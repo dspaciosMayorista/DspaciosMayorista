@@ -1,7 +1,10 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
+
+export type TipoPaquete = "bloqueo" | "porcion_terrestre" | "empaquetado" | "dinamico";
 
 export type PasajeroInput = {
   nombre: string;
@@ -40,6 +43,9 @@ export type ItemInput = {
 };
 
 export type ContratoInput = {
+  tipoPaquete: TipoPaquete;
+  paqueteId: number | null;
+  bloqueoId: number | null; // record asignado (solo bloqueo)
   cliente: string;
   clienteDocumento: string;
   clienteTelefono: string;
@@ -101,7 +107,7 @@ export async function crearContrato(
     pax,
     precio_venta: precioVenta,
     estado: "activo",
-    tipo_paquete: input.vuelos.length > 0 ? "empaquetado" : "porcion_terrestre",
+    tipo_paquete: input.tipoPaquete,
     cliente_documento: oNull(input.clienteDocumento),
     cliente_telefono: oNull(input.clienteTelefono),
     cliente_direccion: oNull(input.clienteDireccion),
@@ -178,6 +184,66 @@ export async function crearContrato(
       }))
     );
     if (error) return { ok: false, error: error.message };
+  }
+
+  // ── Productos negociados: costos desde el módulo de producto + cupos ──────
+  // Se hace con el cliente service-role para que el asesor nunca vea los costos
+  // ni necesite permisos sobre sillas. Si no hay llave service-role, se omite.
+  const esNegociado =
+    input.tipoPaquete === "bloqueo" || input.tipoPaquete === "porcion_terrestre";
+  if ((esNegociado && input.paqueteId) || (input.tipoPaquete === "bloqueo" && input.bloqueoId)) {
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        const admin = createAdminClient();
+
+        // 1) Copiar costos negociados del paquete a la venta (ocultos al asesor)
+        if (esNegociado && input.paqueteId) {
+          const { data: costos } = await admin
+            .from("paquete_costos")
+            .select("*")
+            .eq("paquete_id", input.paqueteId)
+            .maybeSingle();
+          if (costos) {
+            await admin
+              .from("ventas")
+              .update({
+                costo_hotel: costos.costo_hotel,
+                costo_aereo: costos.costo_aereo,
+                costo_receptivo: costos.costo_receptivo,
+                costo_asistencia: costos.costo_asistencia,
+                otros_costos: costos.otros_costos,
+              })
+              .eq("numero_contrato", numero);
+          }
+        }
+
+        // 2) Descontar cupos del record (asignar N sillas disponibles)
+        if (input.tipoPaquete === "bloqueo" && input.bloqueoId) {
+          const adultos = input.pasajeros.filter((p) => !p.esInfante).length || pax;
+          const { data: libres } = await admin
+            .from("sillas")
+            .select("id")
+            .eq("bloqueo_id", input.bloqueoId)
+            .eq("estado", "disponible")
+            .order("numero_silla")
+            .limit(adultos);
+          if (libres && libres.length) {
+            await admin
+              .from("sillas")
+              .update({
+                estado: "en_plazo",
+                numero_contrato: numero,
+                asesor: oNull(input.asesorNombre),
+                hotel: input.hoteles[0]?.nombre ?? null,
+                acomodacion: input.hoteles[0]?.acomodacion ?? null,
+              })
+              .in("id", libres.map((s) => s.id));
+          }
+        }
+      } catch {
+        // No bloquear la creación del contrato si falla el paso administrativo.
+      }
+    }
   }
 
   revalidatePath("/dashboard/contratos");

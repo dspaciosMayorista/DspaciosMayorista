@@ -11,18 +11,52 @@ import {
   type HotelInput,
   type VueloInput,
   type ItemInput,
+  type TipoPaquete,
 } from "./actions";
 
 const hoy = new Date().toISOString().slice(0, 10);
+
+export type PaqueteOpt = {
+  id: number;
+  categoria: "bloqueo" | "porcion_terrestre";
+  nombre: string;
+  plan_alimentacion: string | null;
+  impuesto_no_comisionable: number;
+  paquete_hoteles: { nombre: string; ciudad: string | null; alimentacion: string | null; acomodacion_detalle: string | null }[];
+  paquete_precios: { acomodacion: string; precio: number }[];
+};
+export type BloqueoOpt = { id: number; record: string; ruta: string | null; fecha_ida: string | null; fecha_regreso: string | null; aerolinea: string | null };
+
+const TIPOS: { value: TipoPaquete; label: string }[] = [
+  { value: "bloqueo", label: "Bloqueo (negociado + vuelo)" },
+  { value: "porcion_terrestre", label: "Porción terrestre negociada" },
+  { value: "empaquetado", label: "Empaquetado (tiquetes por sistema)" },
+  { value: "dinamico", label: "Dinámico (todo manual)" },
+];
 
 const labelCls = "mb-1 block text-xs font-medium text-gray-600";
 const sectionCls = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 const titleCls = "text-sm font-semibold";
 
-export function NuevoContratoForm({ asesorDefault }: { asesorDefault: string }) {
+export function NuevoContratoForm({
+  asesorDefault,
+  paquetes = [],
+  bloqueos = [],
+}: {
+  asesorDefault: string;
+  paquetes?: PaqueteOpt[];
+  bloqueos?: BloqueoOpt[];
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
+
+  // Tipo de paquete y producto negociado
+  const [tipoPaquete, setTipoPaquete] = useState<TipoPaquete>("dinamico");
+  const [paqueteId, setPaqueteId] = useState<number | "">("");
+  const [bloqueoId, setBloqueoId] = useState<number | "">("");
+  const esNegociado = tipoPaquete === "bloqueo" || tipoPaquete === "porcion_terrestre";
+  const paquetesFiltrados = paquetes.filter((p) => p.categoria === tipoPaquete);
 
   // Cliente
   const [cliente, setCliente] = useState("");
@@ -73,6 +107,24 @@ export function NuevoContratoForm({ asesorDefault }: { asesorDefault: string }) 
     setVuelos((arr) => arr.map((v, j) => (j === i ? { ...v, ...patch } : v)));
   }
 
+  function aplicarPaquete(idStr: string) {
+    const id = Number(idStr) || "";
+    setPaqueteId(id);
+    const pk = paquetes.find((p) => p.id === id);
+    if (!pk) return;
+    setPlanNombre(pk.plan_alimentacion ?? "");
+    setHoteles(
+      pk.paquete_hoteles.map((h) => ({
+        nombre: h.nombre, ciudad: h.ciudad ?? "", alimentacion: h.alimentacion ?? "",
+        acomodacion: "", detalleAcomodacion: h.acomodacion_detalle ?? "", fechaIngreso: "", fechaSalida: "",
+      }))
+    );
+    const precioDoble = pk.paquete_precios.find((x) => x.acomodacion === "doble")?.precio
+      ?? pk.paquete_precios[0]?.precio ?? 0;
+    const precioNino = pk.paquete_precios.find((x) => x.acomodacion === "nino")?.precio ?? 0;
+    setItems([{ descripcion: pk.nombre, adultos: 1, ninos: 0, tarifaAdulto: precioDoble, tarifaNino: precioNino }]);
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -88,6 +140,9 @@ export function NuevoContratoForm({ asesorDefault }: { asesorDefault: string }) 
     startTransition(async () => {
       try {
         const res = await crearContrato({
+          tipoPaquete,
+          paqueteId: paqueteId === "" ? null : Number(paqueteId),
+          bloqueoId: bloqueoId === "" ? null : Number(bloqueoId),
           cliente,
           clienteDocumento: doc,
           clienteTelefono: tel,
@@ -121,6 +176,49 @@ export function NuevoContratoForm({ asesorDefault }: { asesorDefault: string }) 
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Tipo de paquete */}
+      <section className={sectionCls}>
+        <p className={titleCls} style={{ color: "var(--brand-primary)" }}>Tipo de paquete</p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div>
+            <label className={labelCls}>Tipo *</label>
+            <select
+              value={tipoPaquete}
+              onChange={(e) => { setTipoPaquete(e.target.value as TipoPaquete); setPaqueteId(""); setBloqueoId(""); }}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+            >
+              {TIPOS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </div>
+          {esNegociado && (
+            <div>
+              <label className={labelCls}>Producto del tarifario</label>
+              <select value={paqueteId} onChange={(e) => aplicarPaquete(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Selecciona un paquete</option>
+                {paquetesFiltrados.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+              </select>
+            </div>
+          )}
+          {tipoPaquete === "bloqueo" && (
+            <div>
+              <label className={labelCls}>Record (descuenta cupos)</label>
+              <select value={bloqueoId} onChange={(e) => setBloqueoId(Number(e.target.value) || "")}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Selecciona record</option>
+                {bloqueos.map((b) => <option key={b.id} value={b.id}>{b.record} · {b.ruta} · {b.fecha_ida}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+        {esNegociado && (
+          <p className="text-xs text-gray-400">
+            Los hoteles, el plan y los precios se cargan del producto (no edites el precio).
+            Los costos quedan de uso interno y no se muestran al asesor.
+          </p>
+        )}
+      </section>
+
       {/* Cliente */}
       <section className={sectionCls}>
         <p className={titleCls} style={{ color: "var(--brand-primary)" }}>
