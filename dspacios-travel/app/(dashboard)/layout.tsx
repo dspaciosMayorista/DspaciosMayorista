@@ -33,7 +33,7 @@ export default async function DashboardLayout({
 
         <nav className="flex-1 px-3 py-4 space-y-1">
           <NavItem href="/dashboard/tarifario" label="Tarifario" />
-          <NavItem href="/contratos" label="Contratos" />
+          <NavItem href="/dashboard/contratos" label="Contratos" />
           <NavItem href="/ventas" label="Ventas" />
           <NavItem href="/vuelos" label="Vuelos" />
           <NavItem href="/finanzas" label="Finanzas" />

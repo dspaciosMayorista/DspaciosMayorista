@@ -165,6 +165,17 @@ export type Database = {
           observaciones: string | null;
           facturado: boolean;
           numero_documento: string | null;
+          fecha_emision: string | null;
+          cliente_documento: string | null;
+          cliente_telefono: string | null;
+          cliente_direccion: string | null;
+          asistencia_medica: boolean;
+          plan_nombre: string | null;
+          tours_traslados: string | null;
+          asesor_firma_nombre: string | null;
+          asesor_firma_cargo: string | null;
+          asesor_firma_cc: string | null;
+          asesor_firma_tel: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -195,6 +206,17 @@ export type Database = {
           observaciones?: string | null;
           facturado?: boolean;
           numero_documento?: string | null;
+          fecha_emision?: string | null;
+          cliente_documento?: string | null;
+          cliente_telefono?: string | null;
+          cliente_direccion?: string | null;
+          asistencia_medica?: boolean;
+          plan_nombre?: string | null;
+          tours_traslados?: string | null;
+          asesor_firma_nombre?: string | null;
+          asesor_firma_cargo?: string | null;
+          asesor_firma_cc?: string | null;
+          asesor_firma_tel?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -778,6 +800,110 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["inclusiones"]["Insert"]>;
         Relationships: [];
       };
+      contrato_pasajeros: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          nombre: string;
+          tipo_id: string | null;
+          identificacion: string | null;
+          fecha_nacimiento: string | null;
+          es_infante: boolean;
+          orden: number;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          nombre: string;
+          tipo_id?: string | null;
+          identificacion?: string | null;
+          fecha_nacimiento?: string | null;
+          es_infante?: boolean;
+          orden?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_pasajeros"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_hoteles: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          nombre: string;
+          ciudad: string | null;
+          alimentacion: string | null;
+          acomodacion: string | null;
+          detalle_acomodacion: string | null;
+          fecha_ingreso: string | null;
+          fecha_salida: string | null;
+          orden: number;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          nombre: string;
+          ciudad?: string | null;
+          alimentacion?: string | null;
+          acomodacion?: string | null;
+          detalle_acomodacion?: string | null;
+          fecha_ingreso?: string | null;
+          fecha_salida?: string | null;
+          orden?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_hoteles"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_vuelos: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          aerolinea: string | null;
+          origen_codigo: string | null;
+          origen_ciudad: string | null;
+          destino_codigo: string | null;
+          destino_ciudad: string | null;
+          servicios: string | null;
+          fecha_salida: string | null;
+          orden: number;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          aerolinea?: string | null;
+          origen_codigo?: string | null;
+          origen_ciudad?: string | null;
+          destino_codigo?: string | null;
+          destino_ciudad?: string | null;
+          servicios?: string | null;
+          fecha_salida?: string | null;
+          orden?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_vuelos"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_items: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          descripcion: string;
+          adultos: number;
+          ninos: number;
+          tarifa_adulto: number;
+          tarifa_nino: number;
+          orden: number;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          descripcion: string;
+          adultos?: number;
+          ninos?: number;
+          tarifa_adulto?: number;
+          tarifa_nino?: number;
+          orden?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_items"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {
@@ -798,6 +924,10 @@ export type Database = {
       mi_rol: {
         Args: Record<PropertyKey, never>;
         Returns: Database["public"]["Enums"]["rol_usuario"];
+      };
+      siguiente_numero_contrato: {
+        Args: Record<PropertyKey, never>;
+        Returns: string;
       };
     };
     Enums: {
@@ -852,6 +982,10 @@ export type Silla = Tables<"sillas">;
 export type Destino = Tables<"destinos">;
 export type Hotel = Tables<"hoteles">;
 export type Tarifa = Tables<"tarifas">;
+export type ContratoPasajero = Tables<"contrato_pasajeros">;
+export type ContratoHotel = Tables<"contrato_hoteles">;
+export type ContratoVuelo = Tables<"contrato_vuelos">;
+export type ContratoItem = Tables<"contrato_items">;
 export type RolUsuario = Enums<"rol_usuario">;
 export type EstadoSilla = Enums<"estado_silla">;
 export type AcomodacionTipo = Enums<"acomodacion_tipo">;

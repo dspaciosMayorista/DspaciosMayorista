@@ -40,7 +40,7 @@ export default async function DashboardPage() {
 
 const MODULOS = [
   { href: "/dashboard/tarifario", icon: "🏨", label: "Tarifario", desc: "Hoteles y precios" },
-  { href: "/contratos", icon: "📋", label: "Contratos", desc: "Generar contratos" },
+  { href: "/dashboard/contratos", icon: "📋", label: "Contratos", desc: "Generar contratos" },
   { href: "/ventas", icon: "💼", label: "Ventas", desc: "Gestión y abonos" },
   { href: "/vuelos", icon: "✈️", label: "Vuelos", desc: "Inventario de sillas" },
   { href: "/finanzas", icon: "📊", label: "Finanzas", desc: "Rentabilidad" },
