@@ -6,12 +6,14 @@ export const revalidate = 120; // revalida cada 2 min
 export default async function TarifarioPublicoPage() {
   const sb = await createClient();
 
-  // Detectar sesión (badge de agencia)
+  // Detectar sesión (badge de agencia + permiso de reservar)
   const { data: { user } } = await sb.auth.getUser();
   let esAgencia = false;
+  let puedeReservar = false;
   if (user) {
     const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).single();
     esAgencia = !!perfil && ["agencia", "freelance", "superadmin", "operaciones", "gerencia", "administracion"].includes(perfil.rol);
+    puedeReservar = !!perfil && ["superadmin", "operaciones", "gerencia", "administracion", "venta", "agencia", "freelance"].includes(perfil.rol);
   }
 
   // Resultado del tarifario (solo paquetes activos). Paginado por si supera 1000.
@@ -21,7 +23,7 @@ export default async function TarifarioPublicoPage() {
     const { data: page } = await sb
       .from("tarifario_resultado")
       .select(
-        "modulo, bloqueo_label, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp"
+        "modulo, bloqueo_label, bloqueo_id, paquete_id, hotel_id, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp"
       )
       .eq("paquete_activo", true)
       .order("destino_nombre")
@@ -53,7 +55,7 @@ export default async function TarifarioPublicoPage() {
         {!filas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filas} />
+          <TarifarioPublic filas={filas} puedeReservar={puedeReservar} />
         )}
       </main>
     </div>

@@ -20,6 +20,7 @@ const NAV: NavItem[] = [
     children: [{ href: "/dashboard/paquetes/nuevo", label: "Nuevo paquete" }],
   },
   { href: "/dashboard/tarifario", label: "Tarifario" },
+  { href: "/dashboard/reservar", label: "Reservar" },
   {
     href: "/dashboard/contratos",
     label: "Contratos",

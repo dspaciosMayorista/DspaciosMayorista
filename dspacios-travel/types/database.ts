@@ -180,6 +180,14 @@ export type Database = {
           asesor_firma_cargo: string | null;
           asesor_firma_cc: string | null;
           asesor_firma_tel: string | null;
+          cliente_email: string | null;
+          plazo: string | null;
+          tipo_asesor: string | null;
+          agencia_nombre: string | null;
+          agencia_asesor: string | null;
+          freelance_nombre: string | null;
+          paquete_armado_id: number | null;
+          bloqueo_ref_id: number | null;
           share_token: string;
           created_at: string;
           updated_at: string;
@@ -222,6 +230,14 @@ export type Database = {
           asesor_firma_cargo?: string | null;
           asesor_firma_cc?: string | null;
           asesor_firma_tel?: string | null;
+          cliente_email?: string | null;
+          plazo?: string | null;
+          tipo_asesor?: string | null;
+          agencia_nombre?: string | null;
+          agencia_asesor?: string | null;
+          freelance_nombre?: string | null;
+          paquete_armado_id?: number | null;
+          bloqueo_ref_id?: number | null;
           share_token?: string;
           created_at?: string;
           updated_at?: string;
@@ -832,6 +848,7 @@ export type Database = {
           tipo_id: string | null;
           identificacion: string | null;
           fecha_nacimiento: string | null;
+          nacionalidad: string | null;
           es_infante: boolean;
           orden: number;
         };
@@ -842,6 +859,7 @@ export type Database = {
           tipo_id?: string | null;
           identificacion?: string | null;
           fecha_nacimiento?: string | null;
+          nacionalidad?: string | null;
           es_infante?: boolean;
           orden?: number;
         };

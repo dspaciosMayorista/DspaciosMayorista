@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { ShareButtons } from "./ShareButtons";
 import { GestionTabs } from "./GestionTabs";
+import { EstadoVenta } from "./EstadoVenta";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +68,9 @@ export default async function ContratoDetallePage({
           <p className="mt-1 text-sm text-gray-500">
             {venta.cliente} · {venta.destino ?? "—"} · Viaje {formatFechaLarga(venta.fecha_salida)}
           </p>
+          <div className="mt-2">
+            <EstadoVenta numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
+          </div>
         </div>
         <Link href={`/contrato/${encodeURIComponent(numero)}`} target="_blank">
           <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver / Imprimir contrato →</Button>

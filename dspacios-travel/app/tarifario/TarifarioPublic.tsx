@@ -1,11 +1,15 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
+import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 
 export type FilaTarifario = {
   modulo: "bloqueo" | "porcion_terrestre" | "servicios";
   bloqueo_label: string | null;
+  bloqueo_id?: number | null;
+  paquete_id?: number;
+  hotel_id?: number | null;
   fecha_ida: string | null;
   fecha_regreso: string | null;
   noches: number | null;
@@ -44,6 +48,10 @@ type Pivotada = {
   categoria: string;
   regimen: string;
   precios: Record<string, number>;
+  paquete_id?: number;
+  hotel_id?: number | null;
+  bloqueo_id?: number | null;
+  modulo: FilaTarifario["modulo"];
 };
 
 function pivotar(filas: FilaTarifario[]): Pivotada[] {
@@ -55,7 +63,10 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
     const key = `${hotel}|||${categoria}|||${regimen}`;
     let row = map.get(key);
     if (!row) {
-      row = { hotel, categoria, regimen, precios: {} };
+      row = {
+        hotel, categoria, regimen, precios: {},
+        paquete_id: f.paquete_id, hotel_id: f.hotel_id, bloqueo_id: f.bloqueo_id, modulo: f.modulo,
+      };
       map.set(key, row);
     }
     if (f.acomodacion) row.precios[f.acomodacion] = f.precio_pvp;
@@ -65,7 +76,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
   );
 }
 
-export function TarifarioPublic({ filas }: { filas: FilaTarifario[] }) {
+export function TarifarioPublic({ filas, puedeReservar = false }: { filas: FilaTarifario[]; puedeReservar?: boolean }) {
   const modulosPresentes = MODULOS.filter((m) => filas.some((f) => f.modulo === m.key));
   const [modulo, setModulo] = useState<FilaTarifario["modulo"]>(modulosPresentes[0]?.key ?? "bloqueo");
 
@@ -91,9 +102,9 @@ export function TarifarioPublic({ filas }: { filas: FilaTarifario[] }) {
       </div>
 
       {modulo === "bloqueo" ? (
-        <PorSalida filas={filas.filter((f) => f.modulo === "bloqueo")} />
+        <PorSalida filas={filas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} />
       ) : modulo === "porcion_terrestre" ? (
-        <PorPaquete filas={filas.filter((f) => f.modulo === "porcion_terrestre")} />
+        <PorPaquete filas={filas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} />
       ) : (
         <p className="py-12 text-center text-sm text-gray-400">No hay servicios publicados todavía.</p>
       )}
@@ -106,7 +117,7 @@ export function TarifarioPublic({ filas }: { filas: FilaTarifario[] }) {
 }
 
 // ── Módulo BLOQUEOS: elige una salida (ciclo aéreo) y ve los hoteles ───────
-function PorSalida({ filas }: { filas: FilaTarifario[] }) {
+function PorSalida({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeReservar: boolean }) {
   const salidas = useMemo(() => {
     const map = new Map<string, FilaTarifario>();
     for (const f of filas) {
@@ -163,14 +174,14 @@ function PorSalida({ filas }: { filas: FilaTarifario[] }) {
             {fmtFecha(selFila.fecha_ida)} → {fmtFecha(selFila.fecha_regreso)} ({selFila.noches} noches)
           </p>
         )}
-        <TablaHorizontal rows={rows} />
+        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} />
       </div>
     </div>
   );
 }
 
 // ── Módulo PORCIÓN TERRESTRE: elige un paquete ─────────────────────────────
-function PorPaquete({ filas }: { filas: FilaTarifario[] }) {
+function PorPaquete({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeReservar: boolean }) {
   const paquetes = useMemo(() => {
     const map = new Map<string, FilaTarifario>();
     for (const f of filas) {
@@ -208,13 +219,22 @@ function PorPaquete({ filas }: { filas: FilaTarifario[] }) {
         </ul>
       </aside>
       <div className="min-w-0 flex-1">
-        <TablaHorizontal rows={rows} />
+        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} />
       </div>
     </div>
   );
 }
 
-function TablaHorizontal({ rows }: { rows: Pivotada[] }) {
+function reservarHref(r: Pivotada): string {
+  const p = new URLSearchParams();
+  if (r.paquete_id != null) p.set("paquete", String(r.paquete_id));
+  if (r.hotel_id != null) p.set("hotel", String(r.hotel_id));
+  if (r.bloqueo_id != null) p.set("bloqueo", String(r.bloqueo_id));
+  p.set("modulo", r.modulo);
+  return `/dashboard/reservar/nuevo?${p.toString()}`;
+}
+
+function TablaHorizontal({ rows, puedeReservar = false }: { rows: Pivotada[]; puedeReservar?: boolean }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   if (!rows.length) return <p className="py-8 text-center text-sm text-gray-400">Sin tarifas para esta selección.</p>;
 
@@ -257,7 +277,14 @@ function TablaHorizontal({ rows }: { rows: Pivotada[] }) {
               <Fragment key={hotel}>
                 {visibles.map((r, i) => (
                   <tr key={`${hotel}-${i}`} className="border-t border-gray-100">
-                    <td className="px-3 py-2 font-medium text-gray-800">{i === 0 ? r.hotel : ""}</td>
+                    <td className="px-3 py-2 font-medium text-gray-800">
+                      {i === 0 ? r.hotel : ""}
+                      {i === 0 && puedeReservar && r.paquete_id != null && r.hotel_id != null && (
+                        <Link href={reservarHref(r)} className="mt-0.5 block text-xs font-normal" style={{ color: "var(--brand-accent)" }}>
+                          Reservar →
+                        </Link>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-gray-600">{r.categoria}</td>
                     <td className="px-3 py-2 text-gray-600">{r.regimen}</td>
                     {COLS.map(([k]) => (
