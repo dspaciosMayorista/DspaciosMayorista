@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { CambiarSillasForm } from "./CambiarSillasForm";
+import { SillaEstado } from "./SillaEstado";
 
 export const dynamic = "force-dynamic";
 
@@ -78,9 +79,10 @@ export default async function BloqueoDetallePage({
       <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
         {(sillas ?? []).map((s) => (
           <div key={s.id} className="rounded-lg border border-gray-200 p-3" style={{ backgroundColor: ESTADO_COLOR[s.estado] ?? "#fff" }}>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-1">
               <span className="text-sm font-semibold text-gray-700">Silla {s.numero_silla}</span>
-              <span className="text-[10px] uppercase text-gray-500">{s.estado.replace("_", " ")}</span>
+              <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId}
+                bloqueada={s.estado === "cambio" || s.estado === "cambio_entrante"} />
             </div>
             {s.numero_contrato && <div className="mt-1 font-mono text-xs text-gray-600">{s.numero_contrato}</div>}
             {(s.pasajero_nombres || s.pasajero_apellidos) && (

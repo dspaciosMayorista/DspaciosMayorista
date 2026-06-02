@@ -130,6 +130,24 @@ export async function cambiarSillas(input: {
   return { ok: true };
 }
 
+export type EstadoSillaManual = "disponible" | "en_plazo" | "confirmada" | "devuelta" | "no_vendida";
+
+export async function cambiarEstadoSilla(
+  sillaId: number,
+  estado: EstadoSillaManual,
+  bloqueoId: number
+): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("sillas")
+    .update({ estado, updated_at: new Date().toISOString() })
+    .eq("id", sillaId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
+
 export async function eliminarBloqueo(id: number): Promise<Result> {
   const sb = await createClient();
   // Borrar sillas primero (no hay cascade declarado)
