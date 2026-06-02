@@ -17,6 +17,12 @@ export default async function ContratoDetallePage({
   const numero = decodeURIComponent(raw);
   const sb = await createClient();
 
+  const { data: { user } } = await sb.auth.getUser();
+  const { data: perfil } = user
+    ? await sb.from("usuarios").select("rol").eq("id", user.id).single()
+    : { data: null };
+  const verFinanzas = ["superadmin", "gerencia", "administracion", "operaciones"].includes(perfil?.rol ?? "");
+
   const [
     { data: venta },
     { data: abonos },
@@ -91,6 +97,7 @@ export default async function ContratoDetallePage({
         precioVenta={venta.precio_venta}
         asesorNombre={asesorNombre}
         asesorPct={asesorPct}
+        verFinanzas={verFinanzas}
         costos={{
           costo_hotel: venta.costo_hotel,
           costo_aereo: venta.costo_aereo,

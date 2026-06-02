@@ -32,6 +32,7 @@ export type GestionProps = {
   precioVenta: number;
   asesorNombre: string;
   asesorPct: number;
+  verFinanzas: boolean; // false para el rol 'venta' (asesor): oculta costos/comisiones/rentabilidad
   costos: { costo_hotel: number; costo_aereo: number; costo_receptivo: number; costo_asistencia: number; otros_costos: number };
   abonos: Abono[];
   totalPagado: number;
@@ -72,37 +73,41 @@ export function GestionTabs(p: GestionProps) {
 
   return (
     <div className="mt-8">
-      <Tabs defaultValue="costos">
+      <Tabs defaultValue="cartera">
         <div className="mb-5 overflow-x-auto">
           <TabsList>
-            <TabsTrigger value="costos">Costos</TabsTrigger>
             <TabsTrigger value="cartera">Cartera</TabsTrigger>
-            <TabsTrigger value="proveedores">Proveedores</TabsTrigger>
-            <TabsTrigger value="comisiones">Comisiones</TabsTrigger>
-            <TabsTrigger value="facturacion">Facturación</TabsTrigger>
-            <TabsTrigger value="rentabilidad">Rentabilidad</TabsTrigger>
+            {p.verFinanzas && <TabsTrigger value="costos">Costos</TabsTrigger>}
+            {p.verFinanzas && <TabsTrigger value="proveedores">Proveedores</TabsTrigger>}
+            {p.verFinanzas && <TabsTrigger value="comisiones">Comisiones</TabsTrigger>}
+            {p.verFinanzas && <TabsTrigger value="facturacion">Facturación</TabsTrigger>}
+            {p.verFinanzas && <TabsTrigger value="rentabilidad">Rentabilidad</TabsTrigger>}
           </TabsList>
         </div>
 
-        <TabsContent value="costos">
-          <CostosTab numero={p.numero} costos={p.costos} costoDirecto={costoDirecto} />
-        </TabsContent>
         <TabsContent value="cartera">
           <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} />
         </TabsContent>
-        <TabsContent value="proveedores">
-          <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />
-        </TabsContent>
-        <TabsContent value="comisiones">
-          <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} filas={p.comisionesB2B}
-            comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} />
-        </TabsContent>
-        <TabsContent value="facturacion">
-          <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaDescontable={ivaDescontable} />
-        </TabsContent>
-        <TabsContent value="rentabilidad">
-          <RentabilidadTab rent={rent} />
-        </TabsContent>
+        {p.verFinanzas && (
+          <>
+            <TabsContent value="costos">
+              <CostosTab numero={p.numero} costos={p.costos} costoDirecto={costoDirecto} />
+            </TabsContent>
+            <TabsContent value="proveedores">
+              <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />
+            </TabsContent>
+            <TabsContent value="comisiones">
+              <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} filas={p.comisionesB2B}
+                comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} />
+            </TabsContent>
+            <TabsContent value="facturacion">
+              <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaDescontable={ivaDescontable} />
+            </TabsContent>
+            <TabsContent value="rentabilidad">
+              <RentabilidadTab rent={rent} />
+            </TabsContent>
+          </>
+        )}
       </Tabs>
     </div>
   );

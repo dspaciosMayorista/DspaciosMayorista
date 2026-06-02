@@ -906,6 +906,102 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["contrato_items"]["Insert"]>;
         Relationships: [];
       };
+      paquetes: {
+        Row: {
+          id: number;
+          categoria: Database["public"]["Enums"]["paquete_categoria"];
+          destino_id: number | null;
+          nombre: string;
+          descripcion: string | null;
+          plan_alimentacion: string | null;
+          noches: number;
+          comisionable: boolean;
+          impuesto_no_comisionable: number;
+          bloqueo_id: number | null;
+          activo: boolean;
+          notas: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          categoria: Database["public"]["Enums"]["paquete_categoria"];
+          destino_id?: number | null;
+          nombre: string;
+          descripcion?: string | null;
+          plan_alimentacion?: string | null;
+          noches?: number;
+          comisionable?: boolean;
+          impuesto_no_comisionable?: number;
+          bloqueo_id?: number | null;
+          activo?: boolean;
+          notas?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["paquetes"]["Insert"]>;
+        Relationships: [];
+      };
+      paquete_hoteles: {
+        Row: {
+          id: number;
+          paquete_id: number;
+          nombre: string;
+          ciudad: string | null;
+          alimentacion: string | null;
+          acomodacion_detalle: string | null;
+          noches: number;
+          orden: number;
+        };
+        Insert: {
+          id?: number;
+          paquete_id: number;
+          nombre: string;
+          ciudad?: string | null;
+          alimentacion?: string | null;
+          acomodacion_detalle?: string | null;
+          noches?: number;
+          orden?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["paquete_hoteles"]["Insert"]>;
+        Relationships: [];
+      };
+      paquete_precios: {
+        Row: {
+          id: number;
+          paquete_id: number;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"];
+          precio: number;
+        };
+        Insert: {
+          id?: number;
+          paquete_id: number;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"];
+          precio: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["paquete_precios"]["Insert"]>;
+        Relationships: [];
+      };
+      paquete_costos: {
+        Row: {
+          paquete_id: number;
+          costo_hotel: number;
+          costo_aereo: number;
+          costo_receptivo: number;
+          costo_asistencia: number;
+          otros_costos: number;
+        };
+        Insert: {
+          paquete_id: number;
+          costo_hotel?: number;
+          costo_aereo?: number;
+          costo_receptivo?: number;
+          costo_asistencia?: number;
+          otros_costos?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["paquete_costos"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {
@@ -958,6 +1054,7 @@ export type Database = {
         | "multiple"
         | "nino";
       temporada_tipo: "ALTA" | "MEDIA" | "BAJA";
+      paquete_categoria: "bloqueo" | "porcion_terrestre";
     };
     CompositeTypes: {
       [_ in never]: never;
@@ -988,6 +1085,9 @@ export type ContratoPasajero = Tables<"contrato_pasajeros">;
 export type ContratoHotel = Tables<"contrato_hoteles">;
 export type ContratoVuelo = Tables<"contrato_vuelos">;
 export type ContratoItem = Tables<"contrato_items">;
+export type Paquete = Tables<"paquetes">;
+export type PaqueteHotel = Tables<"paquete_hoteles">;
+export type PaquetePrecio = Tables<"paquete_precios">;
 export type RolUsuario = Enums<"rol_usuario">;
 export type EstadoSilla = Enums<"estado_silla">;
 export type AcomodacionTipo = Enums<"acomodacion_tipo">;
