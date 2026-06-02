@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
@@ -19,6 +20,7 @@ const sectionCls = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 const titleCls = "text-sm font-semibold";
 
 export function NuevoContratoForm({ asesorDefault }: { asesorDefault: string }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
 
@@ -85,7 +87,7 @@ export function NuevoContratoForm({ asesorDefault }: { asesorDefault: string }) 
 
     startTransition(async () => {
       try {
-        await crearContrato({
+        const res = await crearContrato({
           cliente,
           clienteDocumento: doc,
           clienteTelefono: tel,
@@ -106,6 +108,11 @@ export function NuevoContratoForm({ asesorDefault }: { asesorDefault: string }) 
           vuelos: vuelosOk,
           items: itemsOk,
         });
+        if (res.ok) {
+          router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
+        } else {
+          setError(res.error);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error al crear el contrato.");
       }

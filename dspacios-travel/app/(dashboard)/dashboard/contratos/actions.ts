@@ -2,7 +2,6 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 
 export type PasajeroInput = {
   nombre: string;
@@ -64,13 +63,22 @@ export type ContratoInput = {
 
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
-export async function crearContrato(input: ContratoInput): Promise<string> {
+export type CrearContratoResult = { ok: true; numero: string } | { ok: false; error: string };
+
+export async function crearContrato(
+  input: ContratoInput
+): Promise<CrearContratoResult> {
   const sb = await createClient();
 
   // 1. Número de contrato (00-NNNN) vía secuencia en la BD
   const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
   if (ne || !numero) {
-    throw new Error(ne?.message ?? "No se pudo generar el número de contrato.");
+    return {
+      ok: false,
+      error:
+        (ne?.message ?? "No se pudo generar el número de contrato.") +
+        " — Verifica que la migración 010 esté aplicada en Supabase.",
+    };
   }
 
   const precioVenta = input.items.reduce(
@@ -105,7 +113,7 @@ export async function crearContrato(input: ContratoInput): Promise<string> {
     asesor_firma_cc: oNull(input.asesorCc),
     asesor_firma_tel: oNull(input.asesorTel),
   });
-  if (ve) throw new Error(ve.message);
+  if (ve) return { ok: false, error: ve.message };
 
   // 3. Tablas hijas
   if (input.pasajeros.length) {
@@ -120,7 +128,7 @@ export async function crearContrato(input: ContratoInput): Promise<string> {
         orden: i,
       }))
     );
-    if (error) throw new Error(error.message);
+    if (error) return { ok: false, error: error.message };
   }
 
   if (input.hoteles.length) {
@@ -137,7 +145,7 @@ export async function crearContrato(input: ContratoInput): Promise<string> {
         orden: i,
       }))
     );
-    if (error) throw new Error(error.message);
+    if (error) return { ok: false, error: error.message };
   }
 
   if (input.vuelos.length) {
@@ -154,7 +162,7 @@ export async function crearContrato(input: ContratoInput): Promise<string> {
         orden: i,
       }))
     );
-    if (error) throw new Error(error.message);
+    if (error) return { ok: false, error: error.message };
   }
 
   if (input.items.length) {
@@ -169,11 +177,11 @@ export async function crearContrato(input: ContratoInput): Promise<string> {
         orden: i,
       }))
     );
-    if (error) throw new Error(error.message);
+    if (error) return { ok: false, error: error.message };
   }
 
   revalidatePath("/dashboard/contratos");
-  redirect(`/dashboard/contratos/${encodeURIComponent(numero)}`);
+  return { ok: true, numero };
 }
 
 export async function registrarAbono(
