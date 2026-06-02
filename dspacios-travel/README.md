@@ -55,7 +55,16 @@ Orden y contenido:
 | `…0006_seed_parametros.sql` | Seed de parámetros tributarios y planes de alimentación |
 | `…0007_superadmin_first_user.sql` | El primer usuario registrado se vuelve `superadmin` |
 | `…0008_tarifario_producto.sql` | Añade `costo_base`, `pct_mk` a `tarifas` + parámetro `COMISION_AGENCIA` (0.12) |
-| `…0009_tarifas_unique.sql` | **Índice único** `(hotel_id, plan_id, temporada_id, noches)` en `tarifas` — necesario para el upsert de `guardarTarifa` (ver changelog) |
+| `…0009_tarifas_unique.sql` | **Índice único** `(hotel_id, plan_id, temporada_id, noches)` en `tarifas` — necesario para el upsert de `guardarTarifa` |
+| `…0010_contratos.sql` | Numeración `00-NNNN` (`siguiente_numero_contrato`), campos de contrato en `ventas`, tablas `contrato_pasajeros/_hoteles/_vuelos/_items` + RLS |
+| `…0011_share_token.sql` | `share_token` (uuid único) en `ventas` para el enlace público del contrato |
+| `…0012_seed_bloqueos_cartagena.sql` | **Seed** opcional: 15 records JETSMART Cartagena + sus sillas |
+| `…0013_paquetes.sql` | Módulo de Producto: `paquetes`, `paquete_hoteles`, `paquete_precios`, `paquete_costos` (costos con RLS interno) + enum `paquete_categoria` |
+
+> Además de las dos variables `NEXT_PUBLIC_SUPABASE_*`, para el enlace público del
+> contrato y para que los contratos de bloqueo/porción terrestre copien costos y
+> descuenten cupos, configura en el servidor (Vercel) **`SUPABASE_SERVICE_ROLE_KEY`**
+> (la llave secreta `service_role`; nunca con prefijo `NEXT_PUBLIC_`).
 
 > El `project_id` en `supabase/config.toml` es público (no es secreto). **Rotar las llaves**
 > que estuvieron en el `.env` compartido (ver `CLAUDE.md` §12).
@@ -102,3 +111,23 @@ Orden y contenido:
     tarifas en runtime. Se agregó la migración `…0009_tarifas_unique.sql` con el índice
     único correspondiente.
   - ✅ Verificado `pnpm install` + `pnpm build`: compila y pasa TypeScript sin errores.
+  - **Fase 2 — Generador de contratos:** plantilla legal (18 cláusulas) en
+    `lib/contrato/plantilla.ts`; creación de contrato (`/dashboard/contratos/nuevo`),
+    documento imprimible (`/contrato/[numero]`) con colores en PDF, y enlace público
+    para compartir (`/c/[token]`) por WhatsApp/correo.
+  - **Flujo de venta** en cada contrato (`/dashboard/contratos/[numero]`): pestañas
+    Cartera (abonos), Costos, Proveedores (cuentas por pagar), Comisiones (B2B + asesor),
+    Facturación y **Rentabilidad** (relación de utilidades). Cálculos puros en
+    `lib/calc/finanzas.ts` (portados del Apps Script System V2).
+  - **Inventario de vuelos** (`/dashboard/vuelos`): bloqueos con cupos y sillas.
+  - **Módulo de Producto / Paquetes** (`/dashboard/paquetes`): paquetes prearmados
+    (bloqueo / porción terrestre) con hoteles, precio por acomodación y **costos
+    negociados protegidos** (RLS interno, ocultos al asesor).
+  - **Contrato por tipo de paquete:** bloqueo/porción terrestre jalan el producto del
+    tarifario (precio + costos vía service-role) y el bloqueo **descuenta cupos** del
+    record; dinámico es manual.
+  - **Finanzas** (`/dashboard/finanzas`): informe de relación de utilidades por contrato.
+  - **Permisos:** las pestañas financieras y el informe son solo para roles internos
+    (superadmin/gerencia/administración/operaciones); el asesor (`venta`) no ve costos.
+  - **Móvil:** layout del dashboard responsive (barra superior + tablas con scroll).
+  - ⚠️ Pendiente de probar con datos reales (el dueño cargará la BD y validará).
