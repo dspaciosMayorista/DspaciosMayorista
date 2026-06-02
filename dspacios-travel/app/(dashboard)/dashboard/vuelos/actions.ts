@@ -75,6 +75,38 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
   return { ok: true, id: bloqueo.id };
 }
 
+// Editar un bloqueo existente (no modifica cupos/sillas ya generadas).
+export type BloqueoEditInput = Omit<BloqueoInput, "cuposTotal">;
+export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("bloqueos_vuelo")
+    .update({
+      record: input.record.trim().toUpperCase(),
+      aerolinea: oNull(input.aerolinea),
+      proveedor_id: input.proveedorId,
+      destino_id: input.destinoId,
+      ruta: oNull(input.ruta),
+      vuelo_ida: oNull(input.vueloIda),
+      fecha_ida: oNull(input.fechaIda),
+      hora_salida_ida: oNull(input.horaSalidaIda),
+      hora_llegada_ida: oNull(input.horaLlegadaIda),
+      vuelo_regreso: oNull(input.vueloRegreso),
+      fecha_regreso: oNull(input.fechaRegreso),
+      hora_salida_reg: oNull(input.horaSalidaReg),
+      hora_llegada_reg: oNull(input.horaLlegadaReg),
+      tarifa_para_empaquetar: input.tarifaParaEmpaquetar,
+      fecha_devolucion: oNull(input.fechaDevolucion),
+      fecha_emision: oNull(input.fechaEmision),
+      notas: oNull(input.notas),
+      rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
+    })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/vuelos/${id}`);
+  return { ok: true, id };
+}
+
 export async function cambiarSillas(input: {
   origenId: number;
   destinoId: number;

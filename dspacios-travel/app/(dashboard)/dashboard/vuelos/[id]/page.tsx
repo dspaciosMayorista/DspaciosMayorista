@@ -4,6 +4,7 @@ import Link from "next/link";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { CambiarSillasForm } from "./CambiarSillasForm";
 import { SillaEstado } from "./SillaEstado";
+import { EditarBloqueoForm } from "./EditarBloqueoForm";
 
 export const dynamic = "force-dynamic";
 
@@ -27,10 +28,13 @@ export default async function BloqueoDetallePage({
   if (isNaN(bloqueoId)) notFound();
 
   const sb = await createClient();
-  const [{ data: b }, { data: sillas }, { data: otros }] = await Promise.all([
+  const [{ data: b }, { data: sillas }, { data: otros }, { data: destinos }, { data: proveedores }, { data: rangos }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").eq("id", bloqueoId).single(),
     sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, hotel, acomodacion").eq("bloqueo_id", bloqueoId).order("numero_silla"),
     sb.from("bloqueos_vuelo").select("id, record, fecha_ida").neq("id", bloqueoId).order("fecha_ida"),
+    sb.from("destinos").select("id, nombre").order("nombre"),
+    sb.from("proveedores").select("id, nombre").eq("tipo", "aereo").order("nombre"),
+    sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
   ]);
   if (!b) notFound();
 
@@ -67,6 +71,20 @@ export default async function BloqueoDetallePage({
           </span>
         ))}
       </div>
+
+      <EditarBloqueoForm
+        bloqueoId={bloqueoId}
+        proveedores={proveedores ?? []}
+        destinos={destinos ?? []}
+        rangos={rangos ?? []}
+        inicial={{
+          record: b.record ?? "", aerolinea: b.aerolinea ?? "", proveedorId: b.proveedor_id, destinoId: b.destino_id, ruta: b.ruta ?? "",
+          vueloIda: b.vuelo_ida ?? "", fechaIda: b.fecha_ida ?? "", horaSalidaIda: b.hora_salida_ida ?? "", horaLlegadaIda: b.hora_llegada_ida ?? "",
+          vueloRegreso: b.vuelo_regreso ?? "", fechaRegreso: b.fecha_regreso ?? "", horaSalidaReg: b.hora_salida_reg ?? "", horaLlegadaReg: b.hora_llegada_reg ?? "",
+          tarifaParaEmpaquetar: b.tarifa_para_empaquetar ?? 0, fechaDevolucion: b.fecha_devolucion ?? "", fechaEmision: b.fecha_emision ?? "",
+          notas: b.notas ?? "", rangosEdad: b.rangos_edad ?? [],
+        }}
+      />
 
       {/* Cambio de sillas entre records */}
       {disponibles > 0 && otros && otros.length > 0 && (
