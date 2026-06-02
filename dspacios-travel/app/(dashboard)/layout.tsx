@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
 
 const NAV = [
+  { href: "/dashboard/producto", label: "Producto" },
   { href: "/dashboard/tarifario", label: "Tarifario" },
   { href: "/dashboard/paquetes", label: "Paquetes" },
   { href: "/dashboard/contratos", label: "Contratos" },
