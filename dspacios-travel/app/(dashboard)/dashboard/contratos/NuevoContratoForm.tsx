@@ -414,12 +414,16 @@ export function NuevoContratoForm({
                 <Input type="number" min={0} value={it.ninos} onChange={(e) => setItem(i, { ninos: Number(e.target.value) })} />
               </div>
               <div>
-                <label className={labelCls}>Tarifa adulto</label>
-                <Input type="number" min={0} value={it.tarifaAdulto} onChange={(e) => setItem(i, { tarifaAdulto: Number(e.target.value) })} />
+                <label className={labelCls}>Tarifa adulto {esNegociado && <span className="text-gray-400">🔒</span>}</label>
+                <Input type="number" min={0} value={it.tarifaAdulto} disabled={esNegociado}
+                  className={esNegociado ? "bg-gray-100" : ""}
+                  onChange={(e) => setItem(i, { tarifaAdulto: Number(e.target.value) })} />
               </div>
               <div>
-                <label className={labelCls}>Tarifa niño</label>
-                <Input type="number" min={0} value={it.tarifaNino} onChange={(e) => setItem(i, { tarifaNino: Number(e.target.value) })} />
+                <label className={labelCls}>Tarifa niño {esNegociado && <span className="text-gray-400">🔒</span>}</label>
+                <Input type="number" min={0} value={it.tarifaNino} disabled={esNegociado}
+                  className={esNegociado ? "bg-gray-100" : ""}
+                  onChange={(e) => setItem(i, { tarifaNino: Number(e.target.value) })} />
               </div>
               {items.length > 1 && (
                 <button type="button" className="text-xs text-gray-400 hover:text-red-500 md:col-span-6 md:text-right" onClick={() => setItems((a) => a.filter((_, j) => j !== i))}>

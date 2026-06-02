@@ -69,6 +69,67 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
   return { ok: true, id: bloqueo.id };
 }
 
+export async function cambiarSillas(input: {
+  origenId: number;
+  destinoId: number;
+  cantidad: number;
+  motivo: string;
+}): Promise<Result> {
+  const sb = await createClient();
+  if (input.origenId === input.destinoId)
+    return { ok: false, error: "El origen y el destino deben ser distintos." };
+  if (input.cantidad <= 0) return { ok: false, error: "Cantidad inválida." };
+
+  // Sillas disponibles en el origen
+  const { data: libres } = await sb
+    .from("sillas")
+    .select("id")
+    .eq("bloqueo_id", input.origenId)
+    .in("estado", ["disponible", "cambio_entrante"])
+    .order("numero_silla")
+    .limit(input.cantidad);
+  if (!libres || libres.length < input.cantidad)
+    return { ok: false, error: `Solo hay ${libres?.length ?? 0} sillas disponibles en el origen.` };
+  const ids = libres.map((s) => s.id);
+
+  // Origen → CAMBIO
+  const { error: e1 } = await sb.from("sillas").update({ estado: "cambio" }).in("id", ids);
+  if (e1) return { ok: false, error: e1.message };
+
+  // Siguiente número de silla en el destino
+  const { data: maxRows } = await sb
+    .from("sillas")
+    .select("numero_silla")
+    .eq("bloqueo_id", input.destinoId)
+    .order("numero_silla", { ascending: false })
+    .limit(1);
+  const next = maxRows?.[0]?.numero_silla ?? 0;
+
+  // Destino → nuevas CAMBIO ENTRANTE
+  const nuevas = Array.from({ length: input.cantidad }, (_, i) => ({
+    bloqueo_id: input.destinoId,
+    numero_silla: next + i + 1,
+    estado: "cambio_entrante" as const,
+  }));
+  const { error: e2 } = await sb.from("sillas").insert(nuevas);
+  if (e2) return { ok: false, error: e2.message };
+
+  // Registrar movimientos
+  await sb.from("movimientos_silla").insert(
+    ids.map((silla_id) => ({
+      silla_id,
+      bloqueo_origen_id: input.origenId,
+      bloqueo_destino_id: input.destinoId,
+      motivo: input.motivo || null,
+    }))
+  );
+
+  revalidatePath(`/dashboard/vuelos/${input.origenId}`);
+  revalidatePath(`/dashboard/vuelos/${input.destinoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
+
 export async function eliminarBloqueo(id: number): Promise<Result> {
   const sb = await createClient();
   // Borrar sillas primero (no hay cascade declarado)

@@ -87,13 +87,32 @@ export async function crearContrato(
     };
   }
 
-  const precioVenta = input.items.reduce(
+  // Precio BLOQUEADO del producto para negociados: se ignoran las tarifas que
+  // venga del cliente y se usan las del paquete (el asesor no puede cambiarlas).
+  let items = input.items;
+  const negociado =
+    input.tipoPaquete === "bloqueo" || input.tipoPaquete === "porcion_terrestre";
+  if (negociado && input.paqueteId) {
+    const { data: precios } = await sb
+      .from("paquete_precios")
+      .select("acomodacion, precio")
+      .eq("paquete_id", input.paqueteId);
+    if (precios && precios.length) {
+      const doble =
+        precios.find((p) => p.acomodacion === "doble")?.precio ??
+        Math.min(...precios.map((p) => p.precio));
+      const nino = precios.find((p) => p.acomodacion === "nino")?.precio ?? 0;
+      items = input.items.map((it) => ({ ...it, tarifaAdulto: doble, tarifaNino: nino }));
+    }
+  }
+
+  const precioVenta = items.reduce(
     (s, it) => s + it.adultos * it.tarifaAdulto + it.ninos * it.tarifaNino,
     0
   );
   const pax =
     input.pasajeros.filter((p) => !p.esInfante).length ||
-    input.items.reduce((s, it) => s + it.adultos, 0) ||
+    items.reduce((s, it) => s + it.adultos, 0) ||
     1;
 
   // 2. Crear la venta (cabecera del contrato)
@@ -171,9 +190,9 @@ export async function crearContrato(
     if (error) return { ok: false, error: error.message };
   }
 
-  if (input.items.length) {
+  if (items.length) {
     const { error } = await sb.from("contrato_items").insert(
-      input.items.map((it, i) => ({
+      items.map((it, i) => ({
         numero_contrato: numero,
         descripcion: it.descripcion.trim(),
         adultos: it.adultos,
@@ -224,7 +243,7 @@ export async function crearContrato(
             .from("sillas")
             .select("id")
             .eq("bloqueo_id", input.bloqueoId)
-            .eq("estado", "disponible")
+            .in("estado", ["disponible", "cambio_entrante"])
             .order("numero_silla")
             .limit(adultos);
           if (libres && libres.length) {

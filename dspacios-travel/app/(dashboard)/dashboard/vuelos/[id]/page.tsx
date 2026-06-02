@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { CambiarSillasForm } from "./CambiarSillasForm";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +26,10 @@ export default async function BloqueoDetallePage({
   if (isNaN(bloqueoId)) notFound();
 
   const sb = await createClient();
-  const [{ data: b }, { data: sillas }] = await Promise.all([
+  const [{ data: b }, { data: sillas }, { data: otros }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").eq("id", bloqueoId).single(),
     sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, hotel, acomodacion").eq("bloqueo_id", bloqueoId).order("numero_silla"),
+    sb.from("bloqueos_vuelo").select("id, record, fecha_ida").neq("id", bloqueoId).order("fecha_ida"),
   ]);
   if (!b) notFound();
 
@@ -35,6 +37,7 @@ export default async function BloqueoDetallePage({
     acc[s.estado] = (acc[s.estado] ?? 0) + 1;
     return acc;
   }, {});
+  const disponibles = (conteo["disponible"] ?? 0) + (conteo["cambio_entrante"] ?? 0);
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
@@ -63,6 +66,13 @@ export default async function BloqueoDetallePage({
           </span>
         ))}
       </div>
+
+      {/* Cambio de sillas entre records */}
+      {disponibles > 0 && otros && otros.length > 0 && (
+        <div className="mt-6">
+          <CambiarSillasForm origenId={bloqueoId} disponibles={disponibles} destinos={otros} />
+        </div>
+      )}
 
       {/* Malla de sillas */}
       <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
