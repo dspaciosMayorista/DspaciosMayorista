@@ -4,6 +4,15 @@ import Link from "next/link";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
 import { PrintButton } from "@/components/contrato/PrintButton";
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ numero: string }>;
+}) {
+  const { numero } = await params;
+  return { title: `Contrato ${decodeURIComponent(numero)} — D'spacios Travel` };
+}
+
 export default async function ContratoImprimiblePage({
   params,
 }: {
@@ -65,9 +74,15 @@ export default async function ContratoImprimiblePage({
       <style
         dangerouslySetInnerHTML={{
           __html: `
-            @page { size: A4; margin: 14mm; }
+            /* Forzar impresión de colores de fondo (azul, grises) en el PDF */
+            .contrato-doc, .contrato-doc * {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            @page { size: A4; margin: 12mm; }
             @media print {
-              body { background: #fff !important; }
+              html, body { background: #fff !important; }
+              .contrato-doc { box-shadow: none !important; }
             }
           `,
         }}
