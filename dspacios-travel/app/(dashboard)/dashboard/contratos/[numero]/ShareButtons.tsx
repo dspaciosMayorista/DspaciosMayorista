@@ -14,6 +14,15 @@ export function ShareButtons({
 }) {
   const [copiado, setCopiado] = useState(false);
 
+  if (!token) {
+    return (
+      <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+        El enlace para compartir aún no está disponible. Aplica la migración 011
+        en Supabase (columna <code>share_token</code>) y recarga esta página.
+      </p>
+    );
+  }
+
   function url() {
     if (typeof window === "undefined") return "";
     return `${window.location.origin}/c/${token}`;
