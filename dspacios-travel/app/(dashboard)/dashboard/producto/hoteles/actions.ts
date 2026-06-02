@@ -17,6 +17,7 @@ export async function crearHotel(input: {
   edadNinoMax: number;
   categoriaIds: number[];
   regimenIds: number[];
+  rangosEdad?: number[];
 }): Promise<Result> {
   const sb = await createClient();
   const { data: hotel, error } = await sb
@@ -30,6 +31,7 @@ export async function crearHotel(input: {
       edad_infante_max: input.edadInfanteMax,
       edad_nino_min: input.edadNinoMin,
       edad_nino_max: input.edadNinoMax,
+      rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
     })
     .select("id")
     .single();

@@ -5,18 +5,20 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { crearBloqueo } from "./actions";
+import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 
 type ProvOpt = { id: number; nombre: string };
 
-export function NuevoBloqueoForm({ proveedores = [], destinos = [] }: { proveedores?: ProvOpt[]; destinos?: ProvOpt[] }) {
+export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] }: { proveedores?: ProvOpt[]; destinos?: ProvOpt[]; rangos?: RangoEdad[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [proveedorId, setProveedorId] = useState<number | "">("");
   const [destinoId, setDestinoId] = useState<number | "">("");
+  const [rangosSel, setRangosSel] = useState<number[]>([]);
 
   const [f, setF] = useState({
     record: "", aerolinea: "", ruta: "",
@@ -37,7 +39,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [] }: { proveedo
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         cuposTotal: Number(f.cuposTotal) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
-        fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision, notas: f.notas,
+        fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision, notas: f.notas, rangosEdad: rangosSel,
       });
       if (r.ok) router.push("/dashboard/vuelos");
       else setErr(r.error);
@@ -72,6 +74,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [] }: { proveedo
           <div><label className={lbl}>Tarifa para empaquetar</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>
           <div><label className={lbl}>Fecha devolución</label><Input type="date" value={f.fechaDevolucion} onChange={set("fechaDevolucion")} /></div>
         </div>
+        <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} label="Rangos de edad del vuelo (infante/niño)" />
       </section>
 
       <section className={card}>

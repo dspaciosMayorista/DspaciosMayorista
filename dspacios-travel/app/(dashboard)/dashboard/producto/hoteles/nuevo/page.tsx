@@ -6,11 +6,12 @@ export const dynamic = "force-dynamic";
 
 export default async function NuevoHotelPage() {
   const sb = await createClient();
-  const [{ data: destinos }, { data: proveedores }, { data: categorias }, { data: regimenes }] = await Promise.all([
+  const [{ data: destinos }, { data: proveedores }, { data: categorias }, { data: regimenes }, { data: rangos }] = await Promise.all([
     sb.from("destinos").select("id, nombre").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "hotelero").order("nombre"),
     sb.from("categorias_habitacion").select("id, nombre").order("nombre"),
     sb.from("planes_alimentacion").select("id, codigo, nombre").order("codigo"),
+    sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
   ]);
 
   return (
@@ -25,6 +26,7 @@ export default async function NuevoHotelPage() {
         proveedores={proveedores ?? []}
         categorias={categorias ?? []}
         regimenes={regimenes ?? []}
+        rangos={rangos ?? []}
       />
     </div>
   );

@@ -505,6 +505,7 @@ export type Database = {
           notas: string | null;
           proveedor_id: number | null;
           destino_id: number | null;
+          rangos_edad: number[] | null;
           created_at: string;
           updated_at: string;
         };
@@ -513,6 +514,7 @@ export type Database = {
           record: string;
           proveedor_id?: number | null;
           destino_id?: number | null;
+          rangos_edad?: number[] | null;
           aerolinea?: string | null;
           ruta?: string | null;
           vuelo_ida?: string | null;
@@ -646,6 +648,7 @@ export type Database = {
           edad_infante_max: number;
           edad_nino_min: number;
           edad_nino_max: number;
+          rangos_edad: number[] | null;
         };
         Insert: {
           id?: number;
@@ -659,6 +662,7 @@ export type Database = {
           edad_infante_max?: number;
           edad_nino_min?: number;
           edad_nino_max?: number;
+          rangos_edad?: number[] | null;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [
@@ -1065,15 +1069,21 @@ export type Database = {
       servicios_adicionales: {
         Row: {
           id: number; nombre: string; proveedor_id: number | null; destino_id: number | null;
-          tarifa_neta: number; temporada: string | null;
+          tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null;
           liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; activo: boolean; created_at: string;
         };
         Insert: {
           id?: number; nombre: string; proveedor_id?: number | null; destino_id?: number | null;
-          tarifa_neta?: number; temporada?: string | null;
+          tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null;
           liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
+        Relationships: [];
+      };
+      rangos_edad: {
+        Row: { id: number; denominacion: string; edad_min: number; edad_max: number; activo: boolean; created_at: string };
+        Insert: { id?: number; denominacion: string; edad_min?: number; edad_max?: number; activo?: boolean; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["rangos_edad"]["Insert"]>;
         Relationships: [];
       };
       armado_paquetes: {

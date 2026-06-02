@@ -5,11 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { crearServicio, actualizarServicio, eliminarServicio, type Liquidacion } from "./actions";
+import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 
 type Opt = { id: number; nombre: string };
 type Servicio = {
   id: number; nombre: string; tarifa_neta: number; temporada: string | null;
   liquidacion: string; proveedor_id: number | null; destino_id: number | null;
+  rangos_edad: number[] | null;
   proveedores: { nombre: string } | null; destinos: { nombre: string } | null;
 };
 
@@ -17,10 +19,11 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 const LIQ: Record<string, string> = { dia: "Por día", noche: "Por noche", paquete: "Por paquete" };
 
-export function ServiciosClient({ servicios, proveedores, destinos }: { servicios: Servicio[]; proveedores: Opt[]; destinos: Opt[] }) {
+export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { servicios: Servicio[]; proveedores: Opt[]; destinos: Opt[]; rangos: RangoEdad[] }) {
   const [nombre, setNombre] = useState("");
   const [provId, setProvId] = useState<number | "">("");
   const [destId, setDestId] = useState<number | "">("");
+  const [rangosSel, setRangosSel] = useState<number[]>([]);
   const [tarifa, setTarifa] = useState("");
   const [temp, setTemp] = useState("");
   const [liq, setLiq] = useState<Liquidacion>("paquete");
@@ -29,7 +32,7 @@ export function ServiciosClient({ servicios, proveedores, destinos }: { servicio
   const [err, setErr] = useState("");
 
   function resetForm() {
-    setNombre(""); setProvId(""); setDestId(""); setTarifa(""); setTemp(""); setLiq("paquete"); setEditId(null);
+    setNombre(""); setProvId(""); setDestId(""); setTarifa(""); setTemp(""); setLiq("paquete"); setRangosSel([]); setEditId(null);
   }
 
   function startEdit(s: Servicio) {
@@ -41,6 +44,7 @@ export function ServiciosClient({ servicios, proveedores, destinos }: { servicio
     setTarifa(String(s.tarifa_neta ?? ""));
     setTemp(s.temporada ?? "");
     setLiq((s.liquidacion as Liquidacion) ?? "paquete");
+    setRangosSel(s.rangos_edad ?? []);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -49,7 +53,7 @@ export function ServiciosClient({ servicios, proveedores, destinos }: { servicio
     setErr("");
     const input = {
       nombre, proveedorId: provId === "" ? null : Number(provId), destinoId: destId === "" ? null : Number(destId),
-      tarifaNeta: Number(tarifa) || 0, temporada: temp, liquidacion: liq,
+      tarifaNeta: Number(tarifa) || 0, temporada: temp, liquidacion: liq, rangosEdad: rangosSel,
     };
     start(async () => {
       const r = editId ? await actualizarServicio(editId, input) : await crearServicio(input);
@@ -88,6 +92,9 @@ export function ServiciosClient({ servicios, proveedores, destinos }: { servicio
               <option value="noche">Por noche</option>
             </select>
           </div>
+        </div>
+        <div className="mt-3">
+          <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} />
         </div>
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={add} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>

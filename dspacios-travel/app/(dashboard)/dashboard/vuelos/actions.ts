@@ -26,6 +26,7 @@ export type BloqueoInput = {
   fechaDevolucion: string;
   fechaEmision: string;
   notas: string;
+  rangosEdad?: number[];
 };
 
 export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
@@ -52,6 +53,7 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
       fecha_devolucion: oNull(input.fechaDevolucion),
       fecha_emision: oNull(input.fechaEmision),
       notas: oNull(input.notas),
+      rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
     })
     .select("id")
     .single();

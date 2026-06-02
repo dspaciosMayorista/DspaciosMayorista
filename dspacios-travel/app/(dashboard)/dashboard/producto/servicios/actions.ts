@@ -15,6 +15,7 @@ export async function crearServicio(input: {
   tarifaNeta: number;
   temporada: string;
   liquidacion: Liquidacion;
+  rangosEdad?: number[];
 }): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("servicios_adicionales").insert({
@@ -24,6 +25,7 @@ export async function crearServicio(input: {
     tarifa_neta: input.tarifaNeta,
     temporada: oNull(input.temporada),
     liquidacion: input.liquidacion,
+    rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
     activo: true,
   });
   if (error) return { ok: false, error: error.message };
@@ -38,6 +40,7 @@ export async function actualizarServicio(id: number, input: {
   tarifaNeta: number;
   temporada: string;
   liquidacion: Liquidacion;
+  rangosEdad?: number[];
 }): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb
@@ -49,6 +52,7 @@ export async function actualizarServicio(id: number, input: {
       tarifa_neta: input.tarifaNeta,
       temporada: oNull(input.temporada),
       liquidacion: input.liquidacion,
+      rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
     })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };

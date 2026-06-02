@@ -22,16 +22,17 @@ export default async function ConfiguracionPage() {
     );
   }
 
-  const [{ data: asesores }, { data: parametros }] = await Promise.all([
+  const [{ data: asesores }, { data: parametros }, { data: rangos }] = await Promise.all([
     sb.from("asesores").select("id, nombre, email, pct_comision_base, meta_mensual").order("nombre"),
     sb.from("parametros_tributarios").select("parametro, valor, descripcion").order("parametro"),
+    sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
   ]);
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
       <h1 className="mb-1 text-2xl font-semibold text-gray-900">Configuración</h1>
-      <p className="mb-6 text-sm text-gray-500">Asesores, comisiones y parámetros tributarios.</p>
-      <ConfigClient asesores={asesores ?? []} parametros={parametros ?? []} />
+      <p className="mb-6 text-sm text-gray-500">Asesores, comisiones, parámetros tributarios y rangos de edad.</p>
+      <ConfigClient asesores={asesores ?? []} parametros={parametros ?? []} rangos={rangos ?? []} />
     </div>
   );
 }
