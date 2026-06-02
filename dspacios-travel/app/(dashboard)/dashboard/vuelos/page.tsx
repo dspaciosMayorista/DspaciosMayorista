@@ -45,7 +45,7 @@ export default async function VuelosPage() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-semibold text-gray-800">{b.record}</span>
+                      <Link href={`/dashboard/vuelos/${b.id}`} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">{b.record}</Link>
                       <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">{b.aerolinea ?? "—"}</span>
                     </div>
                     <p className="mt-1 text-sm text-gray-600">{b.ruta ?? "—"}</p>
