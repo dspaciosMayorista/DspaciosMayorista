@@ -37,11 +37,9 @@ export default async function TarifarioAdminPage() {
                 <div className="flex items-start justify-between">
                   <div>
                     <h2 className="font-semibold text-gray-900 group-hover:text-[#1D7C9A] transition-colors">
-                      {d.nombre}
+                      {d.nombre?.toUpperCase()}
+                      {d.codigo_iata && <span className="font-normal text-gray-400"> ({d.codigo_iata})</span>}
                     </h2>
-                    {d.codigo_iata && (
-                      <span className="text-xs font-mono text-gray-400 mt-0.5 block">{d.codigo_iata}</span>
-                    )}
                   </div>
                   <span className="text-xs bg-gray-50 text-gray-500 px-2 py-1 rounded-full">
                     {(d.hoteles as unknown as { count: number }[])?.[0]?.count ?? 0} hoteles

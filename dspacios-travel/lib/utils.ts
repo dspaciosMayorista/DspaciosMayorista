@@ -37,6 +37,12 @@ export function formatFechaLarga(iso: string | null | undefined): string {
   });
 }
 
+/** Etiqueta de destino con su código IATA entre paréntesis: "CARTAGENA (CTG)" */
+export function destinoLabel(nombre: string | null | undefined, iata?: string | null): string {
+  const n = (nombre ?? "").toUpperCase();
+  return iata ? `${n} (${iata})` : n;
+}
+
 /** Edad en años cumplidos a una fecha de referencia (def. hoy) */
 export function calcularEdad(
   nacimiento: string | null | undefined,
