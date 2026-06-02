@@ -1,0 +1,857 @@
+// Generado manualmente a partir del schema en supabase/migrations/
+// Para regenerar desde la BD: supabase gen types typescript --project-id sbqvrckukbjzhtzqpyzg
+
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[];
+
+export type Database = {
+  public: {
+    Tables: {
+      usuarios: {
+        Row: {
+          id: string;
+          email: string;
+          nombre: string;
+          rol: Database["public"]["Enums"]["rol_usuario"];
+          activo: boolean;
+          fecha_registro: string;
+        };
+        Insert: {
+          id?: string;
+          email: string;
+          nombre: string;
+          rol?: Database["public"]["Enums"]["rol_usuario"];
+          activo?: boolean;
+          fecha_registro?: string;
+        };
+        Update: {
+          id?: string;
+          email?: string;
+          nombre?: string;
+          rol?: Database["public"]["Enums"]["rol_usuario"];
+          activo?: boolean;
+          fecha_registro?: string;
+        };
+        Relationships: [];
+      };
+      asesores: {
+        Row: {
+          id: number;
+          nombre: string;
+          email: string | null;
+          rol: string | null;
+          pct_comision_base: number;
+          pct_sobre_meta: number;
+          meta_mensual: number;
+          activo: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          email?: string | null;
+          rol?: string | null;
+          pct_comision_base?: number;
+          pct_sobre_meta?: number;
+          meta_mensual?: number;
+          activo?: boolean;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["asesores"]["Insert"]>;
+        Relationships: [];
+      };
+      proveedores: {
+        Row: {
+          id: number;
+          nombre: string;
+          nit: string | null;
+          tipo: string | null;
+          ciudad: string | null;
+          contacto: string | null;
+          aplica_retencion: boolean;
+          pct_retencion: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          nit?: string | null;
+          tipo?: string | null;
+          ciudad?: string | null;
+          contacto?: string | null;
+          aplica_retencion?: boolean;
+          pct_retencion?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["proveedores"]["Insert"]>;
+        Relationships: [];
+      };
+      aliados: {
+        Row: {
+          id: number;
+          nombre: string;
+          nit: string | null;
+          contacto: string | null;
+          email: string | null;
+          telefono: string | null;
+          aplica_retencion: boolean;
+          pct_retencion: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          nit?: string | null;
+          contacto?: string | null;
+          email?: string | null;
+          telefono?: string | null;
+          aplica_retencion?: boolean;
+          pct_retencion?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["aliados"]["Insert"]>;
+        Relationships: [];
+      };
+      parametros_tributarios: {
+        Row: {
+          id: number;
+          parametro: string;
+          valor: number;
+          base_calculo: string | null;
+          descripcion: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          parametro: string;
+          valor: number;
+          base_calculo?: string | null;
+          descripcion?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["parametros_tributarios"]["Insert"]>;
+        Relationships: [];
+      };
+      ventas: {
+        Row: {
+          numero_contrato: string;
+          fecha_venta: string;
+          asesor: string | null;
+          canal: string | null;
+          tipo_cliente: string | null;
+          cliente: string;
+          destino: string | null;
+          tipo_paquete: string | null;
+          fecha_salida: string | null;
+          fecha_regreso: string | null;
+          pax: number;
+          hotel: string | null;
+          aerolinea: string | null;
+          receptivo: string | null;
+          asistencia: string | null;
+          otros_proveedores: string | null;
+          precio_venta: number;
+          costo_hotel: number;
+          costo_aereo: number;
+          costo_receptivo: number;
+          costo_asistencia: number;
+          otros_costos: number;
+          estado: string;
+          observaciones: string | null;
+          facturado: boolean;
+          numero_documento: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          numero_contrato: string;
+          fecha_venta?: string;
+          asesor?: string | null;
+          canal?: string | null;
+          tipo_cliente?: string | null;
+          cliente: string;
+          destino?: string | null;
+          tipo_paquete?: string | null;
+          fecha_salida?: string | null;
+          fecha_regreso?: string | null;
+          pax?: number;
+          hotel?: string | null;
+          aerolinea?: string | null;
+          receptivo?: string | null;
+          asistencia?: string | null;
+          otros_proveedores?: string | null;
+          precio_venta?: number;
+          costo_hotel?: number;
+          costo_aereo?: number;
+          costo_receptivo?: number;
+          costo_asistencia?: number;
+          otros_costos?: number;
+          estado?: string;
+          observaciones?: string | null;
+          facturado?: boolean;
+          numero_documento?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["ventas"]["Insert"]>;
+        Relationships: [];
+      };
+      abonos: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          cliente: string | null;
+          fecha_abono: string;
+          valor_abono: number;
+          forma_pago: string | null;
+          referencia: string | null;
+          recibido_por: string | null;
+          comprobante: string | null;
+          observacion: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          cliente?: string | null;
+          fecha_abono?: string;
+          valor_abono: number;
+          forma_pago?: string | null;
+          referencia?: string | null;
+          recibido_por?: string | null;
+          comprobante?: string | null;
+          observacion?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["abonos"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "abonos_numero_contrato_fkey";
+            columns: ["numero_contrato"];
+            referencedRelation: "ventas";
+            referencedColumns: ["numero_contrato"];
+          }
+        ];
+      };
+      cuentas_por_pagar: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          proveedor: string | null;
+          tipo_proveedor: string | null;
+          servicio: string | null;
+          fecha_obligacion: string | null;
+          fecha_vencimiento: string | null;
+          valor_total: number;
+          aplica_retencion: boolean;
+          pct_retencion: number;
+          abono1: number | null;
+          fecha_abono1: string | null;
+          abono2: number | null;
+          fecha_abono2: string | null;
+          abono3: number | null;
+          fecha_abono3: string | null;
+          observaciones: string | null;
+          tipo_facturacion: string | null;
+          base_gravable: number | null;
+          iva_proveedor: number | null;
+          valor_irt: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          proveedor?: string | null;
+          tipo_proveedor?: string | null;
+          servicio?: string | null;
+          fecha_obligacion?: string | null;
+          fecha_vencimiento?: string | null;
+          valor_total?: number;
+          aplica_retencion?: boolean;
+          pct_retencion?: number;
+          abono1?: number | null;
+          fecha_abono1?: string | null;
+          abono2?: number | null;
+          fecha_abono2?: string | null;
+          abono3?: number | null;
+          fecha_abono3?: string | null;
+          observaciones?: string | null;
+          tipo_facturacion?: string | null;
+          base_gravable?: number | null;
+          iva_proveedor?: number | null;
+          valor_irt?: number | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["cuentas_por_pagar"]["Insert"]>;
+        Relationships: [];
+      };
+      aliados_b2b: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          aliado: string | null;
+          nit: string | null;
+          tipo_aliado: string | null;
+          contacto: string | null;
+          precio_venta: number;
+          base_comision: number;
+          pct_comision: number;
+          recobro_total: number;
+          pct_recobro_aliado: number;
+          aplica_retencion: boolean;
+          pct_retencion: number;
+          estado: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          aliado?: string | null;
+          nit?: string | null;
+          tipo_aliado?: string | null;
+          contacto?: string | null;
+          precio_venta?: number;
+          base_comision?: number;
+          pct_comision?: number;
+          recobro_total?: number;
+          pct_recobro_aliado?: number;
+          aplica_retencion?: boolean;
+          pct_retencion?: number;
+          estado?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["aliados_b2b"]["Insert"]>;
+        Relationships: [];
+      };
+      liquidacion_comisiones: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          asesor: string | null;
+          mes_liquidacion: string | null;
+          precio_venta: number;
+          costo_total: number;
+          com_b2b_pagada: number;
+          fecha_liquidacion: string | null;
+          fecha_pago: string | null;
+          estado: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          asesor?: string | null;
+          mes_liquidacion?: string | null;
+          precio_venta?: number;
+          costo_total?: number;
+          com_b2b_pagada?: number;
+          fecha_liquidacion?: string | null;
+          fecha_pago?: string | null;
+          estado?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["liquidacion_comisiones"]["Insert"]>;
+        Relationships: [];
+      };
+      facturacion: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          numero_factura: string | null;
+          fecha_factura: string | null;
+          cliente: string | null;
+          nit_cliente: string | null;
+          descripcion: string | null;
+          tipo_documento: string | null;
+          naturaleza_ingreso: string | null;
+          base_gravable: number;
+          iva_descontable: number;
+          base_tercero: number;
+          comision_fee: number;
+          factura_todo: number;
+          estado_dian: string | null;
+          obs_tributaria: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          numero_factura?: string | null;
+          fecha_factura?: string | null;
+          cliente?: string | null;
+          nit_cliente?: string | null;
+          descripcion?: string | null;
+          tipo_documento?: string | null;
+          naturaleza_ingreso?: string | null;
+          base_gravable?: number;
+          iva_descontable?: number;
+          base_tercero?: number;
+          comision_fee?: number;
+          factura_todo?: number;
+          estado_dian?: string | null;
+          obs_tributaria?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["facturacion"]["Insert"]>;
+        Relationships: [];
+      };
+      rentabilidad: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          asesor: string | null;
+          destino: string | null;
+          canal: string | null;
+          pax: number;
+          precio_venta: number;
+          costo_directo: number;
+          iva_generado: number;
+          iva_descontable: number;
+          com_b2b: number;
+          com_asesor: number;
+          util_bruta: number;
+          prov_ica: number;
+          prov_bomberil: number;
+          prov_fontur: number;
+          prov_renta: number;
+          total_provisiones: number;
+          util_neta: number;
+          margen_neto: number;
+          clasificacion: string | null;
+          mes: string | null;
+          fecha_calculo: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          asesor?: string | null;
+          destino?: string | null;
+          canal?: string | null;
+          pax?: number;
+          precio_venta?: number;
+          costo_directo?: number;
+          iva_generado?: number;
+          iva_descontable?: number;
+          com_b2b?: number;
+          com_asesor?: number;
+          util_bruta?: number;
+          prov_ica?: number;
+          prov_bomberil?: number;
+          prov_fontur?: number;
+          prov_renta?: number;
+          total_provisiones?: number;
+          util_neta?: number;
+          margen_neto?: number;
+          clasificacion?: string | null;
+          mes?: string | null;
+          fecha_calculo?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["rentabilidad"]["Insert"]>;
+        Relationships: [];
+      };
+      bloqueos_vuelo: {
+        Row: {
+          id: number;
+          record: string;
+          aerolinea: string | null;
+          ruta: string | null;
+          vuelo_ida: string | null;
+          fecha_ida: string | null;
+          hora_salida_ida: string | null;
+          hora_llegada_ida: string | null;
+          vuelo_regreso: string | null;
+          fecha_regreso: string | null;
+          hora_salida_reg: string | null;
+          hora_llegada_reg: string | null;
+          cupos_total: number;
+          tarifa_para_empaquetar: number;
+          fecha_devolucion: string | null;
+          fecha_emision: string | null;
+          notas: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          record: string;
+          aerolinea?: string | null;
+          ruta?: string | null;
+          vuelo_ida?: string | null;
+          fecha_ida?: string | null;
+          hora_salida_ida?: string | null;
+          hora_llegada_ida?: string | null;
+          vuelo_regreso?: string | null;
+          fecha_regreso?: string | null;
+          hora_salida_reg?: string | null;
+          hora_llegada_reg?: string | null;
+          cupos_total?: number;
+          tarifa_para_empaquetar?: number;
+          fecha_devolucion?: string | null;
+          fecha_emision?: string | null;
+          notas?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["bloqueos_vuelo"]["Insert"]>;
+        Relationships: [];
+      };
+      sillas: {
+        Row: {
+          id: number;
+          bloqueo_id: number;
+          numero_silla: number | null;
+          estado: Database["public"]["Enums"]["estado_silla"];
+          numero_contrato: string | null;
+          pasajero_nombres: string | null;
+          pasajero_apellidos: string | null;
+          tipo_doc: string | null;
+          numero_doc: string | null;
+          nacimiento: string | null;
+          asesor: string | null;
+          agencia: string | null;
+          hotel: string | null;
+          acomodacion: string | null;
+          plazo: string | null;
+          inf_nombres: string | null;
+          inf_apellidos: string | null;
+          inf_tipo_doc: string | null;
+          inf_numero: string | null;
+          inf_nacimiento: string | null;
+          responsable_menor: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          bloqueo_id: number;
+          numero_silla?: number | null;
+          estado?: Database["public"]["Enums"]["estado_silla"];
+          numero_contrato?: string | null;
+          pasajero_nombres?: string | null;
+          pasajero_apellidos?: string | null;
+          tipo_doc?: string | null;
+          numero_doc?: string | null;
+          nacimiento?: string | null;
+          asesor?: string | null;
+          agencia?: string | null;
+          hotel?: string | null;
+          acomodacion?: string | null;
+          plazo?: string | null;
+          inf_nombres?: string | null;
+          inf_apellidos?: string | null;
+          inf_tipo_doc?: string | null;
+          inf_numero?: string | null;
+          inf_nacimiento?: string | null;
+          responsable_menor?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["sillas"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "sillas_bloqueo_id_fkey";
+            columns: ["bloqueo_id"];
+            referencedRelation: "bloqueos_vuelo";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      movimientos_silla: {
+        Row: {
+          id: number;
+          silla_id: number;
+          bloqueo_origen_id: number | null;
+          bloqueo_destino_id: number | null;
+          motivo: string | null;
+          fecha_movimiento: string;
+          registrado_por: string | null;
+        };
+        Insert: {
+          id?: number;
+          silla_id: number;
+          bloqueo_origen_id?: number | null;
+          bloqueo_destino_id?: number | null;
+          motivo?: string | null;
+          fecha_movimiento?: string;
+          registrado_por?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["movimientos_silla"]["Insert"]>;
+        Relationships: [];
+      };
+      destinos: {
+        Row: {
+          id: number;
+          nombre: string;
+          codigo_iata: string | null;
+          activo: boolean;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          codigo_iata?: string | null;
+          activo?: boolean;
+        };
+        Update: Partial<Database["public"]["Tables"]["destinos"]["Insert"]>;
+        Relationships: [];
+      };
+      hoteles: {
+        Row: {
+          id: number;
+          destino_id: number;
+          nombre: string;
+          zona: string | null;
+          notas: string | null;
+          activo: boolean;
+        };
+        Insert: {
+          id?: number;
+          destino_id: number;
+          nombre: string;
+          zona?: string | null;
+          notas?: string | null;
+          activo?: boolean;
+        };
+        Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "hoteles_destino_id_fkey";
+            columns: ["destino_id"];
+            referencedRelation: "destinos";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      habitaciones: {
+        Row: { id: number; hotel_id: number; nombre: string };
+        Insert: { id?: number; hotel_id: number; nombre: string };
+        Update: Partial<Database["public"]["Tables"]["habitaciones"]["Insert"]>;
+        Relationships: [];
+      };
+      planes_alimentacion: {
+        Row: {
+          id: number;
+          codigo: string;
+          nombre: string;
+          descripcion: string | null;
+          activo: boolean;
+        };
+        Insert: {
+          id?: number;
+          codigo: string;
+          nombre: string;
+          descripcion?: string | null;
+          activo?: boolean;
+        };
+        Update: Partial<Database["public"]["Tables"]["planes_alimentacion"]["Insert"]>;
+        Relationships: [];
+      };
+      temporadas: {
+        Row: {
+          id: number;
+          destino_id: number;
+          nombre: Database["public"]["Enums"]["temporada_tipo"];
+          anio: number;
+        };
+        Insert: {
+          id?: number;
+          destino_id: number;
+          nombre: Database["public"]["Enums"]["temporada_tipo"];
+          anio?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["temporadas"]["Insert"]>;
+        Relationships: [];
+      };
+      temporada_fechas: {
+        Row: {
+          id: number;
+          temporada_id: number;
+          fecha_inicio: string;
+          fecha_fin: string;
+        };
+        Insert: {
+          id?: number;
+          temporada_id: number;
+          fecha_inicio: string;
+          fecha_fin: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["temporada_fechas"]["Insert"]>;
+        Relationships: [];
+      };
+      tarifas: {
+        Row: {
+          id: number;
+          hotel_id: number;
+          habitacion_id: number | null;
+          plan_id: number;
+          temporada_id: number;
+          noches: number;
+          comisionable: boolean;
+          impuesto_no_comisionable: number;
+          notas: string | null;
+          activo: boolean;
+          costo_base: number | null;
+          pct_mk: number | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          hotel_id: number;
+          habitacion_id?: number | null;
+          plan_id: number;
+          temporada_id: number;
+          noches?: number;
+          comisionable?: boolean;
+          impuesto_no_comisionable?: number;
+          notas?: string | null;
+          activo?: boolean;
+          costo_base?: number | null;
+          pct_mk?: number | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["tarifas"]["Insert"]>;
+        Relationships: [];
+      };
+      tarifa_precios: {
+        Row: {
+          id: number;
+          tarifa_id: number;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"];
+          precio: number;
+        };
+        Insert: {
+          id?: number;
+          tarifa_id: number;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"];
+          precio: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["tarifa_precios"]["Insert"]>;
+        Relationships: [];
+      };
+      itinerarios: {
+        Row: {
+          id: number;
+          destino_id: number;
+          bloqueo_id: number | null;
+          ruta: string | null;
+          fecha_ida: string | null;
+          fecha_regreso: string | null;
+          cupos: number;
+          activo: boolean;
+        };
+        Insert: {
+          id?: number;
+          destino_id: number;
+          bloqueo_id?: number | null;
+          ruta?: string | null;
+          fecha_ida?: string | null;
+          fecha_regreso?: string | null;
+          cupos?: number;
+          activo?: boolean;
+        };
+        Update: Partial<Database["public"]["Tables"]["itinerarios"]["Insert"]>;
+        Relationships: [];
+      };
+      inclusiones: {
+        Row: {
+          id: number;
+          destino_id: number;
+          tipo: string;
+          texto: string;
+          orden: number;
+        };
+        Insert: {
+          id?: number;
+          destino_id: number;
+          tipo: string;
+          texto: string;
+          orden?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["inclusiones"]["Insert"]>;
+        Relationships: [];
+      };
+    };
+    Views: {
+      cupos_por_bloqueo: {
+        Row: {
+          id: number | null;
+          record: string | null;
+          ruta: string | null;
+          fecha_ida: string | null;
+          cupos_total: number | null;
+          cupos_disponibles: number | null;
+          cupos_ocupados: number | null;
+          cupos_devueltos: number | null;
+        };
+        Relationships: [];
+      };
+    };
+    Functions: {
+      mi_rol: {
+        Args: Record<PropertyKey, never>;
+        Returns: Database["public"]["Enums"]["rol_usuario"];
+      };
+    };
+    Enums: {
+      rol_usuario:
+        | "superadmin"
+        | "gerencia"
+        | "administracion"
+        | "operaciones"
+        | "venta"
+        | "control_vuelo"
+        | "agencia"
+        | "freelance"
+        | "cliente_final";
+      estado_silla:
+        | "disponible"
+        | "en_plazo"
+        | "confirmada"
+        | "devuelta"
+        | "no_vendida"
+        | "cambio"
+        | "cambio_entrante";
+      acomodacion_tipo:
+        | "sencilla"
+        | "doble"
+        | "triple"
+        | "multiple"
+        | "nino";
+      temporada_tipo: "ALTA" | "MEDIA" | "BAJA";
+    };
+    CompositeTypes: {
+      [_ in never]: never;
+    };
+  };
+};
+
+// Helpers de conveniencia
+export type Tables<T extends keyof Database["public"]["Tables"]> =
+  Database["public"]["Tables"][T]["Row"];
+export type TablesInsert<T extends keyof Database["public"]["Tables"]> =
+  Database["public"]["Tables"][T]["Insert"];
+export type TablesUpdate<T extends keyof Database["public"]["Tables"]> =
+  Database["public"]["Tables"][T]["Update"];
+export type Enums<T extends keyof Database["public"]["Enums"]> =
+  Database["public"]["Enums"][T];
+
+// Tipos de uso frecuente
+export type Usuario = Tables<"usuarios">;
+export type Venta = Tables<"ventas">;
+export type Abono = Tables<"abonos">;
+export type BloqueoVuelo = Tables<"bloqueos_vuelo">;
+export type Silla = Tables<"sillas">;
+export type Destino = Tables<"destinos">;
+export type Hotel = Tables<"hoteles">;
+export type Tarifa = Tables<"tarifas">;
+export type RolUsuario = Enums<"rol_usuario">;
+export type EstadoSilla = Enums<"estado_silla">;
+export type AcomodacionTipo = Enums<"acomodacion_tipo">;

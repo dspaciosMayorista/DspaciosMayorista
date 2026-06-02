@@ -1,0 +1,2 @@
+/* Re-exporta los estilos centrales desde styles/globals.css */
+@import "../styles/globals.css";
