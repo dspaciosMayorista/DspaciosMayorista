@@ -62,6 +62,34 @@ export async function eliminarHotel(id: number): Promise<Result> {
   return { ok: true };
 }
 
+export async function actualizarHotelConfig(
+  hotelId: number,
+  input: {
+    zona: string;
+    edadInfanteMin: number;
+    edadInfanteMax: number;
+    edadNinoMin: number;
+    edadNinoMax: number;
+    rangosEdad: number[];
+  }
+): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("hoteles")
+    .update({
+      zona: oNull(input.zona),
+      edad_infante_min: input.edadInfanteMin,
+      edad_infante_max: input.edadInfanteMax,
+      edad_nino_min: input.edadNinoMin,
+      edad_nino_max: input.edadNinoMax,
+      rangos_edad: input.rangosEdad.length ? input.rangosEdad : null,
+    })
+    .eq("id", hotelId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true };
+}
+
 // ── Temporadas del hotel ──────────────────────────────────────────────────
 export async function crearTemporada(
   hotelId: number,

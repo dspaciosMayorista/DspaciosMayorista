@@ -283,5 +283,22 @@ export async function registrarAbono(
     referencia: referencia || null,
   });
   if (error) throw new Error(error.message);
+
+  // Regla de negocio: un abono confirma la venta pendiente (y sus sillas).
+  const { data: venta } = await sb
+    .from("ventas")
+    .select("estado")
+    .eq("numero_contrato", numeroContrato)
+    .maybeSingle();
+  if (venta?.estado === "pendiente") {
+    await sb.from("ventas").update({ estado: "confirmado" }).eq("numero_contrato", numeroContrato);
+    const client = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+    await client
+      .from("sillas")
+      .update({ estado: "confirmada" })
+      .eq("numero_contrato", numeroContrato)
+      .eq("estado", "en_plazo");
+  }
+
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
 }
