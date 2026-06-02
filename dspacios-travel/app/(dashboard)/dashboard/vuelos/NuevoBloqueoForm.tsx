@@ -11,11 +11,12 @@ const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 
 type ProvOpt = { id: number; nombre: string };
 
-export function NuevoBloqueoForm({ proveedores = [] }: { proveedores?: ProvOpt[] }) {
+export function NuevoBloqueoForm({ proveedores = [], destinos = [] }: { proveedores?: ProvOpt[]; destinos?: ProvOpt[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [proveedorId, setProveedorId] = useState<number | "">("");
+  const [destinoId, setDestinoId] = useState<number | "">("");
 
   const [f, setF] = useState({
     record: "", aerolinea: "", ruta: "",
@@ -31,7 +32,8 @@ export function NuevoBloqueoForm({ proveedores = [] }: { proveedores?: ProvOpt[]
     setErr("");
     start(async () => {
       const r = await crearBloqueo({
-        record: f.record, aerolinea: f.aerolinea, proveedorId: proveedorId === "" ? null : Number(proveedorId), ruta: f.ruta,
+        record: f.record, aerolinea: f.aerolinea, proveedorId: proveedorId === "" ? null : Number(proveedorId),
+        destinoId: destinoId === "" ? null : Number(destinoId), ruta: f.ruta,
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         cuposTotal: Number(f.cuposTotal) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
@@ -55,6 +57,14 @@ export function NuevoBloqueoForm({ proveedores = [] }: { proveedores?: ProvOpt[]
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
               <option value="">—</option>
               {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={lbl}>Destino</label>
+            <select value={destinoId} onChange={(e) => setDestinoId(Number(e.target.value) || "")}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <option value="">—</option>
+              {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </div>
           <div><label className={lbl}>Ruta</label><Input value={f.ruta} onChange={set("ruta")} placeholder="MDE - CTG - MDE" /></div>

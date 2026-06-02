@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export default async function ServiciosPage() {
   const sb = await createClient();
   const [{ data: serviciosRaw }, { data: proveedores }, { data: destinos }] = await Promise.all([
-    sb.from("servicios_adicionales").select("id, nombre, tarifa_neta, temporada, liquidacion, proveedores(nombre), destinos(nombre)").order("nombre"),
+    sb.from("servicios_adicionales").select("id, nombre, tarifa_neta, temporada, liquidacion, proveedor_id, destino_id, proveedores(nombre), destinos(nombre)").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "servicios").order("nombre"),
     sb.from("destinos").select("id, nombre").order("nombre"),
   ]);

@@ -6,7 +6,17 @@ import { revalidatePath } from "next/cache";
 // ─── Destinos ──────────────────────────────────────────────────────
 export async function crearDestino(nombre: string, codigoIata?: string) {
   const sb = await createClient();
-  const { error } = await sb.from("destinos").insert({ nombre, codigo_iata: codigoIata || null });
+  const limpio = nombre.trim();
+  if (!limpio) throw new Error("El nombre del destino es obligatorio.");
+
+  // Evitar duplicados sin importar mayúsculas/minúsculas (ej. "Cartagena" vs "CARTAGENA").
+  const { data: existentes } = await sb.from("destinos").select("nombre");
+  const yaExiste = (existentes ?? []).some(
+    (d) => d.nombre.trim().toLowerCase() === limpio.toLowerCase()
+  );
+  if (yaExiste) throw new Error(`Ya existe un destino "${limpio}".`);
+
+  const { error } = await sb.from("destinos").insert({ nombre: limpio, codigo_iata: codigoIata || null });
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard/tarifario");
 }

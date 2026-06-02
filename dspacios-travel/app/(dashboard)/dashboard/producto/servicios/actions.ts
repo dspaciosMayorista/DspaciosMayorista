@@ -31,6 +31,31 @@ export async function crearServicio(input: {
   return { ok: true };
 }
 
+export async function actualizarServicio(id: number, input: {
+  nombre: string;
+  proveedorId: number | null;
+  destinoId: number | null;
+  tarifaNeta: number;
+  temporada: string;
+  liquidacion: Liquidacion;
+}): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("servicios_adicionales")
+    .update({
+      nombre: input.nombre.trim(),
+      proveedor_id: input.proveedorId,
+      destino_id: input.destinoId,
+      tarifa_neta: input.tarifaNeta,
+      temporada: oNull(input.temporada),
+      liquidacion: input.liquidacion,
+    })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
 export async function eliminarServicio(id: number): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("servicios_adicionales").delete().eq("id", id);

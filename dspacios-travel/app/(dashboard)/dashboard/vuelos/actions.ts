@@ -11,6 +11,7 @@ export type BloqueoInput = {
   record: string;
   aerolinea: string;
   proveedorId: number | null;
+  destinoId: number | null;
   ruta: string;
   vueloIda: string;
   fechaIda: string;
@@ -36,6 +37,7 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
       record: input.record.trim().toUpperCase(),
       aerolinea: oNull(input.aerolinea),
       proveedor_id: input.proveedorId,
+      destino_id: input.destinoId,
       ruta: oNull(input.ruta),
       vuelo_ida: oNull(input.vueloIda),
       fecha_ida: oNull(input.fechaIda),
