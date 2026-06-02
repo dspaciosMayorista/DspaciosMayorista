@@ -9,7 +9,9 @@ import {
   calcComisionB2B,
   calcComisionAsesor,
   calcRentabilidad,
+  FISCAL_DEFAULT,
   type Rentabilidad,
+  type ParamsFiscales,
 } from "@/lib/calc/finanzas";
 import { AbonoForm } from "./AbonoForm";
 import {
@@ -32,6 +34,7 @@ export type GestionProps = {
   precioVenta: number;
   asesorNombre: string;
   asesorPct: number;
+  fiscal?: ParamsFiscales;
   verFinanzas: boolean; // false para el rol 'venta' (asesor): oculta costos/comisiones/rentabilidad
   costos: { costo_hotel: number; costo_aereo: number; costo_receptivo: number; costo_asistencia: number; otros_costos: number };
   abonos: Abono[];
@@ -58,17 +61,19 @@ export function GestionTabs(p: GestionProps) {
     }).totalPagar, 0
   );
 
+  const fiscal = p.fiscal ?? FISCAL_DEFAULT;
+
   const comAsesor = calcComisionAsesor({
     precioVenta: p.precioVenta, costoTotal: costoDirecto,
-    comB2BPagada: comB2BTotal, pctBase: p.asesorPct,
+    comB2BPagada: comB2BTotal, pctBase: p.asesorPct, retHonorarios: fiscal.RETENCION_HONORARIOS,
   });
 
-  const ivaGenerado = p.facturas.reduce((s, f) => s + f.base_gravable * 0.19, 0);
+  const ivaGenerado = p.facturas.reduce((s, f) => s + f.base_gravable * fiscal.IVA, 0);
   const ivaDescontable = p.facturas.reduce((s, f) => s + (f.iva_descontable || 0), 0);
 
   const rent = calcRentabilidad({
     precioVenta: p.precioVenta, costoDirecto, comB2B: comB2BTotal,
-    comAsesor: comAsesor.comisionNeta, ivaGenerado, ivaDescontable,
+    comAsesor: comAsesor.comisionNeta, ivaGenerado, ivaDescontable, fiscal,
   });
 
   return (

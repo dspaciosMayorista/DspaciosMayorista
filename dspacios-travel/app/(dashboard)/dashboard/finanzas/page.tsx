@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
-import { calcComisionB2B, calcComisionAsesor, calcRentabilidad } from "@/lib/calc/finanzas";
+import { calcComisionB2B, calcComisionAsesor, calcRentabilidad, fiscalFromParams } from "@/lib/calc/finanzas";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +32,9 @@ export default async function FinanzasPage() {
     sb.from("asesores").select("nombre, email, pct_comision_base"),
   ]);
 
+  const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
+  const fiscal = fiscalFromParams(paramsRows ?? []);
+
   const b2bPorContrato = new Map<string, number>();
   for (const r of b2b ?? []) {
     const c = calcComisionB2B({ precioVenta: r.precio_venta, pctComision: r.pct_comision, recobroTotal: r.recobro_total, pctRecobroAliado: r.pct_recobro_aliado, aplicaRetencion: r.aplica_retencion, pctRetencion: r.pct_retencion }).totalPagar;
@@ -40,7 +43,7 @@ export default async function FinanzasPage() {
   const ivaGenPorContrato = new Map<string, number>();
   const ivaDescPorContrato = new Map<string, number>();
   for (const f of facturas ?? []) {
-    ivaGenPorContrato.set(f.numero_contrato, (ivaGenPorContrato.get(f.numero_contrato) ?? 0) + f.base_gravable * 0.19);
+    ivaGenPorContrato.set(f.numero_contrato, (ivaGenPorContrato.get(f.numero_contrato) ?? 0) + f.base_gravable * fiscal.IVA);
     ivaDescPorContrato.set(f.numero_contrato, (ivaDescPorContrato.get(f.numero_contrato) ?? 0) + (f.iva_descontable ?? 0));
   }
 
@@ -48,11 +51,12 @@ export default async function FinanzasPage() {
     const costoDirecto = v.costo_hotel + v.costo_aereo + v.costo_receptivo + v.costo_asistencia + v.otros_costos;
     const comB2B = b2bPorContrato.get(v.numero_contrato) ?? 0;
     const asesorRow = (asesores ?? []).find((a) => a.email === v.asesor || a.nombre === (v.asesor_firma_nombre ?? v.asesor));
-    const comAsesor = calcComisionAsesor({ precioVenta: v.precio_venta, costoTotal: costoDirecto, comB2BPagada: comB2B, pctBase: asesorRow?.pct_comision_base ?? 0.08 }).comisionNeta;
+    const comAsesor = calcComisionAsesor({ precioVenta: v.precio_venta, costoTotal: costoDirecto, comB2BPagada: comB2B, pctBase: asesorRow?.pct_comision_base ?? 0.08, retHonorarios: fiscal.RETENCION_HONORARIOS }).comisionNeta;
     const rent = calcRentabilidad({
       precioVenta: v.precio_venta, costoDirecto, comB2B, comAsesor,
       ivaGenerado: ivaGenPorContrato.get(v.numero_contrato) ?? 0,
       ivaDescontable: ivaDescPorContrato.get(v.numero_contrato) ?? 0,
+      fiscal,
     });
     return { v, rent };
   });

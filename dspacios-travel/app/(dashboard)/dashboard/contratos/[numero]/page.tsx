@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { ShareButtons } from "./ShareButtons";
 import { GestionTabs } from "./GestionTabs";
+import { fiscalFromParams } from "@/lib/calc/finanzas";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,9 @@ export default async function ContratoDetallePage({
     sb.from("facturacion").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("asesores").select("nombre, email, pct_comision_base"),
   ]);
+
+  const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
+  const fiscal = fiscalFromParams(paramsRows ?? []);
 
   if (!venta) notFound();
 
@@ -97,6 +101,7 @@ export default async function ContratoDetallePage({
         precioVenta={venta.precio_venta}
         asesorNombre={asesorNombre}
         asesorPct={asesorPct}
+        fiscal={fiscal}
         verFinanzas={verFinanzas}
         costos={{
           costo_hotel: venta.costo_hotel,

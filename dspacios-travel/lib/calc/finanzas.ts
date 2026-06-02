@@ -19,6 +19,24 @@ export type ParamsFiscales = {
 
 export const FISCAL_DEFAULT: ParamsFiscales = { ...TRIBUTARIO };
 
+/** Construye los parámetros fiscales desde las filas de parametros_tributarios. */
+export function fiscalFromParams(
+  rows: { parametro: string; valor: number }[]
+): ParamsFiscales {
+  const f: ParamsFiscales = { ...FISCAL_DEFAULT };
+  for (const r of rows) {
+    switch (r.parametro) {
+      case "ICA": f.ICA = r.valor; break;
+      case "BOMBERIL": f.BOMBERIL = r.valor; break;
+      case "FONTUR": f.FONTUR = r.valor; break;
+      case "RETENCION_RENTA": f.RETENCION_RENTA = r.valor; break;
+      case "IVA": f.IVA = r.valor; break;
+      case "RETENCION_HONORARIOS": f.RETENCION_HONORARIOS = r.valor; break;
+    }
+  }
+  return f;
+}
+
 // ── Comisión B2B (aliado) ────────────────────────────────────────────────
 export type ComisionB2BInput = {
   precioVenta: number;
