@@ -12,7 +12,7 @@ type Temporada = { id: number; nombre: string; fecha_inicio: string | null; fech
 type Tarifa = {
   id: number; tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
   neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null;
-  neto_multiple: number | null; neto_nino: number | null;
+  neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null;
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -74,7 +74,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
   const [tipo, setTipo] = useState("");
   const [alim, setAlim] = useState("");
   const [temp, setTemp] = useState("");
-  const [p, setP] = useState({ sencilla: "", doble: "", triple: "", multiple: "", nino: "" });
+  const [p, setP] = useState({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "" });
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const nombresTemporada = Array.from(new Set(temporadas.map((t) => t.nombre)));
@@ -87,9 +87,9 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
       const r = await crearTarifa({
         hotelId, tipoHabitacion: tipo, alimentacion: alim, temporada: temp,
         netoSencilla: num(p.sencilla), netoDoble: num(p.doble), netoTriple: num(p.triple),
-        netoMultiple: num(p.multiple), netoNino: num(p.nino),
+        netoMultiple: num(p.multiple), netoNino: num(p.nino), netoNino2: num(p.nino2),
       });
-      if (r.ok) { setP({ sencilla: "", doble: "", triple: "", multiple: "", nino: "" }); }
+      if (r.ok) { setP({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "" }); }
       else setErr(r.error);
     });
   }
@@ -128,8 +128,8 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
             </select>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
-          {([["sencilla","Sencilla"],["doble","Doble"],["triple","Triple"],["multiple","Múltiple"],["nino","Niño"]] as [keyof typeof p, string][]).map(([k, label]) => (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-6">
+          {([["sencilla","Sencilla"],["doble","Doble"],["triple","Triple"],["multiple","Múltiple"],["nino","Niño 1"],["nino2","Niño 2"]] as [keyof typeof p, string][]).map(([k, label]) => (
             <div key={k}>
               <label className={lbl}>{label}</label>
               <Input type="number" min={0} value={p[k]} onChange={(e) => setP({ ...p, [k]: e.target.value })} placeholder="—" />
@@ -139,7 +139,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={add} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Agregar tarifa"}</Button>
           {err && <span className="text-sm text-red-600">{err}</span>}
-          <span className="text-xs text-gray-400">Infante siempre $0.</span>
+          <span className="text-xs text-gray-400">Niño 1 puede ir gratis ($0); Niño 2 con su valor. Infante siempre $0.</span>
         </div>
       </div>
 
@@ -150,7 +150,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
               <th className="px-3 py-2">Categoría</th><th className="px-3 py-2">Régimen</th><th className="px-3 py-2">Temporada</th>
               <th className="px-3 py-2 text-right">Sencilla</th><th className="px-3 py-2 text-right">Doble</th>
               <th className="px-3 py-2 text-right">Triple</th><th className="px-3 py-2 text-right">Múltiple</th>
-              <th className="px-3 py-2 text-right">Niño</th><th className="px-3 py-2"></th>
+              <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th><th className="px-3 py-2"></th>
             </tr></thead>
             <tbody>{tarifas.map((t) => (
               <tr key={t.id} className="border-t border-gray-50">
@@ -161,7 +161,8 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
                 <td className="px-3 py-2 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{t.neto_multiple ? formatCOP(t.neto_multiple) : "—"}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino ? formatCOP(t.neto_nino) : "—"}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino != null ? formatCOP(t.neto_nino) : "—"}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino2 != null ? formatCOP(t.neto_nino2) : "—"}</td>
                 <td className="px-3 py-2 text-right"><DelBtn onDel={() => eliminarTarifa(t.id, hotelId)} /></td>
               </tr>
             ))}</tbody>

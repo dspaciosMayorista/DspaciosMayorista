@@ -120,6 +120,7 @@ export async function crearTarifa(input: {
   netoTriple: number | null;
   netoMultiple: number | null;
   netoNino: number | null;
+  netoNino2: number | null;
 }): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("tarifa_hotel").insert({
@@ -132,6 +133,7 @@ export async function crearTarifa(input: {
     neto_triple: input.netoTriple,
     neto_multiple: input.netoMultiple,
     neto_nino: input.netoNino,
+    neto_nino2: input.netoNino2,
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);

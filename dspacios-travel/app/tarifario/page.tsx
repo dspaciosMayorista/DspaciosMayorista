@@ -1,12 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
-import { TarifarioView } from "./TarifarioView";
+import { TarifarioPublic, type FilaTarifario } from "./TarifarioPublic";
 
-export const revalidate = 300; // revalida cada 5 min
+export const revalidate = 120; // revalida cada 2 min
 
 export default async function TarifarioPublicoPage() {
   const sb = await createClient();
 
-  // Detectar si hay sesión (para mostrar tarifa neta a agencias)
+  // Detectar sesión (badge de agencia)
   const { data: { user } } = await sb.auth.getUser();
   let esAgencia = false;
   if (user) {
@@ -14,46 +14,46 @@ export default async function TarifarioPublicoPage() {
     esAgencia = !!perfil && ["agencia", "freelance", "superadmin", "operaciones", "gerencia", "administracion"].includes(perfil.rol);
   }
 
-  // Destinos con hoteles y sus tarifas
-  const { data: destinos } = await sb
-    .from("destinos")
-    .select(`
-      id, nombre, codigo_iata,
-      inclusiones(tipo, texto, orden),
-      hoteles(
-        id, nombre, zona,
-        tarifas(
-          id, noches, comisionable, impuesto_no_comisionable, notas, costo_base, pct_mk,
-          planes_alimentacion(codigo, nombre),
-          temporadas(nombre, anio),
-          tarifa_precios(acomodacion, precio)
-        )
+  // Resultado del tarifario (solo paquetes activos). Paginado por si supera 1000.
+  const filas: FilaTarifario[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data: page } = await sb
+      .from("tarifario_resultado")
+      .select(
+        "modulo, bloqueo_label, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp"
       )
-    `)
-    .eq("activo", true)
-    .order("nombre");
+      .eq("paquete_activo", true)
+      .order("destino_nombre")
+      .order("bloqueo_label")
+      .order("hotel_nombre")
+      .order("categoria")
+      .order("regimen")
+      .range(from, from + PAGE - 1);
+    if (!page || page.length === 0) break;
+    filas.push(...(page as unknown as FilaTarifario[]));
+    if (page.length < PAGE) break;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="text-white py-8 px-6" style={{ backgroundColor: "var(--brand-primary)" }}>
-        <div className="max-w-6xl mx-auto flex items-end justify-between">
+      <header className="px-6 py-8 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
+        <div className="mx-auto flex max-w-6xl items-end justify-between">
           <div>
             <h1 className="text-3xl font-semibold">D&apos;spacios Travel</h1>
-            <p className="text-sm opacity-80 mt-1">Mayorista de Turismo — Tarifario 2026</p>
+            <p className="mt-1 text-sm opacity-80">Mayorista de Turismo — Tarifario 2026</p>
           </div>
           {esAgencia && (
-            <span className="text-xs bg-white/20 px-3 py-1.5 rounded-full font-medium">
-              Modo agencia — Tarifa neta visible
-            </span>
+            <span className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
           )}
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-10">
-        {!destinos?.length ? (
-          <p className="text-center text-gray-400 py-20">Tarifario en preparación.</p>
+      <main className="mx-auto max-w-6xl px-4 py-8 md:px-6">
+        {!filas.length ? (
+          <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioView destinos={destinos as any} esAgencia={esAgencia} />
+          <TarifarioPublic filas={filas} />
         )}
       </main>
     </div>

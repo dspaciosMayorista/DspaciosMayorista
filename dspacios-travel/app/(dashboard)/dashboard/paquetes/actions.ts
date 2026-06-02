@@ -20,13 +20,14 @@ const dNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s : null
 type ImpuestoTipo = Database["public"]["Enums"]["impuesto_tipo"];
 type Acomodacion = Database["public"]["Enums"]["acomodacion_tipo"];
 
-const ACOMODACIONES: Acomodacion[] = ["sencilla", "doble", "triple", "multiple", "nino"];
+const ACOMODACIONES: Acomodacion[] = ["sencilla", "doble", "triple", "multiple", "nino", "nino2"];
 const COL_NETO: Record<Acomodacion, string> = {
   sencilla: "neto_sencilla",
   doble: "neto_doble",
   triple: "neto_triple",
   multiple: "neto_multiple",
-  nino: "neto_nino",
+  nino: "neto_nino",     // Niño 1 (Chd1)
+  nino2: "neto_nino2",   // Niño 2 (Chd2)
 };
 
 export interface PaqueteConfig {
@@ -240,6 +241,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   const pctMk = Number(pq.pct_mk) || 0;
   const paqueteNombre = pq.nombre;
+  const paqueteActivo = pq.activo;
   const paqueteDestinoId = pq.destino_id;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
@@ -345,7 +347,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             netoPorTemporada[temp] = v == null ? null : Number(v);
           }
           const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
-          if (costoHotel == null || costoHotel <= 0) continue;
+          // null = no aplica (no se publica). 0 sí es válido (ej. niño gratis).
+          if (costoHotel == null) continue;
           const aporteHotel = marcar(costoHotel, pctMk); // hotel siempre con mk
           const t = componerTarifa({
             aporteHotel,
@@ -356,6 +359,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
           filas.push({
             paquete_id: paqueteId,
             paquete_nombre: paqueteNombre,
+            paquete_activo: paqueteActivo,
             modulo,
             bloqueo_id: bloqueoId,
             bloqueo_label: bloqueoLabel,
