@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { AbonoForm } from "./AbonoForm";
+import { ShareButtons } from "./ShareButtons";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +62,22 @@ export default async function ContratoDetallePage({
             Ver / Imprimir contrato →
           </Button>
         </Link>
+      </div>
+
+      {/* Compartir con el cliente */}
+      <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
+        <p className="mb-2 text-sm font-semibold text-gray-700">
+          Compartir con el cliente
+        </p>
+        <p className="mb-3 text-xs text-gray-500">
+          Enlace público para que el cliente vea su contrato sin necesidad de
+          iniciar sesión.
+        </p>
+        <ShareButtons
+          token={venta.share_token}
+          numero={venta.numero_contrato}
+          cliente={venta.cliente}
+        />
       </div>
 
       {/* Totales */}

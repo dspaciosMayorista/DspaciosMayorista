@@ -176,6 +176,7 @@ export type Database = {
           asesor_firma_cargo: string | null;
           asesor_firma_cc: string | null;
           asesor_firma_tel: string | null;
+          share_token: string;
           created_at: string;
           updated_at: string;
         };
@@ -217,6 +218,7 @@ export type Database = {
           asesor_firma_cargo?: string | null;
           asesor_firma_cc?: string | null;
           asesor_firma_tel?: string | null;
+          share_token?: string;
           created_at?: string;
           updated_at?: string;
         };
