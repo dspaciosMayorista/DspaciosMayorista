@@ -3,6 +3,7 @@ import Link from "next/link";
 export const dynamic = "force-dynamic";
 
 const SECCIONES = [
+  { href: "/dashboard/producto/configuracion", icon: "⚙️", label: "Configuración general de hoteles", desc: "Categorías de habitación y régimen de alimentación" },
   { href: "/dashboard/producto/proveedores", icon: "🤝", label: "Proveedores", desc: "Hoteleros, aéreos y de servicios" },
   { href: "/dashboard/producto/hoteles", icon: "🏨", label: "Hoteles y tarifas", desc: "Habitaciones, temporadas y tarifa neta", pronto: true },
   { href: "/dashboard/vuelos", icon: "✈️", label: "Aéreo (bloqueos)", desc: "Aerolínea, vuelos, cupos y valor neto" },

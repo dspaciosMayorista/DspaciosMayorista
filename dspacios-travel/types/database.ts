@@ -1006,6 +1006,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["paquete_costos"]["Insert"]>;
         Relationships: [];
       };
+      categorias_habitacion: {
+        Row: { id: number; nombre: string; descripcion: string | null; activo: boolean; created_at: string };
+        Insert: { id?: number; nombre: string; descripcion?: string | null; activo?: boolean; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["categorias_habitacion"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {
