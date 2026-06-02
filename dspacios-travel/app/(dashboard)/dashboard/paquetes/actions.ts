@@ -117,6 +117,28 @@ export async function setVuelo(
   return { ok: true };
 }
 
+// ── Seleccionar / quitar TODOS los vuelos disponibles ─────────────────────
+export async function setTodosVuelos(
+  paqueteId: number,
+  bloqueoIds: number[],
+  checked: boolean
+): Promise<Result> {
+  const sb = await createClient();
+  if (!checked) {
+    await sb.from("armado_vuelos").delete().eq("paquete_id", paqueteId);
+  } else if (bloqueoIds.length) {
+    const { error } = await sb
+      .from("armado_vuelos")
+      .upsert(
+        bloqueoIds.map((b) => ({ paquete_id: paqueteId, bloqueo_id: b, aplica_mk: true, ta: 0 })),
+        { onConflict: "paquete_id,bloqueo_id", ignoreDuplicates: true }
+      );
+    if (error) return { ok: false, error: error.message };
+  }
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  return { ok: true };
+}
+
 // ── Adición de hotel (con check). El hotel siempre va con el mk del paquete ─
 export async function setHotel(paqueteId: number, hotelId: number, checked: boolean): Promise<Result> {
   const sb = await createClient();

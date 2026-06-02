@@ -67,12 +67,34 @@ export async function crearTemporada(
   inicio: string,
   fin: string
 ): Promise<Result> {
+  if (!nombre.trim()) return { ok: false, error: "El nombre de la temporada es obligatorio." };
+  if (!inicio || !fin) return { ok: false, error: "Debes indicar fecha de inicio y fin." };
+  if (fin < inicio) return { ok: false, error: "La fecha final no puede ser menor que la inicial." };
+
   const sb = await createClient();
+
+  // No se permite solapar fechas con otra temporada del mismo hotel:
+  // una noche solo puede pertenecer a una temporada.
+  const { data: existentes } = await sb
+    .from("hotel_temporadas")
+    .select("nombre, fecha_inicio, fecha_fin")
+    .eq("hotel_id", hotelId);
+  for (const e of existentes ?? []) {
+    if (!e.fecha_inicio || !e.fecha_fin) continue;
+    // Solapan si inicio <= fin_existente && fin >= inicio_existente
+    if (inicio <= e.fecha_fin && fin >= e.fecha_inicio) {
+      return {
+        ok: false,
+        error: `Las fechas se cruzan con la temporada "${e.nombre}" (${e.fecha_inicio} → ${e.fecha_fin}).`,
+      };
+    }
+  }
+
   const { error } = await sb.from("hotel_temporadas").insert({
     hotel_id: hotelId,
     nombre: nombre.trim(),
-    fecha_inicio: oNull(inicio),
-    fecha_fin: oNull(fin),
+    fecha_inicio: inicio,
+    fecha_fin: fin,
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);

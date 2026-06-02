@@ -1,13 +1,35 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
+import { SidebarNav, type NavItem } from "./SidebarNav";
 
-const NAV = [
-  { href: "/dashboard/producto", label: "Producto" },
+const NAV: NavItem[] = [
+  {
+    href: "/dashboard/producto",
+    label: "Producto",
+    children: [
+      { href: "/dashboard/producto/hoteles", label: "Hoteles" },
+      { href: "/dashboard/producto/servicios", label: "Servicios" },
+      { href: "/dashboard/producto/proveedores", label: "Proveedores" },
+      { href: "/dashboard/producto/configuracion", label: "Configuración" },
+    ],
+  },
+  {
+    href: "/dashboard/paquetes",
+    label: "Paquetes",
+    children: [{ href: "/dashboard/paquetes/nuevo", label: "Nuevo paquete" }],
+  },
   { href: "/dashboard/tarifario", label: "Tarifario" },
-  { href: "/dashboard/paquetes", label: "Paquetes" },
-  { href: "/dashboard/contratos", label: "Contratos" },
-  { href: "/dashboard/vuelos", label: "Vuelos" },
+  {
+    href: "/dashboard/contratos",
+    label: "Contratos",
+    children: [{ href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" }],
+  },
+  {
+    href: "/dashboard/vuelos",
+    label: "Vuelos",
+    children: [{ href: "/dashboard/vuelos/nuevo", label: "Nuevo bloqueo" }],
+  },
   { href: "/dashboard/finanzas", label: "Finanzas" },
   { href: "/dashboard/usuarios", label: "Usuarios" },
   { href: "/dashboard/configuracion", label: "Configuración" },
@@ -67,11 +89,7 @@ export default async function DashboardLayout({
             D&apos;spacios Travel
           </a>
         </div>
-        <nav className="flex-1 space-y-1 px-3 py-4">
-          {NAV.map((n) => (
-            <NavItem key={n.href} href={n.href} label={n.label} />
-          ))}
-        </nav>
+        <SidebarNav items={NAV} />
         <div className="border-t border-gray-100 px-5 py-3">
           <LogoutButton />
         </div>
@@ -82,16 +100,5 @@ export default async function DashboardLayout({
         {children}
       </main>
     </div>
-  );
-}
-
-function NavItem({ href, label }: { href: string; label: string }) {
-  return (
-    <a
-      href={href}
-      className="block rounded-lg px-3 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
-    >
-      {label}
-    </a>
   );
 }

@@ -48,7 +48,6 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     { data: selVuelos },
     { data: selHoteles },
     { data: selServicios },
-    { data: resultado },
   ] = await Promise.all([
     sb.from("destinos").select("id, nombre").order("nombre"),
     qVuelos,
@@ -57,15 +56,25 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     sb.from("armado_vuelos").select("bloqueo_id, aplica_mk, ta").eq("paquete_id", paqueteId),
     sb.from("armado_hoteles").select("hotel_id").eq("paquete_id", paqueteId),
     sb.from("armado_servicios").select("servicio_id").eq("paquete_id", paqueteId),
-    sb
+  ]);
+
+  // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.
+  const resultado: Record<string, unknown>[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data: page } = await sb
       .from("tarifario_resultado")
       .select("*")
       .eq("paquete_id", paqueteId)
       .order("bloqueo_id")
       .order("hotel_nombre")
       .order("categoria")
-      .order("regimen"),
-  ]);
+      .order("regimen")
+      .range(from, from + PAGE - 1);
+    if (!page || page.length === 0) break;
+    resultado.push(...page);
+    if (page.length < PAGE) break;
+  }
 
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
@@ -105,7 +114,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         selVuelos={selVuelos ?? []}
         selHoteles={(selHoteles ?? []).map((s) => s.hotel_id)}
         selServicios={(selServicios ?? []).map((s) => s.servicio_id)}
-        resultado={resultado ?? []}
+        resultado={resultado as unknown as Parameters<typeof ArmadoClient>[0]["resultado"]}
       />
     </div>
   );

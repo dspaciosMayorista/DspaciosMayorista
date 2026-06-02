@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { ConfigForm } from "../ConfigForm";
-import { setVuelo, setHotel, setServicio, generarTarifario } from "../actions";
+import { setVuelo, setTodosVuelos, setHotel, setServicio, generarTarifario } from "../actions";
 
 type Opt = { id: number; nombre: string };
 type Vuelo = {
@@ -88,8 +88,29 @@ export function ArmadoClient(props: {
         {!props.vuelosDisp.length ? (
           <Empty>No hay ciclos aéreos del destino en el rango de viaje.</Empty>
         ) : (
-          <ul className="divide-y divide-gray-100">
-            {props.vuelosDisp.map((v) => (
+          <>
+            <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={vueloSel.size === props.vuelosDisp.length && props.vuelosDisp.length > 0}
+                ref={(el) => {
+                  if (el) el.indeterminate = vueloSel.size > 0 && vueloSel.size < props.vuelosDisp.length;
+                }}
+                onChange={(e) =>
+                  start(async () => {
+                    await setTodosVuelos(
+                      props.paqueteId,
+                      props.vuelosDisp.map((v) => v.id),
+                      e.target.checked
+                    );
+                    refrescar();
+                  })
+                }
+              />
+              Seleccionar todos
+            </label>
+            <ul className="divide-y divide-gray-100">
+              {props.vuelosDisp.map((v) => (
               <VueloRow
                 key={v.id}
                 v={v}
@@ -97,8 +118,9 @@ export function ArmadoClient(props: {
                 paqueteId={props.paqueteId}
                 onDone={refrescar}
               />
-            ))}
-          </ul>
+              ))}
+            </ul>
+          </>
         )}
       </Section>
 
