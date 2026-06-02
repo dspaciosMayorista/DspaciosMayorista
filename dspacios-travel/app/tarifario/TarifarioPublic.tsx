@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { formatCOP } from "@/lib/utils";
 
 export type FilaTarifario = {
@@ -215,7 +215,26 @@ function PorPaquete({ filas }: { filas: FilaTarifario[] }) {
 }
 
 function TablaHorizontal({ rows }: { rows: Pivotada[] }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   if (!rows.length) return <p className="py-8 text-center text-sm text-gray-400">Sin tarifas para esta selección.</p>;
+
+  // Agrupa por hotel conservando el orden
+  const byHotel = new Map<string, Pivotada[]>();
+  for (const r of rows) {
+    const arr = byHotel.get(r.hotel) ?? [];
+    arr.push(r);
+    byHotel.set(r.hotel, arr);
+  }
+
+  function toggle(hotel: string) {
+    setExpanded((prev) => {
+      const n = new Set(prev);
+      if (n.has(hotel)) n.delete(hotel);
+      else n.add(hotel);
+      return n;
+    });
+  }
+
   return (
     <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
       <table className="w-full min-w-[760px] text-sm">
@@ -230,22 +249,45 @@ function TablaHorizontal({ rows }: { rows: Pivotada[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="border-t border-gray-100">
-              <td className="px-3 py-2 font-medium text-gray-800">{r.hotel}</td>
-              <td className="px-3 py-2 text-gray-600">{r.categoria}</td>
-              <td className="px-3 py-2 text-gray-600">{r.regimen}</td>
-              {COLS.map(([k]) => (
-                <td key={k} className="px-3 py-2 text-right tabular-nums">
-                  {r.precios[k] != null ? (
-                    <span style={{ color: "var(--brand-primary)" }}>{formatCOP(r.precios[k])}</span>
-                  ) : (
-                    <span className="text-gray-300">—</span>
-                  )}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {[...byHotel.entries()].map(([hotel, hrows]) => {
+            const isOpen = expanded.has(hotel);
+            const visibles = isOpen ? hrows : hrows.slice(0, 1);
+            const ocultas = hrows.length - 1;
+            return (
+              <Fragment key={hotel}>
+                {visibles.map((r, i) => (
+                  <tr key={`${hotel}-${i}`} className="border-t border-gray-100">
+                    <td className="px-3 py-2 font-medium text-gray-800">{i === 0 ? r.hotel : ""}</td>
+                    <td className="px-3 py-2 text-gray-600">{r.categoria}</td>
+                    <td className="px-3 py-2 text-gray-600">{r.regimen}</td>
+                    {COLS.map(([k]) => (
+                      <td key={k} className="px-3 py-2 text-right tabular-nums">
+                        {r.precios[k] != null ? (
+                          <span style={{ color: "var(--brand-primary)" }}>{formatCOP(r.precios[k])}</span>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                {ocultas > 0 && (
+                  <tr className="border-t border-gray-50">
+                    <td colSpan={3 + COLS.length} className="px-3 py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => toggle(hotel)}
+                        className="text-xs font-medium"
+                        style={{ color: "var(--brand-accent)" }}
+                      >
+                        {isOpen ? "Ver menos" : `Ver ${ocultas} opción${ocultas > 1 ? "es" : ""} más de ${hotel} →`}
+                      </button>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
