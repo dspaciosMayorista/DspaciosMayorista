@@ -273,7 +273,7 @@ export function ProductoTab({
             )}
           </div>
 
-          <div className="grid grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
             {ACOMODACIONES.map(({ key, label }) => {
               const precio = Number(precios[key] || 0);
               const calc   = precio > 0 ? calcPreciosTarifa(precio, impuesto) : null;

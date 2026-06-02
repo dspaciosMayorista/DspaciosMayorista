@@ -39,7 +39,7 @@ export default async function DestinoPage({ params }: { params: Promise<{ id: st
   if (!destino) notFound();
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-4 md:p-8 max-w-6xl mx-auto">
       <div className="mb-6">
         <Link href="/dashboard/tarifario" className="text-sm text-gray-400 hover:text-gray-600">
           ← Destinos
@@ -53,12 +53,14 @@ export default async function DestinoPage({ params }: { params: Promise<{ id: st
       </div>
 
       <Tabs defaultValue="hoteles">
-        <TabsList className="mb-6">
-          <TabsTrigger value="hoteles">Hoteles</TabsTrigger>
-          <TabsTrigger value="temporadas">Temporadas</TabsTrigger>
-          <TabsTrigger value="producto">Módulo de Producto</TabsTrigger>
-          <TabsTrigger value="inclusiones">Incluye / No incluye</TabsTrigger>
-        </TabsList>
+        <div className="mb-6 overflow-x-auto">
+          <TabsList>
+            <TabsTrigger value="hoteles">Hoteles</TabsTrigger>
+            <TabsTrigger value="temporadas">Temporadas</TabsTrigger>
+            <TabsTrigger value="producto">Módulo de Producto</TabsTrigger>
+            <TabsTrigger value="inclusiones">Incluye / No incluye</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="hoteles">
           <HotelesTab destinoId={destinoId} hoteles={hoteles ?? []} />

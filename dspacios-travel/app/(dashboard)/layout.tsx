@@ -1,6 +1,14 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
+const NAV = [
+  { href: "/dashboard/tarifario", label: "Tarifario" },
+  { href: "/dashboard/contratos", label: "Contratos" },
+  { href: "/ventas", label: "Ventas" },
+  { href: "/vuelos", label: "Vuelos" },
+  { href: "/finanzas", label: "Finanzas" },
+];
+
 export default async function DashboardLayout({
   children,
 }: {
@@ -16,32 +24,57 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Sidebar — se expande en fases posteriores */}
-      <aside
-        className="w-56 shrink-0 flex flex-col border-r border-gray-200 bg-white"
+    <div className="flex min-h-screen flex-col bg-gray-50 md:flex-row">
+      {/* Barra superior (solo celular) */}
+      <header
+        className="flex flex-col gap-2 border-b border-gray-200 bg-white px-4 py-3 md:hidden"
         style={{ borderTop: `4px solid var(--brand-primary)` }}
       >
-        <div className="px-5 py-4 border-b border-gray-100">
-          <span
-            className="font-semibold text-base"
+        <a
+          href="/dashboard"
+          className="font-semibold"
+          style={{ color: "var(--brand-primary)" }}
+        >
+          D&apos;spacios Travel
+        </a>
+        <nav className="-mx-1 flex gap-1 overflow-x-auto pb-1">
+          {NAV.map((n) => (
+            <a
+              key={n.href}
+              href={n.href}
+              className="whitespace-nowrap rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+            >
+              {n.label}
+            </a>
+          ))}
+        </nav>
+      </header>
+
+      {/* Sidebar (escritorio) */}
+      <aside
+        className="hidden w-56 shrink-0 flex-col border-r border-gray-200 bg-white md:flex"
+        style={{ borderTop: `4px solid var(--brand-primary)` }}
+      >
+        <div className="border-b border-gray-100 px-5 py-4">
+          <a
+            href="/dashboard"
+            className="text-base font-semibold"
             style={{ color: "var(--brand-primary)" }}
           >
             D&apos;spacios Travel
-          </span>
+          </a>
         </div>
-
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          <NavItem href="/dashboard/tarifario" label="Tarifario" />
-          <NavItem href="/dashboard/contratos" label="Contratos" />
-          <NavItem href="/ventas" label="Ventas" />
-          <NavItem href="/vuelos" label="Vuelos" />
-          <NavItem href="/finanzas" label="Finanzas" />
+        <nav className="flex-1 space-y-1 px-3 py-4">
+          {NAV.map((n) => (
+            <NavItem key={n.href} href={n.href} label={n.label} />
+          ))}
         </nav>
       </aside>
 
       {/* Contenido */}
-      <main className="flex-1 overflow-y-auto">{children}</main>
+      <main className="min-w-0 flex-1 overflow-x-hidden md:h-screen md:overflow-y-auto">
+        {children}
+      </main>
     </div>
   );
 }
@@ -50,7 +83,7 @@ function NavItem({ href, label }: { href: string; label: string }) {
   return (
     <a
       href={href}
-      className="block px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+      className="block rounded-lg px-3 py-2 text-sm text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
     >
       {label}
     </a>

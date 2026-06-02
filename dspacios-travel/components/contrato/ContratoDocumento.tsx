@@ -57,7 +57,7 @@ export function ContratoDocumento({
     <div className="contrato-doc mx-auto max-w-3xl bg-white text-gray-800">
       {/* ── Encabezado ─────────────────────────────────────────── */}
       <header
-        className="flex items-start justify-between gap-4 rounded-t-xl px-8 py-6 text-white"
+        className="flex flex-col gap-3 rounded-t-xl px-5 py-5 text-white sm:flex-row sm:items-start sm:justify-between sm:gap-4 md:px-8 md:py-6"
         style={{ backgroundColor: PRIMARY }}
       >
         <div>
@@ -85,7 +85,7 @@ export function ContratoDocumento({
         </div>
       </header>
 
-      <div className="space-y-7 px-8 py-7 text-sm">
+      <div className="space-y-7 px-5 py-6 text-sm md:px-8 md:py-7">
         {/* ── Cliente ──────────────────────────────────────────── */}
         <section>
           <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>
@@ -192,7 +192,8 @@ export function ContratoDocumento({
             >
               Pasajeros
             </h2>
-            <table className="w-full border-collapse text-xs">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] border-collapse text-xs">
               <thead>
                 <tr className="bg-gray-50 text-left text-gray-500">
                   <th className="border border-gray-200 px-2 py-1">#</th>
@@ -243,6 +244,7 @@ export function ContratoDocumento({
                 })}
               </tbody>
             </table>
+            </div>
           </section>
         )}
 
@@ -264,7 +266,8 @@ export function ContratoDocumento({
           </div>
 
           {items.length > 0 && (
-            <table className="w-full border-collapse text-xs">
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] border-collapse text-xs">
               <thead>
                 <tr className="bg-gray-50 text-left text-gray-500">
                   <th className="border border-gray-200 px-2 py-1">Ítem</th>
@@ -300,6 +303,7 @@ export function ContratoDocumento({
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </section>
 

@@ -38,7 +38,7 @@ export default async function ContratoDetallePage({
   const saldo = Math.max(total - pagado, 0);
 
   return (
-    <div className="mx-auto max-w-4xl p-8">
+    <div className="mx-auto max-w-4xl p-4 md:p-8">
       <Link
         href="/dashboard/contratos"
         className="text-sm text-gray-400 hover:text-gray-600"
@@ -64,7 +64,7 @@ export default async function ContratoDetallePage({
       </div>
 
       {/* Totales */}
-      <div className="mt-6 grid grid-cols-3 gap-4">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
           <div className="text-xs opacity-80">Total del contrato</div>
           <div className="text-xl font-bold">{formatCOP(total)}</div>
@@ -105,8 +105,8 @@ export default async function ContratoDetallePage({
           <AbonoForm numeroContrato={numero} />
         </div>
         {abonos?.length ? (
-          <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+            <table className="w-full min-w-[520px] text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase text-gray-400">
                   <th className="px-4 py-2">Fecha</th>

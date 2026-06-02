@@ -21,7 +21,7 @@ export default async function NuevoContratoPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl p-8">
+    <div className="mx-auto max-w-4xl p-4 md:p-8">
       <Link
         href="/dashboard/contratos"
         className="text-sm text-gray-400 hover:text-gray-600"

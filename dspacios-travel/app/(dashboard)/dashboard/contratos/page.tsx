@@ -15,8 +15,8 @@ export default async function ContratosPage() {
     .order("created_at", { ascending: false });
 
   return (
-    <div className="mx-auto max-w-5xl p-8">
-      <div className="mb-8 flex items-center justify-between">
+    <div className="mx-auto max-w-5xl p-4 md:p-8">
+      <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Contratos</h1>
           <p className="mt-1 text-sm text-gray-500">
@@ -38,8 +38,8 @@ export default async function ContratosPage() {
           </p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
                 <th className="px-4 py-3">Contrato</th>

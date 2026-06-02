@@ -12,8 +12,8 @@ export default async function TarifarioAdminPage() {
     .order("nombre");
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
+    <div className="p-4 md:p-8 max-w-5xl mx-auto">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Tarifario</h1>
           <p className="text-sm text-gray-500 mt-1">Módulo de Producto — gestión de destinos y tarifas</p>
