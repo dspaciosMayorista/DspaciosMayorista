@@ -212,3 +212,89 @@ export async function eliminarTarifa(id: number, hotelId: number): Promise<Resul
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   return { ok: true };
 }
+
+// ── Cargas masivas (CSV) ───────────────────────────────────────────────────
+type CargaResult = { ok: boolean; insertados: number; errores: string[] };
+const numCsv = (s?: string) => (s ? parseInt(String(s).replace(/[^\d-]/g, ""), 10) || 0 : 0);
+const numCsvN = (s?: string) => (s && s.trim() !== "" ? numCsv(s) : null);
+
+export async function cargarHotelesMasivo(rows: Record<string, string>[]): Promise<CargaResult> {
+  const sb = await createClient();
+  const [{ data: destinos }, { data: provs }, { data: cats }, { data: regs }] = await Promise.all([
+    sb.from("destinos").select("id, nombre"),
+    sb.from("proveedores").select("id, nombre").eq("tipo", "hotelero"),
+    sb.from("categorias_habitacion").select("id, nombre"),
+    sb.from("planes_alimentacion").select("id, codigo"),
+  ]);
+  const dmap = new Map((destinos ?? []).map((d) => [d.nombre.trim().toLowerCase(), d.id]));
+  const pmap = new Map((provs ?? []).map((p) => [p.nombre.trim().toLowerCase(), p.id]));
+  const cmap = new Map((cats ?? []).map((c) => [c.nombre.trim().toLowerCase(), c.id]));
+  const rmap = new Map((regs ?? []).map((r) => [r.codigo.trim().toLowerCase(), r.id]));
+  const errores: string[] = [];
+  let insertados = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const linea = i + 2;
+    const nombre = (r.nombre || "").trim();
+    if (!nombre) { errores.push(`Fila ${linea}: falta nombre.`); continue; }
+    const destinoId = r.destino ? dmap.get(r.destino.trim().toLowerCase()) : undefined;
+    if (!destinoId) { errores.push(`Fila ${linea} (${nombre}): destino "${r.destino ?? ""}" no existe.`); continue; }
+    const provId = r.proveedor ? pmap.get(r.proveedor.trim().toLowerCase()) ?? null : null;
+    const { data: hotel, error } = await sb
+      .from("hoteles")
+      .insert({
+        nombre, destino_id: destinoId, proveedor_id: provId, zona: oNull(r.zona || ""),
+        edad_infante_min: numCsv(r.edad_infante_min) || 0, edad_infante_max: numCsv(r.edad_infante_max) || 2,
+        edad_nino_min: numCsv(r.edad_nino_min) || 2, edad_nino_max: numCsv(r.edad_nino_max) || 10,
+      })
+      .select("id")
+      .single();
+    if (error || !hotel) { errores.push(`Fila ${linea} (${nombre}): ${error?.message ?? "no se insertó"}`); continue; }
+    const catIds = (r.categorias || "").split(";").map((x) => cmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
+    const regIds = (r.regimenes || "").split(";").map((x) => rmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
+    if (catIds.length) await sb.from("hotel_categorias").insert(catIds.map((categoria_id) => ({ hotel_id: hotel.id, categoria_id })));
+    if (regIds.length) await sb.from("hotel_regimenes").insert(regIds.map((plan_id) => ({ hotel_id: hotel.id, plan_id })));
+    insertados++;
+  }
+  revalidatePath("/dashboard/producto/hoteles");
+  return { ok: errores.length === 0, insertados, errores };
+}
+
+export async function cargarTarifasMasivo(rows: Record<string, string>[]): Promise<CargaResult> {
+  const sb = await createClient();
+  const { data: hoteles } = await sb.from("hoteles").select("id, nombre, destino_id, destinos(nombre)");
+  type HRow = { id: number; nombre: string; destino_id: number; destinos: { nombre: string } | null };
+  const lista = (hoteles ?? []) as unknown as HRow[];
+  const errores: string[] = [];
+  let insertados = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const linea = i + 2;
+    const nombre = (r.hotel || "").trim().toLowerCase();
+    if (!nombre) { errores.push(`Fila ${linea}: falta hotel.`); continue; }
+    let candidatos = lista.filter((h) => h.nombre.trim().toLowerCase() === nombre);
+    if (candidatos.length > 1 && r.destino) {
+      candidatos = candidatos.filter((h) => (h.destinos?.nombre ?? "").trim().toLowerCase() === r.destino.trim().toLowerCase());
+    }
+    if (!candidatos.length) { errores.push(`Fila ${linea}: hotel "${r.hotel}" no encontrado.`); continue; }
+    if (candidatos.length > 1) { errores.push(`Fila ${linea}: hotel "${r.hotel}" está duplicado; agrega columna destino.`); continue; }
+    const { error } = await sb.from("tarifa_hotel").insert({
+      hotel_id: candidatos[0].id,
+      tipo_habitacion: oNull(r.categoria || ""),
+      alimentacion: oNull(r.regimen || ""),
+      temporada: oNull(r.temporada || ""),
+      neto_sencilla: numCsvN(r.neto_sencilla),
+      neto_doble: numCsvN(r.neto_doble),
+      neto_triple: numCsvN(r.neto_triple),
+      neto_multiple: numCsvN(r.neto_multiple),
+      neto_nino: numCsvN(r.neto_nino),
+      neto_nino2: numCsvN(r.neto_nino2),
+    });
+    if (error) { errores.push(`Fila ${linea} (${r.hotel}): ${error.message}`); continue; }
+    insertados++;
+  }
+  revalidatePath("/dashboard/producto/hoteles");
+  return { ok: errores.length === 0, insertados, errores };
+}

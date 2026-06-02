@@ -3,8 +3,30 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { EliminarBloqueoBtn } from "./EliminarBloqueoBtn";
+import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
+import { cargarBloqueosMasivo } from "./actions";
 
 export const dynamic = "force-dynamic";
+
+const COLS_BLOQUEOS = [
+  { key: "record", label: "Record", ejemplo: "L93FYZ" },
+  { key: "aerolinea", label: "Aerolínea", ejemplo: "JETSMART" },
+  { key: "destino", label: "Destino", ejemplo: "CARTAGENA" },
+  { key: "ruta", label: "Ruta", ejemplo: "MDE - CTG - MDE" },
+  { key: "vuelo_ida", label: "Vuelo ida", ejemplo: "5410" },
+  { key: "fecha_ida", label: "Fecha ida (AAAA-MM-DD)", ejemplo: "2026-06-16" },
+  { key: "hora_salida_ida", label: "Hora salida ida", ejemplo: "08:30" },
+  { key: "hora_llegada_ida", label: "Hora llegada ida", ejemplo: "09:45" },
+  { key: "vuelo_regreso", label: "Vuelo regreso", ejemplo: "5414" },
+  { key: "fecha_regreso", label: "Fecha regreso (AAAA-MM-DD)", ejemplo: "2026-06-19" },
+  { key: "hora_salida_reg", label: "Hora salida reg", ejemplo: "18:00" },
+  { key: "hora_llegada_reg", label: "Hora llegada reg", ejemplo: "19:15" },
+  { key: "cupos_total", label: "Cupos", ejemplo: "30" },
+  { key: "tarifa_para_empaquetar", label: "Tarifa empaquetar", ejemplo: "242022" },
+  { key: "fecha_devolucion", label: "Fecha devolución", ejemplo: "2026-06-01" },
+  { key: "fecha_emision", label: "Fecha emisión", ejemplo: "2026-05-20" },
+  { key: "notas", label: "Notas", ejemplo: "" },
+];
 
 export default async function VuelosPage() {
   const sb = await createClient();
@@ -25,6 +47,16 @@ export default async function VuelosPage() {
         <Link href="/dashboard/vuelos/nuevo">
           <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo bloqueo</Button>
         </Link>
+      </div>
+
+      <div className="mb-6">
+        <CargaMasivaCSV
+          titulo="Carga masiva de bloqueos (CSV)"
+          descripcion="Cada fila = un bloqueo. El destino debe existir; las sillas se generan según 'cupos'. Fechas en formato AAAA-MM-DD."
+          columnas={COLS_BLOQUEOS}
+          onSubmit={cargarBloqueosMasivo}
+          nombreArchivo="plantilla_bloqueos"
+        />
       </div>
 
       {!bloqueos?.length ? (

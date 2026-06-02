@@ -2,8 +2,37 @@ import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { EliminarHotelBtn } from "./EliminarHotelBtn";
+import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
+import { cargarHotelesMasivo, cargarTarifasMasivo } from "./actions";
 
 export const dynamic = "force-dynamic";
+
+const COLS_HOTELES = [
+  { key: "nombre", label: "Nombre", ejemplo: "Hotel Dorado Plaza" },
+  { key: "destino", label: "Destino", ejemplo: "CARTAGENA" },
+  { key: "zona", label: "Zona", ejemplo: "Bocagrande" },
+  { key: "proveedor", label: "Proveedor", ejemplo: "" },
+  { key: "edad_infante_min", label: "Edad infante mín", ejemplo: "0" },
+  { key: "edad_infante_max", label: "Edad infante máx", ejemplo: "2" },
+  { key: "edad_nino_min", label: "Edad niño mín", ejemplo: "2" },
+  { key: "edad_nino_max", label: "Edad niño máx", ejemplo: "10" },
+  { key: "categorias", label: "Categorías (separadas por ;)", ejemplo: "Estándar;Superior" },
+  { key: "regimenes", label: "Regímenes (códigos separados por ;)", ejemplo: "PC;FULL" },
+];
+
+const COLS_TARIFAS = [
+  { key: "hotel", label: "Hotel", ejemplo: "Hotel Dorado Plaza" },
+  { key: "destino", label: "Destino (si hay hoteles repetidos)", ejemplo: "CARTAGENA" },
+  { key: "categoria", label: "Categoría", ejemplo: "Estándar" },
+  { key: "regimen", label: "Régimen", ejemplo: "FULL" },
+  { key: "temporada", label: "Temporada", ejemplo: "Baja" },
+  { key: "neto_sencilla", label: "Neto sencilla", ejemplo: "600000" },
+  { key: "neto_doble", label: "Neto doble", ejemplo: "300000" },
+  { key: "neto_triple", label: "Neto triple", ejemplo: "300000" },
+  { key: "neto_multiple", label: "Neto múltiple", ejemplo: "300000" },
+  { key: "neto_nino", label: "Neto niño 1", ejemplo: "150000" },
+  { key: "neto_nino2", label: "Neto niño 2", ejemplo: "" },
+];
 
 export default async function HotelesPage() {
   const sb = await createClient();
@@ -26,6 +55,23 @@ export default async function HotelesPage() {
         <Link href="/dashboard/producto/hoteles/nuevo">
           <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo hotel</Button>
         </Link>
+      </div>
+
+      <div className="mb-4 space-y-3">
+        <CargaMasivaCSV
+          titulo="Carga masiva de hoteles (CSV)"
+          descripcion="Cada fila = un hotel. El destino debe existir. Categorías y regímenes deben existir en Configuración general (sepáralos con ;)."
+          columnas={COLS_HOTELES}
+          onSubmit={cargarHotelesMasivo}
+          nombreArchivo="plantilla_hoteles"
+        />
+        <CargaMasivaCSV
+          titulo="Carga masiva de tarifas de hotel (CSV)"
+          descripcion="Cada fila = una tarifa (hotel + categoría + régimen + temporada + netos). El hotel debe existir; usa 'destino' si hay hoteles con el mismo nombre. Niño 1 puede ir en 0 (gratis)."
+          columnas={COLS_TARIFAS}
+          onSubmit={cargarTarifasMasivo}
+          nombreArchivo="plantilla_tarifas_hotel"
+        />
       </div>
 
       {!hoteles.length ? (

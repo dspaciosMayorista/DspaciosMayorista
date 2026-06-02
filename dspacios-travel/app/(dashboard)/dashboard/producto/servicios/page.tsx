@@ -1,8 +1,19 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { ServiciosClient } from "./ServiciosClient";
+import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
+import { cargarServiciosMasivo } from "./actions";
 
 export const dynamic = "force-dynamic";
+
+const COLS_SERVICIOS = [
+  { key: "nombre", label: "Nombre", ejemplo: "Tour Islas del Rosario" },
+  { key: "destino", label: "Destino", ejemplo: "CARTAGENA" },
+  { key: "proveedor", label: "Proveedor", ejemplo: "" },
+  { key: "tarifa_neta", label: "Tarifa neta", ejemplo: "120000" },
+  { key: "temporada", label: "Temporada", ejemplo: "" },
+  { key: "liquidacion", label: "Liquidación (dia/noche/paquete)", ejemplo: "paquete" },
+];
 
 export default async function ServiciosPage() {
   const sb = await createClient();
@@ -19,6 +30,15 @@ export default async function ServiciosPage() {
       <Link href="/dashboard/producto" className="text-sm text-gray-400 hover:text-gray-600">← Producto</Link>
       <h1 className="mb-1 mt-2 text-2xl font-semibold text-gray-900">Servicios adicionales</h1>
       <p className="mb-6 text-sm text-gray-500">Asistencias, traslados y tours (costo neto).</p>
+      <div className="mb-6">
+        <CargaMasivaCSV
+          titulo="Carga masiva de servicios (CSV)"
+          descripcion="Cada fila = un servicio. Liquidación: dia, noche o paquete. El destino y el proveedor (si los pones) deben existir."
+          columnas={COLS_SERVICIOS}
+          onSubmit={cargarServiciosMasivo}
+          nombreArchivo="plantilla_servicios"
+        />
+      </div>
       <ServiciosClient servicios={servicios} proveedores={proveedores ?? []} destinos={destinos ?? []} rangos={rangos ?? []} />
     </div>
   );
