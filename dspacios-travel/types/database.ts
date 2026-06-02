@@ -1074,21 +1074,6 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
         Relationships: [];
       };
-    };
-    Views: {
-      cupos_por_bloqueo: {
-        Row: {
-          id: number | null;
-          record: string | null;
-          ruta: string | null;
-          fecha_ida: string | null;
-          cupos_total: number | null;
-          cupos_disponibles: number | null;
-          cupos_ocupados: number | null;
-          cupos_devueltos: number | null;
-        };
-        Relationships: [];
-      };
       armado_paquetes: {
         Row: {
           id: number;
@@ -1128,20 +1113,20 @@ export type Database = {
         Relationships: [];
       };
       armado_vuelos: {
-        Row: { paquete_id: number; bloqueo_id: number };
-        Insert: { paquete_id: number; bloqueo_id: number };
+        Row: { paquete_id: number; bloqueo_id: number; aplica_mk: boolean; ta: number };
+        Insert: { paquete_id: number; bloqueo_id: number; aplica_mk?: boolean; ta?: number };
         Update: Partial<Database["public"]["Tables"]["armado_vuelos"]["Insert"]>;
         Relationships: [];
       };
       armado_hoteles: {
-        Row: { id: number; paquete_id: number; hotel_id: number; aplica_mk: boolean; ta: number };
-        Insert: { id?: number; paquete_id: number; hotel_id: number; aplica_mk?: boolean; ta?: number };
+        Row: { id: number; paquete_id: number; hotel_id: number };
+        Insert: { id?: number; paquete_id: number; hotel_id: number };
         Update: Partial<Database["public"]["Tables"]["armado_hoteles"]["Insert"]>;
         Relationships: [];
       };
       armado_servicios: {
-        Row: { id: number; paquete_id: number; servicio_id: number; aplica_mk: boolean; ta: number };
-        Insert: { id?: number; paquete_id: number; servicio_id: number; aplica_mk?: boolean; ta?: number };
+        Row: { id: number; paquete_id: number; servicio_id: number };
+        Insert: { id?: number; paquete_id: number; servicio_id: number };
         Update: Partial<Database["public"]["Tables"]["armado_servicios"]["Insert"]>;
         Relationships: [];
       };
@@ -1195,6 +1180,21 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["tarifario_resultado"]["Insert"]>;
+        Relationships: [];
+      };
+    };
+    Views: {
+      cupos_por_bloqueo: {
+        Row: {
+          id: number | null;
+          record: string | null;
+          ruta: string | null;
+          fecha_ida: string | null;
+          cupos_total: number | null;
+          cupos_disponibles: number | null;
+          cupos_ocupados: number | null;
+          cupos_devueltos: number | null;
+        };
         Relationships: [];
       };
     };

@@ -6,7 +6,8 @@ import type { Database } from "@/types/database";
 import {
   noches as calcNoches,
   liquidarHotelNoches,
-  aporteVenta,
+  marcar,
+  aporteVuelo,
   componerTarifa,
   costoServicio,
   type TemporadaRango,
@@ -91,61 +92,55 @@ export async function eliminarPaquete(id: number): Promise<Result> {
   return { ok: true };
 }
 
-// ── Adición de vuelos: reemplaza la selección completa ─────────────────────
-export async function setVuelos(paqueteId: number, bloqueoIds: number[]): Promise<Result> {
+// ── Adición de vuelo: alta/baja + decisión de margen (mk o TA) ─────────────
+// Solo el vuelo decide margen. TA = Tarifa Administrativa (valor fijo).
+export async function setVuelo(
+  paqueteId: number,
+  bloqueoId: number,
+  checked: boolean,
+  aplicaMk: boolean,
+  ta: number
+): Promise<Result> {
   const sb = await createClient();
-  await sb.from("armado_vuelos").delete().eq("paquete_id", paqueteId);
-  if (bloqueoIds.length) {
+  if (!checked) {
+    await sb.from("armado_vuelos").delete().eq("paquete_id", paqueteId).eq("bloqueo_id", bloqueoId);
+  } else {
     const { error } = await sb
       .from("armado_vuelos")
-      .insert(bloqueoIds.map((b) => ({ paquete_id: paqueteId, bloqueo_id: b })));
+      .upsert(
+        { paquete_id: paqueteId, bloqueo_id: bloqueoId, aplica_mk: aplicaMk, ta: Number(ta) || 0 },
+        { onConflict: "paquete_id,bloqueo_id" }
+      );
     if (error) return { ok: false, error: error.message };
   }
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   return { ok: true };
 }
 
-// ── Adición de hotel: alta/baja + decisión de margen (mk o TA) ─────────────
-export async function setHotel(
-  paqueteId: number,
-  hotelId: number,
-  checked: boolean,
-  aplicaMk: boolean,
-  ta: number
-): Promise<Result> {
+// ── Adición de hotel (con check). El hotel siempre va con el mk del paquete ─
+export async function setHotel(paqueteId: number, hotelId: number, checked: boolean): Promise<Result> {
   const sb = await createClient();
   if (!checked) {
     await sb.from("armado_hoteles").delete().eq("paquete_id", paqueteId).eq("hotel_id", hotelId);
   } else {
     const { error } = await sb
       .from("armado_hoteles")
-      .upsert(
-        { paquete_id: paqueteId, hotel_id: hotelId, aplica_mk: aplicaMk, ta: Number(ta) || 0 },
-        { onConflict: "paquete_id,hotel_id" }
-      );
+      .upsert({ paquete_id: paqueteId, hotel_id: hotelId }, { onConflict: "paquete_id,hotel_id" });
     if (error) return { ok: false, error: error.message };
   }
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   return { ok: true };
 }
 
-export async function setServicio(
-  paqueteId: number,
-  servicioId: number,
-  checked: boolean,
-  aplicaMk: boolean,
-  ta: number
-): Promise<Result> {
+// ── Adición de servicio (con check). Siempre con el mk del paquete ─────────
+export async function setServicio(paqueteId: number, servicioId: number, checked: boolean): Promise<Result> {
   const sb = await createClient();
   if (!checked) {
     await sb.from("armado_servicios").delete().eq("paquete_id", paqueteId).eq("servicio_id", servicioId);
   } else {
     const { error } = await sb
       .from("armado_servicios")
-      .upsert(
-        { paquete_id: paqueteId, servicio_id: servicioId, aplica_mk: aplicaMk, ta: Number(ta) || 0 },
-        { onConflict: "paquete_id,servicio_id" }
-      );
+      .upsert({ paquete_id: paqueteId, servicio_id: servicioId }, { onConflict: "paquete_id,servicio_id" });
     if (error) return { ok: false, error: error.message };
   }
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
@@ -164,20 +159,22 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (ePq || !pq) return { ok: false, error: ePq?.message ?? "Paquete no encontrado." };
 
   const pctMk = Number(pq.pct_mk) || 0;
+  const paqueteNombre = pq.nombre;
+  const paqueteDestinoId = pq.destino_id;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
   const [{ data: vuelosSel }, { data: hotelesSel }, { data: serviciosSel }] = await Promise.all([
     sb
       .from("armado_vuelos")
-      .select("bloqueo_id, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar)")
+      .select("bloqueo_id, aplica_mk, ta, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, aplica_mk, ta, hoteles(nombre)")
+      .select("hotel_id, hoteles(nombre)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, aplica_mk, ta, servicios_adicionales(nombre, tarifa_neta, liquidacion)")
+      .select("servicio_id, servicios_adicionales(nombre, tarifa_neta, liquidacion)")
       .eq("paquete_id", paqueteId),
   ]);
 
@@ -210,7 +207,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"];
   const filas: ResultadoInsert[] = [];
 
-  // Aporte de servicios (por persona, igual para todas las combinaciones)
+  // Aporte de servicios (por persona, igual para todas las combinaciones).
+  // Los servicios SIEMPRE van con el mk del paquete.
   function aporteServicios(numNoches: number): number {
     let total = 0;
     for (const s of servicios) {
@@ -219,15 +217,18 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         | null;
       if (!srv) continue;
       const costo = costoServicio(Number(srv.tarifa_neta) || 0, srv.liquidacion, numNoches);
-      total += aporteVenta(costo, s.aplica_mk, pctMk, Number(s.ta) || 0);
+      total += marcar(costo, pctMk);
     }
     return total;
   }
 
-  // Genera las filas de hotel para una estadía (fechaIda + numNoches)
+  // Genera las filas de hotel para una estadía (fechaIda + numNoches).
+  // `aporteVueloVal` es el aporte del vuelo al PVP (0 en porción terrestre);
+  // `impuesto` es la BNC que se resta del PVP.
   function filasHoteles(
     fechaIda: string,
     numNoches: number,
+    aporteVueloVal: number,
     impuesto: number,
     modulo: Database["public"]["Enums"]["tarifario_modulo"],
     bloqueoId: number | null,
@@ -260,17 +261,22 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
           }
           const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
           if (costoHotel == null || costoHotel <= 0) continue;
-          const aporteHotel = aporteVenta(costoHotel, h.aplica_mk, pctMk, Number(h.ta) || 0);
-          const t = componerTarifa({ aporteHotel, aporteServicios: aporteServ, impuesto });
+          const aporteHotel = marcar(costoHotel, pctMk); // hotel siempre con mk
+          const t = componerTarifa({
+            aporteHotel,
+            aporteServicios: aporteServ,
+            aporteVuelo: aporteVueloVal,
+            impuesto,
+          });
           filas.push({
             paquete_id: paqueteId,
-            paquete_nombre: pq.nombre,
+            paquete_nombre: paqueteNombre,
             modulo,
             bloqueo_id: bloqueoId,
             bloqueo_label: bloqueoLabel,
             hotel_id: h.hotel_id,
             hotel_nombre: hotelNombre,
-            destino_id: pq.destino_id,
+            destino_id: paqueteDestinoId,
             destino_nombre: destinoNombre,
             categoria: categoria || null,
             regimen: regimen || null,
@@ -288,29 +294,29 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   }
 
   const vuelos = (vuelosSel ?? [])
-    .map(
-      (v) =>
-        v.bloqueos_vuelo as unknown as {
-          id: number;
-          record: string | null;
-          ruta: string | null;
-          fecha_ida: string | null;
-          fecha_regreso: string | null;
-          tarifa_para_empaquetar: number;
-        } | null
-    )
-    .filter((b): b is NonNullable<typeof b> => !!b && !!b.fecha_ida && !!b.fecha_regreso);
+    .map((v) => ({
+      aplica_mk: v.aplica_mk as boolean,
+      ta: Number(v.ta) || 0,
+      b: v.bloqueos_vuelo as unknown as {
+        id: number;
+        record: string | null;
+        ruta: string | null;
+        fecha_ida: string | null;
+        fecha_regreso: string | null;
+        tarifa_para_empaquetar: number;
+      } | null,
+    }))
+    .filter((v): v is typeof v & { b: NonNullable<typeof v.b> } => !!v.b && !!v.b.fecha_ida && !!v.b.fecha_regreso);
 
   if (vuelos.length) {
     // MÓDULO BLOQUEOS: una liquidación por ciclo aéreo
-    for (const b of vuelos) {
+    for (const { aplica_mk, ta, b } of vuelos) {
       const numNoches = calcNoches(b.fecha_ida!, b.fecha_regreso!);
-      const impuesto =
-        pq.impuesto_tipo === "tiquete"
-          ? Number(b.tarifa_para_empaquetar) || 0
-          : Number(pq.impuesto_fijo) || 0;
+      const costoTiquete = Number(b.tarifa_para_empaquetar) || 0;
+      const aporteVueloVal = aporteVuelo(costoTiquete, aplica_mk, pctMk, ta);
+      const impuesto = pq.impuesto_tipo === "tiquete" ? costoTiquete : Number(pq.impuesto_fijo) || 0;
       const label = [b.record, b.ruta].filter(Boolean).join(" · ") || b.record || "";
-      filasHoteles(b.fecha_ida!, numNoches, impuesto, "bloqueo", b.id, label, b.fecha_regreso);
+      filasHoteles(b.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", b.id, label, b.fecha_regreso);
     }
   } else if (pq.fecha_viaje_inicio && pq.fecha_viaje_fin) {
     // MÓDULO PORCIÓN TERRESTRE: sin vuelo; noches = rango de viaje, impuesto fijo
@@ -318,6 +324,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     filasHoteles(
       pq.fecha_viaje_inicio,
       numNoches,
+      0,
       Number(pq.impuesto_fijo) || 0,
       "porcion_terrestre",
       null,

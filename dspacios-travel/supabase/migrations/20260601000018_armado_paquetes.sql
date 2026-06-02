@@ -45,32 +45,33 @@ create table if not exists public.armado_paquetes (
   updated_at          timestamptz not null default now()
 );
 
--- ── Adición de VUELOS (ciclos aéreos seleccionados con check) ──────────────
+-- ── Adición de VUELOS (ciclos aéreos con check) + decisión de margen ──────
+-- Solo el VUELO decide margen:
+--   aplica_mk = true  → el tiquete entra como costo / (1 - %mk)
+--   aplica_mk = false → el tiquete entra como costo + TA (Tarifa Administrativa)
 create table if not exists public.armado_vuelos (
   paquete_id  bigint not null references public.armado_paquetes(id) on delete cascade,
   bloqueo_id  bigint not null references public.bloqueos_vuelo(id) on delete cascade,
+  aplica_mk   boolean not null default true,
+  ta          numeric(15,2) not null default 0,
   primary key (paquete_id, bloqueo_id)
 );
 
--- ── Adición de HOTELES (con check) + decisión de margen ───────────────────
--- aplica_mk = true  → se le aplica el %mk general del paquete
--- aplica_mk = false → no se le aplica mk; se le suma una TA (valor fijo)
+-- ── Adición de HOTELES (con check) ────────────────────────────────────────
+-- Los hoteles SIEMPRE van con el %mk general del paquete.
 create table if not exists public.armado_hoteles (
   id          bigserial primary key,
   paquete_id  bigint not null references public.armado_paquetes(id) on delete cascade,
   hotel_id    bigint not null references public.hoteles(id) on delete cascade,
-  aplica_mk   boolean not null default true,
-  ta          numeric(15,2) not null default 0,
   unique (paquete_id, hotel_id)
 );
 
--- ── Adición de SERVICIOS (con check) + decisión de margen ─────────────────
+-- ── Adición de SERVICIOS (con check) ──────────────────────────────────────
+-- Los servicios SIEMPRE van con el %mk general del paquete.
 create table if not exists public.armado_servicios (
   id           bigserial primary key,
   paquete_id   bigint not null references public.armado_paquetes(id) on delete cascade,
   servicio_id  bigint not null references public.servicios_adicionales(id) on delete cascade,
-  aplica_mk    boolean not null default true,
-  ta           numeric(15,2) not null default 0,
   unique (paquete_id, servicio_id)
 );
 

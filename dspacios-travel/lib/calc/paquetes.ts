@@ -3,11 +3,13 @@
 // Flujo de negocio:  PRODUCTO (costos netos) → PAQUETES (margen) → TARIFARIO.
 //
 // Tarifa por persona por paquete:
-//   aporte_hotel      = aplica_mk ? costo_hotel / (1 - %mk) : costo_hotel + TA
-//   aporte_servicio   = aplica_mk ? costo_serv  / (1 - %mk) : costo_serv  + TA
-//   base_comisionable = aporte_hotel + Σ aporte_servicio
-//   impuesto          = valor del tiquete (ciclo aéreo)  ó  valor fijo
-//   PVP               = base_comisionable + impuesto        (⇒ PVP − IMP = base)
+//   aporte_hotel    = costo_hotel / (1 - %mk)          (hotel SIEMPRE con mk)
+//   aporte_servicio = costo_serv  / (1 - %mk)          (servicio SIEMPRE con mk)
+//   aporte_vuelo    = aplica_mk ? costo_tiquete/(1-%mk) : costo_tiquete + TA
+//                     (solo el VUELO decide mk o TA = Tarifa Administrativa)
+//   PVP             = aporte_hotel + Σ aporte_servicio + aporte_vuelo
+//   impuesto (BNC)  = valor neto del tiquete  ó  valor fijo
+//   base_comisionable = PVP − impuesto                 (⇒ PVP − IMP = base)
 //
 // El hotel se liquida NOCHE POR NOCHE: si la estadía cruza dos temporadas del
 // hotel, cada noche usa la tarifa de la temporada en que cae esa fecha.
@@ -75,22 +77,24 @@ export function liquidarHotelNoches(args: {
   return total;
 }
 
+/** Marca un costo con el margen del paquete: costo / (1 - %mk). */
+export function marcar(costo: number, pctMk: number): number {
+  if (pctMk >= 1) return 0; // margen inválido (no se puede dividir por ≤ 0)
+  return costo / (1 - pctMk);
+}
+
 /**
- * Aporte al precio de venta de un componente (hotel o servicio).
- * Si aplica el margen: costo / (1 - %mk). Si no: costo + TA (valor fijo).
+ * Aporte del VUELO al precio de venta.
+ * Si aplica el margen: costo / (1 - %mk). Si no: costo + TA (Tarifa Administrativa).
  * `pctMk` es fracción (0.20 = 20 %).
  */
-export function aporteVenta(
-  costo: number,
+export function aporteVuelo(
+  costoTiquete: number,
   aplicaMk: boolean,
   pctMk: number,
   ta: number
 ): number {
-  if (aplicaMk) {
-    if (pctMk >= 1) return 0; // margen inválido (no se puede dividir por ≤ 0)
-    return costo / (1 - pctMk);
-  }
-  return costo + ta;
+  return aplicaMk ? marcar(costoTiquete, pctMk) : costoTiquete + ta;
 }
 
 export interface TarifaPaquete {
@@ -100,19 +104,22 @@ export interface TarifaPaquete {
 }
 
 /**
- * Compone la tarifa final por persona por paquete a partir de los aportes ya
- * marginados de hotel y servicios, más el impuesto (no comisionable).
+ * Compone la tarifa final por persona por paquete.
+ * PVP = hotel + servicios + vuelo (todos ya marginados).
+ * El impuesto (BNC) se RESTA del PVP para obtener la base comisionable;
+ * no se suma encima (ya está contenido en el aporte del vuelo / hotel).
  */
 export function componerTarifa(args: {
   aporteHotel: number;
   aporteServicios: number;
+  aporteVuelo: number;
   impuesto: number;
 }): TarifaPaquete {
-  const base = args.aporteHotel + args.aporteServicios;
+  const pvp = args.aporteHotel + args.aporteServicios + args.aporteVuelo;
   return {
-    baseComisionable: redondear(base),
+    pvp: redondear(pvp),
     impuesto: redondear(args.impuesto),
-    pvp: redondear(base + args.impuesto),
+    baseComisionable: redondear(pvp - args.impuesto),
   };
 }
 
