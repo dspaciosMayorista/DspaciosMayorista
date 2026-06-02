@@ -637,6 +637,11 @@ export type Database = {
           zona: string | null;
           notas: string | null;
           activo: boolean;
+          proveedor_id: number | null;
+          edad_infante_min: number;
+          edad_infante_max: number;
+          edad_nino_min: number;
+          edad_nino_max: number;
         };
         Insert: {
           id?: number;
@@ -645,6 +650,11 @@ export type Database = {
           zona?: string | null;
           notas?: string | null;
           activo?: boolean;
+          proveedor_id?: number | null;
+          edad_infante_min?: number;
+          edad_infante_max?: number;
+          edad_nino_min?: number;
+          edad_nino_max?: number;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [
@@ -1012,6 +1022,54 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["categorias_habitacion"]["Insert"]>;
         Relationships: [];
       };
+      hotel_categorias: {
+        Row: { hotel_id: number; categoria_id: number };
+        Insert: { hotel_id: number; categoria_id: number };
+        Update: Partial<Database["public"]["Tables"]["hotel_categorias"]["Insert"]>;
+        Relationships: [];
+      };
+      hotel_regimenes: {
+        Row: { hotel_id: number; plan_id: number };
+        Insert: { hotel_id: number; plan_id: number };
+        Update: Partial<Database["public"]["Tables"]["hotel_regimenes"]["Insert"]>;
+        Relationships: [];
+      };
+      hotel_temporadas: {
+        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number };
+        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number };
+        Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
+        Relationships: [];
+      };
+      tarifa_hotel: {
+        Row: {
+          id: number; hotel_id: number; tipo_habitacion: string | null; alimentacion: string | null;
+          temporada: string | null; neto_sencilla: number | null; neto_doble: number | null;
+          neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null;
+          notas: string | null; created_at: string;
+        };
+        Insert: {
+          id?: number; hotel_id: number; tipo_habitacion?: string | null; alimentacion?: string | null;
+          temporada?: string | null; neto_sencilla?: number | null; neto_doble?: number | null;
+          neto_triple?: number | null; neto_multiple?: number | null; neto_nino?: number | null;
+          notas?: string | null; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
+        Relationships: [];
+      };
+      servicios_adicionales: {
+        Row: {
+          id: number; nombre: string; proveedor_id: number | null; destino_id: number | null;
+          tarifa_neta: number; temporada: string | null;
+          liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; activo: boolean; created_at: string;
+        };
+        Insert: {
+          id?: number; nombre: string; proveedor_id?: number | null; destino_id?: number | null;
+          tarifa_neta?: number; temporada?: string | null;
+          liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; activo?: boolean; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {
@@ -1065,6 +1123,7 @@ export type Database = {
         | "nino";
       temporada_tipo: "ALTA" | "MEDIA" | "BAJA";
       paquete_categoria: "bloqueo" | "porcion_terrestre";
+      liquidacion_tipo: "dia" | "noche" | "paquete";
     };
     CompositeTypes: {
       [_ in never]: never;
