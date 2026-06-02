@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { LogoutButton } from "./LogoutButton";
 
 const NAV = [
   { href: "/dashboard/tarifario", label: "Tarifario" },
@@ -31,13 +32,12 @@ export default async function DashboardLayout({
         className="flex flex-col gap-2 border-b border-gray-200 bg-white px-4 py-3 md:hidden"
         style={{ borderTop: `4px solid var(--brand-primary)` }}
       >
-        <a
-          href="/dashboard"
-          className="font-semibold"
-          style={{ color: "var(--brand-primary)" }}
-        >
-          D&apos;spacios Travel
-        </a>
+        <div className="flex items-center justify-between">
+          <a href="/dashboard" className="font-semibold" style={{ color: "var(--brand-primary)" }}>
+            D&apos;spacios Travel
+          </a>
+          <LogoutButton className="text-xs text-gray-500 hover:text-gray-800" />
+        </div>
         <nav className="-mx-1 flex gap-1 overflow-x-auto pb-1">
           {NAV.map((n) => (
             <a
@@ -70,6 +70,9 @@ export default async function DashboardLayout({
             <NavItem key={n.href} href={n.href} label={n.label} />
           ))}
         </nav>
+        <div className="border-t border-gray-100 px-5 py-3">
+          <LogoutButton />
+        </div>
       </aside>
 
       {/* Contenido */}
