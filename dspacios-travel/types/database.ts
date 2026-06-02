@@ -503,12 +503,14 @@ export type Database = {
           fecha_devolucion: string | null;
           fecha_emision: string | null;
           notas: string | null;
+          proveedor_id: number | null;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: number;
           record: string;
+          proveedor_id?: number | null;
           aerolinea?: string | null;
           ruta?: string | null;
           vuelo_ida?: string | null;

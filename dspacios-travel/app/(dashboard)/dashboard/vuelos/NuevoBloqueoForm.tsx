@@ -9,10 +9,13 @@ import { crearBloqueo } from "./actions";
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 
-export function NuevoBloqueoForm() {
+type ProvOpt = { id: number; nombre: string };
+
+export function NuevoBloqueoForm({ proveedores = [] }: { proveedores?: ProvOpt[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  const [proveedorId, setProveedorId] = useState<number | "">("");
 
   const [f, setF] = useState({
     record: "", aerolinea: "", ruta: "",
@@ -28,7 +31,7 @@ export function NuevoBloqueoForm() {
     setErr("");
     start(async () => {
       const r = await crearBloqueo({
-        record: f.record, aerolinea: f.aerolinea, ruta: f.ruta,
+        record: f.record, aerolinea: f.aerolinea, proveedorId: proveedorId === "" ? null : Number(proveedorId), ruta: f.ruta,
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         cuposTotal: Number(f.cuposTotal) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
@@ -46,6 +49,14 @@ export function NuevoBloqueoForm() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
           <div><label className={lbl}>Record (PNR) *</label><Input value={f.record} onChange={set("record")} placeholder="L93FYZ" /></div>
           <div><label className={lbl}>Aerolínea</label><Input value={f.aerolinea} onChange={set("aerolinea")} placeholder="JETSMART" /></div>
+          <div>
+            <label className={lbl}>Proveedor aéreo</label>
+            <select value={proveedorId} onChange={(e) => setProveedorId(Number(e.target.value) || "")}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <option value="">—</option>
+              {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </div>
           <div><label className={lbl}>Ruta</label><Input value={f.ruta} onChange={set("ruta")} placeholder="MDE - CTG - MDE" /></div>
           <div><label className={lbl}>Cupos totales</label><Input type="number" min={0} value={f.cuposTotal} onChange={set("cuposTotal")} /></div>
           <div><label className={lbl}>Tarifa para empaquetar</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>

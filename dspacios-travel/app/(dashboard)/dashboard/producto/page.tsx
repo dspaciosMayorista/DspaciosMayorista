@@ -7,7 +7,7 @@ const SECCIONES = [
   { href: "/dashboard/producto/proveedores", icon: "🤝", label: "Proveedores", desc: "Hoteleros, aéreos y de servicios" },
   { href: "/dashboard/producto/hoteles", icon: "🏨", label: "Hoteles y tarifas", desc: "Habitaciones, temporadas y tarifa neta" },
   { href: "/dashboard/vuelos", icon: "✈️", label: "Aéreo (bloqueos)", desc: "Aerolínea, vuelos, cupos y valor neto" },
-  { href: "/dashboard/producto/servicios", icon: "🧰", label: "Servicios adicionales", desc: "Asistencia, traslados, tours", pronto: true },
+  { href: "/dashboard/producto/servicios", icon: "🧰", label: "Servicios adicionales", desc: "Asistencia, traslados, tours" },
 ];
 
 export default function ProductoPage() {
@@ -24,10 +24,7 @@ export default function ProductoPage() {
             className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-[#1D7C9A] hover:shadow-sm">
             <span className="text-2xl">{s.icon}</span>
             <div>
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-gray-800">{s.label}</span>
-                {s.pronto && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">en construcción</span>}
-              </div>
+              <span className="font-semibold text-gray-800">{s.label}</span>
               <p className="text-xs text-gray-500">{s.desc}</p>
             </div>
           </Link>

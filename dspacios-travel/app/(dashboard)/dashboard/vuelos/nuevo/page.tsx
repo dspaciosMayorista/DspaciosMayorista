@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/server";
 import { NuevoBloqueoForm } from "../NuevoBloqueoForm";
 
 export const dynamic = "force-dynamic";
 
-export default function NuevoBloqueoPage() {
+export default async function NuevoBloqueoPage() {
+  const sb = await createClient();
+  const { data: proveedores } = await sb.from("proveedores").select("id, nombre").eq("tipo", "aereo").order("nombre");
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
       <Link href="/dashboard/vuelos" className="text-sm text-gray-400 hover:text-gray-600">
@@ -14,7 +17,7 @@ export default function NuevoBloqueoPage() {
         Registra un record negociado con la aerolínea y sus cupos. Se crean las
         sillas disponibles para asignarlas a contratos.
       </p>
-      <NuevoBloqueoForm />
+      <NuevoBloqueoForm proveedores={proveedores ?? []} />
     </div>
   );
 }

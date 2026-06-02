@@ -10,6 +10,7 @@ const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 export type BloqueoInput = {
   record: string;
   aerolinea: string;
+  proveedorId: number | null;
   ruta: string;
   vueloIda: string;
   fechaIda: string;
@@ -34,6 +35,7 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
     .insert({
       record: input.record.trim().toUpperCase(),
       aerolinea: oNull(input.aerolinea),
+      proveedor_id: input.proveedorId,
       ruta: oNull(input.ruta),
       vuelo_ida: oNull(input.vueloIda),
       fecha_ida: oNull(input.fechaIda),
