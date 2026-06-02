@@ -269,6 +269,58 @@ export async function crearContrato(
   return { ok: true, numero };
 }
 
+export type VentaEditInput = {
+  cliente: string;
+  clienteDocumento: string;
+  clienteTelefono: string;
+  clienteEmail: string;
+  clienteDireccion: string;
+  destino: string;
+  fechaSalida: string;
+  fechaRegreso: string;
+  plazo: string;
+  tipoAsesor: string;
+  agenciaNombre: string;
+  agenciaAsesor: string;
+  freelanceNombre: string;
+  asesorNombre: string;
+  planNombre: string;
+  observaciones: string;
+};
+
+export async function actualizarVenta(
+  numero: string,
+  input: VentaEditInput
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!input.cliente.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
+  const sb = await createClient();
+  const { error } = await sb
+    .from("ventas")
+    .update({
+      cliente: input.cliente.trim(),
+      cliente_documento: oNull(input.clienteDocumento),
+      cliente_telefono: oNull(input.clienteTelefono),
+      cliente_email: oNull(input.clienteEmail),
+      cliente_direccion: oNull(input.clienteDireccion),
+      destino: oNull(input.destino),
+      fecha_salida: oNull(input.fechaSalida),
+      fecha_regreso: oNull(input.fechaRegreso),
+      plazo: oNull(input.plazo),
+      tipo_asesor: oNull(input.tipoAsesor),
+      agencia_nombre: oNull(input.agenciaNombre),
+      agencia_asesor: oNull(input.agenciaAsesor),
+      freelance_nombre: oNull(input.freelanceNombre),
+      asesor_firma_nombre: oNull(input.asesorNombre),
+      plan_nombre: oNull(input.planNombre),
+      observaciones: oNull(input.observaciones),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("numero_contrato", numero);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/contratos/${numero}`);
+  return { ok: true };
+}
+
 export async function registrarAbono(
   numeroContrato: string,
   valor: number,

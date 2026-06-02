@@ -6,6 +6,7 @@ import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { ShareButtons } from "./ShareButtons";
 import { GestionTabs } from "./GestionTabs";
 import { EstadoVenta } from "./EstadoVenta";
+import { EditarVentaForm } from "./EditarVentaForm";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 
 export const dynamic = "force-dynamic";
@@ -92,6 +93,29 @@ export default async function ContratoDetallePage({
           <div className="text-xl font-bold text-gray-800">{formatCOP(saldo)}</div>
         </div>
       </div>
+
+      {/* Editar datos del contrato */}
+      <EditarVentaForm
+        numero={venta.numero_contrato}
+        inicial={{
+          cliente: venta.cliente ?? "",
+          clienteDocumento: venta.cliente_documento ?? "",
+          clienteTelefono: venta.cliente_telefono ?? "",
+          clienteEmail: venta.cliente_email ?? "",
+          clienteDireccion: venta.cliente_direccion ?? "",
+          destino: venta.destino ?? "",
+          fechaSalida: venta.fecha_salida ?? "",
+          fechaRegreso: venta.fecha_regreso ?? "",
+          plazo: venta.plazo ?? "",
+          tipoAsesor: venta.tipo_asesor ?? "interno",
+          agenciaNombre: venta.agencia_nombre ?? "",
+          agenciaAsesor: venta.agencia_asesor ?? "",
+          freelanceNombre: venta.freelance_nombre ?? "",
+          asesorNombre: venta.asesor_firma_nombre ?? "",
+          planNombre: venta.plan_nombre ?? "",
+          observaciones: venta.observaciones ?? "",
+        }}
+      />
 
       {/* Compartir */}
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
