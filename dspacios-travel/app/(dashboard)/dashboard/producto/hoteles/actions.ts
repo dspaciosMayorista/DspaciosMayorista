@@ -140,6 +140,41 @@ export async function crearTarifa(input: {
   return { ok: true };
 }
 
+export async function actualizarTarifa(
+  id: number,
+  hotelId: number,
+  input: {
+    tipoHabitacion: string;
+    alimentacion: string;
+    temporada: string;
+    netoSencilla: number | null;
+    netoDoble: number | null;
+    netoTriple: number | null;
+    netoMultiple: number | null;
+    netoNino: number | null;
+    netoNino2: number | null;
+  }
+): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("tarifa_hotel")
+    .update({
+      tipo_habitacion: oNull(input.tipoHabitacion),
+      alimentacion: oNull(input.alimentacion),
+      temporada: oNull(input.temporada),
+      neto_sencilla: input.netoSencilla,
+      neto_doble: input.netoDoble,
+      neto_triple: input.netoTriple,
+      neto_multiple: input.netoMultiple,
+      neto_nino: input.netoNino,
+      neto_nino2: input.netoNino2,
+    })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true };
+}
+
 export async function eliminarTarifa(id: number, hotelId: number): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("tarifa_hotel").delete().eq("id", id);
