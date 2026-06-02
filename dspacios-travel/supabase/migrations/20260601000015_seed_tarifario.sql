@@ -1,6 +1,6 @@
 -- Migración 015 (seed): Importación del tarifario real -> paquetes
 -- 583 tarifas (Cartagena/Santa Marta/San Andrés, 59 hoteles).
--- Idempotente: cada paquete se marca con notas 'imp:<hash>' y no se duplica.
+-- RE-EJECUTABLE: limpia la importación previa (notas 'imp:%') y vuelve a cargar.
 
 create temp table _imp (
   destino text, hotel text, tipo text, plan text, temp text,
@@ -595,6 +595,12 @@ insert into _imp (destino,hotel,tipo,plan,temp,sencilla,doble,triple,multiple,ni
 alter table _imp add column k text;
 update _imp set k = md5(destino||'|'||hotel||'|'||tipo||'|'||plan||'|'||temp);
 
+-- Quitar combinaciones repetidas (mismo hotel/tipo/plan/temporada)
+delete from _imp a using _imp b where a.k = b.k and a.ctid > b.ctid;
+
+-- Limpiar importación previa para re-ejecutar sin duplicar (cascade borra hoteles/precios)
+delete from public.paquetes where notas like 'imp:%';
+
 insert into public.destinos (nombre, codigo_iata)
 values
   ('CARTAGENA','CTG'),
@@ -608,13 +614,11 @@ select 'bloqueo'::paquete_categoria, d.id,
        i.plan, 3, true,
        case when i.destino = 'SAN ANDRÉS' then 599000 else 0 end,
        'imp:'||i.k
-from _imp i join public.destinos d on d.nombre = i.destino
-where not exists (select 1 from public.paquetes p where p.notas = 'imp:'||i.k);
+from _imp i join public.destinos d on d.nombre = i.destino;
 
 insert into public.paquete_hoteles (paquete_id, nombre, ciudad, alimentacion, acomodacion_detalle, noches, orden)
 select p.id, i.hotel, i.destino, i.plan, i.tipo, 3, 0
-from _imp i join public.paquetes p on p.notas = 'imp:'||i.k
-where not exists (select 1 from public.paquete_hoteles ph where ph.paquete_id = p.id);
+from _imp i join public.paquetes p on p.notas = 'imp:'||i.k;
 
 insert into public.paquete_precios (paquete_id, acomodacion, precio)
 select p.id, v.acom::acomodacion_tipo, v.precio
@@ -624,5 +628,4 @@ cross join lateral (values
   ('sencilla', i.sencilla), ('doble', i.doble), ('triple', i.triple),
   ('multiple', i.multiple), ('nino', i.nino)
 ) as v(acom, precio)
-where v.precio is not null and v.precio > 0
-  and not exists (select 1 from public.paquete_precios pp where pp.paquete_id = p.id and pp.acomodacion = v.acom::acomodacion_tipo);
+where v.precio is not null and v.precio > 0;
