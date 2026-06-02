@@ -1119,8 +1119,8 @@ export type Database = {
         Relationships: [];
       };
       armado_hoteles: {
-        Row: { id: number; paquete_id: number; hotel_id: number };
-        Insert: { id?: number; paquete_id: number; hotel_id: number };
+        Row: { id: number; paquete_id: number; hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
+        Insert: { id?: number; paquete_id: number; hotel_id: number; categorias?: string[] | null; regimenes?: string[] | null };
         Update: Partial<Database["public"]["Tables"]["armado_hoteles"]["Insert"]>;
         Relationships: [];
       };

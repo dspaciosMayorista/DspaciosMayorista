@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { ConfigForm } from "../ConfigForm";
-import { setVuelo, setTodosVuelos, setHotel, setServicio, generarTarifario } from "../actions";
+import {
+  setVuelo, setTodosVuelos, setHotel, setServicio, generarTarifario,
+  getTarifasHotel, setHotelFiltros, type TarifaHotelPreview,
+} from "../actions";
 
 type Opt = { id: number; nombre: string };
 type Vuelo = {
@@ -16,6 +19,7 @@ type Vuelo = {
 type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null };
 type Servicio = { id: number; nombre: string; tarifa_neta: number; liquidacion: string; destino_id: number | null };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
+type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
 type Resultado = {
   id: number; modulo: string; bloqueo_label: string | null; hotel_nombre: string | null;
   categoria: string | null; regimen: string | null; acomodacion: string | null; noches: number | null;
@@ -36,7 +40,7 @@ export function ArmadoClient(props: {
   hotelesDisp: Hotel[];
   serviciosDisp: Servicio[];
   selVuelos: SelVuelo[];
-  selHoteles: number[];
+  selHoteles: SelHotel[];
   selServicios: number[];
   resultado: Resultado[];
 }) {
@@ -46,7 +50,7 @@ export function ArmadoClient(props: {
   const [msg, setMsg] = useState("");
 
   const vueloSel = new Map(props.selVuelos.map((v) => [v.bloqueo_id, v]));
-  const hotelSel = new Set(props.selHoteles);
+  const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
   const servSel = new Set(props.selServicios);
 
   function refrescar() {
@@ -131,17 +135,12 @@ export function ArmadoClient(props: {
         ) : (
           <ul className="divide-y divide-gray-100">
             {props.hotelesDisp.map((h) => (
-              <CheckRow
+              <HotelRow
                 key={h.id}
-                checked={hotelSel.has(h.id)}
-                title={h.nombre}
-                subtitle={h.zona ?? undefined}
-                onChange={(checked) =>
-                  start(async () => {
-                    await setHotel(props.paqueteId, h.id, checked);
-                    refrescar();
-                  })
-                }
+                hotel={h}
+                sel={hotelSel.get(h.id)}
+                paqueteId={props.paqueteId}
+                onDone={refrescar}
               />
             ))}
           </ul>
@@ -263,6 +262,207 @@ function VueloRow({
         </div>
       </div>
     </li>
+  );
+}
+
+function HotelRow({
+  hotel, sel, paqueteId, onDone,
+}: {
+  hotel: Hotel; sel: SelHotel | undefined; paqueteId: number; onDone: () => void;
+}) {
+  const [, start] = useTransition();
+  const [openModal, setOpenModal] = useState(false);
+  const checked = !!sel;
+
+  const resumen = !checked
+    ? null
+    : sel!.categorias?.length || sel!.regimenes?.length
+      ? `${sel!.categorias?.length ?? "todas las"} categorías · ${sel!.regimenes?.length ?? "todos los"} regímenes`
+      : "todas las categorías y regímenes";
+
+  return (
+    <li className="py-2.5">
+      <div className="flex items-center gap-3">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) =>
+            start(async () => {
+              await setHotel(paqueteId, hotel.id, e.target.checked);
+              onDone();
+            })
+          }
+        />
+        <div className="flex-1">
+          <button
+            type="button"
+            onClick={() => setOpenModal(true)}
+            className="text-left text-sm font-medium text-[var(--brand-primary)] hover:underline"
+          >
+            {hotel.nombre}
+          </button>
+          <p className="text-xs text-gray-500">
+            {hotel.zona ? `${hotel.zona} · ` : ""}
+            {checked ? resumen : "clic en el nombre para ver tarifas y elegir categorías/regímenes"}
+          </p>
+        </div>
+      </div>
+      {openModal && (
+        <HotelModal
+          hotel={hotel}
+          sel={sel}
+          paqueteId={paqueteId}
+          onClose={() => setOpenModal(false)}
+          onDone={onDone}
+        />
+      )}
+    </li>
+  );
+}
+
+function HotelModal({
+  hotel, sel, paqueteId, onClose, onDone,
+}: {
+  hotel: Hotel; sel: SelHotel | undefined; paqueteId: number; onClose: () => void; onDone: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [cats, setCats] = useState<string[]>([]);
+  const [regs, setRegs] = useState<string[]>([]);
+  const [tarifas, setTarifas] = useState<TarifaHotelPreview[]>([]);
+  const [selCats, setSelCats] = useState<Set<string>>(new Set());
+  const [selRegs, setSelRegs] = useState<Set<string>>(new Set());
+  const [saving, start] = useTransition();
+
+  useEffect(() => {
+    void (async () => {
+      const r = await getTarifasHotel(hotel.id);
+      setCats(r.categorias);
+      setRegs(r.regimenes);
+      setTarifas(r.tarifas);
+      // Selección inicial: lo guardado, o todo si era "todas" (null)
+      setSelCats(new Set(sel?.categorias ?? r.categorias));
+      setSelRegs(new Set(sel?.regimenes ?? r.regimenes));
+      setLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hotel.id]);
+
+  function toggle(set: Set<string>, val: string, setter: (s: Set<string>) => void) {
+    const n = new Set(set);
+    if (n.has(val)) n.delete(val);
+    else n.add(val);
+    setter(n);
+  }
+
+  function guardar() {
+    // Si están todas seleccionadas → guardar como "todas" (array vacío)
+    const catsArr = selCats.size === cats.length ? [] : [...selCats];
+    const regsArr = selRegs.size === regs.length ? [] : [...selRegs];
+    start(async () => {
+      await setHotelFiltros(paqueteId, hotel.id, catsArr, regsArr);
+      onDone();
+      onClose();
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-gray-900">{hotel.nombre}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700">✕</button>
+        </div>
+
+        {loading ? (
+          <p className="py-8 text-center text-sm text-gray-400">Cargando tarifas…</p>
+        ) : !tarifas.length ? (
+          <p className="py-8 text-center text-sm text-gray-400">Este hotel no tiene tarifas cargadas en Producto.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <PickBox
+                titulo="Categorías de habitación"
+                items={cats}
+                sel={selCats}
+                onToggle={(v) => toggle(selCats, v, setSelCats)}
+                onAll={() => setSelCats(new Set(selCats.size === cats.length ? [] : cats))}
+                allChecked={selCats.size === cats.length}
+              />
+              <PickBox
+                titulo="Regímenes de alimentación"
+                items={regs}
+                sel={selRegs}
+                onToggle={(v) => toggle(selRegs, v, setSelRegs)}
+                onAll={() => setSelRegs(new Set(selRegs.size === regs.length ? [] : regs))}
+                allChecked={selRegs.size === regs.length}
+              />
+            </div>
+
+            <p className="mb-1 mt-4 text-xs font-medium text-gray-500">Tarifas netas cargadas (referencia interna)</p>
+            <div className="overflow-x-auto rounded-lg border border-gray-100">
+              <table className="w-full text-xs">
+                <thead className="text-gray-500">
+                  <tr className="border-b border-gray-100">
+                    <th className="px-2 py-1 text-left">Categoría</th>
+                    <th className="px-2 py-1 text-left">Régimen</th>
+                    <th className="px-2 py-1 text-left">Temp.</th>
+                    <th className="px-2 py-1 text-right">Doble</th>
+                    <th className="px-2 py-1 text-right">Triple</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tarifas.map((t, i) => (
+                    <tr key={i} className="border-b border-gray-50">
+                      <td className="px-2 py-1">{t.categoria}</td>
+                      <td className="px-2 py-1">{t.regimen}</td>
+                      <td className="px-2 py-1">{t.temporada}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
+                      <td className="px-2 py-1 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={onClose}>Cancelar</Button>
+              <Button onClick={guardar} disabled={saving} style={{ backgroundColor: "var(--brand-primary)" }}>
+                {saving ? "Guardando…" : "Guardar y agregar hotel"}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PickBox({
+  titulo, items, sel, onToggle, onAll, allChecked,
+}: {
+  titulo: string; items: string[]; sel: Set<string>; onToggle: (v: string) => void; onAll: () => void; allChecked: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 p-3">
+      <label className="flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
+        <input type="checkbox" checked={allChecked} onChange={onAll} />
+        {titulo} (todas)
+      </label>
+      <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+        {items.map((it) => (
+          <li key={it}>
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              <input type="checkbox" checked={sel.has(it)} onChange={() => onToggle(it)} />
+              {it}
+            </label>
+          </li>
+        ))}
+        {!items.length && <li className="text-xs text-gray-400">Sin datos.</li>}
+      </ul>
+    </div>
   );
 }
 

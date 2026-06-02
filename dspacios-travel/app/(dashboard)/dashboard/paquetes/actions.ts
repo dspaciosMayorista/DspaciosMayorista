@@ -154,6 +154,64 @@ export async function setHotel(paqueteId: number, hotelId: number, checked: bool
   return { ok: true };
 }
 
+// ── Tarifas de un hotel (para la ventana de selección) ─────────────────────
+export type TarifaHotelPreview = {
+  categoria: string;
+  regimen: string;
+  temporada: string;
+  neto_sencilla: number | null;
+  neto_doble: number | null;
+  neto_triple: number | null;
+  neto_multiple: number | null;
+  neto_nino: number | null;
+};
+export async function getTarifasHotel(hotelId: number): Promise<{
+  categorias: string[];
+  regimenes: string[];
+  tarifas: TarifaHotelPreview[];
+}> {
+  const sb = await createClient();
+  const { data } = await sb
+    .from("tarifa_hotel")
+    .select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino")
+    .eq("hotel_id", hotelId);
+  const tarifas: TarifaHotelPreview[] = (data ?? []).map((r) => ({
+    categoria: r.tipo_habitacion ?? "",
+    regimen: r.alimentacion ?? "",
+    temporada: r.temporada ?? "",
+    neto_sencilla: r.neto_sencilla,
+    neto_doble: r.neto_doble,
+    neto_triple: r.neto_triple,
+    neto_multiple: r.neto_multiple,
+    neto_nino: r.neto_nino,
+  }));
+  const categorias = [...new Set(tarifas.map((t) => t.categoria).filter(Boolean))].sort();
+  const regimenes = [...new Set(tarifas.map((t) => t.regimen).filter(Boolean))].sort();
+  return { categorias, regimenes, tarifas };
+}
+
+// Guarda el hotel + su filtro de categorías/regímenes (null/vacío = todas).
+export async function setHotelFiltros(
+  paqueteId: number,
+  hotelId: number,
+  categorias: string[],
+  regimenes: string[]
+): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("armado_hoteles").upsert(
+    {
+      paquete_id: paqueteId,
+      hotel_id: hotelId,
+      categorias: categorias.length ? categorias : null,
+      regimenes: regimenes.length ? regimenes : null,
+    },
+    { onConflict: "paquete_id,hotel_id" }
+  );
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  return { ok: true };
+}
+
 // ── Adición de servicio (con check). Siempre con el mk del paquete ─────────
 export async function setServicio(paqueteId: number, servicioId: number, checked: boolean): Promise<Result> {
   const sb = await createClient();
@@ -192,7 +250,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, hoteles(nombre)")
+      .select("hotel_id, categorias, regimenes, hoteles(nombre)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
@@ -261,6 +319,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     const aporteServ = aporteServicios(numNoches);
     for (const h of hoteles) {
       const hotelNombre = (h.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
+      const filtroCat = (h.categorias as string[] | null) ?? null;
+      const filtroReg = (h.regimenes as string[] | null) ?? null;
       const temporadas = temporadasPorHotel.get(h.hotel_id) ?? [];
       const tarifas = tarifasPorHotel.get(h.hotel_id) ?? [];
       // Agrupa por (categoría, régimen) -> (temporada -> fila de tarifa)
@@ -274,6 +334,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       }
       for (const [key, tempMap] of combos) {
         const [categoria, regimen] = key.split("|||");
+        // Filtro de la ventana del hotel (null/vacío = todas)
+        if (filtroCat && filtroCat.length && !filtroCat.includes(categoria)) continue;
+        if (filtroReg && filtroReg.length && !filtroReg.includes(regimen)) continue;
         for (const acom of ACOMODACIONES) {
           const col = COL_NETO[acom];
           const netoPorTemporada: Record<string, number | null> = {};

@@ -54,7 +54,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     qHoteles,
     qServicios,
     sb.from("armado_vuelos").select("bloqueo_id, aplica_mk, ta").eq("paquete_id", paqueteId),
-    sb.from("armado_hoteles").select("hotel_id").eq("paquete_id", paqueteId),
+    sb.from("armado_hoteles").select("hotel_id, categorias, regimenes").eq("paquete_id", paqueteId),
     sb.from("armado_servicios").select("servicio_id").eq("paquete_id", paqueteId),
   ]);
 
@@ -112,7 +112,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         hotelesDisp={hotelesDisp ?? []}
         serviciosDisp={serviciosDisp ?? []}
         selVuelos={selVuelos ?? []}
-        selHoteles={(selHoteles ?? []).map((s) => s.hotel_id)}
+        selHoteles={selHoteles ?? []}
         selServicios={(selServicios ?? []).map((s) => s.servicio_id)}
         resultado={resultado as unknown as Parameters<typeof ArmadoClient>[0]["resultado"]}
       />
