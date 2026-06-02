@@ -504,6 +504,7 @@ export type Database = {
           fecha_emision: string | null;
           notas: string | null;
           proveedor_id: number | null;
+          destino_id: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -511,6 +512,7 @@ export type Database = {
           id?: number;
           record: string;
           proveedor_id?: number | null;
+          destino_id?: number | null;
           aerolinea?: string | null;
           ruta?: string | null;
           vuelo_ida?: string | null;
@@ -1087,6 +1089,114 @@ export type Database = {
         };
         Relationships: [];
       };
+      armado_paquetes: {
+        Row: {
+          id: number;
+          nombre: string;
+          activo: boolean;
+          destino_id: number | null;
+          fecha_compra_inicio: string | null;
+          fecha_compra_fin: string | null;
+          fecha_viaje_inicio: string | null;
+          fecha_viaje_fin: string | null;
+          pct_mk: number;
+          impuesto_tipo: Database["public"]["Enums"]["impuesto_tipo"];
+          impuesto_fijo: number;
+          imagen_url: string | null;
+          notas: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          activo?: boolean;
+          destino_id?: number | null;
+          fecha_compra_inicio?: string | null;
+          fecha_compra_fin?: string | null;
+          fecha_viaje_inicio?: string | null;
+          fecha_viaje_fin?: string | null;
+          pct_mk?: number;
+          impuesto_tipo?: Database["public"]["Enums"]["impuesto_tipo"];
+          impuesto_fijo?: number;
+          imagen_url?: string | null;
+          notas?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
+        Relationships: [];
+      };
+      armado_vuelos: {
+        Row: { paquete_id: number; bloqueo_id: number };
+        Insert: { paquete_id: number; bloqueo_id: number };
+        Update: Partial<Database["public"]["Tables"]["armado_vuelos"]["Insert"]>;
+        Relationships: [];
+      };
+      armado_hoteles: {
+        Row: { id: number; paquete_id: number; hotel_id: number; aplica_mk: boolean; ta: number };
+        Insert: { id?: number; paquete_id: number; hotel_id: number; aplica_mk?: boolean; ta?: number };
+        Update: Partial<Database["public"]["Tables"]["armado_hoteles"]["Insert"]>;
+        Relationships: [];
+      };
+      armado_servicios: {
+        Row: { id: number; paquete_id: number; servicio_id: number; aplica_mk: boolean; ta: number };
+        Insert: { id?: number; paquete_id: number; servicio_id: number; aplica_mk?: boolean; ta?: number };
+        Update: Partial<Database["public"]["Tables"]["armado_servicios"]["Insert"]>;
+        Relationships: [];
+      };
+      tarifario_resultado: {
+        Row: {
+          id: number;
+          paquete_id: number;
+          paquete_nombre: string | null;
+          modulo: Database["public"]["Enums"]["tarifario_modulo"];
+          bloqueo_id: number | null;
+          bloqueo_label: string | null;
+          hotel_id: number | null;
+          hotel_nombre: string | null;
+          servicio_id: number | null;
+          servicio_nombre: string | null;
+          destino_id: number | null;
+          destino_nombre: string | null;
+          categoria: string | null;
+          regimen: string | null;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"] | null;
+          noches: number | null;
+          fecha_ida: string | null;
+          fecha_regreso: string | null;
+          base_comisionable: number;
+          impuesto: number;
+          precio_pvp: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          paquete_id: number;
+          paquete_nombre?: string | null;
+          modulo: Database["public"]["Enums"]["tarifario_modulo"];
+          bloqueo_id?: number | null;
+          bloqueo_label?: string | null;
+          hotel_id?: number | null;
+          hotel_nombre?: string | null;
+          servicio_id?: number | null;
+          servicio_nombre?: string | null;
+          destino_id?: number | null;
+          destino_nombre?: string | null;
+          categoria?: string | null;
+          regimen?: string | null;
+          acomodacion?: Database["public"]["Enums"]["acomodacion_tipo"] | null;
+          noches?: number | null;
+          fecha_ida?: string | null;
+          fecha_regreso?: string | null;
+          base_comisionable?: number;
+          impuesto?: number;
+          precio_pvp?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["tarifario_resultado"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Functions: {
       mi_rol: {
@@ -1126,6 +1236,8 @@ export type Database = {
       temporada_tipo: "ALTA" | "MEDIA" | "BAJA";
       paquete_categoria: "bloqueo" | "porcion_terrestre";
       liquidacion_tipo: "dia" | "noche" | "paquete";
+      impuesto_tipo: "tiquete" | "fijo";
+      tarifario_modulo: "bloqueo" | "porcion_terrestre" | "servicios";
     };
     CompositeTypes: {
       [_ in never]: never;

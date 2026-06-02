@@ -1,0 +1,134 @@
+// Motor de cálculo del armado de paquetes (funciones puras y testeables).
+//
+// Flujo de negocio:  PRODUCTO (costos netos) → PAQUETES (margen) → TARIFARIO.
+//
+// Tarifa por persona por paquete:
+//   aporte_hotel      = aplica_mk ? costo_hotel / (1 - %mk) : costo_hotel + TA
+//   aporte_servicio   = aplica_mk ? costo_serv  / (1 - %mk) : costo_serv  + TA
+//   base_comisionable = aporte_hotel + Σ aporte_servicio
+//   impuesto          = valor del tiquete (ciclo aéreo)  ó  valor fijo
+//   PVP               = base_comisionable + impuesto        (⇒ PVP − IMP = base)
+//
+// El hotel se liquida NOCHE POR NOCHE: si la estadía cruza dos temporadas del
+// hotel, cada noche usa la tarifa de la temporada en que cae esa fecha.
+
+const MS_DIA = 86_400_000;
+
+export interface TemporadaRango {
+  nombre: string;
+  fecha_inicio: string | null;
+  fecha_fin: string | null;
+}
+
+/** Redondeo a peso entero (COP). */
+export function redondear(n: number): number {
+  return Math.round(n);
+}
+
+/** Noches entre dos fechas ISO (yyyy-mm-dd). */
+export function noches(fechaIda: string, fechaRegreso: string): number {
+  const a = new Date(`${fechaIda}T00:00:00`).getTime();
+  const b = new Date(`${fechaRegreso}T00:00:00`).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.max(0, Math.round((b - a) / MS_DIA));
+}
+
+/** Devuelve el nombre de la temporada del hotel en la que cae una fecha. */
+export function temporadaParaFecha(
+  fecha: Date,
+  temporadas: TemporadaRango[]
+): string | null {
+  const t0 = fecha.getTime();
+  for (const t of temporadas) {
+    if (!t.fecha_inicio || !t.fecha_fin) continue;
+    const i = new Date(`${t.fecha_inicio}T00:00:00`).getTime();
+    const f = new Date(`${t.fecha_fin}T00:00:00`).getTime();
+    if (t0 >= i && t0 <= f) return t.nombre;
+  }
+  return null;
+}
+
+/**
+ * Liquida el costo neto del hotel para una estadía, sumando noche por noche.
+ * `netoPorTemporada` mapea nombre-de-temporada → neto de la acomodación elegida.
+ * Devuelve `null` si alguna noche no tiene temporada o no tiene tarifa cargada
+ * (tarifa incompleta ⇒ esa combinación no se publica).
+ */
+export function liquidarHotelNoches(args: {
+  fechaIda: string;
+  numNoches: number;
+  temporadas: TemporadaRango[];
+  netoPorTemporada: Record<string, number | null | undefined>;
+}): number | null {
+  if (args.numNoches <= 0) return null;
+  const base = new Date(`${args.fechaIda}T00:00:00`).getTime();
+  if (Number.isNaN(base)) return null;
+  let total = 0;
+  for (let n = 0; n < args.numNoches; n++) {
+    const d = new Date(base + n * MS_DIA);
+    const temp = temporadaParaFecha(d, args.temporadas);
+    if (!temp) return null;
+    const neto = args.netoPorTemporada[temp];
+    if (neto == null) return null;
+    total += neto;
+  }
+  return total;
+}
+
+/**
+ * Aporte al precio de venta de un componente (hotel o servicio).
+ * Si aplica el margen: costo / (1 - %mk). Si no: costo + TA (valor fijo).
+ * `pctMk` es fracción (0.20 = 20 %).
+ */
+export function aporteVenta(
+  costo: number,
+  aplicaMk: boolean,
+  pctMk: number,
+  ta: number
+): number {
+  if (aplicaMk) {
+    if (pctMk >= 1) return 0; // margen inválido (no se puede dividir por ≤ 0)
+    return costo / (1 - pctMk);
+  }
+  return costo + ta;
+}
+
+export interface TarifaPaquete {
+  baseComisionable: number;
+  impuesto: number;
+  pvp: number;
+}
+
+/**
+ * Compone la tarifa final por persona por paquete a partir de los aportes ya
+ * marginados de hotel y servicios, más el impuesto (no comisionable).
+ */
+export function componerTarifa(args: {
+  aporteHotel: number;
+  aporteServicios: number;
+  impuesto: number;
+}): TarifaPaquete {
+  const base = args.aporteHotel + args.aporteServicios;
+  return {
+    baseComisionable: redondear(base),
+    impuesto: redondear(args.impuesto),
+    pvp: redondear(base + args.impuesto),
+  };
+}
+
+/** Liquida un servicio según su modo: por noche, por día o por paquete. */
+export function costoServicio(
+  tarifaNeta: number,
+  liquidacion: 'dia' | 'noche' | 'paquete',
+  numNoches: number
+): number {
+  switch (liquidacion) {
+    case 'noche':
+      return tarifaNeta * numNoches;
+    case 'dia':
+      return tarifaNeta * (numNoches + 1); // n noches = n+1 días
+    case 'paquete':
+    default:
+      return tarifaNeta;
+  }
+}
