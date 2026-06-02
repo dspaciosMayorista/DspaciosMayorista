@@ -73,6 +73,8 @@ export type Database = {
           tipo: string | null;
           ciudad: string | null;
           contacto: string | null;
+          razon_social: string | null;
+          datos_pago: string | null;
           aplica_retencion: boolean;
           pct_retencion: number;
           created_at: string;
@@ -84,6 +86,8 @@ export type Database = {
           tipo?: string | null;
           ciudad?: string | null;
           contacto?: string | null;
+          razon_social?: string | null;
+          datos_pago?: string | null;
           aplica_retencion?: boolean;
           pct_retencion?: number;
           created_at?: string;

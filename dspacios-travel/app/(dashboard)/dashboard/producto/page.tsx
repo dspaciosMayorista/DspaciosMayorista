@@ -1,18 +1,36 @@
+import Link from "next/link";
+
 export const dynamic = "force-dynamic";
+
+const SECCIONES = [
+  { href: "/dashboard/producto/proveedores", icon: "🤝", label: "Proveedores", desc: "Hoteleros, aéreos y de servicios" },
+  { href: "/dashboard/producto/hoteles", icon: "🏨", label: "Hoteles y tarifas", desc: "Habitaciones, temporadas y tarifa neta", pronto: true },
+  { href: "/dashboard/vuelos", icon: "✈️", label: "Aéreo (bloqueos)", desc: "Aerolínea, vuelos, cupos y valor neto" },
+  { href: "/dashboard/producto/servicios", icon: "🧰", label: "Servicios adicionales", desc: "Asistencia, traslados, tours", pronto: true },
+];
 
 export default function ProductoPage() {
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
       <h1 className="text-2xl font-semibold text-gray-900">Producto</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Módulo para montar el producto: hoteles, temporadas y tarifas.
+        Tarifas negociadas (solo costo neto que pagas al proveedor). El margen se define luego en Paquetes.
       </p>
 
-      <div className="mt-8 rounded-2xl border-2 border-dashed border-gray-200 p-10 text-center text-gray-400">
-        <p className="text-lg">Módulo en construcción</p>
-        <p className="mt-1 text-sm">
-          Lo estamos armando a la medida según tu flujo de trabajo.
-        </p>
+      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {SECCIONES.map((s) => (
+          <Link key={s.href} href={s.href}
+            className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-[#1D7C9A] hover:shadow-sm">
+            <span className="text-2xl">{s.icon}</span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-gray-800">{s.label}</span>
+                {s.pronto && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">en construcción</span>}
+              </div>
+              <p className="text-xs text-gray-500">{s.desc}</p>
+            </div>
+          </Link>
+        ))}
       </div>
     </div>
   );
