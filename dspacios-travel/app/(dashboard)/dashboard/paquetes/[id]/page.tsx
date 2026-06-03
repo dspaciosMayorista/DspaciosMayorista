@@ -35,7 +35,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
 
   let qServicios = sb
     .from("servicios_adicionales")
-    .select("id, nombre, precio_persona, precio_grupo, destino_id")
+    .select("id, nombre, precio_persona, destino_id, servicio_tarifa_pax(pax_desde)")
     .eq("activo", true)
     .order("nombre");
   if (destinoId) qServicios = qServicios.or(`destino_id.eq.${destinoId},destino_id.is.null`);
@@ -112,7 +112,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         tieneDestino={!!destinoId}
         vuelosDisp={vuelosDisp ?? []}
         hotelesDisp={hotelesDisp ?? []}
-        serviciosDisp={serviciosDisp ?? []}
+        serviciosDisp={(serviciosDisp ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["serviciosDisp"]}
         selVuelos={selVuelos ?? []}
         selHoteles={selHoteles ?? []}
         selServicios={selServicios ?? []}

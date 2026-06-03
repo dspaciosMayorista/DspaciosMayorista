@@ -7,13 +7,14 @@ type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
 export type Liquidacion = "dia" | "noche" | "paquete";
+export type TierPax = { paxDesde: number; paxHasta: number; precio: number };
 
 export type ServicioInput = {
   nombre: string;
   proveedorId: number | null;
   destinoId: number | null;
   precioPersona: number | null;
-  precioGrupo: number | null;
+  grupoTiers: TierPax[];          // rangos de pax para cobro POR GRUPO
   temporada: string;
   rangosEdad?: number[];
 };
@@ -24,17 +25,36 @@ function servicioToRow(input: ServicioInput) {
     proveedor_id: input.proveedorId,
     destino_id: input.destinoId,
     precio_persona: input.precioPersona,
-    precio_grupo: input.precioGrupo,
-    tarifa_neta: input.precioPersona ?? input.precioGrupo ?? 0,
+    tarifa_neta: input.precioPersona ?? 0,
     temporada: oNull(input.temporada),
     rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
   };
 }
 
+async function guardarGrupoTiers(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  servicioId: number,
+  tiers: TierPax[]
+) {
+  await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", servicioId);
+  const validos = tiers.filter((t) => Number(t.precio) > 0);
+  if (validos.length) {
+    await sb.from("servicio_tarifa_pax").insert(
+      validos.map((t) => ({
+        servicio_id: servicioId,
+        pax_desde: Number(t.paxDesde) || 1,
+        pax_hasta: Number(t.paxHasta) || Number(t.paxDesde) || 1,
+        precio: Number(t.precio) || 0,
+      }))
+    );
+  }
+}
+
 export async function crearServicio(input: ServicioInput): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb.from("servicios_adicionales").insert({ ...servicioToRow(input), activo: true });
-  if (error) return { ok: false, error: error.message };
+  const { data, error } = await sb.from("servicios_adicionales").insert({ ...servicioToRow(input), activo: true }).select("id").single();
+  if (error || !data) return { ok: false, error: error?.message ?? "No se insertó" };
+  await guardarGrupoTiers(sb, data.id, input.grupoTiers);
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }
@@ -43,6 +63,7 @@ export async function actualizarServicio(id: number, input: ServicioInput): Prom
   const sb = await createClient();
   const { error } = await sb.from("servicios_adicionales").update(servicioToRow(input)).eq("id", id);
   if (error) return { ok: false, error: error.message };
+  await guardarGrupoTiers(sb, id, input.grupoTiers);
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }

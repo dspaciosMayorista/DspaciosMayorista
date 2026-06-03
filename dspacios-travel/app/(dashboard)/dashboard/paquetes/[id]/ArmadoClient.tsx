@@ -17,7 +17,7 @@ type Vuelo = {
   fecha_ida: string | null; fecha_regreso: string | null; tarifa_para_empaquetar: number; destino_id: number | null;
 };
 type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null };
-type Servicio = { id: number; nombre: string; precio_persona: number | null; precio_grupo: number | null; destino_id: number | null };
+type Servicio = { id: number; nombre: string; precio_persona: number | null; destino_id: number | null; servicio_tarifa_pax: { pax_desde: number }[] };
 type SelServicio = { servicio_id: number; modo: string };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
 type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
@@ -477,7 +477,7 @@ function ServicioRow({
   const [, start] = useTransition();
   const checked = modo !== undefined;
   const tienePersona = s.precio_persona != null;
-  const tieneGrupo = s.precio_grupo != null;
+  const tieneGrupo = (s.servicio_tarifa_pax ?? []).length > 0;
 
   function save(nextChecked: boolean, nextModo: "persona" | "grupo") {
     start(async () => {
@@ -500,7 +500,7 @@ function ServicioRow({
           <p className="text-xs text-gray-500">
             {tienePersona ? `Persona: ${formatCOP(s.precio_persona!)}` : ""}
             {tienePersona && tieneGrupo ? " · " : ""}
-            {tieneGrupo ? `Grupo: ${formatCOP(s.precio_grupo!)}` : ""}
+            {tieneGrupo ? "Grupo: por rangos de pax" : ""}
           </p>
           {checked && (
             <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-gray-50 p-2 text-xs">

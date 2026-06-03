@@ -264,9 +264,24 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, modo, servicios_adicionales(nombre, precio_persona, precio_grupo)")
+      .select("servicio_id, modo, servicios_adicionales(nombre, precio_persona)")
       .eq("paquete_id", paqueteId),
   ]);
+
+  // Rangos de grupo de los servicios seleccionados
+  const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
+  const gruposPorServicio = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+  if (servicioIds.length) {
+    const { data: gr } = await sb
+      .from("servicio_tarifa_pax")
+      .select("servicio_id, pax_desde, pax_hasta, precio")
+      .in("servicio_id", servicioIds);
+    for (const g of gr ?? []) {
+      const arr = gruposPorServicio.get(g.servicio_id) ?? [];
+      arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
+      gruposPorServicio.set(g.servicio_id, arr);
+    }
+  }
 
   const hoteles = hotelesSel ?? [];
   const servicios = serviciosSel ?? [];
@@ -430,30 +445,34 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     const numNoches = Number(pq.noches) || 3;
     filasHoteles(pq.fecha_viaje_inicio, numNoches, 0, Number(pq.impuesto_fijo) || 0, "porcion_terrestre", null, null, pq.fecha_viaje_fin);
   } else if (tipo === "servicios") {
-    // MÓDULO SERVICIOS: una fila por servicio, según el modo elegido en el paquete
+    // MÓDULO SERVICIOS: según el modo elegido en el paquete.
+    //  - persona: una fila con el precio por persona.
+    //  - grupo:   una fila por rango de pax (precio fijo del grupo).
     for (const s of servicios) {
-      const srv = s.servicios_adicionales as unknown as
-        | { nombre: string; precio_persona: number | null; precio_grupo: number | null }
-        | null;
+      const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null } | null;
       if (!srv) continue;
       const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-      const base = modo === "grupo" ? srv.precio_grupo : srv.precio_persona;
-      if (base == null) continue;
-      const pvp = Math.round(marcar(Number(base) || 0, pctMk));
-      filas.push({
+      const comun = {
         paquete_id: paqueteId,
         paquete_nombre: paqueteNombre,
         paquete_activo: paqueteActivo,
-        modulo: "servicios",
+        modulo: "servicios" as const,
         servicio_id: s.servicio_id,
         servicio_nombre: srv.nombre,
         destino_id: paqueteDestinoId,
         destino_nombre: destinoNombre,
         tipo_tarifa: modo,
-        base_comisionable: pvp,
         impuesto: 0,
-        precio_pvp: pvp,
-      });
+      };
+      if (modo === "grupo") {
+        for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
+          const pvp = Math.round(marcar(Number(g.precio) || 0, pctMk));
+          filas.push({ ...comun, pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, base_comisionable: pvp, precio_pvp: pvp });
+        }
+      } else if (srv.precio_persona != null) {
+        const pvp = Math.round(marcar(Number(srv.precio_persona) || 0, pctMk));
+        filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp });
+      }
     }
   }
 
