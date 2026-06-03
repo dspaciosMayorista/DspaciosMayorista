@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { registrarAbono } from "../actions";
 
-export function AbonoForm({ numeroContrato }: { numeroContrato: string }) {
+export function AbonoForm({ numeroContrato, formasPago = [] }: { numeroContrato: string; formasPago?: string[] }) {
   const [valor, setValor] = useState("");
   const [forma, setForma] = useState("");
   const [ref, setRef] = useState("");
@@ -42,12 +42,16 @@ export function AbonoForm({ numeroContrato }: { numeroContrato: string }) {
         <label className="mb-1 block text-xs font-medium text-gray-600">
           Forma de pago
         </label>
-        <Input
+        <select
           value={forma}
           onChange={(e) => setForma(e.target.value)}
-          placeholder="Transferencia, efectivo…"
-          className="w-44"
-        />
+          className="w-44 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+        >
+          <option value="">Selecciona…</option>
+          {formasPago.map((f) => (
+            <option key={f} value={f}>{f}</option>
+          ))}
+        </select>
       </div>
       <div>
         <label className="mb-1 block text-xs font-medium text-gray-600">

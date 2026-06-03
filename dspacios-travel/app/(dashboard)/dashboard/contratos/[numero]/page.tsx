@@ -33,6 +33,7 @@ export default async function ContratoDetallePage({
     { data: b2b },
     { data: facturas },
     { data: asesores },
+    { data: formasPagoRows },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
@@ -40,7 +41,9 @@ export default async function ContratoDetallePage({
     sb.from("aliados_b2b").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("facturacion").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("asesores").select("nombre, email, pct_comision_base"),
+    sb.from("formas_pago").select("nombre").order("orden"),
   ]);
+  const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
   const fiscal = fiscalFromParams(paramsRows ?? []);
@@ -143,6 +146,7 @@ export default async function ContratoDetallePage({
         cuentasPorPagar={cxp ?? []}
         comisionesB2B={b2b ?? []}
         facturas={facturas ?? []}
+        formasPago={formasPago}
       />
     </div>
   );

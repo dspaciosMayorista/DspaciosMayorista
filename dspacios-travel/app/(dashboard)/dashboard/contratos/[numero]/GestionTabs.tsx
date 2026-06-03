@@ -42,6 +42,7 @@ export type GestionProps = {
   cuentasPorPagar: CxP[];
   comisionesB2B: B2B[];
   facturas: Factura[];
+  formasPago: string[];
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -91,7 +92,7 @@ export function GestionTabs(p: GestionProps) {
         </div>
 
         <TabsContent value="cartera">
-          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} />
+          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} />
         </TabsContent>
         {p.verFinanzas && (
           <>
@@ -163,7 +164,7 @@ function CostosTab({ numero, costos, costoDirecto }: { numero: string; costos: G
 }
 
 // ── CARTERA (abonos) ───────────────────────────────────────────────────
-function CarteraTab({ numero, abonos, totalPagado, total }: { numero: string; abonos: Abono[]; totalPagado: number; total: number }) {
+function CarteraTab({ numero, abonos, totalPagado, total, formasPago }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[] }) {
   const saldo = Math.max(total - totalPagado, 0);
   return (
     <div className="space-y-4">
@@ -174,7 +175,7 @@ function CarteraTab({ numero, abonos, totalPagado, total }: { numero: string; ab
       </div>
       <div className={card}>
         <p className={lbl}>Registrar abono</p>
-        <AbonoForm numeroContrato={numero} />
+        <AbonoForm numeroContrato={numero} formasPago={formasPago} />
       </div>
       {abonos.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">

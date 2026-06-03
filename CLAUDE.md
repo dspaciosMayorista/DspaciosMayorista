@@ -294,7 +294,7 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - **Contrato (visual):** hotel "N hab Doble (M pax)"; **servicios** en tabla aparte (Servicio·Pax·
   Valor total); **vuelo** Origen/Destino derivados de la ruta IATA (`lib/iata.ts`, catálogo editable).
 - **Vuelos:** bloqueos con **destino** + rangos de edad; editar bloqueo; carga masiva.
-- **Configuración:** asesores, parámetros tributarios, **rangos de edad**.
+- **Configuración:** asesores, parámetros tributarios, **rangos de edad**, **formas de pago**.
 
 ### Motor de cálculo (`lib/calc/paquetes.ts`)
 - Hotel: liquida **noche por noche** (mezcla temporadas), `costo/(1−%mk)`.
@@ -306,7 +306,8 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
 019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
 023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
-026 servicio_incluido · 027 hotel_acomodaciones (reservar por habitaciones + config acomod.).
+026 servicio_incluido · 027 hotel_acomodaciones (reservar por habitaciones + config acomod.) ·
+028 formas_pago (catálogo de formas de pago para abonos).
 Script suelto: `supabase/scripts/fusion_cartagena.sql`.
 Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`.
 Google OAuth: callback `/auth/callback`; Site URL = producción.
@@ -342,9 +343,11 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
    compara con la acomodación: capacidad de niños/infantes/pax por habitación, pax mín/máx del
    hotel y edades reales vs declaradas. Muestra **alerta** (errores bloquean, avisos informan) y
    **no deja generar**; el server re-valida (autoritativo).
-5. **Contrato pendiente:** ya guarda costos del aéreo; faltan **costos del hotel negociado y
-   proveedores** (los hay) y, en cartera, **forma de pago como lista desplegable** (catálogo
-   editable en otro lado).
+5. **Contrato pendiente:** *(PARCIAL)* — aéreo ✅ y ahora **costo del hotel negociado** ✅
+   (liquidado noche por noche desde `tarifa_hotel`, admin/service-role, en `ventas.costo_hotel`).
+   **Forma de pago como lista desplegable** ✅ (catálogo `formas_pago`, editable en Configuración;
+   dropdown en el abono). *FALTA:* costos de **proveedores/servicios** netos
+   (`costo_receptivo`/`otros_costos`).
 6. **Visualización del contrato:** el hotel debe leerse como **"1 hab doble"** o **"2 pax en
    acomodación Doble"** (no "2 Doble" ambiguo). Aclarar habitaciones vs pax.
 

@@ -71,6 +71,24 @@ export async function eliminarAsesor(id: number): Promise<Result> {
   return { ok: true };
 }
 
+// ── Formas de pago (catálogo) ──────────────────────────────────────────────
+export async function crearFormaPago(nombre: string): Promise<Result> {
+  if (!nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const sb = await createClient();
+  const { error } = await sb.from("formas_pago").insert({ nombre: nombre.trim() });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+export async function eliminarFormaPago(id: number): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("formas_pago").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
 export async function actualizarParametro(parametro: string, valor: number): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb

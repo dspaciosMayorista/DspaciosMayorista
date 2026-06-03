@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { precioServicio } from "@/lib/calc/paquetes";
+import { precioServicio, noches, liquidarHotelNoches } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
@@ -351,6 +351,49 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       }
     } catch {
       // No bloquear la reserva si falla el paso administrativo.
+    }
+  }
+
+  // 10) Costo neto del HOTEL (liquidado noche por noche) — admin, oculto al asesor.
+  //     La tarifa neta (tarifa_hotel) es interna; por eso se lee con service-role.
+  if (!esServicios && meta.fecha_ida && meta.fecha_regreso && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
+      if (numNoches > 0) {
+        const [{ data: temps }, { data: tarRows }] = await Promise.all([
+          admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin").eq("hotel_id", input.hotelId),
+          admin.from("tarifa_hotel")
+            .select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2")
+            .eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
+        ]);
+        type TarRow = {
+          temporada: string | null; neto_sencilla: number | null; neto_doble: number | null;
+          neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null;
+        };
+        const rows = (tarRows ?? []) as TarRow[];
+        const temporadas = (temps ?? []).map((t) => ({ nombre: t.nombre, fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin }));
+        const colDe: Record<string, keyof TarRow> = {
+          sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple",
+          multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2",
+        };
+        const netoPersona = (acom: string): number | null => {
+          const col = colDe[acom];
+          const netoPorTemporada: Record<string, number | null> = {};
+          for (const r of rows) if (r.temporada) netoPorTemporada[r.temporada] = r[col] as number | null;
+          return liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches, temporadas, netoPorTemporada });
+        };
+        let costoHotel = 0;
+        for (const l of lineasHab) {
+          const per = netoPersona(l.acom);
+          if (per != null) costoHotel += per * l.pax;
+        }
+        if (numNinos > 0) { const per = netoPersona("nino"); if (per != null) costoHotel += per * numNinos; }
+        if (numNinos2 > 0) { const per = netoPersona("nino2"); if (per != null) costoHotel += per * numNinos2; }
+        if (costoHotel > 0) await admin.from("ventas").update({ costo_hotel: costoHotel }).eq("numero_contrato", numero);
+      }
+    } catch {
+      // El costo neto es informativo para rentabilidad; no bloquea la reserva.
     }
   }
 

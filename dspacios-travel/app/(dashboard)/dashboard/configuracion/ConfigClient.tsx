@@ -3,19 +3,70 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { crearAsesor, actualizarAsesor, eliminarAsesor, actualizarParametro, crearRangoEdad, eliminarRangoEdad } from "./actions";
+import { crearAsesor, actualizarAsesor, eliminarAsesor, actualizarParametro, crearRangoEdad, eliminarRangoEdad, crearFormaPago, eliminarFormaPago } from "./actions";
 
 type Asesor = { id: number; nombre: string; email: string | null; pct_comision_base: number; meta_mensual: number };
 type Param = { parametro: string; valor: number; descripcion: string | null };
 type Rango = { id: number; denominacion: string; edad_min: number; edad_max: number };
+type FormaPago = { id: number; nombre: string };
 
-export function ConfigClient({ asesores, parametros, rangos }: { asesores: Asesor[]; parametros: Param[]; rangos: Rango[] }) {
+export function ConfigClient({ asesores, parametros, rangos, formasPago }: { asesores: Asesor[]; parametros: Param[]; rangos: Rango[]; formasPago: FormaPago[] }) {
   return (
     <div className="space-y-8">
       <AsesoresAdmin asesores={asesores} />
       <RangosEdadAdmin rangos={rangos} />
+      <FormasPagoAdmin formasPago={formasPago} />
       <ParametrosAdmin parametros={parametros} />
     </div>
+  );
+}
+
+function FormasPagoAdmin({ formasPago }: { formasPago: FormaPago[] }) {
+  const [nombre, setNombre] = useState("");
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState("");
+
+  function agregar() {
+    if (!nombre.trim()) { setErr("El nombre es obligatorio."); return; }
+    setErr("");
+    start(async () => {
+      const r = await crearFormaPago(nombre);
+      if (r.ok) setNombre(""); else setErr(r.error);
+    });
+  }
+
+  return (
+    <section>
+      <h2 className="mb-1 text-sm font-semibold text-gray-700">Formas de pago</h2>
+      <p className="mb-3 text-xs text-gray-400">Lista usada en los abonos (efectivo, transferencia, PSE, Nequi…).</p>
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Nombre</label>
+            <Input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Transferencia, Nequi…" />
+          </div>
+          <Button onClick={agregar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+            {pending ? "…" : "Agregar"}
+          </Button>
+          {err && <span className="text-sm text-red-600">{err}</span>}
+        </div>
+        <ul className="mt-3 divide-y divide-gray-100">
+          {formasPago.map((f) => (
+            <li key={f.id} className="flex items-center justify-between py-2 text-sm">
+              <span className="text-gray-700">{f.nombre}</span>
+              <button
+                type="button"
+                onClick={() => { if (confirm(`¿Eliminar "${f.nombre}"?`)) void eliminarFormaPago(f.id); }}
+                className="text-xs text-gray-400 hover:text-red-500"
+              >
+                Eliminar
+              </button>
+            </li>
+          ))}
+          {!formasPago.length && <li className="py-2 text-sm text-gray-400">Sin formas de pago aún.</li>}
+        </ul>
+      </div>
+    </section>
   );
 }
 
