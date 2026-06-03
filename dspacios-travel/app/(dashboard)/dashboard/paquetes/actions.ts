@@ -258,9 +258,24 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, servicios_adicionales(nombre, tarifa_neta, liquidacion)")
+      .select("servicio_id, servicios_adicionales(nombre, tarifa_neta, liquidacion, tipo_tarifa)")
       .eq("paquete_id", paqueteId),
   ]);
+
+  // Escalas de pax de los servicios seleccionados
+  const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
+  const tiersPorServicio = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+  if (servicioIds.length) {
+    const { data: tiers } = await sb
+      .from("servicio_tarifa_pax")
+      .select("servicio_id, pax_desde, pax_hasta, precio")
+      .in("servicio_id", servicioIds);
+    for (const t of tiers ?? []) {
+      const arr = tiersPorServicio.get(t.servicio_id) ?? [];
+      arr.push({ pax_desde: t.pax_desde, pax_hasta: t.pax_hasta, precio: t.precio });
+      tiersPorServicio.set(t.servicio_id, arr);
+    }
+  }
 
   const hoteles = hotelesSel ?? [];
   const servicios = serviciosSel ?? [];
@@ -426,32 +441,35 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     const numNoches = calcNoches(pq.fecha_viaje_inicio, pq.fecha_viaje_fin);
     filasHoteles(pq.fecha_viaje_inicio, numNoches, 0, Number(pq.impuesto_fijo) || 0, "porcion_terrestre", null, null, pq.fecha_viaje_fin);
   } else if (tipo === "servicios") {
-    // MÓDULO SERVICIOS: una fila por servicio (precio por persona con mk)
-    const numNoches =
-      pq.fecha_viaje_inicio && pq.fecha_viaje_fin ? calcNoches(pq.fecha_viaje_inicio, pq.fecha_viaje_fin) : 0;
+    // MÓDULO SERVICIOS: una fila por escala de pax (precio con mk)
     for (const s of servicios) {
       const srv = s.servicios_adicionales as unknown as
-        | { nombre: string; tarifa_neta: number; liquidacion: "dia" | "noche" | "paquete" }
+        | { nombre: string; tarifa_neta: number; tipo_tarifa: string }
         | null;
       if (!srv) continue;
-      const costo = costoServicio(Number(srv.tarifa_neta) || 0, srv.liquidacion, numNoches);
-      const pvp = Math.round(marcar(costo, pctMk));
-      filas.push({
-        paquete_id: paqueteId,
-        paquete_nombre: paqueteNombre,
-        paquete_activo: paqueteActivo,
-        modulo: "servicios",
-        servicio_id: s.servicio_id,
-        servicio_nombre: srv.nombre,
-        destino_id: paqueteDestinoId,
-        destino_nombre: destinoNombre,
-        noches: numNoches || null,
-        fecha_ida: pq.fecha_viaje_inicio,
-        fecha_regreso: pq.fecha_viaje_fin,
-        base_comisionable: pvp,
-        impuesto: 0,
-        precio_pvp: pvp,
-      });
+      const tiers = tiersPorServicio.get(s.servicio_id) ?? [];
+      const escalas = tiers.length
+        ? tiers
+        : [{ pax_desde: 1, pax_hasta: 1, precio: Number(srv.tarifa_neta) || 0 }];
+      for (const t of escalas) {
+        const pvp = Math.round(marcar(Number(t.precio) || 0, pctMk));
+        filas.push({
+          paquete_id: paqueteId,
+          paquete_nombre: paqueteNombre,
+          paquete_activo: paqueteActivo,
+          modulo: "servicios",
+          servicio_id: s.servicio_id,
+          servicio_nombre: srv.nombre,
+          destino_id: paqueteDestinoId,
+          destino_nombre: destinoNombre,
+          tipo_tarifa: srv.tipo_tarifa ?? "persona",
+          pax_desde: t.pax_desde,
+          pax_hasta: t.pax_hasta,
+          base_comisionable: pvp,
+          impuesto: 0,
+          precio_pvp: pvp,
+        });
+      }
     }
   }
 

@@ -8,6 +8,8 @@ const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
 export type Liquidacion = "dia" | "noche" | "paquete";
 
+export type TierPax = { paxDesde: number; paxHasta: number; precio: number };
+
 export async function crearServicio(input: {
   nombre: string;
   proveedorId: number | null;
@@ -16,9 +18,11 @@ export async function crearServicio(input: {
   temporada: string;
   liquidacion: Liquidacion;
   rangosEdad?: number[];
+  tipoTarifa?: string;
+  tiers?: TierPax[];
 }): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb.from("servicios_adicionales").insert({
+  const { data, error } = await sb.from("servicios_adicionales").insert({
     nombre: input.nombre.trim(),
     proveedor_id: input.proveedorId,
     destino_id: input.destinoId,
@@ -26,11 +30,32 @@ export async function crearServicio(input: {
     temporada: oNull(input.temporada),
     liquidacion: input.liquidacion,
     rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
+    tipo_tarifa: input.tipoTarifa ?? "persona",
     activo: true,
-  });
-  if (error) return { ok: false, error: error.message };
+  }).select("id").single();
+  if (error || !data) return { ok: false, error: error?.message ?? "No se insertó" };
+  await guardarTiers(sb, data.id, input.tiers ?? []);
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
+}
+
+async function guardarTiers(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  servicioId: number,
+  tiers: TierPax[]
+) {
+  await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", servicioId);
+  const validos = tiers.filter((t) => Number(t.precio) > 0);
+  if (validos.length) {
+    await sb.from("servicio_tarifa_pax").insert(
+      validos.map((t) => ({
+        servicio_id: servicioId,
+        pax_desde: Number(t.paxDesde) || 1,
+        pax_hasta: Number(t.paxHasta) || Number(t.paxDesde) || 1,
+        precio: Number(t.precio) || 0,
+      }))
+    );
+  }
 }
 
 export async function actualizarServicio(id: number, input: {
@@ -41,6 +66,8 @@ export async function actualizarServicio(id: number, input: {
   temporada: string;
   liquidacion: Liquidacion;
   rangosEdad?: number[];
+  tipoTarifa?: string;
+  tiers?: TierPax[];
 }): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb
@@ -53,9 +80,11 @@ export async function actualizarServicio(id: number, input: {
       temporada: oNull(input.temporada),
       liquidacion: input.liquidacion,
       rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
+      tipo_tarifa: input.tipoTarifa ?? "persona",
     })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
+  await guardarTiers(sb, id, input.tiers ?? []);
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }

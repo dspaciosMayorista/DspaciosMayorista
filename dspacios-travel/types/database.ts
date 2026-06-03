@@ -1087,15 +1087,21 @@ export type Database = {
       servicios_adicionales: {
         Row: {
           id: number; nombre: string; proveedor_id: number | null; destino_id: number | null;
-          tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null;
+          tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null; tipo_tarifa: string;
           liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; activo: boolean; created_at: string;
         };
         Insert: {
           id?: number; nombre: string; proveedor_id?: number | null; destino_id?: number | null;
-          tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null;
+          tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null; tipo_tarifa?: string;
           liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
+        Relationships: [];
+      };
+      servicio_tarifa_pax: {
+        Row: { id: number; servicio_id: number; pax_desde: number; pax_hasta: number; precio: number; created_at: string };
+        Insert: { id?: number; servicio_id: number; pax_desde?: number; pax_hasta?: number; precio?: number; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["servicio_tarifa_pax"]["Insert"]>;
         Relationships: [];
       };
       rangos_edad: {
@@ -1183,6 +1189,9 @@ export type Database = {
           noches: number | null;
           fecha_ida: string | null;
           fecha_regreso: string | null;
+          pax_desde: number | null;
+          pax_hasta: number | null;
+          tipo_tarifa: string | null;
           base_comisionable: number;
           impuesto: number;
           precio_pvp: number;
@@ -1193,6 +1202,9 @@ export type Database = {
           paquete_id: number;
           paquete_nombre?: string | null;
           paquete_activo?: boolean;
+          pax_desde?: number | null;
+          pax_hasta?: number | null;
+          tipo_tarifa?: string | null;
           modulo: Database["public"]["Enums"]["tarifario_modulo"];
           bloqueo_id?: number | null;
           bloqueo_label?: string | null;
