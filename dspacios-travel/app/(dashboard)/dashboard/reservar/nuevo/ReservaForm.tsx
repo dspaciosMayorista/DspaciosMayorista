@@ -121,7 +121,7 @@ export function ReservaForm({
 
   // Pasajeros: la cantidad de filas se deriva del total; los datos se guardan
   // en `pax` (se extiende según se editen).
-  const emptyPax = (): PasajeroReserva => ({ nombre: "", tipoDoc: "CC", numeroDoc: "", fechaNacimiento: "", nacionalidad: "Colombiana", esInfante: false });
+  const emptyPax = (): PasajeroReserva => ({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", fechaNacimiento: "", nacionalidad: "Colombiana", esInfante: false });
   const [pax, setPax] = useState<PasajeroReserva[]>([]);
   const paxRows = Array.from({ length: totalPax }, (_, i) => pax[i] ?? emptyPax());
 
@@ -158,7 +158,7 @@ export function ReservaForm({
     setPax((prev) => {
       const next = [...prev];
       while (next.length <= i) next.push(emptyPax());
-      next[i] = { ...next[i], nombre: cli.nombre, tipoDoc: cli.tipoDoc, numeroDoc: cli.numeroDoc };
+      next[i] = { ...next[i], nombres: cli.nombre, tipoDoc: cli.tipoDoc, numeroDoc: cli.numeroDoc };
       return next;
     });
   }
@@ -176,6 +176,9 @@ export function ReservaForm({
     if (!esServicios && validacion.errores.length) {
       setErr(validacion.errores[0]); return;
     }
+    // Nombres y apellidos obligatorios en todos los pasajeros.
+    const faltaNombre = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
+    if (faltaNombre >= 0) { setErr(`Pasajero ${faltaNombre + 1}: nombres y apellidos son obligatorios.`); return; }
     // Validación de documento: solo Pasaporte admite letras; el resto, solo números.
     const docOk = (tipo: string, num: string) => tipo === "PAS" || num.trim() === "" || /^\d+$/.test(num.trim());
     if (!docOk(cli.tipoDoc, cli.numeroDoc)) { setErr("El número de documento del cliente debe ser solo números (excepto Pasaporte)."); return; }
@@ -393,7 +396,8 @@ export function ReservaForm({
                     )}
                   </div>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <div className="sm:col-span-2"><label className={lbl}>Nombre</label><Input value={p.nombre} onChange={(e) => setPaxField(i, "nombre", e.target.value)} /></div>
+                    <div><label className={lbl}>Nombres *</label><Input value={p.nombres} onChange={(e) => setPaxField(i, "nombres", e.target.value)} /></div>
+                    <div><label className={lbl}>Apellidos *</label><Input value={p.apellidos} onChange={(e) => setPaxField(i, "apellidos", e.target.value)} /></div>
                     <div>
                       <label className={lbl}>Tipo doc</label>
                       <select value={p.tipoDoc} onChange={(e) => setPaxField(i, "tipoDoc", e.target.value)} className={inp}>

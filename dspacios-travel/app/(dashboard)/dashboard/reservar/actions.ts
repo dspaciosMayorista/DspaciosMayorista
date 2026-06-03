@@ -120,7 +120,8 @@ export async function cotizarPorFechas(input: {
 }
 
 export type PasajeroReserva = {
-  nombre: string;
+  nombres: string;
+  apellidos: string;
   tipoDoc: string;
   numeroDoc: string;
   fechaNacimiento: string;
@@ -390,7 +391,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     const { error } = await sb.from("contrato_pasajeros").insert(
       input.pasajeros.map((p, i) => ({
         numero_contrato: numero,
-        nombre: p.nombre.trim(),
+        nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
         tipo_id: oNull(p.tipoDoc) ?? "CC",
         identificacion: oNull(p.numeroDoc),
         fecha_nacimiento: oNull(p.fechaNacimiento),
@@ -527,7 +528,8 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
               hotel: meta.hotel_nombre,
               acomodacion: input.categoria,
               plazo: oNull(input.plazo),
-              pasajero_nombres: oNull(p?.nombre),
+              pasajero_nombres: oNull(p?.nombres),
+              pasajero_apellidos: oNull(p?.apellidos),
               tipo_doc: oNull(p?.tipoDoc),
               numero_doc: oNull(p?.numeroDoc),
               nacimiento: oNull(p?.fechaNacimiento),

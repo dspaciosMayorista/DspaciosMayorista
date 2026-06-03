@@ -50,6 +50,17 @@ export default async function TarifarioPublicoPage() {
     for (const c of cup ?? []) cuposPorBloqueo[c.id as number] = Number(c.cupos_disponibles) || 0;
   }
 
+  // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
+  // Los servicios de paquetes porción/bloqueo existen como add-on para Reservar,
+  // pero NO deben publicarse como productos sueltos.
+  let filasVisibles = filas;
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY && filas.some((f) => f.modulo === "servicios")) {
+    const admin = createAdminClient();
+    const { data: pkgs } = await admin.from("armado_paquetes").select("id").eq("tipo", "servicios");
+    const idsServicios = new Set((pkgs ?? []).map((p) => p.id));
+    filasVisibles = filas.filter((f) => f.modulo !== "servicios" || (f.paquete_id != null && idsServicios.has(f.paquete_id)));
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="px-6 py-8 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
@@ -76,10 +87,10 @@ export default async function TarifarioPublicoPage() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-8 md:px-6">
-        {!filas.length ? (
+        {!filasVisibles.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
+          <TarifarioPublic filas={filasVisibles} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
         )}
       </main>
     </div>
