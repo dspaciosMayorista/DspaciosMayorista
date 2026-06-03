@@ -334,7 +334,8 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 026 servicio_incluido · 027 hotel_acomodaciones (reservar por habitaciones + config acomod.) ·
 028 formas_pago (catálogo de formas de pago para abonos) ·
 029 servicio_categoria (tour_traslado/asistencia/otro → ubica el servicio en el contrato).
-Script suelto: `supabase/scripts/fusion_cartagena.sql`.
+Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
+`supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas).
 Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`.
 Google OAuth: callback `/auth/callback`; Site URL = producción.
 
