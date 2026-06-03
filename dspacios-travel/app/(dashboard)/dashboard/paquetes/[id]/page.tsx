@@ -55,7 +55,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     qServicios,
     sb.from("armado_vuelos").select("bloqueo_id, aplica_mk, ta").eq("paquete_id", paqueteId),
     sb.from("armado_hoteles").select("hotel_id, categorias, regimenes").eq("paquete_id", paqueteId),
-    sb.from("armado_servicios").select("servicio_id, modo").eq("paquete_id", paqueteId),
+    sb.from("armado_servicios").select("servicio_id, modo, incluido").eq("paquete_id", paqueteId),
   ]);
 
   // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.

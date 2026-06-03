@@ -18,7 +18,7 @@ type Vuelo = {
 };
 type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null };
 type Servicio = { id: number; nombre: string; precio_persona: number | null; destino_id: number | null; servicio_tarifa_pax: { pax_desde: number }[] };
-type SelServicio = { servicio_id: number; modo: string };
+type SelServicio = { servicio_id: number; modo: string; incluido: boolean };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
 type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
 type Resultado = {
@@ -53,7 +53,7 @@ export function ArmadoClient(props: {
 
   const vueloSel = new Map(props.selVuelos.map((v) => [v.bloqueo_id, v]));
   const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
-  const servSel = new Map(props.selServicios.map((s) => [s.servicio_id, s.modo]));
+  const servSel = new Map(props.selServicios.map((s) => [s.servicio_id, s]));
 
   function refrescar() {
     router.refresh();
@@ -165,7 +165,7 @@ export function ArmadoClient(props: {
               <ServicioRow
                 key={s.id}
                 s={s}
-                modo={servSel.get(s.id)}
+                sel={servSel.get(s.id)}
                 paqueteId={props.paqueteId}
                 onDone={refrescar}
               />
@@ -470,26 +470,30 @@ function PickBox({
 }
 
 function ServicioRow({
-  s, modo, paqueteId, onDone,
+  s, sel, paqueteId, onDone,
 }: {
-  s: Servicio; modo: string | undefined; paqueteId: number; onDone: () => void;
+  s: Servicio; sel: SelServicio | undefined; paqueteId: number; onDone: () => void;
 }) {
   const [, start] = useTransition();
-  const checked = modo !== undefined;
+  const checked = sel !== undefined;
+  const modo = sel?.modo;
+  const incluido = sel?.incluido ?? false;
   const tienePersona = s.precio_persona != null;
   const tieneGrupo = (s.servicio_tarifa_pax ?? []).length > 0;
 
-  function save(nextChecked: boolean, nextModo: "persona" | "grupo") {
+  function save(nextChecked: boolean, nextModo: "persona" | "grupo", nextIncluido: boolean) {
     start(async () => {
-      await setServicio(paqueteId, s.id, nextChecked, nextModo);
+      await setServicio(paqueteId, s.id, nextChecked, nextModo, nextIncluido);
       onDone();
     });
   }
 
   function toggle(c: boolean) {
     const def: "persona" | "grupo" = tienePersona ? "persona" : "grupo";
-    save(c, (modo as "persona" | "grupo") ?? def);
+    save(c, (modo as "persona" | "grupo") ?? def, incluido);
   }
+
+  const m: "persona" | "grupo" = (modo as "persona" | "grupo") ?? (tienePersona ? "persona" : "grupo");
 
   return (
     <li className="py-2.5">
@@ -503,16 +507,32 @@ function ServicioRow({
             {tieneGrupo ? "Grupo: por rangos de pax" : ""}
           </p>
           {checked && (
-            <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-gray-50 p-2 text-xs">
-              <span className="text-gray-500">Cobrar:</span>
-              <label className="flex items-center gap-1" style={{ opacity: tienePersona ? 1 : 0.4 }}>
-                <input type="radio" disabled={!tienePersona} checked={modo === "persona"} onChange={() => save(true, "persona")} />
-                Por persona
-              </label>
-              <label className="flex items-center gap-1" style={{ opacity: tieneGrupo ? 1 : 0.4 }}>
-                <input type="radio" disabled={!tieneGrupo} checked={modo === "grupo"} onChange={() => save(true, "grupo")} />
-                Por grupo
-              </label>
+            <div className="mt-2 space-y-2 rounded-lg bg-gray-50 p-2 text-xs">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-gray-500">Cobro:</span>
+                <label className="flex items-center gap-1" style={{ opacity: tienePersona ? 1 : 0.4 }}>
+                  <input type="radio" disabled={!tienePersona} checked={m === "persona"} onChange={() => save(true, "persona", incluido)} />
+                  Por persona
+                </label>
+                <label className="flex items-center gap-1" style={{ opacity: tieneGrupo ? 1 : 0.4 }}>
+                  <input type="radio" disabled={!tieneGrupo} checked={m === "grupo"} onChange={() => save(true, "grupo", incluido)} />
+                  Por grupo
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-gray-500">En el paquete:</span>
+                <label className="flex items-center gap-1">
+                  <input type="radio" checked={incluido} onChange={() => save(true, m, true)} />
+                  Incluido (todo junto)
+                </label>
+                <label className="flex items-center gap-1">
+                  <input type="radio" checked={!incluido} onChange={() => save(true, m, false)} />
+                  Opcional (add-on)
+                </label>
+              </div>
+              {incluido && m === "grupo" && (
+                <p className="text-amber-600">“Incluido” se hornea por persona; para grupo conviene dejarlo Opcional.</p>
+              )}
             </div>
           )}
         </div>
@@ -530,40 +550,13 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
     );
   }
 
-  // Servicios se muestran como lista simple (sin categoría/régimen/acomodación)
+  // Separa servicios (módulo servicios) de las tarifas de hotel
   const servicios = filas.filter((f) => f.modulo === "servicios");
-  if (servicios.length && servicios.length === filas.length) {
-    return (
-      <div className="mt-4 overflow-x-auto rounded-lg border border-gray-100">
-        <table className="w-full text-sm">
-          <thead className="text-xs text-gray-500">
-            <tr className="border-b border-gray-100">
-              <th className="px-3 py-1.5 text-left">Servicio</th>
-              <th className="px-3 py-1.5 text-left">Rango</th>
-              <th className="px-3 py-1.5 text-right">PVP</th>
-            </tr>
-          </thead>
-          <tbody>
-            {servicios.map((r) => {
-              const esGrupo = (r.tipo_tarifa ?? "persona") === "grupo";
-              return (
-                <tr key={r.id} className="border-t border-gray-50">
-                  <td className="px-3 py-1.5">{r.servicio_nombre ?? "—"}</td>
-                  <td className="px-3 py-1.5 text-gray-500">{esGrupo ? `${r.pax_desde}–${r.pax_hasta} pax` : "Por persona"}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
-                    {formatCOP(r.precio_pvp)} <span className="text-xs font-normal text-gray-400">{esGrupo ? "/grupo" : "/persona"}</span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
-  // Agrupa por salida (bloqueo_label o porción terrestre) → hotel
+  const hoteles = filas.filter((f) => f.modulo !== "servicios");
+
+  // Agrupa hoteles por salida (bloqueo_label o porción terrestre) → hotel
   const grupos = new Map<string, Map<string, Resultado[]>>();
-  for (const f of filas) {
+  for (const f of hoteles) {
     const g = f.bloqueo_label ?? (f.modulo === "porcion_terrestre" ? "Porción terrestre" : "—");
     const h = f.hotel_nombre ?? "—";
     if (!grupos.has(g)) grupos.set(g, new Map());
@@ -612,6 +605,37 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
           ))}
         </div>
       ))}
+
+      {servicios.length > 0 && (
+        <div>
+          <p className="mb-1 text-sm font-semibold" style={{ color: "var(--brand-accent)" }}>Servicios (opcionales)</p>
+          <div className="overflow-x-auto rounded-lg border border-gray-100">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-gray-500">
+                <tr className="border-b border-gray-100">
+                  <th className="px-3 py-1.5 text-left">Servicio</th>
+                  <th className="px-3 py-1.5 text-left">Tipo</th>
+                  <th className="px-3 py-1.5 text-right">Tarifa</th>
+                </tr>
+              </thead>
+              <tbody>
+                {servicios.map((r) => {
+                  const esGrupo = (r.tipo_tarifa ?? "persona") === "grupo";
+                  return (
+                    <tr key={r.id} className="border-t border-gray-50">
+                      <td className="px-3 py-1.5">{r.servicio_nombre ?? "—"}</td>
+                      <td className="px-3 py-1.5 text-gray-500">{esGrupo ? `Por grupo (${r.pax_desde}–${r.pax_hasta} pax)` : "Por persona"}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
+                        {formatCOP(r.precio_pvp)} <span className="text-xs font-normal text-gray-400">{esGrupo ? "/grupo" : "/persona"}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

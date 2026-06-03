@@ -1167,8 +1167,8 @@ export type Database = {
         Relationships: [];
       };
       armado_servicios: {
-        Row: { id: number; paquete_id: number; servicio_id: number; modo: string };
-        Insert: { id?: number; paquete_id: number; servicio_id: number; modo?: string };
+        Row: { id: number; paquete_id: number; servicio_id: number; modo: string; incluido: boolean };
+        Insert: { id?: number; paquete_id: number; servicio_id: number; modo?: string; incluido?: boolean };
         Update: Partial<Database["public"]["Tables"]["armado_servicios"]["Insert"]>;
         Relationships: [];
       };

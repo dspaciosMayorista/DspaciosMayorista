@@ -221,7 +221,8 @@ export async function setServicio(
   paqueteId: number,
   servicioId: number,
   checked: boolean,
-  modo: "persona" | "grupo" = "persona"
+  modo: "persona" | "grupo" = "persona",
+  incluido = false
 ): Promise<Result> {
   const sb = await createClient();
   if (!checked) {
@@ -229,7 +230,7 @@ export async function setServicio(
   } else {
     const { error } = await sb
       .from("armado_servicios")
-      .upsert({ paquete_id: paqueteId, servicio_id: servicioId, modo }, { onConflict: "paquete_id,servicio_id" });
+      .upsert({ paquete_id: paqueteId, servicio_id: servicioId, modo, incluido }, { onConflict: "paquete_id,servicio_id" });
     if (error) return { ok: false, error: error.message };
   }
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
@@ -264,7 +265,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, modo, servicios_adicionales(nombre, precio_persona)")
+      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona)")
       .eq("paquete_id", paqueteId),
   ]);
 
@@ -312,8 +313,18 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"];
   const filas: ResultadoInsert[] = [];
 
-  // Los servicios NO se hornean en la tarifa del hotel: se agregan como add-on
-  // en la reserva (ya con los pax). Aquí el aporte de servicios es 0.
+  // Servicios INCLUIDOS se hornean por persona en la tarifa del hotel.
+  // (Los OPCIONALES no se hornean: se agregan como add-on en la reserva.)
+  function aporteServiciosIncluidos(): number {
+    let total = 0;
+    for (const s of servicios) {
+      if (!(s.incluido as boolean)) continue;
+      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null } | null;
+      if (srv?.precio_persona == null) continue;
+      total += marcar(Number(srv.precio_persona) || 0, pctMk);
+    }
+    return total;
+  }
 
   // Genera las filas de hotel para una estadía (fechaIda + numNoches).
   // `aporteVueloVal` es el aporte del vuelo al PVP (0 en porción terrestre);
@@ -329,7 +340,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     fechaRegreso: string | null
   ) {
     if (numNoches <= 0) return;
-    const aporteServ = 0; // servicios = add-on en la reserva
+    const aporteServ = aporteServiciosIncluidos(); // solo servicios incluidos
     for (const h of hoteles) {
       const hotelNombre = (h.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
       const filtroCat = (h.categorias as string[] | null) ?? null;
@@ -439,6 +450,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // SERVICIOS: se publican siempre (módulo Servicios y/o add-ons en la reserva),
   // sin importar el tipo. Persona = una fila; grupo = una fila por rango de pax.
   for (const s of servicios) {
+    if (s.incluido as boolean) continue; // los incluidos se hornean, no se publican
     const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null } | null;
     if (!srv) continue;
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
