@@ -4,13 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio } from "@/lib/calc/paquetes";
+import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
-
-const ACOM_NINO = ["nino", "nino2"];
-const ACOM_LABEL: Record<string, string> = {
-  sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño 1", nino2: "Niño 2",
-};
 
 export type PasajeroReserva = {
   nombre: string;
@@ -29,8 +25,10 @@ export type ReservaInput = {
   paxServicios?: number;   // pax cuando es paquete tipo servicios (sin hotel)
   categoria: string;
   regimen: string;
-  cantidades: Record<string, number>;   // personas por acomodación
-  infantes: number;
+  habitaciones: Record<string, number>; // CANTIDAD DE HABITACIONES por tipo (sencilla/doble/…)
+  ninos: number;                          // cantidad de niños (Niño 1)
+  ninos2: number;                         // cantidad de niños (Niño 2)
+  infantes: number;                       // cantidad de infantes (sin silla, $0)
   cliente: { nombre: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
   tipoAsesor: "interno" | "agencia" | "freelance";
   asesorInterno: string;
@@ -55,6 +53,11 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   const pvpPorAcom: Record<string, number> = {};
   let precioVenta = 0;
   let paxConSilla = 0;
+  // Reserva por habitaciones: una línea por tipo de habitación con cantidad de
+  // habitaciones, pax que cubren (rooms × pax_tarifa) y PVP por persona.
+  const lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[] = [];
+  const numNinos = Math.max(0, Math.trunc(Number(input.ninos) || 0));
+  const numNinos2 = Math.max(0, Math.trunc(Number(input.ninos2) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
 
   if (!esServicios) {
@@ -71,13 +74,30 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     if (!filas || !filas.length) return { ok: false, error: "No se encontró la tarifa seleccionada en el tarifario." };
     for (const f of filas) if (f.acomodacion) pvpPorAcom[f.acomodacion] = f.precio_pvp;
     meta = filas[0];
-    for (const [acom, cant] of Object.entries(input.cantidades)) {
-      const n = Number(cant) || 0;
-      if (n <= 0) continue;
-      precioVenta += n * (pvpPorAcom[acom] ?? 0);
-      paxConSilla += n;
+
+    // pax_tarifa por acomodación (config del hotel; default si no está configurada).
+    const { data: acomCfg } = await sb
+      .from("hotel_acomodaciones")
+      .select("acomodacion, pax_tarifa")
+      .eq("hotel_id", input.hotelId);
+    const paxTarifa = (a: AcomRoom) => {
+      const c = (acomCfg ?? []).find((x) => x.acomodacion === a);
+      return c?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
+    };
+
+    for (const a of ACOM_ROOMS) {
+      const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
+      if (rooms <= 0 || pvpPorAcom[a] == null) continue;
+      const pvp = pvpPorAcom[a];
+      const pax = rooms * paxTarifa(a);
+      precioVenta += pax * pvp;
+      paxConSilla += pax;
+      lineasHab.push({ acom: a, habitaciones: rooms, pax, pvp });
     }
-    if (paxConSilla <= 0) return { ok: false, error: "Indica al menos un pasajero (cantidad por acomodación)." };
+    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
+    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
+
+    if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
   } else {
     const { data: m } = await sb
       .from("tarifario_resultado")
@@ -177,10 +197,14 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
 
   // 6) Hotel del contrato (no aplica en paquete tipo servicios)
   if (!esServicios) {
-    const resumenAcom = Object.entries(input.cantidades)
-      .filter(([, n]) => Number(n) > 0)
-      .map(([a, n]) => `${n} ${ACOM_LABEL[a] ?? a}`)
-      .join(", ");
+    // Detalle legible: "1 hab Doble (2 pax), 2 hab Triple (6 pax), 1 Niño 1".
+    const partes = lineasHab.map(
+      (l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`
+    );
+    if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
+    if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
+    if ((Number(input.infantes) || 0) > 0) partes.push(`${Number(input.infantes)} Infante(s)`);
+    const resumenAcom = partes.join(", ");
     await sb.from("contrato_hoteles").insert({
       numero_contrato: numero,
       nombre: meta.hotel_nombre ?? "",
@@ -212,21 +236,37 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     }
   }
 
-  // 8) Ítems de valores (uno por acomodación con cantidad)
-  const items = Object.entries(input.cantidades)
-    .filter(([, n]) => Number(n) > 0)
-    .map(([acom, n], i) => {
-      const esNino = ACOM_NINO.includes(acom);
-      return {
-        numero_contrato: numero,
-        descripcion: `${ACOM_LABEL[acom] ?? acom} · ${input.categoria} / ${input.regimen}`,
-        adultos: esNino ? 0 : Number(n),
-        ninos: esNino ? Number(n) : 0,
-        tarifa_adulto: esNino ? 0 : (pvpPorAcom[acom] ?? 0),
-        tarifa_nino: esNino ? (pvpPorAcom[acom] ?? 0) : 0,
-        orden: i,
-      };
+  // 8) Ítems de valores: una fila por tipo de habitación (adultos = pax que cubre)
+  // y una fila por grupo de niños. La tarifa es por persona (PVP del tarifario).
+  const items: {
+    numero_contrato: string; descripcion: string; adultos: number; ninos: number;
+    tarifa_adulto: number; tarifa_nino: number; orden: number;
+  }[] = [];
+  lineasHab.forEach((l, i) => {
+    items.push({
+      numero_contrato: numero,
+      descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${input.categoria} / ${input.regimen}`,
+      adultos: l.pax,
+      ninos: 0,
+      tarifa_adulto: l.pvp,
+      tarifa_nino: 0,
+      orden: i,
     });
+  });
+  if (numNinos > 0 && pvpPorAcom["nino"] != null) {
+    items.push({
+      numero_contrato: numero,
+      descripcion: `Niño 1 · ${input.categoria} / ${input.regimen}`,
+      adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"], orden: 50,
+    });
+  }
+  if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) {
+    items.push({
+      numero_contrato: numero,
+      descripcion: `Niño 2 · ${input.categoria} / ${input.regimen}`,
+      adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"], orden: 51,
+    });
+  }
   // Servicios add-on como ítems (1 fila por servicio, total del grupo o por pax)
   serviciosItems.forEach((s, i) => {
     items.push({

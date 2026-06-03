@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { ReservaForm, type Combo, type Meta, type ServicioDisp } from "./ReservaForm";
+import type { AcomConfig } from "@/lib/acomodaciones";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ export default async function NuevaReservaPage({
   const sb = await createClient();
   let meta: Meta;
   let combos: Combo[] = [];
+  let acomConfigs: AcomConfig[] = [];
 
   if (!esServicios) {
     let q = sb
@@ -57,6 +59,13 @@ export default async function NuevaReservaPage({
       if (f.acomodacion) c.precios[f.acomodacion] = f.precio_pvp;
     }
     combos = [...map.values()];
+
+    // Config de acomodaciones del hotel (reservar por habitaciones).
+    const { data: acoms } = await sb
+      .from("hotel_acomodaciones")
+      .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
+      .eq("hotel_id", hotelId);
+    acomConfigs = (acoms ?? []) as AcomConfig[];
   } else {
     const { data: m } = await sb
       .from("tarifario_resultado")
@@ -101,7 +110,7 @@ export default async function NuevaReservaPage({
         {meta.fechaIda ? ` · ${meta.fechaIda} → ${meta.fechaRegreso} (${meta.noches}N)` : ""}
         {meta.bloqueoLabel ? ` · ${meta.bloqueoLabel}` : ""}
       </p>
-      <ReservaForm meta={meta} combos={combos} serviciosDisp={serviciosDisp} />
+      <ReservaForm meta={meta} combos={combos} serviciosDisp={serviciosDisp} acomConfigs={acomConfigs} />
     </div>
   );
 }

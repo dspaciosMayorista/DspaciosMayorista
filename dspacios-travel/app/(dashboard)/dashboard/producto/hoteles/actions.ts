@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -86,6 +87,57 @@ export async function actualizarHotelConfig(
     })
     .eq("id", hotelId);
   if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true };
+}
+
+// ── Configuración de acomodaciones por hotel (reservar por habitaciones) ────
+export type AcomConfigInput = {
+  acomodacion: AcomRoom;
+  pax_tarifa: number;
+  pax_max: number;
+  adt_min: number;
+  adt_max: number;
+  chd_min: number;
+  chd_max: number;
+  inf_min: number;
+  inf_max: number;
+};
+
+export async function actualizarHotelAcomodaciones(
+  hotelId: number,
+  input: { paxMin: number | null; paxMax: number | null; acomodaciones: AcomConfigInput[] }
+): Promise<Result> {
+  const sb = await createClient();
+
+  const { error: he } = await sb
+    .from("hoteles")
+    .update({ pax_min: input.paxMin, pax_max: input.paxMax })
+    .eq("id", hotelId);
+  if (he) return { ok: false, error: he.message };
+
+  // Upsert por (hotel_id, acomodacion): reemplaza la config completa del hotel.
+  const filas = input.acomodaciones
+    .filter((a) => ACOM_ROOMS.includes(a.acomodacion))
+    .map((a) => ({
+      hotel_id: hotelId,
+      acomodacion: a.acomodacion,
+      pax_tarifa: Math.max(0, Math.trunc(a.pax_tarifa) || 0),
+      pax_max: Math.max(0, Math.trunc(a.pax_max) || 0),
+      adt_min: Math.max(0, Math.trunc(a.adt_min) || 0),
+      adt_max: Math.max(0, Math.trunc(a.adt_max) || 0),
+      chd_min: Math.max(0, Math.trunc(a.chd_min) || 0),
+      chd_max: Math.max(0, Math.trunc(a.chd_max) || 0),
+      inf_min: Math.max(0, Math.trunc(a.inf_min) || 0),
+      inf_max: Math.max(0, Math.trunc(a.inf_max) || 0),
+    }));
+  if (filas.length) {
+    const { error } = await sb
+      .from("hotel_acomodaciones")
+      .upsert(filas, { onConflict: "hotel_id,acomodacion" });
+    if (error) return { ok: false, error: error.message };
+  }
+
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   return { ok: true };
 }

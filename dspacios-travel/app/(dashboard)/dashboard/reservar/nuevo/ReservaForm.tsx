@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { reservarDesdeTarifario, type PasajeroReserva } from "../actions";
 import { precioServicio } from "@/lib/calc/paquetes";
+import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 
 export type ServicioDisp = {
   servicioId: number;
@@ -30,14 +31,12 @@ export type Meta = {
 };
 export type Combo = { categoria: string; regimen: string; precios: Record<string, number> };
 
-const ACOMS: [string, string][] = [
-  ["sencilla", "Sencilla"], ["doble", "Doble"], ["triple", "Triple"],
-  ["multiple", "Múltiple"], ["nino", "Niño 1"], ["nino2", "Niño 2"],
-];
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const inp = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; combos: Combo[]; serviciosDisp?: ServicioDisp[] }) {
+export function ReservaForm({
+  meta, combos, serviciosDisp = [], acomConfigs = [],
+}: { meta: Meta; combos: Combo[]; serviciosDisp?: ServicioDisp[]; acomConfigs?: AcomConfig[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -52,14 +51,29 @@ export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; 
   const precios = combo?.precios ?? {};
 
   const esServicios = meta.modulo === "servicios";
-  const [cant, setCant] = useState<Record<string, string>>({});
+
+  // Reserva por HABITACIONES: cantidad de habitaciones por tipo (sencilla/doble/…).
+  const [habs, setHabs] = useState<Record<string, string>>({});
+  const [ninos, setNinos] = useState("0");
+  const [ninos2, setNinos2] = useState("0");
   const [infantes, setInfantes] = useState("0");
   const [paxServ, setPaxServ] = useState("1");
 
-  const paxConSilla = ACOMS.reduce((s, [k]) => (precios[k] != null ? s + (Number(cant[k]) || 0) : s), 0);
+  const roomTypes = ACOM_ROOMS.filter((a) => precios[a] != null);
+  const paxTarifa = (a: AcomRoom) => paxTarifaDe(acomConfigs, a);
+
+  const paxRooms = roomTypes.reduce((s, a) => s + (Number(habs[a]) || 0) * paxTarifa(a), 0);
+  const numNinos = precios["nino"] != null ? (Number(ninos) || 0) : 0;
+  const numNinos2 = precios["nino2"] != null ? (Number(ninos2) || 0) : 0;
   const numInfantes = Number(infantes) || 0;
+  const paxConSilla = paxRooms + numNinos + numNinos2;
   const totalPax = esServicios ? (Number(paxServ) || 0) : paxConSilla + numInfantes;
-  const totalHotel = ACOMS.reduce((s, [k]) => (precios[k] != null ? s + (Number(cant[k]) || 0) * precios[k]! : s), 0);
+  const numHabitaciones = roomTypes.reduce((s, a) => s + (Number(habs[a]) || 0), 0);
+
+  const totalHotel =
+    roomTypes.reduce((s, a) => s + (Number(habs[a]) || 0) * paxTarifa(a) * precios[a]!, 0) +
+    numNinos * (precios["nino"] ?? 0) +
+    numNinos2 * (precios["nino2"] ?? 0);
 
   // Servicios add-on (precio según pax)
   const [servSel, setServSel] = useState<Set<number>>(new Set());
@@ -108,16 +122,21 @@ export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; 
     if (esServicios) {
       if (totalPax <= 0) { setErr("Indica el número de pasajeros."); return; }
       if (!servSel.size) { setErr("Selecciona al menos un servicio."); return; }
-    } else if (paxConSilla <= 0) { setErr("Indica al menos un pasajero por acomodación."); return; }
+    } else if (numHabitaciones <= 0 && paxConSilla <= 0) {
+      setErr("Indica al menos una habitación."); return;
+    } else if (paxConSilla <= 0) {
+      setErr("Las habitaciones elegidas no suman pasajeros."); return;
+    }
     setErr("");
-    const cantidades: Record<string, number> = {};
-    if (!esServicios) for (const [k] of ACOMS) if (precios[k] != null && Number(cant[k]) > 0) cantidades[k] = Number(cant[k]);
+    const habitaciones: Record<string, number> = {};
+    if (!esServicios) for (const a of roomTypes) if (Number(habs[a]) > 0) habitaciones[a] = Number(habs[a]);
     const cortePax = esServicios ? totalPax : paxConSilla;
     const pasajeros = paxRows.map((p, idx) => ({ ...p, esInfante: idx >= cortePax }));
     start(async () => {
       const r = await reservarDesdeTarifario({
         paqueteId: meta.paqueteId, bloqueoId: meta.bloqueoId, modulo: meta.modulo, hotelId: meta.hotelId,
-        categoria: esServicios ? "" : cat, regimen: esServicios ? "" : reg, cantidades, infantes: numInfantes,
+        categoria: esServicios ? "" : cat, regimen: esServicios ? "" : reg,
+        habitaciones, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes,
         paxServicios: totalPax,
         cliente: cli, tipoAsesor, asesorInterno, agenciaNombre, agenciaAsesor, freelanceNombre, plazo, pasajeros,
         servicios: [...servSel],
@@ -141,10 +160,10 @@ export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; 
           </p>
         </section>
       )}
-      {/* Acomodación */}
+      {/* Habitaciones */}
       {!esServicios && (
       <section className="rounded-xl border border-gray-200 bg-white p-5">
-        <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Acomodación y cantidades</p>
+        <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Habitaciones</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className={lbl}>Categoría</label>
@@ -159,20 +178,42 @@ export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; 
             </select>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {ACOMS.filter(([k]) => precios[k] != null).map(([k, label]) => (
-            <div key={k}>
-              <label className={lbl}>{label} · {formatCOP(precios[k]!)}</label>
-              <Input type="number" min={0} value={cant[k] ?? ""} onChange={(e) => setCant({ ...cant, [k]: e.target.value })} placeholder="0" />
+        <p className="mt-4 mb-1 text-xs font-medium text-gray-500">Cantidad de habitaciones por tipo</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {roomTypes.map((a) => {
+            const pt = paxTarifa(a);
+            return (
+              <div key={a}>
+                <label className={lbl}>
+                  {ACOM_ROOM_LABEL[a]} · {pt} pax<br />
+                  <span className="text-[11px] text-gray-400">{formatCOP(precios[a]! * pt)} / hab</span>
+                </label>
+                <Input type="number" min={0} value={habs[a] ?? ""} onChange={(e) => setHabs({ ...habs, [a]: e.target.value })} placeholder="0" />
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-4 mb-1 text-xs font-medium text-gray-500">Niños e infantes (por cantidad, dentro de las habitaciones)</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {precios["nino"] != null && (
+            <div>
+              <label className={lbl}>Niño 1 · {formatCOP(precios["nino"]!)}</label>
+              <Input type="number" min={0} value={ninos} onChange={(e) => setNinos(e.target.value)} />
             </div>
-          ))}
+          )}
+          {precios["nino2"] != null && (
+            <div>
+              <label className={lbl}>Niño 2 · {formatCOP(precios["nino2"]!)}</label>
+              <Input type="number" min={0} value={ninos2} onChange={(e) => setNinos2(e.target.value)} />
+            </div>
+          )}
           <div>
             <label className={lbl}>Infantes (sin silla, $0)</label>
             <Input type="number" min={0} value={infantes} onChange={(e) => setInfantes(e.target.value)} />
           </div>
         </div>
         <p className="mt-3 text-sm text-gray-600">
-          {totalPax} pasajero(s) · Hotel <b>{formatCOP(totalHotel)}</b>
+          {numHabitaciones} habitación(es) · {totalPax} pasajero(s) · Hotel <b>{formatCOP(totalHotel)}</b>
           {totalServicios > 0 && <> + servicios <b>{formatCOP(totalServicios)}</b></>}
           {" "}· Total <b style={{ color: "var(--brand-primary)" }}>{formatCOP(totalPrecio)}</b>
         </p>
@@ -262,7 +303,7 @@ export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; 
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Pasajeros ({totalPax})</p>
         {!totalPax ? (
-          <p className="text-sm text-gray-400">Indica cantidades arriba para capturar pasajeros.</p>
+          <p className="text-sm text-gray-400">Indica habitaciones arriba para capturar pasajeros.</p>
         ) : (
           <div className="space-y-3">
             {paxRows.map((p, i) => {

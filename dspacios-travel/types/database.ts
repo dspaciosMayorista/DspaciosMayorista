@@ -665,6 +665,8 @@ export type Database = {
           edad_nino_min: number;
           edad_nino_max: number;
           rangos_edad: number[] | null;
+          pax_min: number | null;
+          pax_max: number | null;
         };
         Insert: {
           id?: number;
@@ -679,6 +681,8 @@ export type Database = {
           edad_nino_min?: number;
           edad_nino_max?: number;
           rangos_edad?: number[] | null;
+          pax_min?: number | null;
+          pax_max?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [
@@ -1064,6 +1068,28 @@ export type Database = {
         Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number };
         Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number };
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
+        Relationships: [];
+      };
+      hotel_acomodaciones: {
+        Row: {
+          id: number; hotel_id: number;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"];
+          pax_tarifa: number; pax_max: number;
+          adt_min: number; adt_max: number;
+          chd_min: number; chd_max: number;
+          inf_min: number; inf_max: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number; hotel_id: number;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"];
+          pax_tarifa?: number; pax_max?: number;
+          adt_min?: number; adt_max?: number;
+          chd_min?: number; chd_max?: number;
+          inf_min?: number; inf_max?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["hotel_acomodaciones"]["Insert"]>;
         Relationships: [];
       };
       tarifa_hotel: {

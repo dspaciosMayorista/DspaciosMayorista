@@ -270,7 +270,8 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - **Producto:** Destinos (`/dashboard/producto/destinos`, MAYÚSCULAS + IATA), Proveedores,
   Configuración (categorías de habitación, regímenes), **Hoteles** (temporadas propias +
   tarifa neta por categoría/régimen/temporada con **Niño 1 y Niño 2**; editar tarifa; config
-  de edades y rangos), **Servicios** (precio **por persona** y/o **por grupo con rangos de
+  de edades y rangos; **config de acomodaciones** — pax mín/máx del hotel y, por acomodación,
+  `pax_tarifa` (multiplicador por habitación) + mín/máx de adt/niños/inf), **Servicios** (precio **por persona** y/o **por grupo con rangos de
   pax**; destino vacío = nacional). **Carga masiva CSV** en hoteles, tarifas, servicios y
   bloqueos (plantillas con `sep=;`, listas con `|`).
 - **Paquetes (armado):** config inicial (nombre, **tipo** bloqueo/porción/servicios, **noches**
@@ -282,8 +283,9 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - **Tarifario público** (`/tarifario`): tabla **horizontal** (Hotel·Categoría·R.A.·Sencilla·
   Doble·Triple·Múltiple·**Chd1·Chd2**), "ver más opciones" por hotel; módulos
   **Bloqueos/Porción/Servicios**. Botón **Ingresar** + login con **Google (OAuth)**.
-- **Reservar** (`/dashboard/reservar`): tarifario comercial → formulario (cantidades por
-  acomodación, infantes, **cliente**, **pasajeros** con "copiar del cliente" + nacionalidad,
+- **Reservar** (`/dashboard/reservar`): tarifario comercial → formulario **por habitaciones**
+  (cantidad de habitaciones por tipo; valor = `pax_tarifa` × tarifa/persona) + **niños 1/2 e
+  infantes por cantidad**, **cliente**, **pasajeros** con "copiar del cliente" + nacionalidad,
   tipo de venta interno/agencia/freelance → canal B2B/B2C, **plazo**) → crea **venta pendiente**
   + **sillas en_plazo** (descuenta cupos) + contrato + PDF.
 - **Contratos:** estado pendiente/confirmado; **Confirmar venta** (rol alto) o **abono** auto-
@@ -297,10 +299,11 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - PVP = hotel + servicios + vuelo. **Impuesto (BNC)** = tiquete neto o fijo. Base com. = PVP − imp.
 - Niño 1 / Niño 2 = acomodaciones `nino` / `nino2` (0 = gratis, sí se publica).
 
-### Migraciones Supabase — correr en orden 016→025
+### Migraciones Supabase — correr en orden 016→027
 016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
 019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
-023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo.
+023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
+026 servicio_incluido · 027 hotel_acomodaciones (reservar por habitaciones + config acomod.).
 Script suelto: `supabase/scripts/fusion_cartagena.sql`.
 Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`.
 Google OAuth: callback `/auth/callback`; Site URL = producción.
@@ -320,12 +323,18 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
 2. **Reservar por HABITACIONES, no por personas:** hoy se piden personas por acomodación, mal.
    Debe pedir **cantidad de habitaciones** por tipo: 1 hab Doble ⇒ tarifa_doble × 2 pax;
    1 Triple ⇒ tarifa_triple × 3; Sencilla ⇒ × 1; etc. **Niños e infantes** sí van por **cantidad**
-   (de niños / de infantes), aparte.
-3. **Config de acomodaciones por hotel** (se desprende del punto 2):
-   - A) Mínima y máxima acomodación (pax mín/máx del hotel).
+   (de niños / de infantes), aparte. *(HECHO — migración 027 + `lib/acomodaciones.ts`. Reservar
+   pide habitaciones por tipo; valor = pax_tarifa × tarifa/persona; niños/infantes por cantidad.
+   El detalle del contrato y los ítems se guardan como "N hab Doble (M pax)".)*
+3. **Config de acomodaciones por hotel** (se desprende del punto 2): *(HECHO — tabla
+   `hotel_acomodaciones` + editor en el detalle del hotel. `pax_tarifa` = multiplicador de la
+   tarifa por persona de 1 habitación; defaults 1/2/3/4 si no se configura.)*
+   - A) Mínima y máxima acomodación (pax mín/máx del hotel). *(`hoteles.pax_min/pax_max`.)*
    - B) Por acomodación: pax máx + (mín/máx adultos, mín/máx niños, mín/máx infantes).
      Ej. Sencilla: máx 2 pax | adt 1–1 | chd 0–1 | inf 0–1. Doble: máx 4 | adt 2–2 | chd 0–2 | inf 0–2.
-4. **Validación pasajeros vs acomodación:** si las cantidades/edades de los pasajeros no cuadran
+     *(Guardado en `hotel_acomodaciones`; alimenta la validación del punto 4.)*
+4. **Validación pasajeros vs acomodación:** *(PENDIENTE — usar las reglas adt/chd/inf de
+   `hotel_acomodaciones` ya capturadas.)* Si las cantidades/edades de los pasajeros no cuadran
    con las habitaciones elegidas (ej. 1 sencilla con 1 adt + 1 chd pero hay 2 adultos por fecha de
    nacimiento), mostrar **alerta** y no dejar generar.
 5. **Contrato pendiente:** ya guarda costos del aéreo; faltan **costos del hotel negociado y
