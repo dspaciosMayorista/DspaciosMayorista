@@ -514,17 +514,26 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
         .order("numero_silla")
         .limit(paxConSilla);
       if (libres && libres.length) {
-        await admin
-          .from("sillas")
-          .update({
-            estado: "en_plazo",
-            numero_contrato: numero,
-            asesor: oNull(asesorNombre),
-            hotel: meta.hotel_nombre,
-            acomodacion: input.categoria,
-            plazo: oNull(input.plazo),
+        // Copia los datos del pasajero a cada silla (una silla por pasajero con
+        // silla; los infantes no ocupan silla).
+        const holders = input.pasajeros.filter((p) => !p.esInfante);
+        await Promise.all(
+          libres.map((s, i) => {
+            const p = holders[i];
+            return admin.from("sillas").update({
+              estado: "en_plazo",
+              numero_contrato: numero,
+              asesor: oNull(asesorNombre),
+              hotel: meta.hotel_nombre,
+              acomodacion: input.categoria,
+              plazo: oNull(input.plazo),
+              pasajero_nombres: oNull(p?.nombre),
+              tipo_doc: oNull(p?.tipoDoc),
+              numero_doc: oNull(p?.numeroDoc),
+              nacimiento: oNull(p?.fechaNacimiento),
+            }).eq("id", s.id);
           })
-          .in("id", libres.map((s) => s.id));
+        );
       }
     } catch {
       // No bloquear la reserva si falla el paso administrativo.
