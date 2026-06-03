@@ -283,7 +283,9 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - **Tarifario público** (`/tarifario`): tabla **horizontal** (Hotel·Categoría·R.A.·Sencilla·
   Doble·Triple·Múltiple·**Chd1·Chd2**), "ver más opciones" por hotel; módulos
   **Bloqueos/Porción/Servicios**. Botón **Ingresar** + login con **Google (OAuth)**.
-- **Reservar** (`/dashboard/reservar`): tarifario comercial → formulario **por habitaciones**
+- **Reservar** (`/dashboard/reservar`): en **porción/dinámico** el asesor elige **fecha de ida/
+  regreso** y se **re-liquida en vivo** (`cotizarPorFechas`, service-role); bloqueo usa fechas del
+  record. Luego formulario **por habitaciones**
   (cantidad de habitaciones por tipo; valor = `pax_tarifa` × tarifa/persona) + **niños 1/2 e
   infantes por cantidad**, **cliente**, **pasajeros** con "copiar del cliente" + nacionalidad,
   tipo de venta interno/agencia/freelance → canal B2B/B2C, **plazo**) → crea **venta pendiente**
@@ -321,9 +323,12 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
 - Merge de la rama a `main` cuando todo esté validado.
 
 ### REDISEÑO DE RESERVAR (anotaciones del dueño — pendiente, prioridad alta)
-1. **Motor de consulta por fechas:** en Reservar (sobre todo porción) el usuario pone **Fecha de
-   ida y Fecha de regreso**; el sistema **liquida esas noches** (noche por noche, mezclando
-   temporadas del hotel) y recién ahí muestra las opciones/tarifas para reservar.
+1. **Motor de consulta por fechas:** *(HECHO para porción/dinámico — `cotizarPorFechas` +
+   `liquidarHotelPaquete` en reservar/actions, reutiliza el motor del generador.)* En Reservar
+   (no bloqueo) el asesor pone **Fecha de ida y regreso**; el sistema **liquida esas noches**
+   (noche por noche, mezclando temporadas) con service-role y muestra las tarifas. Valida contra
+   el rango de viaje del paquete. Al generar, el server **re-liquida** con esas fechas
+   (autoritativo). Bloqueo mantiene las fechas fijas del record.
 2. **Reservar por HABITACIONES, no por personas:** hoy se piden personas por acomodación, mal.
    Debe pedir **cantidad de habitaciones** por tipo: 1 hab Doble ⇒ tarifa_doble × 2 pax;
    1 Triple ⇒ tarifa_triple × 3; Sencilla ⇒ × 1; etc. **Niños e infantes** sí van por **cantidad**

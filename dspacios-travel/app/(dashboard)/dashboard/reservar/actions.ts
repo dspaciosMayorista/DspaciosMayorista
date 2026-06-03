@@ -3,12 +3,121 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { precioServicio, noches, liquidarHotelNoches } from "@/lib/calc/paquetes";
+import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, type TemporadaRango } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
+
+// Acomodaciones (incluye niños) y su columna neta en tarifa_hotel.
+const ACOM_ALL = ["sencilla", "doble", "triple", "multiple", "nino", "nino2"] as const;
+const COL_NETO: Record<string, string> = {
+  sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple",
+  multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2",
+};
+
+export type ComboCotizado = { categoria: string; regimen: string; precios: Record<string, number> };
+
+// ── Liquidación EN VIVO de un hotel para fechas elegidas (motor por fechas) ──
+// Reutiliza el mismo motor del generador de tarifario, pero para las noches que
+// el asesor elige en Reservar (porción/dinámico). Devuelve SOLO PVP por
+// categoría/régimen/acomodación (los costos netos no se exponen). Requiere
+// service-role porque `tarifa_hotel` es interno.
+async function liquidarHotelPaquete(
+  admin: ReturnType<typeof createAdminClient>,
+  paqueteId: number,
+  hotelId: number,
+  fechaIda: string,
+  numNoches: number
+): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null } | null> {
+  if (numNoches <= 0) return null;
+  const { data: pq } = await admin
+    .from("armado_paquetes")
+    .select("pct_mk, impuesto_fijo, destino_id, destinos(nombre)")
+    .eq("id", paqueteId)
+    .maybeSingle();
+  if (!pq) return null;
+  const pctMk = Number(pq.pct_mk) || 0;
+  const impuesto = Number(pq.impuesto_fijo) || 0;
+  const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
+
+  const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }] = await Promise.all([
+    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
+    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin").eq("hotel_id", hotelId),
+    admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
+    admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona)").eq("paquete_id", paqueteId),
+  ]);
+  const filtroCat = (hsel?.categorias as string[] | null) ?? null;
+  const filtroReg = (hsel?.regimenes as string[] | null) ?? null;
+  const hotelNombre = (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
+  const temporadas: TemporadaRango[] = (temps ?? []).map((t) => ({ nombre: t.nombre, fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin }));
+
+  // Servicios INCLUIDOS se hornean por persona (igual que el generador).
+  let aporteServ = 0;
+  for (const s of servSel ?? []) {
+    if (!(s.incluido as boolean)) continue;
+    const srv = s.servicios_adicionales as unknown as { precio_persona: number | null } | null;
+    if (srv?.precio_persona == null) continue;
+    aporteServ += marcar(Number(srv.precio_persona) || 0, pctMk);
+  }
+
+  type TarifaRow = Record<string, unknown>;
+  const grupos = new Map<string, Map<string, TarifaRow>>();
+  for (const r of (tarifas ?? []) as TarifaRow[]) {
+    const cat = (r.tipo_habitacion as string) ?? "";
+    const reg = (r.alimentacion as string) ?? "";
+    const key = `${cat}|||${reg}`;
+    if (!grupos.has(key)) grupos.set(key, new Map());
+    grupos.get(key)!.set((r.temporada as string) ?? "", r);
+  }
+
+  const combos: ComboCotizado[] = [];
+  for (const [key, tempMap] of grupos) {
+    const [categoria, regimen] = key.split("|||");
+    if (filtroCat && filtroCat.length && !filtroCat.includes(categoria)) continue;
+    if (filtroReg && filtroReg.length && !filtroReg.includes(regimen)) continue;
+    const precios: Record<string, number> = {};
+    for (const acom of ACOM_ALL) {
+      const col = COL_NETO[acom];
+      const netoPorTemporada: Record<string, number | null> = {};
+      for (const [temp, row] of tempMap) { const v = row[col]; netoPorTemporada[temp] = v == null ? null : Number(v); }
+      const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
+      if (costoHotel == null) continue;
+      const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto });
+      precios[acom] = t.pvp;
+    }
+    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios });
+  }
+  return { combos, destinoNombre, hotelNombre };
+}
+
+export type CotizarResult =
+  | { ok: true; combos: ComboCotizado[]; noches: number }
+  | { ok: false; error: string };
+
+/** Cotiza un hotel para las fechas que elige el asesor (porción/dinámico). */
+export async function cotizarPorFechas(input: {
+  paqueteId: number; hotelId: number; fechaIda: string; fechaRegreso: string;
+}): Promise<CotizarResult> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Cotización por fechas no disponible (falta service-role)." };
+  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y de regreso." };
+  const numNoches = noches(input.fechaIda, input.fechaRegreso);
+  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+  const admin = createAdminClient();
+  const { data: pq } = await admin
+    .from("armado_paquetes")
+    .select("fecha_viaje_inicio, fecha_viaje_fin")
+    .eq("id", input.paqueteId)
+    .maybeSingle();
+  if (pq?.fecha_viaje_inicio && input.fechaIda < pq.fecha_viaje_inicio)
+    return { ok: false, error: `La ida no puede ser antes del ${pq.fecha_viaje_inicio} (rango del paquete).` };
+  if (pq?.fecha_viaje_fin && input.fechaRegreso > pq.fecha_viaje_fin)
+    return { ok: false, error: `El regreso no puede ser después del ${pq.fecha_viaje_fin} (rango del paquete).` };
+  const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda, numNoches);
+  if (!res || !res.combos.length) return { ok: false, error: "No hay tarifa para esas fechas (revisa temporadas del hotel)." };
+  return { ok: true, combos: res.combos, noches: numNoches };
+}
 
 export type PasajeroReserva = {
   nombre: string;
@@ -25,6 +134,8 @@ export type ReservaInput = {
   modulo: "bloqueo" | "porcion_terrestre" | "servicios";
   hotelId: number;
   paxServicios?: number;   // pax cuando es paquete tipo servicios (sin hotel)
+  fechaIda?: string;       // motor por fechas (porción/dinámico): fechas elegidas
+  fechaRegreso?: string;
   categoria: string;
   regimen: string;
   habitaciones: Record<string, number>; // CANTIDAD DE HABITACIONES por tipo (sencilla/doble/…)
@@ -62,7 +173,55 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   const numNinos2 = Math.max(0, Math.trunc(Number(input.ninos2) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
 
-  if (!esServicios) {
+  // Motor por fechas: porción/dinámico con fechas elegidas → re-liquidar en vivo
+  // (autoritativo, no se confía en el cliente). Bloqueo usa el tarifario fijo.
+  const usarFechas =
+    input.modulo !== "bloqueo" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!esServicios && usarFechas) {
+    const numNoches = noches(input.fechaIda!, input.fechaRegreso!);
+    if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+    const admin = createAdminClient();
+    const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda!, numNoches);
+    const combo = res?.combos.find((c) => c.categoria === input.categoria && c.regimen === input.regimen);
+    if (!combo) return { ok: false, error: "No hay tarifa para esas fechas / categoría / régimen." };
+    for (const [acom, p] of Object.entries(combo.precios)) pvpPorAcom[acom] = p;
+    meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
+
+    // Config de acomodaciones del hotel (defaults si no está configurada).
+    const { data: acomCfgF } = await sb
+      .from("hotel_acomodaciones")
+      .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
+      .eq("hotel_id", input.hotelId);
+    const reglasF = (acomCfgF ?? []) as AcomConfig[];
+    const paxTarifaF = (a: AcomRoom) => reglasF.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
+    for (const a of ACOM_ROOMS) {
+      const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
+      if (rooms <= 0 || pvpPorAcom[a] == null) continue;
+      const pax = rooms * paxTarifaF(a);
+      precioVenta += pax * pvpPorAcom[a];
+      paxConSilla += pax;
+      lineasHab.push({ acom: a, habitaciones: rooms, pax, pvp: pvpPorAcom[a] });
+    }
+    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
+    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
+    if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
+
+    const { data: hotelRowF } = await sb
+      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max").eq("id", input.hotelId).maybeSingle();
+    const realF = clasificarPorEdad(
+      input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
+      hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10
+    );
+    const habNumF: Record<string, number> = {};
+    for (const a of ACOM_ROOMS) { const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0)); if (n > 0) habNumF[a] = n; }
+    const valF = validarReservaHabitaciones({
+      habitaciones: habNumF, reglas: reglasF, ninosDeclarados: numNinos + numNinos2,
+      infantesDeclarados: Math.max(0, Math.trunc(Number(input.infantes) || 0)),
+      paxMinHotel: hotelRowF?.pax_min ?? null, paxMaxHotel: hotelRowF?.pax_max ?? null, real: realF,
+    });
+    if (valF.errores.length) return { ok: false, error: valF.errores.join(" ") };
+  } else if (!esServicios) {
     let q = sb
       .from("tarifario_resultado")
       .select("acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso")

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, calcularEdad } from "@/lib/utils";
-import { reservarDesdeTarifario, type PasajeroReserva } from "../actions";
+import { reservarDesdeTarifario, cotizarPorFechas, type PasajeroReserva } from "../actions";
 import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 
@@ -45,16 +45,37 @@ export function ReservaForm({
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
-  const categorias = useMemo(() => [...new Set(combos.map((c) => c.categoria))], [combos]);
+  const esServicios = meta.modulo === "servicios";
+  // Motor por fechas: en porción/dinámico el asesor elige las fechas y se
+  // re-liquida; en bloqueo las fechas son fijas (del record).
+  const esPorFechas = meta.modulo === "porcion_terrestre";
+
+  // Combos (categoría/régimen → precios) pueden recargarse al cotizar por fechas.
+  const [combosState, setCombosState] = useState<Combo[]>(combos);
+  const [fIda, setFIda] = useState(meta.fechaIda ?? "");
+  const [fReg, setFReg] = useState(meta.fechaRegreso ?? "");
+  const [nochesCot, setNochesCot] = useState<number | null>(meta.noches);
+  const [cotPend, startCot] = useTransition();
+  const [cotErr, setCotErr] = useState("");
+
+  function cotizar() {
+    setCotErr("");
+    startCot(async () => {
+      const r = await cotizarPorFechas({ paqueteId: meta.paqueteId, hotelId: meta.hotelId, fechaIda: fIda, fechaRegreso: fReg });
+      if (r.ok) { setCombosState(r.combos); setNochesCot(r.noches); }
+      else setCotErr(r.error);
+    });
+  }
+
+  const categorias = useMemo(() => [...new Set(combosState.map((c) => c.categoria))], [combosState]);
   const [cat, setCat] = useState(categorias[0] ?? "");
-  const regimenes = useMemo(() => combos.filter((c) => c.categoria === cat).map((c) => c.regimen), [combos, cat]);
+  const catSel = categorias.includes(cat) ? cat : (categorias[0] ?? "");
+  const regimenes = useMemo(() => combosState.filter((c) => c.categoria === catSel).map((c) => c.regimen), [combosState, catSel]);
   const [regState, setRegState] = useState("");
   const reg = regimenes.includes(regState) ? regState : (regimenes[0] ?? "");
 
-  const combo = combos.find((c) => c.categoria === cat && c.regimen === reg);
+  const combo = combosState.find((c) => c.categoria === catSel && c.regimen === reg);
   const precios = combo?.precios ?? {};
-
-  const esServicios = meta.modulo === "servicios";
 
   // Reserva por HABITACIONES: cantidad de habitaciones por tipo (sencilla/doble/…).
   const [habs, setHabs] = useState<Record<string, string>>({});
@@ -107,8 +128,9 @@ export function ReservaForm({
   // Validación pasajeros ↔ acomodación (punto 4)
   const habitacionesNum: Record<string, number> = {};
   for (const a of roomTypes) { const n = Number(habs[a]) || 0; if (n > 0) habitacionesNum[a] = n; }
+  const refFecha = esPorFechas ? (fIda || null) : meta.fechaIda;
   const real = esServicios ? undefined : clasificarPorEdad(
-    paxRows.map((p) => calcularEdad(p.fechaNacimiento, meta.fechaIda)),
+    paxRows.map((p) => calcularEdad(p.fechaNacimiento, refFecha)),
     meta.edadInfanteMax, meta.edadNinoMax
   );
   const validacion = esServicios
@@ -162,7 +184,9 @@ export function ReservaForm({
     start(async () => {
       const r = await reservarDesdeTarifario({
         paqueteId: meta.paqueteId, bloqueoId: meta.bloqueoId, modulo: meta.modulo, hotelId: meta.hotelId,
-        categoria: esServicios ? "" : cat, regimen: esServicios ? "" : reg,
+        categoria: esServicios ? "" : catSel, regimen: esServicios ? "" : reg,
+        fechaIda: esPorFechas ? (fIda || undefined) : undefined,
+        fechaRegreso: esPorFechas ? (fReg || undefined) : undefined,
         habitaciones, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes,
         paxServicios: totalPax,
         cliente: cli, tipoAsesor, asesorInterno, agenciaNombre, agenciaAsesor, freelanceNombre, plazo, pasajeros,
@@ -187,6 +211,22 @@ export function ReservaForm({
           </p>
         </section>
       )}
+      {/* Fechas (motor por fechas: porción / dinámico) */}
+      {esPorFechas && (
+        <section className="rounded-xl border border-gray-200 bg-white p-5">
+          <p className="mb-1 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Fechas del viaje</p>
+          <p className="mb-3 text-xs text-gray-400">Elige las fechas y actualiza las tarifas: se liquidan esas noches (mezclando temporadas del hotel).</p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div><label className={lbl}>Fecha de ida</label><Input type="date" value={fIda} onChange={(e) => setFIda(e.target.value)} /></div>
+            <div><label className={lbl}>Fecha de regreso</label><Input type="date" value={fReg} onChange={(e) => setFReg(e.target.value)} /></div>
+            <Button type="button" onClick={cotizar} disabled={cotPend || !fIda || !fReg} style={{ backgroundColor: "var(--brand-accent)" }}>
+              {cotPend ? "Cotizando…" : "Ver tarifas para estas fechas"}
+            </Button>
+            {nochesCot != null && <span className="text-sm text-gray-500">{nochesCot} noche(s)</span>}
+          </div>
+          {cotErr && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{cotErr}</p>}
+        </section>
+      )}
       {/* Habitaciones */}
       {!esServicios && (
       <section className="rounded-xl border border-gray-200 bg-white p-5">
@@ -194,7 +234,7 @@ export function ReservaForm({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className={lbl}>Categoría</label>
-            <select value={cat} onChange={(e) => setCat(e.target.value)} className={inp}>
+            <select value={catSel} onChange={(e) => setCat(e.target.value)} className={inp}>
               {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
