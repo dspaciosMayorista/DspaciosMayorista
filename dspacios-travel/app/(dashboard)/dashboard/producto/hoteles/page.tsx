@@ -16,8 +16,8 @@ const COLS_HOTELES = [
   { key: "edad_infante_max", label: "Edad infante máx", ejemplo: "2" },
   { key: "edad_nino_min", label: "Edad niño mín", ejemplo: "2" },
   { key: "edad_nino_max", label: "Edad niño máx", ejemplo: "10" },
-  { key: "categorias", label: "Categorías (separadas por ;)", ejemplo: "Estándar;Superior" },
-  { key: "regimenes", label: "Regímenes (códigos separados por ;)", ejemplo: "PC;FULL" },
+  { key: "categorias", label: "Categorías (separadas por |)", ejemplo: "Estándar|Superior" },
+  { key: "regimenes", label: "Regímenes (códigos separados por |)", ejemplo: "PC|FULL" },
 ];
 
 const COLS_TARIFAS = [
@@ -60,7 +60,7 @@ export default async function HotelesPage() {
       <div className="mb-4 space-y-3">
         <CargaMasivaCSV
           titulo="Carga masiva de hoteles (CSV)"
-          descripcion="Cada fila = un hotel. El destino debe existir. Categorías y regímenes deben existir en Configuración general (sepáralos con ;)."
+          descripcion="Cada fila = un hotel. El destino debe existir. Categorías y regímenes deben existir en Configuración general (varios se separan con | , ej. Estándar|Superior)."
           columnas={COLS_HOTELES}
           onSubmit={cargarHotelesMasivo}
           nombreArchivo="plantilla_hoteles"

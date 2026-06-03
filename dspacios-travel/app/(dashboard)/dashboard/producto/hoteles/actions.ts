@@ -251,8 +251,8 @@ export async function cargarHotelesMasivo(rows: Record<string, string>[]): Promi
       .select("id")
       .single();
     if (error || !hotel) { errores.push(`Fila ${linea} (${nombre}): ${error?.message ?? "no se insertó"}`); continue; }
-    const catIds = (r.categorias || "").split(";").map((x) => cmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
-    const regIds = (r.regimenes || "").split(";").map((x) => rmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
+    const catIds = (r.categorias || "").split(/[|;]/).map((x) => cmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
+    const regIds = (r.regimenes || "").split(/[|;]/).map((x) => rmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
     if (catIds.length) await sb.from("hotel_categorias").insert(catIds.map((categoria_id) => ({ hotel_id: hotel.id, categoria_id })));
     if (regIds.length) await sb.from("hotel_regimenes").insert(regIds.map((plan_id) => ({ hotel_id: hotel.id, plan_id })));
     insertados++;

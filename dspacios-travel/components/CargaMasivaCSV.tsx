@@ -52,9 +52,12 @@ export function CargaMasivaCSV({
   const [pending, start] = useTransition();
 
   function descargarPlantilla() {
-    const header = columnas.map((c) => c.key).join(",");
-    const ejemplo = columnas.map((c) => c.ejemplo).join(",");
-    const blob = new Blob(["﻿" + header + "\n" + ejemplo + "\n"], { type: "text/csv;charset=utf-8;" });
+    const SEP = ";";
+    const header = columnas.map((c) => c.key).join(SEP);
+    const ejemplo = columnas.map((c) => c.ejemplo).join(SEP);
+    // "sep=;" obliga a Excel a abrir el archivo separado por columnas (cualquier locale).
+    const contenido = "﻿sep=;\n" + header + "\n" + ejemplo + "\n";
+    const blob = new Blob([contenido], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = `${nombreArchivo}.csv`; a.click();
@@ -65,9 +68,18 @@ export function CargaMasivaCSV({
     setRes(null); setErrParse("");
     const text = raw.replace(/^﻿/, "").trim();
     if (!text) { setFilas([]); return; }
-    const primeraLinea = text.split("\n")[0];
-    const delim = (primeraLinea.split(";").length > primeraLinea.split(",").length) ? ";" : ",";
-    const matriz = parseCSV(text, delim);
+    let lineas = text.split("\n");
+    let delim = "";
+    // Soporta la línea "sep=;" (Excel) al inicio
+    if (lineas[0].trim().toLowerCase().startsWith("sep=")) {
+      delim = lineas[0].trim().slice(4).charAt(0) || ";";
+      lineas = lineas.slice(1);
+    }
+    if (!delim) {
+      const primera = lineas[0] ?? "";
+      delim = primera.split(";").length > primera.split(",").length ? ";" : ",";
+    }
+    const matriz = parseCSV(lineas.join("\n"), delim);
     if (matriz.length < 2) { setErrParse("El archivo necesita una fila de encabezados y al menos una fila de datos."); setFilas([]); return; }
     const header = matriz[0].map(norm);
     // Mapea cada columna esperada a su índice (por key o por label)
@@ -130,7 +142,7 @@ export function CargaMasivaCSV({
               onChange={(e) => { setTexto(e.target.value); procesar(e.target.value); }}
               rows={4}
               className="w-full rounded-lg border border-gray-300 p-2 font-mono text-xs"
-              placeholder={columnas.map((c) => c.key).join(",")}
+              placeholder={columnas.map((c) => c.key).join(";")}
             />
           </div>
           {errParse && <p className="text-sm text-red-600">{errParse}</p>}
