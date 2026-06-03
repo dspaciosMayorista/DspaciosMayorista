@@ -30,7 +30,7 @@ export default async function BloqueoDetallePage({
   const sb = await createClient();
   const [{ data: b }, { data: sillas }, { data: otros }, { data: destinos }, { data: proveedores }, { data: rangos }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").eq("id", bloqueoId).single(),
-    sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, hotel, acomodacion").eq("bloqueo_id", bloqueoId).order("numero_silla"),
+    sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo").eq("bloqueo_id", bloqueoId).order("numero_silla"),
     sb.from("bloqueos_vuelo").select("id, record, fecha_ida").neq("id", bloqueoId).order("fecha_ida"),
     sb.from("destinos").select("id, nombre").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "aereo").order("nombre"),
@@ -93,21 +93,55 @@ export default async function BloqueoDetallePage({
         </div>
       )}
 
-      {/* Malla de sillas */}
-      <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-        {(sillas ?? []).map((s) => (
-          <div key={s.id} className="rounded-lg border border-gray-200 p-3" style={{ backgroundColor: ESTADO_COLOR[s.estado] ?? "#fff" }}>
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-sm font-semibold text-gray-700">Silla {s.numero_silla}</span>
-              <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId}
-                bloqueada={s.estado === "cambio" || s.estado === "cambio_entrante"} />
-            </div>
-            {s.numero_contrato && <div className="mt-1 font-mono text-xs text-gray-600">{s.numero_contrato}</div>}
-            {(s.pasajero_nombres || s.pasajero_apellidos) && (
-              <div className="text-xs text-gray-600">{s.pasajero_nombres} {s.pasajero_apellidos}</div>
-            )}
-          </div>
-        ))}
+      {/* Pasajeros del record (una fila por silla) */}
+      <p className="mb-2 mt-6 text-sm font-semibold text-gray-700">Pasajeros</p>
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <table className="w-full min-w-[1000px] text-sm">
+          <thead>
+            <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+              <th className="px-3 py-2">#</th>
+              <th className="px-3 py-2">Nombres</th>
+              <th className="px-3 py-2">Apellidos</th>
+              <th className="px-3 py-2">Tipo doc</th>
+              <th className="px-3 py-2">Número</th>
+              <th className="px-3 py-2">Nacimiento</th>
+              <th className="px-3 py-2">Contrato</th>
+              <th className="px-3 py-2">Asesor</th>
+              <th className="px-3 py-2">Hotel</th>
+              <th className="px-3 py-2">Acomodación</th>
+              <th className="px-3 py-2">Plazo</th>
+              <th className="px-3 py-2">Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(sillas ?? []).map((s) => (
+              <tr key={s.id} className="border-t border-gray-100">
+                <td className="px-3 py-2 font-semibold text-gray-700">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ESTADO_COLOR[s.estado] ?? "#ccc" }} />
+                    {s.numero_silla}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-gray-700">{s.pasajero_nombres || "—"}</td>
+                <td className="px-3 py-2 text-gray-700">{s.pasajero_apellidos || "—"}</td>
+                <td className="px-3 py-2 text-gray-500">{s.tipo_doc || "—"}</td>
+                <td className="px-3 py-2 text-gray-500">{s.numero_doc || "—"}</td>
+                <td className="px-3 py-2 text-xs text-gray-500">{s.nacimiento ? formatFechaLarga(s.nacimiento) : "—"}</td>
+                <td className="px-3 py-2 font-mono text-xs text-[#1D7C9A]">
+                  {s.numero_contrato ? <Link href={`/dashboard/contratos/${s.numero_contrato}`} className="hover:underline">{s.numero_contrato}</Link> : "—"}
+                </td>
+                <td className="px-3 py-2 text-gray-500">{s.asesor || "—"}</td>
+                <td className="px-3 py-2 text-gray-500">{s.hotel || "—"}</td>
+                <td className="px-3 py-2 text-gray-500">{s.acomodacion || "—"}</td>
+                <td className="px-3 py-2 text-xs text-gray-500">{s.plazo ? formatFechaLarga(s.plazo) : "—"}</td>
+                <td className="px-3 py-2">
+                  <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId}
+                    bloqueada={s.estado === "cambio" || s.estado === "cambio_entrante"} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
       {!sillas?.length && <p className="mt-6 text-sm text-gray-400">Este bloqueo no tiene sillas generadas.</p>}
     </div>

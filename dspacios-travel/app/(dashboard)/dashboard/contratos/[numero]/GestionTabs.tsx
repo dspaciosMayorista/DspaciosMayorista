@@ -97,7 +97,7 @@ export function GestionTabs(p: GestionProps) {
         {p.verFinanzas && (
           <>
             <TabsContent value="costos">
-              <CostosTab numero={p.numero} costos={p.costos} costoDirecto={costoDirecto} />
+              <CostosTab numero={p.numero} costos={p.costos} />
             </TabsContent>
             <TabsContent value="proveedores">
               <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />
@@ -120,7 +120,7 @@ export function GestionTabs(p: GestionProps) {
 }
 
 // ── COSTOS ─────────────────────────────────────────────────────────────
-function CostosTab({ numero, costos, costoDirecto }: { numero: string; costos: GestionProps["costos"]; costoDirecto: number }) {
+function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["costos"] }) {
   const [v, setV] = useState(costos);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -144,19 +144,23 @@ function CostosTab({ numero, costos, costoDirecto }: { numero: string; costos: G
   return (
     <div className={card}>
       <p className="mb-4 text-sm text-gray-500">Costos netos por proveedor. Alimentan la rentabilidad.</p>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+      <div className="max-w-xl space-y-3">
         {campos.map(([k, label]) => (
-          <div key={k}>
-            <label className={lbl}>{label}</label>
-            <Input type="number" min={0} value={v[k] || ""} onChange={set(k)} placeholder="0" />
+          <div key={k} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+            <label className="w-40 shrink-0 text-sm font-medium text-gray-600">{label}</label>
+            <Input type="number" min={0} value={v[k] || ""} onChange={set(k)} placeholder="0" className="sm:flex-1" />
+            <span className="w-32 shrink-0 text-right text-sm tabular-nums text-gray-500">{formatCOP(v[k] || 0)}</span>
           </div>
         ))}
+        <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+          <span className="w-40 shrink-0 text-sm font-semibold text-gray-700">Costo directo total</span>
+          <b className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(total)}</b>
+        </div>
       </div>
       <div className="mt-4 flex items-center gap-3">
         <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Guardar costos"}
         </Button>
-        <span className="text-sm text-gray-500">Costo directo total: <b className="tabular-nums">{formatCOP(total)}</b></span>
         {msg && <span className="text-sm text-green-600">{msg}</span>}
       </div>
     </div>

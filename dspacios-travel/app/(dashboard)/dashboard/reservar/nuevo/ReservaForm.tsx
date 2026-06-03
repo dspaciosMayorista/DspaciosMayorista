@@ -176,6 +176,11 @@ export function ReservaForm({
     if (!esServicios && validacion.errores.length) {
       setErr(validacion.errores[0]); return;
     }
+    // Validación de documento: solo Pasaporte admite letras; el resto, solo números.
+    const docOk = (tipo: string, num: string) => tipo === "PAS" || num.trim() === "" || /^\d+$/.test(num.trim());
+    if (!docOk(cli.tipoDoc, cli.numeroDoc)) { setErr("El número de documento del cliente debe ser solo números (excepto Pasaporte)."); return; }
+    const malDoc = paxRows.findIndex((p) => !docOk(p.tipoDoc, p.numeroDoc));
+    if (malDoc >= 0) { setErr(`El documento del pasajero ${malDoc + 1} debe ser solo números (excepto Pasaporte).`); return; }
     setErr("");
     const habitaciones: Record<string, number> = {};
     if (!esServicios) for (const a of roomTypes) if (Number(habs[a]) > 0) habitaciones[a] = Number(habs[a]);
