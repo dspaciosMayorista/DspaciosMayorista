@@ -32,6 +32,7 @@ const COL_NETO: Record<Acomodacion, string> = {
 
 export interface PaqueteConfig {
   nombre: string;
+  tipo: "bloqueo" | "porcion_terrestre" | "servicios";
   destinoId: number | null;
   fechaCompraInicio: string;
   fechaCompraFin: string;
@@ -47,6 +48,7 @@ export interface PaqueteConfig {
 function configToRow(c: PaqueteConfig) {
   return {
     nombre: c.nombre.trim(),
+    tipo: c.tipo,
     destino_id: c.destinoId,
     fecha_compra_inicio: dNull(c.fechaCompraInicio),
     fecha_compra_fin: dNull(c.fechaCompraFin),
@@ -397,7 +399,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     }))
     .filter((v): v is typeof v & { b: NonNullable<typeof v.b> } => !!v.b && !!v.b.fecha_ida && !!v.b.fecha_regreso);
 
-  if (vuelos.length) {
+  const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios";
+
+  if (tipo === "bloqueo") {
     // MÓDULO BLOQUEOS: una liquidación por ciclo aéreo
     for (const { aplica_mk, ta, b } of vuelos) {
       const numNoches = calcNoches(b.fecha_ida!, b.fecha_regreso!);
@@ -407,19 +411,38 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       const label = [b.record, b.ruta].filter(Boolean).join(" · ") || b.record || "";
       filasHoteles(b.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", b.id, label, b.fecha_regreso);
     }
-  } else if (pq.fecha_viaje_inicio && pq.fecha_viaje_fin) {
+  } else if (tipo === "porcion_terrestre" && pq.fecha_viaje_inicio && pq.fecha_viaje_fin) {
     // MÓDULO PORCIÓN TERRESTRE: sin vuelo; noches = rango de viaje, impuesto fijo
     const numNoches = calcNoches(pq.fecha_viaje_inicio, pq.fecha_viaje_fin);
-    filasHoteles(
-      pq.fecha_viaje_inicio,
-      numNoches,
-      0,
-      Number(pq.impuesto_fijo) || 0,
-      "porcion_terrestre",
-      null,
-      null,
-      pq.fecha_viaje_fin
-    );
+    filasHoteles(pq.fecha_viaje_inicio, numNoches, 0, Number(pq.impuesto_fijo) || 0, "porcion_terrestre", null, null, pq.fecha_viaje_fin);
+  } else if (tipo === "servicios") {
+    // MÓDULO SERVICIOS: una fila por servicio (precio por persona con mk)
+    const numNoches =
+      pq.fecha_viaje_inicio && pq.fecha_viaje_fin ? calcNoches(pq.fecha_viaje_inicio, pq.fecha_viaje_fin) : 0;
+    for (const s of servicios) {
+      const srv = s.servicios_adicionales as unknown as
+        | { nombre: string; tarifa_neta: number; liquidacion: "dia" | "noche" | "paquete" }
+        | null;
+      if (!srv) continue;
+      const costo = costoServicio(Number(srv.tarifa_neta) || 0, srv.liquidacion, numNoches);
+      const pvp = Math.round(marcar(costo, pctMk));
+      filas.push({
+        paquete_id: paqueteId,
+        paquete_nombre: paqueteNombre,
+        paquete_activo: paqueteActivo,
+        modulo: "servicios",
+        servicio_id: s.servicio_id,
+        servicio_nombre: srv.nombre,
+        destino_id: paqueteDestinoId,
+        destino_nombre: destinoNombre,
+        noches: numNoches || null,
+        fecha_ida: pq.fecha_viaje_inicio,
+        fecha_regreso: pq.fecha_viaje_fin,
+        base_comisionable: pvp,
+        impuesto: 0,
+        precio_pvp: pvp,
+      });
+    }
   }
 
   // Reescribe el resultado del paquete

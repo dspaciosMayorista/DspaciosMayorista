@@ -8,8 +8,10 @@ import { crearPaquete, actualizarPaquete, type PaqueteConfig } from "./actions";
 
 type Opt = { id: number; nombre: string };
 
+type Tipo = "bloqueo" | "porcion_terrestre" | "servicios";
 type Initial = Partial<{
   nombre: string;
+  tipo: Tipo;
   activo: boolean;
   destinoId: number | null;
   fechaCompraInicio: string;
@@ -36,6 +38,7 @@ export function ConfigForm({
 }) {
   const router = useRouter();
   const [nombre, setNombre] = useState(initial?.nombre ?? "");
+  const [tipo, setTipo] = useState<Tipo>(initial?.tipo ?? "bloqueo");
   const [activo, setActivo] = useState(initial?.activo ?? true);
   const [destinoId, setDestinoId] = useState<number | "">(initial?.destinoId ?? "");
   const [compraIni, setCompraIni] = useState(initial?.fechaCompraInicio ?? "");
@@ -57,6 +60,7 @@ export function ConfigForm({
     setErr("");
     const cfg: PaqueteConfig = {
       nombre,
+      tipo,
       destinoId: destinoId === "" ? null : Number(destinoId),
       fechaCompraInicio: compraIni,
       fechaCompraFin: compraFin,
@@ -83,6 +87,16 @@ export function ConfigForm({
         <div className="md:col-span-2">
           <label className={lbl}>Nombre del paquete *</label>
           <Input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Cartagena 4D/3N — Bloqueo junio" />
+        </div>
+
+        <div className="md:col-span-2">
+          <label className={lbl}>Tipo de paquete *</label>
+          <select value={tipo} onChange={(e) => setTipo(e.target.value as Tipo)} className={sel}>
+            <option value="bloqueo">Bloqueo (vuelo + hotel)</option>
+            <option value="porcion_terrestre">Porción terrestre (solo hotel)</option>
+            <option value="servicios">Servicios (solo servicios)</option>
+          </select>
+          <p className="mt-1 text-[11px] text-gray-400">Define qué adicionas y en qué módulo del tarifario aparece.</p>
         </div>
 
         <div>

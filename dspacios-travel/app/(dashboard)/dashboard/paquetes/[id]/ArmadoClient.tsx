@@ -45,6 +45,7 @@ export function ArmadoClient(props: {
   resultado: Resultado[];
 }) {
   const router = useRouter();
+  const tipo = (props.config?.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios";
   const [openCfg, setOpenCfg] = useState(false);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -88,6 +89,7 @@ export function ArmadoClient(props: {
       </Section>
 
       {/* Adición de vuelos */}
+      {tipo === "bloqueo" && (
       <Section title={`Adición de vuelos (${vueloSel.size})`} open onToggle={() => {}}>
         {!props.vuelosDisp.length ? (
           <Empty>No hay ciclos aéreos del destino en el rango de viaje.</Empty>
@@ -128,7 +130,10 @@ export function ArmadoClient(props: {
         )}
       </Section>
 
+      )}
+
       {/* Adición de hoteles */}
+      {(tipo === "bloqueo" || tipo === "porcion_terrestre") && (
       <Section title={`Adición de hoteles (${hotelSel.size})`} open onToggle={() => {}}>
         {!props.hotelesDisp.length ? (
           <Empty>No hay hoteles del destino.</Empty>
@@ -146,6 +151,8 @@ export function ArmadoClient(props: {
           </ul>
         )}
       </Section>
+
+      )}
 
       {/* Adición de servicios */}
       <Section title={`Adición de servicios (${servSel.size})`} open onToggle={() => {}}>

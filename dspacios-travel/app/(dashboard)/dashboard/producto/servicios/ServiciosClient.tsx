@@ -78,7 +78,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
           <div>
             <label className={lbl}>Destino</label>
             <select value={destId} onChange={(e) => setDestId(Number(e.target.value) || "")} className={sel}>
-              <option value="">—</option>
+              <option value="">Todos los destinos (nacional)</option>
               {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </div>
@@ -126,7 +126,7 @@ function Row({ s, onEdit }: { s: Servicio; onEdit: (s: Servicio) => void }) {
     <tr className="border-t border-gray-50">
       <td className="px-4 py-2 text-gray-700">{s.nombre}</td>
       <td className="px-4 py-2 text-gray-500">{s.proveedores?.nombre ?? "—"}</td>
-      <td className="px-4 py-2 text-gray-500">{s.destinos?.nombre ?? "—"}</td>
+      <td className="px-4 py-2 text-gray-500">{s.destinos?.nombre ?? "Nacional"}</td>
       <td className="px-4 py-2 text-right tabular-nums">{formatCOP(s.tarifa_neta)}</td>
       <td className="px-4 py-2 text-gray-500">{LIQ[s.liquidacion] ?? s.liquidacion}</td>
       <td className="px-4 py-2 text-right">

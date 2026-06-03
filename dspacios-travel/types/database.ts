@@ -1109,6 +1109,7 @@ export type Database = {
           id: number;
           nombre: string;
           activo: boolean;
+          tipo: Database["public"]["Enums"]["tarifario_modulo"];
           destino_id: number | null;
           fecha_compra_inicio: string | null;
           fecha_compra_fin: string | null;
@@ -1126,6 +1127,7 @@ export type Database = {
           id?: number;
           nombre: string;
           activo?: boolean;
+          tipo?: Database["public"]["Enums"]["tarifario_modulo"];
           destino_id?: number | null;
           fecha_compra_inicio?: string | null;
           fecha_compra_fin?: string | null;

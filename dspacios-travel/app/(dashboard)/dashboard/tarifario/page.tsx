@@ -1,58 +1,53 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
-import { NuevoDestinoDialog } from "./NuevoDestinoDialog";
-import { EliminarDestinoBtn } from "./EliminarDestinoBtn";
+import { TarifarioPublic, type FilaTarifario } from "@/app/tarifario/TarifarioPublic";
 
-export default async function TarifarioAdminPage() {
+export const dynamic = "force-dynamic";
+
+export default async function TarifarioInternoPage() {
   const sb = await createClient();
 
-  const { data: destinos } = await sb
-    .from("destinos")
-    .select("id, nombre, codigo_iata, hoteles(count)")
-    .order("nombre");
+  // Tarifario generado (resultado de los paquetes). Paginado por si supera 1000.
+  const filas: FilaTarifario[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data: page } = await sb
+      .from("tarifario_resultado")
+      .select(
+        "modulo, bloqueo_label, bloqueo_id, paquete_id, hotel_id, servicio_nombre, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp"
+      )
+      .eq("paquete_activo", true)
+      .order("destino_nombre")
+      .order("bloqueo_label")
+      .order("hotel_nombre")
+      .order("categoria")
+      .order("regimen")
+      .range(from, from + PAGE - 1);
+    if (!page || page.length === 0) break;
+    filas.push(...(page as unknown as FilaTarifario[]));
+    if (page.length < PAGE) break;
+  }
 
   return (
-    <div className="p-4 md:p-8 max-w-5xl mx-auto">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
+    <div className="mx-auto max-w-6xl p-4 md:p-8">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Tarifario</h1>
-          <p className="text-sm text-gray-500 mt-1">Módulo de Producto — gestión de destinos y tarifas</p>
+          <p className="mt-1 text-sm text-gray-500">
+            Resultado publicado de los paquetes (vista interna). Para generar contratos usa <b>Reservar</b>.
+          </p>
         </div>
-        <NuevoDestinoDialog />
+        <Link href="/dashboard/producto/destinos" className="text-sm text-[var(--brand-accent)] hover:underline">
+          Gestionar destinos →
+        </Link>
       </div>
 
-      {!destinos?.length ? (
-        <div className="text-center py-20 text-gray-400 border-2 border-dashed border-gray-200 rounded-2xl">
-          <p className="text-lg">No hay destinos cargados</p>
-          <p className="text-sm mt-1">Crea el primer destino para comenzar a cargar tarifas</p>
-        </div>
+      {!filas.length ? (
+        <p className="py-20 text-center text-gray-400">
+          Aún no hay tarifas publicadas. Arma un paquete y dale <b>Generar tarifario</b>.
+        </p>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {destinos.map((d) => (
-            <div
-              key={d.id}
-              className="bg-white border border-gray-200 rounded-xl p-5 hover:border-[#1D7C9A] hover:shadow-sm transition-all group relative"
-            >
-              <Link href={`/dashboard/tarifario/${d.id}`} className="block">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h2 className="font-semibold text-gray-900 group-hover:text-[#1D7C9A] transition-colors">
-                      {d.nombre?.toUpperCase()}
-                      {d.codigo_iata && <span className="font-normal text-gray-400"> ({d.codigo_iata})</span>}
-                    </h2>
-                  </div>
-                  <span className="text-xs bg-gray-50 text-gray-500 px-2 py-1 rounded-full">
-                    {(d.hoteles as unknown as { count: number }[])?.[0]?.count ?? 0} hoteles
-                  </span>
-                </div>
-                <p className="text-xs text-[#26BBD9] mt-3 font-medium">Ver tarifas →</p>
-              </Link>
-              <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                <EliminarDestinoBtn id={d.id} nombre={d.nombre} />
-              </div>
-            </div>
-          ))}
-        </div>
+        <TarifarioPublic filas={filas} />
       )}
     </div>
   );

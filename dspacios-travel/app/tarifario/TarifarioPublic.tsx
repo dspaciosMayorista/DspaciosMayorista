@@ -16,6 +16,7 @@ export type FilaTarifario = {
   destino_nombre: string | null;
   paquete_nombre: string | null;
   hotel_nombre: string | null;
+  servicio_nombre?: string | null;
   categoria: string | null;
   regimen: string | null;
   acomodacion: string | null;
@@ -106,7 +107,7 @@ export function TarifarioPublic({ filas, puedeReservar = false }: { filas: FilaT
       ) : modulo === "porcion_terrestre" ? (
         <PorPaquete filas={filas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} />
       ) : (
-        <p className="py-12 text-center text-sm text-gray-400">No hay servicios publicados todavía.</p>
+        <PorServicios filas={filas.filter((f) => f.modulo === "servicios")} />
       )}
 
       <p className="mt-4 text-center text-xs text-gray-400">
@@ -221,6 +222,33 @@ function PorPaquete({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeRes
       <div className="min-w-0 flex-1">
         <TablaHorizontal rows={rows} puedeReservar={puedeReservar} />
       </div>
+    </div>
+  );
+}
+
+// ── Módulo SERVICIOS ───────────────────────────────────────────────────────
+function PorServicios({ filas }: { filas: FilaTarifario[] }) {
+  if (!filas.length) return <p className="py-12 text-center text-sm text-gray-400">No hay servicios publicados.</p>;
+  return (
+    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
+            <th className="px-3 py-2">Servicio</th>
+            <th className="px-3 py-2">Destino</th>
+            <th className="px-3 py-2 text-right">Precio /persona</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((f, i) => (
+            <tr key={i} className="border-t border-gray-100">
+              <td className="px-3 py-2 font-medium text-gray-800">{f.servicio_nombre ?? "—"}</td>
+              <td className="px-3 py-2 text-gray-600">{f.destino_nombre ?? "Nacional"}</td>
+              <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(f.precio_pvp)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

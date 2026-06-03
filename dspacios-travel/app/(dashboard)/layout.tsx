@@ -8,6 +8,7 @@ const NAV: NavItem[] = [
     href: "/dashboard/producto",
     label: "Producto",
     children: [
+      { href: "/dashboard/producto/destinos", label: "Destinos" },
       { href: "/dashboard/producto/hoteles", label: "Hoteles" },
       { href: "/dashboard/producto/servicios", label: "Servicios" },
       { href: "/dashboard/producto/proveedores", label: "Proveedores" },

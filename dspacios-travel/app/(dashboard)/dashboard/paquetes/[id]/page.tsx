@@ -96,6 +96,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         destinos={destinos ?? []}
         config={{
           nombre: pq.nombre,
+          tipo: pq.tipo,
           activo: pq.activo,
           destinoId: pq.destino_id,
           fechaCompraInicio: pq.fecha_compra_inicio ?? "",
