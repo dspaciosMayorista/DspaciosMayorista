@@ -307,7 +307,23 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - PVP = hotel + servicios + vuelo. **Impuesto (BNC)** = tiquete neto o fijo. Base com. = PVP − imp.
 - Niño 1 / Niño 2 = acomodaciones `nino` / `nino2` (0 = gratis, sí se publica).
 
-### Migraciones Supabase — correr en orden 016→027
+### PRÓXIMA TAREA (decidida con el dueño) — Editar reserva pendiente "completa (mismo #)"
+Permitir editar un contrato **pendiente** (cambiar hotel, fechas, habitaciones, servicios) sin
+cambiar el `numero_contrato`. Plan:
+1. **Refactor del motor:** que `reservarDesdeTarifario` acepte `editarNumero?: string`. En modo
+   edición: no genera número; verifica que la venta exista y esté `pendiente`; **libera** sus
+   sillas `en_plazo` (vuelven a `disponible`) y **borra** `contrato_items`/`contrato_hoteles`/
+   `contrato_vuelos`/`contrato_pasajeros`; hace `update` de `ventas` en vez de `insert`; recrea
+   hijos y **reasigna sillas** con la nueva selección; recalcula costos (hotel/aéreo/receptivo).
+   Reutiliza TODA la liquidación existente (incl. `liquidarHotelPaquete` para porción por fechas).
+2. **UI:** botón "Editar reserva" en el contrato pendiente → reabre `/dashboard/reservar/nuevo`
+   en modo edición con el formulario **precargado** (cliente, fechas, categoría/régimen,
+   habitaciones por tipo, niños/infantes, servicios, tipo de venta, pasajeros). Cargar esos datos
+   desde la venta + `contrato_*` y mapearlos al estado del `ReservaForm`.
+3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
+Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
+
+### Migraciones Supabase — correr en orden 016→029
 016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
 019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
 023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
