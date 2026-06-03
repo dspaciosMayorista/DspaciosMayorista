@@ -35,7 +35,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
 
   let qServicios = sb
     .from("servicios_adicionales")
-    .select("id, nombre, tarifa_neta, liquidacion, destino_id")
+    .select("id, nombre, precio_persona, precio_grupo, destino_id")
     .eq("activo", true)
     .order("nombre");
   if (destinoId) qServicios = qServicios.or(`destino_id.eq.${destinoId},destino_id.is.null`);
@@ -55,7 +55,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     qServicios,
     sb.from("armado_vuelos").select("bloqueo_id, aplica_mk, ta").eq("paquete_id", paqueteId),
     sb.from("armado_hoteles").select("hotel_id, categorias, regimenes").eq("paquete_id", paqueteId),
-    sb.from("armado_servicios").select("servicio_id").eq("paquete_id", paqueteId),
+    sb.from("armado_servicios").select("servicio_id, modo").eq("paquete_id", paqueteId),
   ]);
 
   // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.
@@ -97,6 +97,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         config={{
           nombre: pq.nombre,
           tipo: pq.tipo,
+          noches: pq.noches,
           activo: pq.activo,
           destinoId: pq.destino_id,
           fechaCompraInicio: pq.fecha_compra_inicio ?? "",
@@ -114,7 +115,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         serviciosDisp={serviciosDisp ?? []}
         selVuelos={selVuelos ?? []}
         selHoteles={selHoteles ?? []}
-        selServicios={(selServicios ?? []).map((s) => s.servicio_id)}
+        selServicios={selServicios ?? []}
         resultado={resultado as unknown as Parameters<typeof ArmadoClient>[0]["resultado"]}
       />
     </div>

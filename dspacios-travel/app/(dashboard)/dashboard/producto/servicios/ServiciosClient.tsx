@@ -4,24 +4,19 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
-import { crearServicio, actualizarServicio, eliminarServicio, type Liquidacion, type TierPax } from "./actions";
+import { crearServicio, actualizarServicio, eliminarServicio, type ServicioInput } from "./actions";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 
 type Opt = { id: number; nombre: string };
-type Tier = { pax_desde: number; pax_hasta: number; precio: number };
 type Servicio = {
-  id: number; nombre: string; tarifa_neta: number; temporada: string | null;
-  liquidacion: string; proveedor_id: number | null; destino_id: number | null;
-  rangos_edad: number[] | null; tipo_tarifa: string;
+  id: number; nombre: string; temporada: string | null;
+  precio_persona: number | null; precio_grupo: number | null;
+  proveedor_id: number | null; destino_id: number | null; rangos_edad: number[] | null;
   proveedores: { nombre: string } | null; destinos: { nombre: string } | null;
-  servicio_tarifa_pax: Tier[];
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
-
-type TierForm = { paxDesde: string; paxHasta: string; precio: string };
-const tierVacio = (): TierForm => ({ paxDesde: "1", paxHasta: "1", precio: "" });
 
 export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { servicios: Servicio[]; proveedores: Opt[]; destinos: Opt[]; rangos: RangoEdad[] }) {
   const [nombre, setNombre] = useState("");
@@ -29,15 +24,14 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
   const [destId, setDestId] = useState<number | "">("");
   const [rangosSel, setRangosSel] = useState<number[]>([]);
   const [temp, setTemp] = useState("");
-  const [tipoTarifa, setTipoTarifa] = useState<"persona" | "grupo">("persona");
-  const [tiers, setTiers] = useState<TierForm[]>([tierVacio()]);
+  const [pPersona, setPPersona] = useState("");
+  const [pGrupo, setPGrupo] = useState("");
   const [editId, setEditId] = useState<number | null>(null);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
   function resetForm() {
-    setNombre(""); setProvId(""); setDestId(""); setTemp(""); setTipoTarifa("persona");
-    setTiers([tierVacio()]); setRangosSel([]); setEditId(null);
+    setNombre(""); setProvId(""); setDestId(""); setTemp(""); setPPersona(""); setPGrupo(""); setRangosSel([]); setEditId(null);
   }
 
   function startEdit(s: Servicio) {
@@ -47,28 +41,21 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
     setProvId(s.proveedor_id ?? "");
     setDestId(s.destino_id ?? "");
     setTemp(s.temporada ?? "");
-    setTipoTarifa((s.tipo_tarifa as "persona" | "grupo") ?? "persona");
-    const t = (s.servicio_tarifa_pax ?? []).map((x) => ({ paxDesde: String(x.pax_desde), paxHasta: String(x.pax_hasta), precio: String(x.precio) }));
-    setTiers(t.length ? t : [tierVacio()]);
+    setPPersona(s.precio_persona != null ? String(s.precio_persona) : "");
+    setPGrupo(s.precio_grupo != null ? String(s.precio_grupo) : "");
     setRangosSel(s.rangos_edad ?? []);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function setTier(i: number, k: keyof TierForm, v: string) {
-    setTiers((prev) => prev.map((t, idx) => (idx === i ? { ...t, [k]: v } : t)));
-  }
-
   function add() {
     if (!nombre.trim()) { setErr("El nombre es obligatorio."); return; }
-    const tiersValidos: TierPax[] = tiers
-      .filter((t) => Number(t.precio) > 0)
-      .map((t) => ({ paxDesde: Number(t.paxDesde) || 1, paxHasta: Number(t.paxHasta) || Number(t.paxDesde) || 1, precio: Number(t.precio) || 0 }));
-    if (!tiersValidos.length) { setErr("Agrega al menos una escala con precio."); return; }
+    const persona = pPersona.trim() === "" ? null : Number(pPersona) || 0;
+    const grupo = pGrupo.trim() === "" ? null : Number(pGrupo) || 0;
+    if (persona == null && grupo == null) { setErr("Pon al menos un precio (por persona o por grupo)."); return; }
     setErr("");
-    const input = {
+    const input: ServicioInput = {
       nombre, proveedorId: provId === "" ? null : Number(provId), destinoId: destId === "" ? null : Number(destId),
-      tarifaNeta: tiersValidos[0]?.precio ?? 0, temporada: temp, liquidacion: "paquete" as Liquidacion,
-      rangosEdad: rangosSel, tipoTarifa, tiers: tiersValidos,
+      precioPersona: persona, precioGrupo: grupo, temporada: temp, rangosEdad: rangosSel,
     };
     start(async () => {
       const r = editId ? await actualizarServicio(editId, input) : await crearServicio(input);
@@ -76,8 +63,6 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
       else setErr(r.error);
     });
   }
-
-  const precioLabel = tipoTarifa === "persona" ? "Precio por persona" : "Precio del grupo";
 
   return (
     <div className="space-y-6">
@@ -99,36 +84,13 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
               {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </div>
-          <div>
-            <label className={lbl}>Tipo de tarifa</label>
-            <select value={tipoTarifa} onChange={(e) => setTipoTarifa(e.target.value as "persona" | "grupo")} className={sel}>
-              <option value="persona">Por persona (× pax)</option>
-              <option value="grupo">Por grupo (valor fijo del rango)</option>
-            </select>
-          </div>
+          <div><label className={lbl}>Precio por persona</label><Input type="number" min={0} value={pPersona} onChange={(e) => setPPersona(e.target.value)} placeholder="—" /></div>
+          <div><label className={lbl}>Precio por grupo</label><Input type="number" min={0} value={pGrupo} onChange={(e) => setPGrupo(e.target.value)} placeholder="—" /></div>
           <div><label className={lbl}>Temporada (opcional)</label><Input value={temp} onChange={(e) => setTemp(e.target.value)} /></div>
         </div>
-
-        {/* Escalas por pax */}
-        <div className="mt-4 rounded-lg border border-gray-100 p-3">
-          <p className="mb-2 text-xs font-medium text-gray-600">
-            Escalas por pax — {tipoTarifa === "persona" ? "el precio es por persona (total = pax × precio)" : "el precio es fijo del grupo para ese rango"}
-          </p>
-          <div className="space-y-2">
-            {tiers.map((t, i) => (
-              <div key={i} className="flex flex-wrap items-end gap-2">
-                <div className="w-24"><label className={lbl}>Pax desde</label><Input type="number" min={1} value={t.paxDesde} onChange={(e) => setTier(i, "paxDesde", e.target.value)} /></div>
-                <div className="w-24"><label className={lbl}>Pax hasta</label><Input type="number" min={1} value={t.paxHasta} onChange={(e) => setTier(i, "paxHasta", e.target.value)} /></div>
-                <div className="w-36"><label className={lbl}>{precioLabel}</label><Input type="number" min={0} value={t.precio} onChange={(e) => setTier(i, "precio", e.target.value)} placeholder="0" /></div>
-                {tiers.length > 1 && (
-                  <button type="button" onClick={() => setTiers((p) => p.filter((_, idx) => idx !== i))} className="pb-2 text-xs text-gray-400 hover:text-red-500">Quitar</button>
-                )}
-              </div>
-            ))}
-          </div>
-          <button type="button" onClick={() => setTiers((p) => [...p, tierVacio()])} className="mt-2 text-xs font-medium text-[var(--brand-accent)]">+ Agregar escala</button>
-        </div>
-
+        <p className="mt-2 text-[11px] text-gray-400">
+          Puedes llenar uno o ambos. En el paquete eliges si este servicio se cobra por persona o por grupo.
+        </p>
         <div className="mt-3">
           <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} />
         </div>
@@ -146,7 +108,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
           <table className="w-full min-w-[640px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Servicio</th><th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Destino</th>
-              <th className="px-4 py-2">Tipo</th><th className="px-4 py-2">Escalas</th><th className="px-4 py-2"></th>
+              <th className="px-4 py-2 text-right">Por persona</th><th className="px-4 py-2 text-right">Por grupo</th><th className="px-4 py-2"></th>
             </tr></thead>
             <tbody>{servicios.map((s) => <Row key={s.id} s={s} onEdit={startEdit} />)}</tbody>
           </table>
@@ -158,17 +120,13 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
 
 function Row({ s, onEdit }: { s: Servicio; onEdit: (s: Servicio) => void }) {
   const [pending, start] = useTransition();
-  const tiers = s.servicio_tarifa_pax ?? [];
-  const resumen = tiers.length
-    ? tiers.map((t) => `${t.pax_desde}${t.pax_hasta !== t.pax_desde ? `–${t.pax_hasta}` : ""}: ${formatCOP(t.precio)}`).join(" · ")
-    : formatCOP(s.tarifa_neta);
   return (
     <tr className="border-t border-gray-50">
       <td className="px-4 py-2 text-gray-700">{s.nombre}</td>
       <td className="px-4 py-2 text-gray-500">{s.proveedores?.nombre ?? "—"}</td>
       <td className="px-4 py-2 text-gray-500">{s.destinos?.nombre ?? "Nacional"}</td>
-      <td className="px-4 py-2 text-gray-500">{s.tipo_tarifa === "grupo" ? "Grupo" : "Persona"}</td>
-      <td className="px-4 py-2 text-xs text-gray-500">{resumen}</td>
+      <td className="px-4 py-2 text-right tabular-nums">{s.precio_persona != null ? formatCOP(s.precio_persona) : "—"}</td>
+      <td className="px-4 py-2 text-right tabular-nums">{s.precio_grupo != null ? formatCOP(s.precio_grupo) : "—"}</td>
       <td className="px-4 py-2 text-right">
         <div className="flex items-center justify-end gap-3">
           <button type="button" onClick={() => onEdit(s)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>

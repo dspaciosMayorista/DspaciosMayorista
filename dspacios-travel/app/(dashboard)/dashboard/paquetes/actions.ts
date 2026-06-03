@@ -9,7 +9,6 @@ import {
   marcar,
   aporteVuelo,
   componerTarifa,
-  costoServicio,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 
@@ -33,6 +32,7 @@ const COL_NETO: Record<Acomodacion, string> = {
 export interface PaqueteConfig {
   nombre: string;
   tipo: "bloqueo" | "porcion_terrestre" | "servicios";
+  noches: number;
   destinoId: number | null;
   fechaCompraInicio: string;
   fechaCompraFin: string;
@@ -49,6 +49,7 @@ function configToRow(c: PaqueteConfig) {
   return {
     nombre: c.nombre.trim(),
     tipo: c.tipo,
+    noches: Number(c.noches) || 3,
     destino_id: c.destinoId,
     fecha_compra_inicio: dNull(c.fechaCompraInicio),
     fecha_compra_fin: dNull(c.fechaCompraFin),
@@ -215,15 +216,20 @@ export async function setHotelFiltros(
   return { ok: true };
 }
 
-// ── Adición de servicio (con check). Siempre con el mk del paquete ─────────
-export async function setServicio(paqueteId: number, servicioId: number, checked: boolean): Promise<Result> {
+// ── Adición de servicio (con check) + modo de cobro (persona/grupo) ────────
+export async function setServicio(
+  paqueteId: number,
+  servicioId: number,
+  checked: boolean,
+  modo: "persona" | "grupo" = "persona"
+): Promise<Result> {
   const sb = await createClient();
   if (!checked) {
     await sb.from("armado_servicios").delete().eq("paquete_id", paqueteId).eq("servicio_id", servicioId);
   } else {
     const { error } = await sb
       .from("armado_servicios")
-      .upsert({ paquete_id: paqueteId, servicio_id: servicioId }, { onConflict: "paquete_id,servicio_id" });
+      .upsert({ paquete_id: paqueteId, servicio_id: servicioId, modo }, { onConflict: "paquete_id,servicio_id" });
     if (error) return { ok: false, error: error.message };
   }
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
@@ -258,24 +264,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, servicios_adicionales(nombre, tarifa_neta, liquidacion, tipo_tarifa)")
+      .select("servicio_id, modo, servicios_adicionales(nombre, precio_persona, precio_grupo)")
       .eq("paquete_id", paqueteId),
   ]);
-
-  // Escalas de pax de los servicios seleccionados
-  const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
-  const tiersPorServicio = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
-  if (servicioIds.length) {
-    const { data: tiers } = await sb
-      .from("servicio_tarifa_pax")
-      .select("servicio_id, pax_desde, pax_hasta, precio")
-      .in("servicio_id", servicioIds);
-    for (const t of tiers ?? []) {
-      const arr = tiersPorServicio.get(t.servicio_id) ?? [];
-      arr.push({ pax_desde: t.pax_desde, pax_hasta: t.pax_hasta, precio: t.precio });
-      tiersPorServicio.set(t.servicio_id, arr);
-    }
-  }
 
   const hoteles = hotelesSel ?? [];
   const servicios = serviciosSel ?? [];
@@ -306,17 +297,15 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"];
   const filas: ResultadoInsert[] = [];
 
-  // Aporte de servicios (por persona, igual para todas las combinaciones).
-  // Los servicios SIEMPRE van con el mk del paquete.
-  function aporteServicios(numNoches: number): number {
+  // Aporte de servicios al hotel (por persona). Usa el precio POR PERSONA del
+  // servicio; los de solo-grupo se integran como add-on en la reserva (etapa 2).
+  function aporteServicios(): number {
     let total = 0;
     for (const s of servicios) {
-      const srv = s.servicios_adicionales as unknown as
-        | { tarifa_neta: number; liquidacion: "dia" | "noche" | "paquete" }
-        | null;
-      if (!srv) continue;
-      const costo = costoServicio(Number(srv.tarifa_neta) || 0, srv.liquidacion, numNoches);
-      total += marcar(costo, pctMk);
+      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null } | null;
+      const pp = srv?.precio_persona;
+      if (pp == null) continue;
+      total += marcar(Number(pp) || 0, pctMk);
     }
     return total;
   }
@@ -335,7 +324,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     fechaRegreso: string | null
   ) {
     if (numNoches <= 0) return;
-    const aporteServ = aporteServicios(numNoches);
+    const aporteServ = aporteServicios();
     for (const h of hoteles) {
       const hotelNombre = (h.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
       const filtroCat = (h.categorias as string[] | null) ?? null;
@@ -436,40 +425,35 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       const label = [b.record, b.ruta].filter(Boolean).join(" · ") || b.record || "";
       filasHoteles(b.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", b.id, label, b.fecha_regreso);
     }
-  } else if (tipo === "porcion_terrestre" && pq.fecha_viaje_inicio && pq.fecha_viaje_fin) {
-    // MÓDULO PORCIÓN TERRESTRE: sin vuelo; noches = rango de viaje, impuesto fijo
-    const numNoches = calcNoches(pq.fecha_viaje_inicio, pq.fecha_viaje_fin);
+  } else if (tipo === "porcion_terrestre" && pq.fecha_viaje_inicio) {
+    // MÓDULO PORCIÓN TERRESTRE: sin vuelo; noches del paquete desde la fecha inicio
+    const numNoches = Number(pq.noches) || 3;
     filasHoteles(pq.fecha_viaje_inicio, numNoches, 0, Number(pq.impuesto_fijo) || 0, "porcion_terrestre", null, null, pq.fecha_viaje_fin);
   } else if (tipo === "servicios") {
-    // MÓDULO SERVICIOS: una fila por escala de pax (precio con mk)
+    // MÓDULO SERVICIOS: una fila por servicio, según el modo elegido en el paquete
     for (const s of servicios) {
       const srv = s.servicios_adicionales as unknown as
-        | { nombre: string; tarifa_neta: number; tipo_tarifa: string }
+        | { nombre: string; precio_persona: number | null; precio_grupo: number | null }
         | null;
       if (!srv) continue;
-      const tiers = tiersPorServicio.get(s.servicio_id) ?? [];
-      const escalas = tiers.length
-        ? tiers
-        : [{ pax_desde: 1, pax_hasta: 1, precio: Number(srv.tarifa_neta) || 0 }];
-      for (const t of escalas) {
-        const pvp = Math.round(marcar(Number(t.precio) || 0, pctMk));
-        filas.push({
-          paquete_id: paqueteId,
-          paquete_nombre: paqueteNombre,
-          paquete_activo: paqueteActivo,
-          modulo: "servicios",
-          servicio_id: s.servicio_id,
-          servicio_nombre: srv.nombre,
-          destino_id: paqueteDestinoId,
-          destino_nombre: destinoNombre,
-          tipo_tarifa: srv.tipo_tarifa ?? "persona",
-          pax_desde: t.pax_desde,
-          pax_hasta: t.pax_hasta,
-          base_comisionable: pvp,
-          impuesto: 0,
-          precio_pvp: pvp,
-        });
-      }
+      const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
+      const base = modo === "grupo" ? srv.precio_grupo : srv.precio_persona;
+      if (base == null) continue;
+      const pvp = Math.round(marcar(Number(base) || 0, pctMk));
+      filas.push({
+        paquete_id: paqueteId,
+        paquete_nombre: paqueteNombre,
+        paquete_activo: paqueteActivo,
+        modulo: "servicios",
+        servicio_id: s.servicio_id,
+        servicio_nombre: srv.nombre,
+        destino_id: paqueteDestinoId,
+        destino_nombre: destinoNombre,
+        tipo_tarifa: modo,
+        base_comisionable: pvp,
+        impuesto: 0,
+        precio_pvp: pvp,
+      });
     }
   }
 

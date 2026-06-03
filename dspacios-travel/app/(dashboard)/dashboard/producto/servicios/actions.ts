@@ -8,83 +8,41 @@ const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
 export type Liquidacion = "dia" | "noche" | "paquete";
 
-export type TierPax = { paxDesde: number; paxHasta: number; precio: number };
-
-export async function crearServicio(input: {
+export type ServicioInput = {
   nombre: string;
   proveedorId: number | null;
   destinoId: number | null;
-  tarifaNeta: number;
+  precioPersona: number | null;
+  precioGrupo: number | null;
   temporada: string;
-  liquidacion: Liquidacion;
   rangosEdad?: number[];
-  tipoTarifa?: string;
-  tiers?: TierPax[];
-}): Promise<Result> {
-  const sb = await createClient();
-  const { data, error } = await sb.from("servicios_adicionales").insert({
+};
+
+function servicioToRow(input: ServicioInput) {
+  return {
     nombre: input.nombre.trim(),
     proveedor_id: input.proveedorId,
     destino_id: input.destinoId,
-    tarifa_neta: input.tarifaNeta,
+    precio_persona: input.precioPersona,
+    precio_grupo: input.precioGrupo,
+    tarifa_neta: input.precioPersona ?? input.precioGrupo ?? 0,
     temporada: oNull(input.temporada),
-    liquidacion: input.liquidacion,
     rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
-    tipo_tarifa: input.tipoTarifa ?? "persona",
-    activo: true,
-  }).select("id").single();
-  if (error || !data) return { ok: false, error: error?.message ?? "No se insertó" };
-  await guardarTiers(sb, data.id, input.tiers ?? []);
+  };
+}
+
+export async function crearServicio(input: ServicioInput): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("servicios_adicionales").insert({ ...servicioToRow(input), activo: true });
+  if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }
 
-async function guardarTiers(
-  sb: Awaited<ReturnType<typeof createClient>>,
-  servicioId: number,
-  tiers: TierPax[]
-) {
-  await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", servicioId);
-  const validos = tiers.filter((t) => Number(t.precio) > 0);
-  if (validos.length) {
-    await sb.from("servicio_tarifa_pax").insert(
-      validos.map((t) => ({
-        servicio_id: servicioId,
-        pax_desde: Number(t.paxDesde) || 1,
-        pax_hasta: Number(t.paxHasta) || Number(t.paxDesde) || 1,
-        precio: Number(t.precio) || 0,
-      }))
-    );
-  }
-}
-
-export async function actualizarServicio(id: number, input: {
-  nombre: string;
-  proveedorId: number | null;
-  destinoId: number | null;
-  tarifaNeta: number;
-  temporada: string;
-  liquidacion: Liquidacion;
-  rangosEdad?: number[];
-  tipoTarifa?: string;
-  tiers?: TierPax[];
-}): Promise<Result> {
+export async function actualizarServicio(id: number, input: ServicioInput): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb
-    .from("servicios_adicionales")
-    .update({
-      nombre: input.nombre.trim(),
-      proveedor_id: input.proveedorId,
-      destino_id: input.destinoId,
-      tarifa_neta: input.tarifaNeta,
-      temporada: oNull(input.temporada),
-      liquidacion: input.liquidacion,
-      rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
-      tipo_tarifa: input.tipoTarifa ?? "persona",
-    })
-    .eq("id", id);
+  const { error } = await sb.from("servicios_adicionales").update(servicioToRow(input)).eq("id", id);
   if (error) return { ok: false, error: error.message };
-  await guardarTiers(sb, id, input.tiers ?? []);
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }
@@ -123,9 +81,10 @@ export async function cargarServiciosMasivo(
     const provId = r.proveedor ? pmap.get(r.proveedor.trim().toLowerCase()) ?? null : null;
     const liq = (r.liquidacion || "paquete").trim().toLowerCase();
     const liquidacion = (LIQ_VALIDAS.includes(liq) ? liq : "paquete") as Liquidacion;
+    const precio = numCsv(r.tarifa_neta);
     const { error } = await sb.from("servicios_adicionales").insert({
       nombre, proveedor_id: provId, destino_id: destinoId,
-      tarifa_neta: numCsv(r.tarifa_neta), temporada: oNull(r.temporada || ""),
+      tarifa_neta: precio, precio_persona: precio, temporada: oNull(r.temporada || ""),
       liquidacion, activo: true,
     });
     if (error) { errores.push(`Fila ${linea} (${nombre}): ${error.message}`); continue; }

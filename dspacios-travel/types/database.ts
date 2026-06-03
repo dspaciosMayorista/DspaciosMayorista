@@ -1088,11 +1088,13 @@ export type Database = {
         Row: {
           id: number; nombre: string; proveedor_id: number | null; destino_id: number | null;
           tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null; tipo_tarifa: string;
+          precio_persona: number | null; precio_grupo: number | null;
           liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; activo: boolean; created_at: string;
         };
         Insert: {
           id?: number; nombre: string; proveedor_id?: number | null; destino_id?: number | null;
           tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null; tipo_tarifa?: string;
+          precio_persona?: number | null; precio_grupo?: number | null;
           liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
@@ -1116,6 +1118,7 @@ export type Database = {
           nombre: string;
           activo: boolean;
           tipo: Database["public"]["Enums"]["tarifario_modulo"];
+          noches: number;
           destino_id: number | null;
           fecha_compra_inicio: string | null;
           fecha_compra_fin: string | null;
@@ -1134,6 +1137,7 @@ export type Database = {
           nombre: string;
           activo?: boolean;
           tipo?: Database["public"]["Enums"]["tarifario_modulo"];
+          noches?: number;
           destino_id?: number | null;
           fecha_compra_inicio?: string | null;
           fecha_compra_fin?: string | null;
@@ -1163,8 +1167,8 @@ export type Database = {
         Relationships: [];
       };
       armado_servicios: {
-        Row: { id: number; paquete_id: number; servicio_id: number };
-        Insert: { id?: number; paquete_id: number; servicio_id: number };
+        Row: { id: number; paquete_id: number; servicio_id: number; modo: string };
+        Insert: { id?: number; paquete_id: number; servicio_id: number; modo?: string };
         Update: Partial<Database["public"]["Tables"]["armado_servicios"]["Insert"]>;
         Relationships: [];
       };

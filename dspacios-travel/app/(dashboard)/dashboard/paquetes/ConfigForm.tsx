@@ -12,6 +12,7 @@ type Tipo = "bloqueo" | "porcion_terrestre" | "servicios";
 type Initial = Partial<{
   nombre: string;
   tipo: Tipo;
+  noches: number;
   activo: boolean;
   destinoId: number | null;
   fechaCompraInicio: string;
@@ -39,6 +40,7 @@ export function ConfigForm({
   const router = useRouter();
   const [nombre, setNombre] = useState(initial?.nombre ?? "");
   const [tipo, setTipo] = useState<Tipo>(initial?.tipo ?? "bloqueo");
+  const [noches, setNoches] = useState(initial?.noches != null ? String(initial.noches) : "3");
   const [activo, setActivo] = useState(initial?.activo ?? true);
   const [destinoId, setDestinoId] = useState<number | "">(initial?.destinoId ?? "");
   const [compraIni, setCompraIni] = useState(initial?.fechaCompraInicio ?? "");
@@ -61,6 +63,7 @@ export function ConfigForm({
     const cfg: PaqueteConfig = {
       nombre,
       tipo,
+      noches: Number(noches) || 3,
       destinoId: destinoId === "" ? null : Number(destinoId),
       fechaCompraInicio: compraIni,
       fechaCompraFin: compraFin,
@@ -98,6 +101,14 @@ export function ConfigForm({
           </select>
           <p className="mt-1 text-[11px] text-gray-400">Define qué adicionas y en qué módulo del tarifario aparece.</p>
         </div>
+
+        {tipo === "porcion_terrestre" && (
+          <div>
+            <label className={lbl}>Noches (porción terrestre)</label>
+            <Input type="number" min={1} value={noches} onChange={(e) => setNoches(e.target.value)} placeholder="3" />
+            <p className="mt-1 text-[11px] text-gray-400">Se liquida desde la fecha de inicio del viaje.</p>
+          </div>
+        )}
 
         <div>
           <label className={lbl}>Destino</label>

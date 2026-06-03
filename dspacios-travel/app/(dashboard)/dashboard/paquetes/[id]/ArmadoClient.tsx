@@ -17,7 +17,8 @@ type Vuelo = {
   fecha_ida: string | null; fecha_regreso: string | null; tarifa_para_empaquetar: number; destino_id: number | null;
 };
 type Hotel = { id: number; nombre: string; zona: string | null; destino_id: number | null };
-type Servicio = { id: number; nombre: string; tarifa_neta: number; liquidacion: string; destino_id: number | null };
+type Servicio = { id: number; nombre: string; precio_persona: number | null; precio_grupo: number | null; destino_id: number | null };
+type SelServicio = { servicio_id: number; modo: string };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
 type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
 type Resultado = {
@@ -30,7 +31,6 @@ type Resultado = {
 const ACOM_LBL: Record<string, string> = {
   sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño",
 };
-const LIQ_LBL: Record<string, string> = { dia: "/día", noche: "/noche", paquete: "/paquete" };
 
 export function ArmadoClient(props: {
   paqueteId: number;
@@ -42,7 +42,7 @@ export function ArmadoClient(props: {
   serviciosDisp: Servicio[];
   selVuelos: SelVuelo[];
   selHoteles: SelHotel[];
-  selServicios: number[];
+  selServicios: SelServicio[];
   resultado: Resultado[];
 }) {
   const router = useRouter();
@@ -53,7 +53,7 @@ export function ArmadoClient(props: {
 
   const vueloSel = new Map(props.selVuelos.map((v) => [v.bloqueo_id, v]));
   const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
-  const servSel = new Set(props.selServicios);
+  const servSel = new Map(props.selServicios.map((s) => [s.servicio_id, s.modo]));
 
   function refrescar() {
     router.refresh();
@@ -162,17 +162,12 @@ export function ArmadoClient(props: {
         ) : (
           <ul className="divide-y divide-gray-100">
             {props.serviciosDisp.map((s) => (
-              <CheckRow
+              <ServicioRow
                 key={s.id}
-                checked={servSel.has(s.id)}
-                title={s.nombre}
-                subtitle={`${formatCOP(s.tarifa_neta)} ${LIQ_LBL[s.liquidacion] ?? ""}`}
-                onChange={(checked) =>
-                  start(async () => {
-                    await setServicio(props.paqueteId, s.id, checked);
-                    refrescar();
-                  })
-                }
+                s={s}
+                modo={servSel.get(s.id)}
+                paqueteId={props.paqueteId}
+                onDone={refrescar}
               />
             ))}
           </ul>
@@ -474,17 +469,53 @@ function PickBox({
   );
 }
 
-function CheckRow({
-  checked, title, subtitle, onChange,
+function ServicioRow({
+  s, modo, paqueteId, onDone,
 }: {
-  checked: boolean; title: string; subtitle?: string; onChange: (checked: boolean) => void;
+  s: Servicio; modo: string | undefined; paqueteId: number; onDone: () => void;
 }) {
+  const [, start] = useTransition();
+  const checked = modo !== undefined;
+  const tienePersona = s.precio_persona != null;
+  const tieneGrupo = s.precio_grupo != null;
+
+  function save(nextChecked: boolean, nextModo: "persona" | "grupo") {
+    start(async () => {
+      await setServicio(paqueteId, s.id, nextChecked, nextModo);
+      onDone();
+    });
+  }
+
+  function toggle(c: boolean) {
+    const def: "persona" | "grupo" = tienePersona ? "persona" : "grupo";
+    save(c, (modo as "persona" | "grupo") ?? def);
+  }
+
   return (
-    <li className="flex items-center gap-3 py-2.5">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <div>
-        <p className="text-sm font-medium text-gray-800">{title}</p>
-        {subtitle && <p className="text-xs text-gray-500">{subtitle}</p>}
+    <li className="py-2.5">
+      <div className="flex items-start gap-3">
+        <input type="checkbox" className="mt-1" checked={checked} onChange={(e) => toggle(e.target.checked)} />
+        <div className="flex-1">
+          <p className="text-sm font-medium text-gray-800">{s.nombre}</p>
+          <p className="text-xs text-gray-500">
+            {tienePersona ? `Persona: ${formatCOP(s.precio_persona!)}` : ""}
+            {tienePersona && tieneGrupo ? " · " : ""}
+            {tieneGrupo ? `Grupo: ${formatCOP(s.precio_grupo!)}` : ""}
+          </p>
+          {checked && (
+            <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-gray-50 p-2 text-xs">
+              <span className="text-gray-500">Cobrar:</span>
+              <label className="flex items-center gap-1" style={{ opacity: tienePersona ? 1 : 0.4 }}>
+                <input type="radio" disabled={!tienePersona} checked={modo === "persona"} onChange={() => save(true, "persona")} />
+                Por persona
+              </label>
+              <label className="flex items-center gap-1" style={{ opacity: tieneGrupo ? 1 : 0.4 }}>
+                <input type="radio" disabled={!tieneGrupo} checked={modo === "grupo"} onChange={() => save(true, "grupo")} />
+                Por grupo
+              </label>
+            </div>
+          )}
+        </div>
       </div>
     </li>
   );

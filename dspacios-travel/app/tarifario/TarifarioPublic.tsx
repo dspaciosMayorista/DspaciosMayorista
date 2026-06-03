@@ -232,46 +232,33 @@ function PorPaquete({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeRes
 // ── Módulo SERVICIOS ───────────────────────────────────────────────────────
 function PorServicios({ filas }: { filas: FilaTarifario[] }) {
   if (!filas.length) return <p className="py-12 text-center text-sm text-gray-400">No hay servicios publicados.</p>;
-  // Agrupa por servicio
-  const grupos = new Map<string, FilaTarifario[]>();
-  for (const f of filas) {
-    const k = `${f.servicio_nombre}|||${f.destino_nombre}`;
-    const arr = grupos.get(k) ?? [];
-    arr.push(f);
-    grupos.set(k, arr);
-  }
   return (
-    <div className="space-y-3">
-      {[...grupos.values()].map((rows, gi) => {
-        const f0 = rows[0];
-        const porPersona = (f0.tipo_tarifa ?? "persona") === "persona";
-        const escalas = [...rows].sort((a, b) => (a.pax_desde ?? 0) - (b.pax_desde ?? 0));
-        return (
-          <div key={gi} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-            <div className="flex items-center justify-between bg-gray-50 px-3 py-2">
-              <span className="font-medium text-gray-800">{f0.servicio_nombre ?? "—"}</span>
-              <span className="text-xs text-gray-500">
-                {f0.destino_nombre ?? "Nacional"} · {porPersona ? "por persona" : "por grupo"}
-              </span>
-            </div>
-            <table className="w-full text-sm">
-              <tbody>
-                {escalas.map((e, i) => {
-                  const rango = e.pax_desde === e.pax_hasta ? `${e.pax_desde} pax` : `${e.pax_desde}–${e.pax_hasta} pax`;
-                  return (
-                    <tr key={i} className="border-t border-gray-100">
-                      <td className="px-3 py-1.5 text-gray-600">{rango}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
-                        {formatCOP(e.precio_pvp)} <span className="text-xs text-gray-400">{porPersona ? "/persona" : "/grupo"}</span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        );
-      })}
+    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
+            <th className="px-3 py-2">Servicio</th>
+            <th className="px-3 py-2">Destino</th>
+            <th className="px-3 py-2">Cobro</th>
+            <th className="px-3 py-2 text-right">Precio</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((f, i) => {
+            const grupo = (f.tipo_tarifa ?? "persona") === "grupo";
+            return (
+              <tr key={i} className="border-t border-gray-100">
+                <td className="px-3 py-2 font-medium text-gray-800">{f.servicio_nombre ?? "—"}</td>
+                <td className="px-3 py-2 text-gray-600">{f.destino_nombre ?? "Nacional"}</td>
+                <td className="px-3 py-2 text-gray-600">{grupo ? "Por grupo" : "Por persona"}</td>
+                <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
+                  {formatCOP(f.precio_pvp)} <span className="text-xs text-gray-400">{grupo ? "/grupo" : "/persona"}</span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
