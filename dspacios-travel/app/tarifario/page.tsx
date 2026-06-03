@@ -45,9 +45,20 @@ export default async function TarifarioPublicoPage() {
             <h1 className="text-3xl font-semibold">D&apos;spacios Travel</h1>
             <p className="mt-1 text-sm opacity-80">Mayorista de Turismo — Tarifario 2026</p>
           </div>
-          {esAgencia && (
-            <span className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
-          )}
+          <div className="flex items-center gap-3">
+            {esAgencia && (
+              <span className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
+            )}
+            {user ? (
+              <a href="/dashboard" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                Ir al panel →
+              </a>
+            ) : (
+              <a href="/login" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                Ingresar
+              </a>
+            )}
+          </div>
         </div>
       </header>
 
