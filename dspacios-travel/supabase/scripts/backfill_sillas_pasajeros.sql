@@ -28,10 +28,10 @@ sil as (
 )
 update public.sillas s
 set
-  pasajero_nombres = p.nombre,
-  tipo_doc         = p.tipo_id,
-  numero_doc       = p.identificacion,
-  nacimiento       = p.fecha_nacimiento
+  pasajero_nombres = pax.nombre,
+  tipo_doc         = pax.tipo_id,
+  numero_doc       = pax.identificacion,
+  nacimiento       = pax.fecha_nacimiento
 from sil
 join pax
   on pax.numero_contrato = sil.numero_contrato
