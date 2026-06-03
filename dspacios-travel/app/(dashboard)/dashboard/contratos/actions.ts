@@ -18,6 +18,8 @@ export type PasajeroInput = {
 
 export type HotelInput = {
   nombre: string;
+  categoria: string;
+  proveedor: string;
   ciudad: string;
   alimentacion: string;
   acomodacion: string;
@@ -28,12 +30,20 @@ export type HotelInput = {
 
 export type VueloInput = {
   aerolinea: string;
+  record: string;
   origenCodigo: string;
   origenCiudad: string;
   destinoCodigo: string;
   destinoCiudad: string;
+  vueloIda: string;
+  vueloRegreso: string;
+  horaSalidaIda: string;
+  horaLlegadaIda: string;
+  horaSalidaReg: string;
+  horaLlegadaReg: string;
   servicios: string;
   fechaSalida: string;
+  fechaRegreso: string;
 };
 
 export type ItemInput = {
@@ -163,6 +173,8 @@ export async function crearContrato(
       input.hoteles.map((h, i) => ({
         numero_contrato: numero,
         nombre: h.nombre.trim(),
+        categoria: oNull(h.categoria),
+        proveedor: oNull(h.proveedor),
         ciudad: oNull(h.ciudad),
         alimentacion: oNull(h.alimentacion),
         acomodacion: oNull(h.acomodacion),
@@ -180,12 +192,20 @@ export async function crearContrato(
       input.vuelos.map((v, i) => ({
         numero_contrato: numero,
         aerolinea: oNull(v.aerolinea),
+        record: oNull(v.record),
         origen_codigo: oNull(v.origenCodigo),
         origen_ciudad: oNull(v.origenCiudad),
         destino_codigo: oNull(v.destinoCodigo),
         destino_ciudad: oNull(v.destinoCiudad),
+        vuelo_ida: oNull(v.vueloIda),
+        vuelo_regreso: oNull(v.vueloRegreso),
+        hora_salida_ida: oNull(v.horaSalidaIda),
+        hora_llegada_ida: oNull(v.horaLlegadaIda),
+        hora_salida_reg: oNull(v.horaSalidaReg),
+        hora_llegada_reg: oNull(v.horaLlegadaReg),
         servicios: oNull(v.servicios),
         fecha_salida: oNull(v.fechaSalida),
+        fecha_regreso: oNull(v.fechaRegreso),
         orden: i,
       }))
     );

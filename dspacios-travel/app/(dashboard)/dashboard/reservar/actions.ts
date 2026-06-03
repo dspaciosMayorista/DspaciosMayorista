@@ -413,9 +413,19 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
     if ((Number(input.infantes) || 0) > 0) partes.push(`${Number(input.infantes)} Infante(s)`);
     const resumenAcom = partes.join(", ");
+    // Proveedor del hotel (se arrastra al contrato). proveedores es interno, se
+    // lee con service-role si está disponible.
+    let proveedorHotel: string | null = null;
+    if (input.hotelId) {
+      const clientH = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+      const { data: hp } = await clientH.from("hoteles").select("proveedores(nombre)").eq("id", input.hotelId).maybeSingle();
+      proveedorHotel = (hp?.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
+    }
     await sb.from("contrato_hoteles").insert({
       numero_contrato: numero,
       nombre: meta.hotel_nombre ?? "",
+      categoria: input.categoria,
+      proveedor: proveedorHotel,
       ciudad: meta.destino_nombre,
       alimentacion: input.regimen,
       acomodacion: input.categoria,
@@ -430,7 +440,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   if (input.modulo === "bloqueo" && input.bloqueoId) {
     const { data: bq } = await sb
       .from("bloqueos_vuelo")
-      .select("aerolinea, ruta, fecha_ida")
+      .select("aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg")
       .eq("id", input.bloqueoId)
       .maybeSingle();
     if (bq) {
@@ -439,12 +449,20 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       await sb.from("contrato_vuelos").insert({
         numero_contrato: numero,
         aerolinea: bq.aerolinea,
+        record: bq.record,
         origen_codigo: r.origen,
         origen_ciudad: ciudadIata(r.origen),
         destino_codigo: r.destino,
         destino_ciudad: ciudadIata(r.destino),
+        vuelo_ida: bq.vuelo_ida,
+        vuelo_regreso: bq.vuelo_regreso,
+        hora_salida_ida: bq.hora_salida_ida,
+        hora_llegada_ida: bq.hora_llegada_ida,
+        hora_salida_reg: bq.hora_salida_reg,
+        hora_llegada_reg: bq.hora_llegada_reg,
         servicios: bq.ruta,
         fecha_salida: bq.fecha_ida,
+        fecha_regreso: bq.fecha_regreso,
         orden: 0,
       });
     }

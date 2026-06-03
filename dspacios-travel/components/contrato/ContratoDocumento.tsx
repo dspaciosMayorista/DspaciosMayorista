@@ -150,6 +150,7 @@ export function ContratoDocumento({
                 >
                   <div className="flex items-center gap-2 font-semibold text-gray-700">
                     <span>✈</span> {v.aerolinea ?? "—"}
+                    {v.record && <span className="font-mono text-xs font-normal text-gray-500">· {v.record}</span>}
                   </div>
                   <div className="mt-1 text-xs text-gray-600">
                     Origen: {origen}
@@ -163,8 +164,17 @@ export function ContratoDocumento({
                     </div>
                   )}
                   <div className="mt-1 text-xs text-gray-500">
-                    Fecha salida: {formatFechaLarga(v.fecha_salida)}
+                    Ida: {formatFechaLarga(v.fecha_salida)}
+                    {v.vuelo_ida ? ` · vuelo ${v.vuelo_ida}` : ""}
+                    {v.hora_salida_ida ? ` · ${v.hora_salida_ida}${v.hora_llegada_ida ? `–${v.hora_llegada_ida}` : ""}` : ""}
                   </div>
+                  {(v.fecha_regreso || v.vuelo_regreso || v.hora_salida_reg) && (
+                    <div className="text-xs text-gray-500">
+                      Regreso: {formatFechaLarga(v.fecha_regreso)}
+                      {v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
+                      {v.hora_salida_reg ? ` · ${v.hora_salida_reg}${v.hora_llegada_reg ? `–${v.hora_llegada_reg}` : ""}` : ""}
+                    </div>
+                  )}
                 </div>
                 );
               })}
@@ -195,9 +205,12 @@ export function ContratoDocumento({
                   key={h.id}
                   className="rounded-lg border border-gray-200 p-3"
                 >
-                  <div className="font-semibold text-gray-700">{h.nombre}</div>
+                  <div className="font-semibold text-gray-700">
+                    {h.nombre}{h.categoria ? ` · ${h.categoria}` : ""}
+                  </div>
                   <div className="mt-1 text-xs text-gray-600">
                     Ciudad: {h.ciudad ?? "—"}
+                    {h.proveedor ? ` · Proveedor: ${h.proveedor}` : ""}
                   </div>
                   <div className="text-xs text-gray-600">
                     Alimentación: {h.alimentacion ?? "—"} · Acomodación:{" "}

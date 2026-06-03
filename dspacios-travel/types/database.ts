@@ -881,6 +881,8 @@ export type Database = {
           detalle_acomodacion: string | null;
           fecha_ingreso: string | null;
           fecha_salida: string | null;
+          categoria: string | null;
+          proveedor: string | null;
           orden: number;
         };
         Insert: {
@@ -893,6 +895,8 @@ export type Database = {
           detalle_acomodacion?: string | null;
           fecha_ingreso?: string | null;
           fecha_salida?: string | null;
+          categoria?: string | null;
+          proveedor?: string | null;
           orden?: number;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_hoteles"]["Insert"]>;
@@ -909,6 +913,14 @@ export type Database = {
           destino_ciudad: string | null;
           servicios: string | null;
           fecha_salida: string | null;
+          record: string | null;
+          vuelo_ida: string | null;
+          vuelo_regreso: string | null;
+          hora_salida_ida: string | null;
+          hora_llegada_ida: string | null;
+          hora_salida_reg: string | null;
+          hora_llegada_reg: string | null;
+          fecha_regreso: string | null;
           orden: number;
         };
         Insert: {
@@ -921,6 +933,14 @@ export type Database = {
           destino_ciudad?: string | null;
           servicios?: string | null;
           fecha_salida?: string | null;
+          record?: string | null;
+          vuelo_ida?: string | null;
+          vuelo_regreso?: string | null;
+          hora_salida_ida?: string | null;
+          hora_llegada_ida?: string | null;
+          hora_salida_reg?: string | null;
+          hora_llegada_reg?: string | null;
+          fecha_regreso?: string | null;
           orden?: number;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_vuelos"]["Insert"]>;
