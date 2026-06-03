@@ -295,7 +295,10 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   Al generar valida **pasajeros ↔ acomodación** (edades vs habitaciones; bloquea si no cuadra).
 - **Contrato (visual):** hotel "N hab Doble (M pax)"; **servicios** en tabla aparte (Servicio·Pax·
   Valor total); **vuelo** Origen/Destino derivados de la ruta IATA (`lib/iata.ts`, catálogo editable).
-- **Vuelos:** bloqueos con **destino** + rangos de edad; editar bloqueo; carga masiva.
+- **Vuelos:** **dashboard de control** (tarjetas Bloques/Disponibles/En plazo/Confirmadas/
+  Devueltas + tabla de salidas con conteo por estado y % de ocupación; record → pasajeros del
+  record); bloqueos con **destino** + rangos de edad; editar bloqueo; carga masiva. El tarifario
+  y Reservar muestran cupos y **ocultan/bloquean** salidas sin cupos.
 - **Configuración:** asesores, parámetros tributarios, **rangos de edad**, **formas de pago**.
 
 ### Motor de cálculo (`lib/calc/paquetes.ts`)
@@ -309,7 +312,8 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
 023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
 026 servicio_incluido · 027 hotel_acomodaciones (reservar por habitaciones + config acomod.) ·
-028 formas_pago (catálogo de formas de pago para abonos).
+028 formas_pago (catálogo de formas de pago para abonos) ·
+029 servicio_categoria (tour_traslado/asistencia/otro → ubica el servicio en el contrato).
 Script suelto: `supabase/scripts/fusion_cartagena.sql`.
 Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`.
 Google OAuth: callback `/auth/callback`; Site URL = producción.

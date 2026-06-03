@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatFechaLarga } from "@/lib/utils";
 import { EliminarBloqueoBtn } from "./EliminarBloqueoBtn";
 import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
 import { cargarBloqueosMasivo } from "./actions";
@@ -28,14 +28,46 @@ const COLS_BLOQUEOS = [
   { key: "notas", label: "Notas", ejemplo: "" },
 ];
 
+type Conteo = { disp: number; plazo: number; conf: number; dev: number; nven: number };
+
+function ResumenCard({ label, valor, color }: { label: string; valor: number; color: string }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <div className="text-xs uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="mt-1 text-2xl font-bold tabular-nums" style={{ color }}>{valor}</div>
+    </div>
+  );
+}
+
 export default async function VuelosPage() {
   const sb = await createClient();
-  const [{ data: bloqueos }, { data: cupos }] = await Promise.all([
+  const [{ data: bloqueos }, { data: sillas }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: true }),
-    sb.from("cupos_por_bloqueo").select("*"),
+    sb.from("sillas").select("bloqueo_id, estado"),
   ]);
 
-  const cuposPorId = new Map((cupos ?? []).map((c) => [c.id, c]));
+  // Conteo de sillas por estado para cada bloqueo (control de vuelos).
+  const conteo = new Map<number, Conteo>();
+  for (const s of sillas ?? []) {
+    const c = conteo.get(s.bloqueo_id) ?? { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0 };
+    if (s.estado === "disponible" || s.estado === "cambio_entrante") c.disp++;
+    else if (s.estado === "en_plazo") c.plazo++;
+    else if (s.estado === "confirmada") c.conf++;
+    else if (s.estado === "devuelta") c.dev++;
+    else if (s.estado === "no_vendida") c.nven++;
+    conteo.set(s.bloqueo_id, c);
+  }
+  const cZero: Conteo = { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0 };
+  const tot = (bloqueos ?? []).reduce(
+    (a, b) => {
+      const c = conteo.get(b.id) ?? cZero;
+      return {
+        disp: a.disp + c.disp, plazo: a.plazo + c.plazo, conf: a.conf + c.conf,
+        dev: a.dev + c.dev, nven: a.nven + c.nven,
+      };
+    },
+    { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0 }
+  );
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
@@ -65,41 +97,71 @@ export default async function VuelosPage() {
           <p className="mt-1 text-sm">Crea el primer record con el botón “Nuevo bloqueo”.</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {bloqueos.map((b) => {
-            const c = cuposPorId.get(b.id);
-            const disp = c?.cupos_disponibles ?? 0;
-            const total = b.cupos_total ?? 0;
-            const pct = total > 0 ? (Number(disp) / total) * 100 : 0;
-            const color = pct > 50 ? "var(--brand-success)" : pct > 0 ? "#C99A2E" : "#C0392B";
-            return (
-              <div key={b.id} className="rounded-xl border border-gray-200 bg-white p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Link href={`/dashboard/vuelos/${b.id}`} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">{b.record}</Link>
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">{b.aerolinea ?? "—"}</span>
-                    </div>
-                    <p className="mt-1 text-sm text-gray-600">{b.ruta ?? "—"}</p>
-                    <p className="text-xs text-gray-400">
-                      Ida {formatFechaLarga(b.fecha_ida)} · Regreso {formatFechaLarga(b.fecha_regreso)}
-                      {b.tarifa_para_empaquetar > 0 && <> · Tarifa empaquetar {formatCOP(b.tarifa_para_empaquetar)}</>}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <div className="text-lg font-bold tabular-nums" style={{ color }}>
-                        {String(disp)}<span className="text-sm font-normal text-gray-400">/{total}</span>
-                      </div>
-                      <div className="text-xs text-gray-400">cupos disponibles</div>
-                    </div>
-                    <EliminarBloqueoBtn id={b.id} record={b.record} />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <>
+          {/* Tarjetas resumen (control de vuelos) */}
+          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <ResumenCard label="Bloques" valor={bloqueos.length} color="var(--brand-primary)" />
+            <ResumenCard label="Disponibles" valor={tot.disp} color="var(--brand-success)" />
+            <ResumenCard label="En plazo" valor={tot.plazo} color="#C99A2E" />
+            <ResumenCard label="Confirmadas" valor={tot.conf} color="var(--brand-accent)" />
+            <ResumenCard label="Devueltas" valor={tot.dev} color="#C0392B" />
+          </div>
+
+          {/* Tabla de salidas */}
+          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+            <table className="w-full min-w-[920px] text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+                  <th className="px-3 py-2">Record</th>
+                  <th className="px-3 py-2">Aerolínea</th>
+                  <th className="px-3 py-2">Ruta</th>
+                  <th className="px-3 py-2">Ida</th>
+                  <th className="px-3 py-2">Regreso</th>
+                  <th className="px-3 py-2 text-center">Disp</th>
+                  <th className="px-3 py-2 text-center">Plazo</th>
+                  <th className="px-3 py-2 text-center">Conf</th>
+                  <th className="px-3 py-2 text-center">Dev</th>
+                  <th className="px-3 py-2 text-center">N.Ven</th>
+                  <th className="px-3 py-2 text-center">Total</th>
+                  <th className="px-3 py-2 text-center">Ocup.</th>
+                  <th className="px-3 py-2">F. Dev.</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {bloqueos.map((b) => {
+                  const c = conteo.get(b.id) ?? cZero;
+                  const total = b.cupos_total ?? 0;
+                  const ocup = total > 0 ? Math.round(((c.plazo + c.conf) / total) * 100) : 0;
+                  return (
+                    <tr key={b.id} className="border-t border-gray-50">
+                      <td className="px-3 py-2">
+                        <Link href={`/dashboard/vuelos/${b.id}`} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">{b.record}</Link>
+                      </td>
+                      <td className="px-3 py-2 text-gray-600">{b.aerolinea ?? "—"}</td>
+                      <td className="px-3 py-2 text-gray-600">{b.ruta ?? "—"}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">
+                        {formatFechaLarga(b.fecha_ida)}{b.vuelo_ida ? ` · ${b.vuelo_ida}` : ""}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-gray-500">
+                        {formatFechaLarga(b.fecha_regreso)}{b.vuelo_regreso ? ` · ${b.vuelo_regreso}` : ""}
+                      </td>
+                      <td className="px-3 py-2 text-center font-semibold tabular-nums" style={{ color: "var(--brand-success)" }}>{c.disp}</td>
+                      <td className="px-3 py-2 text-center tabular-nums" style={{ color: "#C99A2E" }}>{c.plazo}</td>
+                      <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }}>{c.conf}</td>
+                      <td className="px-3 py-2 text-center tabular-nums text-red-600">{c.dev}</td>
+                      <td className="px-3 py-2 text-center tabular-nums text-gray-400">{c.nven}</td>
+                      <td className="px-3 py-2 text-center font-semibold tabular-nums">{total}</td>
+                      <td className="px-3 py-2 text-center tabular-nums text-gray-500">{ocup}%</td>
+                      <td className="px-3 py-2 text-xs text-gray-400">{formatFechaLarga(b.fecha_devolucion)}</td>
+                      <td className="px-3 py-2 text-right"><EliminarBloqueoBtn id={b.id} record={b.record} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
