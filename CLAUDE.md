@@ -308,10 +308,32 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
 ### PENDIENTE / próximos pasos
 - **Etapa 2 — Servicios como add-on al reservar:** dejar de hornear servicios en la tarifa del
   hotel; en Reservar mostrar los servicios del paquete y calcular por persona (× pax) o por
-  grupo (rango que cubra los pax), sumándolos al contrato.
+  grupo (rango que cubra los pax), sumándolos al contrato. *(HECHO; queda afinar.)*
 - Afinar rentabilidad/costos del contrato (módulo de gestión).
-- Reservar desde el módulo Servicios del tarifario.
+- Reservar desde el módulo Servicios del tarifario. *(HECHO.)*
 - Merge de la rama a `main` cuando todo esté validado.
+
+### REDISEÑO DE RESERVAR (anotaciones del dueño — pendiente, prioridad alta)
+1. **Motor de consulta por fechas:** en Reservar (sobre todo porción) el usuario pone **Fecha de
+   ida y Fecha de regreso**; el sistema **liquida esas noches** (noche por noche, mezclando
+   temporadas del hotel) y recién ahí muestra las opciones/tarifas para reservar.
+2. **Reservar por HABITACIONES, no por personas:** hoy se piden personas por acomodación, mal.
+   Debe pedir **cantidad de habitaciones** por tipo: 1 hab Doble ⇒ tarifa_doble × 2 pax;
+   1 Triple ⇒ tarifa_triple × 3; Sencilla ⇒ × 1; etc. **Niños e infantes** sí van por **cantidad**
+   (de niños / de infantes), aparte.
+3. **Config de acomodaciones por hotel** (se desprende del punto 2):
+   - A) Mínima y máxima acomodación (pax mín/máx del hotel).
+   - B) Por acomodación: pax máx + (mín/máx adultos, mín/máx niños, mín/máx infantes).
+     Ej. Sencilla: máx 2 pax | adt 1–1 | chd 0–1 | inf 0–1. Doble: máx 4 | adt 2–2 | chd 0–2 | inf 0–2.
+4. **Validación pasajeros vs acomodación:** si las cantidades/edades de los pasajeros no cuadran
+   con las habitaciones elegidas (ej. 1 sencilla con 1 adt + 1 chd pero hay 2 adultos por fecha de
+   nacimiento), mostrar **alerta** y no dejar generar.
+5. **Contrato pendiente:** ya guarda costos del aéreo; faltan **costos del hotel negociado y
+   proveedores** (los hay) y, en cartera, **forma de pago como lista desplegable** (catálogo
+   editable en otro lado).
+6. **Visualización del contrato:** el hotel debe leerse como **"1 hab doble"** o **"2 pax en
+   acomodación Doble"** (no "2 Doble" ambiguo). Aclarar habitaciones vs pax.
+
 
 ---
 
