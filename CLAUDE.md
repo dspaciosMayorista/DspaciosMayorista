@@ -255,4 +255,64 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 
 ---
 
+## 13. Estado del proyecto (handoff) — actualizado en desarrollo
+
+> Rama de trabajo: **`claude/dazzling-planck-MsBCZ`** (PR #1 hacia `main`). Producción
+> = `main` (se mergeará al terminar). La **base de datos Supabase es única** y compartida
+> entre `main` y la rama; las migraciones ya aplicadas afectan también a producción.
+> App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
+
+### Flujo de negocio implementado
+**PRODUCTO** (costos netos) → **PAQUETES** (armas + margen) → **TARIFARIO** (resultado,
+interno y público) → **RESERVAR** (genera contrato/venta).
+
+### Módulos construidos
+- **Producto:** Destinos (`/dashboard/producto/destinos`, MAYÚSCULAS + IATA), Proveedores,
+  Configuración (categorías de habitación, regímenes), **Hoteles** (temporadas propias +
+  tarifa neta por categoría/régimen/temporada con **Niño 1 y Niño 2**; editar tarifa; config
+  de edades y rangos), **Servicios** (precio **por persona** y/o **por grupo con rangos de
+  pax**; destino vacío = nacional). **Carga masiva CSV** en hoteles, tarifas, servicios y
+  bloqueos (plantillas con `sep=;`, listas con `|`).
+- **Paquetes (armado):** config inicial (nombre, **tipo** bloqueo/porción/servicios, **noches**
+  para porción, destino, vigencia compra, rango viaje, **%mk**, impuesto tiquete/fijo). Adición
+  de **vuelos** (solo bloqueo; check + mk o **TA** + "seleccionar todos"), **hoteles** (ventana
+  para elegir categorías/regímenes), **servicios** (check + elegir **persona/grupo**). **Generar
+  tarifario** → escribe `tarifario_resultado`. Editar config del paquete.
+- **Tarifario interno** (`/dashboard/tarifario`): vista del resultado generado (solo lectura).
+- **Tarifario público** (`/tarifario`): tabla **horizontal** (Hotel·Categoría·R.A.·Sencilla·
+  Doble·Triple·Múltiple·**Chd1·Chd2**), "ver más opciones" por hotel; módulos
+  **Bloqueos/Porción/Servicios**. Botón **Ingresar** + login con **Google (OAuth)**.
+- **Reservar** (`/dashboard/reservar`): tarifario comercial → formulario (cantidades por
+  acomodación, infantes, **cliente**, **pasajeros** con "copiar del cliente" + nacionalidad,
+  tipo de venta interno/agencia/freelance → canal B2B/B2C, **plazo**) → crea **venta pendiente**
+  + **sillas en_plazo** (descuenta cupos) + contrato + PDF.
+- **Contratos:** estado pendiente/confirmado; **Confirmar venta** (rol alto) o **abono** auto-
+  confirma → sillas confirmada. Editar cabecera. **Cron diario** libera vencidas.
+- **Vuelos:** bloqueos con **destino** + rangos de edad; editar bloqueo; carga masiva.
+- **Configuración:** asesores, parámetros tributarios, **rangos de edad**.
+
+### Motor de cálculo (`lib/calc/paquetes.ts`)
+- Hotel: liquida **noche por noche** (mezcla temporadas), `costo/(1−%mk)`.
+- Vuelo: por vuelo eliges `costo/(1−mk)` **o** `costo + TA`.
+- PVP = hotel + servicios + vuelo. **Impuesto (BNC)** = tiquete neto o fijo. Base com. = PVP − imp.
+- Niño 1 / Niño 2 = acomodaciones `nino` / `nino2` (0 = gratis, sí se publica).
+
+### Migraciones Supabase — correr en orden 016→025
+016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
+019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
+023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo.
+Script suelto: `supabase/scripts/fusion_cartagena.sql`.
+Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`.
+Google OAuth: callback `/auth/callback`; Site URL = producción.
+
+### PENDIENTE / próximos pasos
+- **Etapa 2 — Servicios como add-on al reservar:** dejar de hornear servicios en la tarifa del
+  hotel; en Reservar mostrar los servicios del paquete y calcular por persona (× pax) o por
+  grupo (rango que cubra los pax), sumándolos al contrato.
+- Afinar rentabilidad/costos del contrato (módulo de gestión).
+- Reservar desde el módulo Servicios del tarifario.
+- Merge de la rama a `main` cuando todo esté validado.
+
+---
+
 *Fin del documento. Mantener actualizado conforme avanza el proyecto.*

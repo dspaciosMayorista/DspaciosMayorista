@@ -23,7 +23,7 @@ type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
 type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
 type Resultado = {
   id: number; modulo: string; bloqueo_label: string | null; hotel_nombre: string | null;
-  servicio_nombre: string | null;
+  servicio_nombre: string | null; tipo_tarifa: string | null; pax_desde: number | null; pax_hasta: number | null;
   categoria: string | null; regimen: string | null; acomodacion: string | null; noches: number | null;
   base_comisionable: number; impuesto: number; precio_pvp: number;
 };
@@ -539,18 +539,23 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
           <thead className="text-xs text-gray-500">
             <tr className="border-b border-gray-100">
               <th className="px-3 py-1.5 text-left">Servicio</th>
-              <th className="px-3 py-1.5 text-right">PVP /persona</th>
+              <th className="px-3 py-1.5 text-left">Rango</th>
+              <th className="px-3 py-1.5 text-right">PVP</th>
             </tr>
           </thead>
           <tbody>
-            {servicios.map((r) => (
-              <tr key={r.id} className="border-t border-gray-50">
-                <td className="px-3 py-1.5">{r.servicio_nombre ?? "—"}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
-                  {formatCOP(r.precio_pvp)}
-                </td>
-              </tr>
-            ))}
+            {servicios.map((r) => {
+              const esGrupo = (r.tipo_tarifa ?? "persona") === "grupo";
+              return (
+                <tr key={r.id} className="border-t border-gray-50">
+                  <td className="px-3 py-1.5">{r.servicio_nombre ?? "—"}</td>
+                  <td className="px-3 py-1.5 text-gray-500">{esGrupo ? `${r.pax_desde}–${r.pax_hasta} pax` : "Por persona"}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
+                    {formatCOP(r.precio_pvp)} <span className="text-xs font-normal text-gray-400">{esGrupo ? "/grupo" : "/persona"}</span>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

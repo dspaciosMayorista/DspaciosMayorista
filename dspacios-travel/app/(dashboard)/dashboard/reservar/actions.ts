@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
+import { precioServicio } from "@/lib/calc/paquetes";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -37,6 +38,7 @@ export type ReservaInput = {
   freelanceNombre: string;
   plazo: string;
   pasajeros: PasajeroReserva[];
+  servicios?: number[];   // ids de servicios add-on seleccionados
 };
 
 export type ReservaResult = { ok: true; numero: string } | { ok: false; error: string };
@@ -73,6 +75,33 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     paxConSilla += n;
   }
   if (paxConSilla <= 0) return { ok: false, error: "Indica al menos un pasajero (cantidad por acomodación)." };
+
+  // 2b) Servicios add-on (precio publicado, según pax). Se recalcula server-side.
+  const totalPax = paxConSilla + (Number(input.infantes) || 0);
+  const serviciosItems: { nombre: string; precio: number }[] = [];
+  if (input.servicios?.length) {
+    const { data: srvRows } = await sb
+      .from("tarifario_resultado")
+      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp")
+      .eq("paquete_id", input.paqueteId)
+      .eq("modulo", "servicios")
+      .in("servicio_id", input.servicios);
+    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; grupos: { pax_desde: number; pax_hasta: number; precio: number }[] }>();
+    for (const r of srvRows ?? []) {
+      if (r.servicio_id == null) continue;
+      let s = byServ.get(r.servicio_id);
+      if (!s) {
+        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [] };
+        byServ.set(r.servicio_id, s);
+      }
+      if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
+      else s.personaPvp = r.precio_pvp;
+    }
+    for (const s of byServ.values()) {
+      const p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+      if (p > 0) { precioVenta += p; serviciosItems.push({ nombre: s.nombre, precio: p }); }
+    }
+  }
 
   // 3) Número de contrato
   const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
@@ -179,6 +208,18 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
         orden: i,
       };
     });
+  // Servicios add-on como ítems (1 fila por servicio, total del grupo o por pax)
+  serviciosItems.forEach((s, i) => {
+    items.push({
+      numero_contrato: numero,
+      descripcion: `Servicio · ${s.nombre}`,
+      adultos: 1,
+      ninos: 0,
+      tarifa_adulto: s.precio,
+      tarifa_nino: 0,
+      orden: 100 + i,
+    });
+  });
   if (items.length) await sb.from("contrato_items").insert(items);
 
   // 9) Sillas + costo aéreo (admin: oculto al asesor). Requiere service-role.

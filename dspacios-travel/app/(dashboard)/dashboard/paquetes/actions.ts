@@ -312,18 +312,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"];
   const filas: ResultadoInsert[] = [];
 
-  // Aporte de servicios al hotel (por persona). Usa el precio POR PERSONA del
-  // servicio; los de solo-grupo se integran como add-on en la reserva (etapa 2).
-  function aporteServicios(): number {
-    let total = 0;
-    for (const s of servicios) {
-      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null } | null;
-      const pp = srv?.precio_persona;
-      if (pp == null) continue;
-      total += marcar(Number(pp) || 0, pctMk);
-    }
-    return total;
-  }
+  // Los servicios NO se hornean en la tarifa del hotel: se agregan como add-on
+  // en la reserva (ya con los pax). Aquí el aporte de servicios es 0.
 
   // Genera las filas de hotel para una estadía (fechaIda + numNoches).
   // `aporteVueloVal` es el aporte del vuelo al PVP (0 en porción terrestre);
@@ -339,7 +329,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     fechaRegreso: string | null
   ) {
     if (numNoches <= 0) return;
-    const aporteServ = aporteServicios();
+    const aporteServ = 0; // servicios = add-on en la reserva
     for (const h of hoteles) {
       const hotelNombre = (h.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
       const filtroCat = (h.categorias as string[] | null) ?? null;
@@ -444,35 +434,34 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // MÓDULO PORCIÓN TERRESTRE: sin vuelo; noches del paquete desde la fecha inicio
     const numNoches = Number(pq.noches) || 3;
     filasHoteles(pq.fecha_viaje_inicio, numNoches, 0, Number(pq.impuesto_fijo) || 0, "porcion_terrestre", null, null, pq.fecha_viaje_fin);
-  } else if (tipo === "servicios") {
-    // MÓDULO SERVICIOS: según el modo elegido en el paquete.
-    //  - persona: una fila con el precio por persona.
-    //  - grupo:   una fila por rango de pax (precio fijo del grupo).
-    for (const s of servicios) {
-      const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null } | null;
-      if (!srv) continue;
-      const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-      const comun = {
-        paquete_id: paqueteId,
-        paquete_nombre: paqueteNombre,
-        paquete_activo: paqueteActivo,
-        modulo: "servicios" as const,
-        servicio_id: s.servicio_id,
-        servicio_nombre: srv.nombre,
-        destino_id: paqueteDestinoId,
-        destino_nombre: destinoNombre,
-        tipo_tarifa: modo,
-        impuesto: 0,
-      };
-      if (modo === "grupo") {
-        for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
-          const pvp = Math.round(marcar(Number(g.precio) || 0, pctMk));
-          filas.push({ ...comun, pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, base_comisionable: pvp, precio_pvp: pvp });
-        }
-      } else if (srv.precio_persona != null) {
-        const pvp = Math.round(marcar(Number(srv.precio_persona) || 0, pctMk));
-        filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp });
+  }
+
+  // SERVICIOS: se publican siempre (módulo Servicios y/o add-ons en la reserva),
+  // sin importar el tipo. Persona = una fila; grupo = una fila por rango de pax.
+  for (const s of servicios) {
+    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null } | null;
+    if (!srv) continue;
+    const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
+    const comun = {
+      paquete_id: paqueteId,
+      paquete_nombre: paqueteNombre,
+      paquete_activo: paqueteActivo,
+      modulo: "servicios" as const,
+      servicio_id: s.servicio_id,
+      servicio_nombre: srv.nombre,
+      destino_id: paqueteDestinoId,
+      destino_nombre: destinoNombre,
+      tipo_tarifa: modo,
+      impuesto: 0,
+    };
+    if (modo === "grupo") {
+      for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
+        const pvp = Math.round(marcar(Number(g.precio) || 0, pctMk));
+        filas.push({ ...comun, pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, base_comisionable: pvp, precio_pvp: pvp });
       }
+    } else if (srv.precio_persona != null) {
+      const pvp = Math.round(marcar(Number(srv.precio_persona) || 0, pctMk));
+      filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp });
     }
   }
 

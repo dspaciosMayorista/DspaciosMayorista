@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
-import { ReservaForm, type Combo, type Meta } from "./ReservaForm";
+import { ReservaForm, type Combo, type Meta, type ServicioDisp } from "./ReservaForm";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +57,25 @@ export default async function NuevaReservaPage({
   }
   const combos = [...map.values()];
 
+  // Servicios del paquete (PVP publicado) → add-ons en la reserva
+  const { data: servFilas } = await sb
+    .from("tarifario_resultado")
+    .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp")
+    .eq("paquete_id", paqueteId)
+    .eq("modulo", "servicios");
+  const servMap = new Map<number, ServicioDisp>();
+  for (const r of servFilas ?? []) {
+    if (r.servicio_id == null) continue;
+    let s = servMap.get(r.servicio_id);
+    if (!s) {
+      s = { servicioId: r.servicio_id, nombre: r.servicio_nombre ?? "—", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [] };
+      servMap.set(r.servicio_id, s);
+    }
+    if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
+    else s.personaPvp = r.precio_pvp;
+  }
+  const serviciosDisp = [...servMap.values()];
+
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
       <Link href="/tarifario" className="text-sm text-gray-400 hover:text-gray-600">← Tarifario</Link>
@@ -66,7 +85,7 @@ export default async function NuevaReservaPage({
         {meta.fechaIda ? ` · ${meta.fechaIda} → ${meta.fechaRegreso} (${meta.noches}N)` : ""}
         {meta.bloqueoLabel ? ` · ${meta.bloqueoLabel}` : ""}
       </p>
-      <ReservaForm meta={meta} combos={combos} />
+      <ReservaForm meta={meta} combos={combos} serviciosDisp={serviciosDisp} />
     </div>
   );
 }

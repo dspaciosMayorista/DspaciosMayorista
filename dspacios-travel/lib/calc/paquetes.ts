@@ -123,6 +123,30 @@ export function componerTarifa(args: {
   };
 }
 
+export type GrupoTier = { pax_desde: number; pax_hasta: number; precio: number };
+
+/**
+ * Precio total de un servicio según el modo y la cantidad de pax.
+ *  - 'persona': precioPersona × pax.
+ *  - 'grupo':   el precio del rango que cubra `pax` (fijo). Si ninguno cubre,
+ *               usa el rango con mayor pax_hasta como aproximación.
+ * `precioPersona` y `grupos[].precio` deben venir ya con el margen aplicado
+ * (PVP) si se quiere el total de venta, o netos si se quiere el costo.
+ */
+export function precioServicio(
+  modo: "persona" | "grupo",
+  precioPersona: number | null | undefined,
+  grupos: GrupoTier[],
+  pax: number
+): number {
+  if (modo === "persona") return (Number(precioPersona) || 0) * Math.max(0, pax);
+  if (!grupos.length) return 0;
+  const cubre = grupos.find((g) => pax >= g.pax_desde && pax <= g.pax_hasta);
+  if (cubre) return Number(cubre.precio) || 0;
+  const mayor = grupos.reduce((a, b) => (b.pax_hasta > a.pax_hasta ? b : a), grupos[0]);
+  return Number(mayor.precio) || 0;
+}
+
 /** Liquida un servicio según su modo: por noche, por día o por paquete. */
 export function costoServicio(
   tarifaNeta: number,

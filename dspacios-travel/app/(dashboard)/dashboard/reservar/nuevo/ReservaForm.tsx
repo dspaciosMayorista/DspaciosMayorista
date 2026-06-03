@@ -6,6 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { reservarDesdeTarifario, type PasajeroReserva } from "../actions";
+import { precioServicio } from "@/lib/calc/paquetes";
+
+export type ServicioDisp = {
+  servicioId: number;
+  nombre: string;
+  modo: "persona" | "grupo";
+  personaPvp: number | null;
+  grupos: { pax_desde: number; pax_hasta: number; precio: number }[];
+};
 
 export type Meta = {
   paqueteId: number;
@@ -28,7 +37,7 @@ const ACOMS: [string, string][] = [
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const inp = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-export function ReservaForm({ meta, combos }: { meta: Meta; combos: Combo[] }) {
+export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; combos: Combo[]; serviciosDisp?: ServicioDisp[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -48,7 +57,15 @@ export function ReservaForm({ meta, combos }: { meta: Meta; combos: Combo[] }) {
   const paxConSilla = ACOMS.reduce((s, [k]) => (precios[k] != null ? s + (Number(cant[k]) || 0) : s), 0);
   const numInfantes = Number(infantes) || 0;
   const totalPax = paxConSilla + numInfantes;
-  const totalPrecio = ACOMS.reduce((s, [k]) => (precios[k] != null ? s + (Number(cant[k]) || 0) * precios[k]! : s), 0);
+  const totalHotel = ACOMS.reduce((s, [k]) => (precios[k] != null ? s + (Number(cant[k]) || 0) * precios[k]! : s), 0);
+
+  // Servicios add-on (precio según pax)
+  const [servSel, setServSel] = useState<Set<number>>(new Set());
+  function precioServ(s: ServicioDisp): number {
+    return precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+  }
+  const totalServicios = serviciosDisp.reduce((acc, s) => (servSel.has(s.servicioId) ? acc + precioServ(s) : acc), 0);
+  const totalPrecio = totalHotel + totalServicios;
 
   // Cliente
   const [cli, setCli] = useState({ nombre: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "" });
@@ -96,6 +113,7 @@ export function ReservaForm({ meta, combos }: { meta: Meta; combos: Combo[] }) {
         paqueteId: meta.paqueteId, bloqueoId: meta.bloqueoId, modulo: meta.modulo, hotelId: meta.hotelId,
         categoria: cat, regimen: reg, cantidades, infantes: numInfantes,
         cliente: cli, tipoAsesor, asesorInterno, agenciaNombre, agenciaAsesor, freelanceNombre, plazo, pasajeros,
+        servicios: [...servSel],
       });
       if (r.ok) router.push(`/dashboard/contratos/${r.numero}`);
       else setErr(r.error);
@@ -134,9 +152,46 @@ export function ReservaForm({ meta, combos }: { meta: Meta; combos: Combo[] }) {
           </div>
         </div>
         <p className="mt-3 text-sm text-gray-600">
-          {totalPax} pasajero(s) · Total <b style={{ color: "var(--brand-primary)" }}>{formatCOP(totalPrecio)}</b>
+          {totalPax} pasajero(s) · Hotel <b>{formatCOP(totalHotel)}</b>
+          {totalServicios > 0 && <> + servicios <b>{formatCOP(totalServicios)}</b></>}
+          {" "}· Total <b style={{ color: "var(--brand-primary)" }}>{formatCOP(totalPrecio)}</b>
         </p>
       </section>
+
+      {/* Servicios adicionales (add-on) */}
+      {serviciosDisp.length > 0 && (
+        <section className="rounded-xl border border-gray-200 bg-white p-5">
+          <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Servicios adicionales</p>
+          <ul className="divide-y divide-gray-100">
+            {serviciosDisp.map((s) => {
+              const precio = precioServ(s);
+              const sel = servSel.has(s.servicioId);
+              return (
+                <li key={s.servicioId} className="flex items-center justify-between py-2.5">
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={sel}
+                      onChange={(e) => {
+                        setServSel((prev) => {
+                          const n = new Set(prev);
+                          if (e.target.checked) n.add(s.servicioId); else n.delete(s.servicioId);
+                          return n;
+                        });
+                      }}
+                    />
+                    <span className="text-sm text-gray-800">
+                      {s.nombre}{" "}
+                      <span className="text-xs text-gray-400">({s.modo === "grupo" ? `por grupo · ${totalPax} pax` : "por persona"})</span>
+                    </span>
+                  </label>
+                  <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(precio)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {/* Cliente */}
       <section className="rounded-xl border border-gray-200 bg-white p-5">
