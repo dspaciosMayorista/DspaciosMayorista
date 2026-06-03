@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import Link from "next/link";
 import { ReservaForm, type Combo, type Meta, type ServicioDisp } from "./ReservaForm";
 import type { AcomConfig } from "@/lib/acomodaciones";
@@ -112,6 +113,14 @@ export default async function NuevaReservaPage({
   }
   const serviciosDisp = [...servMap.values()];
 
+  // Cupos disponibles del bloqueo (obs 5): se muestran al asesor.
+  let cuposDisponibles: number | null = null;
+  if (bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const admin = createAdminClient();
+    const { data: cup } = await admin.from("cupos_por_bloqueo").select("cupos_disponibles").eq("id", bloqueoId).maybeSingle();
+    cuposDisponibles = cup ? Number(cup.cupos_disponibles) || 0 : null;
+  }
+
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
       <Link href="/tarifario" className="text-sm text-gray-400 hover:text-gray-600">← Tarifario</Link>
@@ -120,7 +129,17 @@ export default async function NuevaReservaPage({
         {meta.destino}
         {meta.fechaIda ? ` · ${meta.fechaIda} → ${meta.fechaRegreso} (${meta.noches}N)` : ""}
         {meta.bloqueoLabel ? ` · ${meta.bloqueoLabel}` : ""}
+        {cuposDisponibles != null && (
+          <span style={{ color: cuposDisponibles > 0 ? "var(--brand-success)" : "#dc2626" }}>
+            {` · ${cuposDisponibles} cupo(s) disponible(s)`}
+          </span>
+        )}
       </p>
+      {cuposDisponibles === 0 && (
+        <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">
+          Este vuelo no tiene cupos disponibles. No se puede generar el contrato.
+        </p>
+      )}
       <ReservaForm meta={meta} combos={combos} serviciosDisp={serviciosDisp} acomConfigs={acomConfigs} />
     </div>
   );

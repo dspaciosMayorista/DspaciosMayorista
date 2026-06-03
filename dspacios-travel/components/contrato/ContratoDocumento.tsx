@@ -89,6 +89,30 @@ export function ContratoDocumento({
         </div>
       </header>
 
+      {/* ── Estado del contrato (pendiente / confirmado) ─────────── */}
+      {(() => {
+        const est = (venta.estado ?? "").toLowerCase();
+        if (est === "confirmado" || est === "confirmada") {
+          return (
+            <div className="border-b border-green-200 bg-green-50 px-5 py-2 text-center text-xs font-semibold text-green-700 md:px-8">
+              ✓ CONTRATO CONFIRMADO — reserva aprobada y en firme.
+            </div>
+          );
+        }
+        if (est === "cancelado" || est === "cancelada") {
+          return (
+            <div className="border-b border-red-200 bg-red-50 px-5 py-2 text-center text-xs font-semibold text-red-700 md:px-8">
+              ✕ CONTRATO CANCELADO.
+            </div>
+          );
+        }
+        return (
+          <div className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-semibold text-amber-700 md:px-8">
+            ⏳ COTIZACIÓN PENDIENTE — sujeta a disponibilidad y confirmación. No constituye reserva en firme hasta su confirmación.
+          </div>
+        );
+      })()}
+
       <div className="space-y-7 px-5 py-6 text-sm md:px-8 md:py-7">
         {/* ── Cliente ──────────────────────────────────────────── */}
         <section>

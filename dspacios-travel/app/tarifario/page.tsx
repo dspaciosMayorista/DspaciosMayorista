@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { TarifarioPublic, type FilaTarifario } from "./TarifarioPublic";
 
 export const revalidate = 120; // revalida cada 2 min
@@ -37,6 +38,18 @@ export default async function TarifarioPublicoPage() {
     if (page.length < PAGE) break;
   }
 
+  // Cupos disponibles por bloqueo (para mostrar y ocultar salidas sin cupos).
+  // Se lee con service-role porque el tarifario es público (anónimo).
+  const cuposPorBloqueo: Record<number, number> = {};
+  const bloqueoIds = [...new Set(
+    filas.filter((f) => f.modulo === "bloqueo" && f.bloqueo_id != null).map((f) => f.bloqueo_id as number)
+  )];
+  if (bloqueoIds.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const admin = createAdminClient();
+    const { data: cup } = await admin.from("cupos_por_bloqueo").select("id, cupos_disponibles").in("id", bloqueoIds);
+    for (const c of cup ?? []) cuposPorBloqueo[c.id as number] = Number(c.cupos_disponibles) || 0;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="px-6 py-8 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
@@ -66,7 +79,7 @@ export default async function TarifarioPublicoPage() {
         {!filas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filas} puedeReservar={puedeReservar} />
+          <TarifarioPublic filas={filas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
         )}
       </main>
     </div>

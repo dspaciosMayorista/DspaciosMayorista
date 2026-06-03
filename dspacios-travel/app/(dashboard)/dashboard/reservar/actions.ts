@@ -329,6 +329,24 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     return { ok: false, error: "Selecciona al menos un servicio y el número de pasajeros." };
   }
 
+  // 2c) Validar cupos del bloqueo ANTES de crear nada (no sobre-vender sillas).
+  if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      const { count } = await admin
+        .from("sillas")
+        .select("id", { count: "exact", head: true })
+        .eq("bloqueo_id", input.bloqueoId)
+        .in("estado", ["disponible", "cambio_entrante"]);
+      const disponibles = count ?? 0;
+      if (disponibles < paxConSilla) {
+        return { ok: false, error: `No hay cupos suficientes en este vuelo (disponibles: ${disponibles}, requeridos: ${paxConSilla}).` };
+      }
+    } catch {
+      // Si falla la verificación, dejamos que el paso de sillas (más abajo) controle.
+    }
+  }
+
   // 3) Número de contrato
   const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
   if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
@@ -553,6 +571,35 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       }
     } catch {
       // El costo neto es informativo para rentabilidad; no bloquea la reserva.
+    }
+  }
+
+  // 11) Costo neto de SERVICIOS (receptivo) — admin, oculto al asesor.
+  if (input.servicios?.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      const [{ data: arm }, { data: gruposNet }] = await Promise.all([
+        admin.from("armado_servicios")
+          .select("servicio_id, modo, servicios_adicionales(precio_persona)")
+          .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
+        admin.from("servicio_tarifa_pax")
+          .select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", input.servicios),
+      ]);
+      const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+      for (const g of gruposNet ?? []) {
+        const arr = gruposPorServ.get(g.servicio_id) ?? [];
+        arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
+        gruposPorServ.set(g.servicio_id, arr);
+      }
+      let costoReceptivo = 0;
+      for (const s of arm ?? []) {
+        const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
+        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null } | null;
+        costoReceptivo += precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], totalPax);
+      }
+      if (costoReceptivo > 0) await admin.from("ventas").update({ costo_receptivo: costoReceptivo }).eq("numero_contrato", numero);
+    } catch {
+      // Costo neto informativo; no bloquea la reserva.
     }
   }
 

@@ -80,7 +80,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
   );
 }
 
-export function TarifarioPublic({ filas, puedeReservar = false }: { filas: FilaTarifario[]; puedeReservar?: boolean }) {
+export function TarifarioPublic({ filas, puedeReservar = false, cuposPorBloqueo = {} }: { filas: FilaTarifario[]; puedeReservar?: boolean; cuposPorBloqueo?: Record<number, number> }) {
   const modulosPresentes = MODULOS.filter((m) => filas.some((f) => f.modulo === m.key));
   const [modulo, setModulo] = useState<FilaTarifario["modulo"]>(modulosPresentes[0]?.key ?? "bloqueo");
 
@@ -106,7 +106,7 @@ export function TarifarioPublic({ filas, puedeReservar = false }: { filas: FilaT
       </div>
 
       {modulo === "bloqueo" ? (
-        <PorSalida filas={filas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} />
+        <PorSalida filas={filas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
       ) : modulo === "porcion_terrestre" ? (
         <PorPaquete filas={filas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} />
       ) : (
@@ -121,24 +121,32 @@ export function TarifarioPublic({ filas, puedeReservar = false }: { filas: FilaT
 }
 
 // ── Módulo BLOQUEOS: elige una salida (ciclo aéreo) y ve los hoteles ───────
-function PorSalida({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeReservar: boolean }) {
+function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number> }) {
+  // Cupos de una salida (un bloqueo). undefined = desconocido (no ocultar).
+  const cuposDe = (f: FilaTarifario): number | undefined =>
+    f.bloqueo_id != null ? cuposPorBloqueo[f.bloqueo_id] : undefined;
+  // Oculta salidas sin cupos disponibles (obs 4): solo si se conoce y es 0.
+  const filasConCupo = useMemo(
+    () => filas.filter((f) => { const c = cuposDe(f); return c === undefined || c > 0; }),
+    [filas] // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const salidas = useMemo(() => {
     const map = new Map<string, FilaTarifario>();
-    for (const f of filas) {
+    for (const f of filasConCupo) {
       const key = `${f.destino_nombre}|||${f.bloqueo_label}|||${f.fecha_ida}`;
       if (!map.has(key)) map.set(key, f);
     }
     return [...map.entries()].map(([key, f]) => ({ key, f }));
-  }, [filas]);
+  }, [filasConCupo]);
 
   const [sel, setSel] = useState(salidas[0]?.key ?? "");
   const selFila = salidas.find((s) => s.key === sel)?.f;
   const rows = useMemo(
     () =>
       pivotar(
-        filas.filter((f) => `${f.destino_nombre}|||${f.bloqueo_label}|||${f.fecha_ida}` === sel)
+        filasConCupo.filter((f) => `${f.destino_nombre}|||${f.bloqueo_label}|||${f.fecha_ida}` === sel)
       ),
-    [filas, sel]
+    [filasConCupo, sel]
   );
 
   return (
@@ -164,6 +172,11 @@ function PorSalida({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeRese
                   {fmtFecha(f.fecha_ida)} → {fmtFecha(f.fecha_regreso)} · {f.noches}N
                 </span>
                 <span className="block text-[11px] text-gray-400">{f.bloqueo_label}</span>
+                {(() => { const c = cuposDe(f); return c !== undefined ? (
+                  <span className="mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: "rgba(102,181,150,0.18)", color: "var(--brand-success)" }}>
+                    {c} cupo(s) disponible(s)
+                  </span>
+                ) : null; })()}
               </button>
             </li>
           ))}
