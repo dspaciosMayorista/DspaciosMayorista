@@ -8,6 +8,7 @@ import {
   COPYRIGHT_PREFIJO,
 } from "@/lib/contrato/plantilla";
 import { formatCOP, formatFechaLarga, calcularEdad } from "@/lib/utils";
+import { etiquetaIata, parseRuta } from "@/lib/iata";
 import type {
   Venta,
   ContratoPasajero,
@@ -51,6 +52,9 @@ export function ContratoDocumento({
     0
   );
   const saldo = Math.max(total - totalPagado, 0);
+  // Separa servicios (línea propia: Servicio · Pax · Valor total) del alojamiento.
+  const servicioItems = items.filter((it) => it.descripcion?.startsWith("Servicio · "));
+  const alojItems = items.filter((it) => !it.descripcion?.startsWith("Servicio · "));
   const anio = new Date().getFullYear();
 
   return (
@@ -109,7 +113,13 @@ export function ContratoDocumento({
               Vuelos
             </h2>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {vuelos.map((v) => (
+              {vuelos.map((v) => {
+                // Origen/Destino: usa los campos guardados; si están vacíos, los
+                // deriva de la ruta ("MDE - CTG - MDE" → origen MDE, destino CTG).
+                const r = parseRuta(v.servicios);
+                const origen = etiquetaIata(v.origen_codigo) || etiquetaIata(r.origen) || "—";
+                const destino = etiquetaIata(v.destino_codigo) || etiquetaIata(r.destino) || "—";
+                return (
                 <div
                   key={v.id}
                   className="rounded-lg border border-gray-200 p-3"
@@ -118,21 +128,22 @@ export function ContratoDocumento({
                     <span>✈</span> {v.aerolinea ?? "—"}
                   </div>
                   <div className="mt-1 text-xs text-gray-600">
-                    Origen: {v.origen_codigo} — {v.origen_ciudad}
+                    Origen: {origen}
                   </div>
                   <div className="text-xs text-gray-600">
-                    Destino: {v.destino_codigo} — {v.destino_ciudad}
+                    Destino: {destino}
                   </div>
                   {v.servicios && (
                     <div className="mt-1 text-xs text-gray-500">
-                      Servicios: {v.servicios}
+                      Ruta: {v.servicios}
                     </div>
                   )}
                   <div className="mt-1 text-xs text-gray-500">
                     Fecha salida: {formatFechaLarga(v.fecha_salida)}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}
@@ -265,7 +276,7 @@ export function ContratoDocumento({
             <Pill label="Moneda" value="COP" />
           </div>
 
-          {items.length > 0 && (
+          {alojItems.length > 0 && (
             <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] border-collapse text-xs">
               <thead>
@@ -279,10 +290,13 @@ export function ContratoDocumento({
                   <th className="border border-gray-200 px-2 py-1">
                     Tarifa Niño
                   </th>
+                  <th className="border border-gray-200 px-2 py-1">
+                    Valor total
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((it) => (
+                {alojItems.map((it) => (
                   <tr key={it.id}>
                     <td className="border border-gray-200 px-2 py-1">
                       {it.descripcion}
@@ -299,10 +313,41 @@ export function ContratoDocumento({
                     <td className="border border-gray-200 px-2 py-1">
                       {formatCOP(it.tarifa_nino)}
                     </td>
+                    <td className="border border-gray-200 px-2 py-1 font-medium">
+                      {formatCOP(it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
+          )}
+
+          {servicioItems.length > 0 && (
+            <div className="mt-3 overflow-x-auto">
+              <p className="mb-1 text-xs font-semibold text-gray-500">Servicios adicionales</p>
+              <table className="w-full min-w-[360px] border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-50 text-left text-gray-500">
+                    <th className="border border-gray-200 px-2 py-1">Servicio</th>
+                    <th className="border border-gray-200 px-2 py-1">Pax</th>
+                    <th className="border border-gray-200 px-2 py-1">Valor total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {servicioItems.map((it) => (
+                    <tr key={it.id}>
+                      <td className="border border-gray-200 px-2 py-1">
+                        {it.descripcion.replace(/^Servicio · /, "")}
+                      </td>
+                      <td className="border border-gray-200 px-2 py-1">{venta.pax ?? "—"}</td>
+                      <td className="border border-gray-200 px-2 py-1 font-medium">
+                        {formatCOP(it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>

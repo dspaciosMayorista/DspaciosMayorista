@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
+import { parseRuta, ciudadIata } from "@/lib/iata";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -226,9 +227,15 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       .eq("id", input.bloqueoId)
       .maybeSingle();
     if (bq) {
+      // Origen/Destino desde la ruta ("MDE - CTG - MDE" → origen MDE, destino CTG).
+      const r = parseRuta(bq.ruta);
       await sb.from("contrato_vuelos").insert({
         numero_contrato: numero,
         aerolinea: bq.aerolinea,
+        origen_codigo: r.origen,
+        origen_ciudad: ciudadIata(r.origen),
+        destino_codigo: r.destino,
+        destino_ciudad: ciudadIata(r.destino),
         servicios: bq.ruta,
         fecha_salida: bq.fecha_ida,
         orden: 0,
