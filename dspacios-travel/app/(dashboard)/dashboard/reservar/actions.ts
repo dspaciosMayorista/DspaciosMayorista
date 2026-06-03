@@ -580,7 +580,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       const admin = createAdminClient();
       const [{ data: arm }, { data: gruposNet }] = await Promise.all([
         admin.from("armado_servicios")
-          .select("servicio_id, modo, servicios_adicionales(precio_persona)")
+          .select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre)")
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
           .select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", input.servicios),
@@ -592,12 +592,21 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
         gruposPorServ.set(g.servicio_id, arr);
       }
       let costoReceptivo = 0;
+      const tours: string[] = [];
+      let hayAsistencia = false;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null } | null;
+        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string } | null;
         costoReceptivo += precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], totalPax);
+        const cat = srv?.categoria ?? "otro";
+        if (cat === "asistencia") hayAsistencia = true;
+        else if (cat === "tour_traslado" && srv?.nombre) tours.push(srv.nombre);
       }
-      if (costoReceptivo > 0) await admin.from("ventas").update({ costo_receptivo: costoReceptivo }).eq("numero_contrato", numero);
+      const upd: { costo_receptivo?: number; tours_traslados?: string; asistencia_medica?: boolean } = {};
+      if (costoReceptivo > 0) upd.costo_receptivo = costoReceptivo;
+      if (tours.length) upd.tours_traslados = tours.join(", ");
+      if (hayAsistencia) upd.asistencia_medica = true;
+      if (Object.keys(upd).length) await admin.from("ventas").update(upd).eq("numero_contrato", numero);
     } catch {
       // Costo neto informativo; no bloquea la reserva.
     }

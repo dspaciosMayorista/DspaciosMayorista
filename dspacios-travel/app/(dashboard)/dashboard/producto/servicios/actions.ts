@@ -17,6 +17,7 @@ export type ServicioInput = {
   grupoTiers: TierPax[];          // rangos de pax para cobro POR GRUPO
   temporada: string;
   rangosEdad?: number[];
+  categoria?: string;             // tour_traslado | asistencia | otro
 };
 
 function servicioToRow(input: ServicioInput) {
@@ -28,6 +29,7 @@ function servicioToRow(input: ServicioInput) {
     tarifa_neta: input.precioPersona ?? 0,
     temporada: oNull(input.temporada),
     rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
+    categoria: input.categoria || "otro",
   };
 }
 

@@ -12,9 +12,16 @@ type Tier = { pax_desde: number; pax_hasta: number; precio: number };
 type Servicio = {
   id: number; nombre: string; temporada: string | null; precio_persona: number | null;
   proveedor_id: number | null; destino_id: number | null; rangos_edad: number[] | null;
+  categoria?: string | null;
   proveedores: { nombre: string } | null; destinos: { nombre: string } | null;
   servicio_tarifa_pax: Tier[];
 };
+
+const CATEGORIAS: { v: string; label: string }[] = [
+  { v: "tour_traslado", label: "Tour / Traslado" },
+  { v: "asistencia", label: "Asistencia médica" },
+  { v: "otro", label: "Otro" },
+];
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -29,13 +36,14 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
   const [rangosSel, setRangosSel] = useState<number[]>([]);
   const [temp, setTemp] = useState("");
   const [pPersona, setPPersona] = useState("");
+  const [categoria, setCategoria] = useState("otro");
   const [grupo, setGrupo] = useState<TierForm[]>([tierVacio()]);
   const [editId, setEditId] = useState<number | null>(null);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
   function resetForm() {
-    setNombre(""); setProvId(""); setDestId(""); setTemp(""); setPPersona(""); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
+    setNombre(""); setProvId(""); setDestId(""); setTemp(""); setPPersona(""); setCategoria("otro"); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
   }
 
   function startEdit(s: Servicio) {
@@ -46,6 +54,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
     setDestId(s.destino_id ?? "");
     setTemp(s.temporada ?? "");
     setPPersona(s.precio_persona != null ? String(s.precio_persona) : "");
+    setCategoria(s.categoria ?? "otro");
     const t = (s.servicio_tarifa_pax ?? []).map((x) => ({ paxDesde: String(x.pax_desde), paxHasta: String(x.pax_hasta), precio: String(x.precio) }));
     setGrupo(t.length ? t : [tierVacio()]);
     setRangosSel(s.rangos_edad ?? []);
@@ -66,7 +75,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
     setErr("");
     const input: ServicioInput = {
       nombre, proveedorId: provId === "" ? null : Number(provId), destinoId: destId === "" ? null : Number(destId),
-      precioPersona: persona, grupoTiers, temporada: temp, rangosEdad: rangosSel,
+      precioPersona: persona, grupoTiers, temporada: temp, rangosEdad: rangosSel, categoria,
     };
     start(async () => {
       const r = editId ? await actualizarServicio(editId, input) : await crearServicio(input);
@@ -97,6 +106,12 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
           </div>
           <div><label className={lbl}>Precio por persona</label><Input type="number" min={0} value={pPersona} onChange={(e) => setPPersona(e.target.value)} placeholder="—" /></div>
           <div><label className={lbl}>Temporada (opcional)</label><Input value={temp} onChange={(e) => setTemp(e.target.value)} /></div>
+          <div>
+            <label className={lbl}>Categoría (en el contrato)</label>
+            <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className={sel}>
+              {CATEGORIAS.map((c) => <option key={c.v} value={c.v}>{c.label}</option>)}
+            </select>
+          </div>
         </div>
 
         {/* Rangos por grupo */}
