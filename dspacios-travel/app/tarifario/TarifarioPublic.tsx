@@ -110,7 +110,7 @@ export function TarifarioPublic({ filas, puedeReservar = false }: { filas: FilaT
       ) : modulo === "porcion_terrestre" ? (
         <PorPaquete filas={filas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} />
       ) : (
-        <PorServicios filas={filas.filter((f) => f.modulo === "servicios")} />
+        <PorServicios filas={filas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
       )}
 
       <p className="mt-4 text-center text-xs text-gray-400">
@@ -230,48 +230,65 @@ function PorPaquete({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeRes
 }
 
 // ── Módulo SERVICIOS ───────────────────────────────────────────────────────
-function PorServicios({ filas }: { filas: FilaTarifario[] }) {
+function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]; puedeReservar?: boolean }) {
   if (!filas.length) return <p className="py-12 text-center text-sm text-gray-400">No hay servicios publicados.</p>;
-  const grupos = new Map<string, FilaTarifario[]>();
+  // Agrupa por paquete → servicio
+  const porPaquete = new Map<number, FilaTarifario[]>();
   for (const f of filas) {
-    const k = `${f.servicio_nombre}|||${f.destino_nombre}`;
-    const arr = grupos.get(k) ?? [];
+    const k = f.paquete_id ?? -1;
+    const arr = porPaquete.get(k) ?? [];
     arr.push(f);
-    grupos.set(k, arr);
+    porPaquete.set(k, arr);
   }
   return (
-    <div className="space-y-3">
-      {[...grupos.values()].map((rows, gi) => {
+    <div className="space-y-5">
+      {[...porPaquete.entries()].map(([pid, rows]) => {
+        const servicios = new Map<string, FilaTarifario[]>();
+        for (const f of rows) {
+          const arr = servicios.get(f.servicio_nombre ?? "—") ?? [];
+          arr.push(f);
+          servicios.set(f.servicio_nombre ?? "—", arr);
+        }
         const f0 = rows[0];
-        const esGrupo = (f0.tipo_tarifa ?? "persona") === "grupo";
-        const escalas = [...rows].sort((a, b) => (a.pax_desde ?? 0) - (b.pax_desde ?? 0));
         return (
-          <div key={gi} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-            <div className="flex items-center justify-between bg-gray-50 px-3 py-2">
-              <span className="font-medium text-gray-800">{f0.servicio_nombre ?? "—"}</span>
-              <span className="text-xs text-gray-500">{f0.destino_nombre ?? "Nacional"} · {esGrupo ? "por grupo" : "por persona"}</span>
+          <div key={pid}>
+            <div className="mb-1 flex items-center justify-between">
+              <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{f0.paquete_nombre ?? "Servicios"}</p>
+              {puedeReservar && pid > 0 && (
+                <Link href={`/dashboard/reservar/nuevo?paquete=${pid}&modulo=servicios`} className="text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+                  Reservar →
+                </Link>
+              )}
             </div>
-            <table className="w-full text-sm">
-              <tbody>
-                {esGrupo ? (
-                  escalas.map((e, i) => (
-                    <tr key={i} className="border-t border-gray-100">
-                      <td className="px-3 py-1.5 text-gray-600">{e.pax_desde}–{e.pax_hasta} pax</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
-                        {formatCOP(e.precio_pvp)} <span className="text-xs text-gray-400">/grupo</span>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr className="border-t border-gray-100">
-                    <td className="px-3 py-1.5 text-gray-600">Por persona</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
-                      {formatCOP(f0.precio_pvp)} <span className="text-xs text-gray-400">/persona</span>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+              <table className="w-full text-sm">
+                <tbody>
+                  {[...servicios.entries()].map(([nombre, srows]) => {
+                    const esGrupo = (srows[0].tipo_tarifa ?? "persona") === "grupo";
+                    const escalas = [...srows].sort((a, b) => (a.pax_desde ?? 0) - (b.pax_desde ?? 0));
+                    return esGrupo ? (
+                      escalas.map((e, i) => (
+                        <tr key={`${nombre}-${i}`} className="border-t border-gray-100">
+                          <td className="px-3 py-1.5 font-medium text-gray-800">{i === 0 ? nombre : ""}</td>
+                          <td className="px-3 py-1.5 text-gray-500">{e.pax_desde}–{e.pax_hasta} pax</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
+                            {formatCOP(e.precio_pvp)} <span className="text-xs text-gray-400">/grupo</span>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr key={nombre} className="border-t border-gray-100">
+                        <td className="px-3 py-1.5 font-medium text-gray-800">{nombre}</td>
+                        <td className="px-3 py-1.5 text-gray-500">Por persona</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
+                          {formatCOP(srows[0].precio_pvp)} <span className="text-xs text-gray-400">/persona</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         );
       })}

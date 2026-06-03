@@ -24,8 +24,9 @@ export type PasajeroReserva = {
 export type ReservaInput = {
   paqueteId: number;
   bloqueoId: number | null;
-  modulo: "bloqueo" | "porcion_terrestre";
+  modulo: "bloqueo" | "porcion_terrestre" | "servicios";
   hotelId: number;
+  paxServicios?: number;   // pax cuando es paquete tipo servicios (sin hotel)
   categoria: string;
   regimen: string;
   cantidades: Record<string, number>;   // personas por acomodación
@@ -48,36 +49,48 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
 
   if (!input.cliente.nombre.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
 
+  const esServicios = input.modulo === "servicios";
+
   // 1) Precios desde el tarifario (fuente de verdad; el asesor no los cambia)
-  let q = sb
-    .from("tarifario_resultado")
-    .select("acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, noches, bloqueo_label")
-    .eq("paquete_id", input.paqueteId)
-    .eq("hotel_id", input.hotelId)
-    .eq("categoria", input.categoria)
-    .eq("regimen", input.regimen);
-  q = input.bloqueoId ? q.eq("bloqueo_id", input.bloqueoId) : q.is("bloqueo_id", null);
-  const { data: filas, error: fe } = await q;
-  if (fe) return { ok: false, error: fe.message };
-  if (!filas || !filas.length) return { ok: false, error: "No se encontró la tarifa seleccionada en el tarifario." };
-
   const pvpPorAcom: Record<string, number> = {};
-  for (const f of filas) if (f.acomodacion) pvpPorAcom[f.acomodacion] = f.precio_pvp;
-  const meta = filas[0];
-
-  // 2) Totales
   let precioVenta = 0;
   let paxConSilla = 0;
-  for (const [acom, cant] of Object.entries(input.cantidades)) {
-    const n = Number(cant) || 0;
-    if (n <= 0) continue;
-    precioVenta += n * (pvpPorAcom[acom] ?? 0);
-    paxConSilla += n;
-  }
-  if (paxConSilla <= 0) return { ok: false, error: "Indica al menos un pasajero (cantidad por acomodación)." };
+  let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
 
-  // 2b) Servicios add-on (precio publicado, según pax). Se recalcula server-side.
-  const totalPax = paxConSilla + (Number(input.infantes) || 0);
+  if (!esServicios) {
+    let q = sb
+      .from("tarifario_resultado")
+      .select("acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso")
+      .eq("paquete_id", input.paqueteId)
+      .eq("hotel_id", input.hotelId)
+      .eq("categoria", input.categoria)
+      .eq("regimen", input.regimen);
+    q = input.bloqueoId ? q.eq("bloqueo_id", input.bloqueoId) : q.is("bloqueo_id", null);
+    const { data: filas, error: fe } = await q;
+    if (fe) return { ok: false, error: fe.message };
+    if (!filas || !filas.length) return { ok: false, error: "No se encontró la tarifa seleccionada en el tarifario." };
+    for (const f of filas) if (f.acomodacion) pvpPorAcom[f.acomodacion] = f.precio_pvp;
+    meta = filas[0];
+    for (const [acom, cant] of Object.entries(input.cantidades)) {
+      const n = Number(cant) || 0;
+      if (n <= 0) continue;
+      precioVenta += n * (pvpPorAcom[acom] ?? 0);
+      paxConSilla += n;
+    }
+    if (paxConSilla <= 0) return { ok: false, error: "Indica al menos un pasajero (cantidad por acomodación)." };
+  } else {
+    const { data: m } = await sb
+      .from("tarifario_resultado")
+      .select("destino_nombre, paquete_nombre")
+      .eq("paquete_id", input.paqueteId)
+      .eq("modulo", "servicios")
+      .limit(1)
+      .maybeSingle();
+    meta = { hotel_nombre: m?.paquete_nombre ?? "Servicios", destino_nombre: m?.destino_nombre ?? null, fecha_ida: null, fecha_regreso: null };
+  }
+
+  // 2b) Servicios (en tipo servicios es el total; en hotel son add-ons).
+  const totalPax = esServicios ? (Number(input.paxServicios) || 0) : paxConSilla + (Number(input.infantes) || 0);
   const serviciosItems: { nombre: string; precio: number }[] = [];
   if (input.servicios?.length) {
     const { data: srvRows } = await sb
@@ -103,6 +116,10 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     }
   }
 
+  if (esServicios && precioVenta <= 0) {
+    return { ok: false, error: "Selecciona al menos un servicio y el número de pasajeros." };
+  }
+
   // 3) Número de contrato
   const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
   if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
@@ -124,8 +141,8 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     tipo_paquete: input.modulo,
     fecha_salida: meta.fecha_ida,
     fecha_regreso: meta.fecha_regreso,
-    pax: paxConSilla,
-    hotel: meta.hotel_nombre,
+    pax: totalPax || paxConSilla,
+    hotel: esServicios ? null : meta.hotel_nombre,
     precio_venta: precioVenta,
     estado: "pendiente",
     canal,
@@ -158,22 +175,24 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     if (error) return { ok: false, error: error.message };
   }
 
-  // 6) Hotel del contrato
-  const resumenAcom = Object.entries(input.cantidades)
-    .filter(([, n]) => Number(n) > 0)
-    .map(([a, n]) => `${n} ${ACOM_LABEL[a] ?? a}`)
-    .join(", ");
-  await sb.from("contrato_hoteles").insert({
-    numero_contrato: numero,
-    nombre: meta.hotel_nombre ?? "",
-    ciudad: meta.destino_nombre,
-    alimentacion: input.regimen,
-    acomodacion: input.categoria,
-    detalle_acomodacion: resumenAcom,
-    fecha_ingreso: meta.fecha_ida,
-    fecha_salida: meta.fecha_regreso,
-    orden: 0,
-  });
+  // 6) Hotel del contrato (no aplica en paquete tipo servicios)
+  if (!esServicios) {
+    const resumenAcom = Object.entries(input.cantidades)
+      .filter(([, n]) => Number(n) > 0)
+      .map(([a, n]) => `${n} ${ACOM_LABEL[a] ?? a}`)
+      .join(", ");
+    await sb.from("contrato_hoteles").insert({
+      numero_contrato: numero,
+      nombre: meta.hotel_nombre ?? "",
+      ciudad: meta.destino_nombre,
+      alimentacion: input.regimen,
+      acomodacion: input.categoria,
+      detalle_acomodacion: resumenAcom,
+      fecha_ingreso: meta.fecha_ida,
+      fecha_salida: meta.fecha_regreso,
+      orden: 0,
+    });
+  }
 
   // 7) Vuelo del contrato (si es bloqueo)
   if (input.modulo === "bloqueo" && input.bloqueoId) {

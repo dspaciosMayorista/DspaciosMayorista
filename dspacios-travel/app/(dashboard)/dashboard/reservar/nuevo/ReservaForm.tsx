@@ -20,7 +20,7 @@ export type Meta = {
   paqueteId: number;
   hotelId: number;
   bloqueoId: number | null;
-  modulo: "bloqueo" | "porcion_terrestre";
+  modulo: "bloqueo" | "porcion_terrestre" | "servicios";
   hotelNombre: string;
   destino: string;
   fechaIda: string | null;
@@ -51,12 +51,14 @@ export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; 
   const combo = combos.find((c) => c.categoria === cat && c.regimen === reg);
   const precios = combo?.precios ?? {};
 
+  const esServicios = meta.modulo === "servicios";
   const [cant, setCant] = useState<Record<string, string>>({});
   const [infantes, setInfantes] = useState("0");
+  const [paxServ, setPaxServ] = useState("1");
 
   const paxConSilla = ACOMS.reduce((s, [k]) => (precios[k] != null ? s + (Number(cant[k]) || 0) : s), 0);
   const numInfantes = Number(infantes) || 0;
-  const totalPax = paxConSilla + numInfantes;
+  const totalPax = esServicios ? (Number(paxServ) || 0) : paxConSilla + numInfantes;
   const totalHotel = ACOMS.reduce((s, [k]) => (precios[k] != null ? s + (Number(cant[k]) || 0) * precios[k]! : s), 0);
 
   // Servicios add-on (precio según pax)
@@ -103,15 +105,20 @@ export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; 
 
   function guardar() {
     if (!cli.nombre.trim()) { setErr("El nombre del cliente es obligatorio."); return; }
-    if (paxConSilla <= 0) { setErr("Indica al menos un pasajero por acomodación."); return; }
+    if (esServicios) {
+      if (totalPax <= 0) { setErr("Indica el número de pasajeros."); return; }
+      if (!servSel.size) { setErr("Selecciona al menos un servicio."); return; }
+    } else if (paxConSilla <= 0) { setErr("Indica al menos un pasajero por acomodación."); return; }
     setErr("");
     const cantidades: Record<string, number> = {};
-    for (const [k] of ACOMS) if (precios[k] != null && Number(cant[k]) > 0) cantidades[k] = Number(cant[k]);
-    const pasajeros = paxRows.map((p, idx) => ({ ...p, esInfante: idx >= paxConSilla }));
+    if (!esServicios) for (const [k] of ACOMS) if (precios[k] != null && Number(cant[k]) > 0) cantidades[k] = Number(cant[k]);
+    const cortePax = esServicios ? totalPax : paxConSilla;
+    const pasajeros = paxRows.map((p, idx) => ({ ...p, esInfante: idx >= cortePax }));
     start(async () => {
       const r = await reservarDesdeTarifario({
         paqueteId: meta.paqueteId, bloqueoId: meta.bloqueoId, modulo: meta.modulo, hotelId: meta.hotelId,
-        categoria: cat, regimen: reg, cantidades, infantes: numInfantes,
+        categoria: esServicios ? "" : cat, regimen: esServicios ? "" : reg, cantidades, infantes: numInfantes,
+        paxServicios: totalPax,
         cliente: cli, tipoAsesor, asesorInterno, agenciaNombre, agenciaAsesor, freelanceNombre, plazo, pasajeros,
         servicios: [...servSel],
       });
@@ -122,7 +129,20 @@ export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; 
 
   return (
     <div className="space-y-5">
+      {esServicios && (
+        <section className="rounded-xl border border-gray-200 bg-white p-5">
+          <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Pasajeros</p>
+          <div className="w-40">
+            <label className={lbl}>Número de pasajeros</label>
+            <Input type="number" min={1} value={paxServ} onChange={(e) => setPaxServ(e.target.value)} />
+          </div>
+          <p className="mt-3 text-sm text-gray-600">
+            {totalPax} pasajero(s) · Total <b style={{ color: "var(--brand-primary)" }}>{formatCOP(totalPrecio)}</b>
+          </p>
+        </section>
+      )}
       {/* Acomodación */}
+      {!esServicios && (
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Acomodación y cantidades</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -157,6 +177,7 @@ export function ReservaForm({ meta, combos, serviciosDisp = [] }: { meta: Meta; 
           {" "}· Total <b style={{ color: "var(--brand-primary)" }}>{formatCOP(totalPrecio)}</b>
         </p>
       </section>
+      )}
 
       {/* Servicios adicionales (add-on) */}
       {serviciosDisp.length > 0 && (
