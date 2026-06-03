@@ -7,6 +7,7 @@ import { ShareButtons } from "./ShareButtons";
 import { GestionTabs } from "./GestionTabs";
 import { EstadoVenta } from "./EstadoVenta";
 import { EditarVentaForm } from "./EditarVentaForm";
+import { ServiciosContratoEditor, type ServicioDispContrato } from "./ServiciosContratoEditor";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,27 @@ export default async function ContratoDetallePage({
   const fiscal = fiscalFromParams(paramsRows ?? []);
 
   if (!venta) notFound();
+
+  // Servicios del paquete (para editar los add-ons de un contrato PENDIENTE).
+  let serviciosDisp: ServicioDispContrato[] = [];
+  let seleccionServicios: number[] = [];
+  if (venta.estado === "pendiente" && venta.paquete_armado_id) {
+    const [{ data: servFilas }, { data: itemsServ }] = await Promise.all([
+      sb.from("tarifario_resultado").select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp").eq("paquete_id", venta.paquete_armado_id).eq("modulo", "servicios"),
+      sb.from("contrato_items").select("descripcion").eq("numero_contrato", numero),
+    ]);
+    const map = new Map<number, ServicioDispContrato>();
+    for (const r of servFilas ?? []) {
+      if (r.servicio_id == null) continue;
+      let s = map.get(r.servicio_id);
+      if (!s) { s = { servicioId: r.servicio_id, nombre: r.servicio_nombre ?? "—", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [] }; map.set(r.servicio_id, s); }
+      if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
+      else s.personaPvp = r.precio_pvp;
+    }
+    serviciosDisp = [...map.values()];
+    const nombresSel = new Set((itemsServ ?? []).filter((it) => it.descripcion?.startsWith("Servicio · ")).map((it) => it.descripcion!.replace(/^Servicio · /, "")));
+    seleccionServicios = serviciosDisp.filter((s) => nombresSel.has(s.nombre)).map((s) => s.servicioId);
+  }
 
   const totalPagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
   const saldo = Math.max(venta.precio_venta - totalPagado, 0);
@@ -119,6 +141,16 @@ export default async function ContratoDetallePage({
           observaciones: venta.observaciones ?? "",
         }}
       />
+
+      {/* Servicios adicionales (solo contrato pendiente) */}
+      {venta.estado === "pendiente" && (
+        <ServiciosContratoEditor
+          numero={venta.numero_contrato}
+          pax={venta.pax ?? 0}
+          serviciosDisp={serviciosDisp}
+          seleccionInicial={seleccionServicios}
+        />
+      )}
 
       {/* Compartir */}
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">

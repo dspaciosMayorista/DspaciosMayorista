@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
+import { precioServicio } from "@/lib/calc/paquetes";
 
 export type TipoPaquete = "bloqueo" | "porcion_terrestre" | "empaquetado" | "dinamico";
 
@@ -353,4 +354,118 @@ export async function registrarAbono(
   }
 
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+}
+
+// ── Editar servicios adicionales de un contrato PENDIENTE ───────────────────
+// Re-liquida los servicios del paquete según los seleccionados, actualiza los
+// ítems de servicio, el precio de venta y (admin) el costo receptivo + las
+// casillas Tours/Asistencia. Solo aplica a contratos en estado 'pendiente'.
+export async function actualizarServiciosContrato(
+  numeroContrato: string,
+  serviciosIds: number[]
+): Promise<{ ok: boolean; error?: string }> {
+  const sb = await createClient();
+  const { data: venta } = await sb
+    .from("ventas")
+    .select("estado, pax, precio_venta, paquete_armado_id")
+    .eq("numero_contrato", numeroContrato)
+    .maybeSingle();
+  if (!venta) return { ok: false, error: "Contrato no encontrado." };
+  if (venta.estado !== "pendiente") return { ok: false, error: "Solo se pueden editar servicios en contratos pendientes." };
+  if (!venta.paquete_armado_id) return { ok: false, error: "El contrato no está enlazado a un paquete." };
+
+  const pax = Number(venta.pax) || 0;
+
+  // Servicios disponibles del paquete (PVP) desde el tarifario.
+  const { data: servFilas } = await sb
+    .from("tarifario_resultado")
+    .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp")
+    .eq("paquete_id", venta.paquete_armado_id)
+    .eq("modulo", "servicios");
+  type Serv = { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; grupos: { pax_desde: number; pax_hasta: number; precio: number }[] };
+  const byServ = new Map<number, Serv>();
+  for (const r of servFilas ?? []) {
+    if (r.servicio_id == null) continue;
+    let s = byServ.get(r.servicio_id);
+    if (!s) { s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [] }; byServ.set(r.servicio_id, s); }
+    if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
+    else s.personaPvp = r.precio_pvp;
+  }
+
+  // Nuevos ítems de servicio + total.
+  const nuevos: { nombre: string; precio: number }[] = [];
+  let nuevoTotal = 0;
+  for (const id of serviciosIds) {
+    const s = byServ.get(id);
+    if (!s) continue;
+    const p = precioServicio(s.modo, s.personaPvp, s.grupos, pax);
+    if (p > 0) { nuevos.push({ nombre: s.nombre, precio: p }); nuevoTotal += p; }
+  }
+
+  // Quitar ítems de servicio actuales (y su total) para recalcular el precio.
+  const { data: oldItems } = await sb
+    .from("contrato_items")
+    .select("id, descripcion, adultos, ninos, tarifa_adulto, tarifa_nino")
+    .eq("numero_contrato", numeroContrato);
+  let oldTotal = 0;
+  const oldServiceIds: number[] = [];
+  for (const it of oldItems ?? []) {
+    if (it.descripcion?.startsWith("Servicio · ")) {
+      oldTotal += it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino;
+      oldServiceIds.push(it.id);
+    }
+  }
+  if (oldServiceIds.length) await sb.from("contrato_items").delete().in("id", oldServiceIds);
+  if (nuevos.length) {
+    await sb.from("contrato_items").insert(
+      nuevos.map((s, i) => ({
+        numero_contrato: numeroContrato,
+        descripcion: `Servicio · ${s.nombre}`,
+        adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0, orden: 100 + i,
+      }))
+    );
+  }
+
+  const nuevoPrecio = Math.max(0, (Number(venta.precio_venta) || 0) - oldTotal + nuevoTotal);
+  await sb.from("ventas").update({ precio_venta: nuevoPrecio }).eq("numero_contrato", numeroContrato);
+
+  // Costo receptivo neto + casillas Tours/Asistencia (admin: oculto al asesor).
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      let costoReceptivo = 0;
+      const tours: string[] = [];
+      let hayAsistencia = false;
+      if (serviciosIds.length) {
+        const [{ data: arm }, { data: gruposNet }] = await Promise.all([
+          admin.from("armado_servicios").select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre)").eq("paquete_id", venta.paquete_armado_id).in("servicio_id", serviciosIds),
+          admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", serviciosIds),
+        ]);
+        const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+        for (const g of gruposNet ?? []) {
+          const arr = gruposPorServ.get(g.servicio_id) ?? [];
+          arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
+          gruposPorServ.set(g.servicio_id, arr);
+        }
+        for (const s of arm ?? []) {
+          const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
+          const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string } | null;
+          costoReceptivo += precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], pax);
+          const cat = srv?.categoria ?? "otro";
+          if (cat === "asistencia") hayAsistencia = true;
+          else if (cat === "tour_traslado" && srv?.nombre) tours.push(srv.nombre);
+        }
+      }
+      await admin.from("ventas").update({
+        costo_receptivo: costoReceptivo,
+        tours_traslados: tours.length ? tours.join(", ") : null,
+        asistencia_medica: hayAsistencia,
+      }).eq("numero_contrato", numeroContrato);
+    } catch {
+      // Costo neto informativo; no bloquea la edición.
+    }
+  }
+
+  revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+  return { ok: true };
 }

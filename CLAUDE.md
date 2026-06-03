@@ -307,9 +307,13 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - PVP = hotel + servicios + vuelo. **Impuesto (BNC)** = tiquete neto o fijo. Base com. = PVP − imp.
 - Niño 1 / Niño 2 = acomodaciones `nino` / `nino2` (0 = gratis, sí se publica).
 
-### PRÓXIMA TAREA (decidida con el dueño) — Editar reserva pendiente "completa (mismo #)"
-Permitir editar un contrato **pendiente** (cambiar hotel, fechas, habitaciones, servicios) sin
-cambiar el `numero_contrato`. Plan:
+### Editar reserva pendiente
+- **HECHO (servicios):** en un contrato `pendiente`, `ServiciosContratoEditor` +
+  `actualizarServiciosContrato` permiten marcar/desmarcar los servicios del paquete; re-liquida
+  servicios (× pax), actualiza ítems, `precio_venta` y (admin) `costo_receptivo` + casillas
+  Tours/Asistencia. Cambiar hotel/fechas = por ahora anular + reservar.
+- **PENDIENTE (opcional) — Editar "completa (mismo #)"** (cambiar hotel/fechas/habitaciones sin
+  cambiar el número). Plan:
 1. **Refactor del motor:** que `reservarDesdeTarifario` acepte `editarNumero?: string`. En modo
    edición: no genera número; verifica que la venta exista y esté `pendiente`; **libera** sus
    sillas `en_plazo` (vuelven a `disponible`) y **borra** `contrato_items`/`contrato_hoteles`/
