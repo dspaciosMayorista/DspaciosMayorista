@@ -401,6 +401,16 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios";
 
+  // Validaciones según el tipo (mensajes claros en vez de 0 silencioso)
+  if (tipo === "bloqueo" && !vuelos.length)
+    return { ok: false, error: "Bloqueo: selecciona al menos un vuelo." };
+  if (tipo === "porcion_terrestre" && (!pq.fecha_viaje_inicio || !pq.fecha_viaje_fin))
+    return { ok: false, error: "Porción terrestre: define el rango de viaje (fechas) en la Configuración inicial." };
+  if ((tipo === "bloqueo" || tipo === "porcion_terrestre") && !hoteles.length)
+    return { ok: false, error: "Agrega al menos un hotel." };
+  if (tipo === "servicios" && !servicios.length)
+    return { ok: false, error: "Agrega al menos un servicio." };
+
   if (tipo === "bloqueo") {
     // MÓDULO BLOQUEOS: una liquidación por ciclo aéreo
     for (const { aplica_mk, ta, b } of vuelos) {
@@ -451,6 +461,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (filas.length) {
     const ins = await sb.from("tarifario_resultado").insert(filas);
     if (ins.error) return { ok: false, error: ins.error.message };
+  } else if (tipo === "bloqueo" || tipo === "porcion_terrestre") {
+    return {
+      ok: false,
+      error:
+        "No se generaron tarifas. Revisa que el hotel tenga temporadas y tarifas netas que cubran el rango de fechas del viaje.",
+    };
   }
 
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);

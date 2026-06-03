@@ -22,6 +22,7 @@ type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
 type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
 type Resultado = {
   id: number; modulo: string; bloqueo_label: string | null; hotel_nombre: string | null;
+  servicio_nombre: string | null;
   categoria: string | null; regimen: string | null; acomodacion: string | null; noches: number | null;
   base_comisionable: number; impuesto: number; precio_pvp: number;
 };
@@ -495,6 +496,33 @@ function ResultadoTabla({ filas }: { filas: Resultado[] }) {
       <p className="mt-4 rounded-lg border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">
         Aún no hay tarifas. Selecciona vuelos/hoteles y genera el tarifario.
       </p>
+    );
+  }
+
+  // Servicios se muestran como lista simple (sin categoría/régimen/acomodación)
+  const servicios = filas.filter((f) => f.modulo === "servicios");
+  if (servicios.length && servicios.length === filas.length) {
+    return (
+      <div className="mt-4 overflow-x-auto rounded-lg border border-gray-100">
+        <table className="w-full text-sm">
+          <thead className="text-xs text-gray-500">
+            <tr className="border-b border-gray-100">
+              <th className="px-3 py-1.5 text-left">Servicio</th>
+              <th className="px-3 py-1.5 text-right">PVP /persona</th>
+            </tr>
+          </thead>
+          <tbody>
+            {servicios.map((r) => (
+              <tr key={r.id} className="border-t border-gray-50">
+                <td className="px-3 py-1.5">{r.servicio_nombre ?? "—"}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums font-semibold" style={{ color: "var(--brand-primary)" }}>
+                  {formatCOP(r.precio_pvp)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     );
   }
   // Agrupa por salida (bloqueo_label o porción terrestre) → hotel
