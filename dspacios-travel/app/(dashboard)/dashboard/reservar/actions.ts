@@ -143,7 +143,7 @@ export type ReservaInput = {
   ninos: number;                          // cantidad de niños (Niño 1)
   ninos2: number;                         // cantidad de niños (Niño 2)
   infantes: number;                       // cantidad de infantes (sin silla, $0)
-  cliente: { nombre: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
+  cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
   tipoAsesor: "interno" | "agencia" | "freelance";
   asesorInterno: string;
   agenciaNombre: string;
@@ -159,7 +159,7 @@ export type ReservaResult = { ok: true; numero: string } | { ok: false; error: s
 export async function reservarDesdeTarifario(input: ReservaInput): Promise<ReservaResult> {
   const sb = await createClient();
 
-  if (!input.cliente.nombre.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
+  if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
 
   const esServicios = input.modulo === "servicios";
 
@@ -361,7 +361,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // 4) Venta (cabecera) — nace PENDIENTE
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
-    cliente: input.cliente.nombre.trim(),
+    cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
     cliente_documento: oNull(input.cliente.numeroDoc),
     cliente_telefono: oNull(input.cliente.telefono),
     cliente_email: oNull(input.cliente.email),

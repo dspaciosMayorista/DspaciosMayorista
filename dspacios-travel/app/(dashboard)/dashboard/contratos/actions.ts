@@ -8,7 +8,8 @@ import { precioServicio } from "@/lib/calc/paquetes";
 export type TipoPaquete = "bloqueo" | "porcion_terrestre" | "empaquetado" | "dinamico";
 
 export type PasajeroInput = {
-  nombre: string;
+  nombres: string;
+  apellidos: string;
   tipoId: string;
   identificacion: string;
   fechaNacimiento: string;
@@ -146,7 +147,7 @@ export async function crearContrato(
     const { error } = await sb.from("contrato_pasajeros").insert(
       input.pasajeros.map((p, i) => ({
         numero_contrato: numero,
-        nombre: p.nombre.trim(),
+        nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
         tipo_id: oNull(p.tipoId) ?? "CC",
         identificacion: oNull(p.identificacion),
         fecha_nacimiento: oNull(p.fechaNacimiento),
@@ -239,7 +240,8 @@ export async function crearContrato(
 
         // 2) Descontar cupos del record (asignar N sillas disponibles)
         if (input.tipoPaquete === "bloqueo" && input.bloqueoId) {
-          const adultos = input.pasajeros.filter((p) => !p.esInfante).length || pax;
+          const holders = input.pasajeros.filter((p) => !p.esInfante);
+          const adultos = holders.length || pax;
           const { data: libres } = await admin
             .from("sillas")
             .select("id")
@@ -248,16 +250,23 @@ export async function crearContrato(
             .order("numero_silla")
             .limit(adultos);
           if (libres && libres.length) {
-            await admin
-              .from("sillas")
-              .update({
-                estado: "en_plazo",
-                numero_contrato: numero,
-                asesor: oNull(input.asesorNombre),
-                hotel: input.hoteles[0]?.nombre ?? null,
-                acomodacion: input.hoteles[0]?.acomodacion ?? null,
+            await Promise.all(
+              libres.map((s, i) => {
+                const p = holders[i];
+                return admin.from("sillas").update({
+                  estado: "en_plazo",
+                  numero_contrato: numero,
+                  asesor: oNull(input.asesorNombre),
+                  hotel: input.hoteles[0]?.nombre ?? null,
+                  acomodacion: input.hoteles[0]?.acomodacion ?? null,
+                  pasajero_nombres: oNull(p?.nombres),
+                  pasajero_apellidos: oNull(p?.apellidos),
+                  tipo_doc: oNull(p?.tipoId),
+                  numero_doc: oNull(p?.identificacion),
+                  nacimiento: oNull(p?.fechaNacimiento),
+                }).eq("id", s.id);
               })
-              .in("id", libres.map((s) => s.id));
+            );
           }
         }
       } catch {

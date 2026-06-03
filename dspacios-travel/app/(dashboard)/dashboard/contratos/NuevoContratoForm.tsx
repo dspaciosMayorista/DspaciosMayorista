@@ -59,7 +59,9 @@ export function NuevoContratoForm({
   const paquetesFiltrados = paquetes.filter((p) => p.categoria === tipoPaquete);
 
   // Cliente
-  const [cliente, setCliente] = useState("");
+  const [clienteNombres, setClienteNombres] = useState("");
+  const [clienteApellidos, setClienteApellidos] = useState("");
+  const cliente = `${clienteNombres} ${clienteApellidos}`.trim();
   const [doc, setDoc] = useState("");
   const [tel, setTel] = useState("");
   const [dir, setDir] = useState("");
@@ -81,7 +83,7 @@ export function NuevoContratoForm({
 
   // Listas dinámicas
   const [pasajeros, setPasajeros] = useState<PasajeroInput[]>([
-    { nombre: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false },
+    { nombres: "", apellidos: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false },
   ]);
   const [hoteles, setHoteles] = useState<HotelInput[]>([]);
   const [vuelos, setVuelos] = useState<VueloInput[]>([]);
@@ -132,7 +134,7 @@ export function NuevoContratoForm({
       setError("El nombre del cliente es obligatorio.");
       return;
     }
-    const pasajerosOk = pasajeros.filter((p) => p.nombre.trim() !== "");
+    const pasajerosOk = pasajeros.filter((p) => p.nombres.trim() !== "" || p.apellidos.trim() !== "");
     const hotelesOk = hoteles.filter((h) => h.nombre.trim() !== "");
     const vuelosOk = vuelos.filter((v) => v.aerolinea.trim() !== "");
     const itemsOk = items.filter((it) => it.descripcion.trim() !== "");
@@ -226,8 +228,12 @@ export function NuevoContratoForm({
         </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
-            <label className={labelCls}>Nombre completo *</label>
-            <Input value={cliente} onChange={(e) => setCliente(e.target.value)} required />
+            <label className={labelCls}>Nombres *</label>
+            <Input value={clienteNombres} onChange={(e) => setClienteNombres(e.target.value)} required />
+          </div>
+          <div>
+            <label className={labelCls}>Apellidos *</label>
+            <Input value={clienteApellidos} onChange={(e) => setClienteApellidos(e.target.value)} required />
           </div>
           <div>
             <label className={labelCls}>N° Documento</label>
@@ -360,14 +366,15 @@ export function NuevoContratoForm({
           <button
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
-            onClick={() => setPasajeros((a) => [...a, { nombre: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false }])}
+            onClick={() => setPasajeros((a) => [...a, { nombres: "", apellidos: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false }])}
           >
             + Agregar pasajero
           </button>
         </div>
         {pasajeros.map((p, i) => (
-          <div key={i} className="grid grid-cols-2 items-center gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-5">
-            <Input placeholder="Nombre completo" value={p.nombre} onChange={(e) => setPasajero(i, { nombre: e.target.value })} />
+          <div key={i} className="grid grid-cols-2 items-center gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-6">
+            <Input placeholder="Nombres" value={p.nombres} onChange={(e) => setPasajero(i, { nombres: e.target.value })} />
+            <Input placeholder="Apellidos" value={p.apellidos} onChange={(e) => setPasajero(i, { apellidos: e.target.value })} />
             <Input placeholder="Tipo ID" value={p.tipoId} onChange={(e) => setPasajero(i, { tipoId: e.target.value })} />
             <Input placeholder="Identificación" value={p.identificacion} onChange={(e) => setPasajero(i, { identificacion: e.target.value })} />
             <Input type="date" value={p.fechaNacimiento} onChange={(e) => setPasajero(i, { fechaNacimiento: e.target.value })} />

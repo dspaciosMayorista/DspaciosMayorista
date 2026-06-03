@@ -109,7 +109,7 @@ export function ReservaForm({
   const totalPrecio = totalHotel + totalServicios;
 
   // Cliente
-  const [cli, setCli] = useState({ nombre: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "" });
+  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "" });
 
   // Tipo de venta
   const [tipoAsesor, setTipoAsesor] = useState<"interno" | "agencia" | "freelance">("interno");
@@ -158,13 +158,13 @@ export function ReservaForm({
     setPax((prev) => {
       const next = [...prev];
       while (next.length <= i) next.push(emptyPax());
-      next[i] = { ...next[i], nombres: cli.nombre, tipoDoc: cli.tipoDoc, numeroDoc: cli.numeroDoc };
+      next[i] = { ...next[i], nombres: cli.nombres, apellidos: cli.apellidos, tipoDoc: cli.tipoDoc, numeroDoc: cli.numeroDoc };
       return next;
     });
   }
 
   function guardar() {
-    if (!cli.nombre.trim()) { setErr("El nombre del cliente es obligatorio."); return; }
+    if (!cli.nombres.trim() || !cli.apellidos.trim()) { setErr("Nombres y apellidos del cliente son obligatorios."); return; }
     if (esServicios) {
       if (totalPax <= 0) { setErr("Indica el número de pasajeros."); return; }
       if (!servSel.size) { setErr("Selecciona al menos un servicio."); return; }
@@ -334,7 +334,8 @@ export function ReservaForm({
       <section className="rounded-xl border border-gray-200 bg-white p-5">
         <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Cliente</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="sm:col-span-2"><label className={lbl}>Nombre *</label><Input value={cli.nombre} onChange={(e) => setCli({ ...cli, nombre: e.target.value })} /></div>
+          <div><label className={lbl}>Nombres *</label><Input value={cli.nombres} onChange={(e) => setCli({ ...cli, nombres: e.target.value })} /></div>
+          <div><label className={lbl}>Apellidos *</label><Input value={cli.apellidos} onChange={(e) => setCli({ ...cli, apellidos: e.target.value })} /></div>
           <div>
             <label className={lbl}>Tipo doc</label>
             <select value={cli.tipoDoc} onChange={(e) => setCli({ ...cli, tipoDoc: e.target.value })} className={inp}>
