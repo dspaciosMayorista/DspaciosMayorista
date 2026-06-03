@@ -4,10 +4,10 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatCOP, calcularEdad } from "@/lib/utils";
 import { reservarDesdeTarifario, type PasajeroReserva } from "../actions";
 import { precioServicio } from "@/lib/calc/paquetes";
-import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
+import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 
 export type ServicioDisp = {
   servicioId: number;
@@ -28,6 +28,10 @@ export type Meta = {
   fechaRegreso: string | null;
   noches: number | null;
   bloqueoLabel: string | null;
+  edadInfanteMax: number;
+  edadNinoMax: number;
+  paxMinHotel: number | null;
+  paxMaxHotel: number | null;
 };
 export type Combo = { categoria: string; regimen: string; precios: Record<string, number> };
 
@@ -100,6 +104,26 @@ export function ReservaForm({
   const [pax, setPax] = useState<PasajeroReserva[]>([]);
   const paxRows = Array.from({ length: totalPax }, (_, i) => pax[i] ?? emptyPax());
 
+  // Validación pasajeros ↔ acomodación (punto 4)
+  const habitacionesNum: Record<string, number> = {};
+  for (const a of roomTypes) { const n = Number(habs[a]) || 0; if (n > 0) habitacionesNum[a] = n; }
+  const real = esServicios ? undefined : clasificarPorEdad(
+    paxRows.map((p) => calcularEdad(p.fechaNacimiento, meta.fechaIda)),
+    meta.edadInfanteMax, meta.edadNinoMax
+  );
+  const validacion = esServicios
+    ? { errores: [] as string[], avisos: [] as string[] }
+    : validarReservaHabitaciones({
+        habitaciones: habitacionesNum,
+        reglas: acomConfigs,
+        ninosDeclarados: numNinos + numNinos2,
+        infantesDeclarados: numInfantes,
+        paxMinHotel: meta.paxMinHotel,
+        paxMaxHotel: meta.paxMaxHotel,
+        real,
+      });
+  const bloquear = validacion.errores.length > 0;
+
   function setPaxField(i: number, k: keyof PasajeroReserva, v: string) {
     setPax((prev) => {
       const next = [...prev];
@@ -126,6 +150,9 @@ export function ReservaForm({
       setErr("Indica al menos una habitación."); return;
     } else if (paxConSilla <= 0) {
       setErr("Las habitaciones elegidas no suman pasajeros."); return;
+    }
+    if (!esServicios && validacion.errores.length) {
+      setErr(validacion.errores[0]); return;
     }
     setErr("");
     const habitaciones: Record<string, number> = {};
@@ -339,9 +366,20 @@ export function ReservaForm({
         )}
       </section>
 
+      {/* Validación pasajeros ↔ acomodación */}
+      {validacion.errores.length > 0 && (
+        <ul className="space-y-1 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+          {validacion.errores.map((e, i) => <li key={i}>⚠ {e}</li>)}
+        </ul>
+      )}
+      {validacion.avisos.length > 0 && (
+        <ul className="space-y-1 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          {validacion.avisos.map((a, i) => <li key={i}>ⓘ {a}</li>)}
+        </ul>
+      )}
       {err && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
       <div className="flex justify-end">
-        <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+        <Button onClick={guardar} disabled={pending || bloquear} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Generando…" : "Generar contrato (pendiente)"}
         </Button>
       </div>

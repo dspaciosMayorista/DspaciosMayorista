@@ -40,6 +40,12 @@ export default async function NuevaReservaPage({
         </div>
       );
     }
+    // Edades y pax del hotel (para validar pasajeros ↔ acomodación).
+    const { data: hotelRow } = await sb
+      .from("hoteles")
+      .select("edad_infante_max, edad_nino_max, pax_min, pax_max")
+      .eq("id", hotelId)
+      .maybeSingle();
     meta = {
       paqueteId, hotelId, bloqueoId, modulo,
       hotelNombre: filas[0].hotel_nombre ?? "",
@@ -48,6 +54,10 @@ export default async function NuevaReservaPage({
       fechaRegreso: filas[0].fecha_regreso,
       noches: filas[0].noches,
       bloqueoLabel: filas[0].bloqueo_label,
+      edadInfanteMax: hotelRow?.edad_infante_max ?? 2,
+      edadNinoMax: hotelRow?.edad_nino_max ?? 10,
+      paxMinHotel: hotelRow?.pax_min ?? null,
+      paxMaxHotel: hotelRow?.pax_max ?? null,
     };
     const map = new Map<string, Combo>();
     for (const f of filas) {
@@ -79,6 +89,7 @@ export default async function NuevaReservaPage({
       hotelNombre: m?.paquete_nombre ?? "Servicios",
       destino: m?.destino_nombre ?? "",
       fechaIda: null, fechaRegreso: null, noches: null, bloqueoLabel: null,
+      edadInfanteMax: 2, edadNinoMax: 10, paxMinHotel: null, paxMaxHotel: null,
     };
   }
 

@@ -290,6 +290,9 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   + **sillas en_plazo** (descuenta cupos) + contrato + PDF.
 - **Contratos:** estado pendiente/confirmado; **Confirmar venta** (rol alto) o **abono** auto-
   confirma → sillas confirmada. Editar cabecera. **Cron diario** libera vencidas.
+  Al generar valida **pasajeros ↔ acomodación** (edades vs habitaciones; bloquea si no cuadra).
+- **Contrato (visual):** hotel "N hab Doble (M pax)"; **servicios** en tabla aparte (Servicio·Pax·
+  Valor total); **vuelo** Origen/Destino derivados de la ruta IATA (`lib/iata.ts`, catálogo editable).
 - **Vuelos:** bloqueos con **destino** + rangos de edad; editar bloqueo; carga masiva.
 - **Configuración:** asesores, parámetros tributarios, **rangos de edad**.
 
@@ -333,10 +336,12 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
    - B) Por acomodación: pax máx + (mín/máx adultos, mín/máx niños, mín/máx infantes).
      Ej. Sencilla: máx 2 pax | adt 1–1 | chd 0–1 | inf 0–1. Doble: máx 4 | adt 2–2 | chd 0–2 | inf 0–2.
      *(Guardado en `hotel_acomodaciones`; alimenta la validación del punto 4.)*
-4. **Validación pasajeros vs acomodación:** *(PENDIENTE — usar las reglas adt/chd/inf de
-   `hotel_acomodaciones` ya capturadas.)* Si las cantidades/edades de los pasajeros no cuadran
-   con las habitaciones elegidas (ej. 1 sencilla con 1 adt + 1 chd pero hay 2 adultos por fecha de
-   nacimiento), mostrar **alerta** y no dejar generar.
+4. **Validación pasajeros vs acomodación:** *(HECHO — `validarReservaHabitaciones` +
+   `clasificarPorEdad` en `lib/acomodaciones.ts`.)* Clasifica pasajeros por fecha de nacimiento
+   (umbrales del hotel `edad_infante_max`/`edad_nino_max`, referidos a la fecha de salida) y los
+   compara con la acomodación: capacidad de niños/infantes/pax por habitación, pax mín/máx del
+   hotel y edades reales vs declaradas. Muestra **alerta** (errores bloquean, avisos informan) y
+   **no deja generar**; el server re-valida (autoritativo).
 5. **Contrato pendiente:** ya guarda costos del aéreo; faltan **costos del hotel negociado y
    proveedores** (los hay) y, en cartera, **forma de pago como lista desplegable** (catálogo
    editable en otro lado).

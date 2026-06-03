@@ -4,8 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio } from "@/lib/calc/paquetes";
-import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
+import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
+import { calcularEdad } from "@/lib/utils";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -76,13 +77,14 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     for (const f of filas) if (f.acomodacion) pvpPorAcom[f.acomodacion] = f.precio_pvp;
     meta = filas[0];
 
-    // pax_tarifa por acomodación (config del hotel; default si no está configurada).
+    // Config de acomodaciones del hotel (defaults si no está configurada).
     const { data: acomCfg } = await sb
       .from("hotel_acomodaciones")
-      .select("acomodacion, pax_tarifa")
+      .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
       .eq("hotel_id", input.hotelId);
+    const reglas = (acomCfg ?? []) as AcomConfig[];
     const paxTarifa = (a: AcomRoom) => {
-      const c = (acomCfg ?? []).find((x) => x.acomodacion === a);
+      const c = reglas.find((x) => x.acomodacion === a);
       return c?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
     };
 
@@ -99,6 +101,33 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
 
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
+
+    // Validación pasajeros ↔ acomodación (punto 4): edades reales vs declaradas.
+    const { data: hotelRow } = await sb
+      .from("hoteles")
+      .select("edad_infante_max, edad_nino_max, pax_min, pax_max")
+      .eq("id", input.hotelId)
+      .maybeSingle();
+    const real = clasificarPorEdad(
+      input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
+      hotelRow?.edad_infante_max ?? 2,
+      hotelRow?.edad_nino_max ?? 10
+    );
+    const habitacionesNum: Record<string, number> = {};
+    for (const a of ACOM_ROOMS) {
+      const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
+      if (n > 0) habitacionesNum[a] = n;
+    }
+    const val = validarReservaHabitaciones({
+      habitaciones: habitacionesNum,
+      reglas,
+      ninosDeclarados: numNinos + numNinos2,
+      infantesDeclarados: Math.max(0, Math.trunc(Number(input.infantes) || 0)),
+      paxMinHotel: hotelRow?.pax_min ?? null,
+      paxMaxHotel: hotelRow?.pax_max ?? null,
+      real,
+    });
+    if (val.errores.length) return { ok: false, error: val.errores.join(" ") };
   } else {
     const { data: m } = await sb
       .from("tarifario_resultado")
