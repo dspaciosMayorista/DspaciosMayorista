@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, type TemporadaRango } from "@/lib/calc/paquetes";
+import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, type TemporadaRango } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
@@ -115,7 +115,27 @@ export async function cotizarPorFechas(input: {
   if (pq?.fecha_viaje_fin && input.fechaRegreso > pq.fecha_viaje_fin)
     return { ok: false, error: `El regreso no puede ser después del ${pq.fecha_viaje_fin} (rango del paquete).` };
   const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda, numNoches);
-  if (!res || !res.combos.length) return { ok: false, error: "No hay tarifa para esas fechas (revisa temporadas del hotel)." };
+  if (!res || !res.combos.length) {
+    // Diagnóstico: ¿qué temporada de las noches elegidas no tiene tarifa cargada?
+    const [{ data: temps }, { data: tars }] = await Promise.all([
+      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin").eq("hotel_id", input.hotelId),
+      admin.from("tarifa_hotel").select("temporada").eq("hotel_id", input.hotelId),
+    ]);
+    const temporadas = (temps ?? []).map((t) => ({ nombre: t.nombre, fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin }));
+    const conTarifa = new Set((tars ?? []).map((t) => (t.temporada ?? "").trim()));
+    const base = new Date(`${input.fechaIda}T00:00:00`).getTime();
+    const faltan = new Set<string>();
+    let hayNocheSinTemp = false;
+    for (let n = 0; n < numNoches; n++) {
+      const temp = temporadaParaFecha(new Date(base + n * 86_400_000), temporadas);
+      if (!temp) hayNocheSinTemp = true;
+      else if (!conTarifa.has(temp.trim())) faltan.add(temp);
+    }
+    let error = "No hay tarifa para esas fechas (revisa temporadas del hotel).";
+    if (faltan.size) error = `Falta cargar la tarifa de la temporada: ${[...faltan].join(", ")} (cae dentro de tu rango de fechas).`;
+    else if (hayNocheSinTemp) error = "Hay noches que no caen en ninguna temporada del hotel; define la temporada para esas fechas.";
+    return { ok: false, error };
+  }
   return { ok: true, combos: res.combos, noches: numNoches };
 }
 
