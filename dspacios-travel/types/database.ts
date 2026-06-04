@@ -50,6 +50,7 @@ export type Database = {
           meta_mensual: number;
           activo: boolean;
           created_at: string;
+          escala_id: number | null;
         };
         Insert: {
           id?: number;
@@ -61,6 +62,7 @@ export type Database = {
           meta_mensual?: number;
           activo?: boolean;
           created_at?: string;
+          escala_id?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["asesores"]["Insert"]>;
         Relationships: [];
@@ -1144,6 +1146,18 @@ export type Database = {
         Row: { id: number; nombre: string; activo: boolean; orden: number; created_at: string };
         Insert: { id?: number; nombre: string; activo?: boolean; orden?: number; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["formas_pago"]["Insert"]>;
+        Relationships: [];
+      };
+      escalas_comision: {
+        Row: { id: number; nombre: string; activo: boolean; created_at: string };
+        Insert: { id?: number; nombre: string; activo?: boolean; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["escalas_comision"]["Insert"]>;
+        Relationships: [];
+      };
+      escala_rangos: {
+        Row: { id: number; escala_id: number; pvp_desde: number; pvp_hasta: number | null; pct: number; orden: number };
+        Insert: { id?: number; escala_id: number; pvp_desde?: number; pvp_hasta?: number | null; pct?: number; orden?: number };
+        Update: Partial<Database["public"]["Tables"]["escala_rangos"]["Insert"]>;
         Relationships: [];
       };
       hotel_acomodaciones: {
