@@ -81,17 +81,44 @@ export async function eliminarServicio(id: number): Promise<Result> {
 // ── Carga masiva (CSV) ─────────────────────────────────────────────────────
 const numCsv = (s?: string) => (s ? parseInt(String(s).replace(/[^\d-]/g, ""), 10) || 0 : 0);
 const LIQ_VALIDAS = ["dia", "noche", "paquete"];
+const CAT_VALIDAS = ["tour_traslado", "asistencia", "otro"];
+
+// Normaliza la categoría (ubica el servicio en el contrato).
+function normCategoria(s?: string): string {
+  const v = (s || "").trim().toLowerCase();
+  if (CAT_VALIDAS.includes(v)) return v;
+  if (v.includes("tour") || v.includes("traslad")) return "tour_traslado";
+  if (v.includes("asist")) return "asistencia";
+  return "otro";
+}
+
+// "1-4:500000|5-10:400000" → rangos de pax para cobro POR GRUPO.
+function parseTiersCsv(s?: string): TierPax[] {
+  if (!s || !s.trim()) return [];
+  return s
+    .split("|")
+    .map((part) => {
+      const [rango, precioStr] = part.split(":");
+      const [d, h] = (rango || "").split("-");
+      const paxDesde = numCsv(d);
+      const paxHasta = numCsv(h) || paxDesde;
+      return { paxDesde, paxHasta, precio: numCsv(precioStr) };
+    })
+    .filter((t) => t.precio > 0 && t.paxDesde > 0);
+}
 
 export async function cargarServiciosMasivo(
   rows: Record<string, string>[]
 ): Promise<{ ok: boolean; insertados: number; errores: string[] }> {
   const sb = await createClient();
-  const [{ data: destinos }, { data: provs }] = await Promise.all([
+  const [{ data: destinos }, { data: provs }, { data: rangos }] = await Promise.all([
     sb.from("destinos").select("id, nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "servicios"),
+    sb.from("rangos_edad").select("id, denominacion"),
   ]);
   const dmap = new Map((destinos ?? []).map((d) => [d.nombre.trim().toLowerCase(), d.id]));
   const pmap = new Map((provs ?? []).map((p) => [p.nombre.trim().toLowerCase(), p.id]));
+  const rmap = new Map((rangos ?? []).map((x) => [x.denominacion.trim().toLowerCase(), x.id]));
   const errores: string[] = [];
   let insertados = 0;
 
@@ -105,12 +132,23 @@ export async function cargarServiciosMasivo(
     const liq = (r.liquidacion || "paquete").trim().toLowerCase();
     const liquidacion = (LIQ_VALIDAS.includes(liq) ? liq : "paquete") as Liquidacion;
     const precio = numCsv(r.tarifa_neta);
-    const { error } = await sb.from("servicios_adicionales").insert({
+    const rangosEdad = (r.rangos_edad || "")
+      .split(/[|;]/).map((x) => rmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
+    const tiers = parseTiersCsv(r.precio_grupo);
+
+    const { data: sv, error } = await sb.from("servicios_adicionales").insert({
       nombre, proveedor_id: provId, destino_id: destinoId,
       tarifa_neta: precio, precio_persona: precio, temporada: oNull(r.temporada || ""),
       liquidacion, activo: true,
-    });
-    if (error) { errores.push(`Fila ${linea} (${nombre}): ${error.message}`); continue; }
+      categoria: normCategoria(r.categoria),
+      rangos_edad: rangosEdad.length ? rangosEdad : null,
+    }).select("id").single();
+    if (error || !sv) { errores.push(`Fila ${linea} (${nombre}): ${error?.message ?? "no se insertó"}`); continue; }
+    if (tiers.length) {
+      await sb.from("servicio_tarifa_pax").insert(
+        tiers.map((t) => ({ servicio_id: sv.id, pax_desde: t.paxDesde, pax_hasta: t.paxHasta, precio: t.precio }))
+      );
+    }
     insertados++;
   }
   revalidatePath("/dashboard/producto/servicios");

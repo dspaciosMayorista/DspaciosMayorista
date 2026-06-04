@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 const COLS_BLOQUEOS = [
   { key: "record", label: "Record", ejemplo: "L93FYZ" },
   { key: "aerolinea", label: "Aerolínea", ejemplo: "JETSMART" },
+  { key: "proveedor", label: "Proveedor aéreo", ejemplo: "" },
   { key: "destino", label: "Destino", ejemplo: "CARTAGENA" },
   { key: "ruta", label: "Ruta", ejemplo: "MDE - CTG - MDE" },
   { key: "vuelo_ida", label: "Vuelo ida", ejemplo: "5410" },
@@ -25,6 +26,7 @@ const COLS_BLOQUEOS = [
   { key: "tarifa_para_empaquetar", label: "Tarifa empaquetar", ejemplo: "242022" },
   { key: "fecha_devolucion", label: "Fecha devolución", ejemplo: "2026-06-01" },
   { key: "fecha_emision", label: "Fecha emisión", ejemplo: "2026-05-20" },
+  { key: "rangos_edad", label: "Rangos de edad (nombres separados por |)", ejemplo: "" },
   { key: "notas", label: "Notas", ejemplo: "" },
 ];
 
