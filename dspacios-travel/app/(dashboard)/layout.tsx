@@ -23,6 +23,7 @@ const NAV: NavItem[] = [
   },
   { href: "/dashboard/tarifario", label: "Tarifario" },
   { href: "/dashboard/reservar", label: "Reservar" },
+  { href: "/dashboard/ventas", label: "Ventas" },
   {
     href: "/dashboard/contratos",
     label: "Contratos",
