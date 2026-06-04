@@ -162,6 +162,7 @@ export default async function ContratoDetallePage({
       <GestionTabs
         numero={numero}
         precioVenta={venta.precio_venta}
+        impuesto={venta.impuesto ?? 0}
         asesorNombre={asesorNombre}
         asesorPct={asesorPct}
         fiscal={fiscal}

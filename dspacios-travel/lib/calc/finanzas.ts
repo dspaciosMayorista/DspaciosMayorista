@@ -99,6 +99,40 @@ export function calcComisionAsesor(i: ComisionAsesorInput): ComisionAsesor {
   };
 }
 
+// ── Comisión del asesor SOBRE BASE COMISIONABLE (PVP − BNC) ───────────────
+// Regla del negocio: la comisión se calcula sobre la base comisionable, que es
+// el PVP menos el BNC (impuesto no comisionable del paquete). Si el contrato no
+// tiene BNC, la base es el PVP completo.
+//   base = max(0, precioVenta − impuesto) · bruta = base × % · neta = bruta − retención
+export type ComisionAsesorBaseInput = {
+  precioVenta: number;
+  impuesto?: number; // BNC del contrato
+  pctBase?: number; // def 0.08
+  retHonorarios?: number; // def 0.11
+};
+export type ComisionAsesorBase = {
+  pctComision: number;
+  baseComisionable: number;
+  comisionBruta: number;
+  retencion: number;
+  comisionNeta: number;
+};
+
+export function calcComisionAsesorBase(i: ComisionAsesorBaseInput): ComisionAsesorBase {
+  const pct = i.pctBase ?? 0.08;
+  const retH = i.retHonorarios ?? TRIBUTARIO.RETENCION_HONORARIOS;
+  const base = Math.max(0, (i.precioVenta || 0) - (i.impuesto || 0));
+  const comisionBruta = base * pct;
+  const retencion = comisionBruta * retH;
+  return {
+    pctComision: pct,
+    baseComisionable: base,
+    comisionBruta,
+    retencion,
+    comisionNeta: comisionBruta - retencion,
+  };
+}
+
 // ── Rentabilidad por contrato ────────────────────────────────────────────
 export type RentabilidadInput = {
   precioVenta: number;

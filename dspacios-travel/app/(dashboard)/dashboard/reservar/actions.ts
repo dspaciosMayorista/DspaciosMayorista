@@ -378,6 +378,18 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     input.tipoAsesor === "freelance" ? input.freelanceNombre :
     input.asesorInterno;
 
+  // BNC (Base No Comisionable) total del contrato = "Valor fijo del impuesto"
+  // del paquete × pax con tiquete. La base comisionable luego es PVP − BNC.
+  let impuestoTotal = 0;
+  if (!esServicios) {
+    const { data: pqImp } = await sb
+      .from("armado_paquetes")
+      .select("impuesto_fijo")
+      .eq("id", input.paqueteId)
+      .maybeSingle();
+    impuestoTotal = (Number(pqImp?.impuesto_fijo) || 0) * paxConSilla;
+  }
+
   // 4) Venta (cabecera) — nace PENDIENTE
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
@@ -392,6 +404,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     pax: totalPax || paxConSilla,
     hotel: esServicios ? null : meta.hotel_nombre,
     precio_venta: precioVenta,
+    impuesto: impuestoTotal,
     estado: "pendiente",
     canal,
     tipo_asesor: input.tipoAsesor,

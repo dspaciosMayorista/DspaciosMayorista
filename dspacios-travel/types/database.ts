@@ -160,6 +160,7 @@ export type Database = {
           asistencia: string | null;
           otros_proveedores: string | null;
           precio_venta: number;
+          impuesto: number;
           costo_hotel: number;
           costo_aereo: number;
           costo_receptivo: number;
@@ -211,6 +212,7 @@ export type Database = {
           asistencia?: string | null;
           otros_proveedores?: string | null;
           precio_venta?: number;
+          impuesto?: number;
           costo_hotel?: number;
           costo_aereo?: number;
           costo_receptivo?: number;

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import {
   calcComisionB2B,
-  calcComisionAsesor,
+  calcComisionAsesorBase,
   calcRentabilidad,
   FISCAL_DEFAULT,
   type Rentabilidad,
@@ -32,6 +32,7 @@ type Factura = { id: number; numero_factura: string | null; fecha_factura: strin
 export type GestionProps = {
   numero: string;
   precioVenta: number;
+  impuesto: number; // BNC (Base No Comisionable) del contrato
   asesorNombre: string;
   asesorPct: number;
   fiscal?: ParamsFiscales;
@@ -64,9 +65,10 @@ export function GestionTabs(p: GestionProps) {
 
   const fiscal = p.fiscal ?? FISCAL_DEFAULT;
 
-  const comAsesor = calcComisionAsesor({
-    precioVenta: p.precioVenta, costoTotal: costoDirecto,
-    comB2BPagada: comB2BTotal, pctBase: p.asesorPct, retHonorarios: fiscal.RETENCION_HONORARIOS,
+  // Comisión del asesor sobre la BASE COMISIONABLE = PVP − BNC (impuesto).
+  const comAsesor = calcComisionAsesorBase({
+    precioVenta: p.precioVenta, impuesto: p.impuesto,
+    pctBase: p.asesorPct, retHonorarios: fiscal.RETENCION_HONORARIOS,
   });
 
   const ivaGenerado = p.facturas.reduce((s, f) => s + f.base_gravable * fiscal.IVA, 0);
@@ -103,11 +105,11 @@ export function GestionTabs(p: GestionProps) {
               <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />
             </TabsContent>
             <TabsContent value="comisiones">
-              <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} filas={p.comisionesB2B}
-                comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} />
+              <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} impuesto={p.impuesto} filas={p.comisionesB2B}
+                comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} fiscal={fiscal} />
             </TabsContent>
             <TabsContent value="facturacion">
-              <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaDescontable={ivaDescontable} />
+              <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA} />
             </TabsContent>
             <TabsContent value="rentabilidad">
               <RentabilidadTab rent={rent} />
@@ -280,9 +282,9 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
 }
 
 // ── COMISIONES (B2B + asesor) ──────────────────────────────────────────
-function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, comAsesor, asesorNombre, asesorPct }: {
-  numero: string; precioVenta: number; filas: B2B[]; comB2BTotal: number;
-  comAsesor: ReturnType<typeof calcComisionAsesor>; asesorNombre: string; asesorPct: number;
+function ComisionesTab({ numero, precioVenta, impuesto, filas, comB2BTotal, comAsesor, asesorNombre, asesorPct, fiscal }: {
+  numero: string; precioVenta: number; impuesto: number; filas: B2B[]; comB2BTotal: number;
+  comAsesor: ReturnType<typeof calcComisionAsesorBase>; asesorNombre: string; asesorPct: number; fiscal: ParamsFiscales;
 }) {
   const [aliado, setAliado] = useState("");
   const [nit, setNit] = useState("");
@@ -311,17 +313,19 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, comAsesor, ase
 
   return (
     <div className="space-y-4">
-      {/* Comisión asesor (calculada) */}
-      <div className={card}>
-        <p className="mb-2 text-sm font-semibold text-gray-700">Comisión del asesor</p>
-        <p className="mb-3 text-xs text-gray-500">{asesorNombre || "—"} · base {(asesorPct * 100).toFixed(0)}%</p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Mini label="Util. neta base" value={formatCOP(comAsesor.utilidadNeta)} />
-          <Mini label="Comisión bruta" value={formatCOP(comAsesor.comisionBruta)} />
-          <Mini label="Retención 11%" value={formatCOP(comAsesor.retencion)} />
-          <Mini label="Comisión neta" value={formatCOP(comAsesor.comisionNeta)} color="var(--brand-primary)" />
-        </div>
-      </div>
+      {/* Comisión asesor (calculada) — vertical */}
+      <Resumen
+        titulo="Comisión del asesor"
+        subtitulo={`${asesorNombre || "—"} · base ${(asesorPct * 100).toFixed(0)}%`}
+        filas={[
+          { label: "Precio de venta (PVP)", value: formatCOP(precioVenta) },
+          { label: "(−) BNC / impuesto", value: impuesto > 0 ? `− ${formatCOP(impuesto)}` : "Sin BNC" },
+          { label: "= Base comisionable", value: formatCOP(comAsesor.baseComisionable), strong: true },
+          { label: `Comisión bruta (${(asesorPct * 100).toFixed(0)}%)`, value: formatCOP(comAsesor.comisionBruta) },
+          { label: `(−) Retención (${(fiscal.RETENCION_HONORARIOS * 100).toFixed(0)}%)`, value: `− ${formatCOP(comAsesor.retencion)}` },
+          { label: "= Comisión neta", value: formatCOP(comAsesor.comisionNeta), strong: true, color: "var(--brand-primary)" },
+        ]}
+      />
 
       {/* Comisiones B2B */}
       <div className={card}>
@@ -374,16 +378,19 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, comAsesor, ase
 }
 
 // ── FACTURACIÓN ────────────────────────────────────────────────────────
-function FacturacionTab({ numero, filas, ivaGenerado, ivaDescontable }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaDescontable: number }) {
+function FacturacionTab({ numero, filas, ivaGenerado, ivaPct }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaPct: number }) {
   const [num, setNum] = useState("");
   const [fecha, setFecha] = useState("");
   const [cliente, setCliente] = useState("");
   const [nit, setNit] = useState("");
   const [desc, setDesc] = useState("");
   const [base, setBase] = useState("");
-  const [ivaDesc, setIvaDesc] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+
+  const totalBase = filas.reduce((s, f) => s + (f.base_gravable || 0), 0);
+  const baseNum = Number(base) || 0;
+  const ivaNueva = baseNum * ivaPct;
 
   function agregar() {
     if (!Number(base)) return;
@@ -392,20 +399,27 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaDescontable }: { numero
       const r = await crearFactura({
         numeroContrato: numero, numeroFactura: num, fechaFactura: fecha,
         cliente, nitCliente: nit, descripcion: desc,
-        baseGravable: Number(base), ivaDescontable: Number(ivaDesc) || 0,
+        baseGravable: Number(base), ivaDescontable: 0,
       });
-      if (r.ok) { setNum(""); setFecha(""); setCliente(""); setNit(""); setDesc(""); setBase(""); setIvaDesc(""); }
+      if (r.ok) { setNum(""); setFecha(""); setCliente(""); setNit(""); setDesc(""); setBase(""); }
       else setErr(r.error);
     });
   }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Mini label="IVA generado (19%)" value={formatCOP(ivaGenerado)} />
-        <Mini label="IVA descontable" value={formatCOP(ivaDescontable)} />
-        <Mini label="IVA por pagar" value={formatCOP(Math.max(ivaGenerado - ivaDescontable, 0))} />
-      </div>
+      <p className="text-sm text-gray-500">
+        Registra las <b>facturas que le emites al cliente</b>. Cada factura genera IVA del {(ivaPct * 100).toFixed(0)}% sobre su base gravable.
+      </p>
+      {/* Resumen vertical */}
+      <Resumen
+        titulo="Facturación del contrato"
+        filas={[
+          { label: "Facturas emitidas", value: String(filas.length) },
+          { label: "Total base gravable", value: formatCOP(totalBase) },
+          { label: `= IVA generado (${(ivaPct * 100).toFixed(0)}%)`, value: formatCOP(ivaGenerado), strong: true, color: "var(--brand-primary)" },
+        ]}
+      />
       <div className={card}>
         <p className={lbl}>Agregar factura</p>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
@@ -415,8 +429,10 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaDescontable }: { numero
           <Input placeholder="NIT/CC cliente" value={nit} onChange={(e) => setNit(e.target.value)} />
           <Input placeholder="Descripción" value={desc} onChange={(e) => setDesc(e.target.value)} />
           <Input type="number" placeholder="Base gravable" value={base} onChange={(e) => setBase(e.target.value)} />
-          <Input type="number" placeholder="IVA descontable" value={ivaDesc} onChange={(e) => setIvaDesc(e.target.value)} />
         </div>
+        {baseNum > 0 && (
+          <p className="mt-2 text-xs text-gray-500">IVA de esta factura ({(ivaPct * 100).toFixed(0)}%): <b>{formatCOP(ivaNueva)}</b></p>
+        )}
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={agregar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Guardando…" : "Agregar"}
@@ -493,6 +509,29 @@ function RentabilidadTab({ rent }: { rent: Rentabilidad }) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
+// Tarjeta de resultados en formato VERTICAL (etiqueta a la izq, valor a la der).
+// Mejor para números grandes y columnas angostas.
+function Resumen({ titulo, subtitulo, filas }: {
+  titulo: string;
+  subtitulo?: string;
+  filas: { label: string; value: string; strong?: boolean; color?: string }[];
+}) {
+  return (
+    <div className={card}>
+      <p className="text-sm font-semibold text-gray-700">{titulo}</p>
+      {subtitulo && <p className="mt-0.5 text-xs text-gray-500">{subtitulo}</p>}
+      <div className="mt-3 divide-y divide-gray-100">
+        {filas.map((f, i) => (
+          <div key={i} className="flex items-center justify-between gap-3 py-2">
+            <span className={`text-sm ${f.strong ? "font-semibold text-gray-700" : "text-gray-500"}`}>{f.label}</span>
+            <span className={`tabular-nums ${f.strong ? "text-base font-bold" : "text-sm text-gray-800"}`} style={f.color ? { color: f.color } : undefined}>{f.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Mini({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
