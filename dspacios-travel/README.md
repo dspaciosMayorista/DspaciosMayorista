@@ -7,6 +7,41 @@ de verdad del diseño global está en `../CLAUDE.md` y la plantilla del contrato
 
 ---
 
+## ⚙️ Contexto de despliegue (YA configurado — NO volver a preguntar)
+
+> Nota a mí mismo (IA): esto **ya está montado y funcionando en producción**. No
+> le preguntes al dueño cómo configurar dominio, OAuth ni variables: ya está.
+
+- **Producción:** Vercel, **Production Branch = `main`**. Push a `main` ⇒ deploy automático.
+  Root Directory del proyecto en Vercel = `dspacios-travel`.
+- **Dominio:** **`portal.dspaciostravel.com`** en línea (DNS en **Hostinger** → CNAME a
+  Vercel). La **web y el correo** del cliente siguen en Hostinger (no se tocan). Su web
+  está en `www.` / raíz; nosotros usamos el subdominio `portal.`.
+- **Variables en Vercel (Production) — YA puestas:** `NEXT_PUBLIC_SUPABASE_URL`,
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`. (`CRON_SECRET` opcional.)
+- **Supabase:** **un solo proyecto, compartido** entre `main` y las ramas. Las
+  **migraciones se aplican A MANO** en el **SQL Editor** (el dueño las corre cuando se le
+  indica; no usamos `supabase db push`). Cada PR lista sus migraciones pendientes.
+- **Google OAuth — YA configurado:** Supabase Auth → Google. **Site URL** =
+  `https://portal.dspaciostravel.com`; **Redirect** incluye `…/auth/callback`. En Google
+  Cloud el redirect autorizado es el **callback de Supabase** (`https://<ref>.supabase.co/auth/v1/callback`).
+  ⚠️ **Clave:** el middleware `proxy.ts` deja **`/auth` pública** (si no, el login con Google rebota a `/login`).
+- **Storage (se crea por migración, no a mano):** `crm` (público, imágenes/flyers),
+  `contratos` (privado, adjuntos: cédulas/soportes), `empresa` (en la rama white-label).
+- **Ramas:** se trabaja en **`claude/laughing-goodall-e59PS`** → PRs → `main`.
+  **`white-label`** es una rama aparte (marca blanca con `empresa_config`, **congelada**).
+- **Asesor interno = `usuarios` con rol `venta`** (NO el catálogo `asesores`, que quedó en
+  desuso). La escala de comisión y `aplica_retencion` viven en `usuarios`.
+- **Email (campañas CRM):** falta que el dueño ponga la **API key de Brevo/Resend** y
+  remitente verificado en **CRM → Config email** y marque "Envío activo". El código ya soporta Brevo/Resend.
+- **`QUICK_LOGIN_*`** (ingreso rápido por código, solo pruebas) existe gateado por env;
+  en producción **no** debe estar definido.
+- **Respaldos:** plan **gratis** (sin backups automáticos). Guía + script en
+  `supabase/scripts/RESPALDO.md` (`pg_dump` + `respaldo-storage.mjs` → Drive). El `.mjs`
+  se corre en la terminal con **Node**, **no** en el SQL Editor.
+
+---
+
 ## Stack
 
 - **Next.js 16.2.6** (App Router, React 19, TypeScript estricto, Turbopack).
@@ -107,8 +142,8 @@ proveedores, comisiones, facturación, rentabilidad) → **LIQUIDACIÓN** mensua
 
 ## Migraciones
 
-Viven en `supabase/migrations/` (idempotentes). **Correr en orden `0001 → 0041`.**
-La lista detallada y el estado están en `../CLAUDE.md` (§13). Hitos recientes:
+Viven en `supabase/migrations/` (idempotentes). **Correr en orden `0001 → 0046`** en el
+**SQL Editor** de Supabase (a mano). La lista detallada está en `../CLAUDE.md` (§13). Hitos:
 
 | Rango | Contenido |
 |---|---|
@@ -116,26 +151,52 @@ La lista detallada y el estado están en `../CLAUDE.md` (§13). Hitos recientes:
 | 032–034 | BNC en ventas, ítems de factura, pago de comisión B2B |
 | 035 | (rama `white-label`) `empresa_config` para marca blanca |
 | 036 | Contacto comercial del hotel (`contacto_telefono`, `email_comercial`) |
-| 037 | `hotel_calculadora` (tarifa por fórmula) |
+| 037 | `hotel_calculadora` (tarifa por fórmula, ej. HOTEL DUBAI) |
 | 038 | Prioridad + vigencia de compra + promociones en `hotel_temporadas` |
 | 039 | `escalas_comision` + `escala_rangos` (+ `asesores.escala_id`) |
 | 040 | `aliados.tipo/pct_comision`, `asesores.aplica_retencion`, default `COMISION_FREELANCE` |
 | 041 | `usuarios.escala_id` + `usuarios.aplica_retencion` (asesor interno = usuario rol venta) |
+| 042 | `crm_contactos` (CRM, categorías + consentimiento Habeas Data) |
+| 043 | `crm_email_config` (proveedor/remitente/API key) |
+| 044 | `crm_campanas` (registro de envíos) |
+| 045 | Bucket Storage `crm` (imágenes/flyers) |
+| 046 | Bucket privado `contratos` + `contrato_adjuntos` (cédulas/soportes) |
 
-> Env en Vercel: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-> `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos/liquidación), opcional `CRON_SECRET`.
+> Env en Vercel (ya puestas): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+> `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos/liquidación/storage), opcional `CRON_SECRET`.
+
+## CRM (app aparte, mismo código)
+
+Vive en el grupo de rutas **`app/(crm)/`** con **layout propio** (sin sidebar del portal,
+fondo de marca, botón **PORTAL** → `/dashboard`). URL **`/crm`**. Para "sacarlo" a
+`crm.dspaciostravel.com` solo falta DNS (CNAME `crm` → Vercel) + un rewrite a `/crm` — el
+código ya está aislado, no hay que reconstruir. Incluye: contactos por categoría + carga
+masiva (Habeas Data), **cruce con ventas** (ficha con historial de compras), **campañas**
+amigables (tipo libre, **imagen/flyer**, mensaje normal sin HTML, **vista previa real**),
+**cumpleaños**, **cargue B2B** (crea aliado + contacto + acceso al portal) y **Config email**.
+
+## Adjuntos por contrato
+
+Sección **Adjuntos** en `/dashboard/contratos/[numero]`: subir cédula / soporte de pago /
+soporte de abono (PDF o imagen, máx 10 MB) al bucket **privado** `contratos/<número>/…`,
+descargar con **URL firmada** y eliminar. Tabla `contrato_adjuntos`.
 
 ## Pendientes / próximos pasos
 
-- **CRM interno** (rama nueva): bases de clientes por categoría (clientes finales, agencias,
-  freelance, empresas, pasajeros-informativo), importador, cruce con ventas. Subdominio
-  `crm.` apuntando a un proyecto Vercel con la misma Supabase.
-- **Marca blanca** (rama `white-label`): `empresa_config` editable; pendiente afinar y mergear.
+- **Exponer el CRM en `crm.dspaciostravel.com`**: DNS (CNAME `crm` → Vercel) + rewrite a
+  `/crm`. El módulo ya está listo; es solo enrutamiento.
+- **Email real:** el dueño debe cargar API key (Brevo/Resend) + remitente en *CRM → Config
+  email*. Opcional: **cron diario** para felicitaciones de cumpleaños automáticas.
+- **Importar el histórico de adjuntos** desde la carpeta de Drive del dueño (~500 contratos)
+  → subirla a Supabase enlazada por `numero_contrato`. Ojo límite **1 GB** del plan gratis.
+- **Marca blanca** (rama `white-label`): `empresa_config` editable; afinar y mergear.
 - **Otras calculadoras de hotel** (4–5 hoteles con estructuras propias) sobre el marco actual.
 - **Tarifario público en vivo** para promos/vigencia de compra (hoy el publicado es una foto;
   Reservar sí re-liquida en vivo).
 - Afinar costos netos de proveedores/servicios (`costo_receptivo`/`otros_costos`) y el
   detalle tributario de programas (hoy en COP).
 - **Editar reserva pendiente "completa"** (mismo número) sin anular.
+- (Limpieza) El catálogo **`asesores`** quedó en desuso (los asesores internos son
+  `usuarios` rol venta); su UI ya se quitó de Configuración. Se puede eliminar a futuro.
 
 > El detalle vivo del estado y las decisiones está en `../CLAUDE.md` §13.

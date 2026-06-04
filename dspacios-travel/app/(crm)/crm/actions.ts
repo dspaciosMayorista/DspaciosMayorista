@@ -60,7 +60,10 @@ export async function crearContacto(input: ContactoInput): Promise<Result> {
     no_contactar: input.noContactar,
     notas: oNull(input.notas),
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    if (error.code === "23505") return { ok: false, error: "Ya existe un contacto con ese documento, teléfono o correo." };
+    return { ok: false, error: error.message };
+  }
   revalidatePath("/crm");
   return { ok: true };
 }
@@ -73,24 +76,34 @@ export async function eliminarContacto(id: number): Promise<Result> {
   return { ok: true };
 }
 
-// Carga masiva (CSV). Deduplica por documento o email dentro del mismo lote.
+// Carga masiva (CSV). Deduplica por documento, teléfono y email — dentro del
+// archivo Y contra lo ya guardado (índices únicos de la BD). El teléfono compara
+// solo dígitos.
+const digitos = (s?: string) => (s || "").replace(/[^0-9]/g, "");
+
 export async function cargarContactosMasivo(
   rows: Record<string, string>[]
 ): Promise<{ ok: boolean; insertados: number; errores: string[] }> {
   const sb = await createClient();
   const errores: string[] = [];
-  const filas: CrmInsert[] = [];
-  const vistos = new Set<string>();
+  let insertados = 0;
+  const vistosDoc = new Set<string>(), vistosEmail = new Set<string>(), vistosTel = new Set<string>();
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const linea = i + 2;
     const nombre = (r.nombre || "").trim();
     if (!nombre) { errores.push(`Fila ${linea}: falta nombre.`); continue; }
-    const clave = ((r.documento || "").trim() || (r.email || "").trim()).toLowerCase();
-    if (clave && vistos.has(clave)) { errores.push(`Fila ${linea} (${nombre}): duplicado en el archivo, omitido.`); continue; }
-    if (clave) vistos.add(clave);
-    filas.push({
+
+    const doc = (r.documento || "").trim();
+    const email = (r.email || "").trim().toLowerCase();
+    const tel = digitos(r.telefono);
+    // Duplicado dentro del mismo archivo.
+    if (doc && vistosDoc.has(doc)) { errores.push(`Fila ${linea} (${nombre}): documento repetido en el archivo.`); continue; }
+    if (email && vistosEmail.has(email)) { errores.push(`Fila ${linea} (${nombre}): email repetido en el archivo.`); continue; }
+    if (tel && vistosTel.has(tel)) { errores.push(`Fila ${linea} (${nombre}): teléfono repetido en el archivo.`); continue; }
+
+    const fila: CrmInsert = {
       categoria: normCategoria(r.categoria),
       nombre,
       tipo_doc: oNull(r.tipo_doc || ""),
@@ -105,15 +118,18 @@ export async function cargarContactosMasivo(
       acepta_publicidad: toBool(r.acepta_publicidad),
       no_contactar: toBool(r.no_contactar),
       notas: oNull(r.notas || ""),
-    });
+    };
+    // Inserta fila por fila para detectar duplicados contra la BD (índices únicos).
+    const { error } = await sb.from("crm_contactos").insert(fila);
+    if (error) {
+      if (error.code === "23505") errores.push(`Fila ${linea} (${nombre}): ya existe (documento/teléfono/email duplicado).`);
+      else errores.push(`Fila ${linea} (${nombre}): ${error.message}`);
+      continue;
+    }
+    if (doc) vistosDoc.add(doc); if (email) vistosEmail.add(email); if (tel) vistosTel.add(tel);
+    insertados++;
   }
 
-  let insertados = 0;
-  if (filas.length) {
-    const { error, count } = await sb.from("crm_contactos").insert(filas, { count: "exact" });
-    if (error) return { ok: false, insertados: 0, errores: [...errores, error.message] };
-    insertados = count ?? filas.length;
-  }
   revalidatePath("/crm");
   return { ok: errores.length === 0, insertados, errores };
 }
