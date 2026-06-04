@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { TarifarioPublic, type FilaTarifario } from "@/app/tarifario/TarifarioPublic";
+import { getProgramasResumen } from "@/lib/programas";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,9 @@ export default async function TarifarioInternoPage() {
     if (page.length < PAGE) break;
   }
 
+  // Programas (interno: muestra activos aunque no estén publicados).
+  const programas = await getProgramasResumen(sb, false);
+
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-8">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -42,12 +46,12 @@ export default async function TarifarioInternoPage() {
         </Link>
       </div>
 
-      {!filas.length ? (
+      {!filas.length && !programas.length ? (
         <p className="py-20 text-center text-gray-400">
           Aún no hay tarifas publicadas. Arma un paquete y dale <b>Generar tarifario</b>.
         </p>
       ) : (
-        <TarifarioPublic filas={filas} />
+        <TarifarioPublic filas={filas} programas={programas} />
       )}
     </div>
   );

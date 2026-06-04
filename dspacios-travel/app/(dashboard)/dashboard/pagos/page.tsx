@@ -28,7 +28,7 @@ export default async function PagosPage() {
   const { data: cxp } = await sb
     .from("cuentas_por_pagar")
     .select(
-      "id, numero_contrato, proveedor, tipo_proveedor, servicio, valor_total, fecha_obligacion, fecha_vencimiento, aplica_retencion, pct_retencion, abono1, fecha_abono1, abono2, fecha_abono2, abono3, fecha_abono3"
+      "id, numero_contrato, proveedor, tipo_proveedor, servicio, valor_total, moneda, fecha_obligacion, fecha_vencimiento, aplica_retencion, pct_retencion, abono1, fecha_abono1, abono2, fecha_abono2, abono3, fecha_abono3"
     )
     .order("fecha_vencimiento", { ascending: true, nullsFirst: false });
 
@@ -47,6 +47,7 @@ export default async function PagosPage() {
       tipo_proveedor: c.tipo_proveedor,
       servicio: c.servicio,
       valor_total: valorTotal,
+      moneda: c.moneda ?? "COP",
       fecha_obligacion: c.fecha_obligacion as string | null,
       fecha_vencimiento: c.fecha_vencimiento as string | null,
       aplica_retencion: c.aplica_retencion,

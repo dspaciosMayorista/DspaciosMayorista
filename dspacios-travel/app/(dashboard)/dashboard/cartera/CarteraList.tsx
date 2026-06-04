@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { registrarAbonoCartera } from "./actions";
 
 export type CarteraRow = {
@@ -14,6 +14,7 @@ export type CarteraRow = {
   precio_venta: number;
   estado: string | null;
   fecha_salida: string | null;
+  moneda: string;
   pagado: number;
   saldo: number;
   abonos: {
@@ -46,22 +47,31 @@ export function CarteraList({ rows, formasPago }: { rows: CarteraRow[]; formasPa
   }, [rows, filtro, q]);
 
   const totales = useMemo(() => {
-    const t = { venta: 0, recaudado: 0, saldo: 0 };
+    const m = new Map<string, { venta: number; recaudado: number; saldo: number }>();
     for (const r of rows) {
+      const t = m.get(r.moneda) ?? { venta: 0, recaudado: 0, saldo: 0 };
       t.venta += r.precio_venta;
       t.recaudado += r.pagado;
       t.saldo += r.saldo;
+      m.set(r.moneda, t);
     }
-    return t;
+    return [...m.entries()];
   }, [rows]);
 
   return (
     <div>
-      {/* Resumen */}
-      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Tarjeta titulo="Total vendido" valor={totales.venta} />
-        <Tarjeta titulo="Recaudado" valor={totales.recaudado} tono="success" />
-        <Tarjeta titulo="Por cobrar" valor={totales.saldo} tono="primary" />
+      {/* Resumen (por moneda) */}
+      <div className="mb-5 space-y-3">
+        {totales.map(([moneda, t]) => (
+          <div key={moneda}>
+            {totales.length > 1 && <div className="mb-1 text-xs font-medium text-gray-400">{moneda}</div>}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Tarjeta titulo="Total vendido" valor={t.venta} moneda={moneda} />
+              <Tarjeta titulo="Recaudado" valor={t.recaudado} moneda={moneda} tono="success" />
+              <Tarjeta titulo="Por cobrar" valor={t.saldo} moneda={moneda} tono="primary" />
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Controles */}
@@ -154,16 +164,16 @@ function FilaCartera({
         <td className="px-4 py-3 text-gray-700">{row.cliente ?? "—"}</td>
         <td className="px-4 py-3 text-gray-500">{formatFechaLarga(row.fecha_salida)}</td>
         <td className="px-4 py-3 text-right tabular-nums text-gray-700">
-          {formatCOP(row.precio_venta)}
+          {formatMoneda(row.precio_venta, row.moneda)}
         </td>
         <td className="px-4 py-3 text-right tabular-nums text-gray-600">
-          {formatCOP(row.pagado)}
+          {formatMoneda(row.pagado, row.moneda)}
         </td>
         <td
           className="px-4 py-3 text-right font-semibold tabular-nums"
           style={{ color: pagadoTotal ? "var(--brand-success)" : "var(--brand-primary)" }}
         >
-          {pagadoTotal ? "Pagado" : formatCOP(row.saldo)}
+          {pagadoTotal ? "Pagado" : formatMoneda(row.saldo, row.moneda)}
         </td>
         <td className="px-4 py-3 text-right text-gray-400">{abierto ? "▾" : "▸"}</td>
       </tr>
@@ -212,7 +222,7 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
                     <td className="px-3 py-2 text-gray-600">{a.forma_pago ?? "—"}</td>
                     <td className="px-3 py-2 text-gray-500">{a.referencia ?? "—"}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-700">
-                      {formatCOP(a.valor_abono)}
+                      {formatMoneda(a.valor_abono, row.moneda)}
                     </td>
                   </tr>
                 ))}
@@ -223,7 +233,7 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
                     Saldo por cobrar
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
-                    {formatCOP(row.saldo)}
+                    {formatMoneda(row.saldo, row.moneda)}
                   </td>
                 </tr>
               </tfoot>
@@ -240,7 +250,7 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
             Este contrato está totalmente pagado.
           </p>
         ) : (
-          <AbonoInline numeroContrato={row.numero_contrato} formasPago={formasPago} saldo={row.saldo} />
+          <AbonoInline numeroContrato={row.numero_contrato} formasPago={formasPago} saldo={row.saldo} moneda={row.moneda} />
         )}
       </div>
     </div>
@@ -251,10 +261,12 @@ function AbonoInline({
   numeroContrato,
   formasPago,
   saldo,
+  moneda,
 }: {
   numeroContrato: string;
   formasPago: string[];
   saldo: number;
+  moneda: string;
 }) {
   const [valor, setValor] = useState("");
   const [forma, setForma] = useState("");
@@ -328,7 +340,7 @@ function AbonoInline({
           onClick={() => setValor(String(saldo))}
           className="text-xs font-medium text-[#1D7C9A] hover:underline"
         >
-          Saldo total ({formatCOP(saldo)})
+          Saldo total ({formatMoneda(saldo, moneda)})
         </button>
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -339,10 +351,12 @@ function AbonoInline({
 function Tarjeta({
   titulo,
   valor,
+  moneda,
   tono,
 }: {
   titulo: string;
   valor: number;
+  moneda: string;
   tono?: "primary" | "success";
 }) {
   const color =
@@ -351,7 +365,7 @@ function Tarjeta({
     <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
       <div className="text-xs uppercase tracking-wide text-gray-400">{titulo}</div>
       <div className="mt-1 text-xl font-semibold tabular-nums" style={{ color }}>
-        {formatCOP(valor)}
+        {formatMoneda(valor, moneda)}
       </div>
     </div>
   );

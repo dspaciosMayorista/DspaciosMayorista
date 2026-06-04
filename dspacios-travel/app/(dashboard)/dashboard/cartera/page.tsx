@@ -29,7 +29,7 @@ export default async function CarteraPage() {
   const [{ data: ventas }, { data: abonos }, { data: formasPagoRows }] = await Promise.all([
     sb
       .from("ventas")
-      .select("numero_contrato, cliente, destino, precio_venta, estado, fecha_salida, created_at")
+      .select("numero_contrato, cliente, destino, precio_venta, estado, fecha_salida, moneda, created_at")
       .order("created_at", { ascending: false }),
     sb
       .from("abonos")
@@ -63,6 +63,7 @@ export default async function CarteraPage() {
       precio_venta: v.precio_venta ?? 0,
       estado: v.estado,
       fecha_salida: v.fecha_salida,
+      moneda: v.moneda ?? "COP",
       pagado,
       saldo,
       abonos: ab,

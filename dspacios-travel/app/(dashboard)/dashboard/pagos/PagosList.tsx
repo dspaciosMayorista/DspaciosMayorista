@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { registrarPagoProveedor, deshacerUltimoPago } from "./actions";
 
 export type PagoRow = {
@@ -14,6 +14,7 @@ export type PagoRow = {
   tipo_proveedor: string | null;
   servicio: string | null;
   valor_total: number;
+  moneda: string;
   fecha_obligacion: string | null;
   fecha_vencimiento: string | null;
   aplica_retencion: boolean | null;
@@ -46,22 +47,31 @@ export function PagosList({ rows, proveedores }: { rows: PagoRow[]; proveedores:
   }, [rows, filtro, proveedor, q]);
 
   const totales = useMemo(() => {
-    const t = { total: 0, pagado: 0, saldo: 0 };
+    const m = new Map<string, { total: number; pagado: number; saldo: number }>();
     for (const r of visibles) {
+      const t = m.get(r.moneda) ?? { total: 0, pagado: 0, saldo: 0 };
       t.total += r.valor_total;
       t.pagado += r.pagado;
       t.saldo += r.saldo;
+      m.set(r.moneda, t);
     }
-    return t;
+    return [...m.entries()];
   }, [visibles]);
 
   return (
     <div>
-      {/* Resumen */}
-      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Tarjeta titulo="Total obligaciones" valor={totales.total} />
-        <Tarjeta titulo="Pagado" valor={totales.pagado} tono="success" />
-        <Tarjeta titulo="Por pagar" valor={totales.saldo} tono="primary" />
+      {/* Resumen (por moneda) */}
+      <div className="mb-5 space-y-3">
+        {totales.map(([moneda, t]) => (
+          <div key={moneda}>
+            {totales.length > 1 && <div className="mb-1 text-xs font-medium text-gray-400">{moneda}</div>}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <Tarjeta titulo="Total obligaciones" valor={t.total} moneda={moneda} />
+              <Tarjeta titulo="Pagado" valor={t.pagado} moneda={moneda} tono="success" />
+              <Tarjeta titulo="Por pagar" valor={t.saldo} moneda={moneda} tono="primary" />
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Controles */}
@@ -183,13 +193,13 @@ function FilaPago({
             "—"
           )}
         </td>
-        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatCOP(row.valor_total)}</td>
-        <td className="px-4 py-3 text-right tabular-nums text-gray-600">{formatCOP(row.pagado)}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatMoneda(row.valor_total, row.moneda)}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-gray-600">{formatMoneda(row.pagado, row.moneda)}</td>
         <td
           className="px-4 py-3 text-right font-semibold tabular-nums"
           style={{ color: pagada ? "var(--brand-success)" : "var(--brand-primary)" }}
         >
-          {pagada ? "Pagado" : formatCOP(row.saldo)}
+          {pagada ? "Pagado" : formatMoneda(row.saldo, row.moneda)}
         </td>
         <td className="px-4 py-3 text-right text-gray-400">{abierto ? "▾" : "▸"}</td>
       </tr>
@@ -224,7 +234,7 @@ function EstadoCuentaProveedor({ row }: { row: PagoRow }) {
               <tr className="border-b border-gray-50">
                 <td className="px-3 py-2 text-gray-500">Valor de la obligación</td>
                 <td className="px-3 py-2 text-right tabular-nums text-gray-700">
-                  {formatCOP(row.valor_total)}
+                  {formatMoneda(row.valor_total, row.moneda)}
                 </td>
               </tr>
               {row.aplica_retencion && (
@@ -233,7 +243,7 @@ function EstadoCuentaProveedor({ row }: { row: PagoRow }) {
                     Retención ({((row.pct_retencion ?? 0) * 100).toFixed(2)}%)
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-gray-500">
-                    {formatCOP(row.valor_total * (row.pct_retencion ?? 0))}
+                    {formatMoneda(row.valor_total * (row.pct_retencion ?? 0), row.moneda)}
                   </td>
                 </tr>
               )}
@@ -250,7 +260,7 @@ function EstadoCuentaProveedor({ row }: { row: PagoRow }) {
                       Pago {p.n} · {formatFechaLarga(p.fecha)}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-700">
-                      {formatCOP(p.valor)}
+                      {formatMoneda(p.valor, row.moneda)}
                     </td>
                   </tr>
                 ))
@@ -263,7 +273,7 @@ function EstadoCuentaProveedor({ row }: { row: PagoRow }) {
                   className="px-3 py-2 text-right tabular-nums"
                   style={{ color: "var(--brand-primary)" }}
                 >
-                  {formatCOP(row.saldo)}
+                  {formatMoneda(row.saldo, row.moneda)}
                 </td>
               </tr>
             </tfoot>
@@ -286,7 +296,7 @@ function EstadoCuentaProveedor({ row }: { row: PagoRow }) {
             </div>
           </div>
         ) : (
-          <PagoInline id={row.id} saldo={row.saldo} puedeDeshacer={row.pagos.length > 0} />
+          <PagoInline id={row.id} saldo={row.saldo} moneda={row.moneda} puedeDeshacer={row.pagos.length > 0} />
         )}
         {row.pagos.length > 0 && row.saldo <= 0 && <Deshacer id={row.id} />}
       </div>
@@ -297,10 +307,12 @@ function EstadoCuentaProveedor({ row }: { row: PagoRow }) {
 function PagoInline({
   id,
   saldo,
+  moneda,
   puedeDeshacer,
 }: {
   id: number;
   saldo: number;
+  moneda: string;
   puedeDeshacer: boolean;
 }) {
   const [valor, setValor] = useState("");
@@ -357,7 +369,7 @@ function PagoInline({
           onClick={() => setValor(String(saldo))}
           className="text-xs font-medium text-[#1D7C9A] hover:underline"
         >
-          Saldo total ({formatCOP(saldo)})
+          Saldo total ({formatMoneda(saldo, moneda)})
         </button>
         {puedeDeshacer && <Deshacer id={id} />}
       </div>
@@ -383,10 +395,12 @@ function Deshacer({ id }: { id: number }) {
 function Tarjeta({
   titulo,
   valor,
+  moneda,
   tono,
 }: {
   titulo: string;
   valor: number;
+  moneda: string;
   tono?: "primary" | "success";
 }) {
   const color =
@@ -395,7 +409,7 @@ function Tarjeta({
     <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
       <div className="text-xs uppercase tracking-wide text-gray-400">{titulo}</div>
       <div className="mt-1 text-xl font-semibold tabular-nums" style={{ color }}>
-        {formatCOP(valor)}
+        {formatMoneda(valor, moneda)}
       </div>
     </div>
   );

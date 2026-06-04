@@ -750,3 +750,212 @@ export async function liberarVencidas(): Promise<{ ok: boolean; liberadas: numbe
   revalidatePath("/dashboard/contratos");
   return { ok: true, liberadas: nums.length };
 }
+
+// ── Reservar un PROGRAMA (circuito de proveedor, en su moneda) ──────────────
+// Flujo dedicado: el precio se calcula desde la matriz del programa (neto +
+// markup), autoritativo en el servidor. Crea venta (con moneda), pasajeros,
+// ítems, hoteles por ciudad y la cuenta por pagar al proveedor (en su moneda).
+export type ReservaProgramaInput = {
+  programaId: number;
+  categoriaId: number;
+  fechaIda: string;
+  paxPorAcom: Record<string, number>; // pax en cada acomodación (sencilla/doble/triple/…)
+  ninos: number;
+  cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
+  tipoAsesor: "interno" | "agencia" | "freelance";
+  asesorInterno: string;
+  agenciaNombre: string;
+  agenciaAsesor: string;
+  freelanceNombre: string;
+  plazo: string;
+  pasajeros: PasajeroReserva[];
+};
+
+function sumarDias(fecha: string, dias: number): string {
+  const d = new Date(`${fecha}T00:00:00`);
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
+export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaResult> {
+  const sb = await createClient();
+  if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
+    return { ok: false, error: "El nombre del cliente es obligatorio." };
+  if (!input.fechaIda) return { ok: false, error: "Elige la fecha de salida." };
+
+  // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
+  const { data: prog } = await sb
+    .from("programas")
+    .select("id, nombre, subtitulo, moneda, pct_mk, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, proveedores(nombre, aplica_retencion, pct_retencion)")
+    .eq("id", input.programaId)
+    .maybeSingle();
+  if (!prog) return { ok: false, error: "Programa no encontrado." };
+
+  // Vigencia
+  if (prog.vigencia_desde && input.fechaIda < prog.vigencia_desde)
+    return { ok: false, error: "La fecha de salida es anterior a la vigencia del programa." };
+  if (prog.vigencia_hasta && input.fechaIda > prog.vigencia_hasta)
+    return { ok: false, error: "La fecha de salida supera la vigencia del programa." };
+
+  // Blackouts
+  const { data: bos } = await sb
+    .from("programa_blackouts")
+    .select("fecha_inicio, fecha_fin, motivo")
+    .eq("programa_id", input.programaId);
+  for (const b of bos ?? []) {
+    if (b.fecha_inicio && b.fecha_fin && input.fechaIda >= b.fecha_inicio && input.fechaIda <= b.fecha_fin)
+      return { ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` };
+  }
+
+  // 2) Precios de la categoría elegida
+  const { data: precios } = await sb
+    .from("programa_precios")
+    .select("acomodacion, neto, bajo_solicitud")
+    .eq("categoria_id", input.categoriaId);
+  if (!precios?.length) return { ok: false, error: "La categoría no tiene precios cargados." };
+  const netoDe: Record<string, { neto: number | null; bs: boolean }> = {};
+  for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
+
+  const mk = Number(prog.pct_mk) || 0;
+  const pvp = (neto: number) => (mk > 0 && mk < 1 ? Math.round(neto / (1 - mk)) : Math.round(neto));
+
+  // 3) Liquidación por persona/acomodación (incluye niños).
+  const entradas = Object.entries(input.paxPorAcom).filter(([, n]) => (Number(n) || 0) > 0);
+  if ((input.ninos || 0) > 0) entradas.push(["nino", input.ninos]);
+  if (!entradas.length) return { ok: false, error: "Indica cuántos pasajeros van en cada acomodación." };
+
+  let precioVenta = 0;
+  let costoNeto = 0;
+  let totalPax = 0;
+  const items: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number }[] = [];
+  const catNombre = (await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle()).data?.nombre ?? null;
+
+  let orden = 0;
+  for (const [acom, nRaw] of entradas) {
+    const n = Number(nRaw) || 0;
+    const info = netoDe[acom];
+    if (!info || info.neto == null || info.bs)
+      return { ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` };
+    const precioPax = pvp(info.neto);
+    const esNino = acom === "nino";
+    precioVenta += precioPax * n;
+    costoNeto += info.neto * n;
+    totalPax += n;
+    items.push({
+      numero_contrato: "",
+      descripcion: `${n} ${esNino ? "niño(s)" : "pax"} en ${acom}${catNombre ? ` · ${catNombre}` : ""}`,
+      adultos: esNino ? 0 : n,
+      ninos: esNino ? n : 0,
+      tarifa_adulto: esNino ? 0 : precioPax,
+      tarifa_nino: esNino ? precioPax : 0,
+      orden: orden++,
+    });
+  }
+  if (totalPax <= 0) return { ok: false, error: "Debe haber al menos un pasajero." };
+
+  // 4) Número de contrato
+  const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
+  if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+
+  const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
+  const asesorNombre =
+    input.tipoAsesor === "agencia" ? input.agenciaAsesor :
+    input.tipoAsesor === "freelance" ? input.freelanceNombre :
+    input.asesorInterno;
+  const fechaRegreso = prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
+
+  // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
+  const { error: ve } = await sb.from("ventas").insert({
+    numero_contrato: numero,
+    cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
+    cliente_documento: oNull(input.cliente.numeroDoc),
+    cliente_telefono: oNull(input.cliente.telefono),
+    cliente_email: oNull(input.cliente.email),
+    destino: prog.subtitulo ?? prog.nombre,
+    tipo_paquete: "programa",
+    moneda: prog.moneda,
+    fecha_salida: input.fechaIda,
+    fecha_regreso: fechaRegreso,
+    pax: totalPax,
+    hotel: prog.nombre,
+    precio_venta: precioVenta,
+    estado: "pendiente",
+    canal,
+    tipo_asesor: input.tipoAsesor,
+    agencia_nombre: oNull(input.agenciaNombre),
+    agencia_asesor: oNull(input.agenciaAsesor),
+    freelance_nombre: oNull(input.freelanceNombre),
+    plazo: oNull(input.plazo),
+    asesor_firma_nombre: oNull(asesorNombre),
+    plan_nombre: catNombre ?? prog.nombre,
+  });
+  if (ve) return { ok: false, error: ve.message };
+
+  // 6) Pasajeros
+  if (input.pasajeros.length) {
+    const { error } = await sb.from("contrato_pasajeros").insert(
+      input.pasajeros.map((p, i) => ({
+        numero_contrato: numero,
+        nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
+        tipo_id: oNull(p.tipoDoc) ?? "CC",
+        identificacion: oNull(p.numeroDoc),
+        fecha_nacimiento: oNull(p.fechaNacimiento),
+        nacionalidad: oNull(p.nacionalidad),
+        es_infante: p.esInfante,
+        orden: i,
+      }))
+    );
+    if (error) return { ok: false, error: error.message };
+  }
+
+  // 7) Ítems (líneas por acomodación)
+  for (const it of items) it.numero_contrato = numero;
+  if (items.length) await sb.from("contrato_items").insert(items);
+
+  // 8) Hoteles por ciudad (de la categoría elegida) — informativo en el contrato
+  const { data: hotelesCat } = await sb
+    .from("programa_categoria_hoteles")
+    .select("ciudad, hotel, orden")
+    .eq("categoria_id", input.categoriaId)
+    .order("orden");
+  const provNombre = (prog.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
+  if (hotelesCat?.length) {
+    await sb.from("contrato_hoteles").insert(
+      hotelesCat.map((h, i) => ({
+        numero_contrato: numero,
+        nombre: h.hotel ?? "",
+        categoria: catNombre,
+        proveedor: provNombre,
+        ciudad: h.ciudad,
+        detalle_acomodacion: `${totalPax} pax`,
+        orden: i,
+      }))
+    );
+  }
+
+  // 9) Cuenta por pagar al proveedor del programa (neto, en la moneda del programa).
+  if (costoNeto > 0 && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      const pr = prog.proveedores as unknown as { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
+      await admin.from("ventas").update({ costo_receptivo: costoNeto }).eq("numero_contrato", numero);
+      await admin.from("cuentas_por_pagar").insert({
+        numero_contrato: numero,
+        proveedor: pr?.nombre ?? null,
+        tipo_proveedor: "programa",
+        servicio: prog.nombre,
+        valor_total: costoNeto,
+        moneda: prog.moneda,
+        fecha_obligacion: new Date().toISOString().slice(0, 10),
+        aplica_retencion: pr?.aplica_retencion ?? false,
+        pct_retencion: Number(pr?.pct_retencion) || 0,
+        observaciones: "Generado automáticamente desde el tarifario (programa)",
+      });
+    } catch {
+      // No bloquear la reserva si falla el paso administrativo.
+    }
+  }
+
+  revalidatePath("/dashboard/contratos");
+  return { ok: true, numero };
+}

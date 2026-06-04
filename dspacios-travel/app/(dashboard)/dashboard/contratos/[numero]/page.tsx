@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { ShareButtons } from "./ShareButtons";
 import { GestionTabs } from "./GestionTabs";
 import { EstadoVenta } from "./EstadoVenta";
@@ -106,16 +106,16 @@ export default async function ContratoDetallePage({
       {/* Totales */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
-          <div className="text-xs opacity-80">Precio de venta</div>
-          <div className="text-xl font-bold">{formatCOP(venta.precio_venta)}</div>
+          <div className="text-xs opacity-80">Precio de venta{venta.moneda && venta.moneda !== "COP" ? ` (${venta.moneda})` : ""}</div>
+          <div className="text-xl font-bold">{formatMoneda(venta.precio_venta, venta.moneda)}</div>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="text-xs text-gray-400">Total pagado</div>
-          <div className="text-xl font-bold" style={{ color: "var(--brand-success)" }}>{formatCOP(totalPagado)}</div>
+          <div className="text-xl font-bold" style={{ color: "var(--brand-success)" }}>{formatMoneda(totalPagado, venta.moneda)}</div>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="text-xs text-gray-400">Saldo pendiente</div>
-          <div className="text-xl font-bold text-gray-800">{formatCOP(saldo)}</div>
+          <div className="text-xl font-bold text-gray-800">{formatMoneda(saldo, venta.moneda)}</div>
         </div>
       </div>
 

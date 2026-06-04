@@ -2,7 +2,17 @@
 
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
-import { formatCOP } from "@/lib/utils";
+import { formatCOP, formatMoneda } from "@/lib/utils";
+
+export type ProgramaResumen = {
+  id: number;
+  nombre: string;
+  subtitulo: string | null;
+  dias: number | null;
+  noches: number | null;
+  moneda: string;
+  desde_pvp: number | null;
+};
 
 export type FilaTarifario = {
   modulo: "bloqueo" | "porcion_terrestre" | "servicios";
@@ -80,15 +90,30 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
   );
 }
 
-export function TarifarioPublic({ filas, puedeReservar = false, cuposPorBloqueo = {} }: { filas: FilaTarifario[]; puedeReservar?: boolean; cuposPorBloqueo?: Record<number, number> }) {
-  const modulosPresentes = MODULOS.filter((m) => filas.some((f) => f.modulo === m.key));
-  const [modulo, setModulo] = useState<FilaTarifario["modulo"]>(modulosPresentes[0]?.key ?? "bloqueo");
+type ModuloKey = FilaTarifario["modulo"] | "programas";
+
+export function TarifarioPublic({
+  filas,
+  programas = [],
+  puedeReservar = false,
+  cuposPorBloqueo = {},
+}: {
+  filas: FilaTarifario[];
+  programas?: ProgramaResumen[];
+  puedeReservar?: boolean;
+  cuposPorBloqueo?: Record<number, number>;
+}) {
+  const tabs: { key: ModuloKey; label: string }[] = [
+    ...MODULOS.filter((m) => filas.some((f) => f.modulo === m.key)),
+    ...(programas.length ? [{ key: "programas" as const, label: "Programas" }] : []),
+  ];
+  const [modulo, setModulo] = useState<ModuloKey>(tabs[0]?.key ?? "bloqueo");
 
   return (
     <div>
       {/* Tabs de módulos */}
       <div className="mb-5 flex flex-wrap gap-2">
-        {modulosPresentes.map((m) => (
+        {tabs.map((m) => (
           <button
             key={m.key}
             type="button"
@@ -109,12 +134,14 @@ export function TarifarioPublic({ filas, puedeReservar = false, cuposPorBloqueo 
         <PorSalida filas={filas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
       ) : modulo === "porcion_terrestre" ? (
         <PorPaquete filas={filas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} />
-      ) : (
+      ) : modulo === "servicios" ? (
         <PorServicios filas={filas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
+      ) : (
+        <PorProgramas programas={programas} />
       )}
 
       <p className="mt-4 text-center text-xs text-gray-400">
-        Todas las tarifas son por persona por paquete, en pesos colombianos. Sujetas a disponibilidad.
+        Tarifas por persona por paquete, sujetas a disponibilidad. Los programas se cotizan en su moneda.
       </p>
     </div>
   );
@@ -401,6 +428,46 @@ function TablaHorizontal({ rows, puedeReservar = false }: { rows: Pivotada[]; pu
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ── Programas (circuitos) ───────────────────────────────────────────────────
+function PorProgramas({ programas }: { programas: ProgramaResumen[] }) {
+  if (!programas.length) {
+    return <p className="py-12 text-center text-gray-400">No hay programas publicados.</p>;
+  }
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {programas.map((p) => (
+        <Link
+          key={p.id}
+          href={`/tarifario/programa/${p.id}`}
+          className="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-[#1D7C9A] hover:shadow-sm"
+        >
+          <div>
+            <div className="font-semibold text-gray-800">{p.nombre}</div>
+            <p className="mt-0.5 text-xs text-gray-500">
+              {p.subtitulo ?? ""}
+              {p.dias ? ` · ${p.dias} días / ${p.noches ?? ""} noches` : ""}
+            </p>
+          </div>
+          <div className="mt-3 flex items-end justify-between">
+            {p.desde_pvp != null ? (
+              <div>
+                <div className="text-xs text-gray-400">desde</div>
+                <div className="text-lg font-semibold" style={{ color: "var(--brand-primary)" }}>
+                  {formatMoneda(p.desde_pvp, p.moneda)}
+                </div>
+                <div className="text-[10px] text-gray-400">por persona</div>
+              </div>
+            ) : (
+              <span className="text-sm text-gray-400">Consultar</span>
+            )}
+            <span className="text-xs font-medium text-[#26BBD9]">Ver programa →</span>
+          </div>
+        </Link>
+      ))}
     </div>
   );
 }

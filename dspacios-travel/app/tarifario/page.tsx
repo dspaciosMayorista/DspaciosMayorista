@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TarifarioPublic, type FilaTarifario } from "./TarifarioPublic";
+import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 
 export const revalidate = 120; // revalida cada 2 min
@@ -62,6 +63,9 @@ export default async function TarifarioPublicoPage() {
     filasVisibles = filas.filter((f) => f.modulo !== "servicios" || (f.paquete_id != null && idsServicios.has(f.paquete_id)));
   }
 
+  // Programas publicados (fuente propia, en su moneda).
+  const programas = await getProgramasResumen(sb, true);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-brand-gradient px-6 py-8 text-white">
@@ -88,10 +92,10 @@ export default async function TarifarioPublicoPage() {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-8 md:px-6">
-        {!filasVisibles.length ? (
+        {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
         )}
       </main>
     </div>
