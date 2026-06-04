@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 
 export type Columna = { key: string; label: string; ejemplo: string };
@@ -36,13 +36,15 @@ function parseCSV(text: string, delim: string): string[][] {
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, "_");
 
 export function CargaMasivaCSV({
-  titulo, descripcion, columnas, onSubmit, nombreArchivo,
+  titulo, descripcion, columnas, onSubmit, nombreArchivo, nota,
 }: {
   titulo: string;
   descripcion?: string;
   columnas: Columna[];
   onSubmit: (rows: Record<string, string>[]) => Promise<ResultadoCarga>;
   nombreArchivo: string;
+  /** Aviso de requisitos previos (qué configurar antes y dónde). */
+  nota?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [texto, setTexto] = useState("");
@@ -123,6 +125,12 @@ export function CargaMasivaCSV({
       </button>
       {open && (
         <div className="space-y-3 border-t border-gray-100 p-4">
+          {nota && (
+            <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              <span aria-hidden>⚠️</span>
+              <div><span className="font-semibold">Antes de cargar: </span>{nota}</div>
+            </div>
+          )}
           {descripcion && <p className="text-xs text-gray-500">{descripcion}</p>}
           <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
             <p className="mb-1 font-medium">Columnas (en este orden, con encabezado en la 1ª fila):</p>

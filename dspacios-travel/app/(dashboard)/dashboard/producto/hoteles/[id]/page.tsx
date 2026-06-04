@@ -30,6 +30,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     nombre: string; zona: string | null; edad_infante_min: number; edad_infante_max: number;
     edad_nino_min: number; edad_nino_max: number; rangos_edad: number[] | null;
     pax_min: number | null; pax_max: number | null;
+    contacto_telefono: string | null; email_comercial: string | null;
     destinos: { nombre: string } | null; proveedores: { nombre: string } | null;
   };
   const acomConfigs = (acoms ?? []) as AcomConfig[];
@@ -60,6 +61,8 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             edadInfanteMin: h.edad_infante_min, edadInfanteMax: h.edad_infante_max,
             edadNinoMin: h.edad_nino_min, edadNinoMax: h.edad_nino_max,
             rangosEdad: h.rangos_edad ?? [],
+            contactoTelefono: h.contacto_telefono ?? "",
+            emailComercial: h.email_comercial ?? "",
           }}
         />
         <HotelAcomodacionesEditor

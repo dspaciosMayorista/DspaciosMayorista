@@ -36,6 +36,7 @@ export default async function ServiciosPage() {
       <div className="mb-6">
         <CargaMasivaCSV
           titulo="Carga masiva de servicios (CSV)"
+          nota="Crea primero los Destinos (Producto → Destinos) y, si lo asignarás, el Proveedor de servicios (Producto → Proveedores). Los Rangos de edad se crean en Configuración (menú lateral)."
           descripcion="Cada fila = un servicio. Precio por persona y/o por grupo (rangos de pax: 1-4:500000|5-10:400000). Categoría: tour_traslado, asistencia u otro. Rangos de edad por nombre, separados por |. El destino y el proveedor (si los pones) deben existir."
           columnas={COLS_SERVICIOS}
           onSubmit={cargarServiciosMasivo}
