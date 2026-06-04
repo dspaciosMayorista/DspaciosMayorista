@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio } from "@/lib/calc/paquetes";
+import { asegurarCuentasPorPagar } from "../reservar/actions";
 
 export type TipoPaquete = "bloqueo" | "porcion_terrestre" | "empaquetado" | "dinamico";
 
@@ -380,6 +381,8 @@ export async function registrarAbono(
       .update({ estado: "confirmada" })
       .eq("numero_contrato", numeroContrato)
       .eq("estado", "en_plazo");
+    // Respaldo: generar cuentas por pagar desde los costos si aún no existen.
+    await asegurarCuentasPorPagar(numeroContrato);
   }
 
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);

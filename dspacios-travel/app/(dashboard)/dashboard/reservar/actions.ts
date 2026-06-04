@@ -723,9 +723,66 @@ export async function confirmarVenta(numeroContrato: string): Promise<{ ok: bool
   // Sillas a confirmada (admin si hay service-role; si no, intento directo)
   const client = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
   await client.from("sillas").update({ estado: "confirmada" }).eq("numero_contrato", numeroContrato).eq("estado", "en_plazo");
+  // Respaldo: si el contrato aún no tiene cuentas por pagar (p. ej. venía de
+  // legacy o se creó manual), generarlas desde sus costos al confirmar.
+  await asegurarCuentasPorPagar(numeroContrato);
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/contratos");
   return { ok: true };
+}
+
+// ── Respaldo de cuentas por pagar ──────────────────────────────────────────
+// Si un contrato NO tiene cuentas por pagar, las crea a partir de sus costos
+// (hotel/aéreo/receptivo/asistencia/otros). No duplica: si ya hay alguna CxP
+// (p. ej. creada al reservar desde el tarifario con su proveedor), no hace nada.
+// El proveedor queda sin asignar para que el área contable lo elija en el contrato.
+export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{ ok: boolean; creadas: number }> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, creadas: 0 };
+  const admin = createAdminClient();
+
+  const { count } = await admin
+    .from("cuentas_por_pagar")
+    .select("id", { count: "exact", head: true })
+    .eq("numero_contrato", numeroContrato);
+  if ((count ?? 0) > 0) return { ok: true, creadas: 0 }; // ya tiene CxP
+
+  const { data: v } = await admin
+    .from("ventas")
+    .select("costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida")
+    .eq("numero_contrato", numeroContrato)
+    .maybeSingle();
+  if (!v) return { ok: false, creadas: 0 };
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const vence = (v.plazo as string | null) ?? (v.fecha_salida as string | null) ?? null;
+  const moneda = (v.moneda as string | null) ?? "COP";
+
+  const defs: { costo: number; tipo: string; servicio: string }[] = [
+    { costo: Number(v.costo_hotel) || 0, tipo: "hotel", servicio: `Hotel ${v.hotel ?? ""}`.trim() },
+    { costo: Number(v.costo_aereo) || 0, tipo: "aereo", servicio: `Aéreo ${v.aerolinea ?? ""}`.trim() },
+    { costo: Number(v.costo_receptivo) || 0, tipo: "receptivo", servicio: "Servicios receptivos" },
+    { costo: Number(v.costo_asistencia) || 0, tipo: "asistencia", servicio: "Asistencia médica" },
+    { costo: Number(v.otros_costos) || 0, tipo: "otro", servicio: "Otros costos" },
+  ];
+  const rows = defs
+    .filter((d) => d.costo > 0)
+    .map((d) => ({
+      numero_contrato: numeroContrato,
+      proveedor: null,
+      tipo_proveedor: d.tipo,
+      servicio: d.servicio,
+      valor_total: d.costo,
+      moneda,
+      fecha_obligacion: hoy,
+      fecha_vencimiento: vence,
+    }));
+  if (!rows.length) return { ok: true, creadas: 0 };
+
+  const { error } = await admin.from("cuentas_por_pagar").insert(rows);
+  if (error) return { ok: false, creadas: 0 };
+  revalidatePath("/dashboard/pagos");
+  revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+  return { ok: true, creadas: rows.length };
 }
 
 // ── Liberar reservas vencidas (plazo pasado y sin confirmar) ───────────────

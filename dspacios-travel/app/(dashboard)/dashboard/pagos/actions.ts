@@ -49,6 +49,36 @@ export async function registrarPagoProveedor(
   return { ok: true };
 }
 
+// Asigna (o cambia) el proveedor de una cuenta por pagar, tomando la retención
+// del catálogo. Útil para las CxP creadas automáticamente al confirmar, que
+// nacen sin proveedor.
+export async function asignarProveedorCuentaPorPagar(
+  id: number,
+  proveedorNombre: string
+): Promise<Result> {
+  const sb = await createClient();
+  if (!proveedorNombre.trim()) return { ok: false, error: "Elige un proveedor." };
+
+  const { data: prov } = await sb
+    .from("proveedores")
+    .select("nombre, tipo, aplica_retencion, pct_retencion")
+    .eq("nombre", proveedorNombre)
+    .maybeSingle();
+
+  const { error } = await sb
+    .from("cuentas_por_pagar")
+    .update({
+      proveedor: prov?.nombre ?? proveedorNombre,
+      ...(prov?.tipo ? { tipo_proveedor: prov.tipo } : {}),
+      ...(prov?.aplica_retencion != null ? { aplica_retencion: prov.aplica_retencion } : {}),
+      ...(prov?.pct_retencion != null ? { pct_retencion: prov.pct_retencion } : {}),
+    })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/pagos");
+  return { ok: true };
+}
+
 // Deshace el último pago registrado (limpia el cupo más alto ocupado).
 export async function deshacerUltimoPago(id: number): Promise<Result> {
   const sb = await createClient();

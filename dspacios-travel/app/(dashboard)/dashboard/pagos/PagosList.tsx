@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
-import { registrarPagoProveedor, deshacerUltimoPago } from "./actions";
+import { registrarPagoProveedor, deshacerUltimoPago, asignarProveedorCuentaPorPagar } from "./actions";
 
 export type PagoRow = {
   id: number;
@@ -26,7 +26,7 @@ export type PagoRow = {
 
 type Filtro = "por_pagar" | "pagadas" | "todas";
 
-export function PagosList({ rows, proveedores }: { rows: PagoRow[]; proveedores: string[] }) {
+export function PagosList({ rows, proveedores, catalogo = [] }: { rows: PagoRow[]; proveedores: string[]; catalogo?: string[] }) {
   const [filtro, setFiltro] = useState<Filtro>("por_pagar");
   const [proveedor, setProveedor] = useState("");
   const [q, setQ] = useState("");
@@ -141,6 +141,7 @@ export function PagosList({ rows, proveedores }: { rows: PagoRow[]; proveedores:
               <FilaPago
                 key={r.id}
                 row={r}
+                catalogo={catalogo}
                 abierto={abierto === r.id}
                 onToggle={() => setAbierto(abierto === r.id ? null : r.id)}
               />
@@ -161,10 +162,12 @@ function vencida(fecha: string | null, saldo: number): boolean {
 
 function FilaPago({
   row,
+  catalogo,
   abierto,
   onToggle,
 }: {
   row: PagoRow;
+  catalogo: string[];
   abierto: boolean;
   onToggle: () => void;
 }) {
@@ -206,7 +209,7 @@ function FilaPago({
       {abierto && (
         <tr className="bg-gray-50/60">
           <td colSpan={8} className="px-4 py-4">
-            <EstadoCuentaProveedor row={row} />
+            <EstadoCuentaProveedor row={row} catalogo={catalogo} />
           </td>
         </tr>
       )}
@@ -214,9 +217,13 @@ function FilaPago({
   );
 }
 
-function EstadoCuentaProveedor({ row }: { row: PagoRow }) {
+function EstadoCuentaProveedor({ row, catalogo }: { row: PagoRow; catalogo: string[] }) {
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      {/* Asignar / cambiar proveedor (ancho completo) */}
+      <div className="lg:col-span-2">
+        <AsignarProveedor id={row.id} actual={row.proveedor} catalogo={catalogo} />
+      </div>
       {/* Estado de cuenta */}
       <div>
         <div className="mb-2 flex items-center justify-between">
@@ -300,6 +307,43 @@ function EstadoCuentaProveedor({ row }: { row: PagoRow }) {
         )}
         {row.pagos.length > 0 && row.saldo <= 0 && <Deshacer id={row.id} />}
       </div>
+    </div>
+  );
+}
+
+function AsignarProveedor({ id, actual, catalogo }: { id: number; actual: string | null; catalogo: string[] }) {
+  const [sel, setSel] = useState(actual ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  if (!catalogo.length) return null;
+
+  function guardar() {
+    setError(null);
+    if (!sel) { setError("Elige un proveedor."); return; }
+    startTransition(async () => {
+      const res = await asignarProveedorCuentaPorPagar(id, sel);
+      if (!res.ok) setError(res.error);
+    });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-3">
+      <span className="text-xs font-medium text-gray-500">
+        {actual ? "Cambiar proveedor:" : "Asignar proveedor del catálogo:"}
+      </span>
+      <select
+        value={sel}
+        onChange={(e) => setSel(e.target.value)}
+        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm"
+      >
+        <option value="">— elegir —</option>
+        {catalogo.map((p) => <option key={p} value={p}>{p}</option>)}
+      </select>
+      <Button type="button" onClick={guardar} disabled={pending || sel === (actual ?? "")} style={{ backgroundColor: "var(--brand-primary)" }}>
+        {pending ? "Guardando…" : "Asignar"}
+      </Button>
+      {error && <span className="text-sm text-red-600">{error}</span>}
     </div>
   );
 }

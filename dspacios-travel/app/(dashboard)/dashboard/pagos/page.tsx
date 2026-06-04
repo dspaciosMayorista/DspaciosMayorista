@@ -62,6 +62,10 @@ export default async function PagosPage() {
     new Set(rows.map((r) => r.proveedor).filter((p): p is string => !!p))
   ).sort((a, b) => a.localeCompare(b));
 
+  // Catálogo completo (para asignar proveedor a las CxP que nacen sin él).
+  const { data: cat } = await sb.from("proveedores").select("nombre").order("nombre");
+  const catalogo = (cat ?? []).map((p) => p.nombre as string).filter(Boolean);
+
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-8">
       <div className="mb-6">
@@ -71,7 +75,7 @@ export default async function PagosPage() {
           proveedor sin entrar a cada contrato.
         </p>
       </div>
-      <PagosList rows={rows} proveedores={proveedores} />
+      <PagosList rows={rows} proveedores={proveedores} catalogo={catalogo} />
     </div>
   );
 }
