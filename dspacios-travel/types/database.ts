@@ -1198,6 +1198,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["crm_campanas"]["Insert"]>;
         Relationships: [];
       };
+      contrato_adjuntos: {
+        Row: { id: number; numero_contrato: string; tipo: string; nombre: string | null; path: string; size_bytes: number | null; subido_por: string | null; created_at: string };
+        Insert: { id?: number; numero_contrato: string; tipo?: string; nombre?: string | null; path: string; size_bytes?: number | null; subido_por?: string | null; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["contrato_adjuntos"]["Insert"]>;
+        Relationships: [];
+      };
       hotel_acomodaciones: {
         Row: {
           id: number; hotel_id: number;
