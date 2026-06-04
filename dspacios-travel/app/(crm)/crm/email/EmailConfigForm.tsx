@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { guardarEmailConfig } from "../actions";
+import { guardarEmailConfig, enviarEmailPrueba } from "../actions";
 
 type Config = {
   proveedor: string; remitente_email: string | null; remitente_nombre: string | null;
@@ -22,12 +22,23 @@ export function EmailConfigForm({ inicial }: { inicial: Config }) {
   const [activo, setActivo] = useState(inicial.activo);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
+  const [pruebaDest, setPruebaDest] = useState(inicial.responder_a ?? inicial.remitente_email ?? "");
+  const [probando, startPrueba] = useTransition();
+  const [pruebaMsg, setPruebaMsg] = useState("");
 
   function guardar() {
     setMsg("");
     start(async () => {
       const r = await guardarEmailConfig({ proveedor, remitenteEmail, remitenteNombre, responderA, apiKey, firmaHtml, activo });
       setMsg(r.ok ? "✓ Guardado" : r.error);
+    });
+  }
+
+  function probar() {
+    setPruebaMsg("");
+    startPrueba(async () => {
+      const r = await enviarEmailPrueba(pruebaDest);
+      setPruebaMsg(r.ok ? `✓ Correo de prueba enviado a ${pruebaDest}. Revisa la bandeja (y spam).` : r.error);
     });
   }
 
@@ -65,6 +76,16 @@ export function EmailConfigForm({ inicial }: { inicial: Config }) {
       <div className="flex items-center gap-3">
         <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : "Guardar configuración"}</Button>
         {msg && <span className={msg.startsWith("✓") ? "text-sm text-green-600" : "text-sm text-red-600"}>{msg}</span>}
+      </div>
+
+      <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 p-4">
+        <label className={lbl}>Enviar correo de prueba</label>
+        <p className="text-xs text-gray-500">Usa la configuración <b>guardada</b>. Guarda primero, luego prueba. No exige &quot;Envío activo&quot; ni consentimiento (va a un solo correo tuyo).</p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input type="email" value={pruebaDest} onChange={(e) => setPruebaDest(e.target.value)} placeholder="tu-correo@dominio.com" className="sm:max-w-xs" />
+          <Button variant="outline" onClick={probar} disabled={probando}>{probando ? "Enviando…" : "Enviar prueba"}</Button>
+          {pruebaMsg && <span className={pruebaMsg.startsWith("✓") ? "text-sm text-green-600" : "text-sm text-red-600"}>{pruebaMsg}</span>}
+        </div>
       </div>
     </div>
   );

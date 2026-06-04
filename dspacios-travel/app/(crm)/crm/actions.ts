@@ -3,6 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { Database } from "@/types/database";
+import { enviarEmail, type EmailConfig } from "@/lib/crm/email";
+import { renderEmailHtml } from "@/lib/crm/plantilla-email";
 
 type CrmInsert = Database["public"]["Tables"]["crm_contactos"]["Insert"];
 type Result = { ok: true } | { ok: false; error: string };
@@ -166,5 +168,38 @@ export async function guardarEmailConfig(input: EmailConfigInput): Promise<Resul
   }, { onConflict: "id" });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/crm/email");
+  return { ok: true };
+}
+
+// Envía UN correo de prueba con la config GUARDADA para validar API key / remitente
+// / dominio antes de activar campañas. No exige 'activo' (es justo para probar antes
+// de encenderlo) y, al ser a un solo destino del propio equipo, ignora consentimiento
+// y tope. Devuelve el error EXACTO del proveedor si algo falla (SPF/DKIM, key, etc.).
+export async function enviarEmailPrueba(destino: string): Promise<Result> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
+  if (!ROLES_EMAIL.includes(perfil?.rol ?? "")) return { ok: false, error: "Solo administración/gerencia." };
+
+  const dest = oNull(destino);
+  if (!dest || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(dest)) return { ok: false, error: "Pon un correo destino válido para la prueba." };
+
+  const { data: cfg } = await sb.from("crm_email_config").select("*").eq("id", 1).maybeSingle();
+  if (!cfg) return { ok: false, error: "Guarda primero la configuración de email." };
+  if (!cfg.api_key || !cfg.remitente_email) return { ok: false, error: "Falta la API key o el correo remitente. Guárdalos y vuelve a probar." };
+  if (cfg.proveedor !== "brevo" && cfg.proveedor !== "resend") return { ok: false, error: "El envío automático solo soporta Brevo o Resend." };
+
+  const html = renderEmailHtml(
+    {
+      mensaje:
+        "Este es un correo de prueba de D'spacios Travel.\n\n" +
+        "Si lo recibes, la configuración de envío (proveedor, API key y remitente) funciona correctamente.",
+      remitenteNombre: cfg.remitente_nombre,
+    },
+    cfg.firma_html,
+  );
+
+  const r = await enviarEmail(cfg as EmailConfig, dest, "Correo de prueba · D'spacios Travel", html);
+  if (!r.ok) return { ok: false, error: r.error };
   return { ok: true };
 }
