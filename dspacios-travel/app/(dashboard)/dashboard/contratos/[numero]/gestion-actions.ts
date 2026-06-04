@@ -63,6 +63,34 @@ export async function crearCuentaPorPagar(input: {
   return { ok: true };
 }
 
+export async function actualizarCuentaPorPagar(input: {
+  id: number;
+  numeroContrato: string;
+  proveedor: string;
+  servicio: string;
+  valorTotal: number;
+  fechaVencimiento: string;
+  ivaDescontable?: number;
+}): Promise<Result> {
+  const sb = await createClient();
+  const iva = Math.max(0, Number(input.ivaDescontable) || 0);
+  const base = Math.max(0, input.valorTotal - iva);
+  const { error } = await sb
+    .from("cuentas_por_pagar")
+    .update({
+      proveedor: input.proveedor || null,
+      servicio: input.servicio || null,
+      valor_total: input.valorTotal,
+      base_gravable: iva > 0 ? base : null,
+      iva_proveedor: iva > 0 ? iva : null,
+      fecha_vencimiento: input.fechaVencimiento || null,
+    })
+    .eq("id", input.id);
+  if (error) return { ok: false, error: error.message };
+  rev(input.numeroContrato);
+  return { ok: true };
+}
+
 export async function eliminarCuentaPorPagar(
   id: number,
   numeroContrato: string

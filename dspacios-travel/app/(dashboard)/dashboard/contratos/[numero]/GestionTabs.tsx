@@ -17,6 +17,7 @@ import { AbonoForm } from "./AbonoForm";
 import {
   guardarCostos,
   crearCuentaPorPagar,
+  actualizarCuentaPorPagar,
   eliminarCuentaPorPagar,
   crearComisionB2B,
   eliminarComisionB2B,
@@ -85,18 +86,17 @@ export function GestionTabs(p: GestionProps) {
 
   return (
     <div className="mt-8">
-      <Tabs defaultValue="cartera">
-        <div className="mb-5 overflow-x-auto">
-          <TabsList>
-            <TabsTrigger value="cartera">Cartera</TabsTrigger>
-            {p.verFinanzas && <TabsTrigger value="costos">Costos</TabsTrigger>}
-            {p.verFinanzas && <TabsTrigger value="proveedores">Proveedores</TabsTrigger>}
-            {p.verFinanzas && <TabsTrigger value="comisiones">Comisiones</TabsTrigger>}
-            {p.verFinanzas && <TabsTrigger value="facturacion">Facturación</TabsTrigger>}
-            {p.verFinanzas && <TabsTrigger value="rentabilidad">Rentabilidad</TabsTrigger>}
-          </TabsList>
-        </div>
+      <Tabs defaultValue="cartera" orientation="vertical">
+        <TabsList className="w-full shrink-0 sm:w-48">
+          <TabsTrigger value="cartera">Cartera</TabsTrigger>
+          {p.verFinanzas && <TabsTrigger value="costos">Costos</TabsTrigger>}
+          {p.verFinanzas && <TabsTrigger value="proveedores">Proveedores</TabsTrigger>}
+          {p.verFinanzas && <TabsTrigger value="comisiones">Comisiones</TabsTrigger>}
+          {p.verFinanzas && <TabsTrigger value="facturacion">Facturación</TabsTrigger>}
+          {p.verFinanzas && <TabsTrigger value="rentabilidad">Rentabilidad</TabsTrigger>}
+        </TabsList>
 
+        <div className="min-w-0 flex-1">
         <TabsContent value="cartera">
           <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} />
         </TabsContent>
@@ -121,6 +121,7 @@ export function GestionTabs(p: GestionProps) {
             </TabsContent>
           </>
         )}
+        </div>
       </Tabs>
     </div>
   );
@@ -296,22 +297,7 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
               <th className="px-4 py-2 text-right">Costo</th><th className="px-4 py-2 text-right">IVA desc.</th>
               <th className="px-4 py-2 text-right">Valor</th><th className="px-4 py-2">Vence</th><th className="px-4 py-2"></th>
             </tr></thead>
-            <tbody>{filas.map((f) => {
-              const ivaF = f.iva_proveedor ?? 0;
-              const costoF = f.base_gravable ?? (f.valor_total - ivaF);
-              return (
-                <tr key={f.id} className="border-t border-gray-50">
-                  <td className="px-4 py-2 text-gray-700">{f.proveedor ?? "—"}</td>
-                  <td className="px-4 py-2 text-gray-500">{f.servicio ?? "—"}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-gray-600">{formatCOP(costoF)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums text-gray-500">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.valor_total)}</td>
-                  <td className="px-4 py-2 text-gray-500">{f.fecha_vencimiento ?? "—"}</td>
-                  <td className="px-4 py-2 text-right">
-                    <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
-                  </td>
-                </tr>);
-            })}</tbody>
+            <tbody>{filas.map((f) => <FilaCxP key={f.id} f={f} numero={numero} />)}</tbody>
             <tfoot><tr className="border-t border-gray-200 font-medium">
               <td className="px-4 py-2" colSpan={3}>Total por pagar</td>
               <td className="px-4 py-2 text-right tabular-nums text-gray-500">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
@@ -321,6 +307,69 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
         </div>
       )}
     </div>
+  );
+}
+
+// Fila de cuenta por pagar con edición inline (para agregar el IVA a las CxP
+// creadas automáticamente con el contrato, o corregir cualquier dato).
+function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
+  const [editar, setEditar] = useState(false);
+  const ivaF = f.iva_proveedor ?? 0;
+  const costoF = f.base_gravable ?? (f.valor_total - ivaF);
+
+  const [proveedor, setProveedor] = useState(f.proveedor ?? "");
+  const [servicio, setServicio] = useState(f.servicio ?? "");
+  const [valor, setValor] = useState(String(f.valor_total));
+  const [iva, setIva] = useState(ivaF ? String(ivaF) : "");
+  const [venc, setVenc] = useState(f.fecha_vencimiento ?? "");
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState("");
+
+  function guardar() {
+    setErr("");
+    start(async () => {
+      const r = await actualizarCuentaPorPagar({
+        id: f.id, numeroContrato: numero, proveedor, servicio,
+        valorTotal: Number(valor) || 0, fechaVencimiento: venc, ivaDescontable: Number(iva) || 0,
+      });
+      if (r.ok) setEditar(false); else setErr(r.error);
+    });
+  }
+
+  if (editar) {
+    const costoEd = Math.max(0, (Number(valor) || 0) - (Number(iva) || 0));
+    return (
+      <tr className="border-t border-gray-100 bg-gray-50/60">
+        <td className="px-4 py-2" colSpan={7}>
+          <div className="flex flex-wrap items-end gap-2">
+            <div><label className="block text-[11px] text-gray-500">Proveedor</label><Input value={proveedor} onChange={(e) => setProveedor(e.target.value)} className="w-40" /></div>
+            <div><label className="block text-[11px] text-gray-500">Servicio</label><Input value={servicio} onChange={(e) => setServicio(e.target.value)} className="w-44" /></div>
+            <div><label className="block text-[11px] text-gray-500">Valor total</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" /></div>
+            <div><label className="block text-[11px] text-gray-500">IVA descontable</label><Input type="number" value={iva} onChange={(e) => setIva(e.target.value)} className="w-32" placeholder="0" /></div>
+            <div><label className="block text-[11px] text-gray-500">Vence</label><Input type="date" value={venc} onChange={(e) => setVenc(e.target.value)} className="w-40" /></div>
+            <span className="pb-2 text-xs text-gray-500">Costo: <b className="text-gray-700">{formatCOP(costoEd)}</b></span>
+            <Button onClick={guardar} disabled={pending} className="h-9" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Guardar"}</Button>
+            <button type="button" onClick={() => setEditar(false)} className="pb-2 text-xs text-gray-400 hover:text-gray-700">Cancelar</button>
+            {err && <span className="pb-2 text-xs text-red-600">{err}</span>}
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr className="border-t border-gray-50">
+      <td className="px-4 py-2 text-gray-700">{f.proveedor ?? "—"}</td>
+      <td className="px-4 py-2 text-gray-500">{f.servicio ?? "—"}</td>
+      <td className="px-4 py-2 text-right tabular-nums text-gray-600">{formatCOP(costoF)}</td>
+      <td className="px-4 py-2 text-right tabular-nums text-gray-500">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
+      <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.valor_total)}</td>
+      <td className="px-4 py-2 text-gray-500">{f.fecha_vencimiento ?? "—"}</td>
+      <td className="px-4 py-2 text-right whitespace-nowrap">
+        <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
+        <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
+      </td>
+    </tr>
   );
 }
 
