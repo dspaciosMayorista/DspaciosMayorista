@@ -13,12 +13,13 @@ export type ComB2BRow = {
   cliente: string | null;
   aliado: string | null;
   nit: string | null;
-  pct_comision: number;
+  pct_comision: number | null;
   totalComision: number;
   retencion: number;
-  totalPagar: number;
+  totalPagar: number | null;
   estado: string;
   fecha_pago: string | null;
+  sinComision?: boolean;
 };
 
 type Filtro = "pendientes" | "pagadas" | "todas";
@@ -44,8 +45,9 @@ export function ComisionesList({ rows }: { rows: ComB2BRow[] }) {
   const tot = useMemo(() => {
     let total = 0, pagado = 0, pendiente = 0;
     for (const r of visibles) {
-      total += r.totalPagar;
-      if (esPagada(r.estado)) pagado += r.totalPagar; else pendiente += r.totalPagar;
+      const v = r.totalPagar ?? 0;
+      total += v;
+      if (esPagada(r.estado)) pagado += v; else pendiente += v;
     }
     return { total, pagado, pendiente };
   }, [visibles]);
@@ -104,17 +106,38 @@ function Fila({ row }: { row: ComB2BRow }) {
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
   const [pending, start] = useTransition();
 
+  const linkContrato = (
+    <Link href={`/dashboard/contratos/${encodeURIComponent(row.numero_contrato)}`} className="font-mono font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
+      {row.numero_contrato}
+    </Link>
+  );
+
+  // Venta B2B sin comisión registrada todavía → invita a definirla en el contrato.
+  if (row.sinComision) {
+    return (
+      <tr className="border-b border-gray-50 hover:bg-gray-50">
+        <td className="px-4 py-3">{linkContrato}</td>
+        <td className="px-4 py-3 text-gray-700">{row.aliado ?? "—"}</td>
+        <td className="px-4 py-3 text-gray-500">{row.cliente ?? "—"}</td>
+        <td className="px-4 py-3 text-right text-gray-300">—</td>
+        <td className="px-4 py-3 text-right text-gray-400">Por definir</td>
+        <td className="px-4 py-3"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">Sin definir</span></td>
+        <td className="px-4 py-3 text-right">
+          <Link href={`/dashboard/contratos/${encodeURIComponent(row.numero_contrato)}`} className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
+            Definir comisión →
+          </Link>
+        </td>
+      </tr>
+    );
+  }
+
   return (
     <tr className="border-b border-gray-50 hover:bg-gray-50">
-      <td className="px-4 py-3">
-        <Link href={`/dashboard/contratos/${encodeURIComponent(row.numero_contrato)}`} className="font-mono font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
-          {row.numero_contrato}
-        </Link>
-      </td>
+      <td className="px-4 py-3">{linkContrato}</td>
       <td className="px-4 py-3 text-gray-700">{row.aliado ?? "—"}</td>
       <td className="px-4 py-3 text-gray-500">{row.cliente ?? "—"}</td>
-      <td className="px-4 py-3 text-right tabular-nums text-gray-600">{(row.pct_comision * 100).toFixed(1)}%</td>
-      <td className="px-4 py-3 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(row.totalPagar)}</td>
+      <td className="px-4 py-3 text-right tabular-nums text-gray-600">{((row.pct_comision ?? 0) * 100).toFixed(1)}%</td>
+      <td className="px-4 py-3 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(row.totalPagar ?? 0)}</td>
       <td className="px-4 py-3">
         {pagada ? (
           <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">Pagada{row.fecha_pago ? ` · ${row.fecha_pago}` : ""}</span>

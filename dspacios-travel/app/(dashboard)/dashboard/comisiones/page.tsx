@@ -25,12 +25,12 @@ export default async function ComisionesPage() {
 
   const [{ data: b2b }, { data: ventas }] = await Promise.all([
     sb.from("aliados_b2b").select("*").order("id", { ascending: false }),
-    sb.from("ventas").select("numero_contrato, cliente"),
+    sb.from("ventas").select("numero_contrato, cliente, canal, tipo_asesor, agencia_nombre, freelance_nombre"),
   ]);
   const clientePorContrato = new Map<string, string>();
   for (const v of ventas ?? []) clientePorContrato.set(v.numero_contrato, v.cliente ?? "");
 
-  const rows: ComB2BRow[] = (b2b ?? []).map((b) => {
+  const rowsRegistradas: ComB2BRow[] = (b2b ?? []).map((b) => {
     const c = calcComisionB2B({
       precioVenta: b.precio_venta, pctComision: b.pct_comision,
       recobroTotal: b.recobro_total, pctRecobroAliado: b.pct_recobro_aliado,
@@ -50,6 +50,30 @@ export default async function ComisionesPage() {
       fecha_pago: b.fecha_pago,
     };
   });
+
+  // Ventas B2B (agencia/freelance) que aún NO tienen comisión registrada → "por definir".
+  const conRegistro = new Set((b2b ?? []).map((b) => b.numero_contrato));
+  const ventasB2B = (ventas ?? []).filter(
+    (v) => v.canal === "B2B" || v.tipo_asesor === "agencia" || v.tipo_asesor === "freelance"
+  );
+  const rowsPorDefinir: ComB2BRow[] = ventasB2B
+    .filter((v) => !conRegistro.has(v.numero_contrato))
+    .map((v, i) => ({
+      id: -(i + 1), // sintético (no editable)
+      numero_contrato: v.numero_contrato,
+      cliente: v.cliente ?? null,
+      aliado: v.agencia_nombre || v.freelance_nombre || null,
+      nit: null,
+      pct_comision: null,
+      totalComision: 0,
+      retencion: 0,
+      totalPagar: null,
+      estado: "sin_definir",
+      fecha_pago: null,
+      sinComision: true,
+    }));
+
+  const rows: ComB2BRow[] = [...rowsRegistradas, ...rowsPorDefinir];
 
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-8">
