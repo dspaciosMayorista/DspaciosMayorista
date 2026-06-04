@@ -3,6 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
+import { generarTarifas, type DubaiParams } from "@/lib/calc/calculadoras";
+import type { Json } from "@/types/database";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -150,44 +152,45 @@ export async function actualizarHotelAcomodaciones(
   return { ok: true };
 }
 
-// ── Temporadas del hotel ──────────────────────────────────────────────────
-export async function crearTemporada(
-  hotelId: number,
-  nombre: string,
-  inicio: string,
-  fin: string
-): Promise<Result> {
-  if (!nombre.trim()) return { ok: false, error: "El nombre de la temporada es obligatorio." };
-  if (!inicio || !fin) return { ok: false, error: "Debes indicar fecha de inicio y fin." };
-  if (fin < inicio) return { ok: false, error: "La fecha final no puede ser menor que la inicial." };
-
-  const sb = await createClient();
-
-  // No se permite solapar fechas con otra temporada del mismo hotel:
-  // una noche solo puede pertenecer a una temporada.
-  const { data: existentes } = await sb
-    .from("hotel_temporadas")
-    .select("nombre, fecha_inicio, fecha_fin")
-    .eq("hotel_id", hotelId);
-  for (const e of existentes ?? []) {
-    if (!e.fecha_inicio || !e.fecha_fin) continue;
-    // Solapan si inicio <= fin_existente && fin >= inicio_existente
-    if (inicio <= e.fecha_fin && fin >= e.fecha_inicio) {
-      return {
-        ok: false,
-        error: `Las fechas se cruzan con la temporada "${e.nombre}" (${e.fecha_inicio} → ${e.fecha_fin}).`,
-      };
-    }
+// ── Temporadas y promociones del hotel ─────────────────────────────────────
+// Las fechas SÍ se pueden cruzar: la `prioridad` decide cuál prima. Una promo es
+// una temporada con tipo 'descuento_pct'/'descuento_monto' (o 'tarifa' de reemplazo).
+export async function crearTemporada(input: {
+  hotelId: number;
+  nombre: string;
+  inicio: string;
+  fin: string;
+  prioridad?: number;
+  compraInicio?: string;
+  compraFin?: string;
+  tipo?: string;                 // 'tarifa' | 'descuento_pct' | 'descuento_monto'
+  descuentoValor?: number | null;
+}): Promise<Result> {
+  if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  if (!input.inicio || !input.fin) return { ok: false, error: "Debes indicar fecha de inicio y fin." };
+  if (input.fin < input.inicio) return { ok: false, error: "La fecha final no puede ser menor que la inicial." };
+  const tipo = input.tipo ?? "tarifa";
+  if (tipo !== "tarifa" && !(Number(input.descuentoValor) > 0)) {
+    return { ok: false, error: "Una promoción de descuento necesita un valor (% o monto) mayor a 0." };
+  }
+  if (input.compraInicio && input.compraFin && input.compraFin < input.compraInicio) {
+    return { ok: false, error: "La vigencia de compra: la fecha final no puede ser menor que la inicial." };
   }
 
+  const sb = await createClient();
   const { error } = await sb.from("hotel_temporadas").insert({
-    hotel_id: hotelId,
-    nombre: nombre.trim(),
-    fecha_inicio: inicio,
-    fecha_fin: fin,
+    hotel_id: input.hotelId,
+    nombre: input.nombre.trim(),
+    fecha_inicio: input.inicio,
+    fecha_fin: input.fin,
+    prioridad: Math.max(1, Math.trunc(Number(input.prioridad) || 1)),
+    compra_inicio: input.compraInicio || null,
+    compra_fin: input.compraFin || null,
+    tipo,
+    descuento_valor: tipo === "tarifa" ? null : Number(input.descuentoValor) || 0,
   });
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
   return { ok: true };
 }
 
@@ -403,22 +406,24 @@ export async function cargarTemporadasMasivo(rows: Record<string, string>[]): Pr
       .from("hotel_temporadas")
       .select("nombre, fecha_inicio, fecha_fin")
       .eq("hotel_id", hotelId);
+    // Solo se omite el duplicado EXACTO (mismo nombre + mismas fechas).
+    // Los cruces de fechas ahora son válidos (la prioridad decide cuál prima).
     let saltar = false;
     for (const e of existentes ?? []) {
-      if (!e.fecha_inicio || !e.fecha_fin) continue;
-      // Duplicado exacto (mismo nombre + mismas fechas) → se omite sin error.
       if (e.nombre?.trim().toLowerCase() === nombre.toLowerCase() && e.fecha_inicio === inicio && e.fecha_fin === fin) {
-        saltar = true; break;
-      }
-      // Cruce de fechas con otra temporada → error (una noche = una sola temporada).
-      if (inicio <= e.fecha_fin && fin >= e.fecha_inicio) {
-        errores.push(`Fila ${linea} (${nombre}): las fechas se cruzan con "${e.nombre}" (${e.fecha_inicio} → ${e.fecha_fin}).`);
         saltar = true; break;
       }
     }
     if (saltar) continue;
 
-    const { error } = await sb.from("hotel_temporadas").insert({ hotel_id: hotelId, nombre, fecha_inicio: inicio, fecha_fin: fin });
+    const ci = (r.compra_inicio || "").trim();
+    const cf = (r.compra_fin || "").trim();
+    const { error } = await sb.from("hotel_temporadas").insert({
+      hotel_id: hotelId, nombre, fecha_inicio: inicio, fecha_fin: fin,
+      prioridad: Math.max(1, numCsv(r.prioridad) || 1),
+      compra_inicio: reFecha.test(ci) ? ci : null,
+      compra_fin: reFecha.test(cf) ? cf : null,
+    });
     if (error) { errores.push(`Fila ${linea} (${nombre}): ${error.message}`); continue; }
     insertados++;
   }
@@ -466,4 +471,51 @@ export async function cargarAcomodacionesMasivo(rows: Record<string, string>[]):
   }
   revalidatePath("/dashboard/producto/hoteles");
   return { ok: errores.length === 0, insertados, errores };
+}
+
+// ── Calculadora de tarifas (estructura especial por hotel) ──────────────────
+// Guarda el tipo + parámetros de la calculadora del hotel.
+export async function guardarCalculadora(
+  hotelId: number,
+  tipo: string,
+  params: DubaiParams
+): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("hotel_calculadora")
+    .upsert(
+      { hotel_id: hotelId, tipo, params: params as unknown as Json, updated_at: new Date().toISOString() },
+      { onConflict: "hotel_id" }
+    );
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true };
+}
+
+// Genera las filas de tarifa_hotel a partir de la calculadora del hotel.
+// REEMPLAZA las tarifas existentes del hotel (en un hotel por fórmula, todas
+// las tarifas salen de la fórmula).
+export async function generarTarifasCalculadora(
+  hotelId: number
+): Promise<{ ok: true; generadas: number } | { ok: false; error: string }> {
+  const sb = await createClient();
+  const { data: calc } = await sb
+    .from("hotel_calculadora")
+    .select("tipo, params")
+    .eq("hotel_id", hotelId)
+    .maybeSingle();
+  if (!calc) return { ok: false, error: "Este hotel no tiene calculadora configurada. Guárdala primero." };
+
+  const filas = generarTarifas(calc.tipo, calc.params);
+  if (!filas.length) return { ok: false, error: "No hay bases con precio para generar tarifas." };
+
+  // Reemplaza las tarifas del hotel por las recién calculadas.
+  await sb.from("tarifa_hotel").delete().eq("hotel_id", hotelId);
+  const { error } = await sb
+    .from("tarifa_hotel")
+    .insert(filas.map((f) => ({ ...f, hotel_id: hotelId })));
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true, generadas: filas.length };
 }

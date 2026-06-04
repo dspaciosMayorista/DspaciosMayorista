@@ -8,7 +8,20 @@ import {
   crearTemporada, eliminarTemporada, crearTarifa, actualizarTarifa, eliminarTarifa,
 } from "../actions";
 
-type Temporada = { id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null };
+type Temporada = {
+  id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
+  prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null;
+  tipo?: string | null; descuento_valor?: number | null;
+};
+
+const TIPOS_TEMP: { value: string; label: string }[] = [
+  { value: "tarifa", label: "Temporada / tarifa de reemplazo" },
+  { value: "descuento_pct", label: "Promo: descuento %" },
+  { value: "descuento_monto", label: "Promo: descuento $ por pax" },
+];
+const TIPO_BADGE: Record<string, string> = {
+  tarifa: "tarifa", descuento_pct: "promo %", descuento_monto: "promo $",
+};
 type Tarifa = {
   id: number; tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
   neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null;
@@ -33,34 +46,90 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
   const [nombre, setNombre] = useState("");
   const [ini, setIni] = useState("");
   const [fin, setFin] = useState("");
+  const [prioridad, setPrioridad] = useState("1");
+  const [compraIni, setCompraIni] = useState("");
+  const [compraFin, setCompraFin] = useState("");
+  const [tipo, setTipo] = useState("tarifa");
+  const [descuento, setDescuento] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+
+  const esPromo = tipo !== "tarifa";
+
   function add() {
-    if (!nombre.trim()) return;
+    if (!nombre.trim()) { setErr("Ponle un nombre."); return; }
     setErr("");
     start(async () => {
-      const r = await crearTemporada(hotelId, nombre, ini, fin);
-      if (r.ok) { setNombre(""); setIni(""); setFin(""); } else setErr(r.error);
+      const r = await crearTemporada({
+        hotelId, nombre, inicio: ini, fin,
+        prioridad: Number(prioridad) || 1,
+        compraInicio: compraIni, compraFin: compraFin,
+        tipo, descuentoValor: esPromo ? Number(descuento) || 0 : null,
+      });
+      if (r.ok) {
+        setNombre(""); setIni(""); setFin(""); setPrioridad("1");
+        setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento("");
+      } else setErr(r.error);
     });
   }
+
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold text-gray-700">Temporadas del hotel (rangos propios)</h2>
+      <h2 className="mb-1 text-sm font-semibold text-gray-700">Temporadas y promociones</h2>
+      <p className="mb-3 text-xs text-gray-500">
+        Las fechas <b>pueden cruzarse</b>: gana la de mayor <b>prioridad</b>. La <b>vigencia de compra</b> define
+        cuándo está disponible para vender (si hoy está fuera, no aplica). Una promo descuenta la tarifa base de esas fechas.
+      </p>
       <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="flex flex-wrap items-end gap-2">
-          <div><label className={lbl}>Temporada</label><Input placeholder="ALTA, MEDIA, BAJA, SEMANA SANTA…" value={nombre} onChange={(e) => setNombre(e.target.value)} /></div>
-          <div><label className={lbl}>Desde</label><Input type="date" value={ini} onChange={(e) => setIni(e.target.value)} /></div>
-          <div><label className={lbl}>Hasta</label><Input type="date" value={fin} onChange={(e) => setFin(e.target.value)} /></div>
-          <Button onClick={add} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Agregar"}</Button>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="col-span-2 sm:col-span-1"><label className={lbl}>Nombre</label><Input placeholder="ALTA, BAJA, PROMO JULIO…" value={nombre} onChange={(e) => setNombre(e.target.value)} /></div>
+          <div><label className={lbl}>Viaje desde</label><Input type="date" value={ini} onChange={(e) => setIni(e.target.value)} /></div>
+          <div><label className={lbl}>Viaje hasta</label><Input type="date" value={fin} onChange={(e) => setFin(e.target.value)} /></div>
+          <div><label className={lbl}>Prioridad</label><Input type="number" min={1} value={prioridad} onChange={(e) => setPrioridad(e.target.value)} /></div>
+          <div><label className={lbl}>Compra desde</label><Input type="date" value={compraIni} onChange={(e) => setCompraIni(e.target.value)} /></div>
+          <div><label className={lbl}>Compra hasta</label><Input type="date" value={compraFin} onChange={(e) => setCompraFin(e.target.value)} /></div>
+          <div className="col-span-2 sm:col-span-1">
+            <label className={lbl}>Tipo</label>
+            <select value={tipo} onChange={(e) => setTipo(e.target.value)} className={`${sel} w-full`}>
+              {TIPOS_TEMP.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </div>
+          {esPromo && (
+            <div>
+              <label className={lbl}>{tipo === "descuento_pct" ? "Descuento %" : "Descuento $/pax"}</label>
+              <Input type="number" min={0} value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder={tipo === "descuento_pct" ? "20" : "50000"} />
+            </div>
+          )}
         </div>
-        {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+        <div className="mt-3 flex items-center gap-3">
+          <Button onClick={add} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : esPromo ? "Agregar promoción" : "Agregar temporada"}</Button>
+          {err && <span className="text-sm text-red-600">{err}</span>}
+        </div>
+
         <ul className="mt-3 divide-y divide-gray-100">
-          {temporadas.map((t) => (
-            <li key={t.id} className="flex items-center justify-between py-2 text-sm">
-              <span><b>{t.nombre}</b> <span className="text-gray-400">· {formatFechaLarga(t.fecha_inicio)} → {formatFechaLarga(t.fecha_fin)}</span></span>
-              <DelBtn onDel={() => eliminarTemporada(t.id, hotelId)} />
-            </li>
-          ))}
+          {temporadas.map((t) => {
+            const tp = t.tipo ?? "tarifa";
+            const promo = tp !== "tarifa";
+            return (
+              <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <b>{t.nombre}</b>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${promo ? "bg-[var(--brand-highlight)]/25 text-gray-700" : "bg-gray-100 text-gray-500"}`}>{TIPO_BADGE[tp] ?? tp}</span>
+                  <span className="text-[11px] text-gray-400">P{t.prioridad ?? 1}</span>
+                  {promo && t.descuento_valor != null && (
+                    <span className="text-[11px] font-medium text-[var(--brand-success)]">
+                      {tp === "descuento_pct" ? `−${t.descuento_valor}%` : `−${formatCOP(t.descuento_valor)}/pax`}
+                    </span>
+                  )}
+                  <span className="text-gray-400">· {formatFechaLarga(t.fecha_inicio)} → {formatFechaLarga(t.fecha_fin)}</span>
+                  {(t.compra_inicio || t.compra_fin) && (
+                    <span className="text-[11px] text-gray-400">· compra {t.compra_inicio ?? "…"} → {t.compra_fin ?? "…"}</span>
+                  )}
+                </span>
+                <DelBtn onDel={() => eliminarTemporada(t.id, hotelId)} />
+              </li>
+            );
+          })}
           {!temporadas.length && <li className="py-2 text-sm text-gray-400">Sin temporadas aún.</li>}
         </ul>
       </div>

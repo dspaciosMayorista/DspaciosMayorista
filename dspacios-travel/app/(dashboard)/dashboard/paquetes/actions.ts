@@ -9,6 +9,7 @@ import {
   marcar,
   aporteVuelo,
   componerTarifa,
+  toTemporadaRango,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 
@@ -294,12 +295,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
   if (hotelIds.length) {
     const [{ data: temps }, { data: tarifas }] = await Promise.all([
-      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin").in("hotel_id", hotelIds),
+      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").in("hotel_id", hotelIds),
       sb.from("tarifa_hotel").select("*").in("hotel_id", hotelIds),
     ]);
     for (const t of temps ?? []) {
       const arr = temporadasPorHotel.get(t.hotel_id) ?? [];
-      arr.push({ nombre: t.nombre, fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin });
+      arr.push(toTemporadaRango(t));
       temporadasPorHotel.set(t.hotel_id, arr);
     }
     for (const r of (tarifas ?? []) as TarifaRow[]) {

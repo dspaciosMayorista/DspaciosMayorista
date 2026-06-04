@@ -54,7 +54,13 @@ const inp = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 
 export function ReservaForm({
   meta, combos, serviciosDisp = [], acomConfigs = [],
-}: { meta: Meta; combos: Combo[]; serviciosDisp?: ServicioDisp[]; acomConfigs?: AcomConfig[] }) {
+  vendedores = [],
+  agencias = [],
+  freelances = [],
+}: {
+  meta: Meta; combos: Combo[]; serviciosDisp?: ServicioDisp[]; acomConfigs?: AcomConfig[];
+  vendedores?: { nombre: string }[]; agencias?: { id: number; nombre: string }[]; freelances?: { id: number; nombre: string }[];
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -138,6 +144,7 @@ export function ReservaForm({
   const [agenciaNombre, setAgenciaNombre] = useState("");
   const [agenciaAsesor, setAgenciaAsesor] = useState("");
   const [freelanceNombre, setFreelanceNombre] = useState("");
+  const [aliadoId, setAliadoId] = useState<number | "">("");
   const [plazo, setPlazo] = useState("");
 
   // Pasajeros: la cantidad de filas se deriva del total; los datos se guardan
@@ -186,6 +193,8 @@ export function ReservaForm({
 
   function guardar() {
     if (!cli.nombres.trim() || !cli.apellidos.trim()) { setErr("Nombres y apellidos del cliente son obligatorios."); return; }
+    if (!asesorInterno.trim()) { setErr("Selecciona el asesor interno."); return; }
+    if (tipoAsesor !== "interno" && !aliadoId) { setErr(`Selecciona la ${tipoAsesor} del catálogo.`); return; }
     if (esServicios) {
       if (totalPax <= 0) { setErr("Indica el número de pasajeros."); return; }
       if (!servSel.size) { setErr("Selecciona al menos un servicio."); return; }
@@ -218,7 +227,8 @@ export function ReservaForm({
         fechaRegreso: esPorFechas ? (fReg || undefined) : undefined,
         habitaciones, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes,
         paxServicios: totalPax,
-        cliente: cli, tipoAsesor, asesorInterno, agenciaNombre, agenciaAsesor, freelanceNombre, plazo, pasajeros,
+        cliente: cli, tipoAsesor, asesorInterno, agenciaNombre, agenciaAsesor, freelanceNombre,
+        aliadoId: aliadoId === "" ? null : Number(aliadoId), plazo, pasajeros,
         servicios: [...servSel],
       });
       if (r.ok) router.push(`/dashboard/contratos/${r.numero}`);
@@ -372,31 +382,51 @@ export function ReservaForm({
         </div>
       </section>
 
-      {/* Tipo de venta */}
+      {/* Venta */}
       <section className="rounded-xl border border-gray-200 bg-white p-5">
-        <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Tipo de venta</p>
-        <div className="flex flex-wrap gap-4 text-sm">
-          {([["interno", "Asesor interno (B2C)"], ["agencia", "Agencia (B2B)"], ["freelance", "Freelance (B2B)"]] as const).map(([v, label]) => (
-            <label key={v} className="flex items-center gap-1">
-              <input type="radio" checked={tipoAsesor === v} onChange={() => setTipoAsesor(v)} /> {label}
-            </label>
-          ))}
-        </div>
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {tipoAsesor === "interno" && (
-            <div><label className={lbl}>Asesor interno</label><Input value={asesorInterno} onChange={(e) => setAsesorInterno(e.target.value)} /></div>
-          )}
+        <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Venta</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className={lbl}>Asesor interno *</label>
+            <select value={asesorInterno} onChange={(e) => setAsesorInterno(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <option value="">Selecciona asesor</option>
+              {vendedores.map((v) => <option key={v.nombre} value={v.nombre}>{v.nombre}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={lbl}>Tipo de venta *</label>
+            <select value={tipoAsesor} onChange={(e) => { setTipoAsesor(e.target.value as "interno" | "agencia" | "freelance"); setAliadoId(""); setAgenciaNombre(""); setFreelanceNombre(""); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <option value="interno">Directa (B2C)</option>
+              <option value="agencia">Agencia (B2B)</option>
+              <option value="freelance">Freelance (B2B)</option>
+            </select>
+          </div>
           {tipoAsesor === "agencia" && (
             <>
-              <div><label className={lbl}>Nombre de la agencia</label><Input value={agenciaNombre} onChange={(e) => setAgenciaNombre(e.target.value)} /></div>
-              <div><label className={lbl}>Asesor de la agencia</label><Input value={agenciaAsesor} onChange={(e) => setAgenciaAsesor(e.target.value)} /></div>
+              <div>
+                <label className={lbl}>Agencia *</label>
+                <select value={aliadoId} onChange={(e) => { const id = Number(e.target.value) || ""; setAliadoId(id); setAgenciaNombre(agencias.find((a) => a.id === id)?.nombre ?? ""); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                  <option value="">Selecciona agencia</option>
+                  {agencias.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                </select>
+              </div>
+              <div><label className={lbl}>Asesor de la agencia (opcional)</label><Input value={agenciaAsesor} onChange={(e) => setAgenciaAsesor(e.target.value)} /></div>
             </>
           )}
           {tipoAsesor === "freelance" && (
-            <div><label className={lbl}>Nombre del freelance</label><Input value={freelanceNombre} onChange={(e) => setFreelanceNombre(e.target.value)} /></div>
+            <div>
+              <label className={lbl}>Freelance *</label>
+              <select value={aliadoId} onChange={(e) => { const id = Number(e.target.value) || ""; setAliadoId(id); setFreelanceNombre(freelances.find((f) => f.id === id)?.nombre ?? ""); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Selecciona freelance</option>
+                {freelances.map((f) => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+              </select>
+            </div>
           )}
           <div><label className={lbl}>Plazo para confirmar</label><Input type="date" value={plazo} onChange={(e) => setPlazo(e.target.value)} /></div>
         </div>
+        {tipoAsesor !== "interno" && (
+          <p className="mt-2 text-xs text-gray-400">Si no aparece, créala en <b>Finanzas → Agencias y freelance</b>. La comisión B2B se crea sola con su %.</p>
+        )}
       </section>
 
       {/* Pasajeros */}

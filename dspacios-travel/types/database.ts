@@ -20,6 +20,8 @@ export type Database = {
           rol: Database["public"]["Enums"]["rol_usuario"];
           activo: boolean;
           fecha_registro: string;
+          escala_id: number | null;
+          aplica_retencion: boolean;
         };
         Insert: {
           id?: string;
@@ -28,6 +30,8 @@ export type Database = {
           rol?: Database["public"]["Enums"]["rol_usuario"];
           activo?: boolean;
           fecha_registro?: string;
+          escala_id?: number | null;
+          aplica_retencion?: boolean;
         };
         Update: {
           id?: string;
@@ -50,6 +54,8 @@ export type Database = {
           meta_mensual: number;
           activo: boolean;
           created_at: string;
+          escala_id: number | null;
+          aplica_retencion: boolean;
         };
         Insert: {
           id?: number;
@@ -61,6 +67,8 @@ export type Database = {
           meta_mensual?: number;
           activo?: boolean;
           created_at?: string;
+          escala_id?: number | null;
+          aplica_retencion?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["asesores"]["Insert"]>;
         Relationships: [];
@@ -106,6 +114,8 @@ export type Database = {
           aplica_retencion: boolean;
           pct_retencion: number;
           created_at: string;
+          tipo: string;
+          pct_comision: number | null;
         };
         Insert: {
           id?: number;
@@ -117,6 +127,8 @@ export type Database = {
           aplica_retencion?: boolean;
           pct_retencion?: number;
           created_at?: string;
+          tipo?: string;
+          pct_comision?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["aliados"]["Insert"]>;
         Relationships: [];
@@ -1129,15 +1141,33 @@ export type Database = {
         Relationships: [];
       };
       hotel_temporadas: {
-        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number };
-        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number };
+        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null };
+        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null };
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
+        Relationships: [];
+      };
+      hotel_calculadora: {
+        Row: { id: number; hotel_id: number; tipo: string; params: Json; updated_at: string };
+        Insert: { id?: number; hotel_id: number; tipo?: string; params?: Json; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_calculadora"]["Insert"]>;
         Relationships: [];
       };
       formas_pago: {
         Row: { id: number; nombre: string; activo: boolean; orden: number; created_at: string };
         Insert: { id?: number; nombre: string; activo?: boolean; orden?: number; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["formas_pago"]["Insert"]>;
+        Relationships: [];
+      };
+      escalas_comision: {
+        Row: { id: number; nombre: string; activo: boolean; created_at: string };
+        Insert: { id?: number; nombre: string; activo?: boolean; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["escalas_comision"]["Insert"]>;
+        Relationships: [];
+      };
+      escala_rangos: {
+        Row: { id: number; escala_id: number; pvp_desde: number; pvp_hasta: number | null; pct: number; orden: number };
+        Insert: { id?: number; escala_id: number; pvp_desde?: number; pvp_hasta?: number | null; pct?: number; orden?: number };
+        Update: Partial<Database["public"]["Tables"]["escala_rangos"]["Insert"]>;
         Relationships: [];
       };
       hotel_acomodaciones: {

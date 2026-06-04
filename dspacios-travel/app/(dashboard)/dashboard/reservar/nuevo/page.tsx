@@ -121,6 +121,13 @@ export default async function NuevaReservaPage({
     cuposDisponibles = cup ? Number(cup.cupos_disponibles) || 0 : null;
   }
 
+  const [{ data: vendedores }, { data: aliados }] = await Promise.all([
+    sb.from("usuarios").select("nombre").eq("rol", "venta").eq("activo", true).order("nombre"),
+    sb.from("aliados").select("id, nombre, tipo").order("nombre"),
+  ]);
+  const agencias = (aliados ?? []).filter((a) => (a.tipo ?? "agencia") === "agencia").map((a) => ({ id: a.id, nombre: a.nombre }));
+  const freelances = (aliados ?? []).filter((a) => a.tipo === "freelance").map((a) => ({ id: a.id, nombre: a.nombre }));
+
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
       <Link href="/tarifario" className="text-sm text-gray-400 hover:text-gray-600">← Tarifario</Link>
@@ -140,7 +147,8 @@ export default async function NuevaReservaPage({
           Este vuelo no tiene cupos disponibles. No se puede generar el contrato.
         </p>
       )}
-      <ReservaForm meta={meta} combos={combos} serviciosDisp={serviciosDisp} acomConfigs={acomConfigs} />
+      <ReservaForm meta={meta} combos={combos} serviciosDisp={serviciosDisp} acomConfigs={acomConfigs}
+        vendedores={vendedores ?? []} agencias={agencias} freelances={freelances} />
     </div>
   );
 }

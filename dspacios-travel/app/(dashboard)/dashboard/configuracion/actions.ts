@@ -54,10 +54,13 @@ export async function crearAsesor(input: {
 
 export async function actualizarAsesor(
   id: number,
-  pctComisionBase: number
+  pctComisionBase: number,
+  aplicaRetencion?: boolean
 ): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb.from("asesores").update({ pct_comision_base: pctComisionBase }).eq("id", id);
+  const patch: { pct_comision_base: number; aplica_retencion?: boolean } = { pct_comision_base: pctComisionBase };
+  if (aplicaRetencion !== undefined) patch.aplica_retencion = aplicaRetencion;
+  const { error } = await sb.from("asesores").update(patch).eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/configuracion");
   return { ok: true };
@@ -95,6 +98,71 @@ export async function actualizarParametro(parametro: string, valor: number): Pro
     .from("parametros_tributarios")
     .update({ valor, updated_at: new Date().toISOString() })
     .eq("parametro", parametro);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+// ── Escalas de comisión (asesor interno) ───────────────────────────────────
+export async function crearEscala(nombre: string): Promise<Result> {
+  if (!nombre.trim()) return { ok: false, error: "Ponle un nombre a la escala." };
+  const sb = await createClient();
+  const { error } = await sb.from("escalas_comision").insert({ nombre: nombre.trim() });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+export async function eliminarEscala(id: number): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("escalas_comision").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+// Reemplaza TODOS los rangos de una escala (UI edita la lista completa).
+export async function guardarRangosEscala(
+  escalaId: number,
+  rangos: { pvp_desde: number; pvp_hasta: number | null; pct: number }[]
+): Promise<Result> {
+  const sb = await createClient();
+  await sb.from("escala_rangos").delete().eq("escala_id", escalaId);
+  const limpios = rangos
+    .filter((r) => Number(r.pct) >= 0)
+    .map((r, i) => ({
+      escala_id: escalaId,
+      pvp_desde: Math.max(0, Number(r.pvp_desde) || 0),
+      pvp_hasta: r.pvp_hasta == null || r.pvp_hasta === undefined ? null : Math.max(0, Number(r.pvp_hasta) || 0),
+      pct: Math.max(0, Number(r.pct) || 0),
+      orden: i,
+    }));
+  if (limpios.length) {
+    const { error } = await sb.from("escala_rangos").insert(limpios);
+    if (error) return { ok: false, error: error.message };
+  }
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+export async function asignarEscalaAsesor(asesorId: number, escalaId: number | null): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("asesores").update({ escala_id: escalaId }).eq("id", asesorId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+// Asigna escala / retención a un USUARIO (asesor interno = usuario rol 'venta').
+export async function actualizarEscalaUsuario(
+  usuarioId: string,
+  patch: { escalaId?: number | null; aplicaRetencion?: boolean }
+): Promise<Result> {
+  const sb = await createClient();
+  const upd: { escala_id?: number | null; aplica_retencion?: boolean } = {};
+  if (patch.escalaId !== undefined) upd.escala_id = patch.escalaId;
+  if (patch.aplicaRetencion !== undefined) upd.aplica_retencion = patch.aplicaRetencion;
+  const { error } = await sb.from("usuarios").update(upd).eq("id", usuarioId);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/configuracion");
   return { ok: true };

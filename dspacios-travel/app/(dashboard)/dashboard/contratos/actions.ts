@@ -78,6 +78,15 @@ export type ContratoInput = {
   hoteles: HotelInput[];
   vuelos: VueloInput[];
   items: ItemInput[];
+  // BNC (Base No Comisionable) — se elige al crear el contrato (dinámico/empaquetado
+  // no la traen). modo 'tiquetes' = BNC es el valor de los tiquetes; 'fijo' = un
+  // valor fijo que NUNCA puede ser menor al valor de los tiquetes.
+  bncModo?: "tiquetes" | "fijo";
+  valorTiquetes?: number;
+  bncFijo?: number;
+  // Canal / asesor. Todo contrato lleva asesor interno; B2B además agencia o freelance.
+  tipoVenta?: "interno" | "agencia" | "freelance";
+  aliadoId?: number | null;   // id del catálogo de agencias/freelance (B2B)
 };
 
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -128,6 +137,30 @@ export async function crearContrato(
     items.reduce((s, it) => s + it.adultos, 0) ||
     1;
 
+  // BNC (Base No Comisionable): tiquetes o valor fijo (≥ tiquetes y ≤ PVP).
+  const tiquetes = Math.max(0, Number(input.valorTiquetes) || 0);
+  let bnc = tiquetes;
+  if (input.bncModo === "fijo") {
+    const fijo = Math.max(0, Number(input.bncFijo) || 0);
+    if (fijo < tiquetes) return { ok: false, error: "La BNC fija no puede ser menor al valor de los tiquetes." };
+    bnc = fijo;
+  }
+  if (bnc > precioVenta) return { ok: false, error: "La BNC no puede ser mayor al valor total del contrato (PVP)." };
+
+  // Canal / asesor: B2C = solo interno; B2B = interno + agencia o freelance.
+  const tipoVenta = input.tipoVenta ?? "interno";
+  const canal = tipoVenta === "interno" ? "B2C" : "B2B";
+  let agenciaNombre: string | null = null;
+  let freelanceNombre: string | null = null;
+  let aliado: { nombre: string; nit: string | null; pct_comision: number | null; aplica_retencion: boolean; pct_retencion: number } | null = null;
+  if (tipoVenta !== "interno") {
+    if (!input.aliadoId) return { ok: false, error: `Selecciona la ${tipoVenta} del catálogo.` };
+    const { data } = await sb.from("aliados").select("nombre, nit, pct_comision, aplica_retencion, pct_retencion").eq("id", input.aliadoId).maybeSingle();
+    if (!data) return { ok: false, error: "La agencia/freelance seleccionada no existe." };
+    aliado = data;
+    if (tipoVenta === "agencia") agenciaNombre = data.nombre; else freelanceNombre = data.nombre;
+  }
+
   // 2. Crear la venta (cabecera del contrato)
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
@@ -138,8 +171,14 @@ export async function crearContrato(
     fecha_emision: oNull(input.fechaEmision),
     pax,
     precio_venta: precioVenta,
+    impuesto: bnc,
     estado: "activo",
     tipo_paquete: input.tipoPaquete,
+    asesor: oNull(input.asesorNombre),
+    canal,
+    tipo_asesor: tipoVenta,
+    agencia_nombre: agenciaNombre,
+    freelance_nombre: freelanceNombre,
     cliente_documento: oNull(input.clienteDocumento),
     cliente_telefono: oNull(input.clienteTelefono),
     cliente_direccion: oNull(input.clienteDireccion),
@@ -294,6 +333,26 @@ export async function crearContrato(
         // No bloquear la creación del contrato si falla el paso administrativo.
       }
     }
+  }
+
+  // Auto-comisión B2B: usa el % propio del aliado o, si no tiene, el default general.
+  if (aliado) {
+    const defParam = tipoVenta === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
+    const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
+    const pct = aliado.pct_comision ?? Number(p?.valor) ?? (tipoVenta === "agencia" ? 0.12 : 0.11);
+    await sb.from("aliados_b2b").insert({
+      numero_contrato: numero,
+      aliado: aliado.nombre,
+      nit: aliado.nit,
+      precio_venta: precioVenta,
+      base_comision: precioVenta,
+      pct_comision: pct,
+      recobro_total: 0,
+      pct_recobro_aliado: 0,
+      aplica_retencion: aliado.aplica_retencion,
+      pct_retencion: aliado.pct_retencion,
+      estado: "pendiente",
+    });
   }
 
   revalidatePath("/dashboard/contratos");
