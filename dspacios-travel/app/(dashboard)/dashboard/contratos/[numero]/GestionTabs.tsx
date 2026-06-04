@@ -34,6 +34,8 @@ export type GestionProps = {
   numero: string;
   precioVenta: number;
   impuesto: number; // BNC (Base No Comisionable) del contrato
+  clienteNombre: string;
+  clienteDocumento: string;
   asesorNombre: string;
   asesorPct: number;
   fiscal?: ParamsFiscales;
@@ -111,7 +113,8 @@ export function GestionTabs(p: GestionProps) {
                 comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} fiscal={fiscal} />
             </TabsContent>
             <TabsContent value="facturacion">
-              <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA} />
+              <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
+                clienteNombre={p.clienteNombre} clienteDocumento={p.clienteDocumento} />
             </TabsContent>
             <TabsContent value="rentabilidad">
               <RentabilidadTab rent={rent} />
@@ -383,7 +386,7 @@ function ComisionesTab({ numero, precioVenta, impuesto, filas, comB2BTotal, comA
 type ItemForm = { descripcion: string; valor: string; gravable: boolean };
 const itemVacio = (): ItemForm => ({ descripcion: "", valor: "", gravable: true });
 
-function FacturacionTab({ numero, filas, ivaGenerado, ivaPct }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaPct: number }) {
+function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, clienteDocumento }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaPct: number; clienteNombre: string; clienteDocumento: string }) {
   const [num, setNum] = useState("");
   const [fecha, setFecha] = useState("");
   const [cliente, setCliente] = useState("");
@@ -442,7 +445,19 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaPct }: { numero: string
 
       {/* Nueva factura con ítems */}
       <div className={card}>
-        <p className={lbl}>Nueva factura</p>
+        <div className="mb-1 flex items-center justify-between">
+          <p className={lbl}>Nueva factura</p>
+          {(clienteNombre || clienteDocumento) && (
+            <button
+              type="button"
+              onClick={() => { setCliente(clienteNombre || ""); setNit(clienteDocumento || ""); }}
+              className="text-xs font-medium hover:underline"
+              style={{ color: "var(--brand-accent)" }}
+            >
+              Usar datos del cliente del contrato
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Input placeholder="N° factura" value={num} onChange={(e) => setNum(e.target.value)} />
           <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />

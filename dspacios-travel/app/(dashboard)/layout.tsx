@@ -40,6 +40,7 @@ const NAV: NavItem[] = [
     children: [
       { href: "/dashboard/cartera", label: "Cartera (por cobrar)" },
       { href: "/dashboard/pagos", label: "Pagos a proveedores" },
+      { href: "/dashboard/comisiones", label: "Comisiones B2B" },
     ],
   },
   { href: "/dashboard/usuarios", label: "Usuarios" },

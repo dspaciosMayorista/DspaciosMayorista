@@ -178,6 +178,8 @@ export default async function ContratoDetallePage({
         numero={numero}
         precioVenta={venta.precio_venta}
         impuesto={venta.impuesto ?? 0}
+        clienteNombre={venta.cliente ?? ""}
+        clienteDocumento={venta.cliente_documento ?? ""}
         asesorNombre={asesorNombre}
         asesorPct={asesorPct}
         fiscal={fiscal}

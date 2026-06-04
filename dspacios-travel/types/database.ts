@@ -356,6 +356,7 @@ export type Database = {
           aplica_retencion: boolean;
           pct_retencion: number;
           estado: string;
+          fecha_pago: string | null;
           created_at: string;
         };
         Insert: {
@@ -373,6 +374,7 @@ export type Database = {
           aplica_retencion?: boolean;
           pct_retencion?: number;
           estado?: string;
+          fecha_pago?: string | null;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["aliados_b2b"]["Insert"]>;
