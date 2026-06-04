@@ -533,17 +533,48 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   });
   if (items.length) await sb.from("contrato_items").insert(items);
 
+  // Cuentas por pagar (CxP) generadas AUTOMÁTICAMENTE porque la venta sale del
+  // tarifario: una por proveedor de aéreo, hotel y cada servicio. Se acumulan
+  // en los pasos 9/10/11 (que ya leen los costos netos con service-role) y se
+  // insertan en el paso 12. El proveedor (con su retención) se jala del catálogo.
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const OBS_AUTO = "Generado automáticamente desde el tarifario";
+  type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
+  type CxPRow = {
+    numero_contrato: string; proveedor: string | null; tipo_proveedor: string;
+    servicio: string; valor_total: number; fecha_obligacion: string;
+    aplica_retencion: boolean; pct_retencion: number; observaciones: string;
+  };
+  const cxp: CxPRow[] = [];
+  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null) => {
+    if (!(valor > 0)) return;
+    cxp.push({
+      numero_contrato: numero,
+      proveedor: pr?.nombre ?? nombreFallback ?? null,
+      tipo_proveedor: tipo,
+      servicio,
+      valor_total: valor,
+      fecha_obligacion: hoyISO,
+      aplica_retencion: pr?.aplica_retencion ?? false,
+      pct_retencion: Number(pr?.pct_retencion) || 0,
+      observaciones: OBS_AUTO,
+    });
+  };
+
   // 9) Sillas + costo aéreo (admin: oculto al asesor). Requiere service-role.
   if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
       const { data: bq } = await admin
         .from("bloqueos_vuelo")
-        .select("tarifa_para_empaquetar")
+        .select("tarifa_para_empaquetar, aerolinea, proveedores(nombre, aplica_retencion, pct_retencion)")
         .eq("id", input.bloqueoId)
         .maybeSingle();
       if (bq) {
-        await admin.from("ventas").update({ costo_aereo: (Number(bq.tarifa_para_empaquetar) || 0) * paxConSilla }).eq("numero_contrato", numero);
+        const costoAereo = (Number(bq.tarifa_para_empaquetar) || 0) * paxConSilla;
+        await admin.from("ventas").update({ costo_aereo: costoAereo }).eq("numero_contrato", numero);
+        const prA = bq.proveedores as unknown as ProvFact;
+        pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, prA, bq.aerolinea);
       }
       const { data: libres } = await admin
         .from("sillas")
@@ -587,11 +618,12 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       const admin = createAdminClient();
       const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
       if (numNoches > 0) {
-        const [{ data: temps }, { data: tarRows }] = await Promise.all([
+        const [{ data: temps }, { data: tarRows }, { data: hprov }] = await Promise.all([
           admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin").eq("hotel_id", input.hotelId),
           admin.from("tarifa_hotel")
             .select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2")
             .eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
+          admin.from("hoteles").select("nombre, proveedores(nombre, aplica_retencion, pct_retencion)").eq("id", input.hotelId).maybeSingle(),
         ]);
         type TarRow = {
           temporada: string | null; neto_sencilla: number | null; neto_doble: number | null;
@@ -616,7 +648,11 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
         }
         if (numNinos > 0) { const per = netoPersona("nino"); if (per != null) costoHotel += per * numNinos; }
         if (numNinos2 > 0) { const per = netoPersona("nino2"); if (per != null) costoHotel += per * numNinos2; }
-        if (costoHotel > 0) await admin.from("ventas").update({ costo_hotel: costoHotel }).eq("numero_contrato", numero);
+        if (costoHotel > 0) {
+          await admin.from("ventas").update({ costo_hotel: costoHotel }).eq("numero_contrato", numero);
+          const prH = hprov?.proveedores as unknown as ProvFact;
+          pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? hprov?.nombre ?? ""}`.trim(), costoHotel, prH);
+        }
       }
     } catch {
       // El costo neto es informativo para rentabilidad; no bloquea la reserva.
@@ -629,7 +665,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       const admin = createAdminClient();
       const [{ data: arm }, { data: gruposNet }] = await Promise.all([
         admin.from("armado_servicios")
-          .select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre)")
+          .select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre, proveedores(nombre, aplica_retencion, pct_retencion))")
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
           .select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", input.servicios),
@@ -645,11 +681,14 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       let hayAsistencia = false;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string } | null;
-        costoReceptivo += precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], totalPax);
+        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string; proveedores: ProvFact } | null;
+        const costoServ = precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], totalPax);
+        costoReceptivo += costoServ;
         const cat = srv?.categoria ?? "otro";
         if (cat === "asistencia") hayAsistencia = true;
         else if (cat === "tour_traslado" && srv?.nombre) tours.push(srv.nombre);
+        // Una CxP por servicio (asistencia médica va a su propio tipo de proveedor).
+        pushCxP(cat === "asistencia" ? "asistencia" : "receptivo", srv?.nombre ?? "Servicio", costoServ, srv?.proveedores ?? null);
       }
       const upd: { costo_receptivo?: number; tours_traslados?: string; asistencia_medica?: boolean } = {};
       if (costoReceptivo > 0) upd.costo_receptivo = costoReceptivo;
@@ -658,6 +697,17 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       if (Object.keys(upd).length) await admin.from("ventas").update(upd).eq("numero_contrato", numero);
     } catch {
       // Costo neto informativo; no bloquea la reserva.
+    }
+  }
+
+  // 12) Insertar las cuentas por pagar acumuladas (hotel/aéreo/servicios). Como
+  //     la venta proviene del tarifario, los proveedores y costos ya se conocen.
+  if (cxp.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      await admin.from("cuentas_por_pagar").insert(cxp);
+    } catch {
+      // No bloquear la reserva si falla la creación automática de CxP.
     }
   }
 
