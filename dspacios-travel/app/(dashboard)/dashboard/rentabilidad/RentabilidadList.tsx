@@ -13,17 +13,20 @@ export type RentRow = {
   canal: string | null;
   mes: string; // YYYY-MM ("" si no hay fecha)
   precioVenta: number;
+  ivaGenerado: number;
+  ingreso: number;
   costoDirecto: number;
+  ivaDescontable: number;
+  costoNeto: number;
+  utilBruta: number;
   comB2B: number;
   comAsesor: number;
-  utilBruta: number;
   provIca: number;
   provBomberil: number;
   provFontur: number;
   provRenta: number;
   totalProvisiones: number;
-  ivaGenerado: number;
-  ivaDescontable: number;
+  ivaPorPagar: number;
   utilNeta: number;
   margenNeto: number;
   clasificacion: "Alta" | "Media" | "Baja";
@@ -63,24 +66,25 @@ export function RentabilidadList({ rows }: { rows: RentRow[] }) {
   }, [rows, q, asesor, destino, mes, clase]);
 
   const tot = useMemo(() => {
-    let venta = 0, costo = 0, com = 0, prov = 0, util = 0;
+    let ingreso = 0, costo = 0, com = 0, prov = 0, iva = 0, util = 0;
     const dist = { Alta: 0, Media: 0, Baja: 0 };
     for (const r of visibles) {
-      venta += r.precioVenta;
-      costo += r.costoDirecto;
+      ingreso += r.ingreso;
+      costo += r.costoNeto;
       com += r.comB2B + r.comAsesor;
       prov += r.totalProvisiones;
+      iva += r.ivaPorPagar;
       util += r.utilNeta;
       dist[r.clasificacion]++;
     }
-    return { venta, costo, com, prov, util, margen: venta > 0 ? util / venta : 0, dist };
+    return { ingreso, costo, com, prov, iva, util, margen: ingreso > 0 ? util / ingreso : 0, dist };
   }, [visibles]);
 
   return (
     <div>
       {/* Resumen */}
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tarjeta titulo="Ventas" valor={tot.venta} sub={`${visibles.length} contrato(s)`} />
+        <Tarjeta titulo="Ingreso (sin IVA)" valor={tot.ingreso} sub={`${visibles.length} contrato(s)`} />
         <Tarjeta titulo="Costo + comisiones" valor={tot.costo + tot.com} />
         <Tarjeta titulo="Utilidad neta" valor={tot.util} tono="primary" />
         <div className="rounded-xl border border-gray-200 bg-white px-4 py-3">
@@ -118,16 +122,17 @@ export function RentabilidadList({ rows }: { rows: RentRow[] }) {
 
       {/* Tabla */}
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full min-w-[940px] text-sm">
+        <table className="w-full min-w-[1040px] text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
               <th className="px-3 py-3">Contrato</th>
               <th className="px-3 py-3">Cliente</th>
               <th className="px-3 py-3">Asesor</th>
-              <th className="px-3 py-3 text-right">Venta</th>
+              <th className="px-3 py-3 text-right">Ingreso</th>
               <th className="px-3 py-3 text-right">Costo</th>
               <th className="px-3 py-3 text-right">Comisiones</th>
               <th className="px-3 py-3 text-right">Provisiones</th>
+              <th className="px-3 py-3 text-right">IVA x pagar</th>
               <th className="px-3 py-3 text-right">Util. neta</th>
               <th className="px-3 py-3 text-right">Margen</th>
               <th className="px-3 py-3">Clase</th>
@@ -135,7 +140,7 @@ export function RentabilidadList({ rows }: { rows: RentRow[] }) {
           </thead>
           <tbody>
             {visibles.length === 0 && (
-              <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">No hay contratos en este filtro.</td></tr>
+              <tr><td colSpan={11} className="px-4 py-10 text-center text-gray-400">No hay contratos en este filtro.</td></tr>
             )}
             {visibles.map((r) => <Fila key={r.numero_contrato} r={r} />)}
           </tbody>
@@ -143,10 +148,11 @@ export function RentabilidadList({ rows }: { rows: RentRow[] }) {
             <tfoot>
               <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
                 <td className="px-3 py-3" colSpan={3}>Total ({visibles.length})</td>
-                <td className="px-3 py-3 text-right tabular-nums">{formatCOP(tot.venta)}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{formatCOP(tot.ingreso)}</td>
                 <td className="px-3 py-3 text-right tabular-nums text-gray-500">{formatCOP(tot.costo)}</td>
                 <td className="px-3 py-3 text-right tabular-nums text-gray-500">{formatCOP(tot.com)}</td>
                 <td className="px-3 py-3 text-right tabular-nums text-gray-500">{formatCOP(tot.prov)}</td>
+                <td className="px-3 py-3 text-right tabular-nums text-gray-500">{formatCOP(tot.iva)}</td>
                 <td className="px-3 py-3 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(tot.util)}</td>
                 <td className="px-3 py-3 text-right tabular-nums">{(tot.margen * 100).toFixed(1)}%</td>
                 <td className="px-3 py-3" />
@@ -161,21 +167,6 @@ export function RentabilidadList({ rows }: { rows: RentRow[] }) {
 
 function Fila({ r }: { r: RentRow }) {
   const [abierto, setAbierto] = useState(false);
-  const detalle: [string, string][] = [
-    ["Precio de venta", formatCOP(r.precioVenta)],
-    ["(−) Costo directo", `− ${formatCOP(r.costoDirecto)}`],
-    ["(−) Comisión B2B", `− ${formatCOP(r.comB2B)}`],
-    ["(−) Comisión asesor", `− ${formatCOP(r.comAsesor)}`],
-    ["= Utilidad bruta", formatCOP(r.utilBruta)],
-    ["(−) Provisión ICA", `− ${formatCOP(r.provIca)}`],
-    ["(−) Provisión Bomberil", `− ${formatCOP(r.provBomberil)}`],
-    ["(−) Provisión Fontur", `− ${formatCOP(r.provFontur)}`],
-    ["(−) Provisión Renta", `− ${formatCOP(r.provRenta)}`],
-    ["= Total provisiones", formatCOP(r.totalProvisiones)],
-    ["IVA generado", formatCOP(r.ivaGenerado)],
-    ["IVA descontable", formatCOP(r.ivaDescontable)],
-    ["= Utilidad neta", formatCOP(r.utilNeta)],
-  ];
   return (
     <>
       <tr className="border-b border-gray-50 hover:bg-gray-50">
@@ -187,10 +178,11 @@ function Fila({ r }: { r: RentRow }) {
         </td>
         <td className="px-3 py-2.5 text-gray-700">{r.cliente ?? "—"}</td>
         <td className="px-3 py-2.5 text-gray-500">{r.asesor ?? "—"}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums">{formatCOP(r.precioVenta)}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{formatCOP(r.costoDirecto)}</td>
+        <td className="px-3 py-2.5 text-right tabular-nums">{formatCOP(r.ingreso)}</td>
+        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{formatCOP(r.costoNeto)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{formatCOP(r.comB2B + r.comAsesor)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{formatCOP(r.totalProvisiones)}</td>
+        <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{formatCOP(r.ivaPorPagar)}</td>
         <td className="px-3 py-2.5 text-right font-medium tabular-nums" style={{ color: r.utilNeta < 0 ? "#C0392B" : "inherit" }}>{formatCOP(r.utilNeta)}</td>
         <td className="px-3 py-2.5 text-right tabular-nums">{(r.margenNeto * 100).toFixed(1)}%</td>
         <td className="px-3 py-2.5">
@@ -201,26 +193,62 @@ function Fila({ r }: { r: RentRow }) {
       </tr>
       {abierto && (
         <tr className="border-b border-gray-100 bg-gray-50/60">
-          <td colSpan={10} className="px-3 py-3">
-            <div className="max-w-md">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                Desglose · {r.destino ?? "—"}{r.mes ? ` · ${r.mes}` : ""}{r.canal ? ` · ${r.canal}` : ""}
-              </p>
-              <table className="w-full text-sm">
-                <tbody>
-                  {detalle.map(([k, v], i) => (
-                    <tr key={i} className={k.startsWith("=") ? "font-semibold" : ""}>
-                      <td className="py-1 text-gray-600">{k}</td>
-                      <td className="py-1 text-right tabular-nums text-gray-800">{v}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <td colSpan={11} className="px-3 py-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Desglose · {r.destino ?? "—"}{r.mes ? ` · ${r.mes}` : ""}{r.canal ? ` · ${r.canal}` : ""}
+            </p>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {/* Columna 1 — Estado de resultados (sin IVA) */}
+              <Bloque titulo="Estado de resultados (sin IVA)" filas={[
+                { k: "Ingreso (PVP − IVA gen.)", v: formatCOP(r.ingreso) },
+                { k: "(−) Costo (prov. − IVA desc.)", v: `− ${formatCOP(r.costoNeto)}` },
+                { k: "= Utilidad bruta", v: formatCOP(r.utilBruta), total: true },
+                ...(r.comB2B > 0 ? [{ k: "(−) Comisión B2B", v: `− ${formatCOP(r.comB2B)}` }] : []),
+                { k: "(−) Comisión asesor", v: `− ${formatCOP(r.comAsesor)}` },
+                { k: "(−) Provisión ICA", v: `− ${formatCOP(r.provIca)}` },
+                { k: "(−) Provisión Bomberil", v: `− ${formatCOP(r.provBomberil)}` },
+                { k: "(−) Provisión Fontur", v: `− ${formatCOP(r.provFontur)}` },
+                { k: "(−) Provisión Renta", v: `− ${formatCOP(r.provRenta)}` },
+                { k: "= Total provisiones", v: formatCOP(r.totalProvisiones), total: true },
+                { k: "(−) IVA por pagar", v: `− ${formatCOP(r.ivaPorPagar)}` },
+                { k: "= Utilidad neta", v: formatCOP(r.utilNeta), total: true, color: r.utilNeta < 0 ? "#C0392B" : "var(--brand-primary)" },
+              ]} />
+
+              {/* Columna 2 — IVA */}
+              <div className="space-y-4">
+                <Bloque titulo="IVA" filas={[
+                  { k: "IVA generado", v: formatCOP(r.ivaGenerado) },
+                  { k: "(−) IVA descontable", v: `− ${formatCOP(r.ivaDescontable)}` },
+                  { k: "= IVA por pagar", v: formatCOP(r.ivaPorPagar), total: true, color: "var(--brand-primary)" },
+                ]} />
+                <Bloque titulo="Referencia (con IVA)" filas={[
+                  { k: "PVP (con IVA)", v: formatCOP(r.precioVenta) },
+                  { k: "Total proveedor (con IVA)", v: formatCOP(r.costoDirecto) },
+                ]} />
+              </div>
             </div>
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+function Bloque({ titulo, filas }: { titulo: string; filas: { k: string; v: string; total?: boolean; color?: string }[] }) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">{titulo}</p>
+      <table className="w-full text-sm">
+        <tbody>
+          {filas.map((f, i) => (
+            <tr key={i} className={`${f.total ? "border-t border-gray-100 font-semibold" : ""}`}>
+              <td className="py-1 text-gray-600">{f.k}</td>
+              <td className="py-1 text-right tabular-nums" style={f.color ? { color: f.color } : { color: "#1f2937" }}>{f.v}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

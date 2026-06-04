@@ -134,28 +134,39 @@ export function calcComisionAsesorBase(i: ComisionAsesorBaseInput): ComisionAses
 }
 
 // ── Rentabilidad por contrato ────────────────────────────────────────────
+// Modelo (estado de resultados, todo SIN IVA):
+//   Ingreso       = PVP − IVA generado
+//   Costo         = total proveedor − IVA descontable
+//   Utilidad bruta = Ingreso − Costo
+//   (−) Comisiones (B2B + asesor)  ← gasto operacional de venta
+//   (−) Provisiones  ← base = Ingreso (ICA, Renta) / utilidad bruta (Fontur) / ICA (Bomberil)
+//   (−) IVA por pagar = IVA generado − IVA descontable
+//   = Utilidad neta
 export type RentabilidadInput = {
-  precioVenta: number;
-  costoDirecto: number; // suma de costos del proveedor
-  comB2B?: number; // total a pagar comisiones B2B
-  comAsesor?: number; // comisión neta del asesor
+  precioVenta: number;   // PVP (incluye IVA generado)
+  costoDirecto: number;  // total proveedor (incluye IVA descontable)
+  comB2B?: number;       // total a pagar comisiones B2B
+  comAsesor?: number;    // comisión neta del asesor
   ivaGenerado?: number;
   ivaDescontable?: number;
   fiscal?: ParamsFiscales;
 };
 export type Rentabilidad = {
   precioVenta: number;
+  ivaGenerado: number;
+  ingreso: number;
   costoDirecto: number;
+  ivaDescontable: number;
+  costoNeto: number;
+  utilBruta: number;
   comB2B: number;
   comAsesor: number;
-  utilBruta: number;
   provIca: number;
   provBomberil: number;
   provFontur: number;
   provRenta: number;
   totalProvisiones: number;
-  ivaGenerado: number;
-  ivaDescontable: number;
+  ivaPorPagar: number;
   utilNeta: number;
   margenNeto: number;
   clasificacion: "Alta" | "Media" | "Baja";
@@ -164,34 +175,46 @@ export type Rentabilidad = {
 export function calcRentabilidad(i: RentabilidadInput): Rentabilidad {
   const f = i.fiscal ?? FISCAL_DEFAULT;
   const pvp = i.precioVenta || 0;
-  const cd = i.costoDirecto || 0;
+  const ivaGenerado = i.ivaGenerado || 0;
+  const ivaDescontable = i.ivaDescontable || 0;
   const comB2B = i.comB2B || 0;
   const comAsesor = i.comAsesor || 0;
 
-  const utilBruta = pvp - cd - comB2B - comAsesor;
-  const provIca = pvp * f.ICA;
-  const provBomberil = provIca * f.BOMBERIL; // sobre el ICA
-  const provFontur = Math.max(0, utilBruta) * f.FONTUR; // sobre utilidad bruta
-  const provRenta = pvp * f.RETENCION_RENTA;
+  const ingreso = pvp - ivaGenerado;
+  const costoDirecto = i.costoDirecto || 0;
+  const costoNeto = costoDirecto - ivaDescontable;
+  const utilBruta = ingreso - costoNeto;
+
+  // Provisiones sobre el INGRESO (base gravable), no sobre el PVP.
+  const provIca = ingreso * f.ICA;
+  const provBomberil = provIca * f.BOMBERIL;            // % del ICA
+  const provFontur = Math.max(0, utilBruta) * f.FONTUR; // sobre la utilidad bruta
+  const provRenta = ingreso * f.RETENCION_RENTA;
   const totalProvisiones = provIca + provBomberil + provFontur + provRenta;
-  const utilNeta = utilBruta - totalProvisiones;
-  const margenNeto = pvp > 0 ? utilNeta / pvp : 0;
+
+  const ivaPorPagar = ivaGenerado - ivaDescontable;
+
+  const utilNeta = utilBruta - comB2B - comAsesor - totalProvisiones - ivaPorPagar;
+  const margenNeto = ingreso > 0 ? utilNeta / ingreso : 0;
   const clasificacion =
     margenNeto >= 0.15 ? "Alta" : margenNeto >= 0.08 ? "Media" : "Baja";
 
   return {
     precioVenta: pvp,
-    costoDirecto: cd,
+    ivaGenerado,
+    ingreso,
+    costoDirecto,
+    ivaDescontable,
+    costoNeto,
+    utilBruta,
     comB2B,
     comAsesor,
-    utilBruta,
     provIca,
     provBomberil,
     provFontur,
     provRenta,
     totalProvisiones,
-    ivaGenerado: i.ivaGenerado || 0,
-    ivaDescontable: i.ivaDescontable || 0,
+    ivaPorPagar,
     utilNeta,
     margenNeto,
     clasificacion,
