@@ -25,7 +25,7 @@ import {
 } from "./gestion-actions";
 
 type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string };
-type CxP = { id: number; proveedor: string | null; servicio: string | null; valor_total: number; fecha_vencimiento: string | null; aplica_retencion: boolean; pct_retencion: number };
+type CxP = { id: number; proveedor: string | null; servicio: string | null; valor_total: number; base_gravable: number | null; iva_proveedor: number | null; fecha_vencimiento: string | null; aplica_retencion: boolean; pct_retencion: number };
 type B2B = { id: number; aliado: string | null; precio_venta: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
 type FacturaItem = { descripcion: string | null; valor: number; gravable: boolean };
 type Factura = { id: number; numero_factura: string | null; fecha_factura: string | null; base_gravable: number; base_no_gravable: number; estado_dian: string | null; items: FacturaItem[] };
@@ -75,8 +75,8 @@ export function GestionTabs(p: GestionProps) {
   });
 
   const ivaGenerado = p.facturas.reduce((s, f) => s + f.base_gravable * fiscal.IVA, 0);
-  // El IVA descontable viene de compras (proveedores), no de las facturas emitidas.
-  const ivaDescontable = 0;
+  // El IVA descontable viene de las facturas de los PROVEEDORES (cuentas por pagar).
+  const ivaDescontable = p.cuentasPorPagar.reduce((s, c) => s + (c.iva_proveedor ?? 0), 0);
 
   const rent = calcRentabilidad({
     precioVenta: p.precioVenta, costoDirecto, comB2B: comB2BTotal,
@@ -218,9 +218,16 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
   const [venc, setVenc] = useState("");
   const [ret, setRet] = useState(false);
   const [pctRet, setPctRet] = useState("");
+  const [esFactura, setEsFactura] = useState(false); // factura de proveedor → discrimina IVA
+  const [iva, setIva] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const totalCxP = filas.reduce((s, f) => s + f.valor_total, 0);
+  const totalIva = filas.reduce((s, f) => s + (f.iva_proveedor ?? 0), 0);
+
+  const valorNum = Number(valor) || 0;
+  const ivaNum = esFactura ? Number(iva) || 0 : 0;
+  const costoNum = Math.max(0, valorNum - ivaNum); // costo = total − IVA descontable
 
   function agregar() {
     if (!proveedor.trim() || !Number(valor)) return;
@@ -228,10 +235,11 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
     start(async () => {
       const r = await crearCuentaPorPagar({
         numeroContrato: numero, proveedor, tipoProveedor: tipo, servicio,
-        valorTotal: Number(valor), fechaVencimiento: venc,
+        valorTotal: valorNum, fechaVencimiento: venc,
         aplicaRetencion: ret, pctRetencion: Number(pctRet) / 100 || 0,
+        ivaDescontable: ivaNum,
       });
-      if (r.ok) { setProveedor(""); setTipo(""); setServicio(""); setValor(""); setVenc(""); setRet(false); setPctRet(""); }
+      if (r.ok) { setProveedor(""); setTipo(""); setServicio(""); setValor(""); setVenc(""); setRet(false); setPctRet(""); setEsFactura(false); setIva(""); }
       else setErr(r.error);
     });
   }
@@ -251,6 +259,28 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
             {ret && <Input type="number" className="w-20" placeholder="%" value={pctRet} onChange={(e) => setPctRet(e.target.value)} />}
           </label>
         </div>
+
+        {/* Factura de proveedor: discriminar costo / IVA descontable (manual) */}
+        <label className="mt-3 flex items-center gap-2 text-sm font-medium text-gray-700">
+          <input type="checkbox" checked={esFactura} onChange={(e) => setEsFactura(e.target.checked)} />
+          Factura de proveedor (discriminar IVA descontable)
+        </label>
+        {esFactura && (
+          <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">IVA descontable</label>
+              <Input type="number" min={0} placeholder="0" value={iva} onChange={(e) => setIva(e.target.value)} className="w-40" />
+            </div>
+            <div className="text-xs text-gray-500">
+              Costo (base): <b className="text-gray-700">{formatCOP(costoNum)}</b>
+              <span className="mx-2">·</span>
+              IVA: <b className="text-gray-700">{formatCOP(ivaNum)}</b>
+              <span className="mx-2">·</span>
+              Total: <b style={{ color: "var(--brand-primary)" }}>{formatCOP(valorNum)}</b>
+            </div>
+          </div>
+        )}
+
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={agregar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Guardando…" : "Agregar"}
@@ -259,24 +289,32 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
         </div>
       </div>
       {filas.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[560px] text-sm">
+        <div className="overflow-x-auto rounded-xl border border-gray-300 bg-white shadow-sm">
+          <table className="w-full min-w-[640px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Servicio</th>
+              <th className="px-4 py-2 text-right">Costo</th><th className="px-4 py-2 text-right">IVA desc.</th>
               <th className="px-4 py-2 text-right">Valor</th><th className="px-4 py-2">Vence</th><th className="px-4 py-2"></th>
             </tr></thead>
-            <tbody>{filas.map((f) => (
-              <tr key={f.id} className="border-t border-gray-50">
-                <td className="px-4 py-2 text-gray-700">{f.proveedor ?? "—"}</td>
-                <td className="px-4 py-2 text-gray-500">{f.servicio ?? "—"}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.valor_total)}</td>
-                <td className="px-4 py-2 text-gray-500">{f.fecha_vencimiento ?? "—"}</td>
-                <td className="px-4 py-2 text-right">
-                  <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
-                </td>
-              </tr>))}</tbody>
+            <tbody>{filas.map((f) => {
+              const ivaF = f.iva_proveedor ?? 0;
+              const costoF = f.base_gravable ?? (f.valor_total - ivaF);
+              return (
+                <tr key={f.id} className="border-t border-gray-50">
+                  <td className="px-4 py-2 text-gray-700">{f.proveedor ?? "—"}</td>
+                  <td className="px-4 py-2 text-gray-500">{f.servicio ?? "—"}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-gray-600">{formatCOP(costoF)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-gray-500">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.valor_total)}</td>
+                  <td className="px-4 py-2 text-gray-500">{f.fecha_vencimiento ?? "—"}</td>
+                  <td className="px-4 py-2 text-right">
+                    <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
+                  </td>
+                </tr>);
+            })}</tbody>
             <tfoot><tr className="border-t border-gray-200 font-medium">
-              <td className="px-4 py-2" colSpan={2}>Total por pagar</td>
+              <td className="px-4 py-2" colSpan={3}>Total por pagar</td>
+              <td className="px-4 py-2 text-right tabular-nums text-gray-500">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
               <td className="px-4 py-2 text-right tabular-nums">{formatCOP(totalCxP)}</td><td colSpan={2} />
             </tr></tfoot>
           </table>

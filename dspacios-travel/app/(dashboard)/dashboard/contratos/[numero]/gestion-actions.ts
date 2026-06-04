@@ -40,14 +40,20 @@ export async function crearCuentaPorPagar(input: {
   fechaVencimiento: string;
   aplicaRetencion: boolean;
   pctRetencion: number;
+  ivaDescontable?: number; // IVA de la factura del proveedor (manual)
 }): Promise<Result> {
   const sb = await createClient();
+  const iva = Math.max(0, Number(input.ivaDescontable) || 0);
+  // Costo (base) = valor total de la factura − IVA descontable.
+  const base = Math.max(0, input.valorTotal - iva);
   const { error } = await sb.from("cuentas_por_pagar").insert({
     numero_contrato: input.numeroContrato,
     proveedor: input.proveedor || null,
     tipo_proveedor: input.tipoProveedor || null,
     servicio: input.servicio || null,
     valor_total: input.valorTotal,
+    base_gravable: iva > 0 ? base : null,
+    iva_proveedor: iva > 0 ? iva : null,
     fecha_vencimiento: input.fechaVencimiento || null,
     aplica_retencion: input.aplicaRetencion,
     pct_retencion: input.pctRetencion,
