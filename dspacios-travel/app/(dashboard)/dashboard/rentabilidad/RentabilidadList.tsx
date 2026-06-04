@@ -199,9 +199,9 @@ function Fila({ r }: { r: RentRow }) {
             </p>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {/* Columna 1 — Estado de resultados (sin IVA) */}
-              <Bloque titulo="Estado de resultados (sin IVA)" filas={[
-                { k: "Ingreso (PVP − IVA gen.)", v: formatCOP(r.ingreso) },
-                { k: "(−) Costo (prov. − IVA desc.)", v: `− ${formatCOP(r.costoNeto)}` },
+              <Bloque titulo="Estado de resultados" filas={[
+                { k: "Ingreso (PVP)", v: formatCOP(r.ingreso) },
+                { k: "(−) Costo (total proveedor)", v: `− ${formatCOP(r.costoNeto)}` },
                 { k: "= Utilidad bruta", v: formatCOP(r.utilBruta), total: true },
                 ...(r.comB2B > 0 ? [{ k: "(−) Comisión B2B", v: `− ${formatCOP(r.comB2B)}` }] : []),
                 { k: "(−) Comisión asesor", v: `− ${formatCOP(r.comAsesor)}` },
@@ -215,17 +215,11 @@ function Fila({ r }: { r: RentRow }) {
               ]} />
 
               {/* Columna 2 — IVA */}
-              <div className="space-y-4">
-                <Bloque titulo="IVA" filas={[
-                  { k: "IVA generado", v: formatCOP(r.ivaGenerado) },
-                  { k: "(−) IVA descontable", v: `− ${formatCOP(r.ivaDescontable)}` },
-                  { k: "= IVA por pagar", v: formatCOP(r.ivaPorPagar), total: true, color: "var(--brand-primary)" },
-                ]} />
-                <Bloque titulo="Referencia (con IVA)" filas={[
-                  { k: "PVP (con IVA)", v: formatCOP(r.precioVenta) },
-                  { k: "Total proveedor (con IVA)", v: formatCOP(r.costoDirecto) },
-                ]} />
-              </div>
+              <Bloque titulo="IVA" filas={[
+                { k: "IVA generado", v: formatCOP(r.ivaGenerado) },
+                { k: "(−) IVA descontable", v: `− ${formatCOP(r.ivaDescontable)}` },
+                { k: "= IVA por pagar", v: formatCOP(r.ivaPorPagar), total: true, color: "var(--brand-primary)" },
+              ]} />
             </div>
           </td>
         </tr>

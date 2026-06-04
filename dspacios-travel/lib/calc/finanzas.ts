@@ -134,9 +134,9 @@ export function calcComisionAsesorBase(i: ComisionAsesorBaseInput): ComisionAses
 }
 
 // ── Rentabilidad por contrato ────────────────────────────────────────────
-// Modelo (estado de resultados, todo SIN IVA):
-//   Ingreso       = PVP − IVA generado
-//   Costo         = total proveedor − IVA descontable
+// Modelo (estado de resultados):
+//   Ingreso        = PVP (con IVA incluido)
+//   Costo          = total proveedor (con IVA incluido)
 //   Utilidad bruta = Ingreso − Costo
 //   (−) Comisiones (B2B + asesor)  ← gasto operacional de venta
 //   (−) Provisiones  ← base = Ingreso (ICA, Renta) / utilidad bruta (Fontur) / ICA (Bomberil)
@@ -180,9 +180,9 @@ export function calcRentabilidad(i: RentabilidadInput): Rentabilidad {
   const comB2B = i.comB2B || 0;
   const comAsesor = i.comAsesor || 0;
 
-  const ingreso = pvp - ivaGenerado;
+  const ingreso = pvp; // Ingreso = PVP (con IVA incluido)
   const costoDirecto = i.costoDirecto || 0;
-  const costoNeto = costoDirecto - ivaDescontable;
+  const costoNeto = costoDirecto; // Costo = total proveedor (con IVA incluido)
   const utilBruta = ingreso - costoNeto;
 
   // Provisiones sobre el INGRESO (base gravable), no sobre el PVP.
