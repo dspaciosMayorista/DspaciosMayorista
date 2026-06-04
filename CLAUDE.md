@@ -262,6 +262,22 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > entre `main` y la rama; las migraciones ya aplicadas afectan también a producción.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
 
+> **Novedades rama `claude/laughing-goodall-e59PS`:**
+> - **CxP automáticas:** al reservar desde el tarifario se crean solas las cuentas
+>   por pagar de hotel, aéreo y servicios (con proveedor y retención del catálogo).
+> - **Cartera** (`/dashboard/cartera`) y **Pagos a proveedores** (`/dashboard/pagos`):
+>   módulos centrales tipo listado para el área contable (saldos por cobrar/pagar,
+>   estado de cuenta, registrar abonos/pagos). Conscientes de moneda. Roles contables.
+> - **Programas** (`/dashboard/producto/programas`): circuitos multi-ciudad de un
+>   proveedor, **en USD**, con montaje por secciones (ruta, itinerario, matriz de
+>   hoteles/precios por categoría/acomodación, incluye/no incluye, tours, blackouts).
+>   Precio = neto + %markup. Publica al tarifario (tab Programas + vitrina pública
+>   `/tarifario/programa/[id]`) y se reserva (`/dashboard/reservar/programa/[id]`) →
+>   contrato (con `moneda`) + CxP al proveedor. Migración **031**. *Pendiente:* el
+>   detalle tributario del contrato (rentabilidad/IVA/provisiones) sigue en COP;
+>   las CxP guardan máx. 3 pagos.
+> - Marca: logo oficial del manual aplicado; carpeta `docs/marca/` y `docs/programas/`.
+
 ### Marca / identidad (aplicada)
 - Manual oficial en `dspacios-travel/docs/marca/Identidad DESPACIOS.pdf`.
 - **Logo como imagen** (regla del manual, no como fuente) en `public/marca/`:
@@ -341,14 +357,15 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — correr en orden 016→029
+### Migraciones Supabase — correr en orden 016→031
 016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
 019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
 023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
 026 servicio_incluido · 027 hotel_acomodaciones (reservar por habitaciones + config acomod.) ·
 028 formas_pago (catálogo de formas de pago para abonos) ·
 029 servicio_categoria (tour_traslado/asistencia/otro → ubica el servicio en el contrato) ·
-030 contrato_vuelo_hotel_extra (record/horas/números de vuelo + categoría/proveedor de hotel).
+030 contrato_vuelo_hotel_extra (record/horas/números de vuelo + categoría/proveedor de hotel) ·
+031 programas (9 tablas de circuitos de proveedor + `moneda` en ventas y cuentas_por_pagar).
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas).
 Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`.
