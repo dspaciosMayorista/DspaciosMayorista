@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
+import { PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
 import { reservarPrograma } from "../../actions";
+
+// Pax que cubre 1 habitación de cada acomodación (Doble=2, Triple=3, Sencilla=1).
+const paxPorHab = (a: string) => PAX_TARIFA_DEFAULT[a as AcomRoom] ?? 1;
 
 export type CategoriaReserva = {
   id: number;
@@ -45,7 +49,7 @@ export function ProgramaReservaForm({
   const acomsAdulto = cat.precios.filter((p) => p.acomodacion !== "nino" && p.pvp != null && !p.bajoSolicitud);
   const precioNino = cat.precios.find((p) => p.acomodacion === "nino" && p.pvp != null && !p.bajoSolicitud)?.pvp ?? null;
 
-  const [pax, setPax] = useState<Record<string, number>>({});
+  const [habs, setHabs] = useState<Record<string, number>>({}); // habitaciones por acomodación
   const [ninos, setNinos] = useState(0);
   const [fechaIda, setFechaIda] = useState("");
 
@@ -58,16 +62,18 @@ export function ProgramaReservaForm({
   const [plazo, setPlazo] = useState("");
 
   const totalPax = useMemo(
-    () => Object.values(pax).reduce((s, n) => s + (Number(n) || 0), 0) + (Number(ninos) || 0),
-    [pax, ninos]
+    () =>
+      Object.entries(habs).reduce((s, [a, n]) => s + (Number(n) || 0) * paxPorHab(a), 0) +
+      (Number(ninos) || 0),
+    [habs, ninos]
   );
 
   const total = useMemo(() => {
     let t = 0;
-    for (const a of acomsAdulto) t += (a.pvp ?? 0) * (Number(pax[a.acomodacion]) || 0);
+    for (const a of acomsAdulto) t += (a.pvp ?? 0) * paxPorHab(a.acomodacion) * (Number(habs[a.acomodacion]) || 0);
     if (precioNino != null) t += precioNino * (Number(ninos) || 0);
     return t;
-  }, [acomsAdulto, pax, ninos, precioNino]);
+  }, [acomsAdulto, habs, ninos, precioNino]);
 
   // Pasajeros: tantos como pax total
   const [pasajeros, setPasajeros] = useState<Pasajero[]>([]);
@@ -82,7 +88,7 @@ export function ProgramaReservaForm({
   // Mantener el número de pasajeros sincronizado al cambiar pax.
   if (pasajeros.length !== totalPax) sincronizarPasajeros(totalPax);
 
-  const updPax = (acom: string, v: string) => setPax((p) => ({ ...p, [acom]: Number(v) || 0 }));
+  const updHab = (acom: string, v: string) => setHabs((p) => ({ ...p, [acom]: Number(v) || 0 }));
   const updPasajero = (i: number, k: keyof Pasajero, v: string) =>
     setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
   const copiarCliente = (i: number) =>
@@ -95,14 +101,14 @@ export function ProgramaReservaForm({
     e.preventDefault();
     setError(null);
     if (!fechaIda) return setError("Elige la fecha de salida.");
-    if (totalPax <= 0) return setError("Indica cuántos pasajeros van en cada acomodación.");
+    if (totalPax <= 0) return setError("Indica cuántas habitaciones reservas en cada acomodación.");
     if (!`${cliente.nombres}${cliente.apellidos}`.trim()) return setError("El nombre del cliente es obligatorio.");
     startTransition(async () => {
       const res = await reservarPrograma({
         programaId,
         categoriaId,
         fechaIda,
-        paxPorAcom: pax,
+        paxPorAcom: habs, // ahora son HABITACIONES por acomodación (el server expande a pax)
         ninos: Number(ninos) || 0,
         cliente,
         tipoAsesor,
@@ -145,21 +151,28 @@ export function ProgramaReservaForm({
         </div>
       </div>
 
-      {/* Pax por acomodación */}
+      {/* Habitaciones por acomodación */}
       <div>
-        <label className={lbl}>Pasajeros por acomodación (precio por persona)</label>
+        <label className={lbl}>Habitaciones por acomodación (Doble = 2 pax, Triple = 3, Sencilla = 1)</label>
         <div className="flex flex-wrap gap-3">
-          {acomsAdulto.map((a) => (
-            <div key={a.acomodacion} className="w-36 rounded-lg border border-gray-200 bg-white p-2">
-              <div className="text-xs text-gray-500">{ACOM_LABEL[a.acomodacion] ?? a.acomodacion}</div>
-              <div className="mb-1 text-xs font-medium" style={{ color: "var(--brand-primary)" }}>{formatMoneda(a.pvp ?? 0, moneda)}</div>
-              <Input type="number" min={0} value={pax[a.acomodacion] ?? ""} onChange={(e) => updPax(a.acomodacion, e.target.value)} placeholder="0" />
-            </div>
-          ))}
+          {acomsAdulto.map((a) => {
+            const cap = paxPorHab(a.acomodacion);
+            const nHab = Number(habs[a.acomodacion]) || 0;
+            return (
+              <div key={a.acomodacion} className="w-44 rounded-lg border border-gray-200 bg-white p-2">
+                <div className="text-xs font-medium text-gray-600">{ACOM_LABEL[a.acomodacion] ?? a.acomodacion} <span className="text-gray-400">· {cap} pax/hab</span></div>
+                <div className="mb-1 text-xs" style={{ color: "var(--brand-primary)" }}>
+                  {formatMoneda((a.pvp ?? 0) * cap, moneda)} <span className="text-gray-400">/ hab</span>
+                </div>
+                <Input type="number" min={0} value={habs[a.acomodacion] ?? ""} onChange={(e) => updHab(a.acomodacion, e.target.value)} placeholder="0" />
+                {nHab > 0 && <div className="mt-1 text-[11px] text-gray-400">{nHab} hab = {nHab * cap} pax</div>}
+              </div>
+            );
+          })}
           {precioNino != null && (
-            <div className="w-36 rounded-lg border border-gray-200 bg-white p-2">
-              <div className="text-xs text-gray-500">Niños</div>
-              <div className="mb-1 text-xs font-medium" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precioNino, moneda)}</div>
+            <div className="w-44 rounded-lg border border-gray-200 bg-white p-2">
+              <div className="text-xs font-medium text-gray-600">Niños <span className="text-gray-400">· por cantidad</span></div>
+              <div className="mb-1 text-xs" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precioNino, moneda)} <span className="text-gray-400">c/u</span></div>
               <Input type="number" min={0} value={ninos || ""} onChange={(e) => setNinos(Number(e.target.value) || 0)} placeholder="0" />
             </div>
           )}

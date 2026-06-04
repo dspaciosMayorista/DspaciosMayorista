@@ -759,7 +759,7 @@ export type ReservaProgramaInput = {
   programaId: number;
   categoriaId: number;
   fechaIda: string;
-  paxPorAcom: Record<string, number>; // pax en cada acomodación (sencilla/doble/triple/…)
+  paxPorAcom: Record<string, number>; // CANTIDAD DE HABITACIONES por acomodación (sencilla/doble/triple/…). Pax = hab × pax_tarifa.
   ninos: number;
   cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
   tipoAsesor: "interno" | "agencia" | "freelance";
@@ -819,10 +819,12 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   const mk = Number(prog.pct_mk) || 0;
   const pvp = (neto: number) => (mk > 0 && mk < 1 ? Math.round(neto / (1 - mk)) : Math.round(neto));
 
-  // 3) Liquidación por persona/acomodación (incluye niños).
-  const entradas = Object.entries(input.paxPorAcom).filter(([, n]) => (Number(n) || 0) > 0);
-  if ((input.ninos || 0) > 0) entradas.push(["nino", input.ninos]);
-  if (!entradas.length) return { ok: false, error: "Indica cuántos pasajeros van en cada acomodación." };
+  // 3) Liquidación por HABITACIONES (igual que hoteles): pax = hab × pax_tarifa
+  //    (Doble ⇒ 2 pax, Triple ⇒ 3, Sencilla ⇒ 1). El precio de la matriz es por
+  //    persona, así que 1 habitación = pax_tarifa × precio/persona. Niños aparte.
+  const habs = Object.entries(input.paxPorAcom).filter(([, n]) => (Number(n) || 0) > 0);
+  if (!habs.length && (input.ninos || 0) <= 0)
+    return { ok: false, error: "Indica cuántas habitaciones reservas en cada acomodación." };
 
   let precioVenta = 0;
   let costoNeto = 0;
@@ -831,23 +833,45 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   const catNombre = (await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle()).data?.nombre ?? null;
 
   let orden = 0;
-  for (const [acom, nRaw] of entradas) {
-    const n = Number(nRaw) || 0;
+  for (const [acom, habRaw] of habs) {
+    const nHab = Number(habRaw) || 0;
     const info = netoDe[acom];
     if (!info || info.neto == null || info.bs)
       return { ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` };
+    const paxTarifa = PAX_TARIFA_DEFAULT[acom as AcomRoom] ?? 1; // pax por habitación
+    const nPax = nHab * paxTarifa;
     const precioPax = pvp(info.neto);
-    const esNino = acom === "nino";
+    const label = ACOM_ROOM_LABEL[acom as AcomRoom] ?? acom;
+    precioVenta += precioPax * nPax;
+    costoNeto += info.neto * nPax;
+    totalPax += nPax;
+    items.push({
+      numero_contrato: "",
+      descripcion: `${nHab} hab ${label} (${nPax} pax)${catNombre ? ` · ${catNombre}` : ""}`,
+      adultos: nPax,
+      ninos: 0,
+      tarifa_adulto: precioPax,
+      tarifa_nino: 0,
+      orden: orden++,
+    });
+  }
+  // Niños (por cantidad, no por habitación)
+  if ((input.ninos || 0) > 0) {
+    const info = netoDe["nino"];
+    if (!info || info.neto == null || info.bs)
+      return { ok: false, error: `Esta categoría no tiene precio de niño (o es "a solicitud").` };
+    const n = Number(input.ninos) || 0;
+    const precioPax = pvp(info.neto);
     precioVenta += precioPax * n;
     costoNeto += info.neto * n;
     totalPax += n;
     items.push({
       numero_contrato: "",
-      descripcion: `${n} ${esNino ? "niño(s)" : "pax"} en ${acom}${catNombre ? ` · ${catNombre}` : ""}`,
-      adultos: esNino ? 0 : n,
-      ninos: esNino ? n : 0,
-      tarifa_adulto: esNino ? 0 : precioPax,
-      tarifa_nino: esNino ? precioPax : 0,
+      descripcion: `${n} niño(s)${catNombre ? ` · ${catNombre}` : ""}`,
+      adultos: 0,
+      ninos: n,
+      tarifa_adulto: 0,
+      tarifa_nino: precioPax,
       orden: orden++,
     });
   }
