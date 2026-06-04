@@ -102,7 +102,7 @@
    Se activa con <html data-theme="indigo">. Cambia el color principal de
    turquesa a índigo oscuro y conserva el verde lima como acento/realce.
    Pensado para probar el look y decidir; se quita poniendo data-theme="marca". */
-[data-theme="indigo"] {
+html[data-theme="indigo"] {
   --brand-primary:   #232876;  /* índigo oscuro (títulos/botones) */
   --brand-accent:    #3D43B5;  /* índigo más claro (links/hover) */
   --brand-success:   #66B596;  /* verde (estados OK) */
