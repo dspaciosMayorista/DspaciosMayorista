@@ -38,14 +38,22 @@ const labelCls = "mb-1 block text-xs font-medium text-gray-600";
 const sectionCls = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 const titleCls = "text-sm font-semibold";
 
+type Opt = { id: number; nombre: string };
+
 export function NuevoContratoForm({
   asesorDefault,
   paquetes = [],
   bloqueos = [],
+  vendedores = [],
+  agencias = [],
+  freelances = [],
 }: {
   asesorDefault: string;
   paquetes?: PaqueteOpt[];
   bloqueos?: BloqueoOpt[];
+  vendedores?: { nombre: string }[];
+  agencias?: Opt[];
+  freelances?: Opt[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -90,6 +98,10 @@ export function NuevoContratoForm({
   const [items, setItems] = useState<ItemInput[]>([
     { descripcion: "Plan turístico", adultos: 1, ninos: 0, tarifaAdulto: 0, tarifaNino: 0 },
   ]);
+
+  // Canal / asesor (todo contrato: asesor interno; B2B además agencia o freelance)
+  const [tipoVenta, setTipoVenta] = useState<"interno" | "agencia" | "freelance">("interno");
+  const [aliadoId, setAliadoId] = useState<number | "">("");
 
   // BNC (Base No Comisionable)
   const [bncModo, setBncModo] = useState<"tiquetes" | "fijo">("tiquetes");
@@ -149,6 +161,8 @@ export function NuevoContratoForm({
       setError("La BNC no puede ser mayor al total del contrato (PVP).");
       return;
     }
+    if (!asesorNombre.trim()) { setError("Selecciona el asesor interno."); return; }
+    if (tipoVenta !== "interno" && !aliadoId) { setError(`Selecciona la ${tipoVenta} del catálogo.`); return; }
     const pasajerosOk = pasajeros.filter((p) => p.nombres.trim() !== "" || p.apellidos.trim() !== "");
     const hotelesOk = hoteles.filter((h) => h.nombre.trim() !== "");
     const vuelosOk = vuelos.filter((v) => v.aerolinea.trim() !== "");
@@ -182,6 +196,8 @@ export function NuevoContratoForm({
           bncModo,
           valorTiquetes: Number(valorTiquetes) || 0,
           bncFijo: Number(bncFijo) || 0,
+          tipoVenta,
+          aliadoId: aliadoId === "" ? null : Number(aliadoId),
         });
         if (res.ok) {
           router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
@@ -235,6 +251,55 @@ export function NuevoContratoForm({
           <p className="text-xs text-gray-400">
             Los hoteles, el plan y los precios se cargan del producto (no edites el precio).
             Los costos quedan de uso interno y no se muestran al asesor.
+          </p>
+        )}
+      </section>
+
+      {/* Venta / canal */}
+      <section className={sectionCls}>
+        <p className={titleCls} style={{ color: "var(--brand-primary)" }}>Venta</p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div>
+            <label className={labelCls}>Asesor interno *</label>
+            <select value={asesorNombre} onChange={(e) => setAsesorNombre(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <option value="">Selecciona asesor</option>
+              {vendedores.map((v) => <option key={v.nombre} value={v.nombre}>{v.nombre}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls}>Tipo de venta *</label>
+            <select value={tipoVenta} onChange={(e) => { setTipoVenta(e.target.value as "interno" | "agencia" | "freelance"); setAliadoId(""); }}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <option value="interno">Directa (B2C)</option>
+              <option value="agencia">Agencia (B2B)</option>
+              <option value="freelance">Freelance (B2B)</option>
+            </select>
+          </div>
+          {tipoVenta === "agencia" && (
+            <div>
+              <label className={labelCls}>Agencia *</label>
+              <select value={aliadoId} onChange={(e) => setAliadoId(Number(e.target.value) || "")}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Selecciona agencia</option>
+                {agencias.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+              </select>
+            </div>
+          )}
+          {tipoVenta === "freelance" && (
+            <div>
+              <label className={labelCls}>Freelance *</label>
+              <select value={aliadoId} onChange={(e) => setAliadoId(Number(e.target.value) || "")}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Selecciona freelance</option>
+                {freelances.map((f) => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+        {tipoVenta !== "interno" && (
+          <p className="text-xs text-gray-400">
+            Si la {tipoVenta} no aparece, créala primero en <b>Finanzas → Agencias y freelance</b>. La comisión B2B se crea sola con su %.
           </p>
         )}
       </section>
@@ -514,11 +579,8 @@ export function NuevoContratoForm({
         <p className={titleCls} style={{ color: "var(--brand-primary)" }}>
           Asesor que firma
         </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <div>
-            <label className={labelCls}>Nombre</label>
-            <Input value={asesorNombre} onChange={(e) => setAsesorNombre(e.target.value)} />
-          </div>
+        <p className="text-xs text-gray-400">Firma el <b>asesor interno</b> seleccionado arriba ({asesorNombre || "—"}).</p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className={labelCls}>Cargo</label>
             <Input value={asesorCargo} onChange={(e) => setAsesorCargo(e.target.value)} />

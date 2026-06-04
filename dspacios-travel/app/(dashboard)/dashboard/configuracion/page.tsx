@@ -23,8 +23,7 @@ export default async function ConfiguracionPage() {
     );
   }
 
-  const [{ data: asesores }, { data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }, { data: vendedores }] = await Promise.all([
-    sb.from("asesores").select("id, nombre, email, pct_comision_base, meta_mensual, escala_id, aplica_retencion").order("nombre"),
+  const [{ data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }, { data: vendedores }] = await Promise.all([
     sb.from("parametros_tributarios").select("parametro, valor, descripcion").order("parametro"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("formas_pago").select("id, nombre").order("orden"),
@@ -44,8 +43,8 @@ export default async function ConfiguracionPage() {
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
       <h1 className="mb-1 text-2xl font-semibold text-gray-900">Configuración</h1>
-      <p className="mb-6 text-sm text-gray-500">Asesores, comisiones, parámetros tributarios, rangos de edad y formas de pago.</p>
-      <ConfigClient asesores={asesores ?? []} parametros={parametros ?? []} rangos={rangos ?? []} formasPago={formasPago ?? []} />
+      <p className="mb-6 text-sm text-gray-500">Escalas de comisión, parámetros tributarios, rangos de edad y formas de pago.</p>
+      <ConfigClient parametros={parametros ?? []} rangos={rangos ?? []} formasPago={formasPago ?? []} />
       <div className="mt-8">
         <EscalasComisionConfig escalas={escalasConRangos} vendedores={vendedoresEscala} />
       </div>

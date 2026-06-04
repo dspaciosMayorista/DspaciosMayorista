@@ -16,16 +16,20 @@ export default async function NuevoContratoPage() {
     asesorDefault = perfil?.nombre ?? "";
   }
 
-  const [{ data: paquetesRaw }, { data: bloqueosRaw }] = await Promise.all([
+  const [{ data: paquetesRaw }, { data: bloqueosRaw }, { data: vendedores }, { data: aliados }] = await Promise.all([
     sb.from("paquetes")
       .select("id, categoria, nombre, plan_alimentacion, impuesto_no_comisionable, paquete_hoteles(nombre, ciudad, alimentacion, acomodacion_detalle), paquete_precios(acomodacion, precio)")
       .eq("activo", true)
       .order("nombre"),
     sb.from("bloqueos_vuelo").select("id, record, ruta, fecha_ida, fecha_regreso, aerolinea").order("fecha_ida"),
+    sb.from("usuarios").select("nombre").eq("rol", "venta").eq("activo", true).order("nombre"),
+    sb.from("aliados").select("id, nombre, tipo").order("nombre"),
   ]);
 
   const paquetes = (paquetesRaw ?? []) as unknown as PaqueteOpt[];
   const bloqueos = (bloqueosRaw ?? []) as unknown as BloqueoOpt[];
+  const agencias = (aliados ?? []).filter((a) => (a.tipo ?? "agencia") === "agencia").map((a) => ({ id: a.id, nombre: a.nombre }));
+  const freelances = (aliados ?? []).filter((a) => a.tipo === "freelance").map((a) => ({ id: a.id, nombre: a.nombre }));
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
@@ -41,7 +45,8 @@ export default async function NuevoContratoPage() {
           <Link href="/dashboard/reservar" className="font-semibold text-[var(--brand-primary)] hover:underline">Ir a Reservar →</Link>
         </p>
       </div>
-      <NuevoContratoForm asesorDefault={asesorDefault} paquetes={paquetes} bloqueos={bloqueos} />
+      <NuevoContratoForm asesorDefault={asesorDefault} paquetes={paquetes} bloqueos={bloqueos}
+        vendedores={vendedores ?? []} agencias={agencias} freelances={freelances} />
     </div>
   );
 }
