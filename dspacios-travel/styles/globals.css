@@ -179,3 +179,21 @@ html[data-theme="indigo"] .bg-gray-100 {
 .bg-brand-gradient {
   background-image: var(--brand-gradient);
 }
+
+/* ── Tarjetas elevadas ──────────────────────────────────────────────────
+   Efecto "levantado" (sombra) para todas las tarjetas/cuadros del panel sin
+   tocar cada componente: se aplica a las superficies con borde + fondo blanco
+   y a las tarjetas de color (stat cards). Regla plana → gana sobre utilidades. */
+.bg-white.border.rounded-xl,
+.bg-white.border.rounded-2xl,
+.rounded-xl.p-4.text-white,
+.rounded-xl.p-5.text-white {
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 10px 22px -8px rgba(16, 24, 40, 0.14);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+/* Realce sutil al pasar el mouse: se elevan un poco más. */
+.bg-white.border.rounded-xl:hover,
+.bg-white.border.rounded-2xl:hover {
+  box-shadow: 0 2px 6px rgba(16, 24, 40, 0.08), 0 16px 30px -10px rgba(16, 24, 40, 0.18);
+}
