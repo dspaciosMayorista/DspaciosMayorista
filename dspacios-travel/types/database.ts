@@ -20,6 +20,8 @@ export type Database = {
           rol: Database["public"]["Enums"]["rol_usuario"];
           activo: boolean;
           fecha_registro: string;
+          escala_id: number | null;
+          aplica_retencion: boolean;
         };
         Insert: {
           id?: string;
@@ -28,6 +30,8 @@ export type Database = {
           rol?: Database["public"]["Enums"]["rol_usuario"];
           activo?: boolean;
           fecha_registro?: string;
+          escala_id?: number | null;
+          aplica_retencion?: boolean;
         };
         Update: {
           id?: string;

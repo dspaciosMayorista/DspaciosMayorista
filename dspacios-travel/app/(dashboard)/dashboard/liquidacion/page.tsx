@@ -36,9 +36,9 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
   const mes = sp.mes && /^\d{4}-\d{2}$/.test(sp.mes) ? sp.mes : hoy.slice(0, 7);
   const { ini, fin } = rangoMes(mes);
 
-  const [{ data: ventas }, { data: asesores }, { data: rangos }, { data: params }] = await Promise.all([
+  const [{ data: ventas }, { data: vendedores }, { data: rangos }, { data: params }] = await Promise.all([
     sb.from("ventas").select("asesor_firma_nombre, precio_venta, impuesto, estado, fecha_venta").gte("fecha_venta", ini).lt("fecha_venta", fin),
-    sb.from("asesores").select("id, nombre, escala_id, activo, aplica_retencion").order("nombre"),
+    sb.from("usuarios").select("id, nombre, escala_id, aplica_retencion").eq("rol", "venta").order("nombre"),
     sb.from("escala_rangos").select("escala_id, pvp_desde, pvp_hasta, pct"),
     sb.from("parametros_tributarios").select("valor").eq("parametro", "RETENCION_HONORARIOS").maybeSingle(),
   ]);
@@ -65,8 +65,8 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
     rangosPorEscala.set(r.escala_id, arr);
   }
 
-  // Filas: cada asesor del catálogo con su acumulado del mes.
-  const filas = (asesores ?? []).map((a) => {
+  // Filas: cada asesor interno (usuario rol venta) con su acumulado del mes.
+  const filas = (vendedores ?? []).map((a) => {
     const ac = acum.get(a.nombre.trim().toLowerCase()) ?? { pvp: 0, base: 0, n: 0 };
     const rgs = a.escala_id ? rangosPorEscala.get(a.escala_id) ?? [] : [];
     const aplicaRet = a.aplica_retencion ?? true;
@@ -137,8 +137,8 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
       </div>
 
       <p className="mt-3 text-xs text-gray-400">
-        Cuenta contratos en estado activo/confirmado por <b>fecha de venta</b>. El asesor se enlaza por nombre con el catálogo
-        (Configuración → Escalas). Retención de honorarios {Math.round(retH * 100)}%.
+        Cuenta contratos en estado activo/confirmado por <b>fecha de venta</b>. El asesor interno (usuario rol venta) y su escala se
+        configuran en <b>Configuración → Escala y retención por asesor interno</b>. Retención de honorarios {Math.round(retH * 100)}%.
       </p>
     </div>
   );

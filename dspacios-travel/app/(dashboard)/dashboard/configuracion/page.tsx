@@ -23,13 +23,14 @@ export default async function ConfiguracionPage() {
     );
   }
 
-  const [{ data: asesores }, { data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }] = await Promise.all([
+  const [{ data: asesores }, { data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }, { data: vendedores }] = await Promise.all([
     sb.from("asesores").select("id, nombre, email, pct_comision_base, meta_mensual, escala_id, aplica_retencion").order("nombre"),
     sb.from("parametros_tributarios").select("parametro, valor, descripcion").order("parametro"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("formas_pago").select("id, nombre").order("orden"),
     sb.from("escalas_comision").select("id, nombre").order("nombre"),
     sb.from("escala_rangos").select("escala_id, pvp_desde, pvp_hasta, pct, orden").order("orden"),
+    sb.from("usuarios").select("id, nombre, escala_id, aplica_retencion").eq("rol", "venta").order("nombre"),
   ]);
 
   const escalasConRangos = (escalas ?? []).map((e) => ({
@@ -38,7 +39,7 @@ export default async function ConfiguracionPage() {
     rangos: (escalaRangos ?? []).filter((r) => r.escala_id === e.id)
       .map((r) => ({ pvp_desde: Number(r.pvp_desde), pvp_hasta: r.pvp_hasta == null ? null : Number(r.pvp_hasta), pct: Number(r.pct) })),
   }));
-  const asesoresEscala = (asesores ?? []).map((a) => ({ id: a.id, nombre: a.nombre, escala_id: a.escala_id ?? null }));
+  const vendedoresEscala = (vendedores ?? []).map((v) => ({ id: v.id, nombre: v.nombre, escala_id: v.escala_id ?? null, aplica_retencion: v.aplica_retencion ?? true }));
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
@@ -46,7 +47,7 @@ export default async function ConfiguracionPage() {
       <p className="mb-6 text-sm text-gray-500">Asesores, comisiones, parámetros tributarios, rangos de edad y formas de pago.</p>
       <ConfigClient asesores={asesores ?? []} parametros={parametros ?? []} rangos={rangos ?? []} formasPago={formasPago ?? []} />
       <div className="mt-8">
-        <EscalasComisionConfig escalas={escalasConRangos} asesores={asesoresEscala} />
+        <EscalasComisionConfig escalas={escalasConRangos} vendedores={vendedoresEscala} />
       </div>
     </div>
   );

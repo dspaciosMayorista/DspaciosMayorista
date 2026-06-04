@@ -4,16 +4,16 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
-import { crearEscala, eliminarEscala, guardarRangosEscala, asignarEscalaAsesor } from "./actions";
+import { crearEscala, eliminarEscala, guardarRangosEscala, actualizarEscalaUsuario } from "./actions";
 
 type Rango = { pvp_desde: number; pvp_hasta: number | null; pct: number };
 type Escala = { id: number; nombre: string; rangos: Rango[] };
-type Asesor = { id: number; nombre: string; escala_id: number | null };
+type Vendedor = { id: string; nombre: string; escala_id: number | null; aplica_retencion: boolean };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-4";
 
-export function EscalasComisionConfig({ escalas, asesores }: { escalas: Escala[]; asesores: Asesor[] }) {
+export function EscalasComisionConfig({ escalas, vendedores }: { escalas: Escala[]; vendedores: Vendedor[] }) {
   const [nombre, setNombre] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -48,12 +48,16 @@ export function EscalasComisionConfig({ escalas, asesores }: { escalas: Escala[]
       {escalas.map((e) => <EscalaEditor key={e.id} escala={e} />)}
       {!escalas.length && <p className="text-sm text-gray-400">Aún no hay escalas.</p>}
 
-      {/* Asignación a asesores */}
+      {/* Asignación a asesores internos (usuarios con rol venta) */}
       <div className={card}>
-        <p className="mb-2 text-sm font-semibold text-gray-700">Escala por asesor</p>
+        <p className="mb-1 text-sm font-semibold text-gray-700">Escala y retención por asesor interno</p>
+        <p className="mb-2 text-xs text-gray-400">Son los usuarios con rol <b>venta</b>. Si falta alguien, créalo en <b>Usuarios</b> con rol venta.</p>
         <div className="space-y-1">
-          {asesores.map((a) => <AsignacionAsesor key={a.id} asesor={a} escalas={escalas} />)}
-          {!asesores.length && <p className="text-sm text-gray-400">No hay asesores en el catálogo.</p>}
+          <div className="flex items-center justify-between gap-3 pb-1 text-[11px] uppercase text-gray-400">
+            <span className="flex-1">Asesor</span><span className="w-40 text-center">Escala</span><span className="w-24 text-center">Retención</span>
+          </div>
+          {vendedores.map((v) => <AsignacionVendedor key={v.id} vendedor={v} escalas={escalas} />)}
+          {!vendedores.length && <p className="text-sm text-gray-400">No hay usuarios con rol venta.</p>}
         </div>
       </div>
     </section>
@@ -128,21 +132,24 @@ function EscalaEditor({ escala }: { escala: Escala }) {
   );
 }
 
-function AsignacionAsesor({ asesor, escalas }: { asesor: Asesor; escalas: Escala[] }) {
-  const [escalaId, setEscalaId] = useState<string>(asesor.escala_id ? String(asesor.escala_id) : "");
+function AsignacionVendedor({ vendedor, escalas }: { vendedor: Vendedor; escalas: Escala[] }) {
+  const [escalaId, setEscalaId] = useState<string>(vendedor.escala_id ? String(vendedor.escala_id) : "");
+  const [ret, setRet] = useState(vendedor.aplica_retencion ?? true);
   const [pending, start] = useTransition();
-  function cambiar(v: string) {
-    setEscalaId(v);
-    start(async () => { await asignarEscalaAsesor(asesor.id, v === "" ? null : Number(v)); });
-  }
   return (
     <div className="flex items-center justify-between gap-3 border-t border-gray-50 py-1.5 text-sm first:border-t-0">
-      <span className="text-gray-700">{asesor.nombre}</span>
-      <select value={escalaId} onChange={(e) => cambiar(e.target.value)} disabled={pending}
-        className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
+      <span className="flex-1 text-gray-700">{vendedor.nombre}</span>
+      <select value={escalaId} disabled={pending}
+        onChange={(e) => { setEscalaId(e.target.value); start(async () => { await actualizarEscalaUsuario(vendedor.id, { escalaId: e.target.value === "" ? null : Number(e.target.value) }); }); }}
+        className="w-40 rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
         <option value="">— Sin escala —</option>
         {escalas.map((e) => <option key={e.id} value={e.id}>{e.nombre}</option>)}
       </select>
+      <label className="flex w-24 items-center justify-center gap-1.5 text-xs text-gray-600">
+        <input type="checkbox" checked={ret}
+          onChange={(e) => { setRet(e.target.checked); start(async () => { await actualizarEscalaUsuario(vendedor.id, { aplicaRetencion: e.target.checked }); }); }} />
+        Aplica
+      </label>
     </div>
   );
 }

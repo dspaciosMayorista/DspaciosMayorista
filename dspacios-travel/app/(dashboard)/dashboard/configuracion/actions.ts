@@ -152,3 +152,18 @@ export async function asignarEscalaAsesor(asesorId: number, escalaId: number | n
   revalidatePath("/dashboard/configuracion");
   return { ok: true };
 }
+
+// Asigna escala / retención a un USUARIO (asesor interno = usuario rol 'venta').
+export async function actualizarEscalaUsuario(
+  usuarioId: string,
+  patch: { escalaId?: number | null; aplicaRetencion?: boolean }
+): Promise<Result> {
+  const sb = await createClient();
+  const upd: { escala_id?: number | null; aplica_retencion?: boolean } = {};
+  if (patch.escalaId !== undefined) upd.escala_id = patch.escalaId;
+  if (patch.aplicaRetencion !== undefined) upd.aplica_retencion = patch.aplicaRetencion;
+  const { error } = await sb.from("usuarios").update(upd).eq("id", usuarioId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
