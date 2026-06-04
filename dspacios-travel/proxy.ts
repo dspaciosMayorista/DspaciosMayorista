@@ -40,10 +40,8 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  if (user && pathname === "/") {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
-  }
-
+  // La raíz "/" siempre abre el tarifario público (app/page.tsx la redirige),
+  // también con sesión iniciada. Desde ahí cada quien usa "Ingresar".
   return supabaseResponse;
 }
 
