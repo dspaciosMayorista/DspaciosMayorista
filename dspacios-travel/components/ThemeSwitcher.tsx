@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from "react";
 
-type Tema = "marca" | "indigo";
+type Tema = "marca" | "indigo" | "verde";
 const KEY = "dsp-theme";
 
 // Interruptor flotante para PROBAR el estilo: alterna entre la marca actual
-// (turquesa) y el tema índigo (estilo del sitio). Guarda la elección en el
-// navegador. Es una ayuda temporal de decisión; se puede quitar luego.
+// (turquesa), el tema índigo y el tema verde (estilo dashboard). Guarda la
+// elección en el navegador. Es una ayuda temporal de decisión; se puede quitar luego.
 export function ThemeSwitcher() {
   const [tema, setTema] = useState<Tema>("marca");
 
@@ -20,8 +20,8 @@ export function ThemeSwitcher() {
   function aplicar(t: Tema) {
     setTema(t);
     const el = document.documentElement;
-    if (t === "indigo") el.setAttribute("data-theme", "indigo");
-    else el.removeAttribute("data-theme");
+    if (t === "marca") el.removeAttribute("data-theme");
+    else el.setAttribute("data-theme", t);
     try {
       localStorage.setItem(KEY, t);
     } catch {
@@ -49,6 +49,7 @@ export function ThemeSwitcher() {
       <span className="pl-2 pr-1 text-[10px] uppercase tracking-wide text-gray-400">Estilo</span>
       {btn("marca", "Turquesa")}
       {btn("indigo", "Índigo")}
+      {btn("verde", "Verde")}
     </div>
   );
 }
