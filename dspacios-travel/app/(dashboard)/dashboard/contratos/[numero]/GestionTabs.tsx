@@ -50,7 +50,7 @@ export type GestionProps = {
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
-const card = "rounded-xl border border-gray-200 bg-white p-4 sm:p-5";
+const card = "rounded-xl border border-gray-300 bg-white p-4 shadow-sm sm:p-5";
 
 export function GestionTabs(p: GestionProps) {
   // ── Cálculos vivos ──────────────────────────────────────────────
@@ -114,7 +114,7 @@ export function GestionTabs(p: GestionProps) {
             </TabsContent>
             <TabsContent value="facturacion">
               <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
-                clienteNombre={p.clienteNombre} clienteDocumento={p.clienteDocumento} />
+                clienteNombre={p.clienteNombre} clienteDocumento={p.clienteDocumento} totalContrato={p.precioVenta} />
             </TabsContent>
             <TabsContent value="rentabilidad">
               <RentabilidadTab rent={rent} />
@@ -386,7 +386,7 @@ function ComisionesTab({ numero, precioVenta, impuesto, filas, comB2BTotal, comA
 type ItemForm = { descripcion: string; valor: string; gravable: boolean };
 const itemVacio = (): ItemForm => ({ descripcion: "", valor: "", gravable: true });
 
-function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, clienteDocumento }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaPct: number; clienteNombre: string; clienteDocumento: string }) {
+function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, clienteDocumento, totalContrato }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaPct: number; clienteNombre: string; clienteDocumento: string; totalContrato: number }) {
   const [num, setNum] = useState("");
   const [fecha, setFecha] = useState("");
   const [cliente, setCliente] = useState("");
@@ -485,11 +485,24 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, cli
         <button type="button" onClick={addItem} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>+ Agregar ítem</button>
 
         {/* Previsualización de totales de la factura */}
-        <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-          <span className="mr-3">Gravable: <b>{formatCOP(prevGrav)}</b></span>
-          <span className="mr-3">No gravable: <b>{formatCOP(prevNoGrav)}</b></span>
-          <span className="mr-3">IVA: <b>{formatCOP(prevIva)}</b></span>
-          <span>Total factura: <b style={{ color: "var(--brand-primary)" }}>{formatCOP(prevTotal)}</b></span>
+        <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+          <div>
+            <span className="mr-3">Gravable: <b>{formatCOP(prevGrav)}</b></span>
+            <span className="mr-3">No gravable: <b>{formatCOP(prevNoGrav)}</b></span>
+            <span className="mr-3">IVA: <b>{formatCOP(prevIva)}</b></span>
+            <span>Total factura: <b style={{ color: "var(--brand-primary)" }}>{formatCOP(prevTotal)}</b></span>
+          </div>
+          {prevTotal > 0 && (() => {
+            const diff = prevTotal - totalContrato;
+            return (
+              <div className="mt-1 text-red-400/80">
+                Total contrato: {formatCOP(totalContrato)}
+                {Math.abs(diff) < 1
+                  ? " · coincide con la factura"
+                  : ` · ${diff > 0 ? "de más" : "de menos"} ${formatCOP(Math.abs(diff))}`}
+              </div>
+            );
+          })()}
         </div>
 
         <div className="mt-3 flex items-center gap-3">
