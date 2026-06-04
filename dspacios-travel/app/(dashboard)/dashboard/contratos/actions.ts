@@ -78,6 +78,12 @@ export type ContratoInput = {
   hoteles: HotelInput[];
   vuelos: VueloInput[];
   items: ItemInput[];
+  // BNC (Base No Comisionable) — se elige al crear el contrato (dinámico/empaquetado
+  // no la traen). modo 'tiquetes' = BNC es el valor de los tiquetes; 'fijo' = un
+  // valor fijo que NUNCA puede ser menor al valor de los tiquetes.
+  bncModo?: "tiquetes" | "fijo";
+  valorTiquetes?: number;
+  bncFijo?: number;
 };
 
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -128,6 +134,16 @@ export async function crearContrato(
     items.reduce((s, it) => s + it.adultos, 0) ||
     1;
 
+  // BNC (Base No Comisionable): tiquetes o valor fijo (≥ tiquetes y ≤ PVP).
+  const tiquetes = Math.max(0, Number(input.valorTiquetes) || 0);
+  let bnc = tiquetes;
+  if (input.bncModo === "fijo") {
+    const fijo = Math.max(0, Number(input.bncFijo) || 0);
+    if (fijo < tiquetes) return { ok: false, error: "La BNC fija no puede ser menor al valor de los tiquetes." };
+    bnc = fijo;
+  }
+  if (bnc > precioVenta) return { ok: false, error: "La BNC no puede ser mayor al valor total del contrato (PVP)." };
+
   // 2. Crear la venta (cabecera del contrato)
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
@@ -138,6 +154,7 @@ export async function crearContrato(
     fecha_emision: oNull(input.fechaEmision),
     pax,
     precio_venta: precioVenta,
+    impuesto: bnc,
     estado: "activo",
     tipo_paquete: input.tipoPaquete,
     cliente_documento: oNull(input.clienteDocumento),

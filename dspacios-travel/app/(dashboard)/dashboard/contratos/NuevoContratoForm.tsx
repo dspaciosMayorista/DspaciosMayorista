@@ -91,10 +91,17 @@ export function NuevoContratoForm({
     { descripcion: "Plan turístico", adultos: 1, ninos: 0, tarifaAdulto: 0, tarifaNino: 0 },
   ]);
 
+  // BNC (Base No Comisionable)
+  const [bncModo, setBncModo] = useState<"tiquetes" | "fijo">("tiquetes");
+  const [valorTiquetes, setValorTiquetes] = useState("");
+  const [bncFijo, setBncFijo] = useState("");
+
   const total = items.reduce(
     (s, it) => s + it.adultos * it.tarifaAdulto + it.ninos * it.tarifaNino,
     0
   );
+  const bnc = bncModo === "fijo" ? Number(bncFijo) || 0 : Number(valorTiquetes) || 0;
+  const baseComisionable = Math.max(0, total - bnc);
 
   function setItem(i: number, patch: Partial<ItemInput>) {
     setItems((arr) => arr.map((it, j) => (j === i ? { ...it, ...patch } : it)));
@@ -134,6 +141,14 @@ export function NuevoContratoForm({
       setError("El nombre del cliente es obligatorio.");
       return;
     }
+    if (bncModo === "fijo" && (Number(bncFijo) || 0) < (Number(valorTiquetes) || 0)) {
+      setError("La BNC fija no puede ser menor al valor de los tiquetes.");
+      return;
+    }
+    if (bnc > total) {
+      setError("La BNC no puede ser mayor al total del contrato (PVP).");
+      return;
+    }
     const pasajerosOk = pasajeros.filter((p) => p.nombres.trim() !== "" || p.apellidos.trim() !== "");
     const hotelesOk = hoteles.filter((h) => h.nombre.trim() !== "");
     const vuelosOk = vuelos.filter((v) => v.aerolinea.trim() !== "");
@@ -164,6 +179,9 @@ export function NuevoContratoForm({
           hoteles: hotelesOk,
           vuelos: vuelosOk,
           items: itemsOk,
+          bncModo,
+          valorTiquetes: Number(valorTiquetes) || 0,
+          bncFijo: Number(bncFijo) || 0,
         });
         if (res.ok) {
           router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
@@ -455,6 +473,39 @@ export function NuevoContratoForm({
           <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>
             {formatCOP(total)}
           </span>
+        </div>
+      </section>
+
+      {/* BNC (Base No Comisionable) */}
+      <section className={sectionCls}>
+        <p className={titleCls} style={{ color: "var(--brand-primary)" }}>Base No Comisionable (BNC)</p>
+        <p className="text-xs text-gray-500">
+          El valor que NO comisiona (tiquetes). La comisión interna se liquida sobre la <b>base comisionable = PVP − BNC</b>.
+          En dinámico sin vuelo, déjalo en 0.
+        </p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div>
+            <label className={labelCls}>Valor de los tiquetes (total)</label>
+            <Input type="number" min={0} value={valorTiquetes} onChange={(e) => setValorTiquetes(e.target.value)} placeholder="0" />
+          </div>
+          <div>
+            <label className={labelCls}>¿Cómo se calcula la BNC?</label>
+            <select value={bncModo} onChange={(e) => setBncModo(e.target.value as "tiquetes" | "fijo")}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <option value="tiquetes">BNC = valor de los tiquetes</option>
+              <option value="fijo">BNC = valor fijo (≥ tiquetes)</option>
+            </select>
+          </div>
+          {bncModo === "fijo" && (
+            <div>
+              <label className={labelCls}>Valor fijo de la BNC</label>
+              <Input type="number" min={0} value={bncFijo} onChange={(e) => setBncFijo(e.target.value)} placeholder="0" />
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3 text-sm">
+          <span className="text-gray-500">BNC: <b className="tabular-nums text-gray-700">{formatCOP(bnc)}</b></span>
+          <span className="text-gray-500">Base comisionable: <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(baseComisionable)}</b></span>
         </div>
       </section>
 
