@@ -117,3 +117,38 @@ export async function cargarContactosMasivo(
   revalidatePath("/dashboard/crm");
   return { ok: errores.length === 0, insertados, errores };
 }
+
+// ── Configuración de email (envío de campañas) ─────────────────────────────
+const ROLES_EMAIL = ["superadmin", "gerencia", "administracion"];
+
+export type EmailConfigInput = {
+  proveedor: string;
+  remitenteEmail: string;
+  remitenteNombre: string;
+  responderA: string;
+  apiKey: string;
+  firmaHtml: string;
+  activo: boolean;
+};
+
+export async function guardarEmailConfig(input: EmailConfigInput): Promise<Result> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
+  if (!ROLES_EMAIL.includes(perfil?.rol ?? "")) return { ok: false, error: "Solo administración/gerencia." };
+
+  const { error } = await sb.from("crm_email_config").upsert({
+    id: 1,
+    proveedor: input.proveedor,
+    remitente_email: oNull(input.remitenteEmail),
+    remitente_nombre: oNull(input.remitenteNombre),
+    responder_a: oNull(input.responderA),
+    api_key: oNull(input.apiKey),
+    firma_html: oNull(input.firmaHtml),
+    activo: input.activo,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "id" });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/crm/email");
+  return { ok: true };
+}
