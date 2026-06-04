@@ -51,6 +51,7 @@ export type Database = {
           activo: boolean;
           created_at: string;
           escala_id: number | null;
+          aplica_retencion: boolean;
         };
         Insert: {
           id?: number;
@@ -63,6 +64,7 @@ export type Database = {
           activo?: boolean;
           created_at?: string;
           escala_id?: number | null;
+          aplica_retencion?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["asesores"]["Insert"]>;
         Relationships: [];
@@ -108,6 +110,8 @@ export type Database = {
           aplica_retencion: boolean;
           pct_retencion: number;
           created_at: string;
+          tipo: string;
+          pct_comision: number | null;
         };
         Insert: {
           id?: number;
@@ -119,6 +123,8 @@ export type Database = {
           aplica_retencion?: boolean;
           pct_retencion?: number;
           created_at?: string;
+          tipo?: string;
+          pct_comision?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["aliados"]["Insert"]>;
         Relationships: [];

@@ -38,7 +38,7 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
 
   const [{ data: ventas }, { data: asesores }, { data: rangos }, { data: params }] = await Promise.all([
     sb.from("ventas").select("asesor_firma_nombre, precio_venta, impuesto, estado, fecha_venta").gte("fecha_venta", ini).lt("fecha_venta", fin),
-    sb.from("asesores").select("id, nombre, escala_id, activo").order("nombre"),
+    sb.from("asesores").select("id, nombre, escala_id, activo, aplica_retencion").order("nombre"),
     sb.from("escala_rangos").select("escala_id, pvp_desde, pvp_hasta, pct"),
     sb.from("parametros_tributarios").select("valor").eq("parametro", "RETENCION_HONORARIOS").maybeSingle(),
   ]);
@@ -69,7 +69,8 @@ export default async function LiquidacionPage({ searchParams }: { searchParams: 
   const filas = (asesores ?? []).map((a) => {
     const ac = acum.get(a.nombre.trim().toLowerCase()) ?? { pvp: 0, base: 0, n: 0 };
     const rgs = a.escala_id ? rangosPorEscala.get(a.escala_id) ?? [] : [];
-    const liq = comisionMes({ sumaPvp: ac.pvp, sumaBase: ac.base, rangos: rgs, retHonorarios: retH });
+    const aplicaRet = a.aplica_retencion ?? true;
+    const liq = comisionMes({ sumaPvp: ac.pvp, sumaBase: ac.base, rangos: rgs, retHonorarios: aplicaRet ? retH : 0 });
     return { id: a.id, nombre: a.nombre, sinEscala: !a.escala_id, contratos: ac.n, pvp: ac.pvp, base: ac.base, ...liq };
   }).filter((f) => f.contratos > 0 || !f.sinEscala);
 

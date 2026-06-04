@@ -24,7 +24,7 @@ export default async function ConfiguracionPage() {
   }
 
   const [{ data: asesores }, { data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }] = await Promise.all([
-    sb.from("asesores").select("id, nombre, email, pct_comision_base, meta_mensual, escala_id").order("nombre"),
+    sb.from("asesores").select("id, nombre, email, pct_comision_base, meta_mensual, escala_id, aplica_retencion").order("nombre"),
     sb.from("parametros_tributarios").select("parametro, valor, descripcion").order("parametro"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("formas_pago").select("id, nombre").order("orden"),

@@ -54,10 +54,13 @@ export async function crearAsesor(input: {
 
 export async function actualizarAsesor(
   id: number,
-  pctComisionBase: number
+  pctComisionBase: number,
+  aplicaRetencion?: boolean
 ): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb.from("asesores").update({ pct_comision_base: pctComisionBase }).eq("id", id);
+  const patch: { pct_comision_base: number; aplica_retencion?: boolean } = { pct_comision_base: pctComisionBase };
+  if (aplicaRetencion !== undefined) patch.aplica_retencion = aplicaRetencion;
+  const { error } = await sb.from("asesores").update(patch).eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/configuracion");
   return { ok: true };

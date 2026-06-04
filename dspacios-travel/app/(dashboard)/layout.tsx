@@ -43,6 +43,7 @@ const NAV: NavItem[] = [
       { href: "/dashboard/pagos", label: "Pagos a proveedores" },
       { href: "/dashboard/comisiones", label: "Comisiones B2B" },
       { href: "/dashboard/liquidacion", label: "Liquidación asesores" },
+      { href: "/dashboard/aliados", label: "Agencias y freelance" },
     ],
   },
   { href: "/dashboard/usuarios", label: "Usuarios" },
