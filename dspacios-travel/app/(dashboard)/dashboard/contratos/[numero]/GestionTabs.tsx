@@ -87,7 +87,7 @@ export function GestionTabs(p: GestionProps) {
   return (
     <div className="mt-8">
       <Tabs defaultValue="cartera" orientation="vertical">
-        <TabsList className="w-full shrink-0 sm:w-48">
+        <TabsList className="w-40 shrink-0 sm:w-48">
           <TabsTrigger value="cartera">Cartera</TabsTrigger>
           {p.verFinanzas && <TabsTrigger value="costos">Costos</TabsTrigger>}
           {p.verFinanzas && <TabsTrigger value="proveedores">Proveedores</TabsTrigger>}
