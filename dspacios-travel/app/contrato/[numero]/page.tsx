@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
 import { PrintButton } from "@/components/contrato/PrintButton";
+import { getEmpresaConfig } from "@/lib/empresa";
 
 export async function generateMetadata({
   params,
@@ -10,7 +11,7 @@ export async function generateMetadata({
   params: Promise<{ numero: string }>;
 }) {
   const { numero } = await params;
-  return { title: `Contrato ${decodeURIComponent(numero)} — D'spacios Travel` };
+  return { title: `Contrato ${decodeURIComponent(numero)}` };
 }
 
 export default async function ContratoImprimiblePage({
@@ -40,6 +41,8 @@ export default async function ContratoImprimiblePage({
 
   if (!venta) notFound();
 
+  const empresa = await getEmpresaConfig(sb);
+
   const totalPagado = (abonos ?? []).reduce(
     (s, a) => s + (a.valor_abono ?? 0),
     0
@@ -67,6 +70,7 @@ export default async function ContratoImprimiblePage({
             vuelos={vuelos ?? []}
             items={items ?? []}
             totalPagado={totalPagado}
+            empresa={empresa}
           />
         </div>
       </div>

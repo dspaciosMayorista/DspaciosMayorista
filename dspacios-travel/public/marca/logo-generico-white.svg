@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 170" role="img" aria-label="Agencia de Viajes">
+  <g fill="none" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="78" cy="85" r="52"/>
+    <path d="M52 92 l52 -10 -22 30 -10 -14 z" fill="#FFFFFF" stroke="none"/>
+    <path d="M44 70 q34 -22 68 0" stroke="#FFFFFF"/>
+  </g>
+  <text x="156" y="80" font-family="Jost, Questrial, Arial, sans-serif" font-size="46" font-weight="700" fill="#FFFFFF" letter-spacing="1">Tu Agencia</text>
+  <text x="158" y="120" font-family="Jost, Questrial, Arial, sans-serif" font-size="22" font-weight="400" fill="#FFFFFF" opacity="0.85" letter-spacing="3">DE VIAJES Y TURISMO</text>
+</svg>

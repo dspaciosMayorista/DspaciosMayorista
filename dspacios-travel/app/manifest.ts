@@ -5,9 +5,9 @@ import type { MetadataRoute } from "next";
 // el degradado oficial).
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "D'spacios Travel",
-    short_name: "D'spacios",
-    description: "Sistema Integral — Mayorista de Turismo",
+    name: "Agencia de Viajes",
+    short_name: "Agencia",
+    description: "Sistema integral de gestión para agencias de viajes y turismo",
     start_url: "/dashboard",
     scope: "/",
     display: "standalone",

@@ -10,14 +10,14 @@ const jost = Jost({
 });
 
 export const metadata: Metadata = {
-  applicationName: "D'spacios Travel",
-  title: { default: "D'spacios Travel", template: "%s · D'spacios Travel" },
-  description: "Sistema Integral — Mayorista de Turismo",
+  applicationName: "Sistema de Gestión Turística",
+  title: { default: "Agencia de Viajes", template: "%s · Agencia de Viajes" },
+  description: "Sistema integral de gestión para agencias de viajes y turismo",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "D'spacios",
+    title: "Agencia",
   },
   icons: {
     icon: [

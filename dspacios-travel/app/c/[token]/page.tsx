@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
 import { PrintButton } from "@/components/contrato/PrintButton";
+import { getEmpresaConfig } from "@/lib/empresa";
 
 export const dynamic = "force-dynamic";
 
@@ -18,9 +19,7 @@ export async function generateMetadata({
     .eq("share_token", token)
     .single();
   return {
-    title: data
-      ? `Contrato ${data.numero_contrato} — D'spacios Travel`
-      : "Contrato — D'spacios Travel",
+    title: data ? `Contrato ${data.numero_contrato}` : "Contrato",
   };
 }
 
@@ -60,6 +59,8 @@ export default async function ContratoPublicoPage({
     0
   );
 
+  const empresa = await getEmpresaConfig(sb);
+
   return (
     <div className="min-h-screen bg-gray-100 py-6">
       <div className="mx-auto mb-4 flex max-w-3xl items-center justify-end px-4 print:hidden">
@@ -75,6 +76,7 @@ export default async function ContratoPublicoPage({
             vuelos={vuelos ?? []}
             items={items ?? []}
             totalPagado={totalPagado}
+            empresa={empresa}
           />
         </div>
       </div>

@@ -1136,6 +1136,34 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["formas_pago"]["Insert"]>;
         Relationships: [];
       };
+      empresa_config: {
+        Row: {
+          id: number;
+          nombre_comercial: string; tagline: string | null;
+          logo_url: string | null; logo_white_url: string | null; logo_icon_url: string | null;
+          color_primary: string | null; color_accent: string | null;
+          razon_social: string | null; nit: string | null; dv: string | null; regimen: string | null; rnt: string | null;
+          direccion: string | null; ciudad: string | null; telefono: string | null; email: string | null; sitio_web: string | null;
+          banco: string | null; cuenta_tipo: string | null; cuenta_numero: string | null; cuenta_titular: string | null;
+          ciudad_emision: string | null; jurisdiccion: string | null;
+          politica_pago: string | null; politica_cancelacion: string | null; terminos_condiciones: string | null; nota_contrato: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre_comercial?: string; tagline?: string | null;
+          logo_url?: string | null; logo_white_url?: string | null; logo_icon_url?: string | null;
+          color_primary?: string | null; color_accent?: string | null;
+          razon_social?: string | null; nit?: string | null; dv?: string | null; regimen?: string | null; rnt?: string | null;
+          direccion?: string | null; ciudad?: string | null; telefono?: string | null; email?: string | null; sitio_web?: string | null;
+          banco?: string | null; cuenta_tipo?: string | null; cuenta_numero?: string | null; cuenta_titular?: string | null;
+          ciudad_emision?: string | null; jurisdiccion?: string | null;
+          politica_pago?: string | null; politica_cancelacion?: string | null; terminos_condiciones?: string | null; nota_contrato?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["empresa_config"]["Insert"]>;
+        Relationships: [];
+      };
       hotel_acomodaciones: {
         Row: {
           id: number; hotel_id: number;

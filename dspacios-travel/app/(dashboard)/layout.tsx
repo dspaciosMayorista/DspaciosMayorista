@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
 import { SidebarNav, type NavItem } from "./SidebarNav";
 import { Logo } from "@/components/Logo";
+import { getEmpresaConfig } from "@/lib/empresa";
 
 const NAV: NavItem[] = [
   {
@@ -45,7 +46,13 @@ const NAV: NavItem[] = [
     ],
   },
   { href: "/dashboard/usuarios", label: "Usuarios" },
-  { href: "/dashboard/configuracion", label: "Configuración" },
+  {
+    href: "/dashboard/configuracion",
+    label: "Configuración",
+    children: [
+      { href: "/dashboard/empresa", label: "Información de la empresa" },
+    ],
+  },
 ];
 
 export default async function DashboardLayout({
@@ -62,6 +69,8 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
+  const empresa = await getEmpresaConfig(supabase);
+
   return (
     <div className="flex min-h-screen flex-col bg-gray-50 md:flex-row">
       {/* Barra superior (solo celular) */}
@@ -70,8 +79,8 @@ export default async function DashboardLayout({
         style={{ borderTop: `4px solid var(--brand-primary)` }}
       >
         <div className="flex items-center justify-between">
-          <a href="/dashboard" aria-label="D'spacios Travel — inicio">
-            <Logo variant="full" height={32} className="h-7 w-auto" priority />
+          <a href="/dashboard" aria-label={`${empresa.nombre_comercial} — inicio`}>
+            <Logo variant="full" height={32} className="h-7 w-auto" priority src={empresa.logo_url} alt={empresa.nombre_comercial} />
           </a>
           <LogoutButton className="text-xs text-gray-500 hover:text-gray-800" />
         </div>
@@ -94,8 +103,8 @@ export default async function DashboardLayout({
         style={{ borderTop: `4px solid var(--brand-primary)` }}
       >
         <div className="border-b border-gray-100 px-5 py-4">
-          <a href="/dashboard" aria-label="D'spacios Travel — inicio">
-            <Logo variant="full" height={36} className="h-9 w-auto" priority />
+          <a href="/dashboard" aria-label={`${empresa.nombre_comercial} — inicio`}>
+            <Logo variant="full" height={36} className="h-9 w-auto" priority src={empresa.logo_url} alt={empresa.nombre_comercial} />
           </a>
         </div>
         <SidebarNav items={NAV} />

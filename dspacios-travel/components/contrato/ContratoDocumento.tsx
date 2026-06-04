@@ -1,5 +1,4 @@
 import {
-  EMPRESA,
   CONTRATO_TITULO,
   CONTRATO_INTRO,
   CLAUSULAS,
@@ -7,6 +6,7 @@ import {
   FIRMA_ETIQUETAS,
   COPYRIGHT_PREFIJO,
 } from "@/lib/contrato/plantilla";
+import { aplicarEmpresa, lineaCuenta, EMPRESA_DEFAULT, type EmpresaConfig } from "@/lib/empresa";
 import { formatCOP, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import type {
@@ -24,9 +24,18 @@ type Props = {
   vuelos: ContratoVuelo[];
   items: ContratoItem[];
   totalPagado: number;
+  empresa?: EmpresaConfig;
 };
 
-const PRIMARY = "#1D7C9A";
+// Bloque de texto largo (políticas/condiciones editables). Respeta saltos de línea.
+function ParrafoLargo({ titulo, texto }: { titulo: string; texto: string }) {
+  return (
+    <div>
+      <span className="font-semibold text-gray-700">{titulo}: </span>
+      <span className="whitespace-pre-line text-justify leading-relaxed text-gray-600">{texto}</span>
+    </div>
+  );
+}
 
 function Pill({ label, value }: { label: string; value: string }) {
   return (
@@ -46,7 +55,10 @@ export function ContratoDocumento({
   vuelos,
   items,
   totalPagado,
+  empresa = EMPRESA_DEFAULT,
 }: Props) {
+  const e = empresa;
+  const PRIMARY = e.color_primary || "#1D7C9A";
   const total = items.reduce(
     (s, it) => s + it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino,
     0
@@ -65,10 +77,8 @@ export function ContratoDocumento({
         style={{ backgroundColor: PRIMARY }}
       >
         <div>
-          <div className="text-2xl font-bold leading-none">
-            D&apos;spacios Travel
-          </div>
-          <div className="mt-1 text-xs opacity-80">Mayorista de Turismo</div>
+          <div className="text-2xl font-bold leading-none">{e.nombre_comercial}</div>
+          {e.tagline && <div className="mt-1 text-xs opacity-80">{e.tagline}</div>}
         </div>
         <div className="text-center">
           <div className="text-base font-semibold">{CONTRATO_TITULO}</div>
@@ -83,9 +93,9 @@ export function ContratoDocumento({
           </div>
         </div>
         <div className="text-right text-xs opacity-90">
-          <div>{EMPRESA.sitio}</div>
-          <div>{EMPRESA.correo}</div>
-          <div className="mt-1">RNT {EMPRESA.rnt}</div>
+          {e.sitio_web && <div>{e.sitio_web}</div>}
+          {e.email && <div>{e.email}</div>}
+          {e.rnt && <div className="mt-1">RNT {e.rnt}</div>}
         </div>
       </header>
 
@@ -395,20 +405,20 @@ export function ContratoDocumento({
             {CONTRATO_TITULO}
           </h2>
           <p className="mb-4 text-justify text-xs leading-relaxed text-gray-600">
-            {CONTRATO_INTRO}
+            {aplicarEmpresa(CONTRATO_INTRO, e)}
           </p>
           <div className="space-y-3">
             {CLAUSULAS.map((c) => (
               <div key={c.numero} className="break-inside-avoid">
                 <h3 className="text-xs font-semibold text-gray-700">
-                  {c.numero}. {c.titulo}
+                  {c.numero}. {aplicarEmpresa(c.titulo, e)}
                 </h3>
                 {c.parrafos.map((p, i) => (
                   <p
                     key={i}
                     className="mt-1 text-justify text-[11px] leading-relaxed text-gray-600"
                   >
-                    {p}
+                    {aplicarEmpresa(p, e)}
                   </p>
                 ))}
               </div>
@@ -416,10 +426,25 @@ export function ContratoDocumento({
           </div>
         </section>
 
+        {/* ── Condiciones adicionales de la agencia (editables en config) ── */}
+        {(e.politica_pago || e.politica_cancelacion || e.terminos_condiciones || e.nota_contrato) && (
+          <section className="break-inside-avoid text-xs text-gray-600">
+            <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>
+              Condiciones adicionales
+            </h2>
+            <div className="space-y-2">
+              {e.politica_pago && <ParrafoLargo titulo="Política de pago" texto={e.politica_pago} />}
+              {e.politica_cancelacion && <ParrafoLargo titulo="Política de cancelación" texto={e.politica_cancelacion} />}
+              {e.terminos_condiciones && <ParrafoLargo titulo="Términos y condiciones" texto={e.terminos_condiciones} />}
+              {e.nota_contrato && <ParrafoLargo titulo="Notas" texto={e.nota_contrato} />}
+            </div>
+          </section>
+        )}
+
         {/* ── Constancia + Firma ───────────────────────────────── */}
         <section className="break-inside-avoid pt-2 text-xs text-gray-600">
           <p>
-            {CONSTANCIA_PREFIJO} {formatFechaLarga(venta.fecha_emision)}.
+            {aplicarEmpresa(CONSTANCIA_PREFIJO, e)} {formatFechaLarga(venta.fecha_emision)}.
           </p>
           <div className="mt-8">
             <div className="w-64 border-t border-gray-400 pt-1">
@@ -444,18 +469,17 @@ export function ContratoDocumento({
 
           <div className="mt-6 rounded-lg bg-gray-50 p-3 text-[11px]">
             <div className="font-semibold text-gray-700">Datos de pago</div>
-            <div>
-              {EMPRESA.cuentaBancaria.banco} — {EMPRESA.cuentaBancaria.tipo}{" "}
-              {EMPRESA.cuentaBancaria.numero}
-            </div>
-            <div>A nombre de {EMPRESA.cuentaBancaria.titular}</div>
+            <div>{lineaCuenta(e)}</div>
+            {e.cuenta_titular && <div>A nombre de {e.cuenta_titular}</div>}
             <div className="mt-1">
-              {EMPRESA.razonSocial} · NIT {EMPRESA.nit} · RNT {EMPRESA.rnt}
+              {[e.razon_social || e.nombre_comercial, e.nit && `NIT ${e.nit}`, e.rnt && `RNT ${e.rnt}`]
+                .filter(Boolean)
+                .join(" · ")}
             </div>
           </div>
 
           <p className="mt-6 text-center text-[10px] text-gray-400">
-            {COPYRIGHT_PREFIJO} {anio} · Documento digital — se solicita no
+            {e.nombre_comercial} · {COPYRIGHT_PREFIJO} {anio} · Documento digital — se solicita no
             imprimir.
           </p>
         </section>

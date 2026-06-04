@@ -278,6 +278,27 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   las CxP guardan máx. 3 pagos.
 > - Marca: logo oficial del manual aplicado; carpeta `docs/marca/` y `docs/programas/`.
 
+> **Rama `white-label` (marca blanca — vendible a otras agencias):**
+> Convierte la app en producto vendible: el nombre, logo, datos tributarios
+> (cabecera del contrato), cuenta bancaria y políticas dejan de estar "quemados"
+> y pasan a la tabla **`empresa_config`** (fila única id=1), editable en
+> **Configuración → Información de la empresa** (`/dashboard/empresa`).
+> - **Migración 035** `empresa_config` (seed GENÉRICO + RLS lectura pública +
+>   bucket Storage `empresa` para logos). Script `supabase/scripts/empresa_dspacios.sql`
+>   restaura la identidad de D'spacios.
+> - `lib/empresa.ts` (tipo + genéricos + `getEmpresaConfig` + `aplicarEmpresa`).
+>   La **plantilla del contrato** se tokenizó (`{{EMPRESA}}`/`{{CUENTA}}`/
+>   `{{CORREO}}`/`{{CIUDAD}}`); `ContratoDocumento` recibe `empresa` y resuelve
+>   tokens, cabecera, datos de pago, color y **condiciones adicionales** editables.
+>   Contrato `/contrato/[numero]` y `/c/[token]` cargan la config.
+> - `Logo` acepta `src` (config) con fallback; sidebar/topbar ya lo usan. Logos
+>   genéricos en `public/marca/logo-generico*.svg`. **Pendiente:** logo de
+>   **login** y header del **tarifario público** + íconos PWA (binarios).
+> - **Guía de instalación:** `dspacios-travel/INSTALACION.md` (paso a paso).
+> - ⚠️ **Base compartida:** al aplicar 035 en la base de producción, siembra
+>   GENÉRICO; D'spacios debe correr `empresa_dspacios.sql` para conservar su marca.
+>   Aún no aplicada — la rama está aislada para revisión.
+
 ### Marca / identidad (aplicada)
 - Manual oficial en `dspacios-travel/docs/marca/Identidad DESPACIOS.pdf`.
 - **Logo como imagen** (regla del manual, no como fuente) en `public/marca/`:
