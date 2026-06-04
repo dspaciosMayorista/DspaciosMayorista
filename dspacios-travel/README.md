@@ -69,65 +69,73 @@ Orden y contenido:
 > El `project_id` en `supabase/config.toml` es público (no es secreto). **Rotar las llaves**
 > que estuvieron en el `.env` compartido (ver `CLAUDE.md` §12).
 
-## Estado por fases
+## Estado actual (resumen)
 
-- **Fase 0 — Cimientos:** ✅ completa. Login por roles, protección de rutas (`proxy.ts`),
-  layout del dashboard, tokens de marca, tipos TS del esquema, las 9 migraciones, RLS.
-- **Fase 1 — Tarifario:** ✅ funcional.
-  - Admin en `/dashboard/tarifario`: CRUD de destinos, hoteles, temporadas + fechas,
-    inclusiones, y **Módulo de Producto** (costos → % margen → PVP por acomodación con
-    cálculo de tarifa neta de agencia).
-  - Público en `/tarifario`: SSR, muestra tarifa neta a agencias con sesión.
-  - Lógica de cálculo pura y testeable en `lib/calc/tarifario.ts`.
-- **Fase 2 — Generador de contratos:** ⛔ pendiente (siguiente).
-- **Fases 3–5** (operaciones de vuelos, finanzas, portal): ⛔ pendientes. El modelo de
-  datos ya existe; faltan las pantallas.
+App en **producción** (`main`) sobre el subdominio del cliente (Vercel + Supabase).
+Flujo de negocio implementado de punta a punta:
 
-## Rutas
+**PRODUCTO** (costos netos) → **PAQUETES** (margen) → **TARIFARIO** (interno + público) →
+**RESERVAR / NUEVO CONTRATO** (genera venta + PDF) → **GESTIÓN** (cartera, costos,
+proveedores, comisiones, facturación, rentabilidad) → **LIQUIDACIÓN** mensual de comisiones.
 
-| Ruta | Acceso | Estado |
-|---|---|---|
-| `/` | redirige a `/tarifario` | ✅ |
-| `/tarifario` | público (tarifa neta si hay sesión) | ✅ |
-| `/login` | público | ✅ |
-| `/dashboard` | con sesión | ✅ |
-| `/dashboard/tarifario` y `/dashboard/tarifario/[id]` | con sesión | ✅ |
-| `/contratos`, `/ventas`, `/vuelos`, `/finanzas` | enlazados en el sidebar | ⛔ aún no existen (404) |
+### Módulos
+- **Producto:** Destinos, Proveedores, Configuración (categorías/regímenes), **Hoteles**
+  (temporadas, tarifa neta por categoría/régimen/temporada con niño 1/2, config de
+  acomodaciones, contacto comercial), **Servicios** (por persona y/o por grupo con rangos
+  de pax, categoría tour/asistencia/otro), **Programas** (circuitos USD).
+- **Tarifa por fórmula (calculadora):** hoteles especiales que mandan su propia estructura
+  (ej. HOTEL DUBAI: base por persona + modificadores + suplementos de régimen). Marco
+  extensible en `lib/calc/calculadoras.ts`; **genera** las filas normales de `tarifa_hotel`.
+- **Promociones + prioridad + vigencia de compra:** las temporadas pueden cruzarse; gana la
+  de mayor `prioridad`. Promo = descuento %, descuento $/pax o tarifa de reemplazo. Toda
+  vigencia tiene ventana de compra (si HOY está fuera, no aplica). Motor en `lib/calc/paquetes.ts`.
+- **Carga masiva (CSV)** con notas de requisitos previos en: proveedores, hoteles,
+  acomodaciones, temporadas (con prioridad/vigencia), tarifas, servicios, bloqueos.
+- **Reservar / Nuevo contrato:** asesor interno (usuarios rol venta) + tipo de venta
+  B2C/agencia/freelance (dropdowns del catálogo). **BNC** elegible en el contrato
+  (tiquetes o fijo ≥ tiquetes). Comisión B2B **automática** con el % del aliado o el default.
+- **Gestión del contrato:** Cartera (abonos), Costos, Proveedores (CxP), Comisiones B2B,
+  Facturación, Flujo de caja. **Rentabilidad** estructurada (`/dashboard/rentabilidad`).
+- **Comisiones internas por ESCALAS:** escalas por rango de PVP (Configuración), asignadas a
+  cada **usuario de venta**; **liquidación mensual acumulada** (`/dashboard/liquidacion`):
+  Σ PVP del mes → rango → % sobre la base comisionable (PVP − BNC). Motor en `lib/calc/escalas.ts`.
+- **Agencias y freelance** (`/dashboard/aliados`): catálogo con % de comisión propio y
+  retención por entidad; defaults `COMISION_AGENCIA`/`COMISION_FREELANCE` en Configuración.
+- **Vuelos:** dashboard de control de bloqueos/sillas (estados, cambios, plazos).
+- **Cartera / Pagos a proveedores:** listados contables.
+- **Marca / branding** aplicado (logo, degradado, íconos PWA).
 
-## Pendientes conocidos
+## Migraciones
 
-- Crear las rutas de los módulos enlazados en el sidebar (Fases 2–5).
-- La fuente **Jost** se carga pero no se aplica: `@theme` en `styles/globals.css` define
-  `--font-sans` como `var(--font-jost, …)` y `--font-jost` nunca se define, así que cae al
-  fallback. Cosmético; arreglar al pulir UI.
-- Verificar contra la base real que las migraciones (incluida la 009) quedaron aplicadas.
+Viven en `supabase/migrations/` (idempotentes). **Correr en orden `0001 → 0041`.**
+La lista detallada y el estado están en `../CLAUDE.md` (§13). Hitos recientes:
 
-## Changelog de mantenimiento
+| Rango | Contenido |
+|---|---|
+| 016–031 | Producto, config de hoteles, armado de paquetes, dos niños, rangos de edad, reservar por habitaciones, formas de pago, programas |
+| 032–034 | BNC en ventas, ítems de factura, pago de comisión B2B |
+| 035 | (rama `white-label`) `empresa_config` para marca blanca |
+| 036 | Contacto comercial del hotel (`contacto_telefono`, `email_comercial`) |
+| 037 | `hotel_calculadora` (tarifa por fórmula) |
+| 038 | Prioridad + vigencia de compra + promociones en `hotel_temporadas` |
+| 039 | `escalas_comision` + `escala_rangos` (+ `asesores.escala_id`) |
+| 040 | `aliados.tipo/pct_comision`, `asesores.aplica_retencion`, default `COMISION_FREELANCE` |
+| 041 | `usuarios.escala_id` + `usuarios.aplica_retencion` (asesor interno = usuario rol venta) |
 
-- **2026-06-02**
-  - 🔴 **Fix:** `guardarTarifa` (`app/(dashboard)/dashboard/tarifario/actions.ts`) hacía
-    `upsert` con `onConflict: "hotel_id,plan_id,temporada_id,noches"` pero no existía un
-    índice único que respaldara ese `ON CONFLICT`, lo que hacía fallar guardar/editar
-    tarifas en runtime. Se agregó la migración `…0009_tarifas_unique.sql` con el índice
-    único correspondiente.
-  - ✅ Verificado `pnpm install` + `pnpm build`: compila y pasa TypeScript sin errores.
-  - **Fase 2 — Generador de contratos:** plantilla legal (18 cláusulas) en
-    `lib/contrato/plantilla.ts`; creación de contrato (`/dashboard/contratos/nuevo`),
-    documento imprimible (`/contrato/[numero]`) con colores en PDF, y enlace público
-    para compartir (`/c/[token]`) por WhatsApp/correo.
-  - **Flujo de venta** en cada contrato (`/dashboard/contratos/[numero]`): pestañas
-    Cartera (abonos), Costos, Proveedores (cuentas por pagar), Comisiones (B2B + asesor),
-    Facturación y **Rentabilidad** (relación de utilidades). Cálculos puros en
-    `lib/calc/finanzas.ts` (portados del Apps Script System V2).
-  - **Inventario de vuelos** (`/dashboard/vuelos`): bloqueos con cupos y sillas.
-  - **Módulo de Producto / Paquetes** (`/dashboard/paquetes`): paquetes prearmados
-    (bloqueo / porción terrestre) con hoteles, precio por acomodación y **costos
-    negociados protegidos** (RLS interno, ocultos al asesor).
-  - **Contrato por tipo de paquete:** bloqueo/porción terrestre jalan el producto del
-    tarifario (precio + costos vía service-role) y el bloqueo **descuenta cupos** del
-    record; dinámico es manual.
-  - **Finanzas** (`/dashboard/finanzas`): informe de relación de utilidades por contrato.
-  - **Permisos:** las pestañas financieras y el informe son solo para roles internos
-    (superadmin/gerencia/administración/operaciones); el asesor (`venta`) no ve costos.
-  - **Móvil:** layout del dashboard responsive (barra superior + tablas con scroll).
-  - ⚠️ Pendiente de probar con datos reales (el dueño cargará la BD y validará).
+> Env en Vercel: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+> `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos/liquidación), opcional `CRON_SECRET`.
+
+## Pendientes / próximos pasos
+
+- **CRM interno** (rama nueva): bases de clientes por categoría (clientes finales, agencias,
+  freelance, empresas, pasajeros-informativo), importador, cruce con ventas. Subdominio
+  `crm.` apuntando a un proyecto Vercel con la misma Supabase.
+- **Marca blanca** (rama `white-label`): `empresa_config` editable; pendiente afinar y mergear.
+- **Otras calculadoras de hotel** (4–5 hoteles con estructuras propias) sobre el marco actual.
+- **Tarifario público en vivo** para promos/vigencia de compra (hoy el publicado es una foto;
+  Reservar sí re-liquida en vivo).
+- Afinar costos netos de proveedores/servicios (`costo_receptivo`/`otros_costos`) y el
+  detalle tributario de programas (hoy en COP).
+- **Editar reserva pendiente "completa"** (mismo número) sin anular.
+
+> El detalle vivo del estado y las decisiones está en `../CLAUDE.md` §13.

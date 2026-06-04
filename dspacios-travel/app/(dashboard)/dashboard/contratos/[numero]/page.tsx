@@ -8,6 +8,7 @@ import { GestionTabs } from "./GestionTabs";
 import { EstadoVenta } from "./EstadoVenta";
 import { EditarVentaForm } from "./EditarVentaForm";
 import { ServiciosContratoEditor, type ServicioDispContrato } from "./ServiciosContratoEditor";
+import { AdjuntosContrato, type Adjunto } from "./AdjuntosContrato";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,7 @@ export default async function ContratoDetallePage({
     { data: facturas },
     { data: asesores },
     { data: formasPagoRows },
+    { data: adjuntos },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
@@ -43,6 +45,7 @@ export default async function ContratoDetallePage({
     sb.from("facturacion").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("asesores").select("nombre, email, pct_comision_base"),
     sb.from("formas_pago").select("nombre").order("orden"),
+    sb.from("contrato_adjuntos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("numero_contrato", numero).order("created_at", { ascending: false }),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
@@ -198,6 +201,8 @@ export default async function ContratoDetallePage({
         facturas={facturasConItems}
         formasPago={formasPago}
       />
+
+      <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} />
     </div>
   );
 }

@@ -46,6 +46,7 @@ const NAV: NavItem[] = [
       { href: "/dashboard/aliados", label: "Agencias y freelance" },
     ],
   },
+  { href: "/crm", label: "CRM ↗" },
   { href: "/dashboard/usuarios", label: "Usuarios" },
   { href: "/dashboard/configuracion", label: "Configuración" },
 ];

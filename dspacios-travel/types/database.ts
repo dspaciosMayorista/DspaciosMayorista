@@ -1170,6 +1170,40 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["escala_rangos"]["Insert"]>;
         Relationships: [];
       };
+      crm_contactos: {
+        Row: {
+          id: number; categoria: string; nombre: string; tipo_doc: string | null; documento: string | null;
+          email: string | null; telefono: string | null; ciudad: string | null; pais: string | null;
+          fecha_nacimiento: string | null; genero: string | null; origen: string | null; etiquetas: string[] | null;
+          acepta_publicidad: boolean; no_contactar: boolean; notas: string | null; created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: number; categoria?: string; nombre: string; tipo_doc?: string | null; documento?: string | null;
+          email?: string | null; telefono?: string | null; ciudad?: string | null; pais?: string | null;
+          fecha_nacimiento?: string | null; genero?: string | null; origen?: string | null; etiquetas?: string[] | null;
+          acepta_publicidad?: boolean; no_contactar?: boolean; notas?: string | null; created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["crm_contactos"]["Insert"]>;
+        Relationships: [];
+      };
+      crm_email_config: {
+        Row: { id: number; proveedor: string; remitente_email: string | null; remitente_nombre: string | null; responder_a: string | null; api_key: string | null; firma_html: string | null; activo: boolean; updated_at: string };
+        Insert: { id?: number; proveedor?: string; remitente_email?: string | null; remitente_nombre?: string | null; responder_a?: string | null; api_key?: string | null; firma_html?: string | null; activo?: boolean; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["crm_email_config"]["Insert"]>;
+        Relationships: [];
+      };
+      crm_campanas: {
+        Row: { id: number; asunto: string; cuerpo_html: string | null; categoria: string | null; tipo: string; total: number; enviados: number; fallidos: number; estado: string; created_at: string };
+        Insert: { id?: number; asunto: string; cuerpo_html?: string | null; categoria?: string | null; tipo?: string; total?: number; enviados?: number; fallidos?: number; estado?: string; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["crm_campanas"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_adjuntos: {
+        Row: { id: number; numero_contrato: string; tipo: string; nombre: string | null; path: string; size_bytes: number | null; subido_por: string | null; created_at: string };
+        Insert: { id?: number; numero_contrato: string; tipo?: string; nombre?: string | null; path: string; size_bytes?: number | null; subido_por?: string | null; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["contrato_adjuntos"]["Insert"]>;
+        Relationships: [];
+      };
       hotel_acomodaciones: {
         Row: {
           id: number; hotel_id: number;
