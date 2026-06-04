@@ -1192,6 +1192,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["crm_email_config"]["Insert"]>;
         Relationships: [];
       };
+      crm_campanas: {
+        Row: { id: number; asunto: string; cuerpo_html: string | null; categoria: string | null; tipo: string; total: number; enviados: number; fallidos: number; estado: string; created_at: string };
+        Insert: { id?: number; asunto: string; cuerpo_html?: string | null; categoria?: string | null; tipo?: string; total?: number; enviados?: number; fallidos?: number; estado?: string; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["crm_campanas"]["Insert"]>;
+        Relationships: [];
+      };
       hotel_acomodaciones: {
         Row: {
           id: number; hotel_id: number;

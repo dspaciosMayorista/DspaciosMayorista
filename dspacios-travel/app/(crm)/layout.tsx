@@ -26,6 +26,8 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
           </Link>
           <nav className="ml-2 flex items-center gap-1 text-sm">
             <Link href="/crm" className="rounded-lg px-3 py-1.5 hover:bg-white/15">Contactos</Link>
+            <Link href="/crm/campanas" className="rounded-lg px-3 py-1.5 hover:bg-white/15">Campañas</Link>
+            <Link href="/crm/b2b" className="rounded-lg px-3 py-1.5 hover:bg-white/15">Cargar B2B</Link>
             <Link href="/crm/email" className="rounded-lg px-3 py-1.5 hover:bg-white/15">Config email</Link>
           </nav>
           <div className="ml-auto flex items-center gap-2">
