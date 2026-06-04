@@ -55,10 +55,13 @@
 
 :root {
   /* ── Marca (CSS custom props para uso directo) ───── */
-  --brand-primary:   #1D7C9A;
-  --brand-accent:    #26BBD9;
-  --brand-success:   #66B596;
-  --brand-highlight: #AEF44A;
+  --brand-primary:   #1D7C9A;  /* Jelly Bean Blue */
+  --brand-accent:    #26BBD9;  /* Scooter */
+  --brand-success:   #66B596;  /* Piper */
+  --brand-highlight: #AEF44A;  /* Conifer / Lima */
+
+  /* Degradado de marca (azul → turquesa → verde): encabezados/hero */
+  --brand-gradient: linear-gradient(110deg, #1D7C9A 0%, #1F8CA8 35%, #26BBD9 72%, #5FCBA8 100%);
 
   /* ── shadcn/ui tokens ──────────────────────────────── */
   --radius: 0.5rem;
@@ -93,6 +96,45 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: #1D7C9A;
+}
+
+/* ── Tema ÍNDIGO (estilo del sitio coral-gull) ─────────────────────────────
+   Se activa con <html data-theme="indigo">. Cambia el color principal de
+   turquesa a índigo oscuro y conserva el verde lima como acento/realce.
+   Pensado para probar el look y decidir; se quita poniendo data-theme="marca". */
+html[data-theme="indigo"] {
+  --brand-primary:   #232876;  /* índigo oscuro (títulos/botones) */
+  --brand-accent:    #3D43B5;  /* índigo más claro (links/hover) */
+  --brand-success:   #66B596;  /* verde (estados OK) */
+  --brand-highlight: #AEF44A;  /* lima (badges) */
+  --brand-gradient: linear-gradient(110deg, #1b1e63 0%, #232876 45%, #3D43B5 100%);
+
+  --primary: #232876;
+  --accent: #3D43B5;
+  --ring: #232876;
+  --chart-1: #232876;
+  --chart-2: #3D43B5;
+  --chart-3: #66B596;
+  --chart-4: #AEF44A;
+  --sidebar-primary: #232876;
+  --sidebar-ring: #232876;
+
+  /* Fondo general en GRIS (prueba) */
+  --background: #e5e7eb;
+  --secondary:  #e6e8f8;
+  --muted:      #e5e7eb;
+}
+
+/* Cambio COMPLETO en tema índigo: también el FONDO de las superficies que hoy
+   usan gris claro (paneles, listados, vitrina). Las tarjetas blancas se
+   mantienen para contraste, igual que el sitio de referencia.
+   Reglas sin @layer → ganan sobre las utilidades de Tailwind. */
+html[data-theme="indigo"] body,
+html[data-theme="indigo"] .bg-gray-50 {
+  background-color: #e5e7eb;   /* gris (prueba) */
+}
+html[data-theme="indigo"] .bg-gray-100 {
+  background-color: #d1d5db;   /* gris un poco más oscuro */
 }
 
 .dark {
@@ -131,4 +173,27 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Fondo con el degradado de marca (encabezados, hero) */
+.bg-brand-gradient {
+  background-image: var(--brand-gradient);
+}
+
+/* ── Tarjetas elevadas ──────────────────────────────────────────────────
+   Efecto "levantado" (sombra) para todas las tarjetas/cuadros del panel sin
+   tocar cada componente: se aplica a las superficies con borde + fondo blanco
+   y a las tarjetas de color (stat cards). Regla plana → gana sobre utilidades. */
+.bg-white.border.rounded-xl,
+.bg-white.border.rounded-2xl,
+.rounded-xl.p-4.text-white,
+.rounded-xl.p-5.text-white {
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 10px 22px -8px rgba(16, 24, 40, 0.14);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+/* Realce sutil al pasar el mouse: se elevan un poco más. */
+.bg-white.border.rounded-xl:hover,
+.bg-white.border.rounded-2xl:hover {
+  box-shadow: 0 2px 6px rgba(16, 24, 40, 0.08), 0 16px 30px -10px rgba(16, 24, 40, 0.18);
 }

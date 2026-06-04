@@ -2,6 +2,9 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { HotelDetalleClient } from "./HotelDetalleClient";
+import { HotelConfigEditor } from "./HotelConfigEditor";
+import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
+import type { AcomConfig } from "@/lib/acomodaciones";
 
 export const dynamic = "force-dynamic";
 
@@ -11,20 +14,25 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("planes_alimentacion(codigo)").eq("hotel_id", hotelId),
     sb.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin").eq("hotel_id", hotelId).order("orden"),
     sb.from("tarifa_hotel").select("*").eq("hotel_id", hotelId).order("id", { ascending: false }),
+    sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
+    sb.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotelId),
   ]);
 
   if (!hotel) notFound();
 
   const h = hotel as unknown as {
     nombre: string; zona: string | null; edad_infante_min: number; edad_infante_max: number;
-    edad_nino_min: number; edad_nino_max: number; destinos: { nombre: string } | null; proveedores: { nombre: string } | null;
+    edad_nino_min: number; edad_nino_max: number; rangos_edad: number[] | null;
+    pax_min: number | null; pax_max: number | null;
+    destinos: { nombre: string } | null; proveedores: { nombre: string } | null;
   };
+  const acomConfigs = (acoms ?? []) as AcomConfig[];
   const categorias = ((cats ?? []) as unknown as { categorias_habitacion: { nombre: string } | null }[])
     .map((x) => x.categorias_habitacion?.nombre).filter((x): x is string => !!x);
   const regimenes = ((regs ?? []) as unknown as { planes_alimentacion: { codigo: string } | null }[])
@@ -44,6 +52,22 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
       </p>
 
       <div className="mt-6">
+        <HotelConfigEditor
+          hotelId={hotelId}
+          rangos={rangos ?? []}
+          inicial={{
+            zona: h.zona ?? "",
+            edadInfanteMin: h.edad_infante_min, edadInfanteMax: h.edad_infante_max,
+            edadNinoMin: h.edad_nino_min, edadNinoMax: h.edad_nino_max,
+            rangosEdad: h.rangos_edad ?? [],
+          }}
+        />
+        <HotelAcomodacionesEditor
+          hotelId={hotelId}
+          paxMin={h.pax_min}
+          paxMax={h.pax_max}
+          configs={acomConfigs}
+        />
         <HotelDetalleClient
           hotelId={hotelId}
           categorias={categorias}

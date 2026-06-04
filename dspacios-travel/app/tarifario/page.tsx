@@ -1,59 +1,101 @@
 import { createClient } from "@/lib/supabase/server";
-import { TarifarioView } from "./TarifarioView";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { TarifarioPublic, type FilaTarifario } from "./TarifarioPublic";
+import { getProgramasResumen } from "@/lib/programas";
+import { Logo } from "@/components/Logo";
 
-export const revalidate = 300; // revalida cada 5 min
+export const revalidate = 120; // revalida cada 2 min
 
 export default async function TarifarioPublicoPage() {
   const sb = await createClient();
 
-  // Detectar si hay sesión (para mostrar tarifa neta a agencias)
+  // Detectar sesión (badge de agencia + permiso de reservar)
   const { data: { user } } = await sb.auth.getUser();
   let esAgencia = false;
+  let puedeReservar = false;
   if (user) {
     const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).single();
     esAgencia = !!perfil && ["agencia", "freelance", "superadmin", "operaciones", "gerencia", "administracion"].includes(perfil.rol);
+    puedeReservar = !!perfil && ["superadmin", "operaciones", "gerencia", "administracion", "venta", "agencia", "freelance"].includes(perfil.rol);
   }
 
-  // Destinos con hoteles y sus tarifas
-  const { data: destinos } = await sb
-    .from("destinos")
-    .select(`
-      id, nombre, codigo_iata,
-      inclusiones(tipo, texto, orden),
-      hoteles(
-        id, nombre, zona,
-        tarifas(
-          id, noches, comisionable, impuesto_no_comisionable, notas, costo_base, pct_mk,
-          planes_alimentacion(codigo, nombre),
-          temporadas(nombre, anio),
-          tarifa_precios(acomodacion, precio)
-        )
+  // Resultado del tarifario (solo paquetes activos). Paginado por si supera 1000.
+  const filas: FilaTarifario[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data: page } = await sb
+      .from("tarifario_resultado")
+      .select(
+        "modulo, bloqueo_label, bloqueo_id, paquete_id, hotel_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp"
       )
-    `)
-    .eq("activo", true)
-    .order("nombre");
+      .eq("paquete_activo", true)
+      .order("destino_nombre")
+      .order("bloqueo_label")
+      .order("hotel_nombre")
+      .order("categoria")
+      .order("regimen")
+      .range(from, from + PAGE - 1);
+    if (!page || page.length === 0) break;
+    filas.push(...(page as unknown as FilaTarifario[]));
+    if (page.length < PAGE) break;
+  }
+
+  // Cupos disponibles por bloqueo (para mostrar y ocultar salidas sin cupos).
+  // Se lee con service-role porque el tarifario es público (anónimo).
+  const cuposPorBloqueo: Record<number, number> = {};
+  const bloqueoIds = [...new Set(
+    filas.filter((f) => f.modulo === "bloqueo" && f.bloqueo_id != null).map((f) => f.bloqueo_id as number)
+  )];
+  if (bloqueoIds.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const admin = createAdminClient();
+    const { data: cup } = await admin.from("cupos_por_bloqueo").select("id, cupos_disponibles").in("id", bloqueoIds);
+    for (const c of cup ?? []) cuposPorBloqueo[c.id as number] = Number(c.cupos_disponibles) || 0;
+  }
+
+  // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
+  // Los servicios de paquetes porción/bloqueo existen como add-on para Reservar,
+  // pero NO deben publicarse como productos sueltos.
+  let filasVisibles = filas;
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY && filas.some((f) => f.modulo === "servicios")) {
+    const admin = createAdminClient();
+    const { data: pkgs } = await admin.from("armado_paquetes").select("id").eq("tipo", "servicios");
+    const idsServicios = new Set((pkgs ?? []).map((p) => p.id));
+    filasVisibles = filas.filter((f) => f.modulo !== "servicios" || (f.paquete_id != null && idsServicios.has(f.paquete_id)));
+  }
+
+  // Programas publicados (fuente propia, en su moneda).
+  const programas = await getProgramasResumen(sb, true);
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="text-white py-8 px-6" style={{ backgroundColor: "var(--brand-primary)" }}>
-        <div className="max-w-6xl mx-auto flex items-end justify-between">
+      <header className="bg-brand-gradient px-6 py-8 text-white">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-semibold">D&apos;spacios Travel</h1>
-            <p className="text-sm opacity-80 mt-1">Mayorista de Turismo — Tarifario 2026</p>
+            <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
+            <p className="mt-2 text-sm opacity-90">Tarifario 2026</p>
           </div>
-          {esAgencia && (
-            <span className="text-xs bg-white/20 px-3 py-1.5 rounded-full font-medium">
-              Modo agencia — Tarifa neta visible
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {esAgencia && (
+              <span className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
+            )}
+            {user ? (
+              <a href="/dashboard" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                Ir al panel →
+              </a>
+            ) : (
+              <a href="/login" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                Ingresar
+              </a>
+            )}
+          </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-10">
-        {!destinos?.length ? (
-          <p className="text-center text-gray-400 py-20">Tarifario en preparación.</p>
+      <main className="mx-auto max-w-6xl px-4 py-8 md:px-6">
+        {!filasVisibles.length && !programas.length ? (
+          <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioView destinos={destinos as any} esAgencia={esAgencia} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
         )}
       </main>
     </div>

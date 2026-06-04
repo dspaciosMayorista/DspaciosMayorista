@@ -30,11 +30,17 @@ export default async function NuevoContratoPage() {
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
       <Link href="/dashboard/contratos" className="text-sm text-gray-400 hover:text-gray-600">← Contratos</Link>
-      <h1 className="mb-1 mt-2 text-2xl font-semibold text-gray-900">Nuevo contrato</h1>
-      <p className="mb-6 text-sm text-gray-500">
-        Elige el tipo de paquete. En bloqueo y porción terrestre se carga el producto
-        del tarifario; en dinámico el asesor captura todo.
+      <h1 className="mb-1 mt-2 text-2xl font-semibold text-gray-900">Nuevo contrato (manual)</h1>
+      <p className="mb-4 text-sm text-gray-500">
+        Para ventas <b>dinámicas</b> donde el asesor captura todo a mano.
       </p>
+      <div className="mb-6 rounded-xl border border-[var(--brand-accent)] bg-[rgba(38,187,217,0.06)] p-4 text-sm">
+        <p className="font-medium text-gray-800">¿Es un Bloqueo, Porción terrestre o Servicios del tarifario?</p>
+        <p className="mt-1 text-gray-600">
+          Esos ya no se arman aquí: se generan desde el <b>tarifario</b> para no recapturar datos.{" "}
+          <Link href="/dashboard/reservar" className="font-semibold text-[var(--brand-primary)] hover:underline">Ir a Reservar →</Link>
+        </p>
+      </div>
       <NuevoContratoForm asesorDefault={asesorDefault} paquetes={paquetes} bloqueos={bloqueos} />
     </div>
   );

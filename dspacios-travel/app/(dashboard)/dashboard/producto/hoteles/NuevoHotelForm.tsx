@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { crearHotel } from "./actions";
+import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 
 type Opt = { id: number; nombre: string };
 type Regimen = { id: number; codigo: string; nombre: string };
@@ -14,8 +15,8 @@ const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
 export function NuevoHotelForm({
-  destinos, proveedores, categorias, regimenes,
-}: { destinos: Opt[]; proveedores: Opt[]; categorias: Opt[]; regimenes: Regimen[] }) {
+  destinos, proveedores, categorias, regimenes, rangos = [],
+}: { destinos: Opt[]; proveedores: Opt[]; categorias: Opt[]; regimenes: Regimen[]; rangos?: RangoEdad[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -30,6 +31,7 @@ export function NuevoHotelForm({
   const [ninoMax, setNinoMax] = useState(10);
   const [catSel, setCatSel] = useState<number[]>([]);
   const [regSel, setRegSel] = useState<number[]>([]);
+  const [rangosSel, setRangosSel] = useState<number[]>([]);
 
   const toggle = (arr: number[], set: (v: number[]) => void, id: number) =>
     set(arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
@@ -42,7 +44,7 @@ export function NuevoHotelForm({
       const r = await crearHotel({
         nombre, destinoId: Number(destinoId), proveedorId: proveedorId === "" ? null : Number(proveedorId),
         zona, edadInfanteMin: infMin, edadInfanteMax: infMax, edadNinoMin: ninoMin, edadNinoMax: ninoMax,
-        categoriaIds: catSel, regimenIds: regSel,
+        categoriaIds: catSel, regimenIds: regSel, rangosEdad: rangosSel,
       });
       if (r.ok) router.push(`/dashboard/producto/hoteles/${r.id}`);
       else setErr(r.error);
@@ -118,6 +120,7 @@ export function NuevoHotelForm({
             )}
           </div>
         </div>
+        <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} label="Rangos de edad del hotel (infante/niño)" />
       </section>
 
       {err && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}

@@ -160,6 +160,7 @@ export type Database = {
           asistencia: string | null;
           otros_proveedores: string | null;
           precio_venta: number;
+          impuesto: number;
           costo_hotel: number;
           costo_aereo: number;
           costo_receptivo: number;
@@ -168,6 +169,7 @@ export type Database = {
           estado: string;
           observaciones: string | null;
           facturado: boolean;
+          moneda: string;
           numero_documento: string | null;
           fecha_emision: string | null;
           cliente_documento: string | null;
@@ -180,6 +182,14 @@ export type Database = {
           asesor_firma_cargo: string | null;
           asesor_firma_cc: string | null;
           asesor_firma_tel: string | null;
+          cliente_email: string | null;
+          plazo: string | null;
+          tipo_asesor: string | null;
+          agencia_nombre: string | null;
+          agencia_asesor: string | null;
+          freelance_nombre: string | null;
+          paquete_armado_id: number | null;
+          bloqueo_ref_id: number | null;
           share_token: string;
           created_at: string;
           updated_at: string;
@@ -202,6 +212,7 @@ export type Database = {
           asistencia?: string | null;
           otros_proveedores?: string | null;
           precio_venta?: number;
+          impuesto?: number;
           costo_hotel?: number;
           costo_aereo?: number;
           costo_receptivo?: number;
@@ -210,6 +221,7 @@ export type Database = {
           estado?: string;
           observaciones?: string | null;
           facturado?: boolean;
+          moneda?: string;
           numero_documento?: string | null;
           fecha_emision?: string | null;
           cliente_documento?: string | null;
@@ -222,6 +234,14 @@ export type Database = {
           asesor_firma_cargo?: string | null;
           asesor_firma_cc?: string | null;
           asesor_firma_tel?: string | null;
+          cliente_email?: string | null;
+          plazo?: string | null;
+          tipo_asesor?: string | null;
+          agencia_nombre?: string | null;
+          agencia_asesor?: string | null;
+          freelance_nombre?: string | null;
+          paquete_armado_id?: number | null;
+          bloqueo_ref_id?: number | null;
           share_token?: string;
           created_at?: string;
           updated_at?: string;
@@ -289,6 +309,7 @@ export type Database = {
           base_gravable: number | null;
           iva_proveedor: number | null;
           valor_irt: number | null;
+          moneda: string;
           created_at: string;
         };
         Insert: {
@@ -313,6 +334,7 @@ export type Database = {
           base_gravable?: number | null;
           iva_proveedor?: number | null;
           valor_irt?: number | null;
+          moneda?: string;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["cuentas_por_pagar"]["Insert"]>;
@@ -334,6 +356,7 @@ export type Database = {
           aplica_retencion: boolean;
           pct_retencion: number;
           estado: string;
+          fecha_pago: string | null;
           created_at: string;
         };
         Insert: {
@@ -351,6 +374,7 @@ export type Database = {
           aplica_retencion?: boolean;
           pct_retencion?: number;
           estado?: string;
+          fecha_pago?: string | null;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["aliados_b2b"]["Insert"]>;
@@ -386,6 +410,36 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["liquidacion_comisiones"]["Insert"]>;
         Relationships: [];
       };
+      factura_items: {
+        Row: {
+          id: number;
+          factura_id: number;
+          descripcion: string | null;
+          valor: number;
+          gravable: boolean;
+          orden: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          factura_id: number;
+          descripcion?: string | null;
+          valor?: number;
+          gravable?: boolean;
+          orden?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          factura_id?: number;
+          descripcion?: string | null;
+          valor?: number;
+          gravable?: boolean;
+          orden?: number;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       facturacion: {
         Row: {
           id: number;
@@ -398,6 +452,7 @@ export type Database = {
           tipo_documento: string | null;
           naturaleza_ingreso: string | null;
           base_gravable: number;
+          base_no_gravable: number;
           iva_descontable: number;
           base_tercero: number;
           comision_fee: number;
@@ -417,6 +472,7 @@ export type Database = {
           tipo_documento?: string | null;
           naturaleza_ingreso?: string | null;
           base_gravable?: number;
+          base_no_gravable?: number;
           iva_descontable?: number;
           base_tercero?: number;
           comision_fee?: number;
@@ -504,6 +560,8 @@ export type Database = {
           fecha_emision: string | null;
           notas: string | null;
           proveedor_id: number | null;
+          destino_id: number | null;
+          rangos_edad: number[] | null;
           created_at: string;
           updated_at: string;
         };
@@ -511,6 +569,8 @@ export type Database = {
           id?: number;
           record: string;
           proveedor_id?: number | null;
+          destino_id?: number | null;
+          rangos_edad?: number[] | null;
           aerolinea?: string | null;
           ruta?: string | null;
           vuelo_ida?: string | null;
@@ -644,6 +704,9 @@ export type Database = {
           edad_infante_max: number;
           edad_nino_min: number;
           edad_nino_max: number;
+          rangos_edad: number[] | null;
+          pax_min: number | null;
+          pax_max: number | null;
         };
         Insert: {
           id?: number;
@@ -657,6 +720,9 @@ export type Database = {
           edad_infante_max?: number;
           edad_nino_min?: number;
           edad_nino_max?: number;
+          rangos_edad?: number[] | null;
+          pax_min?: number | null;
+          pax_max?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [
@@ -826,6 +892,7 @@ export type Database = {
           tipo_id: string | null;
           identificacion: string | null;
           fecha_nacimiento: string | null;
+          nacionalidad: string | null;
           es_infante: boolean;
           orden: number;
         };
@@ -836,6 +903,7 @@ export type Database = {
           tipo_id?: string | null;
           identificacion?: string | null;
           fecha_nacimiento?: string | null;
+          nacionalidad?: string | null;
           es_infante?: boolean;
           orden?: number;
         };
@@ -853,6 +921,8 @@ export type Database = {
           detalle_acomodacion: string | null;
           fecha_ingreso: string | null;
           fecha_salida: string | null;
+          categoria: string | null;
+          proveedor: string | null;
           orden: number;
         };
         Insert: {
@@ -865,6 +935,8 @@ export type Database = {
           detalle_acomodacion?: string | null;
           fecha_ingreso?: string | null;
           fecha_salida?: string | null;
+          categoria?: string | null;
+          proveedor?: string | null;
           orden?: number;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_hoteles"]["Insert"]>;
@@ -881,6 +953,14 @@ export type Database = {
           destino_ciudad: string | null;
           servicios: string | null;
           fecha_salida: string | null;
+          record: string | null;
+          vuelo_ida: string | null;
+          vuelo_regreso: string | null;
+          hora_salida_ida: string | null;
+          hora_llegada_ida: string | null;
+          hora_salida_reg: string | null;
+          hora_llegada_reg: string | null;
+          fecha_regreso: string | null;
           orden: number;
         };
         Insert: {
@@ -893,6 +973,14 @@ export type Database = {
           destino_ciudad?: string | null;
           servicios?: string | null;
           fecha_salida?: string | null;
+          record?: string | null;
+          vuelo_ida?: string | null;
+          vuelo_regreso?: string | null;
+          hora_salida_ida?: string | null;
+          hora_llegada_ida?: string | null;
+          hora_salida_reg?: string | null;
+          hora_llegada_reg?: string | null;
+          fecha_regreso?: string | null;
           orden?: number;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_vuelos"]["Insert"]>;
@@ -1042,17 +1130,47 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
         Relationships: [];
       };
+      formas_pago: {
+        Row: { id: number; nombre: string; activo: boolean; orden: number; created_at: string };
+        Insert: { id?: number; nombre: string; activo?: boolean; orden?: number; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["formas_pago"]["Insert"]>;
+        Relationships: [];
+      };
+      hotel_acomodaciones: {
+        Row: {
+          id: number; hotel_id: number;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"];
+          pax_tarifa: number; pax_max: number;
+          adt_min: number; adt_max: number;
+          chd_min: number; chd_max: number;
+          inf_min: number; inf_max: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number; hotel_id: number;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"];
+          pax_tarifa?: number; pax_max?: number;
+          adt_min?: number; adt_max?: number;
+          chd_min?: number; chd_max?: number;
+          inf_min?: number; inf_max?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["hotel_acomodaciones"]["Insert"]>;
+        Relationships: [];
+      };
       tarifa_hotel: {
         Row: {
           id: number; hotel_id: number; tipo_habitacion: string | null; alimentacion: string | null;
           temporada: string | null; neto_sencilla: number | null; neto_doble: number | null;
           neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null;
+          neto_nino2: number | null;
           notas: string | null; created_at: string;
         };
         Insert: {
           id?: number; hotel_id: number; tipo_habitacion?: string | null; alimentacion?: string | null;
           temporada?: string | null; neto_sencilla?: number | null; neto_doble?: number | null;
           neto_triple?: number | null; neto_multiple?: number | null; neto_nino?: number | null;
+          neto_nino2?: number | null;
           notas?: string | null; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
@@ -1061,15 +1179,367 @@ export type Database = {
       servicios_adicionales: {
         Row: {
           id: number; nombre: string; proveedor_id: number | null; destino_id: number | null;
-          tarifa_neta: number; temporada: string | null;
+          tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null; tipo_tarifa: string;
+          precio_persona: number | null; precio_grupo: number | null; categoria: string;
           liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; activo: boolean; created_at: string;
         };
         Insert: {
           id?: number; nombre: string; proveedor_id?: number | null; destino_id?: number | null;
-          tarifa_neta?: number; temporada?: string | null;
+          tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null; tipo_tarifa?: string;
+          precio_persona?: number | null; precio_grupo?: number | null; categoria?: string;
           liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
+        Relationships: [];
+      };
+      servicio_tarifa_pax: {
+        Row: { id: number; servicio_id: number; pax_desde: number; pax_hasta: number; precio: number; created_at: string };
+        Insert: { id?: number; servicio_id: number; pax_desde?: number; pax_hasta?: number; precio?: number; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["servicio_tarifa_pax"]["Insert"]>;
+        Relationships: [];
+      };
+      rangos_edad: {
+        Row: { id: number; denominacion: string; edad_min: number; edad_max: number; activo: boolean; created_at: string };
+        Insert: { id?: number; denominacion: string; edad_min?: number; edad_max?: number; activo?: boolean; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["rangos_edad"]["Insert"]>;
+        Relationships: [];
+      };
+      armado_paquetes: {
+        Row: {
+          id: number;
+          nombre: string;
+          activo: boolean;
+          tipo: Database["public"]["Enums"]["tarifario_modulo"];
+          noches: number;
+          destino_id: number | null;
+          fecha_compra_inicio: string | null;
+          fecha_compra_fin: string | null;
+          fecha_viaje_inicio: string | null;
+          fecha_viaje_fin: string | null;
+          pct_mk: number;
+          impuesto_tipo: Database["public"]["Enums"]["impuesto_tipo"];
+          impuesto_fijo: number;
+          imagen_url: string | null;
+          notas: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          activo?: boolean;
+          tipo?: Database["public"]["Enums"]["tarifario_modulo"];
+          noches?: number;
+          destino_id?: number | null;
+          fecha_compra_inicio?: string | null;
+          fecha_compra_fin?: string | null;
+          fecha_viaje_inicio?: string | null;
+          fecha_viaje_fin?: string | null;
+          pct_mk?: number;
+          impuesto_tipo?: Database["public"]["Enums"]["impuesto_tipo"];
+          impuesto_fijo?: number;
+          imagen_url?: string | null;
+          notas?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
+        Relationships: [];
+      };
+      armado_vuelos: {
+        Row: { paquete_id: number; bloqueo_id: number; aplica_mk: boolean; ta: number };
+        Insert: { paquete_id: number; bloqueo_id: number; aplica_mk?: boolean; ta?: number };
+        Update: Partial<Database["public"]["Tables"]["armado_vuelos"]["Insert"]>;
+        Relationships: [];
+      };
+      armado_hoteles: {
+        Row: { id: number; paquete_id: number; hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
+        Insert: { id?: number; paquete_id: number; hotel_id: number; categorias?: string[] | null; regimenes?: string[] | null };
+        Update: Partial<Database["public"]["Tables"]["armado_hoteles"]["Insert"]>;
+        Relationships: [];
+      };
+      armado_servicios: {
+        Row: { id: number; paquete_id: number; servicio_id: number; modo: string; incluido: boolean };
+        Insert: { id?: number; paquete_id: number; servicio_id: number; modo?: string; incluido?: boolean };
+        Update: Partial<Database["public"]["Tables"]["armado_servicios"]["Insert"]>;
+        Relationships: [];
+      };
+      tarifario_resultado: {
+        Row: {
+          id: number;
+          paquete_id: number;
+          paquete_nombre: string | null;
+          paquete_activo: boolean;
+          modulo: Database["public"]["Enums"]["tarifario_modulo"];
+          bloqueo_id: number | null;
+          bloqueo_label: string | null;
+          hotel_id: number | null;
+          hotel_nombre: string | null;
+          servicio_id: number | null;
+          servicio_nombre: string | null;
+          destino_id: number | null;
+          destino_nombre: string | null;
+          categoria: string | null;
+          regimen: string | null;
+          acomodacion: Database["public"]["Enums"]["acomodacion_tipo"] | null;
+          noches: number | null;
+          fecha_ida: string | null;
+          fecha_regreso: string | null;
+          pax_desde: number | null;
+          pax_hasta: number | null;
+          tipo_tarifa: string | null;
+          base_comisionable: number;
+          impuesto: number;
+          precio_pvp: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          paquete_id: number;
+          paquete_nombre?: string | null;
+          paquete_activo?: boolean;
+          pax_desde?: number | null;
+          pax_hasta?: number | null;
+          tipo_tarifa?: string | null;
+          modulo: Database["public"]["Enums"]["tarifario_modulo"];
+          bloqueo_id?: number | null;
+          bloqueo_label?: string | null;
+          hotel_id?: number | null;
+          hotel_nombre?: string | null;
+          servicio_id?: number | null;
+          servicio_nombre?: string | null;
+          destino_id?: number | null;
+          destino_nombre?: string | null;
+          categoria?: string | null;
+          regimen?: string | null;
+          acomodacion?: Database["public"]["Enums"]["acomodacion_tipo"] | null;
+          noches?: number | null;
+          fecha_ida?: string | null;
+          fecha_regreso?: string | null;
+          base_comisionable?: number;
+          impuesto?: number;
+          precio_pvp?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["tarifario_resultado"]["Insert"]>;
+        Relationships: [];
+      };
+      programas: {
+        Row: {
+          id: number;
+          proveedor_id: number | null;
+          nombre: string;
+          subtitulo: string | null;
+          dias: number | null;
+          noches: number | null;
+          moneda: string;
+          salidas: string | null;
+          vigencia_desde: string | null;
+          vigencia_hasta: string | null;
+          min_pax: number | null;
+          max_pax: number | null;
+          pct_mk: number;
+          pct_fee_tarjeta: number;
+          nino_edad_max: number | null;
+          nino_valor_servicios: number | null;
+          texto_condiciones: string | null;
+          texto_cancelacion: string | null;
+          texto_pagos: string | null;
+          notas: string | null;
+          activo: boolean;
+          publicado: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          proveedor_id?: number | null;
+          nombre: string;
+          subtitulo?: string | null;
+          dias?: number | null;
+          noches?: number | null;
+          moneda?: string;
+          salidas?: string | null;
+          vigencia_desde?: string | null;
+          vigencia_hasta?: string | null;
+          min_pax?: number | null;
+          max_pax?: number | null;
+          pct_mk?: number;
+          pct_fee_tarjeta?: number;
+          nino_edad_max?: number | null;
+          nino_valor_servicios?: number | null;
+          texto_condiciones?: string | null;
+          texto_cancelacion?: string | null;
+          texto_pagos?: string | null;
+          notas?: string | null;
+          activo?: boolean;
+          publicado?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["programas"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_ciudades: {
+        Row: {
+          id: number;
+          programa_id: number;
+          orden: number;
+          nombre: string;
+          codigo_iata: string | null;
+          noches: number;
+        };
+        Insert: {
+          id?: number;
+          programa_id: number;
+          orden?: number;
+          nombre: string;
+          codigo_iata?: string | null;
+          noches?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_ciudades"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_dias: {
+        Row: {
+          id: number;
+          programa_id: number;
+          dia: number;
+          titulo: string | null;
+          desayuno: boolean;
+          almuerzo: boolean;
+          cena: boolean;
+          descripcion: string | null;
+        };
+        Insert: {
+          id?: number;
+          programa_id: number;
+          dia: number;
+          titulo?: string | null;
+          desayuno?: boolean;
+          almuerzo?: boolean;
+          cena?: boolean;
+          descripcion?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_dias"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_categorias: {
+        Row: {
+          id: number;
+          programa_id: number;
+          orden: number;
+          nombre: string | null;
+        };
+        Insert: {
+          id?: number;
+          programa_id: number;
+          orden?: number;
+          nombre?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_categorias"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_categoria_hoteles: {
+        Row: {
+          id: number;
+          categoria_id: number;
+          ciudad: string;
+          hotel: string | null;
+          orden: number;
+        };
+        Insert: {
+          id?: number;
+          categoria_id: number;
+          ciudad: string;
+          hotel?: string | null;
+          orden?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_categoria_hoteles"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_precios: {
+        Row: {
+          id: number;
+          categoria_id: number;
+          acomodacion: string;
+          neto: number | null;
+          bajo_solicitud: boolean;
+        };
+        Insert: {
+          id?: number;
+          categoria_id: number;
+          acomodacion: string;
+          neto?: number | null;
+          bajo_solicitud?: boolean;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_precios"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_inclusiones: {
+        Row: {
+          id: number;
+          programa_id: number;
+          ciudad: string | null;
+          tipo: string;
+          texto: string;
+          orden: number;
+        };
+        Insert: {
+          id?: number;
+          programa_id: number;
+          ciudad?: string | null;
+          tipo: string;
+          texto: string;
+          orden?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_inclusiones"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_tours: {
+        Row: {
+          id: number;
+          programa_id: number;
+          ciudad: string | null;
+          nombre: string;
+          precio: number | null;
+          min_pax: number;
+          dias_operacion: string | null;
+          descripcion: string | null;
+          orden: number;
+        };
+        Insert: {
+          id?: number;
+          programa_id: number;
+          ciudad?: string | null;
+          nombre: string;
+          precio?: number | null;
+          min_pax?: number;
+          dias_operacion?: string | null;
+          descripcion?: string | null;
+          orden?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_tours"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_blackouts: {
+        Row: {
+          id: number;
+          programa_id: number;
+          fecha_inicio: string | null;
+          fecha_fin: string | null;
+          motivo: string | null;
+          ciudad: string | null;
+        };
+        Insert: {
+          id?: number;
+          programa_id: number;
+          fecha_inicio?: string | null;
+          fecha_fin?: string | null;
+          motivo?: string | null;
+          ciudad?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_blackouts"]["Insert"]>;
         Relationships: [];
       };
     };
@@ -1122,10 +1592,13 @@ export type Database = {
         | "doble"
         | "triple"
         | "multiple"
-        | "nino";
+        | "nino"
+        | "nino2";
       temporada_tipo: "ALTA" | "MEDIA" | "BAJA";
       paquete_categoria: "bloqueo" | "porcion_terrestre";
       liquidacion_tipo: "dia" | "noche" | "paquete";
+      impuesto_tipo: "tiquete" | "fijo";
+      tarifario_modulo: "bloqueo" | "porcion_terrestre" | "servicios";
     };
     CompositeTypes: {
       [_ in never]: never;

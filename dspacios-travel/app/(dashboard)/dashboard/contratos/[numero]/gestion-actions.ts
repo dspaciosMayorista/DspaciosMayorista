@@ -40,18 +40,52 @@ export async function crearCuentaPorPagar(input: {
   fechaVencimiento: string;
   aplicaRetencion: boolean;
   pctRetencion: number;
+  ivaDescontable?: number; // IVA de la factura del proveedor (manual)
 }): Promise<Result> {
   const sb = await createClient();
+  const iva = Math.max(0, Number(input.ivaDescontable) || 0);
+  // Costo (base) = valor total de la factura − IVA descontable.
+  const base = Math.max(0, input.valorTotal - iva);
   const { error } = await sb.from("cuentas_por_pagar").insert({
     numero_contrato: input.numeroContrato,
     proveedor: input.proveedor || null,
     tipo_proveedor: input.tipoProveedor || null,
     servicio: input.servicio || null,
     valor_total: input.valorTotal,
+    base_gravable: iva > 0 ? base : null,
+    iva_proveedor: iva > 0 ? iva : null,
     fecha_vencimiento: input.fechaVencimiento || null,
     aplica_retencion: input.aplicaRetencion,
     pct_retencion: input.pctRetencion,
   });
+  if (error) return { ok: false, error: error.message };
+  rev(input.numeroContrato);
+  return { ok: true };
+}
+
+export async function actualizarCuentaPorPagar(input: {
+  id: number;
+  numeroContrato: string;
+  proveedor: string;
+  servicio: string;
+  valorTotal: number;
+  fechaVencimiento: string;
+  ivaDescontable?: number;
+}): Promise<Result> {
+  const sb = await createClient();
+  const iva = Math.max(0, Number(input.ivaDescontable) || 0);
+  const base = Math.max(0, input.valorTotal - iva);
+  const { error } = await sb
+    .from("cuentas_por_pagar")
+    .update({
+      proveedor: input.proveedor || null,
+      servicio: input.servicio || null,
+      valor_total: input.valorTotal,
+      base_gravable: iva > 0 ? base : null,
+      iva_proveedor: iva > 0 ? iva : null,
+      fecha_vencimiento: input.fechaVencimiento || null,
+    })
+    .eq("id", input.id);
   if (error) return { ok: false, error: error.message };
   rev(input.numeroContrato);
   return { ok: true };
@@ -117,23 +151,43 @@ export async function crearFactura(input: {
   fechaFactura: string;
   cliente: string;
   nitCliente: string;
-  descripcion: string;
-  baseGravable: number;
-  ivaDescontable: number;
+  items: { descripcion: string; valor: number; gravable: boolean }[];
 }): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb.from("facturacion").insert({
-    numero_contrato: input.numeroContrato,
-    numero_factura: input.numeroFactura || null,
-    fecha_factura: input.fechaFactura || null,
-    cliente: input.cliente || null,
-    nit_cliente: input.nitCliente || null,
-    descripcion: input.descripcion || null,
-    base_gravable: input.baseGravable,
-    iva_descontable: input.ivaDescontable,
-    estado_dian: "borrador",
-  });
+  const items = (input.items ?? []).filter((it) => Number(it.valor) > 0);
+  if (!items.length) return { ok: false, error: "Agrega al menos un ítem con valor." };
+
+  const baseGravable = items.filter((i) => i.gravable).reduce((s, i) => s + Number(i.valor), 0);
+  const baseNoGravable = items.filter((i) => !i.gravable).reduce((s, i) => s + Number(i.valor), 0);
+  const descripcion = items.map((i) => i.descripcion).filter(Boolean).join(", ") || null;
+
+  const { data: fact, error } = await sb
+    .from("facturacion")
+    .insert({
+      numero_contrato: input.numeroContrato,
+      numero_factura: input.numeroFactura || null,
+      fecha_factura: input.fechaFactura || null,
+      cliente: input.cliente || null,
+      nit_cliente: input.nitCliente || null,
+      descripcion,
+      base_gravable: baseGravable,
+      base_no_gravable: baseNoGravable,
+      estado_dian: "borrador",
+    })
+    .select("id")
+    .single();
   if (error) return { ok: false, error: error.message };
+
+  const rows = items.map((it, i) => ({
+    factura_id: fact.id,
+    descripcion: it.descripcion || null,
+    valor: Number(it.valor),
+    gravable: it.gravable,
+    orden: i,
+  }));
+  const { error: e2 } = await sb.from("factura_items").insert(rows);
+  if (e2) return { ok: false, error: e2.message };
+
   rev(input.numeroContrato);
   return { ok: true };
 }

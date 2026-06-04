@@ -2,9 +2,12 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { ShareButtons } from "./ShareButtons";
 import { GestionTabs } from "./GestionTabs";
+import { EstadoVenta } from "./EstadoVenta";
+import { EditarVentaForm } from "./EditarVentaForm";
+import { ServiciosContratoEditor, type ServicioDispContrato } from "./ServiciosContratoEditor";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +34,7 @@ export default async function ContratoDetallePage({
     { data: b2b },
     { data: facturas },
     { data: asesores },
+    { data: formasPagoRows },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
@@ -38,12 +42,50 @@ export default async function ContratoDetallePage({
     sb.from("aliados_b2b").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("facturacion").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("asesores").select("nombre, email, pct_comision_base"),
+    sb.from("formas_pago").select("nombre").order("orden"),
   ]);
+  const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
+
+  // Ítems de las facturas del contrato, agrupados por factura.
+  const facturaIds = (facturas ?? []).map((f) => f.id);
+  const itemsPorFactura: Record<number, { descripcion: string | null; valor: number; gravable: boolean }[]> = {};
+  if (facturaIds.length) {
+    const { data: fItems } = await sb
+      .from("factura_items")
+      .select("factura_id, descripcion, valor, gravable, orden")
+      .in("factura_id", facturaIds)
+      .order("orden");
+    for (const it of fItems ?? []) {
+      (itemsPorFactura[it.factura_id] ??= []).push({ descripcion: it.descripcion, valor: it.valor, gravable: it.gravable });
+    }
+  }
+  const facturasConItems = (facturas ?? []).map((f) => ({ ...f, items: itemsPorFactura[f.id] ?? [] }));
 
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
   const fiscal = fiscalFromParams(paramsRows ?? []);
 
   if (!venta) notFound();
+
+  // Servicios del paquete (para editar los add-ons de un contrato PENDIENTE).
+  let serviciosDisp: ServicioDispContrato[] = [];
+  let seleccionServicios: number[] = [];
+  if (venta.estado === "pendiente" && venta.paquete_armado_id) {
+    const [{ data: servFilas }, { data: itemsServ }] = await Promise.all([
+      sb.from("tarifario_resultado").select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp").eq("paquete_id", venta.paquete_armado_id).eq("modulo", "servicios"),
+      sb.from("contrato_items").select("descripcion").eq("numero_contrato", numero),
+    ]);
+    const map = new Map<number, ServicioDispContrato>();
+    for (const r of servFilas ?? []) {
+      if (r.servicio_id == null) continue;
+      let s = map.get(r.servicio_id);
+      if (!s) { s = { servicioId: r.servicio_id, nombre: r.servicio_nombre ?? "—", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [] }; map.set(r.servicio_id, s); }
+      if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
+      else s.personaPvp = r.precio_pvp;
+    }
+    serviciosDisp = [...map.values()];
+    const nombresSel = new Set((itemsServ ?? []).filter((it) => it.descripcion?.startsWith("Servicio · ")).map((it) => it.descripcion!.replace(/^Servicio · /, "")));
+    seleccionServicios = serviciosDisp.filter((s) => nombresSel.has(s.nombre)).map((s) => s.servicioId);
+  }
 
   const totalPagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
   const saldo = Math.max(venta.precio_venta - totalPagado, 0);
@@ -67,6 +109,9 @@ export default async function ContratoDetallePage({
           <p className="mt-1 text-sm text-gray-500">
             {venta.cliente} · {venta.destino ?? "—"} · Viaje {formatFechaLarga(venta.fecha_salida)}
           </p>
+          <div className="mt-2">
+            <EstadoVenta numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
+          </div>
         </div>
         <Link href={`/contrato/${encodeURIComponent(numero)}`} target="_blank">
           <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver / Imprimir contrato →</Button>
@@ -76,18 +121,51 @@ export default async function ContratoDetallePage({
       {/* Totales */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
-          <div className="text-xs opacity-80">Precio de venta</div>
-          <div className="text-xl font-bold">{formatCOP(venta.precio_venta)}</div>
+          <div className="text-xs opacity-80">Precio de venta{venta.moneda && venta.moneda !== "COP" ? ` (${venta.moneda})` : ""}</div>
+          <div className="text-xl font-bold">{formatMoneda(venta.precio_venta, venta.moneda)}</div>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="text-xs text-gray-400">Total pagado</div>
-          <div className="text-xl font-bold" style={{ color: "var(--brand-success)" }}>{formatCOP(totalPagado)}</div>
+          <div className="text-xl font-bold" style={{ color: "var(--brand-success)" }}>{formatMoneda(totalPagado, venta.moneda)}</div>
         </div>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           <div className="text-xs text-gray-400">Saldo pendiente</div>
-          <div className="text-xl font-bold text-gray-800">{formatCOP(saldo)}</div>
+          <div className="text-xl font-bold text-gray-800">{formatMoneda(saldo, venta.moneda)}</div>
         </div>
       </div>
+
+      {/* Editar datos del contrato */}
+      <EditarVentaForm
+        numero={venta.numero_contrato}
+        inicial={{
+          cliente: venta.cliente ?? "",
+          clienteDocumento: venta.cliente_documento ?? "",
+          clienteTelefono: venta.cliente_telefono ?? "",
+          clienteEmail: venta.cliente_email ?? "",
+          clienteDireccion: venta.cliente_direccion ?? "",
+          destino: venta.destino ?? "",
+          fechaSalida: venta.fecha_salida ?? "",
+          fechaRegreso: venta.fecha_regreso ?? "",
+          plazo: venta.plazo ?? "",
+          tipoAsesor: venta.tipo_asesor ?? "interno",
+          agenciaNombre: venta.agencia_nombre ?? "",
+          agenciaAsesor: venta.agencia_asesor ?? "",
+          freelanceNombre: venta.freelance_nombre ?? "",
+          asesorNombre: venta.asesor_firma_nombre ?? "",
+          planNombre: venta.plan_nombre ?? "",
+          observaciones: venta.observaciones ?? "",
+        }}
+      />
+
+      {/* Servicios adicionales (solo contrato pendiente) */}
+      {venta.estado === "pendiente" && (
+        <ServiciosContratoEditor
+          numero={venta.numero_contrato}
+          pax={venta.pax ?? 0}
+          serviciosDisp={serviciosDisp}
+          seleccionInicial={seleccionServicios}
+        />
+      )}
 
       {/* Compartir */}
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
@@ -99,6 +177,9 @@ export default async function ContratoDetallePage({
       <GestionTabs
         numero={numero}
         precioVenta={venta.precio_venta}
+        impuesto={venta.impuesto ?? 0}
+        clienteNombre={venta.cliente ?? ""}
+        clienteDocumento={venta.cliente_documento ?? ""}
         asesorNombre={asesorNombre}
         asesorPct={asesorPct}
         fiscal={fiscal}
@@ -114,7 +195,8 @@ export default async function ContratoDetallePage({
         totalPagado={totalPagado}
         cuentasPorPagar={cxp ?? []}
         comisionesB2B={b2b ?? []}
-        facturas={facturas ?? []}
+        facturas={facturasConItems}
+        formasPago={formasPago}
       />
     </div>
   );

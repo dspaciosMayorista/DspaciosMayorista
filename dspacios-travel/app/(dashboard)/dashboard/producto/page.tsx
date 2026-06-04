@@ -8,6 +8,7 @@ const SECCIONES = [
   { href: "/dashboard/producto/hoteles", icon: "🏨", label: "Hoteles y tarifas", desc: "Habitaciones, temporadas y tarifa neta" },
   { href: "/dashboard/vuelos", icon: "✈️", label: "Aéreo (bloqueos)", desc: "Aerolínea, vuelos, cupos y valor neto" },
   { href: "/dashboard/producto/servicios", icon: "🧰", label: "Servicios adicionales", desc: "Asistencia, traslados, tours" },
+  { href: "/dashboard/producto/programas", icon: "🗺️", label: "Programas (circuitos)", desc: "Circuitos multi-ciudad de un proveedor, en USD" },
 ];
 
 export default function ProductoPage() {

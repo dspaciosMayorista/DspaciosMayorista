@@ -255,4 +255,165 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 
 ---
 
+## 13. Estado del proyecto (handoff) — actualizado en desarrollo
+
+> Rama de trabajo: **`claude/dazzling-planck-MsBCZ`** (PR #1 hacia `main`). Producción
+> = `main` (se mergeará al terminar). La **base de datos Supabase es única** y compartida
+> entre `main` y la rama; las migraciones ya aplicadas afectan también a producción.
+> App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
+
+> **Novedades rama `claude/laughing-goodall-e59PS`:**
+> - **CxP automáticas:** al reservar desde el tarifario se crean solas las cuentas
+>   por pagar de hotel, aéreo y servicios (con proveedor y retención del catálogo).
+> - **Cartera** (`/dashboard/cartera`) y **Pagos a proveedores** (`/dashboard/pagos`):
+>   módulos centrales tipo listado para el área contable (saldos por cobrar/pagar,
+>   estado de cuenta, registrar abonos/pagos). Conscientes de moneda. Roles contables.
+> - **Programas** (`/dashboard/producto/programas`): circuitos multi-ciudad de un
+>   proveedor, **en USD**, con montaje por secciones (ruta, itinerario, matriz de
+>   hoteles/precios por categoría/acomodación, incluye/no incluye, tours, blackouts).
+>   Precio = neto + %markup. Publica al tarifario (tab Programas + vitrina pública
+>   `/tarifario/programa/[id]`) y se reserva (`/dashboard/reservar/programa/[id]`) →
+>   contrato (con `moneda`) + CxP al proveedor. Migración **031**. *Pendiente:* el
+>   detalle tributario del contrato (rentabilidad/IVA/provisiones) sigue en COP;
+>   las CxP guardan máx. 3 pagos.
+> - Marca: logo oficial del manual aplicado; carpeta `docs/marca/` y `docs/programas/`.
+
+### Marca / identidad (aplicada)
+- Manual oficial en `dspacios-travel/docs/marca/Identidad DESPACIOS.pdf`.
+- **Logo como imagen** (regla del manual, no como fuente) en `public/marca/`:
+  `logo-full.png` (full color, fondos claros), `logo-white.png` (blanco, fondos de
+  color/degradado), `logo-black.png` (negro). Componente reutilizable `components/Logo.tsx`
+  (`variant="full|white|black"`, `height`). Ya en sidebar/topbar del dashboard, login y
+  header del tarifario público.
+- **Degradado de marca** `--brand-gradient` (azul→turquesa→verde) en `styles/globals.css`
+  + clase `.bg-brand-gradient`; usado en el header del tarifario público.
+- Paleta confirmada con el manual (mismos HEX): Conifer/Lima `#AEF44A`, Scooter `#26BBD9`,
+  Piper `#66B596`, Jelly Bean Blue `#1D7C9A`. Tipografía web **Jost** = equivalente a
+  Century Gothic. Íconos PWA/app (`icon-192/512`, `icon-maskable-512`, `apple-icon`) =
+  logo blanco sobre el degradado.
+
+### Flujo de negocio implementado
+**PRODUCTO** (costos netos) → **PAQUETES** (armas + margen) → **TARIFARIO** (resultado,
+interno y público) → **RESERVAR** (genera contrato/venta).
+
+### Módulos construidos
+- **Producto:** Destinos (`/dashboard/producto/destinos`, MAYÚSCULAS + IATA), Proveedores,
+  Configuración (categorías de habitación, regímenes), **Hoteles** (temporadas propias +
+  tarifa neta por categoría/régimen/temporada con **Niño 1 y Niño 2**; editar tarifa; config
+  de edades y rangos; **config de acomodaciones** — pax mín/máx del hotel y, por acomodación,
+  `pax_tarifa` (multiplicador por habitación) + mín/máx de adt/niños/inf), **Servicios** (precio **por persona** y/o **por grupo con rangos de
+  pax**; destino vacío = nacional). **Carga masiva CSV** en hoteles, tarifas, servicios y
+  bloqueos (plantillas con `sep=;`, listas con `|`).
+- **Paquetes (armado):** config inicial (nombre, **tipo** bloqueo/porción/servicios, **noches**
+  para porción, destino, vigencia compra, rango viaje, **%mk**, impuesto tiquete/fijo). Adición
+  de **vuelos** (solo bloqueo; check + mk o **TA** + "seleccionar todos"), **hoteles** (ventana
+  para elegir categorías/regímenes), **servicios** (check + elegir **persona/grupo**). **Generar
+  tarifario** → escribe `tarifario_resultado`. Editar config del paquete.
+- **Tarifario interno** (`/dashboard/tarifario`): vista del resultado generado (solo lectura).
+- **Tarifario público** (`/tarifario`): tabla **horizontal** (Hotel·Categoría·R.A.·Sencilla·
+  Doble·Triple·Múltiple·**Chd1·Chd2**), "ver más opciones" por hotel; módulos
+  **Bloqueos/Porción/Servicios**. Botón **Ingresar** + login con **Google (OAuth)**.
+- **Reservar** (`/dashboard/reservar`): en **porción/dinámico** el asesor elige **fecha de ida/
+  regreso** y se **re-liquida en vivo** (`cotizarPorFechas`, service-role); bloqueo usa fechas del
+  record. Luego formulario **por habitaciones**
+  (cantidad de habitaciones por tipo; valor = `pax_tarifa` × tarifa/persona) + **niños 1/2 e
+  infantes por cantidad**, **cliente**, **pasajeros** con "copiar del cliente" + nacionalidad,
+  tipo de venta interno/agencia/freelance → canal B2B/B2C, **plazo**) → crea **venta pendiente**
+  + **sillas en_plazo** (descuenta cupos) + contrato + PDF.
+- **Contratos:** estado pendiente/confirmado; **Confirmar venta** (rol alto) o **abono** auto-
+  confirma → sillas confirmada. Editar cabecera. **Cron diario** libera vencidas.
+  Al generar valida **pasajeros ↔ acomodación** (edades vs habitaciones; bloquea si no cuadra).
+- **Contrato (visual):** hotel "N hab Doble (M pax)"; **servicios** en tabla aparte (Servicio·Pax·
+  Valor total); **vuelo** Origen/Destino derivados de la ruta IATA (`lib/iata.ts`, catálogo editable).
+- **Vuelos:** **dashboard de control** (tarjetas Bloques/Disponibles/En plazo/Confirmadas/
+  Devueltas + tabla de salidas con conteo por estado y % de ocupación; record → pasajeros del
+  record); bloqueos con **destino** + rangos de edad; editar bloqueo; carga masiva. El tarifario
+  y Reservar muestran cupos y **ocultan/bloquean** salidas sin cupos.
+- **Configuración:** asesores, parámetros tributarios, **rangos de edad**, **formas de pago**.
+
+### Motor de cálculo (`lib/calc/paquetes.ts`)
+- Hotel: liquida **noche por noche** (mezcla temporadas), `costo/(1−%mk)`.
+- Vuelo: por vuelo eliges `costo/(1−mk)` **o** `costo + TA`.
+- PVP = hotel + servicios + vuelo. **Impuesto (BNC)** = tiquete neto o fijo. Base com. = PVP − imp.
+- Niño 1 / Niño 2 = acomodaciones `nino` / `nino2` (0 = gratis, sí se publica).
+
+### Editar reserva pendiente
+- **HECHO (servicios):** en un contrato `pendiente`, `ServiciosContratoEditor` +
+  `actualizarServiciosContrato` permiten marcar/desmarcar los servicios del paquete; re-liquida
+  servicios (× pax), actualiza ítems, `precio_venta` y (admin) `costo_receptivo` + casillas
+  Tours/Asistencia. Cambiar hotel/fechas = por ahora anular + reservar.
+- **PENDIENTE (opcional) — Editar "completa (mismo #)"** (cambiar hotel/fechas/habitaciones sin
+  cambiar el número). Plan:
+1. **Refactor del motor:** que `reservarDesdeTarifario` acepte `editarNumero?: string`. En modo
+   edición: no genera número; verifica que la venta exista y esté `pendiente`; **libera** sus
+   sillas `en_plazo` (vuelven a `disponible`) y **borra** `contrato_items`/`contrato_hoteles`/
+   `contrato_vuelos`/`contrato_pasajeros`; hace `update` de `ventas` en vez de `insert`; recrea
+   hijos y **reasigna sillas** con la nueva selección; recalcula costos (hotel/aéreo/receptivo).
+   Reutiliza TODA la liquidación existente (incl. `liquidarHotelPaquete` para porción por fechas).
+2. **UI:** botón "Editar reserva" en el contrato pendiente → reabre `/dashboard/reservar/nuevo`
+   en modo edición con el formulario **precargado** (cliente, fechas, categoría/régimen,
+   habitaciones por tipo, niños/infantes, servicios, tipo de venta, pasajeros). Cargar esos datos
+   desde la venta + `contrato_*` y mapearlos al estado del `ReservaForm`.
+3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
+Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
+
+### Migraciones Supabase — correr en orden 016→031
+016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
+019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
+023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
+026 servicio_incluido · 027 hotel_acomodaciones (reservar por habitaciones + config acomod.) ·
+028 formas_pago (catálogo de formas de pago para abonos) ·
+029 servicio_categoria (tour_traslado/asistencia/otro → ubica el servicio en el contrato) ·
+030 contrato_vuelo_hotel_extra (record/horas/números de vuelo + categoría/proveedor de hotel) ·
+031 programas (9 tablas de circuitos de proveedor + `moneda` en ventas y cuentas_por_pagar).
+Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
+`supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas).
+Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`.
+Google OAuth: callback `/auth/callback`; Site URL = producción.
+
+### PENDIENTE / próximos pasos
+- **Etapa 2 — Servicios como add-on al reservar:** dejar de hornear servicios en la tarifa del
+  hotel; en Reservar mostrar los servicios del paquete y calcular por persona (× pax) o por
+  grupo (rango que cubra los pax), sumándolos al contrato. *(HECHO; queda afinar.)*
+- Afinar rentabilidad/costos del contrato (módulo de gestión).
+- Reservar desde el módulo Servicios del tarifario. *(HECHO.)*
+- Merge de la rama a `main` cuando todo esté validado.
+
+### REDISEÑO DE RESERVAR (anotaciones del dueño — pendiente, prioridad alta)
+1. **Motor de consulta por fechas:** *(HECHO para porción/dinámico — `cotizarPorFechas` +
+   `liquidarHotelPaquete` en reservar/actions, reutiliza el motor del generador.)* En Reservar
+   (no bloqueo) el asesor pone **Fecha de ida y regreso**; el sistema **liquida esas noches**
+   (noche por noche, mezclando temporadas) con service-role y muestra las tarifas. Valida contra
+   el rango de viaje del paquete. Al generar, el server **re-liquida** con esas fechas
+   (autoritativo). Bloqueo mantiene las fechas fijas del record.
+2. **Reservar por HABITACIONES, no por personas:** hoy se piden personas por acomodación, mal.
+   Debe pedir **cantidad de habitaciones** por tipo: 1 hab Doble ⇒ tarifa_doble × 2 pax;
+   1 Triple ⇒ tarifa_triple × 3; Sencilla ⇒ × 1; etc. **Niños e infantes** sí van por **cantidad**
+   (de niños / de infantes), aparte. *(HECHO — migración 027 + `lib/acomodaciones.ts`. Reservar
+   pide habitaciones por tipo; valor = pax_tarifa × tarifa/persona; niños/infantes por cantidad.
+   El detalle del contrato y los ítems se guardan como "N hab Doble (M pax)".)*
+3. **Config de acomodaciones por hotel** (se desprende del punto 2): *(HECHO — tabla
+   `hotel_acomodaciones` + editor en el detalle del hotel. `pax_tarifa` = multiplicador de la
+   tarifa por persona de 1 habitación; defaults 1/2/3/4 si no se configura.)*
+   - A) Mínima y máxima acomodación (pax mín/máx del hotel). *(`hoteles.pax_min/pax_max`.)*
+   - B) Por acomodación: pax máx + (mín/máx adultos, mín/máx niños, mín/máx infantes).
+     Ej. Sencilla: máx 2 pax | adt 1–1 | chd 0–1 | inf 0–1. Doble: máx 4 | adt 2–2 | chd 0–2 | inf 0–2.
+     *(Guardado en `hotel_acomodaciones`; alimenta la validación del punto 4.)*
+4. **Validación pasajeros vs acomodación:** *(HECHO — `validarReservaHabitaciones` +
+   `clasificarPorEdad` en `lib/acomodaciones.ts`.)* Clasifica pasajeros por fecha de nacimiento
+   (umbrales del hotel `edad_infante_max`/`edad_nino_max`, referidos a la fecha de salida) y los
+   compara con la acomodación: capacidad de niños/infantes/pax por habitación, pax mín/máx del
+   hotel y edades reales vs declaradas. Muestra **alerta** (errores bloquean, avisos informan) y
+   **no deja generar**; el server re-valida (autoritativo).
+5. **Contrato pendiente:** *(PARCIAL)* — aéreo ✅ y ahora **costo del hotel negociado** ✅
+   (liquidado noche por noche desde `tarifa_hotel`, admin/service-role, en `ventas.costo_hotel`).
+   **Forma de pago como lista desplegable** ✅ (catálogo `formas_pago`, editable en Configuración;
+   dropdown en el abono). *FALTA:* costos de **proveedores/servicios** netos
+   (`costo_receptivo`/`otros_costos`).
+6. **Visualización del contrato:** el hotel debe leerse como **"1 hab doble"** o **"2 pax en
+   acomodación Doble"** (no "2 Doble" ambiguo). Aclarar habitaciones vs pax.
+
+
+---
+
 *Fin del documento. Mantener actualizado conforme avanza el proyecto.*

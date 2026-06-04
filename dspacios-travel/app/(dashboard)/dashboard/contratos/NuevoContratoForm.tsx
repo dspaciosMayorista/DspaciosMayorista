@@ -59,7 +59,9 @@ export function NuevoContratoForm({
   const paquetesFiltrados = paquetes.filter((p) => p.categoria === tipoPaquete);
 
   // Cliente
-  const [cliente, setCliente] = useState("");
+  const [clienteNombres, setClienteNombres] = useState("");
+  const [clienteApellidos, setClienteApellidos] = useState("");
+  const cliente = `${clienteNombres} ${clienteApellidos}`.trim();
   const [doc, setDoc] = useState("");
   const [tel, setTel] = useState("");
   const [dir, setDir] = useState("");
@@ -81,7 +83,7 @@ export function NuevoContratoForm({
 
   // Listas dinámicas
   const [pasajeros, setPasajeros] = useState<PasajeroInput[]>([
-    { nombre: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false },
+    { nombres: "", apellidos: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false },
   ]);
   const [hoteles, setHoteles] = useState<HotelInput[]>([]);
   const [vuelos, setVuelos] = useState<VueloInput[]>([]);
@@ -115,7 +117,7 @@ export function NuevoContratoForm({
     setPlanNombre(pk.plan_alimentacion ?? "");
     setHoteles(
       pk.paquete_hoteles.map((h) => ({
-        nombre: h.nombre, ciudad: h.ciudad ?? "", alimentacion: h.alimentacion ?? "",
+        nombre: h.nombre, categoria: "", proveedor: "", ciudad: h.ciudad ?? "", alimentacion: h.alimentacion ?? "",
         acomodacion: "", detalleAcomodacion: h.acomodacion_detalle ?? "", fechaIngreso: "", fechaSalida: "",
       }))
     );
@@ -132,7 +134,7 @@ export function NuevoContratoForm({
       setError("El nombre del cliente es obligatorio.");
       return;
     }
-    const pasajerosOk = pasajeros.filter((p) => p.nombre.trim() !== "");
+    const pasajerosOk = pasajeros.filter((p) => p.nombres.trim() !== "" || p.apellidos.trim() !== "");
     const hotelesOk = hoteles.filter((h) => h.nombre.trim() !== "");
     const vuelosOk = vuelos.filter((v) => v.aerolinea.trim() !== "");
     const itemsOk = items.filter((it) => it.descripcion.trim() !== "");
@@ -226,8 +228,12 @@ export function NuevoContratoForm({
         </p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
-            <label className={labelCls}>Nombre completo *</label>
-            <Input value={cliente} onChange={(e) => setCliente(e.target.value)} required />
+            <label className={labelCls}>Nombres *</label>
+            <Input value={clienteNombres} onChange={(e) => setClienteNombres(e.target.value)} required />
+          </div>
+          <div>
+            <label className={labelCls}>Apellidos *</label>
+            <Input value={clienteApellidos} onChange={(e) => setClienteApellidos(e.target.value)} required />
           </div>
           <div>
             <label className={labelCls}>N° Documento</label>
@@ -293,7 +299,7 @@ export function NuevoContratoForm({
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() =>
-              setVuelos((a) => [...a, { aerolinea: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", servicios: "", fechaSalida: "" }])
+              setVuelos((a) => [...a, { aerolinea: "", record: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", vueloIda: "", vueloRegreso: "", horaSalidaIda: "", horaLlegadaIda: "", horaSalidaReg: "", horaLlegadaReg: "", servicios: "", fechaSalida: "", fechaRegreso: "" }])
             }
           >
             + Agregar trayecto
@@ -304,13 +310,21 @@ export function NuevoContratoForm({
         )}
         {vuelos.map((v, i) => (
           <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4">
+            <Input placeholder="Record (PNR)" value={v.record} onChange={(e) => setVuelo(i, { record: e.target.value })} />
             <Input placeholder="Aerolínea" value={v.aerolinea} onChange={(e) => setVuelo(i, { aerolinea: e.target.value })} />
             <Input placeholder="Origen (cód)" value={v.origenCodigo} onChange={(e) => setVuelo(i, { origenCodigo: e.target.value })} />
-            <Input placeholder="Origen (ciudad)" value={v.origenCiudad} onChange={(e) => setVuelo(i, { origenCiudad: e.target.value })} />
-            <Input type="date" value={v.fechaSalida} onChange={(e) => setVuelo(i, { fechaSalida: e.target.value })} />
             <Input placeholder="Destino (cód)" value={v.destinoCodigo} onChange={(e) => setVuelo(i, { destinoCodigo: e.target.value })} />
+            <Input placeholder="Origen (ciudad)" value={v.origenCiudad} onChange={(e) => setVuelo(i, { origenCiudad: e.target.value })} />
             <Input placeholder="Destino (ciudad)" value={v.destinoCiudad} onChange={(e) => setVuelo(i, { destinoCiudad: e.target.value })} />
-            <Input className="md:col-span-2" placeholder="Servicios (equipaje…)" value={v.servicios} onChange={(e) => setVuelo(i, { servicios: e.target.value })} />
+            <Input placeholder="Vuelo ida (N°)" value={v.vueloIda} onChange={(e) => setVuelo(i, { vueloIda: e.target.value })} />
+            <Input placeholder="Vuelo regreso (N°)" value={v.vueloRegreso} onChange={(e) => setVuelo(i, { vueloRegreso: e.target.value })} />
+            <Input type="date" value={v.fechaSalida} onChange={(e) => setVuelo(i, { fechaSalida: e.target.value })} title="Fecha ida" />
+            <Input type="date" value={v.fechaRegreso} onChange={(e) => setVuelo(i, { fechaRegreso: e.target.value })} title="Fecha regreso" />
+            <Input placeholder="Hora salida ida" value={v.horaSalidaIda} onChange={(e) => setVuelo(i, { horaSalidaIda: e.target.value })} />
+            <Input placeholder="Hora llegada ida" value={v.horaLlegadaIda} onChange={(e) => setVuelo(i, { horaLlegadaIda: e.target.value })} />
+            <Input placeholder="Hora salida regreso" value={v.horaSalidaReg} onChange={(e) => setVuelo(i, { horaSalidaReg: e.target.value })} />
+            <Input placeholder="Hora llegada regreso" value={v.horaLlegadaReg} onChange={(e) => setVuelo(i, { horaLlegadaReg: e.target.value })} />
+            <Input className="md:col-span-3" placeholder="Servicios (equipaje…)" value={v.servicios} onChange={(e) => setVuelo(i, { servicios: e.target.value })} />
             <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setVuelos((a) => a.filter((_, j) => j !== i))}>
               Quitar
             </button>
@@ -328,7 +342,7 @@ export function NuevoContratoForm({
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() =>
-              setHoteles((a) => [...a, { nombre: "", ciudad: "", alimentacion: "", acomodacion: "", detalleAcomodacion: "", fechaIngreso: "", fechaSalida: "" }])
+              setHoteles((a) => [...a, { nombre: "", categoria: "", proveedor: "", ciudad: "", alimentacion: "", acomodacion: "", detalleAcomodacion: "", fechaIngreso: "", fechaSalida: "" }])
             }
           >
             + Agregar hotel
@@ -338,6 +352,8 @@ export function NuevoContratoForm({
         {hoteles.map((h, i) => (
           <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4">
             <Input placeholder="Hotel" value={h.nombre} onChange={(e) => setHotel(i, { nombre: e.target.value })} />
+            <Input placeholder="Categoría habitación" value={h.categoria} onChange={(e) => setHotel(i, { categoria: e.target.value })} />
+            <Input placeholder="Proveedor del hotel" value={h.proveedor} onChange={(e) => setHotel(i, { proveedor: e.target.value })} />
             <Input placeholder="Ciudad" value={h.ciudad} onChange={(e) => setHotel(i, { ciudad: e.target.value })} />
             <Input placeholder="Alimentación (P.A, PAM…)" value={h.alimentacion} onChange={(e) => setHotel(i, { alimentacion: e.target.value })} />
             <Input placeholder="Acomodación (Doble…)" value={h.acomodacion} onChange={(e) => setHotel(i, { acomodacion: e.target.value })} />
@@ -360,14 +376,15 @@ export function NuevoContratoForm({
           <button
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
-            onClick={() => setPasajeros((a) => [...a, { nombre: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false }])}
+            onClick={() => setPasajeros((a) => [...a, { nombres: "", apellidos: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false }])}
           >
             + Agregar pasajero
           </button>
         </div>
         {pasajeros.map((p, i) => (
-          <div key={i} className="grid grid-cols-2 items-center gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-5">
-            <Input placeholder="Nombre completo" value={p.nombre} onChange={(e) => setPasajero(i, { nombre: e.target.value })} />
+          <div key={i} className="grid grid-cols-2 items-center gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-6">
+            <Input placeholder="Nombres" value={p.nombres} onChange={(e) => setPasajero(i, { nombres: e.target.value })} />
+            <Input placeholder="Apellidos" value={p.apellidos} onChange={(e) => setPasajero(i, { apellidos: e.target.value })} />
             <Input placeholder="Tipo ID" value={p.tipoId} onChange={(e) => setPasajero(i, { tipoId: e.target.value })} />
             <Input placeholder="Identificación" value={p.identificacion} onChange={(e) => setPasajero(i, { identificacion: e.target.value })} />
             <Input type="date" value={p.fechaNacimiento} onChange={(e) => setPasajero(i, { fechaNacimiento: e.target.value })} />

@@ -11,6 +11,7 @@ export type BloqueoInput = {
   record: string;
   aerolinea: string;
   proveedorId: number | null;
+  destinoId: number | null;
   ruta: string;
   vueloIda: string;
   fechaIda: string;
@@ -25,6 +26,7 @@ export type BloqueoInput = {
   fechaDevolucion: string;
   fechaEmision: string;
   notas: string;
+  rangosEdad?: number[];
 };
 
 export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
@@ -36,6 +38,7 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
       record: input.record.trim().toUpperCase(),
       aerolinea: oNull(input.aerolinea),
       proveedor_id: input.proveedorId,
+      destino_id: input.destinoId,
       ruta: oNull(input.ruta),
       vuelo_ida: oNull(input.vueloIda),
       fecha_ida: oNull(input.fechaIda),
@@ -50,6 +53,7 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
       fecha_devolucion: oNull(input.fechaDevolucion),
       fecha_emision: oNull(input.fechaEmision),
       notas: oNull(input.notas),
+      rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
     })
     .select("id")
     .single();
@@ -69,6 +73,84 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
 
   revalidatePath("/dashboard/vuelos");
   return { ok: true, id: bloqueo.id };
+}
+
+// Editar un bloqueo existente (no modifica cupos/sillas ya generadas).
+export type BloqueoEditInput = Omit<BloqueoInput, "cuposTotal">;
+export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("bloqueos_vuelo")
+    .update({
+      record: input.record.trim().toUpperCase(),
+      aerolinea: oNull(input.aerolinea),
+      proveedor_id: input.proveedorId,
+      destino_id: input.destinoId,
+      ruta: oNull(input.ruta),
+      vuelo_ida: oNull(input.vueloIda),
+      fecha_ida: oNull(input.fechaIda),
+      hora_salida_ida: oNull(input.horaSalidaIda),
+      hora_llegada_ida: oNull(input.horaLlegadaIda),
+      vuelo_regreso: oNull(input.vueloRegreso),
+      fecha_regreso: oNull(input.fechaRegreso),
+      hora_salida_reg: oNull(input.horaSalidaReg),
+      hora_llegada_reg: oNull(input.horaLlegadaReg),
+      tarifa_para_empaquetar: input.tarifaParaEmpaquetar,
+      fecha_devolucion: oNull(input.fechaDevolucion),
+      fecha_emision: oNull(input.fechaEmision),
+      notas: oNull(input.notas),
+      rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
+    })
+    .eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/vuelos/${id}`);
+  return { ok: true, id };
+}
+
+// ── Carga masiva de bloqueos (CSV) ─────────────────────────────────────────
+const numCsv = (s?: string) => (s ? parseInt(String(s).replace(/[^\d-]/g, ""), 10) || 0 : 0);
+const dCsv = (s?: string) => (s && s.trim() !== "" ? s.trim() : null);
+
+export async function cargarBloqueosMasivo(
+  rows: Record<string, string>[]
+): Promise<{ ok: boolean; insertados: number; errores: string[] }> {
+  const sb = await createClient();
+  const { data: destinos } = await sb.from("destinos").select("id, nombre");
+  const dmap = new Map((destinos ?? []).map((d) => [d.nombre.trim().toLowerCase(), d.id]));
+  const errores: string[] = [];
+  let insertados = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const linea = i + 2;
+    const record = (r.record || "").trim().toUpperCase();
+    if (!record) { errores.push(`Fila ${linea}: falta record (PNR).`); continue; }
+    let destinoId: number | null = null;
+    if (r.destino && r.destino.trim()) {
+      destinoId = dmap.get(r.destino.trim().toLowerCase()) ?? null;
+      if (destinoId === null) errores.push(`Fila ${linea}: destino "${r.destino}" no existe (se deja sin destino).`);
+    }
+    const cupos = numCsv(r.cupos_total);
+    const { data: bq, error } = await sb
+      .from("bloqueos_vuelo")
+      .insert({
+        record, aerolinea: oNull(r.aerolinea || ""), destino_id: destinoId, ruta: oNull(r.ruta || ""),
+        vuelo_ida: oNull(r.vuelo_ida || ""), fecha_ida: dCsv(r.fecha_ida), hora_salida_ida: dCsv(r.hora_salida_ida), hora_llegada_ida: dCsv(r.hora_llegada_ida),
+        vuelo_regreso: oNull(r.vuelo_regreso || ""), fecha_regreso: dCsv(r.fecha_regreso), hora_salida_reg: dCsv(r.hora_salida_reg), hora_llegada_reg: dCsv(r.hora_llegada_reg),
+        cupos_total: cupos, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
+        fecha_devolucion: dCsv(r.fecha_devolucion), fecha_emision: dCsv(r.fecha_emision), notas: oNull(r.notas || ""),
+      })
+      .select("id")
+      .single();
+    if (error || !bq) { errores.push(`Fila ${linea} (${record}): ${error?.message ?? "no se insertó"}`); continue; }
+    if (cupos > 0) {
+      const sillas = Array.from({ length: cupos }, (_, k) => ({ bloqueo_id: bq.id, numero_silla: k + 1, estado: "disponible" as const }));
+      await sb.from("sillas").insert(sillas);
+    }
+    insertados++;
+  }
+  revalidatePath("/dashboard/vuelos");
+  return { ok: errores.length === 0, insertados, errores };
 }
 
 export async function cambiarSillas(input: {

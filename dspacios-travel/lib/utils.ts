@@ -15,6 +15,21 @@ export function formatCOP(value: number): string {
   }).format(value);
 }
 
+/** Formatea un número como dólares: US$1,839 */
+export function formatUSD(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+/** Formatea un monto según su moneda ('COP' por defecto, 'USD' para programas). */
+export function formatMoneda(value: number, moneda?: string | null): string {
+  return (moneda ?? "COP").toUpperCase() === "USD" ? formatUSD(value) : formatCOP(value);
+}
+
 /** Formatea fecha ISO a texto legible en español */
 export function formatFecha(iso: string): string {
   return new Date(iso).toLocaleDateString("es-CO", {
@@ -35,6 +50,12 @@ export function formatFechaLarga(iso: string | null | undefined): string {
     month: "long",
     year: "numeric",
   });
+}
+
+/** Etiqueta de destino con su código IATA entre paréntesis: "CARTAGENA (CTG)" */
+export function destinoLabel(nombre: string | null | undefined, iata?: string | null): string {
+  const n = (nombre ?? "").toUpperCase();
+  return iata ? `${n} (${iata})` : n;
 }
 
 /** Edad en años cumplidos a una fecha de referencia (def. hoy) */

@@ -5,6 +5,34 @@ import { revalidatePath } from "next/cache";
 
 type Result = { ok: true } | { ok: false; error: string };
 
+// ── Rangos de edad (catálogo) ──────────────────────────────────────────────
+export async function crearRangoEdad(input: {
+  denominacion: string;
+  edadMin: number;
+  edadMax: number;
+}): Promise<Result> {
+  if (!input.denominacion.trim()) return { ok: false, error: "La denominación es obligatoria." };
+  if (input.edadMax < input.edadMin) return { ok: false, error: "La edad máxima no puede ser menor que la mínima." };
+  const sb = await createClient();
+  const { error } = await sb.from("rangos_edad").insert({
+    denominacion: input.denominacion.trim(),
+    edad_min: input.edadMin,
+    edad_max: input.edadMax,
+    activo: true,
+  });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+export async function eliminarRangoEdad(id: number): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("rangos_edad").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
 export async function crearAsesor(input: {
   nombre: string;
   email: string;
@@ -38,6 +66,24 @@ export async function actualizarAsesor(
 export async function eliminarAsesor(id: number): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("asesores").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+// ── Formas de pago (catálogo) ──────────────────────────────────────────────
+export async function crearFormaPago(nombre: string): Promise<Result> {
+  if (!nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const sb = await createClient();
+  const { error } = await sb.from("formas_pago").insert({ nombre: nombre.trim() });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+export async function eliminarFormaPago(id: number): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("formas_pago").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/configuracion");
   return { ok: true };

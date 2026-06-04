@@ -1,22 +1,20 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import {
   calcComisionB2B,
-  calcComisionAsesor,
-  calcRentabilidad,
+  calcComisionAsesorBase,
   FISCAL_DEFAULT,
-  type Rentabilidad,
   type ParamsFiscales,
 } from "@/lib/calc/finanzas";
 import { AbonoForm } from "./AbonoForm";
 import {
   guardarCostos,
   crearCuentaPorPagar,
+  actualizarCuentaPorPagar,
   eliminarCuentaPorPagar,
   crearComisionB2B,
   eliminarComisionB2B,
@@ -25,13 +23,17 @@ import {
 } from "./gestion-actions";
 
 type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string };
-type CxP = { id: number; proveedor: string | null; servicio: string | null; valor_total: number; fecha_vencimiento: string | null; aplica_retencion: boolean; pct_retencion: number };
+type CxP = { id: number; proveedor: string | null; servicio: string | null; valor_total: number; base_gravable: number | null; iva_proveedor: number | null; fecha_vencimiento: string | null; aplica_retencion: boolean; pct_retencion: number };
 type B2B = { id: number; aliado: string | null; precio_venta: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
-type Factura = { id: number; numero_factura: string | null; fecha_factura: string | null; base_gravable: number; iva_descontable: number; estado_dian: string | null };
+type FacturaItem = { descripcion: string | null; valor: number; gravable: boolean };
+type Factura = { id: number; numero_factura: string | null; fecha_factura: string | null; base_gravable: number; base_no_gravable: number; estado_dian: string | null; items: FacturaItem[] };
 
 export type GestionProps = {
   numero: string;
   precioVenta: number;
+  impuesto: number; // BNC (Base No Comisionable) del contrato
+  clienteNombre: string;
+  clienteDocumento: string;
   asesorNombre: string;
   asesorPct: number;
   fiscal?: ParamsFiscales;
@@ -42,12 +44,14 @@ export type GestionProps = {
   cuentasPorPagar: CxP[];
   comisionesB2B: B2B[];
   facturas: Factura[];
+  formasPago: string[];
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
-const card = "rounded-xl border border-gray-200 bg-white p-4 sm:p-5";
+const card = "rounded-xl border border-gray-300 bg-white p-4 shadow-sm sm:p-5";
 
 export function GestionTabs(p: GestionProps) {
+  const [tab, setTab] = useState("cartera");
   // ── Cálculos vivos ──────────────────────────────────────────────
   const costoDirecto =
     p.costos.costo_hotel + p.costos.costo_aereo + p.costos.costo_receptivo +
@@ -63,63 +67,72 @@ export function GestionTabs(p: GestionProps) {
 
   const fiscal = p.fiscal ?? FISCAL_DEFAULT;
 
-  const comAsesor = calcComisionAsesor({
-    precioVenta: p.precioVenta, costoTotal: costoDirecto,
-    comB2BPagada: comB2BTotal, pctBase: p.asesorPct, retHonorarios: fiscal.RETENCION_HONORARIOS,
+  // Comisión del asesor sobre la BASE COMISIONABLE = PVP − BNC (impuesto).
+  const comAsesor = calcComisionAsesorBase({
+    precioVenta: p.precioVenta, impuesto: p.impuesto,
+    pctBase: p.asesorPct, retHonorarios: fiscal.RETENCION_HONORARIOS,
   });
 
   const ivaGenerado = p.facturas.reduce((s, f) => s + f.base_gravable * fiscal.IVA, 0);
-  const ivaDescontable = p.facturas.reduce((s, f) => s + (f.iva_descontable || 0), 0);
 
-  const rent = calcRentabilidad({
-    precioVenta: p.precioVenta, costoDirecto, comB2B: comB2BTotal,
-    comAsesor: comAsesor.comisionNeta, ivaGenerado, ivaDescontable, fiscal,
-  });
+  const tabs: { value: string; label: string }[] = [
+    { value: "cartera", label: "Cartera" },
+    ...(p.verFinanzas ? [
+      { value: "costos", label: "Costos" },
+      { value: "proveedores", label: "Proveedores" },
+      { value: "comisiones", label: "Comisiones" },
+      { value: "facturacion", label: "Facturación" },
+      { value: "flujo", label: "Flujo de caja" },
+    ] : []),
+  ];
 
   return (
-    <div className="mt-8">
-      <Tabs defaultValue="cartera">
-        <div className="mb-5 overflow-x-auto">
-          <TabsList>
-            <TabsTrigger value="cartera">Cartera</TabsTrigger>
-            {p.verFinanzas && <TabsTrigger value="costos">Costos</TabsTrigger>}
-            {p.verFinanzas && <TabsTrigger value="proveedores">Proveedores</TabsTrigger>}
-            {p.verFinanzas && <TabsTrigger value="comisiones">Comisiones</TabsTrigger>}
-            {p.verFinanzas && <TabsTrigger value="facturacion">Facturación</TabsTrigger>}
-            {p.verFinanzas && <TabsTrigger value="rentabilidad">Rentabilidad</TabsTrigger>}
-          </TabsList>
-        </div>
+    <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-start">
+      {/* Menú vertical */}
+      <nav className="flex shrink-0 flex-row flex-wrap gap-1 rounded-xl border border-gray-200 bg-white p-1 sm:w-48 sm:flex-col">
+        {tabs.map((t) => {
+          const activo = tab === t.value;
+          return (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setTab(t.value)}
+              className="rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors"
+              style={activo
+                ? { backgroundColor: "var(--brand-primary)", color: "white" }
+                : { color: "#4b5563" }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </nav>
 
-        <TabsContent value="cartera">
-          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} />
-        </TabsContent>
-        {p.verFinanzas && (
-          <>
-            <TabsContent value="costos">
-              <CostosTab numero={p.numero} costos={p.costos} costoDirecto={costoDirecto} />
-            </TabsContent>
-            <TabsContent value="proveedores">
-              <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />
-            </TabsContent>
-            <TabsContent value="comisiones">
-              <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} filas={p.comisionesB2B}
-                comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} />
-            </TabsContent>
-            <TabsContent value="facturacion">
-              <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaDescontable={ivaDescontable} />
-            </TabsContent>
-            <TabsContent value="rentabilidad">
-              <RentabilidadTab rent={rent} />
-            </TabsContent>
-          </>
+      {/* Contenido */}
+      <div className="min-w-0 flex-1">
+        {tab === "cartera" && (
+          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} />
         )}
-      </Tabs>
+        {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
+        {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />}
+        {p.verFinanzas && tab === "comisiones" && (
+          <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} impuesto={p.impuesto} filas={p.comisionesB2B}
+            comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} fiscal={fiscal} />
+        )}
+        {p.verFinanzas && tab === "facturacion" && (
+          <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
+            clienteNombre={p.clienteNombre} clienteDocumento={p.clienteDocumento} totalContrato={p.precioVenta} />
+        )}
+        {p.verFinanzas && tab === "flujo" && (
+          <FlujoCajaTab precioVenta={p.precioVenta} costoDirecto={costoDirecto} comB2B={comB2BTotal} comAsesor={comAsesor.comisionNeta} />
+        )}
+      </div>
     </div>
   );
 }
 
 // ── COSTOS ─────────────────────────────────────────────────────────────
-function CostosTab({ numero, costos, costoDirecto }: { numero: string; costos: GestionProps["costos"]; costoDirecto: number }) {
+function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["costos"] }) {
   const [v, setV] = useState(costos);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -143,19 +156,23 @@ function CostosTab({ numero, costos, costoDirecto }: { numero: string; costos: G
   return (
     <div className={card}>
       <p className="mb-4 text-sm text-gray-500">Costos netos por proveedor. Alimentan la rentabilidad.</p>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+      <div className="max-w-xl space-y-3">
         {campos.map(([k, label]) => (
-          <div key={k}>
-            <label className={lbl}>{label}</label>
-            <Input type="number" min={0} value={v[k] || ""} onChange={set(k)} placeholder="0" />
+          <div key={k} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+            <label className="w-40 shrink-0 text-sm font-medium text-gray-600">{label}</label>
+            <Input type="number" min={0} value={v[k] || ""} onChange={set(k)} placeholder="0" className="sm:flex-1" />
+            <span className="w-32 shrink-0 text-right text-sm tabular-nums text-gray-500">{formatCOP(v[k] || 0)}</span>
           </div>
         ))}
+        <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+          <span className="w-40 shrink-0 text-sm font-semibold text-gray-700">Costo directo total</span>
+          <b className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(total)}</b>
+        </div>
       </div>
       <div className="mt-4 flex items-center gap-3">
         <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Guardar costos"}
         </Button>
-        <span className="text-sm text-gray-500">Costo directo total: <b className="tabular-nums">{formatCOP(total)}</b></span>
         {msg && <span className="text-sm text-green-600">{msg}</span>}
       </div>
     </div>
@@ -163,7 +180,7 @@ function CostosTab({ numero, costos, costoDirecto }: { numero: string; costos: G
 }
 
 // ── CARTERA (abonos) ───────────────────────────────────────────────────
-function CarteraTab({ numero, abonos, totalPagado, total }: { numero: string; abonos: Abono[]; totalPagado: number; total: number }) {
+function CarteraTab({ numero, abonos, totalPagado, total, formasPago }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[] }) {
   const saldo = Math.max(total - totalPagado, 0);
   return (
     <div className="space-y-4">
@@ -174,7 +191,7 @@ function CarteraTab({ numero, abonos, totalPagado, total }: { numero: string; ab
       </div>
       <div className={card}>
         <p className={lbl}>Registrar abono</p>
-        <AbonoForm numeroContrato={numero} />
+        <AbonoForm numeroContrato={numero} formasPago={formasPago} />
       </div>
       {abonos.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
@@ -206,9 +223,16 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
   const [venc, setVenc] = useState("");
   const [ret, setRet] = useState(false);
   const [pctRet, setPctRet] = useState("");
+  const [esFactura, setEsFactura] = useState(false); // factura de proveedor → discrimina IVA
+  const [iva, setIva] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const totalCxP = filas.reduce((s, f) => s + f.valor_total, 0);
+  const totalIva = filas.reduce((s, f) => s + (f.iva_proveedor ?? 0), 0);
+
+  const valorNum = Number(valor) || 0;
+  const ivaNum = esFactura ? Number(iva) || 0 : 0;
+  const costoNum = Math.max(0, valorNum - ivaNum); // costo = total − IVA descontable
 
   function agregar() {
     if (!proveedor.trim() || !Number(valor)) return;
@@ -216,10 +240,11 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
     start(async () => {
       const r = await crearCuentaPorPagar({
         numeroContrato: numero, proveedor, tipoProveedor: tipo, servicio,
-        valorTotal: Number(valor), fechaVencimiento: venc,
+        valorTotal: valorNum, fechaVencimiento: venc,
         aplicaRetencion: ret, pctRetencion: Number(pctRet) / 100 || 0,
+        ivaDescontable: ivaNum,
       });
-      if (r.ok) { setProveedor(""); setTipo(""); setServicio(""); setValor(""); setVenc(""); setRet(false); setPctRet(""); }
+      if (r.ok) { setProveedor(""); setTipo(""); setServicio(""); setValor(""); setVenc(""); setRet(false); setPctRet(""); setEsFactura(false); setIva(""); }
       else setErr(r.error);
     });
   }
@@ -239,6 +264,28 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
             {ret && <Input type="number" className="w-20" placeholder="%" value={pctRet} onChange={(e) => setPctRet(e.target.value)} />}
           </label>
         </div>
+
+        {/* Factura de proveedor: discriminar costo / IVA descontable (manual) */}
+        <label className="mt-3 flex items-center gap-2 text-sm font-medium text-gray-700">
+          <input type="checkbox" checked={esFactura} onChange={(e) => setEsFactura(e.target.checked)} />
+          Factura de proveedor (discriminar IVA descontable)
+        </label>
+        {esFactura && (
+          <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <div>
+              <label className="mb-1 block text-xs text-gray-500">IVA descontable</label>
+              <Input type="number" min={0} placeholder="0" value={iva} onChange={(e) => setIva(e.target.value)} className="w-40" />
+            </div>
+            <div className="text-xs text-gray-500">
+              Costo (base): <b className="text-gray-700">{formatCOP(costoNum)}</b>
+              <span className="mx-2">·</span>
+              IVA: <b className="text-gray-700">{formatCOP(ivaNum)}</b>
+              <span className="mx-2">·</span>
+              Total: <b style={{ color: "var(--brand-primary)" }}>{formatCOP(valorNum)}</b>
+            </div>
+          </div>
+        )}
+
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={agregar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Guardando…" : "Agregar"}
@@ -247,24 +294,17 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
         </div>
       </div>
       {filas.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[560px] text-sm">
+        <div className="overflow-x-auto rounded-xl border border-gray-300 bg-white shadow-sm">
+          <table className="w-full min-w-[640px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Servicio</th>
+              <th className="px-4 py-2 text-right">Costo</th><th className="px-4 py-2 text-right">IVA desc.</th>
               <th className="px-4 py-2 text-right">Valor</th><th className="px-4 py-2">Vence</th><th className="px-4 py-2"></th>
             </tr></thead>
-            <tbody>{filas.map((f) => (
-              <tr key={f.id} className="border-t border-gray-50">
-                <td className="px-4 py-2 text-gray-700">{f.proveedor ?? "—"}</td>
-                <td className="px-4 py-2 text-gray-500">{f.servicio ?? "—"}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.valor_total)}</td>
-                <td className="px-4 py-2 text-gray-500">{f.fecha_vencimiento ?? "—"}</td>
-                <td className="px-4 py-2 text-right">
-                  <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
-                </td>
-              </tr>))}</tbody>
+            <tbody>{filas.map((f) => <FilaCxP key={f.id} f={f} numero={numero} />)}</tbody>
             <tfoot><tr className="border-t border-gray-200 font-medium">
-              <td className="px-4 py-2" colSpan={2}>Total por pagar</td>
+              <td className="px-4 py-2" colSpan={3}>Total por pagar</td>
+              <td className="px-4 py-2 text-right tabular-nums text-gray-500">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
               <td className="px-4 py-2 text-right tabular-nums">{formatCOP(totalCxP)}</td><td colSpan={2} />
             </tr></tfoot>
           </table>
@@ -274,10 +314,73 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
   );
 }
 
+// Fila de cuenta por pagar con edición inline (para agregar el IVA a las CxP
+// creadas automáticamente con el contrato, o corregir cualquier dato).
+function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
+  const [editar, setEditar] = useState(false);
+  const ivaF = f.iva_proveedor ?? 0;
+  const costoF = f.base_gravable ?? (f.valor_total - ivaF);
+
+  const [proveedor, setProveedor] = useState(f.proveedor ?? "");
+  const [servicio, setServicio] = useState(f.servicio ?? "");
+  const [valor, setValor] = useState(String(f.valor_total));
+  const [iva, setIva] = useState(ivaF ? String(ivaF) : "");
+  const [venc, setVenc] = useState(f.fecha_vencimiento ?? "");
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState("");
+
+  function guardar() {
+    setErr("");
+    start(async () => {
+      const r = await actualizarCuentaPorPagar({
+        id: f.id, numeroContrato: numero, proveedor, servicio,
+        valorTotal: Number(valor) || 0, fechaVencimiento: venc, ivaDescontable: Number(iva) || 0,
+      });
+      if (r.ok) setEditar(false); else setErr(r.error);
+    });
+  }
+
+  if (editar) {
+    const costoEd = Math.max(0, (Number(valor) || 0) - (Number(iva) || 0));
+    return (
+      <tr className="border-t border-gray-100 bg-gray-50/60">
+        <td className="px-4 py-2" colSpan={7}>
+          <div className="flex flex-wrap items-end gap-2">
+            <div><label className="block text-[11px] text-gray-500">Proveedor</label><Input value={proveedor} onChange={(e) => setProveedor(e.target.value)} className="w-40" /></div>
+            <div><label className="block text-[11px] text-gray-500">Servicio</label><Input value={servicio} onChange={(e) => setServicio(e.target.value)} className="w-44" /></div>
+            <div><label className="block text-[11px] text-gray-500">Valor total</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" /></div>
+            <div><label className="block text-[11px] text-gray-500">IVA descontable</label><Input type="number" value={iva} onChange={(e) => setIva(e.target.value)} className="w-32" placeholder="0" /></div>
+            <div><label className="block text-[11px] text-gray-500">Vence</label><Input type="date" value={venc} onChange={(e) => setVenc(e.target.value)} className="w-40" /></div>
+            <span className="pb-2 text-xs text-gray-500">Costo: <b className="text-gray-700">{formatCOP(costoEd)}</b></span>
+            <Button onClick={guardar} disabled={pending} className="h-9" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Guardar"}</Button>
+            <button type="button" onClick={() => setEditar(false)} className="pb-2 text-xs text-gray-400 hover:text-gray-700">Cancelar</button>
+            {err && <span className="pb-2 text-xs text-red-600">{err}</span>}
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr className="border-t border-gray-50">
+      <td className="px-4 py-2 text-gray-700">{f.proveedor ?? "—"}</td>
+      <td className="px-4 py-2 text-gray-500">{f.servicio ?? "—"}</td>
+      <td className="px-4 py-2 text-right tabular-nums text-gray-600">{formatCOP(costoF)}</td>
+      <td className="px-4 py-2 text-right tabular-nums text-gray-500">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
+      <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.valor_total)}</td>
+      <td className="px-4 py-2 text-gray-500">{f.fecha_vencimiento ?? "—"}</td>
+      <td className="px-4 py-2 text-right whitespace-nowrap">
+        <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
+        <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
+      </td>
+    </tr>
+  );
+}
+
 // ── COMISIONES (B2B + asesor) ──────────────────────────────────────────
-function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, comAsesor, asesorNombre, asesorPct }: {
-  numero: string; precioVenta: number; filas: B2B[]; comB2BTotal: number;
-  comAsesor: ReturnType<typeof calcComisionAsesor>; asesorNombre: string; asesorPct: number;
+function ComisionesTab({ numero, precioVenta, impuesto, filas, comB2BTotal, comAsesor, asesorNombre, asesorPct, fiscal }: {
+  numero: string; precioVenta: number; impuesto: number; filas: B2B[]; comB2BTotal: number;
+  comAsesor: ReturnType<typeof calcComisionAsesorBase>; asesorNombre: string; asesorPct: number; fiscal: ParamsFiscales;
 }) {
   const [aliado, setAliado] = useState("");
   const [nit, setNit] = useState("");
@@ -306,17 +409,19 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, comAsesor, ase
 
   return (
     <div className="space-y-4">
-      {/* Comisión asesor (calculada) */}
-      <div className={card}>
-        <p className="mb-2 text-sm font-semibold text-gray-700">Comisión del asesor</p>
-        <p className="mb-3 text-xs text-gray-500">{asesorNombre || "—"} · base {(asesorPct * 100).toFixed(0)}%</p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Mini label="Util. neta base" value={formatCOP(comAsesor.utilidadNeta)} />
-          <Mini label="Comisión bruta" value={formatCOP(comAsesor.comisionBruta)} />
-          <Mini label="Retención 11%" value={formatCOP(comAsesor.retencion)} />
-          <Mini label="Comisión neta" value={formatCOP(comAsesor.comisionNeta)} color="var(--brand-primary)" />
-        </div>
-      </div>
+      {/* Comisión asesor (calculada) — vertical */}
+      <Resumen
+        titulo="Comisión del asesor"
+        subtitulo={`${asesorNombre || "—"} · base ${(asesorPct * 100).toFixed(0)}%`}
+        filas={[
+          { label: "Precio de venta (PVP)", value: formatCOP(precioVenta) },
+          { label: "(−) BNC / impuesto", value: impuesto > 0 ? `− ${formatCOP(impuesto)}` : "Sin BNC" },
+          { label: "= Base comisionable", value: formatCOP(comAsesor.baseComisionable), strong: true },
+          { label: `Comisión bruta (${(asesorPct * 100).toFixed(0)}%)`, value: formatCOP(comAsesor.comisionBruta) },
+          { label: `(−) Retención (${(fiscal.RETENCION_HONORARIOS * 100).toFixed(0)}%)`, value: `− ${formatCOP(comAsesor.retencion)}` },
+          { label: "= Comisión neta", value: formatCOP(comAsesor.comisionNeta), strong: true, color: "var(--brand-primary)" },
+        ]}
+      />
 
       {/* Comisiones B2B */}
       <div className={card}>
@@ -369,125 +474,255 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, comAsesor, ase
 }
 
 // ── FACTURACIÓN ────────────────────────────────────────────────────────
-function FacturacionTab({ numero, filas, ivaGenerado, ivaDescontable }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaDescontable: number }) {
+type ItemForm = { descripcion: string; valor: string; gravable: boolean };
+const itemVacio = (): ItemForm => ({ descripcion: "", valor: "", gravable: true });
+
+function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, clienteDocumento, totalContrato }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaPct: number; clienteNombre: string; clienteDocumento: string; totalContrato: number }) {
   const [num, setNum] = useState("");
   const [fecha, setFecha] = useState("");
   const [cliente, setCliente] = useState("");
   const [nit, setNit] = useState("");
-  const [desc, setDesc] = useState("");
-  const [base, setBase] = useState("");
-  const [ivaDesc, setIvaDesc] = useState("");
+  const [items, setItems] = useState<ItemForm[]>([itemVacio()]);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
+  const totalBaseGrav = filas.reduce((s, f) => s + (f.base_gravable || 0), 0);
+  const totalBaseNoGrav = filas.reduce((s, f) => s + (f.base_no_gravable || 0), 0);
+
+  // Previsualización de la factura en edición
+  const prevGrav = items.filter((i) => i.gravable).reduce((s, i) => s + (Number(i.valor) || 0), 0);
+  const prevNoGrav = items.filter((i) => !i.gravable).reduce((s, i) => s + (Number(i.valor) || 0), 0);
+  const prevIva = prevGrav * ivaPct;
+  const prevTotal = prevGrav + prevNoGrav + prevIva;
+
+  const setItem = (idx: number, patch: Partial<ItemForm>) =>
+    setItems((arr) => arr.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+  const addItem = () => setItems((arr) => [...arr, itemVacio()]);
+  const delItem = (idx: number) => setItems((arr) => (arr.length > 1 ? arr.filter((_, i) => i !== idx) : arr));
+
   function agregar() {
-    if (!Number(base)) return;
+    const limpios = items
+      .filter((it) => (Number(it.valor) || 0) > 0)
+      .map((it) => ({ descripcion: it.descripcion, valor: Number(it.valor), gravable: it.gravable }));
+    if (!limpios.length) { setErr("Agrega al menos un ítem con valor."); return; }
     setErr("");
     start(async () => {
       const r = await crearFactura({
         numeroContrato: numero, numeroFactura: num, fechaFactura: fecha,
-        cliente, nitCliente: nit, descripcion: desc,
-        baseGravable: Number(base), ivaDescontable: Number(ivaDesc) || 0,
+        cliente, nitCliente: nit, items: limpios,
       });
-      if (r.ok) { setNum(""); setFecha(""); setCliente(""); setNit(""); setDesc(""); setBase(""); setIvaDesc(""); }
+      if (r.ok) { setNum(""); setFecha(""); setCliente(""); setNit(""); setItems([itemVacio()]); }
       else setErr(r.error);
     });
   }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Mini label="IVA generado (19%)" value={formatCOP(ivaGenerado)} />
-        <Mini label="IVA descontable" value={formatCOP(ivaDescontable)} />
-        <Mini label="IVA por pagar" value={formatCOP(Math.max(ivaGenerado - ivaDescontable, 0))} />
-      </div>
+      <p className="text-sm text-gray-500">
+        Registra las <b>facturas que le emites al cliente</b>. Cada factura puede tener varios ítems;
+        los marcados <b>gravables</b> generan IVA del {(ivaPct * 100).toFixed(0)}%.
+      </p>
+
+      {/* Resumen vertical del contrato */}
+      <Resumen
+        titulo="Facturación del contrato"
+        filas={[
+          { label: "Facturas emitidas", value: String(filas.length) },
+          { label: "Base gravable", value: formatCOP(totalBaseGrav) },
+          { label: "Base no gravable", value: formatCOP(totalBaseNoGrav) },
+          { label: `= IVA generado (${(ivaPct * 100).toFixed(0)}%)`, value: formatCOP(ivaGenerado), strong: true, color: "var(--brand-primary)" },
+        ]}
+      />
+
+      {/* Nueva factura con ítems */}
       <div className={card}>
-        <p className={lbl}>Agregar factura</p>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <div className="mb-1 flex items-center justify-between">
+          <p className={lbl}>Nueva factura</p>
+          {(clienteNombre || clienteDocumento) && (
+            <button
+              type="button"
+              onClick={() => { setCliente(clienteNombre || ""); setNit(clienteDocumento || ""); }}
+              className="text-xs font-medium hover:underline"
+              style={{ color: "var(--brand-accent)" }}
+            >
+              Usar datos del cliente del contrato
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Input placeholder="N° factura" value={num} onChange={(e) => setNum(e.target.value)} />
           <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
           <Input placeholder="Cliente" value={cliente} onChange={(e) => setCliente(e.target.value)} />
           <Input placeholder="NIT/CC cliente" value={nit} onChange={(e) => setNit(e.target.value)} />
-          <Input placeholder="Descripción" value={desc} onChange={(e) => setDesc(e.target.value)} />
-          <Input type="number" placeholder="Base gravable" value={base} onChange={(e) => setBase(e.target.value)} />
-          <Input type="number" placeholder="IVA descontable" value={ivaDesc} onChange={(e) => setIvaDesc(e.target.value)} />
         </div>
+
+        <p className="mb-2 mt-4 text-xs font-medium text-gray-600">Ítems de la factura</p>
+        <div className="space-y-2">
+          {items.map((it, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <Input className="min-w-[160px] flex-1" placeholder="Descripción del ítem" value={it.descripcion} onChange={(e) => setItem(i, { descripcion: e.target.value })} />
+              <Input type="number" className="w-36" placeholder="Valor" value={it.valor} onChange={(e) => setItem(i, { valor: e.target.value })} />
+              <label className="flex items-center gap-1.5 text-sm text-gray-600">
+                <input type="checkbox" checked={it.gravable} onChange={(e) => setItem(i, { gravable: e.target.checked })} />
+                Gravable
+              </label>
+              <span className="w-24 text-right text-xs text-gray-400">
+                {it.gravable && Number(it.valor) > 0 ? `IVA ${formatCOP((Number(it.valor) || 0) * ivaPct)}` : ""}
+              </span>
+              <button type="button" onClick={() => delItem(i)} className="text-xs text-gray-400 hover:text-red-500" disabled={items.length <= 1}>✕</button>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={addItem} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>+ Agregar ítem</button>
+
+        {/* Previsualización de totales de la factura */}
+        <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+          <div>
+            <span className="mr-3">Gravable: <b>{formatCOP(prevGrav)}</b></span>
+            <span className="mr-3">No gravable: <b>{formatCOP(prevNoGrav)}</b></span>
+            <span className="mr-3">IVA: <b>{formatCOP(prevIva)}</b></span>
+            <span>Total factura: <b style={{ color: "var(--brand-primary)" }}>{formatCOP(prevTotal)}</b></span>
+          </div>
+          {prevTotal > 0 && (() => {
+            const diff = prevTotal - totalContrato;
+            return (
+              <div className="mt-1 text-red-400/80">
+                Total contrato: {formatCOP(totalContrato)}
+                {Math.abs(diff) < 1
+                  ? " · coincide con la factura"
+                  : ` · ${diff > 0 ? "de más" : "de menos"} ${formatCOP(Math.abs(diff))}`}
+              </div>
+            );
+          })()}
+        </div>
+
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={agregar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
-            {pending ? "Guardando…" : "Agregar"}
+            {pending ? "Guardando…" : "Guardar factura"}
           </Button>
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
       </div>
+
+      {/* Facturas emitidas */}
       {filas.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[520px] text-sm">
-            <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-              <th className="px-4 py-2">N° Factura</th><th className="px-4 py-2">Fecha</th>
-              <th className="px-4 py-2 text-right">Base</th><th className="px-4 py-2">Estado</th><th className="px-4 py-2"></th>
-            </tr></thead>
-            <tbody>{filas.map((f) => (
-              <tr key={f.id} className="border-t border-gray-50">
-                <td className="px-4 py-2 text-gray-700">{f.numero_factura ?? "—"}</td>
-                <td className="px-4 py-2 text-gray-500">{f.fecha_factura ?? "—"}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.base_gravable)}</td>
-                <td className="px-4 py-2 text-gray-500">{f.estado_dian ?? "—"}</td>
-                <td className="px-4 py-2 text-right"><DeleteBtn onClick={() => eliminarFactura(f.id, numero)} /></td>
-              </tr>))}</tbody>
-          </table>
+        <div className="space-y-3">
+          {filas.map((f) => {
+            const ivaF = (f.base_gravable || 0) * ivaPct;
+            const totalF = (f.base_gravable || 0) + (f.base_no_gravable || 0) + ivaF;
+            return (
+              <div key={f.id} className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-semibold text-gray-800">Factura {f.numero_factura ?? "—"}</span>
+                    <span className="ml-2 text-xs text-gray-400">{f.fecha_factura ?? "—"} · {f.estado_dian ?? "borrador"}</span>
+                  </div>
+                  <DeleteBtn onClick={() => eliminarFactura(f.id, numero)} />
+                </div>
+                {f.items.length > 0 && (
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {f.items.map((it, i) => (
+                        <tr key={i} className="border-t border-gray-50">
+                          <td className="py-1.5 text-gray-600">{it.descripcion ?? "—"}</td>
+                          <td className="py-1.5 text-center">
+                            <span className={`rounded-full px-2 py-0.5 text-xs ${it.gravable ? "bg-sky-100 text-sky-700" : "bg-gray-100 text-gray-500"}`}>
+                              {it.gravable ? "Gravable" : "No gravable"}
+                            </span>
+                          </td>
+                          <td className="py-1.5 text-right tabular-nums text-gray-700">{formatCOP(it.valor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <div className="mt-2 flex flex-wrap justify-end gap-x-4 gap-y-1 border-t border-gray-100 pt-2 text-xs text-gray-500">
+                  <span>Gravable: {formatCOP(f.base_gravable)}</span>
+                  <span>No gravable: {formatCOP(f.base_no_gravable)}</span>
+                  <span>IVA: {formatCOP(ivaF)}</span>
+                  <span className="font-semibold text-gray-700">Total: {formatCOP(totalF)}</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-// ── RENTABILIDAD ───────────────────────────────────────────────────────
-function RentabilidadTab({ rent }: { rent: Rentabilidad }) {
-  const colorClase = rent.clasificacion === "Alta" ? "var(--brand-success)" : rent.clasificacion === "Media" ? "#C99A2E" : "#C0392B";
+// ── FLUJO DE CAJA ──────────────────────────────────────────────────────
+// Flujo simple del contrato: lo que entra por la venta menos lo que sale a
+// proveedores y comisiones. El detalle tributario (provisiones, IVA, márgenes)
+// vive en el módulo Finanzas → Rentabilidad.
+function FlujoCajaTab({ precioVenta, costoDirecto, comB2B, comAsesor }: {
+  precioVenta: number; costoDirecto: number; comB2B: number; comAsesor: number;
+}) {
+  const neto = precioVenta - costoDirecto - comB2B - comAsesor;
+  const margen = precioVenta > 0 ? neto / precioVenta : 0;
   const filas: [string, string][] = [
-    ["Precio de venta", formatCOP(rent.precioVenta)],
-    ["(−) Costo directo", formatCOP(rent.costoDirecto)],
-    ["(−) Comisión B2B", formatCOP(rent.comB2B)],
-    ["(−) Comisión asesor", formatCOP(rent.comAsesor)],
-    ["= Utilidad bruta", formatCOP(rent.utilBruta)],
-    ["(−) Provisión ICA (1%)", formatCOP(rent.provIca)],
-    ["(−) Provisión Bomberil", formatCOP(rent.provBomberil)],
-    ["(−) Provisión Fontur (2.5%)", formatCOP(rent.provFontur)],
-    ["(−) Provisión Renta (3.5%)", formatCOP(rent.provRenta)],
-    ["= Total provisiones", formatCOP(rent.totalProvisiones)],
+    ["Venta", formatCOP(precioVenta)],
+    ["(−) Total proveedor", `− ${formatCOP(costoDirecto)}`],
+    ["(−) Comisión B2B", `− ${formatCOP(comB2B)}`],
+    ["(−) Comisión asesor", `− ${formatCOP(comAsesor)}`],
   ];
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
-          <div className="text-xs opacity-80">Utilidad neta</div>
-          <div className="text-2xl font-bold">{formatCOP(rent.utilNeta)}</div>
+          <div className="text-xs opacity-80">Flujo de caja (neto)</div>
+          <div className="text-2xl font-bold tabular-nums">{formatCOP(neto)}</div>
         </div>
-        <Mini label="Margen neto" value={`${(rent.margenNeto * 100).toFixed(1)}%`} />
-        <div className="rounded-xl border border-gray-200 bg-white p-4">
-          <div className="text-xs text-gray-400">Clasificación</div>
-          <div className="text-2xl font-bold" style={{ color: colorClase }}>{rent.clasificacion}</div>
-        </div>
+        <Mini label="Margen" value={`${(margen * 100).toFixed(1)}%`} color={neto < 0 ? "#C0392B" : undefined} />
       </div>
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         <table className="w-full text-sm">
-          <tbody>{filas.map(([k, val], i) => (
-            <tr key={i} className={`border-t border-gray-50 ${k.startsWith("=") ? "font-semibold bg-gray-50" : ""}`}>
-              <td className="px-4 py-2 text-gray-600">{k}</td>
-              <td className="px-4 py-2 text-right tabular-nums text-gray-800">{val}</td>
-            </tr>))}
-            <tr className="border-t-2 border-gray-300 font-bold">
-              <td className="px-4 py-2">Utilidad neta</td>
-              <td className="px-4 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(rent.utilNeta)}</td>
+          <tbody>
+            {filas.map(([k, val], i) => (
+              <tr key={i} className="border-t border-gray-50 first:border-t-0">
+                <td className="px-4 py-2.5 text-gray-600">{k}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-gray-800">{val}</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
+              <td className="px-4 py-2.5">= Flujo de caja</td>
+              <td className="px-4 py-2.5 text-right tabular-nums" style={{ color: neto < 0 ? "#C0392B" : "var(--brand-primary)" }}>{formatCOP(neto)}</td>
             </tr>
           </tbody>
         </table>
       </div>
+      <p className="text-xs text-gray-400">
+        Flujo simple del contrato. El cálculo tributario completo (provisiones, IVA, márgenes y
+        clasificación) está en <b>Finanzas → Rentabilidad</b>.
+      </p>
     </div>
   );
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
+// Tarjeta de resultados en formato VERTICAL (etiqueta a la izq, valor a la der).
+// Mejor para números grandes y columnas angostas.
+function Resumen({ titulo, subtitulo, filas }: {
+  titulo: string;
+  subtitulo?: string;
+  filas: { label: string; value: string; strong?: boolean; color?: string }[];
+}) {
+  return (
+    <div className={card}>
+      <p className="text-sm font-semibold text-gray-700">{titulo}</p>
+      {subtitulo && <p className="mt-0.5 text-xs text-gray-500">{subtitulo}</p>}
+      <div className="mt-3 divide-y divide-gray-100">
+        {filas.map((f, i) => (
+          <div key={i} className="flex items-center justify-between gap-3 py-2">
+            <span className={`text-sm ${f.strong ? "font-semibold text-gray-700" : "text-gray-500"}`}>{f.label}</span>
+            <span className={`tabular-nums ${f.strong ? "text-base font-bold" : "text-sm text-gray-800"}`} style={f.color ? { color: f.color } : undefined}>{f.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Mini({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">

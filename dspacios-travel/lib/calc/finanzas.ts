@@ -99,29 +99,74 @@ export function calcComisionAsesor(i: ComisionAsesorInput): ComisionAsesor {
   };
 }
 
-// ── Rentabilidad por contrato ────────────────────────────────────────────
-export type RentabilidadInput = {
+// ── Comisión del asesor SOBRE BASE COMISIONABLE (PVP − BNC) ───────────────
+// Regla del negocio: la comisión se calcula sobre la base comisionable, que es
+// el PVP menos el BNC (impuesto no comisionable del paquete). Si el contrato no
+// tiene BNC, la base es el PVP completo.
+//   base = max(0, precioVenta − impuesto) · bruta = base × % · neta = bruta − retención
+export type ComisionAsesorBaseInput = {
   precioVenta: number;
-  costoDirecto: number; // suma de costos del proveedor
-  comB2B?: number; // total a pagar comisiones B2B
-  comAsesor?: number; // comisión neta del asesor
+  impuesto?: number; // BNC del contrato
+  pctBase?: number; // def 0.08
+  retHonorarios?: number; // def 0.11
+};
+export type ComisionAsesorBase = {
+  pctComision: number;
+  baseComisionable: number;
+  comisionBruta: number;
+  retencion: number;
+  comisionNeta: number;
+};
+
+export function calcComisionAsesorBase(i: ComisionAsesorBaseInput): ComisionAsesorBase {
+  const pct = i.pctBase ?? 0.08;
+  const retH = i.retHonorarios ?? TRIBUTARIO.RETENCION_HONORARIOS;
+  const base = Math.max(0, (i.precioVenta || 0) - (i.impuesto || 0));
+  const comisionBruta = base * pct;
+  const retencion = comisionBruta * retH;
+  return {
+    pctComision: pct,
+    baseComisionable: base,
+    comisionBruta,
+    retencion,
+    comisionNeta: comisionBruta - retencion,
+  };
+}
+
+// ── Rentabilidad por contrato ────────────────────────────────────────────
+// Modelo (estado de resultados):
+//   Ingreso        = PVP (con IVA incluido)
+//   Costo          = total proveedor (con IVA incluido)
+//   Utilidad bruta = Ingreso − Costo
+//   (−) Comisiones (B2B + asesor)  ← gasto operacional de venta
+//   (−) Provisiones  ← base = Ingreso (ICA, Renta) / utilidad bruta (Fontur) / ICA (Bomberil)
+//   (−) IVA por pagar = IVA generado − IVA descontable
+//   = Utilidad neta
+export type RentabilidadInput = {
+  precioVenta: number;   // PVP (incluye IVA generado)
+  costoDirecto: number;  // total proveedor (incluye IVA descontable)
+  comB2B?: number;       // total a pagar comisiones B2B
+  comAsesor?: number;    // comisión neta del asesor
   ivaGenerado?: number;
   ivaDescontable?: number;
   fiscal?: ParamsFiscales;
 };
 export type Rentabilidad = {
   precioVenta: number;
+  ivaGenerado: number;
+  ingreso: number;
   costoDirecto: number;
+  ivaDescontable: number;
+  costoNeto: number;
+  utilBruta: number;
   comB2B: number;
   comAsesor: number;
-  utilBruta: number;
   provIca: number;
   provBomberil: number;
   provFontur: number;
   provRenta: number;
   totalProvisiones: number;
-  ivaGenerado: number;
-  ivaDescontable: number;
+  ivaPorPagar: number;
   utilNeta: number;
   margenNeto: number;
   clasificacion: "Alta" | "Media" | "Baja";
@@ -130,34 +175,46 @@ export type Rentabilidad = {
 export function calcRentabilidad(i: RentabilidadInput): Rentabilidad {
   const f = i.fiscal ?? FISCAL_DEFAULT;
   const pvp = i.precioVenta || 0;
-  const cd = i.costoDirecto || 0;
+  const ivaGenerado = i.ivaGenerado || 0;
+  const ivaDescontable = i.ivaDescontable || 0;
   const comB2B = i.comB2B || 0;
   const comAsesor = i.comAsesor || 0;
 
-  const utilBruta = pvp - cd - comB2B - comAsesor;
-  const provIca = pvp * f.ICA;
-  const provBomberil = provIca * f.BOMBERIL; // sobre el ICA
-  const provFontur = Math.max(0, utilBruta) * f.FONTUR; // sobre utilidad bruta
-  const provRenta = pvp * f.RETENCION_RENTA;
+  const ingreso = pvp; // Ingreso = PVP (con IVA incluido)
+  const costoDirecto = i.costoDirecto || 0;
+  const costoNeto = costoDirecto; // Costo = total proveedor (con IVA incluido)
+  const utilBruta = ingreso - costoNeto;
+
+  // Provisiones sobre el INGRESO (base gravable), no sobre el PVP.
+  const provIca = ingreso * f.ICA;
+  const provBomberil = provIca * f.BOMBERIL;            // % del ICA
+  const provFontur = Math.max(0, utilBruta) * f.FONTUR; // sobre la utilidad bruta
+  const provRenta = ingreso * f.RETENCION_RENTA;
   const totalProvisiones = provIca + provBomberil + provFontur + provRenta;
-  const utilNeta = utilBruta - totalProvisiones;
-  const margenNeto = pvp > 0 ? utilNeta / pvp : 0;
+
+  const ivaPorPagar = ivaGenerado - ivaDescontable;
+
+  const utilNeta = utilBruta - comB2B - comAsesor - totalProvisiones - ivaPorPagar;
+  const margenNeto = ingreso > 0 ? utilNeta / ingreso : 0;
   const clasificacion =
     margenNeto >= 0.15 ? "Alta" : margenNeto >= 0.08 ? "Media" : "Baja";
 
   return {
     precioVenta: pvp,
-    costoDirecto: cd,
+    ivaGenerado,
+    ingreso,
+    costoDirecto,
+    ivaDescontable,
+    costoNeto,
+    utilBruta,
     comB2B,
     comAsesor,
-    utilBruta,
     provIca,
     provBomberil,
     provFontur,
     provRenta,
     totalProvisiones,
-    ivaGenerado: i.ivaGenerado || 0,
-    ivaDescontable: i.ivaDescontable || 0,
+    ivaPorPagar,
     utilNeta,
     margenNeto,
     clasificacion,

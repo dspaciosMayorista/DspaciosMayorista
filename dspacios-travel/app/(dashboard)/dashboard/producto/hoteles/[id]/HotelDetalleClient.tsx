@@ -5,14 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import {
-  crearTemporada, eliminarTemporada, crearTarifa, eliminarTarifa,
+  crearTemporada, eliminarTemporada, crearTarifa, actualizarTarifa, eliminarTarifa,
 } from "../actions";
 
 type Temporada = { id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null };
 type Tarifa = {
   id: number; tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
   neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null;
-  neto_multiple: number | null; neto_nino: number | null;
+  neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null;
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -74,22 +74,45 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
   const [tipo, setTipo] = useState("");
   const [alim, setAlim] = useState("");
   const [temp, setTemp] = useState("");
-  const [p, setP] = useState({ sencilla: "", doble: "", triple: "", multiple: "", nino: "" });
+  const [p, setP] = useState({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "" });
+  const [editId, setEditId] = useState<number | null>(null);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const nombresTemporada = Array.from(new Set(temporadas.map((t) => t.nombre)));
   const num = (s: string) => (s === "" ? null : Number(s));
+  const str = (n: number | null) => (n == null ? "" : String(n));
+
+  function resetForm() {
+    setTipo(""); setAlim(""); setTemp("");
+    setP({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "" });
+    setEditId(null);
+  }
+
+  function startEdit(t: Tarifa) {
+    setErr("");
+    setEditId(t.id);
+    setTipo(t.tipo_habitacion ?? "");
+    setAlim(t.alimentacion ?? "");
+    setTemp(t.temporada ?? "");
+    setP({
+      sencilla: str(t.neto_sencilla), doble: str(t.neto_doble), triple: str(t.neto_triple),
+      multiple: str(t.neto_multiple), nino: str(t.neto_nino), nino2: str(t.neto_nino2),
+    });
+  }
 
   function add() {
     if (!tipo || !alim || !temp) { setErr("Elige categoría, régimen y temporada."); return; }
     setErr("");
+    const input = {
+      tipoHabitacion: tipo, alimentacion: alim, temporada: temp,
+      netoSencilla: num(p.sencilla), netoDoble: num(p.doble), netoTriple: num(p.triple),
+      netoMultiple: num(p.multiple), netoNino: num(p.nino), netoNino2: num(p.nino2),
+    };
     start(async () => {
-      const r = await crearTarifa({
-        hotelId, tipoHabitacion: tipo, alimentacion: alim, temporada: temp,
-        netoSencilla: num(p.sencilla), netoDoble: num(p.doble), netoTriple: num(p.triple),
-        netoMultiple: num(p.multiple), netoNino: num(p.nino),
-      });
-      if (r.ok) { setP({ sencilla: "", doble: "", triple: "", multiple: "", nino: "" }); }
+      const r = editId
+        ? await actualizarTarifa(editId, hotelId, input)
+        : await crearTarifa({ hotelId, ...input });
+      if (r.ok) resetForm();
       else setErr(r.error);
     });
   }
@@ -128,8 +151,8 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
             </select>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
-          {([["sencilla","Sencilla"],["doble","Doble"],["triple","Triple"],["multiple","Múltiple"],["nino","Niño"]] as [keyof typeof p, string][]).map(([k, label]) => (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-6">
+          {([["sencilla","Sencilla"],["doble","Doble"],["triple","Triple"],["multiple","Múltiple"],["nino","Niño 1"],["nino2","Niño 2"]] as [keyof typeof p, string][]).map(([k, label]) => (
             <div key={k}>
               <label className={lbl}>{label}</label>
               <Input type="number" min={0} value={p[k]} onChange={(e) => setP({ ...p, [k]: e.target.value })} placeholder="—" />
@@ -137,9 +160,14 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
           ))}
         </div>
         <div className="mt-3 flex items-center gap-3">
-          <Button onClick={add} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Agregar tarifa"}</Button>
+          <Button onClick={add} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+            {pending ? "…" : editId ? "Guardar cambios" : "Agregar tarifa"}
+          </Button>
+          {editId && (
+            <Button variant="outline" onClick={resetForm} disabled={pending}>Cancelar</Button>
+          )}
           {err && <span className="text-sm text-red-600">{err}</span>}
-          <span className="text-xs text-gray-400">Infante siempre $0.</span>
+          {!editId && <span className="text-xs text-gray-400">Niño 1 puede ir gratis ($0); Niño 2 con su valor. Infante siempre $0.</span>}
         </div>
       </div>
 
@@ -150,7 +178,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
               <th className="px-3 py-2">Categoría</th><th className="px-3 py-2">Régimen</th><th className="px-3 py-2">Temporada</th>
               <th className="px-3 py-2 text-right">Sencilla</th><th className="px-3 py-2 text-right">Doble</th>
               <th className="px-3 py-2 text-right">Triple</th><th className="px-3 py-2 text-right">Múltiple</th>
-              <th className="px-3 py-2 text-right">Niño</th><th className="px-3 py-2"></th>
+              <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th><th className="px-3 py-2"></th>
             </tr></thead>
             <tbody>{tarifas.map((t) => (
               <tr key={t.id} className="border-t border-gray-50">
@@ -161,8 +189,14 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
                 <td className="px-3 py-2 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{t.neto_multiple ? formatCOP(t.neto_multiple) : "—"}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino ? formatCOP(t.neto_nino) : "—"}</td>
-                <td className="px-3 py-2 text-right"><DelBtn onDel={() => eliminarTarifa(t.id, hotelId)} /></td>
+                <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino != null ? formatCOP(t.neto_nino) : "—"}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino2 != null ? formatCOP(t.neto_nino2) : "—"}</td>
+                <td className="px-3 py-2 text-right">
+                  <div className="flex items-center justify-end gap-3">
+                    <button type="button" onClick={() => startEdit(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
+                    <DelBtn onDel={() => eliminarTarifa(t.id, hotelId)} />
+                  </div>
+                </td>
               </tr>
             ))}</tbody>
           </table>
