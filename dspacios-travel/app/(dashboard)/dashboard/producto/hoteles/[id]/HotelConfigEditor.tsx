@@ -19,11 +19,15 @@ export function HotelConfigEditor({
     edadInfanteMin: number; edadInfanteMax: number;
     edadNinoMin: number; edadNinoMax: number;
     rangosEdad: number[];
+    contactoTelefono: string;
+    emailComercial: string;
   };
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [zona, setZona] = useState(inicial.zona);
+  const [contactoTel, setContactoTel] = useState(inicial.contactoTelefono);
+  const [emailCom, setEmailCom] = useState(inicial.emailComercial);
   const [infMin, setInfMin] = useState(String(inicial.edadInfanteMin));
   const [infMax, setInfMax] = useState(String(inicial.edadInfanteMax));
   const [ninoMin, setNinoMin] = useState(String(inicial.edadNinoMin));
@@ -40,6 +44,7 @@ export function HotelConfigEditor({
         edadInfanteMin: Number(infMin) || 0, edadInfanteMax: Number(infMax) || 0,
         edadNinoMin: Number(ninoMin) || 0, edadNinoMax: Number(ninoMax) || 0,
         rangosEdad: rangosSel,
+        contactoTelefono: contactoTel, emailComercial: emailCom,
       });
       if (r.ok) { setMsg("Guardado."); router.refresh(); } else setMsg(r.error);
     });
@@ -59,6 +64,10 @@ export function HotelConfigEditor({
             <div><label className={lbl}>Infante máx.</label><Input type="number" value={infMax} onChange={(e) => setInfMax(e.target.value)} /></div>
             <div><label className={lbl}>Niño mín.</label><Input type="number" value={ninoMin} onChange={(e) => setNinoMin(e.target.value)} /></div>
             <div><label className={lbl}>Niño máx.</label><Input type="number" value={ninoMax} onChange={(e) => setNinoMax(e.target.value)} /></div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div><label className={lbl}>Teléfono de contacto (reservas)</label><Input value={contactoTel} onChange={(e) => setContactoTel(e.target.value)} placeholder="+57 ..." /></div>
+            <div><label className={lbl}>Correo comercial (solicitudes)</label><Input type="email" value={emailCom} onChange={(e) => setEmailCom(e.target.value)} placeholder="reservas@hotel.com" /></div>
           </div>
           <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} />
           <div className="flex items-center gap-3">

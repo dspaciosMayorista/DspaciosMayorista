@@ -32,6 +32,8 @@ export function NuevoHotelForm({
   const [catSel, setCatSel] = useState<number[]>([]);
   const [regSel, setRegSel] = useState<number[]>([]);
   const [rangosSel, setRangosSel] = useState<number[]>([]);
+  const [contactoTel, setContactoTel] = useState("");
+  const [emailCom, setEmailCom] = useState("");
 
   const toggle = (arr: number[], set: (v: number[]) => void, id: number) =>
     set(arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
@@ -45,6 +47,7 @@ export function NuevoHotelForm({
         nombre, destinoId: Number(destinoId), proveedorId: proveedorId === "" ? null : Number(proveedorId),
         zona, edadInfanteMin: infMin, edadInfanteMax: infMax, edadNinoMin: ninoMin, edadNinoMax: ninoMax,
         categoriaIds: catSel, regimenIds: regSel, rangosEdad: rangosSel,
+        contactoTelefono: contactoTel, emailComercial: emailCom,
       });
       if (r.ok) router.push(`/dashboard/producto/hoteles/${r.id}`);
       else setErr(r.error);
@@ -72,7 +75,10 @@ export function NuevoHotelForm({
               {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
             </select>
           </div>
+          <div><label className={lbl}>Teléfono de contacto (reservas del hotel)</label><Input value={contactoTel} onChange={(e) => setContactoTel(e.target.value)} placeholder="+57 ..." /></div>
+          <div><label className={lbl}>Correo comercial (solicitudes de reserva)</label><Input type="email" value={emailCom} onChange={(e) => setEmailCom(e.target.value)} placeholder="reservas@hotel.com" /></div>
         </div>
+        <p className="text-xs text-gray-400">El contacto es del hotel (no del proveedor): a este correo se enviarán las solicitudes de reserva.</p>
       </section>
 
       <section className={card}>

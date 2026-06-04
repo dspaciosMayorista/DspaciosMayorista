@@ -19,6 +19,8 @@ export async function crearHotel(input: {
   categoriaIds: number[];
   regimenIds: number[];
   rangosEdad?: number[];
+  contactoTelefono?: string;
+  emailComercial?: string;
 }): Promise<Result> {
   const sb = await createClient();
   const { data: hotel, error } = await sb
@@ -33,6 +35,8 @@ export async function crearHotel(input: {
       edad_nino_min: input.edadNinoMin,
       edad_nino_max: input.edadNinoMax,
       rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
+      contacto_telefono: oNull(input.contactoTelefono ?? ""),
+      email_comercial: oNull(input.emailComercial ?? ""),
     })
     .select("id")
     .single();
@@ -72,6 +76,8 @@ export async function actualizarHotelConfig(
     edadNinoMin: number;
     edadNinoMax: number;
     rangosEdad: number[];
+    contactoTelefono?: string;
+    emailComercial?: string;
   }
 ): Promise<Result> {
   const sb = await createClient();
@@ -84,6 +90,8 @@ export async function actualizarHotelConfig(
       edad_nino_min: input.edadNinoMin,
       edad_nino_max: input.edadNinoMax,
       rangos_edad: input.rangosEdad.length ? input.rangosEdad : null,
+      contacto_telefono: oNull(input.contactoTelefono ?? ""),
+      email_comercial: oNull(input.emailComercial ?? ""),
     })
     .eq("id", hotelId);
   if (error) return { ok: false, error: error.message };
@@ -305,6 +313,7 @@ export async function cargarHotelesMasivo(rows: Record<string, string>[]): Promi
         edad_nino_min: numCsv(r.edad_nino_min) || 2, edad_nino_max: numCsv(r.edad_nino_max) || 10,
         rangos_edad: rangosEdad.length ? rangosEdad : null,
         pax_min: numCsvN(r.pax_min), pax_max: numCsvN(r.pax_max),
+        contacto_telefono: oNull(r.contacto_telefono || ""), email_comercial: oNull(r.email_comercial || ""),
       })
       .select("id")
       .single();

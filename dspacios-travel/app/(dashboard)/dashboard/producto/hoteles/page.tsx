@@ -21,6 +21,8 @@ const COLS_HOTELES = [
   { key: "rangos_edad", label: "Rangos de edad (nombres separados por |)", ejemplo: "" },
   { key: "pax_min", label: "Pax mín del hotel", ejemplo: "1" },
   { key: "pax_max", label: "Pax máx del hotel", ejemplo: "4" },
+  { key: "contacto_telefono", label: "Teléfono de contacto (reservas)", ejemplo: "+57 3001234567" },
+  { key: "email_comercial", label: "Correo comercial (solicitudes)", ejemplo: "reservas@hotel.com" },
 ];
 
 const COLS_ACOMODACIONES = [
@@ -85,6 +87,7 @@ export default async function HotelesPage() {
       <div className="mb-4 space-y-3">
         <CargaMasivaCSV
           titulo="Carga masiva de hoteles (CSV)"
+          nota="Crea primero los Destinos (Producto → Destinos) y, si los asignarás, los Proveedores hoteleros (Producto → Proveedores). Las Categorías de habitación y los Regímenes se crean en Producto → Configuración. Los Rangos de edad en Configuración (menú lateral)."
           descripcion="Cada fila = un hotel. El destino debe existir. Categorías y regímenes deben existir en Configuración general (varios se separan con | , ej. Estándar|Superior)."
           columnas={COLS_HOTELES}
           onSubmit={cargarHotelesMasivo}
@@ -92,6 +95,7 @@ export default async function HotelesPage() {
         />
         <CargaMasivaCSV
           titulo="Carga masiva de acomodaciones por hotel (CSV)"
+          nota="El hotel ya debe existir (créalo en el cargue de arriba o en Producto → Hoteles → Nuevo hotel)."
           descripcion="Config de 'reservar por habitaciones': una fila por acomodación (sencilla/doble/triple/multiple). pax_tarifa = cuántos pax cubre la tarifa de 1 habitación. El hotel debe existir. Si no la cargas, se usan valores por defecto (1/2/3/4)."
           columnas={COLS_ACOMODACIONES}
           onSubmit={cargarAcomodacionesMasivo}
@@ -99,6 +103,7 @@ export default async function HotelesPage() {
         />
         <CargaMasivaCSV
           titulo="Carga masiva de temporadas de hotel (CSV)"
+          nota="El hotel ya debe existir (Producto → Hoteles). Carga las temporadas ANTES que las tarifas."
           descripcion="Cada fila = una temporada con su rango de fechas (las que luego usan las tarifas). Cárgala ANTES que las tarifas. Las fechas de un mismo hotel no se pueden cruzar."
           columnas={COLS_TEMPORADAS}
           onSubmit={cargarTemporadasMasivo}
@@ -106,6 +111,7 @@ export default async function HotelesPage() {
         />
         <CargaMasivaCSV
           titulo="Carga masiva de tarifas de hotel (CSV)"
+          nota="Ya deben existir: el hotel, sus Categorías y Regímenes (Producto → Configuración) y las Temporadas con fechas (cargue de arriba). La tarifa referencia la temporada por su nombre."
           descripcion="Cada fila = una tarifa (hotel + categoría + régimen + temporada + netos). El hotel y la temporada (con sus fechas) deben existir; usa 'destino' si hay hoteles con el mismo nombre. Niño 1 puede ir en 0 (gratis)."
           columnas={COLS_TARIFAS}
           onSubmit={cargarTarifasMasivo}

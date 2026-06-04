@@ -86,6 +86,7 @@ export default async function VuelosPage() {
       <div className="mb-6">
         <CargaMasivaCSV
           titulo="Carga masiva de bloqueos (CSV)"
+          nota="Crea primero los Destinos (Producto → Destinos) y, si lo asignarás, el Proveedor aéreo (Producto → Proveedores). Los Rangos de edad se crean en Configuración (menú lateral)."
           descripcion="Cada fila = un bloqueo. El destino debe existir; las sillas se generan según 'cupos'. Fechas en formato AAAA-MM-DD."
           columnas={COLS_BLOQUEOS}
           onSubmit={cargarBloqueosMasivo}

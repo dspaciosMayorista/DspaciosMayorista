@@ -707,6 +707,8 @@ export type Database = {
           rangos_edad: number[] | null;
           pax_min: number | null;
           pax_max: number | null;
+          contacto_telefono: string | null;
+          email_comercial: string | null;
         };
         Insert: {
           id?: number;
@@ -723,6 +725,8 @@ export type Database = {
           rangos_edad?: number[] | null;
           pax_min?: number | null;
           pax_max?: number | null;
+          contacto_telefono?: string | null;
+          email_comercial?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [
