@@ -9,6 +9,20 @@ import { reservarDesdeTarifario, cotizarPorFechas, type PasajeroReserva } from "
 import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 
+// Suma N noches a una fecha YYYY-MM-DD y devuelve YYYY-MM-DD.
+const addDiasStr = (d: string, n: number) => {
+  const dt = new Date(`${d}T00:00:00`);
+  dt.setDate(dt.getDate() + n);
+  return dt.toISOString().slice(0, 10);
+};
+// Noches entre dos fechas YYYY-MM-DD (0 si faltan o el orden es inválido).
+const nochesEntre = (a: string, b: string) => {
+  if (!a || !b) return 0;
+  const ms = new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime();
+  return Math.max(0, Math.round(ms / 86_400_000));
+};
+
+
 export type ServicioDisp = {
   servicioId: number;
   nombre: string;
@@ -53,8 +67,15 @@ export function ReservaForm({
   // Combos (categoría/régimen → precios) pueden recargarse al cotizar por fechas.
   const [combosState, setCombosState] = useState<Combo[]>(combos);
   const [fIda, setFIda] = useState(meta.fechaIda ?? "");
-  const [fReg, setFReg] = useState(meta.fechaRegreso ?? "");
+  // En porción, regreso por defecto = ida + noches del paquete (estadía corta).
+  // NO el fin de la ventana de viaje (eso es solo el rango permitido).
+  const [fReg, setFReg] = useState(
+    esPorFechas && meta.fechaIda && meta.noches
+      ? addDiasStr(meta.fechaIda, meta.noches)
+      : meta.fechaRegreso ?? ""
+  );
   const [nochesCot, setNochesCot] = useState<number | null>(meta.noches);
+  const nochesLive = nochesEntre(fIda, fReg); // noches reales del rango elegido
   const [cotPend, startCot] = useTransition();
   const [cotErr, setCotErr] = useState("");
 
@@ -223,14 +244,17 @@ export function ReservaForm({
       {esPorFechas && (
         <section className="rounded-xl border border-gray-200 bg-white p-5">
           <p className="mb-1 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Fechas del viaje</p>
-          <p className="mb-3 text-xs text-gray-400">Elige las fechas y actualiza las tarifas: se liquidan esas noches (mezclando temporadas del hotel).</p>
+          <p className="mb-1 text-xs text-gray-400">Elige las fechas de la <b>estadía</b>: se liquidan esas noches (mezclando temporadas del hotel).</p>
+          {meta.fechaIda && meta.fechaRegreso && (
+            <p className="mb-3 text-xs text-gray-400">Ventana permitida del paquete: {meta.fechaIda} → {meta.fechaRegreso} (no es la duración de la estadía).</p>
+          )}
           <div className="flex flex-wrap items-end gap-3">
-            <div><label className={lbl}>Fecha de ida</label><Input type="date" value={fIda} onChange={(e) => setFIda(e.target.value)} /></div>
-            <div><label className={lbl}>Fecha de regreso</label><Input type="date" value={fReg} onChange={(e) => setFReg(e.target.value)} /></div>
+            <div><label className={lbl}>Fecha de ida</label><Input type="date" value={fIda} min={meta.fechaIda ?? undefined} max={meta.fechaRegreso ?? undefined} onChange={(e) => setFIda(e.target.value)} /></div>
+            <div><label className={lbl}>Fecha de regreso</label><Input type="date" value={fReg} min={fIda || (meta.fechaIda ?? undefined)} max={meta.fechaRegreso ?? undefined} onChange={(e) => setFReg(e.target.value)} /></div>
             <Button type="button" onClick={cotizar} disabled={cotPend || !fIda || !fReg} style={{ backgroundColor: "var(--brand-accent)" }}>
               {cotPend ? "Cotizando…" : "Ver tarifas para estas fechas"}
             </Button>
-            {nochesCot != null && <span className="text-sm text-gray-500">{nochesCot} noche(s)</span>}
+            <span className="text-sm text-gray-500">{nochesLive || nochesCot || 0} noche(s)</span>
           </div>
           {cotErr && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{cotErr}</p>}
         </section>
