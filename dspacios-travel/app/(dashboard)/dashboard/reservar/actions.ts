@@ -169,6 +169,7 @@ export type ReservaInput = {
   agenciaNombre: string;
   agenciaAsesor: string;
   freelanceNombre: string;
+  aliadoId?: number | null;   // id del catálogo de agencias/freelance (B2B)
   plazo: string;
   pasajeros: PasajeroReserva[];
   servicios?: number[];   // ids de servicios add-on seleccionados
@@ -373,10 +374,9 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
-  const asesorNombre =
-    input.tipoAsesor === "agencia" ? input.agenciaAsesor :
-    input.tipoAsesor === "freelance" ? input.freelanceNombre :
-    input.asesorInterno;
+  // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
+  // aplica la escala). La agencia/freelance se guarda aparte (canal B2B).
+  const asesorNombre = input.asesorInterno;
 
   // BNC (Base No Comisionable) total del contrato = "Valor fijo del impuesto"
   // del paquete × pax con tiquete. La base comisionable luego es PVP − BNC.
@@ -415,9 +415,38 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     paquete_armado_id: input.paqueteId,
     bloqueo_ref_id: input.bloqueoId,
     asesor_firma_nombre: oNull(asesorNombre),
+    asesor: oNull(input.asesorInterno),
     plan_nombre: `${input.categoria} · ${input.regimen}`,
   });
   if (ve) return { ok: false, error: ve.message };
+
+  // Auto-comisión B2B: si la venta es por agencia/freelance, crea la comisión con
+  // el % propio del aliado (o el default general de su tipo).
+  if (input.tipoAsesor !== "interno" && input.aliadoId) {
+    const { data: al } = await sb
+      .from("aliados")
+      .select("nombre, nit, pct_comision, aplica_retencion, pct_retencion")
+      .eq("id", input.aliadoId)
+      .maybeSingle();
+    if (al) {
+      const defParam = input.tipoAsesor === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
+      const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
+      const pct = al.pct_comision ?? Number(p?.valor) ?? (input.tipoAsesor === "agencia" ? 0.12 : 0.11);
+      await sb.from("aliados_b2b").insert({
+        numero_contrato: numero,
+        aliado: al.nombre,
+        nit: al.nit,
+        precio_venta: precioVenta,
+        base_comision: precioVenta,
+        pct_comision: pct,
+        recobro_total: 0,
+        pct_recobro_aliado: 0,
+        aplica_retencion: al.aplica_retencion,
+        pct_retencion: al.pct_retencion,
+        estado: "pendiente",
+      });
+    }
+  }
 
   // 5) Pasajeros
   if (input.pasajeros.length) {
@@ -952,10 +981,9 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
-  const asesorNombre =
-    input.tipoAsesor === "agencia" ? input.agenciaAsesor :
-    input.tipoAsesor === "freelance" ? input.freelanceNombre :
-    input.asesorInterno;
+  // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
+  // aplica la escala). La agencia/freelance se guarda aparte (canal B2B).
+  const asesorNombre = input.asesorInterno;
   const fechaRegreso = prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
 
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
