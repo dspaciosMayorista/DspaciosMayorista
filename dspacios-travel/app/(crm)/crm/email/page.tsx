@@ -29,7 +29,7 @@ export default async function EmailConfigPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
-      <Link href="/dashboard/crm" className="text-sm text-gray-400 hover:text-gray-600">← CRM</Link>
+      <Link href="/crm" className="text-sm text-gray-400 hover:text-gray-600">← CRM</Link>
       <h1 className="mb-1 mt-2 text-2xl font-semibold text-gray-900">Configuración de email</h1>
       <p className="mb-6 text-sm text-gray-500">Remitente y proveedor para las campañas del CRM.</p>
       <EmailConfigForm inicial={inicial} />

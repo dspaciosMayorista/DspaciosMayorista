@@ -61,7 +61,7 @@ export async function crearContacto(input: ContactoInput): Promise<Result> {
     notas: oNull(input.notas),
   });
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/dashboard/crm");
+  revalidatePath("/crm");
   return { ok: true };
 }
 
@@ -69,7 +69,7 @@ export async function eliminarContacto(id: number): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("crm_contactos").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/dashboard/crm");
+  revalidatePath("/crm");
   return { ok: true };
 }
 
@@ -114,7 +114,7 @@ export async function cargarContactosMasivo(
     if (error) return { ok: false, insertados: 0, errores: [...errores, error.message] };
     insertados = count ?? filas.length;
   }
-  revalidatePath("/dashboard/crm");
+  revalidatePath("/crm");
   return { ok: errores.length === 0, insertados, errores };
 }
 
@@ -149,6 +149,6 @@ export async function guardarEmailConfig(input: EmailConfigInput): Promise<Resul
     updated_at: new Date().toISOString(),
   }, { onConflict: "id" });
   if (error) return { ok: false, error: error.message };
-  revalidatePath("/dashboard/crm/email");
+  revalidatePath("/crm/email");
   return { ok: true };
 }

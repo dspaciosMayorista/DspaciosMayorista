@@ -78,7 +78,7 @@ export function CrmClient({ contactos }: { contactos: Contacto[] }) {
         <Button onClick={() => setAbrirNuevo((o) => !o)} style={{ backgroundColor: "var(--brand-primary)" }}>
           {abrirNuevo ? "Cerrar" : "+ Nuevo contacto"}
         </Button>
-        <Link href="/dashboard/crm/email" className="rounded-lg border border-gray-300 bg-white/90 px-3 py-2 text-sm text-gray-700 hover:bg-white">
+        <Link href="/crm/email" className="rounded-lg border border-gray-300 bg-white/90 px-3 py-2 text-sm text-gray-700 hover:bg-white">
           ⚙️ Config email
         </Link>
         <div className="ml-auto w-full sm:w-auto sm:min-w-[420px]">
@@ -131,7 +131,7 @@ function Fila({ c }: { c: Contacto }) {
     <tr className="border-t border-gray-50">
       <td className="px-3 py-2"><span className="rounded-full bg-[var(--brand-accent)]/15 px-2 py-0.5 text-xs text-gray-600">{CAT_LABEL[c.categoria] ?? c.categoria}</span></td>
       <td className="px-3 py-2 text-gray-700">
-        <Link href={`/dashboard/crm/${c.id}`} className="font-medium text-gray-800 hover:text-[var(--brand-primary)] hover:underline">{c.nombre}</Link>
+        <Link href={`/crm/${c.id}`} className="font-medium text-gray-800 hover:text-[var(--brand-primary)] hover:underline">{c.nombre}</Link>
         {c.no_contactar && <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-[10px] text-red-600">no contactar</span>}
       </td>
       <td className="px-3 py-2 text-gray-500">{c.email ?? "—"}</td>

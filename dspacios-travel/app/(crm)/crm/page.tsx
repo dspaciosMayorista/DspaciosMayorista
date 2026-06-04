@@ -25,24 +25,15 @@ export default async function CrmPage() {
     .limit(2000);
 
   return (
-    <div
-      className="min-h-full"
-      style={{ background: "linear-gradient(180deg, rgba(38,187,217,0.10) 0%, rgba(102,181,150,0.06) 28%, rgba(255,255,255,0) 60%)" }}
-    >
-      {/* Banner de marca */}
-      <div className="bg-brand-gradient px-4 py-7 text-white md:px-8">
-        <div className="mx-auto max-w-6xl">
-          <h1 className="text-2xl font-bold">CRM — Base de datos de contactos</h1>
-          <p className="mt-1 text-sm text-white/85">
-            Clientes finales, agencias, freelance, empresas y pasajeros. Base compartida con el portal.
-            Pensado para campañas de email y publicidad.
-          </p>
-        </div>
+    <div className="mx-auto max-w-6xl p-4 md:p-8">
+      <div className="mb-5">
+        <h1 className="text-2xl font-bold text-gray-900">Base de datos de contactos</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          Clientes finales, agencias, freelance, empresas y pasajeros. Base compartida con el portal.
+          Pensado para campañas de email y publicidad.
+        </p>
       </div>
-
-      <div className="mx-auto max-w-6xl p-4 md:p-8">
-        <CrmClient contactos={(data ?? []) as Contacto[]} />
-      </div>
+      <CrmClient contactos={(data ?? []) as Contacto[]} />
     </div>
   );
 }

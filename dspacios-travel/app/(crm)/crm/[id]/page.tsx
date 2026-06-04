@@ -51,7 +51,7 @@ export default async function ContactoDetallePage({ params }: { params: Promise<
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
-      <Link href="/dashboard/crm" className="text-sm text-gray-400 hover:text-gray-600">← CRM</Link>
+      <Link href="/crm" className="text-sm text-gray-400 hover:text-gray-600">← CRM</Link>
       <div className="mt-2 mb-1 flex flex-wrap items-center gap-2">
         <h1 className="text-2xl font-semibold text-gray-900">{c.nombre}</h1>
         <span className="rounded-full bg-[var(--brand-accent)]/15 px-2 py-0.5 text-xs text-gray-600">{CAT_LABEL[c.categoria] ?? c.categoria}</span>
