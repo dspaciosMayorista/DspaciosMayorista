@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
@@ -54,6 +53,7 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-300 bg-white p-4 shadow-sm sm:p-5";
 
 export function GestionTabs(p: GestionProps) {
+  const [tab, setTab] = useState("cartera");
   // ── Cálculos vivos ──────────────────────────────────────────────
   const costoDirecto =
     p.costos.costo_hotel + p.costos.costo_aereo + p.costos.costo_receptivo +
@@ -84,45 +84,56 @@ export function GestionTabs(p: GestionProps) {
     comAsesor: comAsesor.comisionNeta, ivaGenerado, ivaDescontable, fiscal,
   });
 
-  return (
-    <div className="mt-8">
-      <Tabs defaultValue="cartera" orientation="vertical">
-        <TabsList className="w-40 shrink-0 sm:w-48">
-          <TabsTrigger value="cartera">Cartera</TabsTrigger>
-          {p.verFinanzas && <TabsTrigger value="costos">Costos</TabsTrigger>}
-          {p.verFinanzas && <TabsTrigger value="proveedores">Proveedores</TabsTrigger>}
-          {p.verFinanzas && <TabsTrigger value="comisiones">Comisiones</TabsTrigger>}
-          {p.verFinanzas && <TabsTrigger value="facturacion">Facturación</TabsTrigger>}
-          {p.verFinanzas && <TabsTrigger value="rentabilidad">Rentabilidad</TabsTrigger>}
-        </TabsList>
+  const tabs: { value: string; label: string }[] = [
+    { value: "cartera", label: "Cartera" },
+    ...(p.verFinanzas ? [
+      { value: "costos", label: "Costos" },
+      { value: "proveedores", label: "Proveedores" },
+      { value: "comisiones", label: "Comisiones" },
+      { value: "facturacion", label: "Facturación" },
+      { value: "rentabilidad", label: "Rentabilidad" },
+    ] : []),
+  ];
 
-        <div className="min-w-0 flex-1">
-        <TabsContent value="cartera">
+  return (
+    <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-start">
+      {/* Menú vertical */}
+      <nav className="flex shrink-0 flex-row flex-wrap gap-1 rounded-xl border border-gray-200 bg-white p-1 sm:w-48 sm:flex-col">
+        {tabs.map((t) => {
+          const activo = tab === t.value;
+          return (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => setTab(t.value)}
+              className="rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors"
+              style={activo
+                ? { backgroundColor: "var(--brand-primary)", color: "white" }
+                : { color: "#4b5563" }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Contenido */}
+      <div className="min-w-0 flex-1">
+        {tab === "cartera" && (
           <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} />
-        </TabsContent>
-        {p.verFinanzas && (
-          <>
-            <TabsContent value="costos">
-              <CostosTab numero={p.numero} costos={p.costos} />
-            </TabsContent>
-            <TabsContent value="proveedores">
-              <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />
-            </TabsContent>
-            <TabsContent value="comisiones">
-              <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} impuesto={p.impuesto} filas={p.comisionesB2B}
-                comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} fiscal={fiscal} />
-            </TabsContent>
-            <TabsContent value="facturacion">
-              <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
-                clienteNombre={p.clienteNombre} clienteDocumento={p.clienteDocumento} totalContrato={p.precioVenta} />
-            </TabsContent>
-            <TabsContent value="rentabilidad">
-              <RentabilidadTab rent={rent} />
-            </TabsContent>
-          </>
         )}
-        </div>
-      </Tabs>
+        {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
+        {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />}
+        {p.verFinanzas && tab === "comisiones" && (
+          <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} impuesto={p.impuesto} filas={p.comisionesB2B}
+            comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} fiscal={fiscal} />
+        )}
+        {p.verFinanzas && tab === "facturacion" && (
+          <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
+            clienteNombre={p.clienteNombre} clienteDocumento={p.clienteDocumento} totalContrato={p.precioVenta} />
+        )}
+        {p.verFinanzas && tab === "rentabilidad" && <RentabilidadTab rent={rent} />}
+      </div>
     </div>
   );
 }
