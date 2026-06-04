@@ -35,9 +35,10 @@ const NAV: NavItem[] = [
     children: [{ href: "/dashboard/vuelos/nuevo", label: "Nuevo bloqueo" }],
   },
   {
-    href: "/dashboard/finanzas",
+    href: "/dashboard/rentabilidad",
     label: "Finanzas",
     children: [
+      { href: "/dashboard/rentabilidad", label: "Rentabilidad" },
       { href: "/dashboard/cartera", label: "Cartera (por cobrar)" },
       { href: "/dashboard/pagos", label: "Pagos a proveedores" },
       { href: "/dashboard/comisiones", label: "Comisiones B2B" },

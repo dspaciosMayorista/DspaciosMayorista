@@ -7,9 +7,7 @@ import { formatCOP } from "@/lib/utils";
 import {
   calcComisionB2B,
   calcComisionAsesorBase,
-  calcRentabilidad,
   FISCAL_DEFAULT,
-  type Rentabilidad,
   type ParamsFiscales,
 } from "@/lib/calc/finanzas";
 import { AbonoForm } from "./AbonoForm";
@@ -76,13 +74,6 @@ export function GestionTabs(p: GestionProps) {
   });
 
   const ivaGenerado = p.facturas.reduce((s, f) => s + f.base_gravable * fiscal.IVA, 0);
-  // El IVA descontable viene de las facturas de los PROVEEDORES (cuentas por pagar).
-  const ivaDescontable = p.cuentasPorPagar.reduce((s, c) => s + (c.iva_proveedor ?? 0), 0);
-
-  const rent = calcRentabilidad({
-    precioVenta: p.precioVenta, costoDirecto, comB2B: comB2BTotal,
-    comAsesor: comAsesor.comisionNeta, ivaGenerado, ivaDescontable, fiscal,
-  });
 
   const tabs: { value: string; label: string }[] = [
     { value: "cartera", label: "Cartera" },
@@ -91,7 +82,7 @@ export function GestionTabs(p: GestionProps) {
       { value: "proveedores", label: "Proveedores" },
       { value: "comisiones", label: "Comisiones" },
       { value: "facturacion", label: "Facturación" },
-      { value: "rentabilidad", label: "Rentabilidad" },
+      { value: "flujo", label: "Flujo de caja" },
     ] : []),
   ];
 
@@ -132,7 +123,9 @@ export function GestionTabs(p: GestionProps) {
           <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
             clienteNombre={p.clienteNombre} clienteDocumento={p.clienteDocumento} totalContrato={p.precioVenta} />
         )}
-        {p.verFinanzas && tab === "rentabilidad" && <RentabilidadTab rent={rent} />}
+        {p.verFinanzas && tab === "flujo" && (
+          <FlujoCajaTab precioVenta={p.precioVenta} costoDirecto={costoDirecto} comB2B={comB2BTotal} comAsesor={comAsesor.comisionNeta} />
+        )}
       </div>
     </div>
   );
@@ -658,48 +651,50 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, cli
   );
 }
 
-// ── RENTABILIDAD ───────────────────────────────────────────────────────
-function RentabilidadTab({ rent }: { rent: Rentabilidad }) {
-  const colorClase = rent.clasificacion === "Alta" ? "var(--brand-success)" : rent.clasificacion === "Media" ? "#C99A2E" : "#C0392B";
+// ── FLUJO DE CAJA ──────────────────────────────────────────────────────
+// Flujo simple del contrato: lo que entra por la venta menos lo que sale a
+// proveedores y comisiones. El detalle tributario (provisiones, IVA, márgenes)
+// vive en el módulo Finanzas → Rentabilidad.
+function FlujoCajaTab({ precioVenta, costoDirecto, comB2B, comAsesor }: {
+  precioVenta: number; costoDirecto: number; comB2B: number; comAsesor: number;
+}) {
+  const neto = precioVenta - costoDirecto - comB2B - comAsesor;
+  const margen = precioVenta > 0 ? neto / precioVenta : 0;
   const filas: [string, string][] = [
-    ["Precio de venta", formatCOP(rent.precioVenta)],
-    ["(−) Costo directo", formatCOP(rent.costoDirecto)],
-    ["(−) Comisión B2B", formatCOP(rent.comB2B)],
-    ["(−) Comisión asesor", formatCOP(rent.comAsesor)],
-    ["= Utilidad bruta", formatCOP(rent.utilBruta)],
-    ["(−) Provisión ICA (1%)", formatCOP(rent.provIca)],
-    ["(−) Provisión Bomberil", formatCOP(rent.provBomberil)],
-    ["(−) Provisión Fontur (2.5%)", formatCOP(rent.provFontur)],
-    ["(−) Provisión Renta (3.5%)", formatCOP(rent.provRenta)],
-    ["= Total provisiones", formatCOP(rent.totalProvisiones)],
+    ["Venta", formatCOP(precioVenta)],
+    ["(−) Total proveedor", `− ${formatCOP(costoDirecto)}`],
+    ["(−) Comisión B2B", `− ${formatCOP(comB2B)}`],
+    ["(−) Comisión asesor", `− ${formatCOP(comAsesor)}`],
   ];
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
-          <div className="text-xs opacity-80">Utilidad neta</div>
-          <div className="text-2xl font-bold">{formatCOP(rent.utilNeta)}</div>
+          <div className="text-xs opacity-80">Flujo de caja (neto)</div>
+          <div className="text-2xl font-bold tabular-nums">{formatCOP(neto)}</div>
         </div>
-        <Mini label="Margen neto" value={`${(rent.margenNeto * 100).toFixed(1)}%`} />
-        <div className="rounded-xl border border-gray-200 bg-white p-4">
-          <div className="text-xs text-gray-400">Clasificación</div>
-          <div className="text-2xl font-bold" style={{ color: colorClase }}>{rent.clasificacion}</div>
-        </div>
+        <Mini label="Margen" value={`${(margen * 100).toFixed(1)}%`} color={neto < 0 ? "#C0392B" : undefined} />
       </div>
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         <table className="w-full text-sm">
-          <tbody>{filas.map(([k, val], i) => (
-            <tr key={i} className={`border-t border-gray-50 ${k.startsWith("=") ? "font-semibold bg-gray-50" : ""}`}>
-              <td className="px-4 py-2 text-gray-600">{k}</td>
-              <td className="px-4 py-2 text-right tabular-nums text-gray-800">{val}</td>
-            </tr>))}
-            <tr className="border-t-2 border-gray-300 font-bold">
-              <td className="px-4 py-2">Utilidad neta</td>
-              <td className="px-4 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(rent.utilNeta)}</td>
+          <tbody>
+            {filas.map(([k, val], i) => (
+              <tr key={i} className="border-t border-gray-50 first:border-t-0">
+                <td className="px-4 py-2.5 text-gray-600">{k}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-gray-800">{val}</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold">
+              <td className="px-4 py-2.5">= Flujo de caja</td>
+              <td className="px-4 py-2.5 text-right tabular-nums" style={{ color: neto < 0 ? "#C0392B" : "var(--brand-primary)" }}>{formatCOP(neto)}</td>
             </tr>
           </tbody>
         </table>
       </div>
+      <p className="text-xs text-gray-400">
+        Flujo simple del contrato. El cálculo tributario completo (provisiones, IVA, márgenes y
+        clasificación) está en <b>Finanzas → Rentabilidad</b>.
+      </p>
     </div>
   );
 }
