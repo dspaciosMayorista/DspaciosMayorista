@@ -117,23 +117,43 @@ export async function crearFactura(input: {
   fechaFactura: string;
   cliente: string;
   nitCliente: string;
-  descripcion: string;
-  baseGravable: number;
-  ivaDescontable: number;
+  items: { descripcion: string; valor: number; gravable: boolean }[];
 }): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb.from("facturacion").insert({
-    numero_contrato: input.numeroContrato,
-    numero_factura: input.numeroFactura || null,
-    fecha_factura: input.fechaFactura || null,
-    cliente: input.cliente || null,
-    nit_cliente: input.nitCliente || null,
-    descripcion: input.descripcion || null,
-    base_gravable: input.baseGravable,
-    iva_descontable: input.ivaDescontable,
-    estado_dian: "borrador",
-  });
+  const items = (input.items ?? []).filter((it) => Number(it.valor) > 0);
+  if (!items.length) return { ok: false, error: "Agrega al menos un ítem con valor." };
+
+  const baseGravable = items.filter((i) => i.gravable).reduce((s, i) => s + Number(i.valor), 0);
+  const baseNoGravable = items.filter((i) => !i.gravable).reduce((s, i) => s + Number(i.valor), 0);
+  const descripcion = items.map((i) => i.descripcion).filter(Boolean).join(", ") || null;
+
+  const { data: fact, error } = await sb
+    .from("facturacion")
+    .insert({
+      numero_contrato: input.numeroContrato,
+      numero_factura: input.numeroFactura || null,
+      fecha_factura: input.fechaFactura || null,
+      cliente: input.cliente || null,
+      nit_cliente: input.nitCliente || null,
+      descripcion,
+      base_gravable: baseGravable,
+      base_no_gravable: baseNoGravable,
+      estado_dian: "borrador",
+    })
+    .select("id")
+    .single();
   if (error) return { ok: false, error: error.message };
+
+  const rows = items.map((it, i) => ({
+    factura_id: fact.id,
+    descripcion: it.descripcion || null,
+    valor: Number(it.valor),
+    gravable: it.gravable,
+    orden: i,
+  }));
+  const { error: e2 } = await sb.from("factura_items").insert(rows);
+  if (e2) return { ok: false, error: e2.message };
+
   rev(input.numeroContrato);
   return { ok: true };
 }

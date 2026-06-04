@@ -27,7 +27,8 @@ import {
 type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string };
 type CxP = { id: number; proveedor: string | null; servicio: string | null; valor_total: number; fecha_vencimiento: string | null; aplica_retencion: boolean; pct_retencion: number };
 type B2B = { id: number; aliado: string | null; precio_venta: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
-type Factura = { id: number; numero_factura: string | null; fecha_factura: string | null; base_gravable: number; iva_descontable: number; estado_dian: string | null };
+type FacturaItem = { descripcion: string | null; valor: number; gravable: boolean };
+type Factura = { id: number; numero_factura: string | null; fecha_factura: string | null; base_gravable: number; base_no_gravable: number; estado_dian: string | null; items: FacturaItem[] };
 
 export type GestionProps = {
   numero: string;
@@ -72,7 +73,8 @@ export function GestionTabs(p: GestionProps) {
   });
 
   const ivaGenerado = p.facturas.reduce((s, f) => s + f.base_gravable * fiscal.IVA, 0);
-  const ivaDescontable = p.facturas.reduce((s, f) => s + (f.iva_descontable || 0), 0);
+  // El IVA descontable viene de compras (proveedores), no de las facturas emitidas.
+  const ivaDescontable = 0;
 
   const rent = calcRentabilidad({
     precioVenta: p.precioVenta, costoDirecto, comB2B: comB2BTotal,
@@ -378,30 +380,44 @@ function ComisionesTab({ numero, precioVenta, impuesto, filas, comB2BTotal, comA
 }
 
 // ── FACTURACIÓN ────────────────────────────────────────────────────────
+type ItemForm = { descripcion: string; valor: string; gravable: boolean };
+const itemVacio = (): ItemForm => ({ descripcion: "", valor: "", gravable: true });
+
 function FacturacionTab({ numero, filas, ivaGenerado, ivaPct }: { numero: string; filas: Factura[]; ivaGenerado: number; ivaPct: number }) {
   const [num, setNum] = useState("");
   const [fecha, setFecha] = useState("");
   const [cliente, setCliente] = useState("");
   const [nit, setNit] = useState("");
-  const [desc, setDesc] = useState("");
-  const [base, setBase] = useState("");
+  const [items, setItems] = useState<ItemForm[]>([itemVacio()]);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
-  const totalBase = filas.reduce((s, f) => s + (f.base_gravable || 0), 0);
-  const baseNum = Number(base) || 0;
-  const ivaNueva = baseNum * ivaPct;
+  const totalBaseGrav = filas.reduce((s, f) => s + (f.base_gravable || 0), 0);
+  const totalBaseNoGrav = filas.reduce((s, f) => s + (f.base_no_gravable || 0), 0);
+
+  // Previsualización de la factura en edición
+  const prevGrav = items.filter((i) => i.gravable).reduce((s, i) => s + (Number(i.valor) || 0), 0);
+  const prevNoGrav = items.filter((i) => !i.gravable).reduce((s, i) => s + (Number(i.valor) || 0), 0);
+  const prevIva = prevGrav * ivaPct;
+  const prevTotal = prevGrav + prevNoGrav + prevIva;
+
+  const setItem = (idx: number, patch: Partial<ItemForm>) =>
+    setItems((arr) => arr.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
+  const addItem = () => setItems((arr) => [...arr, itemVacio()]);
+  const delItem = (idx: number) => setItems((arr) => (arr.length > 1 ? arr.filter((_, i) => i !== idx) : arr));
 
   function agregar() {
-    if (!Number(base)) return;
+    const limpios = items
+      .filter((it) => (Number(it.valor) || 0) > 0)
+      .map((it) => ({ descripcion: it.descripcion, valor: Number(it.valor), gravable: it.gravable }));
+    if (!limpios.length) { setErr("Agrega al menos un ítem con valor."); return; }
     setErr("");
     start(async () => {
       const r = await crearFactura({
         numeroContrato: numero, numeroFactura: num, fechaFactura: fecha,
-        cliente, nitCliente: nit, descripcion: desc,
-        baseGravable: Number(base), ivaDescontable: 0,
+        cliente, nitCliente: nit, items: limpios,
       });
-      if (r.ok) { setNum(""); setFecha(""); setCliente(""); setNit(""); setDesc(""); setBase(""); }
+      if (r.ok) { setNum(""); setFecha(""); setCliente(""); setNit(""); setItems([itemVacio()]); }
       else setErr(r.error);
     });
   }
@@ -409,53 +425,107 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaPct }: { numero: string
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-500">
-        Registra las <b>facturas que le emites al cliente</b>. Cada factura genera IVA del {(ivaPct * 100).toFixed(0)}% sobre su base gravable.
+        Registra las <b>facturas que le emites al cliente</b>. Cada factura puede tener varios ítems;
+        los marcados <b>gravables</b> generan IVA del {(ivaPct * 100).toFixed(0)}%.
       </p>
-      {/* Resumen vertical */}
+
+      {/* Resumen vertical del contrato */}
       <Resumen
         titulo="Facturación del contrato"
         filas={[
           { label: "Facturas emitidas", value: String(filas.length) },
-          { label: "Total base gravable", value: formatCOP(totalBase) },
+          { label: "Base gravable", value: formatCOP(totalBaseGrav) },
+          { label: "Base no gravable", value: formatCOP(totalBaseNoGrav) },
           { label: `= IVA generado (${(ivaPct * 100).toFixed(0)}%)`, value: formatCOP(ivaGenerado), strong: true, color: "var(--brand-primary)" },
         ]}
       />
+
+      {/* Nueva factura con ítems */}
       <div className={card}>
-        <p className={lbl}>Agregar factura</p>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <p className={lbl}>Nueva factura</p>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Input placeholder="N° factura" value={num} onChange={(e) => setNum(e.target.value)} />
           <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
           <Input placeholder="Cliente" value={cliente} onChange={(e) => setCliente(e.target.value)} />
           <Input placeholder="NIT/CC cliente" value={nit} onChange={(e) => setNit(e.target.value)} />
-          <Input placeholder="Descripción" value={desc} onChange={(e) => setDesc(e.target.value)} />
-          <Input type="number" placeholder="Base gravable" value={base} onChange={(e) => setBase(e.target.value)} />
         </div>
-        {baseNum > 0 && (
-          <p className="mt-2 text-xs text-gray-500">IVA de esta factura ({(ivaPct * 100).toFixed(0)}%): <b>{formatCOP(ivaNueva)}</b></p>
-        )}
+
+        <p className="mb-2 mt-4 text-xs font-medium text-gray-600">Ítems de la factura</p>
+        <div className="space-y-2">
+          {items.map((it, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <Input className="min-w-[160px] flex-1" placeholder="Descripción del ítem" value={it.descripcion} onChange={(e) => setItem(i, { descripcion: e.target.value })} />
+              <Input type="number" className="w-36" placeholder="Valor" value={it.valor} onChange={(e) => setItem(i, { valor: e.target.value })} />
+              <label className="flex items-center gap-1.5 text-sm text-gray-600">
+                <input type="checkbox" checked={it.gravable} onChange={(e) => setItem(i, { gravable: e.target.checked })} />
+                Gravable
+              </label>
+              <span className="w-24 text-right text-xs text-gray-400">
+                {it.gravable && Number(it.valor) > 0 ? `IVA ${formatCOP((Number(it.valor) || 0) * ivaPct)}` : ""}
+              </span>
+              <button type="button" onClick={() => delItem(i)} className="text-xs text-gray-400 hover:text-red-500" disabled={items.length <= 1}>✕</button>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={addItem} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>+ Agregar ítem</button>
+
+        {/* Previsualización de totales de la factura */}
+        <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+          <span className="mr-3">Gravable: <b>{formatCOP(prevGrav)}</b></span>
+          <span className="mr-3">No gravable: <b>{formatCOP(prevNoGrav)}</b></span>
+          <span className="mr-3">IVA: <b>{formatCOP(prevIva)}</b></span>
+          <span>Total factura: <b style={{ color: "var(--brand-primary)" }}>{formatCOP(prevTotal)}</b></span>
+        </div>
+
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={agregar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
-            {pending ? "Guardando…" : "Agregar"}
+            {pending ? "Guardando…" : "Guardar factura"}
           </Button>
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
       </div>
+
+      {/* Facturas emitidas */}
       {filas.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[520px] text-sm">
-            <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-              <th className="px-4 py-2">N° Factura</th><th className="px-4 py-2">Fecha</th>
-              <th className="px-4 py-2 text-right">Base</th><th className="px-4 py-2">Estado</th><th className="px-4 py-2"></th>
-            </tr></thead>
-            <tbody>{filas.map((f) => (
-              <tr key={f.id} className="border-t border-gray-50">
-                <td className="px-4 py-2 text-gray-700">{f.numero_factura ?? "—"}</td>
-                <td className="px-4 py-2 text-gray-500">{f.fecha_factura ?? "—"}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.base_gravable)}</td>
-                <td className="px-4 py-2 text-gray-500">{f.estado_dian ?? "—"}</td>
-                <td className="px-4 py-2 text-right"><DeleteBtn onClick={() => eliminarFactura(f.id, numero)} /></td>
-              </tr>))}</tbody>
-          </table>
+        <div className="space-y-3">
+          {filas.map((f) => {
+            const ivaF = (f.base_gravable || 0) * ivaPct;
+            const totalF = (f.base_gravable || 0) + (f.base_no_gravable || 0) + ivaF;
+            return (
+              <div key={f.id} className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-semibold text-gray-800">Factura {f.numero_factura ?? "—"}</span>
+                    <span className="ml-2 text-xs text-gray-400">{f.fecha_factura ?? "—"} · {f.estado_dian ?? "borrador"}</span>
+                  </div>
+                  <DeleteBtn onClick={() => eliminarFactura(f.id, numero)} />
+                </div>
+                {f.items.length > 0 && (
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {f.items.map((it, i) => (
+                        <tr key={i} className="border-t border-gray-50">
+                          <td className="py-1.5 text-gray-600">{it.descripcion ?? "—"}</td>
+                          <td className="py-1.5 text-center">
+                            <span className={`rounded-full px-2 py-0.5 text-xs ${it.gravable ? "bg-sky-100 text-sky-700" : "bg-gray-100 text-gray-500"}`}>
+                              {it.gravable ? "Gravable" : "No gravable"}
+                            </span>
+                          </td>
+                          <td className="py-1.5 text-right tabular-nums text-gray-700">{formatCOP(it.valor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <div className="mt-2 flex flex-wrap justify-end gap-x-4 gap-y-1 border-t border-gray-100 pt-2 text-xs text-gray-500">
+                  <span>Gravable: {formatCOP(f.base_gravable)}</span>
+                  <span>No gravable: {formatCOP(f.base_no_gravable)}</span>
+                  <span>IVA: {formatCOP(ivaF)}</span>
+                  <span className="font-semibold text-gray-700">Total: {formatCOP(totalF)}</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

@@ -408,6 +408,36 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["liquidacion_comisiones"]["Insert"]>;
         Relationships: [];
       };
+      factura_items: {
+        Row: {
+          id: number;
+          factura_id: number;
+          descripcion: string | null;
+          valor: number;
+          gravable: boolean;
+          orden: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          factura_id: number;
+          descripcion?: string | null;
+          valor?: number;
+          gravable?: boolean;
+          orden?: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          factura_id?: number;
+          descripcion?: string | null;
+          valor?: number;
+          gravable?: boolean;
+          orden?: number;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       facturacion: {
         Row: {
           id: number;
@@ -420,6 +450,7 @@ export type Database = {
           tipo_documento: string | null;
           naturaleza_ingreso: string | null;
           base_gravable: number;
+          base_no_gravable: number;
           iva_descontable: number;
           base_tercero: number;
           comision_fee: number;
@@ -439,6 +470,7 @@ export type Database = {
           tipo_documento?: string | null;
           naturaleza_ingreso?: string | null;
           base_gravable?: number;
+          base_no_gravable?: number;
           iva_descontable?: number;
           base_tercero?: number;
           comision_fee?: number;

@@ -46,6 +46,21 @@ export default async function ContratoDetallePage({
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
+  // Ítems de las facturas del contrato, agrupados por factura.
+  const facturaIds = (facturas ?? []).map((f) => f.id);
+  const itemsPorFactura: Record<number, { descripcion: string | null; valor: number; gravable: boolean }[]> = {};
+  if (facturaIds.length) {
+    const { data: fItems } = await sb
+      .from("factura_items")
+      .select("factura_id, descripcion, valor, gravable, orden")
+      .in("factura_id", facturaIds)
+      .order("orden");
+    for (const it of fItems ?? []) {
+      (itemsPorFactura[it.factura_id] ??= []).push({ descripcion: it.descripcion, valor: it.valor, gravable: it.gravable });
+    }
+  }
+  const facturasConItems = (facturas ?? []).map((f) => ({ ...f, items: itemsPorFactura[f.id] ?? [] }));
+
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
   const fiscal = fiscalFromParams(paramsRows ?? []);
 
@@ -178,7 +193,7 @@ export default async function ContratoDetallePage({
         totalPagado={totalPagado}
         cuentasPorPagar={cxp ?? []}
         comisionesB2B={b2b ?? []}
-        facturas={facturas ?? []}
+        facturas={facturasConItems}
         formasPago={formasPago}
       />
     </div>
