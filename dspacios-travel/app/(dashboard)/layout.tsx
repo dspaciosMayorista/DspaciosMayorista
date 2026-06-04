@@ -33,7 +33,14 @@ const NAV: NavItem[] = [
     label: "Vuelos",
     children: [{ href: "/dashboard/vuelos/nuevo", label: "Nuevo bloqueo" }],
   },
-  { href: "/dashboard/finanzas", label: "Finanzas" },
+  {
+    href: "/dashboard/finanzas",
+    label: "Finanzas",
+    children: [
+      { href: "/dashboard/cartera", label: "Cartera (por cobrar)" },
+      { href: "/dashboard/pagos", label: "Pagos a proveedores" },
+    ],
+  },
   { href: "/dashboard/usuarios", label: "Usuarios" },
   { href: "/dashboard/configuracion", label: "Configuración" },
 ];
