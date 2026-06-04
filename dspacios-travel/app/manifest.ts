@@ -8,7 +8,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "D'spacios Travel",
     short_name: "D'spacios",
     description: "Sistema Integral — Mayorista de Turismo",
-    start_url: "/dashboard",
+    start_url: "/tarifario",
     scope: "/",
     display: "standalone",
     orientation: "portrait",
