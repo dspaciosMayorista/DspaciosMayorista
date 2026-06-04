@@ -4,6 +4,7 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { Logo } from "@/components/Logo";
+import { loginConCodigo } from "./actions";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,6 +12,19 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [codigo, setCodigo] = useState("");
+
+  async function handleCodigo(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    const r = await loginConCodigo(codigo);
+    // Si tiene éxito, la acción redirige; si vuelve, es error.
+    if (r && !r.ok) {
+      setError(r.error);
+      setLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -115,6 +129,25 @@ export default function LoginPage() {
         <div className="my-5 flex items-center gap-3 text-xs text-gray-400">
           <span className="h-px flex-1 bg-gray-200" /> o <span className="h-px flex-1 bg-gray-200" />
         </div>
+
+        {/* TEMPORAL (pruebas): ingreso rápido con código */}
+        <form onSubmit={handleCodigo} className="mb-4 flex gap-2">
+          <input
+            type="text"
+            value={codigo}
+            onChange={(e) => setCodigo(e.target.value)}
+            placeholder="Código de acceso (pruebas)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#1D7C9A] focus:border-transparent"
+          />
+          <button
+            type="submit"
+            disabled={loading || !codigo}
+            className="shrink-0 rounded-lg px-4 py-2 text-sm font-medium text-white transition-opacity disabled:opacity-60"
+            style={{ backgroundColor: "var(--brand-accent)" }}
+          >
+            Entrar
+          </button>
+        </form>
 
         <button
           type="button"
