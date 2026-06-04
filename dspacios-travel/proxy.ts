@@ -1,7 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/"];
+// `/auth` debe ser pública: el callback de OAuth (/auth/callback) corre ANTES de
+// que exista la sesión; si el middleware lo bloquea, el login con Google falla.
+const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/auth"];
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
