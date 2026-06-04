@@ -4,7 +4,9 @@ import Link from "next/link";
 import { HotelDetalleClient } from "./HotelDetalleClient";
 import { HotelConfigEditor } from "./HotelConfigEditor";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
+import { CalculadoraEditor } from "./CalculadoraEditor";
 import type { AcomConfig } from "@/lib/acomodaciones";
+import type { DubaiParams } from "@/lib/calc/calculadoras";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +16,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("planes_alimentacion(codigo)").eq("hotel_id", hotelId),
@@ -22,6 +24,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     sb.from("tarifa_hotel").select("*").eq("hotel_id", hotelId).order("id", { ascending: false }),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotelId),
+    sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle(),
   ]);
 
   if (!hotel) notFound();
@@ -38,6 +41,8 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     .map((x) => x.categorias_habitacion?.nombre).filter((x): x is string => !!x);
   const regimenes = ((regs ?? []) as unknown as { planes_alimentacion: { codigo: string } | null }[])
     .map((x) => x.planes_alimentacion?.codigo).filter((x): x is string => !!x);
+  const temporadasNombres = (temporadas ?? []).map((t) => t.nombre).filter((x): x is string => !!x);
+  const calcParams = (calc?.params ?? null) as DubaiParams | null;
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
@@ -70,6 +75,13 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           paxMin={h.pax_min}
           paxMax={h.pax_max}
           configs={acomConfigs}
+        />
+        <CalculadoraEditor
+          hotelId={hotelId}
+          categorias={categorias}
+          temporadas={temporadasNombres}
+          regimenes={regimenes}
+          inicial={calcParams}
         />
         <HotelDetalleClient
           hotelId={hotelId}

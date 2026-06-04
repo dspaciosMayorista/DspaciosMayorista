@@ -3,6 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
+import { generarTarifas, type DubaiParams } from "@/lib/calc/calculadoras";
+import type { Json } from "@/types/database";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -466,4 +468,51 @@ export async function cargarAcomodacionesMasivo(rows: Record<string, string>[]):
   }
   revalidatePath("/dashboard/producto/hoteles");
   return { ok: errores.length === 0, insertados, errores };
+}
+
+// ── Calculadora de tarifas (estructura especial por hotel) ──────────────────
+// Guarda el tipo + parámetros de la calculadora del hotel.
+export async function guardarCalculadora(
+  hotelId: number,
+  tipo: string,
+  params: DubaiParams
+): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("hotel_calculadora")
+    .upsert(
+      { hotel_id: hotelId, tipo, params: params as unknown as Json, updated_at: new Date().toISOString() },
+      { onConflict: "hotel_id" }
+    );
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true };
+}
+
+// Genera las filas de tarifa_hotel a partir de la calculadora del hotel.
+// REEMPLAZA las tarifas existentes del hotel (en un hotel por fórmula, todas
+// las tarifas salen de la fórmula).
+export async function generarTarifasCalculadora(
+  hotelId: number
+): Promise<{ ok: true; generadas: number } | { ok: false; error: string }> {
+  const sb = await createClient();
+  const { data: calc } = await sb
+    .from("hotel_calculadora")
+    .select("tipo, params")
+    .eq("hotel_id", hotelId)
+    .maybeSingle();
+  if (!calc) return { ok: false, error: "Este hotel no tiene calculadora configurada. Guárdala primero." };
+
+  const filas = generarTarifas(calc.tipo, calc.params);
+  if (!filas.length) return { ok: false, error: "No hay bases con precio para generar tarifas." };
+
+  // Reemplaza las tarifas del hotel por las recién calculadas.
+  await sb.from("tarifa_hotel").delete().eq("hotel_id", hotelId);
+  const { error } = await sb
+    .from("tarifa_hotel")
+    .insert(filas.map((f) => ({ ...f, hotel_id: hotelId })));
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true, generadas: filas.length };
 }

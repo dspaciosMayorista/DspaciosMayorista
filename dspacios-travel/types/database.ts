@@ -1134,6 +1134,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
         Relationships: [];
       };
+      hotel_calculadora: {
+        Row: { id: number; hotel_id: number; tipo: string; params: Json; updated_at: string };
+        Insert: { id?: number; hotel_id: number; tipo?: string; params?: Json; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_calculadora"]["Insert"]>;
+        Relationships: [];
+      };
       formas_pago: {
         Row: { id: number; nombre: string; activo: boolean; orden: number; created_at: string };
         Insert: { id?: number; nombre: string; activo?: boolean; orden?: number; created_at?: string };
