@@ -98,6 +98,28 @@
   --sidebar-ring: #1D7C9A;
 }
 
+/* ── Tema ÍNDIGO (estilo del sitio coral-gull) ─────────────────────────────
+   Se activa con <html data-theme="indigo">. Cambia el color principal de
+   turquesa a índigo oscuro y conserva el verde lima como acento/realce.
+   Pensado para probar el look y decidir; se quita poniendo data-theme="marca". */
+[data-theme="indigo"] {
+  --brand-primary:   #232876;  /* índigo oscuro (títulos/botones) */
+  --brand-accent:    #3D43B5;  /* índigo más claro (links/hover) */
+  --brand-success:   #66B596;  /* verde (estados OK) */
+  --brand-highlight: #AEF44A;  /* lima (badges) */
+  --brand-gradient: linear-gradient(110deg, #1b1e63 0%, #232876 45%, #3D43B5 100%);
+
+  --primary: #232876;
+  --accent: #3D43B5;
+  --ring: #232876;
+  --chart-1: #232876;
+  --chart-2: #3D43B5;
+  --chart-3: #66B596;
+  --chart-4: #AEF44A;
+  --sidebar-primary: #232876;
+  --sidebar-ring: #232876;
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);

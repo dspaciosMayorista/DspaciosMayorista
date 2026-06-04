@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Jost } from "next/font/google";
 import "../styles/globals.css";
+import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 
 const jost = Jost({
   subsets: ["latin"],
@@ -43,8 +44,18 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es" className={`${jost.variable} h-full antialiased`}>
+      <head>
+        {/* Aplica el tema guardado antes de pintar (evita parpadeo). */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('dsp-theme');if(t==='indigo')document.documentElement.setAttribute('data-theme','indigo');}catch(e){}",
+          }}
+        />
+      </head>
       <body className="min-h-full bg-white text-gray-900 font-sans">
         {children}
+        <ThemeSwitcher />
       </body>
     </html>
   );
