@@ -16,10 +16,62 @@
 
 const MS_DIA = 86_400_000;
 
+export type TemporadaTipo = "tarifa" | "descuento_pct" | "descuento_monto";
+
 export interface TemporadaRango {
   nombre: string;
   fecha_inicio: string | null;
   fecha_fin: string | null;
+  // Fase 2/3: prioridad (gana la más alta), vigencia de compra y promociones.
+  prioridad?: number;            // default 1
+  compra_inicio?: string | null; // vigencia de compra (null = siempre disponible)
+  compra_fin?: string | null;
+  tipo?: TemporadaTipo;          // default 'tarifa'
+  descuento_valor?: number | null; // % (descuento_pct) o monto por pax (descuento_monto)
+}
+
+/** Fecha de hoy (yyyy-mm-dd) en zona horaria Colombia, para la vigencia de compra. */
+export function hoyISO(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
+}
+
+function cubreFecha(t: TemporadaRango, t0: number): boolean {
+  if (!t.fecha_inicio || !t.fecha_fin) return false;
+  const i = new Date(`${t.fecha_inicio}T00:00:00`).getTime();
+  const f = new Date(`${t.fecha_fin}T00:00:00`).getTime();
+  return t0 >= i && t0 <= f;
+}
+
+/** ¿La vigencia de compra cubre HOY? (sin rango = siempre disponible). */
+function compraVigente(t: TemporadaRango, hoy: string): boolean {
+  if (t.compra_inicio && hoy < t.compra_inicio) return false;
+  if (t.compra_fin && hoy > t.compra_fin) return false;
+  return true;
+}
+
+/** Entradas que cubren la fecha y están en vigencia de compra, por prioridad desc. */
+function entradasNoche(t0: number, temporadas: TemporadaRango[], hoy: string): TemporadaRango[] {
+  return temporadas
+    .filter((t) => cubreFecha(t, t0) && compraVigente(t, hoy))
+    .sort((a, b) => (b.prioridad ?? 1) - (a.prioridad ?? 1));
+}
+
+/** Mapea una fila de `hotel_temporadas` (con los campos de promo) a TemporadaRango. */
+export function toTemporadaRango(t: {
+  nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
+  prioridad?: number | null; compra_inicio?: string | null; compra_fin?: string | null;
+  tipo?: string | null; descuento_valor?: number | null;
+}): TemporadaRango {
+  return {
+    nombre: t.nombre,
+    fecha_inicio: t.fecha_inicio,
+    fecha_fin: t.fecha_fin,
+    prioridad: t.prioridad ?? 1,
+    compra_inicio: t.compra_inicio ?? null,
+    compra_fin: t.compra_fin ?? null,
+    tipo: (t.tipo ?? "tarifa") as TemporadaTipo,
+    descuento_valor: t.descuento_valor ?? null,
+  };
 }
 
 /** Redondeo a peso entero (COP). */
@@ -35,42 +87,72 @@ export function noches(fechaIda: string, fechaRegreso: string): number {
   return Math.max(0, Math.round((b - a) / MS_DIA));
 }
 
-/** Devuelve el nombre de la temporada del hotel en la que cae una fecha. */
+/**
+ * Nombre de la temporada-base (tipo 'tarifa') de mayor prioridad que cubre una
+ * fecha. Ignora la vigencia de compra (es para diagnóstico de tarifas faltantes).
+ */
 export function temporadaParaFecha(
   fecha: Date,
   temporadas: TemporadaRango[]
 ): string | null {
   const t0 = fecha.getTime();
-  for (const t of temporadas) {
-    if (!t.fecha_inicio || !t.fecha_fin) continue;
-    const i = new Date(`${t.fecha_inicio}T00:00:00`).getTime();
-    const f = new Date(`${t.fecha_fin}T00:00:00`).getTime();
-    if (t0 >= i && t0 <= f) return t.nombre;
+  const base = temporadas
+    .filter((t) => (t.tipo ?? "tarifa") === "tarifa" && cubreFecha(t, t0))
+    .sort((a, b) => (b.prioridad ?? 1) - (a.prioridad ?? 1))[0];
+  return base?.nombre ?? null;
+}
+
+/**
+ * Neto efectivo de UNA noche, resolviendo por prioridad + vigencia de compra:
+ *  - gana la entrada de mayor prioridad que cubra la fecha y esté en vigencia de compra;
+ *  - si es 'tarifa', usa su neto cargado;
+ *  - si es un descuento, lo aplica sobre la tarifa-base (la 'tarifa' de mayor
+ *    prioridad por debajo, con neto cargado).
+ * Devuelve null si no hay tarifa aplicable (no se publica esa noche).
+ */
+export function netoNoche(
+  t0: number,
+  temporadas: TemporadaRango[],
+  netoPorTemporada: Record<string, number | null | undefined>,
+  hoy: string
+): number | null {
+  const ents = entradasNoche(t0, temporadas, hoy);
+  if (!ents.length) return null;
+  const top = ents[0];
+  const tipoTop = top.tipo ?? "tarifa";
+  if (tipoTop === "tarifa") {
+    const v = netoPorTemporada[top.nombre];
+    return v == null ? null : v;
   }
-  return null;
+  // Descuento: necesita una tarifa-base por debajo, con neto cargado.
+  const base = ents.find((t) => (t.tipo ?? "tarifa") === "tarifa" && netoPorTemporada[t.nombre] != null);
+  if (!base) return null;
+  const baseNeto = netoPorTemporada[base.nombre] as number;
+  const val = Number(top.descuento_valor) || 0;
+  if (tipoTop === "descuento_pct") return Math.round(baseNeto * (1 - val / 100));
+  return Math.max(0, Math.round(baseNeto - val)); // descuento_monto (por pax)
 }
 
 /**
  * Liquida el costo neto del hotel para una estadía, sumando noche por noche.
  * `netoPorTemporada` mapea nombre-de-temporada → neto de la acomodación elegida.
- * Devuelve `null` si alguna noche no tiene temporada o no tiene tarifa cargada
- * (tarifa incompleta ⇒ esa combinación no se publica).
+ * `hoy` (yyyy-mm-dd) evalúa la vigencia de compra; por defecto, hoy en Colombia.
+ * Devuelve `null` si alguna noche no tiene tarifa aplicable.
  */
 export function liquidarHotelNoches(args: {
   fechaIda: string;
   numNoches: number;
   temporadas: TemporadaRango[];
   netoPorTemporada: Record<string, number | null | undefined>;
+  hoy?: string;
 }): number | null {
   if (args.numNoches <= 0) return null;
   const base = new Date(`${args.fechaIda}T00:00:00`).getTime();
   if (Number.isNaN(base)) return null;
+  const hoy = args.hoy ?? hoyISO();
   let total = 0;
   for (let n = 0; n < args.numNoches; n++) {
-    const d = new Date(base + n * MS_DIA);
-    const temp = temporadaParaFecha(d, args.temporadas);
-    if (!temp) return null;
-    const neto = args.netoPorTemporada[temp];
+    const neto = netoNoche(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy);
     if (neto == null) return null;
     total += neto;
   }

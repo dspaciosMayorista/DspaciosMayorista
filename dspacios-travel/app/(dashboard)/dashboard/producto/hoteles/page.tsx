@@ -45,6 +45,9 @@ const COLS_TEMPORADAS = [
   { key: "temporada", label: "Temporada (nombre)", ejemplo: "Baja" },
   { key: "fecha_inicio", label: "Fecha inicio (AAAA-MM-DD)", ejemplo: "2026-02-01" },
   { key: "fecha_fin", label: "Fecha fin (AAAA-MM-DD)", ejemplo: "2026-05-31" },
+  { key: "prioridad", label: "Prioridad (gana la más alta)", ejemplo: "1" },
+  { key: "compra_inicio", label: "Vigencia compra desde (AAAA-MM-DD)", ejemplo: "" },
+  { key: "compra_fin", label: "Vigencia compra hasta (AAAA-MM-DD)", ejemplo: "" },
 ];
 
 const COLS_TARIFAS = [

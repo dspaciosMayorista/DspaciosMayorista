@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, type TemporadaRango } from "@/lib/calc/paquetes";
+import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, toTemporadaRango, type TemporadaRango } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
@@ -44,14 +44,14 @@ async function liquidarHotelPaquete(
 
   const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin").eq("hotel_id", hotelId),
+    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona)").eq("paquete_id", paqueteId),
   ]);
   const filtroCat = (hsel?.categorias as string[] | null) ?? null;
   const filtroReg = (hsel?.regimenes as string[] | null) ?? null;
   const hotelNombre = (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
-  const temporadas: TemporadaRango[] = (temps ?? []).map((t) => ({ nombre: t.nombre, fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin }));
+  const temporadas: TemporadaRango[] = (temps ?? []).map(toTemporadaRango);
 
   // Servicios INCLUIDOS se hornean por persona (igual que el generador).
   let aporteServ = 0;
@@ -118,10 +118,10 @@ export async function cotizarPorFechas(input: {
   if (!res || !res.combos.length) {
     // Diagnóstico: ¿qué temporada de las noches elegidas no tiene tarifa cargada?
     const [{ data: temps }, { data: tars }] = await Promise.all([
-      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin").eq("hotel_id", input.hotelId),
+      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").eq("hotel_id", input.hotelId),
       admin.from("tarifa_hotel").select("temporada").eq("hotel_id", input.hotelId),
     ]);
-    const temporadas = (temps ?? []).map((t) => ({ nombre: t.nombre, fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin }));
+    const temporadas = (temps ?? []).map(toTemporadaRango);
     const conTarifa = new Set((tars ?? []).map((t) => (t.temporada ?? "").trim()));
     const base = new Date(`${input.fechaIda}T00:00:00`).getTime();
     const faltan = new Set<string>();
@@ -632,7 +632,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
       if (numNoches > 0) {
         const [{ data: temps }, { data: tarRows }, { data: hprov }] = await Promise.all([
-          admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin").eq("hotel_id", input.hotelId),
+          admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").eq("hotel_id", input.hotelId),
           admin.from("tarifa_hotel")
             .select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2")
             .eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
@@ -643,7 +643,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
           neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null;
         };
         const rows = (tarRows ?? []) as TarRow[];
-        const temporadas = (temps ?? []).map((t) => ({ nombre: t.nombre, fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin }));
+        const temporadas = (temps ?? []).map(toTemporadaRango);
         const colDe: Record<string, keyof TarRow> = {
           sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple",
           multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2",
