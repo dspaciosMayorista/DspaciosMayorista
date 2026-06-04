@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TarifarioPublic, type FilaTarifario } from "@/app/tarifario/TarifarioPublic";
+import { getProgramasResumen } from "@/lib/programas";
 import { liberarVencidas } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -42,16 +43,19 @@ export default async function ReservarPage() {
     for (const c of cup ?? []) cuposPorBloqueo[c.id as number] = Number(c.cupos_disponibles) || 0;
   }
 
+  // Programas (circuitos) activos: también reservables desde aquí.
+  const programas = await getProgramasResumen(sb, false);
+
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-8">
       <h1 className="mb-1 text-2xl font-semibold text-gray-900">Reservar</h1>
       <p className="mb-6 text-sm text-gray-500">
         Tarifario comercial. Elige una salida y un hotel, y dale <b>Reservar</b> para generar el contrato.
       </p>
-      {!filas.length ? (
+      {!filas.length && !programas.length ? (
         <p className="py-20 text-center text-gray-400">No hay tarifas publicadas. Genera el tarifario en un paquete.</p>
       ) : (
-        <TarifarioPublic filas={filas} puedeReservar cuposPorBloqueo={cuposPorBloqueo} />
+        <TarifarioPublic filas={filas} programas={programas} puedeReservar cuposPorBloqueo={cuposPorBloqueo} />
       )}
     </div>
   );

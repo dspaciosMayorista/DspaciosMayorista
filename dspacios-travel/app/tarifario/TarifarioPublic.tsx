@@ -137,7 +137,7 @@ export function TarifarioPublic({
       ) : modulo === "servicios" ? (
         <PorServicios filas={filas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
       ) : (
-        <PorProgramas programas={programas} />
+        <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       )}
 
       <p className="mt-4 text-center text-xs text-gray-400">
@@ -433,25 +433,24 @@ function TablaHorizontal({ rows, puedeReservar = false }: { rows: Pivotada[]; pu
 }
 
 // ── Programas (circuitos) ───────────────────────────────────────────────────
-function PorProgramas({ programas }: { programas: ProgramaResumen[] }) {
+function PorProgramas({ programas, puedeReservar = false }: { programas: ProgramaResumen[]; puedeReservar?: boolean }) {
   if (!programas.length) {
     return <p className="py-12 text-center text-gray-400">No hay programas publicados.</p>;
   }
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {programas.map((p) => (
-        <Link
+        <div
           key={p.id}
-          href={`/tarifario/programa/${p.id}`}
-          className="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-[#1D7C9A] hover:shadow-sm"
+          className="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-[var(--brand-primary)] hover:shadow-sm"
         >
-          <div>
+          <Link href={`/tarifario/programa/${p.id}`} className="block">
             <div className="font-semibold text-gray-800">{p.nombre}</div>
             <p className="mt-0.5 text-xs text-gray-500">
               {p.subtitulo ?? ""}
               {p.dias ? ` · ${p.dias} días / ${p.noches ?? ""} noches` : ""}
             </p>
-          </div>
+          </Link>
           <div className="mt-3 flex items-end justify-between">
             {p.desde_pvp != null ? (
               <div>
@@ -464,9 +463,22 @@ function PorProgramas({ programas }: { programas: ProgramaResumen[] }) {
             ) : (
               <span className="text-sm text-gray-400">Consultar</span>
             )}
-            <span className="text-xs font-medium text-[#26BBD9]">Ver programa →</span>
+            <div className="flex items-center gap-3">
+              <Link href={`/tarifario/programa/${p.id}`} className="text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+                Ver
+              </Link>
+              {puedeReservar && (
+                <Link
+                  href={`/dashboard/reservar/programa/${p.id}`}
+                  className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
+                  style={{ backgroundColor: "var(--brand-primary)" }}
+                >
+                  Reservar →
+                </Link>
+              )}
+            </div>
           </div>
-        </Link>
+        </div>
       ))}
     </div>
   );
