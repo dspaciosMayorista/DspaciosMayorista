@@ -119,10 +119,10 @@ html[data-theme="indigo"] {
   --sidebar-primary: #232876;
   --sidebar-ring: #232876;
 
-  /* Fondo general tintado de índigo (tokens) */
-  --background: #eef0fb;
+  /* Fondo general en GRIS (prueba) */
+  --background: #e5e7eb;
   --secondary:  #e6e8f8;
-  --muted:      #eef0fb;
+  --muted:      #e5e7eb;
 }
 
 /* Cambio COMPLETO en tema índigo: también el FONDO de las superficies que hoy
@@ -131,10 +131,10 @@ html[data-theme="indigo"] {
    Reglas sin @layer → ganan sobre las utilidades de Tailwind. */
 html[data-theme="indigo"] body,
 html[data-theme="indigo"] .bg-gray-50 {
-  background-color: #eef0fb;   /* índigo muy claro */
+  background-color: #e5e7eb;   /* gris (prueba) */
 }
 html[data-theme="indigo"] .bg-gray-100 {
-  background-color: #e2e5f6;
+  background-color: #d1d5db;   /* gris un poco más oscuro */
 }
 
 .dark {
