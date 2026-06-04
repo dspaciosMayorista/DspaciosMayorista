@@ -10,7 +10,10 @@ const COLS_SERVICIOS = [
   { key: "nombre", label: "Nombre", ejemplo: "Tour Islas del Rosario" },
   { key: "destino", label: "Destino", ejemplo: "CARTAGENA" },
   { key: "proveedor", label: "Proveedor", ejemplo: "" },
-  { key: "tarifa_neta", label: "Tarifa neta", ejemplo: "120000" },
+  { key: "tarifa_neta", label: "Precio por persona (neto)", ejemplo: "120000" },
+  { key: "precio_grupo", label: "Precio por grupo (pax_desde-pax_hasta:precio | …)", ejemplo: "1-4:500000|5-10:400000" },
+  { key: "categoria", label: "Categoría (tour_traslado / asistencia / otro)", ejemplo: "tour_traslado" },
+  { key: "rangos_edad", label: "Rangos de edad (nombres separados por |)", ejemplo: "" },
   { key: "temporada", label: "Temporada", ejemplo: "" },
   { key: "liquidacion", label: "Liquidación (dia/noche/paquete)", ejemplo: "paquete" },
 ];
@@ -33,7 +36,7 @@ export default async function ServiciosPage() {
       <div className="mb-6">
         <CargaMasivaCSV
           titulo="Carga masiva de servicios (CSV)"
-          descripcion="Cada fila = un servicio. Liquidación: dia, noche o paquete. El destino y el proveedor (si los pones) deben existir."
+          descripcion="Cada fila = un servicio. Precio por persona y/o por grupo (rangos de pax: 1-4:500000|5-10:400000). Categoría: tour_traslado, asistencia u otro. Rangos de edad por nombre, separados por |. El destino y el proveedor (si los pones) deben existir."
           columnas={COLS_SERVICIOS}
           onSubmit={cargarServiciosMasivo}
           nombreArchivo="plantilla_servicios"

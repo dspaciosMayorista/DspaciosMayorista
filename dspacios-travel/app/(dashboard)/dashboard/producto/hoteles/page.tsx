@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { EliminarHotelBtn } from "./EliminarHotelBtn";
 import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
-import { cargarHotelesMasivo, cargarTarifasMasivo, cargarTemporadasMasivo } from "./actions";
+import { cargarHotelesMasivo, cargarTarifasMasivo, cargarTemporadasMasivo, cargarAcomodacionesMasivo } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +18,23 @@ const COLS_HOTELES = [
   { key: "edad_nino_max", label: "Edad niño máx", ejemplo: "10" },
   { key: "categorias", label: "Categorías (separadas por |)", ejemplo: "Estándar|Superior" },
   { key: "regimenes", label: "Regímenes (códigos separados por |)", ejemplo: "PC|FULL" },
+  { key: "rangos_edad", label: "Rangos de edad (nombres separados por |)", ejemplo: "" },
+  { key: "pax_min", label: "Pax mín del hotel", ejemplo: "1" },
+  { key: "pax_max", label: "Pax máx del hotel", ejemplo: "4" },
+];
+
+const COLS_ACOMODACIONES = [
+  { key: "hotel", label: "Hotel", ejemplo: "Hotel Dorado Plaza" },
+  { key: "destino", label: "Destino (si hay hoteles repetidos)", ejemplo: "CARTAGENA" },
+  { key: "acomodacion", label: "Acomodación (sencilla/doble/triple/multiple)", ejemplo: "doble" },
+  { key: "pax_tarifa", label: "Pax tarifa (multiplicador de 1 hab)", ejemplo: "2" },
+  { key: "pax_max", label: "Pax máx por habitación", ejemplo: "4" },
+  { key: "adt_min", label: "Adultos mín", ejemplo: "2" },
+  { key: "adt_max", label: "Adultos máx", ejemplo: "2" },
+  { key: "chd_min", label: "Niños mín", ejemplo: "0" },
+  { key: "chd_max", label: "Niños máx", ejemplo: "2" },
+  { key: "inf_min", label: "Infantes mín", ejemplo: "0" },
+  { key: "inf_max", label: "Infantes máx", ejemplo: "2" },
 ];
 
 const COLS_TEMPORADAS = [
@@ -72,6 +89,13 @@ export default async function HotelesPage() {
           columnas={COLS_HOTELES}
           onSubmit={cargarHotelesMasivo}
           nombreArchivo="plantilla_hoteles"
+        />
+        <CargaMasivaCSV
+          titulo="Carga masiva de acomodaciones por hotel (CSV)"
+          descripcion="Config de 'reservar por habitaciones': una fila por acomodación (sencilla/doble/triple/multiple). pax_tarifa = cuántos pax cubre la tarifa de 1 habitación. El hotel debe existir. Si no la cargas, se usan valores por defecto (1/2/3/4)."
+          columnas={COLS_ACOMODACIONES}
+          onSubmit={cargarAcomodacionesMasivo}
+          nombreArchivo="plantilla_acomodaciones_hotel"
         />
         <CargaMasivaCSV
           titulo="Carga masiva de temporadas de hotel (CSV)"

@@ -115,8 +115,14 @@ export async function cargarBloqueosMasivo(
   rows: Record<string, string>[]
 ): Promise<{ ok: boolean; insertados: number; errores: string[] }> {
   const sb = await createClient();
-  const { data: destinos } = await sb.from("destinos").select("id, nombre");
+  const [{ data: destinos }, { data: provs }, { data: rangos }] = await Promise.all([
+    sb.from("destinos").select("id, nombre"),
+    sb.from("proveedores").select("id, nombre"),
+    sb.from("rangos_edad").select("id, denominacion"),
+  ]);
   const dmap = new Map((destinos ?? []).map((d) => [d.nombre.trim().toLowerCase(), d.id]));
+  const pmap = new Map((provs ?? []).map((p) => [p.nombre.trim().toLowerCase(), p.id]));
+  const rmap = new Map((rangos ?? []).map((x) => [x.denominacion.trim().toLowerCase(), x.id]));
   const errores: string[] = [];
   let insertados = 0;
 
@@ -130,15 +136,19 @@ export async function cargarBloqueosMasivo(
       destinoId = dmap.get(r.destino.trim().toLowerCase()) ?? null;
       if (destinoId === null) errores.push(`Fila ${linea}: destino "${r.destino}" no existe (se deja sin destino).`);
     }
+    const provId = r.proveedor ? pmap.get(r.proveedor.trim().toLowerCase()) ?? null : null;
+    const rangosEdad = (r.rangos_edad || "")
+      .split(/[|;]/).map((x) => rmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
     const cupos = numCsv(r.cupos_total);
     const { data: bq, error } = await sb
       .from("bloqueos_vuelo")
       .insert({
-        record, aerolinea: oNull(r.aerolinea || ""), destino_id: destinoId, ruta: oNull(r.ruta || ""),
+        record, aerolinea: oNull(r.aerolinea || ""), proveedor_id: provId, destino_id: destinoId, ruta: oNull(r.ruta || ""),
         vuelo_ida: oNull(r.vuelo_ida || ""), fecha_ida: dCsv(r.fecha_ida), hora_salida_ida: dCsv(r.hora_salida_ida), hora_llegada_ida: dCsv(r.hora_llegada_ida),
         vuelo_regreso: oNull(r.vuelo_regreso || ""), fecha_regreso: dCsv(r.fecha_regreso), hora_salida_reg: dCsv(r.hora_salida_reg), hora_llegada_reg: dCsv(r.hora_llegada_reg),
         cupos_total: cupos, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
         fecha_devolucion: dCsv(r.fecha_devolucion), fecha_emision: dCsv(r.fecha_emision), notas: oNull(r.notas || ""),
+        rangos_edad: rangosEdad.length ? rangosEdad : null,
       })
       .select("id")
       .single();
