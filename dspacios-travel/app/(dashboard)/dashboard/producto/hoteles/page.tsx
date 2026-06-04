@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { EliminarHotelBtn } from "./EliminarHotelBtn";
 import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
-import { cargarHotelesMasivo, cargarTarifasMasivo } from "./actions";
+import { cargarHotelesMasivo, cargarTarifasMasivo, cargarTemporadasMasivo } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -20,12 +20,20 @@ const COLS_HOTELES = [
   { key: "regimenes", label: "Regímenes (códigos separados por |)", ejemplo: "PC|FULL" },
 ];
 
+const COLS_TEMPORADAS = [
+  { key: "hotel", label: "Hotel", ejemplo: "Hotel Dorado Plaza" },
+  { key: "destino", label: "Destino (si hay hoteles repetidos)", ejemplo: "CARTAGENA" },
+  { key: "temporada", label: "Temporada (nombre)", ejemplo: "Baja" },
+  { key: "fecha_inicio", label: "Fecha inicio (AAAA-MM-DD)", ejemplo: "2026-02-01" },
+  { key: "fecha_fin", label: "Fecha fin (AAAA-MM-DD)", ejemplo: "2026-05-31" },
+];
+
 const COLS_TARIFAS = [
   { key: "hotel", label: "Hotel", ejemplo: "Hotel Dorado Plaza" },
   { key: "destino", label: "Destino (si hay hoteles repetidos)", ejemplo: "CARTAGENA" },
   { key: "categoria", label: "Categoría", ejemplo: "Estándar" },
   { key: "regimen", label: "Régimen", ejemplo: "FULL" },
-  { key: "temporada", label: "Temporada", ejemplo: "Baja" },
+  { key: "temporada", label: "Temporada (debe existir con sus fechas)", ejemplo: "Baja" },
   { key: "neto_sencilla", label: "Neto sencilla", ejemplo: "600000" },
   { key: "neto_doble", label: "Neto doble", ejemplo: "300000" },
   { key: "neto_triple", label: "Neto triple", ejemplo: "300000" },
@@ -66,8 +74,15 @@ export default async function HotelesPage() {
           nombreArchivo="plantilla_hoteles"
         />
         <CargaMasivaCSV
+          titulo="Carga masiva de temporadas de hotel (CSV)"
+          descripcion="Cada fila = una temporada con su rango de fechas (las que luego usan las tarifas). Cárgala ANTES que las tarifas. Las fechas de un mismo hotel no se pueden cruzar."
+          columnas={COLS_TEMPORADAS}
+          onSubmit={cargarTemporadasMasivo}
+          nombreArchivo="plantilla_temporadas_hotel"
+        />
+        <CargaMasivaCSV
           titulo="Carga masiva de tarifas de hotel (CSV)"
-          descripcion="Cada fila = una tarifa (hotel + categoría + régimen + temporada + netos). El hotel debe existir; usa 'destino' si hay hoteles con el mismo nombre. Niño 1 puede ir en 0 (gratis)."
+          descripcion="Cada fila = una tarifa (hotel + categoría + régimen + temporada + netos). El hotel y la temporada (con sus fechas) deben existir; usa 'destino' si hay hoteles con el mismo nombre. Niño 1 puede ir en 0 (gratis)."
           columnas={COLS_TARIFAS}
           onSubmit={cargarTarifasMasivo}
           nombreArchivo="plantilla_tarifas_hotel"
