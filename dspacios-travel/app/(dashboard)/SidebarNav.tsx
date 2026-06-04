@@ -33,10 +33,10 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
       <div className="flex items-center">
         <Link
           href={item.href}
-          className="flex-1 rounded-lg px-3 py-2 text-sm transition-colors"
+          className="flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-gray-50"
           style={
             active
-              ? { backgroundColor: "rgba(29,124,154,0.08)", color: "var(--brand-primary)", fontWeight: 600 }
+              ? { backgroundColor: "var(--brand-primary)", color: "white", fontWeight: 600 }
               : { color: "#4b5563" }
           }
         >
