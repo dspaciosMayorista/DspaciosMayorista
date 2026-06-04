@@ -55,10 +55,13 @@
 
 :root {
   /* ── Marca (CSS custom props para uso directo) ───── */
-  --brand-primary:   #1D7C9A;
-  --brand-accent:    #26BBD9;
-  --brand-success:   #66B596;
-  --brand-highlight: #AEF44A;
+  --brand-primary:   #1D7C9A;  /* Jelly Bean Blue */
+  --brand-accent:    #26BBD9;  /* Scooter */
+  --brand-success:   #66B596;  /* Piper */
+  --brand-highlight: #AEF44A;  /* Conifer / Lima */
+
+  /* Degradado de marca (azul → turquesa → verde): encabezados/hero */
+  --brand-gradient: linear-gradient(110deg, #1D7C9A 0%, #1F8CA8 35%, #26BBD9 72%, #5FCBA8 100%);
 
   /* ── shadcn/ui tokens ──────────────────────────────── */
   --radius: 0.5rem;
@@ -131,4 +134,9 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Fondo con el degradado de marca (encabezados, hero) */
+.bg-brand-gradient {
+  background-image: var(--brand-gradient);
 }

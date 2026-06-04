@@ -9,5 +9,5 @@
   <!-- Avión estilizado -->
   <path d="M120 300 L392 196 c14-5 24 9 14 20 l-70 78 -40 92 c-5 12-22 11-26-1 l-22-66 -70-22 c-13-4-13-23 0-27 z"
         fill="#ffffff" opacity="0.95"/>
-  <text x="256" y="430" text-anchor="middle" font-family="Jost, Arial, sans-serif" font-size="92" font-weight="700" fill="#ffffff">D'st</text>
+  <text x="256" y="430" text-anchor="middle" font-family="Jost, Arial, sans-serif" font-size="120" font-weight="700" letter-spacing="2" fill="#ffffff">D'S</text>
 </svg>

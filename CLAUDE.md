@@ -262,6 +262,20 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > entre `main` y la rama; las migraciones ya aplicadas afectan también a producción.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
 
+### Marca / identidad (aplicada)
+- Manual oficial en `dspacios-travel/docs/marca/Identidad DESPACIOS.pdf`.
+- **Logo como imagen** (regla del manual, no como fuente) en `public/marca/`:
+  `logo-full.png` (full color, fondos claros), `logo-white.png` (blanco, fondos de
+  color/degradado), `logo-black.png` (negro). Componente reutilizable `components/Logo.tsx`
+  (`variant="full|white|black"`, `height`). Ya en sidebar/topbar del dashboard, login y
+  header del tarifario público.
+- **Degradado de marca** `--brand-gradient` (azul→turquesa→verde) en `styles/globals.css`
+  + clase `.bg-brand-gradient`; usado en el header del tarifario público.
+- Paleta confirmada con el manual (mismos HEX): Conifer/Lima `#AEF44A`, Scooter `#26BBD9`,
+  Piper `#66B596`, Jelly Bean Blue `#1D7C9A`. Tipografía web **Jost** = equivalente a
+  Century Gothic. Íconos PWA/app (`icon-192/512`, `icon-maskable-512`, `apple-icon`) =
+  logo blanco sobre el degradado.
+
 ### Flujo de negocio implementado
 **PRODUCTO** (costos netos) → **PAQUETES** (armas + margen) → **TARIFARIO** (resultado,
 interno y público) → **RESERVAR** (genera contrato/venta).

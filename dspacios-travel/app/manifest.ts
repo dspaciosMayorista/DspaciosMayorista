@@ -1,7 +1,8 @@
 import type { MetadataRoute } from "next";
 
 // Manifest PWA: permite instalar la web como app (Safari → "Agregar a inicio",
-// Android → "Instalar"). Los íconos finales se ajustan con la identidad de marca.
+// Android → "Instalar"). Íconos derivados del manual de marca (logo blanco sobre
+// el degradado oficial).
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "D'spacios Travel",
@@ -15,7 +16,9 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#1D7C9A",
     icons: [
       { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-      { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
   };
 }

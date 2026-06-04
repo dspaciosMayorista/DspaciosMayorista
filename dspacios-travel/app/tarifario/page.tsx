@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TarifarioPublic, type FilaTarifario } from "./TarifarioPublic";
+import { Logo } from "@/components/Logo";
 
 export const revalidate = 120; // revalida cada 2 min
 
@@ -63,11 +64,11 @@ export default async function TarifarioPublicoPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="px-6 py-8 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
-        <div className="mx-auto flex max-w-6xl items-end justify-between">
+      <header className="bg-brand-gradient px-6 py-8 text-white">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-semibold">D&apos;spacios Travel</h1>
-            <p className="mt-1 text-sm opacity-80">Mayorista de Turismo — Tarifario 2026</p>
+            <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
+            <p className="mt-2 text-sm opacity-90">Tarifario 2026</p>
           </div>
           <div className="flex items-center gap-3">
             {esAgencia && (

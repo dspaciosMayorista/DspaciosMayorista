@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { Logo } from "@/components/Logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -49,14 +50,9 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-        <div className="mb-8 text-center">
-          <p className="text-sm text-gray-500 mt-1">Mayorista de Turismo</p>
-          <h1
-            className="text-2xl font-semibold mt-4"
-            style={{ color: "var(--brand-primary)" }}
-          >
-            D&apos;spacios Travel
-          </h1>
+        <div className="mb-8 flex flex-col items-center text-center">
+          <Logo variant="full" height={56} priority className="h-12 w-auto" />
+          <p className="mt-3 text-sm text-gray-500">Iniciar sesión</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">

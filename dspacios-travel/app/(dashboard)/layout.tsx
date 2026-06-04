@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
 import { SidebarNav, type NavItem } from "./SidebarNav";
+import { Logo } from "@/components/Logo";
 
 const NAV: NavItem[] = [
   {
@@ -59,8 +60,8 @@ export default async function DashboardLayout({
         style={{ borderTop: `4px solid var(--brand-primary)` }}
       >
         <div className="flex items-center justify-between">
-          <a href="/dashboard" className="font-semibold" style={{ color: "var(--brand-primary)" }}>
-            D&apos;spacios Travel
+          <a href="/dashboard" aria-label="D'spacios Travel — inicio">
+            <Logo variant="full" height={32} className="h-7 w-auto" priority />
           </a>
           <LogoutButton className="text-xs text-gray-500 hover:text-gray-800" />
         </div>
@@ -83,12 +84,8 @@ export default async function DashboardLayout({
         style={{ borderTop: `4px solid var(--brand-primary)` }}
       >
         <div className="border-b border-gray-100 px-5 py-4">
-          <a
-            href="/dashboard"
-            className="text-base font-semibold"
-            style={{ color: "var(--brand-primary)" }}
-          >
-            D&apos;spacios Travel
+          <a href="/dashboard" aria-label="D'spacios Travel — inicio">
+            <Logo variant="full" height={36} className="h-9 w-auto" priority />
           </a>
         </div>
         <SidebarNav items={NAV} />
