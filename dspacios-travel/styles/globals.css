@@ -195,6 +195,12 @@ html[data-theme="verde"] .bg-white            { background-color: #0c100e !impor
 html[data-theme="verde"] .bg-gray-100         { background-color: #141a17 !important; }
 html[data-theme="verde"] .bg-gray-200         { background-color: #1b231e !important; }
 
+/* Tarjetas translúcidas del CRM (bg-white/90 · /80) → superficie oscura */
+html[data-theme="verde"] .bg-white\/90,
+html[data-theme="verde"] .bg-white\/80        { background-color: rgba(12, 16, 14, 0.92) !important; }
+/* Fondo propio del CRM (degradado claro inline) → oscuro con este tema */
+html[data-theme="verde"] .crm-shell           { background: linear-gradient(160deg, #07120e 0%, #000000 60%) !important; }
+
 html[data-theme="verde"] .text-gray-900,
 html[data-theme="verde"] .text-gray-800,
 html[data-theme="verde"] .text-black          { color: #eef3f0 !important; }
