@@ -33,11 +33,12 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
       <div className="flex items-center">
         <Link
           href={item.href}
+          aria-current={active ? "page" : undefined}
           className="flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-gray-50"
           style={
             active
               ? { backgroundColor: "var(--brand-primary)", color: "white", fontWeight: 600 }
-              : { color: "#4b5563" }
+              : { color: "var(--nav-fg, #4b5563)" }
           }
         >
           {item.label}
@@ -62,8 +63,9 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
               <Link
                 key={c.href}
                 href={c.href}
+                aria-current={cActive ? "page" : undefined}
                 className="block rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-gray-50"
-                style={cActive ? { color: "var(--brand-accent)", fontWeight: 600 } : { color: "#6b7280" }}
+                style={cActive ? { color: "var(--brand-accent)", fontWeight: 600 } : { color: "var(--nav-subfg, #6b7280)" }}
               >
                 {c.label}
               </Link>

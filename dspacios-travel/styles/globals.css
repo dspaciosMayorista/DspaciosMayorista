@@ -137,51 +137,108 @@ html[data-theme="indigo"] .bg-gray-100 {
   background-color: #d1d5db;   /* gris un poco más oscuro */
 }
 
-/* ── Tema VERDE (estilo dashboard "Growin") ────────────────────────────────
-   Se activa con <html data-theme="verde">. Inspirado en el panel de fintech:
-   canvas gris muy suave, tarjetas blancas, bordes redondeados/aireados y acento
-   VERDE grass con degradado verde oscuro → lima. Se quita con data-theme="marca". */
+/* ── Tema VERDE OSCURO (dark · fondo negro + acento verde) ──────────────────
+   Se activa con <html data-theme="verde">. Tema OSCURO real: canvas negro,
+   superficies casi negras, texto claro, bordes verdosos sutiles y acento VERDE
+   neón. Como la app trae colores fijos (bg-white / text-gray-* / border-gray-*)
+   en cada pantalla, aquí se sobrescriben globalmente SOLO con este tema activo.
+   Se quita poniendo data-theme="marca". */
 html[data-theme="verde"] {
-  --brand-primary:   #15803D;  /* verde bosque (títulos/botones/activo, texto blanco legible) */
-  --brand-accent:    #22C55E;  /* verde grass vivo (links/hover/pestaña activa) */
-  --brand-success:   #16A34A;  /* verde (estados OK) */
+  --brand-primary:   #1AA651;  /* verde (botones/menú activo, texto blanco) */
+  --brand-accent:    #34E06A;  /* verde neón (links/hover/subitem activo) */
+  --brand-success:   #22C55E;  /* verde (estados OK) */
   --brand-highlight: #BBF451;  /* lima (badges/realce) */
-  --brand-gradient: linear-gradient(110deg, #14532D 0%, #15803D 40%, #22C55E 80%, #86EFAC 100%);
+  --brand-gradient: linear-gradient(110deg, #052e16 0%, #15803D 45%, #22C55E 100%);
 
-  --primary: #15803D;
-  --accent: #22C55E;
-  --ring: #15803D;
-  --chart-1: #15803D;
-  --chart-2: #22C55E;
-  --chart-3: #4ADE80;
-  --chart-4: #BBF451;
-  --sidebar-primary: #15803D;
-  --sidebar-ring: #15803D;
-  --sidebar-accent: #ECFDF3;            /* verde muy claro (hover del menú) */
-  --sidebar-accent-foreground: #15803D;
+  /* Colores del menú (los lee SidebarNav con fallback claro para otros temas) */
+  --nav-fg:    #c2ccc7;   /* item inactivo */
+  --nav-subfg: #93a09a;   /* subitem inactivo */
 
-  /* Bordes más suaves y esquinas más redondeadas (look aireado del panel) */
+  /* ── shadcn/ui tokens en OSCURO ── */
   --radius: 0.85rem;
-  --border:  #e8ebe9;
-  --input:   #e8ebe9;
-  --sidebar: #ffffff;                   /* sidebar blanco como en la referencia */
-  --sidebar-border: #eef1ef;
-
-  /* Canvas gris muy suave; las tarjetas se mantienen blancas para contraste */
-  --background: #f6f8f7;
-  --secondary:  #eef2f0;
-  --muted:      #eef2f0;
+  --background: #000000;            /* canvas negro */
+  --foreground: #eef3f0;
+  --card: #0c100e;                  /* superficie casi negra */
+  --card-foreground: #eef3f0;
+  --popover: #0c100e;
+  --popover-foreground: #eef3f0;
+  --primary: #1AA651;
+  --primary-foreground: #ffffff;
+  --secondary: #141a17;
+  --secondary-foreground: #eef3f0;
+  --muted: #141a17;
+  --muted-foreground: #8a948f;
+  --accent: #34E06A;
+  --accent-foreground: #04140a;
+  --border: #1f2a24;
+  --input: #1f2a24;
+  --ring: #1AA651;
+  --chart-1: #22C55E;
+  --chart-2: #4ADE80;
+  --chart-3: #34E06A;
+  --chart-4: #BBF451;
+  --sidebar: #0c100e;
+  --sidebar-foreground: #eef3f0;
+  --sidebar-primary: #1AA651;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #141a17;
+  --sidebar-accent-foreground: #eef3f0;
+  --sidebar-border: #1f2a24;
+  --sidebar-ring: #1AA651;
 }
 
-/* Cambio del FONDO de las superficies grises a un canvas suave (igual que el
-   panel de referencia). Reglas planas → ganan sobre las utilidades de Tailwind. */
+/* Overrides globales de las utilidades fijas (Tailwind va en @layer → estas
+   reglas planas ganan). Cubren el ~90% de superficies/textos/bordes. */
 html[data-theme="verde"] body,
-html[data-theme="verde"] .bg-gray-50 {
-  background-color: #f4f6f5;   /* canvas verde-gris muy suave */
+html[data-theme="verde"] .bg-gray-50          { background-color: #000000 !important; }
+html[data-theme="verde"] .bg-white            { background-color: #0c100e !important; }
+html[data-theme="verde"] .bg-gray-100         { background-color: #141a17 !important; }
+html[data-theme="verde"] .bg-gray-200         { background-color: #1b231e !important; }
+
+html[data-theme="verde"] .text-gray-900,
+html[data-theme="verde"] .text-gray-800,
+html[data-theme="verde"] .text-black          { color: #eef3f0 !important; }
+html[data-theme="verde"] .text-gray-700       { color: #d2dcd7 !important; }
+html[data-theme="verde"] .text-gray-600       { color: #bcc7c1 !important; }
+html[data-theme="verde"] .text-gray-500       { color: #97a29c !important; }
+html[data-theme="verde"] .text-gray-400       { color: #79847e !important; }
+
+html[data-theme="verde"] .border-gray-100,
+html[data-theme="verde"] .border-gray-200,
+html[data-theme="verde"] .border-gray-300     { border-color: #1f2a24 !important; }
+
+html[data-theme="verde"] .hover\:bg-gray-50:hover,
+html[data-theme="verde"] .hover\:bg-gray-100:hover { background-color: #161d19 !important; }
+html[data-theme="verde"] .hover\:text-gray-700:hover,
+html[data-theme="verde"] .hover\:text-gray-800:hover,
+html[data-theme="verde"] .hover\:text-gray-900:hover { color: #ffffff !important; }
+
+/* Campos de formulario en oscuro */
+html[data-theme="verde"] input,
+html[data-theme="verde"] select,
+html[data-theme="verde"] textarea {
+  background-color: #0c100e;
+  color: #eef3f0;
+  border-color: #1f2a24;
 }
-html[data-theme="verde"] .bg-gray-100 {
-  background-color: #e9eeec;
+html[data-theme="verde"] ::placeholder { color: #6b746e; }
+
+/* Tarjetas: en negro la sombra no se ve → borde + halo oscuro suave */
+html[data-theme="verde"] .bg-white.border.rounded-xl,
+html[data-theme="verde"] .bg-white.border.rounded-2xl {
+  border-color: #1f2a24;
+  box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.85);
 }
+
+/* MENÚ: item activo como píldora verde con glow neón (otro look) */
+html[data-theme="verde"] nav a[aria-current="page"] {
+  border-radius: 9999px;
+  box-shadow: 0 0 0 1px rgba(52, 224, 106, 0.35), 0 6px 18px -6px rgba(34, 197, 94, 0.55);
+}
+
+/* Logo (imagen a color) → blanco para que se lea sobre el negro */
+html[data-theme="verde"] aside img,
+html[data-theme="verde"] header img { filter: brightness(0) invert(1); }
 
 .dark {
   --background: oklch(0.145 0 0);
