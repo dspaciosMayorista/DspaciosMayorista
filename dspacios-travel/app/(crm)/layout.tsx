@@ -14,7 +14,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
 
   return (
     <div
-      className="flex min-h-screen flex-col"
+      className="crm-shell flex min-h-screen flex-col"
       style={{ background: "linear-gradient(160deg, #dceef3 0%, #e6f3ee 55%, #eef6f1 100%)" }}
     >
       {/* Barra superior del CRM (degradado de marca) */}
