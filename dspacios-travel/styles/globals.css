@@ -137,6 +137,52 @@ html[data-theme="indigo"] .bg-gray-100 {
   background-color: #d1d5db;   /* gris un poco más oscuro */
 }
 
+/* ── Tema VERDE (estilo dashboard "Growin") ────────────────────────────────
+   Se activa con <html data-theme="verde">. Inspirado en el panel de fintech:
+   canvas gris muy suave, tarjetas blancas, bordes redondeados/aireados y acento
+   VERDE grass con degradado verde oscuro → lima. Se quita con data-theme="marca". */
+html[data-theme="verde"] {
+  --brand-primary:   #15803D;  /* verde bosque (títulos/botones/activo, texto blanco legible) */
+  --brand-accent:    #22C55E;  /* verde grass vivo (links/hover/pestaña activa) */
+  --brand-success:   #16A34A;  /* verde (estados OK) */
+  --brand-highlight: #BBF451;  /* lima (badges/realce) */
+  --brand-gradient: linear-gradient(110deg, #14532D 0%, #15803D 40%, #22C55E 80%, #86EFAC 100%);
+
+  --primary: #15803D;
+  --accent: #22C55E;
+  --ring: #15803D;
+  --chart-1: #15803D;
+  --chart-2: #22C55E;
+  --chart-3: #4ADE80;
+  --chart-4: #BBF451;
+  --sidebar-primary: #15803D;
+  --sidebar-ring: #15803D;
+  --sidebar-accent: #ECFDF3;            /* verde muy claro (hover del menú) */
+  --sidebar-accent-foreground: #15803D;
+
+  /* Bordes más suaves y esquinas más redondeadas (look aireado del panel) */
+  --radius: 0.85rem;
+  --border:  #e8ebe9;
+  --input:   #e8ebe9;
+  --sidebar: #ffffff;                   /* sidebar blanco como en la referencia */
+  --sidebar-border: #eef1ef;
+
+  /* Canvas gris muy suave; las tarjetas se mantienen blancas para contraste */
+  --background: #f6f8f7;
+  --secondary:  #eef2f0;
+  --muted:      #eef2f0;
+}
+
+/* Cambio del FONDO de las superficies grises a un canvas suave (igual que el
+   panel de referencia). Reglas planas → ganan sobre las utilidades de Tailwind. */
+html[data-theme="verde"] body,
+html[data-theme="verde"] .bg-gray-50 {
+  background-color: #f4f6f5;   /* canvas verde-gris muy suave */
+}
+html[data-theme="verde"] .bg-gray-100 {
+  background-color: #e9eeec;
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);

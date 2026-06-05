@@ -49,7 +49,7 @@ export default function RootLayout({
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "try{var t=localStorage.getItem('dsp-theme');if(t==='indigo')document.documentElement.setAttribute('data-theme','indigo');}catch(e){}",
+              "try{var t=localStorage.getItem('dsp-theme');if(t==='indigo'||t==='verde')document.documentElement.setAttribute('data-theme',t);}catch(e){}",
           }}
         />
       </head>
