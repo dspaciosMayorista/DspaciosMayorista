@@ -1216,6 +1216,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["contrato_adjuntos"]["Insert"]>;
         Relationships: [];
       };
+      hotel_documentos: {
+        Row: { id: number; hotel_id: number; tipo: string; nombre: string | null; path: string; size_bytes: number | null; subido_por: string | null; created_at: string };
+        Insert: { id?: number; hotel_id: number; tipo?: string; nombre?: string | null; path: string; size_bytes?: number | null; subido_por?: string | null; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_documentos"]["Insert"]>;
+        Relationships: [];
+      };
       hotel_acomodaciones: {
         Row: {
           id: number; hotel_id: number;

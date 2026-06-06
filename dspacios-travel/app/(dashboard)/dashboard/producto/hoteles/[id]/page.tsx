@@ -4,6 +4,7 @@ import Link from "next/link";
 import { HotelDetalleClient } from "./HotelDetalleClient";
 import { HotelConfigEditor } from "./HotelConfigEditor";
 import { HotelCategoriasRegimenesEditor } from "./HotelCategoriasRegimenesEditor";
+import { HotelDocumentos } from "./HotelDocumentos";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
 import { CalculadoraEditor } from "./CalculadoraEditor";
 import type { AcomConfig } from "@/lib/acomodaciones";
@@ -17,7 +18,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre, politica_reservas)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
@@ -28,6 +29,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle(),
     sb.from("categorias_habitacion").select("id, nombre").order("nombre"),
     sb.from("planes_alimentacion").select("id, codigo").order("codigo"),
+    sb.from("hotel_documentos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("hotel_id", hotelId).order("created_at", { ascending: false }),
   ]);
 
   if (!hotel) notFound();
@@ -89,6 +91,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           categoriaIds={categoriaIds}
           regimenIds={regimenIds}
         />
+        <HotelDocumentos hotelId={hotelId} documentos={documentos ?? []} />
         <HotelAcomodacionesEditor
           hotelId={hotelId}
           paxMin={h.pax_min}
