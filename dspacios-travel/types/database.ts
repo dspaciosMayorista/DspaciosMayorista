@@ -700,12 +700,14 @@ export type Database = {
           id: number;
           nombre: string;
           codigo_iata: string | null;
+          pais: string | null;
           activo: boolean;
         };
         Insert: {
           id?: number;
           nombre: string;
           codigo_iata?: string | null;
+          pais?: string | null;
           activo?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["destinos"]["Insert"]>;
