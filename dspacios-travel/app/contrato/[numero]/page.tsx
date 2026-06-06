@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
 import { PrintButton } from "@/components/contrato/PrintButton";
+import { adjuntarNotaRegimen } from "@/lib/contrato/regimenNotas";
 
 export async function generateMetadata({
   params,
@@ -29,6 +30,7 @@ export default async function ContratoImprimiblePage({
     { data: vuelos },
     { data: items },
     { data: abonos },
+    { data: planes },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("contrato_pasajeros").select("*").eq("numero_contrato", numero).order("orden"),
@@ -36,6 +38,7 @@ export default async function ContratoImprimiblePage({
     sb.from("contrato_vuelos").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("contrato_items").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("abonos").select("valor_abono").eq("numero_contrato", numero),
+    sb.from("planes_alimentacion").select("codigo, nombre, nota_especial"),
   ]);
 
   if (!venta) notFound();
@@ -44,6 +47,7 @@ export default async function ContratoImprimiblePage({
     (s, a) => s + (a.valor_abono ?? 0),
     0
   );
+  const hotelesConNota = adjuntarNotaRegimen(hoteles ?? [], planes ?? []);
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">
@@ -63,7 +67,7 @@ export default async function ContratoImprimiblePage({
           <ContratoDocumento
             venta={venta}
             pasajeros={pasajeros ?? []}
-            hoteles={hoteles ?? []}
+            hoteles={hotelesConNota}
             vuelos={vuelos ?? []}
             items={items ?? []}
             totalPagado={totalPagado}

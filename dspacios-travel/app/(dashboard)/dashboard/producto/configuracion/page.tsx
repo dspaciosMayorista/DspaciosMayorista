@@ -8,7 +8,7 @@ export default async function ConfigHotelesPage() {
   const sb = await createClient();
   const [{ data: categorias }, { data: regimenes }] = await Promise.all([
     sb.from("categorias_habitacion").select("id, nombre, descripcion").order("nombre"),
-    sb.from("planes_alimentacion").select("id, codigo, nombre, descripcion").order("codigo"),
+    sb.from("planes_alimentacion").select("id, codigo, nombre, descripcion, nota_especial").order("codigo"),
   ]);
 
   return (
