@@ -47,6 +47,16 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
   const [pctRet, setPctRet] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 10;
+
+  const filtrados = query.trim()
+    ? proveedores.filter((p) => p.nombre.toLowerCase().includes(query.trim().toLowerCase()))
+    : proveedores;
+  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
+  const paginaActual = Math.min(page, totalPaginas - 1);
+  const visibles = filtrados.slice(paginaActual * PAGE_SIZE, paginaActual * PAGE_SIZE + PAGE_SIZE);
 
   function reset() {
     setEditId(null); setTipo("hotelero"); setNombre(""); setRazon(""); setNit("");
@@ -133,15 +143,44 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
       </div>
 
       {proveedores.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[720px] text-sm">
-            <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-              <th className="px-4 py-2">Tipo</th><th className="px-4 py-2">Nombre</th>
-              <th className="px-4 py-2">Razón social</th><th className="px-4 py-2">NIT</th>
-              <th className="px-4 py-2">Datos bancarios</th><th className="px-4 py-2">Política de reservas</th><th className="px-4 py-2"></th>
-            </tr></thead>
-            <tbody>{proveedores.map((p) => <Row key={p.id} p={p} onEdit={editar} />)}</tbody>
-          </table>
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Input
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setPage(0); }}
+              placeholder="Buscar por nombre…"
+              className="max-w-xs"
+            />
+            <span className="text-xs text-gray-400">
+              {filtrados.length} {filtrados.length === 1 ? "proveedor" : "proveedores"}
+              {query.trim() ? ` · filtrado de ${proveedores.length}` : ""}
+            </span>
+          </div>
+
+          {visibles.length === 0 ? (
+            <p className="rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-400">
+              Sin resultados para “{query}”.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+                  <th className="px-4 py-2">Tipo</th><th className="px-4 py-2">Nombre</th>
+                  <th className="px-4 py-2">Razón social</th><th className="px-4 py-2">NIT</th>
+                  <th className="px-4 py-2">Datos bancarios</th><th className="px-4 py-2">Política de reservas</th><th className="px-4 py-2"></th>
+                </tr></thead>
+                <tbody>{visibles.map((p) => <Row key={p.id} p={p} onEdit={editar} />)}</tbody>
+              </table>
+            </div>
+          )}
+
+          {totalPaginas > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-1">
+              <Button variant="outline" disabled={paginaActual === 0} onClick={() => setPage(paginaActual - 1)}>← Anterior</Button>
+              <span className="text-sm text-gray-500">Página {paginaActual + 1} de {totalPaginas}</span>
+              <Button variant="outline" disabled={paginaActual >= totalPaginas - 1} onClick={() => setPage(paginaActual + 1)}>Siguiente →</Button>
+            </div>
+          )}
         </div>
       )}
     </div>
