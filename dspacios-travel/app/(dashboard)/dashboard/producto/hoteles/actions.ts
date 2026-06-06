@@ -69,6 +69,32 @@ export async function eliminarHotel(id: number): Promise<Result> {
   return { ok: true };
 }
 
+// Reemplaza las categorías de habitación y regímenes asignados a un hotel.
+// No toca las tarifas ya cargadas (tarifa_hotel guarda categoría/régimen como texto).
+export async function actualizarHotelCategoriasRegimenes(
+  hotelId: number,
+  categoriaIds: number[],
+  regimenIds: number[],
+): Promise<Result> {
+  const sb = await createClient();
+  await sb.from("hotel_categorias").delete().eq("hotel_id", hotelId);
+  await sb.from("hotel_regimenes").delete().eq("hotel_id", hotelId);
+  if (categoriaIds.length) {
+    const { error } = await sb.from("hotel_categorias").insert(
+      categoriaIds.map((categoria_id) => ({ hotel_id: hotelId, categoria_id }))
+    );
+    if (error) return { ok: false, error: error.message };
+  }
+  if (regimenIds.length) {
+    const { error } = await sb.from("hotel_regimenes").insert(
+      regimenIds.map((plan_id) => ({ hotel_id: hotelId, plan_id }))
+    );
+    if (error) return { ok: false, error: error.message };
+  }
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true };
+}
+
 export async function actualizarHotelConfig(
   hotelId: number,
   input: {
