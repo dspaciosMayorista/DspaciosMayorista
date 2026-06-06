@@ -17,7 +17,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   const sb = await createClient();
 
   const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }] = await Promise.all([
-    sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre)").eq("id", hotelId).single(),
+    sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre, politica_reservas)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("planes_alimentacion(codigo)").eq("hotel_id", hotelId),
     sb.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").eq("hotel_id", hotelId).order("prioridad", { ascending: false }).order("orden"),
@@ -34,7 +34,8 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     edad_nino_min: number; edad_nino_max: number; rangos_edad: number[] | null;
     pax_min: number | null; pax_max: number | null;
     contacto_telefono: string | null; email_comercial: string | null;
-    destinos: { nombre: string } | null; proveedores: { nombre: string } | null;
+    destinos: { nombre: string } | null;
+    proveedores: { nombre: string; politica_reservas: string | null } | null;
   };
   const acomConfigs = (acoms ?? []) as AcomConfig[];
   const categorias = ((cats ?? []) as unknown as { categorias_habitacion: { nombre: string } | null }[])
@@ -56,6 +57,12 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
         {categorias.length > 0 && <> · Categorías: {categorias.join(", ")}</>}
         {regimenes.length > 0 && <> · Régimen: {regimenes.join(", ")}</>}
       </p>
+      {h.proveedores?.politica_reservas && (
+        <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+          <p className="mb-0.5 text-xs font-medium text-gray-500">Política de reservas del proveedor <span className="font-normal text-gray-400">(interno)</span></p>
+          <p className="whitespace-pre-wrap text-gray-700">{h.proveedores.politica_reservas}</p>
+        </div>
+      )}
 
       <div className="mt-6">
         <HotelConfigEditor

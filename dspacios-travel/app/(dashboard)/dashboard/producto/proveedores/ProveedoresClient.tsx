@@ -8,7 +8,8 @@ import { crearProveedor, eliminarProveedor, type TipoProveedor } from "./actions
 type Proveedor = {
   id: number; tipo: string | null; nombre: string; razon_social: string | null;
   nit: string | null; ciudad: string | null; contacto: string | null;
-  datos_pago: string | null; aplica_retencion: boolean; pct_retencion: number;
+  datos_pago: string | null; politica_reservas: string | null;
+  aplica_retencion: boolean; pct_retencion: number;
 };
 
 const TIPOS: { value: TipoProveedor; label: string }[] = [
@@ -28,6 +29,7 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
   const [ciudad, setCiudad] = useState("");
   const [contacto, setContacto] = useState("");
   const [datosPago, setDatosPago] = useState("");
+  const [politica, setPolitica] = useState("");
   const [ret, setRet] = useState(false);
   const [pctRet, setPctRet] = useState("");
   const [pending, start] = useTransition();
@@ -39,9 +41,10 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
     start(async () => {
       const r = await crearProveedor({
         tipo, nombre, razonSocial: razon, nit, ciudad, contacto, datosPago,
+        politicaReservas: politica,
         aplicaRetencion: ret, pctRetencion: Number(pctRet) / 100 || 0,
       });
-      if (r.ok) { setNombre(""); setRazon(""); setNit(""); setCiudad(""); setContacto(""); setDatosPago(""); setRet(false); setPctRet(""); }
+      if (r.ok) { setNombre(""); setRazon(""); setNit(""); setCiudad(""); setContacto(""); setDatosPago(""); setPolitica(""); setRet(false); setPctRet(""); }
       else setErr(r.error);
     });
   }
@@ -64,6 +67,12 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
           <div><label className={lbl}>Ciudad</label><Input value={ciudad} onChange={(e) => setCiudad(e.target.value)} /></div>
           <div><label className={lbl}>Contacto</label><Input value={contacto} onChange={(e) => setContacto(e.target.value)} /></div>
           <div className="md:col-span-2"><label className={lbl}>Datos de pago (banco, cuenta…)</label><Input value={datosPago} onChange={(e) => setDatosPago(e.target.value)} /></div>
+          <div className="md:col-span-3">
+            <label className={lbl}>Política de reservas <span className="font-normal text-gray-400">(uso interno · no se muestra en el contrato)</span></label>
+            <textarea value={politica} onChange={(e) => setPolitica(e.target.value)} rows={2}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+              placeholder="Ej. Reserva con 50% de anticipo · cancelación sin costo hasta 15 días antes · no reembolsable en temporada alta…" />
+          </div>
           <div className="flex items-end gap-2">
             <label className="flex items-center gap-2 text-sm text-gray-600">
               <input type="checkbox" checked={ret} onChange={(e) => setRet(e.target.checked)} /> Retención
@@ -85,7 +94,7 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Tipo</th><th className="px-4 py-2">Nombre</th>
               <th className="px-4 py-2">Razón social</th><th className="px-4 py-2">NIT</th>
-              <th className="px-4 py-2">Datos de pago</th><th className="px-4 py-2"></th>
+              <th className="px-4 py-2">Datos de pago</th><th className="px-4 py-2">Política de reservas</th><th className="px-4 py-2"></th>
             </tr></thead>
             <tbody>{proveedores.map((p) => <Row key={p.id} p={p} />)}</tbody>
           </table>
@@ -106,6 +115,7 @@ function Row({ p }: { p: Proveedor }) {
       <td className="px-4 py-2 text-gray-500">{p.razon_social ?? "—"}</td>
       <td className="px-4 py-2 text-gray-500">{p.nit ?? "—"}</td>
       <td className="px-4 py-2 text-gray-500">{p.datos_pago ?? "—"}</td>
+      <td className="px-4 py-2 text-gray-500"><span className="block max-w-[260px] whitespace-pre-wrap">{p.politica_reservas ?? "—"}</span></td>
       <td className="px-4 py-2 text-right">
         <button type="button" disabled={pending}
           onClick={() => { if (confirm(`¿Eliminar ${p.nombre}?`)) start(() => { void eliminarProveedor(p.id); }); }}

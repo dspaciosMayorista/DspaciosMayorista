@@ -16,6 +16,7 @@ export async function crearProveedor(input: {
   ciudad: string;
   contacto: string;
   datosPago: string;
+  politicaReservas: string;
   aplicaRetencion: boolean;
   pctRetencion: number;
 }): Promise<Result> {
@@ -28,6 +29,7 @@ export async function crearProveedor(input: {
     ciudad: oNull(input.ciudad),
     contacto: oNull(input.contacto),
     datos_pago: oNull(input.datosPago),
+    politica_reservas: oNull(input.politicaReservas),
     aplica_retencion: input.aplicaRetencion,
     pct_retencion: input.pctRetencion,
   });
@@ -81,6 +83,7 @@ export async function cargarProveedoresMasivo(
       ciudad: oNull(r.ciudad || ""),
       contacto: oNull(r.contacto || ""),
       datos_pago: oNull(r.datos_pago || ""),
+      politica_reservas: oNull(r.politica_reservas || ""),
       aplica_retencion: aplicaRet,
       pct_retencion: pct / 100,
     });
