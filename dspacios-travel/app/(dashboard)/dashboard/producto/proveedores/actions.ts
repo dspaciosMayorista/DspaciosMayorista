@@ -8,31 +8,51 @@ const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
 export type TipoProveedor = "hotelero" | "aereo" | "servicios";
 
-export async function crearProveedor(input: {
+export type ProveedorInput = {
   tipo: TipoProveedor;
   nombre: string;
   razonSocial: string;
   nit: string;
   ciudad: string;
   contacto: string;
-  datosPago: string;
+  banco: string;
+  tipoCuenta: string;
+  numeroCuenta: string;
   politicaReservas: string;
   aplicaRetencion: boolean;
   pctRetencion: number;
-}): Promise<Result> {
-  const sb = await createClient();
-  const { error } = await sb.from("proveedores").insert({
+};
+
+function toRow(input: ProveedorInput) {
+  return {
     tipo: input.tipo,
     nombre: input.nombre.trim(),
     razon_social: oNull(input.razonSocial),
     nit: oNull(input.nit),
     ciudad: oNull(input.ciudad),
     contacto: oNull(input.contacto),
-    datos_pago: oNull(input.datosPago),
+    banco: oNull(input.banco),
+    tipo_cuenta: oNull(input.tipoCuenta),
+    numero_cuenta: oNull(input.numeroCuenta),
     politica_reservas: oNull(input.politicaReservas),
     aplica_retencion: input.aplicaRetencion,
     pct_retencion: input.pctRetencion,
-  });
+  };
+}
+
+export async function crearProveedor(input: ProveedorInput): Promise<Result> {
+  const sb = await createClient();
+  if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const { error } = await sb.from("proveedores").insert(toRow(input));
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/producto/proveedores");
+  return { ok: true };
+}
+
+export async function actualizarProveedor(id: number, input: ProveedorInput): Promise<Result> {
+  const sb = await createClient();
+  if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const { error } = await sb.from("proveedores").update(toRow(input)).eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/producto/proveedores");
   return { ok: true };
@@ -82,7 +102,9 @@ export async function cargarProveedoresMasivo(
       nit: oNull(r.nit || ""),
       ciudad: oNull(r.ciudad || ""),
       contacto: oNull(r.contacto || ""),
-      datos_pago: oNull(r.datos_pago || ""),
+      banco: oNull(r.banco || ""),
+      tipo_cuenta: oNull(r.tipo_cuenta || ""),
+      numero_cuenta: oNull(r.numero_cuenta || ""),
       politica_reservas: oNull(r.politica_reservas || ""),
       aplica_retencion: aplicaRet,
       pct_retencion: pct / 100,
