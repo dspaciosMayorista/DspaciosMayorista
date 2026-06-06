@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { HotelDetalleClient } from "./HotelDetalleClient";
 import { HotelConfigEditor } from "./HotelConfigEditor";
+import { HotelCategoriasRegimenesEditor } from "./HotelCategoriasRegimenesEditor";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
 import { CalculadoraEditor } from "./CalculadoraEditor";
 import type { AcomConfig } from "@/lib/acomodaciones";
@@ -16,15 +17,17 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre, politica_reservas)").eq("id", hotelId).single(),
-    sb.from("hotel_categorias").select("categorias_habitacion(nombre)").eq("hotel_id", hotelId),
-    sb.from("hotel_regimenes").select("planes_alimentacion(codigo)").eq("hotel_id", hotelId),
+    sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
+    sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
     sb.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").eq("hotel_id", hotelId).order("prioridad", { ascending: false }).order("orden"),
     sb.from("tarifa_hotel").select("*").eq("hotel_id", hotelId).order("id", { ascending: false }),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotelId),
     sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle(),
+    sb.from("categorias_habitacion").select("id, nombre").order("nombre"),
+    sb.from("planes_alimentacion").select("id, codigo").order("codigo"),
   ]);
 
   if (!hotel) notFound();
@@ -38,10 +41,12 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     proveedores: { nombre: string; politica_reservas: string | null } | null;
   };
   const acomConfigs = (acoms ?? []) as AcomConfig[];
-  const categorias = ((cats ?? []) as unknown as { categorias_habitacion: { nombre: string } | null }[])
-    .map((x) => x.categorias_habitacion?.nombre).filter((x): x is string => !!x);
-  const regimenes = ((regs ?? []) as unknown as { planes_alimentacion: { codigo: string } | null }[])
-    .map((x) => x.planes_alimentacion?.codigo).filter((x): x is string => !!x);
+  const catsRows = (cats ?? []) as unknown as { categoria_id: number; categorias_habitacion: { nombre: string } | null }[];
+  const regsRows = (regs ?? []) as unknown as { plan_id: number; planes_alimentacion: { codigo: string } | null }[];
+  const categorias = catsRows.map((x) => x.categorias_habitacion?.nombre).filter((x): x is string => !!x);
+  const regimenes = regsRows.map((x) => x.planes_alimentacion?.codigo).filter((x): x is string => !!x);
+  const categoriaIds = catsRows.map((x) => x.categoria_id);
+  const regimenIds = regsRows.map((x) => x.plan_id);
   const temporadasNombres = (temporadas ?? []).map((t) => t.nombre).filter((x): x is string => !!x);
   const calcParams = (calc?.params ?? null) as DubaiParams | null;
 
@@ -76,6 +81,13 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             contactoTelefono: h.contacto_telefono ?? "",
             emailComercial: h.email_comercial ?? "",
           }}
+        />
+        <HotelCategoriasRegimenesEditor
+          hotelId={hotelId}
+          todasCategorias={todasCats ?? []}
+          todosRegimenes={todosRegs ?? []}
+          categoriaIds={categoriaIds}
+          regimenIds={regimenIds}
         />
         <HotelAcomodacionesEditor
           hotelId={hotelId}
