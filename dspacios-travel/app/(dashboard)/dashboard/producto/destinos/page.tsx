@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { NuevoDestinoDialog } from "../../tarifario/NuevoDestinoDialog";
 import { EliminarDestinoBtn } from "../../tarifario/EliminarDestinoBtn";
+import { CargarDestinosSugeridos } from "./CargarDestinosSugeridos";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,10 @@ export default async function DestinosPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Destinos</h1>
           <p className="mt-1 text-sm text-gray-500">Ciudades / destinos donde operas (nombre en mayúsculas + código IATA).</p>
         </div>
-        <NuevoDestinoDialog />
+        <div className="flex flex-wrap items-center gap-3">
+          <CargarDestinosSugeridos />
+          <NuevoDestinoDialog />
+        </div>
       </div>
 
       {!destinos?.length ? (
