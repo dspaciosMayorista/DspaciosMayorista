@@ -83,6 +83,9 @@ export type Database = {
           contacto: string | null;
           razon_social: string | null;
           datos_pago: string | null;
+          banco: string | null;
+          tipo_cuenta: string | null;
+          numero_cuenta: string | null;
           politica_reservas: string | null;
           aplica_retencion: boolean;
           pct_retencion: number;
@@ -97,6 +100,9 @@ export type Database = {
           contacto?: string | null;
           razon_social?: string | null;
           datos_pago?: string | null;
+          banco?: string | null;
+          tipo_cuenta?: string | null;
+          numero_cuenta?: string | null;
           politica_reservas?: string | null;
           aplica_retencion?: boolean;
           pct_retencion?: number;
