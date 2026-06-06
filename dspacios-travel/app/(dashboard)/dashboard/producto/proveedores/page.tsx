@@ -14,6 +14,7 @@ const COLS_PROVEEDORES = [
   { key: "ciudad", label: "Ciudad", ejemplo: "Bogotá" },
   { key: "contacto", label: "Contacto", ejemplo: "Juan Pérez - 3001234567" },
   { key: "datos_pago", label: "Datos de pago (banco, cuenta…)", ejemplo: "" },
+  { key: "politica_reservas", label: "Política de reservas (uso interno)", ejemplo: "50% anticipo · cancela sin costo 15 días antes" },
   { key: "aplica_retencion", label: "Aplica retención (si/no)", ejemplo: "no" },
   { key: "pct_retencion", label: "% retención", ejemplo: "0" },
 ];
@@ -22,7 +23,7 @@ export default async function ProveedoresPage() {
   const sb = await createClient();
   const { data: proveedores } = await sb
     .from("proveedores")
-    .select("id, tipo, nombre, razon_social, nit, ciudad, contacto, datos_pago, aplica_retencion, pct_retencion")
+    .select("id, tipo, nombre, razon_social, nit, ciudad, contacto, datos_pago, politica_reservas, aplica_retencion, pct_retencion")
     .order("tipo")
     .order("nombre");
 
