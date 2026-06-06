@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import {
-  crearTemporada, eliminarTemporada, crearTarifa, actualizarTarifa, eliminarTarifa,
+  crearTemporada, actualizarTemporada, eliminarTemporada, crearTarifa, actualizarTarifa, eliminarTarifa,
 } from "../actions";
 
 type Temporada = {
@@ -43,6 +43,7 @@ export function HotelDetalleClient({
 }
 
 function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: Temporada[] }) {
+  const [editId, setEditId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [ini, setIni] = useState("");
   const [fin, setFin] = useState("");
@@ -55,21 +56,39 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
   const [err, setErr] = useState("");
 
   const esPromo = tipo !== "tarifa";
+  const editando = editId != null;
 
-  function add() {
+  function reset() {
+    setEditId(null); setNombre(""); setIni(""); setFin(""); setPrioridad("1");
+    setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento(""); setErr("");
+  }
+
+  function editar(t: Temporada) {
+    setEditId(t.id);
+    setNombre(t.nombre);
+    setIni(t.fecha_inicio ?? "");
+    setFin(t.fecha_fin ?? "");
+    setPrioridad(String(t.prioridad ?? 1));
+    setCompraIni(t.compra_inicio ?? "");
+    setCompraFin(t.compra_fin ?? "");
+    setTipo(t.tipo ?? "tarifa");
+    setDescuento(t.descuento_valor != null ? String(t.descuento_valor) : "");
+    setErr("");
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function guardar() {
     if (!nombre.trim()) { setErr("Ponle un nombre."); return; }
     setErr("");
+    const payload = {
+      hotelId, nombre, inicio: ini, fin,
+      prioridad: Number(prioridad) || 1,
+      compraInicio: compraIni, compraFin: compraFin,
+      tipo, descuentoValor: esPromo ? Number(descuento) || 0 : null,
+    };
     start(async () => {
-      const r = await crearTemporada({
-        hotelId, nombre, inicio: ini, fin,
-        prioridad: Number(prioridad) || 1,
-        compraInicio: compraIni, compraFin: compraFin,
-        tipo, descuentoValor: esPromo ? Number(descuento) || 0 : null,
-      });
-      if (r.ok) {
-        setNombre(""); setIni(""); setFin(""); setPrioridad("1");
-        setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento("");
-      } else setErr(r.error);
+      const r = editId == null ? await crearTemporada(payload) : await actualizarTemporada(editId, payload);
+      if (r.ok) reset(); else setErr(r.error);
     });
   }
 
@@ -81,6 +100,7 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
         cuándo está disponible para vender (si hoy está fuera, no aplica). Una promo descuenta la tarifa base de esas fechas.
       </p>
       <div className="rounded-xl border border-gray-200 bg-white p-4">
+        {editando && <p className="mb-2 text-xs font-medium text-[var(--brand-accent)]">Editando: {nombre || "temporada"}</p>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="col-span-2 sm:col-span-1"><label className={lbl}>Nombre</label><Input placeholder="ALTA, BAJA, PROMO JULIO…" value={nombre} onChange={(e) => setNombre(e.target.value)} /></div>
           <div><label className={lbl}>Viaje desde</label><Input type="date" value={ini} onChange={(e) => setIni(e.target.value)} /></div>
@@ -102,7 +122,8 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
           )}
         </div>
         <div className="mt-3 flex items-center gap-3">
-          <Button onClick={add} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : esPromo ? "Agregar promoción" : "Agregar temporada"}</Button>
+          <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : editando ? "Guardar cambios" : esPromo ? "Agregar promoción" : "Agregar temporada"}</Button>
+          {editando && <Button variant="outline" onClick={reset} disabled={pending}>Cancelar</Button>}
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
 
@@ -126,7 +147,10 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
                     <span className="text-[11px] text-gray-400">· compra {t.compra_inicio ?? "…"} → {t.compra_fin ?? "…"}</span>
                   )}
                 </span>
-                <DelBtn onDel={() => eliminarTemporada(t.id, hotelId)} />
+                <span className="flex items-center gap-3">
+                  <button type="button" onClick={() => editar(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
+                  <DelBtn onDel={() => eliminarTemporada(t.id, hotelId)} />
+                </span>
               </li>
             );
           })}
