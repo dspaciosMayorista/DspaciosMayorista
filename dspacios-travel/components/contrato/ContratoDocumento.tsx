@@ -17,10 +17,12 @@ import type {
   ContratoItem,
 } from "@/types/database";
 
+type HotelConNota = ContratoHotel & { nota_regimen?: string | null };
+
 type Props = {
   venta: Venta;
   pasajeros: ContratoPasajero[];
-  hoteles: ContratoHotel[];
+  hoteles: HotelConNota[];
   vuelos: ContratoVuelo[];
   items: ContratoItem[];
   totalPagado: number;
@@ -219,6 +221,11 @@ export function ContratoDocumento({
                   {h.detalle_acomodacion && (
                     <div className="text-xs text-gray-500">
                       {h.detalle_acomodacion}
+                    </div>
+                  )}
+                  {h.nota_regimen && (
+                    <div className="mt-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">
+                      <span className="font-semibold">Nota especial del plan:</span> {h.nota_regimen}
                     </div>
                   )}
                   <div className="mt-1 text-xs text-gray-500">

@@ -772,6 +772,7 @@ export type Database = {
           codigo: string;
           nombre: string;
           descripcion: string | null;
+          nota_especial: string | null;
           activo: boolean;
         };
         Insert: {
@@ -779,6 +780,7 @@ export type Database = {
           codigo: string;
           nombre: string;
           descripcion?: string | null;
+          nota_especial?: string | null;
           activo?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["planes_alimentacion"]["Insert"]>;

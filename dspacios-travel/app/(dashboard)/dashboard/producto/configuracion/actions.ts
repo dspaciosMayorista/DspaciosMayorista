@@ -27,12 +27,13 @@ export async function eliminarCategoria(id: number): Promise<Result> {
 }
 
 // ── Régimen de alimentación (planes_alimentacion) ─────────────────────────
-export async function crearRegimen(codigo: string, nombre: string, descripcion: string): Promise<Result> {
+export async function crearRegimen(codigo: string, nombre: string, descripcion: string, notaEspecial: string = ""): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("planes_alimentacion").insert({
     codigo: codigo.trim().toUpperCase(),
     nombre: nombre.trim(),
     descripcion: descripcion.trim() || null,
+    nota_especial: notaEspecial.trim() || null,
   });
   if (error) return { ok: false, error: error.message };
   rev();
