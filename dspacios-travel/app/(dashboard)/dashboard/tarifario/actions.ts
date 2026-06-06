@@ -28,6 +28,60 @@ export async function eliminarDestino(id: number) {
   revalidatePath("/dashboard/tarifario");
 }
 
+// Lista curada de destinos turísticos famosos (nombre + IATA) para cargar de una.
+// Colombia, República Dominicana y México. Se omiten los que ya existan.
+const DESTINOS_SUGERIDOS: { nombre: string; iata: string }[] = [
+  // Colombia
+  { nombre: "CARTAGENA", iata: "CTG" },
+  { nombre: "SAN ANDRÉS", iata: "ADZ" },
+  { nombre: "SANTA MARTA", iata: "SMR" },
+  { nombre: "BOGOTÁ", iata: "BOG" },
+  { nombre: "MEDELLÍN", iata: "MDE" },
+  { nombre: "CALI", iata: "CLO" },
+  { nombre: "BARRANQUILLA", iata: "BAQ" },
+  { nombre: "PEREIRA", iata: "PEI" },
+  { nombre: "ARMENIA", iata: "AXM" },
+  { nombre: "LETICIA", iata: "LET" },
+  { nombre: "RIOHACHA", iata: "RCH" },
+  // República Dominicana
+  { nombre: "PUNTA CANA", iata: "PUJ" },
+  { nombre: "SANTO DOMINGO", iata: "SDQ" },
+  { nombre: "PUERTO PLATA", iata: "POP" },
+  { nombre: "LA ROMANA", iata: "LRM" },
+  { nombre: "SAMANÁ", iata: "AZS" },
+  { nombre: "SANTIAGO DE LOS CABALLEROS", iata: "STI" },
+  // México
+  { nombre: "CANCÚN", iata: "CUN" },
+  { nombre: "CIUDAD DE MÉXICO", iata: "MEX" },
+  { nombre: "LOS CABOS", iata: "SJD" },
+  { nombre: "PUERTO VALLARTA", iata: "PVR" },
+  { nombre: "COZUMEL", iata: "CZM" },
+  { nombre: "TULUM", iata: "TQO" },
+  { nombre: "MÉRIDA", iata: "MID" },
+  { nombre: "GUADALAJARA", iata: "GDL" },
+  { nombre: "MAZATLÁN", iata: "MZT" },
+  { nombre: "ACAPULCO", iata: "ACA" },
+  { nombre: "OAXACA", iata: "OAX" },
+];
+
+export async function cargarDestinosSugeridos(): Promise<{ insertados: number; omitidos: number }> {
+  const sb = await createClient();
+  const { data: existentes } = await sb.from("destinos").select("nombre");
+  const yaHay = new Set((existentes ?? []).map((d) => d.nombre.trim().toLowerCase()));
+
+  const nuevos = DESTINOS_SUGERIDOS
+    .filter((d) => !yaHay.has(d.nombre.toLowerCase()))
+    .map((d) => ({ nombre: d.nombre, codigo_iata: d.iata }));
+
+  if (nuevos.length) {
+    const { error } = await sb.from("destinos").insert(nuevos);
+    if (error) throw new Error(error.message);
+  }
+  revalidatePath("/dashboard/tarifario");
+  revalidatePath("/dashboard/producto/destinos");
+  return { insertados: nuevos.length, omitidos: DESTINOS_SUGERIDOS.length - nuevos.length };
+}
+
 // ─── Hoteles ───────────────────────────────────────────────────────
 export async function crearHotel(destinoId: number, nombre: string, zona?: string, notas?: string) {
   const sb = await createClient();
