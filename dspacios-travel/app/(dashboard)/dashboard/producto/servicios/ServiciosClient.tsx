@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { crearServicio, actualizarServicio, eliminarServicio, type ServicioInput, type TierPax } from "./actions";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
+import { Paginador } from "@/components/Paginador";
 
 type Opt = { id: number; nombre: string };
 type Tier = { pax_desde: number; pax_hasta: number; precio: number };
@@ -41,6 +42,16 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
   const [editId, setEditId] = useState<number | null>(null);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 10;
+
+  const filtrados = query.trim()
+    ? servicios.filter((s) => s.nombre.toLowerCase().includes(query.trim().toLowerCase()))
+    : servicios;
+  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
+  const paginaActual = Math.min(page, totalPaginas - 1);
+  const visibles = filtrados.slice(paginaActual * PAGE_SIZE, paginaActual * PAGE_SIZE + PAGE_SIZE);
 
   function resetForm() {
     setNombre(""); setProvId(""); setDestId(""); setTemp(""); setPPersona(""); setCategoria("otro"); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
@@ -148,14 +159,29 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
       </div>
 
       {servicios.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[680px] text-sm">
-            <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-              <th className="px-4 py-2">Servicio</th><th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Destino</th>
-              <th className="px-4 py-2 text-right">Por persona</th><th className="px-4 py-2">Por grupo (rangos)</th><th className="px-4 py-2"></th>
-            </tr></thead>
-            <tbody>{servicios.map((s) => <Row key={s.id} s={s} onEdit={startEdit} />)}</tbody>
-          </table>
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0); }} placeholder="Buscar por nombre…" className="max-w-xs" />
+            <span className="text-xs text-gray-400">
+              {filtrados.length} {filtrados.length === 1 ? "servicio" : "servicios"}{query.trim() ? ` · filtrado de ${servicios.length}` : ""}
+            </span>
+          </div>
+
+          {visibles.length === 0 ? (
+            <p className="rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-400">Sin resultados para “{query}”.</p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+              <table className="w-full text-sm">
+                <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+                  <th className="px-4 py-2">Servicio</th><th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Destino</th>
+                  <th className="px-4 py-2 text-right">Por persona</th><th className="px-4 py-2">Por grupo (rangos)</th><th className="px-4 py-2"></th>
+                </tr></thead>
+                <tbody>{visibles.map((s) => <Row key={s.id} s={s} onEdit={startEdit} />)}</tbody>
+              </table>
+            </div>
+          )}
+
+          <Paginador page={paginaActual} totalPaginas={totalPaginas} onPage={setPage} />
         </div>
       )}
     </div>
