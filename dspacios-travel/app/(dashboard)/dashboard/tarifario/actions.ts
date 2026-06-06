@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 
 // ─── Destinos ──────────────────────────────────────────────────────
-export async function crearDestino(nombre: string, codigoIata?: string) {
+export async function crearDestino(nombre: string, codigoIata?: string, pais?: string) {
   const sb = await createClient();
   const limpio = nombre.trim().toUpperCase();
   if (!limpio) throw new Error("El nombre del destino es obligatorio.");
@@ -16,9 +16,14 @@ export async function crearDestino(nombre: string, codigoIata?: string) {
   );
   if (yaExiste) throw new Error(`Ya existe un destino "${limpio}".`);
 
-  const { error } = await sb.from("destinos").insert({ nombre: limpio, codigo_iata: codigoIata?.trim().toUpperCase() || null });
+  const { error } = await sb.from("destinos").insert({
+    nombre: limpio,
+    codigo_iata: codigoIata?.trim().toUpperCase() || null,
+    pais: pais?.trim() || null,
+  });
   if (error) throw new Error(error.message);
   revalidatePath("/dashboard/tarifario");
+  revalidatePath("/dashboard/producto/destinos");
 }
 
 export async function eliminarDestino(id: number) {
@@ -30,38 +35,38 @@ export async function eliminarDestino(id: number) {
 
 // Lista curada de destinos turísticos famosos (nombre + IATA) para cargar de una.
 // Colombia, República Dominicana y México. Se omiten los que ya existan.
-const DESTINOS_SUGERIDOS: { nombre: string; iata: string }[] = [
+const DESTINOS_SUGERIDOS: { nombre: string; iata: string; pais: string }[] = [
   // Colombia
-  { nombre: "CARTAGENA", iata: "CTG" },
-  { nombre: "SAN ANDRÉS", iata: "ADZ" },
-  { nombre: "SANTA MARTA", iata: "SMR" },
-  { nombre: "BOGOTÁ", iata: "BOG" },
-  { nombre: "MEDELLÍN", iata: "MDE" },
-  { nombre: "CALI", iata: "CLO" },
-  { nombre: "BARRANQUILLA", iata: "BAQ" },
-  { nombre: "PEREIRA", iata: "PEI" },
-  { nombre: "ARMENIA", iata: "AXM" },
-  { nombre: "LETICIA", iata: "LET" },
-  { nombre: "RIOHACHA", iata: "RCH" },
+  { nombre: "CARTAGENA", iata: "CTG", pais: "Colombia" },
+  { nombre: "SAN ANDRÉS", iata: "ADZ", pais: "Colombia" },
+  { nombre: "SANTA MARTA", iata: "SMR", pais: "Colombia" },
+  { nombre: "BOGOTÁ", iata: "BOG", pais: "Colombia" },
+  { nombre: "MEDELLÍN", iata: "MDE", pais: "Colombia" },
+  { nombre: "CALI", iata: "CLO", pais: "Colombia" },
+  { nombre: "BARRANQUILLA", iata: "BAQ", pais: "Colombia" },
+  { nombre: "PEREIRA", iata: "PEI", pais: "Colombia" },
+  { nombre: "ARMENIA", iata: "AXM", pais: "Colombia" },
+  { nombre: "LETICIA", iata: "LET", pais: "Colombia" },
+  { nombre: "RIOHACHA", iata: "RCH", pais: "Colombia" },
   // República Dominicana
-  { nombre: "PUNTA CANA", iata: "PUJ" },
-  { nombre: "SANTO DOMINGO", iata: "SDQ" },
-  { nombre: "PUERTO PLATA", iata: "POP" },
-  { nombre: "LA ROMANA", iata: "LRM" },
-  { nombre: "SAMANÁ", iata: "AZS" },
-  { nombre: "SANTIAGO DE LOS CABALLEROS", iata: "STI" },
+  { nombre: "PUNTA CANA", iata: "PUJ", pais: "República Dominicana" },
+  { nombre: "SANTO DOMINGO", iata: "SDQ", pais: "República Dominicana" },
+  { nombre: "PUERTO PLATA", iata: "POP", pais: "República Dominicana" },
+  { nombre: "LA ROMANA", iata: "LRM", pais: "República Dominicana" },
+  { nombre: "SAMANÁ", iata: "AZS", pais: "República Dominicana" },
+  { nombre: "SANTIAGO DE LOS CABALLEROS", iata: "STI", pais: "República Dominicana" },
   // México
-  { nombre: "CANCÚN", iata: "CUN" },
-  { nombre: "CIUDAD DE MÉXICO", iata: "MEX" },
-  { nombre: "LOS CABOS", iata: "SJD" },
-  { nombre: "PUERTO VALLARTA", iata: "PVR" },
-  { nombre: "COZUMEL", iata: "CZM" },
-  { nombre: "TULUM", iata: "TQO" },
-  { nombre: "MÉRIDA", iata: "MID" },
-  { nombre: "GUADALAJARA", iata: "GDL" },
-  { nombre: "MAZATLÁN", iata: "MZT" },
-  { nombre: "ACAPULCO", iata: "ACA" },
-  { nombre: "OAXACA", iata: "OAX" },
+  { nombre: "CANCÚN", iata: "CUN", pais: "México" },
+  { nombre: "CIUDAD DE MÉXICO", iata: "MEX", pais: "México" },
+  { nombre: "LOS CABOS", iata: "SJD", pais: "México" },
+  { nombre: "PUERTO VALLARTA", iata: "PVR", pais: "México" },
+  { nombre: "COZUMEL", iata: "CZM", pais: "México" },
+  { nombre: "TULUM", iata: "TQO", pais: "México" },
+  { nombre: "MÉRIDA", iata: "MID", pais: "México" },
+  { nombre: "GUADALAJARA", iata: "GDL", pais: "México" },
+  { nombre: "MAZATLÁN", iata: "MZT", pais: "México" },
+  { nombre: "ACAPULCO", iata: "ACA", pais: "México" },
+  { nombre: "OAXACA", iata: "OAX", pais: "México" },
 ];
 
 export async function cargarDestinosSugeridos(): Promise<{ insertados: number; omitidos: number }> {
@@ -71,7 +76,7 @@ export async function cargarDestinosSugeridos(): Promise<{ insertados: number; o
 
   const nuevos = DESTINOS_SUGERIDOS
     .filter((d) => !yaHay.has(d.nombre.toLowerCase()))
-    .map((d) => ({ nombre: d.nombre, codigo_iata: d.iata }));
+    .map((d) => ({ nombre: d.nombre, codigo_iata: d.iata, pais: d.pais }));
 
   if (nuevos.length) {
     const { error } = await sb.from("destinos").insert(nuevos);

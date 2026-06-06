@@ -10,6 +10,7 @@ export function NuevoDestinoDialog() {
   const [open, setOpen] = useState(false);
   const [nombre, setNombre] = useState("");
   const [iata, setIata] = useState("");
+  const [pais, setPais] = useState("");
   const [error, setError] = useState("");
   const [pending, startTransition] = useTransition();
 
@@ -19,9 +20,10 @@ export function NuevoDestinoDialog() {
     setError("");
     startTransition(async () => {
       try {
-        await crearDestino(nombre.trim(), iata.trim() || undefined);
+        await crearDestino(nombre.trim(), iata.trim() || undefined, pais.trim() || undefined);
         setNombre("");
         setIata("");
+        setPais("");
         setOpen(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error al crear destino");
@@ -56,6 +58,20 @@ export function NuevoDestinoDialog() {
               placeholder="Ej: ADZ"
               maxLength={4}
             />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 block mb-1">País</label>
+            <Input
+              value={pais}
+              onChange={(e) => setPais(e.target.value)}
+              placeholder="Ej: Colombia"
+              list="paises-sugeridos"
+            />
+            <datalist id="paises-sugeridos">
+              {["Colombia", "República Dominicana", "México", "Panamá", "Aruba", "Curazao", "Cuba", "Brasil", "Perú", "España", "Estados Unidos"].map((p) => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
