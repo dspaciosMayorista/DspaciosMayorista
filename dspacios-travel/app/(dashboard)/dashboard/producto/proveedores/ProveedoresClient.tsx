@@ -17,8 +17,9 @@ const TIPOS: { value: TipoProveedor; label: string }[] = [
   { value: "hotelero", label: "Hotelero" },
   { value: "aereo", label: "Aéreo" },
   { value: "servicios", label: "Servicios adicionales" },
+  { value: "programa", label: "Programa/circuito" },
 ];
-const TIPO_LABEL: Record<string, string> = { hotelero: "Hotelero", aereo: "Aéreo", servicios: "Servicios" };
+const TIPO_LABEL: Record<string, string> = { hotelero: "Hotelero", aereo: "Aéreo", servicios: "Servicios", programa: "Programa/circuito" };
 const TIPOS_CUENTA = ["Ahorros", "Corriente"];
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
