@@ -228,6 +228,44 @@ export async function eliminarTemporada(id: number, hotelId: number): Promise<Re
   return { ok: true };
 }
 
+export async function actualizarTemporada(id: number, input: {
+  hotelId: number;
+  nombre: string;
+  inicio: string;
+  fin: string;
+  prioridad?: number;
+  compraInicio?: string;
+  compraFin?: string;
+  tipo?: string;
+  descuentoValor?: number | null;
+}): Promise<Result> {
+  if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  if (!input.inicio || !input.fin) return { ok: false, error: "Debes indicar fecha de inicio y fin." };
+  if (input.fin < input.inicio) return { ok: false, error: "La fecha final no puede ser menor que la inicial." };
+  const tipo = input.tipo ?? "tarifa";
+  if (tipo !== "tarifa" && !(Number(input.descuentoValor) > 0)) {
+    return { ok: false, error: "Una promoción de descuento necesita un valor (% o monto) mayor a 0." };
+  }
+  if (input.compraInicio && input.compraFin && input.compraFin < input.compraInicio) {
+    return { ok: false, error: "La vigencia de compra: la fecha final no puede ser menor que la inicial." };
+  }
+
+  const sb = await createClient();
+  const { error } = await sb.from("hotel_temporadas").update({
+    nombre: input.nombre.trim(),
+    fecha_inicio: input.inicio,
+    fecha_fin: input.fin,
+    prioridad: Math.max(1, Math.trunc(Number(input.prioridad) || 1)),
+    compra_inicio: input.compraInicio || null,
+    compra_fin: input.compraFin || null,
+    tipo,
+    descuento_valor: tipo === "tarifa" ? null : Number(input.descuentoValor) || 0,
+  }).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
+  return { ok: true };
+}
+
 // ── Tarifa neta del hotel ─────────────────────────────────────────────────
 export async function crearTarifa(input: {
   hotelId: number;
