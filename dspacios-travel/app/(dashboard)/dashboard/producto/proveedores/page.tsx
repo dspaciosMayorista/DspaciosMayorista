@@ -7,7 +7,7 @@ import { cargarProveedoresMasivo } from "./actions";
 export const dynamic = "force-dynamic";
 
 const COLS_PROVEEDORES = [
-  { key: "tipo", label: "Tipo (hotelero/aereo/servicios)", ejemplo: "hotelero" },
+  { key: "tipo", label: "Tipo (hotelero/aereo/servicios/programa)", ejemplo: "hotelero" },
   { key: "nombre", label: "Nombre comercial", ejemplo: "GHL Hoteles" },
   { key: "razon_social", label: "Razón social", ejemplo: "GHL S.A.S." },
   { key: "nit", label: "NIT", ejemplo: "900123456-7" },
@@ -38,7 +38,7 @@ export default async function ProveedoresPage() {
       <div className="mb-6">
         <CargaMasivaCSV
           titulo="Carga masiva de proveedores (CSV)"
-          descripcion="Cada fila = un proveedor. Tipo: hotelero, aereo o servicios. 'Aplica retención' acepta si/no; el % se escribe como número (ej. 3.5)."
+          descripcion="Cada fila = un proveedor. Tipo: hotelero, aereo, servicios o programa. 'Aplica retención' acepta si/no; el % se escribe como número (ej. 3.5)."
           nota="Este cargue no requiere configurar nada antes. Los proveedores son la base para hoteles, vuelos y servicios — cárgalos primero."
           columnas={COLS_PROVEEDORES}
           onSubmit={cargarProveedoresMasivo}

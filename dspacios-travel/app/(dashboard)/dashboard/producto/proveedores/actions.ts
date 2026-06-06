@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
-export type TipoProveedor = "hotelero" | "aereo" | "servicios";
+export type TipoProveedor = "hotelero" | "aereo" | "servicios" | "programa";
 
 export type ProveedorInput = {
   tipo: TipoProveedor;
@@ -67,7 +67,7 @@ export async function eliminarProveedor(id: number): Promise<Result> {
 }
 
 // ── Carga masiva (CSV) ─────────────────────────────────────────────────────
-const TIPOS_VALIDOS = ["hotelero", "aereo", "servicios"];
+const TIPOS_VALIDOS = ["hotelero", "aereo", "servicios", "programa"];
 const toBool = (s?: string) => /^(s[ií]|si|true|1|x)$/i.test((s || "").trim());
 
 function normTipo(s?: string): TipoProveedor | null {
@@ -76,6 +76,7 @@ function normTipo(s?: string): TipoProveedor | null {
   if (v.startsWith("hotel")) return "hotelero";
   if (v.includes("aere") || v.includes("aére") || v.includes("vuelo") || v.includes("aéreo")) return "aereo";
   if (v.includes("serv")) return "servicios";
+  if (v.startsWith("program") || v.includes("circuito")) return "programa";
   return null;
 }
 
@@ -92,7 +93,7 @@ export async function cargarProveedoresMasivo(
     const nombre = (r.nombre || "").trim();
     if (!nombre) { errores.push(`Fila ${linea}: falta nombre.`); continue; }
     const tipo = normTipo(r.tipo);
-    if (!tipo) { errores.push(`Fila ${linea} (${nombre}): tipo "${r.tipo ?? ""}" inválido (hotelero/aereo/servicios).`); continue; }
+    if (!tipo) { errores.push(`Fila ${linea} (${nombre}): tipo "${r.tipo ?? ""}" inválido (hotelero/aereo/servicios/programa).`); continue; }
     const pct = Number((r.pct_retencion || "").replace(",", ".").replace(/[^\d.]/g, "")) || 0;
     const aplicaRet = toBool(r.aplica_retencion) || pct > 0;
     const { error } = await sb.from("proveedores").insert({
