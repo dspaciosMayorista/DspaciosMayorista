@@ -269,6 +269,28 @@ export async function eliminarTemporada(id: number, hotelId: number): Promise<Re
   return { ok: true };
 }
 
+// Copia TODAS las temporadas/vigencias de otro hotel al hotel actual (como copias
+// independientes). Útil para cadenas con la misma configuración. No borra ni toca
+// las del hotel origen.
+export async function copiarTemporadasDesdeHotel(
+  hotelDestino: number,
+  hotelOrigen: number,
+): Promise<{ ok: true; copiadas: number } | { ok: false; error: string }> {
+  if (!hotelOrigen || hotelDestino === hotelOrigen) return { ok: false, error: "Elige un hotel de origen distinto." };
+  const sb = await createClient();
+  const { data: origen, error: e1 } = await sb
+    .from("hotel_temporadas")
+    .select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden")
+    .eq("hotel_id", hotelOrigen);
+  if (e1) return { ok: false, error: e1.message };
+  if (!origen?.length) return { ok: false, error: "El hotel de origen no tiene temporadas para copiar." };
+  const filas = origen.map((t) => ({ ...t, hotel_id: hotelDestino }));
+  const { error } = await sb.from("hotel_temporadas").insert(filas);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/producto/hoteles/${hotelDestino}`);
+  return { ok: true, copiadas: filas.length };
+}
+
 export async function actualizarTemporada(id: number, input: TemporadaInput): Promise<Result> {
   const v = validarTemporada(input);
   if (!v.ok) return v;
