@@ -602,10 +602,12 @@ export async function guardarCalculadora(
 }
 
 // Genera las filas de tarifa_hotel a partir de la calculadora del hotel.
-// REEMPLAZA las tarifas existentes del hotel (en un hotel por fórmula, todas
-// las tarifas salen de la fórmula).
+//  - modo "agregar" (por defecto): reemplaza SOLO las tarifas de los regímenes
+//    que se están generando (respeta las de otros regímenes ya cargados).
+//  - modo "reemplazar": borra TODAS las tarifas del hotel y deja solo las nuevas.
 export async function generarTarifasCalculadora(
-  hotelId: number
+  hotelId: number,
+  modo: "agregar" | "reemplazar" = "agregar",
 ): Promise<{ ok: true; generadas: number } | { ok: false; error: string }> {
   const sb = await createClient();
   const { data: calc } = await sb
@@ -618,8 +620,16 @@ export async function generarTarifasCalculadora(
   const filas = generarTarifas(calc.tipo, calc.params);
   if (!filas.length) return { ok: false, error: "No hay bases con precio para generar tarifas." };
 
-  // Reemplaza las tarifas del hotel por las recién calculadas.
-  await sb.from("tarifa_hotel").delete().eq("hotel_id", hotelId);
+  if (modo === "reemplazar") {
+    await sb.from("tarifa_hotel").delete().eq("hotel_id", hotelId);
+  } else {
+    // Solo borra las tarifas de los regímenes generados (evita duplicados y
+    // respeta los demás regímenes ya cargados).
+    const regimenes = [...new Set(filas.map((f) => f.alimentacion).filter(Boolean))];
+    if (regimenes.length) {
+      await sb.from("tarifa_hotel").delete().eq("hotel_id", hotelId).in("alimentacion", regimenes);
+    }
+  }
   const { error } = await sb
     .from("tarifa_hotel")
     .insert(filas.map((f) => ({ ...f, hotel_id: hotelId })));
