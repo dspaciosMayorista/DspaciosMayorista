@@ -238,6 +238,14 @@ function validarTemporada(input: TemporadaInput): { ok: true; rangos: RangoFecha
   if (!rr.rangos.length) return { ok: false, error: "Debes indicar al menos un rango de fechas (inicio y fin)." };
   const bb = limpiarRangos(input.blackouts);
   if (!bb.ok) return bb;
+  // Un black-out solo tiene sentido DENTRO de la vigencia de viaje: debe quedar
+  // contenido en alguno de los rangos de cobertura.
+  for (const bo of bb.rangos) {
+    const dentro = rr.rangos.some((r) => bo.fecha_inicio >= r.fecha_inicio && bo.fecha_fin <= r.fecha_fin);
+    if (!dentro) {
+      return { ok: false, error: `El black-out ${bo.fecha_inicio} → ${bo.fecha_fin} está fuera de la vigencia de viaje. Debe estar dentro de un rango de fechas.` };
+    }
+  }
   const tipo = input.tipo ?? "tarifa";
   if (tipo !== "tarifa" && !(Number(input.descuentoValor) > 0)) {
     return { ok: false, error: "Una promoción de descuento necesita un valor (% o monto) mayor a 0." };
