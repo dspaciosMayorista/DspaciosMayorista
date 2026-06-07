@@ -8,11 +8,22 @@ import {
   crearTemporada, actualizarTemporada, eliminarTemporada, crearTarifa, actualizarTarifa, eliminarTarifa,
 } from "../actions";
 
+type RangoFechas = { fecha_inicio: string; fecha_fin: string };
 type Temporada = {
   id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
   prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null;
   tipo?: string | null; descuento_valor?: number | null;
+  rangos?: unknown; blackouts?: unknown;
 };
+
+// jsonb → lista de rangos válidos.
+function asRangos(v: unknown): RangoFechas[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((r): r is RangoFechas =>
+    !!r && typeof r === "object" &&
+    typeof (r as { fecha_inicio?: unknown }).fecha_inicio === "string" &&
+    typeof (r as { fecha_fin?: unknown }).fecha_fin === "string");
+}
 
 const TIPOS_TEMP: { value: string; label: string }[] = [
   { value: "tarifa", label: "Temporada / tarifa de reemplazo" },
@@ -52,6 +63,8 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
   const [compraFin, setCompraFin] = useState("");
   const [tipo, setTipo] = useState("tarifa");
   const [descuento, setDescuento] = useState("");
+  const [rangosExtra, setRangosExtra] = useState<RangoFechas[]>([]);
+  const [blackouts, setBlackouts] = useState<RangoFechas[]>([]);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
@@ -60,14 +73,19 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
 
   function reset() {
     setEditId(null); setNombre(""); setIni(""); setFin(""); setPrioridad("1");
-    setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento(""); setErr("");
+    setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento("");
+    setRangosExtra([]); setBlackouts([]); setErr("");
   }
 
   function editar(t: Temporada) {
     setEditId(t.id);
     setNombre(t.nombre);
-    setIni(t.fecha_inicio ?? "");
-    setFin(t.fecha_fin ?? "");
+    const rangos = asRangos(t.rangos);
+    // El primer rango es el principal (Viaje desde/hasta); el resto son adicionales.
+    setIni(rangos[0]?.fecha_inicio ?? t.fecha_inicio ?? "");
+    setFin(rangos[0]?.fecha_fin ?? t.fecha_fin ?? "");
+    setRangosExtra(rangos.slice(1));
+    setBlackouts(asRangos(t.blackouts));
     setPrioridad(String(t.prioridad ?? 1));
     setCompraIni(t.compra_inicio ?? "");
     setCompraFin(t.compra_fin ?? "");
@@ -85,6 +103,7 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
       prioridad: Number(prioridad) || 1,
       compraInicio: compraIni, compraFin: compraFin,
       tipo, descuentoValor: esPromo ? Number(descuento) || 0 : null,
+      rangos: rangosExtra, blackouts,
     };
     start(async () => {
       const r = editId == null ? await crearTemporada(payload) : await actualizarTemporada(editId, payload);
@@ -98,6 +117,7 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
       <p className="mb-3 text-xs text-gray-500">
         Las fechas <b>pueden cruzarse</b>: gana la de mayor <b>prioridad</b>. La <b>vigencia de compra</b> define
         cuándo está disponible para vender (si hoy está fuera, no aplica). Una promo descuenta la tarifa base de esas fechas.
+        Usa <b>rangos adicionales</b> para una misma vigencia con varias fechas (ej. puentes) y <b>black-outs</b> para excluir fechas.
       </p>
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         {editando && <p className="mb-2 text-xs font-medium text-[var(--brand-accent)]">Editando: {nombre || "temporada"}</p>}
@@ -121,6 +141,12 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
             </div>
           )}
         </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <ListaRangos titulo="Rangos adicionales (misma vigencia)" items={rangosExtra} onChange={setRangosExtra} />
+          <ListaRangos titulo="Black-outs (fechas a excluir)" items={blackouts} onChange={setBlackouts} />
+        </div>
+
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : editando ? "Guardar cambios" : esPromo ? "Agregar promoción" : "Agregar temporada"}</Button>
           {editando && <Button variant="outline" onClick={reset} disabled={pending}>Cancelar</Button>}
@@ -143,6 +169,12 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
                     </span>
                   )}
                   <span className="text-gray-400">· {formatFechaLarga(t.fecha_inicio)} → {formatFechaLarga(t.fecha_fin)}</span>
+                  {asRangos(t.rangos).length > 1 && (
+                    <span className="text-[11px] text-gray-400">· +{asRangos(t.rangos).length - 1} rango(s)</span>
+                  )}
+                  {asRangos(t.blackouts).length > 0 && (
+                    <span className="text-[11px] font-medium text-amber-600">· {asRangos(t.blackouts).length} black-out</span>
+                  )}
                   {(t.compra_inicio || t.compra_fin) && (
                     <span className="text-[11px] text-gray-400">· compra {t.compra_inicio ?? "…"} → {t.compra_fin ?? "…"}</span>
                   )}
@@ -158,6 +190,28 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
         </ul>
       </div>
     </section>
+  );
+}
+
+// Editor de una lista de rangos de fechas (para rangos adicionales y black-outs).
+function ListaRangos({ titulo, items, onChange }: { titulo: string; items: RangoFechas[]; onChange: (v: RangoFechas[]) => void }) {
+  const set = (i: number, k: keyof RangoFechas, v: string) =>
+    onChange(items.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  return (
+    <div className="rounded-lg border border-gray-100 p-3">
+      <p className={lbl}>{titulo}</p>
+      <div className="space-y-2">
+        {items.map((r, i) => (
+          <div key={i} className="flex items-end gap-2">
+            <div className="flex-1"><label className="block text-[10px] text-gray-400">Desde</label><Input type="date" value={r.fecha_inicio} onChange={(e) => set(i, "fecha_inicio", e.target.value)} /></div>
+            <div className="flex-1"><label className="block text-[10px] text-gray-400">Hasta</label><Input type="date" value={r.fecha_fin} onChange={(e) => set(i, "fecha_fin", e.target.value)} /></div>
+            <button type="button" onClick={() => onChange(items.filter((_, idx) => idx !== i))} className="pb-2 text-xs text-gray-400 hover:text-red-500">Quitar</button>
+          </div>
+        ))}
+        {!items.length && <p className="text-[11px] text-gray-400">Ninguno.</p>}
+      </div>
+      <button type="button" onClick={() => onChange([...items, { fecha_inicio: "", fecha_fin: "" }])} className="mt-2 text-xs font-medium text-[var(--brand-accent)]">+ Agregar</button>
+    </div>
   );
 }
 

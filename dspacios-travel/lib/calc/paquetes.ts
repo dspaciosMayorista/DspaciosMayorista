@@ -18,6 +18,8 @@ const MS_DIA = 86_400_000;
 
 export type TemporadaTipo = "tarifa" | "descuento_pct" | "descuento_monto";
 
+export interface RangoFechas { fecha_inicio: string; fecha_fin: string }
+
 export interface TemporadaRango {
   nombre: string;
   fecha_inicio: string | null;
@@ -28,6 +30,9 @@ export interface TemporadaRango {
   compra_fin?: string | null;
   tipo?: TemporadaTipo;          // default 'tarifa'
   descuento_valor?: number | null; // % (descuento_pct) o monto por pax (descuento_monto)
+  // Fase 4: múltiples rangos de cobertura + black-outs (exclusiones).
+  rangos?: RangoFechas[];        // si está vacío, se usa fecha_inicio/fecha_fin
+  blackouts?: RangoFechas[];     // fechas excluidas de la cobertura
 }
 
 /** Fecha de hoy (yyyy-mm-dd) en zona horaria Colombia, para la vigencia de compra. */
@@ -35,11 +40,23 @@ export function hoyISO(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
 }
 
-function cubreFecha(t: TemporadaRango, t0: number): boolean {
-  if (!t.fecha_inicio || !t.fecha_fin) return false;
-  const i = new Date(`${t.fecha_inicio}T00:00:00`).getTime();
-  const f = new Date(`${t.fecha_fin}T00:00:00`).getTime();
+function enRango(t0: number, ini: string | null, fin: string | null): boolean {
+  if (!ini || !fin) return false;
+  const i = new Date(`${ini}T00:00:00`).getTime();
+  const f = new Date(`${fin}T00:00:00`).getTime();
   return t0 >= i && t0 <= f;
+}
+
+function cubreFecha(t: TemporadaRango, t0: number): boolean {
+  // Cobertura: si hay rangos múltiples, se usan; si no, el rango simple legado.
+  const rangos = t.rangos && t.rangos.length
+    ? t.rangos
+    : (t.fecha_inicio && t.fecha_fin ? [{ fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin }] : []);
+  const dentro = rangos.some((r) => enRango(t0, r.fecha_inicio, r.fecha_fin));
+  if (!dentro) return false;
+  // Black-out: si la fecha cae en una exclusión, la temporada NO cubre esa noche.
+  if (t.blackouts && t.blackouts.some((b) => enRango(t0, b.fecha_inicio, b.fecha_fin))) return false;
+  return true;
 }
 
 /** ¿La vigencia de compra cubre HOY? (sin rango = siempre disponible). */
@@ -56,11 +73,23 @@ function entradasNoche(t0: number, temporadas: TemporadaRango[], hoy: string): T
     .sort((a, b) => (b.prioridad ?? 1) - (a.prioridad ?? 1));
 }
 
+/** Normaliza un valor jsonb a una lista de rangos de fechas válidos. */
+export function normRangos(v: unknown): RangoFechas[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (r): r is RangoFechas =>
+      !!r && typeof r === "object" &&
+      typeof (r as { fecha_inicio?: unknown }).fecha_inicio === "string" &&
+      typeof (r as { fecha_fin?: unknown }).fecha_fin === "string"
+  );
+}
+
 /** Mapea una fila de `hotel_temporadas` (con los campos de promo) a TemporadaRango. */
 export function toTemporadaRango(t: {
   nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
   prioridad?: number | null; compra_inicio?: string | null; compra_fin?: string | null;
   tipo?: string | null; descuento_valor?: number | null;
+  rangos?: unknown; blackouts?: unknown;
 }): TemporadaRango {
   return {
     nombre: t.nombre,
@@ -71,6 +100,8 @@ export function toTemporadaRango(t: {
     compra_fin: t.compra_fin ?? null,
     tipo: (t.tipo ?? "tarifa") as TemporadaTipo,
     descuento_valor: t.descuento_valor ?? null,
+    rangos: normRangos(t.rangos),
+    blackouts: normRangos(t.blackouts),
   };
 }
 

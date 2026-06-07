@@ -44,7 +44,7 @@ async function liquidarHotelPaquete(
 
   const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").eq("hotel_id", hotelId),
+    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona)").eq("paquete_id", paqueteId),
   ]);
@@ -118,7 +118,7 @@ export async function cotizarPorFechas(input: {
   if (!res || !res.combos.length) {
     // Diagnóstico: ¿qué temporada de las noches elegidas no tiene tarifa cargada?
     const [{ data: temps }, { data: tars }] = await Promise.all([
-      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").eq("hotel_id", input.hotelId),
+      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", input.hotelId),
       admin.from("tarifa_hotel").select("temporada").eq("hotel_id", input.hotelId),
     ]);
     const temporadas = (temps ?? []).map(toTemporadaRango);
@@ -661,7 +661,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
       if (numNoches > 0) {
         const [{ data: temps }, { data: tarRows }, { data: hprov }] = await Promise.all([
-          admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").eq("hotel_id", input.hotelId),
+          admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", input.hotelId),
           admin.from("tarifa_hotel")
             .select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2")
             .eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
