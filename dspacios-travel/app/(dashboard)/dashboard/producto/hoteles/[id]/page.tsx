@@ -8,7 +8,7 @@ import { HotelDocumentos } from "./HotelDocumentos";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
 import { CalculadoraEditor } from "./CalculadoraEditor";
 import type { AcomConfig } from "@/lib/acomodaciones";
-import type { DubaiParams } from "@/lib/calc/calculadoras";
+import type { DubaiParams, MixtaParams, CalcTipo } from "@/lib/calc/calculadoras";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +51,9 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   const categoriaIds = catsRows.map((x) => x.categoria_id);
   const regimenIds = regsRows.map((x) => x.plan_id);
   const temporadasNombres = (temporadas ?? []).map((t) => t.nombre).filter((x): x is string => !!x);
-  const calcParams = (calc?.params ?? null) as DubaiParams | null;
+  const calcTipo = (calc?.tipo ?? null) as CalcTipo | null;
+  const dubaiInicial = calc?.tipo === "dubai" ? (calc.params as unknown as DubaiParams) : null;
+  const mixtaInicial = calc?.tipo === "mixta" ? (calc.params as unknown as MixtaParams) : null;
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
@@ -104,7 +106,9 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           categorias={categorias}
           temporadas={temporadasNombres}
           regimenes={regimenes}
-          inicial={calcParams}
+          tipoInicial={calcTipo}
+          dubaiInicial={dubaiInicial}
+          mixtaInicial={mixtaInicial}
         />
         <HotelDetalleClient
           hotelId={hotelId}
