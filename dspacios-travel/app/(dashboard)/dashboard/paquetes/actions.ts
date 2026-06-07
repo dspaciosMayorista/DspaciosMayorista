@@ -295,7 +295,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
   if (hotelIds.length) {
     const [{ data: temps }, { data: tarifas }] = await Promise.all([
-      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor").in("hotel_id", hotelIds),
+      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").in("hotel_id", hotelIds),
       sb.from("tarifa_hotel").select("*").in("hotel_id", hotelIds),
     ]);
     for (const t of temps ?? []) {
