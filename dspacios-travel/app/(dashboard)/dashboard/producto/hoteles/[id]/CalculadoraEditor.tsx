@@ -95,14 +95,15 @@ function DubaiForm({
 
   const preview = useMemo(() => generarTarifasDubai(params).filter((f) => f.alimentacion === regimenBase), [params, regimenBase]);
 
-  function guardar(luegoGenerar: boolean) {
+  function guardar(modo: "solo" | "agregar" | "reemplazar") {
+    if (modo === "reemplazar" && !confirm("¿Borrar TODAS las tarifas de este hotel y dejar solo las generadas ahora?")) return;
     setMsg("");
     start(async () => {
       const r = await guardarCalculadora(hotelId, "dubai", params);
       if (!r.ok) { setMsg(r.error); return; }
-      if (!luegoGenerar) { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
-      const g = await generarTarifasCalculadora(hotelId);
-      setMsg(g.ok ? `✓ Generadas ${g.generadas} tarifas (reemplazaron las anteriores).` : g.error);
+      if (modo === "solo") { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
+      const g = await generarTarifasCalculadora(hotelId, modo);
+      setMsg(g.ok ? `✓ Generadas ${g.generadas} tarifas (${modo === "reemplazar" ? "reemplazaron todas" : "agregadas/actualizadas"}).` : g.error);
       router.refresh();
     });
   }
@@ -113,7 +114,7 @@ function DubaiForm({
 
   return (
     <div className="space-y-5">
-      <p className="text-xs text-gray-500">Carga una <b>base por persona/noche</b> (en doble, con el régimen base) por categoría y temporada; el sistema deriva sencilla/triple/múltiple/niño con los modificadores y suma los suplementos de régimen. <b>&quot;Generar tarifas&quot;</b> reemplaza las tarifas de este hotel.</p>
+      <p className="text-xs text-gray-500">Carga una <b>base por persona/noche</b> (en doble, con el régimen base) por categoría y temporada; el sistema deriva sencilla/triple/múltiple/niño con los modificadores y suma los suplementos de régimen.</p>
       <div>
         <p className={lbl}>Modificadores (% sobre la base)</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -157,7 +158,7 @@ function DubaiForm({
         </div>
       </div>
       {preview.length > 0 && <PreviewTabla titulo={`Vista previa (${regimenBase})`} filas={preview} />}
-      <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar(false)} onGenerar={() => guardar(true)} />
+      <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
     </div>
   );
 }
@@ -227,14 +228,15 @@ function MixtaForm({
 
   const preview = useMemo(() => generarTarifasMixta(params), [params]);
 
-  function guardar(luegoGenerar: boolean) {
+  function guardar(modo: "solo" | "agregar" | "reemplazar") {
+    if (modo === "reemplazar" && !confirm("¿Borrar TODAS las tarifas de este hotel y dejar solo las generadas ahora?")) return;
     setMsg("");
     start(async () => {
       const r = await guardarCalculadora(hotelId, "mixta", params);
       if (!r.ok) { setMsg(r.error); return; }
-      if (!luegoGenerar) { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
-      const g = await generarTarifasCalculadora(hotelId);
-      setMsg(g.ok ? `✓ Generadas ${g.generadas} tarifas (reemplazaron las anteriores).` : g.error);
+      if (modo === "solo") { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
+      const g = await generarTarifasCalculadora(hotelId, modo);
+      setMsg(g.ok ? `✓ Generadas ${g.generadas} tarifas (${modo === "reemplazar" ? "reemplazaron todas" : "agregadas/actualizadas"}).` : g.error);
       router.refresh();
     });
   }
@@ -311,7 +313,7 @@ function MixtaForm({
       </div>
 
       {preview.length > 0 && <PreviewTabla titulo="Vista previa — tarifa por persona resultante" filas={preview} />}
-      <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar(false)} onGenerar={() => guardar(true)} />
+      <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
     </div>
   );
 }
@@ -348,12 +350,19 @@ function PreviewTabla({ titulo, filas }: { titulo: string; filas: FilaPrev[] }) 
   );
 }
 
-function BotonesGuardar({ pending, msg, onGuardar, onGenerar }: { pending: boolean; msg: string; onGuardar: () => void; onGenerar: () => void }) {
+function BotonesGuardar({ pending, msg, onGuardar, onAgregar, onReemplazar }: { pending: boolean; msg: string; onGuardar: () => void; onAgregar: () => void; onReemplazar: () => void }) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Button variant="outline" onClick={onGuardar} disabled={pending}>{pending ? "…" : "Guardar calculadora"}</Button>
-      <Button onClick={onGenerar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Generando…" : "Generar tarifas"}</Button>
-      {msg && <span className={msg.startsWith("✓") ? "text-sm text-green-600" : "text-sm text-red-600"}>{msg}</span>}
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="outline" onClick={onGuardar} disabled={pending}>{pending ? "…" : "Guardar calculadora"}</Button>
+        <Button onClick={onAgregar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Generando…" : "Generar (agregar/actualizar)"}</Button>
+        <Button variant="outline" onClick={onReemplazar} disabled={pending}>Reemplazar TODAS las tarifas</Button>
+        {msg && <span className={msg.startsWith("✓") ? "text-sm text-green-600" : "text-sm text-red-600"}>{msg}</span>}
+      </div>
+      <p className="text-[11px] text-gray-400">
+        <b>Agregar/actualizar</b>: reemplaza solo las tarifas del régimen generado y conserva los demás. ·
+        <b> Reemplazar TODAS</b>: borra todas las tarifas del hotel y deja solo estas.
+      </p>
     </div>
   );
 }
