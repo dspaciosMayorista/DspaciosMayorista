@@ -84,13 +84,80 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
   return out;
 }
 
+// ── Calculadora "MIXTA" ────────────────────────────────────────────────────
+// El hotel mezcla tarifas POR HABITACIÓN y POR PERSONA, con IVA opcional por
+// acomodación. Por cada acomodación se elige modo (hab/pax) y si lleva IVA (19%).
+// Como el resto del sistema trabaja POR PERSONA:
+//   - modo 'hab': valor / pax de la habitación  → por persona
+//   - modo 'pax': el valor ya es por persona
+//   - si IVA: × (1 + iva%)
+// Los valores se cargan por categoría × temporada (uno por acomodación).
+export type MixtaAcom = "sencilla" | "doble" | "triple" | "multiple";
+export const MIXTA_ACOMS: MixtaAcom[] = ["sencilla", "doble", "triple", "multiple"];
+
+export type MixtaParams = {
+  regimen: string;
+  iva_pct: number;                                    // 19
+  acom: Record<MixtaAcom, { modo: "hab" | "pax"; iva: boolean }>;
+  nino: { iva: boolean };
+  pax: Record<MixtaAcom, number>;                     // pax por habitación (1/2/3/4)
+  bases: {
+    categoria: string; temporada: string;
+    sencilla: number; doble: number; triple: number; multiple: number;
+    nino: number; nino2: number | null;
+  }[];
+};
+
+export function generarTarifasMixta(p: MixtaParams): TarifaGenerada[] {
+  const ivaPct = Number(p.iva_pct) || 19;
+  const conIva = (v: number, iva: boolean) => (iva ? v * (1 + ivaPct / 100) : v);
+  // Por persona, según modo de la acomodación.
+  const pp = (valor: number, acom: MixtaAcom) => {
+    const v = Number(valor) || 0;
+    if (v <= 0) return 0;
+    const cfg = p.acom?.[acom] ?? { modo: "pax" as const, iva: false };
+    const paxRoom = Math.max(1, Number(p.pax?.[acom]) || 1);
+    const base = cfg.modo === "hab" ? v / paxRoom : v;
+    return Math.round(conIva(base, cfg.iva));
+  };
+  const ppNino = (valor: number) => {
+    const v = Number(valor) || 0;
+    if (v <= 0) return 0;
+    return Math.round(conIva(v, p.nino?.iva ?? false));
+  };
+
+  const out: TarifaGenerada[] = [];
+  for (const b of p.bases ?? []) {
+    if (!b.categoria?.trim() || !b.temporada?.trim()) continue;
+    const sencilla = pp(b.sencilla, "sencilla");
+    const doble = pp(b.doble, "doble");
+    const triple = pp(b.triple, "triple");
+    const multiple = pp(b.multiple, "multiple");
+    if (sencilla + doble + triple + multiple <= 0) continue; // fila sin valores
+    out.push({
+      tipo_habitacion: b.categoria.trim(),
+      alimentacion: (p.regimen || "").trim(),
+      temporada: b.temporada.trim(),
+      neto_sencilla: sencilla,
+      neto_doble: doble,
+      neto_triple: triple,
+      neto_multiple: multiple,
+      neto_nino: ppNino(b.nino),
+      neto_nino2: b.nino2 != null ? ppNino(b.nino2) : null,
+    });
+  }
+  return out;
+}
+
 // ── Registro de calculadoras ───────────────────────────────────────────────
-export type CalcTipo = "dubai";
+export type CalcTipo = "dubai" | "mixta";
 
 export function generarTarifas(tipo: string, params: unknown): TarifaGenerada[] {
   switch (tipo) {
     case "dubai":
       return generarTarifasDubai(params as DubaiParams);
+    case "mixta":
+      return generarTarifasMixta(params as MixtaParams);
     default:
       return [];
   }
