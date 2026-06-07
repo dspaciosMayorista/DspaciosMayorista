@@ -18,7 +18,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre, politica_reservas)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
@@ -30,6 +30,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     sb.from("categorias_habitacion").select("id, nombre").order("nombre"),
     sb.from("planes_alimentacion").select("id, codigo").order("codigo"),
     sb.from("hotel_documentos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("hotel_id", hotelId).order("created_at", { ascending: false }),
+    sb.from("hoteles").select("id, nombre").neq("id", hotelId).order("nombre"),
   ]);
 
   if (!hotel) notFound();
@@ -111,6 +112,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           regimenes={regimenes}
           temporadas={temporadas ?? []}
           tarifas={(tarifas ?? []) as never}
+          otrosHoteles={otrosHoteles ?? []}
         />
       </div>
     </div>

@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import {
-  crearTemporada, actualizarTemporada, eliminarTemporada, crearTarifa, actualizarTarifa, eliminarTarifa,
+  crearTemporada, actualizarTemporada, eliminarTemporada, copiarTemporadasDesdeHotel,
+  crearTarifa, actualizarTarifa, eliminarTarifa,
 } from "../actions";
 
 type RangoFechas = { fecha_inicio: string; fecha_fin: string };
@@ -43,17 +45,17 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const sel = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
 export function HotelDetalleClient({
-  hotelId, categorias, regimenes, temporadas, tarifas,
-}: { hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[] }) {
+  hotelId, categorias, regimenes, temporadas, tarifas, otrosHoteles,
+}: { hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; otrosHoteles: { id: number; nombre: string }[] }) {
   return (
     <div className="space-y-8">
-      <TemporadasBox hotelId={hotelId} temporadas={temporadas} />
+      <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} />
       <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} />
     </div>
   );
 }
 
-function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: Temporada[] }) {
+function TemporadasBox({ hotelId, temporadas, otrosHoteles }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[] }) {
   const [editId, setEditId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [ini, setIni] = useState("");
@@ -119,6 +121,7 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
         cuándo está disponible para vender (si hoy está fuera, no aplica). Una promo descuenta la tarifa base de esas fechas.
         Usa <b>rangos adicionales</b> para una misma vigencia con varias fechas (ej. puentes) y <b>black-outs</b> para excluir fechas.
       </p>
+      {!editando && <CopiarDeHotel hotelId={hotelId} otrosHoteles={otrosHoteles} />}
       <div className="rounded-xl border border-gray-200 bg-white p-4">
         {editando && <p className="mb-2 text-xs font-medium text-[var(--brand-accent)]">Editando: {nombre || "temporada"}</p>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -190,6 +193,39 @@ function TemporadasBox({ hotelId, temporadas }: { hotelId: number; temporadas: T
         </ul>
       </div>
     </section>
+  );
+}
+
+// Copia las vigencias de otro hotel al actual (cadenas con misma config).
+function CopiarDeHotel({ hotelId, otrosHoteles }: { hotelId: number; otrosHoteles: { id: number; nombre: string }[] }) {
+  const router = useRouter();
+  const [origen, setOrigen] = useState<number | "">("");
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState("");
+
+  if (!otrosHoteles.length) return null;
+
+  function copiar() {
+    if (origen === "") { setMsg("Elige un hotel."); return; }
+    if (!confirm("¿Copiar todas las vigencias de ese hotel a este? Se agregan como copias independientes (no borra las actuales).")) return;
+    setMsg("");
+    start(async () => {
+      const r = await copiarTemporadasDesdeHotel(hotelId, Number(origen));
+      if (r.ok) { setMsg(`✓ ${r.copiadas} copiada(s)`); setOrigen(""); router.refresh(); }
+      else setMsg(r.error);
+    });
+  }
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3">
+      <span className="text-xs font-medium text-gray-600">Traer vigencias de otro hotel:</span>
+      <select value={origen} onChange={(e) => setOrigen(Number(e.target.value) || "")} className={`${sel} max-w-xs`}>
+        <option value="">— Elegir hotel origen —</option>
+        {otrosHoteles.map((h) => <option key={h.id} value={h.id}>{h.nombre}</option>)}
+      </select>
+      <Button variant="outline" onClick={copiar} disabled={pending}>{pending ? "Copiando…" : "Traer"}</Button>
+      {msg && <span className={msg.startsWith("✓") ? "text-sm text-green-600" : "text-sm text-red-600"}>{msg}</span>}
+    </div>
   );
 }
 
