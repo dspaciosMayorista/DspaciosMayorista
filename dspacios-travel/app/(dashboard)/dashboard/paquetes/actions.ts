@@ -159,6 +159,25 @@ export async function setHotel(paqueteId: number, hotelId: number, checked: bool
   return { ok: true };
 }
 
+// Seleccionar/quitar TODOS los hoteles disponibles (con todas las categorías y
+// regímenes por defecto; luego se afina cada uno desde su ventana).
+export async function setTodosHoteles(paqueteId: number, hotelIds: number[], checked: boolean): Promise<Result> {
+  const sb = await createClient();
+  if (!checked) {
+    await sb.from("armado_hoteles").delete().eq("paquete_id", paqueteId);
+  } else if (hotelIds.length) {
+    const { error } = await sb
+      .from("armado_hoteles")
+      .upsert(
+        hotelIds.map((h) => ({ paquete_id: paqueteId, hotel_id: h })),
+        { onConflict: "paquete_id,hotel_id", ignoreDuplicates: true }
+      );
+    if (error) return { ok: false, error: error.message };
+  }
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  return { ok: true };
+}
+
 // ── Tarifas de un hotel (para la ventana de selección) ─────────────────────
 export type TarifaHotelPreview = {
   categoria: string;

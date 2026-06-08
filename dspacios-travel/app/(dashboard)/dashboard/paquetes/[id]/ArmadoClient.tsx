@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { ConfigForm } from "../ConfigForm";
 import {
-  setVuelo, setTodosVuelos, setHotel, setServicio, generarTarifario,
+  setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, generarTarifario,
   getTarifasHotel, setHotelFiltros, type TarifaHotelPreview,
 } from "../actions";
 
@@ -139,17 +139,39 @@ export function ArmadoClient(props: {
         {!props.hotelesDisp.length ? (
           <Empty>No hay hoteles del destino.</Empty>
         ) : (
-          <ul className="divide-y divide-gray-100">
-            {props.hotelesDisp.map((h) => (
-              <HotelRow
-                key={h.id}
-                hotel={h}
-                sel={hotelSel.get(h.id)}
-                paqueteId={props.paqueteId}
-                onDone={refrescar}
+          <>
+            <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={hotelSel.size === props.hotelesDisp.length && props.hotelesDisp.length > 0}
+                ref={(el) => {
+                  if (el) el.indeterminate = hotelSel.size > 0 && hotelSel.size < props.hotelesDisp.length;
+                }}
+                onChange={(e) =>
+                  start(async () => {
+                    await setTodosHoteles(
+                      props.paqueteId,
+                      props.hotelesDisp.map((h) => h.id),
+                      e.target.checked
+                    );
+                    refrescar();
+                  })
+                }
               />
-            ))}
-          </ul>
+              Seleccionar todos
+            </label>
+            <ul className="divide-y divide-gray-100">
+              {props.hotelesDisp.map((h) => (
+                <HotelRow
+                  key={h.id}
+                  hotel={h}
+                  sel={hotelSel.get(h.id)}
+                  paqueteId={props.paqueteId}
+                  onDone={refrescar}
+                />
+              ))}
+            </ul>
+          </>
         )}
       </Section>
 
