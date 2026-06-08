@@ -63,6 +63,21 @@ export default async function TarifarioPublicoPage() {
     filasVisibles = filas.filter((f) => f.modulo !== "servicios" || (f.paquete_id != null && idsServicios.has(f.paquete_id)));
   }
 
+  // Foto de portada por hotel (bucket público; lectura anónima permitida).
+  const fotosPorHotel: Record<number, string> = {};
+  const hotelIds = [...new Set(filasVisibles.filter((f) => f.hotel_id != null).map((f) => f.hotel_id as number))];
+  if (hotelIds.length) {
+    const { data: fotos } = await sb
+      .from("hotel_fotos")
+      .select("hotel_id, url, es_portada, orden")
+      .in("hotel_id", hotelIds)
+      .order("orden");
+    for (const f of fotos ?? []) {
+      if (fotosPorHotel[f.hotel_id] == null) fotosPorHotel[f.hotel_id] = f.url; // primera por orden
+      if (f.es_portada) fotosPorHotel[f.hotel_id] = f.url;                       // portada gana
+    }
+  }
+
   // Programas publicados (fuente propia, en su moneda).
   const programas = await getProgramasResumen(sb, true);
 
@@ -95,7 +110,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} />
         )}
       </main>
     </div>
