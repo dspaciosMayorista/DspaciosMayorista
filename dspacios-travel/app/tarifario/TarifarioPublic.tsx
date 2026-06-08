@@ -93,6 +93,18 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
 
 type ModuloKey = FilaTarifario["modulo"] | "programas";
 
+type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
+
+// Estrellas (★) o clasificación (Boutique/Luxury…) al lado del nombre del hotel.
+function CategoriaInline({ info }: { info?: { estrellas: number | null; clasificacion: string | null } }) {
+  if (!info) return null;
+  if (info.estrellas && info.estrellas > 0)
+    return <span className="ml-1 text-amber-400" title={`${info.estrellas} estrellas`}>{"★".repeat(info.estrellas)}</span>;
+  if (info.clasificacion?.trim())
+    return <span className="ml-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">{info.clasificacion}</span>;
+  return null;
+}
+
 // Acomodaciones para el filtro (mismas claves que COLS).
 const ACOM_OPCIONES = COLS;
 
@@ -229,9 +241,9 @@ export function TarifarioPublic({
           {tabs.length === 0 ? (
             <p className="py-12 text-center text-sm text-gray-400">No hay resultados para los filtros aplicados.</p>
           ) : modulo === "bloqueo" ? (
-            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} />
+            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} />
           ) : modulo === "porcion_terrestre" ? (
-            <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} />
+            <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} />
           ) : modulo === "servicios" ? (
             <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
           ) : (
@@ -248,7 +260,7 @@ export function TarifarioPublic({
 }
 
 // ── Módulo BLOQUEOS: elige una salida (ciclo aéreo) y ve los hoteles ───────
-function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null }: { filas: FilaTarifario[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number>; soloAcom?: string | null }) {
+function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null, infoPorHotel = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number>; soloAcom?: string | null; infoPorHotel?: InfoHotel }) {
   // Cupos de una salida (un bloqueo). undefined = desconocido (no ocultar).
   const cuposDe = (f: FilaTarifario): number | undefined =>
     f.bloqueo_id != null ? cuposPorBloqueo[f.bloqueo_id] : undefined;
@@ -317,14 +329,14 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
             {fmtFecha(selFila.fecha_ida)} → {fmtFecha(selFila.fecha_regreso)} ({selFila.noches} noches)
           </p>
         )}
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} />
+        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} />
       </div>
     </div>
   );
 }
 
 // ── Módulo PORCIÓN TERRESTRE: elige un paquete ─────────────────────────────
-function PorPaquete({ filas, puedeReservar, soloAcom = null }: { filas: FilaTarifario[]; puedeReservar: boolean; soloAcom?: string | null }) {
+function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel }) {
   const paquetes = useMemo(() => {
     const map = new Map<string, FilaTarifario>();
     for (const f of filas) {
@@ -361,7 +373,7 @@ function PorPaquete({ filas, puedeReservar, soloAcom = null }: { filas: FilaTari
         </div>
       </div>
       <div className="min-w-0">
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} />
+        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} />
       </div>
     </div>
   );
@@ -443,7 +455,7 @@ function reservarHref(r: Pivotada): string {
   return `/dashboard/reservar/nuevo?${p.toString()}`;
 }
 
-function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null }: { rows: Pivotada[]; puedeReservar?: boolean; soloAcom?: string | null }) {
+function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPorHotel = {} }: { rows: Pivotada[]; puedeReservar?: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // Filtro de acomodación: restringe las columnas a esa acomodación y deja solo
@@ -494,6 +506,7 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null }: { row
                   <tr key={`${hotel}-${i}`} className="border-t border-gray-100">
                     <td className="px-3 py-2 font-medium text-gray-800">
                       {i === 0 ? r.hotel : ""}
+                      {i === 0 && r.hotel_id != null && <CategoriaInline info={infoPorHotel[r.hotel_id]} />}
                       {i === 0 && puedeReservar && r.paquete_id != null && r.hotel_id != null && (
                         <Link href={reservarHref(r)} className="mt-0.5 block text-xs font-normal" style={{ color: "var(--brand-accent)" }}>
                           Reservar →
