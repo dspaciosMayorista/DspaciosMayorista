@@ -1680,6 +1680,28 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["cotizaciones"]["Insert"]>;
         Relationships: [];
       };
+      hotel_fotos: {
+        Row: {
+          id: number;
+          hotel_id: number;
+          path: string;
+          url: string;
+          orden: number;
+          es_portada: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          hotel_id: number;
+          path: string;
+          url: string;
+          orden?: number;
+          es_portada?: boolean;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["hotel_fotos"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {

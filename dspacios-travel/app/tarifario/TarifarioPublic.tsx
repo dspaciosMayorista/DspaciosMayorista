@@ -92,6 +92,19 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
 
 type ModuloKey = FilaTarifario["modulo"] | "programas";
 
+// Acomodaciones para el filtro (mismas claves que COLS).
+const ACOM_OPCIONES = COLS;
+
+function coincideFiltro(f: FilaTarifario, q: string, fCat: string, fReg: string): boolean {
+  if (q) {
+    const hay = `${f.hotel_nombre ?? ""} ${f.paquete_nombre ?? ""} ${f.servicio_nombre ?? ""}`.toLowerCase();
+    if (!hay.includes(q.toLowerCase())) return false;
+  }
+  if (fCat && (f.categoria ?? "") !== fCat) return false;
+  if (fReg && (f.regimen ?? "") !== fReg) return false;
+  return true;
+}
+
 export function TarifarioPublic({
   filas,
   programas = [],
@@ -103,21 +116,77 @@ export function TarifarioPublic({
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
 }) {
+  const [q, setQ] = useState("");
+  const [fCat, setFCat] = useState("");
+  const [fReg, setFReg] = useState("");
+  const [fAcom, setFAcom] = useState("");
+
+  // Opciones únicas para los selects (de toda la base, ordenadas).
+  const cats = useMemo(
+    () => [...new Set(filas.map((f) => f.categoria).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b)),
+    [filas]
+  );
+  const regs = useMemo(
+    () => [...new Set(filas.map((f) => f.regimen).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b)),
+    [filas]
+  );
+
+  const filasFiltradas = useMemo(
+    () => filas.filter((f) => coincideFiltro(f, q.trim(), fCat, fReg)),
+    [filas, q, fCat, fReg]
+  );
+  const hayFiltro = !!(q.trim() || fCat || fReg || fAcom);
+
   const tabs: { key: ModuloKey; label: string }[] = [
-    ...MODULOS.filter((m) => filas.some((f) => f.modulo === m.key)),
+    ...MODULOS.filter((m) => filasFiltradas.some((f) => f.modulo === m.key)),
     ...(programas.length ? [{ key: "programas" as const, label: "Programas" }] : []),
   ];
-  const [modulo, setModulo] = useState<ModuloKey>(tabs[0]?.key ?? "bloqueo");
+  const [moduloSel, setModuloSel] = useState<ModuloKey>("bloqueo");
+  // Si el módulo activo se queda sin resultados por el filtro, salta al primero con datos.
+  const modulo = tabs.some((t) => t.key === moduloSel) ? moduloSel : (tabs[0]?.key ?? "bloqueo");
+
+  const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700";
 
   return (
     <div>
+      {/* Barra de filtros y buscador */}
+      <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white p-3">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Buscar hotel por nombre…"
+          className="min-w-[180px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        />
+        <select value={fCat} onChange={(e) => setFCat(e.target.value)} className={selCls} aria-label="Categoría de habitación">
+          <option value="">Categoría: todas</option>
+          {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={fReg} onChange={(e) => setFReg(e.target.value)} className={selCls} aria-label="Alimentación / régimen">
+          <option value="">Alimentación: todas</option>
+          {regs.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+        <select value={fAcom} onChange={(e) => setFAcom(e.target.value)} className={selCls} aria-label="Acomodación">
+          <option value="">Acomodación: todas</option>
+          {ACOM_OPCIONES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+        </select>
+        {hayFiltro && (
+          <button
+            type="button"
+            onClick={() => { setQ(""); setFCat(""); setFReg(""); setFAcom(""); }}
+            className="text-xs font-medium text-gray-500 hover:text-gray-800"
+          >
+            Limpiar
+          </button>
+        )}
+      </div>
+
       {/* Tabs de módulos */}
       <div className="mb-5 flex flex-wrap gap-2">
         {tabs.map((m) => (
           <button
             key={m.key}
             type="button"
-            onClick={() => setModulo(m.key)}
+            onClick={() => setModuloSel(m.key)}
             className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
             style={
               modulo === m.key
@@ -130,12 +199,14 @@ export function TarifarioPublic({
         ))}
       </div>
 
-      {modulo === "bloqueo" ? (
-        <PorSalida filas={filas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} />
+      {tabs.length === 0 ? (
+        <p className="py-12 text-center text-sm text-gray-400">No hay resultados para los filtros aplicados.</p>
+      ) : modulo === "bloqueo" ? (
+        <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} />
       ) : modulo === "porcion_terrestre" ? (
-        <PorPaquete filas={filas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} />
+        <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} />
       ) : modulo === "servicios" ? (
-        <PorServicios filas={filas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
+        <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
       ) : (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       )}
@@ -148,7 +219,7 @@ export function TarifarioPublic({
 }
 
 // ── Módulo BLOQUEOS: elige una salida (ciclo aéreo) y ve los hoteles ───────
-function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number> }) {
+function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null }: { filas: FilaTarifario[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number>; soloAcom?: string | null }) {
   // Cupos de una salida (un bloqueo). undefined = desconocido (no ocultar).
   const cuposDe = (f: FilaTarifario): number | undefined =>
     f.bloqueo_id != null ? cuposPorBloqueo[f.bloqueo_id] : undefined;
@@ -217,14 +288,14 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {} }: { filas: Fila
             {fmtFecha(selFila.fecha_ida)} → {fmtFecha(selFila.fecha_regreso)} ({selFila.noches} noches)
           </p>
         )}
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} />
+        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} />
       </div>
     </div>
   );
 }
 
 // ── Módulo PORCIÓN TERRESTRE: elige un paquete ─────────────────────────────
-function PorPaquete({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeReservar: boolean }) {
+function PorPaquete({ filas, puedeReservar, soloAcom = null }: { filas: FilaTarifario[]; puedeReservar: boolean; soloAcom?: string | null }) {
   const paquetes = useMemo(() => {
     const map = new Map<string, FilaTarifario>();
     for (const f of filas) {
@@ -261,7 +332,7 @@ function PorPaquete({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeRes
         </div>
       </div>
       <div className="min-w-0">
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} />
+        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} />
       </div>
     </div>
   );
@@ -343,13 +414,19 @@ function reservarHref(r: Pivotada): string {
   return `/dashboard/reservar/nuevo?${p.toString()}`;
 }
 
-function TablaHorizontal({ rows, puedeReservar = false }: { rows: Pivotada[]; puedeReservar?: boolean }) {
+function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null }: { rows: Pivotada[]; puedeReservar?: boolean; soloAcom?: string | null }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  if (!rows.length) return <p className="py-8 text-center text-sm text-gray-400">Sin tarifas para esta selección.</p>;
+
+  // Filtro de acomodación: restringe las columnas a esa acomodación y deja solo
+  // las filas (hotel/categoría/régimen) que tienen tarifa en ella.
+  const cols = soloAcom ? COLS.filter(([k]) => k === soloAcom) : COLS;
+  const rowsVisibles = soloAcom ? rows.filter((r) => r.precios[soloAcom] != null) : rows;
+
+  if (!rowsVisibles.length) return <p className="py-8 text-center text-sm text-gray-400">Sin tarifas para esta selección.</p>;
 
   // Agrupa por hotel conservando el orden
   const byHotel = new Map<string, Pivotada[]>();
-  for (const r of rows) {
+  for (const r of rowsVisibles) {
     const arr = byHotel.get(r.hotel) ?? [];
     arr.push(r);
     byHotel.set(r.hotel, arr);
@@ -372,7 +449,7 @@ function TablaHorizontal({ rows, puedeReservar = false }: { rows: Pivotada[]; pu
             <th className="px-3 py-2">Hotel</th>
             <th className="px-3 py-2">Categoría</th>
             <th className="px-3 py-2">R.A.</th>
-            {COLS.map(([k, label]) => (
+            {cols.map(([k, label]) => (
               <th key={k} className="px-3 py-2 text-right">{label}</th>
             ))}
           </tr>
@@ -396,7 +473,7 @@ function TablaHorizontal({ rows, puedeReservar = false }: { rows: Pivotada[]; pu
                     </td>
                     <td className="px-3 py-2 text-gray-600">{r.categoria}</td>
                     <td className="px-3 py-2 text-gray-600">{r.regimen}</td>
-                    {COLS.map(([k]) => {
+                    {cols.map(([k]) => {
                       // En habitaciones, 0 = no aplica (no gratis) → "—". En niños
                       // (nino/nino2) el 0 es válido (gratis) y sí se muestra.
                       const esRoom = k !== "nino" && k !== "nino2";
@@ -416,7 +493,7 @@ function TablaHorizontal({ rows, puedeReservar = false }: { rows: Pivotada[]; pu
                 ))}
                 {ocultas > 0 && (
                   <tr>
-                    <td colSpan={3 + COLS.length} className="px-3 pb-2 pt-0.5">
+                    <td colSpan={3 + cols.length} className="px-3 pb-2 pt-0.5">
                       <button
                         type="button"
                         onClick={() => toggle(hotel)}
