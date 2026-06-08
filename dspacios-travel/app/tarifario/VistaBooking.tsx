@@ -3,11 +3,13 @@
 import { useMemo, useState, useTransition } from "react";
 import Image from "next/image";
 import { formatCOP } from "@/lib/utils";
-import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
+import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart } from "@/lib/cart/CartContext";
 import { cotizarPorFechas, type ComboCotizado } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
-import type { FilaTarifario } from "./TarifarioPublic";
+import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
+
+const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
 // ── Modelo de la vista dinámica: tarjetas por hotel, detalle con opciones ────
 type HotelCard = {
@@ -84,6 +86,7 @@ export function VistaBooking({
   ventanaPorPaquete = {},
   infoPorHotel = {},
   planesInfo = {},
+  capPorHotel = {},
 }: {
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
@@ -92,6 +95,7 @@ export function VistaBooking({
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
   planesInfo?: PlanesInfo;
+  capPorHotel?: CapHotel;
 }) {
   // Solo módulos con hotel (bloqueo + porción). Servicios/programas viven en la tabla.
   const hoteles = useMemo<HotelCard[]>(() => {
@@ -169,7 +173,7 @@ export function VistaBooking({
       </div>
 
       {abierto && (
-        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} onClose={() => setAbierto(null)} />
+        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onClose={() => setAbierto(null)} />
       )}
     </div>
   );
@@ -178,10 +182,11 @@ export function VistaBooking({
 // ── Modal de detalle: elige opción (salida/paquete), categoría/régimen y
 //    habitaciones; calcula el precio y agrega al carrito ─────────────────────
 function HotelModal({
-  hotel, cuposPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, onClose,
+  hotel, cuposPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, onClose,
 }: {
   hotel: HotelCard; cuposPorBloqueo: Record<number, number>; puedeReservar: boolean;
-  ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>; planesInfo: PlanesInfo; onClose: () => void;
+  ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>; planesInfo: PlanesInfo;
+  cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }; onClose: () => void;
 }) {
   const { add } = useCart();
 
@@ -283,6 +288,7 @@ function HotelModal({
                   hotel={hotel}
                   ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
                   planesInfo={planesInfo}
+                  cap={cap}
                   onAgregar={(item) => { add(item); onClose(); }}
                 />
               ) : (
@@ -292,6 +298,7 @@ function HotelModal({
                   hotel={hotel}
                   puedeReservar={puedeReservar}
                   planesInfo={planesInfo}
+                  cap={cap}
                   onAgregar={(item) => { add(item); onClose(); }}
                 />
               )}
@@ -304,9 +311,10 @@ function HotelModal({
 }
 
 function Selector({
-  opcion, hotel, puedeReservar, planesInfo, onAgregar,
+  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar,
 }: {
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
+  cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
 }) {
   const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
@@ -362,7 +370,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
+      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
     </div>
   );
 }
@@ -370,9 +378,12 @@ function Selector({
 // Editor de habitaciones/niños + total + botón. Recibe el PVP por acomodación y
 // reporta la selección (no conoce fechas ni módulo). Reutilizado por bloqueo y porción.
 function EditorPax({
-  pvp, nota, onAgregar,
+  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, onAgregar,
 }: {
   pvp: Record<string, number>;
+  acomConfig?: AcomConfig[];
+  paxMin?: number | null;
+  paxMax?: number | null;
   nota?: string;
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, pax: number, precio: number) => void;
 }) {
@@ -381,17 +392,44 @@ function EditorPax({
   const [ninos2, setNinos2] = useState(0);
   const setHab = (a: AcomRoom, n: number) => setHabs((p) => ({ ...p, [a]: Math.max(0, n) }));
 
+  // Config de cada acomodación (la del hotel o el default si no está configurada).
+  const cfg = (a: AcomRoom): AcomConfig => acomConfig.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
+
+  // Adultos (por pax_tarifa), precio y CAPACIDADES según las habitaciones elegidas.
   let precio = 0;
-  let pax = 0;
+  let adultos = 0;
+  let capPax = 0;   // máx personas que admiten las habitaciones elegidas
+  let capChd = 0;   // máx niños
   for (const a of ACOM_ROOMS) {
     const rooms = habs[a] ?? 0;
-    if (rooms > 0 && pvp[a] != null) { const p = rooms * PAX_TARIFA_DEFAULT[a]; precio += p * pvp[a]; pax += p; }
+    if (rooms > 0 && pvp[a] != null) {
+      const c = cfg(a);
+      adultos += rooms * c.pax_tarifa;
+      precio += rooms * c.pax_tarifa * pvp[a];
+      capPax += rooms * c.pax_max;
+      capChd += rooms * c.chd_max;
+    }
   }
-  if (ninos > 0 && pvp["nino"] != null) { precio += ninos * pvp["nino"]; pax += ninos; }
-  if (ninos2 > 0 && pvp["nino2"] != null) { precio += ninos2 * pvp["nino2"]; pax += ninos2; }
+  if (ninos > 0 && pvp["nino"] != null) precio += ninos * pvp["nino"];
+  if (ninos2 > 0 && pvp["nino2"] != null) precio += ninos2 * pvp["nino2"];
+  const ninosTotal = ninos + ninos2;
+  const pax = adultos + ninosTotal;
+  const hayHab = adultos > 0;
+
+  // Topes efectivos (capacidad de habitaciones + límites del hotel).
+  const maxPax = paxMax != null ? Math.min(capPax, paxMax) : capPax;
+  const maxNinos = Math.max(0, Math.min(capChd, maxPax - adultos));
+
+  const errores: string[] = [];
+  if (hayHab) {
+    if (ninosTotal > capChd) errores.push(`Las habitaciones elegidas admiten máximo ${capChd} niño(s).`);
+    if (pax > maxPax) errores.push(`Las habitaciones elegidas admiten máximo ${maxPax} persona(s).`);
+    if (paxMin != null && pax < paxMin) errores.push(`Este hotel exige un mínimo de ${paxMin} persona(s).`);
+  }
+  const puede = precio > 0 && errores.length === 0;
 
   function agregar() {
-    if (precio <= 0) return;
+    if (!puede) return;
     const habitaciones: Record<string, number> = {};
     for (const a of ACOM_ROOMS) if ((habs[a] ?? 0) > 0) habitaciones[a] = habs[a];
     onAgregar(habitaciones, ninos, ninos2, pax, precio);
@@ -416,20 +454,31 @@ function EditorPax({
       </div>
 
       {(pvp["nino"] != null || pvp["nino2"] != null) && (
-        <div className="flex flex-wrap gap-3">
-          {pvp["nino"] != null && (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Niños 1 ({formatCOP(pvp["nino"])})</label>
-              <input type="number" min={0} value={ninos} onChange={(e) => setNinos(Math.max(0, Number(e.target.value)))} className={inputCls} />
-            </div>
-          )}
-          {pvp["nino2"] != null && (
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Niños 2 ({formatCOP(pvp["nino2"])})</label>
-              <input type="number" min={0} value={ninos2} onChange={(e) => setNinos2(Math.max(0, Number(e.target.value)))} className={inputCls} />
-            </div>
-          )}
+        <div>
+          <div className="flex flex-wrap gap-3">
+            {pvp["nino"] != null && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Niños 1 ({formatCOP(pvp["nino"])})</label>
+                <input type="number" min={0} max={Math.max(0, maxNinos - ninos2)} value={ninos} disabled={!hayHab}
+                  onChange={(e) => setNinos(Math.min(Math.max(0, Number(e.target.value)), Math.max(0, maxNinos - ninos2)))} className={inputCls} />
+              </div>
+            )}
+            {pvp["nino2"] != null && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Niños 2 ({formatCOP(pvp["nino2"])})</label>
+                <input type="number" min={0} max={Math.max(0, maxNinos - ninos)} value={ninos2} disabled={!hayHab}
+                  onChange={(e) => setNinos2(Math.min(Math.max(0, Number(e.target.value)), Math.max(0, maxNinos - ninos)))} className={inputCls} />
+              </div>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] text-gray-400">
+            {hayHab ? `Máximo ${maxNinos} niño(s) y ${maxPax} pax para las habitaciones elegidas.` : "Elige primero las habitaciones."}
+          </p>
         </div>
+      )}
+
+      {errores.length > 0 && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{errores.join(" ")}</p>
       )}
 
       <div className="flex items-center justify-between border-t border-gray-100 pt-3">
@@ -437,7 +486,7 @@ function EditorPax({
           <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
           <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(precio)}</div>
         </div>
-        <button type="button" onClick={agregar} disabled={precio <= 0}
+        <button type="button" onClick={agregar} disabled={!puede}
           className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
           style={{ backgroundColor: "var(--brand-primary)" }}>
           Agregar al carrito
@@ -451,9 +500,10 @@ function EditorPax({
 // Motor por fechas (porción/dinámico): el usuario elige las fechas reales y se
 // liquida la tarifa noche por noche (cotizarPorFechas, service-role, solo PVP).
 function SelectorPorFechas({
-  opcion, hotel, ventana, planesInfo, onAgregar,
+  opcion, hotel, ventana, planesInfo, cap, onAgregar,
 }: {
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
+  cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
 }) {
   // Por defecto: ida = inicio del rango; regreso = ida + 3 noches (ciclo base),
@@ -553,7 +603,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
-          <EditorPax pvp={pvp} onAgregar={agregarItem} />
+          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} onAgregar={agregarItem} />
         </>
       )}
     </div>

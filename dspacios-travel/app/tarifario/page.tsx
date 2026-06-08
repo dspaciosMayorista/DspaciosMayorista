@@ -4,6 +4,7 @@ import { TarifarioPublic, type FilaTarifario } from "./TarifarioPublic";
 import { CartDrawer } from "./CartDrawer";
 import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
+import type { AcomConfig } from "@/lib/acomodaciones";
 
 export const revalidate = 120; // revalida cada 2 min
 
@@ -81,9 +82,27 @@ export default async function TarifarioPublicoPage() {
 
   // Estrellas / clasificación / descripción por hotel (hoteles es lectura pública).
   const infoPorHotel: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }> = {};
+  // Capacidades por hotel (pax mín/máx + config de acomodaciones) para validar el
+  // carrito. pax_min/max viven en `hoteles` (público); la config de acomodaciones
+  // (`hotel_acomodaciones`) NO es pública → se lee con service-role.
+  const capPorHotel: Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }> = {};
   if (hotelIds.length) {
-    const { data: hs } = await sb.from("hoteles").select("id, estrellas, clasificacion, descripcion").in("id", hotelIds);
-    for (const h of hs ?? []) infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion };
+    const { data: hs } = await sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, pax_min, pax_max").in("id", hotelIds);
+    for (const h of hs ?? []) {
+      infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion };
+      capPorHotel[h.id] = { paxMin: h.pax_min, paxMax: h.pax_max, acom: [] };
+    }
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      const admin = createAdminClient();
+      const { data: acs } = await admin
+        .from("hotel_acomodaciones")
+        .select("hotel_id, acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
+        .in("hotel_id", hotelIds);
+      for (const a of acs ?? []) {
+        const slot = (capPorHotel[a.hotel_id] ??= { paxMin: null, paxMax: null, acom: [] });
+        slot.acom.push(a as unknown as AcomConfig);
+      }
+    }
   }
 
   // Régimen de alimentación: qué incluye cada plan (catálogo, lectura pública).
@@ -140,7 +159,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} />
         )}
       </main>
     </div>
