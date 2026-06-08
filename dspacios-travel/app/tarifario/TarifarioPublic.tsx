@@ -177,41 +177,40 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {} }: { filas: Fila
   );
 
   return (
-    <div className="flex flex-col gap-4 md:flex-row">
-      {/* Lista de salidas */}
-      <aside className="md:w-72 md:shrink-0">
+    <div className="space-y-4">
+      {/* Lista de salidas (horizontal) */}
+      <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Salidas</p>
-        <ul className="space-y-1">
+        <div className="flex gap-2 overflow-x-auto pb-1">
           {salidas.map(({ key, f }) => (
-            <li key={key}>
-              <button
-                type="button"
-                onClick={() => setSel(key)}
-                className="w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors"
-                style={
-                  sel === key
-                    ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
-                    : { borderColor: "#e5e7eb", backgroundColor: "white" }
-                }
-              >
-                <span className="block font-medium text-gray-800">{f.destino_nombre ?? "—"}</span>
-                <span className="block text-xs text-gray-500">
-                  {fmtFecha(f.fecha_ida)} → {fmtFecha(f.fecha_regreso)} · {f.noches}N
+            <button
+              key={key}
+              type="button"
+              onClick={() => setSel(key)}
+              className="shrink-0 rounded-lg border px-3 py-2 text-left text-sm transition-colors"
+              style={
+                sel === key
+                  ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
+                  : { borderColor: "#e5e7eb", backgroundColor: "white" }
+              }
+            >
+              <span className="block whitespace-nowrap font-medium text-gray-800">{f.destino_nombre ?? "—"}</span>
+              <span className="block whitespace-nowrap text-xs text-gray-500">
+                {fmtFecha(f.fecha_ida)} → {fmtFecha(f.fecha_regreso)} · {f.noches}N
+              </span>
+              <span className="block whitespace-nowrap text-[11px] text-gray-400">{f.bloqueo_label}</span>
+              {(() => { const c = cuposDe(f); return c !== undefined ? (
+                <span className="mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: "rgba(102,181,150,0.18)", color: "var(--brand-success)" }}>
+                  {c} cupo(s) disponible(s)
                 </span>
-                <span className="block text-[11px] text-gray-400">{f.bloqueo_label}</span>
-                {(() => { const c = cuposDe(f); return c !== undefined ? (
-                  <span className="mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ backgroundColor: "rgba(102,181,150,0.18)", color: "var(--brand-success)" }}>
-                    {c} cupo(s) disponible(s)
-                  </span>
-                ) : null; })()}
-              </button>
-            </li>
+              ) : null; })()}
+            </button>
           ))}
-        </ul>
-      </aside>
+        </div>
+      </div>
 
       {/* Tabla horizontal */}
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         {selFila && (
           <p className="mb-2 text-sm text-gray-600">
             <b style={{ color: "var(--brand-primary)" }}>{selFila.destino_nombre}</b> ·{" "}
@@ -239,30 +238,29 @@ function PorPaquete({ filas, puedeReservar }: { filas: FilaTarifario[]; puedeRes
   const rows = useMemo(() => pivotar(filas.filter((f) => `${f.paquete_nombre}` === sel)), [filas, sel]);
 
   return (
-    <div className="flex flex-col gap-4 md:flex-row">
-      <aside className="md:w-72 md:shrink-0">
+    <div className="space-y-4">
+      <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Paquetes</p>
-        <ul className="space-y-1">
+        <div className="flex gap-2 overflow-x-auto pb-1">
           {paquetes.map(({ key, f }) => (
-            <li key={key}>
-              <button
-                type="button"
-                onClick={() => setSel(key)}
-                className="w-full rounded-lg border px-3 py-2 text-left text-sm transition-colors"
-                style={
-                  sel === key
-                    ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
-                    : { borderColor: "#e5e7eb", backgroundColor: "white" }
-                }
-              >
-                <span className="block font-medium text-gray-800">{f.paquete_nombre}</span>
-                <span className="block text-xs text-gray-500">{f.destino_nombre} · {f.noches}N</span>
-              </button>
-            </li>
+            <button
+              key={key}
+              type="button"
+              onClick={() => setSel(key)}
+              className="shrink-0 rounded-lg border px-3 py-2 text-left text-sm transition-colors"
+              style={
+                sel === key
+                  ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
+                  : { borderColor: "#e5e7eb", backgroundColor: "white" }
+              }
+            >
+              <span className="block whitespace-nowrap font-medium text-gray-800">{f.paquete_nombre}</span>
+              <span className="block whitespace-nowrap text-xs text-gray-500">{f.destino_nombre} · {f.noches}N</span>
+            </button>
           ))}
-        </ul>
-      </aside>
-      <div className="min-w-0 flex-1">
+        </div>
+      </div>
+      <div className="min-w-0">
         <TablaHorizontal rows={rows} puedeReservar={puedeReservar} />
       </div>
     </div>
