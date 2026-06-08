@@ -7,6 +7,7 @@ import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, te
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
+import type { Json } from "@/types/database";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -181,26 +182,37 @@ export type ReservaInput = {
 
 export type ReservaResult = { ok: true; numero: string } | { ok: false; error: string };
 
-export async function reservarDesdeTarifario(input: ReservaInput): Promise<ReservaResult> {
-  const sb = await createClient();
+// ── Cálculo de la reserva (SIN efectos): precios, líneas, pax, impuesto ──────
+// Bloque de solo-lectura compartido por reservarDesdeTarifario (que luego inserta
+// contrato/sillas/CxP) y por crearCotizacion (que solo guarda el snapshot). Tener
+// una única fuente del precio evita que cotización y contrato diverjan.
+type ComputoReserva = {
+  meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
+  pvpPorAcom: Record<string, number>;
+  precioVenta: number;
+  paxConSilla: number;
+  totalPax: number;
+  numNinos: number;
+  numNinos2: number;
+  lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[];
+  serviciosItems: { nombre: string; precio: number }[];
+  impuestoTotal: number;
+};
 
-  if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
-
+async function computarReserva(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  input: ReservaInput
+): Promise<{ ok: true; data: ComputoReserva } | { ok: false; error: string }> {
   const esServicios = input.modulo === "servicios";
 
-  // 1) Precios desde el tarifario (fuente de verdad; el asesor no los cambia)
   const pvpPorAcom: Record<string, number> = {};
   let precioVenta = 0;
   let paxConSilla = 0;
-  // Reserva por habitaciones: una línea por tipo de habitación con cantidad de
-  // habitaciones, pax que cubren (rooms × pax_tarifa) y PVP por persona.
   const lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[] = [];
   const numNinos = Math.max(0, Math.trunc(Number(input.ninos) || 0));
   const numNinos2 = Math.max(0, Math.trunc(Number(input.ninos2) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
 
-  // Motor por fechas: porción/dinámico con fechas elegidas → re-liquidar en vivo
-  // (autoritativo, no se confía en el cliente). Bloqueo usa el tarifario fijo.
   const usarFechas =
     input.modulo !== "bloqueo" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -214,7 +226,6 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     for (const [acom, p] of Object.entries(combo.precios)) pvpPorAcom[acom] = p;
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
 
-    // Config de acomodaciones del hotel (defaults si no está configurada).
     const { data: acomCfgF } = await sb
       .from("hotel_acomodaciones")
       .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
@@ -262,7 +273,6 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     for (const f of filas) if (f.acomodacion) pvpPorAcom[f.acomodacion] = f.precio_pvp;
     meta = filas[0];
 
-    // Config de acomodaciones del hotel (defaults si no está configurada).
     const { data: acomCfg } = await sb
       .from("hotel_acomodaciones")
       .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
@@ -287,7 +297,6 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
 
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
-    // Validación pasajeros ↔ acomodación (punto 4): edades reales vs declaradas.
     const { data: hotelRow } = await sb
       .from("hoteles")
       .select("edad_infante_max, edad_nino_max, pax_min, pax_max")
@@ -324,7 +333,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     meta = { hotel_nombre: m?.paquete_nombre ?? "Servicios", destino_nombre: m?.destino_nombre ?? null, fecha_ida: null, fecha_regreso: null };
   }
 
-  // 2b) Servicios (en tipo servicios es el total; en hotel son add-ons).
+  // Servicios (en tipo servicios es el total; en hotel son add-ons).
   const totalPax = esServicios ? (Number(input.paxServicios) || 0) : paxConSilla + (Number(input.infantes) || 0);
   const serviciosItems: { nombre: string; precio: number }[] = [];
   if (input.servicios?.length) {
@@ -355,6 +364,35 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     return { ok: false, error: "Selecciona al menos un servicio y el número de pasajeros." };
   }
 
+  // BNC (Base No Comisionable) total = "Valor fijo del impuesto" × pax con tiquete.
+  let impuestoTotal = 0;
+  if (!esServicios) {
+    const { data: pqImp } = await sb
+      .from("armado_paquetes")
+      .select("impuesto_fijo")
+      .eq("id", input.paqueteId)
+      .maybeSingle();
+    impuestoTotal = (Number(pqImp?.impuesto_fijo) || 0) * paxConSilla;
+  }
+
+  return {
+    ok: true,
+    data: { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal },
+  };
+}
+
+export async function reservarDesdeTarifario(input: ReservaInput): Promise<ReservaResult> {
+  const sb = await createClient();
+
+  if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
+
+  const esServicios = input.modulo === "servicios";
+
+  // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
+  const comp = await computarReserva(sb, input);
+  if (!comp.ok) return { ok: false, error: comp.error };
+  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal } = comp.data;
+
   // 2c) Validar cupos del bloqueo ANTES de crear nada (no sobre-vender sillas).
   if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
@@ -381,18 +419,6 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
   // aplica la escala). La agencia/freelance se guarda aparte (canal B2B).
   const asesorNombre = input.asesorInterno;
-
-  // BNC (Base No Comisionable) total del contrato = "Valor fijo del impuesto"
-  // del paquete × pax con tiquete. La base comisionable luego es PVP − BNC.
-  let impuestoTotal = 0;
-  if (!esServicios) {
-    const { data: pqImp } = await sb
-      .from("armado_paquetes")
-      .select("impuesto_fijo")
-      .eq("id", input.paqueteId)
-      .maybeSingle();
-    impuestoTotal = (Number(pqImp?.impuesto_fijo) || 0) * paxConSilla;
-  }
 
   // 4) Venta (cabecera) — nace PENDIENTE
   const { error: ve } = await sb.from("ventas").insert({
@@ -759,6 +785,176 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
 
   revalidatePath("/dashboard/contratos");
   return { ok: true, numero };
+}
+
+// ── COTIZACIONES: presupuesto SIN número de contrato ───────────────────────
+// crearCotizacion reusa computarReserva (mismo precio que el contrato) y guarda
+// un snapshot listo para el PDF. NO toca inventario ni numera. Al convertir se
+// llama a reservarDesdeTarifario (que sí genera número, sillas y CxP).
+export type CotizacionResult = { ok: true; id: number } | { ok: false; error: string };
+
+export async function crearCotizacion(input: ReservaInput): Promise<CotizacionResult> {
+  const sb = await createClient();
+  if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
+    return { ok: false, error: "El nombre del cliente es obligatorio." };
+
+  const esServicios = input.modulo === "servicios";
+  const comp = await computarReserva(sb, input);
+  if (!comp.ok) return { ok: false, error: comp.error };
+  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems } = comp.data;
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const asesorNombre = input.asesorInterno;
+  const clienteNombre = `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim();
+  const planNombre = esServicios ? null : `${input.categoria} · ${input.regimen}`;
+
+  // Snapshot para el documento/PDF (objetos planos tipo contrato_*, sin proveedor).
+  const ventaSnap: Record<string, unknown> = {
+    numero_contrato: "",
+    cliente: clienteNombre,
+    cliente_documento: oNull(input.cliente.numeroDoc),
+    cliente_telefono: oNull(input.cliente.telefono),
+    cliente_direccion: null,
+    destino: meta.destino_nombre,
+    fecha_emision: hoy,
+    fecha_salida: meta.fecha_ida,
+    fecha_regreso: meta.fecha_regreso,
+    pax: totalPax || paxConSilla,
+    estado: "pendiente",
+    plan_nombre: planNombre,
+    asistencia_medica: false,
+    tours_traslados: null,
+    asesor_firma_nombre: oNull(asesorNombre),
+    asesor_firma_cargo: "Asesor/a",
+    asesor_firma_cc: null,
+    asesor_firma_tel: null,
+    moneda: "COP",
+  };
+
+  const pasajerosSnap: Record<string, unknown>[] = input.pasajeros.map((p, i) => ({
+    id: i + 1,
+    nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
+    tipo_id: oNull(p.tipoDoc) ?? "CC",
+    identificacion: oNull(p.numeroDoc),
+    fecha_nacimiento: oNull(p.fechaNacimiento),
+    es_infante: p.esInfante,
+  }));
+
+  const hotelesSnap: Record<string, unknown>[] = [];
+  if (!esServicios) {
+    const partes = lineasHab.map((l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`);
+    if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
+    if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
+    if ((Number(input.infantes) || 0) > 0) partes.push(`${Number(input.infantes)} Infante(s)`);
+    hotelesSnap.push({
+      id: 1,
+      nombre: meta.hotel_nombre ?? "",
+      categoria: input.categoria,
+      ciudad: meta.destino_nombre,
+      proveedor: null,
+      alimentacion: input.regimen,
+      acomodacion: input.categoria,
+      detalle_acomodacion: partes.join(", "),
+      fecha_ingreso: meta.fecha_ida,
+      fecha_salida: meta.fecha_regreso,
+      nota_regimen: null,
+    });
+  }
+
+  const vuelosSnap: Record<string, unknown>[] = [];
+  if (input.modulo === "bloqueo" && input.bloqueoId) {
+    const { data: bq } = await sb
+      .from("bloqueos_vuelo")
+      .select("aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg")
+      .eq("id", input.bloqueoId).maybeSingle();
+    if (bq) {
+      const r = parseRuta(bq.ruta);
+      vuelosSnap.push({
+        id: 1, aerolinea: bq.aerolinea, record: bq.record,
+        origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
+        destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+        vuelo_ida: bq.vuelo_ida, vuelo_regreso: bq.vuelo_regreso,
+        hora_salida_ida: bq.hora_salida_ida, hora_llegada_ida: bq.hora_llegada_ida,
+        hora_salida_reg: bq.hora_salida_reg, hora_llegada_reg: bq.hora_llegada_reg,
+        servicios: bq.ruta, fecha_salida: bq.fecha_ida, fecha_regreso: bq.fecha_regreso,
+      });
+    }
+  }
+
+  const itemsSnap: Record<string, unknown>[] = [];
+  lineasHab.forEach((l, i) => itemsSnap.push({
+    id: i + 1,
+    descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${input.categoria} / ${input.regimen}`,
+    adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0,
+  }));
+  if (numNinos > 0 && pvpPorAcom["nino"] != null)
+    itemsSnap.push({ id: 50, descripcion: `Niño 1 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"] });
+  if (numNinos2 > 0 && pvpPorAcom["nino2"] != null)
+    itemsSnap.push({ id: 51, descripcion: `Niño 2 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"] });
+  serviciosItems.forEach((s, i) => itemsSnap.push({ id: 100 + i, descripcion: `Servicio · ${s.nombre}`, adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0 }));
+
+  const detalle = { venta: ventaSnap, pasajeros: pasajerosSnap, hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
+
+  // Vigencia por defecto: hoy + 3 días.
+  const vig = new Date(); vig.setDate(vig.getDate() + 3);
+
+  const { data: { user } } = await sb.auth.getUser();
+
+  const { data: row, error } = await sb.from("cotizaciones").insert({
+    payload: input as unknown as Json,
+    detalle: detalle as unknown as Json,
+    cliente: clienteNombre,
+    cliente_documento: oNull(input.cliente.numeroDoc),
+    destino: meta.destino_nombre,
+    hotel: esServicios ? null : meta.hotel_nombre,
+    modulo: input.modulo,
+    plan_nombre: planNombre,
+    pax: totalPax || paxConSilla,
+    precio_venta: precioVenta,
+    moneda: "COP",
+    fecha_salida: meta.fecha_ida,
+    fecha_regreso: meta.fecha_regreso,
+    vigencia_hasta: vig.toISOString().slice(0, 10),
+    paquete_armado_id: input.paqueteId,
+    asesor: oNull(asesorNombre),
+    creado_por: user?.email ?? null,
+  }).select("id").single();
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/dashboard/cotizaciones");
+  return { ok: true, id: row.id };
+}
+
+// Convierte una cotización en CONTRATO: corre el motor de reserva normal (genera
+// numero_contrato + sillas + CxP) con el payload guardado, y enlaza la cotización.
+export async function convertirCotizacion(id: number): Promise<ReservaResult> {
+  const sb = await createClient();
+  const { data: cot, error } = await sb
+    .from("cotizaciones")
+    .select("estado, payload, numero_contrato")
+    .eq("id", id)
+    .maybeSingle();
+  if (error || !cot) return { ok: false, error: error?.message ?? "Cotización no encontrada." };
+  if (cot.estado === "convertida" && cot.numero_contrato) return { ok: true, numero: cot.numero_contrato };
+  if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
+
+  const res = await reservarDesdeTarifario(cot.payload as unknown as ReservaInput);
+  if (!res.ok) return res;
+
+  await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);
+  revalidatePath("/dashboard/cotizaciones");
+  revalidatePath(`/dashboard/cotizaciones/${id}`);
+  revalidatePath("/dashboard/contratos");
+  return { ok: true, numero: res.numero };
+}
+
+export async function descartarCotizacion(id: number): Promise<{ ok: boolean; error?: string }> {
+  const sb = await createClient();
+  const { error } = await sb.from("cotizaciones").update({ estado: "descartada" }).eq("id", id).eq("estado", "abierta");
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/cotizaciones");
+  revalidatePath(`/dashboard/cotizaciones/${id}`);
+  return { ok: true };
 }
 
 // ── Confirmar venta: sillas en_plazo -> confirmada ─────────────────────────

@@ -26,6 +26,11 @@ type Props = {
   vuelos: ContratoVuelo[];
   items: ContratoItem[];
   totalPagado: number;
+  // Modo COTIZACIÓN: rotula el documento como presupuesto (sin número de
+  // contrato) y muestra la vigencia. No constituye reserva en firme.
+  esCotizacion?: boolean;
+  codigo?: string;
+  vigenciaHasta?: string | null;
 };
 
 const PRIMARY = "#1D7C9A";
@@ -48,6 +53,9 @@ export function ContratoDocumento({
   vuelos,
   items,
   totalPagado,
+  esCotizacion = false,
+  codigo,
+  vigenciaHasta,
 }: Props) {
   const total = items.reduce(
     (s, it) => s + it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino,
@@ -73,9 +81,9 @@ export function ContratoDocumento({
           <div className="mt-1 text-xs opacity-80">Mayorista de Turismo</div>
         </div>
         <div className="text-center">
-          <div className="text-base font-semibold">{CONTRATO_TITULO}</div>
+          <div className="text-base font-semibold">{esCotizacion ? "COTIZACIÓN" : CONTRATO_TITULO}</div>
           <div className="mt-1 text-xs opacity-90">
-            Contrato #: {venta.numero_contrato}
+            {esCotizacion ? `Cotización #: ${codigo ?? "—"}` : `Contrato #: ${venta.numero_contrato}`}
           </div>
           <div className="text-xs opacity-90">
             Emisión: {formatFechaLarga(venta.fecha_emision)}
@@ -83,6 +91,11 @@ export function ContratoDocumento({
           <div className="text-xs opacity-90">
             Viaje: {formatFechaLarga(venta.fecha_salida)}
           </div>
+          {esCotizacion && vigenciaHasta && (
+            <div className="text-xs opacity-90">
+              Válida hasta: {formatFechaLarga(vigenciaHasta)}
+            </div>
+          )}
         </div>
         <div className="text-right text-xs opacity-90">
           <div>{EMPRESA.sitio}</div>
