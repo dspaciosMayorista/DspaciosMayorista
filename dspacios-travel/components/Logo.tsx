@@ -32,7 +32,7 @@ export function Logo({
       alt="D'spacios Travel — Mayorista de Turismo"
       width={width}
       height={height}
-      className={className}
+      className={["brand-logo", className].filter(Boolean).join(" ")}
       priority={priority}
     />
   );
