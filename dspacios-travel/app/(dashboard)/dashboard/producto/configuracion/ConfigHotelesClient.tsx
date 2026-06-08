@@ -53,21 +53,22 @@ function Regimenes({ regimenes }: { regimenes: Regimen[] }) {
   const [editId, setEditId] = useState<number | null>(null);
   const [codigo, setCodigo] = useState("");
   const [nombre, setNombre] = useState("");
+  const [desc, setDesc] = useState("");
   const [nota, setNota] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
-  function reset() { setEditId(null); setCodigo(""); setNombre(""); setNota(""); setErr(""); }
+  function reset() { setEditId(null); setCodigo(""); setNombre(""); setDesc(""); setNota(""); setErr(""); }
 
   function editar(r: Regimen) {
-    setEditId(r.id); setCodigo(r.codigo); setNombre(r.nombre); setNota(r.nota_especial ?? ""); setErr("");
+    setEditId(r.id); setCodigo(r.codigo); setNombre(r.nombre); setDesc(r.descripcion ?? ""); setNota(r.nota_especial ?? ""); setErr("");
   }
 
   function guardar() {
     if (!codigo.trim() || !nombre.trim()) return;
     setErr("");
     start(async () => {
-      const r = editId == null ? await crearRegimen(codigo, nombre, "", nota) : await actualizarRegimen(editId, codigo, nombre, nota);
+      const r = editId == null ? await crearRegimen(codigo, nombre, desc, nota) : await actualizarRegimen(editId, codigo, nombre, nota, desc);
       if (r.ok) reset(); else setErr(r.error);
     });
   }
@@ -84,6 +85,9 @@ function Regimenes({ regimenes }: { regimenes: Regimen[] }) {
           </Button>
           {editId != null && <Button variant="outline" onClick={reset} disabled={pending}>Cancelar</Button>}
         </div>
+        <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={2}
+          className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+          placeholder="Qué incluye (se muestra al cliente en el tarifario) — ej. Desayuno, almuerzo y cena tipo buffet · bebidas nacionales ilimitadas · snacks" />
         <textarea value={nota} onChange={(e) => setNota(e.target.value)} rows={2}
           className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
           placeholder="Nota especial (opcional) — instrucciones del plan; aparece en el contrato si se usa este régimen" />
