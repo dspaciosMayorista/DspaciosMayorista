@@ -27,6 +27,20 @@ export type SolicitudItem = {
 
 export type SolicitudCliente = { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
 
+// Portada actual por hotel (para resolver la foto de ítems del carrito que se
+// guardaron sin fotoUrl). hotel_fotos es lectura pública.
+export async function fotosPortada(hotelIds: number[]): Promise<Record<number, string>> {
+  const out: Record<number, string> = {};
+  if (!hotelIds.length) return out;
+  const sb = await createClient();
+  const { data } = await sb.from("hotel_fotos").select("hotel_id, url, es_portada, orden").in("hotel_id", hotelIds).order("orden");
+  for (const f of data ?? []) {
+    if (out[f.hotel_id] == null) out[f.hotel_id] = f.url;
+    if (f.es_portada) out[f.hotel_id] = f.url;
+  }
+  return out;
+}
+
 export type SolicitudResult =
   | { ok: true; cotizaciones: { id: number; codigo: string; hotel: string }[]; waUrl: string | null; mailtoUrl: string | null; mensaje: string }
   | { ok: false; error: string };

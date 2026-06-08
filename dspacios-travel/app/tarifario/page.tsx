@@ -150,7 +150,7 @@ export default async function TarifarioPublicoPage() {
                 </a>
               )}
             </div>
-            <CartDrawer checkoutHabilitado />
+            <CartDrawer checkoutHabilitado fotosPorHotel={fotosPorHotel} />
           </div>
         </div>
       </header>

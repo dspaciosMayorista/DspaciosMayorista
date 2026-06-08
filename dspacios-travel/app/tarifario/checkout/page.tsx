@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem } from "@/lib/cart/CartContext";
-import { crearSolicitudReserva, type SolicitudResult } from "./actions";
+import { crearSolicitudReserva, fotosPortada, type SolicitudResult } from "./actions";
 
 function resumenHab(it: CartItem): string {
   const partes = Object.entries(it.habitaciones).filter(([, n]) => n > 0).map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
@@ -20,6 +20,15 @@ export default function CheckoutPage() {
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [res, setRes] = useState<Extract<SolicitudResult, { ok: true }> | null>(null);
+  const [fotos, setFotos] = useState<Record<number, string>>({});
+
+  // Resuelve la portada actual por hotel (ítems del carrito sin fotoUrl).
+  useEffect(() => {
+    const ids = [...new Set(items.map((i) => i.hotelId))];
+    if (!ids.length) return;
+    fotosPortada(ids).then(setFotos).catch(() => {});
+  }, [items]);
+  const fotoDe = (it: CartItem) => fotos[it.hotelId] || it.fotoUrl;
 
   const inp = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm";
   const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -67,9 +76,9 @@ export default function CheckoutPage() {
                 {items.map((it) => (
                   <li key={it.id} className="flex gap-3 border-b border-gray-50 pb-3 last:border-0 last:pb-0">
                     <div className="relative flex h-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-lg text-gray-300" style={{ width: 72 }}>
-                      {it.fotoUrl
+                      {fotoDe(it)
                         // eslint-disable-next-line @next/next/no-img-element
-                        ? <img src={it.fotoUrl} alt={it.hotelNombre} className="absolute inset-0 h-full w-full object-cover" />
+                        ? <img src={fotoDe(it) as string} alt={it.hotelNombre} className="absolute inset-0 h-full w-full object-cover" />
                         : <span aria-hidden>🏨</span>}
                     </div>
                     <div className="min-w-0 flex-1">
