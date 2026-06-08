@@ -731,6 +731,9 @@ export type Database = {
           pax_max: number | null;
           contacto_telefono: string | null;
           email_comercial: string | null;
+          estrellas: number | null;
+          clasificacion: string | null;
+          descripcion: string | null;
         };
         Insert: {
           id?: number;
@@ -749,6 +752,9 @@ export type Database = {
           pax_max?: number | null;
           contacto_telefono?: string | null;
           email_comercial?: string | null;
+          estrellas?: number | null;
+          clasificacion?: string | null;
+          descripcion?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [

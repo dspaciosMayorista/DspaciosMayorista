@@ -106,6 +106,9 @@ export async function actualizarHotelConfig(
     rangosEdad: number[];
     contactoTelefono?: string;
     emailComercial?: string;
+    estrellas?: number | null;
+    clasificacion?: string;
+    descripcion?: string;
   }
 ): Promise<Result> {
   const sb = await createClient();
@@ -120,6 +123,9 @@ export async function actualizarHotelConfig(
       rangos_edad: input.rangosEdad.length ? input.rangosEdad : null,
       contacto_telefono: oNull(input.contactoTelefono ?? ""),
       email_comercial: oNull(input.emailComercial ?? ""),
+      estrellas: input.estrellas && input.estrellas > 0 ? input.estrellas : null,
+      clasificacion: oNull(input.clasificacion ?? ""),
+      descripcion: oNull(input.descripcion ?? ""),
     })
     .eq("id", hotelId);
   if (error) return { ok: false, error: error.message };

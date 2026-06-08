@@ -79,6 +79,13 @@ export default async function TarifarioPublicoPage() {
     }
   }
 
+  // Estrellas / clasificación / descripción por hotel (hoteles es lectura pública).
+  const infoPorHotel: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }> = {};
+  if (hotelIds.length) {
+    const { data: hs } = await sb.from("hoteles").select("id, estrellas, clasificacion, descripcion").in("id", hotelIds);
+    for (const h of hs ?? []) infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion };
+  }
+
   // Ventana de viaje por paquete (porción/dinámico) para el motor por fechas de la
   // vista Booking. armado_paquetes es interno → se lee con service-role.
   const ventanaPorPaquete: Record<number, { min: string | null; max: string | null }> = {};
@@ -126,7 +133,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} />
         )}
       </main>
     </div>
