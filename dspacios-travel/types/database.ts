@@ -1658,10 +1658,12 @@ export type Database = {
           asesor: string | null;
           creado_por: string | null;
           numero_contrato: string | null;
+          share_token: string;
         };
         Insert: {
           id?: number;
           codigo?: string;
+          share_token?: string;
           created_at?: string;
           estado?: string;
           payload: Json;

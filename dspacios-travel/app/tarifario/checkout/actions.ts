@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { crearCotizacion, type ReservaInput } from "@/app/(dashboard)/dashboard/reservar/actions";
@@ -42,7 +43,7 @@ export async function fotosPortada(hotelIds: number[]): Promise<Record<number, s
 }
 
 export type SolicitudResult =
-  | { ok: true; cotizaciones: { id: number; codigo: string; hotel: string }[]; waUrl: string | null; mailtoUrl: string | null; mensaje: string }
+  | { ok: true; cotizaciones: { id: number; codigo: string; hotel: string; url: string }[]; waUrl: string | null; mailtoUrl: string | null; mensaje: string }
   | { ok: false; error: string };
 
 function resumenHab(it: SolicitudItem): string {
@@ -56,7 +57,7 @@ function resumenHab(it: SolicitudItem): string {
 
 function construirMensaje(
   cliente: SolicitudCliente,
-  cotis: { codigo: string; hotel: string; precio: number; item: SolicitudItem }[],
+  cotis: { codigo: string; hotel: string; precio: number; item: SolicitudItem; url: string }[],
   extra: string | null,
 ): string {
   const L: string[] = [];
@@ -76,6 +77,7 @@ function construirMensaje(
     L.push(`   ${it.categoria} / ${it.regimen} · ${resumenHab(it)}`);
     L.push(`   ${it.pax} pax · Valor estimado: ${formatCOP(c.precio)}`);
     L.push(`   Cotización: ${c.codigo}`);
+    if (c.url) L.push(`   Documento: ${c.url}`);
     L.push("");
   });
   L.push(`Total estimado: ${formatCOP(total)}`);
@@ -91,7 +93,14 @@ export async function crearSolicitudReserva(input: { items: SolicitudItem[]; cli
   if (!input.cliente.telefono.trim() && !input.cliente.email.trim()) return { ok: false, error: "Ingresa al menos un teléfono o correo de contacto." };
 
   const sb = await createClient();
-  const cotis: { id: number; codigo: string; hotel: string; precio: number; item: SolicitudItem }[] = [];
+
+  // Origen absoluto para armar el enlace público del documento (/cot/<token>).
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  const origin = host ? `${proto}://${host}` : "";
+
+  const cotis: { id: number; codigo: string; hotel: string; precio: number; item: SolicitudItem; url: string }[] = [];
 
   for (const it of input.items) {
     const reserva: ReservaInput = {
@@ -116,8 +125,9 @@ export async function crearSolicitudReserva(input: { items: SolicitudItem[]; cli
     };
     const r = await crearCotizacion(reserva);
     if (!r.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${r.error}` };
-    const { data: row } = await sb.from("cotizaciones").select("codigo, precio_venta").eq("id", r.id).maybeSingle();
-    cotis.push({ id: r.id, codigo: row?.codigo ?? `#${r.id}`, hotel: it.hotelNombre, precio: row?.precio_venta ?? it.precio, item: it });
+    const { data: row } = await sb.from("cotizaciones").select("codigo, precio_venta, share_token").eq("id", r.id).maybeSingle();
+    const url = origin && row?.share_token ? `${origin}/cot/${row.share_token}` : "";
+    cotis.push({ id: r.id, codigo: row?.codigo ?? `#${r.id}`, hotel: it.hotelNombre, precio: row?.precio_venta ?? it.precio, item: it, url });
   }
 
   // Destinatarios configurados (service-role: el checkout es público/anónimo).
@@ -136,5 +146,5 @@ export async function crearSolicitudReserva(input: { items: SolicitudItem[]; cli
     ? `mailto:${correos}?subject=${encodeURIComponent("Solicitud de reserva — D'spacios Travel")}&body=${encodeURIComponent(mensaje)}`
     : null;
 
-  return { ok: true, cotizaciones: cotis.map((c) => ({ id: c.id, codigo: c.codigo, hotel: c.hotel })), waUrl, mailtoUrl, mensaje };
+  return { ok: true, cotizaciones: cotis.map((c) => ({ id: c.id, codigo: c.codigo, hotel: c.hotel, url: c.url })), waUrl, mailtoUrl, mensaje };
 }
