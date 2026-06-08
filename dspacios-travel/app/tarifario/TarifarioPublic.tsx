@@ -415,8 +415,8 @@ function TablaHorizontal({ rows, puedeReservar = false }: { rows: Pivotada[]; pu
                   </tr>
                 ))}
                 {ocultas > 0 && (
-                  <tr className="border-t border-gray-50">
-                    <td colSpan={3 + COLS.length} className="px-3 py-1.5">
+                  <tr>
+                    <td colSpan={3 + COLS.length} className="px-3 pb-2 pt-0.5">
                       <button
                         type="button"
                         onClick={() => toggle(hotel)}
