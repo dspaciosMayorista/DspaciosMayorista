@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
@@ -57,7 +56,8 @@ export function CartDrawer({ checkoutHabilitado = false }: { checkoutHabilitado?
                     <li key={it.id} className="flex gap-3 rounded-xl border border-gray-200 p-3">
                       <div className="relative flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-xl text-gray-300">
                         {it.fotoUrl ? (
-                          <Image src={it.fotoUrl} alt={it.hotelNombre} fill sizes="80px" className="object-cover" unoptimized />
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={it.fotoUrl} alt={it.hotelNombre} className="absolute inset-0 h-full w-full object-cover" />
                         ) : (
                           <span aria-hidden>🏨</span>
                         )}

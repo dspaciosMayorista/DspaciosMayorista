@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem } from "@/lib/cart/CartContext";
@@ -68,7 +67,10 @@ export default function CheckoutPage() {
                 {items.map((it) => (
                   <li key={it.id} className="flex gap-3 border-b border-gray-50 pb-3 last:border-0 last:pb-0">
                     <div className="relative flex h-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-lg text-gray-300" style={{ width: 72 }}>
-                      {it.fotoUrl ? <Image src={it.fotoUrl} alt={it.hotelNombre} fill sizes="72px" className="object-cover" unoptimized /> : <span aria-hidden>🏨</span>}
+                      {it.fotoUrl
+                        // eslint-disable-next-line @next/next/no-img-element
+                        ? <img src={it.fotoUrl} alt={it.hotelNombre} className="absolute inset-0 h-full w-full object-cover" />
+                        : <span aria-hidden>🏨</span>}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-medium text-gray-800">{it.hotelNombre}</div>
