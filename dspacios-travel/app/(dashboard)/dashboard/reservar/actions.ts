@@ -852,6 +852,12 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
     if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
     if ((Number(input.infantes) || 0) > 0) partes.push(`${Number(input.infantes)} Infante(s)`);
+    // Foto de portada del hotel (para mostrarla junto al nombre en el documento).
+    let fotoUrl: string | null = null;
+    if (input.hotelId) {
+      const { data: fotos } = await sb.from("hotel_fotos").select("url, es_portada, orden").eq("hotel_id", input.hotelId).order("orden");
+      for (const f of fotos ?? []) { if (fotoUrl == null) fotoUrl = f.url; if (f.es_portada) fotoUrl = f.url; }
+    }
     hotelesSnap.push({
       id: 1,
       nombre: meta.hotel_nombre ?? "",
@@ -864,6 +870,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
       fecha_ingreso: meta.fecha_ida,
       fecha_salida: meta.fecha_regreso,
       nota_regimen: null,
+      foto_url: fotoUrl,
     });
   }
 
