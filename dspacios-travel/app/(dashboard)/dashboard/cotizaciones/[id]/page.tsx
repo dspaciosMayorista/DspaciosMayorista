@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { CotizacionAcciones } from "./CotizacionAcciones";
+import { VigenciaCotizacion } from "./VigenciaCotizacion";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +59,7 @@ export default async function CotizacionDetallePage({
           <div className="text-xl font-bold">{formatCOP(c.precio_venta ?? 0)}</div>
         </div>
         <Dato label="Pasajeros" value={String(c.pax ?? "—")} />
-        <Dato label="Válida hasta" value={formatFechaLarga(c.vigencia_hasta)} />
+        <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} editable={c.estado === "abierta"} />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">

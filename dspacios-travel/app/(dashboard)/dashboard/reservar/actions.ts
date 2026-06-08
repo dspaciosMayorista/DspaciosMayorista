@@ -793,7 +793,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
 // llama a reservarDesdeTarifario (que sí genera número, sillas y CxP).
 export type CotizacionResult = { ok: true; id: number } | { ok: false; error: string };
 
-export async function crearCotizacion(input: ReservaInput): Promise<CotizacionResult> {
+export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHasta?: string }): Promise<CotizacionResult> {
   const sb = await createClient();
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
@@ -895,8 +895,9 @@ export async function crearCotizacion(input: ReservaInput): Promise<CotizacionRe
 
   const detalle = { venta: ventaSnap, pasajeros: pasajerosSnap, hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
 
-  // Vigencia por defecto: hoy + 3 días.
-  const vig = new Date(); vig.setDate(vig.getDate() + 3);
+  // Vigencia: la que indique el asesor o, por defecto, hoy + 3 días.
+  let vigencia = opts?.vigenciaHasta && /^\d{4}-\d{2}-\d{2}$/.test(opts.vigenciaHasta) ? opts.vigenciaHasta : null;
+  if (!vigencia) { const vig = new Date(); vig.setDate(vig.getDate() + 3); vigencia = vig.toISOString().slice(0, 10); }
 
   const { data: { user } } = await sb.auth.getUser();
 
@@ -914,7 +915,7 @@ export async function crearCotizacion(input: ReservaInput): Promise<CotizacionRe
     moneda: "COP",
     fecha_salida: meta.fecha_ida,
     fecha_regreso: meta.fecha_regreso,
-    vigencia_hasta: vig.toISOString().slice(0, 10),
+    vigencia_hasta: vigencia,
     paquete_armado_id: input.paqueteId,
     asesor: oNull(asesorNombre),
     creado_por: user?.email ?? null,
@@ -946,6 +947,15 @@ export async function convertirCotizacion(id: number): Promise<ReservaResult> {
   revalidatePath(`/dashboard/cotizaciones/${id}`);
   revalidatePath("/dashboard/contratos");
   return { ok: true, numero: res.numero };
+}
+
+export async function actualizarVigenciaCotizacion(id: number, vigenciaHasta: string): Promise<{ ok: boolean; error?: string }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(vigenciaHasta)) return { ok: false, error: "Fecha inválida." };
+  const sb = await createClient();
+  const { error } = await sb.from("cotizaciones").update({ vigencia_hasta: vigenciaHasta }).eq("id", id).eq("estado", "abierta");
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/cotizaciones/${id}`);
+  return { ok: true };
 }
 
 export async function descartarCotizacion(id: number): Promise<{ ok: boolean; error?: string }> {
