@@ -147,6 +147,10 @@ export function ReservaForm({
   const [freelanceNombre, setFreelanceNombre] = useState("");
   const [aliadoId, setAliadoId] = useState<number | "">("");
   const [plazo, setPlazo] = useState("");
+  // Vigencia de la cotización: por defecto hoy + 3 días (editable).
+  const [vigencia, setVigencia] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 3); return d.toISOString().slice(0, 10);
+  });
 
   // Pasajeros: la cantidad de filas se deriva del total; los datos se guardan
   // en `pax` (se extiende según se editen).
@@ -231,7 +235,7 @@ export function ReservaForm({
         cliente: cli, tipoAsesor, asesorInterno, agenciaNombre, agenciaAsesor, freelanceNombre,
         aliadoId: aliadoId === "" ? null : Number(aliadoId), plazo, pasajeros,
         servicios: [...servSel],
-      });
+      }, { vigenciaHasta: vigencia || undefined });
       if (r.ok) router.push(`/dashboard/cotizaciones/${r.id}`);
       else setErr(r.error);
     });
@@ -483,7 +487,12 @@ export function ReservaForm({
         </ul>
       )}
       {err && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <label className={lbl}>Cotización válida hasta</label>
+          <Input type="date" value={vigencia} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setVigencia(e.target.value)} className="w-44" />
+          <p className="mt-1 text-xs text-gray-400">Por defecto, 3 días. Editable.</p>
+        </div>
         <Button onClick={guardar} disabled={pending || bloquear} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Generando…" : "Generar cotización"}
         </Button>
