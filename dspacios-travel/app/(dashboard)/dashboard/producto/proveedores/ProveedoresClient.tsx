@@ -43,6 +43,7 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
   const [tipoCuenta, setTipoCuenta] = useState("");
   const [numeroCuenta, setNumeroCuenta] = useState("");
   const [politica, setPolitica] = useState("");
+  const [origenPol, setOrigenPol] = useState<number | "">("");
   const [ret, setRet] = useState(false);
   const [pctRet, setPctRet] = useState("");
   const [pending, start] = useTransition();
@@ -61,8 +62,22 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
   function reset() {
     setEditId(null); setTipo("hotelero"); setNombre(""); setRazon(""); setNit("");
     setCiudad(""); setContacto(""); setBanco(""); setTipoCuenta(""); setNumeroCuenta("");
-    setPolitica(""); setRet(false); setPctRet(""); setErr("");
+    setPolitica(""); setOrigenPol(""); setRet(false); setPctRet(""); setErr("");
   }
+
+  // Copia la política de reservas de otro proveedor a este formulario (muchos
+  // manejan las mismas). Rellena el textarea para revisar antes de guardar.
+  function traerPolitica() {
+    if (origenPol === "") return;
+    const o = proveedores.find((p) => p.id === origenPol);
+    if (!o) return;
+    if (politica.trim() && !confirm("¿Reemplazar la política actual con la del proveedor elegido?")) return;
+    setPolitica(o.politica_reservas ?? "");
+    setOrigenPol("");
+  }
+
+  // Proveedores (distintos al que se edita) que tienen política para copiar.
+  const conPolitica = proveedores.filter((p) => p.id !== editId && (p.politica_reservas ?? "").trim() !== "");
 
   function editar(p: Proveedor) {
     setEditId(p.id);
@@ -125,6 +140,17 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
             <textarea value={politica} onChange={(e) => setPolitica(e.target.value)} rows={2}
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
               placeholder="Ej. Reserva con 50% de anticipo · cancelación sin costo hasta 15 días antes · no reembolsable en temporada alta…" />
+            {conPolitica.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-gray-500">Traer política de otro proveedor:</span>
+                <select value={origenPol} onChange={(e) => setOrigenPol(e.target.value === "" ? "" : Number(e.target.value))}
+                  className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
+                  <option value="">— Elegir proveedor —</option>
+                  {conPolitica.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                </select>
+                <Button type="button" variant="outline" onClick={traerPolitica} disabled={origenPol === ""}>Traer</Button>
+              </div>
+            )}
           </div>
           <div className="flex items-end gap-2">
             <label className="flex items-center gap-2 text-sm text-gray-600">
