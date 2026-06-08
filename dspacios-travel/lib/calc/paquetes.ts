@@ -110,6 +110,15 @@ export function redondear(n: number): number {
   return Math.round(n);
 }
 
+/**
+ * Redondea un precio de VENTA hacia ARRIBA al siguiente múltiplo de mil (COP).
+ * Ej.: 1.625.200 → 1.626.000 · 1.625.001 → 1.626.000 · 1.625.000 → 1.625.000.
+ */
+export function redondearMilArriba(n: number): number {
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.ceil(n / 1000) * 1000;
+}
+
 /** Noches entre dos fechas ISO (yyyy-mm-dd). */
 export function noches(fechaIda: string, fechaRegreso: string): number {
   const a = new Date(`${fechaIda}T00:00:00`).getTime();
@@ -195,6 +204,35 @@ export function liquidarHotelNoches(args: {
   return total;
 }
 
+/**
+ * Costo del hotel para el TARIFARIO ("desde"): la opción más económica.
+ * Recorre noche por noche la ventana de viaje [desde, hasta] (resolviendo
+ * prioridad, vigencia de compra y promos por día) y toma el menor neto/noche;
+ * lo multiplica por `numNoches`. Así el tarifario publica la tarifa más baja
+ * disponible (baja/promo) sin atarse a un mes; al reservar se re-liquida por la
+ * fecha real. Devuelve `null` si ninguna noche de la ventana tiene tarifa.
+ */
+export function liquidarHotelMasBarato(args: {
+  desde: string;
+  hasta: string;
+  numNoches: number;
+  temporadas: TemporadaRango[];
+  netoPorTemporada: Record<string, number | null | undefined>;
+  hoy?: string;
+}): number | null {
+  if (args.numNoches <= 0) return null;
+  const lo = new Date(`${args.desde}T00:00:00`).getTime();
+  const hi = new Date(`${args.hasta}T00:00:00`).getTime();
+  if (Number.isNaN(lo) || Number.isNaN(hi) || hi < lo) return null;
+  const hoy = args.hoy ?? hoyISO();
+  let min: number | null = null;
+  for (let t0 = lo; t0 <= hi; t0 += MS_DIA) {
+    const n = netoNoche(t0, args.temporadas, args.netoPorTemporada, hoy);
+    if (n != null && (min == null || n < min)) min = n;
+  }
+  return min == null ? null : min * args.numNoches;
+}
+
 /** Marca un costo con el margen del paquete: costo / (1 - %mk). */
 export function marcar(costo: number, pctMk: number): number {
   if (pctMk >= 1) return 0; // margen inválido (no se puede dividir por ≤ 0)
@@ -233,9 +271,10 @@ export function componerTarifa(args: {
   aporteVuelo: number;
   impuesto: number;
 }): TarifaPaquete {
-  const pvp = args.aporteHotel + args.aporteServicios + args.aporteVuelo;
+  // El PVP (precio de venta) se redondea hacia ARRIBA al siguiente múltiplo de mil.
+  const pvp = redondearMilArriba(args.aporteHotel + args.aporteServicios + args.aporteVuelo);
   return {
-    pvp: redondear(pvp),
+    pvp,
     impuesto: redondear(args.impuesto),
     baseComisionable: redondear(pvp - args.impuesto),
   };
