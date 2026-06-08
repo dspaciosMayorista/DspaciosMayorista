@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { TarifarioPublic, type FilaTarifario } from "./TarifarioPublic";
+import { CartDrawer } from "./CartDrawer";
 import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 
@@ -78,6 +79,18 @@ export default async function TarifarioPublicoPage() {
     }
   }
 
+  // Ventana de viaje por paquete (porción/dinámico) para el motor por fechas de la
+  // vista Booking. armado_paquetes es interno → se lee con service-role.
+  const ventanaPorPaquete: Record<number, { min: string | null; max: string | null }> = {};
+  const paqIdsPorcion = [...new Set(
+    filasVisibles.filter((f) => f.modulo === "porcion_terrestre" && f.paquete_id != null).map((f) => f.paquete_id as number)
+  )];
+  if (paqIdsPorcion.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const admin = createAdminClient();
+    const { data: pqs } = await admin.from("armado_paquetes").select("id, fecha_viaje_inicio, fecha_viaje_fin").in("id", paqIdsPorcion);
+    for (const p of pqs ?? []) ventanaPorPaquete[p.id as number] = { min: p.fecha_viaje_inicio as string | null, max: p.fecha_viaje_fin as string | null };
+  }
+
   // Programas publicados (fuente propia, en su moneda).
   const programas = await getProgramasResumen(sb, true);
 
@@ -89,19 +102,22 @@ export default async function TarifarioPublicoPage() {
             <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
             <p className="mt-2 text-sm opacity-90">Tarifario 2026</p>
           </div>
-          <div className="flex items-center gap-3">
-            {esAgencia && (
-              <span className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
-            )}
-            {user ? (
-              <a href="/dashboard" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
-                Ir al panel →
-              </a>
-            ) : (
-              <a href="/login" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
-                Ingresar
-              </a>
-            )}
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-3">
+              {esAgencia && (
+                <span className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium">Modo agencia</span>
+              )}
+              {user ? (
+                <a href="/dashboard" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                  Ir al panel →
+                </a>
+              ) : (
+                <a href="/login" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                  Ingresar
+                </a>
+              )}
+            </div>
+            <CartDrawer checkoutHabilitado />
           </div>
         </div>
       </header>
@@ -110,7 +126,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} />
         )}
       </main>
     </div>

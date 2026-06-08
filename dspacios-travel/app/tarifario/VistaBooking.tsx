@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Image from "next/image";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart } from "@/lib/cart/CartContext";
+import { cotizarPorFechas, type ComboCotizado } from "@/app/(dashboard)/dashboard/reservar/actions";
 import type { FilaTarifario } from "./TarifarioPublic";
 
 // ── Modelo de la vista dinámica: tarjetas por hotel, detalle con opciones ────
@@ -36,6 +37,12 @@ function fmtFecha(s: string | null): string {
   return `${d}/${m}/${y.slice(2)}`;
 }
 
+function calcNoches(ida: string, regreso: string): number {
+  const a = new Date(`${ida}T00:00:00`).getTime();
+  const b = new Date(`${regreso}T00:00:00`).getTime();
+  return Math.round((b - a) / 86_400_000);
+}
+
 function minRoomPvp(filas: FilaTarifario[]): number | null {
   const precios = filas
     .filter((f) => f.acomodacion && f.acomodacion !== "nino" && f.acomodacion !== "nino2" && f.precio_pvp > 0)
@@ -48,11 +55,13 @@ export function VistaBooking({
   fotosPorHotel = {},
   cuposPorBloqueo = {},
   puedeReservar = false,
+  ventanaPorPaquete = {},
 }: {
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
   puedeReservar?: boolean;
+  ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
 }) {
   // Solo módulos con hotel (bloqueo + porción). Servicios/programas viven en la tabla.
   const hoteles = useMemo<HotelCard[]>(() => {
@@ -118,7 +127,7 @@ export function VistaBooking({
       </div>
 
       {abierto && (
-        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} onClose={() => setAbierto(null)} />
+        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} onClose={() => setAbierto(null)} />
       )}
     </div>
   );
@@ -127,9 +136,10 @@ export function VistaBooking({
 // ── Modal de detalle: elige opción (salida/paquete), categoría/régimen y
 //    habitaciones; calcula el precio y agrega al carrito ─────────────────────
 function HotelModal({
-  hotel, cuposPorBloqueo, puedeReservar, onClose,
+  hotel, cuposPorBloqueo, puedeReservar, ventanaPorPaquete, onClose,
 }: {
-  hotel: HotelCard; cuposPorBloqueo: Record<number, number>; puedeReservar: boolean; onClose: () => void;
+  hotel: HotelCard; cuposPorBloqueo: Record<number, number>; puedeReservar: boolean;
+  ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>; onClose: () => void;
 }) {
   const { add } = useCart();
 
@@ -218,13 +228,23 @@ function HotelModal({
                 </div>
               )}
 
-              <Selector
-                key={opcion.key}
-                opcion={opcion}
-                hotel={hotel}
-                puedeReservar={puedeReservar}
-                onAgregar={(item) => { add(item); onClose(); }}
-              />
+              {opcion.modulo === "porcion_terrestre" ? (
+                <SelectorPorFechas
+                  key={opcion.key}
+                  opcion={opcion}
+                  hotel={hotel}
+                  ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
+                  onAgregar={(item) => { add(item); onClose(); }}
+                />
+              ) : (
+                <Selector
+                  key={opcion.key}
+                  opcion={opcion}
+                  hotel={hotel}
+                  puedeReservar={puedeReservar}
+                  onAgregar={(item) => { add(item); onClose(); }}
+                />
+              )}
             </>
           )}
         </div>
@@ -259,52 +279,16 @@ function Selector({
     return m;
   }, [opcion, catEff, regEff]);
 
-  const [habs, setHabs] = useState<Record<string, number>>({});
-  const [ninos, setNinos] = useState(0);
-  const [ninos2, setNinos2] = useState(0);
-
-  const setHab = (a: AcomRoom, n: number) => setHabs((p) => ({ ...p, [a]: Math.max(0, n) }));
-
-  let precio = 0;
-  let pax = 0;
-  for (const a of ACOM_ROOMS) {
-    const rooms = habs[a] ?? 0;
-    if (rooms > 0 && pvp[a] != null) {
-      const p = rooms * PAX_TARIFA_DEFAULT[a];
-      precio += p * pvp[a];
-      pax += p;
-    }
-  }
-  if (ninos > 0 && pvp["nino"] != null) { precio += ninos * pvp["nino"]; pax += ninos; }
-  if (ninos2 > 0 && pvp["nino2"] != null) { precio += ninos2 * pvp["nino2"]; pax += ninos2; }
-
-  function agregar() {
-    if (precio <= 0) return;
-    const habitaciones: Record<string, number> = {};
-    for (const a of ACOM_ROOMS) if ((habs[a] ?? 0) > 0) habitaciones[a] = habs[a];
-    onAgregar({
-      modulo: opcion.modulo,
-      paqueteId: opcion.paqueteId,
-      hotelId: hotel.hotelId,
-      bloqueoId: opcion.bloqueoId,
-      hotelNombre: hotel.hotelNombre,
-      destino: hotel.destino,
-      fotoUrl: hotel.foto,
-      categoria: catEff,
-      regimen: regEff,
-      fechaIda: opcion.fechaIda,
-      fechaRegreso: opcion.fechaRegreso,
-      noches: opcion.noches,
-      habitaciones,
-      ninos,
-      ninos2,
-      pax,
-      precio,
-    });
-  }
-
-  const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
+
+  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, pax: number, precio: number) =>
+    onAgregar({
+      modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: opcion.bloqueoId,
+      hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
+      categoria: catEff, regimen: regEff,
+      fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso, noches: opcion.noches,
+      habitaciones, ninos, ninos2, pax, precio,
+    });
 
   return (
     <div className="space-y-4 rounded-xl border border-gray-200 p-4">
@@ -323,6 +307,45 @@ function Selector({
         </div>
       </div>
 
+      <EditorPax pvp={pvp} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
+    </div>
+  );
+}
+
+// Editor de habitaciones/niños + total + botón. Recibe el PVP por acomodación y
+// reporta la selección (no conoce fechas ni módulo). Reutilizado por bloqueo y porción.
+function EditorPax({
+  pvp, nota, onAgregar,
+}: {
+  pvp: Record<string, number>;
+  nota?: string;
+  onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, pax: number, precio: number) => void;
+}) {
+  const [habs, setHabs] = useState<Record<string, number>>({});
+  const [ninos, setNinos] = useState(0);
+  const [ninos2, setNinos2] = useState(0);
+  const setHab = (a: AcomRoom, n: number) => setHabs((p) => ({ ...p, [a]: Math.max(0, n) }));
+
+  let precio = 0;
+  let pax = 0;
+  for (const a of ACOM_ROOMS) {
+    const rooms = habs[a] ?? 0;
+    if (rooms > 0 && pvp[a] != null) { const p = rooms * PAX_TARIFA_DEFAULT[a]; precio += p * pvp[a]; pax += p; }
+  }
+  if (ninos > 0 && pvp["nino"] != null) { precio += ninos * pvp["nino"]; pax += ninos; }
+  if (ninos2 > 0 && pvp["nino2"] != null) { precio += ninos2 * pvp["nino2"]; pax += ninos2; }
+
+  function agregar() {
+    if (precio <= 0) return;
+    const habitaciones: Record<string, number> = {};
+    for (const a of ACOM_ROOMS) if ((habs[a] ?? 0) > 0) habitaciones[a] = habs[a];
+    onAgregar(habitaciones, ninos, ninos2, pax, precio);
+  }
+
+  const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
+
+  return (
+    <>
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Habitaciones</p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -330,11 +353,8 @@ function Selector({
             <div key={a} className={`rounded-lg border p-2 ${pvp[a] == null ? "opacity-40" : ""}`}>
               <div className="text-xs font-medium text-gray-700">{ACOM_ROOM_LABEL[a]}</div>
               <div className="text-[11px] text-gray-400">{pvp[a] != null ? `${formatCOP(pvp[a])}/pers` : "No aplica"}</div>
-              <input
-                type="number" min={0} value={habs[a] ?? 0} disabled={pvp[a] == null}
-                onChange={(e) => setHab(a, Number(e.target.value))}
-                className={`${inputCls} mt-1`}
-              />
+              <input type="number" min={0} value={habs[a] ?? 0} disabled={pvp[a] == null}
+                onChange={(e) => setHab(a, Number(e.target.value))} className={`${inputCls} mt-1`} />
             </div>
           ))}
         </div>
@@ -362,20 +382,107 @@ function Selector({
           <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
           <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(precio)}</div>
         </div>
-        <button
-          type="button"
-          onClick={agregar}
-          disabled={precio <= 0}
+        <button type="button" onClick={agregar} disabled={precio <= 0}
           className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
-          style={{ backgroundColor: "var(--brand-primary)" }}
-        >
+          style={{ backgroundColor: "var(--brand-primary)" }}>
           Agregar al carrito
         </button>
       </div>
-      {!puedeReservar && (
-        <p className="text-[11px] text-gray-400">
-          El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización.
-        </p>
+      {nota && <p className="text-[11px] text-gray-400">{nota}</p>}
+    </>
+  );
+}
+
+// Motor por fechas (porción/dinámico): el usuario elige las fechas reales y se
+// liquida la tarifa noche por noche (cotizarPorFechas, service-role, solo PVP).
+function SelectorPorFechas({
+  opcion, hotel, ventana, onAgregar,
+}: {
+  opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null };
+  onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
+}) {
+  const [fIda, setFIda] = useState(opcion.fechaIda ?? "");
+  const [fReg, setFReg] = useState(opcion.fechaRegreso ?? "");
+  const [combos, setCombos] = useState<ComboCotizado[] | null>(null);
+  const [nochesCot, setNochesCot] = useState<number | null>(null);
+  const [err, setErr] = useState("");
+  const [pending, start] = useTransition();
+  const [cat, setCat] = useState("");
+  const [reg, setReg] = useState("");
+
+  function cotizar() {
+    setErr("");
+    if (!fIda || !fReg) { setErr("Indica fecha de ida y de regreso."); return; }
+    start(async () => {
+      const r = await cotizarPorFechas({ paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, fechaIda: fIda, fechaRegreso: fReg });
+      if (r.ok) {
+        setCombos(r.combos); setNochesCot(r.noches);
+        setCat(r.combos[0]?.categoria ?? ""); setReg(r.combos[0]?.regimen ?? "");
+      } else { setCombos(null); setErr(r.error); }
+    });
+  }
+
+  const cats = combos ? [...new Set(combos.map((c) => c.categoria))] : [];
+  const catEff = cats.includes(cat) ? cat : (cats[0] ?? "");
+  const regs = combos ? [...new Set(combos.filter((c) => c.categoria === catEff).map((c) => c.regimen))] : [];
+  const regEff = regs.includes(reg) ? reg : (regs[0] ?? "");
+  const pvp = combos?.find((c) => c.categoria === catEff && c.regimen === regEff)?.precios ?? {};
+
+  const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
+  const dateCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
+
+  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, pax: number, precio: number) =>
+    onAgregar({
+      modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: null,
+      hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
+      categoria: catEff, regimen: regEff,
+      fechaIda: fIda, fechaRegreso: fReg, noches: nochesCot ?? calcNoches(fIda, fReg),
+      habitaciones, ninos, ninos2, pax, precio,
+    });
+
+  return (
+    <div className="space-y-4 rounded-xl border border-gray-200 p-4">
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Elige tus fechas</p>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Ida</label>
+            <input type="date" value={fIda} min={ventana.min ?? undefined} max={ventana.max ?? undefined} onChange={(e) => { setFIda(e.target.value); setCombos(null); }} className={dateCls} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Regreso</label>
+            <input type="date" value={fReg} min={fIda || (ventana.min ?? undefined)} max={ventana.max ?? undefined} onChange={(e) => { setFReg(e.target.value); setCombos(null); }} className={dateCls} />
+          </div>
+          <button type="button" onClick={cotizar} disabled={pending || !fIda || !fReg}
+            className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-accent)" }}>
+            {pending ? "Cotizando…" : "Cotizar"}
+          </button>
+        </div>
+        {(ventana.min || ventana.max) && (
+          <p className="mt-1 text-[11px] text-gray-400">Rango del paquete: {ventana.min ?? "—"} → {ventana.max ?? "—"}</p>
+        )}
+        {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+      </div>
+
+      {combos && combos.length > 0 && (
+        <>
+          <div className="flex flex-wrap gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Categoría</label>
+              <select value={catEff} onChange={(e) => setCat(e.target.value)} className={selCls}>
+                {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Alimentación</label>
+              <select value={regEff} onChange={(e) => setReg(e.target.value)} className={selCls}>
+                {regs.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
+          </div>
+          <EditorPax pvp={pvp} onAgregar={agregarItem} />
+        </>
       )}
     </div>
   );
