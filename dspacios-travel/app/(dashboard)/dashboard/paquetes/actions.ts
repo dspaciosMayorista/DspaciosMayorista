@@ -6,6 +6,7 @@ import type { Database } from "@/types/database";
 import {
   noches as calcNoches,
   liquidarHotelNoches,
+  liquidarHotelMasBarato,
   marcar,
   aporteVuelo,
   componerTarifa,
@@ -357,7 +358,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     modulo: Database["public"]["Enums"]["tarifario_modulo"],
     bloqueoId: number | null,
     bloqueoLabel: string | null,
-    fechaRegreso: string | null
+    fechaRegreso: string | null,
+    // Tarifario "desde": toma la tarifa más barata de la ventana de viaje
+    // [fechaIda, fechaRegreso] en vez de liquidar una fecha fija. Para porción,
+    // donde el asesor elige fecha al reservar (re-liquida). Bloqueo = fecha fija.
+    masBarato = false
   ) {
     if (numNoches <= 0) return;
     const aporteServ = aporteServiciosIncluidos(); // solo servicios incluidos
@@ -388,7 +393,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             const v = row[col];
             netoPorTemporada[temp] = v == null ? null : Number(v);
           }
-          const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
+          const costoHotel = masBarato
+            ? liquidarHotelMasBarato({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada })
+            : liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
           // null = no aplica (no se publica). En HABITACIONES, 0 también es "no
           // aplica" (no es gratis); solo en niños el 0 es válido (niño gratis).
           const esRoom = acom !== "nino" && acom !== "nino2";
@@ -467,7 +474,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   } else if (tipo === "porcion_terrestre" && pq.fecha_viaje_inicio) {
     // MÓDULO PORCIÓN TERRESTRE: sin vuelo; noches del paquete desde la fecha inicio
     const numNoches = Number(pq.noches) || 3;
-    filasHoteles(pq.fecha_viaje_inicio, numNoches, 0, Number(pq.impuesto_fijo) || 0, "porcion_terrestre", null, null, pq.fecha_viaje_fin);
+    filasHoteles(pq.fecha_viaje_inicio, numNoches, 0, Number(pq.impuesto_fijo) || 0, "porcion_terrestre", null, null, pq.fecha_viaje_fin, true);
   }
 
   // SERVICIOS: se publican siempre (módulo Servicios y/o add-ons en la reserva),
