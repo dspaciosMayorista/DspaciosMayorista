@@ -67,8 +67,8 @@ export default function CheckoutPage() {
               <ul className="space-y-3">
                 {items.map((it) => (
                   <li key={it.id} className="flex gap-3 border-b border-gray-50 pb-3 last:border-0 last:pb-0">
-                    <div className="relative h-14 w-18 shrink-0 overflow-hidden rounded-lg bg-gray-100" style={{ width: 72 }}>
-                      {it.fotoUrl ? <Image src={it.fotoUrl} alt={it.hotelNombre} fill sizes="72px" className="object-cover" unoptimized /> : null}
+                    <div className="relative flex h-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-lg text-gray-300" style={{ width: 72 }}>
+                      {it.fotoUrl ? <Image src={it.fotoUrl} alt={it.hotelNombre} fill sizes="72px" className="object-cover" unoptimized /> : <span aria-hidden>🏨</span>}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-medium text-gray-800">{it.hotelNombre}</div>
