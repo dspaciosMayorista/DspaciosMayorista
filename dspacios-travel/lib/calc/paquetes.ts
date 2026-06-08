@@ -153,7 +153,12 @@ export function netoNoche(
   const tipoTop = top.tipo ?? "tarifa";
   if (tipoTop === "tarifa") {
     const v = netoPorTemporada[top.nombre];
-    return v == null ? null : v;
+    if (v != null) return v;
+    // La temporada de mayor prioridad NO tiene neto para ESTE combo (categoría/
+    // régimen) — p. ej. "BAJA" es de PAM y este combo es PC. Cae a la 'tarifa' de
+    // mayor prioridad que cubra la fecha Y tenga neto para este combo ("BAJA PC").
+    const baseT = ents.find((t) => (t.tipo ?? "tarifa") === "tarifa" && netoPorTemporada[t.nombre] != null);
+    return baseT ? (netoPorTemporada[baseT.nombre] as number) : null;
   }
   // Descuento: necesita una tarifa-base por debajo, con neto cargado.
   const base = ents.find((t) => (t.tipo ?? "tarifa") === "tarifa" && netoPorTemporada[t.nombre] != null);
