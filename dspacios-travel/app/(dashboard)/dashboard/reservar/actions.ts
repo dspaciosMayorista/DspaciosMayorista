@@ -83,7 +83,11 @@ async function liquidarHotelPaquete(
       const netoPorTemporada: Record<string, number | null> = {};
       for (const [temp, row] of tempMap) { const v = row[col]; netoPorTemporada[temp] = v == null ? null : Number(v); }
       const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
+      // null = no aplica. En habitaciones, 0 también es "no aplica" (no gratis);
+      // solo en niños el 0 es válido.
+      const esRoom = acom !== "nino" && acom !== "nino2";
       if (costoHotel == null) continue;
+      if (esRoom && costoHotel <= 0) continue;
       const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto });
       precios[acom] = t.pvp;
     }

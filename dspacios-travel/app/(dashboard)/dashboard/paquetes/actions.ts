@@ -389,8 +389,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             netoPorTemporada[temp] = v == null ? null : Number(v);
           }
           const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
-          // null = no aplica (no se publica). 0 sí es válido (ej. niño gratis).
+          // null = no aplica (no se publica). En HABITACIONES, 0 también es "no
+          // aplica" (no es gratis); solo en niños el 0 es válido (niño gratis).
+          const esRoom = acom !== "nino" && acom !== "nino2";
           if (costoHotel == null) continue;
+          if (esRoom && costoHotel <= 0) continue;
           const aporteHotel = marcar(costoHotel, pctMk); // hotel siempre con mk
           const t = componerTarifa({
             aporteHotel,

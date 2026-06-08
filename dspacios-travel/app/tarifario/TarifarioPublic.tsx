@@ -398,15 +398,22 @@ function TablaHorizontal({ rows, puedeReservar = false }: { rows: Pivotada[]; pu
                     </td>
                     <td className="px-3 py-2 text-gray-600">{r.categoria}</td>
                     <td className="px-3 py-2 text-gray-600">{r.regimen}</td>
-                    {COLS.map(([k]) => (
-                      <td key={k} className="px-3 py-2 text-right tabular-nums">
-                        {r.precios[k] != null ? (
-                          <span style={{ color: "var(--brand-primary)" }}>{formatCOP(r.precios[k])}</span>
-                        ) : (
-                          <span className="text-gray-300">—</span>
-                        )}
-                      </td>
-                    ))}
+                    {COLS.map(([k]) => {
+                      // En habitaciones, 0 = no aplica (no gratis) → "—". En niños
+                      // (nino/nino2) el 0 es válido (gratis) y sí se muestra.
+                      const esRoom = k !== "nino" && k !== "nino2";
+                      const v = r.precios[k];
+                      const mostrar = v != null && (!esRoom || v > 0);
+                      return (
+                        <td key={k} className="px-3 py-2 text-right tabular-nums">
+                          {mostrar ? (
+                            <span style={{ color: "var(--brand-primary)" }}>{formatCOP(v)}</span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
                 {ocultas > 0 && (

@@ -111,7 +111,8 @@ export function ReservaForm({
   const [infantes, setInfantes] = useState("0");
   const [paxServ, setPaxServ] = useState("1");
 
-  const roomTypes = ACOM_ROOMS.filter((a) => precios[a] != null);
+  // Solo habitaciones CON tarifa: 0 o vacío = no aplica (no es gratis).
+  const roomTypes = ACOM_ROOMS.filter((a) => precios[a] != null && precios[a]! > 0);
   const paxTarifa = (a: AcomRoom) => paxTarifaDe(acomConfigs, a);
 
   const paxRooms = roomTypes.reduce((s, a) => s + (Number(habs[a]) || 0) * paxTarifa(a), 0);
