@@ -17,7 +17,7 @@ import type {
   ContratoItem,
 } from "@/types/database";
 
-type HotelConNota = ContratoHotel & { nota_regimen?: string | null };
+type HotelConNota = ContratoHotel & { nota_regimen?: string | null; foto_url?: string | null };
 
 type Props = {
   venta: Venta;
@@ -220,6 +220,16 @@ export function ContratoDocumento({
                   key={h.id}
                   className="rounded-lg border border-gray-200 p-3"
                 >
+                  <div className="flex items-start gap-3">
+                    {h.foto_url && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={h.foto_url}
+                        alt={h.nombre}
+                        className="h-14 w-14 shrink-0 rounded-md object-cover"
+                      />
+                    )}
+                    <div className="min-w-0">
                   <div className="font-semibold text-gray-700">
                     {h.nombre}{h.categoria ? ` · ${h.categoria}` : ""}
                   </div>
@@ -244,6 +254,8 @@ export function ContratoDocumento({
                   <div className="mt-1 text-xs text-gray-500">
                     {formatFechaLarga(h.fecha_ingreso)} →{" "}
                     {formatFechaLarga(h.fecha_salida)}
+                  </div>
+                    </div>
                   </div>
                 </div>
               ))}
