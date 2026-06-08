@@ -86,6 +86,13 @@ export default async function TarifarioPublicoPage() {
     for (const h of hs ?? []) infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion };
   }
 
+  // Régimen de alimentación: qué incluye cada plan (catálogo, lectura pública).
+  const planesInfo: Record<string, { nombre: string | null; descripcion: string | null; nota_especial: string | null }> = {};
+  {
+    const { data: planes } = await sb.from("planes_alimentacion").select("codigo, nombre, descripcion, nota_especial");
+    for (const p of planes ?? []) planesInfo[(p.codigo ?? "").trim().toUpperCase()] = { nombre: p.nombre, descripcion: p.descripcion, nota_especial: p.nota_especial };
+  }
+
   // Ventana de viaje por paquete (porción/dinámico) para el motor por fechas de la
   // vista Booking. armado_paquetes es interno → se lee con service-role.
   const ventanaPorPaquete: Record<number, { min: string | null; max: string | null }> = {};
@@ -133,7 +140,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
         )}
       </main>
     </div>

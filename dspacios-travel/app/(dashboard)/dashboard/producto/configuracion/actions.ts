@@ -40,11 +40,12 @@ export async function crearRegimen(codigo: string, nombre: string, descripcion: 
   return { ok: true };
 }
 
-export async function actualizarRegimen(id: number, codigo: string, nombre: string, notaEspecial: string = ""): Promise<Result> {
+export async function actualizarRegimen(id: number, codigo: string, nombre: string, notaEspecial: string = "", descripcion: string = ""): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("planes_alimentacion").update({
     codigo: codigo.trim().toUpperCase(),
     nombre: nombre.trim(),
+    descripcion: descripcion.trim() || null,
     nota_especial: notaEspecial.trim() || null,
   }).eq("id", id);
   if (error) return { ok: false, error: error.message };

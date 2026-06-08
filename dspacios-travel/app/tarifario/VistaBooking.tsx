@@ -6,6 +6,7 @@ import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart } from "@/lib/cart/CartContext";
 import { cotizarPorFechas, type ComboCotizado } from "@/app/(dashboard)/dashboard/reservar/actions";
+import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import type { FilaTarifario } from "./TarifarioPublic";
 
 // ── Modelo de la vista dinámica: tarjetas por hotel, detalle con opciones ────
@@ -82,6 +83,7 @@ export function VistaBooking({
   puedeReservar = false,
   ventanaPorPaquete = {},
   infoPorHotel = {},
+  planesInfo = {},
 }: {
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
@@ -89,6 +91,7 @@ export function VistaBooking({
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
+  planesInfo?: PlanesInfo;
 }) {
   // Solo módulos con hotel (bloqueo + porción). Servicios/programas viven en la tabla.
   const hoteles = useMemo<HotelCard[]>(() => {
@@ -166,7 +169,7 @@ export function VistaBooking({
       </div>
 
       {abierto && (
-        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} onClose={() => setAbierto(null)} />
+        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} onClose={() => setAbierto(null)} />
       )}
     </div>
   );
@@ -175,10 +178,10 @@ export function VistaBooking({
 // ── Modal de detalle: elige opción (salida/paquete), categoría/régimen y
 //    habitaciones; calcula el precio y agrega al carrito ─────────────────────
 function HotelModal({
-  hotel, cuposPorBloqueo, puedeReservar, ventanaPorPaquete, onClose,
+  hotel, cuposPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, onClose,
 }: {
   hotel: HotelCard; cuposPorBloqueo: Record<number, number>; puedeReservar: boolean;
-  ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>; onClose: () => void;
+  ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>; planesInfo: PlanesInfo; onClose: () => void;
 }) {
   const { add } = useCart();
 
@@ -279,6 +282,7 @@ function HotelModal({
                   opcion={opcion}
                   hotel={hotel}
                   ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
+                  planesInfo={planesInfo}
                   onAgregar={(item) => { add(item); onClose(); }}
                 />
               ) : (
@@ -287,6 +291,7 @@ function HotelModal({
                   opcion={opcion}
                   hotel={hotel}
                   puedeReservar={puedeReservar}
+                  planesInfo={planesInfo}
                   onAgregar={(item) => { add(item); onClose(); }}
                 />
               )}
@@ -299,9 +304,9 @@ function HotelModal({
 }
 
 function Selector({
-  opcion, hotel, puedeReservar, onAgregar,
+  opcion, hotel, puedeReservar, planesInfo, onAgregar,
 }: {
-  opcion: Opcion; hotel: HotelCard; puedeReservar: boolean;
+  opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
 }) {
   const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
@@ -349,6 +354,11 @@ function Selector({
           <select value={regEff} onChange={(e) => setReg(e.target.value)} className={selCls}>
             {regs.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
+          {regEff && (
+            <div className="mt-1">
+              <RegimenInfo codigo={regEff} info={planesInfo[regEff.trim().toUpperCase()]} variant="link" className="text-xs" />
+            </div>
+          )}
         </div>
       </div>
 
@@ -441,9 +451,9 @@ function EditorPax({
 // Motor por fechas (porción/dinámico): el usuario elige las fechas reales y se
 // liquida la tarifa noche por noche (cotizarPorFechas, service-role, solo PVP).
 function SelectorPorFechas({
-  opcion, hotel, ventana, onAgregar,
+  opcion, hotel, ventana, planesInfo, onAgregar,
 }: {
-  opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null };
+  opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
 }) {
   // Por defecto: ida = inicio del rango; regreso = ida + 3 noches (ciclo base),
@@ -535,6 +545,11 @@ function SelectorPorFechas({
               <select value={regEff} onChange={(e) => setReg(e.target.value)} className={selCls}>
                 {regs.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
+              {regEff && (
+                <div className="mt-1">
+                  <RegimenInfo codigo={regEff} info={planesInfo[regEff.trim().toUpperCase()]} variant="link" className="text-xs" />
+                </div>
+              )}
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>

@@ -4,6 +4,7 @@ import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
+import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 
 export type ProgramaResumen = {
   id: number;
@@ -126,6 +127,7 @@ export function TarifarioPublic({
   fotosPorHotel = {},
   ventanaPorPaquete = {},
   infoPorHotel = {},
+  planesInfo = {},
 }: {
   filas: FilaTarifario[];
   programas?: ProgramaResumen[];
@@ -134,6 +136,7 @@ export function TarifarioPublic({
   fotosPorHotel?: Record<number, string>;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
+  planesInfo?: PlanesInfo;
 }) {
   const [vista, setVista] = useState<"tabla" | "booking">("tabla");
   const [q, setQ] = useState("");
@@ -216,7 +219,7 @@ export function TarifarioPublic({
       </div>
 
       {vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
       ) : (
         <>
           {/* Tabs de módulos */}
@@ -241,9 +244,9 @@ export function TarifarioPublic({
           {tabs.length === 0 ? (
             <p className="py-12 text-center text-sm text-gray-400">No hay resultados para los filtros aplicados.</p>
           ) : modulo === "bloqueo" ? (
-            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} />
+            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : modulo === "porcion_terrestre" ? (
-            <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} />
+            <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : modulo === "servicios" ? (
             <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
           ) : (
@@ -260,7 +263,7 @@ export function TarifarioPublic({
 }
 
 // ── Módulo BLOQUEOS: elige una salida (ciclo aéreo) y ve los hoteles ───────
-function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null, infoPorHotel = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number>; soloAcom?: string | null; infoPorHotel?: InfoHotel }) {
+function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number>; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
   // Cupos de una salida (un bloqueo). undefined = desconocido (no ocultar).
   const cuposDe = (f: FilaTarifario): number | undefined =>
     f.bloqueo_id != null ? cuposPorBloqueo[f.bloqueo_id] : undefined;
@@ -329,14 +332,14 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
             {fmtFecha(selFila.fecha_ida)} → {fmtFecha(selFila.fecha_regreso)} ({selFila.noches} noches)
           </p>
         )}
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} />
+        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
       </div>
     </div>
   );
 }
 
 // ── Módulo PORCIÓN TERRESTRE: elige un paquete ─────────────────────────────
-function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel }) {
+function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
   const paquetes = useMemo(() => {
     const map = new Map<string, FilaTarifario>();
     for (const f of filas) {
@@ -373,7 +376,7 @@ function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {} }
         </div>
       </div>
       <div className="min-w-0">
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} />
+        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
       </div>
     </div>
   );
@@ -455,7 +458,7 @@ function reservarHref(r: Pivotada): string {
   return `/dashboard/reservar/nuevo?${p.toString()}`;
 }
 
-function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPorHotel = {} }: { rows: Pivotada[]; puedeReservar?: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel }) {
+function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { rows: Pivotada[]; puedeReservar?: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // Filtro de acomodación: restringe las columnas a esa acomodación y deja solo
@@ -514,7 +517,9 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                       )}
                     </td>
                     <td className="px-3 py-2 text-gray-600">{r.categoria}</td>
-                    <td className="px-3 py-2 text-gray-600">{r.regimen}</td>
+                    <td className="px-3 py-2 text-gray-600">
+                      <RegimenInfo codigo={r.regimen} info={planesInfo[(r.regimen ?? "").trim().toUpperCase()]} />
+                    </td>
                     {cols.map(([k]) => {
                       // En habitaciones, 0 = no aplica (no gratis) → "—". En niños
                       // (nino/nino2) el 0 es válido (gratis) y sí se muestra.
