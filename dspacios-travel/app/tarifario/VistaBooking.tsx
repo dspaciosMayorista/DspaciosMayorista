@@ -506,9 +506,12 @@ function SelectorPorFechas({
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
 }) {
-  // Por defecto: ida = inicio del rango; regreso = ida + 3 noches (ciclo base),
-  // NO el regreso del paquete completo.
-  const idaInicial = opcion.fechaIda ?? ventana.min ?? "";
+  // No se permite check-in en el pasado: el mínimo es HOY (o el inicio del rango
+  // del paquete si es posterior). Si el paquete empieza antes de hoy, arranca hoy.
+  const hoy = new Date().toISOString().slice(0, 10);
+  const minIda = ventana.min && ventana.min > hoy ? ventana.min : hoy;
+  const base = opcion.fechaIda ?? ventana.min ?? hoy;
+  const idaInicial = base < minIda ? minIda : base;
   const [fIda, setFIda] = useState(idaInicial);
   const [fReg, setFReg] = useState(idaInicial ? sumarDias(idaInicial, CICLO_NOCHES) : "");
   const [combos, setCombos] = useState<ComboCotizado[] | null>(null);
@@ -555,7 +558,7 @@ function SelectorPorFechas({
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Ida</label>
-            <input type="date" value={fIda} min={ventana.min ?? undefined} max={ventana.max ?? undefined}
+            <input type="date" value={fIda} min={minIda} max={ventana.max ?? undefined}
               onChange={(e) => {
                 const nueva = e.target.value;
                 setFIda(nueva);
@@ -568,7 +571,7 @@ function SelectorPorFechas({
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Regreso</label>
-            <input type="date" value={fReg} min={fIda || (ventana.min ?? undefined)} max={ventana.max ?? undefined} onChange={(e) => { setFReg(e.target.value); setCombos(null); }} className={dateCls} />
+            <input type="date" value={fReg} min={fIda || minIda} max={ventana.max ?? undefined} onChange={(e) => { setFReg(e.target.value); setCombos(null); }} className={dateCls} />
           </div>
           <button type="button" onClick={cotizar} disabled={pending || !fIda || !fReg}
             className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-accent)" }}>
