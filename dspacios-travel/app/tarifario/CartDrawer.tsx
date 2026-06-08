@@ -23,16 +23,16 @@ export function CartDrawer({ checkoutHabilitado = false }: { checkoutHabilitado?
 
   return (
     <>
-      {/* Botón flotante */}
+      {/* Botón del carrito (va en el header) */}
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-lg"
-        style={{ backgroundColor: "var(--brand-primary)" }}
+        className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium shadow-sm"
+        style={{ color: "var(--brand-primary)" }}
       >
         🛒 Carrito
         {count > 0 && (
-          <span className="ml-1 rounded-full bg-white px-2 py-0.5 text-xs font-bold" style={{ color: "var(--brand-primary)" }}>
+          <span className="ml-1 rounded-full px-2 py-0.5 text-xs font-bold text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
             {count}
           </span>
         )}

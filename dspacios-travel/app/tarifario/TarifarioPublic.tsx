@@ -3,7 +3,6 @@
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatCOP, formatMoneda } from "@/lib/utils";
-import { CartDrawer } from "./CartDrawer";
 import { VistaBooking } from "./VistaBooking";
 
 export type ProgramaResumen = {
@@ -113,12 +112,14 @@ export function TarifarioPublic({
   puedeReservar = false,
   cuposPorBloqueo = {},
   fotosPorHotel = {},
+  ventanaPorPaquete = {},
 }: {
   filas: FilaTarifario[];
   programas?: ProgramaResumen[];
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
   fotosPorHotel?: Record<number, string>;
+  ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
 }) {
   const [vista, setVista] = useState<"tabla" | "booking">("tabla");
   const [q, setQ] = useState("");
@@ -201,7 +202,7 @@ export function TarifarioPublic({
       </div>
 
       {vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} />
       ) : (
         <>
           {/* Tabs de módulos */}
@@ -240,8 +241,6 @@ export function TarifarioPublic({
       <p className="mt-4 text-center text-xs text-gray-400">
         Tarifas por persona por paquete, sujetas a disponibilidad. Los programas se cotizan en su moneda.
       </p>
-
-      <CartDrawer checkoutHabilitado />
     </div>
   );
 }
