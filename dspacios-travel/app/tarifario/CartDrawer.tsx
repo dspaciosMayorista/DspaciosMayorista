@@ -55,10 +55,12 @@ export function CartDrawer({ checkoutHabilitado = false }: { checkoutHabilitado?
                 <ul className="space-y-3">
                   {items.map((it) => (
                     <li key={it.id} className="flex gap-3 rounded-xl border border-gray-200 p-3">
-                      <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-lg bg-gray-100">
+                      <div className="relative flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-xl text-gray-300">
                         {it.fotoUrl ? (
                           <Image src={it.fotoUrl} alt={it.hotelNombre} fill sizes="80px" className="object-cover" unoptimized />
-                        ) : null}
+                        ) : (
+                          <span aria-hidden>🏨</span>
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-medium text-gray-800">{it.hotelNombre}</div>
