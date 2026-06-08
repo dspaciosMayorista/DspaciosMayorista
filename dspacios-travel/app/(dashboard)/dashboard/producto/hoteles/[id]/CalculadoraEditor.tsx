@@ -207,6 +207,10 @@ function MixtaForm({
   }
   const [vals, setVals] = useState<Record<string, string>>(valInicial);
   const setVal = (c: string, t: string, campo: Campo, v: string) => setVals((s) => ({ ...s, [`${c}|${t}|${campo}`]: v }));
+
+  // Al cambiar de régimen, vaciar los valores: cada régimen se carga aparte
+  // (evita arrastrar/borrar a mano los del régimen anterior).
+  function cambiarRegimen(v: string) { setRegimen(v); setVals({}); setMsg(""); }
   const num = (c: string, t: string, campo: Campo) => Number(vals[`${c}|${t}|${campo}`]) || 0;
 
   const setAcomCfg = (a: MixtaAcom, patch: Partial<{ modo: "hab" | "pax"; iva: boolean }>) =>
@@ -255,7 +259,7 @@ function MixtaForm({
 
       <div className="flex items-center gap-2 text-xs text-gray-600">
         <span>Régimen:</span>
-        <select value={regimen} onChange={(e) => setRegimen(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
+        <select value={regimen} onChange={(e) => cambiarRegimen(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
           {regimenes.length === 0 && <option value="PC">PC</option>}
           {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
