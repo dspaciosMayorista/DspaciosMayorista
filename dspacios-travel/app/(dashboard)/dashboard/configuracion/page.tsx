@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { ConfigClient } from "./ConfigClient";
 import { EscalasComisionConfig } from "./EscalasComisionConfig";
+import { SolicitudesConfig } from "./SolicitudesConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -23,13 +24,14 @@ export default async function ConfiguracionPage() {
     );
   }
 
-  const [{ data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }, { data: vendedores }] = await Promise.all([
+  const [{ data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }, { data: vendedores }, { data: configSolicitudes }] = await Promise.all([
     sb.from("parametros_tributarios").select("parametro, valor, descripcion").order("parametro"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("formas_pago").select("id, nombre").order("orden"),
     sb.from("escalas_comision").select("id, nombre").order("nombre"),
     sb.from("escala_rangos").select("escala_id, pvp_desde, pvp_hasta, pct, orden").order("orden"),
     sb.from("usuarios").select("id, nombre, escala_id, aplica_retencion").eq("rol", "venta").order("nombre"),
+    sb.from("config_solicitudes").select("whatsapp, emails, mensaje_extra").eq("id", 1).maybeSingle(),
   ]);
 
   const escalasConRangos = (escalas ?? []).map((e) => ({
@@ -47,6 +49,9 @@ export default async function ConfiguracionPage() {
       <ConfigClient parametros={parametros ?? []} rangos={rangos ?? []} formasPago={formasPago ?? []} />
       <div className="mt-8">
         <EscalasComisionConfig escalas={escalasConRangos} vendedores={vendedoresEscala} />
+      </div>
+      <div className="mt-8">
+        <SolicitudesConfig config={configSolicitudes ?? null} />
       </div>
     </div>
   );

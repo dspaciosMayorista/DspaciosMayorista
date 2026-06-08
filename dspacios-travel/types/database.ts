@@ -1702,6 +1702,24 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["hotel_fotos"]["Insert"]>;
         Relationships: [];
       };
+      config_solicitudes: {
+        Row: {
+          id: number;
+          whatsapp: string | null;
+          emails: string | null;
+          mensaje_extra: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          whatsapp?: string | null;
+          emails?: string | null;
+          mensaje_extra?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["config_solicitudes"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {

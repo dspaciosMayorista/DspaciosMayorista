@@ -3,7 +3,6 @@
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatCOP, formatMoneda } from "@/lib/utils";
-import { CartProvider } from "@/lib/cart/CartContext";
 import { CartDrawer } from "./CartDrawer";
 import { VistaBooking } from "./VistaBooking";
 
@@ -154,7 +153,6 @@ export function TarifarioPublic({
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700";
 
   return (
-    <CartProvider>
     <div>
       {/* Toggle de vista: tabla (estático) vs Booking (dinámico) */}
       <div className="mb-4 inline-flex rounded-full border border-gray-200 bg-white p-1">
@@ -243,9 +241,8 @@ export function TarifarioPublic({
         Tarifas por persona por paquete, sujetas a disponibilidad. Los programas se cotizan en su moneda.
       </p>
 
-      <CartDrawer checkoutHabilitado={false} />
+      <CartDrawer checkoutHabilitado />
     </div>
-    </CartProvider>
   );
 }
 
