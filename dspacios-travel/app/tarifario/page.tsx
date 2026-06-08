@@ -69,7 +69,7 @@ export default async function TarifarioPublicoPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-brand-gradient px-6 py-8 text-white">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-4">
+        <div className="mx-auto flex max-w-[1700px] flex-wrap items-end justify-between gap-4">
           <div>
             <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
             <p className="mt-2 text-sm opacity-90">Tarifario 2026</p>
@@ -91,7 +91,7 @@ export default async function TarifarioPublicoPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8 md:px-6">
+      <main className="mx-auto max-w-[1700px] px-4 py-8 md:px-6">
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
