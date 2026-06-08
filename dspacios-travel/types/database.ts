@@ -1628,6 +1628,58 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["programa_blackouts"]["Insert"]>;
         Relationships: [];
       };
+      cotizaciones: {
+        Row: {
+          id: number;
+          codigo: string;
+          created_at: string;
+          estado: string;
+          payload: Json;
+          detalle: Json | null;
+          cliente: string | null;
+          cliente_documento: string | null;
+          destino: string | null;
+          hotel: string | null;
+          modulo: string | null;
+          plan_nombre: string | null;
+          pax: number | null;
+          precio_venta: number | null;
+          moneda: string | null;
+          fecha_salida: string | null;
+          fecha_regreso: string | null;
+          vigencia_hasta: string | null;
+          paquete_armado_id: number | null;
+          asesor: string | null;
+          creado_por: string | null;
+          numero_contrato: string | null;
+        };
+        Insert: {
+          id?: number;
+          codigo?: string;
+          created_at?: string;
+          estado?: string;
+          payload: Json;
+          detalle?: Json | null;
+          cliente?: string | null;
+          cliente_documento?: string | null;
+          destino?: string | null;
+          hotel?: string | null;
+          modulo?: string | null;
+          plan_nombre?: string | null;
+          pax?: number | null;
+          precio_venta?: number | null;
+          moneda?: string | null;
+          fecha_salida?: string | null;
+          fecha_regreso?: string | null;
+          vigencia_hasta?: string | null;
+          paquete_armado_id?: number | null;
+          asesor?: string | null;
+          creado_por?: string | null;
+          numero_contrato?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["cotizaciones"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {

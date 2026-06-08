@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP, calcularEdad } from "@/lib/utils";
-import { reservarDesdeTarifario, cotizarPorFechas, type PasajeroReserva } from "../actions";
+import { crearCotizacion, cotizarPorFechas, type PasajeroReserva } from "../actions";
 import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 
@@ -221,7 +221,7 @@ export function ReservaForm({
     const cortePax = esServicios ? totalPax : paxConSilla;
     const pasajeros = paxRows.map((p, idx) => ({ ...p, esInfante: idx >= cortePax }));
     start(async () => {
-      const r = await reservarDesdeTarifario({
+      const r = await crearCotizacion({
         paqueteId: meta.paqueteId, bloqueoId: meta.bloqueoId, modulo: meta.modulo, hotelId: meta.hotelId,
         categoria: esServicios ? "" : catSel, regimen: esServicios ? "" : reg,
         fechaIda: esPorFechas ? (fIda || undefined) : undefined,
@@ -232,7 +232,7 @@ export function ReservaForm({
         aliadoId: aliadoId === "" ? null : Number(aliadoId), plazo, pasajeros,
         servicios: [...servSel],
       });
-      if (r.ok) router.push(`/dashboard/contratos/${r.numero}`);
+      if (r.ok) router.push(`/dashboard/cotizaciones/${r.id}`);
       else setErr(r.error);
     });
   }
@@ -485,7 +485,7 @@ export function ReservaForm({
       {err && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
       <div className="flex justify-end">
         <Button onClick={guardar} disabled={pending || bloquear} style={{ backgroundColor: "var(--brand-primary)" }}>
-          {pending ? "Generando…" : "Generar contrato (pendiente)"}
+          {pending ? "Generando…" : "Generar cotización"}
         </Button>
       </div>
     </div>
