@@ -15,8 +15,22 @@ type HotelCard = {
   destino: string | null;
   foto: string | null;
   desde: number | null;
+  estrellas: number | null;
+  clasificacion: string | null;
+  descripcion: string | null;
   filas: FilaTarifario[];
 };
+
+// Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
+function Categoria({ estrellas, clasificacion, className = "" }: { estrellas: number | null; clasificacion: string | null; className?: string }) {
+  if (estrellas && estrellas > 0) {
+    return <span className={`text-amber-400 ${className}`} title={`${estrellas} estrellas`}>{"★".repeat(estrellas)}</span>;
+  }
+  if (clasificacion?.trim()) {
+    return <span className={`rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600 ${className}`}>{clasificacion}</span>;
+  }
+  return null;
+}
 
 type Opcion = {
   key: string;
@@ -43,6 +57,17 @@ function calcNoches(ida: string, regreso: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
+function sumarDias(fecha: string, n: number): string {
+  if (!fecha) return "";
+  const d = new Date(`${fecha}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// Ciclo base del tarifario: 3 noches. La fecha de regreso por defecto es la de
+// ida + 3 noches (no el rango completo del paquete).
+const CICLO_NOCHES = 3;
+
 function minRoomPvp(filas: FilaTarifario[]): number | null {
   const precios = filas
     .filter((f) => f.acomodacion && f.acomodacion !== "nino" && f.acomodacion !== "nino2" && f.precio_pvp > 0)
@@ -56,12 +81,14 @@ export function VistaBooking({
   cuposPorBloqueo = {},
   puedeReservar = false,
   ventanaPorPaquete = {},
+  infoPorHotel = {},
 }: {
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
 }) {
   // Solo módulos con hotel (bloqueo + porción). Servicios/programas viven en la tabla.
   const hoteles = useMemo<HotelCard[]>(() => {
@@ -73,7 +100,13 @@ export function VistaBooking({
       const id = f.hotel_id as number;
       let c = map.get(id);
       if (!c) {
-        c = { hotelId: id, hotelNombre: f.hotel_nombre ?? "—", destino: f.destino_nombre, foto: fotosPorHotel[id] ?? null, desde: null, filas: [] };
+        const info = infoPorHotel[id];
+        c = {
+          hotelId: id, hotelNombre: f.hotel_nombre ?? "—", destino: f.destino_nombre,
+          foto: fotosPorHotel[id] ?? null, desde: null,
+          estrellas: info?.estrellas ?? null, clasificacion: info?.clasificacion ?? null, descripcion: info?.descripcion ?? null,
+          filas: [],
+        };
         map.set(id, c);
       }
       c.filas.push(f);
@@ -81,7 +114,7 @@ export function VistaBooking({
     const arr = [...map.values()];
     for (const c of arr) c.desde = minRoomPvp(c.filas);
     return arr.sort((a, b) => a.hotelNombre.localeCompare(b.hotelNombre));
-  }, [filas, fotosPorHotel]);
+  }, [filas, fotosPorHotel, infoPorHotel]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
 
@@ -107,8 +140,14 @@ export function VistaBooking({
               )}
             </div>
             <div className="flex flex-1 flex-col p-4">
-              <div className="font-semibold text-gray-800">{h.hotelNombre}</div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-gray-800">{h.hotelNombre}</span>
+                <Categoria estrellas={h.estrellas} clasificacion={h.clasificacion} className="text-sm" />
+              </div>
               <div className="mt-0.5 text-xs text-gray-500">{h.destino ?? ""}</div>
+              {h.descripcion?.trim() && (
+                <p className="mt-1 line-clamp-2 text-xs text-gray-400">{h.descripcion}</p>
+              )}
               <div className="mt-3 flex items-end justify-between">
                 {h.desde != null ? (
                   <div>
@@ -195,8 +234,14 @@ function HotelModal({
 
         <div className="space-y-5 p-5">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900">{hotel.hotelNombre}</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-xl font-semibold text-gray-900">{hotel.hotelNombre}</h2>
+              <Categoria estrellas={hotel.estrellas} clasificacion={hotel.clasificacion} className="text-base" />
+            </div>
             <p className="text-sm text-gray-500">{hotel.destino ?? ""}</p>
+            {hotel.descripcion?.trim() && (
+              <p className="mt-2 text-sm text-gray-600">{hotel.descripcion}</p>
+            )}
           </div>
 
           {!opcion ? (
@@ -401,8 +446,11 @@ function SelectorPorFechas({
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null };
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
 }) {
-  const [fIda, setFIda] = useState(opcion.fechaIda ?? "");
-  const [fReg, setFReg] = useState(opcion.fechaRegreso ?? "");
+  // Por defecto: ida = inicio del rango; regreso = ida + 3 noches (ciclo base),
+  // NO el regreso del paquete completo.
+  const idaInicial = opcion.fechaIda ?? ventana.min ?? "";
+  const [fIda, setFIda] = useState(idaInicial);
+  const [fReg, setFReg] = useState(idaInicial ? sumarDias(idaInicial, CICLO_NOCHES) : "");
   const [combos, setCombos] = useState<ComboCotizado[] | null>(null);
   const [nochesCot, setNochesCot] = useState<number | null>(null);
   const [err, setErr] = useState("");
@@ -447,7 +495,16 @@ function SelectorPorFechas({
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Ida</label>
-            <input type="date" value={fIda} min={ventana.min ?? undefined} max={ventana.max ?? undefined} onChange={(e) => { setFIda(e.target.value); setCombos(null); }} className={dateCls} />
+            <input type="date" value={fIda} min={ventana.min ?? undefined} max={ventana.max ?? undefined}
+              onChange={(e) => {
+                const nueva = e.target.value;
+                setFIda(nueva);
+                // Mantén el ciclo de 3 noches por defecto si el regreso quedó vacío
+                // o ya no es posterior a la nueva ida.
+                if (nueva && (!fReg || fReg <= nueva)) setFReg(sumarDias(nueva, CICLO_NOCHES));
+                setCombos(null);
+              }}
+              className={dateCls} />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Regreso</label>

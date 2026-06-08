@@ -113,6 +113,7 @@ export function TarifarioPublic({
   cuposPorBloqueo = {},
   fotosPorHotel = {},
   ventanaPorPaquete = {},
+  infoPorHotel = {},
 }: {
   filas: FilaTarifario[];
   programas?: ProgramaResumen[];
@@ -120,6 +121,7 @@ export function TarifarioPublic({
   cuposPorBloqueo?: Record<number, number>;
   fotosPorHotel?: Record<number, string>;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
 }) {
   const [vista, setVista] = useState<"tabla" | "booking">("tabla");
   const [q, setQ] = useState("");
@@ -202,7 +204,7 @@ export function TarifarioPublic({
       </div>
 
       {vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} />
       ) : (
         <>
           {/* Tabs de módulos */}
