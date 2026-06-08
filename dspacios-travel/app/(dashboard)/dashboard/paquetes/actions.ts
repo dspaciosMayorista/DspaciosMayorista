@@ -10,6 +10,7 @@ import {
   marcar,
   aporteVuelo,
   componerTarifa,
+  redondearMilArriba,
   toTemporadaRango,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
@@ -498,11 +499,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     };
     if (modo === "grupo") {
       for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
-        const pvp = Math.round(marcar(Number(g.precio) || 0, pctMk));
+        const pvp = redondearMilArriba(marcar(Number(g.precio) || 0, pctMk));
         filas.push({ ...comun, pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, base_comisionable: pvp, precio_pvp: pvp });
       }
     } else if (srv.precio_persona != null) {
-      const pvp = Math.round(marcar(Number(srv.precio_persona) || 0, pctMk));
+      const pvp = redondearMilArriba(marcar(Number(srv.precio_persona) || 0, pctMk));
       filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp });
     }
   }
