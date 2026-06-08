@@ -3,6 +3,9 @@
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatCOP, formatMoneda } from "@/lib/utils";
+import { CartProvider } from "@/lib/cart/CartContext";
+import { CartDrawer } from "./CartDrawer";
+import { VistaBooking } from "./VistaBooking";
 
 export type ProgramaResumen = {
   id: number;
@@ -110,12 +113,15 @@ export function TarifarioPublic({
   programas = [],
   puedeReservar = false,
   cuposPorBloqueo = {},
+  fotosPorHotel = {},
 }: {
   filas: FilaTarifario[];
   programas?: ProgramaResumen[];
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
+  fotosPorHotel?: Record<number, string>;
 }) {
+  const [vista, setVista] = useState<"tabla" | "booking">("tabla");
   const [q, setQ] = useState("");
   const [fCat, setFCat] = useState("");
   const [fReg, setFReg] = useState("");
@@ -148,7 +154,23 @@ export function TarifarioPublic({
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700";
 
   return (
+    <CartProvider>
     <div>
+      {/* Toggle de vista: tabla (estático) vs Booking (dinámico) */}
+      <div className="mb-4 inline-flex rounded-full border border-gray-200 bg-white p-1">
+        {([["tabla", "Vista tabla"], ["booking", "Vista Booking"]] as const).map(([v, label]) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setVista(v)}
+            className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
+            style={vista === v ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#4b5563" }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Barra de filtros y buscador */}
       <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white p-3">
         <input
@@ -180,41 +202,50 @@ export function TarifarioPublic({
         )}
       </div>
 
-      {/* Tabs de módulos */}
-      <div className="mb-5 flex flex-wrap gap-2">
-        {tabs.map((m) => (
-          <button
-            key={m.key}
-            type="button"
-            onClick={() => setModuloSel(m.key)}
-            className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
-            style={
-              modulo === m.key
-                ? { backgroundColor: "var(--brand-primary)", color: "white" }
-                : { backgroundColor: "white", color: "#4b5563", border: "1px solid #e5e7eb" }
-            }
-          >
-            {m.label}
-          </button>
-        ))}
-      </div>
-
-      {tabs.length === 0 ? (
-        <p className="py-12 text-center text-sm text-gray-400">No hay resultados para los filtros aplicados.</p>
-      ) : modulo === "bloqueo" ? (
-        <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} />
-      ) : modulo === "porcion_terrestre" ? (
-        <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} />
-      ) : modulo === "servicios" ? (
-        <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
+      {vista === "booking" ? (
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} />
       ) : (
-        <PorProgramas programas={programas} puedeReservar={puedeReservar} />
+        <>
+          {/* Tabs de módulos */}
+          <div className="mb-5 flex flex-wrap gap-2">
+            {tabs.map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setModuloSel(m.key)}
+                className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
+                style={
+                  modulo === m.key
+                    ? { backgroundColor: "var(--brand-primary)", color: "white" }
+                    : { backgroundColor: "white", color: "#4b5563", border: "1px solid #e5e7eb" }
+                }
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {tabs.length === 0 ? (
+            <p className="py-12 text-center text-sm text-gray-400">No hay resultados para los filtros aplicados.</p>
+          ) : modulo === "bloqueo" ? (
+            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} />
+          ) : modulo === "porcion_terrestre" ? (
+            <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} />
+          ) : modulo === "servicios" ? (
+            <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
+          ) : (
+            <PorProgramas programas={programas} puedeReservar={puedeReservar} />
+          )}
+        </>
       )}
 
       <p className="mt-4 text-center text-xs text-gray-400">
         Tarifas por persona por paquete, sujetas a disponibilidad. Los programas se cotizan en su moneda.
       </p>
+
+      <CartDrawer checkoutHabilitado={false} />
     </div>
+    </CartProvider>
   );
 }
 
