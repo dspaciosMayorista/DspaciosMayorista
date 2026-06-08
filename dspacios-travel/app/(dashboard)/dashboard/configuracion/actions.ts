@@ -167,3 +167,19 @@ export async function actualizarEscalaUsuario(
   revalidatePath("/dashboard/configuracion");
   return { ok: true };
 }
+
+// ── Destinatarios de solicitudes de reserva (tarifario dinámico) ───────────
+export async function actualizarConfigSolicitudes(input: {
+  whatsapp: string; emails: string; mensajeExtra: string;
+}): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("config_solicitudes").update({
+    whatsapp: input.whatsapp.trim() || null,
+    emails: input.emails.trim() || null,
+    mensaje_extra: input.mensajeExtra.trim() || null,
+    updated_at: new Date().toISOString(),
+  }).eq("id", 1);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}

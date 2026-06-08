@@ -250,14 +250,18 @@ async function computarReserva(
       input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
       hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10
     );
-    const habNumF: Record<string, number> = {};
-    for (const a of ACOM_ROOMS) { const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0)); if (n > 0) habNumF[a] = n; }
-    const valF = validarReservaHabitaciones({
-      habitaciones: habNumF, reglas: reglasF, ninosDeclarados: numNinos + numNinos2,
-      infantesDeclarados: Math.max(0, Math.trunc(Number(input.infantes) || 0)),
-      paxMinHotel: hotelRowF?.pax_min ?? null, paxMaxHotel: hotelRowF?.pax_max ?? null, real: realF,
-    });
-    if (valF.errores.length) return { ok: false, error: valF.errores.join(" ") };
+    // Sin pasajeros (cotización preliminar desde el carrito público) se omite la
+    // validación de edades vs acomodación; se revalida al convertir en contrato.
+    if (input.pasajeros.length) {
+      const habNumF: Record<string, number> = {};
+      for (const a of ACOM_ROOMS) { const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0)); if (n > 0) habNumF[a] = n; }
+      const valF = validarReservaHabitaciones({
+        habitaciones: habNumF, reglas: reglasF, ninosDeclarados: numNinos + numNinos2,
+        infantesDeclarados: Math.max(0, Math.trunc(Number(input.infantes) || 0)),
+        paxMinHotel: hotelRowF?.pax_min ?? null, paxMaxHotel: hotelRowF?.pax_max ?? null, real: realF,
+      });
+      if (valF.errores.length) return { ok: false, error: valF.errores.join(" ") };
+    }
   } else if (!esServicios) {
     let q = sb
       .from("tarifario_resultado")
@@ -307,21 +311,23 @@ async function computarReserva(
       hotelRow?.edad_infante_max ?? 2,
       hotelRow?.edad_nino_max ?? 10
     );
-    const habitacionesNum: Record<string, number> = {};
-    for (const a of ACOM_ROOMS) {
-      const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
-      if (n > 0) habitacionesNum[a] = n;
+    if (input.pasajeros.length) {
+      const habitacionesNum: Record<string, number> = {};
+      for (const a of ACOM_ROOMS) {
+        const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
+        if (n > 0) habitacionesNum[a] = n;
+      }
+      const val = validarReservaHabitaciones({
+        habitaciones: habitacionesNum,
+        reglas,
+        ninosDeclarados: numNinos + numNinos2,
+        infantesDeclarados: Math.max(0, Math.trunc(Number(input.infantes) || 0)),
+        paxMinHotel: hotelRow?.pax_min ?? null,
+        paxMaxHotel: hotelRow?.pax_max ?? null,
+        real,
+      });
+      if (val.errores.length) return { ok: false, error: val.errores.join(" ") };
     }
-    const val = validarReservaHabitaciones({
-      habitaciones: habitacionesNum,
-      reglas,
-      ninosDeclarados: numNinos + numNinos2,
-      infantesDeclarados: Math.max(0, Math.trunc(Number(input.infantes) || 0)),
-      paxMinHotel: hotelRow?.pax_min ?? null,
-      paxMaxHotel: hotelRow?.pax_max ?? null,
-      real,
-    });
-    if (val.errores.length) return { ok: false, error: val.errores.join(" ") };
   } else {
     const { data: m } = await sb
       .from("tarifario_resultado")
