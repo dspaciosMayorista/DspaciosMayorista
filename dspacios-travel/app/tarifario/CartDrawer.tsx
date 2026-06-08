@@ -15,10 +15,13 @@ function resumenHabitaciones(it: CartItem): string {
   return partes.join(" · ");
 }
 
-export function CartDrawer({ checkoutHabilitado = false }: { checkoutHabilitado?: boolean }) {
+export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: { checkoutHabilitado?: boolean; fotosPorHotel?: Record<number, string> }) {
   const { items, remove, total, count } = useCart();
   const [open, setOpen] = useState(false);
   const router = useRouter();
+  // Resuelve la foto ACTUAL del hotel por id (los ítems viejos del carrito pueden
+  // no traer fotoUrl si se agregaron antes de subir la portada).
+  const fotoDe = (it: { hotelId: number; fotoUrl: string | null }) => fotosPorHotel[it.hotelId] || it.fotoUrl;
 
   return (
     <>
@@ -55,9 +58,9 @@ export function CartDrawer({ checkoutHabilitado = false }: { checkoutHabilitado?
                   {items.map((it) => (
                     <li key={it.id} className="flex gap-3 rounded-xl border border-gray-200 p-3">
                       <div className="relative flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-xl text-gray-300">
-                        {it.fotoUrl ? (
+                        {fotoDe(it) ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={it.fotoUrl} alt={it.hotelNombre} className="absolute inset-0 h-full w-full object-cover" />
+                          <img src={fotoDe(it) as string} alt={it.hotelNombre} className="absolute inset-0 h-full w-full object-cover" />
                         ) : (
                           <span aria-hidden>🏨</span>
                         )}
