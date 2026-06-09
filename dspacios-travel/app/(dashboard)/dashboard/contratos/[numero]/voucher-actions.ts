@@ -101,7 +101,12 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
   const ingreso = h0?.fecha_ingreso ?? venta.fecha_salida;
   const salida = h0?.fecha_salida ?? venta.fecha_regreso;
   const hoy = new Date().toISOString().slice(0, 10);
-  const vendedor = venta.asesor_firma_nombre ?? venta.asesor ?? "";
+  // Vendedor: agencia → asesor de la agencia; freelance → nombre del freelance;
+  // B2C/interno → asesor interno que gestionó la reserva.
+  const vendedor =
+    venta.tipo_asesor === "agencia" ? (venta.agencia_asesor ?? venta.agencia_nombre ?? "")
+    : venta.tipo_asesor === "freelance" ? (venta.freelance_nombre ?? "")
+    : (venta.asesor_firma_nombre ?? venta.asesor ?? "");
 
   // Regenera: borra los vouchers de servicios previos de este contrato.
   await sb.from("vouchers").delete().eq("numero_contrato", numero).eq("tipo", "servicios");
@@ -120,7 +125,9 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
       fechaIngreso: ingreso && salida ? `${formatFechaLarga(ingreso)} al ${formatFechaLarga(salida)}` : "",
       tipoPax: "Adultos",
       noches: String(noches(ingreso, salida) || ""),
-      tipoPlan: g.servicios.join(" · "),
+      // Tipo de plan = régimen de alimentación elegido en la reserva; si no hay
+      // (paquete de solo servicios), cae a los servicios.
+      tipoPlan: venta.plan_nombre || g.servicios.join(" · "),
       titular: venta.cliente ?? "",
       adultos: String(venta.pax ?? ""),
       ninos: "0",

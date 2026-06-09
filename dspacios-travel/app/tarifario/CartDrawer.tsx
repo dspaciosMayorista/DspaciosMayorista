@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
@@ -22,6 +22,14 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
   // Resuelve la foto ACTUAL del hotel por id (los ítems viejos del carrito pueden
   // no traer fotoUrl si se agregaron antes de subir la portada).
   const fotoDe = (it: { hotelId: number; fotoUrl: string | null }) => fotosPorHotel[it.hotelId] || it.fotoUrl;
+
+  // Bloquea el scroll del fondo mientras el panel del carrito está abierto (móvil).
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
 
   return (
     <>
@@ -48,7 +56,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
               <button type="button" onClick={() => setOpen(false)} className="text-sm text-gray-400 hover:text-gray-700">Cerrar ✕</button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto overscroll-contain p-4">
               {!items.length ? (
                 <div className="py-16 text-center text-sm text-gray-400">
                   Tu carrito está vacío.<br />Agrega alojamientos desde la vista Booking.
