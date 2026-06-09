@@ -989,8 +989,9 @@ export async function confirmarVenta(numeroContrato: string): Promise<{ ok: bool
   const client = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
   await client.from("sillas").update({ estado: "confirmada" }).eq("numero_contrato", numeroContrato).eq("estado", "en_plazo");
   // Respaldo: si el contrato aún no tiene cuentas por pagar (p. ej. venía de
-  // legacy o se creó manual), generarlas desde sus costos al confirmar.
-  await asegurarCuentasPorPagar(numeroContrato);
+  // legacy o se creó manual), generarlas desde sus costos al confirmar. No debe
+  // tumbar la confirmación si falla.
+  try { await asegurarCuentasPorPagar(numeroContrato); } catch { /* no bloquear la confirmación */ }
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/contratos");
   return { ok: true };
