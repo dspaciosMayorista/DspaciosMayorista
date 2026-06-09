@@ -11,6 +11,7 @@ import { ServiciosContratoEditor, type ServicioDispContrato } from "./ServiciosC
 import { AdjuntosContrato, type Adjunto } from "./AdjuntosContrato";
 import { VouchersPanel, type VoucherRow } from "./VouchersPanel";
 import { type CuotaRow } from "./PlanCobroPanel";
+import { EditarAsesorPasajeros, type PasajeroRow } from "./EditarAsesorPasajeros";
 import { EliminarContrato } from "./EliminarContrato";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 
@@ -43,6 +44,8 @@ export default async function ContratoDetallePage({
     { data: adjuntos },
     { data: vouchers },
     { data: cuotas },
+    { data: pasajerosC },
+    { data: asesoresVenta },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
@@ -54,6 +57,8 @@ export default async function ContratoDetallePage({
     sb.from("contrato_adjuntos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("numero_contrato", numero).order("created_at", { ascending: false }),
     sb.from("vouchers").select("id, tipo, proveedor, share_token, contenido").eq("numero_contrato", numero).order("id"),
     sb.from("cuotas").select("id, orden, tipo, fecha_limite, monto").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_pasajeros").select("id, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante").eq("numero_contrato", numero).order("orden"),
+    sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre"),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
@@ -212,6 +217,14 @@ export default async function ContratoDetallePage({
       />
 
       <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} />
+
+      <EditarAsesorPasajeros
+        numero={numero}
+        asesores={asesoresVenta ?? []}
+        asesorActual={venta.asesor_firma_nombre ?? venta.asesor ?? ""}
+        puedeAsesor={verFinanzas}
+        pasajeros={(pasajerosC ?? []) as unknown as PasajeroRow[]}
+      />
 
       <VouchersPanel
         numero={numero}
