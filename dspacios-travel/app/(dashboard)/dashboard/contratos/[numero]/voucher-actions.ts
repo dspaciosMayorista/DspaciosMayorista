@@ -61,41 +61,39 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
     }
   }
 
-  // Nombres de los servicios contratados (se guardan como "Servicio · {nombre}").
-  const nombresSel = (items ?? [])
-    .map((it) => it.descripcion ?? "")
-    .filter((d) => d.startsWith("Servicio · "))
-    .map((d) => d.replace(/^Servicio · /, "").trim());
-  if (!nombresSel.length) return { ok: false, error: "Este contrato no tiene servicios para generar vouchers." };
+  // Servicios add-on seleccionados (se guardan como "Servicio · {nombre}").
+  const addonNames = new Set(
+    (items ?? [])
+      .map((it) => it.descripcion ?? "")
+      .filter((d) => d.startsWith("Servicio · "))
+      .map((d) => d.replace(/^Servicio · /, "").trim())
+  );
 
-  // Reconstruye proveedor por servicio desde el paquete (el contrato no guarda ids).
-  const provPorNombre = new Map<string, { proveedor: string; voucherContacto: string | null }>();
+  // Servicios del paquete agrupados por proveedor: los INCLUIDOS (siempre van) +
+  // los add-on seleccionados. El proveedor se reconstruye desde el paquete (el
+  // contrato no guarda los ids de servicio).
+  const porProveedor = new Map<string, { contacto: string | null; servicios: string[] }>();
   if (venta.paquete_armado_id) {
     const { data: arm } = await sb
       .from("armado_servicios")
-      .select("servicios_adicionales(nombre, proveedores(nombre, voucher_contacto, contacto))")
+      .select("incluido, servicios_adicionales(nombre, proveedores(nombre, voucher_contacto, contacto))")
       .eq("paquete_id", venta.paquete_armado_id);
     for (const a of arm ?? []) {
       const s = a.servicios_adicionales as unknown as { nombre: string | null; proveedores: { nombre: string; voucher_contacto: string | null; contacto: string | null } | null } | null;
       if (!s?.nombre) continue;
+      const nombre = s.nombre.trim();
+      const incluido = (a as { incluido?: boolean | null }).incluido === true;
+      if (!incluido && !addonNames.has(nombre)) continue; // no es del contrato
       const prov = s.proveedores;
-      provPorNombre.set(s.nombre.trim(), {
-        proveedor: prov?.nombre ?? "Proveedor",
-        voucherContacto: prov?.voucher_contacto ?? prov?.contacto ?? null,
-      });
+      const key = prov?.nombre ?? "Sin proveedor";
+      const contacto = prov?.voucher_contacto ?? prov?.contacto ?? null;
+      const g = porProveedor.get(key) ?? { contacto, servicios: [] };
+      if (!g.contacto && contacto) g.contacto = contacto;
+      if (!g.servicios.includes(nombre)) g.servicios.push(nombre);
+      porProveedor.set(key, g);
     }
   }
-
-  // Agrupa los servicios contratados por proveedor.
-  const porProveedor = new Map<string, { contacto: string | null; servicios: string[] }>();
-  for (const nombre of nombresSel) {
-    const info = provPorNombre.get(nombre);
-    const key = info?.proveedor ?? "Sin proveedor";
-    const g = porProveedor.get(key) ?? { contacto: info?.voucherContacto ?? null, servicios: [] };
-    if (!g.contacto && info?.voucherContacto) g.contacto = info.voucherContacto;
-    g.servicios.push(nombre);
-    porProveedor.set(key, g);
-  }
+  if (!porProveedor.size) return { ok: false, error: "Este contrato no tiene servicios para generar vouchers." };
 
   const h0 = (hoteles ?? [])[0];
   const ingreso = h0?.fecha_ingreso ?? venta.fecha_salida;
