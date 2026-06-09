@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart } from "@/lib/cart/CartContext";
+import { useCart, type CartItem } from "@/lib/cart/CartContext";
 import { buscarHoteles, type BusquedaResultado } from "@/app/(dashboard)/dashboard/reservar/actions";
 
 type Hab = { acom: AcomRoom; ninos: number };
@@ -19,7 +19,6 @@ export function BuscadorBooking({
   fotosPorHotel?: Record<number, string>;
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
 }) {
-  const { add } = useCart();
   const hoy = new Date().toISOString().slice(0, 10);
   const [fIda, setFIda] = useState(hoy);
   const [fReg, setFReg] = useState(sumarDias(hoy, 3));
@@ -108,12 +107,18 @@ export function BuscadorBooking({
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {resultados.map((r) => (
-                <Resultado key={`${r.paqueteId}-${r.hotelId}`} r={r} foto={fotosPorHotel[r.hotelId] ?? null} info={infoPorHotel[r.hotelId]} onAdd={() => add({
-                  modulo: "porcion_terrestre", paqueteId: r.paqueteId, hotelId: r.hotelId, bloqueoId: null,
-                  hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: fotosPorHotel[r.hotelId] ?? null,
-                  categoria: r.categoria, regimen: r.regimen, fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso, noches: r.noches,
-                  habitaciones: r.habitaciones, ninos: r.ninos, ninos2: 0, pax: r.pax, precio: r.total,
-                })} />
+                <Resultado
+                  key={`${r.paqueteId}-${r.hotelId}`}
+                  r={r}
+                  foto={fotosPorHotel[r.hotelId] ?? null}
+                  info={infoPorHotel[r.hotelId]}
+                  item={{
+                    modulo: "porcion_terrestre", paqueteId: r.paqueteId, hotelId: r.hotelId, bloqueoId: null,
+                    hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: fotosPorHotel[r.hotelId] ?? null,
+                    categoria: r.categoria, regimen: r.regimen, fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso, noches: r.noches,
+                    habitaciones: r.habitaciones, ninos: r.ninos, ninos2: 0, pax: r.pax, precio: r.total,
+                  }}
+                />
               ))}
             </div>
           )}
@@ -123,8 +128,14 @@ export function BuscadorBooking({
   );
 }
 
-function Resultado({ r, foto, info, onAdd }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null }; onAdd: () => void }) {
-  const [added, setAdded] = useState(false);
+function Resultado({ r, foto, info, item }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null }; item: Omit<CartItem, "id"> }) {
+  const { items, add, remove } = useCart();
+  // El estado del botón se deriva del carrito real: si se quita del carrito,
+  // vuelve a estar disponible para agregar.
+  const enCarrito = items.find((i) =>
+    i.hotelId === item.hotelId && i.paqueteId === item.paqueteId &&
+    i.fechaIda === item.fechaIda && i.fechaRegreso === item.fechaRegreso &&
+    i.categoria === item.categoria && i.regimen === item.regimen);
   const estrellas = info?.estrellas && info.estrellas > 0 ? "★".repeat(info.estrellas) : "";
   return (
     <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
@@ -145,9 +156,9 @@ function Resultado({ r, foto, info, onAdd }: { r: BusquedaResultado; foto: strin
             <div className="text-[10px] uppercase tracking-wide text-gray-400">total {r.pax} pax</div>
             <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(r.total)}</div>
           </div>
-          <button type="button" onClick={() => { onAdd(); setAdded(true); }} disabled={added}
-            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: added ? "var(--brand-success)" : "var(--brand-primary)" }}>
-            {added ? "✓ Agregado" : "Agregar al carrito"}
+          <button type="button" onClick={() => (enCarrito ? remove(enCarrito.id) : add(item))}
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ backgroundColor: enCarrito ? "var(--brand-success)" : "var(--brand-primary)" }}>
+            {enCarrito ? "✓ En el carrito · quitar" : "Agregar al carrito"}
           </button>
         </div>
       </div>
