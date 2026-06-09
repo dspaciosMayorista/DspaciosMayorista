@@ -10,6 +10,7 @@ import { EditarVentaForm } from "./EditarVentaForm";
 import { ServiciosContratoEditor, type ServicioDispContrato } from "./ServiciosContratoEditor";
 import { AdjuntosContrato, type Adjunto } from "./AdjuntosContrato";
 import { VouchersPanel, type VoucherRow } from "./VouchersPanel";
+import { type CuotaRow } from "./PlanCobroPanel";
 import { EliminarContrato } from "./EliminarContrato";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 
@@ -41,6 +42,7 @@ export default async function ContratoDetallePage({
     { data: formasPagoRows },
     { data: adjuntos },
     { data: vouchers },
+    { data: cuotas },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
@@ -51,6 +53,7 @@ export default async function ContratoDetallePage({
     sb.from("formas_pago").select("nombre").order("orden"),
     sb.from("contrato_adjuntos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("numero_contrato", numero).order("created_at", { ascending: false }),
     sb.from("vouchers").select("id, proveedor, share_token, contenido").eq("numero_contrato", numero).eq("tipo", "servicios").order("id"),
+    sb.from("cuotas").select("id, orden, tipo, fecha_limite, monto").eq("numero_contrato", numero).order("orden"),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
@@ -200,6 +203,7 @@ export default async function ContratoDetallePage({
           otros_costos: venta.otros_costos,
         }}
         abonos={abonos ?? []}
+        cuotas={(cuotas ?? []) as unknown as CuotaRow[]}
         totalPagado={totalPagado}
         cuentasPorPagar={cxp ?? []}
         comisionesB2B={b2b ?? []}

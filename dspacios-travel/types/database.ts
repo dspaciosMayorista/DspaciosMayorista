@@ -1752,6 +1752,18 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["vouchers"]["Insert"]>;
         Relationships: [];
       };
+      config_cobros: {
+        Row: { tipo_paquete: string; pct_abono: number; updated_at: string };
+        Insert: { tipo_paquete: string; pct_abono?: number; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["config_cobros"]["Insert"]>;
+        Relationships: [];
+      };
+      cuotas: {
+        Row: { id: number; numero_contrato: string; orden: number; tipo: string; fecha_limite: string; monto: number; created_at: string };
+        Insert: { id?: number; numero_contrato: string; orden: number; tipo: string; fecha_limite: string; monto: number; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["cuotas"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {
