@@ -8,6 +8,7 @@ export type NavItem = {
   href: string;
   label: string;
   children?: { href: string; label: string }[];
+  separadorAntes?: boolean;   // dibuja un separador antes de este ítem
 };
 
 export function SidebarNav({ items }: { items: NavItem[] }) {
@@ -15,7 +16,10 @@ export function SidebarNav({ items }: { items: NavItem[] }) {
   return (
     <nav className="flex-1 space-y-0.5 px-3 py-4">
       {items.map((it) => (
-        <Group key={it.href} item={it} pathname={pathname} />
+        <div key={it.href}>
+          {it.separadorAntes && <div className="my-2 border-t border-gray-100" />}
+          <Group item={it} pathname={pathname} />
+        </div>
       ))}
     </nav>
   );

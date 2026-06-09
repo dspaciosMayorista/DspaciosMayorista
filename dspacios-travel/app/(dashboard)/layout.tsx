@@ -5,6 +5,31 @@ import { SidebarNav, type NavItem } from "./SidebarNav";
 import { Logo } from "@/components/Logo";
 
 const NAV: NavItem[] = [
+  // Comercial / venta
+  { href: "/tarifario", label: "Tarifario ↗" },
+  { href: "/dashboard/reservar", label: "Reservar" },
+  { href: "/dashboard/cotizaciones", label: "Cotizaciones" },
+
+  // Operación
+  { href: "/dashboard/ventas", label: "Ventas", separadorAntes: true },
+  {
+    href: "/dashboard/contratos",
+    label: "Contratos",
+    children: [{ href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" }],
+  },
+  {
+    href: "/dashboard/vuelos",
+    label: "Vuelos",
+    children: [{ href: "/dashboard/vuelos/nuevo", label: "Nuevo bloqueo" }],
+  },
+
+  // Producto
+  {
+    href: "/dashboard/paquetes",
+    label: "Montaje de producto",
+    separadorAntes: true,
+    children: [{ href: "/dashboard/paquetes/nuevo", label: "Nuevo paquete" }],
+  },
   {
     href: "/dashboard/producto",
     label: "Netas",
@@ -16,28 +41,12 @@ const NAV: NavItem[] = [
       { href: "/dashboard/producto/configuracion", label: "Configuración" },
     ],
   },
-  {
-    href: "/dashboard/paquetes",
-    label: "Montaje de producto",
-    children: [{ href: "/dashboard/paquetes/nuevo", label: "Nuevo paquete" }],
-  },
-  { href: "/dashboard/tarifario", label: "Tarifario" },
-  { href: "/dashboard/reservar", label: "Reservar" },
-  { href: "/dashboard/cotizaciones", label: "Cotizaciones" },
-  { href: "/dashboard/ventas", label: "Ventas" },
-  {
-    href: "/dashboard/contratos",
-    label: "Contratos",
-    children: [{ href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" }],
-  },
-  {
-    href: "/dashboard/vuelos",
-    label: "Vuelos",
-    children: [{ href: "/dashboard/vuelos/nuevo", label: "Nuevo bloqueo" }],
-  },
+
+  // Administración
   {
     href: "/dashboard/rentabilidad",
     label: "Finanzas",
+    separadorAntes: true,
     children: [
       { href: "/dashboard/rentabilidad", label: "Rentabilidad" },
       { href: "/dashboard/cartera", label: "Cartera (por cobrar)" },
@@ -47,9 +56,11 @@ const NAV: NavItem[] = [
       { href: "/dashboard/aliados", label: "Agencias y freelance" },
     ],
   },
-  { href: "/crm", label: "CRM ↗" },
   { href: "/dashboard/usuarios", label: "Usuarios" },
   { href: "/dashboard/configuracion", label: "Configuración" },
+
+  // CRM
+  { href: "/crm", label: "CRM ↗", separadorAntes: true },
 ];
 
 export default async function DashboardLayout({
