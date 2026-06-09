@@ -147,9 +147,9 @@ export function ReservaForm({
   const [freelanceNombre, setFreelanceNombre] = useState("");
   const [aliadoId, setAliadoId] = useState<number | "">("");
   const [plazo, setPlazo] = useState("");
-  // Vigencia de la cotización: por defecto hoy + 3 días (editable).
+  // Vigencia de la cotización: por defecto 24 horas (hoy + 1 día, editable).
   const [vigencia, setVigencia] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() + 3); return d.toISOString().slice(0, 10);
+    const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10);
   });
 
   // Pasajeros: la cantidad de filas se deriva del total; los datos se guardan
@@ -491,7 +491,7 @@ export function ReservaForm({
         <div>
           <label className={lbl}>Cotización válida hasta</label>
           <Input type="date" value={vigencia} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setVigencia(e.target.value)} className="w-44" />
-          <p className="mt-1 text-xs text-gray-400">Por defecto, 3 días. Editable.</p>
+          <p className="mt-1 text-xs text-gray-400">Por defecto, 24 horas. Editable.</p>
         </div>
         <Button onClick={guardar} disabled={pending || bloquear} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Generando…" : "Generar cotización"}

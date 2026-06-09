@@ -130,6 +130,26 @@ export async function crearSolicitudReserva(input: { items: SolicitudItem[]; cli
     cotis.push({ id: r.id, codigo: row?.codigo ?? `#${r.id}`, hotel: it.hotelNombre, precio: row?.precio_venta ?? it.precio, item: it, url });
   }
 
+  // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
+  // editable luego a B2B (agencia/freelance). Service-role: el checkout es público.
+  try {
+    const admin = createAdminClient();
+    const nombre = `${input.cliente.nombres} ${input.cliente.apellidos}`.trim();
+    if (nombre) {
+      // Si ya existe (índice único por documento/email/teléfono) el insert falla
+      // con 23505 y simplemente se ignora (no se duplica ni bloquea la solicitud).
+      await admin.from("crm_contactos").insert({
+        categoria: "cliente_final",
+        nombre,
+        tipo_doc: input.cliente.numeroDoc.trim() ? "CC" : null,
+        documento: input.cliente.numeroDoc.trim() || null,
+        email: input.cliente.email.trim() || null,
+        telefono: input.cliente.telefono.trim() || null,
+        origen: "Cotización tarifario (B2C)",
+      });
+    }
+  } catch { /* no bloquear la solicitud */ }
+
   // Destinatarios configurados (service-role: el checkout es público/anónimo).
   let whatsapp: string | null = null, emails: string | null = null, mensajeExtra: string | null = null;
   try {

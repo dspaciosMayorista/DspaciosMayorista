@@ -908,9 +908,9 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
   const detalle = { venta: ventaSnap, pasajeros: pasajerosSnap, hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
 
-  // Vigencia: la que indique el asesor o, por defecto, hoy + 3 días.
+  // Vigencia: la que indique el asesor o, por defecto, 24 horas (hoy + 1 día).
   let vigencia = opts?.vigenciaHasta && /^\d{4}-\d{2}-\d{2}$/.test(opts.vigenciaHasta) ? opts.vigenciaHasta : null;
-  if (!vigencia) { const vig = new Date(); vig.setDate(vig.getDate() + 3); vigencia = vig.toISOString().slice(0, 10); }
+  if (!vigencia) { const vig = new Date(); vig.setDate(vig.getDate() + 1); vigencia = vig.toISOString().slice(0, 10); }
 
   const { data: { user } } = await sb.auth.getUser();
 
