@@ -43,12 +43,28 @@ async function liquidarHotelPaquete(
   const impuesto = Number(pq.impuesto_fijo) || 0;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
-  const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }] = await Promise.all([
+  const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }, { data: blackouts }] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
     admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona)").eq("paquete_id", paqueteId),
+    admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones").eq("hotel_id", hotelId),
   ]);
+
+  // Black out general del hotel: cierra noches (total o por acomodación) por encima
+  // de cualquier vigencia. Si alguna noche de la estadía cae en un blackout total,
+  // el hotel no se vende; si es por acomodación, esas acomodaciones quedan fuera.
+  const nochesStay: string[] = [];
+  { const base = new Date(`${fechaIda}T00:00:00`).getTime(); for (let n = 0; n < numNoches; n++) nochesStay.push(new Date(base + n * 86_400_000).toISOString().slice(0, 10)); }
+  const acomCerradas = new Set<string>();
+  let cierreTotal = false;
+  for (const b of blackouts ?? []) {
+    const cubre = nochesStay.some((d) => (b.fecha_inicio as string) <= d && d <= (b.fecha_fin as string));
+    if (!cubre) continue;
+    if (b.total) cierreTotal = true;
+    else for (const a of ((b.acomodaciones as string[] | null) ?? [])) acomCerradas.add(a);
+  }
+  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null };
   const filtroCat = (hsel?.categorias as string[] | null) ?? null;
   const filtroReg = (hsel?.regimenes as string[] | null) ?? null;
   const hotelNombre = (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
@@ -94,7 +110,12 @@ async function liquidarHotelPaquete(
     }
     if (Object.keys(precios).length) combos.push({ categoria, regimen, precios });
   }
-  return { combos, destinoNombre, hotelNombre };
+  // Quita las acomodaciones cerradas por blackout; descarta combos sin habitación.
+  if (acomCerradas.size) {
+    for (const c of combos) for (const a of acomCerradas) delete c.precios[a];
+  }
+  const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2"));
+  return { combos: combosF, destinoNombre, hotelNombre };
 }
 
 export type CotizarResult =
