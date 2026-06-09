@@ -19,6 +19,7 @@ export type ProveedorInput = {
   tipoCuenta: string;
   numeroCuenta: string;
   politicaReservas: string;
+  voucherContacto: string;
   aplicaRetencion: boolean;
   pctRetencion: number;
 };
@@ -35,6 +36,7 @@ function toRow(input: ProveedorInput) {
     tipo_cuenta: oNull(input.tipoCuenta),
     numero_cuenta: oNull(input.numeroCuenta),
     politica_reservas: oNull(input.politicaReservas),
+    voucher_contacto: oNull(input.voucherContacto),
     aplica_retencion: input.aplicaRetencion,
     pct_retencion: input.pctRetencion,
   };
