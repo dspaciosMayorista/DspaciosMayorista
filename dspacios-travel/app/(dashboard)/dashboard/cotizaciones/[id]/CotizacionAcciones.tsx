@@ -11,17 +11,20 @@ type ClientePrefill = { nombres: string; apellidos: string; tipoDoc: string; num
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 export function CotizacionAcciones({
-  id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores,
+  id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores, miNombre, miRolVenta,
 }: {
   id: number; pax: number; infantes: number; tienePasajeros: boolean; cliente: ClientePrefill; esSuperadmin: boolean;
   asesores: { nombre: string; email: string | null }[];
+  miNombre: string; miRolVenta: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [confirmarDescarte, setConfirmarDescarte] = useState(false);
   const [capturando, setCapturando] = useState(false);
-  const [asesorSel, setAsesorSel] = useState("");
+  // Si quien gestiona es asesor de ventas, se autollena con su usuario.
+  const [asesorSel, setAsesorSel] = useState(miRolVenta ? miNombre : "");
+  const asesorBloqueado = miRolVenta && !esSuperadmin; // solo superadmin lo cambia
 
   const total = Math.max(1, pax || 1);
   const [paxRows, setPaxRows] = useState<PasajeroReserva[]>(() =>
@@ -51,7 +54,7 @@ export function CotizacionAcciones({
   function generarConPasajeros() {
     const falta = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
     if (falta >= 0) { setErr(`Pasajero ${falta + 1}: nombres y apellidos son obligatorios.`); return; }
-    if (!asesorSel) { setErr("Elige el asesor interno que gestiona esta reserva."); return; }
+    if (!asesorSel && !esSuperadmin) { setErr("Elige el asesor interno que gestiona esta reserva."); return; }
     setErr("");
     start(async () => {
       const r = await convertirCotizacion(id, paxRows, false, asesorSel);
@@ -105,11 +108,14 @@ export function CotizacionAcciones({
           <p className="text-sm font-medium text-gray-700">Datos de los pasajeros ({total})</p>
           <p className="text-xs text-gray-400">Ya tienes al titular; completa el resto. Sin pasajeros no pasa a contrato.</p>
           <div className="max-w-xs">
-            <label className="text-[11px] text-gray-500">Asesor interno que gestiona *</label>
-            <select value={asesorSel} onChange={(e) => setAsesorSel(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
-              <option value="">— Elegir asesor —</option>
+            <label className="text-[11px] text-gray-500">Asesor interno que gestiona{esSuperadmin ? " (opcional)" : " *"}</label>
+            <select value={asesorSel} onChange={(e) => setAsesorSel(e.target.value)} disabled={asesorBloqueado}
+              className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500">
+              <option value="">{esSuperadmin ? "— Sin asesor —" : "— Elegir asesor —"}</option>
               {asesores.map((a) => <option key={a.email ?? a.nombre} value={a.nombre}>{a.nombre}</option>)}
+              {asesorSel && !asesores.some((a) => a.nombre === asesorSel) && <option value={asesorSel}>{asesorSel}</option>}
             </select>
+            {asesorBloqueado && <p className="mt-0.5 text-[10px] text-gray-400">Te asigna automáticamente; solo un superadmin puede cambiarlo.</p>}
           </div>
           {paxRows.map((p, i) => (
             <div key={i} className="grid grid-cols-2 gap-2 sm:grid-cols-6">
