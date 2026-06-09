@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { calcularEdad } from "@/lib/utils";
 import { convertirCotizacion, descartarCotizacion, type PasajeroReserva } from "../../reservar/actions";
 
 type ClientePrefill = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string };
@@ -54,6 +55,21 @@ export function CotizacionAcciones({
   function generarConPasajeros() {
     const falta = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
     if (falta >= 0) { setErr(`Pasajero ${falta + 1}: nombres y apellidos son obligatorios.`); return; }
+    // Menores de edad no pueden tener CC (solo RC o TI).
+    const menorConCC = paxRows.findIndex((p) => {
+      const edad = calcularEdad(p.fechaNacimiento, null);
+      return edad != null && edad < 18 && p.tipoDoc === "CC";
+    });
+    if (menorConCC >= 0) { setErr(`Pasajero ${menorConCC + 1}: un menor de edad no puede tener CC; usa RC o TI.`); return; }
+    // No puede haber dos pasajeros con el mismo tipo + número de documento.
+    const vistos = new Set<string>();
+    for (let i = 0; i < paxRows.length; i++) {
+      const p = paxRows[i];
+      if (!p.numeroDoc.trim()) continue;
+      const k = `${p.tipoDoc}-${p.numeroDoc.trim()}`;
+      if (vistos.has(k)) { setErr(`Pasajero ${i + 1}: documento repetido (${p.tipoDoc} ${p.numeroDoc}).`); return; }
+      vistos.add(k);
+    }
     if (!asesorSel && !esSuperadmin) { setErr("Elige el asesor interno que gestiona esta reserva."); return; }
     setErr("");
     start(async () => {
@@ -118,18 +134,18 @@ export function CotizacionAcciones({
             {asesorBloqueado && <p className="mt-0.5 text-[10px] text-gray-400">Te asigna automáticamente; solo un superadmin puede cambiarlo.</p>}
           </div>
           {paxRows.map((p, i) => (
-            <div key={i} className="grid grid-cols-2 gap-2 sm:grid-cols-6">
-              <div className="sm:col-span-1"><label className="text-[11px] text-gray-500">Nombres</label><Input value={p.nombres} onChange={(e) => setRow(i, "nombres", e.target.value)} /></div>
-              <div className="sm:col-span-1"><label className="text-[11px] text-gray-500">Apellidos</label><Input value={p.apellidos} onChange={(e) => setRow(i, "apellidos", e.target.value)} /></div>
-              <div>
+            <div key={i} className="flex flex-wrap items-end gap-2">
+              <div className="w-32"><label className="text-[11px] text-gray-500">Nombres</label><Input value={p.nombres} onChange={(e) => setRow(i, "nombres", e.target.value)} /></div>
+              <div className="w-32"><label className="text-[11px] text-gray-500">Apellidos</label><Input value={p.apellidos} onChange={(e) => setRow(i, "apellidos", e.target.value)} /></div>
+              <div className="w-24">
                 <label className="text-[11px] text-gray-500">Tipo doc</label>
                 <select value={p.tipoDoc} onChange={(e) => setRow(i, "tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
                   {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
-              <div><label className="text-[11px] text-gray-500">N° doc</label><Input value={p.numeroDoc} onChange={(e) => setRow(i, "numeroDoc", e.target.value)} /></div>
-              <div><label className="text-[11px] text-gray-500">Nacimiento</label><Input type="date" value={p.fechaNacimiento} onChange={(e) => setRow(i, "fechaNacimiento", e.target.value)} /></div>
-              <div><label className="text-[11px] text-gray-500">Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setRow(i, "nacionalidad", e.target.value)} /></div>
+              <div className="w-28"><label className="text-[11px] text-gray-500">N° doc</label><Input value={p.numeroDoc} onChange={(e) => setRow(i, "numeroDoc", e.target.value)} /></div>
+              <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><Input type="date" className="w-full" value={p.fechaNacimiento} onChange={(e) => setRow(i, "fechaNacimiento", e.target.value)} /></div>
+              <div className="w-32"><label className="text-[11px] text-gray-500">Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setRow(i, "nacionalidad", e.target.value)} /></div>
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-3">
