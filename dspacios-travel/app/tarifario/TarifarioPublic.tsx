@@ -143,7 +143,7 @@ export function TarifarioPublic({
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
 }) {
-  const [vista, setVista] = useState<"tabla" | "booking">("tabla");
+  const [vista, setVista] = useState<"tabla" | "booking">("booking");
   const [q, setQ] = useState("");
   const [fCat, setFCat] = useState("");
   const [fReg, setFReg] = useState("");
