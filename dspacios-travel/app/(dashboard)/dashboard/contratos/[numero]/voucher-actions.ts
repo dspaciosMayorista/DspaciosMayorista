@@ -2,8 +2,14 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { formatFechaLarga } from "@/lib/utils";
+import { formatFechaLarga, calcularEdad } from "@/lib/utils";
 import type { Json } from "@/types/database";
+
+// "Adultos" o "Adultos y niños" según las edades de los pasajeros.
+function tipoPaxDe(pasajeros: { fecha_nacimiento: string | null }[], fechaRef: string | null): string {
+  const hayMenores = pasajeros.some((p) => { const e = calcularEdad(p.fecha_nacimiento, fechaRef); return e != null && e < 18; });
+  return hayMenores ? "Adultos y niños" : "Adultos";
+}
 
 type Result = { ok: true; creados?: number } | { ok: false; error: string };
 
@@ -42,12 +48,14 @@ const noches = (a: string | null, b: string | null): number => {
 export async function generarVouchersServicios(numero: string): Promise<Result> {
   const sb = await createClient();
 
-  const [{ data: venta }, { data: hoteles }, { data: items }] = await Promise.all([
+  const [{ data: venta }, { data: hoteles }, { data: items }, { data: pasajeros }] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("contrato_hoteles").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("contrato_items").select("descripcion").eq("numero_contrato", numero),
+    sb.from("contrato_pasajeros").select("fecha_nacimiento").eq("numero_contrato", numero),
   ]);
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
+  const tipoPax = tipoPaxDe(pasajeros ?? [], venta.fecha_salida);
 
   // Gating: solo se generan vouchers si el contrato está 100% pago, o si quien lo
   // genera es superadmin (override).
@@ -124,7 +132,7 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
       hotel: h0?.nombre ?? venta.hotel ?? "",
       destino: venta.destino ?? "",
       fechaIngreso: ingreso && salida ? `${formatFechaLarga(ingreso)} al ${formatFechaLarga(salida)}` : "",
-      tipoPax: "Adultos",
+      tipoPax,
       noches: String(noches(ingreso, salida) || ""),
       // Tipo de plan = régimen de alimentación elegido en la reserva; si no hay
       // (paquete de solo servicios), cae a los servicios.
@@ -153,9 +161,10 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
 // editable "Código de reserva del hotel".
 export async function generarVoucherHotel(numero: string): Promise<Result> {
   const sb = await createClient();
-  const [{ data: venta }, { data: hoteles }] = await Promise.all([
+  const [{ data: venta }, { data: hoteles }, { data: pasajeros }] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("contrato_hoteles").select("*").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_pasajeros").select("fecha_nacimiento").eq("numero_contrato", numero),
   ]);
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
 
@@ -178,9 +187,16 @@ export async function generarVoucherHotel(numero: string): Promise<Result> {
     : venta.tipo_asesor === "freelance" ? (venta.freelance_nombre ?? "")
     : (venta.asesor_firma_nombre ?? venta.asesor ?? "");
 
+  // Régimen: mostrar QUÉ INCLUYE (descripción del plan), no el código (ej. "PC").
+  let regimenTexto = h0.alimentacion ?? "";
+  if (h0.alimentacion) {
+    const { data: plan } = await sb.from("planes_alimentacion").select("nombre, descripcion").eq("codigo", h0.alimentacion).maybeSingle();
+    regimenTexto = plan?.descripcion?.trim() || plan?.nombre?.trim() || h0.alimentacion;
+  }
+
   const incluye: string[] = [];
   if (h0.detalle_acomodacion) incluye.push(`Alojamiento: ${h0.detalle_acomodacion}`);
-  if (h0.alimentacion) incluye.push(`Régimen: ${h0.alimentacion}`);
+  if (regimenTexto) incluye.push(`Alimentación: ${regimenTexto}`);
 
   const contenido: VoucherContenido = {
     emision: hoy, nReserva: numero, vendedor, elaboradoPor: "ÁREA DE RESERVAS",
@@ -188,8 +204,8 @@ export async function generarVoucherHotel(numero: string): Promise<Result> {
     proveedor: h0.proveedor ?? h0.nombre ?? "",
     hotel: h0.nombre ?? venta.hotel ?? "", destino: venta.destino ?? "",
     fechaIngreso: ingreso && salida ? `${formatFechaLarga(ingreso)} al ${formatFechaLarga(salida)}` : "",
-    tipoPax: "Adultos", noches: String(noches(ingreso, salida) || ""),
-    tipoPlan: venta.plan_nombre || h0.alimentacion || "",
+    tipoPax: tipoPaxDe(pasajeros ?? [], venta.fecha_salida), noches: String(noches(ingreso, salida) || ""),
+    tipoPlan: regimenTexto || venta.plan_nombre || "",
     titular: venta.cliente ?? "", adultos: String(venta.pax ?? ""), ninos: "0",
     checkIn: "", checkOut: "", incluye,
     infoImportante: "Presentar documento de identidad. Todo menor de edad debe viajar con los permisos diligenciados exigidos por las autoridades.",
