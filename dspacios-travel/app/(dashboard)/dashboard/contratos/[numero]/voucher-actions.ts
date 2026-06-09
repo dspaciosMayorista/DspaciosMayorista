@@ -29,6 +29,7 @@ export type VoucherContenido = {
   incluye: string[];
   infoImportante: string;
   noIncluye: string;
+  codigoReserva?: string;   // solo voucher de hotel
 };
 
 const noches = (a: string | null, b: string | null): number => {
@@ -146,6 +147,61 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true, creados: filas.length };
+}
+
+// Voucher de HOTEL (D'spacios → cliente, para el check-in). Incluye el campo
+// editable "Código de reserva del hotel".
+export async function generarVoucherHotel(numero: string): Promise<Result> {
+  const sb = await createClient();
+  const [{ data: venta }, { data: hoteles }] = await Promise.all([
+    sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
+    sb.from("contrato_hoteles").select("*").eq("numero_contrato", numero).order("orden"),
+  ]);
+  if (!venta) return { ok: false, error: "Contrato no encontrado." };
+
+  // Gating: 100% pago o superadmin.
+  const { data: { user } } = await sb.auth.getUser();
+  const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
+  if (perfil?.rol !== "superadmin") {
+    const { data: abonos } = await sb.from("abonos").select("valor_abono").eq("numero_contrato", numero);
+    const pagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
+    if (pagado < (venta.precio_venta ?? 0)) return { ok: false, error: "El contrato debe estar 100% pago (o pídelo a un superadmin)." };
+  }
+
+  const h0 = (hoteles ?? [])[0];
+  if (!h0) return { ok: false, error: "Este contrato no tiene hotel." };
+  const ingreso = h0.fecha_ingreso ?? venta.fecha_salida;
+  const salida = h0.fecha_salida ?? venta.fecha_regreso;
+  const hoy = new Date().toISOString().slice(0, 10);
+  const vendedor =
+    venta.tipo_asesor === "agencia" ? (venta.agencia_asesor ?? venta.agencia_nombre ?? "")
+    : venta.tipo_asesor === "freelance" ? (venta.freelance_nombre ?? "")
+    : (venta.asesor_firma_nombre ?? venta.asesor ?? "");
+
+  const incluye: string[] = [];
+  if (h0.detalle_acomodacion) incluye.push(`Alojamiento: ${h0.detalle_acomodacion}`);
+  if (h0.alimentacion) incluye.push(`Régimen: ${h0.alimentacion}`);
+
+  const contenido: VoucherContenido = {
+    emision: hoy, nReserva: numero, vendedor, elaboradoPor: "ÁREA DE RESERVAS",
+    contactoEmpresa: "(+57) 321-2094015",
+    proveedor: h0.proveedor ?? h0.nombre ?? "",
+    hotel: h0.nombre ?? venta.hotel ?? "", destino: venta.destino ?? "",
+    fechaIngreso: ingreso && salida ? `${formatFechaLarga(ingreso)} al ${formatFechaLarga(salida)}` : "",
+    tipoPax: "Adultos", noches: String(noches(ingreso, salida) || ""),
+    tipoPlan: venta.plan_nombre || h0.alimentacion || "",
+    titular: venta.cliente ?? "", adultos: String(venta.pax ?? ""), ninos: "0",
+    checkIn: "", checkOut: "", incluye,
+    infoImportante: "Presentar documento de identidad. Todo menor de edad debe viajar con los permisos diligenciados exigidos por las autoridades.",
+    noIncluye: "Gastos no especificados en este documento.",
+    codigoReserva: "",
+  };
+
+  await sb.from("vouchers").delete().eq("numero_contrato", numero).eq("tipo", "hotel");
+  const { error } = await sb.from("vouchers").insert({ numero_contrato: numero, tipo: "hotel", proveedor: contenido.proveedor, contenido: contenido as unknown as Json });
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/contratos/${numero}`);
+  return { ok: true, creados: 1 };
 }
 
 export async function actualizarVoucher(id: number, contenido: VoucherContenido, numero: string): Promise<Result> {

@@ -11,15 +11,17 @@ type ClientePrefill = { nombres: string; apellidos: string; tipoDoc: string; num
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 export function CotizacionAcciones({
-  id, pax, infantes, tienePasajeros, cliente, esSuperadmin,
+  id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores,
 }: {
   id: number; pax: number; infantes: number; tienePasajeros: boolean; cliente: ClientePrefill; esSuperadmin: boolean;
+  asesores: { nombre: string; email: string | null }[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [confirmarDescarte, setConfirmarDescarte] = useState(false);
   const [capturando, setCapturando] = useState(false);
+  const [asesorSel, setAsesorSel] = useState("");
 
   const total = Math.max(1, pax || 1);
   const [paxRows, setPaxRows] = useState<PasajeroReserva[]>(() =>
@@ -49,9 +51,10 @@ export function CotizacionAcciones({
   function generarConPasajeros() {
     const falta = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
     if (falta >= 0) { setErr(`Pasajero ${falta + 1}: nombres y apellidos son obligatorios.`); return; }
+    if (!asesorSel) { setErr("Elige el asesor interno que gestiona esta reserva."); return; }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacion(id, paxRows);
+      const r = await convertirCotizacion(id, paxRows, false, asesorSel);
       if (r.ok) router.push(`/dashboard/contratos/${r.numero}`);
       else setErr(r.error);
     });
@@ -101,6 +104,13 @@ export function CotizacionAcciones({
         <div className="space-y-3 rounded-xl border border-gray-200 p-4">
           <p className="text-sm font-medium text-gray-700">Datos de los pasajeros ({total})</p>
           <p className="text-xs text-gray-400">Ya tienes al titular; completa el resto. Sin pasajeros no pasa a contrato.</p>
+          <div className="max-w-xs">
+            <label className="text-[11px] text-gray-500">Asesor interno que gestiona *</label>
+            <select value={asesorSel} onChange={(e) => setAsesorSel(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
+              <option value="">— Elegir asesor —</option>
+              {asesores.map((a) => <option key={a.email ?? a.nombre} value={a.nombre}>{a.nombre}</option>)}
+            </select>
+          </div>
           {paxRows.map((p, i) => (
             <div key={i} className="grid grid-cols-2 gap-2 sm:grid-cols-6">
               <div className="sm:col-span-1"><label className="text-[11px] text-gray-500">Nombres</label><Input value={p.nombres} onChange={(e) => setRow(i, "nombres", e.target.value)} /></div>

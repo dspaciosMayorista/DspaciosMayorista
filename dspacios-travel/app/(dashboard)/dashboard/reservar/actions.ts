@@ -941,7 +941,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
 // Convierte una cotización en CONTRATO: corre el motor de reserva normal (genera
 // numero_contrato + sillas + CxP) con el payload guardado, y enlaza la cotización.
-export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserva[], override?: boolean): Promise<ReservaResult> {
+export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserva[], override?: boolean, asesorInterno?: string): Promise<ReservaResult> {
   const sb = await createClient();
   const { data: cot, error } = await sb
     .from("cotizaciones")
@@ -965,7 +965,9 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
     }
   }
 
-  const res = await reservarDesdeTarifario({ ...payload, pasajeros: pax });
+  // Si viene del portal B2C, el asesor interno que la gestiona se elige al convertir.
+  const asesor = asesorInterno?.trim() || payload.asesorInterno || "";
+  const res = await reservarDesdeTarifario({ ...payload, pasajeros: pax, asesorInterno: asesor });
   if (!res.ok) return res;
 
   await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);

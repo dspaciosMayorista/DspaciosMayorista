@@ -4,9 +4,9 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { generarVouchersServicios, actualizarVoucher, eliminarVoucher, type VoucherContenido } from "./voucher-actions";
+import { generarVouchersServicios, generarVoucherHotel, actualizarVoucher, eliminarVoucher, type VoucherContenido } from "./voucher-actions";
 
-export type VoucherRow = { id: number; proveedor: string | null; share_token: string; contenido: VoucherContenido };
+export type VoucherRow = { id: number; tipo?: string; proveedor: string | null; share_token: string; contenido: VoucherContenido };
 
 const lbl = "mb-1 block text-[11px] font-medium text-gray-500";
 const inp = "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
@@ -20,7 +20,15 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo }:
     setMsg("");
     start(async () => {
       const r = await generarVouchersServicios(numero);
-      if (r.ok) { setMsg(`✓ ${r.creados} voucher(s) generado(s)`); router.refresh(); }
+      if (r.ok) { setMsg(`✓ ${r.creados} voucher(s) de servicios`); router.refresh(); }
+      else setMsg(r.error);
+    });
+  }
+  function generarHotel() {
+    setMsg("");
+    start(async () => {
+      const r = await generarVoucherHotel(numero);
+      if (r.ok) { setMsg("✓ Voucher de hotel generado"); router.refresh(); }
       else setMsg(r.error);
     });
   }
@@ -29,12 +37,17 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo }:
     <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-gray-700">Vouchers de servicios</h2>
-          <p className="text-xs text-gray-400">Uno por proveedor. Auto-armado desde el contrato; editable antes de imprimir.</p>
+          <h2 className="text-sm font-semibold text-gray-700">Vouchers</h2>
+          <p className="text-xs text-gray-400">Servicios (uno por proveedor) y hotel. Auto-armados; editables antes de imprimir.</p>
         </div>
-        <Button onClick={generar} disabled={pending || !puedeGenerar} style={{ backgroundColor: "var(--brand-primary)" }}>
-          {pending ? "Generando…" : vouchers.length ? "Regenerar vouchers" : "Generar vouchers de servicios"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={generar} disabled={pending || !puedeGenerar} style={{ backgroundColor: "var(--brand-primary)" }}>
+            {pending ? "…" : "Vouchers de servicios"}
+          </Button>
+          <Button onClick={generarHotel} disabled={pending || !puedeGenerar} variant="outline">
+            Voucher de hotel
+          </Button>
+        </div>
       </div>
       {!puedeGenerar && <p className="mt-2 text-xs text-amber-600">{motivoBloqueo ?? "El contrato debe estar 100% pago para generar los vouchers (o pídelo a un superadmin)."}</p>}
       {msg && <p className={`mt-2 text-sm ${msg.startsWith("✓") ? "text-green-600" : "text-red-600"}`}>{msg}</p>}
@@ -73,7 +86,10 @@ function VoucherCard({ numero, v }: { numero: string; v: VoucherRow }) {
   return (
     <div className="rounded-xl border border-gray-200">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-        <div className="font-medium text-gray-800">{v.proveedor ?? "Proveedor"}</div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-500">{v.tipo === "hotel" ? "Hotel" : "Servicios"}</span>
+          <span className="font-medium text-gray-800">{v.proveedor ?? "Proveedor"}</span>
+        </div>
         <div className="flex items-center gap-3 text-sm">
           <a href={`/voucher/${v.share_token}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Ver / imprimir →</a>
           <button type="button" onClick={() => setOpen((o) => !o)} className="text-xs" style={{ color: "var(--brand-accent)" }}>{open ? "Cerrar" : "Editar"}</button>
@@ -83,6 +99,9 @@ function VoucherCard({ numero, v }: { numero: string; v: VoucherRow }) {
 
       {open && (
         <div className="space-y-3 border-t border-gray-100 p-4">
+          {c.codigoReserva !== undefined && (
+            <div><label className={lbl}>Código de reserva del hotel</label><Input value={c.codigoReserva} onChange={(e) => set("codigoReserva", e.target.value)} placeholder="Ej. ABC123 / confirmación del hotel" /></div>
+          )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div><label className={lbl}>Hotel</label><Input value={c.hotel} onChange={(e) => set("hotel", e.target.value)} /></div>
             <div><label className={lbl}>Destino</label><Input value={c.destino} onChange={(e) => set("destino", e.target.value)} /></div>
