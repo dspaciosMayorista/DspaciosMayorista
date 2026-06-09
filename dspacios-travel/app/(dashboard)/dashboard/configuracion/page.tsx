@@ -3,6 +3,7 @@ import { ConfigClient } from "./ConfigClient";
 import { EscalasComisionConfig } from "./EscalasComisionConfig";
 import { SolicitudesConfig } from "./SolicitudesConfig";
 import { CobrosConfig } from "./CobrosConfig";
+import { NotificacionesConfig } from "./NotificacionesConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function ConfiguracionPage() {
     );
   }
 
-  const [{ data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }, { data: vendedores }, { data: configSolicitudes }, { data: configCobros }] = await Promise.all([
+  const [{ data: parametros }, { data: rangos }, { data: formasPago }, { data: escalas }, { data: escalaRangos }, { data: vendedores }, { data: configSolicitudes }, { data: configCobros }, { data: configNotif }] = await Promise.all([
     sb.from("parametros_tributarios").select("parametro, valor, descripcion").order("parametro"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("formas_pago").select("id, nombre").order("orden"),
@@ -34,6 +35,7 @@ export default async function ConfiguracionPage() {
     sb.from("usuarios").select("id, nombre, escala_id, aplica_retencion").eq("rol", "venta").order("nombre"),
     sb.from("config_solicitudes").select("whatsapp, emails, mensaje_extra").eq("id", 1).maybeSingle(),
     sb.from("config_cobros").select("tipo_paquete, pct_abono").order("tipo_paquete"),
+    sb.from("config_notificaciones").select("remitente, destinatarios, dias_anticipacion, alerta_cxp, alerta_cuotas, alerta_bloqueos, activo").eq("id", 1).maybeSingle(),
   ]);
 
   const escalasConRangos = (escalas ?? []).map((e) => ({
@@ -57,6 +59,9 @@ export default async function ConfiguracionPage() {
       </div>
       <div className="mt-8">
         <CobrosConfig config={configCobros ?? []} esSuperadmin={perfil?.rol === "superadmin"} />
+      </div>
+      <div className="mt-8">
+        <NotificacionesConfig config={configNotif ?? null} />
       </div>
     </div>
   );

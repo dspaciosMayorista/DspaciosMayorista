@@ -183,3 +183,28 @@ export async function actualizarConfigSolicitudes(input: {
   revalidatePath("/dashboard/configuracion");
   return { ok: true };
 }
+
+// ── Notificaciones por correo (Resend) ─────────────────────────────────────
+export async function actualizarConfigNotificaciones(input: {
+  remitente: string; destinatarios: string; diasAnticipacion: number;
+  alertaCxp: boolean; alertaCuotas: boolean; alertaBloqueos: boolean; activo: boolean;
+}): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("config_notificaciones").update({
+    remitente: input.remitente.trim() || "D'spacios Travel <info@dspaciostravel.com>",
+    destinatarios: input.destinatarios.trim() || null,
+    dias_anticipacion: Math.max(0, Math.trunc(input.diasAnticipacion) || 5),
+    alerta_cxp: input.alertaCxp, alerta_cuotas: input.alertaCuotas, alerta_bloqueos: input.alertaBloqueos,
+    activo: input.activo, updated_at: new Date().toISOString(),
+  }).eq("id", 1);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/configuracion");
+  return { ok: true };
+}
+
+export async function enviarNotificacionPrueba(): Promise<Result> {
+  const { enviarNotificaciones } = await import("@/lib/notificaciones");
+  const r = await enviarNotificaciones({ forzar: true });
+  if (!r.ok) return { ok: false, error: r.error ?? "No se pudo enviar." };
+  return { ok: true };
+}
