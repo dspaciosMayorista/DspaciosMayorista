@@ -7,7 +7,7 @@ import { Logo } from "@/components/Logo";
 const NAV: NavItem[] = [
   {
     href: "/dashboard/producto",
-    label: "Producto",
+    label: "Netas",
     children: [
       { href: "/dashboard/producto/destinos", label: "Destinos" },
       { href: "/dashboard/producto/hoteles", label: "Hoteles" },
@@ -18,7 +18,7 @@ const NAV: NavItem[] = [
   },
   {
     href: "/dashboard/paquetes",
-    label: "Paquetes",
+    label: "Montaje de producto",
     children: [{ href: "/dashboard/paquetes/nuevo", label: "Nuevo paquete" }],
   },
   { href: "/dashboard/tarifario", label: "Tarifario" },
