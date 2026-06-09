@@ -941,7 +941,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
 // Convierte una cotización en CONTRATO: corre el motor de reserva normal (genera
 // numero_contrato + sillas + CxP) con el payload guardado, y enlaza la cotización.
-export async function convertirCotizacion(id: number): Promise<ReservaResult> {
+export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserva[], override?: boolean): Promise<ReservaResult> {
   const sb = await createClient();
   const { data: cot, error } = await sb
     .from("cotizaciones")
@@ -952,7 +952,20 @@ export async function convertirCotizacion(id: number): Promise<ReservaResult> {
   if (cot.estado === "convertida" && cot.numero_contrato) return { ok: true, numero: cot.numero_contrato };
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
 
-  const res = await reservarDesdeTarifario(cot.payload as unknown as ReservaInput);
+  const payload = cot.payload as unknown as ReservaInput;
+  // Un contrato necesita pasajeros: usa los capturados ahora o los que ya trae la
+  // cotización (las internas los traen; las del tarifario B2C no). Sin pasajeros
+  // no pasa a contrato, salvo override de superadmin.
+  const pax = pasajeros && pasajeros.length ? pasajeros : (payload.pasajeros ?? []);
+  if (!pax.length) {
+    const { data: { user } } = await sb.auth.getUser();
+    const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
+    if (!(override && perfil?.rol === "superadmin")) {
+      return { ok: false, error: "Captura los datos de los pasajeros antes de generar el contrato." };
+    }
+  }
+
+  const res = await reservarDesdeTarifario({ ...payload, pasajeros: pax });
   if (!res.ok) return res;
 
   await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);

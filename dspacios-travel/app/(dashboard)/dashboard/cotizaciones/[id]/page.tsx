@@ -32,6 +32,18 @@ export default async function CotizacionDetallePage({
 
   if (!c) notFound();
 
+  const { data: { user } } = await sb.auth.getUser();
+  const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
+  const esSuperadmin = perfil?.rol === "superadmin";
+  const payload = (c.payload ?? {}) as { pasajeros?: unknown[]; infantes?: number; cliente?: { nombres?: string; apellidos?: string; tipoDoc?: string; numeroDoc?: string } };
+  const tienePasajeros = Array.isArray(payload.pasajeros) && payload.pasajeros.length > 0;
+  const clientePre = {
+    nombres: payload.cliente?.nombres ?? "",
+    apellidos: payload.cliente?.apellidos ?? "",
+    tipoDoc: payload.cliente?.tipoDoc ?? "CC",
+    numeroDoc: payload.cliente?.numeroDoc ?? "",
+  };
+
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
       <Link href="/dashboard/cotizaciones" className="text-sm text-gray-400 hover:text-gray-600">
@@ -71,7 +83,14 @@ export default async function CotizacionDetallePage({
 
       <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
         {c.estado === "abierta" ? (
-          <CotizacionAcciones id={c.id} />
+          <CotizacionAcciones
+            id={c.id}
+            pax={c.pax ?? 1}
+            infantes={payload.infantes ?? 0}
+            tienePasajeros={tienePasajeros}
+            cliente={clientePre}
+            esSuperadmin={esSuperadmin}
+          />
         ) : c.estado === "convertida" && c.numero_contrato ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-gray-600">
