@@ -736,6 +736,7 @@ export type Database = {
           estrellas: number | null;
           clasificacion: string | null;
           descripcion: string | null;
+          ubicacion: string | null;
         };
         Insert: {
           id?: number;
@@ -757,6 +758,7 @@ export type Database = {
           estrellas?: number | null;
           clasificacion?: string | null;
           descripcion?: string | null;
+          ubicacion?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [

@@ -22,6 +22,7 @@ type HotelCard = {
   estrellas: number | null;
   clasificacion: string | null;
   descripcion: string | null;
+  ubicacion: string | null;
   filas: FilaTarifario[];
 };
 
@@ -94,7 +95,7 @@ export function VistaBooking({
   cuposPorBloqueo?: Record<number, number>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null }>;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
 }) {
@@ -113,6 +114,7 @@ export function VistaBooking({
           hotelId: id, hotelNombre: f.hotel_nombre ?? "—", destino: f.destino_nombre,
           foto: fotosPorHotel[id] ?? null, desde: null,
           estrellas: info?.estrellas ?? null, clasificacion: info?.clasificacion ?? null, descripcion: info?.descripcion ?? null,
+          ubicacion: info?.ubicacion ?? null,
           filas: [],
         };
         map.set(id, c);
@@ -253,6 +255,24 @@ function HotelModal({
               <p className="mt-2 text-sm text-gray-600">{hotel.descripcion}</p>
             )}
           </div>
+
+          {hotel.ubicacion?.trim() && (
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Ubicación</span>
+                <a href={`https://www.google.com/maps?q=${encodeURIComponent(hotel.ubicacion)}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+                  Ver en Google Maps →
+                </a>
+              </div>
+              <iframe
+                title={`Mapa ${hotel.hotelNombre}`}
+                src={`https://www.google.com/maps?q=${encodeURIComponent(hotel.ubicacion)}&output=embed`}
+                className="h-56 w-full rounded-lg border border-gray-200"
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            </div>
+          )}
 
           {!opcion ? (
             <p className="text-sm text-gray-400">Sin disponibilidad publicada.</p>

@@ -97,7 +97,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
 
 type ModuloKey = FilaTarifario["modulo"] | "programas";
 
-type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
+type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null }>;
 
 // Estrellas (★) o clasificación (Boutique/Luxury…) al lado del nombre del hotel.
 function CategoriaInline({ info }: { info?: { estrellas: number | null; clasificacion: string | null } }) {
@@ -139,7 +139,7 @@ export function TarifarioPublic({
   cuposPorBloqueo?: Record<number, number>;
   fotosPorHotel?: Record<number, string>;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null }>;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
 }) {
