@@ -144,6 +144,86 @@ export async function cotizarPorFechas(input: {
   return { ok: true, combos: res.combos, noches: numNoches };
 }
 
+// ── Mini-motor de búsqueda (público): liquida TODOS los hoteles de porción para
+// las fechas y la composición de habitaciones, y devuelve los que CABEN ya con
+// precio (el combo categoría/régimen más barato por hotel). ───────────────────
+export type BusquedaInput = {
+  fechaIda: string;
+  fechaRegreso: string;
+  habitaciones: { acom: AcomRoom; ninos: number }[]; // una entrada por habitación
+  infantes: number;
+};
+export type BusquedaResultado = {
+  hotelId: number; hotelNombre: string | null; destino: string | null;
+  paqueteId: number; categoria: string; regimen: string;
+  total: number; noches: number; fechaIda: string; fechaRegreso: string;
+  habitaciones: Record<string, number>; ninos: number; pax: number;
+};
+
+export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; resultados: BusquedaResultado[] } | { ok: false; error: string }> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
+  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y regreso." };
+  const numNoches = noches(input.fechaIda, input.fechaRegreso);
+  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+  if (!input.habitaciones.length) return { ok: false, error: "Indica al menos una habitación." };
+
+  const admin = createAdminClient();
+  const { data: filas } = await admin
+    .from("tarifario_resultado")
+    .select("paquete_id, hotel_id")
+    .eq("modulo", "porcion_terrestre")
+    .eq("paquete_activo", true);
+  const pares = new Map<string, { paquete: number; hotel: number }>();
+  for (const f of filas ?? []) if (f.paquete_id != null && f.hotel_id != null) pares.set(`${f.paquete_id}-${f.hotel_id}`, { paquete: f.paquete_id, hotel: f.hotel_id });
+
+  // Composición agregada por acomodación: nº de habitaciones y niños asignados.
+  const porAcom = new Map<AcomRoom, { count: number; ninos: number }>();
+  for (const r of input.habitaciones) {
+    const g = porAcom.get(r.acom) ?? { count: 0, ninos: 0 };
+    g.count += 1; g.ninos += Math.max(0, Math.trunc(r.ninos) || 0);
+    porAcom.set(r.acom, g);
+  }
+  const totalNinos = [...porAcom.values()].reduce((s, g) => s + g.ninos, 0);
+  const habitaciones: Record<string, number> = {};
+  for (const [a, g] of porAcom) habitaciones[a] = g.count;
+
+  const resultados: BusquedaResultado[] = [];
+  for (const { paquete, hotel } of pares.values()) {
+    const res = await liquidarHotelPaquete(admin, paquete, hotel, input.fechaIda, numNoches);
+    if (!res || !res.combos.length) continue;
+    const { data: acomCfg } = await admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, chd_max").eq("hotel_id", hotel);
+    const reglas = (acomCfg ?? []) as { acomodacion: string; pax_tarifa: number; chd_max: number }[];
+    const paxTarifa = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
+    const chdMax = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.chd_max ?? PAX_TARIFA_DEFAULT[a];
+
+    let mejor: { total: number; categoria: string; regimen: string; pax: number } | null = null;
+    for (const combo of res.combos) {
+      let total = 0; let pax = 0; let ok = true;
+      for (const [acom, g] of porAcom) {
+        const pvp = combo.precios[acom];
+        if (pvp == null) { ok = false; break; }
+        const adultos = g.count * paxTarifa(acom);
+        total += adultos * pvp; pax += adultos;
+        if (g.ninos > 0) {
+          if (g.ninos > g.count * chdMax(acom)) { ok = false; break; }
+          const pvpN = combo.precios["nino"];
+          if (pvpN == null) { ok = false; break; }
+          total += g.ninos * pvpN; pax += g.ninos;
+        }
+      }
+      if (ok && (!mejor || total < mejor.total)) mejor = { total, categoria: combo.categoria, regimen: combo.regimen, pax };
+    }
+    if (mejor) resultados.push({
+      hotelId: hotel, hotelNombre: res.hotelNombre, destino: res.destinoNombre,
+      paqueteId: paquete, categoria: mejor.categoria, regimen: mejor.regimen,
+      total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso,
+      habitaciones, ninos: totalNinos, pax: mejor.pax,
+    });
+  }
+  resultados.sort((a, b) => a.total - b.total);
+  return { ok: true, resultados };
+}
+
 export type PasajeroReserva = {
   nombres: string;
   apellidos: string;

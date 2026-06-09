@@ -7,6 +7,7 @@ import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, type AcomRoom, type Aco
 import { useCart } from "@/lib/cart/CartContext";
 import { cotizarPorFechas, type ComboCotizado } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
+import { BuscadorBooking } from "./BuscadorBooking";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
@@ -125,12 +126,13 @@ export function VistaBooking({
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
 
-  if (!hoteles.length) {
-    return <p className="py-12 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados.</p>;
-  }
-
   return (
     <div>
+      {/* Mini-motor: buscar por fechas + composición de habitaciones */}
+      <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} />
+
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">O explora todos los alojamientos</p>
+      {!hoteles.length && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados.</p>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {hoteles.map((h) => (
           <button
