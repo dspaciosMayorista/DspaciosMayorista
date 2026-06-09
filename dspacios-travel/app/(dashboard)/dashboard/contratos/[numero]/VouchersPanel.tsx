@@ -11,7 +11,7 @@ export type VoucherRow = { id: number; proveedor: string | null; share_token: st
 const lbl = "mb-1 block text-[11px] font-medium text-gray-500";
 const inp = "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
 
-export function VouchersPanel({ numero, vouchers }: { numero: string; vouchers: VoucherRow[] }) {
+export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo }: { numero: string; vouchers: VoucherRow[]; puedeGenerar: boolean; motivoBloqueo?: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -32,10 +32,11 @@ export function VouchersPanel({ numero, vouchers }: { numero: string; vouchers: 
           <h2 className="text-sm font-semibold text-gray-700">Vouchers de servicios</h2>
           <p className="text-xs text-gray-400">Uno por proveedor. Auto-armado desde el contrato; editable antes de imprimir.</p>
         </div>
-        <Button onClick={generar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+        <Button onClick={generar} disabled={pending || !puedeGenerar} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Generando…" : vouchers.length ? "Regenerar vouchers" : "Generar vouchers de servicios"}
         </Button>
       </div>
+      {!puedeGenerar && <p className="mt-2 text-xs text-amber-600">{motivoBloqueo ?? "El contrato debe estar 100% pago para generar los vouchers (o pídelo a un superadmin)."}</p>}
       {msg && <p className={`mt-2 text-sm ${msg.startsWith("✓") ? "text-green-600" : "text-red-600"}`}>{msg}</p>}
 
       {vouchers.length > 0 && (

@@ -48,6 +48,19 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
   ]);
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
 
+  // Gating: solo se generan vouchers si el contrato está 100% pago, o si quien lo
+  // genera es superadmin (override).
+  const { data: { user } } = await sb.auth.getUser();
+  const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
+  const esSuperadmin = perfil?.rol === "superadmin";
+  if (!esSuperadmin) {
+    const { data: abonos } = await sb.from("abonos").select("valor_abono").eq("numero_contrato", numero);
+    const pagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
+    if (pagado < (venta.precio_venta ?? 0)) {
+      return { ok: false, error: "El contrato debe estar 100% pago para generar los vouchers (o pídelo a un superadmin)." };
+    }
+  }
+
   // Nombres de los servicios contratados (se guardan como "Servicio · {nombre}").
   const nombresSel = (items ?? [])
     .map((it) => it.descripcion ?? "")

@@ -1777,6 +1777,10 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: string;
       };
+      eliminar_contrato: {
+        Args: { p_numero: string; p_reusar: boolean };
+        Returns: undefined;
+      };
     };
     Enums: {
       rol_usuario:

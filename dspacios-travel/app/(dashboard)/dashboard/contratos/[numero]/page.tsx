@@ -10,6 +10,7 @@ import { EditarVentaForm } from "./EditarVentaForm";
 import { ServiciosContratoEditor, type ServicioDispContrato } from "./ServiciosContratoEditor";
 import { AdjuntosContrato, type Adjunto } from "./AdjuntosContrato";
 import { VouchersPanel, type VoucherRow } from "./VouchersPanel";
+import { EliminarContrato } from "./EliminarContrato";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +29,7 @@ export default async function ContratoDetallePage({
     ? await sb.from("usuarios").select("rol").eq("id", user.id).single()
     : { data: null };
   const verFinanzas = ["superadmin", "gerencia", "administracion", "operaciones"].includes(perfil?.rol ?? "");
+  const esSuperadmin = perfil?.rol === "superadmin";
 
   const [
     { data: venta },
@@ -207,7 +209,13 @@ export default async function ContratoDetallePage({
 
       <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} />
 
-      <VouchersPanel numero={numero} vouchers={(vouchers ?? []) as unknown as VoucherRow[]} />
+      <VouchersPanel
+        numero={numero}
+        vouchers={(vouchers ?? []) as unknown as VoucherRow[]}
+        puedeGenerar={esSuperadmin || saldo <= 0}
+      />
+
+      {esSuperadmin && <EliminarContrato numero={numero} />}
     </div>
   );
 }
