@@ -93,7 +93,9 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
       porProveedor.set(key, g);
     }
   }
-  if (!porProveedor.size) return { ok: false, error: "Este contrato no tiene servicios para generar vouchers." };
+  // Si no se detectan servicios (contratos viejos o paquetes sin servicios
+  // cargados), igual se crea UN voucher en blanco para que el asesor lo complete.
+  if (!porProveedor.size) porProveedor.set("(por definir)", { contacto: null, servicios: [] });
 
   const h0 = (hoteles ?? [])[0];
   const ingreso = h0?.fecha_ingreso ?? venta.fecha_salida;

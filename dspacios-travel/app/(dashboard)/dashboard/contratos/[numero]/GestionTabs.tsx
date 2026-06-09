@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import {
   calcComisionB2B,
-  calcComisionAsesorBase,
   FISCAL_DEFAULT,
   type ParamsFiscales,
 } from "@/lib/calc/finanzas";
@@ -67,11 +66,9 @@ export function GestionTabs(p: GestionProps) {
 
   const fiscal = p.fiscal ?? FISCAL_DEFAULT;
 
-  // Comisión del asesor sobre la BASE COMISIONABLE = PVP − BNC (impuesto).
-  const comAsesor = calcComisionAsesorBase({
-    precioVenta: p.precioVenta, impuesto: p.impuesto,
-    pctBase: p.asesorPct, retHonorarios: fiscal.RETENCION_HONORARIOS,
-  });
+  // La comisión del asesor interno NO es un costo por contrato: se liquida en el
+  // global (módulo Liquidación) y solo si el asesor cumple su meta. Por eso aquí
+  // ya no se calcula ni se descuenta.
 
   const ivaGenerado = p.facturas.reduce((s, f) => s + f.base_gravable * fiscal.IVA, 0);
 
@@ -116,15 +113,14 @@ export function GestionTabs(p: GestionProps) {
         {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
         {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />}
         {p.verFinanzas && tab === "comisiones" && (
-          <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} impuesto={p.impuesto} filas={p.comisionesB2B}
-            comB2BTotal={comB2BTotal} comAsesor={comAsesor} asesorNombre={p.asesorNombre} asesorPct={p.asesorPct} fiscal={fiscal} />
+          <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} filas={p.comisionesB2B} comB2BTotal={comB2BTotal} />
         )}
         {p.verFinanzas && tab === "facturacion" && (
           <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
             clienteNombre={p.clienteNombre} clienteDocumento={p.clienteDocumento} totalContrato={p.precioVenta} />
         )}
         {p.verFinanzas && tab === "flujo" && (
-          <FlujoCajaTab precioVenta={p.precioVenta} costoDirecto={costoDirecto} comB2B={comB2BTotal} comAsesor={comAsesor.comisionNeta} />
+          <FlujoCajaTab precioVenta={p.precioVenta} costoDirecto={costoDirecto} comB2B={comB2BTotal} />
         )}
       </div>
     </div>
@@ -377,10 +373,11 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
   );
 }
 
-// ── COMISIONES (B2B + asesor) ──────────────────────────────────────────
-function ComisionesTab({ numero, precioVenta, impuesto, filas, comB2BTotal, comAsesor, asesorNombre, asesorPct, fiscal }: {
-  numero: string; precioVenta: number; impuesto: number; filas: B2B[]; comB2BTotal: number;
-  comAsesor: ReturnType<typeof calcComisionAsesorBase>; asesorNombre: string; asesorPct: number; fiscal: ParamsFiscales;
+// ── COMISIONES (solo B2B) ──────────────────────────────────────────────
+// La comisión del asesor interno NO va aquí: se liquida en el global (módulo
+// Liquidación) si el asesor cumple su meta.
+function ComisionesTab({ numero, precioVenta, filas, comB2BTotal }: {
+  numero: string; precioVenta: number; filas: B2B[]; comB2BTotal: number;
 }) {
   const [aliado, setAliado] = useState("");
   const [nit, setNit] = useState("");
@@ -409,20 +406,6 @@ function ComisionesTab({ numero, precioVenta, impuesto, filas, comB2BTotal, comA
 
   return (
     <div className="space-y-4">
-      {/* Comisión asesor (calculada) — vertical */}
-      <Resumen
-        titulo="Comisión del asesor"
-        subtitulo={`${asesorNombre || "—"} · base ${(asesorPct * 100).toFixed(0)}%`}
-        filas={[
-          { label: "Precio de venta (PVP)", value: formatCOP(precioVenta) },
-          { label: "(−) BNC / impuesto", value: impuesto > 0 ? `− ${formatCOP(impuesto)}` : "Sin BNC" },
-          { label: "= Base comisionable", value: formatCOP(comAsesor.baseComisionable), strong: true },
-          { label: `Comisión bruta (${(asesorPct * 100).toFixed(0)}%)`, value: formatCOP(comAsesor.comisionBruta) },
-          { label: `(−) Retención (${(fiscal.RETENCION_HONORARIOS * 100).toFixed(0)}%)`, value: `− ${formatCOP(comAsesor.retencion)}` },
-          { label: "= Comisión neta", value: formatCOP(comAsesor.comisionNeta), strong: true, color: "var(--brand-primary)" },
-        ]}
-      />
-
       {/* Comisiones B2B */}
       <div className={card}>
         <p className={lbl}>Agregar comisión B2B (aliado)</p>
@@ -655,16 +638,15 @@ function FacturacionTab({ numero, filas, ivaGenerado, ivaPct, clienteNombre, cli
 // Flujo simple del contrato: lo que entra por la venta menos lo que sale a
 // proveedores y comisiones. El detalle tributario (provisiones, IVA, márgenes)
 // vive en el módulo Finanzas → Rentabilidad.
-function FlujoCajaTab({ precioVenta, costoDirecto, comB2B, comAsesor }: {
-  precioVenta: number; costoDirecto: number; comB2B: number; comAsesor: number;
+function FlujoCajaTab({ precioVenta, costoDirecto, comB2B }: {
+  precioVenta: number; costoDirecto: number; comB2B: number;
 }) {
-  const neto = precioVenta - costoDirecto - comB2B - comAsesor;
+  const neto = precioVenta - costoDirecto - comB2B;
   const margen = precioVenta > 0 ? neto / precioVenta : 0;
   const filas: [string, string][] = [
     ["Venta", formatCOP(precioVenta)],
     ["(−) Total proveedor", `− ${formatCOP(costoDirecto)}`],
     ["(−) Comisión B2B", `− ${formatCOP(comB2B)}`],
-    ["(−) Comisión asesor", `− ${formatCOP(comAsesor)}`],
   ];
   return (
     <div className="space-y-4">
