@@ -25,7 +25,7 @@ export default async function ProveedoresPage() {
   const sb = await createClient();
   const { data: proveedores } = await sb
     .from("proveedores")
-    .select("id, tipo, nombre, razon_social, nit, ciudad, contacto, datos_pago, banco, tipo_cuenta, numero_cuenta, politica_reservas, aplica_retencion, pct_retencion")
+    .select("id, tipo, nombre, razon_social, nit, ciudad, contacto, datos_pago, banco, tipo_cuenta, numero_cuenta, politica_reservas, voucher_contacto, aplica_retencion, pct_retencion")
     .order("tipo")
     .order("nombre");
 

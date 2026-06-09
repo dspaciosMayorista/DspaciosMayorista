@@ -10,6 +10,7 @@ type Proveedor = {
   nit: string | null; ciudad: string | null; contacto: string | null;
   datos_pago: string | null; banco: string | null; tipo_cuenta: string | null; numero_cuenta: string | null;
   politica_reservas: string | null;
+  voucher_contacto: string | null;
   aplica_retencion: boolean; pct_retencion: number;
 };
 
@@ -43,6 +44,7 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
   const [tipoCuenta, setTipoCuenta] = useState("");
   const [numeroCuenta, setNumeroCuenta] = useState("");
   const [politica, setPolitica] = useState("");
+  const [voucherCon, setVoucherCon] = useState("");
   const [origenPol, setOrigenPol] = useState<number | "">("");
   const [ret, setRet] = useState(false);
   const [pctRet, setPctRet] = useState("");
@@ -62,7 +64,7 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
   function reset() {
     setEditId(null); setTipo("hotelero"); setNombre(""); setRazon(""); setNit("");
     setCiudad(""); setContacto(""); setBanco(""); setTipoCuenta(""); setNumeroCuenta("");
-    setPolitica(""); setOrigenPol(""); setRet(false); setPctRet(""); setErr("");
+    setPolitica(""); setVoucherCon(""); setOrigenPol(""); setRet(false); setPctRet(""); setErr("");
   }
 
   // Copia la política de reservas de otro proveedor a este formulario (muchos
@@ -85,7 +87,7 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
     setNombre(p.nombre); setRazon(p.razon_social ?? ""); setNit(p.nit ?? "");
     setCiudad(p.ciudad ?? ""); setContacto(p.contacto ?? "");
     setBanco(p.banco ?? ""); setTipoCuenta(p.tipo_cuenta ?? ""); setNumeroCuenta(p.numero_cuenta ?? "");
-    setPolitica(p.politica_reservas ?? "");
+    setPolitica(p.politica_reservas ?? ""); setVoucherCon(p.voucher_contacto ?? "");
     setRet(p.aplica_retencion); setPctRet(p.aplica_retencion ? String(p.pct_retencion * 100) : "");
     setErr("");
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -96,7 +98,7 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
     setErr("");
     const input: ProveedorInput = {
       tipo, nombre, razonSocial: razon, nit, ciudad, contacto,
-      banco, tipoCuenta, numeroCuenta, politicaReservas: politica,
+      banco, tipoCuenta, numeroCuenta, politicaReservas: politica, voucherContacto: voucherCon,
       aplicaRetencion: ret, pctRetencion: Number(pctRet) / 100 || 0,
     };
     start(async () => {
@@ -151,6 +153,10 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
                 <Button type="button" variant="outline" onClick={traerPolitica} disabled={origenPol === ""}>Traer</Button>
               </div>
             )}
+          </div>
+          <div className="md:col-span-3">
+            <label className={lbl}>Contacto para voucher <span className="font-normal text-gray-400">(sale en el voucher de servicios)</span></label>
+            <Input value={voucherCon} onChange={(e) => setVoucherCon(e.target.value)} placeholder="Ej. Angie Mendoza · Cels 320-500.88.48 · Operador Transturismo Cartagena" />
           </div>
           <div className="flex items-end gap-2">
             <label className="flex items-center gap-2 text-sm text-gray-600">

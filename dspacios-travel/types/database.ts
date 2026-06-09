@@ -90,6 +90,7 @@ export type Database = {
           aplica_retencion: boolean;
           pct_retencion: number;
           created_at: string;
+          voucher_contacto: string | null;
         };
         Insert: {
           id?: number;
@@ -107,6 +108,7 @@ export type Database = {
           aplica_retencion?: boolean;
           pct_retencion?: number;
           created_at?: string;
+          voucher_contacto?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["proveedores"]["Insert"]>;
         Relationships: [];
@@ -1726,6 +1728,28 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["config_solicitudes"]["Insert"]>;
+        Relationships: [];
+      };
+      vouchers: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          tipo: string;
+          proveedor: string | null;
+          contenido: Json;
+          share_token: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          tipo?: string;
+          proveedor?: string | null;
+          contenido: Json;
+          share_token?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["vouchers"]["Insert"]>;
         Relationships: [];
       };
     };
