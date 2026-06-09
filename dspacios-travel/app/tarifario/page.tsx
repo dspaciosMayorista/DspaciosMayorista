@@ -81,15 +81,15 @@ export default async function TarifarioPublicoPage() {
   }
 
   // Estrellas / clasificación / descripción por hotel (hoteles es lectura pública).
-  const infoPorHotel: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }> = {};
+  const infoPorHotel: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null }> = {};
   // Capacidades por hotel (pax mín/máx + config de acomodaciones) para validar el
   // carrito. pax_min/max viven en `hoteles` (público); la config de acomodaciones
   // (`hotel_acomodaciones`) NO es pública → se lee con service-role.
   const capPorHotel: Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }> = {};
   if (hotelIds.length) {
-    const { data: hs } = await sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, pax_min, pax_max").in("id", hotelIds);
+    const { data: hs } = await sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, ubicacion, pax_min, pax_max").in("id", hotelIds);
     for (const h of hs ?? []) {
-      infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion };
+      infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion, ubicacion: h.ubicacion };
       capPorHotel[h.id] = { paxMin: h.pax_min, paxMax: h.pax_max, acom: [] };
     }
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
