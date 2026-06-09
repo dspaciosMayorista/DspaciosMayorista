@@ -1764,6 +1764,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["cuotas"]["Insert"]>;
         Relationships: [];
       };
+      config_notificaciones: {
+        Row: { id: number; remitente: string; destinatarios: string | null; dias_anticipacion: number; alerta_cxp: boolean; alerta_cuotas: boolean; alerta_bloqueos: boolean; activo: boolean; updated_at: string };
+        Insert: { id?: number; remitente?: string; destinatarios?: string | null; dias_anticipacion?: number; alerta_cxp?: boolean; alerta_cuotas?: boolean; alerta_bloqueos?: boolean; activo?: boolean; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["config_notificaciones"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {
