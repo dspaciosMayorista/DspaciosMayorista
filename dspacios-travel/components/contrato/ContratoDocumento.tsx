@@ -75,10 +75,9 @@ export function ContratoDocumento({
         style={{ backgroundColor: PRIMARY }}
       >
         <div>
-          <div className="text-2xl font-bold leading-none">
-            D&apos;spacios Travel
-          </div>
-          <div className="mt-1 text-xs opacity-80">Mayorista de Turismo</div>
+          {/* Logo de marca (blanco, va sobre el fondo turquesa) */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/marca/logo-white.png" alt="D'spacios Travel — Mayorista de Turismo" className="h-12 w-auto" />
         </div>
         <div className="text-center">
           <div className="text-base font-semibold">{esCotizacion ? "COTIZACIÓN" : CONTRATO_TITULO}</div>
