@@ -56,15 +56,20 @@ export async function actualizarPasajerosContrato(numero: string, pasajeros: Pas
   }
 
   await sb.from("contrato_pasajeros").delete().eq("numero_contrato", numero);
-  const filas = limpios.map((p, i) => ({
-    numero_contrato: numero,
-    nombre: p.nombre.trim(),
-    tipo_id: p.tipoId || "CC",
-    identificacion: p.identificacion.trim() || null,
-    fecha_nacimiento: p.fechaNacimiento || null,
-    es_infante: p.esInfante,
-    orden: i,
-  }));
+  const filas = limpios.map((p, i) => {
+    // Infante = bebé (< 2 años a la fecha de viaje). Se deriva de la fecha de
+    // nacimiento; no se elige a mano.
+    const edad = calcularEdad(p.fechaNacimiento, ref);
+    return {
+      numero_contrato: numero,
+      nombre: p.nombre.trim(),
+      tipo_id: p.tipoId || "CC",
+      identificacion: p.identificacion.trim() || null,
+      fecha_nacimiento: p.fechaNacimiento || null,
+      es_infante: edad != null && edad < 2,
+      orden: i,
+    };
+  });
   const { error } = await sb.from("contrato_pasajeros").insert(filas);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);

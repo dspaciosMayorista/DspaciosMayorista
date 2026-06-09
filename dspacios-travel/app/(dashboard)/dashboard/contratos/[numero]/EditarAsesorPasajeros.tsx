@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { calcularEdad } from "@/lib/utils";
 import { actualizarAsesorContrato, actualizarPasajerosContrato, type PasajeroEdit } from "./editar-contrato-actions";
 
 export type PasajeroRow = { id: number; nombre: string; tipo_id: string | null; identificacion: string | null; fecha_nacimiento: string | null; es_infante: boolean };
@@ -11,13 +12,14 @@ export type PasajeroRow = { id: number; nombre: string; tipo_id: string | null; 
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 export function EditarAsesorPasajeros({
-  numero, asesores, asesorActual, puedeAsesor, pasajeros,
+  numero, asesores, asesorActual, puedeAsesor, pasajeros, fechaSalida,
 }: {
   numero: string;
   asesores: { nombre: string; email: string | null }[];
   asesorActual: string;
   puedeAsesor: boolean;
   pasajeros: PasajeroRow[];
+  fechaSalida: string | null;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -75,7 +77,12 @@ export function EditarAsesorPasajeros({
               </div>
               <div className="w-28"><label className="text-[11px] text-gray-500">N° doc</label><Input value={p.identificacion} onChange={(e) => setRow(i, { identificacion: e.target.value })} /></div>
               <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><Input type="date" className="w-full" value={p.fechaNacimiento} onChange={(e) => setRow(i, { fechaNacimiento: e.target.value })} /></div>
-              <label className="flex items-center gap-1 pb-2 text-xs text-gray-500"><input type="checkbox" checked={p.esInfante} onChange={(e) => setRow(i, { esInfante: e.target.checked })} /> Infante</label>
+              {(() => {
+                const edad = calcularEdad(p.fechaNacimiento, fechaSalida);
+                if (edad == null) return <span className="pb-2 text-[11px] text-gray-300">—</span>;
+                const cat = edad < 2 ? "Infante" : edad < 12 ? "Niño" : "Adulto";
+                return <span className={`pb-2 text-[11px] ${edad < 2 ? "font-medium text-[var(--brand-accent)]" : "text-gray-400"}`}>{cat} · {edad}a</span>;
+              })()}
               <button type="button" onClick={() => setFilas((f) => f.filter((_, n) => n !== i))} className="pb-2 text-xs text-gray-400 hover:text-red-500">Quitar</button>
             </div>
           ))}
