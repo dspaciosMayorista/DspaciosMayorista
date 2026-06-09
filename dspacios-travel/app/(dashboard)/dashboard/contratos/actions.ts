@@ -426,13 +426,19 @@ export async function registrarAbono(
   });
   if (error) throw new Error(error.message);
 
-  // Regla de negocio: un abono confirma la venta pendiente (y sus sillas).
+  // Regla de negocio: la venta pendiente se confirma cuando lo abonado alcanza el
+  // % mínimo configurado por tipo de contrato (default 30%), no con cualquier abono.
   const { data: venta } = await sb
     .from("ventas")
-    .select("estado")
+    .select("estado, precio_venta, tipo_paquete")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
-  if (venta?.estado === "pendiente") {
+  const { data: abs } = await sb.from("abonos").select("valor_abono").eq("numero_contrato", numeroContrato);
+  const totalAbonado = (abs ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
+  const { data: cfg } = await sb.from("config_cobros").select("pct_abono").eq("tipo_paquete", venta?.tipo_paquete ?? "").maybeSingle();
+  const pctMin = cfg?.pct_abono ?? 0.3;
+  const alcanzaMinimo = totalAbonado >= (venta?.precio_venta ?? 0) * pctMin;
+  if (venta?.estado === "pendiente" && alcanzaMinimo) {
     await sb.from("ventas").update({ estado: "confirmado" }).eq("numero_contrato", numeroContrato);
     const client = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
     await client

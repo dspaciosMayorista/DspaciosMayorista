@@ -10,6 +10,7 @@ import {
   type ParamsFiscales,
 } from "@/lib/calc/finanzas";
 import { AbonoForm } from "./AbonoForm";
+import { PlanCobroPanel, type CuotaRow } from "./PlanCobroPanel";
 import {
   guardarCostos,
   crearCuentaPorPagar,
@@ -39,6 +40,7 @@ export type GestionProps = {
   verFinanzas: boolean; // false para el rol 'venta' (asesor): oculta costos/comisiones/rentabilidad
   costos: { costo_hotel: number; costo_aereo: number; costo_receptivo: number; costo_asistencia: number; otros_costos: number };
   abonos: Abono[];
+  cuotas: CuotaRow[];
   totalPagado: number;
   cuentasPorPagar: CxP[];
   comisionesB2B: B2B[];
@@ -108,7 +110,7 @@ export function GestionTabs(p: GestionProps) {
       {/* Contenido */}
       <div className="min-w-0 flex-1">
         {tab === "cartera" && (
-          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} />
+          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} />
         )}
         {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
         {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />}
@@ -176,7 +178,7 @@ function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["c
 }
 
 // ── CARTERA (abonos) ───────────────────────────────────────────────────
-function CarteraTab({ numero, abonos, totalPagado, total, formasPago }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[] }) {
+function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[] }) {
   const saldo = Math.max(total - totalPagado, 0);
   return (
     <div className="space-y-4">
@@ -185,6 +187,7 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago }: { numero
         <Mini label="Pagado" value={formatCOP(totalPagado)} color="var(--brand-success)" />
         <Mini label="Saldo" value={formatCOP(saldo)} />
       </div>
+      <PlanCobroPanel numero={numero} cuotas={cuotas} pagado={totalPagado} />
       <div className={card}>
         <p className={lbl}>Registrar abono</p>
         <AbonoForm numeroContrato={numero} formasPago={formasPago} />
