@@ -54,6 +54,11 @@ export function VoucherDocumento({ c }: { c: VoucherContenido }) {
           <Celda label="N° Reserva" value={c.nReserva} />
           <Celda label="Vendedor" value={c.vendedor} />
         </div>
+        {c.codigoReserva != null && (
+          <div className="sm:col-span-2">
+            <Celda label="Código de reserva del hotel" value={c.codigoReserva} />
+          </div>
+        )}
       </div>
 
       <div className="px-5 py-4">

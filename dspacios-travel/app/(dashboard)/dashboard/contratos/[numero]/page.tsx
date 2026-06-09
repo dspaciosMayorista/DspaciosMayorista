@@ -52,7 +52,7 @@ export default async function ContratoDetallePage({
     sb.from("asesores").select("nombre, email, pct_comision_base"),
     sb.from("formas_pago").select("nombre").order("orden"),
     sb.from("contrato_adjuntos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("numero_contrato", numero).order("created_at", { ascending: false }),
-    sb.from("vouchers").select("id, proveedor, share_token, contenido").eq("numero_contrato", numero).eq("tipo", "servicios").order("id"),
+    sb.from("vouchers").select("id, tipo, proveedor, share_token, contenido").eq("numero_contrato", numero).order("id"),
     sb.from("cuotas").select("id, orden, tipo, fecha_limite, monto").eq("numero_contrato", numero).order("orden"),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);

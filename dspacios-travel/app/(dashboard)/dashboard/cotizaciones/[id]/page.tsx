@@ -35,6 +35,7 @@ export default async function CotizacionDetallePage({
   const { data: { user } } = await sb.auth.getUser();
   const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
   const esSuperadmin = perfil?.rol === "superadmin";
+  const { data: asesores } = await sb.from("asesores").select("nombre, email").eq("activo", true).order("nombre");
   const payload = (c.payload ?? {}) as { pasajeros?: unknown[]; infantes?: number; cliente?: { nombres?: string; apellidos?: string; tipoDoc?: string; numeroDoc?: string } };
   const tienePasajeros = Array.isArray(payload.pasajeros) && payload.pasajeros.length > 0;
   const clientePre = {
@@ -90,6 +91,7 @@ export default async function CotizacionDetallePage({
             tienePasajeros={tienePasajeros}
             cliente={clientePre}
             esSuperadmin={esSuperadmin}
+            asesores={asesores ?? []}
           />
         ) : c.estado === "convertida" && c.numero_contrato ? (
           <div className="flex flex-wrap items-center justify-between gap-3">
