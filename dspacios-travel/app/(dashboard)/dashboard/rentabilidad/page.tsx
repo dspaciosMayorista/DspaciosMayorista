@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { calcComisionB2B, calcComisionAsesor, calcRentabilidad, fiscalFromParams } from "@/lib/calc/finanzas";
+import { calcComisionB2B, calcRentabilidad, fiscalFromParams } from "@/lib/calc/finanzas";
 import { RentabilidadList, type RentRow } from "./RentabilidadList";
 
 export const dynamic = "force-dynamic";
@@ -55,7 +55,9 @@ export default async function RentabilidadPage() {
     const costoDirecto = (v.costo_hotel ?? 0) + (v.costo_aereo ?? 0) + (v.costo_receptivo ?? 0) + (v.costo_asistencia ?? 0) + (v.otros_costos ?? 0);
     const comB2B = b2bPorContrato.get(v.numero_contrato) ?? 0;
     const asesorRow = (asesores ?? []).find((a) => a.email === v.asesor || a.nombre === (v.asesor_firma_nombre ?? v.asesor));
-    const comAsesor = calcComisionAsesor({ precioVenta: v.precio_venta, costoTotal: costoDirecto, comB2BPagada: comB2B, pctBase: asesorRow?.pct_comision_base ?? 0.08, retHonorarios: fiscal.RETENCION_HONORARIOS }).comisionNeta;
+    // La comisión del asesor interno NO se descuenta por contrato: se liquida en
+    // el global (módulo Liquidación) y solo si el asesor cumple su meta.
+    const comAsesor = 0;
     const rent = calcRentabilidad({
       precioVenta: v.precio_venta, costoDirecto, comB2B, comAsesor,
       ivaGenerado: ivaGenPorContrato.get(v.numero_contrato) ?? 0,

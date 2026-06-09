@@ -204,7 +204,6 @@ function Fila({ r }: { r: RentRow }) {
                 { k: "(−) Costo (total proveedor)", v: `− ${formatCOP(r.costoNeto)}` },
                 { k: "= Utilidad bruta", v: formatCOP(r.utilBruta), total: true },
                 ...(r.comB2B > 0 ? [{ k: "(−) Comisión B2B", v: `− ${formatCOP(r.comB2B)}` }] : []),
-                { k: "(−) Comisión asesor", v: `− ${formatCOP(r.comAsesor)}` },
                 { k: "(−) Provisión ICA", v: `− ${formatCOP(r.provIca)}` },
                 { k: "(−) Provisión Bomberil", v: `− ${formatCOP(r.provBomberil)}` },
                 { k: "(−) Provisión Fontur", v: `− ${formatCOP(r.provFontur)}` },
