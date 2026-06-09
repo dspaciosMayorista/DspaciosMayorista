@@ -6,6 +6,7 @@ import { HotelConfigEditor } from "./HotelConfigEditor";
 import { HotelCategoriasRegimenesEditor } from "./HotelCategoriasRegimenesEditor";
 import { HotelDocumentos } from "./HotelDocumentos";
 import { HotelFotos } from "./HotelFotos";
+import { HotelBlackouts } from "./HotelBlackouts";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
 import { CalculadoraEditor } from "./CalculadoraEditor";
 import type { AcomConfig } from "@/lib/acomodaciones";
@@ -19,7 +20,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre, politica_reservas)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
@@ -33,6 +34,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     sb.from("hotel_documentos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("hotel_id", hotelId).order("created_at", { ascending: false }),
     sb.from("hoteles").select("id, nombre").neq("id", hotelId).order("nombre"),
     sb.from("hotel_fotos").select("id, path, url, orden, es_portada").eq("hotel_id", hotelId).order("orden"),
+    sb.from("hotel_blackouts").select("id, fecha_inicio, fecha_fin, total, acomodaciones, motivo").eq("hotel_id", hotelId).order("fecha_inicio"),
   ]);
 
   if (!hotel) notFound();
@@ -101,6 +103,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           regimenIds={regimenIds}
         />
         <HotelFotos hotelId={hotelId} fotos={fotos ?? []} />
+        <HotelBlackouts hotelId={hotelId} blackouts={blackouts ?? []} />
         <HotelDocumentos hotelId={hotelId} documentos={documentos ?? []} />
         <HotelAcomodacionesEditor
           hotelId={hotelId}
