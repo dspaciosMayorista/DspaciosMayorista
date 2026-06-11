@@ -14,10 +14,11 @@ function sumarDias(fecha: string, n: number): string {
 }
 
 export function BuscadorBooking({
-  fotosPorHotel = {}, infoPorHotel = {},
+  fotosPorHotel = {}, infoPorHotel = {}, destinos = [],
 }: {
   fotosPorHotel?: Record<number, string>;
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
+  destinos?: string[];
 }) {
   const hoy = new Date().toISOString().slice(0, 10);
   const [fIda, setFIda] = useState(hoy);
@@ -25,6 +26,7 @@ export function BuscadorBooking({
   const [adultos, setAdultos] = useState("2");
   const [ninos, setNinos] = useState("0");
   const [infantes, setInfantes] = useState("0");
+  const [destino, setDestino] = useState("");
   const [nHab, setNHab] = useState("1");
   const [habs, setHabs] = useState<Hab[]>([{ acom: "doble", ninos: 0 }]);
   const [pending, start] = useTransition();
@@ -51,7 +53,7 @@ export function BuscadorBooking({
     setErr(""); setResultados(null);
     if (ninosAsignados !== ninosTotal) { setErr(`Asigna los ${ninosTotal} niño(s) a las habitaciones (asignados: ${ninosAsignados}).`); return; }
     start(async () => {
-      const r = await buscarHoteles({ fechaIda: fIda, fechaRegreso: fReg, habitaciones: habs.map((h) => ({ acom: h.acom, ninos: Number(h.ninos) || 0 })), infantes: Number(infantes) || 0 });
+      const r = await buscarHoteles({ fechaIda: fIda, fechaRegreso: fReg, habitaciones: habs.map((h) => ({ acom: h.acom, ninos: Number(h.ninos) || 0 })), infantes: Number(infantes) || 0, destino });
       if (r.ok) setResultados(r.resultados);
       else setErr(r.error);
     });
@@ -64,6 +66,14 @@ export function BuscadorBooking({
       <div className="rounded-2xl border border-gray-200 bg-white p-4">
         <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Buscar alojamiento</p>
         <div className="flex flex-wrap items-end gap-3">
+          {destinos.length > 0 && (
+            <div><label className="mb-1 block text-xs text-gray-500">Destino</label>
+              <select value={destino} onChange={(e) => setDestino(e.target.value)} className={sel}>
+                <option value="">Todos</option>
+                {destinos.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          )}
           <div><label className="mb-1 block text-xs text-gray-500">Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { setFIda(e.target.value); if (fReg <= e.target.value) setFReg(sumarDias(e.target.value, 3)); }} className={sel} /></div>
           <div><label className="mb-1 block text-xs text-gray-500">Regreso</label><input type="date" min={fIda} value={fReg} onChange={(e) => setFReg(e.target.value)} className={sel} /></div>
           <div><label className="mb-1 block text-xs text-gray-500">Adultos (12+)</label><input type="number" min={1} value={adultos} onChange={(e) => setAdultos(e.target.value)} className={`${sel} w-20`} /></div>

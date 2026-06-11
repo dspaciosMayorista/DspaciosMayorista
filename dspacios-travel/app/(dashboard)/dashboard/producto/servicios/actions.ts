@@ -18,6 +18,7 @@ export type ServicioInput = {
   temporada: string;
   rangosEdad?: number[];
   categoria?: string;             // tour_traslado | asistencia | otro
+  liquidacion?: Liquidacion;      // tipo de cobro: dia | noche | paquete
 };
 
 function servicioToRow(input: ServicioInput) {
@@ -30,6 +31,7 @@ function servicioToRow(input: ServicioInput) {
     temporada: oNull(input.temporada),
     rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
     categoria: input.categoria || "otro",
+    liquidacion: input.liquidacion ?? "paquete",
   };
 }
 
