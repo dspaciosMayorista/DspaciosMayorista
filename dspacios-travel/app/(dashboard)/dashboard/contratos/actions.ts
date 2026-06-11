@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { precioServicio } from "@/lib/calc/paquetes";
+import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
 import { asegurarCuentasPorPagar } from "../reservar/actions";
 
 export type TipoPaquete = "bloqueo" | "porcion_terrestre" | "empaquetado" | "dinamico";
@@ -464,7 +464,7 @@ export async function actualizarServiciosContrato(
   const sb = await createClient();
   const { data: venta } = await sb
     .from("ventas")
-    .select("estado, pax, precio_venta, paquete_armado_id")
+    .select("estado, pax, precio_venta, paquete_armado_id, fecha_salida, fecha_regreso")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
@@ -535,7 +535,7 @@ export async function actualizarServiciosContrato(
       let hayAsistencia = false;
       if (serviciosIds.length) {
         const [{ data: arm }, { data: gruposNet }] = await Promise.all([
-          admin.from("armado_servicios").select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre)").eq("paquete_id", venta.paquete_armado_id).in("servicio_id", serviciosIds),
+          admin.from("armado_servicios").select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre, liquidacion)").eq("paquete_id", venta.paquete_armado_id).in("servicio_id", serviciosIds),
           admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", serviciosIds),
         ]);
         const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
@@ -544,10 +544,11 @@ export async function actualizarServiciosContrato(
           arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
           gruposPorServ.set(g.servicio_id, arr);
         }
+        const nochesStay = venta.fecha_salida && venta.fecha_regreso ? noches(venta.fecha_salida, venta.fecha_regreso) : 1;
         for (const s of arm ?? []) {
           const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-          const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string } | null;
-          costoReceptivo += precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], pax);
+          const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string; liquidacion: string | null } | null;
+          costoReceptivo += precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], pax) * factorLiquidacion(srv?.liquidacion, nochesStay);
           const cat = srv?.categoria ?? "otro";
           if (cat === "asistencia") hayAsistencia = true;
           else if (cat === "tour_traslado" && srv?.nombre) tours.push(srv.nombre);

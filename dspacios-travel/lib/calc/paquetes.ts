@@ -320,3 +320,11 @@ export function costoServicio(
       return tarifaNeta;
   }
 }
+
+/** Multiplicador del servicio según su tipo de cobro: 'noche' × noches,
+ *  'dia' × (noches+1), 'paquete' × 1. Para amarrar el cobro a la duración. */
+export function factorLiquidacion(liquidacion: string | null | undefined, numNoches: number): number {
+  if (liquidacion === "noche") return Math.max(1, numNoches);
+  if (liquidacion === "dia") return Math.max(1, numNoches + 1);
+  return 1;
+}
