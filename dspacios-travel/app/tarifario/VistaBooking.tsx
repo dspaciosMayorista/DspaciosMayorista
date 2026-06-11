@@ -128,10 +128,16 @@ export function VistaBooking({
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
 
+  // Destinos disponibles (porción) para el filtro del mini-motor.
+  const destinos = useMemo(
+    () => [...new Set(filas.filter((f) => f.modulo === "porcion_terrestre" && f.destino_nombre).map((f) => f.destino_nombre as string))].sort((a, b) => a.localeCompare(b)),
+    [filas]
+  );
+
   return (
     <div>
       {/* Mini-motor: buscar por fechas + composición de habitaciones */}
-      <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} />
+      <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} destinos={destinos} />
 
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">O explora todos los alojamientos</p>
       {!hoteles.length && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados.</p>}

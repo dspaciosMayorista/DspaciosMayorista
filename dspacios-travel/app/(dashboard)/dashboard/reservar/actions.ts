@@ -173,6 +173,7 @@ export type BusquedaInput = {
   fechaRegreso: string;
   habitaciones: { acom: AcomRoom; ninos: number }[]; // una entrada por habitación
   infantes: number;
+  destino?: string; // filtra por destino (vacío = todos)
 };
 export type BusquedaResultado = {
   hotelId: number; hotelNombre: string | null; destino: string | null;
@@ -189,11 +190,13 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
   if (!input.habitaciones.length) return { ok: false, error: "Indica al menos una habitación." };
 
   const admin = createAdminClient();
-  const { data: filas } = await admin
+  let q = admin
     .from("tarifario_resultado")
-    .select("paquete_id, hotel_id")
+    .select("paquete_id, hotel_id, destino_nombre")
     .eq("modulo", "porcion_terrestre")
     .eq("paquete_activo", true);
+  if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
+  const { data: filas } = await q;
   const pares = new Map<string, { paquete: number; hotel: number }>();
   for (const f of filas ?? []) if (f.paquete_id != null && f.hotel_id != null) pares.set(`${f.paquete_id}-${f.hotel_id}`, { paquete: f.paquete_id, hotel: f.hotel_id });
 
