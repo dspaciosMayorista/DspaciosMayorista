@@ -11,6 +11,7 @@ import {
   aporteVuelo,
   componerTarifa,
   redondearMilArriba,
+  factorLiquidacion,
   toTemporadaRango,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
@@ -287,7 +288,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona)")
+      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion)")
       .eq("paquete_id", paqueteId),
   ]);
 
@@ -337,13 +338,14 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   // Servicios INCLUIDOS se hornean por persona en la tarifa del hotel.
   // (Los OPCIONALES no se hornean: se agregan como add-on en la reserva.)
-  function aporteServiciosIncluidos(): number {
+  function aporteServiciosIncluidos(numNoches: number): number {
     let total = 0;
     for (const s of servicios) {
       if (!(s.incluido as boolean)) continue;
-      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null } | null;
+      const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; liquidacion: string | null } | null;
       if (srv?.precio_persona == null) continue;
-      total += marcar(Number(srv.precio_persona) || 0, pctMk);
+      // Cobro amarrado a la duración: por noche × noches, por día × (noches+1).
+      total += marcar(Number(srv.precio_persona) || 0, pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
     }
     return total;
   }
@@ -366,7 +368,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     masBarato = false
   ) {
     if (numNoches <= 0) return;
-    const aporteServ = aporteServiciosIncluidos(); // solo servicios incluidos
+    const aporteServ = aporteServiciosIncluidos(numNoches); // solo servicios incluidos
     for (const h of hoteles) {
       const hotelNombre = (h.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
       const filtroCat = (h.categorias as string[] | null) ?? null;
@@ -478,12 +480,19 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     filasHoteles(pq.fecha_viaje_inicio, numNoches, 0, Number(pq.impuesto_fijo) || 0, "porcion_terrestre", null, null, pq.fecha_viaje_fin, true);
   }
 
+  // Noches del paquete para amarrar el cobro de los servicios por día/noche.
+  let nochesPaq = Number(pq.noches) || 1;
+  if (tipo === "bloqueo" && vuelos.length) {
+    nochesPaq = calcNoches(vuelos[0].b.fecha_ida!, vuelos[0].b.fecha_regreso!) || nochesPaq;
+  }
+
   // SERVICIOS: se publican siempre (módulo Servicios y/o add-ons en la reserva),
   // sin importar el tipo. Persona = una fila; grupo = una fila por rango de pax.
   for (const s of servicios) {
     if (s.incluido as boolean) continue; // los incluidos se hornean, no se publican
-    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null } | null;
+    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null } | null;
     if (!srv) continue;
+    const fLiq = factorLiquidacion(srv.liquidacion, nochesPaq);
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
     const comun = {
       paquete_id: paqueteId,
@@ -499,11 +508,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     };
     if (modo === "grupo") {
       for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
-        const pvp = redondearMilArriba(marcar(Number(g.precio) || 0, pctMk));
+        const pvp = redondearMilArriba(marcar(Number(g.precio) || 0, pctMk) * fLiq);
         filas.push({ ...comun, pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, base_comisionable: pvp, precio_pvp: pvp });
       }
     } else if (srv.precio_persona != null) {
-      const pvp = redondearMilArriba(marcar(Number(srv.precio_persona) || 0, pctMk));
+      const pvp = redondearMilArriba(marcar(Number(srv.precio_persona) || 0, pctMk) * fLiq);
       filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp });
     }
   }
