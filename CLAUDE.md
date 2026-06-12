@@ -257,10 +257,13 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 
 ## 13. Estado del proyecto (handoff) — actualizado en desarrollo
 
-> Rama de trabajo: **`claude/dazzling-planck-MsBCZ`** (PR #1 hacia `main`). Producción
+> Rama de trabajo actual: **`claude/modest-clarke-Ehftt`** (última; ramas previas:
+> `claude/dazzling-planck-MsBCZ` PR #1, `claude/laughing-goodall-e59PS`). Producción
 > = `main` (se mergeará al terminar). La **base de datos Supabase es única** y compartida
-> entre `main` y la rama; las migraciones ya aplicadas afectan también a producción.
+> entre `main` y las ramas; las migraciones ya aplicadas afectan también a producción.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
+> **Migraciones a la fecha: hasta la 067** (correr en orden las que falten — ver más abajo).
+> *Pendiente del dueño:* correr **066** (vitrina de programas) y **067** (asistencia médica).
 
 > **Novedades rama `claude/laughing-goodall-e59PS`:**
 > - **CxP automáticas:** al reservar desde el tarifario se crean solas las cuentas
@@ -389,7 +392,9 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — correr en orden 016→031
+### Migraciones Supabase — correr en orden 016→067
+> Las migraciones nuevas usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el
+> número NNN. Correr en orden las que falten en tu base.
 016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
 019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
 023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
@@ -398,9 +403,18 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 029 servicio_categoria (tour_traslado/asistencia/otro → ubica el servicio en el contrato) ·
 030 contrato_vuelo_hotel_extra (record/horas/números de vuelo + categoría/proveedor de hotel) ·
 031 programas (9 tablas de circuitos de proveedor + `moneda` en ventas y cuentas_por_pagar).
+**032→065** (ramas intermedias): CxP automáticas, cartera/pagos, CRM (contactos/email/campañas),
+adjuntos de contrato, política/datos bancarios de proveedor, país de destino, nota de régimen,
+documentos/fotos/estrellas/ubicación de hotel, cotizaciones (+share_token), config de
+solicitudes, vouchers, eliminar contrato, cobros, notificaciones, `ventas_asesor` sin FK,
+blackouts de hotel. *(Ver nombres exactos en `supabase/migrations/`.)*
+**066** programas_vitrina (`desde_precio`, `incluye_aereo`, `portada_url`) ·
+**067** programas_asistencia (`asistencia_medica_dia`). ← **pendientes de correr.**
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas).
-Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`.
+Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`,
+`RESEND_API_KEY` + dominio verificado para notificaciones/cobros (migr. 056/061/062);
+configurar destinatarios en `config_solicitudes`/`config_cobros`/`config_notificaciones`.
 Google OAuth: callback `/auth/callback`; Site URL = producción.
 
 ### PENDIENTE / próximos pasos
