@@ -315,8 +315,14 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
   **Fee bancario %** (`pct_fee_tarjeta`) y **Asistencia médica/día** (`asistencia_medica_dia`,
   por pax y por día). La pestaña *Hoteles y precios* muestra el **PVP en vivo** bajo cada neto.
   *Nota:* los 4 ejemplos publicados traían el neto del proveedor **sin** recargo (eran
-  reformateos); de ahí que el montaje deba definir el precio de venta. *Pendiente confirmar:*
-  si "25% MK" es margen `/(1−0.25)` (lo implementado) o markup `×1.25`.
+  reformateos); de ahí que el montaje deba definir el precio de venta. El markup es **margen**:
+  `neto/(1−mk)` con `mk` en decimales (0,25 = 25%) — confirmado por el dueño.
+- **⚠️ Programas ≠ Paquetes — NO mezclar las dos estructuras de PVP.** Son motores
+  independientes en archivos distintos: el PVP de **paquetes** vive en `lib/calc/paquetes.ts`
+  (`componerTarifa`/`liquidarHotelNoches`/`factorLiquidacion`, impuesto BNC, etc.) y **está
+  bien, no se toca**; el PVP de **programas** vive en `lib/programas.ts` (`pvpPrograma`) y solo
+  se usa en contexto de programas (vitrina, matriz, `reservarPrograma`). `pct_mk`/`pct_fee_tarjeta`
+  son columnas de tablas distintas (`paquetes` vs `programas`). No compartir fórmula ni campos.
 
 ### Flujo de negocio implementado
 **PRODUCTO** (costos netos) → **PAQUETES** (armas + margen) → **TARIFARIO** (resultado,
