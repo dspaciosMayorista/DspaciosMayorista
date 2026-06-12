@@ -304,9 +304,19 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 - **Campos de vitrina** (migración **066**): `desde_precio` (titular "Desde" manual; manda
   sobre el mínimo de la matriz — útil cuando el proveedor solo da "Desde $X"), `incluye_aereo`
   (Solo terrestre / Con aéreo → badge en tarjeta y cabecera), `portada_url` (imagen).
-- Modelo de precios **sin cambios**: por categoría × acomodación. Programas con precio por
-  **periodo de salida** (ej. Sendero del Oeste) se montan usando cada "categoría" como
-  temporada de precio. (Si más adelante se quiere matriz fecha×precio nativa, es el próximo paso.)
+- Modelo de precios **sin cambios** en estructura: por categoría × acomodación. Programas con
+  precio por **periodo de salida** (ej. Sendero del Oeste) se montan usando cada "categoría"
+  como temporada de precio. (Si más adelante se quiere matriz fecha×precio nativa, es el próximo paso.)
+- **Precio de venta (PVP)** — el montaje ahora calcula el PVP, no solo republica el neto
+  (migración **067** + `pvpPrograma` en `lib/programas.ts`, fuente única usada por vitrina,
+  resumen y `reservarPrograma`):
+  `PVP = neto/(1−markup) + asistencia_medica_dia×días, todo /(1−fee_bancario)`.
+  Campos en la cabecera: **Markup proveedor %** (`pct_mk`, convención margen del app),
+  **Fee bancario %** (`pct_fee_tarjeta`) y **Asistencia médica/día** (`asistencia_medica_dia`,
+  por pax y por día). La pestaña *Hoteles y precios* muestra el **PVP en vivo** bajo cada neto.
+  *Nota:* los 4 ejemplos publicados traían el neto del proveedor **sin** recargo (eran
+  reformateos); de ahí que el montaje deba definir el precio de venta. *Pendiente confirmar:*
+  si "25% MK" es margen `/(1−0.25)` (lo implementado) o markup `×1.25`.
 
 ### Flujo de negocio implementado
 **PRODUCTO** (costos netos) → **PAQUETES** (armas + margen) → **TARIFARIO** (resultado,

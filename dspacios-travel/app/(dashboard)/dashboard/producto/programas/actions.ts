@@ -43,6 +43,7 @@ export type CabeceraInput = {
   desdePrecio: number | null;
   incluyeAereo: boolean;
   portadaUrl: string;
+  asistenciaMedicaDia: number | null;
 };
 
 function cabeceraRow(input: CabeceraInput) {
@@ -69,6 +70,7 @@ function cabeceraRow(input: CabeceraInput) {
     desde_precio: input.desdePrecio,
     incluye_aereo: !!input.incluyeAereo,
     portada_url: oNull(input.portadaUrl),
+    asistencia_medica_dia: input.asistenciaMedicaDia ?? 0,
   };
 }
 

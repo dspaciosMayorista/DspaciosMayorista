@@ -48,6 +48,7 @@ export function CabeceraForm({
     desdePrecio: initial?.desdePrecio ?? null,
     incluyeAereo: initial?.incluyeAereo ?? false,
     portadaUrl: initial?.portadaUrl ?? "",
+    asistenciaMedicaDia: initial?.asistenciaMedicaDia ?? null,
   });
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState(false);
@@ -184,23 +185,32 @@ export function CabeceraForm({
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div>
-          <label className={lbl}>Markup %</label>
+          <label className={lbl}>Markup proveedor %</label>
           <Input
             type="number"
             step="0.1"
             value={f.pctMk ? f.pctMk * 100 : ""}
             onChange={(e) => set("pctMk", e.target.value === "" ? 0 : Number(e.target.value) / 100)}
-            placeholder="20"
+            placeholder="25"
           />
         </div>
         <div>
-          <label className={lbl}>Fee tarjeta %</label>
+          <label className={lbl}>Fee bancario %</label>
           <Input
             type="number"
             step="0.1"
             value={f.pctFeeTarjeta ? f.pctFeeTarjeta * 100 : ""}
             onChange={(e) => set("pctFeeTarjeta", e.target.value === "" ? 0 : Number(e.target.value) / 100)}
-            placeholder="5"
+            placeholder="3"
+          />
+        </div>
+        <div>
+          <label className={lbl}>Asistencia médica / día ({f.moneda})</label>
+          <Input
+            type="number"
+            value={f.asistenciaMedicaDia ?? ""}
+            onChange={(e) => set("asistenciaMedicaDia", numOrNull(e.target.value))}
+            placeholder="0"
           />
         </div>
         <div>

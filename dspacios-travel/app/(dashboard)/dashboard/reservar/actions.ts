@@ -7,6 +7,7 @@ import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, te
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
+import { pvpPrograma } from "@/lib/programas";
 import type { Json } from "@/types/database";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -1229,7 +1230,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
   const { data: prog } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, moneda, pct_mk, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, proveedores(nombre, aplica_retencion, pct_retencion)")
+    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, proveedores(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
   if (!prog) return { ok: false, error: "Programa no encontrado." };
@@ -1259,8 +1260,14 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   const netoDe: Record<string, { neto: number | null; bs: boolean }> = {};
   for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
 
-  const mk = Number(prog.pct_mk) || 0;
-  const pvp = (neto: number) => (mk > 0 && mk < 1 ? Math.round(neto / (1 - mk)) : Math.round(neto));
+  // PVP de venta: neto → +markup → +asistencia médica/día → +fee bancario.
+  const pvp = (neto: number) =>
+    pvpPrograma(neto, {
+      pctMk: prog.pct_mk,
+      asistenciaDia: prog.asistencia_medica_dia,
+      dias: prog.dias,
+      pctFee: prog.pct_fee_tarjeta,
+    });
 
   // 3) Liquidación por HABITACIONES (igual que hoteles): pax = hab × pax_tarifa
   //    (Doble ⇒ 2 pax, Triple ⇒ 3, Sencilla ⇒ 1). El precio de la matriz es por

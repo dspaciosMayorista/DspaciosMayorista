@@ -21,6 +21,8 @@ import {
   type CategoriaInput,
 } from "../actions";
 import { parsearPrograma } from "@/lib/programasImport";
+import { pvpPrograma, type PvpOpciones } from "@/lib/programas";
+import { formatMoneda } from "@/lib/utils";
 
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
 type Ciudad = { id: number; nombre: string; codigo_iata: string | null; noches: number };
@@ -89,6 +91,7 @@ export function ProgramaEditor(props: {
     desdePrecio: programa.desde_precio,
     incluyeAereo: programa.incluye_aereo,
     portadaUrl: programa.portada_url ?? "",
+    asistenciaMedicaDia: programa.asistencia_medica_dia,
   };
 
   return (
@@ -161,6 +164,12 @@ export function ProgramaEditor(props: {
           hoteles={props.hoteles}
           precios={props.precios}
           moneda={programa.moneda}
+          pvpOpt={{
+            pctMk: programa.pct_mk,
+            asistenciaDia: programa.asistencia_medica_dia,
+            dias: programa.dias,
+            pctFee: programa.pct_fee_tarjeta,
+          }}
         />
       )}
       {tab === "inclusiones" && <InclusionesEditor programaId={programa.id} ciudades={props.ciudades} inclusiones={props.inclusiones} />}
@@ -311,6 +320,7 @@ function MatrizEditor({
   hoteles,
   precios,
   moneda,
+  pvpOpt,
 }: {
   programaId: number;
   ciudades: Ciudad[];
@@ -318,6 +328,7 @@ function MatrizEditor({
   hoteles: HotelRow[];
   precios: PrecioRow[];
   moneda: string;
+  pvpOpt: PvpOpciones;
 }) {
   const ciudadNames = ciudades.map((c) => c.nombre);
   const initialCats: CatState[] = categorias.map((cat) => {
@@ -352,8 +363,13 @@ function MatrizEditor({
 
   return (
     <div>
-      <p className="mb-3 text-sm text-gray-500">
-        Cada categoría define qué hotel se usa en cada ciudad y su precio neto por acomodación (en {moneda}). El PVP se calcula con el markup de la cabecera.
+      <p className="mb-1 text-sm text-gray-500">
+        Cada categoría define qué hotel se usa en cada ciudad y su precio <b>neto</b> por acomodación (en {moneda}).
+      </p>
+      <p className="mb-3 text-xs text-gray-400">
+        Precio de venta (PVP) = neto + markup {Math.round((pvpOpt.pctMk ?? 0) * 100)}%
+        {pvpOpt.asistenciaDia ? ` + asistencia ${formatMoneda(pvpOpt.asistenciaDia, moneda)}/día × ${pvpOpt.dias ?? 0} días` : ""}
+        {pvpOpt.pctFee ? ` + fee bancario ${Math.round((pvpOpt.pctFee ?? 0) * 100)}%` : ""}. Ajusta esos valores en la pestaña General.
       </p>
       <div className="space-y-6">
         {cats.map((c, i) => (
@@ -388,6 +404,11 @@ function MatrizEditor({
                       placeholder="0"
                       disabled={!!c.precios[acom]?.bs}
                     />
+                    {!c.precios[acom]?.bs && Number(c.precios[acom]?.neto) > 0 && (
+                      <div className="mt-1 text-xs font-medium" style={{ color: "var(--brand-primary)" }}>
+                        PVP {formatMoneda(pvpPrograma(Number(c.precios[acom].neto), pvpOpt), moneda)}
+                      </div>
+                    )}
                     <label className="mt-1 flex items-center gap-1 text-xs text-gray-500">
                       <input type="checkbox" checked={!!c.precios[acom]?.bs} onChange={(e) => updPrecio(i, acom, "bs", e.target.checked)} /> bajo solicitud
                     </label>
