@@ -16,9 +16,11 @@ import {
   guardarBlackouts,
   setPublicado,
   eliminarPrograma,
+  importarDesdeTexto,
   type CabeceraInput,
   type CategoriaInput,
 } from "../actions";
+import { parsearPrograma } from "@/lib/programasImport";
 
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
 type Ciudad = { id: number; nombre: string; codigo_iata: string | null; noches: number };
@@ -38,6 +40,7 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 
 const TABS = [
   { key: "general", label: "General" },
+  { key: "importar", label: "Importar ✨" },
   { key: "ruta", label: "Ruta" },
   { key: "itinerario", label: "Itinerario" },
   { key: "matriz", label: "Hoteles y precios" },
@@ -83,6 +86,9 @@ export function ProgramaEditor(props: {
     textoCancelacion: programa.texto_cancelacion ?? "",
     textoPagos: programa.texto_pagos ?? "",
     notas: programa.notas ?? "",
+    desdePrecio: programa.desde_precio,
+    incluyeAereo: programa.incluye_aereo,
+    portadaUrl: programa.portada_url ?? "",
   };
 
   return (
@@ -144,6 +150,7 @@ export function ProgramaEditor(props: {
           submitLabel="Guardar cabecera"
         />
       )}
+      {tab === "importar" && <ImportarEditor programaId={programa.id} onDone={() => router.refresh()} />}
       {tab === "ruta" && <RutaEditor programaId={programa.id} ciudades={props.ciudades} />}
       {tab === "itinerario" && <ItinerarioEditor programaId={programa.id} dias={props.dias} totalDias={programa.dias} />}
       {tab === "matriz" && (
@@ -473,6 +480,99 @@ function ToursEditor({ programaId, ciudades, tours }: { programaId: number; ciud
         <AddBtn onClick={() => setRows((p) => [...p, { ciudad: "", nombre: "", precio: null, minPax: 2, diasOperacion: "", descripcion: "" }])}>+ Agregar tour</AddBtn>
       </div>
       <SaveBar onSave={() => guardarTours(programaId, rows)} />
+    </div>
+  );
+}
+
+// ── Importar desde el texto del proveedor ─────────────────────────────────────
+function ImportarEditor({ programaId, onDone }: { programaId: number; onDone: () => void }) {
+  const [texto, setTexto] = useState("");
+  const [opts, setOpts] = useState({ itinerario: true, ruta: true, inclusiones: true, diasNoches: true });
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+
+  const preview = texto.trim() ? parsearPrograma(texto) : null;
+  const optRow = (k: keyof typeof opts, label: string, count: number) => (
+    <label className="flex items-center gap-2 text-sm text-gray-700">
+      <input type="checkbox" checked={opts[k]} onChange={(e) => setOpts((p) => ({ ...p, [k]: e.target.checked }))} />
+      {label} <span className="text-xs text-gray-400">({count})</span>
+    </label>
+  );
+
+  return (
+    <div>
+      <div className="mb-3 rounded-lg border border-[var(--brand-accent)] bg-[rgba(38,187,217,0.06)] p-3 text-sm text-gray-600">
+        Pega aquí el texto del programa <b>tal como lo envía el proveedor</b> (copiado del Word o PDF).
+        El sistema reconoce solo el itinerario día por día, la ruta, los días/noches y el bloque de
+        incluye / no incluye. Revisa la vista previa y luego importa — después puedes ajustar todo a mano.
+      </div>
+      <textarea
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        rows={12}
+        className={sel}
+        placeholder={"COLORES DE TURQUÍA 2026-27\n8 DÍAS / 7 NOCHES\nAnkara - Cappadocia – Estambul…\nITINERARIO\nDÍA 01 - ESTAMBUL Llegada en vuelo internacional…"}
+      />
+
+      {preview && (
+        <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+          <p className="mb-2 text-sm font-semibold text-gray-700">Vista previa de lo detectado</p>
+          <p className="mb-3 text-xs text-gray-500">
+            {preview.dias ?? "?"} días / {preview.noches ?? "?"} noches · {preview.ciudades.length} ciudades ·{" "}
+            {preview.itinerario.length} días de itinerario · {preview.incluye.length} incluye / {preview.noIncluye.length} no incluye
+          </p>
+          <div className="mb-3 space-y-1.5">
+            {optRow("diasNoches", "Días / noches", preview.dias ? 1 : 0)}
+            {optRow("ruta", "Ruta (ciudades)", preview.ciudades.length)}
+            {optRow("itinerario", "Itinerario día por día", preview.itinerario.length)}
+            {optRow("inclusiones", "Incluye / No incluye", preview.incluye.length + preview.noIncluye.length)}
+          </div>
+          {preview.itinerario.length > 0 && (
+            <details className="mb-2">
+              <summary className="cursor-pointer text-xs font-medium text-[#1D7C9A]">Ver itinerario detectado</summary>
+              <div className="mt-2 max-h-64 space-y-1 overflow-y-auto text-xs text-gray-600">
+                {preview.itinerario.map((d) => (
+                  <p key={d.dia}>
+                    <b>Día {d.dia}{d.titulo ? `: ${d.titulo}` : ""}</b>
+                    {(d.desayuno || d.almuerzo || d.cena) && (
+                      <span className="text-gray-400">
+                        {" "}({[d.desayuno && "Des", d.almuerzo && "Alm", d.cena && "Cena"].filter(Boolean).join(", ")})
+                      </span>
+                    )}
+                    {d.descripcion ? ` — ${d.descripcion.slice(0, 120)}${d.descripcion.length > 120 ? "…" : ""}` : ""}
+                  </p>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center gap-3">
+        <Button
+          disabled={pending || !preview}
+          onClick={() =>
+            start(async () => {
+              setError(null);
+              setOk(false);
+              const r = await importarDesdeTexto(programaId, texto, opts);
+              if (r.ok) {
+                setOk(true);
+                onDone();
+              } else setError(r.error ?? "Error al importar");
+            })
+          }
+          style={{ backgroundColor: "var(--brand-primary)" }}
+        >
+          {pending ? "Importando…" : "Importar lo seleccionado"}
+        </Button>
+        {ok && <span className="text-sm text-green-600">Importado ✓ — revisa las pestañas Itinerario / Ruta / Incluye.</span>}
+        {error && <span className="text-sm text-red-600">{error}</span>}
+      </div>
+      <p className="mt-2 text-xs text-amber-700">
+        Ojo: importar <b>reemplaza</b> el contenido de cada sección marcada (no agrega encima).
+      </p>
     </div>
   );
 }

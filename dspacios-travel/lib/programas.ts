@@ -13,7 +13,10 @@ export function pvpDesdeNeto(neto: number, pctMk: number): number {
 
 /** Resumen de programas para el tarifario (con precio "desde" en PVP). */
 export async function getProgramasResumen(sb: SB, soloPublicados = true): Promise<ProgramaResumen[]> {
-  let q = sb.from("programas").select("id, nombre, subtitulo, dias, noches, moneda, pct_mk, publicado").eq("activo", true);
+  let q = sb
+    .from("programas")
+    .select("id, nombre, subtitulo, dias, noches, moneda, pct_mk, publicado, desde_precio, incluye_aereo, portada_url")
+    .eq("activo", true);
   if (soloPublicados) q = q.eq("publicado", true);
   const { data: programas } = await q.order("nombre");
   if (!programas?.length) return [];
@@ -42,6 +45,8 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
 
   return programas.map((p) => {
     const neto = minNeto.get(p.id);
+    // El "Desde" manual de la cabecera manda sobre el mínimo calculado de la matriz.
+    const desdeManual = p.desde_precio != null && p.desde_precio > 0 ? Number(p.desde_precio) : null;
     return {
       id: p.id,
       nombre: p.nombre,
@@ -49,7 +54,9 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
       dias: p.dias,
       noches: p.noches,
       moneda: p.moneda,
-      desde_pvp: neto != null ? pvpDesdeNeto(neto, p.pct_mk) : null,
+      desde_pvp: desdeManual ?? (neto != null ? pvpDesdeNeto(neto, p.pct_mk) : null),
+      incluye_aereo: !!p.incluye_aereo,
+      portada_url: p.portada_url ?? null,
     };
   });
 }

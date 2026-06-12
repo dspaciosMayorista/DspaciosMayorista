@@ -45,6 +45,9 @@ export function CabeceraForm({
     textoCancelacion: initial?.textoCancelacion ?? "",
     textoPagos: initial?.textoPagos ?? "",
     notas: initial?.notas ?? "",
+    desdePrecio: initial?.desdePrecio ?? null,
+    incluyeAereo: initial?.incluyeAereo ?? false,
+    portadaUrl: initial?.portadaUrl ?? "",
   });
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState(false);
@@ -145,6 +148,37 @@ export function CabeceraForm({
         <div>
           <label className={lbl}>Máx. pax</label>
           <Input type="number" value={f.maxPax ?? ""} onChange={(e) => set("maxPax", numOrNull(e.target.value))} />
+        </div>
+      </div>
+
+      {/* Vitrina pública */}
+      <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Vitrina pública</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div>
+            <label className={lbl}>Precio “Desde” ({f.moneda})</label>
+            <Input
+              type="number"
+              value={f.desdePrecio ?? ""}
+              onChange={(e) => set("desdePrecio", numOrNull(e.target.value))}
+              placeholder="Opcional · si está, manda sobre el mínimo de la matriz"
+            />
+          </div>
+          <div>
+            <label className={lbl}>Aéreo</label>
+            <select
+              value={f.incluyeAereo ? "1" : "0"}
+              onChange={(e) => set("incluyeAereo", e.target.value === "1")}
+              className={sel}
+            >
+              <option value="0">Solo terrestre</option>
+              <option value="1">Con aéreo</option>
+            </select>
+          </div>
+          <div>
+            <label className={lbl}>Imagen de portada (URL)</label>
+            <Input value={f.portadaUrl} onChange={(e) => set("portadaUrl", e.target.value)} placeholder="https://…" />
+          </div>
         </div>
       </div>
 

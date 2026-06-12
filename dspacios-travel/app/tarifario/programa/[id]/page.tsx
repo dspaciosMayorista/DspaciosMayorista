@@ -62,12 +62,24 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
               ← Volver al tarifario
             </Link>
           </div>
-          <h1 className="text-3xl font-semibold">{p.nombre}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-3xl font-semibold">{p.nombre}</h1>
+            <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-medium">
+              {p.incluye_aereo ? "✈ Con aéreo" : "Solo terrestre"}
+            </span>
+          </div>
           <p className="mt-1 text-sm opacity-90">
             {p.subtitulo ?? ""}
             {p.dias ? ` · ${p.dias} días / ${p.noches ?? ""} noches` : ""}
             {p.salidas ? ` · Salidas: ${p.salidas}` : ""}
           </p>
+          {p.desde_precio != null && p.desde_precio > 0 && (
+            <p className="mt-2 text-sm">
+              <span className="opacity-80">Desde</span>{" "}
+              <span className="text-xl font-semibold">{formatMoneda(p.desde_precio, moneda)}</span>{" "}
+              <span className="opacity-80">por persona</span>
+            </p>
+          )}
           {(p.vigencia_desde || p.vigencia_hasta) && (
             <p className="mt-1 text-xs opacity-80">
               Vigencia: {formatFechaLarga(p.vigencia_desde)} — {formatFechaLarga(p.vigencia_hasta)}
@@ -77,6 +89,10 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
       </header>
 
       <main className="mx-auto max-w-5xl space-y-8 px-4 py-8 md:px-6">
+        {p.portada_url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={p.portada_url} alt={p.nombre} className="h-64 w-full rounded-xl object-cover" />
+        )}
         {puedeReservar && (
           <div className="flex justify-end">
             <Link

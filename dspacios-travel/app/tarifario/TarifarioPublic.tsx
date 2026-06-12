@@ -17,6 +17,8 @@ export type ProgramaResumen = {
   noches: number | null;
   moneda: string;
   desde_pvp: number | null;
+  incluye_aereo: boolean;
+  portada_url: string | null;
 };
 
 export type FilaTarifario = {
@@ -576,15 +578,34 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
       {programas.map((p) => (
         <div
           key={p.id}
-          className="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-[var(--brand-primary)] hover:shadow-sm"
+          className="flex flex-col justify-between overflow-hidden rounded-xl border border-gray-200 bg-white transition-all hover:border-[var(--brand-primary)] hover:shadow-sm"
         >
           <Link href={`/tarifario/programa/${p.id}`} className="block">
-            <div className="font-semibold text-gray-800">{p.nombre}</div>
-            <p className="mt-0.5 text-xs text-gray-500">
-              {p.subtitulo ?? ""}
-              {p.dias ? ` · ${p.dias} días / ${p.noches ?? ""} noches` : ""}
-            </p>
+            {p.portada_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={p.portada_url} alt={p.nombre} className="h-36 w-full object-cover" />
+            )}
+            <div className="p-5 pb-0">
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-semibold text-gray-800">{p.nombre}</div>
+                <span
+                  className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                  style={
+                    p.incluye_aereo
+                      ? { backgroundColor: "rgba(29,124,154,0.12)", color: "var(--brand-primary)" }
+                      : { backgroundColor: "#f3f4f6", color: "#6b7280" }
+                  }
+                >
+                  {p.incluye_aereo ? "✈ Con aéreo" : "Solo terrestre"}
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs text-gray-500">
+                {p.subtitulo ?? ""}
+                {p.dias ? ` · ${p.dias} días / ${p.noches ?? ""} noches` : ""}
+              </p>
+            </div>
           </Link>
+          <div className="px-5 pb-5 pt-0">
           <div className="mt-3 flex items-end justify-between">
             {p.desde_pvp != null ? (
               <div>
@@ -611,6 +632,7 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
                 </Link>
               )}
             </div>
+          </div>
           </div>
         </div>
       ))}

@@ -292,6 +292,22 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
   Century Gothic. Íconos PWA/app (`icon-192/512`, `icon-maskable-512`, `apple-icon`) =
   logo blanco sobre el degradado.
 
+### Programas (terceros) — manejo simplificado · rama `claude/modest-clarke-Ehftt`
+> Los programas son circuitos de **terceros**; cada proveedor manda un Word/PDF con
+> estructura distinta. En vez de re-tipear, el montaje ahora arranca pegando el texto.
+- **Importador "pegar del proveedor"** (`lib/programasImport.ts` — parser PURO + pestaña
+  *Importar ✨* en el editor del programa). Detecta del texto crudo: **días/noches, ruta
+  (ciudades), itinerario día por día e incluye/no incluye** (con cierre de bloque por
+  encabezados de precios/hoteles/notas para no tragar tablas). Vista previa + casillas por
+  sección → `importarDesdeTexto` **reemplaza** solo las secciones marcadas. Probado contra
+  los 4 ejemplos reales en `docs/programas/ejemplos/`.
+- **Campos de vitrina** (migración **066**): `desde_precio` (titular "Desde" manual; manda
+  sobre el mínimo de la matriz — útil cuando el proveedor solo da "Desde $X"), `incluye_aereo`
+  (Solo terrestre / Con aéreo → badge en tarjeta y cabecera), `portada_url` (imagen).
+- Modelo de precios **sin cambios**: por categoría × acomodación. Programas con precio por
+  **periodo de salida** (ej. Sendero del Oeste) se montan usando cada "categoría" como
+  temporada de precio. (Si más adelante se quiere matriz fecha×precio nativa, es el próximo paso.)
+
 ### Flujo de negocio implementado
 **PRODUCTO** (costos netos) → **PAQUETES** (armas + margen) → **TARIFARIO** (resultado,
 interno y público) → **RESERVAR** (genera contrato/venta).
