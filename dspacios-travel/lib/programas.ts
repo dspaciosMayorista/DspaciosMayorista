@@ -55,6 +55,19 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
   for (const c of cats ?? []) catToProg.set(c.id, c.programa_id);
   const catIds = [...catToProg.keys()];
 
+  // Ciudades por programa (para el filtro de destino en la vitrina).
+  const { data: ciudadesRows } = await sb
+    .from("programa_ciudades")
+    .select("programa_id, nombre, orden")
+    .in("programa_id", ids)
+    .order("orden");
+  const ciudadesPorProg = new Map<number, string[]>();
+  for (const c of ciudadesRows ?? []) {
+    const arr = ciudadesPorProg.get(c.programa_id) ?? [];
+    if (c.nombre) arr.push(c.nombre);
+    ciudadesPorProg.set(c.programa_id, arr);
+  }
+
   const minNeto = new Map<number, number>();
   const setMin = (pid: number, neto: number) => {
     if (neto <= 0) return;
@@ -108,6 +121,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
           : null),
       incluye_aereo: !!p.incluye_aereo,
       portada_url: p.portada_url ?? null,
+      ciudades: ciudadesPorProg.get(p.id) ?? [],
     };
   });
 }
