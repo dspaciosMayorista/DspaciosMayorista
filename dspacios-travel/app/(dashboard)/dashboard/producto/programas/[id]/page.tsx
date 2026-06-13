@@ -19,6 +19,7 @@ export default async function ProgramaDetallePage({ params }: { params: Promise<
     { data: categorias },
     { data: hoteles },
     { data: precios },
+    { data: salidas },
     { data: inclusiones },
     { data: tours },
     { data: blackouts },
@@ -30,6 +31,7 @@ export default async function ProgramaDetallePage({ params }: { params: Promise<
     sb.from("programa_categorias").select("*").eq("programa_id", id).order("orden"),
     sb.from("programa_categoria_hoteles").select("*, programa_categorias!inner(programa_id)").eq("programa_categorias.programa_id", id),
     sb.from("programa_precios").select("*, programa_categorias!inner(programa_id)").eq("programa_categorias.programa_id", id),
+    sb.from("programa_salidas").select("*").eq("programa_id", id).order("orden"),
     sb.from("programa_inclusiones").select("*").eq("programa_id", id).order("orden"),
     sb.from("programa_tours").select("*").eq("programa_id", id).order("orden"),
     sb.from("programa_blackouts").select("*").eq("programa_id", id).order("fecha_inicio"),
@@ -50,6 +52,7 @@ export default async function ProgramaDetallePage({ params }: { params: Promise<
         categorias={categorias ?? []}
         hoteles={(hoteles ?? []) as never[]}
         precios={(precios ?? []) as never[]}
+        salidas={salidas ?? []}
         inclusiones={inclusiones ?? []}
         tours={tours ?? []}
         blackouts={blackouts ?? []}

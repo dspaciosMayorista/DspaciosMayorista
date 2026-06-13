@@ -49,6 +49,7 @@ export function CabeceraForm({
     incluyeAereo: initial?.incluyeAereo ?? false,
     portadaUrl: initial?.portadaUrl ?? "",
     asistenciaMedicaDia: initial?.asistenciaMedicaDia ?? null,
+    modoPrecio: initial?.modoPrecio ?? "categoria",
   });
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState(false);
@@ -150,6 +151,20 @@ export function CabeceraForm({
           <label className={lbl}>Máx. pax</label>
           <Input type="number" value={f.maxPax ?? ""} onChange={(e) => set("maxPax", numOrNull(e.target.value))} />
         </div>
+      </div>
+
+      {/* Modo de precio */}
+      <div>
+        <label className={lbl}>Estructura de precio</label>
+        <select value={f.modoPrecio} onChange={(e) => set("modoPrecio", e.target.value)} className={sel}>
+          <option value="categoria">Por categoría de hotel (matriz categoría × acomodación)</option>
+          <option value="salida">Por salida (fecha × precio, noches variables)</option>
+        </select>
+        <p className="mt-1 text-xs text-gray-400">
+          {f.modoPrecio === "salida"
+            ? "Para circuitos donde el precio cambia por fecha de salida y las noches varían (tipo Cibeles). Cárgalas en la pestaña “Salidas y precios”."
+            : "Para circuitos con niveles de hotel y precio por acomodación. Cárgalos en “Hoteles y precios”."}
+        </p>
       </div>
 
       {/* Vitrina pública */}

@@ -56,6 +56,11 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
   const catIds = [...catToProg.keys()];
 
   const minNeto = new Map<number, number>();
+  const setMin = (pid: number, neto: number) => {
+    if (neto <= 0) return;
+    const prev = minNeto.get(pid);
+    if (prev == null || neto < prev) minNeto.set(pid, neto);
+  };
   if (catIds.length) {
     const { data: precios } = await sb
       .from("programa_precios")
@@ -64,10 +69,19 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
       .not("neto", "is", null);
     for (const row of precios ?? []) {
       const pid = catToProg.get(row.categoria_id);
-      const neto = row.neto ?? 0;
-      if (pid == null || neto <= 0) continue;
-      const prev = minNeto.get(pid);
-      if (prev == null || neto < prev) minNeto.set(pid, neto);
+      if (pid == null) continue;
+      setMin(pid, row.neto ?? 0);
+    }
+  }
+  // Modo "salida": el mínimo sale de programa_salidas (neto por acomodación).
+  const { data: salidas } = await sb
+    .from("programa_salidas")
+    .select("programa_id, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud")
+    .in("programa_id", ids);
+  for (const s of salidas ?? []) {
+    if (s.bajo_solicitud) continue;
+    for (const v of [s.neto_doble, s.neto_triple, s.neto_multiple, s.neto_sencilla, s.neto_nino]) {
+      if (v != null) setMin(s.programa_id, Number(v));
     }
   }
 
@@ -109,6 +123,16 @@ export type ProgramaDetalle = {
     hoteles: { ciudad: string; hotel: string | null }[];
     precios: { acomodacion: string; neto: number | null; pvp: number | null; bajo_solicitud: boolean }[];
   }[];
+  salidas: {
+    id: number;
+    etiqueta: string | null;
+    fecha_desde: string | null;
+    fecha_hasta: string | null;
+    noches: number | null;
+    columna: string | null;
+    precios: { acomodacion: string; neto: number | null; pvp: number | null }[];
+    bajo_solicitud: boolean;
+  }[];
   inclusiones: { ciudad: string | null; tipo: string; texto: string }[];
   tours: { ciudad: string | null; nombre: string; precio: number | null; min_pax: number; dias_operacion: string | null; descripcion: string | null }[];
   blackouts: { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null }[];
@@ -131,13 +155,14 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
     pctFee: prow.pct_fee_tarjeta,
   };
 
-  const [{ data: ciudades }, { data: dias }, { data: categorias }, { data: hoteles }, { data: precios }, { data: inclusiones }, { data: tours }, { data: blackouts }] =
+  const [{ data: ciudades }, { data: dias }, { data: categorias }, { data: hoteles }, { data: precios }, { data: salidasRaw }, { data: inclusiones }, { data: tours }, { data: blackouts }] =
     await Promise.all([
       sb.from("programa_ciudades").select("id, nombre, codigo_iata, noches").eq("programa_id", id).order("orden"),
       sb.from("programa_dias").select("dia, titulo, desayuno, almuerzo, cena, descripcion").eq("programa_id", id).order("dia"),
       sb.from("programa_categorias").select("id, nombre, orden").eq("programa_id", id).order("orden"),
       sb.from("programa_categoria_hoteles").select("categoria_id, ciudad, hotel, orden").order("orden"),
       sb.from("programa_precios").select("categoria_id, acomodacion, neto, bajo_solicitud"),
+      sb.from("programa_salidas").select("id, etiqueta, fecha_desde, fecha_hasta, noches, columna, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud").eq("programa_id", id).order("orden"),
       sb.from("programa_inclusiones").select("ciudad, tipo, texto").eq("programa_id", id).order("orden"),
       sb.from("programa_tours").select("ciudad, nombre, precio, min_pax, dias_operacion, descripcion").eq("programa_id", id).order("orden"),
       sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad").eq("programa_id", id).order("fecha_inicio"),
@@ -161,12 +186,44 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
   }));
   void catIds;
 
+  // Salidas (modo de precio por fecha). El PVP usa las noches de la salida
+  // (variables) para el componente de asistencia médica; si no hay, cae a la
+  // cabecera. Niño = nino.
+  const ACOM_SALIDA: [string, "neto_sencilla" | "neto_doble" | "neto_triple" | "neto_multiple" | "neto_nino"][] = [
+    ["sencilla", "neto_sencilla"],
+    ["doble", "neto_doble"],
+    ["triple", "neto_triple"],
+    ["multiple", "neto_multiple"],
+    ["nino", "neto_nino"],
+  ];
+  const salidas = (salidasRaw ?? []).map((s) => {
+    const optSalida: PvpOpciones = { ...pvpOpt, dias: s.noches != null ? s.noches : prow.dias };
+    return {
+      id: s.id,
+      etiqueta: s.etiqueta,
+      fecha_desde: s.fecha_desde,
+      fecha_hasta: s.fecha_hasta,
+      noches: s.noches,
+      columna: s.columna,
+      bajo_solicitud: s.bajo_solicitud,
+      precios: ACOM_SALIDA.map(([acom, col]) => {
+        const neto = s[col] as number | null;
+        return {
+          acomodacion: acom,
+          neto,
+          pvp: neto != null && !s.bajo_solicitud ? pvpPrograma(neto, optSalida) : null,
+        };
+      }).filter((p) => p.neto != null),
+    };
+  });
+
   return {
     programa: programa as ProgramaRow,
     proveedorNombre,
     ciudades: ciudades ?? [],
     dias: dias ?? [],
     categorias: cats,
+    salidas,
     inclusiones: inclusiones ?? [],
     tours: tours ?? [],
     blackouts: blackouts ?? [],

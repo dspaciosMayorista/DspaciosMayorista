@@ -17,8 +17,10 @@ import {
   setPublicado,
   eliminarPrograma,
   importarDesdeTexto,
+  guardarSalidas,
   type CabeceraInput,
   type CategoriaInput,
+  type SalidaInput,
 } from "../actions";
 import { parsearPrograma } from "@/lib/programasImport";
 import { pvpPrograma, type PvpOpciones } from "@/lib/programas";
@@ -30,6 +32,10 @@ type Dia = { dia: number; titulo: string | null; desayuno: boolean; almuerzo: bo
 type Categoria = { id: number; nombre: string | null; orden: number };
 type HotelRow = { categoria_id: number; ciudad: string; hotel: string | null; orden: number };
 type PrecioRow = { categoria_id: number; acomodacion: string; neto: number | null; bajo_solicitud: boolean };
+type SalidaRow = {
+  etiqueta: string | null; fecha_desde: string | null; fecha_hasta: string | null; noches: number | null; columna: string | null;
+  neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; bajo_solicitud: boolean;
+};
 type Inclusion = { ciudad: string | null; tipo: string; texto: string };
 type Tour = { ciudad: string | null; nombre: string; precio: number | null; min_pax: number; dias_operacion: string | null; descripcion: string | null };
 type Blackout = { fecha_inicio: string | null; fecha_fin: string | null; motivo: string | null; ciudad: string | null };
@@ -59,6 +65,7 @@ export function ProgramaEditor(props: {
   categorias: Categoria[];
   hoteles: HotelRow[];
   precios: PrecioRow[];
+  salidas: SalidaRow[];
   inclusiones: Inclusion[];
   tours: Tour[];
   blackouts: Blackout[];
@@ -66,6 +73,10 @@ export function ProgramaEditor(props: {
   const { programa } = props;
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("general");
   const router = useRouter();
+  const modoSalidaTabs = programa.modo_precio === "salida";
+  const tabs = TABS.map((t) =>
+    t.key === "matriz" ? { ...t, label: modoSalidaTabs ? "Salidas y precios" : "Hoteles y precios" } : t
+  );
   const [pubPending, startPub] = useTransition();
 
   const initialCab: Partial<CabeceraInput> = {
@@ -92,6 +103,7 @@ export function ProgramaEditor(props: {
     incluyeAereo: programa.incluye_aereo,
     portadaUrl: programa.portada_url ?? "",
     asistenciaMedicaDia: programa.asistencia_medica_dia,
+    modoPrecio: programa.modo_precio,
   };
 
   return (
@@ -128,7 +140,7 @@ export function ProgramaEditor(props: {
 
       {/* Tabs */}
       <div className="mb-5 flex flex-wrap gap-1 border-b border-gray-200">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             type="button"
@@ -156,22 +168,35 @@ export function ProgramaEditor(props: {
       {tab === "importar" && <ImportarEditor programaId={programa.id} onDone={() => router.refresh()} />}
       {tab === "ruta" && <RutaEditor programaId={programa.id} ciudades={props.ciudades} />}
       {tab === "itinerario" && <ItinerarioEditor programaId={programa.id} dias={props.dias} totalDias={programa.dias} />}
-      {tab === "matriz" && (
-        <MatrizEditor
-          programaId={programa.id}
-          ciudades={props.ciudades}
-          categorias={props.categorias}
-          hoteles={props.hoteles}
-          precios={props.precios}
-          moneda={programa.moneda}
-          pvpOpt={{
-            pctMk: programa.pct_mk,
-            asistenciaDia: programa.asistencia_medica_dia,
-            dias: programa.dias,
-            pctFee: programa.pct_fee_tarjeta,
-          }}
-        />
-      )}
+      {tab === "matriz" &&
+        (modoSalidaTabs ? (
+          <SalidasEditor
+            programaId={programa.id}
+            salidas={props.salidas}
+            moneda={programa.moneda}
+            pvpOpt={{
+              pctMk: programa.pct_mk,
+              asistenciaDia: programa.asistencia_medica_dia,
+              dias: programa.dias,
+              pctFee: programa.pct_fee_tarjeta,
+            }}
+          />
+        ) : (
+          <MatrizEditor
+            programaId={programa.id}
+            ciudades={props.ciudades}
+            categorias={props.categorias}
+            hoteles={props.hoteles}
+            precios={props.precios}
+            moneda={programa.moneda}
+            pvpOpt={{
+              pctMk: programa.pct_mk,
+              asistenciaDia: programa.asistencia_medica_dia,
+              dias: programa.dias,
+              pctFee: programa.pct_fee_tarjeta,
+            }}
+          />
+        ))}
       {tab === "inclusiones" && <InclusionesEditor programaId={programa.id} ciudades={props.ciudades} inclusiones={props.inclusiones} />}
       {tab === "tours" && <ToursEditor programaId={programa.id} ciudades={props.ciudades} tours={props.tours} />}
       {tab === "blackouts" && <BlackoutsEditor programaId={programa.id} blackouts={props.blackouts} />}
@@ -423,6 +448,125 @@ function MatrizEditor({
         <AddBtn onClick={addCat}>+ Agregar categoría</AddBtn>
       </div>
       <SaveBar onSave={() => guardarMatriz(programaId, payload)} />
+    </div>
+  );
+}
+
+// ── Salidas y precios (modo por fecha) ─────────────────────────────────────────
+type SalidaState = {
+  etiqueta: string; fechaDesde: string; fechaHasta: string; noches: string; columna: string;
+  netoSencilla: string; netoDoble: string; netoTriple: string; netoMultiple: string; netoNino: string; bs: boolean;
+};
+
+function SalidasEditor({
+  programaId,
+  salidas,
+  moneda,
+  pvpOpt,
+}: {
+  programaId: number;
+  salidas: SalidaRow[];
+  moneda: string;
+  pvpOpt: PvpOpciones;
+}) {
+  const toState = (s: SalidaRow): SalidaState => ({
+    etiqueta: s.etiqueta ?? "",
+    fechaDesde: s.fecha_desde ?? "",
+    fechaHasta: s.fecha_hasta ?? "",
+    noches: s.noches != null ? String(s.noches) : "",
+    columna: s.columna ?? "",
+    netoSencilla: s.neto_sencilla != null ? String(s.neto_sencilla) : "",
+    netoDoble: s.neto_doble != null ? String(s.neto_doble) : "",
+    netoTriple: s.neto_triple != null ? String(s.neto_triple) : "",
+    netoMultiple: s.neto_multiple != null ? String(s.neto_multiple) : "",
+    netoNino: s.neto_nino != null ? String(s.neto_nino) : "",
+    bs: s.bajo_solicitud,
+  });
+  const [rows, setRows] = useState<SalidaState[]>(salidas.map(toState));
+  const upd = (i: number, k: keyof SalidaState, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  const nOrNull = (v: string) => (v === "" ? null : Number(v));
+
+  // PVP en vivo: usa las noches de la salida para la asistencia médica.
+  const pvpDe = (r: SalidaState, neto: string) => {
+    if (r.bs || !(Number(neto) > 0)) return null;
+    const dias = r.noches !== "" ? Number(r.noches) : pvpOpt.dias;
+    return pvpPrograma(Number(neto), { ...pvpOpt, dias });
+  };
+
+  const payload: SalidaInput[] = rows.map((r) => ({
+    etiqueta: r.etiqueta,
+    fechaDesde: r.fechaDesde,
+    fechaHasta: r.fechaHasta,
+    noches: nOrNull(r.noches),
+    columna: r.columna,
+    netoSencilla: nOrNull(r.netoSencilla),
+    netoDoble: nOrNull(r.netoDoble),
+    netoTriple: nOrNull(r.netoTriple),
+    netoMultiple: nOrNull(r.netoMultiple),
+    netoNino: nOrNull(r.netoNino),
+    bajoSolicitud: r.bs,
+  }));
+
+  const COLS: [keyof SalidaState, string][] = [
+    ["netoSencilla", "Sencilla"],
+    ["netoDoble", "Doble"],
+    ["netoTriple", "Triple"],
+    ["netoMultiple", "Múltiple"],
+    ["netoNino", "Niño"],
+  ];
+
+  return (
+    <div>
+      <p className="mb-1 text-sm text-gray-500">
+        Una fila por <b>salida</b> (rango de fecha). Las <b>noches</b> pueden variar por salida. El precio es el <b>neto</b> por acomodación (en {moneda}); el PVP se calcula igual que en categorías.
+      </p>
+      <p className="mb-3 text-xs text-gray-400">
+        Usa <b>Columna</b> si el proveedor da varias columnas de precio por fecha (ej. distintos hoteles: Zuruma / Siami / Waira) → crea una fila por columna con la misma etiqueta de fecha.
+      </p>
+      <div className="space-y-3">
+        {rows.map((r, i) => (
+          <div key={i} className="rounded-lg border border-gray-200 bg-white p-3">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <Input value={r.etiqueta} onChange={(e) => upd(i, "etiqueta", e.target.value)} placeholder="Etiqueta (ej. MAY 29 AL 01 JUN)" className="w-56" />
+              <Input type="date" value={r.fechaDesde} onChange={(e) => upd(i, "fechaDesde", e.target.value)} className="w-40" title="Fecha desde" />
+              <span className="text-gray-300">→</span>
+              <Input type="date" value={r.fechaHasta} onChange={(e) => upd(i, "fechaHasta", e.target.value)} className="w-40" title="Fecha hasta" />
+              <Input type="number" value={r.noches} onChange={(e) => upd(i, "noches", e.target.value)} placeholder="Noches" className="w-24" />
+              <Input value={r.columna} onChange={(e) => upd(i, "columna", e.target.value)} placeholder="Columna/hotel (opcional)" className="w-48" />
+              <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {COLS.map(([k, label]) => (
+                <div key={k} className="w-32">
+                  <div className="mb-1 text-xs text-gray-500">{label}</div>
+                  <Input type="number" value={r[k] as string} onChange={(e) => upd(i, k, e.target.value)} placeholder="neto" disabled={r.bs} />
+                  {pvpDe(r, r[k] as string) != null && (
+                    <div className="mt-1 text-xs font-medium" style={{ color: "var(--brand-primary)" }}>
+                      PVP {formatMoneda(pvpDe(r, r[k] as string)!, moneda)}
+                    </div>
+                  )}
+                </div>
+              ))}
+              <label className="mt-5 flex items-center gap-1 text-xs text-gray-500">
+                <input type="checkbox" checked={r.bs} onChange={(e) => upd(i, "bs", e.target.checked)} /> a solicitud
+              </label>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3">
+        <AddBtn
+          onClick={() =>
+            setRows((p) => [
+              ...p,
+              { etiqueta: "", fechaDesde: "", fechaHasta: "", noches: "", columna: "", netoSencilla: "", netoDoble: "", netoTriple: "", netoMultiple: "", netoNino: "", bs: false },
+            ])
+          }
+        >
+          + Agregar salida
+        </AddBtn>
+      </div>
+      <SaveBar onSave={() => guardarSalidas(programaId, payload)} />
     </div>
   );
 }

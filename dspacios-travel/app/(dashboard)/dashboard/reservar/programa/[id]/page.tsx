@@ -20,11 +20,22 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
     .filter((a): a is { nombre: string; email: string } => !!a.email)
     .map((a) => ({ nombre: a.nombre, email: a.email }));
 
-  const categorias: CategoriaReserva[] = det.categorias.map((c, i) => ({
-    id: c.id,
-    nombre: c.nombre ?? `Categoría ${i + 1}`,
-    precios: c.precios.map((p) => ({ acomodacion: p.acomodacion, pvp: p.pvp, bajoSolicitud: p.bajo_solicitud })),
-  }));
+  const modoSalida = det.programa.modo_precio === "salida";
+  const categorias: CategoriaReserva[] = modoSalida
+    ? det.salidas.map((s) => ({
+        id: s.id,
+        nombre: [s.etiqueta ?? s.fecha_desde ?? "Salida", s.columna, s.noches != null ? `${s.noches}N` : null]
+          .filter(Boolean)
+          .join(" · "),
+        precios: s.precios.map((p) => ({ acomodacion: p.acomodacion, pvp: p.pvp, bajoSolicitud: s.bajo_solicitud })),
+        noches: s.noches,
+        fechaSugerida: s.fecha_desde,
+      }))
+    : det.categorias.map((c, i) => ({
+        id: c.id,
+        nombre: c.nombre ?? `Categoría ${i + 1}`,
+        precios: c.precios.map((p) => ({ acomodacion: p.acomodacion, pvp: p.pvp, bajoSolicitud: p.bajo_solicitud })),
+      }));
 
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
@@ -39,7 +50,7 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
 
       {!categorias.length ? (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          Este programa aún no tiene categorías/precios cargados.
+          Este programa aún no tiene {modoSalida ? "salidas" : "categorías"}/precios cargados.
         </p>
       ) : (
         <ProgramaReservaForm
@@ -50,6 +61,7 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
           vigenciaHasta={det.programa.vigencia_hasta}
           categorias={categorias}
           asesores={asesores}
+          modoSalida={modoSalida}
         />
       )}
     </div>
