@@ -24,6 +24,7 @@ import {
 } from "../actions";
 import { parsearPrograma } from "@/lib/programasImport";
 import { pvpPrograma, type PvpOpciones } from "@/lib/programas";
+import { calcularNetoPrograma, type ModoBaseComisionable } from "@/lib/calc/programaPrecio";
 import { formatMoneda } from "@/lib/utils";
 
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
@@ -488,6 +489,19 @@ function SalidasEditor({
   const dup = (i: number) => setRows((p) => [...p.slice(0, i + 1), { ...p[i] }, ...p.slice(i + 1)]);
   const nOrNull = (v: string) => (v === "" ? null : Number(v));
 
+  // Regla comisionable: convierte una TARIFA del proveedor en el NETO a montar.
+  const [reglaOn, setReglaOn] = useState(false);
+  const [cModo, setCModo] = useState<ModoBaseComisionable>("pct");
+  const [cValor, setCValor] = useState("3");
+  const [cComision, setCComision] = useState("10");
+  // Escribe el neto (doble = múltiple, base Cibeles) desde una tarifa comisionable.
+  const aplicarTarifa = (i: number, tarifaStr: string) => {
+    const tarifa = Number(tarifaStr);
+    if (!Number.isFinite(tarifa) || tarifa <= 0) return;
+    const { neto } = calcularNetoPrograma({ tarifa, modo: cModo, valor: Number(cValor) || 0, pctComision: Number(cComision) || 0 });
+    setRows((p) => p.map((r, j) => (j === i ? { ...r, netoDoble: String(neto), netoMultiple: String(neto) } : r)));
+  };
+
   // PVP en vivo: usa las noches de la salida para la asistencia médica.
   const pvpDe = (r: SalidaState, neto: string) => {
     if (r.bs || !(Number(neto) > 0)) return null;
@@ -525,6 +539,38 @@ function SalidasEditor({
       <p className="mb-3 text-xs text-gray-400">
         Usa <b>Columna</b> si el proveedor da varias columnas de precio por fecha (ej. distintos hoteles: Zuruma / Siami / Waira) → crea una fila por columna con la misma etiqueta de fecha.
       </p>
+
+      {/* Regla comisionable: convierte tarifa del proveedor → neto */}
+      <div className="mb-4 rounded-lg border border-gray-100 bg-gray-50 p-3">
+        <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+          <input type="checkbox" checked={reglaOn} onChange={(e) => setReglaOn(e.target.checked)} />
+          El proveedor da <b>tarifa comisionable</b> (no el neto)
+        </label>
+        {reglaOn && (
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <div>
+              <div className={lbl}>Base comisionable</div>
+              <select value={cModo} onChange={(e) => setCModo(e.target.value as ModoBaseComisionable)} className={sel + " w-48"}>
+                <option value="pct">Tarifa − %</option>
+                <option value="impuesto">Tarifa − impuesto</option>
+                <option value="ninguno">Tarifa (nada)</option>
+              </select>
+            </div>
+            {cModo !== "ninguno" && (
+              <div>
+                <div className={lbl}>{cModo === "pct" ? "% a restar" : `Impuesto (${moneda})`}</div>
+                <Input type="number" value={cValor} onChange={(e) => setCValor(e.target.value)} className="w-28" />
+              </div>
+            )}
+            <div>
+              <div className={lbl}>% comisión</div>
+              <Input type="number" value={cComision} onChange={(e) => setCComision(e.target.value)} className="w-24" />
+            </div>
+            <p className="text-xs text-gray-400">En cada fila escribe la <b>tarifa</b> y se llena el neto (Doble = Múltiple). Ajusta sencilla/niño aparte.</p>
+          </div>
+        )}
+      </div>
+
       <div className="space-y-3">
         {rows.map((r, i) => (
           <div key={i} className="rounded-lg border border-gray-200 bg-white p-3">
@@ -541,6 +587,14 @@ function SalidasEditor({
               <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
             </div>
             <div className="flex flex-wrap gap-3">
+              {reglaOn && (
+                <div className="w-32">
+                  <div className="mb-1 text-xs font-medium text-[#1D7C9A]">Tarifa proveedor</div>
+                  <Input type="number" placeholder="tarifa" disabled={r.bs}
+                    onChange={(e) => aplicarTarifa(i, e.target.value)} />
+                  <div className="mt-1 text-[10px] text-gray-400">→ llena el neto</div>
+                </div>
+              )}
               {COLS.map(([k, label]) => (
                 <div key={k} className="w-32">
                   <div className="mb-1 text-xs text-gray-500">{label}</div>
