@@ -146,7 +146,7 @@ export function TarifarioPublic({
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
 }) {
-  const [vista, setVista] = useState<"tabla" | "booking">("booking");
+  const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
   const [q, setQ] = useState("");
   const [fCat, setFCat] = useState("");
   const [fReg, setFReg] = useState("");
@@ -168,10 +168,9 @@ export function TarifarioPublic({
   );
   const hayFiltro = !!(q.trim() || fCat || fReg || fAcom);
 
-  const tabs: { key: ModuloKey; label: string }[] = [
-    ...MODULOS.filter((m) => filasFiltradas.some((f) => f.modulo === m.key)),
-    ...(programas.length ? [{ key: "programas" as const, label: "Programas" }] : []),
-  ];
+  const tabs: { key: ModuloKey; label: string }[] = MODULOS.filter((m) =>
+    filasFiltradas.some((f) => f.modulo === m.key)
+  );
   const [moduloSel, setModuloSel] = useState<ModuloKey>("bloqueo");
   // Si el módulo activo se queda sin resultados por el filtro, salta al primero con datos.
   const modulo = tabs.some((t) => t.key === moduloSel) ? moduloSel : (tabs[0]?.key ?? "bloqueo");
@@ -180,9 +179,9 @@ export function TarifarioPublic({
 
   return (
     <div>
-      {/* Toggle de vista: tabla (estático) vs Booking (dinámico) */}
+      {/* Toggle de vista: tabla (estático) · Booking (dinámico) · Programas (circuitos) */}
       <div className="mb-4 inline-flex rounded-full border border-gray-200 bg-white p-1">
-        {([["tabla", "Vista tabla"], ["booking", "Vista Booking"]] as const).map(([v, label]) => (
+        {([["tabla", "Vista tabla"], ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
           <button
             key={v}
             type="button"
@@ -195,7 +194,8 @@ export function TarifarioPublic({
         ))}
       </div>
 
-      {/* Barra de filtros y buscador */}
+      {/* Barra de filtros y buscador (solo para hoteles: tabla/booking) */}
+      {vista !== "programas" && (
       <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white p-3">
         <input
           value={q}
@@ -225,8 +225,11 @@ export function TarifarioPublic({
           </button>
         )}
       </div>
+      )}
 
-      {vista === "booking" ? (
+      {vista === "programas" ? (
+        <PorProgramas programas={programas} puedeReservar={puedeReservar} />
+      ) : vista === "booking" ? (
         <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} />
       ) : (
         <>
@@ -255,10 +258,8 @@ export function TarifarioPublic({
             <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : modulo === "porcion_terrestre" ? (
             <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
-          ) : modulo === "servicios" ? (
-            <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
           ) : (
-            <PorProgramas programas={programas} puedeReservar={puedeReservar} />
+            <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
           )}
         </>
       )}
@@ -646,9 +647,14 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
               className="flex flex-col justify-between overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:border-[var(--brand-primary)] hover:shadow-lg"
             >
           <Link href={`/tarifario/programa/${p.id}`} className="block">
-            {p.portada_url && (
+            {p.portada_url ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={p.portada_url} alt={p.nombre} className="h-36 w-full object-cover" />
+              <img src={p.portada_url} alt={p.nombre} className="h-40 w-full object-cover" />
+            ) : (
+              // Portada por defecto: degradado de marca con el nombre del programa.
+              <div className="bg-brand-gradient flex h-40 w-full items-end p-4">
+                <span className="text-sm font-semibold leading-tight text-white drop-shadow">{p.nombre}</span>
+              </div>
             )}
             <div className="p-5 pb-0">
               <div className="flex items-start justify-between gap-2">
