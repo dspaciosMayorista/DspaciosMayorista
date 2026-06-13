@@ -50,6 +50,7 @@ export function CabeceraForm({
     portadaUrl: initial?.portadaUrl ?? "",
     asistenciaMedicaDia: initial?.asistenciaMedicaDia ?? null,
     modoPrecio: initial?.modoPrecio ?? "categoria",
+    videoUrl: initial?.videoUrl ?? "",
   });
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState(false);
@@ -194,6 +195,10 @@ export function CabeceraForm({
           <div>
             <label className={lbl}>Imagen de portada (URL)</label>
             <Input value={f.portadaUrl} onChange={(e) => set("portadaUrl", e.target.value)} placeholder="https://…" />
+          </div>
+          <div className="sm:col-span-3">
+            <label className={lbl}>Video de fondo (URL de YouTube)</label>
+            <Input value={f.videoUrl} onChange={(e) => set("videoUrl", e.target.value)} placeholder="https://youtu.be/… (opcional, se usa de fondo en la ficha del programa)" />
           </div>
         </div>
       </div>

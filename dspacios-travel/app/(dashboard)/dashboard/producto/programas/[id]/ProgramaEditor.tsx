@@ -104,6 +104,7 @@ export function ProgramaEditor(props: {
     portadaUrl: programa.portada_url ?? "",
     asistenciaMedicaDia: programa.asistencia_medica_dia,
     modoPrecio: programa.modo_precio,
+    videoUrl: programa.video_url ?? "",
   };
 
   return (

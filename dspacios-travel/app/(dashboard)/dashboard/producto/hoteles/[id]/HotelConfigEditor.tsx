@@ -25,6 +25,7 @@ export function HotelConfigEditor({
     clasificacion: string;
     descripcion: string;
     ubicacion: string;
+    videoUrl: string;
   };
 }) {
   const router = useRouter();
@@ -36,6 +37,7 @@ export function HotelConfigEditor({
   const [clasificacion, setClasificacion] = useState(inicial.clasificacion);
   const [descripcion, setDescripcion] = useState(inicial.descripcion);
   const [ubicacion, setUbicacion] = useState(inicial.ubicacion);
+  const [videoUrl, setVideoUrl] = useState(inicial.videoUrl);
   const [infMin, setInfMin] = useState(String(inicial.edadInfanteMin));
   const [infMax, setInfMax] = useState(String(inicial.edadInfanteMax));
   const [ninoMin, setNinoMin] = useState(String(inicial.edadNinoMin));
@@ -53,7 +55,7 @@ export function HotelConfigEditor({
         edadNinoMin: Number(ninoMin) || 0, edadNinoMax: Number(ninoMax) || 0,
         rangosEdad: rangosSel,
         contactoTelefono: contactoTel, emailComercial: emailCom,
-        estrellas: Number(estrellas) || null, clasificacion, descripcion, ubicacion,
+        estrellas: Number(estrellas) || null, clasificacion, descripcion, ubicacion, videoUrl,
       });
       if (r.ok) { setMsg("Guardado."); router.refresh(); } else setMsg(r.error);
     });
@@ -100,6 +102,10 @@ export function HotelConfigEditor({
           <div>
             <label className={lbl}>Ubicación para el mapa <span className="font-normal text-gray-400">(dirección o coordenadas lat,lng)</span></label>
             <Input value={ubicacion} onChange={(e) => setUbicacion(e.target.value)} placeholder="Ej. Carrera 1 #2-34, El Rodadero, Santa Marta  ·  o  11.2026,-74.2253" />
+          </div>
+          <div>
+            <label className={lbl}>Video del hotel <span className="font-normal text-gray-400">(URL de YouTube, se muestra en su ficha)</span></label>
+            <Input value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} placeholder="https://youtu.be/…" />
           </div>
           <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} />
           <div className="flex items-center gap-3">

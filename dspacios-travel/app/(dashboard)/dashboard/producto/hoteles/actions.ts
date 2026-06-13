@@ -110,6 +110,7 @@ export async function actualizarHotelConfig(
     clasificacion?: string;
     descripcion?: string;
     ubicacion?: string;
+    videoUrl?: string;
   }
 ): Promise<Result> {
   const sb = await createClient();
@@ -128,6 +129,7 @@ export async function actualizarHotelConfig(
       clasificacion: oNull(input.clasificacion ?? ""),
       descripcion: oNull(input.descripcion ?? ""),
       ubicacion: oNull(input.ubicacion ?? ""),
+      video_url: oNull(input.videoUrl ?? ""),
     })
     .eq("id", hotelId);
   if (error) return { ok: false, error: error.message };
