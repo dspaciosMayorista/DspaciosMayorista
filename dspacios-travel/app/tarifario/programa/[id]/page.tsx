@@ -97,8 +97,16 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
           // eslint-disable-next-line @next/next/no-img-element
           <img src={p.portada_url} alt={p.nombre} className="h-64 w-full rounded-xl object-cover" />
         )}
-        {puedeReservar && (
-          <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-3">
+          <Link
+            href={`/tarifario/programa/${p.id}/doc`}
+            target="_blank"
+            className="rounded-lg border px-5 py-2.5 text-sm font-semibold"
+            style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}
+          >
+            Generar documento PDF
+          </Link>
+          {puedeReservar && (
             <Link
               href={`/dashboard/reservar/programa/${p.id}`}
               className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white"
@@ -106,8 +114,8 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
             >
               Reservar este programa →
             </Link>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Precios por salida (modo fecha × precio) */}
         {det.salidas.length > 0 && (
