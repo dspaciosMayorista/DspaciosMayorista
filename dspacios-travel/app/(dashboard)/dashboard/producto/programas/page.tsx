@@ -42,9 +42,14 @@ export default async function ProgramasPage() {
             ajusta tu markup y publícalo al tarifario.
           </p>
         </div>
-        <Link href="/dashboard/producto/programas/nuevo">
-          <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo programa</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/dashboard/producto/programas/calculadora">
+            <Button variant="secondary">🧮 Calculadora de precios</Button>
+          </Link>
+          <Link href="/dashboard/producto/programas/nuevo">
+            <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo programa</Button>
+          </Link>
+        </div>
       </div>
 
       {!programas?.length ? (
