@@ -45,6 +45,10 @@ export function CabeceraForm({
     textoCancelacion: initial?.textoCancelacion ?? "",
     textoPagos: initial?.textoPagos ?? "",
     notas: initial?.notas ?? "",
+    desdePrecio: initial?.desdePrecio ?? null,
+    incluyeAereo: initial?.incluyeAereo ?? false,
+    portadaUrl: initial?.portadaUrl ?? "",
+    asistenciaMedicaDia: initial?.asistenciaMedicaDia ?? null,
   });
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState(false);
@@ -148,25 +152,65 @@ export function CabeceraForm({
         </div>
       </div>
 
+      {/* Vitrina pública */}
+      <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Vitrina pública</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div>
+            <label className={lbl}>Precio “Desde” ({f.moneda})</label>
+            <Input
+              type="number"
+              value={f.desdePrecio ?? ""}
+              onChange={(e) => set("desdePrecio", numOrNull(e.target.value))}
+              placeholder="Opcional · si está, manda sobre el mínimo de la matriz"
+            />
+          </div>
+          <div>
+            <label className={lbl}>Aéreo</label>
+            <select
+              value={f.incluyeAereo ? "1" : "0"}
+              onChange={(e) => set("incluyeAereo", e.target.value === "1")}
+              className={sel}
+            >
+              <option value="0">Solo terrestre</option>
+              <option value="1">Con aéreo</option>
+            </select>
+          </div>
+          <div>
+            <label className={lbl}>Imagen de portada (URL)</label>
+            <Input value={f.portadaUrl} onChange={(e) => set("portadaUrl", e.target.value)} placeholder="https://…" />
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div>
-          <label className={lbl}>Markup %</label>
+          <label className={lbl}>Markup proveedor %</label>
           <Input
             type="number"
             step="0.1"
             value={f.pctMk ? f.pctMk * 100 : ""}
             onChange={(e) => set("pctMk", e.target.value === "" ? 0 : Number(e.target.value) / 100)}
-            placeholder="20"
+            placeholder="25"
           />
         </div>
         <div>
-          <label className={lbl}>Fee tarjeta %</label>
+          <label className={lbl}>Fee bancario %</label>
           <Input
             type="number"
             step="0.1"
             value={f.pctFeeTarjeta ? f.pctFeeTarjeta * 100 : ""}
             onChange={(e) => set("pctFeeTarjeta", e.target.value === "" ? 0 : Number(e.target.value) / 100)}
-            placeholder="5"
+            placeholder="3"
+          />
+        </div>
+        <div>
+          <label className={lbl}>Asistencia médica / día ({f.moneda})</label>
+          <Input
+            type="number"
+            value={f.asistenciaMedicaDia ?? ""}
+            onChange={(e) => set("asistenciaMedicaDia", numOrNull(e.target.value))}
+            placeholder="0"
           />
         </div>
         <div>

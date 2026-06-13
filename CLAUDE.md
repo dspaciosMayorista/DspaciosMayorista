@@ -257,10 +257,13 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 
 ## 13. Estado del proyecto (handoff) — actualizado en desarrollo
 
-> Rama de trabajo: **`claude/dazzling-planck-MsBCZ`** (PR #1 hacia `main`). Producción
+> Rama de trabajo actual: **`claude/modest-clarke-Ehftt`** (última; ramas previas:
+> `claude/dazzling-planck-MsBCZ` PR #1, `claude/laughing-goodall-e59PS`). Producción
 > = `main` (se mergeará al terminar). La **base de datos Supabase es única** y compartida
-> entre `main` y la rama; las migraciones ya aplicadas afectan también a producción.
+> entre `main` y las ramas; las migraciones ya aplicadas afectan también a producción.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
+> **Migraciones a la fecha: hasta la 067** (correr en orden las que falten — ver más abajo).
+> *Pendiente del dueño:* correr **066** (vitrina de programas) y **067** (asistencia médica).
 
 > **Novedades rama `claude/laughing-goodall-e59PS`:**
 > - **CxP automáticas:** al reservar desde el tarifario se crean solas las cuentas
@@ -291,6 +294,38 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
   Piper `#66B596`, Jelly Bean Blue `#1D7C9A`. Tipografía web **Jost** = equivalente a
   Century Gothic. Íconos PWA/app (`icon-192/512`, `icon-maskable-512`, `apple-icon`) =
   logo blanco sobre el degradado.
+
+### Programas (terceros) — manejo simplificado · rama `claude/modest-clarke-Ehftt`
+> Los programas son circuitos de **terceros**; cada proveedor manda un Word/PDF con
+> estructura distinta. En vez de re-tipear, el montaje ahora arranca pegando el texto.
+- **Importador "pegar del proveedor"** (`lib/programasImport.ts` — parser PURO + pestaña
+  *Importar ✨* en el editor del programa). Detecta del texto crudo: **días/noches, ruta
+  (ciudades), itinerario día por día e incluye/no incluye** (con cierre de bloque por
+  encabezados de precios/hoteles/notas para no tragar tablas). Vista previa + casillas por
+  sección → `importarDesdeTexto` **reemplaza** solo las secciones marcadas. Probado contra
+  los 4 ejemplos reales en `docs/programas/ejemplos/`.
+- **Campos de vitrina** (migración **066**): `desde_precio` (titular "Desde" manual; manda
+  sobre el mínimo de la matriz — útil cuando el proveedor solo da "Desde $X"), `incluye_aereo`
+  (Solo terrestre / Con aéreo → badge en tarjeta y cabecera), `portada_url` (imagen).
+- Modelo de precios **sin cambios** en estructura: por categoría × acomodación. Programas con
+  precio por **periodo de salida** (ej. Sendero del Oeste) se montan usando cada "categoría"
+  como temporada de precio. (Si más adelante se quiere matriz fecha×precio nativa, es el próximo paso.)
+- **Precio de venta (PVP)** — el montaje ahora calcula el PVP, no solo republica el neto
+  (migración **067** + `pvpPrograma` en `lib/programas.ts`, fuente única usada por vitrina,
+  resumen y `reservarPrograma`):
+  `PVP = neto/(1−markup) + asistencia_medica_dia×días, todo /(1−fee_bancario)`.
+  Campos en la cabecera: **Markup proveedor %** (`pct_mk`, convención margen del app),
+  **Fee bancario %** (`pct_fee_tarjeta`) y **Asistencia médica/día** (`asistencia_medica_dia`,
+  por pax y por día). La pestaña *Hoteles y precios* muestra el **PVP en vivo** bajo cada neto.
+  *Nota:* los 4 ejemplos publicados traían el neto del proveedor **sin** recargo (eran
+  reformateos); de ahí que el montaje deba definir el precio de venta. El markup es **margen**:
+  `neto/(1−mk)` con `mk` en decimales (0,25 = 25%) — confirmado por el dueño.
+- **⚠️ Programas ≠ Paquetes — NO mezclar las dos estructuras de PVP.** Son motores
+  independientes en archivos distintos: el PVP de **paquetes** vive en `lib/calc/paquetes.ts`
+  (`componerTarifa`/`liquidarHotelNoches`/`factorLiquidacion`, impuesto BNC, etc.) y **está
+  bien, no se toca**; el PVP de **programas** vive en `lib/programas.ts` (`pvpPrograma`) y solo
+  se usa en contexto de programas (vitrina, matriz, `reservarPrograma`). `pct_mk`/`pct_fee_tarjeta`
+  son columnas de tablas distintas (`paquetes` vs `programas`). No compartir fórmula ni campos.
 
 ### Flujo de negocio implementado
 **PRODUCTO** (costos netos) → **PAQUETES** (armas + margen) → **TARIFARIO** (resultado,
@@ -357,7 +392,9 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — correr en orden 016→031
+### Migraciones Supabase — correr en orden 016→067
+> Las migraciones nuevas usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el
+> número NNN. Correr en orden las que falten en tu base.
 016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
 019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
 023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
@@ -366,9 +403,18 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 029 servicio_categoria (tour_traslado/asistencia/otro → ubica el servicio en el contrato) ·
 030 contrato_vuelo_hotel_extra (record/horas/números de vuelo + categoría/proveedor de hotel) ·
 031 programas (9 tablas de circuitos de proveedor + `moneda` en ventas y cuentas_por_pagar).
+**032→065** (ramas intermedias): CxP automáticas, cartera/pagos, CRM (contactos/email/campañas),
+adjuntos de contrato, política/datos bancarios de proveedor, país de destino, nota de régimen,
+documentos/fotos/estrellas/ubicación de hotel, cotizaciones (+share_token), config de
+solicitudes, vouchers, eliminar contrato, cobros, notificaciones, `ventas_asesor` sin FK,
+blackouts de hotel. *(Ver nombres exactos en `supabase/migrations/`.)*
+**066** programas_vitrina (`desde_precio`, `incluye_aereo`, `portada_url`) ·
+**067** programas_asistencia (`asistencia_medica_dia`). ← **pendientes de correr.**
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas).
-Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`.
+Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`,
+`RESEND_API_KEY` + dominio verificado para notificaciones/cobros (migr. 056/061/062);
+configurar destinatarios en `config_solicitudes`/`config_cobros`/`config_notificaciones`.
 Google OAuth: callback `/auth/callback`; Site URL = producción.
 
 ### PENDIENTE / próximos pasos

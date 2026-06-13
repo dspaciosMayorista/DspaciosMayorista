@@ -5,15 +5,46 @@ import type { ProgramaResumen } from "@/app/tarifario/TarifarioPublic";
 type SB = SupabaseClient<Database>;
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
 
-/** PVP a partir del neto y el markup (neto / (1 - mk)). */
+/** Solo markup: neto / (1 - mk). Se mantiene para compatibilidad. */
 export function pvpDesdeNeto(neto: number, pctMk: number): number {
   const mk = Number(pctMk) || 0;
   return mk > 0 && mk < 1 ? Math.round(neto / (1 - mk)) : Math.round(neto);
 }
 
+export type PvpOpciones = {
+  pctMk: number;            // markup del proveedor (ej. 0.25)
+  asistenciaDia?: number;   // asistencia médica por pax y por día
+  dias?: number | null;     // días del programa
+  pctFee?: number;          // fee bancario / TDC (ej. 0.03)
+};
+
+/**
+ * PVP de venta de un programa por persona, a partir del neto del proveedor:
+ *   1) markup:        sub = neto / (1 - mk)
+ *   2) asistencia:    sub += asistencia_dia × días   (no se le aplica markup)
+ *   3) fee bancario:  pvp  = sub / (1 - fee)          (sobre el total)
+ * El orden replica el montaje de D'spacios (neto → +MK → +asistencia → +fee).
+ */
+export function pvpPrograma(neto: number, opt: PvpOpciones): number {
+  const mk = Number(opt.pctMk) || 0;
+  const fee = Number(opt.pctFee) || 0;
+  const asis = Number(opt.asistenciaDia) || 0;
+  const dias = Math.max(0, Number(opt.dias) || 0);
+
+  let sub = mk > 0 && mk < 1 ? neto / (1 - mk) : neto;
+  sub += asis * dias;
+  if (fee > 0 && fee < 1) sub = sub / (1 - fee);
+  return Math.round(sub);
+}
+
 /** Resumen de programas para el tarifario (con precio "desde" en PVP). */
 export async function getProgramasResumen(sb: SB, soloPublicados = true): Promise<ProgramaResumen[]> {
-  let q = sb.from("programas").select("id, nombre, subtitulo, dias, noches, moneda, pct_mk, publicado").eq("activo", true);
+  let q = sb
+    .from("programas")
+    .select(
+      "id, nombre, subtitulo, dias, noches, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, publicado, desde_precio, incluye_aereo, portada_url"
+    )
+    .eq("activo", true);
   if (soloPublicados) q = q.eq("publicado", true);
   const { data: programas } = await q.order("nombre");
   if (!programas?.length) return [];
@@ -42,6 +73,8 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
 
   return programas.map((p) => {
     const neto = minNeto.get(p.id);
+    // El "Desde" manual de la cabecera manda sobre el mínimo calculado de la matriz.
+    const desdeManual = p.desde_precio != null && p.desde_precio > 0 ? Number(p.desde_precio) : null;
     return {
       id: p.id,
       nombre: p.nombre,
@@ -49,7 +82,18 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
       dias: p.dias,
       noches: p.noches,
       moneda: p.moneda,
-      desde_pvp: neto != null ? pvpDesdeNeto(neto, p.pct_mk) : null,
+      desde_pvp:
+        desdeManual ??
+        (neto != null
+          ? pvpPrograma(neto, {
+              pctMk: p.pct_mk,
+              asistenciaDia: p.asistencia_medica_dia,
+              dias: p.dias,
+              pctFee: p.pct_fee_tarjeta,
+            })
+          : null),
+      incluye_aereo: !!p.incluye_aereo,
+      portada_url: p.portada_url ?? null,
     };
   });
 }
@@ -79,7 +123,13 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
     .maybeSingle();
   if (!programa) return null;
   const proveedorNombre = (programa.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
-  const mk = (programa as ProgramaRow).pct_mk;
+  const prow = programa as ProgramaRow;
+  const pvpOpt: PvpOpciones = {
+    pctMk: prow.pct_mk,
+    asistenciaDia: prow.asistencia_medica_dia,
+    dias: prow.dias,
+    pctFee: prow.pct_fee_tarjeta,
+  };
 
   const [{ data: ciudades }, { data: dias }, { data: categorias }, { data: hoteles }, { data: precios }, { data: inclusiones }, { data: tours }, { data: blackouts }] =
     await Promise.all([
@@ -105,7 +155,7 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
       .map((p) => ({
         acomodacion: p.acomodacion,
         neto: p.neto,
-        pvp: p.neto != null && !p.bajo_solicitud ? pvpDesdeNeto(p.neto, mk) : null,
+        pvp: p.neto != null && !p.bajo_solicitud ? pvpPrograma(p.neto, pvpOpt) : null,
         bajo_solicitud: p.bajo_solicitud,
       })),
   }));

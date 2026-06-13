@@ -1442,6 +1442,10 @@ export type Database = {
           texto_cancelacion: string | null;
           texto_pagos: string | null;
           notas: string | null;
+          desde_precio: number | null;
+          incluye_aereo: boolean;
+          portada_url: string | null;
+          asistencia_medica_dia: number;
           activo: boolean;
           publicado: boolean;
           created_at: string;
@@ -1468,6 +1472,10 @@ export type Database = {
           texto_cancelacion?: string | null;
           texto_pagos?: string | null;
           notas?: string | null;
+          desde_precio?: number | null;
+          incluye_aereo?: boolean;
+          portada_url?: string | null;
+          asistencia_medica_dia?: number;
           activo?: boolean;
           publicado?: boolean;
           created_at?: string;

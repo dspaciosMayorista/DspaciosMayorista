@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { parsearPrograma } from "@/lib/programasImport";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -39,6 +40,10 @@ export type CabeceraInput = {
   textoCancelacion: string;
   textoPagos: string;
   notas: string;
+  desdePrecio: number | null;
+  incluyeAereo: boolean;
+  portadaUrl: string;
+  asistenciaMedicaDia: number | null;
 };
 
 function cabeceraRow(input: CabeceraInput) {
@@ -62,6 +67,10 @@ function cabeceraRow(input: CabeceraInput) {
     texto_cancelacion: oNull(input.textoCancelacion),
     texto_pagos: oNull(input.textoPagos),
     notas: oNull(input.notas),
+    desde_precio: input.desdePrecio,
+    incluye_aereo: !!input.incluyeAereo,
+    portada_url: oNull(input.portadaUrl),
+    asistencia_medica_dia: input.asistenciaMedicaDia ?? 0,
   };
 }
 
@@ -276,6 +285,83 @@ export async function guardarBlackouts(
     const { error } = await sb.from("programa_blackouts").insert(filas);
     if (error) return { ok: false, error: error.message };
   }
+  rev(programaId);
+  return { ok: true };
+}
+
+// ── Importar desde el texto del proveedor ──────────────────────────────────────
+// Parsea el texto crudo (Word/PDF pegado) y, según las casillas marcadas,
+// reemplaza el itinerario, la ruta y/o las inclusiones del programa. También
+// puede actualizar días/noches de la cabecera. Es destructivo por sección:
+// solo toca lo que el usuario eligió importar.
+export type ImportarOpciones = {
+  itinerario: boolean;
+  ruta: boolean;
+  inclusiones: boolean;
+  diasNoches: boolean;
+};
+
+export async function importarDesdeTexto(
+  programaId: number,
+  texto: string,
+  opciones: ImportarOpciones
+): Promise<Result> {
+  if (!texto.trim()) return { ok: false, error: "Pega primero el texto del proveedor." };
+  const parsed = parsearPrograma(texto);
+  const sb = await createClient();
+
+  if (opciones.diasNoches && (parsed.dias != null || parsed.noches != null)) {
+    const { error } = await sb
+      .from("programas")
+      .update({
+        ...(parsed.dias != null ? { dias: parsed.dias } : {}),
+        ...(parsed.noches != null ? { noches: parsed.noches } : {}),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", programaId);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  if (opciones.ruta && parsed.ciudades.length) {
+    await sb.from("programa_ciudades").delete().eq("programa_id", programaId);
+    const filas = parsed.ciudades.map((nombre, i) => ({
+      programa_id: programaId,
+      orden: i,
+      nombre: nombre.trim(),
+      codigo_iata: null,
+      noches: 0,
+    }));
+    const { error } = await sb.from("programa_ciudades").insert(filas);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  if (opciones.itinerario && parsed.itinerario.length) {
+    await sb.from("programa_dias").delete().eq("programa_id", programaId);
+    const filas = parsed.itinerario.map((d) => ({
+      programa_id: programaId,
+      dia: d.dia,
+      titulo: oNull(d.titulo),
+      desayuno: d.desayuno,
+      almuerzo: d.almuerzo,
+      cena: d.cena,
+      descripcion: oNull(d.descripcion),
+    }));
+    const { error } = await sb.from("programa_dias").insert(filas);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  if (opciones.inclusiones && (parsed.incluye.length || parsed.noIncluye.length)) {
+    await sb.from("programa_inclusiones").delete().eq("programa_id", programaId);
+    const filas = [
+      ...parsed.incluye.map((texto, i) => ({ tipo: "incluye", texto, orden: i })),
+      ...parsed.noIncluye.map((texto, i) => ({ tipo: "no_incluye", texto, orden: parsed.incluye.length + i })),
+    ].map((x) => ({ programa_id: programaId, ciudad: null, ...x }));
+    if (filas.length) {
+      const { error } = await sb.from("programa_inclusiones").insert(filas);
+      if (error) return { ok: false, error: error.message };
+    }
+  }
+
   rev(programaId);
   return { ok: true };
 }
