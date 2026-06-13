@@ -37,6 +37,7 @@ const NAV: NavItem[] = [
       { href: "/dashboard/producto/destinos", label: "Destinos" },
       { href: "/dashboard/producto/hoteles", label: "Hoteles" },
       { href: "/dashboard/producto/servicios", label: "Servicios" },
+      { href: "/dashboard/producto/programas", label: "Programas (circuitos)" },
       { href: "/dashboard/producto/proveedores", label: "Proveedores" },
       { href: "/dashboard/producto/configuracion", label: "Configuración" },
     ],
