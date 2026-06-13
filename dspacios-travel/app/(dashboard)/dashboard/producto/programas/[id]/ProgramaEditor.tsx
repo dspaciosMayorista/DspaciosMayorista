@@ -485,6 +485,7 @@ function SalidasEditor({
   });
   const [rows, setRows] = useState<SalidaState[]>(salidas.map(toState));
   const upd = (i: number, k: keyof SalidaState, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  const dup = (i: number) => setRows((p) => [...p.slice(0, i + 1), { ...p[i] }, ...p.slice(i + 1)]);
   const nOrNull = (v: string) => (v === "" ? null : Number(v));
 
   // PVP en vivo: usa las noches de la salida para la asistencia médica.
@@ -534,6 +535,9 @@ function SalidasEditor({
               <Input type="date" value={r.fechaHasta} onChange={(e) => upd(i, "fechaHasta", e.target.value)} className="w-40" title="Fecha hasta" />
               <Input type="number" value={r.noches} onChange={(e) => upd(i, "noches", e.target.value)} placeholder="Noches" className="w-24" />
               <Input value={r.columna} onChange={(e) => upd(i, "columna", e.target.value)} placeholder="Columna/hotel (opcional)" className="w-48" />
+              <button type="button" onClick={() => dup(i)} className="text-xs font-medium text-[#1D7C9A] hover:underline" title="Duplica esta salida con los mismos precios; cambia solo el hotel">
+                ⧉ Duplicar
+              </button>
               <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
             </div>
             <div className="flex flex-wrap gap-3">
