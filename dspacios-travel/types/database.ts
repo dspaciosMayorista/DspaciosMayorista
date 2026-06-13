@@ -1446,6 +1446,7 @@ export type Database = {
           incluye_aereo: boolean;
           portada_url: string | null;
           asistencia_medica_dia: number;
+          modo_precio: string;
           activo: boolean;
           publicado: boolean;
           created_at: string;
@@ -1476,12 +1477,49 @@ export type Database = {
           incluye_aereo?: boolean;
           portada_url?: string | null;
           asistencia_medica_dia?: number;
+          modo_precio?: string;
           activo?: boolean;
           publicado?: boolean;
           created_at?: string;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["programas"]["Insert"]>;
+        Relationships: [];
+      };
+      programa_salidas: {
+        Row: {
+          id: number;
+          programa_id: number;
+          orden: number;
+          etiqueta: string | null;
+          fecha_desde: string | null;
+          fecha_hasta: string | null;
+          noches: number | null;
+          columna: string | null;
+          neto_sencilla: number | null;
+          neto_doble: number | null;
+          neto_triple: number | null;
+          neto_multiple: number | null;
+          neto_nino: number | null;
+          bajo_solicitud: boolean;
+        };
+        Insert: {
+          id?: number;
+          programa_id: number;
+          orden?: number;
+          etiqueta?: string | null;
+          fecha_desde?: string | null;
+          fecha_hasta?: string | null;
+          noches?: number | null;
+          columna?: string | null;
+          neto_sencilla?: number | null;
+          neto_doble?: number | null;
+          neto_triple?: number | null;
+          neto_multiple?: number | null;
+          neto_nino?: number | null;
+          bajo_solicitud?: boolean;
+        };
+        Update: Partial<Database["public"]["Tables"]["programa_salidas"]["Insert"]>;
         Relationships: [];
       };
       programa_ciudades: {

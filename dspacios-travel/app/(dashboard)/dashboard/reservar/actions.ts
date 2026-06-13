@@ -1202,6 +1202,7 @@ export async function liberarVencidas(): Promise<{ ok: boolean; liberadas: numbe
 export type ReservaProgramaInput = {
   programaId: number;
   categoriaId: number;
+  salidaId?: number; // cuando el programa tarifa por salida (modo_precio='salida')
   fechaIda: string;
   paxPorAcom: Record<string, number>; // CANTIDAD DE HABITACIONES por acomodación (sencilla/doble/triple/…). Pax = hab × pax_tarifa.
   ninos: number;
@@ -1230,10 +1231,11 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
   const { data: prog } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, proveedores(nombre, aplica_retencion, pct_retencion)")
+    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, proveedores(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
   if (!prog) return { ok: false, error: "Programa no encontrado." };
+  const modoSalida = prog.modo_precio === "salida";
 
   // Vigencia
   if (prog.vigencia_desde && input.fechaIda < prog.vigencia_desde)
@@ -1251,21 +1253,47 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
       return { ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` };
   }
 
-  // 2) Precios de la categoría elegida
-  const { data: precios } = await sb
-    .from("programa_precios")
-    .select("acomodacion, neto, bajo_solicitud")
-    .eq("categoria_id", input.categoriaId);
-  if (!precios?.length) return { ok: false, error: "La categoría no tiene precios cargados." };
+  // 2) Precios — por categoría (matriz) o por salida (fecha × precio).
   const netoDe: Record<string, { neto: number | null; bs: boolean }> = {};
-  for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
+  let nochesViaje = prog.dias != null ? Math.max(0, prog.dias - 1) : null; // noches del viaje
+  let etiquetaOpcion: string | null = null; // nombre de la opción elegida (categoría o salida)
+  let hotelSalida: string | null = null;
+
+  if (modoSalida) {
+    if (!input.salidaId) return { ok: false, error: "Elige una salida." };
+    const { data: sal } = await sb
+      .from("programa_salidas")
+      .select("etiqueta, columna, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud")
+      .eq("id", input.salidaId)
+      .eq("programa_id", input.programaId)
+      .maybeSingle();
+    if (!sal) return { ok: false, error: "Salida no encontrada." };
+    const bs = sal.bajo_solicitud;
+    netoDe["sencilla"] = { neto: sal.neto_sencilla, bs };
+    netoDe["doble"] = { neto: sal.neto_doble, bs };
+    netoDe["triple"] = { neto: sal.neto_triple, bs };
+    netoDe["multiple"] = { neto: sal.neto_multiple, bs };
+    netoDe["nino"] = { neto: sal.neto_nino, bs };
+    if (sal.noches != null) nochesViaje = sal.noches;
+    etiquetaOpcion = sal.etiqueta ?? null;
+    hotelSalida = sal.columna ?? null;
+  } else {
+    const { data: precios } = await sb
+      .from("programa_precios")
+      .select("acomodacion, neto, bajo_solicitud")
+      .eq("categoria_id", input.categoriaId);
+    if (!precios?.length) return { ok: false, error: "La categoría no tiene precios cargados." };
+    for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
+  }
 
   // PVP de venta: neto → +markup → +asistencia médica/día → +fee bancario.
+  // En modo salida la asistencia médica usa las noches de la salida.
+  const diasPvp = modoSalida && nochesViaje != null ? nochesViaje : prog.dias;
   const pvp = (neto: number) =>
     pvpPrograma(neto, {
       pctMk: prog.pct_mk,
       asistenciaDia: prog.asistencia_medica_dia,
-      dias: prog.dias,
+      dias: diasPvp,
       pctFee: prog.pct_fee_tarjeta,
     });
 
@@ -1280,7 +1308,9 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   let costoNeto = 0;
   let totalPax = 0;
   const items: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number }[] = [];
-  const catNombre = (await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle()).data?.nombre ?? null;
+  const catNombre = modoSalida
+    ? etiquetaOpcion
+    : (await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle()).data?.nombre ?? null;
 
   let orden = 0;
   for (const [acom, habRaw] of habs) {
@@ -1335,7 +1365,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
   // aplica la escala). La agencia/freelance se guarda aparte (canal B2B).
   const asesorNombre = input.asesorInterno;
-  const fechaRegreso = prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
+  const fechaRegreso = nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
 
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
   const { error: ve } = await sb.from("ventas").insert({
@@ -1385,13 +1415,16 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   for (const it of items) it.numero_contrato = numero;
   if (items.length) await sb.from("contrato_items").insert(items);
 
-  // 8) Hoteles por ciudad (de la categoría elegida) — informativo en el contrato
-  const { data: hotelesCat } = await sb
-    .from("programa_categoria_hoteles")
-    .select("ciudad, hotel, orden")
-    .eq("categoria_id", input.categoriaId)
-    .order("orden");
+  // 8) Hoteles por ciudad (de la categoría elegida) — informativo en el contrato.
+  //    En modo salida no hay matriz de hoteles; se usa el hotel de la columna si lo hay.
   const provNombre = (prog.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
+  const { data: hotelesCat } = modoSalida
+    ? { data: hotelSalida ? [{ ciudad: prog.subtitulo ?? prog.nombre, hotel: hotelSalida, orden: 0 }] : [] }
+    : await sb
+        .from("programa_categoria_hoteles")
+        .select("ciudad, hotel, orden")
+        .eq("categoria_id", input.categoriaId)
+        .order("orden");
   if (hotelesCat?.length) {
     await sb.from("contrato_hoteles").insert(
       hotelesCat.map((h, i) => ({

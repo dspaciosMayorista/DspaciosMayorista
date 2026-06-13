@@ -12,9 +12,10 @@ const ACOM_LABEL: Record<string, string> = {
   doble: "Doble",
   triple: "Triple",
   cuadruple: "Cuádruple",
+  multiple: "Múltiple",
   nino: "Niño",
 };
-const ACOM_ORDER = ["sencilla", "doble", "triple", "cuadruple", "nino"];
+const ACOM_ORDER = ["sencilla", "doble", "triple", "cuadruple", "multiple", "nino"];
 
 function comidas(d: { desayuno: boolean; almuerzo: boolean; cena: boolean }): string {
   const c = [d.desayuno && "Desayuno", d.almuerzo && "Almuerzo", d.cena && "Cena"].filter(Boolean);
@@ -49,6 +50,7 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
   const noIncluye = det.inclusiones.filter((x) => x.tipo === "no_incluye");
 
   const acomsPresentes = ACOM_ORDER.filter((a) => det.categorias.some((c) => c.precios.some((pr) => pr.acomodacion === a)));
+  const salidaAcoms = ACOM_ORDER.filter((a) => det.salidas.some((s) => s.precios.some((pr) => pr.acomodacion === a)));
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -103,6 +105,46 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
               Reservar este programa →
             </Link>
           </div>
+        )}
+
+        {/* Precios por salida (modo fecha × precio) */}
+        {det.salidas.length > 0 && (
+          <section>
+            <h2 className="mb-3 text-xl font-semibold text-gray-900">Salidas y precios por persona ({moneda})</h2>
+            <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
+                    <th className="px-4 py-3">Salida</th>
+                    <th className="px-4 py-3">Noches</th>
+                    {det.salidas.some((s) => s.columna) && <th className="px-4 py-3">Hotel</th>}
+                    {salidaAcoms.map((a) => (
+                      <th key={a} className="px-4 py-3 text-right">{ACOM_LABEL[a] ?? a}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {det.salidas.map((s) => (
+                    <tr key={s.id} className="border-b border-gray-50">
+                      <td className="px-4 py-3 font-medium text-gray-700">
+                        {s.etiqueta ?? (s.fecha_desde ? `${formatFechaLarga(s.fecha_desde)} — ${formatFechaLarga(s.fecha_hasta)}` : "—")}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{s.noches ?? "—"}</td>
+                      {det.salidas.some((x) => x.columna) && <td className="px-4 py-3 text-gray-600">{s.columna ?? "—"}</td>}
+                      {salidaAcoms.map((a) => {
+                        const pr = s.precios.find((p) => p.acomodacion === a);
+                        return (
+                          <td key={a} className="px-4 py-3 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
+                            {s.bajo_solicitud ? "A solicitud" : pr?.pvp != null ? formatMoneda(pr.pvp, moneda) : "—"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
         )}
 
         {/* Precios por categoría */}

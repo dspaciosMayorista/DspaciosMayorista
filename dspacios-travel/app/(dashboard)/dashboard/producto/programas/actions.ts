@@ -44,6 +44,7 @@ export type CabeceraInput = {
   incluyeAereo: boolean;
   portadaUrl: string;
   asistenciaMedicaDia: number | null;
+  modoPrecio: string;
 };
 
 function cabeceraRow(input: CabeceraInput) {
@@ -71,6 +72,7 @@ function cabeceraRow(input: CabeceraInput) {
     incluye_aereo: !!input.incluyeAereo,
     portada_url: oNull(input.portadaUrl),
     asistencia_medica_dia: input.asistenciaMedicaDia ?? 0,
+    modo_precio: input.modoPrecio === "salida" ? "salida" : "categoria",
   };
 }
 
@@ -209,6 +211,49 @@ export async function guardarMatriz(
       const { error } = await sb.from("programa_precios").insert(precios);
       if (error) return { ok: false, error: error.message };
     }
+  }
+  rev(programaId);
+  return { ok: true };
+}
+
+// ── Salidas (modo de precio por fecha) ─────────────────────────────────────────
+export type SalidaInput = {
+  etiqueta: string;
+  fechaDesde: string;
+  fechaHasta: string;
+  noches: number | null;
+  columna: string;
+  netoSencilla: number | null;
+  netoDoble: number | null;
+  netoTriple: number | null;
+  netoMultiple: number | null;
+  netoNino: number | null;
+  bajoSolicitud: boolean;
+};
+
+export async function guardarSalidas(programaId: number, salidas: SalidaInput[]): Promise<Result> {
+  const sb = await createClient();
+  await sb.from("programa_salidas").delete().eq("programa_id", programaId);
+  const filas = salidas
+    .filter((s) => s.etiqueta.trim() || s.fechaDesde || s.netoDoble != null)
+    .map((s, i) => ({
+      programa_id: programaId,
+      orden: i,
+      etiqueta: oNull(s.etiqueta),
+      fecha_desde: oNull(s.fechaDesde),
+      fecha_hasta: oNull(s.fechaHasta),
+      noches: num(s.noches),
+      columna: oNull(s.columna),
+      neto_sencilla: num(s.netoSencilla),
+      neto_doble: num(s.netoDoble),
+      neto_triple: num(s.netoTriple),
+      neto_multiple: num(s.netoMultiple),
+      neto_nino: num(s.netoNino),
+      bajo_solicitud: !!s.bajoSolicitud,
+    }));
+  if (filas.length) {
+    const { error } = await sb.from("programa_salidas").insert(filas);
+    if (error) return { ok: false, error: error.message };
   }
   rev(programaId);
   return { ok: true };

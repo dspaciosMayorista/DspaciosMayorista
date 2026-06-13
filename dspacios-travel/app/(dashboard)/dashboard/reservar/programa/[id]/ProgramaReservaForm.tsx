@@ -15,6 +15,8 @@ export type CategoriaReserva = {
   id: number;
   nombre: string;
   precios: { acomodacion: string; pvp: number | null; bajoSolicitud: boolean }[];
+  noches?: number | null;       // solo modo salida
+  fechaSugerida?: string | null; // solo modo salida (fecha_desde)
 };
 
 const ACOM_LABEL: Record<string, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", cuadruple: "Cuádruple", nino: "Niño" };
@@ -32,6 +34,7 @@ export function ProgramaReservaForm({
   vigenciaHasta,
   categorias,
   asesores,
+  modoSalida = false,
 }: {
   programaId: number;
   moneda: string;
@@ -40,6 +43,7 @@ export function ProgramaReservaForm({
   vigenciaHasta: string | null;
   categorias: CategoriaReserva[];
   asesores: { nombre: string; email: string }[];
+  modoSalida?: boolean;
 }) {
   const router = useRouter();
   const [categoriaId, setCategoriaId] = useState<number>(categorias[0]?.id ?? 0);
@@ -107,6 +111,7 @@ export function ProgramaReservaForm({
       const res = await reservarPrograma({
         programaId,
         categoriaId,
+        salidaId: modoSalida ? categoriaId : undefined,
         fechaIda,
         paxPorAcom: habs, // ahora son HABITACIONES por acomodación (el server expande a pax)
         ninos: Number(ninos) || 0,
@@ -137,17 +142,33 @@ export function ProgramaReservaForm({
       {/* Categoría + fecha */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <label className={lbl}>Categoría (hoteles)</label>
-          <select value={categoriaId} onChange={(e) => setCategoriaId(Number(e.target.value))} className={sel}>
+          <label className={lbl}>{modoSalida ? "Salida (fecha)" : "Categoría (hoteles)"}</label>
+          <select
+            value={categoriaId}
+            onChange={(e) => {
+              const id = Number(e.target.value);
+              setCategoriaId(id);
+              if (modoSalida) {
+                const c = categorias.find((x) => x.id === id);
+                if (c?.fechaSugerida) setFechaIda(c.fechaSugerida);
+              }
+            }}
+            className={sel}
+          >
             {categorias.map((c) => (
               <option key={c.id} value={c.id}>{c.nombre}</option>
             ))}
           </select>
+          {modoSalida && cat?.noches != null && <p className="mt-1 text-xs text-gray-400">{cat.noches} noches.</p>}
         </div>
         <div>
           <label className={lbl}>Fecha de salida</label>
           <Input type="date" value={fechaIda} min={vigenciaDesde ?? undefined} max={vigenciaHasta ?? undefined} onChange={(e) => setFechaIda(e.target.value)} />
-          {dias ? <p className="mt-1 text-xs text-gray-400">Regreso estimado a {dias} días de la salida.</p> : null}
+          {(modoSalida ? cat?.noches : dias) ? (
+            <p className="mt-1 text-xs text-gray-400">
+              Regreso estimado a {modoSalida ? `${cat?.noches} noches` : `${dias} días`} de la salida.
+            </p>
+          ) : null}
         </div>
       </div>
 
