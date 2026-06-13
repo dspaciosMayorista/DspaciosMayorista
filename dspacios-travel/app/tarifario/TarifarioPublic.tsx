@@ -19,6 +19,7 @@ export type ProgramaResumen = {
   desde_pvp: number | null;
   incluye_aereo: boolean;
   portada_url: string | null;
+  ciudades: string[];
 };
 
 export type FilaTarifario = {
@@ -568,18 +569,82 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
   );
 }
 
-// ── Programas (circuitos) ───────────────────────────────────────────────────
+// ── Programas (circuitos) — vista de cards flotantes con filtro de destino ────
 function PorProgramas({ programas, puedeReservar = false }: { programas: ProgramaResumen[]; puedeReservar?: boolean }) {
+  const [destino, setDestino] = useState("");
+  const [aereo, setAereo] = useState<"" | "si" | "no">("");
+
+  // Destinos únicos (ciudades de todos los programas) para el filtro.
+  const destinos = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of programas) for (const c of p.ciudades) if (c) set.add(c.trim());
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [programas]);
+
+  const filtrados = useMemo(
+    () =>
+      programas.filter((p) => {
+        if (destino && !p.ciudades.some((c) => c.toLowerCase() === destino.toLowerCase())) return false;
+        if (aereo === "si" && !p.incluye_aereo) return false;
+        if (aereo === "no" && p.incluye_aereo) return false;
+        return true;
+      }),
+    [programas, destino, aereo]
+  );
+
   if (!programas.length) {
     return <p className="py-12 text-center text-gray-400">No hay programas publicados.</p>;
   }
+
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      {programas.map((p) => (
-        <div
-          key={p.id}
-          className="flex flex-col justify-between overflow-hidden rounded-xl border border-gray-200 bg-white transition-all hover:border-[var(--brand-primary)] hover:shadow-sm"
-        >
+    <div>
+      {/* Barra de filtros */}
+      <div className="mb-5 flex flex-wrap items-end gap-3">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Destino</label>
+          <select
+            value={destino}
+            onChange={(e) => setDestino(e.target.value)}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+          >
+            <option value="">Todos los destinos</option>
+            {destinos.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Aéreo</label>
+          <div className="flex gap-1">
+            {([["", "Todos"], ["si", "✈ Con aéreo"], ["no", "Solo terrestre"]] as const).map(([v, l]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setAereo(v)}
+                className="rounded-lg border px-3 py-2 text-xs font-medium transition-all"
+                style={
+                  aereo === v
+                    ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
+                    : { borderColor: "#e5e7eb", color: "#6b7280" }
+                }
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+        </div>
+        <span className="ml-auto self-center text-xs text-gray-400">{filtrados.length} programa(s)</span>
+      </div>
+
+      {filtrados.length === 0 ? (
+        <p className="py-12 text-center text-gray-400">No hay programas para ese filtro.</p>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtrados.map((p) => (
+            <div
+              key={p.id}
+              className="flex flex-col justify-between overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:border-[var(--brand-primary)] hover:shadow-lg"
+            >
           <Link href={`/tarifario/programa/${p.id}`} className="block">
             {p.portada_url && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -635,7 +700,9 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
           </div>
           </div>
         </div>
-      ))}
+          ))}
+        </div>
+      )}
     </div>
   );
 }
