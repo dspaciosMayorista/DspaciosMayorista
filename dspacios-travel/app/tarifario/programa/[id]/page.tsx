@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
+import { BackgroundVideo } from "@/components/BackgroundVideo";
 
 export const dynamic = "force-dynamic";
 
@@ -54,8 +55,9 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-brand-gradient px-6 py-8 text-white">
-        <div className="mx-auto max-w-5xl">
+      <header className={`relative overflow-hidden bg-brand-gradient px-6 py-8 text-white ${p.video_url ? "flex min-h-[55vh] flex-col justify-end" : ""}`}>
+        <BackgroundVideo url={p.video_url} overlay={0.4} />
+        <div className="relative mx-auto w-full max-w-5xl">
           <div className="mb-4 flex items-center justify-between">
             <Link href="/tarifario" aria-label="Tarifario">
               <Logo variant="white" height={40} priority className="h-9 w-auto" />

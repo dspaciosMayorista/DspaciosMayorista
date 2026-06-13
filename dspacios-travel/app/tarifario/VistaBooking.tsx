@@ -8,6 +8,7 @@ import { useCart } from "@/lib/cart/CartContext";
 import { cotizarPorFechas, type ComboCotizado } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking } from "./BuscadorBooking";
+import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
@@ -23,6 +24,7 @@ type HotelCard = {
   clasificacion: string | null;
   descripcion: string | null;
   ubicacion: string | null;
+  video_url: string | null;
   filas: FilaTarifario[];
 };
 
@@ -95,7 +97,7 @@ export function VistaBooking({
   cuposPorBloqueo?: Record<number, number>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null }>;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
 }) {
@@ -114,7 +116,7 @@ export function VistaBooking({
           hotelId: id, hotelNombre: f.hotel_nombre ?? "—", destino: f.destino_nombre,
           foto: fotosPorHotel[id] ?? null, desde: null,
           estrellas: info?.estrellas ?? null, clasificacion: info?.clasificacion ?? null, descripcion: info?.descripcion ?? null,
-          ubicacion: info?.ubicacion ?? null,
+          ubicacion: info?.ubicacion ?? null, video_url: info?.video_url ?? null,
           filas: [],
         };
         map.set(id, c);
@@ -240,7 +242,9 @@ function HotelModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative aspect-[16/9] w-full bg-gray-100">
-          {hotel.foto ? (
+          {hotel.video_url ? (
+            <BackgroundVideo url={hotel.video_url} overlay={0} />
+          ) : hotel.foto ? (
             <Image src={hotel.foto} alt={hotel.hotelNombre} fill sizes="640px" className="object-cover" unoptimized />
           ) : (
             <div className="flex h-full w-full items-center justify-center text-gray-300">Sin foto</div>

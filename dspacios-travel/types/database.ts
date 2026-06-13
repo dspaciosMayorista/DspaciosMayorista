@@ -737,6 +737,7 @@ export type Database = {
           clasificacion: string | null;
           descripcion: string | null;
           ubicacion: string | null;
+          video_url: string | null;
         };
         Insert: {
           id?: number;
@@ -759,6 +760,7 @@ export type Database = {
           clasificacion?: string | null;
           descripcion?: string | null;
           ubicacion?: string | null;
+          video_url?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [
@@ -1447,8 +1449,8 @@ export type Database = {
           portada_url: string | null;
           asistencia_medica_dia: number;
           modo_precio: string;
-          activo: boolean;
-          publicado: boolean;
+          video_url: string | null;
+          activo: boolean;          publicado: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -1478,6 +1480,7 @@ export type Database = {
           portada_url?: string | null;
           asistencia_medica_dia?: number;
           modo_precio?: string;
+          video_url?: string | null;
           activo?: boolean;
           publicado?: boolean;
           created_at?: string;
@@ -1776,6 +1779,20 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["config_solicitudes"]["Insert"]>;
+        Relationships: [];
+      };
+      config_sitio: {
+        Row: {
+          id: number;
+          video_fondo_url: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          video_fondo_url?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["config_sitio"]["Insert"]>;
         Relationships: [];
       };
       vouchers: {

@@ -4,6 +4,7 @@ import { TarifarioPublic, type FilaTarifario } from "./TarifarioPublic";
 import { CartDrawer } from "./CartDrawer";
 import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
+import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { AcomConfig } from "@/lib/acomodaciones";
 
 export const revalidate = 120; // revalida cada 2 min
@@ -81,15 +82,15 @@ export default async function TarifarioPublicoPage() {
   }
 
   // Estrellas / clasificación / descripción por hotel (hoteles es lectura pública).
-  const infoPorHotel: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null }> = {};
+  const infoPorHotel: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url: string | null }> = {};
   // Capacidades por hotel (pax mín/máx + config de acomodaciones) para validar el
   // carrito. pax_min/max viven en `hoteles` (público); la config de acomodaciones
   // (`hotel_acomodaciones`) NO es pública → se lee con service-role.
   const capPorHotel: Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }> = {};
   if (hotelIds.length) {
-    const { data: hs } = await sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, ubicacion, pax_min, pax_max").in("id", hotelIds);
+    const { data: hs } = await sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, ubicacion, video_url, pax_min, pax_max").in("id", hotelIds);
     for (const h of hs ?? []) {
-      infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion, ubicacion: h.ubicacion };
+      infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion, ubicacion: h.ubicacion, video_url: h.video_url };
       capPorHotel[h.id] = { paxMin: h.pax_min, paxMax: h.pax_max, acom: [] };
     }
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -127,10 +128,15 @@ export default async function TarifarioPublicoPage() {
   // Programas publicados (fuente propia, en su moneda).
   const programas = await getProgramasResumen(sb, true);
 
+  // Video de fondo del tarifario (global, opcional).
+  const { data: cfgSitio } = await sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle();
+  const videoFondo = cfgSitio?.video_fondo_url ?? null;
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-brand-gradient px-6 py-8 text-white">
-        <div className="mx-auto flex max-w-[1700px] flex-wrap items-end justify-between gap-4">
+      <header className={`relative overflow-hidden bg-brand-gradient px-6 py-8 text-white ${videoFondo ? "flex min-h-[60vh] flex-col justify-end" : ""}`}>
+        <BackgroundVideo url={videoFondo} overlay={0.4} />
+        <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-end justify-between gap-4">
           <div>
             <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
             <p className="mt-2 text-sm opacity-90">Tarifario 2026</p>

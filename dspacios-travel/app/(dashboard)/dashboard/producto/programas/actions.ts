@@ -45,6 +45,7 @@ export type CabeceraInput = {
   portadaUrl: string;
   asistenciaMedicaDia: number | null;
   modoPrecio: string;
+  videoUrl: string;
 };
 
 function cabeceraRow(input: CabeceraInput) {
@@ -73,6 +74,7 @@ function cabeceraRow(input: CabeceraInput) {
     portada_url: oNull(input.portadaUrl),
     asistencia_medica_dia: input.asistenciaMedicaDia ?? 0,
     modo_precio: input.modoPrecio === "salida" ? "salida" : "categoria",
+    video_url: oNull(input.videoUrl),
   };
 }
 

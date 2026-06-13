@@ -45,6 +45,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     pax_min: number | null; pax_max: number | null;
     contacto_telefono: string | null; email_comercial: string | null;
     estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null;
+    video_url: string | null;
     destinos: { nombre: string } | null;
     proveedores: { nombre: string; politica_reservas: string | null } | null;
   };
@@ -94,6 +95,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             clasificacion: h.clasificacion ?? "",
             descripcion: h.descripcion ?? "",
             ubicacion: h.ubicacion ?? "",
+            videoUrl: h.video_url ?? "",
           }}
         />
         <HotelCategoriasRegimenesEditor
