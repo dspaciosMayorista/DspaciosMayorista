@@ -280,6 +280,7 @@ export type ReservaInput = {
   agenciaAsesor: string;
   freelanceNombre: string;
   aliadoId?: number | null;   // id del catálogo de agencias/freelance (B2B)
+  modoCompra?: "neta" | "comisionable";  // B2B: cómo compra el aliado
   plazo: string;
   pasajeros: PasajeroReserva[];
   servicios?: number[];   // ids de servicios add-on seleccionados
@@ -531,6 +532,42 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // aplica la escala). La agencia/freelance se guarda aparte (canal B2B).
   const asesorNombre = input.asesorInterno;
 
+  // 4-bis) Modo de compra B2B (neta vs comisionable).
+  //   base comisionable = PVP − impuesto (BNC) · comisión = base × % del aliado.
+  //   · neta         → el aliado paga PVP − comisión (se descuenta).
+  //   · comisionable → paga el PVP; la comisión se liquida aparte.
+  let precioFinal = precioVenta;
+  let baseComisB2B = 0;
+  let pctComB2B = 0;
+  let comisionB2B: number | null = null;
+  let modoCompra: string | null = null;
+  let comisionEstado: string | null = null;
+  let b2bUsuarioId: string | null = null;
+  if (input.tipoAsesor !== "interno" && input.modoCompra) {
+    baseComisB2B = Math.max(0, precioVenta - impuestoTotal);
+    let pct: number | null = null;
+    if (input.aliadoId) {
+      const { data: al } = await sb.from("aliados").select("pct_comision").eq("id", input.aliadoId).maybeSingle();
+      pct = al?.pct_comision ?? null;
+    }
+    if (pct == null) {
+      const defParam = input.tipoAsesor === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
+      const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
+      pct = Number(p?.valor) || (input.tipoAsesor === "agencia" ? 0.12 : 0.11);
+    }
+    pctComB2B = pct;
+    const comision = Math.round(baseComisB2B * pct);
+    modoCompra = input.modoCompra;
+    comisionB2B = comision;
+    if (modoCompra === "neta") { precioFinal = Math.max(0, precioVenta - comision); comisionEstado = "descontada"; }
+    else { comisionEstado = "pendiente"; }
+    const { data: { user } } = await sb.auth.getUser();
+    if (user) {
+      const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).maybeSingle();
+      if (perfil?.rol === "agencia" || perfil?.rol === "freelance") b2bUsuarioId = user.id;
+    }
+  }
+
   // 4) Venta (cabecera) — nace PENDIENTE
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
@@ -544,11 +581,15 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     fecha_regreso: meta.fecha_regreso,
     pax: totalPax || paxConSilla,
     hotel: esServicios ? null : meta.hotel_nombre,
-    precio_venta: precioVenta,
+    precio_venta: precioFinal,
     impuesto: impuestoTotal,
     estado: "pendiente",
     canal,
     tipo_asesor: input.tipoAsesor,
+    modo_compra: modoCompra,
+    comision_b2b: comisionB2B,
+    comision_estado: comisionEstado,
+    b2b_usuario_id: b2bUsuarioId,
     agencia_nombre: oNull(input.agenciaNombre),
     agencia_asesor: oNull(input.agenciaAsesor),
     freelance_nombre: oNull(input.freelanceNombre),
@@ -572,19 +613,19 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     if (al) {
       const defParam = input.tipoAsesor === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
       const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
-      const pct = al.pct_comision ?? Number(p?.valor) ?? (input.tipoAsesor === "agencia" ? 0.12 : 0.11);
+      const pct = pctComB2B || al.pct_comision || Number(p?.valor) || (input.tipoAsesor === "agencia" ? 0.12 : 0.11);
       await sb.from("aliados_b2b").insert({
         numero_contrato: numero,
         aliado: al.nombre,
         nit: al.nit,
         precio_venta: precioVenta,
-        base_comision: precioVenta,
+        base_comision: baseComisB2B || precioVenta,
         pct_comision: pct,
         recobro_total: 0,
         pct_recobro_aliado: 0,
         aplica_retencion: al.aplica_retencion,
         pct_retencion: al.pct_retencion,
-        estado: "pendiente",
+        estado: comisionEstado === "descontada" ? "pagada" : "pendiente",
       });
     }
   }

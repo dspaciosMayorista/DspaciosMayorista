@@ -146,6 +146,7 @@ export function ReservaForm({
   const [agenciaAsesor, setAgenciaAsesor] = useState("");
   const [freelanceNombre, setFreelanceNombre] = useState("");
   const [aliadoId, setAliadoId] = useState<number | "">("");
+  const [modoCompra, setModoCompra] = useState<"neta" | "comisionable">("comisionable");
   const [plazo, setPlazo] = useState("");
   // Vigencia de la cotización: por defecto 24 horas (hoy + 1 día, editable).
   const [vigencia, setVigencia] = useState(() => {
@@ -233,7 +234,7 @@ export function ReservaForm({
         habitaciones, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes,
         paxServicios: totalPax,
         cliente: cli, tipoAsesor, asesorInterno, agenciaNombre, agenciaAsesor, freelanceNombre,
-        aliadoId: aliadoId === "" ? null : Number(aliadoId), plazo, pasajeros,
+        aliadoId: aliadoId === "" ? null : Number(aliadoId), modoCompra: tipoAsesor === "interno" ? undefined : modoCompra, plazo, pasajeros,
         servicios: [...servSel],
       }, { vigenciaHasta: vigencia || undefined });
       if (r.ok) router.push(`/dashboard/cotizaciones/${r.id}`);
@@ -430,7 +431,29 @@ export function ReservaForm({
           <div><label className={lbl}>Plazo para confirmar</label><Input type="date" value={plazo} onChange={(e) => setPlazo(e.target.value)} /></div>
         </div>
         {tipoAsesor !== "interno" && (
-          <p className="mt-2 text-xs text-gray-400">Si no aparece, créala en <b>Finanzas → Agencias y freelance</b>. La comisión B2B se crea sola con su %.</p>
+          <>
+            <div className="mt-3">
+              <label className={lbl}>Modalidad de compra</label>
+              <div className="flex flex-wrap gap-2">
+                {([["comisionable", "Comisionable (paga total, comisión aparte)"], ["neta", "Neta (se descuenta la comisión)"]] as const).map(([v, l]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setModoCompra(v)}
+                    className="rounded-lg border px-3 py-2 text-xs font-medium transition-all"
+                    style={modoCompra === v
+                      ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
+                      : { borderColor: "#e5e7eb", color: "#6b7280" }}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-gray-400">
+              Si no aparece la agencia/freelance, créala en <b>Finanzas → Agencias y freelance</b>. <b>Neta</b>: el aliado paga el precio menos la comisión. <b>Comisionable</b>: paga el total y la comisión se liquida aparte (cuenta de cobro / factura).
+            </p>
+          </>
         )}
       </section>
 
