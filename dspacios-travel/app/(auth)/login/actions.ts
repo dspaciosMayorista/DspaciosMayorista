@@ -11,14 +11,28 @@ import { createClient } from "@/lib/supabase/server";
 export async function loginConCodigo(
   codigo: string
 ): Promise<{ ok: false; error: string }> {
-  const codigoOk = process.env.QUICK_LOGIN_CODE || "1";
-  if ((codigo ?? "").trim() !== codigoOk) {
+  const code = (codigo ?? "").trim();
+  const codigoAdmin = process.env.QUICK_LOGIN_CODE || "1";
+  const codigoB2B = process.env.QUICK_LOGIN_B2B_CODE || "2";
+
+  let email: string | undefined;
+  let password: string | undefined;
+  let destino = "/dashboard";
+
+  if (code === codigoAdmin) {
+    email = process.env.QUICK_LOGIN_EMAIL;
+    password = process.env.QUICK_LOGIN_PASSWORD;
+    destino = "/dashboard";
+  } else if (code === codigoB2B) {
+    email = process.env.QUICK_LOGIN_B2B_EMAIL;
+    password = process.env.QUICK_LOGIN_B2B_PASSWORD;
+    destino = "/portal/b2b";
+  } else {
     return { ok: false, error: "Código inválido." };
   }
-  const email = process.env.QUICK_LOGIN_EMAIL;
-  const password = process.env.QUICK_LOGIN_PASSWORD;
+
   if (!email || !password) {
-    return { ok: false, error: "Falta configurar QUICK_LOGIN_EMAIL / QUICK_LOGIN_PASSWORD en el entorno." };
+    return { ok: false, error: "Falta configurar las credenciales de la cuenta de pruebas en el entorno." };
   }
 
   const supabase = await createClient();
@@ -26,5 +40,5 @@ export async function loginConCodigo(
   if (error) {
     return { ok: false, error: "No se pudo entrar con la cuenta de pruebas (revisa las credenciales del entorno)." };
   }
-  redirect("/dashboard");
+  redirect(destino);
 }

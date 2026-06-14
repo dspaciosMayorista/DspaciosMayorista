@@ -71,7 +71,9 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
         <div className="mb-8 flex flex-col items-center text-center">
-          <Logo variant="full" height={56} priority className="h-12 w-auto" />
+          <a href="/tarifario" aria-label="Volver al tarifario">
+            <Logo variant="full" height={56} priority className="h-12 w-auto" />
+          </a>
           <p className="mt-3 text-sm text-gray-500">Iniciar sesión</p>
         </div>
 
