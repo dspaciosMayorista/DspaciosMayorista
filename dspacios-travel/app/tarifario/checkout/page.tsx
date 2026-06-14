@@ -5,7 +5,7 @@ import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem } from "@/lib/cart/CartContext";
-import { crearSolicitudReserva, fotosPortada, type SolicitudResult } from "./actions";
+import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B } from "./actions";
 
 function resumenHab(it: CartItem): string {
   const partes = Object.entries(it.habitaciones).filter(([, n]) => n > 0).map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
@@ -21,6 +21,21 @@ export default function CheckoutPage() {
   const [err, setErr] = useState("");
   const [res, setRes] = useState<Extract<SolicitudResult, { ok: true }> | null>(null);
   const [fotos, setFotos] = useState<Record<number, string>>({});
+
+  // Contexto B2B (si el aliado está logueado): habilita modo + facturación.
+  const [ctx, setCtx] = useState<ContextoB2B | null>(null);
+  const [modo, setModo] = useState<"comisionable" | "neta">("comisionable");
+  const [fact, setFact] = useState({ nombre: "", nit: "", email: "", telefono: "" });
+  useEffect(() => {
+    getContextoB2B().then((x) => {
+      setCtx(x);
+      if (x.esB2B && x.agencia) setFact(x.agencia);
+    }).catch(() => {});
+  }, []);
+  const esB2B = !!ctx?.esB2B;
+  const pct = ctx?.pctComision ?? 0;
+  const comision = Math.round(total * pct);
+  const totalNeto = total - comision;
 
   // Resuelve la portada actual por hotel (ítems del carrito sin fotoUrl).
   useEffect(() => {
@@ -44,6 +59,7 @@ export default function CheckoutPage() {
           habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, pax: it.pax, precio: it.precio,
         })),
         cliente: c,
+        ...(esB2B ? { modo, facturacion: fact, pctComision: pct } : {}),
       });
       if (r.ok) { setRes(r); clear(); }
       else setErr(r.error);
@@ -95,15 +111,72 @@ export default function CheckoutPage() {
                   </li>
                 ))}
               </ul>
-              <div className="mt-3 flex items-center justify-between border-t border-gray-100 pt-3">
-                <span className="text-sm text-gray-500">Total estimado</span>
-                <span className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(total)}</span>
+              <div className="mt-3 space-y-1 border-t border-gray-100 pt-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-500">Total{esB2B ? " (PVP)" : " estimado"}</span>
+                  <span className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(total)}</span>
+                </div>
+                {esB2B && modo === "neta" && (
+                  <>
+                    <div className="flex items-center justify-between text-sm text-gray-500">
+                      <span>Comisión ({Math.round(pct * 100)}%)</span>
+                      <span>−{formatCOP(comision)}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-gray-100 pt-1">
+                      <span className="text-sm font-semibold text-gray-700">Total neto a pagar</span>
+                      <span className="text-lg font-bold" style={{ color: "var(--brand-success)" }}>{formatCOP(totalNeto)}</span>
+                    </div>
+                  </>
+                )}
+                {esB2B && modo === "comisionable" && (
+                  <div className="flex items-center justify-between text-sm text-gray-500">
+                    <span>Comisión a liquidar ({Math.round(pct * 100)}%)</span>
+                    <span style={{ color: "var(--brand-success)" }}>{formatCOP(comision)}</span>
+                  </div>
+                )}
               </div>
             </section>
 
-            {/* Datos del cliente */}
+            {/* Modalidad B2B */}
+            {esB2B && (
+              <section className="rounded-2xl border border-gray-200 bg-white p-5">
+                <h2 className="mb-3 text-sm font-semibold text-gray-700">Modalidad del contrato</h2>
+                <div className="flex flex-wrap gap-2">
+                  {([["comisionable", "Contrato comisionable"], ["neta", "Contrato neto"]] as const).map(([v, l]) => (
+                    <button key={v} type="button" onClick={() => setModo(v)}
+                      className="rounded-lg border px-4 py-2 text-sm font-medium transition-all"
+                      style={modo === v
+                        ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
+                        : { borderColor: "#e5e7eb", color: "#6b7280" }}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-gray-400">
+                  {modo === "neta"
+                    ? "Pagas el PVP menos tu comisión. La factura va a la agencia."
+                    : "Pagas el PVP completo; la comisión se te liquida aparte."}
+                </p>
+              </section>
+            )}
+
+            {/* Facturación (solo contrato neto) */}
+            {esB2B && modo === "neta" && (
+              <section className="rounded-2xl border border-gray-200 bg-white p-5">
+                <h2 className="mb-1 text-sm font-semibold text-gray-700">Facturar a (agencia)</h2>
+                <p className="mb-3 text-xs text-gray-400">Prellenado con los datos de tu agencia; puedes ajustarlo.</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div><label className={lbl}>Razón social / Nombre</label><input className={inp} value={fact.nombre} onChange={(e) => setFact({ ...fact, nombre: e.target.value })} /></div>
+                  <div><label className={lbl}>NIT</label><input className={inp} value={fact.nit} onChange={(e) => setFact({ ...fact, nit: e.target.value })} /></div>
+                  <div><label className={lbl}>Teléfono</label><input className={inp} value={fact.telefono} onChange={(e) => setFact({ ...fact, telefono: e.target.value })} /></div>
+                  <div><label className={lbl}>Correo</label><input type="email" className={inp} value={fact.email} onChange={(e) => setFact({ ...fact, email: e.target.value })} /></div>
+                </div>
+              </section>
+            )}
+
+            {/* Datos del titular del contrato / cliente */}
             <section className="rounded-2xl border border-gray-200 bg-white p-5">
-              <h2 className="mb-3 text-sm font-semibold text-gray-700">Tus datos</h2>
+              <h2 className="mb-3 text-sm font-semibold text-gray-700">{esB2B ? "Datos del titular del contrato" : "Tus datos"}</h2>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div><label className={lbl}>Nombres *</label><input className={inp} value={c.nombres} onChange={(e) => setC({ ...c, nombres: e.target.value })} /></div>
                 <div><label className={lbl}>Apellidos *</label><input className={inp} value={c.apellidos} onChange={(e) => setC({ ...c, apellidos: e.target.value })} /></div>
