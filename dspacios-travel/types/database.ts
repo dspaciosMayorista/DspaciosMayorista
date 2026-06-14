@@ -568,6 +568,8 @@ export type Database = {
           record: string;
           aerolinea: string | null;
           ruta: string | null;
+          origen: string | null;
+          tarifa_neta: number | null;
           vuelo_ida: string | null;
           fecha_ida: string | null;
           hora_salida_ida: string | null;
@@ -595,6 +597,8 @@ export type Database = {
           rangos_edad?: number[] | null;
           aerolinea?: string | null;
           ruta?: string | null;
+          origen?: string | null;
+          tarifa_neta?: number | null;
           vuelo_ida?: string | null;
           fecha_ida?: string | null;
           hora_salida_ida?: string | null;
