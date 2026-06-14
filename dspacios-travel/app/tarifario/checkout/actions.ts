@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { crearCotizacion, type ReservaInput } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { formatCOP } from "@/lib/utils";
+import { comisionDefault, categoriaAliado } from "@/lib/b2b";
 
 export type SolicitudItem = {
   modulo: "bloqueo" | "porcion_terrestre";
@@ -36,6 +37,7 @@ export type ContextoB2B = {
   tipo: "agencia" | "freelance" | null;
   agencia: Facturacion | null;
   pctComision: number; // fracción (0.10)
+  categoria: string | null; // "Agencia Junior" / "Agencia Senior" / ...
 };
 
 // Contexto del aliado logueado (para el checkout B2B): tipo, datos de
@@ -43,10 +45,10 @@ export type ContextoB2B = {
 export async function getContextoB2B(): Promise<ContextoB2B> {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { esB2B: false, tipo: null, agencia: null, pctComision: 0 };
+  if (!user) return { esB2B: false, tipo: null, agencia: null, pctComision: 0, categoria: null };
   const { data: perfil } = await sb.from("usuarios").select("nombre, email, rol, agencia_id, pct_comision").eq("id", user.id).maybeSingle();
   const rol = perfil?.rol ?? null;
-  if (rol !== "agencia" && rol !== "freelance") return { esB2B: false, tipo: null, agencia: null, pctComision: 0 };
+  if (rol !== "agencia" && rol !== "freelance") return { esB2B: false, tipo: null, agencia: null, pctComision: 0, categoria: null };
 
   // Si es un AGENTE, la facturación/comisión es la de su AGENCIA titular.
   const agenciaUserId = perfil?.agencia_id ?? user.id;
@@ -70,9 +72,12 @@ export async function getContextoB2B(): Promise<ContextoB2B> {
     telefono: sol?.telefono ?? "",
   };
 
-  // Comisión POR AGENCIA: el % vive en el usuario (la agencia titular).
-  const pct = agenciaPerfil?.pct_comision ?? (rol === "agencia" ? 0.12 : 0.11);
-  return { esB2B: true, tipo: rol, agencia, pctComision: pct };
+  // Comisión POR AGENCIA: el % vive en el usuario (la agencia titular). El
+  // default general sale del parámetro tributario; la categoría compara contra él.
+  const def = await comisionDefault(sb, rol);
+  const pct = agenciaPerfil?.pct_comision ?? def;
+  const categoria = categoriaAliado(rol, pct, def).label;
+  return { esB2B: true, tipo: rol, agencia, pctComision: pct, categoria };
 }
 
 // Portada actual por hotel (para resolver la foto de ítems del carrito que se

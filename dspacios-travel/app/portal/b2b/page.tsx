@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { comisionDefault, categoriaAliado } from "@/lib/b2b";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export default async function PortalB2BPage() {
   const { data: { user } } = await sb.auth.getUser();
 
   const { data: perfil } = user
-    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id").eq("id", user.id).maybeSingle()
+    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id, pct_comision").eq("id", user.id).maybeSingle()
     : { data: null };
   const rol = perfil?.rol ?? null;
   const esB2B = rol === "agencia" || rol === "freelance";
@@ -71,6 +72,17 @@ export default async function PortalB2BPage() {
   if (!user) return null;
   const admin = createAdminClient();
   const nombre = (perfil?.nombre ?? "").trim();
+
+  // Categoría del aliado (Junior/Senior) según su % vs. el default general.
+  let pctAgencia = perfil?.pct_comision ?? null;
+  if (perfil?.agencia_id) {
+    const { data: ag } = await admin.from("usuarios").select("pct_comision").eq("id", perfil.agencia_id).maybeSingle();
+    pctAgencia = ag?.pct_comision ?? null;
+  }
+  const defCom = await comisionDefault(sb, rol ?? "agencia");
+  const pctEfectivo = pctAgencia ?? defCom;
+  const cat = categoriaAliado(rol ?? "agencia", pctEfectivo, defCom);
+
   const sel = "numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado";
   const [{ data: porId }, { data: porNombre }] = await Promise.all([
     admin.from("ventas").select(sel).eq("b2b_usuario_id", user.id),
@@ -93,6 +105,18 @@ export default async function PortalB2BPage() {
 
   return (
     <Shell nombre={nombre}>
+      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3">
+        <span
+          className="rounded-full px-3 py-1 text-xs font-semibold"
+          style={cat.nivel === "senior"
+            ? { backgroundColor: "rgba(174,244,74,0.25)", color: "#5a7d12" }
+            : { backgroundColor: "rgba(29,124,154,0.12)", color: "var(--brand-primary)" }}
+        >
+          {cat.label}
+        </span>
+        <span className="text-sm text-gray-600">Tu comisión: <b>{Math.round(pctEfectivo * 1000) / 10}%</b> sobre la base comisionable</span>
+      </div>
+
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-gray-900">Mis contratos</h2>
         <div className="flex flex-wrap gap-2">
