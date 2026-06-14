@@ -107,6 +107,82 @@ export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Pr
   return { ok: true, id };
 }
 
+// ── Cambio operacional (vuelos/horas/fechas) con registro en historial ────────
+export type CambioOperacionalInput = {
+  vueloIda: string; fechaIda: string; horaSalidaIda: string; horaLlegadaIda: string;
+  vueloRegreso: string; fechaRegreso: string; horaSalidaReg: string; horaLlegadaReg: string;
+  nota: string;
+};
+
+export async function registrarCambioOperacional(
+  bloqueoId: number,
+  input: CambioOperacionalInput
+): Promise<Result> {
+  const sb = await createClient();
+
+  const { data: actual } = await sb
+    .from("bloqueos_vuelo")
+    .select("vuelo_ida, fecha_ida, hora_salida_ida, hora_llegada_ida, vuelo_regreso, fecha_regreso, hora_salida_reg, hora_llegada_reg")
+    .eq("id", bloqueoId)
+    .single();
+  if (!actual) return { ok: false, error: "Bloqueo no encontrado." };
+
+  // Campos a comparar (etiqueta · valor actual · valor nuevo)
+  const campos: [string, string, string | null, string | null][] = [
+    ["# Vuelo ida", "vuelo_ida", actual.vuelo_ida, oNull(input.vueloIda)],
+    ["Fecha ida", "fecha_ida", actual.fecha_ida, oNull(input.fechaIda)],
+    ["Hora salida ida", "hora_salida_ida", actual.hora_salida_ida, oNull(input.horaSalidaIda)],
+    ["Hora llegada ida", "hora_llegada_ida", actual.hora_llegada_ida, oNull(input.horaLlegadaIda)],
+    ["# Vuelo regreso", "vuelo_regreso", actual.vuelo_regreso, oNull(input.vueloRegreso)],
+    ["Fecha regreso", "fecha_regreso", actual.fecha_regreso, oNull(input.fechaRegreso)],
+    ["Hora salida regreso", "hora_salida_reg", actual.hora_salida_reg, oNull(input.horaSalidaReg)],
+    ["Hora llegada regreso", "hora_llegada_reg", actual.hora_llegada_reg, oNull(input.horaLlegadaReg)],
+  ];
+
+  const cambios = campos.filter(([, , antes, despues]) => (antes ?? "") !== (despues ?? ""));
+  if (!cambios.length && !input.nota.trim()) return { ok: false, error: "No hay cambios para registrar." };
+
+  // Aplica los cambios al bloqueo (campos conocidos; los iguales no cambian nada)
+  if (cambios.length) {
+    const { error } = await sb
+      .from("bloqueos_vuelo")
+      .update({
+        vuelo_ida: oNull(input.vueloIda),
+        fecha_ida: oNull(input.fechaIda),
+        hora_salida_ida: oNull(input.horaSalidaIda),
+        hora_llegada_ida: oNull(input.horaLlegadaIda),
+        vuelo_regreso: oNull(input.vueloRegreso),
+        fecha_regreso: oNull(input.fechaRegreso),
+        hora_salida_reg: oNull(input.horaSalidaReg),
+        hora_llegada_reg: oNull(input.horaLlegadaReg),
+      })
+      .eq("id", bloqueoId);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  // Detalle del historial (antes → después)
+  const detalle = cambios.map(([lbl, , antes, despues]) => `${lbl}: ${antes ?? "—"} → ${despues ?? "—"}`).join(" · ");
+
+  // Quién lo registra
+  const { data: { user } } = await sb.auth.getUser();
+  let quien = user?.email ?? null;
+  if (user) {
+    const { data: perfil } = await sb.from("usuarios").select("nombre").eq("id", user.id).maybeSingle();
+    if (perfil?.nombre) quien = perfil.nombre;
+  }
+
+  const { error: le } = await sb.from("bloqueo_cambios").insert({
+    bloqueo_id: bloqueoId,
+    detalle: detalle || null,
+    nota: oNull(input.nota),
+    registrado_por: quien,
+  });
+  if (le) return { ok: false, error: le.message };
+
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  return { ok: true, id: bloqueoId };
+}
+
 // ── Carga masiva de bloqueos (CSV) ─────────────────────────────────────────
 const numCsv = (s?: string) => (s ? parseInt(String(s).replace(/[^\d-]/g, ""), 10) || 0 : 0);
 const dCsv = (s?: string) => (s && s.trim() !== "" ? s.trim() : null);

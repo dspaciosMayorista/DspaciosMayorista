@@ -675,6 +675,26 @@ export type Database = {
           }
         ];
       };
+      bloqueo_cambios: {
+        Row: {
+          id: number;
+          bloqueo_id: number;
+          fecha: string;
+          detalle: string | null;
+          nota: string | null;
+          registrado_por: string | null;
+        };
+        Insert: {
+          id?: number;
+          bloqueo_id: number;
+          fecha?: string;
+          detalle?: string | null;
+          nota?: string | null;
+          registrado_por?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["bloqueo_cambios"]["Insert"]>;
+        Relationships: [];
+      };
       movimientos_silla: {
         Row: {
           id: number;
