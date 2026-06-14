@@ -16,10 +16,10 @@ export function EditarBloqueoForm({
 }: {
   bloqueoId: number;
   inicial: {
-    record: string; aerolinea: string; proveedorId: number | null; destinoId: number | null; ruta: string;
+    record: string; aerolinea: string; proveedorId: number | null; destinoId: number | null; ruta: string; origen: string;
     vueloIda: string; fechaIda: string; horaSalidaIda: string; horaLlegadaIda: string;
     vueloRegreso: string; fechaRegreso: string; horaSalidaReg: string; horaLlegadaReg: string;
-    tarifaParaEmpaquetar: number; fechaDevolucion: string; fechaEmision: string; notas: string; rangosEdad: number[];
+    tarifaNeta: number; tarifaParaEmpaquetar: number; fechaDevolucion: string; fechaEmision: string; notas: string; rangosEdad: number[];
   };
   proveedores: Opt[]; destinos: Opt[]; rangos: RangoEdad[];
 }) {
@@ -27,7 +27,7 @@ export function EditarBloqueoForm({
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
-  const [f, setF] = useState({ ...inicial, tarifaParaEmpaquetar: String(inicial.tarifaParaEmpaquetar) });
+  const [f, setF] = useState({ ...inicial, tarifaParaEmpaquetar: String(inicial.tarifaParaEmpaquetar), tarifaNeta: String(inicial.tarifaNeta) });
   const [proveedorId, setProveedorId] = useState<number | "">(inicial.proveedorId ?? "");
   const [destinoId, setDestinoId] = useState<number | "">(inicial.destinoId ?? "");
   const [rangosSel, setRangosSel] = useState<number[]>(inicial.rangosEdad);
@@ -38,10 +38,10 @@ export function EditarBloqueoForm({
     start(async () => {
       const r = await actualizarBloqueo(bloqueoId, {
         record: f.record, aerolinea: f.aerolinea, proveedorId: proveedorId === "" ? null : Number(proveedorId),
-        destinoId: destinoId === "" ? null : Number(destinoId), ruta: f.ruta,
+        destinoId: destinoId === "" ? null : Number(destinoId), ruta: f.ruta, origen: f.origen,
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
-        tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0, fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision,
+        tarifaNeta: Number(f.tarifaNeta) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0, fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision,
         notas: f.notas, rangosEdad: rangosSel,
       });
       if (r.ok) { setMsg("Guardado."); setOpen(false); router.refresh(); } else setMsg(r.error);
@@ -73,8 +73,10 @@ export function EditarBloqueoForm({
                 {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
               </select>
             </div>
-            <div><label className={lbl}>Ruta</label><Input value={f.ruta} onChange={set("ruta")} /></div>
-            <div><label className={lbl}>Tarifa para empaquetar</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} /></div>
+            <div><label className={lbl}>Origen</label><Input value={f.origen} onChange={set("origen")} placeholder="Ej. BOG · MDE" /></div>
+            <div><label className={lbl}>Ruta</label><Input value={f.ruta} onChange={set("ruta")} placeholder="Ej. BOG - CTG - BOG" /></div>
+            <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} /></div>
+            <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} /></div>
             <div><label className={lbl}># Vuelo ida</label><Input value={f.vueloIda} onChange={set("vueloIda")} /></div>
             <div><label className={lbl}>Fecha ida</label><Input type="date" value={f.fechaIda} onChange={set("fechaIda")} /></div>
             <div><label className={lbl}>Hora salida ida</label><Input type="time" value={f.horaSalidaIda} onChange={set("horaSalidaIda")} /></div>

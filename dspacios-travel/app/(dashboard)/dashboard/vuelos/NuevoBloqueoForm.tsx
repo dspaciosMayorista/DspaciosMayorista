@@ -21,10 +21,10 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
   const [rangosSel, setRangosSel] = useState<number[]>([]);
 
   const [f, setF] = useState({
-    record: "", aerolinea: "", ruta: "",
+    record: "", aerolinea: "", ruta: "", origen: "",
     vueloIda: "", fechaIda: "", horaSalidaIda: "", horaLlegadaIda: "",
     vueloRegreso: "", fechaRegreso: "", horaSalidaReg: "", horaLlegadaReg: "",
-    cuposTotal: "10", tarifaParaEmpaquetar: "", fechaDevolucion: "", fechaEmision: "", notas: "",
+    cuposTotal: "10", tarifaNeta: "", tarifaParaEmpaquetar: "", fechaDevolucion: "", fechaEmision: "", notas: "",
   });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
 
@@ -35,10 +35,10 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
     start(async () => {
       const r = await crearBloqueo({
         record: f.record, aerolinea: f.aerolinea, proveedorId: proveedorId === "" ? null : Number(proveedorId),
-        destinoId: destinoId === "" ? null : Number(destinoId), ruta: f.ruta,
+        destinoId: destinoId === "" ? null : Number(destinoId), ruta: f.ruta, origen: f.origen,
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
-        cuposTotal: Number(f.cuposTotal) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
+        cuposTotal: Number(f.cuposTotal) || 0, tarifaNeta: Number(f.tarifaNeta) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
         fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision, notas: f.notas, rangosEdad: rangosSel,
       });
       if (r.ok) router.push("/dashboard/vuelos");
@@ -69,9 +69,11 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
               {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </div>
-          <div><label className={lbl}>Ruta</label><Input value={f.ruta} onChange={set("ruta")} placeholder="MDE - CTG - MDE" /></div>
+          <div><label className={lbl}>Origen</label><Input value={f.origen} onChange={set("origen")} placeholder="BOG · MDE" /></div>
+          <div><label className={lbl}>Ruta</label><Input value={f.ruta} onChange={set("ruta")} placeholder="BOG - CTG - BOG" /></div>
           <div><label className={lbl}>Cupos totales</label><Input type="number" min={0} value={f.cuposTotal} onChange={set("cuposTotal")} /></div>
-          <div><label className={lbl}>Tarifa para empaquetar</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>
+          <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} placeholder="200000" /></div>
+          <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>
           <div><label className={lbl}>Fecha devolución</label><Input type="date" value={f.fechaDevolucion} onChange={set("fechaDevolucion")} /></div>
         </div>
         <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} label="Rangos de edad del vuelo (infante/niño)" />

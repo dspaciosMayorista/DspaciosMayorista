@@ -13,6 +13,8 @@ export type BloqueoInput = {
   proveedorId: number | null;
   destinoId: number | null;
   ruta: string;
+  origen: string;
+  tarifaNeta: number;
   vueloIda: string;
   fechaIda: string;
   horaSalidaIda: string;
@@ -40,6 +42,8 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
       proveedor_id: input.proveedorId,
       destino_id: input.destinoId,
       ruta: oNull(input.ruta),
+      origen: oNull(input.origen),
+      tarifa_neta: input.tarifaNeta || null,
       vuelo_ida: oNull(input.vueloIda),
       fecha_ida: oNull(input.fechaIda),
       hora_salida_ida: oNull(input.horaSalidaIda),
@@ -87,6 +91,8 @@ export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Pr
       proveedor_id: input.proveedorId,
       destino_id: input.destinoId,
       ruta: oNull(input.ruta),
+      origen: oNull(input.origen),
+      tarifa_neta: input.tarifaNeta || null,
       vuelo_ida: oNull(input.vueloIda),
       fecha_ida: oNull(input.fechaIda),
       hora_salida_ida: oNull(input.horaSalidaIda),
@@ -219,10 +225,10 @@ export async function cargarBloqueosMasivo(
     const { data: bq, error } = await sb
       .from("bloqueos_vuelo")
       .insert({
-        record, aerolinea: oNull(r.aerolinea || ""), proveedor_id: provId, destino_id: destinoId, ruta: oNull(r.ruta || ""),
+        record, aerolinea: oNull(r.aerolinea || ""), proveedor_id: provId, destino_id: destinoId, ruta: oNull(r.ruta || ""), origen: oNull(r.origen || ""),
         vuelo_ida: oNull(r.vuelo_ida || ""), fecha_ida: dCsv(r.fecha_ida), hora_salida_ida: dCsv(r.hora_salida_ida), hora_llegada_ida: dCsv(r.hora_llegada_ida),
         vuelo_regreso: oNull(r.vuelo_regreso || ""), fecha_regreso: dCsv(r.fecha_regreso), hora_salida_reg: dCsv(r.hora_salida_reg), hora_llegada_reg: dCsv(r.hora_llegada_reg),
-        cupos_total: cupos, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
+        cupos_total: cupos, tarifa_neta: numCsv(r.tarifa_neta) || null, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
         fecha_devolucion: dCsv(r.fecha_devolucion), fecha_emision: dCsv(r.fecha_emision), notas: oNull(r.notas || ""),
         rangos_edad: rangosEdad.length ? rangosEdad : null,
       })
