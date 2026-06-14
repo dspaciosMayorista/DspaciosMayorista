@@ -15,10 +15,16 @@ export default async function PortalB2BPage() {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
 
-  // No logueado → opciones de ingreso/registro.
-  if (!user) {
+  const { data: perfil } = user
+    ? await sb.from("usuarios").select("nombre, rol, activo").eq("id", user.id).maybeSingle()
+    : { data: null };
+  const rol = perfil?.rol ?? null;
+  const esB2B = rol === "agencia" || rol === "freelance";
+
+  // Pantalla de ingreso / registro: para visitantes y para usuarios NO B2B (internos).
+  if (!esB2B) {
     return (
-      <Shell>
+      <Shell nombre={perfil?.nombre ?? undefined}>
         <div className="rounded-xl border border-gray-200 bg-white p-8 text-center">
           <h2 className="text-lg font-semibold text-gray-900">Portal de aliados</h2>
           <p className="mt-1 text-sm text-gray-500">Agencias y freelance: ingresa o regístrate.</p>
@@ -26,14 +32,15 @@ export default async function PortalB2BPage() {
             <Link href="/login" className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white" style={{ backgroundColor: "var(--brand-primary)" }}>Iniciar sesión</Link>
             <Link href="/portal/registro" className="rounded-lg border px-5 py-2.5 text-sm font-semibold" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>Registrarse</Link>
           </div>
+          {user && (
+            <p className="mt-4 text-xs text-gray-400">
+              Estás con una cuenta interna. ¿Buscas tu panel? <Link href="/dashboard" className="font-semibold" style={{ color: "var(--brand-primary)" }}>Portal Admin</Link>.
+            </p>
+          )}
         </div>
       </Shell>
     );
   }
-
-  const { data: perfil } = await sb.from("usuarios").select("nombre, rol, activo").eq("id", user.id).maybeSingle();
-  const rol = perfil?.rol ?? null;
-  const esB2B = rol === "agencia" || rol === "freelance";
 
   // Aliado registrado pero aún no aprobado.
   if (esB2B && perfil?.activo === false) {
@@ -60,6 +67,7 @@ export default async function PortalB2BPage() {
   }
 
   // Mis contratos: por vínculo directo (b2b_usuario_id) o por nombre del aliado.
+  if (!user) return null;
   const admin = createAdminClient();
   const nombre = (perfil?.nombre ?? "").trim();
   const sel = "numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado";
