@@ -35,8 +35,12 @@ export async function enviarSolicitudB2B(input: SolicitudB2BInput): Promise<Resu
   }
   const uid = created.user.id;
 
-  // El trigger crea el perfil; lo dejamos como aliado pendiente (inactivo).
-  await admin.from("usuarios").update({ rol: tipo, activo: false, nombre: input.nombre.trim() }).eq("id", uid);
+  // El trigger crea el perfil; lo dejamos como aliado pendiente (inactivo) con
+  // su comisión por defecto (12% agencia, 11% freelance).
+  await admin.from("usuarios").update({
+    rol: tipo, activo: false, nombre: input.nombre.trim(),
+    pct_comision: tipo === "agencia" ? 0.12 : 0.11,
+  }).eq("id", uid);
 
   const { error } = await admin.from("b2b_solicitudes").insert({
     tipo,
