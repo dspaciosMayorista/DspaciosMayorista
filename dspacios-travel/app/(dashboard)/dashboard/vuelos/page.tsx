@@ -1,10 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatFechaLarga } from "@/lib/utils";
-import { EliminarBloqueoBtn } from "./EliminarBloqueoBtn";
 import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
 import { cargarBloqueosMasivo } from "./actions";
+import { BloqueosTabla } from "./BloqueosTabla";
 
 export const dynamic = "force-dynamic";
 
@@ -110,60 +109,18 @@ export default async function VuelosPage() {
             <ResumenCard label="Devueltas" valor={tot.dev} color="#C0392B" />
           </div>
 
-          {/* Tabla de salidas */}
-          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-            <table className="w-full min-w-[920px] text-sm">
-              <thead>
-                <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-                  <th className="px-3 py-2">Record</th>
-                  <th className="px-3 py-2">Aerolínea</th>
-                  <th className="px-3 py-2">Ruta</th>
-                  <th className="px-3 py-2">Ida</th>
-                  <th className="px-3 py-2">Regreso</th>
-                  <th className="px-3 py-2 text-center">Disp</th>
-                  <th className="px-3 py-2 text-center">Plazo</th>
-                  <th className="px-3 py-2 text-center">Conf</th>
-                  <th className="px-3 py-2 text-center">Dev</th>
-                  <th className="px-3 py-2 text-center">N.Ven</th>
-                  <th className="px-3 py-2 text-center">Total</th>
-                  <th className="px-3 py-2 text-center">Ocup.</th>
-                  <th className="px-3 py-2">F. Dev.</th>
-                  <th className="px-3 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {bloqueos.map((b) => {
-                  const c = conteo.get(b.id) ?? cZero;
-                  const total = b.cupos_total ?? 0;
-                  const ocup = total > 0 ? Math.round(((c.plazo + c.conf) / total) * 100) : 0;
-                  return (
-                    <tr key={b.id} className="border-t border-gray-50">
-                      <td className="px-3 py-2">
-                        <Link href={`/dashboard/vuelos/${b.id}`} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">{b.record}</Link>
-                      </td>
-                      <td className="px-3 py-2 text-gray-600">{b.aerolinea ?? "—"}</td>
-                      <td className="px-3 py-2 text-gray-600">{b.ruta ?? "—"}</td>
-                      <td className="px-3 py-2 text-xs text-gray-500">
-                        {formatFechaLarga(b.fecha_ida)}{b.vuelo_ida ? ` · ${b.vuelo_ida}` : ""}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-gray-500">
-                        {formatFechaLarga(b.fecha_regreso)}{b.vuelo_regreso ? ` · ${b.vuelo_regreso}` : ""}
-                      </td>
-                      <td className="px-3 py-2 text-center font-semibold tabular-nums" style={{ color: "var(--brand-success)" }}>{c.disp}</td>
-                      <td className="px-3 py-2 text-center tabular-nums" style={{ color: "#C99A2E" }}>{c.plazo}</td>
-                      <td className="px-3 py-2 text-center tabular-nums" style={{ color: "var(--brand-accent)" }}>{c.conf}</td>
-                      <td className="px-3 py-2 text-center tabular-nums text-red-600">{c.dev}</td>
-                      <td className="px-3 py-2 text-center tabular-nums text-gray-400">{c.nven}</td>
-                      <td className="px-3 py-2 text-center font-semibold tabular-nums">{total}</td>
-                      <td className="px-3 py-2 text-center tabular-nums text-gray-500">{ocup}%</td>
-                      <td className="px-3 py-2 text-xs text-gray-400">{formatFechaLarga(b.fecha_devolucion)}</td>
-                      <td className="px-3 py-2 text-right"><EliminarBloqueoBtn id={b.id} record={b.record} /></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          {/* Tabla de salidas con filtros (Ruta, Mes) y totales */}
+          <BloqueosTabla
+            filas={bloqueos.map((b) => {
+              const c = conteo.get(b.id) ?? cZero;
+              return {
+                id: b.id, record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
+                fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
+                fecha_devolucion: b.fecha_devolucion, cupos_total: b.cupos_total ?? 0,
+                disp: c.disp, plazo: c.plazo, conf: c.conf, dev: c.dev, nven: c.nven,
+              };
+            })}
+          />
         </>
       )}
     </div>

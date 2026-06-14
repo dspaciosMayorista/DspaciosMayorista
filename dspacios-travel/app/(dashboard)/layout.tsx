@@ -20,7 +20,10 @@ const NAV: NavItem[] = [
   {
     href: "/dashboard/vuelos",
     label: "Vuelos",
-    children: [{ href: "/dashboard/vuelos/nuevo", label: "Nuevo bloqueo" }],
+    children: [
+      { href: "/dashboard/vuelos/pasajeros", label: "Pasajeros" },
+      { href: "/dashboard/vuelos/nuevo", label: "Nuevo bloqueo" },
+    ],
   },
 
   // Producto
