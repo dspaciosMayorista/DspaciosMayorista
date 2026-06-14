@@ -44,21 +44,29 @@ export async function getContextoB2B(): Promise<ContextoB2B> {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { esB2B: false, tipo: null, agencia: null, pctComision: 0 };
-  const { data: perfil } = await sb.from("usuarios").select("nombre, email, rol").eq("id", user.id).maybeSingle();
+  const { data: perfil } = await sb.from("usuarios").select("nombre, email, rol, agencia_id").eq("id", user.id).maybeSingle();
   const rol = perfil?.rol ?? null;
   if (rol !== "agencia" && rol !== "freelance") return { esB2B: false, tipo: null, agencia: null, pctComision: 0 };
+
+  // Si es un AGENTE, la facturación/comisión es la de su AGENCIA titular.
+  const agenciaUserId = perfil?.agencia_id ?? user.id;
+  let agenciaPerfil = perfil;
+  if (perfil?.agencia_id) {
+    const { data: ap } = await sb.from("usuarios").select("nombre, email, rol").eq("id", perfil.agencia_id).maybeSingle();
+    if (ap) agenciaPerfil = { ...ap, agencia_id: null };
+  }
 
   const { data: sols } = await sb
     .from("b2b_solicitudes")
     .select("nombre, nit, email, telefono")
-    .eq("usuario_id", user.id)
+    .eq("usuario_id", agenciaUserId)
     .order("created_at", { ascending: false })
     .limit(1);
   const sol = sols?.[0];
   const agencia: Facturacion = {
-    nombre: sol?.nombre ?? perfil?.nombre ?? "",
+    nombre: sol?.nombre ?? agenciaPerfil?.nombre ?? "",
     nit: sol?.nit ?? "",
-    email: sol?.email ?? perfil?.email ?? "",
+    email: sol?.email ?? agenciaPerfil?.email ?? "",
     telefono: sol?.telefono ?? "",
   };
 

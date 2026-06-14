@@ -22,6 +22,7 @@ export type Database = {
           fecha_registro: string;
           escala_id: number | null;
           aplica_retencion: boolean;
+          agencia_id: string | null;
         };
         Insert: {
           id?: string;
@@ -32,6 +33,7 @@ export type Database = {
           fecha_registro?: string;
           escala_id?: number | null;
           aplica_retencion?: boolean;
+          agencia_id?: string | null;
         };
         Update: {
           id?: string;
@@ -40,6 +42,7 @@ export type Database = {
           rol?: Database["public"]["Enums"]["rol_usuario"];
           activo?: boolean;
           fecha_registro?: string;
+          agencia_id?: string | null;
         };
         Relationships: [];
       };

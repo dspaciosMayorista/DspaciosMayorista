@@ -16,10 +16,11 @@ export default async function PortalB2BPage() {
   const { data: { user } } = await sb.auth.getUser();
 
   const { data: perfil } = user
-    ? await sb.from("usuarios").select("nombre, rol, activo").eq("id", user.id).maybeSingle()
+    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id").eq("id", user.id).maybeSingle()
     : { data: null };
   const rol = perfil?.rol ?? null;
   const esB2B = rol === "agencia" || rol === "freelance";
+  const esTitularAgencia = rol === "agencia" && !perfil?.agencia_id;
 
   // Pantalla de ingreso / registro: para visitantes y para usuarios NO B2B (internos).
   if (!esB2B) {
@@ -95,6 +96,9 @@ export default async function PortalB2BPage() {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-gray-900">Mis contratos</h2>
         <div className="flex flex-wrap gap-2">
+          {esTitularAgencia && (
+            <Link href="/portal/b2b/agentes" className="rounded-lg border px-4 py-2 text-sm font-semibold" style={{ borderColor: "#9ca3af", color: "#4b5563" }}>👥 Agentes</Link>
+          )}
           {linkPago && (
             <a href={linkPago} target="_blank" rel="noopener noreferrer" className="rounded-lg border px-4 py-2 text-sm font-semibold" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>💳 Pagar en línea</a>
           )}
