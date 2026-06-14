@@ -27,8 +27,9 @@ export async function loginConCodigo(
     password = process.env.QUICK_LOGIN_PASSWORD;
     destino = "/dashboard";
   } else if (code === codigoB2B) {
-    email = process.env.QUICK_LOGIN_B2B_EMAIL;
-    password = process.env.QUICK_LOGIN_B2B_PASSWORD;
+    // Defaults para que el código "2" funcione sin configurar nada (pruebas).
+    email = process.env.QUICK_LOGIN_B2B_EMAIL || "b2b.prueba@dspaciostravel.com";
+    password = process.env.QUICK_LOGIN_B2B_PASSWORD || "B2bPrueba2026!";
     destino = "/portal/b2b";
     esB2B = true;
   } else {
