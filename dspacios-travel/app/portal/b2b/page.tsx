@@ -31,9 +31,22 @@ export default async function PortalB2BPage() {
     );
   }
 
-  const { data: perfil } = await sb.from("usuarios").select("nombre, rol").eq("id", user.id).maybeSingle();
+  const { data: perfil } = await sb.from("usuarios").select("nombre, rol, activo").eq("id", user.id).maybeSingle();
   const rol = perfil?.rol ?? null;
   const esB2B = rol === "agencia" || rol === "freelance";
+
+  // Aliado registrado pero aún no aprobado.
+  if (esB2B && perfil?.activo === false) {
+    return (
+      <Shell nombre={perfil?.nombre ?? undefined}>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <div className="text-2xl">⏳</div>
+          <h2 className="mt-2 text-lg font-semibold text-gray-800">Registro en revisión</h2>
+          <p className="mt-1 text-sm text-gray-600">Tu cuenta fue creada y está pendiente de aprobación. Te avisaremos cuando esté lista.</p>
+        </div>
+      </Shell>
+    );
+  }
 
   // Usuario interno: este portal no es para él.
   if (!esB2B) {
