@@ -1819,6 +1819,18 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["config_sitio"]["Insert"]>;
         Relationships: [];
       };
+      permisos_rol: {
+        Row: { rol: string; modulo: string; consultar: boolean; modificar: boolean; eliminar: boolean };
+        Insert: { rol: string; modulo: string; consultar?: boolean; modificar?: boolean; eliminar?: boolean };
+        Update: Partial<Database["public"]["Tables"]["permisos_rol"]["Insert"]>;
+        Relationships: [];
+      };
+      permisos_usuario: {
+        Row: { usuario_id: string; modulo: string; consultar: boolean; modificar: boolean; eliminar: boolean };
+        Insert: { usuario_id: string; modulo: string; consultar?: boolean; modificar?: boolean; eliminar?: boolean };
+        Update: Partial<Database["public"]["Tables"]["permisos_usuario"]["Insert"]>;
+        Relationships: [];
+      };
       vouchers: {
         Row: {
           id: number;

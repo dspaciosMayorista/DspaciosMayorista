@@ -9,6 +9,7 @@ export type NavItem = {
   label: string;
   children?: { href: string; label: string }[];
   separadorAntes?: boolean;   // dibuja un separador antes de este ítem
+  modulo?: string;            // módulo de permisos (para ocultar según rol)
 };
 
 export function SidebarNav({ items }: { items: NavItem[] }) {

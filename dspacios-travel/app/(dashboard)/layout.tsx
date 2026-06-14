@@ -3,23 +3,26 @@ import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
 import { SidebarNav, type NavItem } from "./SidebarNav";
 import { Logo } from "@/components/Logo";
+import { modulosConsultables } from "@/lib/permisos";
 
 const NAV: NavItem[] = [
   // Comercial / venta
-  { href: "/tarifario", label: "Tarifario ↗" },
-  { href: "/dashboard/reservar", label: "Reservar" },
-  { href: "/dashboard/cotizaciones", label: "Cotizaciones" },
+  { href: "/tarifario", label: "Tarifario ↗", modulo: "tarifario" },
+  { href: "/dashboard/reservar", label: "Reservar", modulo: "reservar" },
+  { href: "/dashboard/cotizaciones", label: "Cotizaciones", modulo: "cotizaciones" },
 
   // Operación
-  { href: "/dashboard/ventas", label: "Ventas", separadorAntes: true },
+  { href: "/dashboard/ventas", label: "Ventas", separadorAntes: true, modulo: "ventas" },
   {
     href: "/dashboard/contratos",
     label: "Contratos",
+    modulo: "contratos",
     children: [{ href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" }],
   },
   {
     href: "/dashboard/vuelos",
     label: "Vuelos",
+    modulo: "vuelos",
     children: [
       { href: "/dashboard/vuelos/pasajeros", label: "Pasajeros" },
       { href: "/dashboard/vuelos/nuevo", label: "Nuevo bloqueo" },
@@ -31,11 +34,13 @@ const NAV: NavItem[] = [
     href: "/dashboard/paquetes",
     label: "Montaje de producto",
     separadorAntes: true,
+    modulo: "paquetes",
     children: [{ href: "/dashboard/paquetes/nuevo", label: "Nuevo paquete" }],
   },
   {
     href: "/dashboard/producto",
     label: "Netas",
+    modulo: "producto",
     children: [
       { href: "/dashboard/producto/destinos", label: "Destinos" },
       { href: "/dashboard/producto/hoteles", label: "Hoteles" },
@@ -51,6 +56,7 @@ const NAV: NavItem[] = [
     href: "/dashboard/rentabilidad",
     label: "Finanzas",
     separadorAntes: true,
+    modulo: "finanzas",
     children: [
       { href: "/dashboard/rentabilidad", label: "Rentabilidad" },
       { href: "/dashboard/cartera", label: "Cartera (por cobrar)" },
@@ -60,11 +66,16 @@ const NAV: NavItem[] = [
       { href: "/dashboard/aliados", label: "Agencias y freelance" },
     ],
   },
-  { href: "/dashboard/usuarios", label: "Usuarios" },
-  { href: "/dashboard/configuracion", label: "Configuración" },
+  {
+    href: "/dashboard/usuarios",
+    label: "Usuarios",
+    modulo: "usuarios",
+    children: [{ href: "/dashboard/usuarios/permisos", label: "Permisos" }],
+  },
+  { href: "/dashboard/configuracion", label: "Configuración", modulo: "configuracion" },
 
   // CRM
-  { href: "/crm", label: "CRM ↗", separadorAntes: true },
+  { href: "/crm", label: "CRM ↗", separadorAntes: true, modulo: "crm" },
 ];
 
 export default async function DashboardLayout({
@@ -81,6 +92,11 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
+  // Oculta del menú los módulos que el rol/usuario no puede consultar.
+  // (La seguridad de datos la garantiza RLS; esto es solo visibilidad.)
+  const permitidos = await modulosConsultables();
+  const nav = NAV.filter((n) => !n.modulo || permitidos.has(n.modulo));
+
   return (
     <div className="flex min-h-screen flex-col bg-gray-50 md:flex-row">
       {/* Barra superior (solo celular) */}
@@ -95,7 +111,7 @@ export default async function DashboardLayout({
           <LogoutButton className="text-xs text-gray-500 hover:text-gray-800" />
         </div>
         <nav className="-mx-1 flex gap-1 overflow-x-auto pb-1">
-          {NAV.map((n) => (
+          {nav.map((n) => (
             <a
               key={n.href}
               href={n.href}
@@ -117,7 +133,7 @@ export default async function DashboardLayout({
             <Logo variant="full" height={36} className="h-9 w-auto" priority />
           </a>
         </div>
-        <SidebarNav items={NAV} />
+        <SidebarNav items={nav} />
         <div className="border-t border-gray-100 px-5 py-3">
           <LogoutButton />
         </div>
