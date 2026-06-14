@@ -12,7 +12,7 @@ export function LogoutButton({ className }: { className?: string }) {
     start(async () => {
       const sb = createClient();
       await sb.auth.signOut();
-      router.push("/login");
+      router.push("/tarifario");
       router.refresh();
     });
   }
