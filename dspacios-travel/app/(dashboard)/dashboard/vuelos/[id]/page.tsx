@@ -5,6 +5,7 @@ import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { CambiarSillasForm } from "./CambiarSillasForm";
 import { SillaEstado } from "./SillaEstado";
 import { EditarBloqueoForm } from "./EditarBloqueoForm";
+import { CambioOperacionalForm } from "./CambioOperacionalForm";
 
 export const dynamic = "force-dynamic";
 
@@ -28,13 +29,14 @@ export default async function BloqueoDetallePage({
   if (isNaN(bloqueoId)) notFound();
 
   const sb = await createClient();
-  const [{ data: b }, { data: sillas }, { data: otros }, { data: destinos }, { data: proveedores }, { data: rangos }] = await Promise.all([
+  const [{ data: b }, { data: sillas }, { data: otros }, { data: destinos }, { data: proveedores }, { data: rangos }, { data: cambios }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").eq("id", bloqueoId).single(),
     sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo").eq("bloqueo_id", bloqueoId).order("numero_silla"),
     sb.from("bloqueos_vuelo").select("id, record, fecha_ida").neq("id", bloqueoId).order("fecha_ida"),
     sb.from("destinos").select("id, nombre").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "aereo").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
+    sb.from("bloqueo_cambios").select("id, fecha, detalle, nota, registrado_por").eq("bloqueo_id", bloqueoId).order("fecha", { ascending: false }),
   ]);
   if (!b) notFound();
 
@@ -85,6 +87,32 @@ export default async function BloqueoDetallePage({
           notas: b.notas ?? "", rangosEdad: b.rangos_edad ?? [],
         }}
       />
+
+      <CambioOperacionalForm
+        bloqueoId={bloqueoId}
+        inicial={{
+          vueloIda: b.vuelo_ida ?? "", fechaIda: b.fecha_ida ?? "", horaSalidaIda: b.hora_salida_ida ?? "", horaLlegadaIda: b.hora_llegada_ida ?? "",
+          vueloRegreso: b.vuelo_regreso ?? "", fechaRegreso: b.fecha_regreso ?? "", horaSalidaReg: b.hora_salida_reg ?? "", horaLlegadaReg: b.hora_llegada_reg ?? "",
+        }}
+      />
+
+      {/* Historial de cambios operacionales */}
+      {cambios && cambios.length > 0 && (
+        <section className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+          <p className="mb-2 text-sm font-semibold text-gray-700">Historial de cambios operacionales</p>
+          <ul className="space-y-2">
+            {cambios.map((c) => (
+              <li key={c.id} className="border-l-2 border-gray-200 pl-3 text-xs">
+                <div className="text-gray-400">
+                  {formatFechaLarga(c.fecha)}{c.registrado_por ? ` · ${c.registrado_por}` : ""}
+                </div>
+                {c.detalle && <div className="text-gray-700">{c.detalle}</div>}
+                {c.nota && <div className="text-gray-500 italic">“{c.nota}”</div>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* Cambio de sillas entre records */}
       {disponibles > 0 && otros && otros.length > 0 && (
