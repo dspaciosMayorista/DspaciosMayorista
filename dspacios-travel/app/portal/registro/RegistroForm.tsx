@@ -12,6 +12,7 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 export function RegistroForm() {
   const [f, setF] = useState({
     tipo: "agencia", nombre: "", nit: "", contacto: "", email: "", telefono: "", ciudad: "", notas: "", aceptaNotificaciones: true,
+    password: "", passwordConfirm: "",
   });
   const set = (k: keyof typeof f, v: string | boolean) => setF((p) => ({ ...p, [k]: v }));
   const [pending, start] = useTransition();
@@ -56,6 +57,8 @@ export function RegistroForm() {
         <div><label className={lbl}>Correo *</label><Input type="email" value={f.email} onChange={(e) => set("email", e.target.value)} /></div>
         <div><label className={lbl}>Teléfono</label><Input value={f.telefono} onChange={(e) => set("telefono", e.target.value)} /></div>
         <div><label className={lbl}>Ciudad</label><Input value={f.ciudad} onChange={(e) => set("ciudad", e.target.value)} /></div>
+        <div><label className={lbl}>Contraseña *</label><Input type="password" value={f.password} onChange={(e) => set("password", e.target.value)} placeholder="mín. 6 caracteres" /></div>
+        <div><label className={lbl}>Repetir contraseña *</label><Input type="password" value={f.passwordConfirm} onChange={(e) => set("passwordConfirm", e.target.value)} /></div>
       </div>
       <div><label className={lbl}>Notas</label><textarea value={f.notas} onChange={(e) => set("notas", e.target.value)} rows={2} className={sel} /></div>
       <label className="flex items-center gap-2 text-sm text-gray-700">

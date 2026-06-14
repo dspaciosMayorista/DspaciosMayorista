@@ -32,7 +32,7 @@ export default function LoginPage() {
     setLoading(true);
 
     const supabase = createClient();
-    const { error: authError } = await supabase.auth.signInWithPassword({
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -43,7 +43,13 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/dashboard");
+    // Rutea según el rol: agencias/freelance van al portal B2B.
+    let destino = "/dashboard";
+    if (data.user) {
+      const { data: perfil } = await supabase.from("usuarios").select("rol").eq("id", data.user.id).maybeSingle();
+      if (perfil?.rol === "agencia" || perfil?.rol === "freelance" || perfil?.rol === "cliente_final") destino = "/portal/b2b";
+    }
+    router.push(destino);
     router.refresh();
   }
 
