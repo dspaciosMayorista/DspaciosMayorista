@@ -72,7 +72,7 @@ export default async function VuelosPage() {
   );
 
   return (
-    <div className="mx-auto max-w-5xl p-4 md:p-8">
+    <div className="mx-auto max-w-[1500px] p-4 md:p-8">
       <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Inventario de vuelos</h1>

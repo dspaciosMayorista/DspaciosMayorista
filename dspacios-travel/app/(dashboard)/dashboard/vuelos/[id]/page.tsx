@@ -45,7 +45,7 @@ export default async function BloqueoDetallePage({
   const disponibles = (conteo["disponible"] ?? 0) + (conteo["cambio_entrante"] ?? 0);
 
   return (
-    <div className="mx-auto max-w-4xl p-4 md:p-8">
+    <div className="mx-auto max-w-[1500px] p-4 md:p-8">
       <Link href="/dashboard/vuelos" className="text-sm text-gray-400 hover:text-gray-600">← Vuelos</Link>
 
       <div className="mt-2 flex flex-wrap items-baseline gap-3">
