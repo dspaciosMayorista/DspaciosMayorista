@@ -28,6 +28,53 @@ export type SolicitudItem = {
 
 export type SolicitudCliente = { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
 
+// Datos de facturación (contrato neto): normalmente la agencia.
+export type Facturacion = { nombre: string; nit: string; email: string; telefono: string };
+
+export type ContextoB2B = {
+  esB2B: boolean;
+  tipo: "agencia" | "freelance" | null;
+  agencia: Facturacion | null;
+  pctComision: number; // fracción (0.10)
+};
+
+// Contexto del aliado logueado (para el checkout B2B): tipo, datos de
+// facturación de la agencia y su % de comisión.
+export async function getContextoB2B(): Promise<ContextoB2B> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { esB2B: false, tipo: null, agencia: null, pctComision: 0 };
+  const { data: perfil } = await sb.from("usuarios").select("nombre, email, rol").eq("id", user.id).maybeSingle();
+  const rol = perfil?.rol ?? null;
+  if (rol !== "agencia" && rol !== "freelance") return { esB2B: false, tipo: null, agencia: null, pctComision: 0 };
+
+  const { data: sols } = await sb
+    .from("b2b_solicitudes")
+    .select("nombre, nit, email, telefono")
+    .eq("usuario_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const sol = sols?.[0];
+  const agencia: Facturacion = {
+    nombre: sol?.nombre ?? perfil?.nombre ?? "",
+    nit: sol?.nit ?? "",
+    email: sol?.email ?? perfil?.email ?? "",
+    telefono: sol?.telefono ?? "",
+  };
+
+  let pct: number | null = null;
+  if (agencia.nombre) {
+    const { data: al } = await sb.from("aliados").select("pct_comision").eq("nombre", agencia.nombre).maybeSingle();
+    pct = al?.pct_comision ?? null;
+  }
+  if (pct == null) {
+    const defParam = rol === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
+    const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
+    pct = Number(p?.valor) || (rol === "agencia" ? 0.12 : 0.11);
+  }
+  return { esB2B: true, tipo: rol, agencia, pctComision: pct };
+}
+
 // Portada actual por hotel (para resolver la foto de ítems del carrito que se
 // guardaron sin fotoUrl). hotel_fotos es lectura pública.
 export async function fotosPortada(hotelIds: number[]): Promise<Record<number, string>> {
@@ -59,14 +106,22 @@ function construirMensaje(
   cliente: SolicitudCliente,
   cotis: { codigo: string; hotel: string; precio: number; item: SolicitudItem; url: string }[],
   extra: string | null,
+  b2b?: { modo: "comisionable" | "neta"; facturacion: Facturacion; pctComision: number },
 ): string {
   const L: string[] = [];
   L.push("Solicitud de reserva — D'spacios Travel");
   L.push("");
-  L.push(`Cliente: ${`${cliente.nombres} ${cliente.apellidos}`.trim()}`);
+  if (b2b) L.push(`Modalidad: ${b2b.modo === "neta" ? "CONTRATO NETO" : "CONTRATO COMISIONABLE"}`);
+  L.push(`${b2b?.modo === "neta" ? "Titular / pasajero" : "Cliente"}: ${`${cliente.nombres} ${cliente.apellidos}`.trim()}`);
   const contacto = [cliente.telefono, cliente.email].map((x) => x?.trim()).filter(Boolean).join(" · ");
   if (contacto) L.push(`Contacto: ${contacto}`);
   if (cliente.numeroDoc?.trim()) L.push(`Documento: ${cliente.numeroDoc.trim()}`);
+  if (b2b?.modo === "neta" && b2b.facturacion.nombre) {
+    L.push("");
+    L.push(`Facturar a: ${b2b.facturacion.nombre}${b2b.facturacion.nit ? ` · NIT ${b2b.facturacion.nit}` : ""}`);
+    const fc = [b2b.facturacion.telefono, b2b.facturacion.email].map((x) => x?.trim()).filter(Boolean).join(" · ");
+    if (fc) L.push(`   ${fc}`);
+  }
   L.push("");
   let total = 0;
   cotis.forEach((c, i) => {
@@ -80,14 +135,28 @@ function construirMensaje(
     if (c.url) L.push(`   Documento: ${c.url}`);
     L.push("");
   });
-  L.push(`Total estimado: ${formatCOP(total)}`);
+  L.push(`Total (PVP): ${formatCOP(total)}`);
+  if (b2b?.modo === "neta") {
+    const comision = Math.round(total * (b2b.pctComision || 0));
+    L.push(`Comisión (${Math.round((b2b.pctComision || 0) * 100)}%): −${formatCOP(comision)}`);
+    L.push(`TOTAL NETO a pagar: ${formatCOP(total - comision)}`);
+  } else if (b2b?.modo === "comisionable") {
+    const comision = Math.round(total * (b2b.pctComision || 0));
+    L.push(`Comisión a liquidar (${Math.round((b2b.pctComision || 0) * 100)}%): ${formatCOP(comision)}`);
+  }
   if (extra?.trim()) { L.push(""); L.push(extra.trim()); }
   return L.join("\n");
 }
 
 // Genera una cotización por ítem del carrito (un hotel por cotización) y arma los
 // enlaces wa.me + mailto hacia los destinatarios configurados. Público (sin login).
-export async function crearSolicitudReserva(input: { items: SolicitudItem[]; cliente: SolicitudCliente }): Promise<SolicitudResult> {
+export async function crearSolicitudReserva(input: {
+  items: SolicitudItem[];
+  cliente: SolicitudCliente;
+  modo?: "comisionable" | "neta";
+  facturacion?: Facturacion;
+  pctComision?: number;
+}): Promise<SolicitudResult> {
   if (!input.items.length) return { ok: false, error: "El carrito está vacío." };
   if (!`${input.cliente.nombres}${input.cliente.apellidos}`.trim()) return { ok: false, error: "Ingresa tu nombre y apellido." };
   if (!input.cliente.telefono.trim() && !input.cliente.email.trim()) return { ok: false, error: "Ingresa al menos un teléfono o correo de contacto." };
@@ -158,7 +227,10 @@ export async function crearSolicitudReserva(input: { items: SolicitudItem[]; cli
     whatsapp = cfg?.whatsapp ?? null; emails = cfg?.emails ?? null; mensajeExtra = cfg?.mensaje_extra ?? null;
   } catch { /* ignore */ }
 
-  const mensaje = construirMensaje(input.cliente, cotis, mensajeExtra);
+  const b2b = input.modo && input.facturacion
+    ? { modo: input.modo, facturacion: input.facturacion, pctComision: input.pctComision ?? 0 }
+    : undefined;
+  const mensaje = construirMensaje(input.cliente, cotis, mensajeExtra, b2b);
   const wa = (whatsapp ?? "").replace(/\D/g, "");
   const waUrl = wa ? `https://wa.me/${wa}?text=${encodeURIComponent(mensaje)}` : null;
   const correos = (emails ?? "").split(",").map((e) => e.trim()).filter(Boolean).join(",");
