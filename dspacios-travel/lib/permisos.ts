@@ -12,6 +12,7 @@ export const MODULOS: { key: string; label: string }[] = [
   { key: "producto", label: "Producto (netas)" },
   { key: "finanzas", label: "Finanzas" },
   { key: "usuarios", label: "Usuarios" },
+  { key: "b2b", label: "Portal B2B (aprobaciones)" },
   { key: "configuracion", label: "Configuración" },
   { key: "crm", label: "CRM" },
 ];
@@ -47,6 +48,8 @@ function permisoDefault(rol: string, modulo: string): Permiso {
   // Externos: solo el tarifario público; nada del dashboard.
   if (EXTERNOS.includes(rol)) return modulo === "tarifario" ? { consultar: true, modificar: false, eliminar: false } : { ...NADA };
   if (!rol) return { ...NADA };
+  // Aprobaciones B2B: solo roles admin por defecto (otros, solo si se personaliza).
+  if (modulo === "b2b") return { ...NADA };
   // Internos (operaciones, venta, control_vuelo, etc.): ven todo; modifican todo
   // salvo Usuarios/Configuración; no eliminan por defecto.
   const soloConsulta = ["usuarios", "configuracion"].includes(modulo);

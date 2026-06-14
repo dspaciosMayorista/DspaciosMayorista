@@ -213,6 +213,10 @@ export type Database = {
           paquete_armado_id: number | null;
           bloqueo_ref_id: number | null;
           share_token: string;
+          b2b_usuario_id: string | null;
+          modo_compra: string | null;
+          comision_b2b: number | null;
+          comision_estado: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -265,6 +269,10 @@ export type Database = {
           paquete_armado_id?: number | null;
           bloqueo_ref_id?: number | null;
           share_token?: string;
+          b2b_usuario_id?: string | null;
+          modo_compra?: string | null;
+          comision_b2b?: number | null;
+          comision_estado?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1817,6 +1825,22 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["config_sitio"]["Insert"]>;
+        Relationships: [];
+      };
+      b2b_solicitudes: {
+        Row: {
+          id: number; tipo: string; nombre: string; nit: string | null; contacto: string | null;
+          email: string; telefono: string | null; ciudad: string | null; notas: string | null;
+          acepta_notificaciones: boolean; estado: string; usuario_id: string | null;
+          revisado_por: string | null; revisado_at: string | null; created_at: string;
+        };
+        Insert: {
+          id?: number; tipo?: string; nombre: string; nit?: string | null; contacto?: string | null;
+          email: string; telefono?: string | null; ciudad?: string | null; notas?: string | null;
+          acepta_notificaciones?: boolean; estado?: string; usuario_id?: string | null;
+          revisado_por?: string | null; revisado_at?: string | null; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["b2b_solicitudes"]["Insert"]>;
         Relationships: [];
       };
       permisos_rol: {
