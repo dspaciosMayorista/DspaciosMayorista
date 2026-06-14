@@ -151,8 +151,8 @@ export default async function TarifarioPublicoPage() {
                   Ir al panel →
                 </a>
               ) : (
-                <a href="/login" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
-                  Ingresar
+                <a href="/portal/b2b" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                  Portal B2B
                 </a>
               )}
             </div>

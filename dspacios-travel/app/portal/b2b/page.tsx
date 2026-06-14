@@ -79,11 +79,19 @@ export default async function PortalB2BPage() {
     for (const a of abonos ?? []) abonosPorContrato.set(a.numero_contrato, (abonosPorContrato.get(a.numero_contrato) ?? 0) + Number(a.valor_abono ?? 0));
   }
 
+  const { data: cfg } = await sb.from("config_sitio").select("link_pago").eq("id", 1).maybeSingle();
+  const linkPago = cfg?.link_pago ?? null;
+
   return (
     <Shell nombre={nombre}>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-gray-900">Mis contratos</h2>
-        <Link href="/tarifario" className="rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ backgroundColor: "var(--brand-primary)" }}>Cotizar / comprar →</Link>
+        <div className="flex flex-wrap gap-2">
+          {linkPago && (
+            <a href={linkPago} target="_blank" rel="noopener noreferrer" className="rounded-lg border px-4 py-2 text-sm font-semibold" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>💳 Pagar en línea</a>
+          )}
+          <Link href="/tarifario" className="rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ backgroundColor: "var(--brand-primary)" }}>Cotizar / comprar →</Link>
+        </div>
       </div>
       {contratos.length === 0 ? (
         <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-gray-400">Aún no tienes contratos. Empieza en el tarifario.</p>

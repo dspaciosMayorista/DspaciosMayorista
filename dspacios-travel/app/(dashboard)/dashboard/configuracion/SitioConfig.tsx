@@ -7,15 +7,16 @@ import { actualizarConfigSitio } from "./actions";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
-export function SitioConfig({ config }: { config: { video_fondo_url: string | null } | null }) {
+export function SitioConfig({ config }: { config: { video_fondo_url: string | null; link_pago: string | null } | null }) {
   const [url, setUrl] = useState(config?.video_fondo_url ?? "");
+  const [linkPago, setLinkPago] = useState(config?.link_pago ?? "");
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
 
   function guardar() {
     setMsg("");
     start(async () => {
-      const r = await actualizarConfigSitio({ videoFondoUrl: url });
+      const r = await actualizarConfigSitio({ videoFondoUrl: url, linkPago });
       setMsg(r.ok ? "✓ Guardado" : r.error);
     });
   }
@@ -30,6 +31,11 @@ export function SitioConfig({ config }: { config: { video_fondo_url: string | nu
       <div>
         <label className={lbl}>URL de YouTube</label>
         <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://youtu.be/… o https://www.youtube.com/watch?v=…" />
+      </div>
+      <div className="mt-4">
+        <label className={lbl}>Link de pago (Wompi / Bold / Nequi / PayU…)</label>
+        <Input value={linkPago} onChange={(e) => setLinkPago(e.target.value)} placeholder="https://checkout.wompi.co/l/..." />
+        <p className="mt-1 text-[11px] text-gray-400">Pega el enlace de cobro de tu pasarela. Aparecerá como “Pagar en línea” en /pagar y en el Portal B2B.</p>
       </div>
       <div className="mt-3 flex items-center gap-3">
         <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
