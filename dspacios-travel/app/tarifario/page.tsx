@@ -151,9 +151,14 @@ export default async function TarifarioPublicoPage() {
                   Ir al panel →
                 </a>
               ) : (
-                <a href="/portal/b2b" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
-                  Portal B2B
-                </a>
+                <>
+                  <a href="/portal/b2b" className="rounded-lg bg-white px-4 py-2 text-sm font-medium" style={{ color: "var(--brand-primary)" }}>
+                    Portal B2B
+                  </a>
+                  <a href="/login" className="rounded-lg border border-white/60 px-4 py-2 text-sm font-medium text-white hover:bg-white/10">
+                    Portal Admin
+                  </a>
+                </>
               )}
             </div>
             <CartDrawer checkoutHabilitado fotosPorHotel={fotosPorHotel} />
