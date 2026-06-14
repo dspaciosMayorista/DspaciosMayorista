@@ -39,7 +39,7 @@ export default async function ConfiguracionPage() {
     sb.from("config_notificaciones").select("remitente, destinatarios, dias_anticipacion, alerta_cxp, alerta_cuotas, alerta_bloqueos, activo").eq("id", 1).maybeSingle(),
   ]);
 
-  const { data: configSitio } = await sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle();
+  const { data: configSitio } = await sb.from("config_sitio").select("video_fondo_url, link_pago").eq("id", 1).maybeSingle();
 
   const escalasConRangos = (escalas ?? []).map((e) => ({
     id: e.id,

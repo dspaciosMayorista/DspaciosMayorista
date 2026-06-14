@@ -185,10 +185,11 @@ export async function actualizarConfigSolicitudes(input: {
 }
 
 // ── Video de fondo del tarifario (global) ──────────────────────────────────
-export async function actualizarConfigSitio(input: { videoFondoUrl: string }): Promise<Result> {
+export async function actualizarConfigSitio(input: { videoFondoUrl: string; linkPago: string }): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("config_sitio").update({
     video_fondo_url: input.videoFondoUrl.trim() || null,
+    link_pago: input.linkPago.trim() || null,
     updated_at: new Date().toISOString(),
   }).eq("id", 1);
   if (error) return { ok: false, error: error.message };

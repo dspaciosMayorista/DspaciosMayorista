@@ -1817,11 +1817,13 @@ export type Database = {
         Row: {
           id: number;
           video_fondo_url: string | null;
+          link_pago: string | null;
           updated_at: string;
         };
         Insert: {
           id?: number;
           video_fondo_url?: string | null;
+          link_pago?: string | null;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["config_sitio"]["Insert"]>;
