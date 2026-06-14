@@ -115,8 +115,11 @@ export default async function PortalB2BPage() {
                     <td className="px-3 py-2 text-xs text-gray-600">{(c.estado as string) ?? "—"}</td>
                     <td className="px-3 py-2 text-xs text-gray-500">{c.modo_compra === "comisionable" ? "Comisionable" : c.modo_compra === "neta" ? "Neta" : "—"}</td>
                     <td className="px-3 py-2 text-right text-xs tabular-nums">
-                      {com != null ? `${formatMoneda(com, moneda)}` : "—"}
+                      {com != null && com > 0 ? `${formatMoneda(com, moneda)}` : "—"}
                       {c.comision_estado ? <span className="block text-[10px] text-gray-400">{ESTADO_COMISION[c.comision_estado as string] ?? (c.comision_estado as string)}</span> : null}
+                      {c.modo_compra === "comisionable" && com != null && com > 0 && (
+                        <Link href={`/portal/comision/${encodeURIComponent(num)}`} className="block text-[10px] font-medium" style={{ color: "var(--brand-accent)" }}>Cuenta de cobro →</Link>
+                      )}
                     </td>
                   </tr>
                 );
