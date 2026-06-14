@@ -133,10 +133,6 @@ export default async function DashboardLayout({
           <a href="/dashboard" aria-label="D'spacios Travel — inicio">
             <Logo variant="full" height={36} className="h-9 w-auto" priority />
           </a>
-          <div className="mt-2 flex gap-1 text-[11px]">
-            <span className="rounded-full bg-[rgba(29,124,154,0.12)] px-2 py-0.5 font-medium" style={{ color: "var(--brand-primary)" }}>Portal Admin</span>
-            <a href="/portal/b2b" className="rounded-full px-2 py-0.5 text-gray-400 hover:text-gray-700">Portal B2B ↗</a>
-          </div>
         </div>
         <SidebarNav items={nav} />
         <div className="border-t border-gray-100 px-5 py-3">
