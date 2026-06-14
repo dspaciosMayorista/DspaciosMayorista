@@ -3,7 +3,9 @@ import { NextResponse, type NextRequest } from "next/server";
 
 // `/auth` debe ser pública: el callback de OAuth (/auth/callback) corre ANTES de
 // que exista la sesión; si el middleware lo bloquea, el login con Google falla.
-const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/auth"];
+// `/portal` y `/pagar` son públicas: el portal B2B muestra ingresar/registrarse
+// sin sesión, y /pagar es el link de pago.
+const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/auth", "/portal", "/pagar"];
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
