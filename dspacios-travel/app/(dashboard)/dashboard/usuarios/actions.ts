@@ -49,6 +49,18 @@ export async function cambiarRol(id: string, rol: RolUsuario): Promise<Result> {
   return { ok: true };
 }
 
+// Comisión por agencia (%). El superadmin la ajusta por usuario aliado.
+export async function setComisionUsuario(id: string, pct: number): Promise<Result> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
+    return { ok: false, error: "Falta SUPABASE_SERVICE_ROLE_KEY." };
+  const valor = Number.isFinite(pct) && pct >= 0 && pct <= 1 ? pct : null;
+  const admin = createAdminClient();
+  const { error } = await admin.from("usuarios").update({ pct_comision: valor }).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/usuarios");
+  return { ok: true };
+}
+
 export async function cambiarActivo(id: string, activo: boolean): Promise<Result> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
     return { ok: false, error: "Falta SUPABASE_SERVICE_ROLE_KEY." };

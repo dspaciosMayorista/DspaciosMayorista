@@ -24,7 +24,7 @@ export default async function UsuariosPage() {
 
   const { data: usuarios } = await sb
     .from("usuarios")
-    .select("id, email, nombre, rol, activo")
+    .select("id, email, nombre, rol, activo, pct_comision")
     .order("nombre");
 
   return (

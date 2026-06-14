@@ -4,9 +4,9 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ROLES, type Rol } from "@/lib/constants";
-import { crearUsuario, cambiarRol, cambiarActivo } from "./actions";
+import { crearUsuario, cambiarRol, cambiarActivo, setComisionUsuario } from "./actions";
 
-type Usuario = { id: string; email: string; nombre: string; rol: string; activo: boolean };
+type Usuario = { id: string; email: string; nombre: string; rol: string; activo: boolean; pct_comision: number | null };
 
 export function UsuariosClient({ usuarios }: { usuarios: Usuario[] }) {
   const [email, setEmail] = useState("");
@@ -51,7 +51,7 @@ export function UsuariosClient({ usuarios }: { usuarios: Usuario[] }) {
           <table className="w-full min-w-[560px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Nombre</th><th className="px-4 py-2">Email</th>
-              <th className="px-4 py-2">Rol</th><th className="px-4 py-2">Estado</th>
+              <th className="px-4 py-2">Rol</th><th className="px-4 py-2">Comisión</th><th className="px-4 py-2">Estado</th>
             </tr></thead>
             <tbody>{usuarios.map((u) => <UsuarioRow key={u.id} u={u} />)}</tbody>
           </table>
@@ -63,6 +63,8 @@ export function UsuariosClient({ usuarios }: { usuarios: Usuario[] }) {
 
 function UsuarioRow({ u }: { u: Usuario }) {
   const [pending, start] = useTransition();
+  const esB2B = u.rol === "agencia" || u.rol === "freelance";
+  const pctDefault = u.pct_comision != null ? Math.round(u.pct_comision * 1000) / 10 : (u.rol === "agencia" ? 12 : u.rol === "freelance" ? 11 : 0);
   return (
     <tr className="border-t border-gray-50">
       <td className="px-4 py-2 text-gray-700">{u.nombre}</td>
@@ -73,6 +75,16 @@ function UsuarioRow({ u }: { u: Usuario }) {
           className="rounded border border-gray-300 bg-white px-2 py-1 text-xs">
           {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
+      </td>
+      <td className="px-4 py-2">
+        {esB2B ? (
+          <div className="flex items-center gap-1">
+            <input type="number" step="0.5" min={0} max={100} defaultValue={pctDefault} disabled={pending}
+              onBlur={(e) => start(() => { void setComisionUsuario(u.id, (Number(e.target.value) || 0) / 100); })}
+              className="w-16 rounded border border-gray-300 bg-white px-2 py-1 text-xs" />
+            <span className="text-xs text-gray-400">%</span>
+          </div>
+        ) : <span className="text-xs text-gray-300">—</span>}
       </td>
       <td className="px-4 py-2">
         <button type="button" disabled={pending}

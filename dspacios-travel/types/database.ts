@@ -23,6 +23,7 @@ export type Database = {
           escala_id: number | null;
           aplica_retencion: boolean;
           agencia_id: string | null;
+          pct_comision: number | null;
         };
         Insert: {
           id?: string;
@@ -34,6 +35,7 @@ export type Database = {
           escala_id?: number | null;
           aplica_retencion?: boolean;
           agencia_id?: string | null;
+          pct_comision?: number | null;
         };
         Update: {
           id?: string;
@@ -43,6 +45,7 @@ export type Database = {
           activo?: boolean;
           fecha_registro?: string;
           agencia_id?: string | null;
+          pct_comision?: number | null;
         };
         Relationships: [];
       };

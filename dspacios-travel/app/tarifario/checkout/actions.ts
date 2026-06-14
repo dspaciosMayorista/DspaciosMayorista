@@ -44,7 +44,7 @@ export async function getContextoB2B(): Promise<ContextoB2B> {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { esB2B: false, tipo: null, agencia: null, pctComision: 0 };
-  const { data: perfil } = await sb.from("usuarios").select("nombre, email, rol, agencia_id").eq("id", user.id).maybeSingle();
+  const { data: perfil } = await sb.from("usuarios").select("nombre, email, rol, agencia_id, pct_comision").eq("id", user.id).maybeSingle();
   const rol = perfil?.rol ?? null;
   if (rol !== "agencia" && rol !== "freelance") return { esB2B: false, tipo: null, agencia: null, pctComision: 0 };
 
@@ -52,7 +52,7 @@ export async function getContextoB2B(): Promise<ContextoB2B> {
   const agenciaUserId = perfil?.agencia_id ?? user.id;
   let agenciaPerfil = perfil;
   if (perfil?.agencia_id) {
-    const { data: ap } = await sb.from("usuarios").select("nombre, email, rol").eq("id", perfil.agencia_id).maybeSingle();
+    const { data: ap } = await sb.from("usuarios").select("nombre, email, rol, pct_comision").eq("id", perfil.agencia_id).maybeSingle();
     if (ap) agenciaPerfil = { ...ap, agencia_id: null };
   }
 
@@ -70,16 +70,8 @@ export async function getContextoB2B(): Promise<ContextoB2B> {
     telefono: sol?.telefono ?? "",
   };
 
-  let pct: number | null = null;
-  if (agencia.nombre) {
-    const { data: al } = await sb.from("aliados").select("pct_comision").eq("nombre", agencia.nombre).maybeSingle();
-    pct = al?.pct_comision ?? null;
-  }
-  if (pct == null) {
-    const defParam = rol === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
-    const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
-    pct = Number(p?.valor) || (rol === "agencia" ? 0.12 : 0.11);
-  }
+  // Comisión POR AGENCIA: el % vive en el usuario (la agencia titular).
+  const pct = agenciaPerfil?.pct_comision ?? (rol === "agencia" ? 0.12 : 0.11);
   return { esB2B: true, tipo: rol, agencia, pctComision: pct };
 }
 
