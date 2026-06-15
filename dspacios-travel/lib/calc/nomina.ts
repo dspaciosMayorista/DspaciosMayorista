@@ -23,6 +23,11 @@ export const ARL = {
 } as const;
 export type ClaseRiesgo = keyof typeof ARL;
 
+// Exoneración de aportes (Art. 114-1 E.T., Ley 1819/2016): los empleadores
+// DECLARANTES de renta (sociedades) no pagan Salud (8.5%) + SENA (2%) + ICBF (3%)
+// por los empleados que ganen MENOS de 10 SMMLV. Caja (4%), pensión y ARL siempre.
+export const UMBRAL_EXONERACION = 10 * SMMLV;
+
 export type LiquidacionEmpleado = {
   salario: number;
   auxilio: number;
@@ -33,6 +38,7 @@ export type LiquidacionEmpleado = {
   parafiscales: number;      // SENA + ICBF + caja
   prestaciones: number;      // prima + cesantías + intereses + vacaciones
   costoTotalMensual: number; // salario + auxilio + todo lo anterior
+  exonerado: boolean;        // si se aplicó la exoneración (salud/SENA/ICBF en 0)
 };
 
 // El auxilio de transporte (por ley) aplica a salarios ≤ 2 SMMLV; el check del
@@ -50,17 +56,21 @@ export function aplicaAuxilio(salario: number): boolean {
 export function liquidarEmpleadoContrato(
   salario: number,
   conAuxilio: boolean,
-  riesgo: ClaseRiesgo = "I"
+  riesgo: ClaseRiesgo = "I",
+  empresaDeclarante = false
 ): LiquidacionEmpleado {
   const s = Math.max(0, Number(salario) || 0);
   const auxilio = conAuxilio ? SUBSIDIO_TRANSPORTE : 0;
   const baseP = s + auxilio;
 
-  const salud = s * TASAS_NOMINA.salud;
+  // Exoneración: declarante de renta + salario < 10 SMMLV → no salud/SENA/ICBF.
+  const exonerado = empresaDeclarante && s > 0 && s < UMBRAL_EXONERACION;
+
+  const salud = exonerado ? 0 : s * TASAS_NOMINA.salud;
   const pension = s * TASAS_NOMINA.pension;
   const arl = s * ARL[riesgo];
-  const sena = s * TASAS_NOMINA.sena;
-  const icbf = s * TASAS_NOMINA.icbf;
+  const sena = exonerado ? 0 : s * TASAS_NOMINA.sena;
+  const icbf = exonerado ? 0 : s * TASAS_NOMINA.icbf;
   const caja = s * TASAS_NOMINA.caja;
   const prima = baseP * TASAS_NOMINA.prima;
   const cesantias = baseP * TASAS_NOMINA.cesantias;
@@ -78,5 +88,6 @@ export function liquidarEmpleadoContrato(
     prima: r(prima), cesantias: r(cesantias), interesesCesantias: r(interesesCesantias), vacaciones: r(vacaciones),
     seguridadSocial: r(seguridadSocial), parafiscales: r(parafiscales), prestaciones: r(prestaciones),
     costoTotalMensual: r(s + auxilio + seguridadSocial + parafiscales + prestaciones),
+    exonerado,
   };
 }

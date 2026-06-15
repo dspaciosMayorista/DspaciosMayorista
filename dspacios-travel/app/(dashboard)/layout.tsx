@@ -59,6 +59,7 @@ const NAV: NavItem[] = [
     modulo: "finanzas",
     children: [
       { href: "/dashboard/rentabilidad", label: "Rentabilidad" },
+      { href: "/dashboard/flujo-caja", label: "Flujo de caja" },
       { href: "/dashboard/punto-equilibrio", label: "Punto de equilibrio" },
       { href: "/dashboard/cartera", label: "Cartera (por cobrar)" },
       { href: "/dashboard/pagos", label: "Pagos a proveedores" },

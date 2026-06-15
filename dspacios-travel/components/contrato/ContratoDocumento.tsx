@@ -164,7 +164,7 @@ export function ContratoDocumento({
                 >
                   <div className="flex items-center gap-2 font-semibold text-gray-700">
                     <span>✈</span> {v.aerolinea ?? "—"}
-                    {v.record && <span className="font-mono text-xs font-normal text-gray-500">· {v.record}</span>}
+                    {/* El record/PNR es interno: NO se muestra al cliente. */}
                   </div>
                   <div className="mt-1 text-xs text-gray-600">
                     Origen: {origen}

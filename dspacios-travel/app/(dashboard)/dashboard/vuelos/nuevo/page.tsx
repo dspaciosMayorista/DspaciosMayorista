@@ -8,7 +8,7 @@ export default async function NuevoBloqueoPage() {
   const sb = await createClient();
   const [{ data: proveedores }, { data: destinos }, { data: rangos }] = await Promise.all([
     sb.from("proveedores").select("id, nombre").eq("tipo", "aereo").order("nombre"),
-    sb.from("destinos").select("id, nombre").order("nombre"),
+    sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
   ]);
   return (

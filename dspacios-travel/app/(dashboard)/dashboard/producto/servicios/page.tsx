@@ -23,7 +23,7 @@ export default async function ServiciosPage() {
   const [{ data: serviciosRaw }, { data: proveedores }, { data: destinos }, { data: rangos }] = await Promise.all([
     sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, rangos_edad, categoria, liquidacion, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio)").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "servicios").order("nombre"),
-    sb.from("destinos").select("id, nombre").order("nombre"),
+    sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
   ]);
   const servicios = (serviciosRaw ?? []) as unknown as Parameters<typeof ServiciosClient>[0]["servicios"];

@@ -471,7 +471,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       const costoTiquete = Number(b.tarifa_para_empaquetar) || 0;
       const aporteVueloVal = aporteVuelo(costoTiquete, aplica_mk, pctMk, ta);
       const impuesto = pq.impuesto_tipo === "tiquete" ? costoTiquete : Number(pq.impuesto_fijo) || 0;
-      const label = [b.record, b.ruta].filter(Boolean).join(" · ") || b.record || "";
+      // Etiqueta pública del vuelo: solo la ruta (el record/PNR es interno y
+      // NO debe aparecer en el tarifario que ven clientes B2C/B2B).
+      const label = b.ruta || "";
       filasHoteles(b.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", b.id, label, b.fecha_regreso);
     }
   } else if (tipo === "porcion_terrestre" && pq.fecha_viaje_inicio) {

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { crearHotel } from "./actions";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
+import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 
 type Opt = { id: number; nombre: string };
 type Regimen = { id: number; codigo: string; nombre: string };
@@ -16,7 +17,7 @@ const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text
 
 export function NuevoHotelForm({
   destinos, proveedores, categorias, regimenes, rangos = [],
-}: { destinos: Opt[]; proveedores: Opt[]; categorias: Opt[]; regimenes: Regimen[]; rangos?: RangoEdad[] }) {
+}: { destinos: DestinoOpt[]; proveedores: Opt[]; categorias: Opt[]; regimenes: Regimen[]; rangos?: RangoEdad[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -63,10 +64,7 @@ export function NuevoHotelForm({
           <div><label className={lbl}>Zona / ubicación</label><Input value={zona} onChange={(e) => setZona(e.target.value)} placeholder="Crespo" /></div>
           <div>
             <label className={lbl}>Destino *</label>
-            <select value={destinoId} onChange={(e) => setDestinoId(Number(e.target.value) || "")} className={selCls}>
-              <option value="">Selecciona destino</option>
-              {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-            </select>
+            <ComboDestino destinos={destinos} value={destinoId} onChange={setDestinoId} placeholder="Selecciona destino…" />
           </div>
           <div>
             <label className={lbl}>Proveedor hotelero</label>

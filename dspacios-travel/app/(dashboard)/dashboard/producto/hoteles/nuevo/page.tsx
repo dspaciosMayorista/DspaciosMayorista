@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export default async function NuevoHotelPage() {
   const sb = await createClient();
   const [{ data: destinos }, { data: proveedores }, { data: categorias }, { data: regimenes }, { data: rangos }] = await Promise.all([
-    sb.from("destinos").select("id, nombre").order("nombre"),
+    sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "hotelero").order("nombre"),
     sb.from("categorias_habitacion").select("id, nombre").order("nombre"),
     sb.from("planes_alimentacion").select("id, codigo, nombre").order("codigo"),

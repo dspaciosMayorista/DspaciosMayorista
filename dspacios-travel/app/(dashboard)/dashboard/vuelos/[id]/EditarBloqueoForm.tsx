@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
+import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { actualizarBloqueo } from "../actions";
 
 type Opt = { id: number; nombre: string };
@@ -21,7 +22,7 @@ export function EditarBloqueoForm({
     vueloRegreso: string; fechaRegreso: string; horaSalidaReg: string; horaLlegadaReg: string;
     tarifaNeta: number; tarifaParaEmpaquetar: number; fechaDevolucion: string; fechaEmision: string; notas: string; rangosEdad: number[];
   };
-  proveedores: Opt[]; destinos: Opt[]; rangos: RangoEdad[];
+  proveedores: Opt[]; destinos: DestinoOpt[]; rangos: RangoEdad[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -69,10 +70,7 @@ export function EditarBloqueoForm({
             <div><label className={lbl}>Origen</label><Input value={f.origen} onChange={set("origen")} placeholder="Ej. BOG · MDE" /></div>
             <div>
               <label className={lbl}>Destino</label>
-              <select value={destinoId} onChange={(e) => setDestinoId(Number(e.target.value) || "")} className={selCls}>
-                <option value="">—</option>
-                {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-              </select>
+              <ComboDestino destinos={destinos} value={destinoId} onChange={setDestinoId} />
             </div>
             <div><label className={lbl}>Ruta</label><Input value={f.ruta} onChange={set("ruta")} placeholder="Ej. BOG - CTG - BOG" /></div>
             <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} /></div>
