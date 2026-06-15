@@ -194,7 +194,7 @@ export function VistaBooking({
   }, [filas]);
 
   const SUBTABS = [
-    { key: "bloqueo", label: "Bloqueos" },
+    { key: "bloqueo", label: "Paquetes" },
     { key: "porcion_terrestre", label: "Porción terrestre" },
     { key: "receptivos", label: "Receptivos" },
   ] as const;
@@ -227,7 +227,7 @@ export function VistaBooking({
       {/* Buscador de BLOQUEOS: origen → destino → salida (vuelo) */}
       {sub === "bloqueo" && (
         <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
-          <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Buscar vuelo + hotel (bloqueo)</p>
+          <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Buscar vuelo + hotel (paquete)</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600">Origen</label>

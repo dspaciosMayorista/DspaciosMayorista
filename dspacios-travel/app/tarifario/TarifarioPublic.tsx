@@ -45,7 +45,7 @@ export type FilaTarifario = {
 };
 
 const MODULOS: { key: FilaTarifario["modulo"]; label: string }[] = [
-  { key: "bloqueo", label: "Bloqueos" },
+  { key: "bloqueo", label: "Paquetes" },
   { key: "porcion_terrestre", label: "Porción terrestre" },
   { key: "servicios", label: "Servicios" },
 ];
