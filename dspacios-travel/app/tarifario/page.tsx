@@ -46,13 +46,22 @@ export default async function TarifarioPublicoPage() {
   // Cupos disponibles por bloqueo (para mostrar y ocultar salidas sin cupos).
   // Se lee con service-role porque el tarifario es público (anónimo).
   const cuposPorBloqueo: Record<number, number> = {};
+  const origenPorBloqueo: Record<number, string> = {};
   const bloqueoIds = [...new Set(
     filas.filter((f) => f.modulo === "bloqueo" && f.bloqueo_id != null).map((f) => f.bloqueo_id as number)
   )];
   if (bloqueoIds.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const admin = createAdminClient();
-    const { data: cup } = await admin.from("cupos_por_bloqueo").select("id, cupos_disponibles").in("id", bloqueoIds);
+    const [{ data: cup }, { data: blo }] = await Promise.all([
+      admin.from("cupos_por_bloqueo").select("id, cupos_disponibles").in("id", bloqueoIds),
+      admin.from("bloqueos_vuelo").select("id, origen, ruta").in("id", bloqueoIds),
+    ]);
     for (const c of cup ?? []) cuposPorBloqueo[c.id as number] = Number(c.cupos_disponibles) || 0;
+    for (const b of blo ?? []) {
+      // Origen: el configurado, o el 1er tramo de la ruta "MDE - SMR - MDE".
+      const ori = (b.origen ?? "").trim() || (b.ruta ? b.ruta.split("-")[0].trim() : "");
+      if (ori) origenPorBloqueo[b.id as number] = ori.toUpperCase();
+    }
   }
 
   // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
@@ -170,7 +179,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} />
         )}
       </main>
     </div>
