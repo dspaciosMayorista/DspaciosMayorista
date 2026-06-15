@@ -46,6 +46,8 @@ type Opcion = {
   bloqueoId: number | null;
   label: string;
   destino: string | null;
+  origen: string | null;
+  cupos: number | null;
   fechaIda: string | null;
   fechaRegreso: string | null;
   noches: number | null;
@@ -86,6 +88,7 @@ export function VistaBooking({
   filas,
   fotosPorHotel = {},
   cuposPorBloqueo = {},
+  origenPorBloqueo = {},
   puedeReservar = false,
   ventanaPorPaquete = {},
   infoPorHotel = {},
@@ -95,6 +98,7 @@ export function VistaBooking({
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
+  origenPorBloqueo?: Record<number, string>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null }>;
@@ -103,13 +107,33 @@ export function VistaBooking({
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
+  const [origenSel, setOrigenSel] = useState("");
+
+  // Orígenes disponibles en bloqueo (con cupos > 0) para el filtro.
+  const origenes = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of filas) {
+      if (f.modulo !== "bloqueo" || f.bloqueo_id == null) continue;
+      const c = cuposPorBloqueo[f.bloqueo_id];
+      if (c !== undefined && c <= 0) continue;
+      const o = origenPorBloqueo[f.bloqueo_id];
+      if (o) set.add(o);
+    }
+    return [...set].sort();
+  }, [filas, cuposPorBloqueo, origenPorBloqueo]);
 
   // Tarjetas de hotel del submódulo activo (bloqueo o porción).
   const hoteles = useMemo<HotelCard[]>(() => {
     const mod = sub === "receptivos" ? null : sub;
-    const conHotel = filas.filter(
-      (f) => mod != null && f.modulo === mod && f.hotel_id != null
-    );
+    const conHotel = filas.filter((f) => {
+      if (mod == null || f.modulo !== mod || f.hotel_id == null) return false;
+      if (mod === "bloqueo" && f.bloqueo_id != null) {
+        const c = cuposPorBloqueo[f.bloqueo_id];
+        if (c !== undefined && c <= 0) return false; // sin cupos: no se muestra
+        if (origenSel && origenPorBloqueo[f.bloqueo_id] !== origenSel) return false;
+      }
+      return true;
+    });
     const map = new Map<number, HotelCard>();
     for (const f of conHotel) {
       const id = f.hotel_id as number;
@@ -130,7 +154,7 @@ export function VistaBooking({
     const arr = [...map.values()];
     for (const c of arr) c.desde = minRoomPvp(c.filas);
     return arr.sort((a, b) => a.hotelNombre.localeCompare(b.hotelNombre));
-  }, [filas, fotosPorHotel, infoPorHotel, sub]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
 
@@ -177,6 +201,25 @@ export function VistaBooking({
           </button>
         ))}
       </div>
+
+      {/* Filtro de Origen (solo bloqueo, cuando hay varias ciudades de origen) */}
+      {sub === "bloqueo" && origenes.length > 1 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-gray-500">Origen:</span>
+          <button type="button" onClick={() => setOrigenSel("")}
+            className="rounded-full border px-3 py-1 text-xs font-medium transition-all"
+            style={origenSel === "" ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" } : { borderColor: "#e5e7eb", color: "#6b7280" }}>
+            Todos
+          </button>
+          {origenes.map((o) => (
+            <button key={o} type="button" onClick={() => setOrigenSel(o)}
+              className="rounded-full border px-3 py-1 text-xs font-medium transition-all"
+              style={origenSel === o ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" } : { borderColor: "#e5e7eb", color: "#6b7280" }}>
+              {o}
+            </button>
+          ))}
+        </div>
+      )}
 
       {sub === "receptivos" ? (
         receptivos.length === 0 ? (
@@ -245,7 +288,7 @@ export function VistaBooking({
       )}
 
       {abierto && (
-        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onClose={() => setAbierto(null)} />
+        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onClose={() => setAbierto(null)} />
       )}
     </div>
   );
@@ -254,9 +297,9 @@ export function VistaBooking({
 // ── Modal de detalle: elige opción (salida/paquete), categoría/régimen y
 //    habitaciones; calcula el precio y agrega al carrito ─────────────────────
 function HotelModal({
-  hotel, cuposPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, onClose,
+  hotel, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, onClose,
 }: {
-  hotel: HotelCard; cuposPorBloqueo: Record<number, number>; puedeReservar: boolean;
+  hotel: HotelCard; cuposPorBloqueo: Record<number, number>; origenPorBloqueo: Record<number, string>; puedeReservar: boolean;
   ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }; onClose: () => void;
 }) {
@@ -280,6 +323,8 @@ function HotelModal({
           bloqueoId: f.bloqueo_id ?? null,
           label: f.modulo === "bloqueo" ? (f.bloqueo_label ?? "Salida") : (f.paquete_nombre ?? "Paquete"),
           destino: f.destino_nombre,
+          origen: f.modulo === "bloqueo" && f.bloqueo_id != null ? (origenPorBloqueo[f.bloqueo_id] ?? null) : null,
+          cupos: f.modulo === "bloqueo" && f.bloqueo_id != null ? (cuposPorBloqueo[f.bloqueo_id] ?? null) : null,
           fechaIda: f.fecha_ida,
           fechaRegreso: f.fecha_regreso,
           noches: f.noches,
@@ -290,7 +335,7 @@ function HotelModal({
       o.filas.push(f);
     }
     return [...map.values()];
-  }, [hotel, cuposPorBloqueo]);
+  }, [hotel, cuposPorBloqueo, origenPorBloqueo]);
 
   const [opKey, setOpKey] = useState(opciones[0]?.key ?? "");
   const opcion = opciones.find((o) => o.key === opKey) ?? opciones[0];
@@ -364,13 +409,26 @@ function HotelModal({
                           : { borderColor: "#e5e7eb", backgroundColor: "white" }}
                       >
                         <span className="block font-medium text-gray-800">{o.label}</span>
+                        {o.origen && <span className="block text-[11px] text-gray-500">Origen: {o.origen}{o.destino ? ` → ${o.destino}` : ""}</span>}
                         <span className="block text-xs text-gray-500">
                           {o.fechaIda ? `${fmtFecha(o.fechaIda)} → ${fmtFecha(o.fechaRegreso)}` : ""}{o.noches ? ` · ${o.noches}N` : ""}
                         </span>
+                        {o.cupos != null && (
+                          <span className="mt-0.5 block text-[11px] font-medium" style={{ color: o.cupos > 0 ? "var(--brand-success)" : "#C0392B" }}>
+                            {o.cupos} cupo{o.cupos === 1 ? "" : "s"} disponible{o.cupos === 1 ? "" : "s"}
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
                 </div>
+              )}
+
+              {opcion.modulo === "bloqueo" && opcion.cupos != null && (
+                <p className="text-xs text-gray-500">
+                  {opcion.origen ? <>Origen <b>{opcion.origen}</b>{opcion.destino ? <> → <b>{opcion.destino}</b></> : null} · </> : null}
+                  <b style={{ color: opcion.cupos > 0 ? "var(--brand-success)" : "#C0392B" }}>{opcion.cupos} cupo{opcion.cupos === 1 ? "" : "s"} disponible{opcion.cupos === 1 ? "" : "s"}</b>
+                </p>
               )}
 
               {opcion.modulo === "porcion_terrestre" ? (
