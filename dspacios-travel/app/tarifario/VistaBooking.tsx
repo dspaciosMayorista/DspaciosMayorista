@@ -101,10 +101,14 @@ export function VistaBooking({
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
 }) {
-  // Solo módulos con hotel (bloqueo + porción). Servicios/programas viven en la tabla.
+  // Submódulos de la vista Booking.
+  const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
+
+  // Tarjetas de hotel del submódulo activo (bloqueo o porción).
   const hoteles = useMemo<HotelCard[]>(() => {
+    const mod = sub === "receptivos" ? null : sub;
     const conHotel = filas.filter(
-      (f) => (f.modulo === "bloqueo" || f.modulo === "porcion_terrestre") && f.hotel_id != null
+      (f) => mod != null && f.modulo === mod && f.hotel_id != null
     );
     const map = new Map<number, HotelCard>();
     for (const f of conHotel) {
@@ -126,9 +130,28 @@ export function VistaBooking({
     const arr = [...map.values()];
     for (const c of arr) c.desde = minRoomPvp(c.filas);
     return arr.sort((a, b) => a.hotelNombre.localeCompare(b.hotelNombre));
-  }, [filas, fotosPorHotel, infoPorHotel]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
+
+  // Receptivos (servicios) para su submódulo: agrupados por nombre con su "desde".
+  const receptivos = useMemo(() => {
+    const map = new Map<string, { nombre: string; destino: string | null; desde: number }>();
+    for (const f of filas.filter((f) => f.modulo === "servicios" && f.servicio_nombre)) {
+      const k = `${f.servicio_nombre}|${f.destino_nombre ?? ""}`;
+      const prev = map.get(k);
+      const p = f.precio_pvp ?? 0;
+      if (!prev) map.set(k, { nombre: f.servicio_nombre as string, destino: f.destino_nombre, desde: p });
+      else if (p > 0 && p < prev.desde) prev.desde = p;
+    }
+    return [...map.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
+  }, [filas]);
+
+  const SUBTABS = [
+    { key: "bloqueo", label: "Bloqueos" },
+    { key: "porcion_terrestre", label: "Porción terrestre" },
+    { key: "receptivos", label: "Receptivos" },
+  ] as const;
 
   // Destinos disponibles (porción) para el filtro del mini-motor.
   const destinos = useMemo(
@@ -138,6 +161,41 @@ export function VistaBooking({
 
   return (
     <div>
+      {/* Submódulos: Bloqueos · Porción terrestre · Receptivos */}
+      <div className="mb-5 flex flex-wrap gap-2">
+        {SUBTABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setSub(t.key)}
+            className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
+            style={sub === t.key
+              ? { backgroundColor: "var(--brand-primary)", color: "white" }
+              : { backgroundColor: "white", color: "#4b5563", border: "1px solid #e5e7eb" }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {sub === "receptivos" ? (
+        receptivos.length === 0 ? (
+          <p className="py-12 text-center text-sm text-gray-400">No hay receptivos publicados.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {receptivos.map((r, i) => (
+              <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4">
+                <div className="font-semibold text-gray-800">{r.nombre}</div>
+                {r.destino && <div className="text-xs text-gray-500">{r.destino}</div>}
+                <div className="mt-3 text-[10px] uppercase tracking-wide text-gray-400">desde</div>
+                <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(r.desde)}</div>
+                <div className="text-[10px] text-gray-400">por persona</div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : (
+      <>
       {/* Mini-motor: buscar por fechas + composición de habitaciones */}
       <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} destinos={destinos} />
 
@@ -183,6 +241,8 @@ export function VistaBooking({
           </button>
         ))}
       </div>
+      </>
+      )}
 
       {abierto && (
         <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onClose={() => setAbierto(null)} />
