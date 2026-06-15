@@ -26,7 +26,9 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     .from("bloqueos_vuelo")
     .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, destino_id")
     .order("fecha_ida");
-  if (destinoId) qVuelos = qVuelos.or(`destino_id.eq.${destinoId},destino_id.is.null`);
+  // Un vuelo SIEMPRE pertenece a un destino: filtro estricto (los que no tienen
+  // destino asignado no se mezclan en paquetes de otro destino).
+  if (destinoId) qVuelos = qVuelos.eq("destino_id", destinoId);
   if (viajeIni) qVuelos = qVuelos.gte("fecha_ida", viajeIni);
   if (viajeFin) qVuelos = qVuelos.lte("fecha_ida", viajeFin);
 
@@ -49,7 +51,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     { data: selHoteles },
     { data: selServicios },
   ] = await Promise.all([
-    sb.from("destinos").select("id, nombre").order("nombre"),
+    sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     qVuelos,
     qHoteles,
     qServicios,

@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { crearPaquete, actualizarPaquete, type PaqueteConfig } from "./actions";
+import { ComboDestino } from "@/components/ComboDestino";
 
-type Opt = { id: number; nombre: string };
+type Opt = { id: number; nombre: string; codigo_iata?: string | null };
 
 type Tipo = "bloqueo" | "porcion_terrestre" | "servicios";
 type Initial = Partial<{
@@ -112,13 +113,8 @@ export function ConfigForm({
 
         <div>
           <label className={lbl}>Destino</label>
-          <select value={destinoId} onChange={(e) => setDestinoId(Number(e.target.value) || "")} className={sel}>
-            <option value="">— Elige destino —</option>
-            {destinos.map((d) => (
-              <option key={d.id} value={d.id}>{d.nombre}</option>
-            ))}
-          </select>
-          <p className="mt-1 text-[11px] text-gray-400">Filtra los vuelos, hoteles y servicios disponibles.</p>
+          <ComboDestino destinos={destinos} value={destinoId} onChange={setDestinoId} />
+          <p className="mt-1 text-[11px] text-gray-400">Escribe el nombre o el IATA y elígelo. Filtra los vuelos, hoteles y servicios disponibles.</p>
         </div>
 
         <div className="flex items-end gap-2">

@@ -11,7 +11,7 @@ import {
   getTarifasHotel, setHotelFiltros, type TarifaHotelPreview,
 } from "../actions";
 
-type Opt = { id: number; nombre: string };
+type Opt = { id: number; nombre: string; codigo_iata?: string | null };
 type Vuelo = {
   id: number; record: string | null; ruta: string | null; aerolinea: string | null;
   fecha_ida: string | null; fecha_regreso: string | null; tarifa_para_empaquetar: number; destino_id: number | null;

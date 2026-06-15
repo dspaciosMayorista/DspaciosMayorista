@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function NuevoPaquetePage() {
   const sb = await createClient();
-  const { data: destinos } = await sb.from("destinos").select("id, nombre").order("nombre");
+  const { data: destinos } = await sb.from("destinos").select("id, nombre, codigo_iata").order("nombre");
 
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
