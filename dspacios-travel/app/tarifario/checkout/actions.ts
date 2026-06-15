@@ -163,8 +163,9 @@ export async function crearSolicitudReserva(input: {
   pctComision?: number;
 }): Promise<SolicitudResult> {
   if (!input.items.length) return { ok: false, error: "El carrito está vacío." };
-  if (!`${input.cliente.nombres}${input.cliente.apellidos}`.trim()) return { ok: false, error: "Ingresa tu nombre y apellido." };
-  if (!input.cliente.telefono.trim() && !input.cliente.email.trim()) return { ok: false, error: "Ingresa al menos un teléfono o correo de contacto." };
+  if (!`${input.cliente.nombres}${input.cliente.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
+  if (!input.cliente.numeroDoc.trim()) return { ok: false, error: "El documento es obligatorio." };
+  if (!input.cliente.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
 
   const sb = await createClient();
 
