@@ -33,7 +33,7 @@ export default async function BloqueoDetallePage({
     sb.from("bloqueos_vuelo").select("*").eq("id", bloqueoId).single(),
     sb.from("sillas").select("id, numero_silla, estado, numero_contrato, pasajero_nombres, pasajero_apellidos, tipo_doc, numero_doc, nacimiento, asesor, hotel, acomodacion, plazo").eq("bloqueo_id", bloqueoId).order("numero_silla"),
     sb.from("bloqueos_vuelo").select("id, record, fecha_ida").neq("id", bloqueoId).order("fecha_ida"),
-    sb.from("destinos").select("id, nombre").order("nombre"),
+    sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "aereo").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("bloqueo_cambios").select("id, fecha, detalle, nota, registrado_por").eq("bloqueo_id", bloqueoId).order("fecha", { ascending: false }),

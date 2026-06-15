@@ -7,6 +7,7 @@ import { formatCOP } from "@/lib/utils";
 import { crearServicio, actualizarServicio, eliminarServicio, type ServicioInput, type TierPax } from "./actions";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { Paginador } from "@/components/Paginador";
+import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 
 type Opt = { id: number; nombre: string };
 type Tier = { pax_desde: number; pax_hasta: number; precio: number };
@@ -31,7 +32,7 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 type TierForm = { paxDesde: string; paxHasta: string; precio: string };
 const tierVacio = (): TierForm => ({ paxDesde: "1", paxHasta: "4", precio: "" });
 
-export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { servicios: Servicio[]; proveedores: Opt[]; destinos: Opt[]; rangos: RangoEdad[] }) {
+export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { servicios: Servicio[]; proveedores: Opt[]; destinos: DestinoOpt[]; rangos: RangoEdad[] }) {
   const [nombre, setNombre] = useState("");
   const [provId, setProvId] = useState<number | "">("");
   const [destId, setDestId] = useState<number | "">("");
@@ -113,10 +114,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
           </div>
           <div>
             <label className={lbl}>Destino</label>
-            <select value={destId} onChange={(e) => setDestId(Number(e.target.value) || "")} className={sel}>
-              <option value="">Todos los destinos (nacional)</option>
-              {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-            </select>
+            <ComboDestino destinos={destinos} value={destId} onChange={setDestId} placeholder="Todos los destinos (nacional)…" />
           </div>
           <div><label className={lbl}>Precio por persona</label><Input type="number" min={0} value={pPersona} onChange={(e) => setPPersona(e.target.value)} placeholder="—" /></div>
           <div><label className={lbl}>Temporada (opcional)</label><Input value={temp} onChange={(e) => setTemp(e.target.value)} /></div>
