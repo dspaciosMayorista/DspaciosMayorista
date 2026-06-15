@@ -107,20 +107,40 @@ export function VistaBooking({
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
+  // Buscador de bloqueos: origen → destino → salida (vuelo).
   const [origenSel, setOrigenSel] = useState("");
+  const [destinoSel, setDestinoSel] = useState("");
+  const [salidaSel, setSalidaSel] = useState<number | "">("");
 
-  // Orígenes disponibles en bloqueo (con cupos > 0) para el filtro.
-  const origenes = useMemo(() => {
-    const set = new Set<string>();
+  // Salidas (bloqueos) con cupos > 0, con su origen/destino/fechas/cupos.
+  const salidasBloqueo = useMemo(() => {
+    const map = new Map<number, { id: number; origen: string; destino: string; label: string; fechaIda: string | null; fechaRegreso: string | null; noches: number | null; cupos: number }>();
     for (const f of filas) {
       if (f.modulo !== "bloqueo" || f.bloqueo_id == null) continue;
-      const c = cuposPorBloqueo[f.bloqueo_id];
-      if (c !== undefined && c <= 0) continue;
-      const o = origenPorBloqueo[f.bloqueo_id];
-      if (o) set.add(o);
+      const cupos = cuposPorBloqueo[f.bloqueo_id];
+      if (cupos !== undefined && cupos <= 0) continue;
+      if (map.has(f.bloqueo_id)) continue;
+      map.set(f.bloqueo_id, {
+        id: f.bloqueo_id,
+        origen: origenPorBloqueo[f.bloqueo_id] ?? "",
+        destino: f.destino_nombre ?? "",
+        label: f.bloqueo_label ?? "Salida",
+        fechaIda: f.fecha_ida, fechaRegreso: f.fecha_regreso, noches: f.noches,
+        cupos: cupos ?? 0,
+      });
     }
-    return [...set].sort();
+    return [...map.values()];
   }, [filas, cuposPorBloqueo, origenPorBloqueo]);
+
+  const origenes = useMemo(() => [...new Set(salidasBloqueo.map((s) => s.origen).filter(Boolean))].sort(), [salidasBloqueo]);
+  const destinosBloqueo = useMemo(
+    () => [...new Set(salidasBloqueo.filter((s) => !origenSel || s.origen === origenSel).map((s) => s.destino).filter(Boolean))].sort(),
+    [salidasBloqueo, origenSel]
+  );
+  const salidasFiltradas = useMemo(
+    () => salidasBloqueo.filter((s) => (!origenSel || s.origen === origenSel) && (!destinoSel || s.destino === destinoSel)),
+    [salidasBloqueo, origenSel, destinoSel]
+  );
 
   // Tarjetas de hotel del submódulo activo (bloqueo o porción).
   const hoteles = useMemo<HotelCard[]>(() => {
@@ -131,6 +151,8 @@ export function VistaBooking({
         const c = cuposPorBloqueo[f.bloqueo_id];
         if (c !== undefined && c <= 0) return false; // sin cupos: no se muestra
         if (origenSel && origenPorBloqueo[f.bloqueo_id] !== origenSel) return false;
+        if (destinoSel && (f.destino_nombre ?? "") !== destinoSel) return false;
+        if (salidaSel !== "" && f.bloqueo_id !== salidaSel) return false;
       }
       return true;
     });
@@ -154,7 +176,7 @@ export function VistaBooking({
     const arr = [...map.values()];
     for (const c of arr) c.desde = minRoomPvp(c.filas);
     return arr.sort((a, b) => a.hotelNombre.localeCompare(b.hotelNombre));
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, salidaSel]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
 
@@ -202,22 +224,38 @@ export function VistaBooking({
         ))}
       </div>
 
-      {/* Filtro de Origen (solo bloqueo, cuando hay varias ciudades de origen) */}
-      {sub === "bloqueo" && origenes.length > 1 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-gray-500">Origen:</span>
-          <button type="button" onClick={() => setOrigenSel("")}
-            className="rounded-full border px-3 py-1 text-xs font-medium transition-all"
-            style={origenSel === "" ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" } : { borderColor: "#e5e7eb", color: "#6b7280" }}>
-            Todos
-          </button>
-          {origenes.map((o) => (
-            <button key={o} type="button" onClick={() => setOrigenSel(o)}
-              className="rounded-full border px-3 py-1 text-xs font-medium transition-all"
-              style={origenSel === o ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" } : { borderColor: "#e5e7eb", color: "#6b7280" }}>
-              {o}
-            </button>
-          ))}
+      {/* Buscador de BLOQUEOS: origen → destino → salida (vuelo) */}
+      {sub === "bloqueo" && (
+        <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
+          <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Buscar vuelo + hotel (bloqueo)</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Origen</label>
+              <select value={origenSel} onChange={(e) => { setOrigenSel(e.target.value); setDestinoSel(""); setSalidaSel(""); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Todos</option>
+                {origenes.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Destino</label>
+              <select value={destinoSel} onChange={(e) => { setDestinoSel(e.target.value); setSalidaSel(""); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Todos</option>
+                {destinosBloqueo.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Salida (vuelo)</label>
+              <select value={salidaSel} onChange={(e) => setSalidaSel(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Todas las salidas</option>
+                {salidasFiltradas.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.origen} → {s.destino} · {fmtFecha(s.fechaIda)}–{fmtFecha(s.fechaRegreso)}{s.noches ? ` (${s.noches}N)` : ""} · {s.cupos} cupos
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-gray-400">Elige el origen y el destino; las fechas salen del vuelo (no son libres). El resto (habitaciones y acomodación) se elige en cada hotel.</p>
         </div>
       )}
 
@@ -239,10 +277,12 @@ export function VistaBooking({
         )
       ) : (
       <>
-      {/* Mini-motor: buscar por fechas + composición de habitaciones */}
-      <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} destinos={destinos} />
+      {/* Mini-motor por fechas: solo en Porción terrestre (en bloqueo manda el vuelo) */}
+      {sub === "porcion_terrestre" && (
+        <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} destinos={destinos} />
+      )}
 
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">O explora todos los alojamientos</p>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">{sub === "bloqueo" ? "Hoteles disponibles" : "O explora todos los alojamientos"}</p>
       {!hoteles.length && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados.</p>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {hoteles.map((h) => (
