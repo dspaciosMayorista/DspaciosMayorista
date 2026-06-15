@@ -61,6 +61,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
               {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
             </select>
           </div>
+          <div><label className={lbl}>Origen</label><Input value={f.origen} onChange={set("origen")} placeholder="BOG · MDE" /></div>
           <div>
             <label className={lbl}>Destino</label>
             <select value={destinoId} onChange={(e) => setDestinoId(Number(e.target.value) || "")}
@@ -69,7 +70,6 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
               {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
             </select>
           </div>
-          <div><label className={lbl}>Origen</label><Input value={f.origen} onChange={set("origen")} placeholder="BOG · MDE" /></div>
           <div><label className={lbl}>Ruta</label><Input value={f.ruta} onChange={set("ruta")} placeholder="BOG - CTG - BOG" /></div>
           <div><label className={lbl}>Cupos totales</label><Input type="number" min={0} value={f.cuposTotal} onChange={set("cuposTotal")} /></div>
           <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} placeholder="200000" /></div>
