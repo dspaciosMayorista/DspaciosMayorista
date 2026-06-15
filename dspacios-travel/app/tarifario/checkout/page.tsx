@@ -50,6 +50,9 @@ export default function CheckoutPage() {
 
   function enviar() {
     setErr("");
+    if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
+    if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
+    if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
     start(async () => {
       const r = await crearSolicitudReserva({
         items: items.map((it) => ({
@@ -180,8 +183,8 @@ export default function CheckoutPage() {
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div><label className={lbl}>Nombres *</label><input className={inp} value={c.nombres} onChange={(e) => setC({ ...c, nombres: e.target.value })} /></div>
                 <div><label className={lbl}>Apellidos *</label><input className={inp} value={c.apellidos} onChange={(e) => setC({ ...c, apellidos: e.target.value })} /></div>
-                <div><label className={lbl}>Documento</label><input className={inp} value={c.numeroDoc} onChange={(e) => setC({ ...c, numeroDoc: e.target.value })} /></div>
-                <div><label className={lbl}>Teléfono / WhatsApp</label><input className={inp} value={c.telefono} onChange={(e) => setC({ ...c, telefono: e.target.value })} /></div>
+                <div><label className={lbl}>Documento *</label><input className={inp} value={c.numeroDoc} onChange={(e) => setC({ ...c, numeroDoc: e.target.value })} /></div>
+                <div><label className={lbl}>Teléfono / WhatsApp *</label><input className={inp} value={c.telefono} onChange={(e) => setC({ ...c, telefono: e.target.value })} /></div>
                 <div className="sm:col-span-2"><label className={lbl}>Correo</label><input type="email" className={inp} value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>
               </div>
               {err && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
