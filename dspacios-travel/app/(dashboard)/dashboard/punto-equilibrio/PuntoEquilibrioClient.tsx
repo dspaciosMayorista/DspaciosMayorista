@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
+import { SMMLV } from "@/lib/constants";
 import { liquidarEmpleadoContrato, aplicaAuxilio, ARL, type ClaseRiesgo } from "@/lib/calc/nomina";
 
 type Linea = { concepto: string; valor: string };
@@ -12,23 +13,28 @@ type EmpServicio = { nombre: string; honorario: string };
 const n = (s: string) => Number(s) || 0;
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
-export function PuntoEquilibrioClient() {
+export function PuntoEquilibrioClient({ margenAuto = 30 }: { margenAuto?: number }) {
   const [fijos, setFijos] = useState<Linea[]>([{ concepto: "Arriendo oficina", valor: "" }]);
   const [variables, setVariables] = useState<Linea[]>([{ concepto: "Comisiones / costo variable", valor: "" }]);
   const [contrato, setContrato] = useState<EmpContrato[]>([]);
   const [servicios, setServicios] = useState<EmpServicio[]>([]);
-  const [margen, setMargen] = useState("30");
+  const [margen, setMargen] = useState(String(margenAuto));
+  const [usarAuto, setUsarAuto] = useState(true);
+  const [declarante, setDeclarante] = useState(true);
+  const [detalle, setDetalle] = useState<number | null>(null);
+
+  const margenEf = usarAuto ? margenAuto : (n(margen) || 0);
 
   // Totales
   const totFijos = fijos.reduce((a, x) => a + n(x.valor), 0);
   const totVariables = variables.reduce((a, x) => a + n(x.valor), 0);
-  const liqs = contrato.map((e) => liquidarEmpleadoContrato(n(e.salario), e.auxilio, e.riesgo));
+  const liqs = contrato.map((e) => liquidarEmpleadoContrato(n(e.salario), e.auxilio, e.riesgo, declarante));
   const totNomina = liqs.reduce((a, l) => a + l.costoTotalMensual, 0);
   const totServicios = servicios.reduce((a, x) => a + n(x.honorario), 0);
 
   const costosFijosTotales = totFijos + totNomina + totServicios; // fijos del negocio
   const costosTotales = costosFijosTotales + totVariables;
-  const m = n(margen) / 100;
+  const m = margenEf / 100;
   const peVentas = m > 0 ? Math.round(costosFijosTotales / m) : 0;
 
   const cell = "rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm";
@@ -62,8 +68,17 @@ export function PuntoEquilibrioClient() {
       {/* Empleados por contrato */}
       <Seccion titulo="Empleados por contrato (liquidación 2026)" total={totNomina}>
         <p className="mb-2 text-xs text-gray-400">Incluye seguridad social, parafiscales y prestaciones sociales. El auxilio de transporte aplica a salarios ≤ 2 SMMLV.</p>
+        <label className="mb-3 flex items-start gap-2 rounded-lg border border-gray-100 bg-[rgba(102,181,150,0.08)] px-3 py-2 text-xs text-gray-600">
+          <input type="checkbox" checked={declarante} onChange={(ev) => setDeclarante(ev.target.checked)} className="mt-0.5" />
+          <span>
+            <b>Empresa declarante de renta</b> (sociedad). Aplica la <b>exoneración de aportes</b> (Art. 114-1 E.T.,
+            Ley 1819/2016): no se pagan <b>Salud (8,5%)</b>, <b>SENA (2%)</b> ni <b>ICBF (3%)</b> por los empleados que
+            ganen menos de <b>10 SMMLV</b> ({formatCOP(SMMLV * 10)}). Pensión, ARL y Caja siempre se pagan.
+          </span>
+        </label>
         {contrato.map((e, i) => {
           const l = liqs[i];
+          const abierto = detalle === i;
           return (
             <div key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
               <div className="flex flex-wrap items-end gap-2">
@@ -80,14 +95,36 @@ export function PuntoEquilibrioClient() {
                 </label>
                 <Del onClick={() => setContrato((p) => p.filter((_, j) => j !== i))} />
               </div>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-gray-500">
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500">
                 <span>SS: {formatCOP(l.seguridadSocial)}</span>
                 <span>Parafiscales: {formatCOP(l.parafiscales)}</span>
                 <span>Prestaciones: {formatCOP(l.prestaciones)}</span>
                 {l.auxilio > 0 && <span>Auxilio: {formatCOP(l.auxilio)}</span>}
                 <span className="font-semibold" style={{ color: "var(--brand-primary)" }}>Costo total: {formatCOP(l.costoTotalMensual)}</span>
+                {l.exonerado && <span className="rounded bg-[rgba(102,181,150,0.18)] px-1.5 py-0.5 font-medium text-[#3d7a63]">exonerado de Salud/SENA/ICBF</span>}
                 {n(e.salario) > 0 && !aplicaAuxilio(n(e.salario)) && e.auxilio && <span className="text-amber-600">⚠ salario &gt; 2 SMMLV: por ley no llevaría auxilio</span>}
+                <button type="button" onClick={() => setDetalle(abierto ? null : i)} className="font-medium text-[#1D7C9A] hover:underline">{abierto ? "Ocultar detalle" : "Ver detalle"}</button>
               </div>
+              {abierto && (
+                <div className="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-gray-100 bg-white p-3 sm:grid-cols-3">
+                  <DetalleGrupo titulo="Seguridad social" total={l.seguridadSocial}>
+                    <DLinea label="Salud (8,5%)" valor={l.salud} tachado={l.exonerado} />
+                    <DLinea label="Pensión (12%)" valor={l.pension} />
+                    <DLinea label={`ARL (${(ARL[e.riesgo] * 100).toFixed(3)}%)`} valor={l.arl} />
+                  </DetalleGrupo>
+                  <DetalleGrupo titulo="Parafiscales" total={l.parafiscales}>
+                    <DLinea label="SENA (2%)" valor={l.sena} tachado={l.exonerado} />
+                    <DLinea label="ICBF (3%)" valor={l.icbf} tachado={l.exonerado} />
+                    <DLinea label="Caja comp. (4%)" valor={l.caja} />
+                  </DetalleGrupo>
+                  <DetalleGrupo titulo="Prestaciones sociales" total={l.prestaciones}>
+                    <DLinea label="Prima (8,33%)" valor={l.prima} />
+                    <DLinea label="Cesantías (8,33%)" valor={l.cesantias} />
+                    <DLinea label="Int. cesantías (1%)" valor={l.interesesCesantias} />
+                    <DLinea label="Vacaciones (4,17%)" valor={l.vacaciones} />
+                  </DetalleGrupo>
+                </div>
+              )}
             </div>
           );
         })}
@@ -116,8 +153,14 @@ export function PuntoEquilibrioClient() {
           <Resumen label="Costos y gastos totales" valor={costosTotales} />
           <div>
             <label className={lbl}>Margen de contribución / utilidad %</label>
-            <Input type="number" value={margen} onChange={(e) => setMargen(e.target.value)} className="w-32" />
-            <p className="mt-1 text-[11px] text-gray-400">Tómalo de Rentabilidad (margen promedio).</p>
+            <div className="flex items-center gap-2">
+              <Input type="number" value={usarAuto ? String(margenAuto) : margen} onChange={(e) => setMargen(e.target.value)} disabled={usarAuto} className="w-32 disabled:bg-gray-50 disabled:text-gray-500" />
+              <span className="text-lg font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{margenEf.toFixed(1)}%</span>
+            </div>
+            <label className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500">
+              <input type="checkbox" checked={usarAuto} onChange={(e) => { setUsarAuto(e.target.checked); if (!e.target.checked) setMargen(String(margenAuto)); }} />
+              Automático de Rentabilidad (margen promedio ponderado: <b>{margenAuto.toFixed(1)}%</b>)
+            </label>
           </div>
         </div>
         <div className="mt-4 flex items-center justify-between rounded-lg bg-[rgba(29,124,154,0.06)] px-4 py-3">
@@ -146,6 +189,25 @@ function Resumen({ label, valor }: { label: string; valor: number }) {
     <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
       <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
       <div className="text-lg font-bold tabular-nums text-gray-800">{formatCOP(valor)}</div>
+    </div>
+  );
+}
+function DetalleGrupo({ titulo, total, children }: { titulo: string; total: number; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between border-b border-gray-100 pb-1">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{titulo}</span>
+        <span className="text-[11px] font-semibold tabular-nums text-gray-700">{formatCOP(total)}</span>
+      </div>
+      <div className="space-y-0.5">{children}</div>
+    </div>
+  );
+}
+function DLinea({ label, valor, tachado }: { label: string; valor: number; tachado?: boolean }) {
+  return (
+    <div className="flex items-center justify-between text-[11px]">
+      <span className={tachado ? "text-gray-400 line-through" : "text-gray-500"}>{label}</span>
+      <span className={`tabular-nums ${tachado ? "text-[#3d7a63]" : "text-gray-700"}`}>{tachado ? "exonerado" : formatCOP(valor)}</span>
     </div>
   );
 }
