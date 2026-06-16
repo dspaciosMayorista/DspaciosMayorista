@@ -25,8 +25,17 @@ type HotelCard = {
   descripcion: string | null;
   ubicacion: string | null;
   video_url: string | null;
+  ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null;
   filas: FilaTarifario[];
 };
+
+// Texto del rango de edad de niño/infante configurado por hotel.
+function textoEdades(c: { ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null }): string | null {
+  const partes: string[] = [];
+  if (c.ninoMin != null && c.ninoMax != null) partes.push(`Niño 1 y 2: ${c.ninoMin} a ${c.ninoMax} años`);
+  if (c.infMax != null && c.infMax > 0) partes.push(`Infante: ${c.infMin ?? 0} a ${c.infMax} año${c.infMax === 1 ? "" : "s"}`);
+  return partes.length ? partes.join(" · ") : null;
+}
 
 // Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
 function Categoria({ estrellas, clasificacion, className = "" }: { estrellas: number | null; clasificacion: string | null; className?: string }) {
@@ -101,7 +110,7 @@ export function VistaBooking({
   origenPorBloqueo?: Record<number, string>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null }>;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
 }) {
@@ -167,6 +176,7 @@ export function VistaBooking({
           foto: fotosPorHotel[id] ?? null, desde: null,
           estrellas: info?.estrellas ?? null, clasificacion: info?.clasificacion ?? null, descripcion: info?.descripcion ?? null,
           ubicacion: info?.ubicacion ?? null, video_url: info?.video_url ?? null,
+          ninoMin: info?.ninoMin ?? null, ninoMax: info?.ninoMax ?? null, infMin: info?.infMin ?? null, infMax: info?.infMax ?? null,
           filas: [],
         };
         map.set(id, c);
@@ -560,7 +570,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
+      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdades(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
     </div>
   );
 }
@@ -568,13 +578,14 @@ function Selector({
 // Editor de habitaciones/niños + total + botón. Recibe el PVP por acomodación y
 // reporta la selección (no conoce fechas ni módulo). Reutilizado por bloqueo y porción.
 function EditorPax({
-  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, onAgregar,
+  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota, onAgregar,
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
   paxMin?: number | null;
   paxMax?: number | null;
   nota?: string;
+  edadesNota?: string | null;
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, pax: number, precio: number) => void;
 }) {
   const [habs, setHabs] = useState<Record<string, number>>({});
@@ -645,6 +656,7 @@ function EditorPax({
 
       {(pvp["nino"] != null || pvp["nino2"] != null) && (
         <div>
+          {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
           <div className="flex flex-wrap gap-3">
             {pvp["nino"] != null && (
               <div>
