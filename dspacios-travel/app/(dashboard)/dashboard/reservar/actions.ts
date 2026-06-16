@@ -181,6 +181,9 @@ export type BusquedaResultado = {
   paqueteId: number; categoria: string; regimen: string;
   total: number; noches: number; fechaIda: string; fechaRegreso: string;
   habitaciones: Record<string, number>; ninos: number; pax: number;
+  // Todos los combos válidos (categoría × régimen) para esta composición, con su
+  // precio. El top-level categoria/regimen/total es el más barato (predeterminado).
+  combos: { categoria: string; regimen: string; total: number; pax: number }[];
 };
 
 export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; resultados: BusquedaResultado[] } | { ok: false; error: string }> {
@@ -221,7 +224,7 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
     const paxTarifa = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
     const chdMax = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.chd_max ?? PAX_TARIFA_DEFAULT[a];
 
-    let mejor: { total: number; categoria: string; regimen: string; pax: number } | null = null;
+    const combosValidos: { total: number; categoria: string; regimen: string; pax: number }[] = [];
     for (const combo of res.combos) {
       let total = 0; let pax = 0; let ok = true;
       for (const [acom, g] of porAcom) {
@@ -236,14 +239,19 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
           total += g.ninos * pvpN; pax += g.ninos;
         }
       }
-      if (ok && (!mejor || total < mejor.total)) mejor = { total, categoria: combo.categoria, regimen: combo.regimen, pax };
+      if (ok) combosValidos.push({ total, categoria: combo.categoria, regimen: combo.regimen, pax });
     }
-    if (mejor) resultados.push({
-      hotelId: hotel, hotelNombre: res.hotelNombre, destino: res.destinoNombre,
-      paqueteId: paquete, categoria: mejor.categoria, regimen: mejor.regimen,
-      total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso,
-      habitaciones, ninos: totalNinos, pax: mejor.pax,
-    });
+    if (combosValidos.length) {
+      combosValidos.sort((a, b) => a.total - b.total); // más barato primero (predeterminado)
+      const mejor = combosValidos[0];
+      resultados.push({
+        hotelId: hotel, hotelNombre: res.hotelNombre, destino: res.destinoNombre,
+        paqueteId: paquete, categoria: mejor.categoria, regimen: mejor.regimen,
+        total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso,
+        habitaciones, ninos: totalNinos, pax: mejor.pax,
+        combos: combosValidos,
+      });
+    }
   }
   resultados.sort((a, b) => a.total - b.total);
   return { ok: true, resultados };
