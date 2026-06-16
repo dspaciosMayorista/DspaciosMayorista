@@ -70,6 +70,25 @@ export function esAcomRoom(a: string): a is AcomRoom {
   return (ACOM_ROOMS as string[]).includes(a);
 }
 
+/**
+ * Texto del rango de edad de niño/infante configurado por hotel.
+ * Ej.: "Niño 1 y 2: 5 a 11 años · Infante: 0 a 1 año".
+ * Devuelve null si no hay datos suficientes para componer ninguna parte.
+ */
+export function textoEdadesHotel(c: {
+  ninoMin?: number | null;
+  ninoMax?: number | null;
+  infMin?: number | null;
+  infMax?: number | null;
+}): string | null {
+  const partes: string[] = [];
+  if (c.ninoMin != null && c.ninoMax != null)
+    partes.push(`Niño 1 y 2: ${c.ninoMin} a ${c.ninoMax} años`);
+  if (c.infMax != null && c.infMax > 0)
+    partes.push(`Infante: ${c.infMin ?? 0} a ${c.infMax} año${c.infMax === 1 ? "" : "s"}`);
+  return partes.length ? partes.join(" · ") : null;
+}
+
 /** pax_tarifa de una acomodación buscando primero en la config del hotel. */
 export function paxTarifaDe(configs: AcomConfig[] | undefined | null, a: AcomRoom): number {
   const c = configs?.find((x) => x.acomodacion === a);

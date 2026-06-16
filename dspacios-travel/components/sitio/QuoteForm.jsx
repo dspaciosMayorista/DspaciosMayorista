@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { Send, Calendar, Users, MapPin, Plane, DollarSign, CheckCircle2 } from 'lucide-react';
+import { Send, Users, Plane, DollarSign, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/sitio/ui/button';
 import { useToast } from '@/components/sitio/ui/use-toast';
 

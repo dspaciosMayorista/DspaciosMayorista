@@ -11,31 +11,12 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { createClient } from "@/lib/supabase/server";
 import {
-  packages as estPackages,
   destinations as estDestinations,
   testimonials as estTestimonials,
   blogPosts as estBlogPosts,
 } from "@/lib/sitio/data";
 
 // ── Tipos de salida (forma EN inglés que consumen los componentes) ──────────
-export type SitioPaquete = {
-  id: number | string;
-  title: string;
-  region: string;
-  destination: string;
-  duration: string;
-  people: string;
-  priceFrom: string;
-  description: string;
-  longDescription: string;
-  includes: string[];
-  notIncludes: string[];
-  image: string;
-  gallery: string[];
-  featured: boolean;
-  ctaUrl: string;
-};
-
 export type SitioDestino = {
   id: number | string;
   name: string;
@@ -88,26 +69,6 @@ export type SitioConfig = {
 };
 
 // ── Mapeo estático → forma inglesa (fallback) ───────────────────────────────
-function fbPaquetes(): SitioPaquete[] {
-  return estPackages.map((p) => ({
-    id: p.id,
-    title: p.title,
-    region: p.region,
-    destination: p.destination,
-    duration: p.duration,
-    people: p.people,
-    priceFrom: p.priceFrom,
-    description: p.description,
-    longDescription: p.longDescription,
-    includes: p.includes ?? [],
-    notIncludes: p.notIncludes ?? [],
-    image: p.image,
-    gallery: p.gallery ?? [],
-    featured: !!p.featured,
-    ctaUrl: "/tarifario",
-  }));
-}
-
 function fbDestinos(): SitioDestino[] {
   return estDestinations.map((d) => ({
     id: d.id,
@@ -177,42 +138,6 @@ function parseLineasAtencion(v: unknown): string[] {
 }
 
 // ── Lectura desde Supabase con fallback centralizado ────────────────────────
-export async function getPaquetes(): Promise<SitioPaquete[]> {
-  try {
-    const sb = await createClient();
-    const { data, error } = await sb
-      .from("web_paquetes")
-      .select("*")
-      .eq("activo", true)
-      .order("orden", { ascending: true });
-    if (error || !data || data.length === 0) return fbPaquetes();
-    return data.map((p) => ({
-      id: p.id,
-      title: p.titulo,
-      region: p.region ?? "",
-      destination: p.destino ?? "",
-      duration: p.duracion ?? "",
-      people: p.personas ?? "",
-      priceFrom: p.precio_desde ?? "",
-      description: p.descripcion ?? "",
-      longDescription: p.descripcion_larga ?? "",
-      includes: p.incluye ?? [],
-      notIncludes: p.no_incluye ?? [],
-      image: p.imagen_url ?? "",
-      gallery: p.galeria ?? [],
-      featured: !!p.destacado,
-      ctaUrl: p.cta_url || "/tarifario",
-    }));
-  } catch {
-    return fbPaquetes();
-  }
-}
-
-export async function getPaquete(id: string): Promise<SitioPaquete | null> {
-  const items = await getPaquetes();
-  return items.find((p) => String(p.id) === String(id)) ?? null;
-}
-
 export async function getDestinos(): Promise<SitioDestino[]> {
   try {
     const sb = await createClient();
@@ -232,11 +157,6 @@ export async function getDestinos(): Promise<SitioDestino[]> {
   } catch {
     return fbDestinos();
   }
-}
-
-export async function getDestino(id: string): Promise<SitioDestino | null> {
-  const items = await getDestinos();
-  return items.find((d) => String(d.id) === String(id)) ?? null;
 }
 
 export async function getTestimonios(): Promise<SitioTestimonio[]> {
