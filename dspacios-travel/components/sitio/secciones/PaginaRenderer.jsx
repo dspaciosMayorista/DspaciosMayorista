@@ -39,11 +39,26 @@ export default async function PaginaRenderer({ pagina, config }) {
 
   const contexto = { hijos, testimonios, blog, destinos, config };
 
-  return (
-    <>
-      {secciones.map((seccion) => (
-        <SeccionRenderer key={seccion.id} seccion={seccion} contexto={contexto} />
-      ))}
-    </>
-  );
+  // Si una sección `actividades` viene seguida de una `plan`, las mostramos en
+  // grid de 2 columnas (md+) para parecerse a la web real. Si no, apiladas.
+  const elementos = [];
+  for (let i = 0; i < secciones.length; i++) {
+    const s = secciones[i];
+    const sig = secciones[i + 1];
+    if (s.tipo === 'actividades' && sig && sig.tipo === 'plan') {
+      elementos.push(
+        <div key={s.id} className="grid grid-cols-1 items-stretch md:grid-cols-2 [&>section]:h-full">
+          <SeccionRenderer seccion={s} contexto={contexto} />
+          <SeccionRenderer seccion={sig} contexto={contexto} />
+        </div>
+      );
+      i++; // saltar la `plan` ya renderizada
+      continue;
+    }
+    elementos.push(
+      <SeccionRenderer key={s.id} seccion={s} contexto={contexto} />
+    );
+  }
+
+  return <>{elementos}</>;
 }

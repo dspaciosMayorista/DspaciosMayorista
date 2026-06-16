@@ -39,6 +39,9 @@ const TIPOS_SECCION: { value: string; label: string }[] = [
   { value: "blog_grid", label: "Grilla de blog" },
   { value: "cta", label: "CTA" },
   { value: "contacto", label: "Contacto" },
+  { value: "actividades", label: "Actividades imperdibles" },
+  { value: "plan", label: "El plan incluye / no incluye" },
+  { value: "flyers", label: "Flyers (botones + modal)" },
 ];
 
 const TIPO_SECCION_LBL = Object.fromEntries(

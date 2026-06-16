@@ -8,6 +8,9 @@ import Testimonios from '@/components/sitio/secciones/Testimonios';
 import BlogGrid from '@/components/sitio/secciones/BlogGrid';
 import Cta from '@/components/sitio/secciones/Cta';
 import Contacto from '@/components/sitio/secciones/Contacto';
+import Actividades from '@/components/sitio/secciones/Actividades';
+import Plan from '@/components/sitio/secciones/Plan';
+import Flyers from '@/components/sitio/secciones/Flyers';
 
 // Mapa tipo de sección → componente. Exportado para que el CMS reúse el mismo
 // renderer en su vista previa.
@@ -21,6 +24,9 @@ export const SECCION_COMPONENTES = {
   blog_grid: BlogGrid,
   cta: Cta,
   contacto: Contacto,
+  actividades: Actividades,
+  plan: Plan,
+  flyers: Flyers,
 };
 
 // Renderiza UNA sección. `contexto` agrupa los datos auxiliares (hijos,

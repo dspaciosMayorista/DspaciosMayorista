@@ -32,6 +32,9 @@ const TIPOS_SECCION = [
   "blog_grid",
   "cta",
   "contacto",
+  "actividades",
+  "plan",
+  "flyers",
 ] as const;
 
 // Revalida el sitio público (home + slug afectado) y el propio CMS.
