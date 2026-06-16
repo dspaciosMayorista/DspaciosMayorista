@@ -1909,6 +1909,36 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["hotel_blackouts"]["Insert"]>;
         Relationships: [];
       };
+      web_paquetes: {
+        Row: { id: number; titulo: string; region: string | null; destino: string | null; duracion: string | null; personas: string | null; precio_desde: string | null; descripcion: string | null; descripcion_larga: string | null; incluye: string[]; no_incluye: string[]; imagen_url: string | null; galeria: string[]; destacado: boolean; cta_url: string | null; orden: number; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; titulo: string; region?: string | null; destino?: string | null; duracion?: string | null; personas?: string | null; precio_desde?: string | null; descripcion?: string | null; descripcion_larga?: string | null; incluye?: string[]; no_incluye?: string[]; imagen_url?: string | null; galeria?: string[]; destacado?: boolean; cta_url?: string | null; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["web_paquetes"]["Insert"]>;
+        Relationships: [];
+      };
+      web_destinos: {
+        Row: { id: number; nombre: string; region: string | null; imagen_url: string | null; tips: string[]; orden: number; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; nombre: string; region?: string | null; imagen_url?: string | null; tips?: string[]; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["web_destinos"]["Insert"]>;
+        Relationships: [];
+      };
+      web_testimonios: {
+        Row: { id: number; nombre: string; ubicacion: string | null; rating: number; comentario: string; imagen_url: string | null; orden: number; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; nombre: string; ubicacion?: string | null; rating?: number; comentario: string; imagen_url?: string | null; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["web_testimonios"]["Insert"]>;
+        Relationships: [];
+      };
+      web_blog: {
+        Row: { id: number; titulo: string; slug: string | null; categoria: string | null; fecha: string | null; resumen: string | null; contenido: string | null; imagen_url: string | null; orden: number; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; titulo: string; slug?: string | null; categoria?: string | null; fecha?: string | null; resumen?: string | null; contenido?: string | null; imagen_url?: string | null; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["web_blog"]["Insert"]>;
+        Relationships: [];
+      };
+      web_config: {
+        Row: { id: number; hero_titulo: string | null; hero_subtitulo: string | null; hero_imagen_url: string | null; hero_cta_texto: string | null; hero_cta_url: string | null; nosotros_titulo: string | null; nosotros_texto: string | null; nosotros_imagen_url: string | null; contacto_email: string | null; contacto_telefono: string | null; whatsapp_numero: string | null; whatsapp_mensaje: string | null; direccion: string | null; instagram_url: string | null; facebook_url: string | null; tiktok_url: string | null; extra: Json; updated_at: string };
+        Insert: { id?: number; hero_titulo?: string | null; hero_subtitulo?: string | null; hero_imagen_url?: string | null; hero_cta_texto?: string | null; hero_cta_url?: string | null; nosotros_titulo?: string | null; nosotros_texto?: string | null; nosotros_imagen_url?: string | null; contacto_email?: string | null; contacto_telefono?: string | null; whatsapp_numero?: string | null; whatsapp_mensaje?: string | null; direccion?: string | null; instagram_url?: string | null; facebook_url?: string | null; tiktok_url?: string | null; extra?: Json; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["web_config"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {

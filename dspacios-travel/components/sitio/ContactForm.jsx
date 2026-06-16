@@ -4,7 +4,10 @@ import React from 'react';
 import { Button } from '@/components/sitio/ui/button';
 import { Send, MapPin, Phone, Mail } from 'lucide-react';
 
-const ContactForm = () => {
+const ContactForm = ({ config }) => {
+  const direccion = config?.direccion || "Calle 123 # 45-67, Oficina 301\nBogotá, Colombia";
+  const telefono = config?.contactoTelefono || "+57 123 456 7890";
+  const email = config?.contactoEmail || "info@dspaciostravel.com";
   return (
     <section className="py-24 bg-gray-50">
       <div className="container mx-auto px-4">
@@ -25,7 +28,7 @@ const ContactForm = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-[#120573] text-lg">Visítanos</h3>
-                  <p className="text-gray-600">Calle 123 # 45-67, Oficina 301<br/>Bogotá, Colombia</p>
+                  <p className="text-gray-600 whitespace-pre-line">{direccion}</p>
                 </div>
               </div>
 
@@ -35,7 +38,7 @@ const ContactForm = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-[#120573] text-lg">Llámanos</h3>
-                  <p className="text-gray-600">+57 123 456 7890<br/>+57 300 123 4567</p>
+                  <p className="text-gray-600">{telefono}</p>
                 </div>
               </div>
 
@@ -45,7 +48,7 @@ const ContactForm = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-[#120573] text-lg">Escríbenos</h3>
-                  <p className="text-gray-600">info@dspaciostravel.com<br/>ventas@dspaciostravel.com</p>
+                  <p className="text-gray-600">{email}</p>
                 </div>
               </div>
             </div>

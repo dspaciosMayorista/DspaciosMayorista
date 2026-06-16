@@ -4,10 +4,12 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Globe2, MapPin } from 'lucide-react';
 
-const Destinations = () => {
+const NATIONAL_REGIONS = ['nacional', 'nacionales', 'colombia', 'caribe'];
+
+const Destinations = ({ items }) => {
   const [activeTab, setActiveTab] = useState('nacional');
 
-  const nationalDestinations = [
+  const defaultNationalDestinations = [
     {
       name: 'Cartagena',
       image: 'Historic walled city of Cartagena Colombia with colorful colonial buildings'
@@ -34,7 +36,7 @@ const Destinations = () => {
     }
   ];
 
-  const internationalDestinations = [
+  const defaultInternationalDestinations = [
     {
       name: 'Punta Cana',
       image: 'Luxury resort in Punta Cana Dominican Republic with beach'
@@ -68,6 +70,14 @@ const Destinations = () => {
       image: 'Colorful Caminito street in Buenos Aires Argentina'
     }
   ];
+
+  const hasItems = items && items.length;
+  const nationalDestinations = hasItems
+    ? items.filter((d) => NATIONAL_REGIONS.includes((d.region || '').toLowerCase()))
+    : defaultNationalDestinations;
+  const internationalDestinations = hasItems
+    ? items.filter((d) => !NATIONAL_REGIONS.includes((d.region || '').toLowerCase()))
+    : defaultInternationalDestinations;
 
   const destinations = activeTab === 'nacional' ? nationalDestinations : internationalDestinations;
 
@@ -139,7 +149,7 @@ const Destinations = () => {
                   <img
                     className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
                     alt={destination.name}
-                   src="https://images.unsplash.com/photo-1595872018818-97555653a011" />
+                   src={destination.image || "https://images.unsplash.com/photo-1595872018818-97555653a011"} />
                 </div>
                 <div className="absolute inset-0 bg-gradient-to-t from-[#120573]/80 via-[#120573]/40 to-transparent flex items-end">
                   <div className="p-4 w-full">

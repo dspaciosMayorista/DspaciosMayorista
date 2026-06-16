@@ -6,9 +6,14 @@ import { MessageCircle, CalendarCheck } from 'lucide-react';
 import { Button } from '@/components/sitio/ui/button';
 import { useRouter } from 'next/navigation';
 
-const Hero = () => {
+const Hero = ({ config }) => {
   const router = useRouter();
-  const whatsappLink = "https://wa.me/573212150582?text=%C2%A1Hola!%20He%20visto%20las%20ofertas%20de%20viajes%20de%20D%27SPACIOS%20TRAVEL%20y%20estoy%20interesado%20en%20saber%20m%C3%A1s%20detalles.%20%C2%BFPodr%C3%ADas%20darme%20m%C3%A1s%20informaci%C3%B3n?";
+  const waNumero = config?.whatsappNumero || "573212150582";
+  const waMensaje = config?.whatsappMensaje
+    ? encodeURIComponent(config.whatsappMensaje)
+    : "%C2%A1Hola!%20He%20visto%20las%20ofertas%20de%20viajes%20de%20D%27SPACIOS%20TRAVEL%20y%20estoy%20interesado%20en%20saber%20m%C3%A1s%20detalles.%20%C2%BFPodr%C3%ADas%20darme%20m%C3%A1s%20informaci%C3%B3n?";
+  const whatsappLink = `https://wa.me/${waNumero}?text=${waMensaje}`;
+  const heroImg = config?.heroImagenUrl || "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80";
 
   return (
     <section id="hero" className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
@@ -17,7 +22,7 @@ const Hero = () => {
         <img
           className="w-full h-full object-cover"
           alt="Destino turístico paradisíaco"
-          src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80"
+          src={heroImg}
         />
         <div className="absolute inset-0 bg-gradient-to-r from-[#120573]/90 via-[#120573]/60 to-transparent"></div>
       </div>
@@ -45,10 +50,16 @@ const Hero = () => {
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.8, delay: 0.2 }}
             >
-              Tu Próxima Aventura <br/>
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#d8f511] to-white">
-                Comienza Aquí
-              </span>
+              {config?.heroTitulo ? (
+                config.heroTitulo
+              ) : (
+                <>
+                  Tu Próxima Aventura <br/>
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#d8f511] to-white">
+                    Comienza Aquí
+                  </span>
+                </>
+              )}
             </motion.h1>
 
             <motion.p
@@ -57,7 +68,7 @@ const Hero = () => {
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.8, delay: 0.4 }}
             >
-              Creamos itinerarios personalizados que superan tus expectativas y transforman tus sueños en realidad.
+              {config?.heroSubtitulo || "Creamos itinerarios personalizados que superan tus expectativas y transforman tus sueños en realidad."}
             </motion.p>
 
             <motion.div
@@ -77,10 +88,10 @@ const Hero = () => {
               <Button
                 size="lg"
                 className="bg-[#d8f511] text-[#120573] hover:bg-[#cbe610] font-bold text-lg px-8 py-7 rounded-xl shadow-2xl hover:shadow-[#d8f511]/30 transition-all flex items-center gap-3"
-                onClick={() => router.push('/tarifario')}
+                onClick={() => router.push(config?.heroCtaUrl || '/tarifario')}
               >
                 <CalendarCheck className="h-6 w-6" />
-                Ver Tarifario
+                {config?.heroCtaTexto || "Ver Tarifario"}
               </Button>
             </motion.div>
           </motion.div>

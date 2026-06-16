@@ -1,9 +1,10 @@
 import React from 'react';
 import Link from 'next/link';
-import { blogPosts } from '@/lib/sitio/data';
+import { getBlog } from '@/lib/sitio/cms';
 import { Calendar, ArrowRight, Tag } from 'lucide-react';
 
-export default function Blog() {
+export default async function Blog() {
+  const blogPosts = await getBlog();
   return (
     <div className="pt-28 pb-24 bg-gray-50 min-h-screen">
       <div className="container mx-auto px-4">

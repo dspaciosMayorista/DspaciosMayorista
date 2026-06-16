@@ -4,8 +4,8 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Star, Quote } from 'lucide-react';
 
-const Testimonials = () => {
-  const testimonials = [
+const Testimonials = ({ items }) => {
+  const defaultTestimonials = [
     {
       name: 'María González',
       location: 'Bogotá, Colombia',
@@ -28,6 +28,8 @@ const Testimonials = () => {
       image: 'Smiling female traveler on beach honeymoon vacation'
     }
   ];
+
+  const testimonials = items && items.length ? items : defaultTestimonials;
 
   return (
     <section id="testimonials" className="py-20 bg-gray-50">
@@ -62,7 +64,7 @@ const Testimonials = () => {
                   <img
                     className="w-full h-full object-cover"
                     alt={testimonial.name}
-                   src="https://images.unsplash.com/photo-1595872018818-97555653a011" />
+                   src={(testimonial.image && testimonial.image.startsWith('http')) ? testimonial.image : "https://images.unsplash.com/photo-1595872018818-97555653a011"} />
                 </div>
                 <div>
                   <h4 className="font-bold text-[#120573]">{testimonial.name}</h4>

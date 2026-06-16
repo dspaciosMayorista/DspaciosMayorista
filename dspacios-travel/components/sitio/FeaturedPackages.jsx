@@ -7,8 +7,9 @@ import { Button } from '@/components/sitio/ui/button';
 import Link from 'next/link';
 import { packages } from '@/lib/sitio/data';
 
-const FeaturedPackages = () => {
-  const featured = packages.filter(p => p.featured).slice(0, 3);
+const FeaturedPackages = ({ items }) => {
+  const source = items && items.length ? items : packages;
+  const featured = source.filter(p => p.featured).slice(0, 3);
 
   return (
     <section id="packages" className="py-24 bg-gray-50">

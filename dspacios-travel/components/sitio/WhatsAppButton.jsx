@@ -4,8 +4,12 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { MessageCircle } from 'lucide-react';
 
-const WhatsAppButton = () => {
-  const whatsappLink = "https://wa.me/573212150582?text=%C2%A1Hola!%20He%20visto%20las%20ofertas%20de%20viajes%20de%20D%27SPACIOS%20TRAVEL%20y%20estoy%20interesado%20en%20saber%20m%C3%A1s%20detalles.%20%C2%BFPodr%C3%ADas%20darme%20m%C3%A1s%20informaci%C3%B3n?";
+const WhatsAppButton = ({ config }) => {
+  const waNumero = config?.whatsappNumero || "573212150582";
+  const waMensaje = config?.whatsappMensaje
+    ? encodeURIComponent(config.whatsappMensaje)
+    : "%C2%A1Hola!%20He%20visto%20las%20ofertas%20de%20viajes%20de%20D%27SPACIOS%20TRAVEL%20y%20estoy%20interesado%20en%20saber%20m%C3%A1s%20detalles.%20%C2%BFPodr%C3%ADas%20darme%20m%C3%A1s%20informaci%C3%B3n?";
+  const whatsappLink = `https://wa.me/${waNumero}?text=${waMensaje}`;
 
   const handleWhatsAppClick = () => {
     window.open(whatsappLink, '_blank');

@@ -10,6 +10,7 @@ export type NavItem = {
   children?: { href: string; label: string }[];
   separadorAntes?: boolean;   // dibuja un separador antes de este ítem
   modulo?: string;            // módulo de permisos (para ocultar según rol)
+  soloSuperadmin?: boolean;   // visible solo para el rol superadmin
 };
 
 export function SidebarNav({ items }: { items: NavItem[] }) {

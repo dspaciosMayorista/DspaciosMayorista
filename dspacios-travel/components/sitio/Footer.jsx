@@ -4,7 +4,13 @@ import React from 'react';
 import { Plane, Mail, Phone, MapPin, Globe as Facebook, Camera as Instagram, Send as Twitter } from 'lucide-react';
 import Link from 'next/link';
 
-const Footer = () => {
+const Footer = ({ config }) => {
+  const telefono = config?.contactoTelefono || "+57 123 456 7890";
+  const email = config?.contactoEmail || "info@dspaciostravel.com";
+  const direccion = config?.direccion || "Bogotá, Colombia";
+  const facebookUrl = config?.facebookUrl || "https://facebook.com";
+  const instagramUrl = config?.instagramUrl || "https://instagram.com";
+  const tiktokUrl = config?.tiktokUrl || "https://twitter.com";
   return (
     <footer className="bg-[#120573] text-white pt-16 pb-8">
       <div className="container mx-auto px-4">
@@ -65,15 +71,15 @@ const Footer = () => {
             <ul className="space-y-3">
               <li className="flex items-start gap-2">
                 <Phone className="w-5 h-5 text-[#d8f511] mt-1 shrink-0" />
-                <span className="text-white/80">+57 123 456 7890</span>
+                <span className="text-white/80">{telefono}</span>
               </li>
               <li className="flex items-start gap-2">
                 <Mail className="w-5 h-5 text-[#d8f511] mt-1 shrink-0" />
-                <span className="text-white/80">info@dspaciostravel.com</span>
+                <span className="text-white/80">{email}</span>
               </li>
               <li className="flex items-start gap-2">
                 <MapPin className="w-5 h-5 text-[#d8f511] mt-1 shrink-0" />
-                <span className="text-white/80">Bogotá, Colombia</span>
+                <span className="text-white/80 whitespace-pre-line">{direccion}</span>
               </li>
             </ul>
           </div>
@@ -86,19 +92,19 @@ const Footer = () => {
             </p>
             <div className="flex gap-4">
               <button
-                onClick={() => window.open('https://facebook.com', '_blank')}
+                onClick={() => window.open(facebookUrl, '_blank')}
                 className="w-10 h-10 bg-white/10 hover:bg-[#d8f511] rounded-full flex items-center justify-center transition-all"
               >
                 <Facebook className="w-5 h-5" />
               </button>
               <button
-                onClick={() => window.open('https://instagram.com', '_blank')}
+                onClick={() => window.open(instagramUrl, '_blank')}
                 className="w-10 h-10 bg-white/10 hover:bg-[#d8f511] rounded-full flex items-center justify-center transition-all"
               >
                 <Instagram className="w-5 h-5" />
               </button>
               <button
-                onClick={() => window.open('https://twitter.com', '_blank')}
+                onClick={() => window.open(tiktokUrl, '_blank')}
                 className="w-10 h-10 bg-white/10 hover:bg-[#d8f511] rounded-full flex items-center justify-center transition-all"
               >
                 <Twitter className="w-5 h-5" />
