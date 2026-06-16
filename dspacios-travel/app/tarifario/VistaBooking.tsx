@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import Image from "next/image";
 import { formatCOP } from "@/lib/utils";
-import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
+import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart } from "@/lib/cart/CartContext";
 import { cotizarPorFechas, type ComboCotizado } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -28,14 +28,6 @@ type HotelCard = {
   ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null;
   filas: FilaTarifario[];
 };
-
-// Texto del rango de edad de niño/infante configurado por hotel.
-function textoEdades(c: { ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null }): string | null {
-  const partes: string[] = [];
-  if (c.ninoMin != null && c.ninoMax != null) partes.push(`Niño 1 y 2: ${c.ninoMin} a ${c.ninoMax} años`);
-  if (c.infMax != null && c.infMax > 0) partes.push(`Infante: ${c.infMin ?? 0} a ${c.infMax} año${c.infMax === 1 ? "" : "s"}`);
-  return partes.length ? partes.join(" · ") : null;
-}
 
 // Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
 function Categoria({ estrellas, clasificacion, className = "" }: { estrellas: number | null; clasificacion: string | null; className?: string }) {
@@ -570,7 +562,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdades(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
+      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
     </div>
   );
 }
@@ -808,7 +800,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdades(hotel)} onAgregar={agregarItem} />
+          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} onAgregar={agregarItem} />
         </>
       )}
     </div>

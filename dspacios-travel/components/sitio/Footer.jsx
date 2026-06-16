@@ -116,7 +116,7 @@ const Footer = ({ config }) => {
         <div className="border-t border-white/20 pt-8">
           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
             <p className="text-white/60 text-sm">
-              © 2025 D'Spacios Travel. Todos los derechos reservados.
+              © 2025 D&apos;Spacios Travel. Todos los derechos reservados.
             </p>
             <div className="flex gap-6 text-sm">
               <span className="text-white/60">Política de Privacidad</span>

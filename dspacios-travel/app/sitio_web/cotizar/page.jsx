@@ -64,7 +64,7 @@ export default function QuoteRequest() {
 
               <div className="mt-8 pt-8 border-t border-white/10">
                 <p className="text-sm text-blue-200 italic">
-                  "Hicieron de nuestra luna de miel algo mágico. La atención al detalle fue increíble."
+                  &quot;Hicieron de nuestra luna de miel algo mágico. La atención al detalle fue increíble.&quot;
                 </p>
                 <p className="text-xs text-[#d8f511] mt-2 font-bold">- María & José, Viajeros Felices</p>
               </div>

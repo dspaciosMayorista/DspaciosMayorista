@@ -27,7 +27,7 @@ export default function BlogDetalle({ post, whatsappNumero }) {
           </h1>
           <div className="flex items-center justify-center text-gray-500 gap-6 text-sm border-y border-gray-100 py-6">
             <span className="flex items-center gap-2"><Calendar className="w-4 h-4" /> {post.date}</span>
-            <span className="flex items-center gap-2"><User className="w-4 h-4" /> Equipo D'Spacios</span>
+            <span className="flex items-center gap-2"><User className="w-4 h-4" /> Equipo D&apos;Spacios</span>
             <span className="flex items-center gap-2 cursor-pointer hover:text-[#120573]"><Share2 className="w-4 h-4" /> Compartir</span>
           </div>
         </header>

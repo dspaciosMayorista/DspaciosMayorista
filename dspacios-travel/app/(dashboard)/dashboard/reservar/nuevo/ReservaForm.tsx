@@ -111,6 +111,17 @@ export function ReservaForm({
   const [infantes, setInfantes] = useState("0");
   const [paxServ, setPaxServ] = useState("1");
 
+  // Nota informativa de edades del hotel (junto a los inputs de niño/infante).
+  // El meta solo trae los máximos, así que se muestra "hasta N años".
+  const edadesNota = [
+    meta.edadNinoMax > 0 ? `Niño: hasta ${meta.edadNinoMax} años` : null,
+    meta.edadInfanteMax > 0
+      ? `Infante: hasta ${meta.edadInfanteMax} año${meta.edadInfanteMax === 1 ? "" : "s"}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" · ") || null;
+
   // Solo habitaciones CON tarifa: 0 o vacío = no aplica (no es gratis).
   const roomTypes = ACOM_ROOMS.filter((a) => precios[a] != null && precios[a]! > 0);
   const paxTarifa = (a: AcomRoom) => paxTarifaDe(acomConfigs, a);
@@ -309,6 +320,7 @@ export function ReservaForm({
           })}
         </div>
         <p className="mt-4 mb-1 text-xs font-medium text-gray-500">Niños e infantes (por cantidad, dentro de las habitaciones)</p>
+        {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {precios["nino"] != null && (
             <div>

@@ -23,6 +23,7 @@ export default async function ProgramaDetallePage({ params }: { params: Promise<
     { data: inclusiones },
     { data: tours },
     { data: blackouts },
+    { data: destinos },
   ] = await Promise.all([
     sb.from("programas").select("*").eq("id", id).maybeSingle(),
     sb.from("proveedores").select("id, nombre").order("nombre"),
@@ -35,6 +36,7 @@ export default async function ProgramaDetallePage({ params }: { params: Promise<
     sb.from("programa_inclusiones").select("*").eq("programa_id", id).order("orden"),
     sb.from("programa_tours").select("*").eq("programa_id", id).order("orden"),
     sb.from("programa_blackouts").select("*").eq("programa_id", id).order("fecha_inicio"),
+    sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
   ]);
 
   if (!programa) notFound();
@@ -56,6 +58,7 @@ export default async function ProgramaDetallePage({ params }: { params: Promise<
         inclusiones={inclusiones ?? []}
         tours={tours ?? []}
         blackouts={blackouts ?? []}
+        destinos={destinos ?? []}
       />
     </div>
   );

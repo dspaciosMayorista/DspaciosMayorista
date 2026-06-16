@@ -5,13 +5,15 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { generarVouchersServicios, generarVoucherHotel, actualizarVoucher, eliminarVoucher, type VoucherContenido } from "./voucher-actions";
+import { ComboCiudad } from "@/components/ComboCiudad";
+import type { DestinoOpt } from "@/components/ComboDestino";
 
 export type VoucherRow = { id: number; tipo?: string; proveedor: string | null; share_token: string; contenido: VoucherContenido };
 
 const lbl = "mb-1 block text-[11px] font-medium text-gray-500";
 const inp = "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
 
-export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo }: { numero: string; vouchers: VoucherRow[]; puedeGenerar: boolean; motivoBloqueo?: string }) {
+export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, destinos = [] }: { numero: string; vouchers: VoucherRow[]; puedeGenerar: boolean; motivoBloqueo?: string; destinos?: DestinoOpt[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -54,14 +56,14 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo }:
 
       {vouchers.length > 0 && (
         <div className="mt-4 space-y-3">
-          {vouchers.map((v) => <VoucherCard key={v.id} numero={numero} v={v} />)}
+          {vouchers.map((v) => <VoucherCard key={v.id} numero={numero} v={v} destinos={destinos} />)}
         </div>
       )}
     </section>
   );
 }
 
-function VoucherCard({ numero, v }: { numero: string; v: VoucherRow }) {
+function VoucherCard({ numero, v, destinos }: { numero: string; v: VoucherRow; destinos: DestinoOpt[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [c, setC] = useState<VoucherContenido>(v.contenido);
@@ -104,7 +106,7 @@ function VoucherCard({ numero, v }: { numero: string; v: VoucherRow }) {
           )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div><label className={lbl}>Hotel</label><Input value={c.hotel} onChange={(e) => set("hotel", e.target.value)} /></div>
-            <div><label className={lbl}>Destino</label><Input value={c.destino} onChange={(e) => set("destino", e.target.value)} /></div>
+            <div><label className={lbl}>Destino</label><ComboCiudad destinos={destinos} value={c.destino} onChange={(val) => set("destino", val)} modo="nombre" permitirLibre placeholder="Destino…" /></div>
             <div><label className={lbl}>Fecha ingreso</label><Input value={c.fechaIngreso} onChange={(e) => set("fechaIngreso", e.target.value)} /></div>
             <div><label className={lbl}>Tipo de pax</label><Input value={c.tipoPax} onChange={(e) => set("tipoPax", e.target.value)} /></div>
             <div><label className={lbl}>Noches</label><Input value={c.noches} onChange={(e) => set("noches", e.target.value)} /></div>

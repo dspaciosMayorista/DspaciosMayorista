@@ -5,7 +5,7 @@ import Link from "next/link";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
-import type { AcomConfig } from "@/lib/acomodaciones";
+import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
 
@@ -102,17 +102,10 @@ type ModuloKey = FilaTarifario["modulo"] | "programas";
 
 type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null }>;
 
-// Texto de rango de edad de niño/infante configurado por hotel.
-// Ej.: "Niño 1 y 2: 5 a 11 años · Infante: 0 a 1 año".
-function rangoEdades(info?: { ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null }): string | null {
-  if (!info) return null;
-  const partes: string[] = [];
-  if (info.ninoMin != null && info.ninoMax != null)
-    partes.push(`Niño 1 y 2: ${info.ninoMin} a ${info.ninoMax} años`);
-  if (info.infMax != null && info.infMax > 0)
-    partes.push(`Infante: ${info.infMin ?? 0} a ${info.infMax} año${info.infMax === 1 ? "" : "s"}`);
-  return partes.length ? partes.join(" · ") : null;
-}
+// Texto de rango de edad de niño/infante (helper centralizado en lib).
+// Tolera `info` undefined (hoteles sin config) devolviendo null.
+const rangoEdades = (info?: Parameters<typeof textoEdadesHotel>[0]): string | null =>
+  info ? textoEdadesHotel(info) : null;
 
 // Estrellas (★) o clasificación (Boutique/Luxury…) al lado del nombre del hotel.
 function CategoriaInline({ info }: { info?: { estrellas: number | null; clasificacion: string | null } }) {

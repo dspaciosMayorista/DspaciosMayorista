@@ -28,6 +28,7 @@ export default async function ProveedoresPage() {
     .select("id, tipo, nombre, razon_social, nit, ciudad, contacto, datos_pago, banco, tipo_cuenta, numero_cuenta, politica_reservas, voucher_contacto, aplica_retencion, pct_retencion")
     .order("tipo")
     .order("nombre");
+  const { data: destinos } = await sb.from("destinos").select("id, nombre, codigo_iata").order("nombre");
 
   return (
     <div className="mx-auto max-w-7xl p-4 md:p-8">
@@ -46,7 +47,7 @@ export default async function ProveedoresPage() {
         />
       </div>
 
-      <ProveedoresClient proveedores={proveedores ?? []} />
+      <ProveedoresClient proveedores={proveedores ?? []} destinos={destinos ?? []} />
     </div>
   );
 }
