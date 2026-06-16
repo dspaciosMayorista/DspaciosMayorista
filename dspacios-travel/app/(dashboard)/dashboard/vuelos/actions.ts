@@ -390,7 +390,8 @@ export async function borrarPasajeroSilla(sillaId: number, bloqueoId: number): P
 }
 
 // Mueve el pasajero (con su estado y contrato) a otro record: lo copia como
-// nueva silla en el destino y marca la silla de origen como 'cambio'.
+// nueva silla en el destino, deja la silla de origen DISPONIBLE (liberada y
+// limpia) y registra el cambio en movimientos_silla.
 export async function moverPasajeroSilla(
   sillaId: number,
   origenId: number,
@@ -418,7 +419,15 @@ export async function moverPasajeroSilla(
   });
   if (eIns) return { ok: false, error: eIns.message };
 
-  await sb.from("sillas").update({ estado: "cambio", updated_at: new Date().toISOString() }).eq("id", sillaId);
+  // Origen → DISPONIBLE (liberada y limpia); el cambio queda en movimientos_silla.
+  await sb.from("sillas").update({
+    estado: "disponible",
+    numero_contrato: null,
+    pasajero_nombres: null, pasajero_apellidos: null, tipo_doc: null, numero_doc: null, nacimiento: null,
+    asesor: null, agencia: null, hotel: null, acomodacion: null, plazo: null,
+    inf_nombres: null, inf_apellidos: null, inf_tipo_doc: null, inf_numero: null, inf_nacimiento: null, responsable_menor: null,
+    updated_at: new Date().toISOString(),
+  }).eq("id", sillaId);
   await sb.from("movimientos_silla").insert({
     silla_id: sillaId, bloqueo_origen_id: origenId, bloqueo_destino_id: destinoId,
     motivo: "Cambio de pasajero a otro record",
