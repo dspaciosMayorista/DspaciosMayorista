@@ -82,7 +82,7 @@ const Header = ({ config, menu }) => {
           <div className="flex items-center justify-between">
             <Link href={SITIO_BASE} onClick={closeAll}>
               <motion.div whileHover={{ scale: 1.02 }} className="flex items-center cursor-pointer">
-                <Logo variant="white" height={40} className="h-10 sm:h-12 w-auto object-contain" />
+                <Logo variant="full" height={40} className="h-10 sm:h-12 w-auto object-contain" />
               </motion.div>
             </Link>
 
