@@ -423,6 +423,9 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
   grupo (rango que cubra los pax), sumándolos al contrato. *(HECHO; queda afinar.)*
 - Afinar rentabilidad/costos del contrato (módulo de gestión).
 - Reservar desde el módulo Servicios del tarifario. *(HECHO.)*
+- **Vuelos dinámicos (JetSMART/agregador) + empaquetado dinámico:** idea a futuro del
+  dueño, NO construir hasta que lo confirme. Plan completo (caminos, costos, checklist,
+  cómo encaja, esqueleto técnico) en `dspacios-travel/docs/futuro/vuelos-dinamicos-jetsmart.md`.
 - Merge de la rama a `main` cuando todo esté validado.
 
 ### REDISEÑO DE RESERVAR (anotaciones del dueño — pendiente, prioridad alta)
