@@ -38,12 +38,12 @@ begin
     (nac, 'nuqui',             'Nuquí',                 'destino', 8),
     (nac, 'cano-cristales',    'Caño Cristales',        'destino', 9),
     (nac, 'eje-cafetero',      'Eje Cafetero',          'destino', 10),
-    (nac, 'sur-de-colombia',   'Sur de Colombia',       'destino', 11),  -- ⚠ "Sur de C..."
-    (nac, 'llanos-orientales', 'Llanos Orientales',     'destino', 12),  -- ⚠ "Llanos O..."
+    (nac, 'sur-de-colombia',   'Sur de Colombia',       'destino', 11),
+    (nac, 'llanos-orientales', 'Llanos Orientales',     'destino', 12),
     (nac, 'boyaca',            'Boyacá',                'destino', 13),
     (nac, 'santander',         'Santander',             'destino', 14),
-    (nac, 'huila-al-limite',   'Huila al Límite',       'destino', 15),  -- ⚠ "Huíla al Lí..."
-    (nac, 'desierto-tatacoa',  'Desierto de la Tatacoa','destino', 16),  -- ⚠ "Desierto ..."
+    (nac, 'huila-al-limite',   'Huíla al Límite',       'destino', 15),
+    (nac, 'desierto-tatacoa',  'Desierto de la Tatacoa','destino', 16),
     (nac, 'amazonas',          'Amazonas',              'destino', 17);
 
   -- ── Destinos Internacionales (subpáginas) ──────────────────────────────
