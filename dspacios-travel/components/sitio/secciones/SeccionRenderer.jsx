@@ -11,6 +11,7 @@ import Contacto from '@/components/sitio/secciones/Contacto';
 import Actividades from '@/components/sitio/secciones/Actividades';
 import Plan from '@/components/sitio/secciones/Plan';
 import Flyers from '@/components/sitio/secciones/Flyers';
+import ConsultaDisponibilidad from '@/components/sitio/secciones/ConsultaDisponibilidad';
 
 // Mapa tipo de sección → componente. Exportado para que el CMS reúse el mismo
 // renderer en su vista previa.
@@ -27,6 +28,7 @@ export const SECCION_COMPONENTES = {
   actividades: Actividades,
   plan: Plan,
   flyers: Flyers,
+  consulta_disponibilidad: ConsultaDisponibilidad,
 };
 
 // Renderiza UNA sección. `contexto` agrupa los datos auxiliares (hijos,

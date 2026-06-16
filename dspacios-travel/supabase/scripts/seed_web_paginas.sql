@@ -73,4 +73,11 @@ begin
   select id, 'hero', 0, jsonb_build_object(
     'titulo', titulo, 'subtitulo', '', 'cta_texto', 'Cotizar', 'cta_url', '/tarifario', 'imagen', coalesce(imagen_portada,'')
   ) from public.web_paginas where tipo = 'destino';
+
+  -- Botón "Consulta Disponibilidad" al final de cada destino → vista booking del portal.
+  insert into public.web_secciones (pagina_id, tipo, orden, datos)
+  select id, 'consulta_disponibilidad', 90, jsonb_build_object(
+    'titulo', 'Elige tu fecha Favorita aquí', 'boton_texto', 'Consulta Disponibilidad',
+    'url', '/tarifario', 'destino', titulo
+  ) from public.web_paginas where tipo = 'destino';
 end $$;

@@ -42,6 +42,7 @@ const TIPOS_SECCION: { value: string; label: string }[] = [
   { value: "actividades", label: "Actividades imperdibles" },
   { value: "plan", label: "El plan incluye / no incluye" },
   { value: "flyers", label: "Flyers (botones + modal)" },
+  { value: "consulta_disponibilidad", label: "Consulta disponibilidad (→ tarifario)" },
 ];
 
 const TIPO_SECCION_LBL = Object.fromEntries(

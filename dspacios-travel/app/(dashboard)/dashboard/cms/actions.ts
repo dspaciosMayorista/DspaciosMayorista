@@ -35,6 +35,7 @@ const TIPOS_SECCION = [
   "actividades",
   "plan",
   "flyers",
+  "consulta_disponibilidad",
 ] as const;
 
 // Revalida el sitio público (home + slug afectado) y el propio CMS.

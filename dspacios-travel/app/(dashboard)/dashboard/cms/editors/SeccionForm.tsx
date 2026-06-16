@@ -146,6 +146,32 @@ export function SeccionForm({
         </>
       )}
 
+      {tipo === "consulta_disponibilidad" && (
+        <>
+          <Field label="Título">
+            <Input value={s("titulo")} onChange={(e) => set("titulo", e.target.value)} placeholder="Elige tu fecha Favorita aquí" />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Botón — texto">
+              <Input value={s("boton_texto")} onChange={(e) => set("boton_texto", e.target.value)} placeholder="Consulta Disponibilidad" />
+            </Field>
+            <Field label="Destino a la vista del portal (URL)">
+              <Input value={s("url")} onChange={(e) => set("url", e.target.value)} placeholder="/tarifario" />
+            </Field>
+          </div>
+          <Field label="Filtrar por destino (opcional, deep-link)">
+            <Input value={s("destino")} onChange={(e) => set("destino", e.target.value)} placeholder="San Andrés" />
+          </Field>
+          <Field label="Imagen de fondo (URL, opcional)">
+            <Input value={s("imagen_fondo")} onChange={(e) => set("imagen_fondo", e.target.value)} placeholder="https://…" />
+          </Field>
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input type="checkbox" checked={!!datos["nueva_pestana"]} onChange={(e) => set("nueva_pestana", e.target.checked)} />
+            Abrir en una pestaña nueva
+          </label>
+        </>
+      )}
+
       {tipo === "contacto" && (
         <>
           <Field label="Título">
