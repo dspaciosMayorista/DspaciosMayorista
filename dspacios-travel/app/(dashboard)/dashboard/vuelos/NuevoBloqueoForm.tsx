@@ -19,15 +19,26 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
   const [err, setErr] = useState("");
   const [proveedorId, setProveedorId] = useState<number | "">("");
   const [destinoId, setDestinoId] = useState<number | "">("");
+  const [origenId, setOrigenId] = useState<number | "">("");
   const [rangosSel, setRangosSel] = useState<number[]>([]);
 
   const [f, setF] = useState({
-    record: "", aerolinea: "", ruta: "", origen: "",
+    record: "", aerolinea: "",
     vueloIda: "", fechaIda: "", horaSalidaIda: "", horaLlegadaIda: "",
     vueloRegreso: "", fechaRegreso: "", horaSalidaReg: "", horaLlegadaReg: "",
     cuposTotal: "10", tarifaNeta: "", tarifaParaEmpaquetar: "", fechaDevolucion: "", fechaEmision: "", notas: "",
   });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
+
+  // Origen y destino salen del MISMO catálogo de destinos (ciudad + IATA).
+  // La ruta es automática: IATA_ORIGEN - IATA_DESTINO - IATA_ORIGEN.
+  const iataDe = (id: number | "") => {
+    const d = destinos.find((x) => x.id === id);
+    return (d?.codigo_iata || d?.nombre || "").toUpperCase().trim();
+  };
+  const oIATA = iataDe(origenId);
+  const dIATA = iataDe(destinoId);
+  const rutaAuto = oIATA && dIATA ? `${oIATA} - ${dIATA} - ${oIATA}` : "";
 
   function guardar(e: React.FormEvent) {
     e.preventDefault();
@@ -36,7 +47,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
     start(async () => {
       const r = await crearBloqueo({
         record: f.record, aerolinea: f.aerolinea, proveedorId: proveedorId === "" ? null : Number(proveedorId),
-        destinoId: destinoId === "" ? null : Number(destinoId), ruta: f.ruta, origen: f.origen,
+        destinoId: destinoId === "" ? null : Number(destinoId), ruta: rutaAuto, origen: oIATA,
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         cuposTotal: Number(f.cuposTotal) || 0, tarifaNeta: Number(f.tarifaNeta) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
@@ -62,12 +73,18 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
               {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
             </select>
           </div>
-          <div><label className={lbl}>Origen</label><Input value={f.origen} onChange={set("origen")} placeholder="BOG · MDE" /></div>
+          <div>
+            <label className={lbl}>Origen</label>
+            <ComboDestino destinos={destinos} value={origenId} onChange={setOrigenId} placeholder="Ciudad de origen…" />
+          </div>
           <div>
             <label className={lbl}>Destino</label>
-            <ComboDestino destinos={destinos} value={destinoId} onChange={setDestinoId} />
+            <ComboDestino destinos={destinos} value={destinoId} onChange={setDestinoId} placeholder="Ciudad de destino…" />
           </div>
-          <div><label className={lbl}>Ruta</label><Input value={f.ruta} onChange={set("ruta")} placeholder="BOG - CTG - BOG" /></div>
+          <div>
+            <label className={lbl}>Ruta (automática)</label>
+            <Input value={rutaAuto} readOnly disabled placeholder="Se arma con Origen y Destino" className="bg-gray-50 text-gray-600" />
+          </div>
           <div><label className={lbl}>Cupos totales</label><Input type="number" min={0} value={f.cuposTotal} onChange={set("cuposTotal")} /></div>
           <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} placeholder="200000" /></div>
           <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>
