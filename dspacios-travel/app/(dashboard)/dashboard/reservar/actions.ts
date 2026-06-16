@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
-import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
+import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, paxDeAcomodacion, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
 import { pvpPrograma } from "@/lib/programas";
@@ -1367,10 +1367,10 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
     const info = netoDe[acom];
     if (!info || info.neto == null || info.bs)
       return { ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` };
-    const paxTarifa = PAX_TARIFA_DEFAULT[acom as AcomRoom] ?? 1; // pax por habitación
+    const paxTarifa = paxDeAcomodacion(acom); // pax por habitación (cuadruple = 4)
     const nPax = nHab * paxTarifa;
     const precioPax = pvp(info.neto);
-    const label = ACOM_ROOM_LABEL[acom as AcomRoom] ?? acom;
+    const label = ACOM_ROOM_LABEL[acom as AcomRoom] ?? (acom === "cuadruple" ? "Cuádruple" : acom);
     precioVenta += precioPax * nPax;
     costoNeto += info.neto * nPax;
     totalPax += nPax;

@@ -26,6 +26,17 @@ export const PAX_TARIFA_DEFAULT: Record<AcomRoom, number> = {
   multiple: 4,
 };
 
+/**
+ * Pax que cubre 1 habitación de una acomodación. Tolera claves legadas como
+ * "cuadruple" (usada por el editor de programas) que equivale a múltiple = 4 pax.
+ * Evita que una habitación cuádruple se liquide como 1 sola persona.
+ */
+export function paxDeAcomodacion(acom: string): number {
+  if (acom in PAX_TARIFA_DEFAULT) return PAX_TARIFA_DEFAULT[acom as AcomRoom];
+  if (acom === "cuadruple") return 4;
+  return 1;
+}
+
 /** Configuración de una acomodación por hotel (migración 027). */
 export type AcomConfig = {
   acomodacion: AcomRoom;

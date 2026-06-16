@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
-import { PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
+import { paxDeAcomodacion } from "@/lib/acomodaciones";
 import { reservarPrograma } from "../../actions";
 
-// Pax que cubre 1 habitación de cada acomodación (Doble=2, Triple=3, Sencilla=1).
-const paxPorHab = (a: string) => PAX_TARIFA_DEFAULT[a as AcomRoom] ?? 1;
+// Pax que cubre 1 habitación (Doble=2, Triple=3, Cuádruple=4, Sencilla=1).
+const paxPorHab = (a: string) => paxDeAcomodacion(a);
 
 export type CategoriaReserva = {
   id: number;
