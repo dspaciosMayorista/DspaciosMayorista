@@ -48,16 +48,16 @@ begin
 
   -- ── Destinos Internacionales (subpáginas) ──────────────────────────────
   insert into public.web_paginas (parent_id, slug, titulo, tipo, orden) values
-    (intl, 'mar-caribe',     'Mar Caribe',        'destino', 0),  -- ⚠ "MAR CA..."
-    (intl, 'eeuu-canada',    'EEUU y Canadá',     'destino', 1),  -- ⚠ "EEUU Y C..."
-    (intl, 'suramerica',     'Suramérica',        'destino', 2),  -- ⚠ "SURAMÉ..."
-    (intl, 'centroamerica',  'Centroamérica',     'destino', 3),  -- ⚠ "CENTRO..."
-    (intl, 'paises-arabes',  'Países Árabes',     'destino', 4),  -- ⚠ "PAISES Á..."
+    (intl, 'mar-caribe',     'Mar Caribe',        'destino', 0),
+    (intl, 'eeuu-canada',    'EEUU y Canadá',     'destino', 1),
+    (intl, 'suramerica',     'Suramérica',        'destino', 2),
+    (intl, 'centroamerica',  'Centroamérica',     'destino', 3),
+    (intl, 'paises-arabes',  'Países Árabes',     'destino', 4),
     (intl, 'turquia',        'Turquía',           'destino', 5),
     (intl, 'europa',         'Europa',            'destino', 6),
     (intl, 'africa',         'África',            'destino', 7),
-    (intl, 'asia-oceania',   'Asia y Oceanía',    'destino', 8),  -- ⚠ "ASIA Y O..."
-    (intl, 'cruceros',       'Cruceros',          'destino', 9);  -- ⚠ "CRUCER..."
+    (intl, 'asia-oceania',   'Asia y Oceanía',    'destino', 8),
+    (intl, 'cruceros',       'Cruceros',          'destino', 9);
 
   -- ── Secciones base (hero) para Inicio y cada subpágina ─────────────────
   -- Inicio: hero principal con el texto de la web actual.
