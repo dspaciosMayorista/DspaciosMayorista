@@ -10,7 +10,7 @@ export default async function DestinosPage() {
   const sb = await createClient();
   const { data: destinos } = await sb
     .from("destinos")
-    .select("id, nombre, codigo_iata, pais, hoteles(count)")
+    .select("id, nombre, codigo_iata, pais, hoteles(id, nombre)")
     .order("nombre");
 
   return (

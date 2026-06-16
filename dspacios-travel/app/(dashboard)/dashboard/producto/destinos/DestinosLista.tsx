@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { EliminarDestinoBtn } from "../../tarifario/EliminarDestinoBtn";
 
-type Dest = { id: number; nombre: string; codigo_iata: string | null; pais: string | null; hoteles: unknown };
+type HotelMini = { id: number; nombre: string };
+type Dest = { id: number; nombre: string; codigo_iata: string | null; pais: string | null; hoteles: HotelMini[] | null };
 
 export function DestinosLista({ destinos }: { destinos: Dest[] }) {
   const [query, setQuery] = useState("");
@@ -46,7 +48,9 @@ export function DestinosLista({ destinos }: { destinos: Dest[] }) {
                 {pais} <span className="font-normal text-gray-400">({grupos.get(pais)!.length})</span>
               </h2>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {grupos.get(pais)!.map((d) => (
+                {grupos.get(pais)!.map((d) => {
+                  const hoteles = d.hoteles ?? [];
+                  return (
                   <div key={d.id} className="group relative rounded-xl border border-gray-200 bg-white p-5">
                     <div className="flex items-start justify-between">
                       <h3 className="font-semibold text-gray-900">
@@ -54,14 +58,26 @@ export function DestinosLista({ destinos }: { destinos: Dest[] }) {
                         {d.codigo_iata && <span className="font-normal text-gray-400"> ({d.codigo_iata})</span>}
                       </h3>
                       <span className="rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-500">
-                        {(d.hoteles as { count: number }[])?.[0]?.count ?? 0} hoteles
+                        {hoteles.length} {hoteles.length === 1 ? "hotel" : "hoteles"}
                       </span>
                     </div>
+                    {hoteles.length > 0 && (
+                      <ul className="mt-3 space-y-1">
+                        {hoteles.map((h) => (
+                          <li key={h.id}>
+                            <Link href={`/dashboard/producto/hoteles/${h.id}`} className="text-xs text-[#1D7C9A] hover:underline">
+                              · {h.nombre}
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     <div className="absolute right-3 top-3 opacity-0 transition-opacity group-hover:opacity-100">
                       <EliminarDestinoBtn id={d.id} nombre={d.nombre} />
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           ))}
