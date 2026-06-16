@@ -40,9 +40,9 @@ const TIPOS_SECCION = [
 
 // Revalida el sitio público (home + slug afectado) y el propio CMS.
 function revalidarSitio(slug?: string | null) {
-  revalidatePath("/", "layout");
-  if (slug && slug !== "inicio") revalidatePath(`/${slug}`);
-  revalidatePath("/dashboard/cms");
+  revalidatePath("/sitio_web", "layout");
+  if (slug && slug !== "inicio") revalidatePath(`/sitio_web/${slug}`);
+  revalidatePath("/cms");
 }
 
 // Re-valida el rol superadmin del lado server. No confiamos en la UI.

@@ -3,6 +3,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
+import { rutaSitio } from '@/lib/sitio/rutas';
 
 // Sección DESTINOS_GRID. datos: { titulo?, subtitulo? }
 // hijos: subpáginas (PaginaHijo[]) → tarjetas que enlazan a /[slug].
@@ -17,7 +18,7 @@ const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
         key: h.slug,
         name: h.titulo,
         image: h.imagenPortada,
-        href: `/${h.slug}`,
+        href: rutaSitio(h.slug),
       }))
     : (destinos || []).map((d) => ({
         key: d.id,
