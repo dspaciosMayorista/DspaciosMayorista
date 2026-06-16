@@ -808,7 +808,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} onAgregar={agregarItem} />
+          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdades(hotel)} onAgregar={agregarItem} />
         </>
       )}
     </div>
