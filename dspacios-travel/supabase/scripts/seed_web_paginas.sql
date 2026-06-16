@@ -30,8 +30,8 @@ begin
     (nac, 'san-andres',        'San Andrés',            'destino', 0),
     (nac, 'cartagena',         'Cartagena',             'destino', 1),
     (nac, 'santa-marta',       'Santa Marta',           'destino', 2),
-    (nac, 'la-guajira',        'La Guajira',            'destino', 3),
-    (nac, 'la-guajira-2',      'La Guajira (2)',        'destino', 4),   -- ⚠ nombre exacto a confirmar
+    (nac, 'la-guajira-aereo',     'La Guajira Aéreo',    'destino', 3),
+    (nac, 'la-guajira-terrestre', 'La Guajira Terrestre','destino', 4),
     (nac, 'tolu-covenas',      'Tolú & Coveñas',        'destino', 5),
     (nac, 'capurgana',         'Capurganá',             'destino', 6),
     (nac, 'bahia-solano',      'Bahía Solano',          'destino', 7),
