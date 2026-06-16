@@ -1,8 +1,10 @@
 "use client";
 
 import React from 'react';
-import { Plane, Mail, Phone, MapPin } from 'lucide-react';
+import { Mail, Phone, MapPin } from 'lucide-react';
 import Link from 'next/link';
+import { Logo } from '@/components/Logo';
+import { SITIO_BASE, rutaSitio } from '@/lib/sitio/rutas';
 
 // Íconos sociales como SVG inline: lucide-react de este repo no exporta
 // Facebook/Instagram/Youtube/Tiktok, así que evitamos depender de su versión.
@@ -51,12 +53,9 @@ const Footer = ({ config }) => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-12">
           {/* Brand */}
           <div>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-10 h-10 bg-[#d8f511] rounded-full flex items-center justify-center">
-                <Plane className="w-6 h-6 text-[#120573]" />
-              </div>
-              <span className="text-2xl font-bold">D'Spacios Travel</span>
-            </div>
+            <Link href={SITIO_BASE} className="inline-flex items-center mb-4">
+              <Logo variant="white" height={40} className="h-10 w-auto" />
+            </Link>
             <p className="text-white/80 leading-relaxed">
               Tu agencia mayorista de viajes de confianza. Creando experiencias inolvidables desde 2008.
             </p>
@@ -66,11 +65,11 @@ const Footer = ({ config }) => {
           <div>
             <h3 className="text-lg font-bold mb-4 text-[#d8f511]">Enlaces Rápidos</h3>
             <ul className="space-y-3">
-              <li><Link href="/destinos-nacionales" className="text-white/80 hover:text-[#d8f511] transition-colors">Destinos Nacionales</Link></li>
-              <li><Link href="/destinos-internacionales" className="text-white/80 hover:text-[#d8f511] transition-colors">Destinos Internacionales</Link></li>
-              <li><Link href="/experiencias" className="text-white/80 hover:text-[#d8f511] transition-colors">Experiencias</Link></li>
-              <li><Link href="/sobre-nosotros" className="text-white/80 hover:text-[#d8f511] transition-colors">Sobre Nosotros</Link></li>
-              <li><Link href="/blog" className="text-white/80 hover:text-[#d8f511] transition-colors">Blog</Link></li>
+              <li><Link href={rutaSitio('destinos-nacionales')} className="text-white/80 hover:text-[#d8f511] transition-colors">Destinos Nacionales</Link></li>
+              <li><Link href={rutaSitio('destinos-internacionales')} className="text-white/80 hover:text-[#d8f511] transition-colors">Destinos Internacionales</Link></li>
+              <li><Link href={rutaSitio('experiencias')} className="text-white/80 hover:text-[#d8f511] transition-colors">Experiencias</Link></li>
+              <li><Link href={rutaSitio('sobre-nosotros')} className="text-white/80 hover:text-[#d8f511] transition-colors">Sobre Nosotros</Link></li>
+              <li><Link href={rutaSitio('blog')} className="text-white/80 hover:text-[#d8f511] transition-colors">Blog</Link></li>
               <li><Link href="/tarifario" className="text-white/80 hover:text-[#d8f511] transition-colors">Tarifario</Link></li>
             </ul>
           </div>

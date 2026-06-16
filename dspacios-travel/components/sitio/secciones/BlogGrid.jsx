@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { Calendar, ArrowRight, Tag } from 'lucide-react';
+import { SITIO_BASE } from '@/lib/sitio/rutas';
 
 // Sección BLOG_GRID. datos: { titulo?, subtitulo? }
 // items: SitioBlog[] (de web_blog) pasados por prop. Detalle en /blog/[id].
@@ -59,7 +60,7 @@ const BlogGrid = ({ datos = {}, items = [] }) => {
 
                   <p className="text-gray-600 mb-8 line-clamp-3 flex-1 leading-relaxed">{post.summary}</p>
 
-                  <Link href={`/blog/${post.id}`} className="mt-auto inline-block">
+                  <Link href={`${SITIO_BASE}/blog/${post.id}`} className="mt-auto inline-block">
                     <button className="text-[#120573] font-bold flex items-center text-sm uppercase tracking-wide group-hover:text-[#d8f511] transition-colors">
                       Leer Artículo Completo <ArrowRight className="ml-2 w-4 h-4 group-hover:translate-x-2 transition-transform" />
                     </button>

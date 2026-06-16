@@ -76,9 +76,9 @@ export function CmsClient({
 
   const previewSrc = paginaSel
     ? paginaSel.slug === "inicio"
-      ? "/"
-      : `/${paginaSel.slug}`
-    : "/";
+      ? "/sitio_web"
+      : `/sitio_web/${paginaSel.slug}`
+    : "/sitio_web";
 
   return (
     <div className="space-y-4">

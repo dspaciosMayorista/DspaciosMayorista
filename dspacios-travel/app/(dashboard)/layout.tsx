@@ -78,7 +78,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard/configuracion", label: "Configuración", modulo: "configuracion" },
 
   // Sitio web público (CMS) — solo superadmin
-  { href: "/dashboard/cms", label: "Sitio web", modulo: "configuracion", soloSuperadmin: true },
+  { href: "/cms", label: "Sitio web", modulo: "configuracion", soloSuperadmin: true },
 
   // CRM
   { href: "/crm", label: "CRM ↗", separadorAntes: true, modulo: "crm" },

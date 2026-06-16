@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { Calendar, ArrowLeft, MessageCircle, User, Share2 } from 'lucide-react';
 import { Button } from '@/components/sitio/ui/button';
+import { SITIO_BASE } from '@/lib/sitio/rutas';
 
 export default function BlogDetalle({ post, whatsappNumero }) {
   const waNumero = whatsappNumero || '573212150582';
@@ -13,7 +14,7 @@ export default function BlogDetalle({ post, whatsappNumero }) {
   return (
     <div className="pt-28 pb-24 bg-white min-h-screen">
       <article className="container mx-auto px-4 max-w-4xl">
-        <Link href="/blog" className="inline-flex items-center text-gray-500 hover:text-[#120573] mb-8 font-medium transition-colors">
+        <Link href={`${SITIO_BASE}/blog`} className="inline-flex items-center text-gray-500 hover:text-[#120573] mb-8 font-medium transition-colors">
           <ArrowLeft className="w-4 h-4 mr-2" /> Volver a la revista
         </Link>
 

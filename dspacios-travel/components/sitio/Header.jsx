@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Menu, X, ChevronDown, Phone } from 'lucide-react';
 import { Button } from '@/components/sitio/ui/button';
+import { Logo } from '@/components/Logo';
+import { SITIO_BASE, rutaSitio } from '@/lib/sitio/rutas';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -36,7 +38,7 @@ const Header = ({ config, menu }) => {
   if (config?.telefonoFijo) lineas.push(config.telefonoFijo);
   const lineasUnicas = [...new Set(lineas.filter(Boolean))];
 
-  const hrefDe = (item) => (item.slug === 'inicio' ? '/' : `/${item.slug}`);
+  const hrefDe = (item) => rutaSitio(item.slug);
   const isActive = (href) => pathname === href;
   const linkClass = (href) => `font-medium transition-colors ${
     isActive(href) ? 'text-[#120573] font-bold' : 'text-gray-700 hover:text-[#120573]'
@@ -78,13 +80,9 @@ const Header = ({ config, menu }) => {
       >
         <nav className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <Link href="/" onClick={closeAll}>
+            <Link href={SITIO_BASE} onClick={closeAll}>
               <motion.div whileHover={{ scale: 1.02 }} className="flex items-center cursor-pointer">
-                <img
-                  src="https://horizons-cdn.hostinger.com/bc38254b-0628-443e-a042-b2bb3af1fb5a/b4bdab48eba84a991f5567ce4c70da86.png"
-                  alt="Logo D'Spacios Travel"
-                  className="h-10 sm:h-12 w-auto object-contain"
-                />
+                <Logo variant="white" height={40} className="h-10 sm:h-12 w-auto object-contain" />
               </motion.div>
             </Link>
 
@@ -113,7 +111,7 @@ const Header = ({ config, menu }) => {
                             {item.hijos.map((h) => (
                               <Link
                                 key={h.id}
-                                href={`/${h.slug}`}
+                                href={rutaSitio(h.slug)}
                                 onClick={closeAll}
                                 className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 hover:text-[#120573] transition-colors"
                               >
@@ -180,7 +178,7 @@ const Header = ({ config, menu }) => {
                             Ver todo
                           </Link>
                           {item.hijos.map((h) => (
-                            <Link key={h.id} href={`/${h.slug}`} onClick={closeAll} className="block text-sm text-gray-600 hover:text-[#120573] py-1.5">
+                            <Link key={h.id} href={rutaSitio(h.slug)} onClick={closeAll} className="block text-sm text-gray-600 hover:text-[#120573] py-1.5">
                               {h.etiquetaMenu}
                             </Link>
                           ))}
