@@ -4,6 +4,7 @@ import Link from "next/link";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { CambiarSillasForm } from "./CambiarSillasForm";
 import { SillaEstado } from "./SillaEstado";
+import { PasajeroAcciones } from "./PasajeroAcciones";
 import { EditarBloqueoForm } from "./EditarBloqueoForm";
 import { CambioOperacionalForm } from "./CambioOperacionalForm";
 
@@ -139,6 +140,7 @@ export default async function BloqueoDetallePage({
               <th className="px-3 py-2">Acomodación</th>
               <th className="px-3 py-2">Plazo</th>
               <th className="px-3 py-2">Estado</th>
+              <th className="px-3 py-2">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -165,6 +167,19 @@ export default async function BloqueoDetallePage({
                 <td className="px-3 py-2">
                   <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId}
                     bloqueada={s.estado === "cambio" || s.estado === "cambio_entrante"} />
+                </td>
+                <td className="px-3 py-2">
+                  <PasajeroAcciones
+                    sillaId={s.id}
+                    bloqueoId={bloqueoId}
+                    bloqueada={s.estado === "cambio" || s.estado === "cambio_entrante"}
+                    otros={otros ?? []}
+                    inicial={{
+                      pasajero_nombres: s.pasajero_nombres ?? "", pasajero_apellidos: s.pasajero_apellidos ?? "",
+                      tipo_doc: s.tipo_doc ?? "", numero_doc: s.numero_doc ?? "", nacimiento: s.nacimiento ?? "",
+                      asesor: s.asesor ?? "", hotel: s.hotel ?? "", acomodacion: s.acomodacion ?? "", plazo: s.plazo ?? "",
+                    }}
+                  />
                 </td>
               </tr>
             ))}
