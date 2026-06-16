@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem } from "@/lib/cart/CartContext";
@@ -122,12 +122,6 @@ export function BuscadorBooking({
                   r={r}
                   foto={fotosPorHotel[r.hotelId] ?? null}
                   info={infoPorHotel[r.hotelId]}
-                  item={{
-                    modulo: "porcion_terrestre", paqueteId: r.paqueteId, hotelId: r.hotelId, bloqueoId: null,
-                    hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: fotosPorHotel[r.hotelId] ?? null,
-                    categoria: r.categoria, regimen: r.regimen, fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso, noches: r.noches,
-                    habitaciones: r.habitaciones, ninos: r.ninos, ninos2: 0, pax: r.pax, precio: r.total,
-                  }}
                 />
               ))}
             </div>
@@ -138,8 +132,28 @@ export function BuscadorBooking({
   );
 }
 
-function Resultado({ r, foto, info, item }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null }; item: Omit<CartItem, "id"> }) {
+function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null } }) {
   const { items, add, remove } = useCart();
+
+  // Combos disponibles → selectores de categoría y alimentación (el más barato
+  // viene por defecto). El precio y lo que va al carrito siguen al combo elegido.
+  const categorias = useMemo(() => [...new Set(r.combos.map((c) => c.categoria))], [r.combos]);
+  const [cat, setCat] = useState(r.categoria);
+  const [reg, setReg] = useState(r.regimen);
+  const regimenes = useMemo(
+    () => [...new Set(r.combos.filter((c) => c.categoria === cat).map((c) => c.regimen))],
+    [r.combos, cat]
+  );
+  // Si el régimen elegido no aplica a la categoría, cae al más barato de esa categoría.
+  const regEff = regimenes.includes(reg) ? reg : (regimenes[0] ?? reg);
+  const combo = r.combos.find((c) => c.categoria === cat && c.regimen === regEff) ?? r.combos[0];
+
+  const item: Omit<CartItem, "id"> = {
+    modulo: "porcion_terrestre", paqueteId: r.paqueteId, hotelId: r.hotelId, bloqueoId: null,
+    hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: foto,
+    categoria: combo.categoria, regimen: combo.regimen, fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso, noches: r.noches,
+    habitaciones: r.habitaciones, ninos: r.ninos, ninos2: 0, pax: combo.pax, precio: combo.total,
+  };
   // El estado del botón se deriva del carrito real: si se quita del carrito,
   // vuelve a estar disponible para agregar.
   const enCarrito = items.find((i) =>
@@ -147,6 +161,7 @@ function Resultado({ r, foto, info, item }: { r: BusquedaResultado; foto: string
     i.fechaIda === item.fechaIda && i.fechaRegreso === item.fechaRegreso &&
     i.categoria === item.categoria && i.regimen === item.regimen);
   const estrellas = info?.estrellas && info.estrellas > 0 ? "★".repeat(info.estrellas) : "";
+  const selCls = "rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs";
   return (
     <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
       <div className="aspect-[16/10] w-full bg-gray-100">
@@ -160,11 +175,28 @@ function Resultado({ r, foto, info, item }: { r: BusquedaResultado; foto: string
           <span className="font-semibold text-gray-800">{r.hotelNombre}</span>
           {estrellas && <span className="text-sm text-amber-400">{estrellas}</span>}
         </div>
-        <div className="text-xs text-gray-500">{r.destino ?? ""} · {r.categoria} / {r.regimen} · {r.noches}N</div>
+        <div className="text-xs text-gray-500">{r.destino ?? ""} · {r.noches}N</div>
+
+        {/* Selectores de categoría y alimentación */}
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="w-20 shrink-0">Categoría</span>
+            <select value={cat} onChange={(e) => setCat(e.target.value)} className={`${selCls} flex-1`}>
+              {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="w-20 shrink-0">Alimentación</span>
+            <select value={regEff} onChange={(e) => setReg(e.target.value)} className={`${selCls} flex-1`}>
+              {regimenes.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </label>
+        </div>
+
         <div className="mt-3 flex items-end justify-between">
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-gray-400">total {r.pax} pax</div>
-            <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(r.total)}</div>
+            <div className="text-[10px] uppercase tracking-wide text-gray-400">total {combo.pax} pax</div>
+            <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(combo.total)}</div>
           </div>
           <button type="button" onClick={() => (enCarrito ? remove(enCarrito.id) : add(item))}
             className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ backgroundColor: enCarrito ? "var(--brand-success)" : "var(--brand-primary)" }}>
