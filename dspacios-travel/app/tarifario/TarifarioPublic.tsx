@@ -100,7 +100,19 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
 
 type ModuloKey = FilaTarifario["modulo"] | "programas";
 
-type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null }>;
+type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null }>;
+
+// Texto de rango de edad de niño/infante configurado por hotel.
+// Ej.: "Niño 1 y 2: 5 a 11 años · Infante: 0 a 1 año".
+function rangoEdades(info?: { ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null }): string | null {
+  if (!info) return null;
+  const partes: string[] = [];
+  if (info.ninoMin != null && info.ninoMax != null)
+    partes.push(`Niño 1 y 2: ${info.ninoMin} a ${info.ninoMax} años`);
+  if (info.infMax != null && info.infMax > 0)
+    partes.push(`Infante: ${info.infMin ?? 0} a ${info.infMax} año${info.infMax === 1 ? "" : "s"}`);
+  return partes.length ? partes.join(" · ") : null;
+}
 
 // Estrellas (★) o clasificación (Boutique/Luxury…) al lado del nombre del hotel.
 function CategoriaInline({ info }: { info?: { estrellas: number | null; clasificacion: string | null } }) {
@@ -144,7 +156,7 @@ export function TarifarioPublic({
   origenPorBloqueo?: Record<number, string>;
   fotosPorHotel?: Record<number, string>;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null }>;
+  infoPorHotel?: InfoHotel;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
 }) {
@@ -521,6 +533,9 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                     <td className="px-3 py-2 font-medium text-gray-800">
                       {i === 0 ? r.hotel : ""}
                       {i === 0 && r.hotel_id != null && <CategoriaInline info={infoPorHotel[r.hotel_id]} />}
+                      {i === 0 && r.hotel_id != null && rangoEdades(infoPorHotel[r.hotel_id]) && (
+                        <span className="mt-0.5 block text-[11px] font-normal text-gray-400">{rangoEdades(infoPorHotel[r.hotel_id])}</span>
+                      )}
                       {i === 0 && puedeReservar && r.paquete_id != null && r.hotel_id != null && (
                         <Link href={reservarHref(r)} className="mt-0.5 block text-xs font-normal" style={{ color: "var(--brand-accent)" }}>
                           Reservar →
