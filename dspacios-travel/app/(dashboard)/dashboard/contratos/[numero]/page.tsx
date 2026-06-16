@@ -46,6 +46,7 @@ export default async function ContratoDetallePage({
     { data: cuotas },
     { data: pasajerosC },
     { data: asesoresVenta },
+    { data: destinos },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
@@ -59,6 +60,7 @@ export default async function ContratoDetallePage({
     sb.from("cuotas").select("id, orden, tipo, fecha_limite, monto").eq("numero_contrato", numero).order("orden"),
     sb.from("contrato_pasajeros").select("id, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante").eq("numero_contrato", numero).order("orden"),
     sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre"),
+    sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
@@ -171,6 +173,7 @@ export default async function ContratoDetallePage({
           planNombre: venta.plan_nombre ?? "",
           observaciones: venta.observaciones ?? "",
         }}
+        destinos={destinos ?? []}
       />
 
       {/* Servicios adicionales (solo contrato pendiente) */}
@@ -231,6 +234,7 @@ export default async function ContratoDetallePage({
         numero={numero}
         vouchers={(vouchers ?? []) as unknown as VoucherRow[]}
         puedeGenerar={esSuperadmin || saldo <= 0}
+        destinos={destinos ?? []}
       />
 
       {esSuperadmin && <EliminarContrato numero={numero} />}

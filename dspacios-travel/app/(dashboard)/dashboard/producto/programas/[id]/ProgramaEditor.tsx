@@ -26,6 +26,8 @@ import { parsearPrograma } from "@/lib/programasImport";
 import { pvpPrograma, type PvpOpciones } from "@/lib/programas";
 import { calcularNetoPrograma, type ModoBaseComisionable } from "@/lib/calc/programaPrecio";
 import { formatMoneda } from "@/lib/utils";
+import { ComboCiudad } from "@/components/ComboCiudad";
+import type { DestinoOpt } from "@/components/ComboDestino";
 
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
 type Ciudad = { id: number; nombre: string; codigo_iata: string | null; noches: number };
@@ -70,6 +72,7 @@ export function ProgramaEditor(props: {
   inclusiones: Inclusion[];
   tours: Tour[];
   blackouts: Blackout[];
+  destinos?: DestinoOpt[];
 }) {
   const { programa } = props;
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("general");
@@ -168,7 +171,7 @@ export function ProgramaEditor(props: {
         />
       )}
       {tab === "importar" && <ImportarEditor programaId={programa.id} onDone={() => router.refresh()} />}
-      {tab === "ruta" && <RutaEditor programaId={programa.id} ciudades={props.ciudades} />}
+      {tab === "ruta" && <RutaEditor programaId={programa.id} ciudades={props.ciudades} destinos={props.destinos ?? []} />}
       {tab === "itinerario" && <ItinerarioEditor programaId={programa.id} dias={props.dias} totalDias={programa.dias} />}
       {tab === "matriz" &&
         (modoSalidaTabs ? (
@@ -269,11 +272,18 @@ function DelBtn({ onClick }: { onClick: () => void }) {
 }
 
 // ── Ruta (ciudades) ───────────────────────────────────────────────────────────
-function RutaEditor({ programaId, ciudades }: { programaId: number; ciudades: Ciudad[] }) {
+function RutaEditor({ programaId, ciudades, destinos }: { programaId: number; ciudades: Ciudad[]; destinos: DestinoOpt[] }) {
   const [rows, setRows] = useState(
     ciudades.map((c) => ({ nombre: c.nombre, codigoIata: c.codigo_iata ?? "", noches: c.noches as number | null }))
   );
   const upd = (i: number, k: string, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  // Al elegir un destino del catálogo, auto-rellena el IATA de esa fila (si el destino lo tiene).
+  const setCiudad = (i: number, nombre: string) =>
+    setRows((p) => p.map((r, j) => {
+      if (j !== i) return r;
+      const d = destinos.find((x) => x.nombre.toLowerCase() === nombre.toLowerCase());
+      return { ...r, nombre, codigoIata: d?.codigo_iata ? d.codigo_iata : r.codigoIata };
+    }));
   return (
     <div>
       <p className="mb-3 text-sm text-gray-500">Ciudades del circuito, en orden. Las noches suman el total del programa.</p>
@@ -281,7 +291,7 @@ function RutaEditor({ programaId, ciudades }: { programaId: number; ciudades: Ci
         {rows.map((r, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2">
             <span className="w-5 text-xs text-gray-400">{i + 1}</span>
-            <Input value={r.nombre} onChange={(e) => upd(i, "nombre", e.target.value)} placeholder="Ciudad" className="w-56" />
+            <div className="w-56"><ComboCiudad destinos={destinos} value={r.nombre} onChange={(v) => setCiudad(i, v)} modo="nombre" permitirLibre placeholder="Ciudad" /></div>
             <Input value={r.codigoIata} onChange={(e) => upd(i, "codigoIata", e.target.value)} placeholder="IATA" className="w-24" />
             <Input type="number" value={r.noches ?? ""} onChange={(e) => upd(i, "noches", e.target.value === "" ? null : Number(e.target.value))} placeholder="Noches" className="w-28" />
             <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />

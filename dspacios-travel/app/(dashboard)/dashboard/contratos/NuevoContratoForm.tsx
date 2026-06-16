@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
+import { ComboCiudad } from "@/components/ComboCiudad";
+import type { DestinoOpt } from "@/components/ComboDestino";
 import {
   crearContrato,
   type PasajeroInput,
@@ -47,6 +49,7 @@ export function NuevoContratoForm({
   vendedores = [],
   agencias = [],
   freelances = [],
+  destinos = [],
 }: {
   asesorDefault: string;
   paquetes?: PaqueteOpt[];
@@ -54,6 +57,7 @@ export function NuevoContratoForm({
   vendedores?: { nombre: string }[];
   agencias?: Opt[];
   freelances?: Opt[];
+  destinos?: DestinoOpt[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -341,7 +345,7 @@ export function NuevoContratoForm({
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className={labelCls}>Destino</label>
-            <Input value={destino} onChange={(e) => setDestino(e.target.value)} />
+            <ComboCiudad destinos={destinos} value={destino} onChange={setDestino} modo="nombre" permitirLibre placeholder="Destino…" />
           </div>
           <div>
             <label className={labelCls}>Fecha de salida (viaje)</label>
@@ -395,10 +399,10 @@ export function NuevoContratoForm({
           <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4">
             <Input placeholder="Record (PNR)" value={v.record} onChange={(e) => setVuelo(i, { record: e.target.value })} />
             <Input placeholder="Aerolínea" value={v.aerolinea} onChange={(e) => setVuelo(i, { aerolinea: e.target.value })} />
-            <Input placeholder="Origen (cód)" value={v.origenCodigo} onChange={(e) => setVuelo(i, { origenCodigo: e.target.value })} />
-            <Input placeholder="Destino (cód)" value={v.destinoCodigo} onChange={(e) => setVuelo(i, { destinoCodigo: e.target.value })} />
-            <Input placeholder="Origen (ciudad)" value={v.origenCiudad} onChange={(e) => setVuelo(i, { origenCiudad: e.target.value })} />
-            <Input placeholder="Destino (ciudad)" value={v.destinoCiudad} onChange={(e) => setVuelo(i, { destinoCiudad: e.target.value })} />
+            <ComboCiudad destinos={destinos} value={v.origenCodigo} onChange={(val) => setVuelo(i, { origenCodigo: val })} modo="iata" permitirLibre placeholder="Origen (cód)" />
+            <ComboCiudad destinos={destinos} value={v.destinoCodigo} onChange={(val) => setVuelo(i, { destinoCodigo: val })} modo="iata" permitirLibre placeholder="Destino (cód)" />
+            <ComboCiudad destinos={destinos} value={v.origenCiudad} onChange={(val) => setVuelo(i, { origenCiudad: val })} modo="nombre" permitirLibre placeholder="Origen (ciudad)" />
+            <ComboCiudad destinos={destinos} value={v.destinoCiudad} onChange={(val) => setVuelo(i, { destinoCiudad: val })} modo="nombre" permitirLibre placeholder="Destino (ciudad)" />
             <Input placeholder="Vuelo ida (N°)" value={v.vueloIda} onChange={(e) => setVuelo(i, { vueloIda: e.target.value })} />
             <Input placeholder="Vuelo regreso (N°)" value={v.vueloRegreso} onChange={(e) => setVuelo(i, { vueloRegreso: e.target.value })} />
             <Input type="date" value={v.fechaSalida} onChange={(e) => setVuelo(i, { fechaSalida: e.target.value })} title="Fecha ida" />
@@ -437,7 +441,7 @@ export function NuevoContratoForm({
             <Input placeholder="Hotel" value={h.nombre} onChange={(e) => setHotel(i, { nombre: e.target.value })} />
             <Input placeholder="Categoría habitación" value={h.categoria} onChange={(e) => setHotel(i, { categoria: e.target.value })} />
             <Input placeholder="Proveedor del hotel" value={h.proveedor} onChange={(e) => setHotel(i, { proveedor: e.target.value })} />
-            <Input placeholder="Ciudad" value={h.ciudad} onChange={(e) => setHotel(i, { ciudad: e.target.value })} />
+            <ComboCiudad destinos={destinos} value={h.ciudad} onChange={(val) => setHotel(i, { ciudad: val })} modo="nombre" permitirLibre placeholder="Ciudad" />
             <Input placeholder="Alimentación (P.A, PAM…)" value={h.alimentacion} onChange={(e) => setHotel(i, { alimentacion: e.target.value })} />
             <Input placeholder="Acomodación (Doble…)" value={h.acomodacion} onChange={(e) => setHotel(i, { acomodacion: e.target.value })} />
             <Input className="md:col-span-2" placeholder="Detalle acomodación" value={h.detalleAcomodacion} onChange={(e) => setHotel(i, { detalleAcomodacion: e.target.value })} />

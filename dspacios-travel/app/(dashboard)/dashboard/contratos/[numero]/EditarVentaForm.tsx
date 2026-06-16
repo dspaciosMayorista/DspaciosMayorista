@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { actualizarVenta, type VentaEditInput } from "../actions";
+import { ComboCiudad } from "@/components/ComboCiudad";
+import type { DestinoOpt } from "@/components/ComboDestino";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-export function EditarVentaForm({ numero, inicial }: { numero: string; inicial: VentaEditInput }) {
+export function EditarVentaForm({ numero, inicial, destinos = [] }: { numero: string; inicial: VentaEditInput; destinos?: DestinoOpt[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [f, setF] = useState(inicial);
@@ -40,7 +42,7 @@ export function EditarVentaForm({ numero, inicial }: { numero: string; inicial: 
             <div><label className={lbl}>Teléfono</label><Input value={f.clienteTelefono} onChange={set("clienteTelefono")} /></div>
             <div><label className={lbl}>Email</label><Input value={f.clienteEmail} onChange={set("clienteEmail")} /></div>
             <div><label className={lbl}>Dirección</label><Input value={f.clienteDireccion} onChange={set("clienteDireccion")} /></div>
-            <div><label className={lbl}>Destino</label><Input value={f.destino} onChange={set("destino")} /></div>
+            <div><label className={lbl}>Destino</label><ComboCiudad destinos={destinos} value={f.destino} onChange={(v) => setF({ ...f, destino: v })} modo="nombre" permitirLibre placeholder="Destino…" /></div>
             <div><label className={lbl}>Fecha salida</label><Input type="date" value={f.fechaSalida} onChange={set("fechaSalida")} /></div>
             <div><label className={lbl}>Fecha regreso</label><Input type="date" value={f.fechaRegreso} onChange={set("fechaRegreso")} /></div>
             <div><label className={lbl}>Plazo</label><Input type="date" value={f.plazo} onChange={set("plazo")} /></div>

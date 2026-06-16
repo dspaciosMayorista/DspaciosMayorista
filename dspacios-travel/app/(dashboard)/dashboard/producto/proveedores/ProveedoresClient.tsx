@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { crearProveedor, actualizarProveedor, eliminarProveedor, type TipoProveedor, type ProveedorInput } from "./actions";
+import { ComboCiudad } from "@/components/ComboCiudad";
+import type { DestinoOpt } from "@/components/ComboDestino";
 
 type Proveedor = {
   id: number; tipo: string | null; nombre: string; razon_social: string | null;
@@ -32,7 +34,7 @@ function bancarioTexto(p: Proveedor): string {
   return p.datos_pago ?? "—";
 }
 
-export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] }) {
+export function ProveedoresClient({ proveedores, destinos }: { proveedores: Proveedor[]; destinos: DestinoOpt[] }) {
   const [editId, setEditId] = useState<number | null>(null);
   const [tipo, setTipo] = useState<TipoProveedor>("hotelero");
   const [nombre, setNombre] = useState("");
@@ -125,7 +127,7 @@ export function ProveedoresClient({ proveedores }: { proveedores: Proveedor[] })
           <div><label className={lbl}>Nombre comercial *</label><Input value={nombre} onChange={(e) => setNombre(e.target.value)} /></div>
           <div><label className={lbl}>Razón social</label><Input value={razon} onChange={(e) => setRazon(e.target.value)} /></div>
           <div><label className={lbl}>NIT</label><Input value={nit} onChange={(e) => setNit(e.target.value)} /></div>
-          <div><label className={lbl}>Ciudad</label><Input value={ciudad} onChange={(e) => setCiudad(e.target.value)} /></div>
+          <div><label className={lbl}>Ciudad</label><ComboCiudad destinos={destinos} value={ciudad} onChange={setCiudad} modo="nombre" permitirLibre placeholder="Ciudad…" /></div>
           <div><label className={lbl}>Contacto</label><Input value={contacto} onChange={(e) => setContacto(e.target.value)} /></div>
           <div><label className={lbl}>Banco</label><Input value={banco} onChange={(e) => setBanco(e.target.value)} placeholder="Ej. Bancolombia" /></div>
           <div>

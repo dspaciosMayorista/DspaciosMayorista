@@ -16,7 +16,7 @@ export default async function NuevoContratoPage() {
     asesorDefault = perfil?.nombre ?? "";
   }
 
-  const [{ data: paquetesRaw }, { data: bloqueosRaw }, { data: vendedores }, { data: aliados }] = await Promise.all([
+  const [{ data: paquetesRaw }, { data: bloqueosRaw }, { data: vendedores }, { data: aliados }, { data: destinos }] = await Promise.all([
     sb.from("paquetes")
       .select("id, categoria, nombre, plan_alimentacion, impuesto_no_comisionable, paquete_hoteles(nombre, ciudad, alimentacion, acomodacion_detalle), paquete_precios(acomodacion, precio)")
       .eq("activo", true)
@@ -24,6 +24,7 @@ export default async function NuevoContratoPage() {
     sb.from("bloqueos_vuelo").select("id, record, ruta, fecha_ida, fecha_regreso, aerolinea").order("fecha_ida"),
     sb.from("usuarios").select("nombre").eq("rol", "venta").eq("activo", true).order("nombre"),
     sb.from("aliados").select("id, nombre, tipo").order("nombre"),
+    sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
   ]);
 
   const paquetes = (paquetesRaw ?? []) as unknown as PaqueteOpt[];
@@ -46,7 +47,7 @@ export default async function NuevoContratoPage() {
         </p>
       </div>
       <NuevoContratoForm asesorDefault={asesorDefault} paquetes={paquetes} bloqueos={bloqueos}
-        vendedores={vendedores ?? []} agencias={agencias} freelances={freelances} />
+        vendedores={vendedores ?? []} agencias={agencias} freelances={freelances} destinos={destinos ?? []} />
     </div>
   );
 }
