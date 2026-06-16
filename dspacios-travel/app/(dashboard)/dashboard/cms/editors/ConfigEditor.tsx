@@ -11,16 +11,17 @@ type Config = Database["public"]["Tables"]["web_config"]["Row"];
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const ta = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
+function youtubeDe(config: Config | null): string {
+  const e = config?.extra;
+  if (e && typeof e === "object" && !Array.isArray(e)) {
+    const v = (e as Record<string, unknown>).youtube_url;
+    return typeof v === "string" ? v : "";
+  }
+  return "";
+}
+
 function fromRow(config: Config | null): WebConfigInput {
   return {
-    hero_titulo: config?.hero_titulo ?? "",
-    hero_subtitulo: config?.hero_subtitulo ?? "",
-    hero_imagen_url: config?.hero_imagen_url ?? "",
-    hero_cta_texto: config?.hero_cta_texto ?? "",
-    hero_cta_url: config?.hero_cta_url ?? "",
-    nosotros_titulo: config?.nosotros_titulo ?? "",
-    nosotros_texto: config?.nosotros_texto ?? "",
-    nosotros_imagen_url: config?.nosotros_imagen_url ?? "",
     contacto_email: config?.contacto_email ?? "",
     contacto_telefono: config?.contacto_telefono ?? "",
     whatsapp_numero: config?.whatsapp_numero ?? "",
@@ -29,6 +30,7 @@ function fromRow(config: Config | null): WebConfigInput {
     instagram_url: config?.instagram_url ?? "",
     facebook_url: config?.facebook_url ?? "",
     tiktok_url: config?.tiktok_url ?? "",
+    youtube_url: youtubeDe(config),
   };
 }
 
@@ -53,47 +55,10 @@ export function ConfigEditor({ config }: { config: Config | null }) {
 
   return (
     <div className="space-y-6">
-      <Section title="Hero (portada)">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div>
-            <label className={lbl}>Título</label>
-            <Input value={form.hero_titulo} onChange={(e) => set("hero_titulo", e.target.value)} />
-          </div>
-          <div>
-            <label className={lbl}>CTA — texto del botón</label>
-            <Input value={form.hero_cta_texto} onChange={(e) => set("hero_cta_texto", e.target.value)} placeholder="Ver Tarifario" />
-          </div>
-          <div className="md:col-span-2">
-            <label className={lbl}>Subtítulo</label>
-            <textarea className={ta} rows={2} value={form.hero_subtitulo} onChange={(e) => set("hero_subtitulo", e.target.value)} />
-          </div>
-          <div>
-            <label className={lbl}>Imagen de fondo (URL)</label>
-            <Input value={form.hero_imagen_url} onChange={(e) => set("hero_imagen_url", e.target.value)} placeholder="https://…" />
-          </div>
-          <div>
-            <label className={lbl}>CTA — URL del botón</label>
-            <Input value={form.hero_cta_url} onChange={(e) => set("hero_cta_url", e.target.value)} placeholder="/tarifario" />
-          </div>
-        </div>
-      </Section>
-
-      <Section title="Nosotros">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div>
-            <label className={lbl}>Título</label>
-            <Input value={form.nosotros_titulo} onChange={(e) => set("nosotros_titulo", e.target.value)} />
-          </div>
-          <div>
-            <label className={lbl}>Imagen (URL)</label>
-            <Input value={form.nosotros_imagen_url} onChange={(e) => set("nosotros_imagen_url", e.target.value)} placeholder="https://…" />
-          </div>
-          <div className="md:col-span-2">
-            <label className={lbl}>Texto</label>
-            <textarea className={ta} rows={3} value={form.nosotros_texto} onChange={(e) => set("nosotros_texto", e.target.value)} />
-          </div>
-        </div>
-      </Section>
+      <p className="text-sm text-gray-500">
+        Datos globales del sitio (pie de página, contacto, redes). Las páginas y sus
+        secciones se editan en la pestaña <strong>Páginas</strong>.
+      </p>
 
       <Section title="Contacto y canales">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -102,7 +67,7 @@ export function ConfigEditor({ config }: { config: Config | null }) {
             <Input value={form.contacto_email} onChange={(e) => set("contacto_email", e.target.value)} />
           </div>
           <div>
-            <label className={lbl}>Teléfono</label>
+            <label className={lbl}>Teléfono / línea de atención</label>
             <Input value={form.contacto_telefono} onChange={(e) => set("contacto_telefono", e.target.value)} />
           </div>
           <div>
@@ -121,7 +86,7 @@ export function ConfigEditor({ config }: { config: Config | null }) {
       </Section>
 
       <Section title="Redes sociales">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
             <label className={lbl}>Instagram (URL)</label>
             <Input value={form.instagram_url} onChange={(e) => set("instagram_url", e.target.value)} />
@@ -133,6 +98,10 @@ export function ConfigEditor({ config }: { config: Config | null }) {
           <div>
             <label className={lbl}>TikTok (URL)</label>
             <Input value={form.tiktok_url} onChange={(e) => set("tiktok_url", e.target.value)} />
+          </div>
+          <div>
+            <label className={lbl}>YouTube (URL)</label>
+            <Input value={form.youtube_url} onChange={(e) => set("youtube_url", e.target.value)} />
           </div>
         </div>
       </Section>

@@ -2,19 +2,42 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import type { Json } from "@/types/database";
 
 type Result = { ok: true } | { ok: false; error: string };
+type ResultId = { ok: true; id: number } | { ok: false; error: string };
 
 const oNull = (s: string | null | undefined) =>
   s && s.trim() !== "" ? s.trim() : null;
 
-// Rutas del sitio público que dependen del CMS (se revalidan tras cada cambio).
-function revalidarSitio() {
-  revalidatePath("/");
-  revalidatePath("/paquetes");
-  revalidatePath("/destinos");
-  revalidatePath("/testimonios");
-  revalidatePath("/blog");
+// Tipos de página/sección válidos (espejo de la migración 079).
+const TIPOS_PAGINA = [
+  "home",
+  "destinos_nacionales",
+  "destinos_internacionales",
+  "destino",
+  "experiencias",
+  "nosotros",
+  "contacto",
+  "blog",
+  "generica",
+] as const;
+const TIPOS_SECCION = [
+  "hero",
+  "texto",
+  "galeria",
+  "destinos_grid",
+  "experiencias",
+  "testimonios",
+  "blog_grid",
+  "cta",
+  "contacto",
+] as const;
+
+// Revalida el sitio público (home + slug afectado) y el propio CMS.
+function revalidarSitio(slug?: string | null) {
+  revalidatePath("/", "layout");
+  if (slug && slug !== "inicio") revalidatePath(`/${slug}`);
   revalidatePath("/dashboard/cms");
 }
 
@@ -38,98 +61,116 @@ async function exigirSuperadmin(): Promise<
   return { ok: true, sb };
 }
 
-// Convierte un textarea (una línea por ítem) a text[].
-function lineasAArray(texto: string | null | undefined): string[] {
-  if (!texto) return [];
-  return texto
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+// Normaliza un slug: minúsculas, sin espacios ni caracteres raros.
+function normalizarSlug(raw: string): string {
+  return (raw || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9/-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .replace(/^\/+|\/+$/g, "");
 }
 
-// ───────────────────────── PAQUETES ─────────────────────────
-export type WebPaqueteInput = {
+// ───────────────────────── PÁGINAS ─────────────────────────
+export type WebPaginaInput = {
+  parent_id: number | null;
+  slug: string;
   titulo: string;
-  region: string;
-  destino: string;
-  duracion: string;
-  personas: string;
-  precio_desde: string;
-  descripcion: string;
-  descripcion_larga: string;
-  incluye: string; // textarea (una línea por ítem)
-  no_incluye: string;
-  imagen_url: string;
-  galeria: string; // textarea (una línea por URL)
-  destacado: boolean;
-  cta_url: string;
-  orden: number;
-  activo: boolean;
+  etiqueta_menu: string;
+  tipo: string;
+  es_grupo_menu: boolean;
+  en_menu: boolean;
+  seo_titulo: string;
+  seo_descripcion: string;
+  imagen_portada: string;
 };
 
-function paqueteToRow(input: WebPaqueteInput) {
+function paginaToRow(input: WebPaginaInput) {
+  const tipo = (TIPOS_PAGINA as readonly string[]).includes(input.tipo)
+    ? input.tipo
+    : "generica";
   return {
+    parent_id: input.parent_id ?? null,
+    slug: normalizarSlug(input.slug),
     titulo: input.titulo.trim(),
-    region: oNull(input.region),
-    destino: oNull(input.destino),
-    duracion: oNull(input.duracion),
-    personas: oNull(input.personas),
-    precio_desde: oNull(input.precio_desde),
-    descripcion: oNull(input.descripcion),
-    descripcion_larga: oNull(input.descripcion_larga),
-    incluye: lineasAArray(input.incluye),
-    no_incluye: lineasAArray(input.no_incluye),
-    imagen_url: oNull(input.imagen_url),
-    galeria: lineasAArray(input.galeria),
-    destacado: !!input.destacado,
-    cta_url: oNull(input.cta_url),
-    orden: Number(input.orden) || 0,
-    activo: !!input.activo,
+    etiqueta_menu: oNull(input.etiqueta_menu),
+    tipo,
+    es_grupo_menu: !!input.es_grupo_menu,
+    en_menu: !!input.en_menu,
+    seo_titulo: oNull(input.seo_titulo),
+    seo_descripcion: oNull(input.seo_descripcion),
+    imagen_portada: oNull(input.imagen_portada),
   };
 }
 
-export async function crearPaquete(input: WebPaqueteInput): Promise<Result> {
+export async function crearPagina(input: WebPaginaInput): Promise<ResultId> {
   const auth = await exigirSuperadmin();
   if (!auth.ok) return auth;
   if (!input.titulo.trim()) return { ok: false, error: "El título es obligatorio." };
-  const { error } = await auth.sb.from("web_paquetes").insert(paqueteToRow(input));
+  const row = paginaToRow(input);
+  if (!row.slug) return { ok: false, error: "El slug es obligatorio." };
+
+  // Próximo orden dentro del mismo padre.
+  const q = auth.sb.from("web_paginas").select("orden");
+  const { data: hermanos } = row.parent_id
+    ? await q.eq("parent_id", row.parent_id)
+    : await q.is("parent_id", null);
+  const maxOrden = (hermanos ?? []).reduce(
+    (m, r) => Math.max(m, r.orden ?? 0),
+    -1
+  );
+
+  const { data, error } = await auth.sb
+    .from("web_paginas")
+    .insert({ ...row, orden: maxOrden + 1, activo: true })
+    .select("id")
+    .single();
   if (error) return { ok: false, error: error.message };
-  revalidarSitio();
-  return { ok: true };
+  revalidarSitio(row.slug);
+  return { ok: true, id: data.id };
 }
 
-export async function actualizarPaquete(
+export async function actualizarPagina(
   id: number,
-  input: WebPaqueteInput
+  input: WebPaginaInput
 ): Promise<Result> {
   const auth = await exigirSuperadmin();
   if (!auth.ok) return auth;
+  const row = paginaToRow(input);
+  if (!row.slug) return { ok: false, error: "El slug es obligatorio." };
+  // No permitir que una página sea su propio padre.
+  if (row.parent_id === id)
+    return { ok: false, error: "Una página no puede ser su propia subpágina." };
   const { error } = await auth.sb
-    .from("web_paquetes")
-    .update(paqueteToRow(input))
+    .from("web_paginas")
+    .update(row)
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
-  revalidarSitio();
+  revalidarSitio(row.slug);
   return { ok: true };
 }
 
-export async function eliminarPaquete(id: number): Promise<Result> {
+export async function eliminarPagina(id: number): Promise<Result> {
   const auth = await exigirSuperadmin();
   if (!auth.ok) return auth;
-  const { error } = await auth.sb.from("web_paquetes").delete().eq("id", id);
+  // ON DELETE CASCADE borra subpáginas y secciones.
+  const { error } = await auth.sb.from("web_paginas").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidarSitio();
   return { ok: true };
 }
 
-export async function toggleActivoPaquete(
+export async function togglePaginaActivo(
   id: number,
   activo: boolean
 ): Promise<Result> {
   const auth = await exigirSuperadmin();
   if (!auth.ok) return auth;
   const { error } = await auth.sb
-    .from("web_paquetes")
+    .from("web_paginas")
     .update({ activo })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -137,72 +178,167 @@ export async function toggleActivoPaquete(
   return { ok: true };
 }
 
-// ───────────────────────── DESTINOS ─────────────────────────
-export type WebDestinoInput = {
-  nombre: string;
-  region: string;
-  imagen_url: string;
-  tips: string; // textarea
-  orden: number;
-  activo: boolean;
-};
-
-function destinoToRow(input: WebDestinoInput) {
-  return {
-    nombre: input.nombre.trim(),
-    region: oNull(input.region),
-    imagen_url: oNull(input.imagen_url),
-    tips: lineasAArray(input.tips),
-    orden: Number(input.orden) || 0,
-    activo: !!input.activo,
-  };
-}
-
-export async function crearDestino(input: WebDestinoInput): Promise<Result> {
-  const auth = await exigirSuperadmin();
-  if (!auth.ok) return auth;
-  if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
-  const { error } = await auth.sb.from("web_destinos").insert(destinoToRow(input));
-  if (error) return { ok: false, error: error.message };
-  revalidarSitio();
-  return { ok: true };
-}
-
-export async function actualizarDestino(
+export async function togglePaginaEnMenu(
   id: number,
-  input: WebDestinoInput
+  en_menu: boolean
 ): Promise<Result> {
   const auth = await exigirSuperadmin();
   if (!auth.ok) return auth;
   const { error } = await auth.sb
-    .from("web_destinos")
-    .update(destinoToRow(input))
+    .from("web_paginas")
+    .update({ en_menu })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidarSitio();
   return { ok: true };
 }
 
-export async function eliminarDestino(id: number): Promise<Result> {
+// Mueve una página arriba/abajo dentro de sus hermanos (mismo parent).
+export async function moverPagina(
+  id: number,
+  dir: "up" | "down"
+): Promise<Result> {
   const auth = await exigirSuperadmin();
   if (!auth.ok) return auth;
-  const { error } = await auth.sb.from("web_destinos").delete().eq("id", id);
+
+  const { data: actual } = await auth.sb
+    .from("web_paginas")
+    .select("id, parent_id, orden")
+    .eq("id", id)
+    .maybeSingle();
+  if (!actual) return { ok: false, error: "Página no encontrada." };
+
+  const base = auth.sb
+    .from("web_paginas")
+    .select("id, orden")
+    .order("orden", { ascending: true });
+  const { data: hermanos } = actual.parent_id
+    ? await base.eq("parent_id", actual.parent_id)
+    : await base.is("parent_id", null);
+  const lista = hermanos ?? [];
+  const idx = lista.findIndex((p) => p.id === id);
+  const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+  if (idx < 0 || swapIdx < 0 || swapIdx >= lista.length) return { ok: true };
+
+  const a = lista[idx];
+  const b = lista[swapIdx];
+  const { error: e1 } = await auth.sb
+    .from("web_paginas")
+    .update({ orden: b.orden })
+    .eq("id", a.id);
+  const { error: e2 } = await auth.sb
+    .from("web_paginas")
+    .update({ orden: a.orden })
+    .eq("id", b.id);
+  if (e1 || e2)
+    return { ok: false, error: (e1 || e2)!.message };
+  revalidarSitio();
+  return { ok: true };
+}
+
+// ───────────────────────── SECCIONES ─────────────────────────
+export async function crearSeccion(
+  pagina_id: number,
+  tipo: string
+): Promise<ResultId> {
+  const auth = await exigirSuperadmin();
+  if (!auth.ok) return auth;
+  if (!(TIPOS_SECCION as readonly string[]).includes(tipo))
+    return { ok: false, error: "Tipo de sección inválido." };
+
+  const { data: hermanas } = await auth.sb
+    .from("web_secciones")
+    .select("orden")
+    .eq("pagina_id", pagina_id);
+  const maxOrden = (hermanas ?? []).reduce(
+    (m, r) => Math.max(m, r.orden ?? 0),
+    -1
+  );
+
+  const { data, error } = await auth.sb
+    .from("web_secciones")
+    .insert({ pagina_id, tipo, orden: maxOrden + 1, datos: {}, visible: true })
+    .select("id")
+    .single();
+  if (error) return { ok: false, error: error.message };
+  revalidarSitio();
+  return { ok: true, id: data.id };
+}
+
+export async function actualizarSeccion(
+  id: number,
+  datos: Record<string, unknown>
+): Promise<Result> {
+  const auth = await exigirSuperadmin();
+  if (!auth.ok) return auth;
+  const { error } = await auth.sb
+    .from("web_secciones")
+    .update({ datos: datos as Json })
+    .eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidarSitio();
   return { ok: true };
 }
 
-export async function toggleActivoDestino(
+export async function eliminarSeccion(id: number): Promise<Result> {
+  const auth = await exigirSuperadmin();
+  if (!auth.ok) return auth;
+  const { error } = await auth.sb.from("web_secciones").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidarSitio();
+  return { ok: true };
+}
+
+export async function toggleSeccionVisible(
   id: number,
-  activo: boolean
+  visible: boolean
 ): Promise<Result> {
   const auth = await exigirSuperadmin();
   if (!auth.ok) return auth;
   const { error } = await auth.sb
-    .from("web_destinos")
-    .update({ activo })
+    .from("web_secciones")
+    .update({ visible })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
+  revalidarSitio();
+  return { ok: true };
+}
+
+export async function moverSeccion(
+  id: number,
+  dir: "up" | "down"
+): Promise<Result> {
+  const auth = await exigirSuperadmin();
+  if (!auth.ok) return auth;
+
+  const { data: actual } = await auth.sb
+    .from("web_secciones")
+    .select("id, pagina_id, orden")
+    .eq("id", id)
+    .maybeSingle();
+  if (!actual) return { ok: false, error: "Sección no encontrada." };
+
+  const { data: hermanas } = await auth.sb
+    .from("web_secciones")
+    .select("id, orden")
+    .eq("pagina_id", actual.pagina_id)
+    .order("orden", { ascending: true });
+  const lista = hermanas ?? [];
+  const idx = lista.findIndex((s) => s.id === id);
+  const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+  if (idx < 0 || swapIdx < 0 || swapIdx >= lista.length) return { ok: true };
+
+  const a = lista[idx];
+  const b = lista[swapIdx];
+  const { error: e1 } = await auth.sb
+    .from("web_secciones")
+    .update({ orden: b.orden })
+    .eq("id", a.id);
+  const { error: e2 } = await auth.sb
+    .from("web_secciones")
+    .update({ orden: a.orden })
+    .eq("id", b.id);
+  if (e1 || e2) return { ok: false, error: (e1 || e2)!.message };
   revalidarSitio();
   return { ok: true };
 }
@@ -359,16 +495,8 @@ export async function toggleActivoBlog(
   return { ok: true };
 }
 
-// ───────────────────────── CONFIG (fila única id=1) ─────────────────────────
+// ───────────────────────── CONFIG GLOBAL (fila única id=1) ─────────────────────────
 export type WebConfigInput = {
-  hero_titulo: string;
-  hero_subtitulo: string;
-  hero_imagen_url: string;
-  hero_cta_texto: string;
-  hero_cta_url: string;
-  nosotros_titulo: string;
-  nosotros_texto: string;
-  nosotros_imagen_url: string;
   contacto_email: string;
   contacto_telefono: string;
   whatsapp_numero: string;
@@ -377,22 +505,28 @@ export type WebConfigInput = {
   instagram_url: string;
   facebook_url: string;
   tiktok_url: string;
+  youtube_url: string; // se guarda dentro de extra
 };
 
 export async function guardarConfig(input: WebConfigInput): Promise<Result> {
   const auth = await exigirSuperadmin();
   if (!auth.ok) return auth;
+
+  // Preservar el resto de `extra` y guardar youtube allí.
+  const { data: previo } = await auth.sb
+    .from("web_config")
+    .select("extra")
+    .eq("id", 1)
+    .maybeSingle();
+  const extraBase =
+    previo?.extra && typeof previo.extra === "object" && !Array.isArray(previo.extra)
+      ? (previo.extra as Record<string, unknown>)
+      : {};
+  const extra = { ...extraBase, youtube_url: oNull(input.youtube_url) };
+
   const { error } = await auth.sb.from("web_config").upsert(
     {
       id: 1,
-      hero_titulo: oNull(input.hero_titulo),
-      hero_subtitulo: oNull(input.hero_subtitulo),
-      hero_imagen_url: oNull(input.hero_imagen_url),
-      hero_cta_texto: oNull(input.hero_cta_texto),
-      hero_cta_url: oNull(input.hero_cta_url),
-      nosotros_titulo: oNull(input.nosotros_titulo),
-      nosotros_texto: oNull(input.nosotros_texto),
-      nosotros_imagen_url: oNull(input.nosotros_imagen_url),
       contacto_email: oNull(input.contacto_email),
       contacto_telefono: oNull(input.contacto_telefono),
       whatsapp_numero: oNull(input.whatsapp_numero),
@@ -401,6 +535,7 @@ export async function guardarConfig(input: WebConfigInput): Promise<Result> {
       instagram_url: oNull(input.instagram_url),
       facebook_url: oNull(input.facebook_url),
       tiktok_url: oNull(input.tiktok_url),
+      extra: extra as Json,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "id" }
