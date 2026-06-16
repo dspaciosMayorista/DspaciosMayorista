@@ -1,0 +1,22 @@
+/* Estilos del sitio de marketing (D'spacios Travel).
+   El Next app usa Tailwind v4: los tokens de marca (--primary = #1D7C9A,
+   --accent/--ring = #26BBD9, etc.) ya están definidos en styles/globals.css
+   y las utilidades bg-primary/text-primary/bg-accent resuelven a la paleta
+   D'spacios. Aquí solo se aporta la tipografía Inter del sitio original y un
+   par de reglas base, todo acotado a .sitio-root para no afectar al dashboard. */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+.sitio-root {
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  scroll-behavior: smooth;
+}
+
+.sitio-root h1,
+.sitio-root h2,
+.sitio-root h3,
+.sitio-root h4,
+.sitio-root h5,
+.sitio-root h6 {
+  font-weight: 700;
+}

@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
 import { SidebarNav, type NavItem } from "./SidebarNav";
 import { Logo } from "@/components/Logo";
-import { modulosConsultables } from "@/lib/permisos";
+import { modulosConsultables, permisosDelUsuario } from "@/lib/permisos";
 
 const NAV: NavItem[] = [
   // Comercial / venta
@@ -77,6 +77,9 @@ const NAV: NavItem[] = [
   { href: "/dashboard/usuarios/b2b", label: "Aprobaciones B2B", modulo: "b2b" },
   { href: "/dashboard/configuracion", label: "Configuración", modulo: "configuracion" },
 
+  // Sitio web público (CMS) — solo superadmin
+  { href: "/dashboard/cms", label: "Sitio web", modulo: "configuracion", soloSuperadmin: true },
+
   // CRM
   { href: "/crm", label: "CRM ↗", separadorAntes: true, modulo: "crm" },
 ];
@@ -98,7 +101,11 @@ export default async function DashboardLayout({
   // Oculta del menú los módulos que el rol/usuario no puede consultar.
   // (La seguridad de datos la garantiza RLS; esto es solo visibilidad.)
   const permitidos = await modulosConsultables();
-  const nav = NAV.filter((n) => !n.modulo || permitidos.has(n.modulo));
+  const { rol } = await permisosDelUsuario();
+  const nav = NAV.filter((n) => {
+    if (n.soloSuperadmin && rol !== "superadmin") return false;
+    return !n.modulo || permitidos.has(n.modulo);
+  });
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-50 md:flex-row">

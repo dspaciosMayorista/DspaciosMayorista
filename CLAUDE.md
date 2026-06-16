@@ -409,9 +409,12 @@ documentos/fotos/estrellas/ubicación de hotel, cotizaciones (+share_token), con
 solicitudes, vouchers, eliminar contrato, cobros, notificaciones, `ventas_asesor` sin FK,
 blackouts de hotel. *(Ver nombres exactos en `supabase/migrations/`.)*
 **066** programas_vitrina (`desde_precio`, `incluye_aereo`, `portada_url`) ·
-**067** programas_asistencia (`asistencia_medica_dia`). ← **pendientes de correr.**
+**067** programas_asistencia (`asistencia_medica_dia`) ·
+**078** web_cms (tablas `web_paquetes/destinos/testimonios/blog/config` del sitio
+público + RLS: lectura pública de lo activo, escritura solo superadmin). ← **pendientes de correr.**
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
-`supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas).
+`supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
+`supabase/scripts/seed_web_cms.sql` (contenido inicial del CMS; correr tras la 078).
 Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`,
 `RESEND_API_KEY` + dominio verificado para notificaciones/cobros (migr. 056/061/062);
 configurar destinatarios en `config_solicitudes`/`config_cobros`/`config_notificaciones`.
@@ -423,6 +426,20 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
   grupo (rango que cubra los pax), sumándolos al contrato. *(HECHO; queda afinar.)*
 - Afinar rentabilidad/costos del contrato (módulo de gestión).
 - Reservar desde el módulo Servicios del tarifario. *(HECHO.)*
+- **Vuelos dinámicos (JetSMART/agregador) + empaquetado dinámico:** idea a futuro del
+  dueño, NO construir hasta que lo confirme. Plan completo (caminos, costos, checklist,
+  cómo encaja, esqueleto técnico) en `dspacios-travel/docs/futuro/vuelos-dinamicos-jetsmart.md`.
+- **Sitio web público + CMS (HECHO Fase 1 y 2):** la web de marketing (antes en
+  Hostinger Horizons, Vite) se portó a Next dentro del mismo proyecto en route group
+  `app/(sitio)` (rutas `/ /paquetes /destinos /nosotros /testimonios /blog /cotizar`),
+  reusando estructura/colores/UI; enlaza al tarifario. Contenido editable desde el
+  **CMS** `/dashboard/cms` (solo superadmin) → tablas `web_*` (migración **078**), con
+  **fallback** a `lib/sitio/data.js` mientras no se corra la 078/seed. Separación por
+  subdominio en `proxy.ts` vía envs `NEXT_PUBLIC_SITIO_HOST`/`NEXT_PUBLIC_PORTAL_HOST`.
+  *Pendientes:* correr 078 + `seed_web_cms.sql`; configurar dominios/DNS (ver
+  `docs/sitio-web/despliegue-dominio.md`); subida de imágenes a Storage (hoy URLs);
+  título/favicon propios; borrar `sitio-web/` (export Vite, hoy solo referencia).
+  La carpeta `sitio-web/` NO se despliega.
 - Merge de la rama a `main` cuando todo esté validado.
 
 ### REDISEÑO DE RESERVAR (anotaciones del dueño — pendiente, prioridad alta)
