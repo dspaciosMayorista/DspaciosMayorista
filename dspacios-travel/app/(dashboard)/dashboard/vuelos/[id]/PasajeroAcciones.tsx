@@ -109,7 +109,7 @@ export function PasajeroAcciones({
             ) : (
               <>
                 <h3 className="mb-1 text-sm font-semibold text-gray-800">Mover pasajero a otro record</h3>
-                <p className="mb-3 text-xs text-gray-500">Se copia con su contrato y estado al record elegido; la silla actual queda como “cambio”.</p>
+                <p className="mb-3 text-xs text-gray-500">Se copia con su contrato y estado al record elegido; la silla actual queda <b>disponible</b> y se registra el cambio.</p>
                 <select value={destino} onChange={(e) => setDestino(e.target.value === "" ? "" : Number(e.target.value))} className={inp}>
                   <option value="">Elige el record destino…</option>
                   {otros.map((o) => <option key={o.id} value={o.id}>{o.record}{o.fecha_ida ? ` · ${o.fecha_ida}` : ""}</option>)}
