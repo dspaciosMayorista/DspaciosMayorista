@@ -333,3 +333,99 @@ export async function eliminarBloqueo(id: number): Promise<Result> {
   revalidatePath("/dashboard/vuelos");
   return { ok: true };
 }
+
+// ── Pasajeros de una silla: editar / borrar (liberar) / mover de record ──────
+export type PasajeroSillaInput = {
+  pasajero_nombres: string; pasajero_apellidos: string;
+  tipo_doc: string; numero_doc: string; nacimiento: string;
+  asesor: string; hotel: string; acomodacion: string; plazo: string;
+};
+
+export async function editarPasajeroSilla(
+  sillaId: number,
+  bloqueoId: number,
+  data: PasajeroSillaInput
+): Promise<Result> {
+  const sb = await createClient();
+  const v = (s: string) => (s && s.trim() ? s.trim() : null);
+  const { error } = await sb
+    .from("sillas")
+    .update({
+      pasajero_nombres: v(data.pasajero_nombres),
+      pasajero_apellidos: v(data.pasajero_apellidos),
+      tipo_doc: v(data.tipo_doc),
+      numero_doc: v(data.numero_doc),
+      nacimiento: v(data.nacimiento),
+      asesor: v(data.asesor),
+      hotel: v(data.hotel),
+      acomodacion: v(data.acomodacion),
+      plazo: v(data.plazo),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", sillaId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  return { ok: true };
+}
+
+// Borra el pasajero de la silla y la LIBERA (vuelve a 'disponible'). No toca el
+// contrato; es una operación manual del control de vuelos.
+export async function borrarPasajeroSilla(sillaId: number, bloqueoId: number): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb
+    .from("sillas")
+    .update({
+      estado: "disponible",
+      numero_contrato: null,
+      pasajero_nombres: null, pasajero_apellidos: null, tipo_doc: null, numero_doc: null, nacimiento: null,
+      asesor: null, agencia: null, hotel: null, acomodacion: null, plazo: null,
+      inf_nombres: null, inf_apellidos: null, inf_tipo_doc: null, inf_numero: null, inf_nacimiento: null, responsable_menor: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", sillaId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
+
+// Mueve el pasajero (con su estado y contrato) a otro record: lo copia como
+// nueva silla en el destino y marca la silla de origen como 'cambio'.
+export async function moverPasajeroSilla(
+  sillaId: number,
+  origenId: number,
+  destinoId: number
+): Promise<Result> {
+  const sb = await createClient();
+  if (origenId === destinoId) return { ok: false, error: "Elige un record distinto al actual." };
+
+  const { data: orig } = await sb.from("sillas").select("*").eq("id", sillaId).single();
+  if (!orig) return { ok: false, error: "Silla no encontrada." };
+
+  const { data: maxRows } = await sb
+    .from("sillas").select("numero_silla")
+    .eq("bloqueo_id", destinoId).order("numero_silla", { ascending: false }).limit(1);
+  const next = (maxRows?.[0]?.numero_silla ?? 0) + 1;
+
+  const { error: eIns } = await sb.from("sillas").insert({
+    bloqueo_id: destinoId, numero_silla: next, estado: orig.estado,
+    numero_contrato: orig.numero_contrato,
+    pasajero_nombres: orig.pasajero_nombres, pasajero_apellidos: orig.pasajero_apellidos,
+    tipo_doc: orig.tipo_doc, numero_doc: orig.numero_doc, nacimiento: orig.nacimiento,
+    asesor: orig.asesor, agencia: orig.agencia, hotel: orig.hotel, acomodacion: orig.acomodacion, plazo: orig.plazo,
+    inf_nombres: orig.inf_nombres, inf_apellidos: orig.inf_apellidos, inf_tipo_doc: orig.inf_tipo_doc,
+    inf_numero: orig.inf_numero, inf_nacimiento: orig.inf_nacimiento, responsable_menor: orig.responsable_menor,
+  });
+  if (eIns) return { ok: false, error: eIns.message };
+
+  await sb.from("sillas").update({ estado: "cambio", updated_at: new Date().toISOString() }).eq("id", sillaId);
+  await sb.from("movimientos_silla").insert({
+    silla_id: sillaId, bloqueo_origen_id: origenId, bloqueo_destino_id: destinoId,
+    motivo: "Cambio de pasajero a otro record",
+  });
+
+  revalidatePath(`/dashboard/vuelos/${origenId}`);
+  revalidatePath(`/dashboard/vuelos/${destinoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
