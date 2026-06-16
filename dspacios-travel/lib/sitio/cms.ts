@@ -81,6 +81,10 @@ export type SitioConfig = {
   instagramUrl: string | null;
   facebookUrl: string | null;
   tiktokUrl: string | null;
+  // Campos extra guardados dentro de web_config.extra (jsonb) — sin migración nueva.
+  youtubeUrl: string | null;
+  telefonoFijo: string | null;
+  lineasAtencion: string[]; // teléfonos para la barra superior de "Líneas de Atención"
 };
 
 // ── Mapeo estático → forma inglesa (fallback) ───────────────────────────────
@@ -155,7 +159,22 @@ const CONFIG_FALLBACK: SitioConfig = {
   instagramUrl: null,
   facebookUrl: null,
   tiktokUrl: null,
+  youtubeUrl: null,
+  telefonoFijo: null,
+  lineasAtencion: [],
 };
+
+// Normaliza el valor de extra.lineas_atencion (acepta array o texto con saltos/comas).
+function parseLineasAtencion(v: unknown): string[] {
+  if (Array.isArray(v))
+    return v.map((x) => String(x).trim()).filter((x) => x.length > 0);
+  if (typeof v === "string")
+    return v
+      .split(/[\n,]/)
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0);
+  return [];
+}
 
 // ── Lectura desde Supabase con fallback centralizado ────────────────────────
 export async function getPaquetes(): Promise<SitioPaquete[]> {
@@ -283,6 +302,7 @@ export async function getConfig(): Promise<SitioConfig> {
       .eq("id", 1)
       .maybeSingle();
     if (error || !data) return { ...CONFIG_FALLBACK };
+    const extra = (data.extra ?? {}) as Record<string, unknown>;
     return {
       heroTitulo: data.hero_titulo,
       heroSubtitulo: data.hero_subtitulo,
@@ -300,6 +320,11 @@ export async function getConfig(): Promise<SitioConfig> {
       instagramUrl: data.instagram_url,
       facebookUrl: data.facebook_url,
       tiktokUrl: data.tiktok_url,
+      youtubeUrl:
+        typeof extra.youtube_url === "string" ? extra.youtube_url : null,
+      telefonoFijo:
+        typeof extra.telefono_fijo === "string" ? extra.telefono_fijo : null,
+      lineasAtencion: parseLineasAtencion(extra.lineas_atencion),
     };
   } catch {
     return { ...CONFIG_FALLBACK };

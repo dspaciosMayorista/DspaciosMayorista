@@ -4,22 +4,24 @@ import React from 'react';
 import { Button } from '@/components/sitio/ui/button';
 import { Send, MapPin, Phone, Mail } from 'lucide-react';
 
-const ContactForm = ({ config }) => {
-  const direccion = config?.direccion || "Calle 123 # 45-67, Oficina 301\nBogotá, Colombia";
+// Sección CONTACTO. datos: { titulo?, texto? }
+// config: SitioConfig (email/telefono/direccion). Reusa el layout del ContactForm.
+const Contacto = ({ datos = {}, config }) => {
+  const titulo = datos.titulo || "¿Listo para tu próxima aventura?";
+  const texto = datos.texto ||
+    "Déjanos tus datos y un asesor experto te contactará para diseñar el viaje de tus sueños.";
+  const direccion = config?.direccion || "Bogotá, Colombia";
   const telefono = config?.contactoTelefono || "+57 123 456 7890";
   const email = config?.contactoEmail || "info@dspaciostravel.com";
+
   return (
     <section className="py-24 bg-gray-50">
       <div className="container mx-auto px-4">
         <div className="grid lg:grid-cols-2 gap-12 items-center">
           {/* Info */}
           <div>
-            <h2 className="text-4xl md:text-5xl font-bold text-[#120573] mb-6">
-              ¿Listo para tu próxima aventura?
-            </h2>
-            <p className="text-xl text-gray-600 mb-12 leading-relaxed">
-              Déjanos tus datos y un asesor experto te contactará para diseñar el viaje de tus sueños.
-            </p>
+            <h2 className="text-4xl md:text-5xl font-bold text-[#120573] mb-6">{titulo}</h2>
+            <p className="text-xl text-gray-600 mb-12 leading-relaxed">{texto}</p>
 
             <div className="space-y-8">
               <div className="flex items-start gap-4">
@@ -94,4 +96,4 @@ const ContactForm = ({ config }) => {
   );
 };
 
-export default ContactForm;
+export default Contacto;

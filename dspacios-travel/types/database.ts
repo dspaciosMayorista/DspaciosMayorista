@@ -1939,6 +1939,18 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["web_config"]["Insert"]>;
         Relationships: [];
       };
+      web_paginas: {
+        Row: { id: number; parent_id: number | null; slug: string; titulo: string; etiqueta_menu: string | null; tipo: string; es_grupo_menu: boolean; en_menu: boolean; orden: number; seo_titulo: string | null; seo_descripcion: string | null; imagen_portada: string | null; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; parent_id?: number | null; slug: string; titulo: string; etiqueta_menu?: string | null; tipo?: string; es_grupo_menu?: boolean; en_menu?: boolean; orden?: number; seo_titulo?: string | null; seo_descripcion?: string | null; imagen_portada?: string | null; activo?: boolean; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["web_paginas"]["Insert"]>;
+        Relationships: [];
+      };
+      web_secciones: {
+        Row: { id: number; pagina_id: number; tipo: string; orden: number; datos: Json; visible: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; pagina_id: number; tipo: string; orden?: number; datos?: Json; visible?: boolean; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["web_secciones"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: {
       cupos_por_bloqueo: {
