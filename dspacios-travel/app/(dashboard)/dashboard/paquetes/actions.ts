@@ -537,3 +537,27 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   revalidatePath("/tarifario");
   return { ok: true, id: filas.length };
 }
+
+// ── AUTO-RECÁLCULO ─────────────────────────────────────────────────────────
+// Regenera el tarifario de TODOS los paquetes activos que usan un hotel. Se
+// llama tras editar tarifas/vigencias del hotel para que el tarifario (y el PVP
+// que lee Reservar) se actualice solo, sin volver a "Generar" a mano. No lanza:
+// un fallo de un paquete no debe tumbar el guardado de la tarifa.
+export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void> {
+  if (!hotelId) return;
+  try {
+    const sb = await createClient();
+    const { data: pkgs } = await sb
+      .from("armado_hoteles")
+      .select("paquete_id, armado_paquetes!inner(activo)")
+      .eq("hotel_id", hotelId);
+    const ids = [...new Set((pkgs ?? [])
+      .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
+      .map((p) => p.paquete_id))];
+    for (const id of ids) {
+      try { await generarTarifario(id); } catch { /* un paquete malo no frena el resto */ }
+    }
+  } catch {
+    /* el auto-recálculo es best-effort; nunca bloquea la edición */
+  }
+}

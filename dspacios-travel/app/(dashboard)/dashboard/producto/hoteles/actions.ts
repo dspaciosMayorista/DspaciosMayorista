@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
 import { generarTarifas, type DubaiParams, type MixtaParams } from "@/lib/calc/calculadoras";
+import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
 import type { Json } from "@/types/database";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
@@ -278,6 +279,7 @@ export async function crearTemporada(input: TemporadaInput): Promise<Result> {
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
+  await regenerarTarifariosDeHotel(input.hotelId);
   return { ok: true };
 }
 
@@ -286,6 +288,7 @@ export async function eliminarTemporada(id: number, hotelId: number): Promise<Re
   const { error } = await sb.from("hotel_temporadas").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  await regenerarTarifariosDeHotel(hotelId);
   return { ok: true };
 }
 
@@ -308,6 +311,7 @@ export async function copiarTemporadasDesdeHotel(
   const { error } = await sb.from("hotel_temporadas").insert(filas);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${hotelDestino}`);
+  await regenerarTarifariosDeHotel(hotelDestino);
   return { ok: true, copiadas: filas.length };
 }
 
@@ -320,6 +324,7 @@ export async function actualizarTemporada(id: number, input: TemporadaInput): Pr
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
+  await regenerarTarifariosDeHotel(input.hotelId);
   return { ok: true };
 }
 
@@ -351,6 +356,7 @@ export async function crearTarifa(input: {
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
+  await regenerarTarifariosDeHotel(input.hotelId);
   return { ok: true };
 }
 
@@ -386,6 +392,7 @@ export async function actualizarTarifa(
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  await regenerarTarifariosDeHotel(hotelId);
   return { ok: true };
 }
 
@@ -394,6 +401,7 @@ export async function eliminarTarifa(id: number, hotelId: number): Promise<Resul
   const { error } = await sb.from("tarifa_hotel").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  await regenerarTarifariosDeHotel(hotelId);
   return { ok: true };
 }
 
@@ -459,6 +467,7 @@ export async function cargarTarifasMasivo(rows: Record<string, string>[]): Promi
   const lista = (hoteles ?? []) as unknown as HRow[];
   const errores: string[] = [];
   let insertados = 0;
+  const tocados = new Set<number>();
 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
@@ -485,8 +494,10 @@ export async function cargarTarifasMasivo(rows: Record<string, string>[]): Promi
     });
     if (error) { errores.push(`Fila ${linea} (${r.hotel}): ${error.message}`); continue; }
     insertados++;
+    tocados.add(candidatos[0].id);
   }
   revalidatePath("/dashboard/producto/hoteles");
+  for (const hid of tocados) await regenerarTarifariosDeHotel(hid);
   return { ok: errores.length === 0, insertados, errores };
 }
 
@@ -500,6 +511,7 @@ export async function cargarTemporadasMasivo(rows: Record<string, string>[]): Pr
   const lista = (hoteles ?? []) as unknown as HRow[];
   const errores: string[] = [];
   let insertados = 0;
+  const tocados = new Set<number>();
   const reFecha = /^\d{4}-\d{2}-\d{2}$/;
 
   for (let i = 0; i < rows.length; i++) {
@@ -547,8 +559,10 @@ export async function cargarTemporadasMasivo(rows: Record<string, string>[]): Pr
     });
     if (error) { errores.push(`Fila ${linea} (${nombre}): ${error.message}`); continue; }
     insertados++;
+    tocados.add(hotelId);
   }
   revalidatePath("/dashboard/producto/hoteles");
+  for (const hid of tocados) await regenerarTarifariosDeHotel(hid);
   return { ok: errores.length === 0, insertados, errores };
 }
 
@@ -648,5 +662,6 @@ export async function generarTarifasCalculadora(
   if (error) return { ok: false, error: error.message };
 
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  await regenerarTarifariosDeHotel(hotelId);
   return { ok: true, generadas: filas.length };
 }

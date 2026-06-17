@@ -1,7 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import Link from "next/link";
 import { TarifarioPublic, type FilaTarifario } from "@/app/tarifario/TarifarioPublic";
 import { getProgramasResumen } from "@/lib/programas";
+import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +11,7 @@ export default async function TarifarioInternoPage() {
   const sb = await createClient();
 
   // Tarifario generado (resultado de los paquetes). Paginado por si supera 1000.
-  const filas: FilaTarifario[] = [];
+  let filas: FilaTarifario[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data: page } = await sb
@@ -27,6 +29,12 @@ export default async function TarifarioInternoPage() {
     if (!page || page.length === 0) break;
     filas.push(...(page as unknown as FilaTarifario[]));
     if (page.length < PAGE) break;
+  }
+
+  // Oculta tarifas de hotel con vigencia de compra vencida (igual que el público:
+  // lo vencido no aparece). El histórico se consulta en el detalle del hotel.
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    filas = await filtrarTarifarioVencidas(createAdminClient(), filas);
   }
 
   // Programas (interno: muestra activos aunque no estén publicados).

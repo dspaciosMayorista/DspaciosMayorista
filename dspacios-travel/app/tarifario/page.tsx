@@ -6,7 +6,7 @@ import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { AcomConfig } from "@/lib/acomodaciones";
-import { buildVigenciaChecker, type TempRow, type TarRow } from "@/lib/tarifario/vigencia";
+import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
 
 export const revalidate = 120; // revalida cada 2 min
 
@@ -65,25 +65,11 @@ export default async function TarifarioPublicoPage() {
     }
   }
 
-  // Oculta del tarifario las tarifas de BLOQUEO (fecha fija) cuya vigencia de
-  // COMPRA ya venció: el PVP quedó congelado en el snapshot, pero ya no es
-  // comprable. Se re-liquida HOY en el servidor (el costo neto no sale al
-  // cliente). Porción/dinámico se re-liquida en vivo al reservar, no aplica aquí.
+  // Oculta del tarifario las tarifas de hotel cuya vigencia de COMPRA ya venció:
+  // el PVP quedó congelado en el snapshot, pero ya no es comprable. Se re-liquida
+  // HOY en el servidor (el costo neto no sale al cliente).
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const bloqueoHoteles = filas.filter((f) => f.modulo === "bloqueo" && f.hotel_id != null && !!f.fecha_ida && !!f.noches);
-    const hIds = [...new Set(bloqueoHoteles.map((f) => f.hotel_id as number))];
-    if (hIds.length) {
-      const admin = createAdminClient();
-      const [{ data: temps }, { data: tars }] = await Promise.all([
-        admin.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").in("hotel_id", hIds),
-        admin.from("tarifa_hotel").select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple").in("hotel_id", hIds),
-      ]);
-      const vigente = buildVigenciaChecker((temps ?? []) as TempRow[], (tars ?? []) as TarRow[]);
-      filas = filas.filter((f) => {
-        if (f.modulo !== "bloqueo" || f.hotel_id == null || !f.fecha_ida || !f.noches) return true;
-        return vigente(f.hotel_id, f.categoria, f.regimen, f.fecha_ida, f.noches);
-      });
-    }
+    filas = await filtrarTarifarioVencidas(createAdminClient(), filas);
   }
 
   // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
