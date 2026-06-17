@@ -70,6 +70,33 @@ export async function crearContacto(input: ContactoInput): Promise<Result> {
   return { ok: true };
 }
 
+export async function actualizarContacto(id: number, input: ContactoInput): Promise<Result> {
+  if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const sb = await createClient();
+  const { error } = await sb.from("crm_contactos").update({
+    categoria: normCategoria(input.categoria),
+    nombre: input.nombre.trim(),
+    tipo_doc: oNull(input.tipoDoc),
+    documento: oNull(input.documento),
+    email: oNull(input.email),
+    telefono: oNull(input.telefono),
+    ciudad: oNull(input.ciudad),
+    pais: oNull(input.pais),
+    fecha_nacimiento: oNull(input.fechaNacimiento),
+    genero: oNull(input.genero),
+    origen: oNull(input.origen),
+    acepta_publicidad: input.aceptaPublicidad,
+    no_contactar: input.noContactar,
+    notas: oNull(input.notas),
+  }).eq("id", id);
+  if (error) {
+    if (error.code === "23505") return { ok: false, error: "Ya existe un contacto con ese documento, teléfono o correo." };
+    return { ok: false, error: error.message };
+  }
+  revalidatePath("/crm");
+  return { ok: true };
+}
+
 export async function eliminarContacto(id: number): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("crm_contactos").delete().eq("id", id);

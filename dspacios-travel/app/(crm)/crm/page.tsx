@@ -20,7 +20,7 @@ export default async function CrmPage() {
 
   const { data } = await sb
     .from("crm_contactos")
-    .select("id, categoria, nombre, email, telefono, ciudad, pais, fecha_nacimiento, genero, origen, acepta_publicidad, no_contactar")
+    .select("id, categoria, nombre, email, telefono, ciudad, pais, fecha_nacimiento, genero, origen, acepta_publicidad, no_contactar, tipo_doc, documento, notas")
     .order("created_at", { ascending: false })
     .limit(2000);
 
