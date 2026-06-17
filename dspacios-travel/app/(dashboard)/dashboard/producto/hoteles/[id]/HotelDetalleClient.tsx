@@ -14,7 +14,7 @@ type RangoFechas = { fecha_inicio: string; fecha_fin: string };
 type Temporada = {
   id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
   prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null;
-  tipo?: string | null; descuento_valor?: number | null;
+  tipo?: string | null; descuento_valor?: number | null; min_noches?: number;
   rangos?: unknown; blackouts?: unknown;
 };
 
@@ -61,6 +61,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles }: { hotelId: number;
   const [ini, setIni] = useState("");
   const [fin, setFin] = useState("");
   const [prioridad, setPrioridad] = useState("1");
+  const [minNoches, setMinNoches] = useState("1");
   const [compraIni, setCompraIni] = useState("");
   const [compraFin, setCompraFin] = useState("");
   const [tipo, setTipo] = useState("tarifa");
@@ -74,7 +75,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles }: { hotelId: number;
   const editando = editId != null;
 
   function reset() {
-    setEditId(null); setNombre(""); setIni(""); setFin(""); setPrioridad("1");
+    setEditId(null); setNombre(""); setIni(""); setFin(""); setPrioridad("1"); setMinNoches("1");
     setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento("");
     setRangosExtra([]); setBlackouts([]); setErr("");
   }
@@ -89,6 +90,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles }: { hotelId: number;
     setRangosExtra(rangos.slice(1));
     setBlackouts(asRangos(t.blackouts));
     setPrioridad(String(t.prioridad ?? 1));
+    setMinNoches(String(t.min_noches ?? 1));
     setCompraIni(t.compra_inicio ?? "");
     setCompraFin(t.compra_fin ?? "");
     setTipo(t.tipo ?? "tarifa");
@@ -103,6 +105,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles }: { hotelId: number;
     const payload = {
       hotelId, nombre, inicio: ini, fin,
       prioridad: Number(prioridad) || 1,
+      minNoches: Math.max(1, Number(minNoches) || 1),
       compraInicio: compraIni, compraFin: compraFin,
       tipo, descuentoValor: esPromo ? Number(descuento) || 0 : null,
       rangos: rangosExtra, blackouts,
@@ -129,6 +132,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles }: { hotelId: number;
           <div><label className={lbl}>Viaje desde</label><Input type="date" value={ini} onChange={(e) => setIni(e.target.value)} /></div>
           <div><label className={lbl}>Viaje hasta</label><Input type="date" value={fin} onChange={(e) => setFin(e.target.value)} /></div>
           <div><label className={lbl}>Prioridad</label><Input type="number" min={1} value={prioridad} onChange={(e) => setPrioridad(e.target.value)} /></div>
+          <div><label className={lbl}>Mín. noches</label><Input type="number" min={1} value={minNoches} onChange={(e) => setMinNoches(e.target.value)} /></div>
           <div><label className={lbl}>Compra desde</label><Input type="date" value={compraIni} onChange={(e) => setCompraIni(e.target.value)} /></div>
           <div><label className={lbl}>Compra hasta</label><Input type="date" value={compraFin} onChange={(e) => setCompraFin(e.target.value)} /></div>
           <div className="col-span-2 sm:col-span-1">

@@ -203,6 +203,7 @@ export type TemporadaInput = {
   compraFin?: string;
   tipo?: string;                 // 'tarifa' | 'descuento_pct' | 'descuento_monto'
   descuentoValor?: number | null;
+  minNoches?: number;            // mínimo de noches de esta vigencia (default 1)
   rangos?: RangoFechasInput[];   // múltiples rangos de cobertura (Fase 4)
   blackouts?: RangoFechasInput[]; // fechas excluidas
 };
@@ -234,6 +235,7 @@ function payloadTemporada(input: TemporadaInput, rangos: RangoFechasInput[], bla
     compra_fin: input.compraFin || null,
     tipo,
     descuento_valor: tipo === "tarifa" ? null : Number(input.descuentoValor) || 0,
+    min_noches: Math.max(1, Math.trunc(Number(input.minNoches) || 1)),
     rangos: rangos as unknown as Json,
     blackouts: blackouts as unknown as Json,
   };
@@ -298,7 +300,7 @@ export async function copiarTemporadasDesdeHotel(
   const sb = await createClient();
   const { data: origen, error: e1 } = await sb
     .from("hotel_temporadas")
-    .select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden")
+    .select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden, min_noches")
     .eq("hotel_id", hotelOrigen);
   if (e1) return { ok: false, error: e1.message };
   if (!origen?.length) return { ok: false, error: "El hotel de origen no tiene temporadas para copiar." };
