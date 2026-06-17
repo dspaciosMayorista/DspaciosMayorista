@@ -5,12 +5,13 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
-import { crearContacto, eliminarContacto, cargarContactosMasivo } from "./actions";
+import { crearContacto, actualizarContacto, eliminarContacto, cargarContactosMasivo } from "./actions";
 
 export type Contacto = {
   id: number; categoria: string; nombre: string; email: string | null; telefono: string | null;
   ciudad: string | null; pais: string | null; fecha_nacimiento: string | null; genero: string | null;
   origen: string | null; acepta_publicidad: boolean; no_contactar: boolean;
+  tipo_doc: string | null; documento: string | null; notas: string | null;
 };
 
 const CATS: { value: string; label: string }[] = [
@@ -46,6 +47,7 @@ export function CrmClient({ contactos }: { contactos: Contacto[] }) {
   const [cat, setCat] = useState<string>("todos");
   const [q, setQ] = useState("");
   const [abrirNuevo, setAbrirNuevo] = useState(false);
+  const [editar, setEditar] = useState<Contacto | null>(null);
 
   const conteo = useMemo(() => {
     const m: Record<string, number> = {};
@@ -93,7 +95,8 @@ export function CrmClient({ contactos }: { contactos: Contacto[] }) {
         </div>
       </div>
 
-      {abrirNuevo && <NuevoContacto onDone={() => setAbrirNuevo(false)} />}
+      {abrirNuevo && <ContactoForm onDone={() => setAbrirNuevo(false)} />}
+      {editar && <ContactoForm inicial={editar} onDone={() => setEditar(null)} />}
 
       {/* Tabla */}
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white/90 backdrop-blur">
@@ -105,7 +108,7 @@ export function CrmClient({ contactos }: { contactos: Contacto[] }) {
             <th className="px-3 py-2 text-center">Publicidad</th><th className="px-3 py-2"></th>
           </tr></thead>
           <tbody>
-            {filtrados.map((c) => <Fila key={c.id} c={c} />)}
+            {filtrados.map((c) => <Fila key={c.id} c={c} onEdit={() => { setEditar(c); setAbrirNuevo(false); }} />)}
             {!filtrados.length && <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-400">Sin contactos en esta vista.</td></tr>}
           </tbody>
         </table>
@@ -125,7 +128,7 @@ function Kpi({ label, valor, activo, onClick }: { label: string; valor: number; 
   );
 }
 
-function Fila({ c }: { c: Contacto }) {
+function Fila({ c, onEdit }: { c: Contacto; onEdit: () => void }) {
   const [pending, start] = useTransition();
   return (
     <tr className="border-t border-gray-50">
@@ -140,6 +143,7 @@ function Fila({ c }: { c: Contacto }) {
       <td className="px-3 py-2 text-gray-500">{c.origen ?? "—"}</td>
       <td className="px-3 py-2 text-center">{c.acepta_publicidad ? "✓" : "—"}</td>
       <td className="px-3 py-2 text-right">
+        <button type="button" onClick={onEdit} className="mr-3 text-xs font-medium text-[var(--brand-primary)] hover:underline">Editar</button>
         <button type="button" disabled={pending}
           onClick={() => { if (confirm(`¿Eliminar ${c.nombre}?`)) start(() => { void eliminarContacto(c.id); }); }}
           className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
@@ -148,11 +152,15 @@ function Fila({ c }: { c: Contacto }) {
   );
 }
 
-function NuevoContacto({ onDone }: { onDone: () => void }) {
+function ContactoForm({ inicial, onDone }: { inicial?: Contacto; onDone: () => void }) {
   const [v, setV] = useState({
-    categoria: "cliente_final", nombre: "", tipoDoc: "CC", documento: "", email: "", telefono: "",
-    ciudad: "", pais: "Colombia", fechaNacimiento: "", genero: "", origen: "", notas: "",
-    aceptaPublicidad: false, noContactar: false,
+    categoria: inicial?.categoria ?? "cliente_final", nombre: inicial?.nombre ?? "",
+    tipoDoc: inicial?.tipo_doc ?? "CC", documento: inicial?.documento ?? "",
+    email: inicial?.email ?? "", telefono: inicial?.telefono ?? "",
+    ciudad: inicial?.ciudad ?? "", pais: inicial?.pais ?? "Colombia",
+    fechaNacimiento: inicial?.fecha_nacimiento ?? "", genero: inicial?.genero ?? "",
+    origen: inicial?.origen ?? "", notas: inicial?.notas ?? "",
+    aceptaPublicidad: inicial?.acepta_publicidad ?? false, noContactar: inicial?.no_contactar ?? false,
   });
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -162,14 +170,14 @@ function NuevoContacto({ onDone }: { onDone: () => void }) {
     if (!v.nombre.trim()) { setErr("El nombre es obligatorio."); return; }
     setErr("");
     start(async () => {
-      const r = await crearContacto(v);
+      const r = inicial ? await actualizarContacto(inicial.id, v) : await crearContacto(v);
       if (r.ok) onDone(); else setErr(r.error);
     });
   }
 
   return (
     <div className={card}>
-      <p className="mb-3 text-sm font-semibold text-gray-700">Nuevo contacto</p>
+      <p className="mb-3 text-sm font-semibold text-gray-700">{inicial ? `Editar contacto · ${inicial.nombre}` : "Nuevo contacto"}</p>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <div>
           <label className={lbl}>Categoría</label>
@@ -202,7 +210,8 @@ function NuevoContacto({ onDone }: { onDone: () => void }) {
         </label>
       </div>
       <div className="mt-3 flex items-center gap-3">
-        <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : "Guardar contacto"}</Button>
+        <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : inicial ? "Guardar cambios" : "Guardar contacto"}</Button>
+        {inicial && <button type="button" onClick={onDone} className="text-sm text-gray-500 hover:text-gray-800">Cancelar</button>}
         {err && <span className="text-sm text-red-600">{err}</span>}
       </div>
     </div>
