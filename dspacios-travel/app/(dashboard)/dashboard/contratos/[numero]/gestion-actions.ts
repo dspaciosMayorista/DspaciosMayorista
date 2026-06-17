@@ -2,11 +2,24 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { asegurarCuentasPorPagar } from "../../reservar/actions";
 
 type Result = { ok: true } | { ok: false; error: string };
 
 function rev(numero: string) {
   revalidatePath(`/dashboard/contratos/${numero}`);
+}
+
+// Completa las cuentas por pagar que falten (hotel/aéreo/servicios) a partir de
+// los costos del contrato. Útil cuando al reservar solo se generó parte (p. ej.
+// "solo el aéreo" porque el costo neto del hotel salió 0). No duplica.
+export async function completarProveedores(
+  numeroContrato: string
+): Promise<{ ok: boolean; creadas?: number; error?: string }> {
+  const r = await asegurarCuentasPorPagar(numeroContrato);
+  if (!r.ok) return { ok: false, error: r.error ?? "No se pudieron completar los proveedores." };
+  rev(numeroContrato);
+  return { ok: true, creadas: r.creadas };
 }
 
 // ── Costos de la venta ───────────────────────────────────────────────────
