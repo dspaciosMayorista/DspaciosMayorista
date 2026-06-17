@@ -23,6 +23,7 @@ export type SolicitudItem = {
   habitaciones: Record<string, number>;
   ninos: number;
   ninos2: number;
+  infantes: number;
   pax: number;
   precio: number;
 };
@@ -104,6 +105,7 @@ function resumenHab(it: SolicitudItem): string {
     .map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
   if (it.ninos > 0) partes.push(`${it.ninos} Niño 1`);
   if (it.ninos2 > 0) partes.push(`${it.ninos2} Niño 2`);
+  if (it.infantes > 0) partes.push(`${it.infantes} Infante(s)`);
   return partes.join(", ");
 }
 
@@ -190,7 +192,7 @@ export async function crearSolicitudReserva(input: {
       habitaciones: it.habitaciones,
       ninos: it.ninos,
       ninos2: it.ninos2,
-      infantes: 0,
+      infantes: it.infantes || 0,
       cliente: {
         nombres: input.cliente.nombres, apellidos: input.cliente.apellidos, tipoDoc: "CC",
         numeroDoc: input.cliente.numeroDoc, telefono: input.cliente.telefono, email: input.cliente.email,

@@ -59,7 +59,7 @@ export default function CheckoutPage() {
           modulo: it.modulo, paqueteId: it.paqueteId, hotelId: it.hotelId, bloqueoId: it.bloqueoId,
           hotelNombre: it.hotelNombre, destino: it.destino, categoria: it.categoria, regimen: it.regimen,
           fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, noches: it.noches,
-          habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, pax: it.pax, precio: it.precio,
+          habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes, pax: it.pax, precio: it.precio,
         })),
         cliente: c,
         ...(esB2B ? { modo, facturacion: fact, pctComision: pct } : {}),

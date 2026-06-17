@@ -126,6 +126,7 @@ export function BuscadorBooking({
                   r={r}
                   foto={fotosPorHotel[r.hotelId] ?? null}
                   info={infoPorHotel[r.hotelId]}
+                  infantes={Number(infantes) || 0}
                 />
               ))}
             </div>
@@ -136,7 +137,7 @@ export function BuscadorBooking({
   );
 }
 
-function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null } }) {
+function Resultado({ r, foto, info, infantes = 0 }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null }; infantes?: number }) {
   const { items, add, remove } = useCart();
 
   // Combos disponibles → selectores de categoría y alimentación (el más barato
@@ -156,7 +157,7 @@ function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | nul
     modulo: "porcion_terrestre", paqueteId: r.paqueteId, hotelId: r.hotelId, bloqueoId: null,
     hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: foto,
     categoria: combo.categoria, regimen: combo.regimen, fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso, noches: r.noches,
-    habitaciones: r.habitaciones, ninos: r.ninos, ninos2: 0, pax: combo.pax, precio: combo.total,
+    habitaciones: r.habitaciones, ninos: r.ninos, ninos2: 0, infantes, pax: combo.pax, precio: combo.total,
   };
   // El estado del botón se deriva del carrito real: si se quita del carrito,
   // vuelve a estar disponible para agregar.

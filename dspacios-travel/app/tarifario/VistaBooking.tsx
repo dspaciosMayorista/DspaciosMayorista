@@ -539,13 +539,13 @@ function Selector({
 
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, pax: number, precio: number) =>
+  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) =>
     onAgregar({
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: opcion.bloqueoId,
       hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
       categoria: catEff, regimen: regEff,
       fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso, noches: opcion.noches,
-      habitaciones, ninos, ninos2, pax, precio,
+      habitaciones, ninos, ninos2, infantes, pax, precio,
     });
 
   return (
@@ -586,11 +586,12 @@ function EditorPax({
   paxMax?: number | null;
   nota?: string;
   edadesNota?: string | null;
-  onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, pax: number, precio: number) => void;
+  onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) => void;
 }) {
   const [habs, setHabs] = useState<Record<string, number>>({});
   const [ninos, setNinos] = useState(0);
   const [ninos2, setNinos2] = useState(0);
+  const [infantes, setInfantes] = useState(0);
   const setHab = (a: AcomRoom, n: number) => setHabs((p) => ({ ...p, [a]: Math.max(0, n) }));
 
   // Config de cada acomodación (la del hotel o el default si no está configurada).
@@ -601,6 +602,7 @@ function EditorPax({
   let adultos = 0;
   let capPax = 0;   // máx personas que admiten las habitaciones elegidas
   let capChd = 0;   // máx niños
+  let capInf = 0;   // máx infantes
   for (const a of ACOM_ROOMS) {
     const rooms = habs[a] ?? 0;
     if (rooms > 0 && pvp[a] != null) {
@@ -609,6 +611,7 @@ function EditorPax({
       precio += rooms * c.pax_tarifa * pvp[a];
       capPax += rooms * c.pax_max;
       capChd += rooms * c.chd_max;
+      capInf += rooms * c.inf_max;
     }
   }
   if (ninos > 0 && pvp["nino"] != null) precio += ninos * pvp["nino"];
@@ -627,6 +630,7 @@ function EditorPax({
   if (totalHab > 8) errores.push("A partir de 9 habitaciones, contacta a un asesor.");
   if (hayHab) {
     if (ninosTotal > capChd) errores.push(`Las habitaciones elegidas admiten máximo ${capChd} niño(s).`);
+    if (infantes > capInf) errores.push(`Las habitaciones elegidas admiten máximo ${capInf} infante(s).`);
     if (pax > maxPax) errores.push(`Las habitaciones elegidas admiten máximo ${maxPax} persona(s).`);
     if (paxMin != null && pax < paxMin) errores.push(`Este hotel exige un mínimo de ${paxMin} persona(s).`);
   }
@@ -636,7 +640,7 @@ function EditorPax({
     if (!puede) return;
     const habitaciones: Record<string, number> = {};
     for (const a of ACOM_ROOMS) if ((habs[a] ?? 0) > 0) habitaciones[a] = habs[a];
-    onAgregar(habitaciones, ninos, ninos2, pax, precio);
+    onAgregar(habitaciones, ninos, ninos2, infantes, pax, precio);
   }
 
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
@@ -679,6 +683,14 @@ function EditorPax({
           <p className="mt-1 text-[11px] text-gray-400">
             {hayHab ? `Máximo ${maxNinos} niño(s) y ${maxPax} pax para las habitaciones elegidas.` : "Elige primero las habitaciones."}
           </p>
+        </div>
+      )}
+
+      {hayHab && capInf > 0 && (
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Infantes (sin costo · máx {capInf})</label>
+          <input type="number" min={0} max={capInf} value={infantes} disabled={!hayHab}
+            onChange={(e) => setInfantes(Math.min(Math.max(0, Number(e.target.value)), capInf))} className={inputCls} />
         </div>
       )}
 
@@ -747,13 +759,13 @@ function SelectorPorFechas({
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
   const dateCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, pax: number, precio: number) =>
+  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) =>
     onAgregar({
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: null,
       hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
       categoria: catEff, regimen: regEff,
       fechaIda: fIda, fechaRegreso: fReg, noches: nochesCot ?? calcNoches(fIda, fReg),
-      habitaciones, ninos, ninos2, pax, precio,
+      habitaciones, ninos, ninos2, infantes, pax, precio,
     });
 
   return (
