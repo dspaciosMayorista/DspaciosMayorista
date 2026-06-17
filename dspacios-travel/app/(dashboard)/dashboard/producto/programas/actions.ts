@@ -36,6 +36,9 @@ export type CabeceraInput = {
   pctFeeTarjeta: number;
   ninoEdadMax: number | null;
   ninoValorServicios: number | null;
+  edadNinoMin: number | null;
+  edadNinoMax: number | null;
+  edadInfanteMax: number | null;
   textoCondiciones: string;
   textoCancelacion: string;
   textoPagos: string;
@@ -65,6 +68,9 @@ function cabeceraRow(input: CabeceraInput) {
     pct_fee_tarjeta: input.pctFeeTarjeta || 0,
     nino_edad_max: input.ninoEdadMax,
     nino_valor_servicios: input.ninoValorServicios,
+    edad_nino_min: input.edadNinoMin ?? 2,
+    edad_nino_max: input.edadNinoMax ?? 11,
+    edad_infante_max: input.edadInfanteMax ?? 1,
     texto_condiciones: oNull(input.textoCondiciones),
     texto_cancelacion: oNull(input.textoCancelacion),
     texto_pagos: oNull(input.textoPagos),

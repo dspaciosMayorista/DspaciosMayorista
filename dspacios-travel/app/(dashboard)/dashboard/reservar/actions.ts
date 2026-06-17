@@ -1255,6 +1255,7 @@ export type ReservaProgramaInput = {
   fechaIda: string;
   paxPorAcom: Record<string, number>; // CANTIDAD DE HABITACIONES por acomodación (sencilla/doble/triple/…). Pax = hab × pax_tarifa.
   ninos: number;
+  infantes?: number; // cantidad de infantes (pasajeros adicionales, sin silla)
   cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
   tipoAsesor: "interno" | "agencia" | "freelance";
   asesorInterno: string;
@@ -1280,7 +1281,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
   const { data: prog } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, proveedores(nombre, aplica_retencion, pct_retencion)")
+    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, proveedores(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
   if (!prog) return { ok: false, error: "Programa no encontrado." };
@@ -1404,7 +1405,35 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
       orden: orden++,
     });
   }
+  // Los infantes son pasajeros adicionales (sin silla), por cantidad.
+  const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
+  totalPax += numInfantes;
   if (totalPax <= 0) return { ok: false, error: "Debe haber al menos un pasajero." };
+
+  // 3.b) Validación de pasajeros por edad (umbrales del programa, según el
+  //      proveedor). Si hay fechas de nacimiento, la clasificación real debe
+  //      cuadrar con los niños/infantes declarados; si faltan, no se bloquea.
+  {
+    const numNinos = Math.max(0, Math.trunc(Number(input.ninos) || 0));
+    const infanteMax = prog.edad_infante_max ?? 1;
+    const ninoMax = prog.edad_nino_max ?? 11;
+    const real = clasificarPorEdad(
+      input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, input.fechaIda)),
+      infanteMax,
+      ninoMax
+    );
+    if (input.pasajeros.length && real.sinFecha === 0) {
+      const adultosEsperados = totalPax - numNinos - numInfantes;
+      const errores: string[] = [];
+      if (real.infantes > numInfantes)
+        errores.push(`Por fecha de nacimiento hay ${real.infantes} infante(s), pero declaraste ${numInfantes}.`);
+      if (real.ninos > numNinos)
+        errores.push(`Por fecha de nacimiento hay ${real.ninos} niño(s), pero declaraste ${numNinos}.`);
+      if (real.adultos > adultosEsperados)
+        errores.push(`Por fecha de nacimiento hay ${real.adultos} adulto(s), pero la reserva es para ${adultosEsperados}.`);
+      if (errores.length) return { ok: false, error: errores.join(" ") };
+    }
+  }
 
   // 4) Número de contrato
   const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
