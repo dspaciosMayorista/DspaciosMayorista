@@ -822,18 +822,18 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     aplica_retencion: boolean; pct_retencion: number; observaciones: string;
   };
   const cxp: CxPRow[] = [];
-  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null) => {
-    if (!(valor > 0)) return;
+  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, opts?: { permitirCero?: boolean }) => {
+    if (!(valor > 0) && !opts?.permitirCero) return;
     cxp.push({
       numero_contrato: numero,
       proveedor: pr?.nombre ?? nombreFallback ?? null,
       tipo_proveedor: tipo,
       servicio,
-      valor_total: valor,
+      valor_total: Math.max(0, valor),
       fecha_obligacion: hoyISO,
       aplica_retencion: pr?.aplica_retencion ?? false,
       pct_retencion: Number(pr?.pct_retencion) || 0,
-      observaciones: OBS_AUTO,
+      observaciones: valor > 0 ? OBS_AUTO : `${OBS_AUTO} · costo neto pendiente`,
     });
   };
 
