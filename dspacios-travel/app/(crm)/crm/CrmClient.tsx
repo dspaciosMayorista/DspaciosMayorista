@@ -10,7 +10,7 @@ import { crearContacto, actualizarContacto, eliminarContacto, cargarContactosMas
 export type Contacto = {
   id: number; categoria: string; nombre: string; email: string | null; telefono: string | null;
   ciudad: string | null; pais: string | null; fecha_nacimiento: string | null; genero: string | null;
-  origen: string | null; acepta_publicidad: boolean; no_contactar: boolean;
+  origen: string | null; subcategoria: string | null; acepta_publicidad: boolean; no_contactar: boolean;
   tipo_doc: string | null; documento: string | null; notas: string | null;
 };
 
@@ -35,6 +35,7 @@ const COLS = [
   { key: "fecha_nacimiento", label: "Fecha nacimiento (AAAA-MM-DD)", ejemplo: "1990-05-20" },
   { key: "genero", label: "Género (F/M/otro)", ejemplo: "F" },
   { key: "origen", label: "Origen (agencia/canal)", ejemplo: "Agencia XYZ" },
+  { key: "subcategoria", label: "Subcategoría (grupo para campañas)", ejemplo: "VIP" },
   { key: "acepta_publicidad", label: "Acepta publicidad (si/no)", ejemplo: "si" },
   { key: "no_contactar", label: "No contactar (si/no)", ejemplo: "no" },
   { key: "notas", label: "Notas", ejemplo: "" },
@@ -45,6 +46,7 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
 export function CrmClient({ contactos }: { contactos: Contacto[] }) {
   const [cat, setCat] = useState<string>("todos");
+  const [subcat, setSubcat] = useState<string>("todos");
   const [q, setQ] = useState("");
   const [abrirNuevo, setAbrirNuevo] = useState(false);
   const [editar, setEditar] = useState<Contacto | null>(null);
@@ -55,28 +57,46 @@ export function CrmClient({ contactos }: { contactos: Contacto[] }) {
     return m;
   }, [contactos]);
 
+  // Todas las subcategorías existentes (para el autocompletado del formulario).
+  const subcatsTodas = useMemo(
+    () => [...new Set(contactos.map((c) => c.subcategoria?.trim()).filter((x): x is string => !!x))].sort(),
+    [contactos]
+  );
+  // Subcategorías de la categoría seleccionada (para el filtro).
+  const subcatsDisponibles = useMemo(
+    () => [...new Set(contactos.filter((c) => cat === "todos" || c.categoria === cat).map((c) => c.subcategoria?.trim()).filter((x): x is string => !!x))].sort(),
+    [contactos, cat]
+  );
+
   const filtrados = useMemo(() => {
     const term = q.trim().toLowerCase();
     return contactos.filter((c) => {
       if (cat !== "todos" && c.categoria !== cat) return false;
+      if (subcat !== "todos" && (c.subcategoria ?? "") !== subcat) return false;
       if (!term) return true;
-      return [c.nombre, c.email, c.telefono, c.ciudad, c.origen].some((x) => (x ?? "").toLowerCase().includes(term));
+      return [c.nombre, c.email, c.telefono, c.ciudad, c.origen, c.subcategoria].some((x) => (x ?? "").toLowerCase().includes(term));
     });
-  }, [contactos, cat, q]);
+  }, [contactos, cat, subcat, q]);
 
   return (
     <div className="space-y-5">
       {/* KPIs por categoría */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Kpi label="Total" valor={contactos.length} activo={cat === "todos"} onClick={() => setCat("todos")} />
+        <Kpi label="Total" valor={contactos.length} activo={cat === "todos"} onClick={() => { setCat("todos"); setSubcat("todos"); }} />
         {CATS.map((c) => (
-          <Kpi key={c.value} label={c.label} valor={conteo[c.value] ?? 0} activo={cat === c.value} onClick={() => setCat(c.value)} />
+          <Kpi key={c.value} label={c.label} valor={conteo[c.value] ?? 0} activo={cat === c.value} onClick={() => { setCat(c.value); setSubcat("todos"); }} />
         ))}
       </div>
 
       {/* Acciones */}
       <div className="flex flex-wrap items-center gap-3">
         <Input placeholder="Buscar nombre, email, teléfono…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-xs bg-white/90" />
+        {subcatsDisponibles.length > 0 && (
+          <select value={subcat} onChange={(e) => setSubcat(e.target.value)} className="rounded-lg border border-gray-300 bg-white/90 px-3 py-2 text-sm text-gray-700" aria-label="Subcategoría">
+            <option value="todos">Subcategoría: todas</option>
+            {subcatsDisponibles.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        )}
         <Button onClick={() => setAbrirNuevo((o) => !o)} style={{ backgroundColor: "var(--brand-primary)" }}>
           {abrirNuevo ? "Cerrar" : "+ Nuevo contacto"}
         </Button>
@@ -95,8 +115,8 @@ export function CrmClient({ contactos }: { contactos: Contacto[] }) {
         </div>
       </div>
 
-      {abrirNuevo && <ContactoForm onDone={() => setAbrirNuevo(false)} />}
-      {editar && <ContactoForm inicial={editar} onDone={() => setEditar(null)} />}
+      {abrirNuevo && <ContactoForm subcats={subcatsTodas} onDone={() => setAbrirNuevo(false)} />}
+      {editar && <ContactoForm inicial={editar} subcats={subcatsTodas} onDone={() => setEditar(null)} />}
 
       {/* Tabla */}
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white/90 backdrop-blur">
@@ -132,7 +152,10 @@ function Fila({ c, onEdit }: { c: Contacto; onEdit: () => void }) {
   const [pending, start] = useTransition();
   return (
     <tr className="border-t border-gray-50">
-      <td className="px-3 py-2"><span className="rounded-full bg-[var(--brand-accent)]/15 px-2 py-0.5 text-xs text-gray-600">{CAT_LABEL[c.categoria] ?? c.categoria}</span></td>
+      <td className="px-3 py-2">
+        <span className="rounded-full bg-[var(--brand-accent)]/15 px-2 py-0.5 text-xs text-gray-600">{CAT_LABEL[c.categoria] ?? c.categoria}</span>
+        {c.subcategoria && <span className="ml-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">{c.subcategoria}</span>}
+      </td>
       <td className="px-3 py-2 text-gray-700">
         <Link href={`/crm/${c.id}`} className="font-medium text-gray-800 hover:text-[var(--brand-primary)] hover:underline">{c.nombre}</Link>
         {c.no_contactar && <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-[10px] text-red-600">no contactar</span>}
@@ -152,14 +175,14 @@ function Fila({ c, onEdit }: { c: Contacto; onEdit: () => void }) {
   );
 }
 
-function ContactoForm({ inicial, onDone }: { inicial?: Contacto; onDone: () => void }) {
+function ContactoForm({ inicial, subcats = [], onDone }: { inicial?: Contacto; subcats?: string[]; onDone: () => void }) {
   const [v, setV] = useState({
     categoria: inicial?.categoria ?? "cliente_final", nombre: inicial?.nombre ?? "",
     tipoDoc: inicial?.tipo_doc ?? "CC", documento: inicial?.documento ?? "",
     email: inicial?.email ?? "", telefono: inicial?.telefono ?? "",
     ciudad: inicial?.ciudad ?? "", pais: inicial?.pais ?? "Colombia",
     fechaNacimiento: inicial?.fecha_nacimiento ?? "", genero: inicial?.genero ?? "",
-    origen: inicial?.origen ?? "", notas: inicial?.notas ?? "",
+    origen: inicial?.origen ?? "", subcategoria: inicial?.subcategoria ?? "", notas: inicial?.notas ?? "",
     aceptaPublicidad: inicial?.acepta_publicidad ?? false, noContactar: inicial?.no_contactar ?? false,
   });
   const [pending, start] = useTransition();
@@ -198,6 +221,11 @@ function ContactoForm({ inicial, onDone }: { inicial?: Contacto; onDone: () => v
           </select>
         </div>
         <div><label className={lbl}>Origen</label><Input value={v.origen} onChange={set("origen")} placeholder="Agencia / canal" /></div>
+        <div>
+          <label className={lbl}>Subcategoría (grupo para campañas)</label>
+          <Input value={v.subcategoria} onChange={set("subcategoria")} placeholder="VIP, Luna de miel, Corporativo…" list="crm-subcats" />
+          <datalist id="crm-subcats">{subcats.map((s) => <option key={s} value={s} />)}</datalist>
+        </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-4">
         <label className="flex items-center gap-2 text-sm text-gray-600">

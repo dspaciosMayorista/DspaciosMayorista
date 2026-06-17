@@ -1237,12 +1237,14 @@ export type Database = {
           id: number; categoria: string; nombre: string; tipo_doc: string | null; documento: string | null;
           email: string | null; telefono: string | null; ciudad: string | null; pais: string | null;
           fecha_nacimiento: string | null; genero: string | null; origen: string | null; etiquetas: string[] | null;
+          subcategoria: string | null;
           acepta_publicidad: boolean; no_contactar: boolean; notas: string | null; created_at: string; updated_at: string;
         };
         Insert: {
           id?: number; categoria?: string; nombre: string; tipo_doc?: string | null; documento?: string | null;
           email?: string | null; telefono?: string | null; ciudad?: string | null; pais?: string | null;
           fecha_nacimiento?: string | null; genero?: string | null; origen?: string | null; etiquetas?: string[] | null;
+          subcategoria?: string | null;
           acepta_publicidad?: boolean; no_contactar?: boolean; notas?: string | null; created_at?: string; updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["crm_contactos"]["Insert"]>;

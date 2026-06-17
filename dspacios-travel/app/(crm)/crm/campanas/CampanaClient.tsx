@@ -84,19 +84,21 @@ function Preview({ mensaje, imagenUrl, botonTexto, botonUrl }: { mensaje: string
   );
 }
 
+type Eleg = { categoria: string; subcategoria: string };
+
 export function CampanaClient({
-  porCat, total, cumpleHoy, cumpleMes, campanas,
-}: { porCat: Record<string, number>; total: number; cumpleHoy: number; cumpleMes: number; campanas: Campana[] }) {
+  porCat, total, eleg = [], cumpleHoy, cumpleMes, campanas,
+}: { porCat: Record<string, number>; total: number; eleg?: Eleg[]; cumpleHoy: number; cumpleMes: number; campanas: Campana[] }) {
   return (
     <div className="space-y-6">
-      <CampanaForm porCat={porCat} total={total} />
+      <CampanaForm porCat={porCat} total={total} eleg={eleg} />
       <CumpleForm cumpleHoy={cumpleHoy} cumpleMes={cumpleMes} />
       <Historial campanas={campanas} />
     </div>
   );
 }
 
-function CampanaForm({ porCat, total }: { porCat: Record<string, number>; total: number }) {
+function CampanaForm({ porCat, total, eleg = [] }: { porCat: Record<string, number>; total: number; eleg?: Eleg[] }) {
   const [tipo, setTipo] = useState("Promoción");
   const [asunto, setAsunto] = useState("");
   const [mensaje, setMensaje] = useState("Hola {{nombre}},\n\n");
@@ -104,15 +106,26 @@ function CampanaForm({ porCat, total }: { porCat: Record<string, number>; total:
   const [botonTexto, setBotonTexto] = useState("");
   const [botonUrl, setBotonUrl] = useState("");
   const [categoria, setCategoria] = useState("todos");
+  const [subcat, setSubcat] = useState("todos");
   const [pending, start] = useTransition();
   const [res, setRes] = useState<EnvioCampanaResult | null>(null);
 
-  const conteo = categoria === "todos" ? total : (porCat[categoria] ?? 0);
+  // Subcategorías disponibles para la categoría elegida (de los elegibles).
+  const subcatsDisp = useMemo(
+    () => [...new Set(eleg.filter((e) => categoria === "todos" || e.categoria === categoria).map((e) => e.subcategoria).filter(Boolean))].sort(),
+    [eleg, categoria]
+  );
+  // Conteo de destinatarios según categoría + subcategoría.
+  const conteo = useMemo(
+    () => eleg.filter((e) => (categoria === "todos" || e.categoria === categoria) && (subcat === "todos" || e.subcategoria === subcat)).length,
+    [eleg, categoria, subcat]
+  );
 
   function enviar() {
     setRes(null);
-    if (!confirm(`¿Enviar a ${conteo} contacto(s) elegibles de "${categoria}"?`)) return;
-    start(async () => setRes(await enviarCampana({ tipo, asunto, mensaje, imagenUrl, botonTexto, botonUrl, categoria })));
+    const destino = subcat === "todos" ? `"${categoria}"` : `"${categoria}" · subcategoría "${subcat}"`;
+    if (!confirm(`¿Enviar a ${conteo} contacto(s) elegibles de ${destino}?`)) return;
+    start(async () => setRes(await enviarCampana({ tipo, asunto, mensaje, imagenUrl, botonTexto, botonUrl, categoria, subcategoria: subcat })));
   }
 
   return (
@@ -129,11 +142,20 @@ function CampanaForm({ porCat, total }: { porCat: Record<string, number>; total:
             </div>
             <div>
               <label className={lbl}>Enviar a (elegibles)</label>
-              <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <select value={categoria} onChange={(e) => { setCategoria(e.target.value); setSubcat("todos"); }} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
                 {CATS.map((c) => <option key={c.value} value={c.value}>{c.label} ({c.value === "todos" ? total : (porCat[c.value] ?? 0)})</option>)}
               </select>
             </div>
           </div>
+          {subcatsDisp.length > 0 && (
+            <div>
+              <label className={lbl}>Subcategoría (afina el grupo)</label>
+              <select value={subcat} onChange={(e) => setSubcat(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="todos">Todas las subcategorías</option>
+                {subcatsDisp.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          )}
           <div><label className={lbl}>Asunto</label><Input value={asunto} onChange={(e) => setAsunto(e.target.value)} placeholder="¡Promoción de temporada!" /></div>
           <div>
             <label className={lbl}>Mensaje (escríbelo normal · {"{{nombre}}"} pone el nombre)</label>
