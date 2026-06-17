@@ -62,6 +62,9 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
           categorias={categorias}
           asesores={asesores}
           modoSalida={modoSalida}
+          edadNinoMin={det.programa.edad_nino_min ?? 2}
+          edadNinoMax={det.programa.edad_nino_max ?? 11}
+          edadInfanteMax={det.programa.edad_infante_max ?? 1}
         />
       )}
     </div>

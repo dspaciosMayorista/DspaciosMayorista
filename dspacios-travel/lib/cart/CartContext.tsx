@@ -21,6 +21,7 @@ export type CartItem = {
   habitaciones: Record<string, number>;
   ninos: number;
   ninos2: number;
+  infantes: number;
   pax: number;
   precio: number;
 };

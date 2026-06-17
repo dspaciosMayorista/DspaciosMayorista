@@ -41,6 +41,9 @@ export function CabeceraForm({
     pctFeeTarjeta: initial?.pctFeeTarjeta ?? 0,
     ninoEdadMax: initial?.ninoEdadMax ?? null,
     ninoValorServicios: initial?.ninoValorServicios ?? null,
+    edadNinoMin: initial?.edadNinoMin ?? 2,
+    edadNinoMax: initial?.edadNinoMax ?? 11,
+    edadInfanteMax: initial?.edadInfanteMax ?? 1,
     textoCondiciones: initial?.textoCondiciones ?? "",
     textoCancelacion: initial?.textoCancelacion ?? "",
     textoPagos: initial?.textoPagos ?? "",
@@ -241,6 +244,26 @@ export function CabeceraForm({
           <label className={lbl}>Niño: valor servicios</label>
           <Input type="number" value={f.ninoValorServicios ?? ""} onChange={(e) => set("ninoValorServicios", numOrNull(e.target.value))} placeholder="719" />
         </div>
+      </div>
+
+      {/* Edades (según el proveedor del programa) — alimentan la validación al reservar */}
+      <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Edades (según el proveedor)</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div>
+            <label className={lbl}>Edad niño desde</label>
+            <Input type="number" value={f.edadNinoMin ?? ""} onChange={(e) => set("edadNinoMin", numOrNull(e.target.value))} placeholder="2" />
+          </div>
+          <div>
+            <label className={lbl}>Edad niño hasta</label>
+            <Input type="number" value={f.edadNinoMax ?? ""} onChange={(e) => set("edadNinoMax", numOrNull(e.target.value))} placeholder="11" />
+          </div>
+          <div>
+            <label className={lbl}>Edad infante hasta</label>
+            <Input type="number" value={f.edadInfanteMax ?? ""} onChange={(e) => set("edadInfanteMax", numOrNull(e.target.value))} placeholder="1" />
+          </div>
+        </div>
+        <p className="mt-1 text-xs text-gray-400">Define qué cuenta como niño / infante en este programa. Se usa para validar pasajeros al reservar.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

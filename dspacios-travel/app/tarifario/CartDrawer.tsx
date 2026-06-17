@@ -12,6 +12,7 @@ function resumenHabitaciones(it: CartItem): string {
     .map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
   if (it.ninos > 0) partes.push(`${it.ninos} Niño 1`);
   if (it.ninos2 > 0) partes.push(`${it.ninos2} Niño 2`);
+  if (it.infantes > 0) partes.push(`${it.infantes} Infante(s)`);
   return partes.join(" · ");
 }
 

@@ -1478,6 +1478,9 @@ export type Database = {
           pct_fee_tarjeta: number;
           nino_edad_max: number | null;
           nino_valor_servicios: number | null;
+          edad_nino_min: number;
+          edad_nino_max: number;
+          edad_infante_max: number;
           texto_condiciones: string | null;
           texto_cancelacion: string | null;
           texto_pagos: string | null;
@@ -1509,6 +1512,9 @@ export type Database = {
           pct_fee_tarjeta?: number;
           nino_edad_max?: number | null;
           nino_valor_servicios?: number | null;
+          edad_nino_min?: number;
+          edad_nino_max?: number;
+          edad_infante_max?: number;
           texto_condiciones?: string | null;
           texto_cancelacion?: string | null;
           texto_pagos?: string | null;

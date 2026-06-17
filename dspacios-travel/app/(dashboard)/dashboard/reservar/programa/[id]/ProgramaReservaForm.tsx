@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
-import { paxDeAcomodacion } from "@/lib/acomodaciones";
+import { paxDeAcomodacion, textoEdadesHotel } from "@/lib/acomodaciones";
 import { reservarPrograma } from "../../actions";
 
 // Pax que cubre 1 habitación (Doble=2, Triple=3, Cuádruple=4, Sencilla=1).
@@ -35,6 +35,9 @@ export function ProgramaReservaForm({
   categorias,
   asesores,
   modoSalida = false,
+  edadNinoMin = 2,
+  edadNinoMax = 11,
+  edadInfanteMax = 1,
 }: {
   programaId: number;
   moneda: string;
@@ -44,6 +47,9 @@ export function ProgramaReservaForm({
   categorias: CategoriaReserva[];
   asesores: { nombre: string; email: string }[];
   modoSalida?: boolean;
+  edadNinoMin?: number;
+  edadNinoMax?: number;
+  edadInfanteMax?: number;
 }) {
   const router = useRouter();
   const [categoriaId, setCategoriaId] = useState<number>(categorias[0]?.id ?? 0);
@@ -55,7 +61,10 @@ export function ProgramaReservaForm({
 
   const [habs, setHabs] = useState<Record<string, number>>({}); // habitaciones por acomodación
   const [ninos, setNinos] = useState(0);
+  const [infantes, setInfantes] = useState(0);
   const [fechaIda, setFechaIda] = useState("");
+
+  const textoEdades = textoEdadesHotel({ ninoMin: edadNinoMin, ninoMax: edadNinoMax, infMin: 0, infMax: edadInfanteMax });
 
   const [cliente, setCliente] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "" });
   const [tipoAsesor, setTipoAsesor] = useState<"interno" | "agencia" | "freelance">("interno");
@@ -65,12 +74,15 @@ export function ProgramaReservaForm({
   const [freelanceNombre, setFreelanceNombre] = useState("");
   const [plazo, setPlazo] = useState("");
 
-  const totalPax = useMemo(
+  // Pasajeros que ocupan silla (adultos por habitación + niños). Los infantes
+  // van como pasajeros adicionales para poder validar sus edades.
+  const paxConSilla = useMemo(
     () =>
       Object.entries(habs).reduce((s, [a, n]) => s + (Number(n) || 0) * paxPorHab(a), 0) +
       (Number(ninos) || 0),
     [habs, ninos]
   );
+  const totalPax = paxConSilla + (Number(infantes) || 0);
 
   const total = useMemo(() => {
     let t = 0;
@@ -115,6 +127,7 @@ export function ProgramaReservaForm({
         fechaIda,
         paxPorAcom: habs, // ahora son HABITACIONES por acomodación (el server expande a pax)
         ninos: Number(ninos) || 0,
+        infantes: Number(infantes) || 0,
         cliente,
         tipoAsesor,
         asesorInterno,
@@ -122,14 +135,15 @@ export function ProgramaReservaForm({
         agenciaAsesor,
         freelanceNombre,
         plazo,
-        pasajeros: pasajeros.map((p) => ({
+        pasajeros: pasajeros.map((p, i) => ({
           nombres: p.nombres,
           apellidos: p.apellidos,
           tipoDoc: p.tipoDoc,
           numeroDoc: p.numeroDoc,
           fechaNacimiento: p.fechaNacimiento,
           nacionalidad: p.nacionalidad,
-          esInfante: false,
+          // Los últimos N pasajeros corresponden a los infantes declarados.
+          esInfante: i >= paxConSilla,
         })),
       });
       if (!res.ok) return setError(res.error);
@@ -175,6 +189,7 @@ export function ProgramaReservaForm({
       {/* Habitaciones por acomodación */}
       <div>
         <label className={lbl}>Habitaciones por acomodación (Doble = 2 pax, Triple = 3, Sencilla = 1)</label>
+        {textoEdades && <p className="mb-2 text-xs text-gray-400">{textoEdades}</p>}
         <div className="flex flex-wrap gap-3">
           {acomsAdulto.map((a) => {
             const cap = paxPorHab(a.acomodacion);
@@ -197,6 +212,11 @@ export function ProgramaReservaForm({
               <Input type="number" min={0} value={ninos || ""} onChange={(e) => setNinos(Number(e.target.value) || 0)} placeholder="0" />
             </div>
           )}
+          <div className="w-44 rounded-lg border border-gray-200 bg-white p-2">
+            <div className="text-xs font-medium text-gray-600">Infantes <span className="text-gray-400">· por cantidad</span></div>
+            <div className="mb-1 text-xs text-gray-400">{edadInfanteMax != null ? `hasta ${edadInfanteMax} año${edadInfanteMax === 1 ? "" : "s"}` : "sin costo"}</div>
+            <Input type="number" min={0} value={infantes || ""} onChange={(e) => setInfantes(Number(e.target.value) || 0)} placeholder="0" />
+          </div>
         </div>
         {acomsAdulto.length === 0 && (
           <p className="mt-2 text-sm text-amber-700">Esta categoría no tiene precios publicados (revisa “a solicitud”).</p>
