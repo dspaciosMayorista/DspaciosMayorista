@@ -5,6 +5,7 @@ import Link from "next/link";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
+import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
@@ -74,6 +75,8 @@ type Pivotada = {
   hotel_id?: number | null;
   bloqueo_id?: number | null;
   modulo: FilaTarifario["modulo"];
+  destino?: string | null;
+  noches?: number | null;
 };
 
 function pivotar(filas: FilaTarifario[]): Pivotada[] {
@@ -88,6 +91,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
       row = {
         hotel, categoria, regimen, precios: {},
         paquete_id: f.paquete_id, hotel_id: f.hotel_id, bloqueo_id: f.bloqueo_id, modulo: f.modulo,
+        destino: f.destino_nombre, noches: f.noches,
       };
       map.set(key, row);
     }
@@ -533,6 +537,16 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                         <Link href={reservarHref(r)} className="mt-0.5 block text-xs font-normal" style={{ color: "var(--brand-accent)" }}>
                           Reservar →
                         </Link>
+                      )}
+                      {i === 0 && puedeReservar && (
+                        <BriefFlyerButton
+                          className="mt-0.5 block"
+                          datos={{
+                            destino: r.destino, hotel: r.hotel, categoria: r.categoria, regimen: r.regimen,
+                            noches: r.noches, precios: r.precios,
+                            edadNino: r.hotel_id != null ? rangoEdades(infoPorHotel[r.hotel_id]) : null,
+                          }}
+                        />
                       )}
                     </td>
                     <td className="px-3 py-2 text-gray-600">{r.categoria}</td>
