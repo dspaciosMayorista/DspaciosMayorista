@@ -95,6 +95,7 @@ export function VistaBooking({
   infoPorHotel = {},
   planesInfo = {},
   capPorHotel = {},
+  soloAcom = null,
 }: {
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
@@ -105,6 +106,7 @@ export function VistaBooking({
   infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null }>;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
+  soloAcom?: string | null;
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
@@ -175,10 +177,13 @@ export function VistaBooking({
       }
       c.filas.push(f);
     }
-    const arr = [...map.values()];
+    let arr = [...map.values()];
+    // Filtro de acomodación (de la barra superior): el hotel se muestra solo si
+    // tiene tarifa para esa acomodación.
+    if (soloAcom) arr = arr.filter((c) => c.filas.some((f) => f.acomodacion === soloAcom && f.precio_pvp > 0));
     for (const c of arr) c.desde = minRoomPvp(c.filas);
     return arr.sort((a, b) => a.hotelNombre.localeCompare(b.hotelNombre));
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, salidaSel]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, salidaSel, soloAcom]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
 
@@ -284,8 +289,11 @@ export function VistaBooking({
         <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} destinos={destinos} />
       )}
 
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">{sub === "bloqueo" ? "Hoteles disponibles" : "O explora todos los alojamientos"}</p>
-      {!hoteles.length && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados.</p>}
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+        {sub === "bloqueo" ? "Hoteles disponibles" : "O explora todos los alojamientos"}
+        <span className="ml-2 font-normal normal-case text-gray-400">({hoteles.length})</span>
+      </p>
+      {!hoteles.length && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados. Prueba quitar filtros o cambiar de pestaña (Paquetes/Porción).</p>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {hoteles.map((h) => (
           <button
@@ -613,7 +621,10 @@ function EditorPax({
   const maxPax = paxMax != null ? Math.min(capPax, paxMax) : capPax;
   const maxNinos = Math.max(0, Math.min(capChd, maxPax - adultos));
 
+  const totalHab = ACOM_ROOMS.reduce((s, a) => s + (habs[a] ?? 0), 0);
+
   const errores: string[] = [];
+  if (totalHab > 8) errores.push("A partir de 9 habitaciones, contacta a un asesor.");
   if (hayHab) {
     if (ninosTotal > capChd) errores.push(`Las habitaciones elegidas admiten máximo ${capChd} niño(s).`);
     if (pax > maxPax) errores.push(`Las habitaciones elegidas admiten máximo ${maxPax} persona(s).`);

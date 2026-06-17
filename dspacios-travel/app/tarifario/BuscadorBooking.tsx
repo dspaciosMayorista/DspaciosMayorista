@@ -31,11 +31,14 @@ export function BuscadorBooking({
   const [habs, setHabs] = useState<Hab[]>([{ acom: "doble", ninos: 0 }]);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  const [avisoHab, setAvisoHab] = useState("");
   const [resultados, setResultados] = useState<BusquedaResultado[] | null>(null);
 
-  // Ajusta el nº de filas de habitación.
+  // Ajusta el nº de filas de habitación (tope de 8; 9+ requiere asesor).
   function setCantidad(n: number) {
-    const cant = Math.max(1, Math.min(8, Math.trunc(n) || 1));
+    const pedido = Math.trunc(n) || 1;
+    setAvisoHab(pedido > 8 ? "A partir de 9 habitaciones, contacta a un asesor." : "");
+    const cant = Math.max(1, Math.min(8, pedido));
     setNHab(String(cant));
     setHabs((prev) => {
       const next = [...prev];
@@ -106,6 +109,7 @@ export function BuscadorBooking({
           </button>
           {resultados && <button type="button" onClick={() => setResultados(null)} className="text-xs text-gray-400 hover:text-gray-700">Limpiar resultados</button>}
         </div>
+        {avisoHab && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{avisoHab}</p>}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
       </div>
 
