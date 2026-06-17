@@ -10,7 +10,9 @@ type CrmInsert = Database["public"]["Tables"]["crm_contactos"]["Insert"];
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
-export const CATEGORIAS = ["cliente_final", "agencia", "freelance", "empresa", "pasajero"] as const;
+// Un archivo "use server" SOLO puede exportar funciones async. Por eso este
+// catálogo queda interno (sin export); el tipo derivado sí puede exportarse.
+const CATEGORIAS = ["cliente_final", "agencia", "freelance", "empresa", "pasajero"] as const;
 export type Categoria = (typeof CATEGORIAS)[number];
 
 function normCategoria(s?: string): Categoria {
