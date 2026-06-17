@@ -44,18 +44,26 @@ type Tarifa = {
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const sel = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
+// Hoy en formato yyyy-mm-dd (zona del navegador). Una vigencia está VENCIDA si su
+// "compra hasta" ya pasó: deja de alimentar el tarifario pero NO se borra; pasa
+// al histórico del hotel para consultar y comparar contratos viejos.
+const hoyLocal = () => new Date().toLocaleDateString("en-CA");
+const esVencida = (t: Temporada, hoy: string): boolean => !!t.compra_fin && t.compra_fin < hoy;
+
 export function HotelDetalleClient({
   hotelId, categorias, regimenes, temporadas, tarifas, otrosHoteles,
 }: { hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; otrosHoteles: { id: number; nombre: string }[] }) {
+  const hoy = hoyLocal();
+  const vencidasNombres = new Set(temporadas.filter((t) => esVencida(t, hoy)).map((t) => t.nombre));
   return (
     <div className="space-y-8">
-      <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} />
-      <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} />
+      <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} />
+      <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} vencidasNombres={vencidasNombres} />
     </div>
   );
 }
 
-function TemporadasBox({ hotelId, temporadas, otrosHoteles }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[] }) {
+function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string }) {
   const [editId, setEditId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [ini, setIni] = useState("");
@@ -116,6 +124,42 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles }: { hotelId: number;
     });
   }
 
+  const activas = temporadas.filter((t) => !esVencida(t, hoy));
+  const vencidas = temporadas.filter((t) => esVencida(t, hoy));
+
+  const filaTemp = (t: Temporada, historico = false) => {
+    const tp = t.tipo ?? "tarifa";
+    const promo = tp !== "tarifa";
+    return (
+      <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <b>{t.nombre}</b>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] ${promo ? "bg-[var(--brand-highlight)]/25 text-gray-700" : "bg-gray-100 text-gray-500"}`}>{TIPO_BADGE[tp] ?? tp}</span>
+          <span className="text-[11px] text-gray-400">P{t.prioridad ?? 1}</span>
+          {promo && t.descuento_valor != null && (
+            <span className="text-[11px] font-medium text-[var(--brand-success)]">
+              {tp === "descuento_pct" ? `−${t.descuento_valor}%` : `−${formatCOP(t.descuento_valor)}/pax`}
+            </span>
+          )}
+          <span className="text-gray-400">· {formatFechaLarga(t.fecha_inicio)} → {formatFechaLarga(t.fecha_fin)}</span>
+          {asRangos(t.rangos).length > 1 && (
+            <span className="text-[11px] text-gray-400">· +{asRangos(t.rangos).length - 1} rango(s)</span>
+          )}
+          {asRangos(t.blackouts).length > 0 && (
+            <span className="text-[11px] font-medium text-amber-600">· {asRangos(t.blackouts).length} black-out</span>
+          )}
+          {(t.compra_inicio || t.compra_fin) && (
+            <span className={`text-[11px] ${historico ? "font-medium text-gray-500" : "text-gray-400"}`}>· compra {t.compra_inicio ?? "…"} → {t.compra_fin ?? "…"}{historico ? " (vencida)" : ""}</span>
+          )}
+        </span>
+        <span className="flex items-center gap-3">
+          <button type="button" onClick={() => editar(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
+          <DelBtn onDel={() => eliminarTemporada(t.id, hotelId)} />
+        </span>
+      </li>
+    );
+  };
+
   return (
     <section>
       <h2 className="mb-1 text-sm font-semibold text-gray-700">Temporadas y promociones</h2>
@@ -161,41 +205,22 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles }: { hotelId: number;
         </div>
 
         <ul className="mt-3 divide-y divide-gray-100">
-          {temporadas.map((t) => {
-            const tp = t.tipo ?? "tarifa";
-            const promo = tp !== "tarifa";
-            return (
-              <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <b>{t.nombre}</b>
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${promo ? "bg-[var(--brand-highlight)]/25 text-gray-700" : "bg-gray-100 text-gray-500"}`}>{TIPO_BADGE[tp] ?? tp}</span>
-                  <span className="text-[11px] text-gray-400">P{t.prioridad ?? 1}</span>
-                  {promo && t.descuento_valor != null && (
-                    <span className="text-[11px] font-medium text-[var(--brand-success)]">
-                      {tp === "descuento_pct" ? `−${t.descuento_valor}%` : `−${formatCOP(t.descuento_valor)}/pax`}
-                    </span>
-                  )}
-                  <span className="text-gray-400">· {formatFechaLarga(t.fecha_inicio)} → {formatFechaLarga(t.fecha_fin)}</span>
-                  {asRangos(t.rangos).length > 1 && (
-                    <span className="text-[11px] text-gray-400">· +{asRangos(t.rangos).length - 1} rango(s)</span>
-                  )}
-                  {asRangos(t.blackouts).length > 0 && (
-                    <span className="text-[11px] font-medium text-amber-600">· {asRangos(t.blackouts).length} black-out</span>
-                  )}
-                  {(t.compra_inicio || t.compra_fin) && (
-                    <span className="text-[11px] text-gray-400">· compra {t.compra_inicio ?? "…"} → {t.compra_fin ?? "…"}</span>
-                  )}
-                </span>
-                <span className="flex items-center gap-3">
-                  <button type="button" onClick={() => editar(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
-                  <DelBtn onDel={() => eliminarTemporada(t.id, hotelId)} />
-                </span>
-              </li>
-            );
-          })}
-          {!temporadas.length && <li className="py-2 text-sm text-gray-400">Sin temporadas aún.</li>}
+          {activas.map((t) => filaTemp(t))}
+          {!activas.length && <li className="py-2 text-sm text-gray-400">Sin vigencias activas.</li>}
         </ul>
       </div>
+
+      {vencidas.length > 0 && (
+        <details className="mt-3 rounded-xl border border-gray-200 bg-gray-50/60">
+          <summary className="cursor-pointer select-none px-4 py-2 text-sm font-medium text-gray-600">
+            Histórico de vigencias vencidas <span className="text-gray-400">({vencidas.length})</span>
+          </summary>
+          <p className="px-4 pb-1 text-xs text-gray-500">
+            Vigencias cuya <b>compra hasta</b> ya pasó. No alimentan el tarifario; se conservan para consultar y comparar contratos viejos.
+          </p>
+          <ul className="divide-y divide-gray-100 px-4 pb-3 opacity-80">{vencidas.map((t) => filaTemp(t, true))}</ul>
+        </details>
+      )}
     </section>
   );
 }
@@ -255,8 +280,8 @@ function ListaRangos({ titulo, items, onChange }: { titulo: string; items: Rango
   );
 }
 
-function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
-  hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[];
+function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, vencidasNombres }: {
+  hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; vencidasNombres: Set<string>;
 }) {
   const [tipo, setTipo] = useState("");
   const [alim, setAlim] = useState("");
@@ -305,6 +330,44 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
   }
 
   const faltaConfig = categorias.length === 0 || regimenes.length === 0 || temporadas.length === 0;
+
+  const esHistorica = (t: Tarifa) => !!t.temporada && vencidasNombres.has(t.temporada);
+  const activas = tarifas.filter((t) => !esHistorica(t));
+  const historicas = tarifas.filter((t) => esHistorica(t));
+
+  const filaTarifa = (t: Tarifa) => (
+    <tr key={t.id} className="border-t border-gray-50">
+      <td className="px-3 py-2 text-gray-700">{t.tipo_habitacion ?? "—"}</td>
+      <td className="px-3 py-2 text-gray-500">{t.alimentacion ?? "—"}</td>
+      <td className="px-3 py-2 text-gray-500">{t.temporada ?? "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{t.neto_sencilla ? formatCOP(t.neto_sencilla) : "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{t.neto_multiple ? formatCOP(t.neto_multiple) : "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino != null ? formatCOP(t.neto_nino) : "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino2 != null ? formatCOP(t.neto_nino2) : "—"}</td>
+      <td className="px-3 py-2 text-right">
+        <div className="flex items-center justify-end gap-3">
+          <button type="button" onClick={() => startEdit(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
+          <DelBtn onDel={() => eliminarTarifa(t.id, hotelId)} />
+        </div>
+      </td>
+    </tr>
+  );
+
+  const tablaTarifas = (rows: Tarifa[]) => (
+    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <table className="w-full min-w-[680px] text-sm">
+        <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+          <th className="px-3 py-2">Categoría</th><th className="px-3 py-2">Régimen</th><th className="px-3 py-2">Temporada</th>
+          <th className="px-3 py-2 text-right">Sencilla</th><th className="px-3 py-2 text-right">Doble</th>
+          <th className="px-3 py-2 text-right">Triple</th><th className="px-3 py-2 text-right">Múltiple</th>
+          <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th><th className="px-3 py-2"></th>
+        </tr></thead>
+        <tbody>{rows.map((t) => filaTarifa(t))}</tbody>
+      </table>
+    </div>
+  );
 
   return (
     <section>
@@ -358,36 +421,18 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas }: {
         </div>
       </div>
 
-      {tarifas.length > 0 && (
-        <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[680px] text-sm">
-            <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-              <th className="px-3 py-2">Categoría</th><th className="px-3 py-2">Régimen</th><th className="px-3 py-2">Temporada</th>
-              <th className="px-3 py-2 text-right">Sencilla</th><th className="px-3 py-2 text-right">Doble</th>
-              <th className="px-3 py-2 text-right">Triple</th><th className="px-3 py-2 text-right">Múltiple</th>
-              <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th><th className="px-3 py-2"></th>
-            </tr></thead>
-            <tbody>{tarifas.map((t) => (
-              <tr key={t.id} className="border-t border-gray-50">
-                <td className="px-3 py-2 text-gray-700">{t.tipo_habitacion ?? "—"}</td>
-                <td className="px-3 py-2 text-gray-500">{t.alimentacion ?? "—"}</td>
-                <td className="px-3 py-2 text-gray-500">{t.temporada ?? "—"}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{t.neto_sencilla ? formatCOP(t.neto_sencilla) : "—"}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{t.neto_multiple ? formatCOP(t.neto_multiple) : "—"}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino != null ? formatCOP(t.neto_nino) : "—"}</td>
-                <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino2 != null ? formatCOP(t.neto_nino2) : "—"}</td>
-                <td className="px-3 py-2 text-right">
-                  <div className="flex items-center justify-end gap-3">
-                    <button type="button" onClick={() => startEdit(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
-                    <DelBtn onDel={() => eliminarTarifa(t.id, hotelId)} />
-                  </div>
-                </td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
+      {activas.length > 0 && <div className="mt-4">{tablaTarifas(activas)}</div>}
+
+      {historicas.length > 0 && (
+        <details className="mt-4 rounded-xl border border-gray-200 bg-gray-50/60">
+          <summary className="cursor-pointer select-none px-4 py-2 text-sm font-medium text-gray-600">
+            Histórico de tarifas vencidas <span className="text-gray-400">({historicas.length})</span>
+          </summary>
+          <p className="px-4 pb-2 text-xs text-gray-500">
+            Tarifas de vigencias ya vencidas. No se publican; quedan para auditar contratos viejos con la tarifa que aplicó.
+          </p>
+          <div className="px-3 pb-3 opacity-80">{tablaTarifas(historicas)}</div>
+        </details>
       )}
     </section>
   );
