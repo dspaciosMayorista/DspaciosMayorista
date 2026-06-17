@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
+import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, toTemporadaRango, minNochesAplicable, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, paxDeAcomodacion, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
@@ -32,7 +32,7 @@ async function liquidarHotelPaquete(
   hotelId: number,
   fechaIda: string,
   numNoches: number
-): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null } | null> {
+): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number } | null> {
   if (numNoches <= 0) return null;
   const { data: pq } = await admin
     .from("armado_paquetes")
@@ -46,7 +46,7 @@ async function liquidarHotelPaquete(
 
   const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }, { data: blackouts }] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", hotelId),
+    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones").eq("hotel_id", hotelId),
@@ -65,7 +65,7 @@ async function liquidarHotelPaquete(
     if (b.total) cierreTotal = true;
     else for (const a of ((b.acomodaciones as string[] | null) ?? [])) acomCerradas.add(a);
   }
-  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null };
+  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null, minNoches: 1 };
   const filtroCat = (hsel?.categorias as string[] | null) ?? null;
   const filtroReg = (hsel?.regimenes as string[] | null) ?? null;
   const hotelNombre = (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
@@ -116,7 +116,7 @@ async function liquidarHotelPaquete(
     for (const c of combos) for (const a of acomCerradas) delete c.precios[a];
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2"));
-  return { combos: combosF, destinoNombre, hotelNombre };
+  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda) };
 }
 
 export type CotizarResult =
@@ -142,10 +142,13 @@ export async function cotizarPorFechas(input: {
   if (pq?.fecha_viaje_fin && input.fechaRegreso > pq.fecha_viaje_fin)
     return { ok: false, error: `El regreso no puede ser después del ${pq.fecha_viaje_fin} (rango del paquete).` };
   const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda, numNoches);
+  if (res && numNoches < (res.minNoches ?? 1)) {
+    return { ok: false, error: `Este alojamiento exige un mínimo de ${res.minNoches} noche(s) para esas fechas.` };
+  }
   if (!res || !res.combos.length) {
     // Diagnóstico: ¿qué temporada de las noches elegidas no tiene tarifa cargada?
     const [{ data: temps }, { data: tars }] = await Promise.all([
-      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", input.hotelId),
+      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", input.hotelId),
       admin.from("tarifa_hotel").select("temporada").eq("hotel_id", input.hotelId),
     ]);
     const temporadas = (temps ?? []).map(toTemporadaRango);
@@ -219,6 +222,7 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
   for (const { paquete, hotel } of pares.values()) {
     const res = await liquidarHotelPaquete(admin, paquete, hotel, input.fechaIda, numNoches);
     if (!res || !res.combos.length) continue;
+    if (numNoches < (res.minNoches ?? 1)) continue; // exige más noches de las buscadas
     const { data: acomCfg } = await admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, chd_max").eq("hotel_id", hotel);
     const reglas = (acomCfg ?? []) as { acomodacion: string; pax_tarifa: number; chd_max: number }[];
     const paxTarifa = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
@@ -851,7 +855,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
       if (numNoches > 0) {
         const [{ data: temps }, { data: tarRows }, { data: hprov }] = await Promise.all([
-          admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", input.hotelId),
+          admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", input.hotelId),
           admin.from("tarifa_hotel")
             .select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2")
             .eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
