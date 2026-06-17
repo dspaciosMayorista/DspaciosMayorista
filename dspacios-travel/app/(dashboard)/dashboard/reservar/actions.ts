@@ -782,18 +782,18 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     aplica_retencion: boolean; pct_retencion: number; observaciones: string;
   };
   const cxp: CxPRow[] = [];
-  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null) => {
-    if (!(valor > 0)) return;
+  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, opts?: { permitirCero?: boolean }) => {
+    if (!(valor > 0) && !opts?.permitirCero) return;
     cxp.push({
       numero_contrato: numero,
       proveedor: pr?.nombre ?? nombreFallback ?? null,
       tipo_proveedor: tipo,
       servicio,
-      valor_total: valor,
+      valor_total: Math.max(0, valor),
       fecha_obligacion: hoyISO,
       aplica_retencion: pr?.aplica_retencion ?? false,
       pct_retencion: Number(pr?.pct_retencion) || 0,
-      observaciones: OBS_AUTO,
+      observaciones: valor > 0 ? OBS_AUTO : `${OBS_AUTO} · costo neto pendiente`,
     });
   };
 
@@ -886,9 +886,13 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
         if (numNinos2 > 0) { const per = netoPersona("nino2"); if (per != null) costoHotel += per * numNinos2; }
         if (costoHotel > 0) {
           await admin.from("ventas").update({ costo_hotel: costoHotel }).eq("numero_contrato", numero);
-          const prH = hprov?.proveedores as unknown as ProvFact;
-          pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? hprov?.nombre ?? ""}`.trim(), costoHotel, prH);
         }
+        // Crea SIEMPRE la CxP del hotel (aunque el costo neto salga 0 por tarifa
+        // no cargada): el proveedor del hotel debe aparecer en cuentas por pagar
+        // y contabilidad ajusta el valor. Antes solo se creaba con costoHotel > 0,
+        // por eso a veces "solo salía el aéreo".
+        const prH = hprov?.proveedores as unknown as ProvFact;
+        pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? hprov?.nombre ?? ""}`.trim(), costoHotel, prH, null, { permitirCero: true });
       }
     } catch {
       // El costo neto es informativo para rentabilidad; no bloquea la reserva.
@@ -1172,54 +1176,72 @@ export async function confirmarVenta(numeroContrato: string): Promise<{ ok: bool
 }
 
 // ── Respaldo de cuentas por pagar ──────────────────────────────────────────
-// Si un contrato NO tiene cuentas por pagar, las crea a partir de sus costos
-// (hotel/aéreo/receptivo/asistencia/otros). No duplica: si ya hay alguna CxP
-// (p. ej. creada al reservar desde el tarifario con su proveedor), no hace nada.
-// El proveedor queda sin asignar para que el área contable lo elija en el contrato.
-export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{ ok: boolean; creadas: number }> {
+// Crea las cuentas por pagar que FALTEN para un contrato a partir de sus costos
+// (hotel/aéreo/receptivo/asistencia/otros). NO duplica: solo agrega los tipos de
+// proveedor que aún no tengan CxP. Útil cuando al reservar solo se generó parte
+// (p. ej. "solo el aéreo" porque el costo neto del hotel salió 0). El proveedor
+// del hotel/aéreo se jala del contrato; los demás quedan para que contabilidad
+// los asigne. El hotel se crea aunque el costo sea 0 (queda pendiente de valor).
+export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{ ok: boolean; creadas: number; error?: string }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, creadas: 0 };
   const admin = createAdminClient();
 
-  const { count } = await admin
-    .from("cuentas_por_pagar")
-    .select("id", { count: "exact", head: true })
-    .eq("numero_contrato", numeroContrato);
-  if ((count ?? 0) > 0) return { ok: true, creadas: 0 }; // ya tiene CxP
-
-  const { data: v } = await admin
-    .from("ventas")
-    .select("costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida")
-    .eq("numero_contrato", numeroContrato)
-    .maybeSingle();
+  const [{ data: existentes }, { data: v }, { data: ch }, { data: cv }, { data: provs }] = await Promise.all([
+    admin.from("cuentas_por_pagar").select("tipo_proveedor").eq("numero_contrato", numeroContrato),
+    admin.from("ventas").select("costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida").eq("numero_contrato", numeroContrato).maybeSingle(),
+    admin.from("contrato_hoteles").select("nombre, proveedor").eq("numero_contrato", numeroContrato).order("orden").limit(1),
+    admin.from("contrato_vuelos").select("aerolinea").eq("numero_contrato", numeroContrato).order("orden").limit(1),
+    admin.from("proveedores").select("nombre, aplica_retencion, pct_retencion"),
+  ]);
   if (!v) return { ok: false, creadas: 0 };
 
+  const yaTiene = new Set(((existentes ?? []).map((r) => r.tipo_proveedor).filter(Boolean)) as string[]);
   const hoy = new Date().toISOString().slice(0, 10);
   const vence = (v.plazo as string | null) ?? (v.fecha_salida as string | null) ?? null;
   const moneda = (v.moneda as string | null) ?? "COP";
+  const hotelRow = (ch ?? [])[0] as { nombre: string | null; proveedor: string | null } | undefined;
+  const vueloRow = (cv ?? [])[0] as { aerolinea: string | null } | undefined;
 
-  const defs: { costo: number; tipo: string; servicio: string }[] = [
-    { costo: Number(v.costo_hotel) || 0, tipo: "hotel", servicio: `Hotel ${v.hotel ?? ""}`.trim() },
-    { costo: Number(v.costo_aereo) || 0, tipo: "aereo", servicio: `Aéreo ${v.aerolinea ?? ""}`.trim() },
-    { costo: Number(v.costo_receptivo) || 0, tipo: "receptivo", servicio: "Servicios receptivos" },
-    { costo: Number(v.costo_asistencia) || 0, tipo: "asistencia", servicio: "Asistencia médica" },
-    { costo: Number(v.otros_costos) || 0, tipo: "otro", servicio: "Otros costos" },
-  ];
-  const rows = defs
-    .filter((d) => d.costo > 0)
-    .map((d) => ({
-      numero_contrato: numeroContrato,
-      proveedor: null,
-      tipo_proveedor: d.tipo,
-      servicio: d.servicio,
-      valor_total: d.costo,
-      moneda,
-      fecha_obligacion: hoy,
-      fecha_vencimiento: vence,
-    }));
+  // Retención del catálogo de proveedores por nombre (case-insensitive).
+  const retDe = (nombre: string | null) => {
+    const p = (provs ?? []).find((x) => x.nombre && nombre && x.nombre.trim().toLowerCase() === nombre.trim().toLowerCase());
+    return { aplica_retencion: p?.aplica_retencion ?? false, pct_retencion: Number(p?.pct_retencion) || 0 };
+  };
+
+  type Row = {
+    numero_contrato: string; proveedor: string | null; tipo_proveedor: string; servicio: string;
+    valor_total: number; moneda: string; fecha_obligacion: string; fecha_vencimiento: string | null;
+    aplica_retencion: boolean; pct_retencion: number; observaciones: string;
+  };
+  const rows: Row[] = [];
+  const OBS = "Completado automáticamente (faltaba el proveedor)";
+  const add = (tipo: string, servicio: string, valor: number, proveedor: string | null) => {
+    const r = retDe(proveedor);
+    rows.push({
+      numero_contrato: numeroContrato, proveedor: proveedor || null, tipo_proveedor: tipo, servicio,
+      valor_total: Math.max(0, valor), moneda, fecha_obligacion: hoy, fecha_vencimiento: vence,
+      aplica_retencion: r.aplica_retencion, pct_retencion: r.pct_retencion,
+      observaciones: valor > 0 ? OBS : `${OBS} · costo neto pendiente`,
+    });
+  };
+
+  // Hotel: si el contrato lleva hotel y no hay CxP de hotel, créala aunque el
+  // costo neto sea 0 (el proveedor debe aparecer; contabilidad ajusta el valor).
+  if (hotelRow && !yaTiene.has("hotel"))
+    add("hotel", `Hotel ${hotelRow.nombre ?? v.hotel ?? ""}`.trim(), Number(v.costo_hotel) || 0, hotelRow.proveedor);
+  if (!yaTiene.has("aereo") && (Number(v.costo_aereo) || 0) > 0)
+    add("aereo", `Aéreo ${vueloRow?.aerolinea ?? v.aerolinea ?? ""}`.trim(), Number(v.costo_aereo) || 0, vueloRow?.aerolinea ?? (v.aerolinea as string | null));
+  if (!yaTiene.has("receptivo") && (Number(v.costo_receptivo) || 0) > 0)
+    add("receptivo", "Servicios receptivos", Number(v.costo_receptivo) || 0, null);
+  if (!yaTiene.has("asistencia") && (Number(v.costo_asistencia) || 0) > 0)
+    add("asistencia", "Asistencia médica", Number(v.costo_asistencia) || 0, null);
+  if (!yaTiene.has("otro") && (Number(v.otros_costos) || 0) > 0)
+    add("otro", "Otros costos", Number(v.otros_costos) || 0, null);
+
   if (!rows.length) return { ok: true, creadas: 0 };
 
   const { error } = await admin.from("cuentas_por_pagar").insert(rows);
-  if (error) return { ok: false, creadas: 0 };
+  if (error) return { ok: false, creadas: 0, error: error.message };
   revalidatePath("/dashboard/pagos");
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   return { ok: true, creadas: rows.length };
