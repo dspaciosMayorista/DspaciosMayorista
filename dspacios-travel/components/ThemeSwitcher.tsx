@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-type Tema = "marca" | "indigo" | "verde";
+type Tema = "marca" | "indigo" | "verde" | "web";
 const KEY = "dsp-theme";
 const POS_KEY = "dsp-theme-pos";
 
@@ -92,6 +92,7 @@ export function ThemeSwitcher() {
           {btn("marca", "Turquesa")}
           {btn("indigo", "Índigo")}
           {btn("verde", "Verde")}
+          {btn("web", "Web")}
         </div>
       )}
     </div>

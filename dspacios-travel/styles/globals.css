@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 
@@ -246,6 +247,73 @@ html[data-theme="verde"] nav a[aria-current="page"] {
    Solo el logo (.brand-logo); NO otras imágenes del header/aside (ej. la foto
    del hotel en el carrito), que se verían en blanco. */
 html[data-theme="verde"] .brand-logo { filter: brightness(0) invert(1); }
+
+/* ── Tema WEB (estilo del sitio público: índigo profundo + lima, Inter) ──────
+   Se activa con <html data-theme="web">. Lleva el look del sitio de marketing a
+   TODO el portal: sidebar con degradado índigo (como el header/hero del sitio),
+   lienzo claro tintado, realces lima, botones/links índigo y tipografía Inter.
+   Se quita poniendo data-theme="marca". */
+html[data-theme="web"] {
+  --brand-primary:   #120573;   /* índigo profundo del sitio */
+  --brand-accent:    #2a1f9e;   /* índigo más claro (links/hover) */
+  --brand-success:   #66B596;
+  --brand-highlight: #d8f511;   /* lima del sitio */
+  --brand-gradient:  linear-gradient(135deg, #0c0350 0%, #120573 45%, #2a1f9e 100%);
+
+  --primary: #120573;
+  --accent:  #2a1f9e;
+  --ring:    #120573;
+  --chart-1: #120573; --chart-2: #2a1f9e; --chart-3: #66B596; --chart-4: #d8f511;
+  --sidebar-primary: #120573; --sidebar-ring: #120573;
+
+  /* Texto del nav sobre el sidebar índigo */
+  --nav-fg:    #c9cbf0;
+  --nav-subfg: #a3a6da;
+
+  --background: #f4f5fb;
+  --secondary:  #eceefb;
+  --muted:      #eceefb;
+}
+
+/* Tipografía del sitio (Inter) en todo el portal */
+html[data-theme="web"] body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+html[data-theme="web"] h1, html[data-theme="web"] h2, html[data-theme="web"] h3 { letter-spacing: -0.01em; }
+
+/* Lienzo claro tintado de índigo (paneles/listados) */
+html[data-theme="web"] body,
+html[data-theme="web"] .bg-gray-50  { background-color: #f4f5fb !important; }
+html[data-theme="web"] .bg-gray-100 { background-color: #e9eaf8 !important; }
+
+/* SIDEBAR con degradado índigo (como el header del sitio) + contenido claro */
+html[data-theme="web"] aside.bg-white {
+  background: linear-gradient(180deg, #14078a 0%, #0c0350 100%) !important;
+  border-right-color: rgba(255, 255, 255, 0.10) !important;
+}
+html[data-theme="web"] aside .border-gray-100 { border-color: rgba(255, 255, 255, 0.12) !important; }
+html[data-theme="web"] aside .border-l        { border-color: rgba(255, 255, 255, 0.16) !important; }
+html[data-theme="web"] aside .brand-logo      { filter: brightness(0) invert(1); }   /* logo en blanco */
+html[data-theme="web"] aside nav a:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+}
+html[data-theme="web"] aside .text-gray-400,
+html[data-theme="web"] aside .text-gray-500,
+html[data-theme="web"] aside .text-gray-600   { color: #c9cbf0 !important; }
+html[data-theme="web"] aside .hover\:text-gray-700:hover,
+html[data-theme="web"] aside .hover\:text-gray-800:hover { color: #ffffff !important; }
+/* Item activo: píldora LIMA (el !important gana sobre el estilo inline) */
+html[data-theme="web"] aside nav a[aria-current="page"] {
+  background-color: #d8f511 !important;
+  color: #120573 !important;
+  font-weight: 700 !important;
+  border-radius: 9999px;
+}
+
+/* Tarjetas: blancas con sombra índigo suave (look web, más “elevado”) */
+html[data-theme="web"] .bg-white.border.rounded-xl,
+html[data-theme="web"] .bg-white.border.rounded-2xl {
+  box-shadow: 0 10px 30px -18px rgba(18, 5, 115, 0.35);
+}
 
 .dark {
   --background: oklch(0.145 0 0);
