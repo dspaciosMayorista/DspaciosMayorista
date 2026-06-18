@@ -195,12 +195,21 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
       <div>
         <div className="mb-2 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-700">Estado de cuenta</h3>
-          <Link
-            href={`/dashboard/contratos/${encodeURIComponent(row.numero_contrato)}`}
-            className="text-xs font-medium text-[#1D7C9A] hover:underline"
-          >
-            Ver contrato →
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href={`/estado-cuenta/${encodeURIComponent(row.numero_contrato)}`}
+              target="_blank"
+              className="text-xs font-medium text-[#1D7C9A] hover:underline"
+            >
+              Descargar estado de cuenta ↗
+            </Link>
+            <Link
+              href={`/dashboard/contratos/${encodeURIComponent(row.numero_contrato)}`}
+              className="text-xs font-medium text-gray-500 hover:underline"
+            >
+              Ver contrato →
+            </Link>
+          </div>
         </div>
         {row.abonos.length === 0 ? (
           <p className="text-sm text-gray-400">Sin abonos registrados.</p>
@@ -213,6 +222,7 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
                   <th className="px-3 py-2">Forma</th>
                   <th className="px-3 py-2">Referencia</th>
                   <th className="px-3 py-2 text-right">Valor</th>
+                  <th className="px-3 py-2 text-right">Recibo</th>
                 </tr>
               </thead>
               <tbody>
@@ -223,6 +233,11 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
                     <td className="px-3 py-2 text-gray-500">{a.referencia ?? "—"}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-700">
                       {formatMoneda(a.valor_abono, row.moneda)}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">
+                        Recibo ↗
+                      </Link>
                     </td>
                   </tr>
                 ))}
@@ -235,6 +250,7 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
                   <td className="px-3 py-2 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
                     {formatMoneda(row.saldo, row.moneda)}
                   </td>
+                  <td className="px-3 py-2"></td>
                 </tr>
               </tfoot>
             </table>

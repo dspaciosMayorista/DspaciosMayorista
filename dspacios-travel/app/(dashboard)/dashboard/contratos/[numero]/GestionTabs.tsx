@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
@@ -195,10 +196,17 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas }: 
       </div>
       {abonos.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[480px] text-sm">
+          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2">
+            <span className="text-xs font-semibold uppercase text-gray-400">Pagos registrados</span>
+            <Link href={`/estado-cuenta/${encodeURIComponent(numero)}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">
+              Estado de cuenta ↗
+            </Link>
+          </div>
+          <table className="w-full min-w-[560px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Fecha</th><th className="px-4 py-2 text-right">Valor</th>
               <th className="px-4 py-2">Forma</th><th className="px-4 py-2">Referencia</th>
+              <th className="px-4 py-2 text-right">Recibo</th>
             </tr></thead>
             <tbody>{abonos.map((a) => (
               <tr key={a.id} className="border-t border-gray-50">
@@ -206,6 +214,9 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas }: 
                 <td className="px-4 py-2 text-right tabular-nums">{formatCOP(a.valor_abono)}</td>
                 <td className="px-4 py-2 text-gray-500">{a.forma_pago ?? "—"}</td>
                 <td className="px-4 py-2 text-gray-500">{a.referencia ?? "—"}</td>
+                <td className="px-4 py-2 text-right">
+                  <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">Recibo ↗</Link>
+                </td>
               </tr>))}</tbody>
           </table>
         </div>
