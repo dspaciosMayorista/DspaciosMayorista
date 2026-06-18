@@ -5,6 +5,7 @@ import { getProgramaDetalle } from "@/lib/programas";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
+import { Plane } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -68,8 +69,8 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-3xl font-semibold">{p.nombre}</h1>
-            <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-medium">
-              {p.incluye_aereo ? "✈ Con aéreo" : "Solo terrestre"}
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-medium">
+              {p.incluye_aereo ? <><Plane size={12} /> Con aéreo</> : "Solo terrestre"}
             </span>
           </div>
           <p className="mt-1 text-sm opacity-90">

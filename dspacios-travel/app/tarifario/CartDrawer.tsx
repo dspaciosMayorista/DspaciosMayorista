@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Hotel, ShoppingCart, X } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem } from "@/lib/cart/CartContext";
@@ -41,7 +42,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
         className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-medium shadow-sm"
         style={{ color: "var(--brand-primary)" }}
       >
-        🛒 Carrito
+        <ShoppingCart size={16} /> Carrito
         {count > 0 && (
           <span className="ml-1 rounded-full px-2 py-0.5 text-xs font-bold text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
             {count}
@@ -54,7 +55,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
           <div className="flex h-full w-full max-w-md flex-col bg-white" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
               <h2 className="text-lg font-semibold text-gray-900">Tu selección</h2>
-              <button type="button" onClick={() => setOpen(false)} className="text-sm text-gray-400 hover:text-gray-700">Cerrar ✕</button>
+              <button type="button" onClick={() => setOpen(false)} className="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-700">Cerrar <X size={14} /></button>
             </div>
 
             <div className="flex-1 overflow-y-auto overscroll-contain p-4">
@@ -66,12 +67,12 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                 <ul className="space-y-3">
                   {items.map((it) => (
                     <li key={it.id} className="flex gap-3 rounded-xl border border-gray-200 p-3">
-                      <div className="relative flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-xl text-gray-300">
+                      <div className="relative flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-gray-300">
                         {fotoDe(it) ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={fotoDe(it) as string} alt={it.hotelNombre} className="absolute inset-0 h-full w-full object-cover" />
                         ) : (
-                          <span aria-hidden>🏨</span>
+                          <Hotel size={22} aria-hidden />
                         )}
                       </div>
                       <div className="min-w-0 flex-1">

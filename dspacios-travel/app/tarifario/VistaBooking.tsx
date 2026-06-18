@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import Image from "next/image";
+import { Star } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart } from "@/lib/cart/CartContext";
@@ -32,7 +33,11 @@ type HotelCard = {
 // Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
 function Categoria({ estrellas, clasificacion, className = "" }: { estrellas: number | null; clasificacion: string | null; className?: string }) {
   if (estrellas && estrellas > 0) {
-    return <span className={`text-amber-400 ${className}`} title={`${estrellas} estrellas`}>{"★".repeat(estrellas)}</span>;
+    return (
+      <span className={`inline-flex align-middle text-amber-400 ${className}`} title={`${estrellas} estrellas`}>
+        {Array.from({ length: estrellas }).map((_, i) => <Star key={i} size={12} fill="currentColor" strokeWidth={0} />)}
+      </span>
+    );
   }
   if (clasificacion?.trim()) {
     return <span className={`rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600 ${className}`}>{clasificacion}</span>;

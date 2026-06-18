@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Sparkles } from "lucide-react";
 import { briefFlyer, type BriefFlyerInput } from "@/lib/flyer/brief";
 
 // Botón que genera un BRIEF de texto del producto (precios, datos, estilo de
@@ -25,10 +26,10 @@ export function BriefFlyerButton({ datos, className = "" }: { datos: BriefFlyerI
       <button
         type="button"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAbierto(true); }}
-        className={`text-xs font-normal ${className}`}
+        className={`inline-flex items-center gap-1 text-xs font-normal ${className}`}
         style={{ color: "var(--brand-accent)" }}
       >
-        ✨ Brief de flyer
+        <Sparkles size={12} /> Brief de flyer
       </button>
 
       {abierto && (

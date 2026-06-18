@@ -150,7 +150,7 @@ export default async function TarifarioPublicoPage() {
   const videoFondo = cfgSitio?.video_fondo_url ?? null;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="app-bg min-h-screen bg-gray-50">
       <header className={`relative overflow-hidden bg-brand-gradient px-6 py-8 text-white ${videoFondo ? "flex min-h-[60vh] flex-col justify-end" : ""}`}>
         <BackgroundVideo url={videoFondo} overlay={0.4} />
         <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-end justify-between gap-4">

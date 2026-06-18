@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { EstadoBadge } from "@/components/EstadoBadge";
 
 export const dynamic = "force-dynamic";
 
@@ -71,9 +72,7 @@ export default async function ContratosPage() {
                     {formatCOP(v.precio_venta)}
                   </td>
                   <td className="px-4 py-3">
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-                      {v.estado}
-                    </span>
+                    <EstadoBadge estado={v.estado} />
                   </td>
                   <td className="px-4 py-3 text-right">
                     <Link

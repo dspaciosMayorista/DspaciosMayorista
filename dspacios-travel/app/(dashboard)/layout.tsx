@@ -1,27 +1,30 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
-import { SidebarNav, type NavItem } from "./SidebarNav";
+import { type NavItem } from "./SidebarNav";
+import { DesktopSidebar } from "./DesktopSidebar";
 import { Logo } from "@/components/Logo";
 import { modulosConsultables, permisosDelUsuario } from "@/lib/permisos";
 
 const NAV: NavItem[] = [
   // Comercial / venta
-  { href: "/tarifario", label: "Tarifario ↗", modulo: "tarifario" },
-  { href: "/dashboard/reservar", label: "Reservar", modulo: "reservar" },
-  { href: "/dashboard/cotizaciones", label: "Cotizaciones", modulo: "cotizaciones" },
+  { href: "/tarifario", label: "Tarifario ↗", grupo: "Comercial", iconKey: "tarifario", modulo: "tarifario" },
+  { href: "/dashboard/reservar", label: "Reservar", iconKey: "reservar", modulo: "reservar" },
+  { href: "/dashboard/cotizaciones", label: "Cotizaciones", iconKey: "cotizaciones", modulo: "cotizaciones" },
 
   // Operación
-  { href: "/dashboard/ventas", label: "Ventas", separadorAntes: true, modulo: "ventas" },
+  { href: "/dashboard/ventas", label: "Ventas", separadorAntes: true, grupo: "Operación", iconKey: "ventas", modulo: "ventas" },
   {
     href: "/dashboard/contratos",
     label: "Contratos",
+    iconKey: "contratos",
     modulo: "contratos",
     children: [{ href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" }],
   },
   {
     href: "/dashboard/vuelos",
     label: "Vuelos",
+    iconKey: "vuelos",
     modulo: "vuelos",
     children: [
       { href: "/dashboard/vuelos/pasajeros", label: "Pasajeros" },
@@ -34,12 +37,15 @@ const NAV: NavItem[] = [
     href: "/dashboard/paquetes",
     label: "Montaje de producto",
     separadorAntes: true,
+    grupo: "Producto",
+    iconKey: "paquetes",
     modulo: "paquetes",
     children: [{ href: "/dashboard/paquetes/nuevo", label: "Nuevo paquete" }],
   },
   {
     href: "/dashboard/producto",
     label: "Netas",
+    iconKey: "producto",
     modulo: "producto",
     children: [
       { href: "/dashboard/producto/destinos", label: "Destinos" },
@@ -56,6 +62,8 @@ const NAV: NavItem[] = [
     href: "/dashboard/rentabilidad",
     label: "Finanzas",
     separadorAntes: true,
+    grupo: "Administración",
+    iconKey: "finanzas",
     modulo: "finanzas",
     children: [
       { href: "/dashboard/rentabilidad", label: "Rentabilidad" },
@@ -71,17 +79,18 @@ const NAV: NavItem[] = [
   {
     href: "/dashboard/usuarios",
     label: "Usuarios",
+    iconKey: "usuarios",
     modulo: "usuarios",
     children: [{ href: "/dashboard/usuarios/permisos", label: "Permisos" }],
   },
-  { href: "/dashboard/usuarios/b2b", label: "Aprobaciones B2B", modulo: "b2b" },
-  { href: "/dashboard/configuracion", label: "Configuración", modulo: "configuracion" },
+  { href: "/dashboard/usuarios/b2b", label: "Aprobaciones B2B", iconKey: "b2b", modulo: "b2b" },
+  { href: "/dashboard/configuracion", label: "Configuración", iconKey: "configuracion", modulo: "configuracion" },
 
   // Sitio web público (CMS) — solo superadmin
-  { href: "/cms", label: "Sitio web", modulo: "configuracion", soloSuperadmin: true },
+  { href: "/cms", label: "Sitio web", iconKey: "cms", modulo: "configuracion", soloSuperadmin: true },
 
   // CRM
-  { href: "/crm", label: "CRM ↗", separadorAntes: true, modulo: "crm" },
+  { href: "/crm", label: "CRM ↗", separadorAntes: true, grupo: "Externo", iconKey: "crm", modulo: "crm" },
 ];
 
 export default async function DashboardLayout({
@@ -108,7 +117,7 @@ export default async function DashboardLayout({
   });
 
   return (
-    <div className="flex min-h-screen flex-col bg-gray-50 md:flex-row">
+    <div className="font-sitio flex min-h-screen flex-col bg-gray-50 md:flex-row">
       {/* Barra superior (solo celular) */}
       <header
         className="flex flex-col gap-2 border-b border-gray-200 bg-white px-4 py-3 md:hidden"
@@ -133,24 +142,12 @@ export default async function DashboardLayout({
         </nav>
       </header>
 
-      {/* Sidebar (escritorio) */}
-      <aside
-        className="hidden w-56 shrink-0 flex-col border-r border-gray-200 bg-white md:flex"
-        style={{ borderTop: `4px solid var(--brand-primary)` }}
-      >
-        <div className="border-b border-gray-100 px-5 py-4">
-          <a href="/dashboard" aria-label="D'spacios Travel — inicio">
-            <Logo variant="full" height={36} className="h-9 w-auto" priority />
-          </a>
-        </div>
-        <SidebarNav items={nav} />
-        <div className="border-t border-gray-100 px-5 py-3">
-          <LogoutButton />
-        </div>
-      </aside>
+      {/* Sidebar (escritorio) — recogible */}
+      <DesktopSidebar nav={nav} />
 
-      {/* Contenido */}
-      <main className="min-w-0 flex-1 overflow-x-hidden md:h-screen md:overflow-y-auto">
+      {/* Contenido: la página entera hace scroll (un solo scrollbar); el menú
+          queda fijo (sticky). Sin scroll interno propio. */}
+      <main className="app-bg min-w-0 flex-1 overflow-x-hidden">
         {children}
       </main>
     </div>
