@@ -28,7 +28,7 @@ export function DesktopSidebar({ nav }: { nav: NavItem[] }) {
 
   return (
     <aside
-      className={`hidden shrink-0 flex-col border-r border-gray-200 bg-white transition-[width] duration-200 md:flex ${collapsed ? "w-16" : "w-64"}`}
+      className={`hidden shrink-0 flex-col border-r border-gray-200 bg-white transition-[width] duration-200 md:flex md:sticky md:top-0 md:h-screen ${collapsed ? "w-16" : "w-64"}`}
       style={{ borderTop: "4px solid var(--brand-primary)" }}
     >
       <div className={`flex items-center border-b border-gray-100 py-4 ${collapsed ? "justify-center px-2" : "justify-between px-4"}`}>

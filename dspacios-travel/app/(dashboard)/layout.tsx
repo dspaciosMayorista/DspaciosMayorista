@@ -145,8 +145,9 @@ export default async function DashboardLayout({
       {/* Sidebar (escritorio) — recogible */}
       <DesktopSidebar nav={nav} />
 
-      {/* Contenido (fondo de playa tipo wallpaper) */}
-      <main className="app-bg min-w-0 flex-1 overflow-x-hidden md:h-screen md:overflow-y-auto">
+      {/* Contenido: la página entera hace scroll (un solo scrollbar); el menú
+          queda fijo (sticky). Sin scroll interno propio. */}
+      <main className="app-bg min-w-0 flex-1 overflow-x-hidden">
         {children}
       </main>
     </div>
