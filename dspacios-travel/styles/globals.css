@@ -248,75 +248,83 @@ html[data-theme="verde"] nav a[aria-current="page"] {
    del hotel en el carrito), que se verían en blanco. */
 html[data-theme="verde"] .brand-logo { filter: brightness(0) invert(1); }
 
-/* ── Tema WEB (estilo del sitio público: índigo profundo + lima, Inter) ──────
-   Se activa con <html data-theme="web">. Lleva el look del sitio de marketing a
-   TODO el portal: sidebar con degradado índigo (como el header/hero del sitio),
-   lienzo claro tintado, realces lima, botones/links índigo y tipografía Inter.
-   Se quita poniendo data-theme="marca". */
+/* ── Tema WEB · "Travel Ops" ─────────────────────────────────────────────────
+   data-theme="web". Identidad del sitio (índigo/turquesa/lima) aplicada a TODO
+   el portal con criterio operativo B2B: sidebar índigo, lienzo #F5F7FB, texto
+   sobrio, bordes finos, sombras mínimas, tipografía Inter. */
 html[data-theme="web"] {
-  --brand-primary:   #120573;   /* índigo profundo del sitio */
-  --brand-accent:    #2a1f9e;   /* índigo más claro (links/hover) */
-  --brand-success:   #66B596;
-  --brand-highlight: #d8f511;   /* lima del sitio */
-  --brand-gradient:  linear-gradient(135deg, #0c0350 0%, #120573 45%, #2a1f9e 100%);
+  --brand-primary:   #16006E;   /* índigo profundo */
+  --brand-accent:    #14B8C4;   /* turquesa (links/acento) */
+  --brand-success:   #25D366;   /* verde acción */
+  --brand-highlight: #D7FF00;   /* lima CTA */
+  --brand-gradient:  linear-gradient(125deg, #16006E 0%, #3425A7 52%, #14B8C4 122%);
 
-  --primary: #120573;
-  --accent:  #2a1f9e;
-  --ring:    #120573;
-  --chart-1: #120573; --chart-2: #2a1f9e; --chart-3: #66B596; --chart-4: #d8f511;
-  --sidebar-primary: #120573; --sidebar-ring: #120573;
+  --primary: #16006E;
+  --accent:  #14B8C4;
+  --ring:    #3425A7;
+  --chart-1: #16006E; --chart-2: #3425A7; --chart-3: #14B8C4; --chart-4: #D7FF00;
+  --sidebar-primary: #16006E; --sidebar-ring: #3425A7;
 
   /* Texto del nav sobre el sidebar índigo */
-  --nav-fg:    #c9cbf0;
-  --nav-subfg: #a3a6da;
+  --nav-fg:    #c7caee;
+  --nav-subfg: #9296cf;
 
-  --background: #f4f5fb;
-  --secondary:  #eceefb;
-  --muted:      #eceefb;
+  --background: #F5F7FB;
+  --secondary:  #eef1f8;
+  --muted:      #eef1f8;
 }
 
-/* Tipografía del sitio (Inter) en todo el portal */
+/* Tipografía Inter del sitio */
 html[data-theme="web"] body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
-html[data-theme="web"] h1, html[data-theme="web"] h2, html[data-theme="web"] h3 { letter-spacing: -0.01em; }
+html[data-theme="web"] h1, html[data-theme="web"] h2, html[data-theme="web"] h3 { letter-spacing: -0.015em; }
 
-/* Lienzo CENTRAL con índigo claro de verdad (no gris): el fondo de la pantalla
-   toma el look del sitio, no solo el menú. */
+/* Lienzo operativo #F5F7FB */
 html[data-theme="web"] body,
-html[data-theme="web"] .bg-gray-50  { background-color: #e7e9f9 !important; }
-html[data-theme="web"] .bg-gray-100 { background-color: #dadef3 !important; }
-html[data-theme="web"] main {
-  background: linear-gradient(180deg, #eef0fd 0%, #e3e6f7 55%, #e7eef0 100%) !important;
-}
+html[data-theme="web"] main,
+html[data-theme="web"] .bg-gray-50  { background-color: #F5F7FB !important; }
+html[data-theme="web"] .bg-gray-100 { background-color: #eceef4 !important; }
 
-/* SIDEBAR con degradado índigo (como el header del sitio) + contenido claro */
+/* Texto del sistema sobrio (#172033 / #667085) */
+html[data-theme="web"] .text-gray-900, html[data-theme="web"] .text-gray-800 { color: #172033 !important; }
+html[data-theme="web"] .text-gray-700 { color: #344054 !important; }
+html[data-theme="web"] .text-gray-600 { color: #475467 !important; }
+html[data-theme="web"] .text-gray-500 { color: #667085 !important; }
+html[data-theme="web"] .text-gray-400 { color: #98A2B3 !important; }
+
+/* Bordes finos y nítidos */
+html[data-theme="web"] .border-gray-200 { border-color: #E4E7EF !important; }
+html[data-theme="web"] .border-gray-300 { border-color: #D0D5DD !important; }
+
+/* SIDEBAR índigo (premium, ordenado) + contenido claro */
 html[data-theme="web"] aside.bg-white {
-  background: linear-gradient(180deg, #14078a 0%, #0c0350 100%) !important;
-  border-right-color: rgba(255, 255, 255, 0.10) !important;
+  background: linear-gradient(190deg, #1B1178 0%, #16006E 60%, #12005a 100%) !important;
+  border-right-color: rgba(255, 255, 255, 0.08) !important;
 }
-html[data-theme="web"] aside .border-gray-100 { border-color: rgba(255, 255, 255, 0.12) !important; }
-html[data-theme="web"] aside .border-l        { border-color: rgba(255, 255, 255, 0.16) !important; }
-html[data-theme="web"] aside .brand-logo      { filter: brightness(0) invert(1); }   /* logo en blanco */
+html[data-theme="web"] aside .border-gray-100 { border-color: rgba(255, 255, 255, 0.10) !important; }
+html[data-theme="web"] aside .border-l        { border-color: rgba(255, 255, 255, 0.14) !important; }
+html[data-theme="web"] aside .brand-logo      { filter: brightness(0) invert(1); }
 html[data-theme="web"] aside nav a:hover {
-  background-color: rgba(255, 255, 255, 0.08) !important;
+  background-color: rgba(255, 255, 255, 0.07) !important;
   color: #ffffff !important;
 }
 html[data-theme="web"] aside .text-gray-400,
 html[data-theme="web"] aside .text-gray-500,
-html[data-theme="web"] aside .text-gray-600   { color: #c9cbf0 !important; }
+html[data-theme="web"] aside .text-gray-600 { color: #c7caee !important; }
 html[data-theme="web"] aside .hover\:text-gray-700:hover,
 html[data-theme="web"] aside .hover\:text-gray-800:hover { color: #ffffff !important; }
-/* Item activo: píldora LIMA (el !important gana sobre el estilo inline) */
+/* Activo: barra lima + tinte (evidente, sin pastilla enorme; gana al inline) */
 html[data-theme="web"] aside nav a[aria-current="page"] {
-  background-color: #d8f511 !important;
-  color: #120573 !important;
-  font-weight: 700 !important;
-  border-radius: 9999px;
+  background-color: rgba(215, 255, 0, 0.13) !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  box-shadow: inset 3px 0 0 #D7FF00;
+  font-weight: 600 !important;
 }
 
-/* Tarjetas: blancas con sombra índigo suave (look web, más “elevado”) */
+/* Tarjetas: sin “sombra IA”; borde fino + sombra mínima */
 html[data-theme="web"] .bg-white.border.rounded-xl,
 html[data-theme="web"] .bg-white.border.rounded-2xl {
-  box-shadow: 0 10px 30px -18px rgba(18, 5, 115, 0.35);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.05);
 }
 
 .dark {

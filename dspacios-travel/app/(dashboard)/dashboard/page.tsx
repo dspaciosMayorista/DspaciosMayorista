@@ -1,11 +1,16 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
+import {
+  Compass, FileText, Package, Armchair, Wallet, ChevronRight,
+  Tags, Ticket, Boxes, FileSignature, Plane, HandCoins, Receipt, LineChart, Settings,
+  type LucideIcon,
+} from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 // Tinte claro del color de marca para los chips de íconos (se adapta al tema).
-const tint = (v: string) => `color-mix(in srgb, ${v} 14%, white)`;
+const tint = (v: string) => `color-mix(in srgb, ${v} 12%, white)`;
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -29,109 +34,104 @@ export default async function DashboardPage() {
     .reduce((s, v) => s + (v.precio_venta ?? 0), 0);
 
   const hoy = new Date().toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" });
+  const nombre = (perfil?.nombre ?? user?.email ?? "").split("@")[0];
 
   return (
-    <div className="p-4 md:p-8">
-      {/* Banner de bienvenida con degradado de marca */}
-      <div className="bg-brand-gradient relative overflow-hidden rounded-2xl px-6 py-7 text-white shadow-sm">
+    <div className="p-4 md:p-7">
+      {/* ── Encabezado editorial (bloque índigo) ───────────────────────── */}
+      <header className="bg-brand-gradient relative overflow-hidden rounded-xl px-6 py-7 text-white">
+        {/* Textura discreta de “rutas” (puntos), sin avión decorativo */}
+        <div
+          className="pointer-events-none absolute inset-0 opacity-70"
+          style={{ backgroundImage: "radial-gradient(rgba(255,255,255,0.09) 1px, transparent 1.4px)", backgroundSize: "22px 22px" }}
+        />
+        <Compass className="pointer-events-none absolute -right-5 -top-5 h-28 w-28 text-white/10" strokeWidth={1.25} />
         <div className="relative z-10">
-          <p className="text-xs uppercase tracking-wider opacity-80">{hoy}</p>
-          <h1 className="mt-1 text-2xl font-semibold md:text-3xl">
-            Hola, {perfil?.nombre ?? user?.email} 👋
-          </h1>
-          <span className="mt-2 inline-block rounded-full bg-white/20 px-3 py-1 text-xs font-medium backdrop-blur">
+          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/70">{hoy}</p>
+          <h1 className="mt-1.5 text-2xl font-bold capitalize md:text-[28px]">Hola, {nombre}</h1>
+          <span
+            className="mt-3 inline-block rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide"
+            style={{ backgroundColor: "var(--brand-highlight)", color: "var(--brand-primary)" }}
+          >
             {perfil?.rol ?? "—"}
           </span>
         </div>
-        {/* Adorno */}
-        <div className="pointer-events-none absolute -right-6 -top-8 select-none text-[9rem] leading-none opacity-15">✈️</div>
-      </div>
+      </header>
 
-      {/* Métricas */}
-      <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
-        <Stat icon="📋" label="Contratos" value={String(nContratos ?? 0)} color="var(--brand-primary)" />
-        <Stat icon="📦" label="Paquetes" value={String(nPaquetes ?? 0)} color="var(--brand-accent)" />
-        <Stat icon="🪑" label="Cupos disponibles" value={String(cuposDisponibles)} color="var(--brand-success)" />
-        {interno && <Stat icon="💰" label="Ventas del mes" value={formatCOP(ventaMesTotal)} color="var(--brand-primary)" highlight />}
-      </div>
+      {/* ── Métricas (paneles de control compactos) ────────────────────── */}
+      <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Metric icon={FileText} label="Contratos" value={String(nContratos ?? 0)} color="var(--brand-primary)" />
+        <Metric icon={Package} label="Paquetes activos" value={String(nPaquetes ?? 0)} color="var(--brand-accent)" />
+        <Metric icon={Armchair} label="Cupos disponibles" value={String(cuposDisponibles)} color="var(--brand-success)" />
+        {interno && <Metric icon={Wallet} label="Ventas del mes" value={formatCOP(ventaMesTotal)} color="var(--brand-primary)" sub={hoy.split(",")[0]} highlight />}
+      </section>
 
-      {/* Accesos rápidos */}
-      <h2 className="mb-3 mt-9 text-sm font-semibold uppercase tracking-wide text-gray-400">Accesos rápidos</h2>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {/* ── Módulos de operación ───────────────────────────────────────── */}
+      <h2 className="mb-3 mt-8 text-xs font-semibold uppercase tracking-wider text-gray-400">Módulos</h2>
+      <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {MODULOS.filter((m) => !m.interno || interno).map((m) => (
           <Link
             key={m.href}
             href={m.href}
-            className="group flex items-start gap-3 rounded-2xl border border-gray-200 bg-white p-4 transition-all hover:-translate-y-0.5 hover:shadow-md"
+            className="group flex items-center gap-3 rounded-[10px] border border-gray-200 bg-white p-3.5 transition-colors hover:border-[color:var(--brand-accent)] hover:bg-gray-50/70"
           >
-            <span
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-xl transition-transform group-hover:scale-110"
-              style={{ backgroundColor: tint(m.color) }}
-            >
-              {m.icon}
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg" style={{ backgroundColor: tint(m.color), color: m.color }}>
+              <m.icon size={18} strokeWidth={2} />
             </span>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1 text-sm font-semibold text-gray-800">
-                {m.label}
-                <span className="opacity-0 transition-opacity group-hover:opacity-100" style={{ color: m.color }}>→</span>
-              </div>
-              <div className="text-xs text-gray-400">{m.desc}</div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-gray-800">{m.label}</div>
+              <div className="truncate text-xs text-gray-400">{m.desc}</div>
             </div>
+            <ChevronRight size={16} className="shrink-0 text-gray-300 transition-colors group-hover:text-[color:var(--brand-accent)]" />
           </Link>
         ))}
-      </div>
+      </section>
     </div>
   );
 }
 
-function Stat({
-  icon,
-  label,
-  value,
-  color,
-  highlight,
+function Metric({
+  icon: Icon, label, value, color, sub, highlight,
 }: {
-  icon: string;
-  label: string;
-  value: string;
-  color: string;
-  highlight?: boolean;
+  icon: LucideIcon; label: string; value: string; color: string; sub?: string; highlight?: boolean;
 }) {
   if (highlight) {
     return (
-      <div className="bg-brand-gradient rounded-2xl p-4 text-white shadow-sm">
-        <div className="flex items-center justify-between">
-          <span className="text-xs opacity-80">{label}</span>
-          <span className="text-lg">{icon}</span>
+      <div className="bg-brand-gradient rounded-[10px] p-4 text-white">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/15">
+            <Icon size={18} strokeWidth={2} />
+          </span>
+          <span className="text-xs font-medium text-white/80">{label}</span>
         </div>
-        <div className="mt-2 text-xl font-bold tabular-nums">{value}</div>
+        <div className="mt-3 text-xl font-bold tabular-nums">{value}</div>
+        {sub && <div className="mt-0.5 text-[11px] capitalize text-white/60">{sub}</div>}
       </div>
     );
   }
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-4 transition-shadow hover:shadow-sm">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-gray-400">{label}</span>
-        <span className="grid h-8 w-8 place-items-center rounded-lg text-base" style={{ backgroundColor: tint(color) }}>
-          {icon}
+    <div className="rounded-[10px] border border-gray-200 bg-white p-4">
+      <div className="flex items-center gap-2.5">
+        <span className="grid h-9 w-9 place-items-center rounded-lg" style={{ backgroundColor: tint(color), color }}>
+          <Icon size={18} strokeWidth={2} />
         </span>
+        <span className="text-xs font-medium text-gray-500">{label}</span>
       </div>
-      <div className="mt-2 text-2xl font-bold tabular-nums" style={{ color }}>
-        {value}
-      </div>
+      <div className="mt-3 text-2xl font-semibold tabular-nums text-gray-900">{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] capitalize text-gray-400">{sub}</div>}
     </div>
   );
 }
 
-const MODULOS = [
-  { href: "/dashboard/tarifario", icon: "🏨", label: "Tarifario", desc: "Hoteles y precios", color: "var(--brand-accent)", interno: false },
-  { href: "/dashboard/reservar", icon: "🧳", label: "Reservar", desc: "Generar contrato", color: "var(--brand-primary)", interno: false },
-  { href: "/dashboard/producto", icon: "🧱", label: "Producto", desc: "Hoteles, vuelos, programas", color: "var(--brand-success)", interno: true },
-  { href: "/dashboard/paquetes", icon: "📦", label: "Paquetes", desc: "Armado y margen", color: "var(--brand-accent)", interno: true },
-  { href: "/dashboard/contratos", icon: "📋", label: "Contratos", desc: "Ventas y estados", color: "var(--brand-primary)", interno: false },
-  { href: "/dashboard/vuelos", icon: "✈️", label: "Vuelos", desc: "Bloqueos y sillas", color: "var(--brand-accent)", interno: true },
-  { href: "/dashboard/cartera", icon: "💵", label: "Cartera", desc: "Por cobrar / abonos", color: "var(--brand-success)", interno: true },
-  { href: "/dashboard/pagos", icon: "🧾", label: "Pagos", desc: "Por pagar a proveedores", color: "var(--brand-primary)", interno: true },
-  { href: "/dashboard/finanzas", icon: "📊", label: "Finanzas", desc: "Relación de utilidades", color: "var(--brand-accent)", interno: true },
-  { href: "/dashboard/configuracion", icon: "⚙️", label: "Configuración", desc: "Asesores y parámetros", color: "var(--brand-success)", interno: true },
+const MODULOS: { href: string; icon: LucideIcon; label: string; desc: string; color: string; interno: boolean }[] = [
+  { href: "/dashboard/tarifario", icon: Tags, label: "Tarifario", desc: "Hoteles y precios", color: "var(--brand-accent)", interno: false },
+  { href: "/dashboard/reservar", icon: Ticket, label: "Reservar", desc: "Generar contrato", color: "var(--brand-primary)", interno: false },
+  { href: "/dashboard/producto", icon: Boxes, label: "Producto", desc: "Hoteles, vuelos, programas", color: "var(--brand-success)", interno: true },
+  { href: "/dashboard/paquetes", icon: Package, label: "Paquetes", desc: "Armado y margen", color: "var(--brand-accent)", interno: true },
+  { href: "/dashboard/contratos", icon: FileSignature, label: "Contratos", desc: "Ventas y estados", color: "var(--brand-primary)", interno: false },
+  { href: "/dashboard/vuelos", icon: Plane, label: "Vuelos", desc: "Bloqueos y sillas", color: "var(--brand-accent)", interno: true },
+  { href: "/dashboard/cartera", icon: HandCoins, label: "Cartera", desc: "Por cobrar / abonos", color: "var(--brand-success)", interno: true },
+  { href: "/dashboard/pagos", icon: Receipt, label: "Pagos", desc: "Por pagar a proveedores", color: "var(--brand-primary)", interno: true },
+  { href: "/dashboard/finanzas", icon: LineChart, label: "Finanzas", desc: "Relación de utilidades", color: "var(--brand-accent)", interno: true },
+  { href: "/dashboard/configuracion", icon: Settings, label: "Configuración", desc: "Asesores y parámetros", color: "var(--brand-success)", interno: true },
 ];

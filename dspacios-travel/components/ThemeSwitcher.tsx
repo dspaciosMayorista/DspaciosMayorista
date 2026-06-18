@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Palette } from "lucide-react";
 
 type Tema = "marca" | "indigo" | "verde" | "web";
 const KEY = "dsp-theme";
@@ -80,11 +81,11 @@ export function ThemeSwitcher() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        className="flex h-9 w-9 cursor-grab items-center justify-center rounded-full border border-gray-200 bg-white/95 text-base shadow-lg backdrop-blur select-none active:cursor-grabbing"
+        className="flex h-9 w-9 cursor-grab items-center justify-center rounded-lg border border-gray-200 bg-white/95 text-gray-600 shadow-md backdrop-blur select-none active:cursor-grabbing"
         title="Estilo · clic para mostrar/ocultar · arrastra para mover"
         aria-label="Barra de estilo"
       >
-        🎨
+        <Palette size={17} />
       </button>
       {mostrar && (
         <div className="flex items-center gap-1 rounded-full border border-gray-200 bg-white/95 p-1 shadow-lg backdrop-blur">

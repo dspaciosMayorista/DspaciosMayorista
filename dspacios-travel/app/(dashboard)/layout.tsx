@@ -7,21 +7,23 @@ import { modulosConsultables, permisosDelUsuario } from "@/lib/permisos";
 
 const NAV: NavItem[] = [
   // Comercial / venta
-  { href: "/tarifario", label: "Tarifario ↗", modulo: "tarifario" },
-  { href: "/dashboard/reservar", label: "Reservar", modulo: "reservar" },
-  { href: "/dashboard/cotizaciones", label: "Cotizaciones", modulo: "cotizaciones" },
+  { href: "/tarifario", label: "Tarifario ↗", grupo: "Comercial", iconKey: "tarifario", modulo: "tarifario" },
+  { href: "/dashboard/reservar", label: "Reservar", iconKey: "reservar", modulo: "reservar" },
+  { href: "/dashboard/cotizaciones", label: "Cotizaciones", iconKey: "cotizaciones", modulo: "cotizaciones" },
 
   // Operación
-  { href: "/dashboard/ventas", label: "Ventas", separadorAntes: true, modulo: "ventas" },
+  { href: "/dashboard/ventas", label: "Ventas", separadorAntes: true, grupo: "Operación", iconKey: "ventas", modulo: "ventas" },
   {
     href: "/dashboard/contratos",
     label: "Contratos",
+    iconKey: "contratos",
     modulo: "contratos",
     children: [{ href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" }],
   },
   {
     href: "/dashboard/vuelos",
     label: "Vuelos",
+    iconKey: "vuelos",
     modulo: "vuelos",
     children: [
       { href: "/dashboard/vuelos/pasajeros", label: "Pasajeros" },
@@ -34,12 +36,15 @@ const NAV: NavItem[] = [
     href: "/dashboard/paquetes",
     label: "Montaje de producto",
     separadorAntes: true,
+    grupo: "Producto",
+    iconKey: "paquetes",
     modulo: "paquetes",
     children: [{ href: "/dashboard/paquetes/nuevo", label: "Nuevo paquete" }],
   },
   {
     href: "/dashboard/producto",
     label: "Netas",
+    iconKey: "producto",
     modulo: "producto",
     children: [
       { href: "/dashboard/producto/destinos", label: "Destinos" },
@@ -56,6 +61,8 @@ const NAV: NavItem[] = [
     href: "/dashboard/rentabilidad",
     label: "Finanzas",
     separadorAntes: true,
+    grupo: "Administración",
+    iconKey: "finanzas",
     modulo: "finanzas",
     children: [
       { href: "/dashboard/rentabilidad", label: "Rentabilidad" },
@@ -71,17 +78,18 @@ const NAV: NavItem[] = [
   {
     href: "/dashboard/usuarios",
     label: "Usuarios",
+    iconKey: "usuarios",
     modulo: "usuarios",
     children: [{ href: "/dashboard/usuarios/permisos", label: "Permisos" }],
   },
-  { href: "/dashboard/usuarios/b2b", label: "Aprobaciones B2B", modulo: "b2b" },
-  { href: "/dashboard/configuracion", label: "Configuración", modulo: "configuracion" },
+  { href: "/dashboard/usuarios/b2b", label: "Aprobaciones B2B", iconKey: "b2b", modulo: "b2b" },
+  { href: "/dashboard/configuracion", label: "Configuración", iconKey: "configuracion", modulo: "configuracion" },
 
   // Sitio web público (CMS) — solo superadmin
-  { href: "/cms", label: "Sitio web", modulo: "configuracion", soloSuperadmin: true },
+  { href: "/cms", label: "Sitio web", iconKey: "cms", modulo: "configuracion", soloSuperadmin: true },
 
   // CRM
-  { href: "/crm", label: "CRM ↗", separadorAntes: true, modulo: "crm" },
+  { href: "/crm", label: "CRM ↗", separadorAntes: true, grupo: "Externo", iconKey: "crm", modulo: "crm" },
 ];
 
 export default async function DashboardLayout({
