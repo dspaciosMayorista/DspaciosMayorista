@@ -255,6 +255,22 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 
 ---
 
+## 12.bis Convenciones técnicas críticas (NO romper el build)
+
+- **⚠️ Middleware = `proxy.ts` (Next.js 16).** Este proyecto corre **Next 16**, que
+  renombró el middleware a **`proxy.ts`** (raíz de `dspacios-travel/`, exporta
+  `proxy` + `config`). **NO crear `middleware.ts`**: tener AMBOS rompe el build con
+  *"Both middleware file and proxy file are detected. Please use ./proxy.ts only"*.
+  Toda lógica de middleware (auth por sesión, redirecciones por rol) va DENTRO de
+  `proxy.ts`. Ahí vive: protección de rutas no públicas (→ `/login`) y el **bloqueo
+  de roles externos (B2B) al dashboard interno** (agencia/freelance/cliente_final →
+  `/portal/b2b`, salvo `/dashboard/reservar` donde sí generan contrato).
+- **Verificar siempre con `npm run build`** (no solo `tsc --noEmit`) antes de subir:
+  errores de Next/Turbopack (archivos de convención duplicados, rutas, etc.) NO los
+  detecta el typecheck y SÍ tumban el deploy en Vercel.
+
+---
+
 ## 13. Estado del proyecto (handoff) — actualizado en desarrollo
 
 > Rama de trabajo actual: **`claude/modest-clarke-Ehftt`** (última; ramas previas:

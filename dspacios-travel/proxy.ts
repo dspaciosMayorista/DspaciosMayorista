@@ -8,6 +8,11 @@ import { NextResponse, type NextRequest } from "next/server";
 // `/sitio_web` es la web pública de marketing (route group app/sitio_web): toda pública.
 const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/auth", "/portal", "/pagar", "/sitio_web"];
 
+// Roles externos (aliados B2B / cliente final): su lugar es el Portal B2B,
+// NO el dashboard interno. Única excepción: /dashboard/reservar, desde donde
+// los aliados generan su contrato (el tarifario los enlaza ahí).
+const EXTERNOS = ["agencia", "freelance", "cliente_final"];
+
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -46,6 +51,24 @@ export async function proxy(request: NextRequest) {
 
   if (!user && !esRutaPublica) {
     return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // ── Bloqueo de roles externos en el dashboard interno ───────────────────
+  // Los aliados B2B no deben ver módulos internos (vuelos, finanzas, etc.).
+  // Solo /dashboard/reservar les sirve (generar contrato). El resto → portal.
+  if (
+    user &&
+    pathname.startsWith("/dashboard") &&
+    !pathname.startsWith("/dashboard/reservar")
+  ) {
+    const { data: perfil } = await supabase
+      .from("usuarios")
+      .select("rol")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (perfil && EXTERNOS.includes(perfil.rol ?? "")) {
+      return NextResponse.redirect(new URL("/portal/b2b", request.url));
+    }
   }
 
   return supabaseResponse;
