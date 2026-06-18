@@ -10,7 +10,9 @@ export type ServicioManual = {
   nombre: string;        // nombre del servicio
   proveedor: string;     // proveedor (texto libre)
   costoNeto: number;     // costo neto
+  modo: "mk" | "ta";     // mk = markup (margen) · ta = valor fijo (solo aéreo)
   pctMarkup: number;     // markup en % (25 = 25%); margen: costo/(1-mk)
+  ta: number;            // valor fijo a sumar (TA) cuando modo='ta'
 };
 
 export type CotizacionManualInput = {
@@ -34,12 +36,14 @@ const TIPO_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
 };
 
-// Valor de venta de un servicio = costo / (1 − markup). Redondeo a entero.
-function valorServicio(costo: number, pctMarkup: number): number {
+// Valor de venta de un servicio:
+//   modo 'mk' → costo / (1 − markup)   (margen)
+//   modo 'ta' → costo + TA             (valor fijo, p. ej. aéreo)
+function valorServicio(costo: number, modo: "mk" | "ta", pctMarkup: number, ta: number): number {
   const c = Number(costo) || 0;
+  if (modo === "ta") return Math.round(Math.max(0, c) + (Number(ta) || 0));
   const mk = (Number(pctMarkup) || 0) / 100;
-  if (c <= 0) return 0;
-  if (mk >= 1) return 0;
+  if (c <= 0 || mk >= 1) return 0;
   return Math.round(marcar(c, mk));
 }
 
@@ -65,7 +69,9 @@ export async function crearCotizacionManual(
 
   // Liquidación de cada servicio.
   const filas = servicios.map((s, i) => {
-    const valor = valorServicio(s.costoNeto, s.pctMarkup);
+    // Solo el aéreo permite TA; el resto siempre markup.
+    const modo: "mk" | "ta" = s.tipo === "aereo" && s.modo === "ta" ? "ta" : "mk";
+    const valor = valorServicio(s.costoNeto, modo, s.pctMarkup, s.ta);
     return {
       orden: i,
       tipo_servicio: s.tipo || "otro",
@@ -73,7 +79,9 @@ export async function crearCotizacionManual(
       nombre_servicio: (s.nombre || "").trim() || null,
       proveedor: (s.proveedor || "").trim() || null,
       costo_neto: Number(s.costoNeto) || 0,
-      pct_markup: (Number(s.pctMarkup) || 0) / 100,
+      modo,
+      pct_markup: modo === "mk" ? (Number(s.pctMarkup) || 0) / 100 : 0,
+      ta: modo === "ta" ? (Number(s.ta) || 0) : 0,
       valor,
     };
   });

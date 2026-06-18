@@ -25,8 +25,10 @@ create table if not exists public.cotizacion_servicios (
   nombre_servicio text,                -- nombre del servicio
   proveedor      text,                 -- proveedor del servicio (texto libre)
   costo_neto     numeric(15,2) not null default 0,
-  pct_markup     numeric(6,4) not null default 0,   -- margen en fracción (0.25 = 25%)
-  valor          numeric(15,2) not null default 0,  -- costo / (1 - markup)
+  modo           text not null default 'mk',        -- 'mk' (markup) | 'ta' (valor fijo)
+  pct_markup     numeric(6,4) not null default 0,   -- margen en fracción (0.25 = 25%) si modo='mk'
+  ta             numeric(15,2) not null default 0,  -- valor fijo a sumar (TA) si modo='ta'
+  valor          numeric(15,2) not null default 0,  -- mk: costo/(1-markup) · ta: costo + TA
   created_at     timestamptz not null default now()
 );
 

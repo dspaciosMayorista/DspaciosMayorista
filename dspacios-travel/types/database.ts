@@ -1799,7 +1799,9 @@ export type Database = {
           nombre_servicio: string | null;
           proveedor: string | null;
           costo_neto: number;
+          modo: string;
           pct_markup: number;
+          ta: number;
           valor: number;
           created_at: string;
         };
@@ -1812,7 +1814,9 @@ export type Database = {
           nombre_servicio?: string | null;
           proveedor?: string | null;
           costo_neto?: number;
+          modo?: string;
           pct_markup?: number;
+          ta?: number;
           valor?: number;
           created_at?: string;
         };

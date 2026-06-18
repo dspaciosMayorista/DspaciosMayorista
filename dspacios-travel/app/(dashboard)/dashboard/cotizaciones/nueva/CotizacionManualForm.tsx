@@ -26,9 +26,10 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const hoy = new Date().toISOString().slice(0, 10);
 const masDias = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
 
-function valor(costo: number, mk: number): number {
-  const c = Number(costo) || 0;
-  const m = (Number(mk) || 0) / 100;
+function valor(f: { costoNeto: number; modo: "mk" | "ta"; pctMarkup: number; ta: number }): number {
+  const c = Number(f.costoNeto) || 0;
+  if (f.modo === "ta") return Math.round(Math.max(0, c) + (Number(f.ta) || 0));
+  const m = (Number(f.pctMarkup) || 0) / 100;
   if (c <= 0 || m >= 1) return 0;
   return Math.round(c / (1 - m));
 }
@@ -60,11 +61,13 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
   const [markupGeneral, setMarkupGeneral] = useState("20");
   const [filas, setFilas] = useState<Fila[]>([]);
 
-  const total = useMemo(() => filas.reduce((s, f) => s + valor(f.costoNeto, f.pctMarkup), 0), [filas]);
+  // El modo TA solo aplica al aéreo (igual que en el servidor).
+  const efModo = (f: Fila): "mk" | "ta" => (f.tipo === "aereo" && f.modo === "ta" ? "ta" : "mk");
+  const total = useMemo(() => filas.reduce((s, f) => s + valor({ ...f, modo: efModo(f) }), 0), [filas]);
   const fmt = (n: number) => formatMoneda(n, moneda);
 
   function agregar(tipo: string) {
-    setFilas((f) => [...f, { _id: _seq++, tipo, plataforma: "", nombre: "", proveedor: "", costoNeto: 0, pctMarkup: Number(markupGeneral) || 0 }]);
+    setFilas((f) => [...f, { _id: _seq++, tipo, plataforma: "", nombre: "", proveedor: "", costoNeto: 0, modo: "mk", pctMarkup: Number(markupGeneral) || 0, ta: 0 }]);
   }
   function set(id: number, k: keyof ServicioManual, v: string | number) {
     setFilas((f) => f.map((x) => (x._id === id ? { ...x, [k]: v } : x)));
@@ -85,7 +88,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
         agenciaNombre: tipoAsesor === "agencia" ? aliadoNombre : "",
         freelanceNombre: tipoAsesor === "freelance" ? aliadoNombre : "",
         plazo, vigenciaHasta: vigencia, observaciones,
-        servicios: filas.map(({ tipo, plataforma, nombre, proveedor, costoNeto, pctMarkup }) => ({ tipo, plataforma, nombre, proveedor, costoNeto: Number(costoNeto) || 0, pctMarkup: Number(pctMarkup) || 0 })),
+        servicios: filas.map(({ tipo, plataforma, nombre, proveedor, costoNeto, modo, pctMarkup, ta }) => ({ tipo, plataforma, nombre, proveedor, costoNeto: Number(costoNeto) || 0, modo, pctMarkup: Number(pctMarkup) || 0, ta: Number(ta) || 0 })),
       });
       if (r.ok) router.push(`/dashboard/cotizaciones/${r.id}`);
       else setErr(r.error);
@@ -187,21 +190,38 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
         ) : (
           <div className="space-y-3">
             {filas.map((f) => {
-              const v = valor(f.costoNeto, f.pctMarkup);
+              const esAereo = f.tipo === "aereo";
+              const v = valor({ ...f, modo: efModo(f) });
+              const modoTa = esAereo && f.modo === "ta";
               return (
                 <div key={f._id} className="rounded-lg border border-gray-200 p-3">
-                  <div className="mb-2 flex items-center justify-between">
+                  <div className="mb-2 flex items-center justify-between gap-2">
                     <select value={f.tipo} onChange={(e) => set(f._id, "tipo", e.target.value)} className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs font-semibold">
                       {TIPOS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                     </select>
-                    <button type="button" onClick={() => quitar(f._id)} className="text-gray-400 hover:text-red-500"><Trash2 size={15} /></button>
+                    {esAereo && (
+                      <div className="flex overflow-hidden rounded-md border border-gray-300 text-[11px] font-medium">
+                        {(["mk", "ta"] as const).map((m) => (
+                          <button key={m} type="button" onClick={() => set(f._id, "modo", m)}
+                            className="px-2.5 py-1 transition-colors"
+                            style={f.modo === m ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#6b7280" }}>
+                            {m === "mk" ? "Markup" : "TA (fijo)"}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <button type="button" onClick={() => quitar(f._id)} className="ml-auto text-gray-400 hover:text-red-500"><Trash2 size={15} /></button>
                   </div>
                   <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
                     <div><label className={lbl}>Plataforma</label><Input value={f.plataforma} onChange={(e) => set(f._id, "plataforma", e.target.value)} placeholder="Despegar, JetSMART…" /></div>
                     <div><label className={lbl}>Nombre del servicio</label><Input value={f.nombre} onChange={(e) => set(f._id, "nombre", e.target.value)} /></div>
                     <div><label className={lbl}>Proveedor</label><Input value={f.proveedor} onChange={(e) => set(f._id, "proveedor", e.target.value)} /></div>
                     <div><label className={lbl}>Costo neto</label><Input type="number" min={0} value={f.costoNeto || ""} onChange={(e) => set(f._id, "costoNeto", Number(e.target.value))} /></div>
-                    <div><label className={lbl}>Markup %</label><Input type="number" min={0} value={f.pctMarkup} onChange={(e) => set(f._id, "pctMarkup", Number(e.target.value))} /></div>
+                    {modoTa ? (
+                      <div><label className={lbl}>TA (valor fijo)</label><Input type="number" min={0} value={f.ta || ""} onChange={(e) => set(f._id, "ta", Number(e.target.value))} /></div>
+                    ) : (
+                      <div><label className={lbl}>Markup %</label><Input type="number" min={0} value={f.pctMarkup} onChange={(e) => set(f._id, "pctMarkup", Number(e.target.value))} /></div>
+                    )}
                     <div>
                       <label className={lbl}>Valor</label>
                       <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(v)}</div>
