@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Palette } from "lucide-react";
 
-type Tema = "marca" | "indigo" | "verde" | "web";
+type Tema = "marca" | "indigo" | "verde" | "web" | "blueprint";
 const KEY = "dsp-theme";
 const POS_KEY = "dsp-theme-pos";
 
@@ -94,6 +94,7 @@ export function ThemeSwitcher() {
           {btn("indigo", "Índigo")}
           {btn("verde", "Verde")}
           {btn("web", "Web")}
+          {btn("blueprint", "Blueprint")}
         </div>
       )}
     </div>
