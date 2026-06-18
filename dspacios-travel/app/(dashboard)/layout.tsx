@@ -5,6 +5,7 @@ import { type NavItem } from "./SidebarNav";
 import { DesktopSidebar } from "./DesktopSidebar";
 import { Logo } from "@/components/Logo";
 import { modulosConsultables, permisosDelUsuario } from "@/lib/permisos";
+import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 
 const NAV: NavItem[] = [
   // Comercial / venta
@@ -150,6 +151,7 @@ export default async function DashboardLayout({
       <main className="app-bg min-w-0 flex-1 overflow-x-hidden">
         {children}
       </main>
+      <ThemeSwitcher />
     </div>
   );
 }

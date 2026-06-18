@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Palette } from "lucide-react";
 
-type Tema = "marca" | "indigo" | "verde" | "web" | "blueprint";
+type Tema = "marca" | "verde" | "blueprint";
 const KEY = "dsp-theme";
 const POS_KEY = "dsp-theme-pos";
 
@@ -100,9 +100,7 @@ export function ThemeSwitcher() {
         <div className="flex items-center gap-1 rounded-full border border-gray-200 bg-white/95 p-1 shadow-lg backdrop-blur">
           <span className="pl-2 pr-1 text-[10px] uppercase tracking-wide text-gray-400">Estilo</span>
           {btn("marca", "Turquesa")}
-          {btn("indigo", "Índigo")}
           {btn("verde", "Verde")}
-          {btn("web", "Web")}
           {btn("blueprint", "Blueprint")}
         </div>
       )}
