@@ -116,7 +116,7 @@ export default async function DashboardLayout({
   });
 
   return (
-    <div className="flex min-h-screen flex-col bg-gray-50 md:flex-row">
+    <div className="font-sitio flex min-h-screen flex-col bg-gray-50 md:flex-row">
       {/* Barra superior (solo celular) */}
       <header
         className="flex flex-col gap-2 border-b border-gray-200 bg-white px-4 py-3 md:hidden"

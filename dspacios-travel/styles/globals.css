@@ -248,82 +248,103 @@ html[data-theme="verde"] nav a[aria-current="page"] {
    del hotel en el carrito), que se verían en blanco. */
 html[data-theme="verde"] .brand-logo { filter: brightness(0) invert(1); }
 
-/* ── Tema WEB · "Travel Ops" ─────────────────────────────────────────────────
-   data-theme="web". Identidad del sitio (índigo/turquesa/lima) aplicada a TODO
-   el portal con criterio operativo B2B: sidebar índigo, lienzo #F5F7FB, texto
-   sobrio, bordes finos, sombras mínimas, tipografía Inter. */
+/* ── Tema WEB · "Travel Operations Blueprint" ───────────────────────────────
+   data-theme="web". No es un dashboard SaaS genérico: fondo papel técnico con
+   grilla sutil, azul marino como color principal, bordes navy finos, sombras
+   controladas y conectores terracota. Estética de centro de control / mapa
+   operativo de una mayorista. Tipografía Inter. */
 html[data-theme="web"] {
-  --brand-primary:   #16006E;   /* índigo profundo */
-  --brand-accent:    #14B8C4;   /* turquesa (links/acento) */
-  --brand-success:   #25D366;   /* verde acción */
+  --brand-primary:   #08233F;   /* navy principal */
+  --brand-accent:    #0B2545;   /* azul profundo (links) */
+  --brand-success:   #5E8C6A;   /* verde operativo (legible) */
   --brand-highlight: #D7FF00;   /* lima CTA */
-  --brand-gradient:  linear-gradient(125deg, #16006E 0%, #3425A7 52%, #14B8C4 122%);
+  --brand-connector: #B9785F;   /* terracota (conectores/flechas) */
+  --brand-gradient:  linear-gradient(135deg, #08233F 0%, #0B2545 100%);
 
-  --primary: #16006E;
-  --accent:  #14B8C4;
-  --ring:    #3425A7;
-  --chart-1: #16006E; --chart-2: #3425A7; --chart-3: #14B8C4; --chart-4: #D7FF00;
-  --sidebar-primary: #16006E; --sidebar-ring: #3425A7;
+  --primary: #08233F;
+  --accent:  #0B2545;
+  --ring:    #1E3448;
+  --chart-1: #08233F; --chart-2: #1E5A8A; --chart-3: #B9785F; --chart-4: #5E8C6A;
+  --sidebar-primary: #08233F; --sidebar-ring: #1E3448;
 
-  /* Texto del nav sobre el sidebar índigo */
-  --nav-fg:    #c7caee;
-  --nav-subfg: #9296cf;
+  /* Texto del nav sobre el sidebar navy */
+  --nav-fg:    #aebccb;
+  --nav-subfg: #7d8ea0;
 
-  --background: #F5F7FB;
-  --secondary:  #eef1f8;
-  --muted:      #eef1f8;
+  --background: #F6F1E8;
+  --secondary:  #efe8da;
+  --muted:      #efe8da;
 }
 
-/* Tipografía Inter del sitio */
+/* Tipografía Inter + jerarquía marcada */
 html[data-theme="web"] body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
-html[data-theme="web"] h1, html[data-theme="web"] h2, html[data-theme="web"] h3 { letter-spacing: -0.015em; }
+html[data-theme="web"] h1 { letter-spacing: -0.02em; }
+html[data-theme="web"] h2, html[data-theme="web"] h3 { letter-spacing: -0.01em; }
 
-/* Lienzo operativo #F5F7FB (main lo deja la imagen de playa .app-bg) */
+/* Lienzo PAPEL TÉCNICO #F6F1E8 (la grilla la pone .app-bg) */
 html[data-theme="web"] body,
-html[data-theme="web"] .bg-gray-50  { background-color: #F5F7FB !important; }
-html[data-theme="web"] .bg-gray-100 { background-color: #eceef4 !important; }
+html[data-theme="web"] .bg-gray-50  { background-color: #F6F1E8 !important; }
+html[data-theme="web"] .bg-gray-100 { background-color: #ece4d4 !important; }
 
-/* Texto del sistema sobrio (#172033 / #667085) */
-html[data-theme="web"] .text-gray-900, html[data-theme="web"] .text-gray-800 { color: #172033 !important; }
-html[data-theme="web"] .text-gray-700 { color: #344054 !important; }
-html[data-theme="web"] .text-gray-600 { color: #475467 !important; }
-html[data-theme="web"] .text-gray-500 { color: #667085 !important; }
-html[data-theme="web"] .text-gray-400 { color: #98A2B3 !important; }
+/* Texto del sistema sobrio (#1A2B3C / #64707D) */
+html[data-theme="web"] .text-gray-900, html[data-theme="web"] .text-gray-800 { color: #14283b !important; }
+html[data-theme="web"] .text-gray-700 { color: #33424f !important; }
+html[data-theme="web"] .text-gray-600 { color: #4b5762 !important; }
+html[data-theme="web"] .text-gray-500 { color: #64707D !important; }
+html[data-theme="web"] .text-gray-400 { color: #8d97a1 !important; }
 
-/* Bordes finos y nítidos */
-html[data-theme="web"] .border-gray-200 { border-color: #E4E7EF !important; }
-html[data-theme="web"] .border-gray-300 { border-color: #D0D5DD !important; }
+/* Bordes TÉCNICOS navy (más definidos que el gris de plantilla) */
+html[data-theme="web"] .border-gray-100 { border-color: #e4dccc !important; }
+html[data-theme="web"] .border-gray-200 { border-color: #d8cdb8 !important; }
+html[data-theme="web"] .border-gray-300 { border-color: #c7bca6 !important; }
 
-/* SIDEBAR índigo (premium, ordenado) + contenido claro */
-html[data-theme="web"] aside.bg-white {
-  background: linear-gradient(190deg, #1B1178 0%, #16006E 60%, #12005a 100%) !important;
-  border-right-color: rgba(255, 255, 255, 0.08) !important;
+/* Tarjetas/módulos: superficie papel claro con borde navy fino y sombra
+   controlada (no card blanca flotante genérica) */
+html[data-theme="web"] .bg-white { background-color: #FFFDF8 !important; }
+html[data-theme="web"] .bg-white.border,
+html[data-theme="web"] .bg-white.rounded-lg.border,
+html[data-theme="web"] .bg-white.border.rounded-xl,
+html[data-theme="web"] .bg-white.border.rounded-2xl {
+  border-color: rgba(30, 52, 72, 0.22) !important;
+  box-shadow: 0 1px 0 rgba(30, 52, 72, 0.05), 0 2px 4px rgba(30, 52, 72, 0.06) !important;
 }
-html[data-theme="web"] aside .border-gray-100 { border-color: rgba(255, 255, 255, 0.10) !important; }
-html[data-theme="web"] aside .border-l        { border-color: rgba(255, 255, 255, 0.14) !important; }
+
+/* SIDEBAR navy sobrio */
+html[data-theme="web"] aside.bg-white {
+  background: linear-gradient(190deg, #0B2545 0%, #08233F 60%, #061a30 100%) !important;
+  border-right-color: rgba(255, 255, 255, 0.06) !important;
+}
+html[data-theme="web"] aside .border-gray-100 { border-color: rgba(255, 255, 255, 0.08) !important; }
+html[data-theme="web"] aside .border-l        { border-color: rgba(255, 255, 255, 0.12) !important; }
 html[data-theme="web"] aside .brand-logo      { filter: brightness(0) invert(1); }
 html[data-theme="web"] aside nav a:hover {
-  background-color: rgba(255, 255, 255, 0.07) !important;
+  background-color: rgba(255, 255, 255, 0.06) !important;
   color: #ffffff !important;
 }
 html[data-theme="web"] aside .text-gray-400,
 html[data-theme="web"] aside .text-gray-500,
-html[data-theme="web"] aside .text-gray-600 { color: #c7caee !important; }
+html[data-theme="web"] aside .text-gray-600 { color: #aebccb !important; }
 html[data-theme="web"] aside .hover\:text-gray-700:hover,
 html[data-theme="web"] aside .hover\:text-gray-800:hover { color: #ffffff !important; }
-/* Activo: barra lima + tinte (evidente, sin pastilla enorme; gana al inline) */
+/* Activo: barra lima + tinte (evidente; gana al inline) */
 html[data-theme="web"] aside nav a[aria-current="page"] {
-  background-color: rgba(215, 255, 0, 0.13) !important;
+  background-color: rgba(215, 255, 0, 0.12) !important;
   color: #ffffff !important;
   border-radius: 8px !important;
   box-shadow: inset 3px 0 0 #D7FF00;
   font-weight: 600 !important;
 }
 
-/* Tarjetas: sin “sombra IA”; borde fino + sombra mínima */
-html[data-theme="web"] .bg-white.border.rounded-xl,
-html[data-theme="web"] .bg-white.border.rounded-2xl {
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.05);
+/* Fondo del portal y tarifario en tema WEB: PAPEL + GRILLA sutil (blueprint),
+   no la playa. Gana sobre .app-bg. */
+html[data-theme="web"] .app-bg {
+  background-color: #F6F1E8 !important;
+  background-image:
+    linear-gradient(rgba(30, 52, 72, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 52, 72, 0.055) 1px, transparent 1px) !important;
+  background-size: 26px 26px, 26px 26px !important;
+  background-position: center !important;
+  background-attachment: fixed !important;
 }
 
 /* ── Fondo de pantalla con imagen de PLAYA (portal + tarifario público) ──────
