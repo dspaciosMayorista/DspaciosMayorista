@@ -19,7 +19,7 @@ export function PasajeroAcciones({
   bloqueoId: number;
   inicial: Pasajero;
   otros: RecordOpt[];
-  bloqueada: boolean; // cambio / cambio_entrante: las gestiona el sistema
+  bloqueada: boolean; // solo 'cambio' (silla que salió a otro record): la gestiona el sistema
 }) {
   const [modo, setModo] = useState<null | "editar" | "mover">(null);
   const [form, setForm] = useState<Pasajero>(inicial);

@@ -166,13 +166,13 @@ export default async function BloqueoDetallePage({
                 <td className="px-3 py-2 text-xs text-gray-500">{s.plazo ? formatFechaLarga(s.plazo) : "—"}</td>
                 <td className="px-3 py-2">
                   <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId}
-                    bloqueada={s.estado === "cambio" || s.estado === "cambio_entrante"} />
+                    bloqueada={s.estado === "cambio"} />
                 </td>
                 <td className="px-3 py-2">
                   <PasajeroAcciones
                     sillaId={s.id}
                     bloqueoId={bloqueoId}
-                    bloqueada={s.estado === "cambio" || s.estado === "cambio_entrante"}
+                    bloqueada={s.estado === "cambio"}
                     otros={otros ?? []}
                     inicial={{
                       pasajero_nombres: s.pasajero_nombres ?? "", pasajero_apellidos: s.pasajero_apellidos ?? "",

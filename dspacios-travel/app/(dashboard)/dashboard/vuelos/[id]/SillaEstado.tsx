@@ -20,13 +20,18 @@ export function SillaEstado({
   sillaId: number;
   estado: string;
   bloqueoId: number;
-  bloqueada: boolean; // cambio / cambio_entrante: gestionadas por el sistema
+  bloqueada: boolean; // 'cambio' (silla que salió a otro record): la gestiona el sistema
 }) {
   const [pending, start] = useTransition();
 
   if (bloqueada) {
     return <span className="text-[10px] uppercase text-gray-500">{estado.replace("_", " ")}</span>;
   }
+
+  // Si el estado actual no es uno "manual" (p. ej. 'cambio_entrante': silla que
+  // llegó de otro record), se muestra como opción deshabilitada para no perder el
+  // valor, y se puede cambiar a un estado normal (en plazo, confirmada, etc.).
+  const esManual = OPCIONES.some((o) => o.value === estado);
 
   return (
     <select
@@ -37,6 +42,7 @@ export function SillaEstado({
       }
       className="rounded border border-gray-300 bg-white/70 px-1 py-0.5 text-[10px]"
     >
+      {!esManual && <option value={estado} disabled>{estado.replace("_", " ")}</option>}
       {OPCIONES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   );
