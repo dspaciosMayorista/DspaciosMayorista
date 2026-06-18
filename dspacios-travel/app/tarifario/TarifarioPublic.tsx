@@ -194,54 +194,61 @@ export function TarifarioPublic({
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700";
 
   return (
-    <div>
-      {/* Toggle de vista: tabla (estático) · Booking (dinámico) · Programas (circuitos) */}
-      <div className="mb-4 inline-flex rounded-full border border-gray-200 bg-white p-1">
-        {([["tabla", "Vista tabla"], ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
-          <button
-            key={v}
-            type="button"
-            onClick={() => setVista(v)}
-            className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
-            style={vista === v ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#4b5563" }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <div className="relative">
+      {/* Card flotante que solapa el borde inferior del header */}
+      <div className="-mt-10 mb-6 relative z-10 px-0">
+        <div className="rounded-2xl border border-gray-100 bg-white p-3 shadow-[0_6px_32px_rgba(0,0,0,0.12)]">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Toggle de vista: tabla (estático) · Booking (dinámico) · Programas (circuitos) */}
+            <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 p-1">
+              {([["tabla", "Vista tabla"], ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setVista(v)}
+                  className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
+                  style={vista === v ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#4b5563" }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
-      {/* Barra de filtros y buscador (solo para hoteles: tabla/booking) */}
-      {vista !== "programas" && (
-      <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white p-3">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Buscar hotel por nombre…"
-          className="min-w-[180px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-        />
-        <select value={fCat} onChange={(e) => setFCat(e.target.value)} className={selCls} aria-label="Categoría de habitación">
-          <option value="">Categoría: todas</option>
-          {cats.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={fReg} onChange={(e) => setFReg(e.target.value)} className={selCls} aria-label="Alimentación / régimen">
-          <option value="">Alimentación: todas</option>
-          {regs.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <select value={fAcom} onChange={(e) => setFAcom(e.target.value)} className={selCls} aria-label="Acomodación">
-          <option value="">Acomodación: todas</option>
-          {ACOM_OPCIONES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-        </select>
-        {hayFiltro && (
-          <button
-            type="button"
-            onClick={() => { setQ(""); setFCat(""); setFReg(""); setFAcom(""); }}
-            className="text-xs font-medium text-gray-500 hover:text-gray-800"
-          >
-            Limpiar
-          </button>
-        )}
+            {/* Filtros inline (solo para hoteles: tabla/booking) */}
+            {vista !== "programas" && (
+              <>
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Buscar hotel por nombre…"
+                  className="min-w-[160px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                <select value={fCat} onChange={(e) => setFCat(e.target.value)} className={selCls} aria-label="Categoría de habitación">
+                  <option value="">Categoría: todas</option>
+                  {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select value={fReg} onChange={(e) => setFReg(e.target.value)} className={selCls} aria-label="Alimentación / régimen">
+                  <option value="">Alimentación: todas</option>
+                  {regs.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <select value={fAcom} onChange={(e) => setFAcom(e.target.value)} className={selCls} aria-label="Acomodación">
+                  <option value="">Acomodación: todas</option>
+                  {ACOM_OPCIONES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </select>
+                {hayFiltro && (
+                  <button
+                    type="button"
+                    onClick={() => { setQ(""); setFCat(""); setFReg(""); setFAcom(""); }}
+                    className="text-xs font-medium text-gray-500 hover:text-gray-800"
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       </div>
-      )}
 
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />

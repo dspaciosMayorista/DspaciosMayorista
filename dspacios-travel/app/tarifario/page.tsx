@@ -151,8 +151,14 @@ export default async function TarifarioPublicoPage() {
 
   return (
     <div className="app-bg min-h-screen bg-gray-50">
-      <header className={`relative overflow-hidden bg-brand-gradient px-6 py-8 text-white ${videoFondo ? "flex min-h-[60vh] flex-col justify-end" : ""}`}>
+      <header className={`relative overflow-hidden bg-brand-gradient px-6 pt-8 pb-16 text-white ${videoFondo ? "flex min-h-[60vh] flex-col justify-end" : "min-h-[200px] flex flex-col justify-end"}`}>
         <BackgroundVideo url={videoFondo} overlay={0.4} />
+        {!videoFondo && (
+          <div
+            className="absolute inset-0 bg-cover bg-center opacity-15"
+            style={{ backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1920&fit=crop&auto=format')" }}
+          />
+        )}
         <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-end justify-between gap-4">
           <div>
             <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
@@ -183,7 +189,7 @@ export default async function TarifarioPublicoPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1700px] px-4 py-8 md:px-6">
+      <main className="mx-auto max-w-[1700px] px-4 pt-0 pb-8 md:px-6">
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (

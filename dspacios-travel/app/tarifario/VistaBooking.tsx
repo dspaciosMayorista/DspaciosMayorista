@@ -305,7 +305,7 @@ export function VistaBooking({
             key={h.hotelId}
             type="button"
             onClick={() => setAbierto(h)}
-            className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-0.5 hover:shadow-md"
+            className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
           >
             <div className="relative aspect-[16/10] w-full bg-gray-100">
               {h.foto ? (
@@ -313,6 +313,17 @@ export function VistaBooking({
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
               )}
+              {/* Cupos disponibles (solo para bloqueos con datos) */}
+              {(() => {
+                const ids = [...new Set(h.filas.filter((f) => f.bloqueo_id != null).map((f) => f.bloqueo_id as number))];
+                const vals = ids.map((id) => cuposPorBloqueo[id]).filter((c): c is number => c != null && c > 0);
+                const min = vals.length ? Math.min(...vals) : null;
+                return min !== null ? (
+                  <span className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
+                    {min} cupo{min !== 1 ? "s" : ""}
+                  </span>
+                ) : null;
+              })()}
             </div>
             <div className="flex flex-1 flex-col p-4">
               <div className="flex items-center gap-2">
@@ -327,11 +338,11 @@ export function VistaBooking({
                 {h.desde != null ? (
                   <div>
                     <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
-                    <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(h.desde)}</div>
+                    <div className="text-xl font-extrabold tracking-tight" style={{ color: "var(--brand-primary)" }}>{formatCOP(h.desde)}</div>
                     <div className="text-[10px] text-gray-400">por persona</div>
                   </div>
                 ) : <span className="text-sm text-gray-400">Consultar</span>}
-                <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ backgroundColor: "var(--brand-accent)" }}>
+                <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "var(--brand-accent)" }}>
                   Ver opciones →
                 </span>
               </div>
