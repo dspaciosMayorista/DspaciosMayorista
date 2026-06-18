@@ -12,7 +12,7 @@ export type PasajeroRow = { id: number; nombre: string; tipo_id: string | null; 
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 export function EditarAsesorPasajeros({
-  numero, asesores, asesorActual, puedeAsesor, pasajeros, fechaSalida,
+  numero, asesores, asesorActual, puedeAsesor, pasajeros, fechaSalida, pax, titularNombre,
 }: {
   numero: string;
   asesores: { nombre: string; email: string | null }[];
@@ -20,16 +20,30 @@ export function EditarAsesorPasajeros({
   puedeAsesor: boolean;
   pasajeros: PasajeroRow[];
   fechaSalida: string | null;
+  pax?: number;
+  titularNombre?: string;
 }) {
+  const maxPax = pax ?? 0;
   const router = useRouter();
   const [pending, start] = useTransition();
   const [asesor, setAsesor] = useState(asesorActual);
   const [msgA, setMsgA] = useState("");
-  const [filas, setFilas] = useState<PasajeroEdit[]>(
-    pasajeros.length
-      ? pasajeros.map((p) => ({ nombre: p.nombre, tipoId: p.tipo_id ?? "CC", identificacion: p.identificacion ?? "", fechaNacimiento: p.fecha_nacimiento ?? "", esInfante: p.es_infante }))
-      : [{ nombre: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false }]
-  );
+
+  // Inicializa filas: si hay pasajeros guardados los usa; si no, crea `pax` filas
+  // vacías con el primer puesto pre-llenado con el titular.
+  const [filas, setFilas] = useState<PasajeroEdit[]>(() => {
+    if (pasajeros.length) {
+      return pasajeros.map((p) => ({ nombre: p.nombre, tipoId: p.tipo_id ?? "CC", identificacion: p.identificacion ?? "", fechaNacimiento: p.fecha_nacimiento ?? "", esInfante: p.es_infante }));
+    }
+    const vacios: PasajeroEdit[] = Array.from({ length: Math.max(maxPax, 1) }, (_, i) => ({
+      nombre: i === 0 ? (titularNombre ?? "") : "",
+      tipoId: "CC",
+      identificacion: "",
+      fechaNacimiento: "",
+      esInfante: false,
+    }));
+    return vacios;
+  });
   const [msgP, setMsgP] = useState("");
 
   const setRow = (i: number, patch: Partial<PasajeroEdit>) => setFilas((f) => f.map((r, n) => (n === i ? { ...r, ...patch } : r)));
@@ -88,7 +102,9 @@ export function EditarAsesorPasajeros({
           ))}
         </div>
         <div className="mt-3 flex items-center gap-3">
-          <button type="button" onClick={() => setFilas((f) => [...f, { nombre: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false }])} className="text-sm font-medium" style={{ color: "var(--brand-accent)" }}>+ Agregar pasajero</button>
+          {(maxPax === 0 || filas.length < maxPax) && (
+            <button type="button" onClick={() => setFilas((f) => [...f, { nombre: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false }])} className="text-sm font-medium" style={{ color: "var(--brand-accent)" }}>+ Agregar pasajero</button>
+          )}
           <Button onClick={guardarPasajeros} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : "Guardar pasajeros"}</Button>
           {msgP && <span className={msgP.startsWith("✓") ? "text-sm text-green-600" : "text-sm text-red-600"}>{msgP}</span>}
         </div>

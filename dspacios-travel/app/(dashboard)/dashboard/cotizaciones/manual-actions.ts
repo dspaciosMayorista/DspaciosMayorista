@@ -233,9 +233,10 @@ export async function convertirCotizacionManualAContrato(
     const items = ss.map(s => ({
       numero_contrato: numero,
       descripcion: descripcionServicioCliente(s.tipo_servicio, s.nombre_servicio, s.proveedor),
-      adultos: 1,
+      adultos: cot.pax ?? 1,
       ninos: 0,
-      tarifa_adulto: s.valor ?? 0,
+      // tarifa_adulto = precio por persona; total = adultos × tarifa_adulto
+      tarifa_adulto: Math.round((s.valor ?? 0) / Math.max(cot.pax ?? 1, 1)),
       tarifa_nino: 0,
       orden: s.orden,
     }));
