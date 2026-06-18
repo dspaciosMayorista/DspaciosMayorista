@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import Image from "next/image";
 import { Star } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
@@ -370,6 +371,9 @@ function HotelModal({
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }; onClose: () => void;
 }) {
   const { add } = useCart();
+  const pathname = usePathname();
+  const router = useRouter();
+  const esDashboard = pathname?.startsWith("/dashboard") ?? false;
 
   const opciones = useMemo<Opcion[]>(() => {
     const map = new Map<string, Opcion>();
@@ -505,7 +509,16 @@ function HotelModal({
                   ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
                   planesInfo={planesInfo}
                   cap={cap}
-                  onAgregar={(item) => { add(item); onClose(); }}
+                  btnLabel={esDashboard ? "Reservar →" : undefined}
+                  onAgregar={(item) => {
+                    if (esDashboard) {
+                      const q = new URLSearchParams({ paquete: String(opcion.paqueteId), hotel: String(hotel.hotelId), modulo: opcion.modulo });
+                      router.push(`/dashboard/reservar/nuevo?${q}`);
+                    } else {
+                      add(item);
+                    }
+                    onClose();
+                  }}
                 />
               ) : (
                 <Selector
@@ -515,7 +528,17 @@ function HotelModal({
                   puedeReservar={puedeReservar}
                   planesInfo={planesInfo}
                   cap={cap}
-                  onAgregar={(item) => { add(item); onClose(); }}
+                  btnLabel={esDashboard ? "Reservar →" : undefined}
+                  onAgregar={(item) => {
+                    if (esDashboard) {
+                      const q = new URLSearchParams({ paquete: String(opcion.paqueteId), hotel: String(hotel.hotelId), modulo: opcion.modulo });
+                      if (opcion.bloqueoId != null) q.set("bloqueo", String(opcion.bloqueoId));
+                      router.push(`/dashboard/reservar/nuevo?${q}`);
+                    } else {
+                      add(item);
+                    }
+                    onClose();
+                  }}
                 />
               )}
             </>
@@ -527,11 +550,12 @@ function HotelModal({
 }
 
 function Selector({
-  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar,
+  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar, btnLabel,
 }: {
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
+  btnLabel?: string;
 }) {
   const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
   const [cat, setCat] = useState(cats[0] ?? "");
@@ -586,7 +610,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
+      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} btnLabel={btnLabel} onAgregar={agregarItem} />
     </div>
   );
 }
@@ -594,7 +618,7 @@ function Selector({
 // Editor de habitaciones/niños + total + botón. Recibe el PVP por acomodación y
 // reporta la selección (no conoce fechas ni módulo). Reutilizado por bloqueo y porción.
 function EditorPax({
-  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota, onAgregar,
+  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota, onAgregar, btnLabel = "Agregar al carrito",
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -603,6 +627,7 @@ function EditorPax({
   nota?: string;
   edadesNota?: string | null;
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) => void;
+  btnLabel?: string;
 }) {
   const [habs, setHabs] = useState<Record<string, number>>({});
   const [ninos, setNinos] = useState(0);
@@ -722,7 +747,7 @@ function EditorPax({
         <button type="button" onClick={agregar} disabled={!puede}
           className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
           style={{ backgroundColor: "var(--brand-primary)" }}>
-          Agregar al carrito
+          {btnLabel}
         </button>
       </div>
       {nota && <p className="text-[11px] text-gray-400">{nota}</p>}
@@ -733,11 +758,12 @@ function EditorPax({
 // Motor por fechas (porción/dinámico): el usuario elige las fechas reales y se
 // liquida la tarifa noche por noche (cotizarPorFechas, service-role, solo PVP).
 function SelectorPorFechas({
-  opcion, hotel, ventana, planesInfo, cap, onAgregar,
+  opcion, hotel, ventana, planesInfo, cap, onAgregar, btnLabel,
 }: {
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
+  btnLabel?: string;
 }) {
   // No se permite check-in en el pasado: el mínimo es HOY (o el inicio del rango
   // del paquete si es posterior). Si el paquete empieza antes de hoy, arranca hoy.
@@ -839,7 +865,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} onAgregar={agregarItem} />
+          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} btnLabel={btnLabel} onAgregar={agregarItem} />
         </>
       )}
     </div>
