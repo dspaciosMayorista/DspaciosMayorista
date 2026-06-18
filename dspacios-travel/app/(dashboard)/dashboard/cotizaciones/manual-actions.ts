@@ -1,8 +1,14 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { marcar } from "@/lib/calc/paquetes";
+
+// Tipo de servicio de la cotización dinámica → tipo de proveedor de la CxP.
+const TIPO_PROVEEDOR: Record<string, string> = {
+  aereo: "aereo", hotel: "hotel", traslado: "receptivo", asistencia: "asistencia", otro: "otro",
+};
 
 export type ServicioManual = {
   tipo: string;          // aereo / hotel / traslado / asistencia / otro
@@ -244,6 +250,50 @@ export async function convertirCotizacionManualAContrato(
     if (ie) return { ok: false, error: ie.message };
   }
 
+  // Cuentas por pagar (CxP) de la cotización DINÁMICA. A diferencia del tarifario
+  // (proveedor negociado del catálogo), aquí el servicio se cotizó en una
+  // plataforma (JetSMART, agregadores, OTAs…). Por eso el proveedor de la CxP es,
+  // por defecto, el nombre de la PLATAFORMA (o el proveedor si el asesor lo
+  // escribió). Así la compra queda registrada y se ve en flujo de caja y costos.
+  if (ss.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      const { data: provs } = await admin.from("proveedores").select("nombre, aplica_retencion, pct_retencion");
+      const retDe = (nombre: string | null) => {
+        const p = (provs ?? []).find((x) => x.nombre && nombre && x.nombre.trim().toLowerCase() === nombre.trim().toLowerCase());
+        return { aplica_retencion: p?.aplica_retencion ?? false, pct_retencion: Number(p?.pct_retencion) || 0 };
+      };
+      const hoyISO = new Date().toISOString().slice(0, 10);
+      const moneda = (cot.moneda as string | null) ?? "COP";
+      const vence = (cot.fecha_salida as string | null) ?? null;
+      const cxp = ss
+        .filter((s) => (Number(s.costo_neto) || 0) > 0)
+        .map((s) => {
+          // Proveedor por defecto = plataforma; si el asesor escribió un proveedor, ese manda.
+          const proveedor = (s.proveedor || "").trim() || (s.plataforma || "").trim() || null;
+          const r = retDe(proveedor);
+          const tipo = TIPO_PROVEEDOR[s.tipo_servicio] ?? "otro";
+          const etiqueta = TIPO_LABEL[s.tipo_servicio] ?? "Servicio";
+          return {
+            numero_contrato: numero,
+            proveedor,
+            tipo_proveedor: tipo,
+            servicio: `${etiqueta}${s.nombre_servicio ? ` ${s.nombre_servicio}` : ""}`.trim(),
+            valor_total: Math.max(0, Number(s.costo_neto) || 0),
+            moneda,
+            fecha_obligacion: hoyISO,
+            fecha_vencimiento: vence,
+            aplica_retencion: r.aplica_retencion,
+            pct_retencion: r.pct_retencion,
+            observaciones: "Generado automáticamente desde cotización dinámica",
+          };
+        });
+      if (cxp.length) await admin.from("cuentas_por_pagar").insert(cxp);
+    } catch {
+      // No bloquear la conversión si falla la creación automática de CxP.
+    }
+  }
+
   // Actualiza cotización: estado convertida + numero_contrato en el detalle
   const detalleActualizado = {
     ...detalle,
@@ -257,6 +307,8 @@ export async function convertirCotizacionManualAContrato(
   revalidatePath("/dashboard/cotizaciones");
   revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
   revalidatePath(`/cotizacion/${cotizacionId}`);
+  revalidatePath("/dashboard/pagos");
+  revalidatePath("/dashboard/flujo-caja");
 
   return { ok: true, numero };
 }
