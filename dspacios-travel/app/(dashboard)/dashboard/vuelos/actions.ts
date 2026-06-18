@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { regenerarTarifariosDeBloqueo, generarTarifario } from "../paquetes/actions";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -110,6 +111,7 @@ export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Pr
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/vuelos/${id}`);
+  await regenerarTarifariosDeBloqueo(id); // la tarifa/fechas del aéreo cambió → recalcula paquetes
   return { ok: true, id };
 }
 
@@ -186,6 +188,7 @@ export async function registrarCambioOperacional(
   if (le) return { ok: false, error: le.message };
 
   revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  await regenerarTarifariosDeBloqueo(bloqueoId); // fechas/vuelos cambiaron → recalcula
   return { ok: true, id: bloqueoId };
 }
 
@@ -326,10 +329,15 @@ export async function cambiarEstadoSilla(
 
 export async function eliminarBloqueo(id: number): Promise<Result> {
   const sb = await createClient();
+  // Captura los paquetes que usaban el bloqueo ANTES de borrarlo; se regeneran
+  // DESPUÉS para que el tarifario deje de publicar esa salida.
+  const { data: usados } = await sb.from("armado_vuelos").select("paquete_id").eq("bloqueo_id", id);
+  const paqIds = [...new Set((usados ?? []).map((u) => u.paquete_id))];
   // Borrar sillas primero (no hay cascade declarado)
   await sb.from("sillas").delete().eq("bloqueo_id", id);
   const { error } = await sb.from("bloqueos_vuelo").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
+  for (const pid of paqIds) { try { await generarTarifario(pid); } catch { /* sigue */ } }
   revalidatePath("/dashboard/vuelos");
   return { ok: true };
 }
