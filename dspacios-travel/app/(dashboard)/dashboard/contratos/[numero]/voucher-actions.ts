@@ -35,7 +35,11 @@ export type VoucherContenido = {
   incluye: string[];
   infoImportante: string;
   noIncluye: string;
-  codigoReserva?: string;   // solo voucher de hotel
+  codigoReserva?: string;       // voucher hotel tarifario/dinámico
+  categoriaHabitacion?: string; // voucher hotel dinámico (manual)
+  // Contexto del viaje (se almacena para poder acotar el date-picker del tour).
+  fechaSalidaViaje?: string;
+  fechaRegresoViaje?: string;
 };
 
 const noches = (a: string | null, b: string | null): number => {
@@ -78,11 +82,10 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
       .map((d) => d.replace(/^Servicio · /, "").trim())
   );
 
-  // Servicios del paquete agrupados por proveedor: los INCLUIDOS (siempre van) +
-  // los add-on seleccionados. El proveedor se reconstruye desde el paquete (el
-  // contrato no guarda los ids de servicio).
   const porProveedor = new Map<string, { contacto: string | null; servicios: string[] }>();
+
   if (venta.paquete_armado_id) {
+    // ── TARIFARIO: servicios del paquete agrupados por proveedor ─────────────
     const { data: arm } = await sb
       .from("armado_servicios")
       .select("incluido, servicios_adicionales(nombre, proveedores(nombre, voucher_contacto, contacto))")
@@ -92,7 +95,7 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
       if (!s?.nombre) continue;
       const nombre = s.nombre.trim();
       const incluido = (a as { incluido?: boolean | null }).incluido === true;
-      if (!incluido && !addonNames.has(nombre)) continue; // no es del contrato
+      if (!incluido && !addonNames.has(nombre)) continue;
       const prov = s.proveedores;
       const key = prov?.nombre ?? "Sin proveedor";
       const contacto = prov?.voucher_contacto ?? prov?.contacto ?? null;
@@ -101,9 +104,32 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
       if (!g.servicios.includes(nombre)) g.servicios.push(nombre);
       porProveedor.set(key, g);
     }
+  } else {
+    // ── DINÁMICO: servicios de la cotización (sin hotel, sin aéreo) ──────────
+    const { data: cot } = await sb
+      .from("cotizaciones")
+      .select("id")
+      .eq("numero_contrato", numero)
+      .eq("tipo", "manual")
+      .maybeSingle();
+    if (cot) {
+      const { data: svcs } = await sb
+        .from("cotizacion_servicios")
+        .select("tipo_servicio, nombre_servicio, proveedor")
+        .eq("cotizacion_id", cot.id)
+        .not("tipo_servicio", "in", '("hotel","aereo")')
+        .order("orden");
+      for (const s of svcs ?? []) {
+        const key = (s.proveedor || s.nombre_servicio || "(sin proveedor)").trim();
+        const g = porProveedor.get(key) ?? { contacto: null, servicios: [] };
+        const nombre = s.nombre_servicio?.trim() || s.tipo_servicio;
+        if (!g.servicios.includes(nombre)) g.servicios.push(nombre);
+        porProveedor.set(key, g);
+      }
+    }
   }
-  // Si no se detectan servicios (contratos viejos o paquetes sin servicios
-  // cargados), igual se crea UN voucher en blanco para que el asesor lo complete.
+
+  // Si no se detectan servicios, crea UN voucher en blanco para completar.
   if (!porProveedor.size) porProveedor.set("(por definir)", { contacto: null, servicios: [] });
 
   const h0 = (hoteles ?? [])[0];
@@ -147,6 +173,9 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
         ? `Podrá encontrar al proveedor de servicios en la salida del aeropuerto. En caso de no encontrarlo puede comunicarse al ${g.contacto}.`
         : "Podrá encontrar al proveedor de servicios en el punto de encuentro indicado.",
       noIncluye: "Gastos no especificados en este documento.",
+      // Contexto del viaje para acotar el date-picker del día del tour.
+      fechaSalidaViaje: venta.fecha_salida ?? undefined,
+      fechaRegresoViaje: venta.fecha_regreso ?? undefined,
     };
     filas.push({ numero_contrato: numero, tipo: "servicios", proveedor, contenido: contenido as unknown as Json });
   }
@@ -177,15 +206,65 @@ export async function generarVoucherHotel(numero: string): Promise<Result> {
     if (pagado < (venta.precio_venta ?? 0)) return { ok: false, error: "El contrato debe estar 100% pago (o pídelo a un superadmin)." };
   }
 
-  const h0 = (hoteles ?? [])[0];
-  if (!h0) return { ok: false, error: "Este contrato no tiene hotel." };
-  const ingreso = h0.fecha_ingreso ?? venta.fecha_salida;
-  const salida = h0.fecha_salida ?? venta.fecha_regreso;
   const hoy = new Date().toISOString().slice(0, 10);
   const vendedor =
     venta.tipo_asesor === "agencia" ? (venta.agencia_asesor ?? venta.agencia_nombre ?? "")
     : venta.tipo_asesor === "freelance" ? (venta.freelance_nombre ?? "")
     : (venta.asesor_firma_nombre ?? venta.asesor ?? "");
+
+  const h0 = (hoteles ?? [])[0];
+
+  // ── CONTRATO DINÁMICO: sin contrato_hoteles → usar cotizacion_servicios ──
+  if (!h0) {
+    const { data: cot } = await sb
+      .from("cotizaciones")
+      .select("id")
+      .eq("numero_contrato", numero)
+      .eq("tipo", "manual")
+      .maybeSingle();
+    if (!cot) return { ok: false, error: "Este contrato no tiene hotel." };
+
+    const { data: svcs } = await sb
+      .from("cotizacion_servicios")
+      .select("nombre_servicio, proveedor")
+      .eq("cotizacion_id", cot.id)
+      .eq("tipo_servicio", "hotel")
+      .order("orden");
+
+    const svc = (svcs ?? [])[0];
+    if (!svc) return { ok: false, error: "La cotización dinámica no tiene servicio de hotel." };
+
+    const ingreso = venta.fecha_salida;
+    const salida  = venta.fecha_regreso;
+    const contenido: VoucherContenido = {
+      emision: hoy, nReserva: numero, vendedor, elaboradoPor: "ÁREA DE RESERVAS",
+      contactoEmpresa: "(+57) 321-2094015",
+      proveedor: svc.proveedor ?? svc.nombre_servicio ?? "",
+      hotel: svc.nombre_servicio ?? venta.hotel ?? "",
+      destino: venta.destino ?? "",
+      fechaIngreso: ingreso && salida ? `${formatFechaLarga(ingreso)} al ${formatFechaLarga(salida)}` : "",
+      tipoPax: tipoPaxDe(pasajeros ?? [], venta.fecha_salida),
+      noches: String(noches(ingreso, salida) || ""),
+      categoriaHabitacion: "",   // completar manualmente
+      tipoPlan: "",              // régimen — completar manualmente
+      titular: venta.cliente ?? "", adultos: String(venta.pax ?? ""), ninos: "0",
+      checkIn: "", checkOut: "",
+      incluye: [],               // completar manualmente
+      infoImportante: "Presentar documento de identidad. Todo menor de edad debe viajar con los permisos diligenciados exigidos por las autoridades.",
+      noIncluye: "",             // completar manualmente
+      codigoReserva: "",
+    };
+
+    await sb.from("vouchers").delete().eq("numero_contrato", numero).eq("tipo", "hotel");
+    const { error } = await sb.from("vouchers").insert({ numero_contrato: numero, tipo: "hotel", proveedor: contenido.proveedor, contenido: contenido as unknown as Json });
+    if (error) return { ok: false, error: error.message };
+    revalidatePath(`/dashboard/contratos/${numero}`);
+    return { ok: true, creados: 1 };
+  }
+
+  // ── CONTRATO TARIFARIO: lógica existente ───────────────────────────────────
+  const ingreso = h0.fecha_ingreso ?? venta.fecha_salida;
+  const salida  = h0.fecha_salida  ?? venta.fecha_regreso;
 
   // Régimen: mostrar QUÉ INCLUYE (descripción del plan), no el código (ej. "PC").
   let regimenTexto = h0.alimentacion ?? "";

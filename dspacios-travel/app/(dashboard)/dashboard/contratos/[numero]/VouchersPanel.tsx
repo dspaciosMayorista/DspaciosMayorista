@@ -105,12 +105,35 @@ function VoucherCard({ numero, v, destinos }: { numero: string; v: VoucherRow; d
             <div><label className={lbl}>Código de reserva del hotel</label><Input value={c.codigoReserva} onChange={(e) => set("codigoReserva", e.target.value)} placeholder="Ej. ABC123 / confirmación del hotel" /></div>
           )}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div><label className={lbl}>Hotel</label><Input value={c.hotel} onChange={(e) => set("hotel", e.target.value)} /></div>
+            <div><label className={lbl}>Hotel / Proveedor</label><Input value={c.hotel} onChange={(e) => set("hotel", e.target.value)} /></div>
             <div><label className={lbl}>Destino</label><ComboCiudad destinos={destinos} value={c.destino} onChange={(val) => set("destino", val)} modo="nombre" permitirLibre placeholder="Destino…" /></div>
-            <div><label className={lbl}>Fecha ingreso</label><Input value={c.fechaIngreso} onChange={(e) => set("fechaIngreso", e.target.value)} /></div>
+
+            {/* Fecha: para servicios = date-picker de un día del viaje;
+                para hotel = rango de texto (tarifario) o date (dinámico) */}
+            {v.tipo === "servicios" ? (
+              <div>
+                <label className={lbl}>Fecha del servicio</label>
+                <Input
+                  type="date"
+                  value={c.fechaIngreso?.slice(0, 10) ?? ""}
+                  min={c.fechaSalidaViaje ?? undefined}
+                  max={c.fechaRegresoViaje ?? undefined}
+                  onChange={(e) => set("fechaIngreso", e.target.value)}
+                />
+              </div>
+            ) : (
+              <div><label className={lbl}>Fecha ingreso</label><Input value={c.fechaIngreso} onChange={(e) => set("fechaIngreso", e.target.value)} /></div>
+            )}
+
             <div><label className={lbl}>Tipo de pax</label><Input value={c.tipoPax} onChange={(e) => set("tipoPax", e.target.value)} /></div>
             <div><label className={lbl}>Noches</label><Input value={c.noches} onChange={(e) => set("noches", e.target.value)} /></div>
-            <div><label className={lbl}>Tipo de plan</label><Input value={c.tipoPlan} onChange={(e) => set("tipoPlan", e.target.value)} /></div>
+            <div><label className={lbl}>Régimen / Tipo de plan</label><Input value={c.tipoPlan} onChange={(e) => set("tipoPlan", e.target.value)} placeholder="Ej. PC, PAM, Solo alojamiento…" /></div>
+
+            {/* Categoría de habitación — solo hotel (dinámico muestra el campo vacío; tarifario puede tenerlo) */}
+            {v.tipo === "hotel" && (
+              <div><label className={lbl}>Categoría de habitación</label><Input value={c.categoriaHabitacion ?? ""} onChange={(e) => set("categoriaHabitacion", e.target.value)} placeholder="Ej. Doble estándar, Suite…" /></div>
+            )}
+
             <div className="sm:col-span-2"><label className={lbl}>Titular</label><Input value={c.titular} onChange={(e) => set("titular", e.target.value)} /></div>
             <div><label className={lbl}>Vendedor</label><Input value={c.vendedor} onChange={(e) => set("vendedor", e.target.value)} /></div>
             <div><label className={lbl}>Adultos</label><Input value={c.adultos} onChange={(e) => set("adultos", e.target.value)} /></div>
@@ -123,7 +146,7 @@ function VoucherCard({ numero, v, destinos }: { numero: string; v: VoucherRow; d
             <textarea value={incluyeText} onChange={(e) => setIncluyeText(e.target.value)} rows={3} className={inp} />
           </div>
           <div>
-            <label className={lbl}>Información importante</label>
+            <label className={lbl}>Condiciones de reserva / Información importante</label>
             <textarea value={c.infoImportante} onChange={(e) => set("infoImportante", e.target.value)} rows={2} className={inp} />
           </div>
           <div>

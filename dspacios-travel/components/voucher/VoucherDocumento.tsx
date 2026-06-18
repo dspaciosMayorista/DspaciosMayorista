@@ -73,6 +73,11 @@ export function VoucherDocumento({ c }: { c: VoucherContenido }) {
           <Celda label="Noches" value={c.noches} />
           <Celda label="Tipo de plan" value={c.tipoPlan} />
         </div>
+        {c.categoriaHabitacion && (
+          <div className="mt-px">
+            <Celda label="Categoría de habitación" value={c.categoriaHabitacion} />
+          </div>
+        )}
 
         <div className="mt-2 grid grid-cols-2 gap-px sm:grid-cols-5">
           <div className="sm:col-span-2"><Celda label="Nombre titular" value={c.titular} /></div>
