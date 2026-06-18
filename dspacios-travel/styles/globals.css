@@ -373,16 +373,10 @@ html[data-theme="blueprint"] .bg-white.border.rounded-2xl {
   box-shadow: 0 1px 0 rgba(30, 52, 72, 0.05), 0 2px 4px rgba(30, 52, 72, 0.06) !important;
 }
 
-/* SIDEBAR en PAPEL (misma hoja que la pantalla: papel + grilla CONTINUA fija
-   al viewport, para que menú y fondo se vean como una sola superficie) */
+/* SIDEBAR en PAPEL LISO (mismo fondo que la pantalla, sin cuadrícula) */
 html[data-theme="blueprint"] aside.bg-white {
   background-color: #F6F1E8 !important;
-  background-image:
-    linear-gradient(rgba(30, 52, 72, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(30, 52, 72, 0.05) 1px, transparent 1px) !important;
-  background-size: 26px 26px, 26px 26px !important;
-  background-position: center !important;
-  background-attachment: fixed !important;
+  background-image: none !important;
   border-right-color: #d8cdb8 !important;
 }
 html[data-theme="blueprint"] aside .border-gray-100 { border-color: #e0d8c6 !important; }
@@ -405,16 +399,10 @@ html[data-theme="blueprint"] aside nav a[aria-current="page"] {
   font-weight: 600 !important;
 }
 
-/* Fondo del portal y tarifario en tema WEB: PAPEL + GRILLA sutil (blueprint),
-   no la playa. Gana sobre .app-bg. */
+/* Fondo del portal y tarifario en blueprint: PAPEL LISO #F6F1E8 (sin grilla,
+   sin la playa). Gana sobre .app-bg. */
 html[data-theme="blueprint"] .app-bg {
-  background-color: #F6F1E8 !important;
-  background-image:
-    linear-gradient(rgba(30, 52, 72, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(30, 52, 72, 0.055) 1px, transparent 1px) !important;
-  background-size: 26px 26px, 26px 26px !important;
-  background-position: center !important;
-  background-attachment: fixed !important;
+  background: #F6F1E8 !important;
 }
 
 /* ── Fondo de pantalla con imagen de PLAYA (portal + tarifario público) ──────
