@@ -36,6 +36,15 @@ const TIPO_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
 };
 
+// Descripción del servicio para documentos al CLIENTE (cotización/contrato).
+// NO incluye la plataforma: es info interna (dónde se cotizó), no va al cliente.
+function descripcionServicioCliente(tipo: string, nombre?: string | null, proveedor?: string | null): string {
+  const t = TIPO_LABEL[tipo] ?? tipo;
+  const n = (nombre || "").trim() || "—";
+  const p = (proveedor || "").trim();
+  return `${t}: ${n}${p ? ` (${p})` : ""}`;
+}
+
 // Valor de venta de un servicio:
 //   modo 'mk' → costo / (1 − markup)   (margen)
 //   modo 'ta' → costo + TA             (valor fijo, p. ej. aéreo)
@@ -112,9 +121,7 @@ export async function crearCotizacionManual(
     vuelos: [],
     items: filas.map((f) => ({
       numero_contrato: "",
-      descripcion: `${TIPO_LABEL[f.tipo_servicio] ?? f.tipo_servicio}: ${f.nombre_servicio ?? "—"}`
-        + (f.plataforma ? ` · ${f.plataforma}` : "")
-        + (f.proveedor ? ` (${f.proveedor})` : ""),
+      descripcion: descripcionServicioCliente(f.tipo_servicio, f.nombre_servicio, f.proveedor),
       adultos: 1,
       ninos: 0,
       tarifa_adulto: f.valor,
@@ -225,9 +232,7 @@ export async function convertirCotizacionManualAContrato(
   if (ss.length) {
     const items = ss.map(s => ({
       numero_contrato: numero,
-      descripcion: `${TIPO_LABEL[s.tipo_servicio] ?? s.tipo_servicio}: ${s.nombre_servicio ?? "—"}`
-        + (s.plataforma ? ` · ${s.plataforma}` : "")
-        + (s.proveedor ? ` (${s.proveedor})` : ""),
+      descripcion: descripcionServicioCliente(s.tipo_servicio, s.nombre_servicio, s.proveedor),
       adultos: 1,
       ninos: 0,
       tarifa_adulto: s.valor ?? 0,
