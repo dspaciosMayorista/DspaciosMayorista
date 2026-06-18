@@ -45,11 +45,12 @@ export default function RootLayout({
   return (
     <html lang="es" className={`${jost.variable} h-full antialiased`}>
       <head>
-        {/* Aplica el tema guardado antes de pintar (evita parpadeo). */}
+        {/* Aplica el tema guardado antes de pintar (evita parpadeo) — portal y
+            tarifario. Vale para cualquier tema (indigo/verde/web/blueprint). */}
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "try{var t=localStorage.getItem('dsp-theme');if(t==='indigo'||t==='verde')document.documentElement.setAttribute('data-theme',t);}catch(e){}",
+              "try{var t=localStorage.getItem('dsp-theme');if(t&&t!=='marca')document.documentElement.setAttribute('data-theme',t);}catch(e){}",
           }}
         />
       </head>

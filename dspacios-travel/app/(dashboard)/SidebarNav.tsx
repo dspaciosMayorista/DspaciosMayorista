@@ -27,8 +27,32 @@ const ICONS: Record<string, LucideIcon> = {
   cms: Globe, crm: Contact,
 };
 
-export function SidebarNav({ items }: { items: NavItem[] }) {
+export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?: boolean }) {
   const pathname = usePathname();
+
+  if (collapsed) {
+    return (
+      <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-4">
+        {items.map((it) => {
+          const active = pathname === it.href || pathname.startsWith(it.href + "/");
+          const Icon = it.iconKey ? ICONS[it.iconKey] : undefined;
+          return (
+            <Link
+              key={it.href}
+              href={it.href}
+              aria-current={active ? "page" : undefined}
+              title={it.label}
+              className="mx-auto grid h-10 w-10 place-items-center rounded-lg transition-colors hover:bg-gray-50"
+              style={active ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "var(--nav-fg, #4b5563)" }}
+            >
+              {Icon ? <Icon size={18} strokeWidth={2} /> : <span className="text-xs font-bold">{it.label.charAt(0)}</span>}
+            </Link>
+          );
+        })}
+      </nav>
+    );
+  }
+
   return (
     <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
       {items.map((it) => (

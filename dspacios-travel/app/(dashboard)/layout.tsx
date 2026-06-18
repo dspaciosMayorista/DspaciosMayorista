@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { LogoutButton } from "./LogoutButton";
-import { SidebarNav, type NavItem } from "./SidebarNav";
+import { type NavItem } from "./SidebarNav";
+import { DesktopSidebar } from "./DesktopSidebar";
 import { Logo } from "@/components/Logo";
 import { modulosConsultables, permisosDelUsuario } from "@/lib/permisos";
 
@@ -141,21 +142,8 @@ export default async function DashboardLayout({
         </nav>
       </header>
 
-      {/* Sidebar (escritorio) */}
-      <aside
-        className="hidden w-56 shrink-0 flex-col border-r border-gray-200 bg-white md:flex"
-        style={{ borderTop: `4px solid var(--brand-primary)` }}
-      >
-        <div className="border-b border-gray-100 px-5 py-4">
-          <a href="/dashboard" aria-label="D'spacios Travel — inicio">
-            <Logo variant="full" height={36} className="h-9 w-auto" priority />
-          </a>
-        </div>
-        <SidebarNav items={nav} />
-        <div className="border-t border-gray-100 px-5 py-3">
-          <LogoutButton />
-        </div>
-      </aside>
+      {/* Sidebar (escritorio) — recogible */}
+      <DesktopSidebar nav={nav} />
 
       {/* Contenido (fondo de playa tipo wallpaper) */}
       <main className="app-bg min-w-0 flex-1 overflow-x-hidden md:h-screen md:overflow-y-auto">

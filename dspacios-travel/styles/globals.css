@@ -331,9 +331,9 @@ html[data-theme="blueprint"] {
   --chart-1: #08233F; --chart-2: #1E5A8A; --chart-3: #B9785F; --chart-4: #5E8C6A;
   --sidebar-primary: #08233F; --sidebar-ring: #1E3448;
 
-  /* Texto del nav sobre el sidebar navy */
-  --nav-fg:    #aebccb;
-  --nav-subfg: #7d8ea0;
+  /* Texto del nav sobre el sidebar de PAPEL (navy oscuro) */
+  --nav-fg:    #33424f;
+  --nav-subfg: #64707D;
 
   --background: #F6F1E8;
   --secondary:  #efe8da;
@@ -373,26 +373,29 @@ html[data-theme="blueprint"] .bg-white.border.rounded-2xl {
   box-shadow: 0 1px 0 rgba(30, 52, 72, 0.05), 0 2px 4px rgba(30, 52, 72, 0.06) !important;
 }
 
-/* SIDEBAR navy sobrio */
+/* SIDEBAR en PAPEL (mismo fondo que la pantalla principal: papel + grilla) */
 html[data-theme="blueprint"] aside.bg-white {
-  background: linear-gradient(190deg, #0B2545 0%, #08233F 60%, #061a30 100%) !important;
-  border-right-color: rgba(255, 255, 255, 0.06) !important;
+  background-color: #F6F1E8 !important;
+  background-image:
+    linear-gradient(rgba(30, 52, 72, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 52, 72, 0.05) 1px, transparent 1px) !important;
+  background-size: 26px 26px, 26px 26px !important;
+  border-right-color: #d8cdb8 !important;
 }
-html[data-theme="blueprint"] aside .border-gray-100 { border-color: rgba(255, 255, 255, 0.08) !important; }
-html[data-theme="blueprint"] aside .border-l        { border-color: rgba(255, 255, 255, 0.12) !important; }
-html[data-theme="blueprint"] aside .brand-logo      { filter: brightness(0) invert(1); }
+html[data-theme="blueprint"] aside .border-gray-100 { border-color: #e0d8c6 !important; }
+html[data-theme="blueprint"] aside .border-l        { border-color: #d8cdb8 !important; }
 html[data-theme="blueprint"] aside nav a:hover {
-  background-color: rgba(255, 255, 255, 0.06) !important;
-  color: #ffffff !important;
+  background-color: rgba(8, 35, 63, 0.06) !important;
+  color: #08233F !important;
 }
 html[data-theme="blueprint"] aside .text-gray-400,
 html[data-theme="blueprint"] aside .text-gray-500,
-html[data-theme="blueprint"] aside .text-gray-600 { color: #aebccb !important; }
+html[data-theme="blueprint"] aside .text-gray-600 { color: #4b5762 !important; }
 html[data-theme="blueprint"] aside .hover\:text-gray-700:hover,
-html[data-theme="blueprint"] aside .hover\:text-gray-800:hover { color: #ffffff !important; }
-/* Activo: barra lima + tinte (evidente; gana al inline) */
+html[data-theme="blueprint"] aside .hover\:text-gray-800:hover { color: #08233F !important; }
+/* Activo: relleno navy + barra lima (evidente sobre el papel) */
 html[data-theme="blueprint"] aside nav a[aria-current="page"] {
-  background-color: rgba(215, 255, 0, 0.12) !important;
+  background-color: #08233F !important;
   color: #ffffff !important;
   border-radius: 8px !important;
   box-shadow: inset 3px 0 0 #D7FF00;
