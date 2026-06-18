@@ -157,8 +157,8 @@ export default async function DashboardLayout({
         </div>
       </aside>
 
-      {/* Contenido */}
-      <main className="min-w-0 flex-1 overflow-x-hidden md:h-screen md:overflow-y-auto">
+      {/* Contenido (fondo de playa tipo wallpaper) */}
+      <main className="app-bg min-w-0 flex-1 overflow-x-hidden md:h-screen md:overflow-y-auto">
         {children}
       </main>
     </div>

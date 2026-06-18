@@ -38,27 +38,15 @@ export default async function DashboardPage() {
 
   return (
     <div className="p-4 md:p-7">
-      {/* ── Encabezado editorial (playa + degradado de marca, como el sitio) ── */}
-      <header className="relative overflow-hidden rounded-xl px-6 py-8 text-white">
-        {/* Imagen de fondo (playa) */}
-        <img
-          src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80"
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-        {/* Degradado de marca encima (sólido a la izquierda → playa a la derecha) */}
+      {/* ── Encabezado editorial (bloque de marca) ─────────────────────── */}
+      <header className="bg-brand-gradient relative overflow-hidden rounded-xl px-6 py-7 text-white">
         <div
-          className="absolute inset-0"
-          style={{ background: "linear-gradient(100deg, var(--brand-primary) 22%, color-mix(in srgb, var(--brand-primary) 62%, transparent) 62%, color-mix(in srgb, var(--brand-primary) 12%, transparent) 100%)" }}
-        />
-        {/* Textura discreta de “rutas” (puntos) sobre el color */}
-        <div
-          className="pointer-events-none absolute inset-0 opacity-50"
-          style={{ backgroundImage: "radial-gradient(rgba(255,255,255,0.10) 1px, transparent 1.4px)", backgroundSize: "22px 22px" }}
+          className="pointer-events-none absolute inset-0 opacity-60"
+          style={{ backgroundImage: "radial-gradient(rgba(255,255,255,0.09) 1px, transparent 1.4px)", backgroundSize: "22px 22px" }}
         />
         <div className="relative z-10">
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-white/75">{hoy}</p>
-          <h1 className="mt-1.5 text-2xl font-bold capitalize drop-shadow-sm md:text-[28px]">Hola, {nombre}</h1>
+          <h1 className="mt-1.5 text-2xl font-bold capitalize md:text-[28px]">Hola, {nombre}</h1>
           <span
             className="mt-3 inline-block rounded-md px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide"
             style={{ backgroundColor: "var(--brand-highlight)", color: "var(--brand-primary)" }}

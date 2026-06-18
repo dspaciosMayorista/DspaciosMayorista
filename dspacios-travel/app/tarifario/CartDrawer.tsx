@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Hotel } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem } from "@/lib/cart/CartContext";
@@ -66,12 +67,12 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                 <ul className="space-y-3">
                   {items.map((it) => (
                     <li key={it.id} className="flex gap-3 rounded-xl border border-gray-200 p-3">
-                      <div className="relative flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-xl text-gray-300">
+                      <div className="relative flex h-16 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-gray-300">
                         {fotoDe(it) ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={fotoDe(it) as string} alt={it.hotelNombre} className="absolute inset-0 h-full w-full object-cover" />
                         ) : (
-                          <span aria-hidden>🏨</span>
+                          <Hotel size={22} aria-hidden />
                         )}
                       </div>
                       <div className="min-w-0 flex-1">

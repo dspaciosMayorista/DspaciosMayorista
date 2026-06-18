@@ -278,9 +278,8 @@ html[data-theme="web"] {
 html[data-theme="web"] body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
 html[data-theme="web"] h1, html[data-theme="web"] h2, html[data-theme="web"] h3 { letter-spacing: -0.015em; }
 
-/* Lienzo operativo #F5F7FB */
+/* Lienzo operativo #F5F7FB (main lo deja la imagen de playa .app-bg) */
 html[data-theme="web"] body,
-html[data-theme="web"] main,
 html[data-theme="web"] .bg-gray-50  { background-color: #F5F7FB !important; }
 html[data-theme="web"] .bg-gray-100 { background-color: #eceef4 !important; }
 
@@ -326,6 +325,25 @@ html[data-theme="web"] .bg-white.border.rounded-xl,
 html[data-theme="web"] .bg-white.border.rounded-2xl {
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.05);
 }
+
+/* ── Fondo de pantalla con imagen de PLAYA (portal + tarifario público) ──────
+   Imagen fija tipo wallpaper con un wash claro encima para legibilidad; las
+   tarjetas blancas flotan sobre la playa. Se aplica con la clase .app-bg. */
+.app-bg {
+  background-image:
+    linear-gradient(180deg, rgba(244, 247, 251, 0.60) 0%, rgba(244, 247, 251, 0.82) 44%, rgba(244, 247, 251, 0.93) 100%),
+    url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80");
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+/* En el tema oscuro la playa no aplica (rompería el negro). */
+html[data-theme="verde"] .app-bg { background: #000 !important; }
+
+/* Tipografía del sitio (Inter) — para el tarifario público, así su “letra”
+   coincide con el portal/sitio sin depender del tema. */
+.font-sitio { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
 
 .dark {
   --background: oklch(0.145 0 0);

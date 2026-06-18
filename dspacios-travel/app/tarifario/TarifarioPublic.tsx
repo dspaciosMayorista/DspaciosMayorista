@@ -2,6 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
+import { Star, Plane } from "lucide-react";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -115,7 +116,11 @@ const rangoEdades = (info?: Parameters<typeof textoEdadesHotel>[0]): string | nu
 function CategoriaInline({ info }: { info?: { estrellas: number | null; clasificacion: string | null } }) {
   if (!info) return null;
   if (info.estrellas && info.estrellas > 0)
-    return <span className="ml-1 text-amber-400" title={`${info.estrellas} estrellas`}>{"★".repeat(info.estrellas)}</span>;
+    return (
+      <span className="ml-1 inline-flex align-middle text-amber-400" title={`${info.estrellas} estrellas`}>
+        {Array.from({ length: info.estrellas }).map((_, i) => <Star key={i} size={12} fill="currentColor" strokeWidth={0} />)}
+      </span>
+    );
   if (info.clasificacion?.trim())
     return <span className="ml-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">{info.clasificacion}</span>;
   return null;
@@ -641,19 +646,19 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-500">Aéreo</label>
           <div className="flex gap-1">
-            {([["", "Todos"], ["si", "✈ Con aéreo"], ["no", "Solo terrestre"]] as const).map(([v, l]) => (
+            {([["", "Todos"], ["si", "Con aéreo"], ["no", "Solo terrestre"]] as const).map(([v, l]) => (
               <button
                 key={v}
                 type="button"
                 onClick={() => setAereo(v)}
-                className="rounded-lg border px-3 py-2 text-xs font-medium transition-all"
+                className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium transition-all"
                 style={
                   aereo === v
                     ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
                     : { borderColor: "#e5e7eb", color: "#6b7280" }
                 }
               >
-                {l}
+                {v === "si" && <Plane size={12} />}{l}
               </button>
             ))}
           </div>
@@ -684,14 +689,14 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
               <div className="flex items-start justify-between gap-2">
                 <div className="font-semibold text-gray-800">{p.nombre}</div>
                 <span
-                  className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
                   style={
                     p.incluye_aereo
                       ? { backgroundColor: "rgba(29,124,154,0.12)", color: "var(--brand-primary)" }
                       : { backgroundColor: "#f3f4f6", color: "#6b7280" }
                   }
                 >
-                  {p.incluye_aereo ? "✈ Con aéreo" : "Solo terrestre"}
+                  {p.incluye_aereo ? <><Plane size={11} /> Con aéreo</> : "Solo terrestre"}
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-gray-500">
