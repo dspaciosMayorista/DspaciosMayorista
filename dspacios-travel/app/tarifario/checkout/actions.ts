@@ -202,7 +202,10 @@ export async function crearSolicitudReserva(input: {
     };
     const r = await crearCotizacion(reserva);
     if (!r.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${r.error}` };
-    const { data: row } = await sb.from("cotizaciones").select("codigo, precio_venta, share_token").eq("id", r.id).maybeSingle();
+    // Lectura por service-role: la RLS de `cotizaciones` es solo interna, y el
+    // checkout corre para B2B/público. Sin esto, el B2B no obtiene el enlace.
+    const lector = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+    const { data: row } = await lector.from("cotizaciones").select("codigo, precio_venta, share_token").eq("id", r.id).maybeSingle();
     const url = origin && row?.share_token ? `${origin}/cot/${row.share_token}` : "";
     cotis.push({ id: r.id, codigo: row?.codigo ?? `#${r.id}`, hotel: it.hotelNombre, precio: row?.precio_venta ?? it.precio, item: it, url });
   }

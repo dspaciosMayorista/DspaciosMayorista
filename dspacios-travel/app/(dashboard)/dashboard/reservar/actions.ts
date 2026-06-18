@@ -1089,7 +1089,13 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
   const { data: { user } } = await sb.auth.getUser();
 
-  const { data: row, error } = await sb.from("cotizaciones").insert({
+  // El precio se calcula en el servidor (autoritativo) y el checkout debe servir
+  // tanto a aliados B2B como a usuarios públicos. La RLS de `cotizaciones` es solo
+  // para roles internos, así que el insert va por service-role cuando está
+  // disponible (si no, cae al cliente con sesión = sólo internos).
+  const sbCot = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+
+  const { data: row, error } = await sbCot.from("cotizaciones").insert({
     payload: input as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: clienteNombre,
