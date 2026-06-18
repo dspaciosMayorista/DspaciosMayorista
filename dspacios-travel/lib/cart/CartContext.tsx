@@ -76,6 +76,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
 export function useCart(): CartCtx {
   const c = useContext(Ctx);
-  if (!c) throw new Error("useCart debe usarse dentro de CartProvider");
+  if (!c) {
+    // Outside CartProvider (e.g. dashboard context): return safe no-ops.
+    return { items: [], add: () => {}, remove: () => {}, clear: () => {}, total: 0, count: 0 };
+  }
   return c;
 }
