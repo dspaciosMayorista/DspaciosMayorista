@@ -2,9 +2,14 @@ import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { CotizacionAcciones } from "./CotizacionAcciones";
 import { VigenciaCotizacion } from "./VigenciaCotizacion";
+import { DescartarBtn } from "./DescartarBtn";
+
+const TIPO_SERV_LABEL: Record<string, string> = {
+  aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
+};
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +36,12 @@ export default async function CotizacionDetallePage({
     .maybeSingle();
 
   if (!c) notFound();
+
+  const esManual = c.tipo === "manual";
+  const moneda = c.moneda ?? "COP";
+  const { data: serviciosManual } = esManual
+    ? await sb.from("cotizacion_servicios").select("*").eq("cotizacion_id", c.id).order("orden")
+    : { data: null };
 
   const { data: { user } } = await sb.auth.getUser();
   const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre").eq("id", user.id).single() : { data: null };
@@ -70,7 +81,7 @@ export default async function CotizacionDetallePage({
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
           <div className="text-xs opacity-80">Precio de venta</div>
-          <div className="text-xl font-bold">{formatCOP(c.precio_venta ?? 0)}</div>
+          <div className="text-xl font-bold">{formatMoneda(c.precio_venta ?? 0, moneda)}</div>
         </div>
         <Dato label="Pasajeros" value={String(c.pax ?? "—")} />
         <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} editable={c.estado === "abierta"} />
@@ -83,8 +94,47 @@ export default async function CotizacionDetallePage({
         <Dato label="Asesor" value={c.asesor ?? "—"} />
       </div>
 
+      {esManual && (
+        <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <div className="border-b border-gray-100 px-5 py-3 text-sm font-semibold text-gray-700">Servicios cotizados</div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+                <th className="px-4 py-2">Tipo</th><th className="px-4 py-2">Plataforma</th><th className="px-4 py-2">Servicio</th>
+                <th className="px-4 py-2">Proveedor</th><th className="px-4 py-2 text-right">Valor</th>
+              </tr></thead>
+              <tbody>
+                {(serviciosManual ?? []).map((s) => (
+                  <tr key={s.id} className="border-t border-gray-50">
+                    <td className="px-4 py-2 text-gray-700">{TIPO_SERV_LABEL[s.tipo_servicio] ?? s.tipo_servicio}</td>
+                    <td className="px-4 py-2 text-gray-500">{s.plataforma ?? "—"}</td>
+                    <td className="px-4 py-2 text-gray-500">{s.nombre_servicio ?? "—"}</td>
+                    <td className="px-4 py-2 text-gray-500">{s.proveedor ?? "—"}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-gray-700">{formatMoneda(s.valor ?? 0, moneda)}</td>
+                  </tr>
+                ))}
+                {!serviciosManual?.length && <tr><td colSpan={5} className="px-4 py-4 text-center text-gray-400">Sin servicios.</td></tr>}
+              </tbody>
+              <tfoot><tr className="border-t border-gray-200 font-medium">
+                <td className="px-4 py-2" colSpan={4}>Total</td>
+                <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(c.precio_venta ?? 0, moneda)}</td>
+              </tr></tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
-        {c.estado === "abierta" ? (
+        {esManual ? (
+          c.estado === "abierta" ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-gray-500">Cotización dinámica (manual). Puedes imprimirla/compartirla o descartarla.</p>
+              <DescartarBtn id={c.id} />
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">Cotización descartada.</p>
+          )
+        ) : c.estado === "abierta" ? (
           <CotizacionAcciones
             id={c.id}
             pax={c.pax ?? 1}
