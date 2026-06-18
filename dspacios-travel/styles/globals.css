@@ -399,10 +399,18 @@ html[data-theme="blueprint"] aside nav a[aria-current="page"] {
   font-weight: 600 !important;
 }
 
-/* Fondo del portal y tarifario en blueprint: PAPEL LISO #F6F1E8 (sin grilla,
-   sin la playa). Gana sobre .app-bg. */
+/* Fondo de la pantalla principal en blueprint: imagen del sitio (playa) con un
+   velo en tono PAPEL (#F6F1E8) para legibilidad y para que combine con el menú.
+   Gana sobre .app-bg. */
 html[data-theme="blueprint"] .app-bg {
-  background: #F6F1E8 !important;
+  background-image:
+    linear-gradient(180deg, rgba(246, 241, 232, 0.55) 0%, rgba(246, 241, 232, 0.84) 46%, rgba(246, 241, 232, 0.94) 100%),
+    url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80") !important;
+  background-color: #F6F1E8 !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-attachment: fixed !important;
+  background-repeat: no-repeat !important;
 }
 
 /* ── Fondo de pantalla con imagen de PLAYA (portal + tarifario público) ──────
