@@ -561,3 +561,37 @@ export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void>
     /* el auto-recálculo es best-effort; nunca bloquea la edición */
   }
 }
+
+// Regenera el tarifario de los paquetes activos que usan un BLOQUEO aéreo. Se
+// llama tras editar/eliminar el bloqueo (tarifa de empaquetar, fechas, ruta).
+export async function regenerarTarifariosDeBloqueo(bloqueoId: number): Promise<void> {
+  if (!bloqueoId) return;
+  try {
+    const sb = await createClient();
+    const { data: pkgs } = await sb
+      .from("armado_vuelos")
+      .select("paquete_id, armado_paquetes!inner(activo)")
+      .eq("bloqueo_id", bloqueoId);
+    const ids = [...new Set((pkgs ?? [])
+      .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
+      .map((p) => p.paquete_id))];
+    for (const id of ids) { try { await generarTarifario(id); } catch { /* sigue */ } }
+  } catch { /* best-effort */ }
+}
+
+// Regenera el tarifario de los paquetes activos que usan un SERVICIO. Se llama
+// tras editar/eliminar el servicio (precio por persona o tarifas por grupo).
+export async function regenerarTarifariosDeServicio(servicioId: number): Promise<void> {
+  if (!servicioId) return;
+  try {
+    const sb = await createClient();
+    const { data: pkgs } = await sb
+      .from("armado_servicios")
+      .select("paquete_id, armado_paquetes!inner(activo)")
+      .eq("servicio_id", servicioId);
+    const ids = [...new Set((pkgs ?? [])
+      .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
+      .map((p) => p.paquete_id))];
+    for (const id of ids) { try { await generarTarifario(id); } catch { /* sigue */ } }
+  } catch { /* best-effort */ }
+}
