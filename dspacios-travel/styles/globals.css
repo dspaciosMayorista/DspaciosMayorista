@@ -279,10 +279,14 @@ html[data-theme="web"] {
 html[data-theme="web"] body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
 html[data-theme="web"] h1, html[data-theme="web"] h2, html[data-theme="web"] h3 { letter-spacing: -0.01em; }
 
-/* Lienzo claro tintado de índigo (paneles/listados) */
+/* Lienzo CENTRAL con índigo claro de verdad (no gris): el fondo de la pantalla
+   toma el look del sitio, no solo el menú. */
 html[data-theme="web"] body,
-html[data-theme="web"] .bg-gray-50  { background-color: #f4f5fb !important; }
-html[data-theme="web"] .bg-gray-100 { background-color: #e9eaf8 !important; }
+html[data-theme="web"] .bg-gray-50  { background-color: #e7e9f9 !important; }
+html[data-theme="web"] .bg-gray-100 { background-color: #dadef3 !important; }
+html[data-theme="web"] main {
+  background: linear-gradient(180deg, #eef0fd 0%, #e3e6f7 55%, #e7eef0 100%) !important;
+}
 
 /* SIDEBAR con degradado índigo (como el header del sitio) + contenido claro */
 html[data-theme="web"] aside.bg-white {
