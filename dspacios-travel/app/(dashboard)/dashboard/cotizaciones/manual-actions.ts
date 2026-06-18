@@ -156,3 +156,101 @@ export async function crearCotizacionManual(
   revalidatePath("/dashboard/cotizaciones");
   return { ok: true, id: cot.id };
 }
+
+// ── Convertir cotización dinámica a contrato ───────────────────────────────
+// Genera numero_contrato, crea la venta y los contrato_items. La cotización
+// queda en estado 'convertida' enlazada al nuevo contrato.
+export async function convertirCotizacionManualAContrato(
+  cotizacionId: number
+): Promise<{ ok: true; numero: string } | { ok: false; error: string }> {
+  const sb = await createClient();
+
+  const { data: cot } = await sb
+    .from("cotizaciones")
+    .select("*")
+    .eq("id", cotizacionId)
+    .eq("tipo", "manual")
+    .eq("estado", "abierta")
+    .maybeSingle();
+  if (!cot) return { ok: false, error: "Cotización no encontrada o ya fue procesada." };
+
+  const { data: servicios } = await sb
+    .from("cotizacion_servicios")
+    .select("*")
+    .eq("cotizacion_id", cotizacionId)
+    .order("orden");
+
+  const payload = (cot.payload ?? {}) as CotizacionManualInput;
+  const detalle = (cot.detalle ?? {}) as Record<string, unknown>;
+
+  // Número de contrato (secuencia BD)
+  const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
+  if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+
+  // Costos netos agregados por tipo (para la venta)
+  const ss = servicios ?? [];
+  const costoAereo   = ss.filter(s => s.tipo_servicio === "aereo").reduce((a, s) => a + (s.costo_neto ?? 0), 0);
+  const costoHotel   = ss.filter(s => s.tipo_servicio === "hotel").reduce((a, s) => a + (s.costo_neto ?? 0), 0);
+  const costoOtros   = ss.filter(s => !["aereo","hotel"].includes(s.tipo_servicio)).reduce((a, s) => a + (s.costo_neto ?? 0), 0);
+
+  const canal = payload.tipoAsesor === "interno" ? "B2C" : "B2B";
+  const ventaSnap = (detalle.venta ?? {}) as Record<string, unknown>;
+
+  const { error: ve } = await sb.from("ventas").insert({
+    numero_contrato: numero,
+    cliente: cot.cliente ?? "",
+    cliente_documento: cot.cliente_documento ?? undefined,
+    cliente_telefono: payload.cliente?.telefono || undefined,
+    destino: cot.destino ?? undefined,
+    tipo_paquete: "dinamico",
+    fecha_salida: cot.fecha_salida ?? undefined,
+    fecha_regreso: cot.fecha_regreso ?? undefined,
+    pax: cot.pax ?? undefined,
+    precio_venta: cot.precio_venta ?? undefined,
+    moneda: cot.moneda ?? "COP",
+    asesor: cot.asesor ?? undefined,
+    canal,
+    tipo_cliente: payload.tipoAsesor ?? undefined,
+    hotel: typeof ventaSnap.hotel === "string" ? ventaSnap.hotel : undefined,
+    aerolinea: typeof ventaSnap.aerolinea === "string" ? ventaSnap.aerolinea : undefined,
+    costo_aereo: costoAereo,
+    costo_hotel: costoHotel,
+    otros_costos: costoOtros,
+    estado: "pendiente",
+    observaciones: payload.observaciones || undefined,
+  });
+  if (ve) return { ok: false, error: ve.message };
+
+  // Ítems del contrato (uno por servicio)
+  if (ss.length) {
+    const items = ss.map(s => ({
+      numero_contrato: numero,
+      descripcion: `${TIPO_LABEL[s.tipo_servicio] ?? s.tipo_servicio}: ${s.nombre_servicio ?? "—"}`
+        + (s.plataforma ? ` · ${s.plataforma}` : "")
+        + (s.proveedor ? ` (${s.proveedor})` : ""),
+      adultos: 1,
+      ninos: 0,
+      tarifa_adulto: s.valor ?? 0,
+      tarifa_nino: 0,
+      orden: s.orden,
+    }));
+    const { error: ie } = await sb.from("contrato_items").insert(items);
+    if (ie) return { ok: false, error: ie.message };
+  }
+
+  // Actualiza cotización: estado convertida + numero_contrato en el detalle
+  const detalleActualizado = {
+    ...detalle,
+    venta: { ...ventaSnap, numero_contrato: numero },
+  };
+  await sb
+    .from("cotizaciones")
+    .update({ estado: "convertida", numero_contrato: numero, detalle: detalleActualizado })
+    .eq("id", cotizacionId);
+
+  revalidatePath("/dashboard/cotizaciones");
+  revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
+  revalidatePath(`/cotizacion/${cotizacionId}`);
+
+  return { ok: true, numero };
+}

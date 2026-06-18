@@ -6,6 +6,7 @@ import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { CotizacionAcciones } from "./CotizacionAcciones";
 import { VigenciaCotizacion } from "./VigenciaCotizacion";
 import { DescartarBtn } from "./DescartarBtn";
+import { ConvertirManualBtn } from "./ConvertirManualBtn";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -128,8 +129,20 @@ export default async function CotizacionDetallePage({
         {esManual ? (
           c.estado === "abierta" ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-gray-500">Cotización dinámica (manual). Puedes imprimirla/compartirla o descartarla.</p>
-              <DescartarBtn id={c.id} />
+              <p className="text-sm text-gray-500">Cotización dinámica. Genera el contrato para confirmarla o descártala.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <DescartarBtn id={c.id} />
+                <ConvertirManualBtn id={c.id} />
+              </div>
+            </div>
+          ) : c.estado === "convertida" && c.numero_contrato ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-gray-600">
+                Convertida en contrato <span className="font-mono font-medium text-gray-800">{c.numero_contrato}</span>.
+              </p>
+              <Link href={`/dashboard/contratos/${encodeURIComponent(c.numero_contrato)}`}>
+                <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver contrato →</Button>
+              </Link>
             </div>
           ) : (
             <p className="text-sm text-gray-500">Cotización descartada.</p>
