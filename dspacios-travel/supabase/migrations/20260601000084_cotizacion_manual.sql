@@ -32,6 +32,20 @@ create table if not exists public.cotizacion_servicios (
   created_at     timestamptz not null default now()
 );
 
+-- Si la tabla se creó con una versión anterior de esta migración (sin modo/ta),
+-- el `create table if not exists` de arriba no la toca → aseguramos las columnas.
+alter table public.cotizacion_servicios add column if not exists plataforma text;
+alter table public.cotizacion_servicios add column if not exists nombre_servicio text;
+alter table public.cotizacion_servicios add column if not exists proveedor text;
+alter table public.cotizacion_servicios add column if not exists costo_neto numeric(15,2) not null default 0;
+alter table public.cotizacion_servicios add column if not exists modo text not null default 'mk';
+alter table public.cotizacion_servicios add column if not exists pct_markup numeric(6,4) not null default 0;
+alter table public.cotizacion_servicios add column if not exists ta numeric(15,2) not null default 0;
+alter table public.cotizacion_servicios add column if not exists valor numeric(15,2) not null default 0;
+
+-- Forzar a PostgREST a recargar el esquema (por si quedó cacheado sin las columnas).
+notify pgrst, 'reload schema';
+
 create index if not exists idx_cot_servicios_cotizacion on public.cotizacion_servicios(cotizacion_id);
 
 -- ── RLS: mismo alcance interno que cotizaciones ───────────────────────────
