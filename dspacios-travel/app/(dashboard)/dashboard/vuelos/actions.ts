@@ -446,3 +446,115 @@ export async function moverPasajeroSilla(
   revalidatePath("/dashboard/vuelos");
   return { ok: true };
 }
+
+// ── Carga masiva de PASAJEROS ──────────────────────────────────────────────
+// Cada fila trae su PNR (record). El pasajero se asigna a una silla LIBRE de ese
+// record (sin pasajero, estado disponible/cambio_entrante). Reglas pedidas:
+//  - Repetido por documento en el MISMO PNR → se omite (ya está ahí).
+//  - Mismo documento en OTRO PNR → alarma para revisar (no bloquea).
+//  - PNR que no existe → se cuenta y se avisa cuántos pasajeros lo traen.
+//  - Si un PNR no tiene cupos libres suficientes → se avisa.
+export async function cargarPasajerosMasivo(
+  rows: Record<string, string>[]
+): Promise<{ ok: boolean; insertados: number; errores: string[] }> {
+  const sb = await createClient();
+  const errores: string[] = [];
+
+  // PNR (record) → bloqueo. record es único.
+  const { data: bloqueos } = await sb.from("bloqueos_vuelo").select("id, record");
+  const recordToId = new Map<string, number>();
+  for (const b of bloqueos ?? []) {
+    const r = (b.record ?? "").trim().toUpperCase();
+    if (r) recordToId.set(r, b.id);
+  }
+
+  // Documento → records donde ya aparece (pasajeros ya cargados). Se va
+  // actualizando con el propio lote para detectar repetidos dentro del archivo.
+  const { data: existentes } = await sb
+    .from("sillas")
+    .select("numero_doc, bloqueos_vuelo(record)")
+    .not("numero_doc", "is", null);
+  const docRecords = new Map<string, Set<string>>();
+  for (const s of existentes ?? []) {
+    const doc = (s.numero_doc ?? "").trim();
+    if (!doc) continue;
+    const rec = ((s.bloqueos_vuelo as unknown as { record: string | null } | null)?.record ?? "").trim().toUpperCase();
+    const set = docRecords.get(doc) ?? new Set<string>();
+    if (rec) set.add(rec);
+    docRecords.set(doc, set);
+  }
+
+  type Pas = { nombres: string; apellidos: string; tipoDoc: string; doc: string; nacimiento: string | null };
+  const aCargarPorPnr = new Map<string, Pas[]>();
+  const pnrInexistente = new Set<string>();
+  let pnrInexistenteCount = 0;
+  let omitidos = 0;
+  const reFecha = /^\d{4}-\d{2}-\d{2}$/;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const linea = i + 2;
+    const pnr = (r.pnr || r.record || "").trim().toUpperCase();
+    const nombres = (r.nombres || "").trim();
+    const apellidos = (r.apellidos || "").trim();
+    const tipoDoc = (r.tipo_doc || "").trim();
+    const doc = (r.numero_doc || "").trim();
+    const nacRaw = (r.nacimiento || "").trim();
+    const nacimiento = reFecha.test(nacRaw) ? nacRaw : null;
+
+    if (!pnr) { errores.push(`Fila ${linea}: sin PNR.`); continue; }
+    if (!doc) { errores.push(`Fila ${linea}: sin número de documento.`); continue; }
+    if (!nombres && !apellidos) { errores.push(`Fila ${linea}: sin nombre.`); continue; }
+
+    const records = docRecords.get(doc) ?? new Set<string>();
+    if (records.has(pnr)) { omitidos++; continue; } // ya está en ese PNR → omitir
+    if (records.size > 0) {
+      errores.push(`⚠️ Revisar: ${nombres} ${apellidos} (doc ${doc}) ya aparece en el PNR ${[...records].join(", ")} y ahora en ${pnr}.`);
+    }
+    records.add(pnr);
+    docRecords.set(doc, records);
+
+    if (!recordToId.has(pnr)) { pnrInexistenteCount++; pnrInexistente.add(pnr); continue; }
+    const arr = aCargarPorPnr.get(pnr) ?? [];
+    arr.push({ nombres, apellidos, tipoDoc, doc, nacimiento });
+    aCargarPorPnr.set(pnr, arr);
+  }
+
+  if (pnrInexistenteCount > 0)
+    errores.push(`⚠️ ${pnrInexistenteCount} pasajero(s) tienen un PNR que no existe: ${[...pnrInexistente].join(", ")}.`);
+  if (omitidos > 0)
+    errores.push(`${omitidos} pasajero(s) omitido(s): ya estaban en el mismo PNR (documento repetido).`);
+
+  // Asignación a sillas libres por record.
+  let insertados = 0;
+  for (const [pnr, pas] of aCargarPorPnr) {
+    const bloqueoId = recordToId.get(pnr)!;
+    const { data: libres } = await sb
+      .from("sillas")
+      .select("id")
+      .eq("bloqueo_id", bloqueoId)
+      .in("estado", ["disponible", "cambio_entrante"])
+      .is("pasajero_nombres", null)
+      .order("numero_silla")
+      .limit(pas.length);
+    const ids = (libres ?? []).map((s) => s.id);
+    if (ids.length < pas.length)
+      errores.push(`PNR ${pnr}: faltaron ${pas.length - ids.length} cupo(s) libre(s) para ${pas.length} pasajero(s).`);
+    for (let k = 0; k < ids.length && k < pas.length; k++) {
+      const p = pas[k];
+      const { error } = await sb.from("sillas").update({
+        pasajero_nombres: p.nombres || null,
+        pasajero_apellidos: p.apellidos || null,
+        tipo_doc: p.tipoDoc || null,
+        numero_doc: p.doc || null,
+        nacimiento: p.nacimiento,
+        updated_at: new Date().toISOString(),
+      }).eq("id", ids[k]);
+      if (error) errores.push(`PNR ${pnr}: ${error.message}`);
+      else insertados++;
+    }
+    revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  }
+  revalidatePath("/dashboard/vuelos/pasajeros");
+  return { ok: errores.length === 0, insertados, errores };
+}

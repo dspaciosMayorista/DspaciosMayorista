@@ -1,8 +1,19 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { PasajerosBuscador, type PasajeroFila } from "./PasajerosBuscador";
+import { CargaMasivaCSV, type Columna } from "@/components/CargaMasivaCSV";
+import { cargarPasajerosMasivo } from "../actions";
 
 export const dynamic = "force-dynamic";
+
+const PAS_COLS: Columna[] = [
+  { key: "pnr", label: "PNR", ejemplo: "L93FYZ" },
+  { key: "nombres", label: "Nombres", ejemplo: "MARIO ALEJANDRO" },
+  { key: "apellidos", label: "Apellidos", ejemplo: "DUQUE FRANCO" },
+  { key: "tipo_doc", label: "Tipo doc", ejemplo: "CC" },
+  { key: "numero_doc", label: "Número doc", ejemplo: "15429812" },
+  { key: "nacimiento", label: "Nacimiento (AAAA-MM-DD)", ejemplo: "1965-09-09" },
+];
 
 export default async function PasajerosPage() {
   const sb = await createClient();
@@ -48,6 +59,23 @@ export default async function PasajerosPage() {
       <p className="mb-6 text-sm text-gray-500">
         Busca por nombre, apellido, documento o contrato; o filtra por mes para ver todos los que viajan ese mes.
       </p>
+
+      <div className="mb-6">
+        <CargaMasivaCSV
+          titulo="Carga masiva de pasajeros"
+          descripcion="Pega o sube el listado con su PNR. Cada pasajero se asigna a una silla libre de su record."
+          columnas={PAS_COLS}
+          onSubmit={cargarPasajerosMasivo}
+          nombreArchivo="plantilla_pasajeros"
+          nota={
+            <>
+              El <b>PNR</b> (record) debe existir en Vuelos. Repetidos por documento en el <b>mismo PNR</b> se omiten;
+              en <b>otro PNR</b> se avisan para revisar; y se reporta cuántos pasajeros traen un PNR que no existe.
+            </>
+          }
+        />
+      </div>
+
       <PasajerosBuscador filas={filas} />
     </div>
   );
