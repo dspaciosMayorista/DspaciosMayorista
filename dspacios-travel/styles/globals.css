@@ -373,13 +373,16 @@ html[data-theme="blueprint"] .bg-white.border.rounded-2xl {
   box-shadow: 0 1px 0 rgba(30, 52, 72, 0.05), 0 2px 4px rgba(30, 52, 72, 0.06) !important;
 }
 
-/* SIDEBAR en PAPEL (mismo fondo que la pantalla principal: papel + grilla) */
+/* SIDEBAR en PAPEL (misma hoja que la pantalla: papel + grilla CONTINUA fija
+   al viewport, para que menú y fondo se vean como una sola superficie) */
 html[data-theme="blueprint"] aside.bg-white {
   background-color: #F6F1E8 !important;
   background-image:
     linear-gradient(rgba(30, 52, 72, 0.05) 1px, transparent 1px),
     linear-gradient(90deg, rgba(30, 52, 72, 0.05) 1px, transparent 1px) !important;
   background-size: 26px 26px, 26px 26px !important;
+  background-position: center !important;
+  background-attachment: fixed !important;
   border-right-color: #d8cdb8 !important;
 }
 html[data-theme="blueprint"] aside .border-gray-100 { border-color: #e0d8c6 !important; }
