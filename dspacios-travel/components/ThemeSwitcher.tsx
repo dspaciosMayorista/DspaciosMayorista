@@ -22,7 +22,14 @@ export function ThemeSwitcher() {
     setTema(saved);
     try {
       const p = localStorage.getItem(POS_KEY);
-      if (p) setPos(JSON.parse(p) as { x: number; y: number });
+      if (p) {
+        const raw = JSON.parse(p) as { x: number; y: number };
+        // Re-encuadra dentro del viewport actual: si quedó fuera (por arrastre o
+        // cambio de tamaño), vuelve a un punto visible en vez de desaparecer.
+        const x = Math.min(Math.max(8, raw.x), window.innerWidth - 48);
+        const y = Math.min(Math.max(8, raw.y), window.innerHeight - 48);
+        setPos({ x, y });
+      }
     } catch { /* ignore */ }
   }, []);
 
@@ -81,11 +88,13 @@ export function ThemeSwitcher() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        className="flex h-9 w-9 cursor-grab items-center justify-center rounded-lg border border-gray-200 bg-white/95 text-gray-600 shadow-md backdrop-blur select-none active:cursor-grabbing"
+        className="flex h-10 cursor-grab items-center gap-2 rounded-full border border-white/30 px-3.5 text-sm font-semibold text-white shadow-lg backdrop-blur select-none active:cursor-grabbing"
+        style={{ backgroundColor: "var(--brand-primary)" }}
         title="Estilo · clic para mostrar/ocultar · arrastra para mover"
         aria-label="Barra de estilo"
       >
         <Palette size={17} />
+        <span className="hidden sm:inline">Estilo</span>
       </button>
       {mostrar && (
         <div className="flex items-center gap-1 rounded-full border border-gray-200 bg-white/95 p-1 shadow-lg backdrop-blur">
