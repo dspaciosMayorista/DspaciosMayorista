@@ -1737,9 +1737,10 @@ export type Database = {
         Row: {
           id: number;
           codigo: string;
+          tipo: string;
           created_at: string;
           estado: string;
-          payload: Json;
+          payload: Json | null;
           detalle: Json | null;
           cliente: string | null;
           cliente_documento: string | null;
@@ -1762,10 +1763,11 @@ export type Database = {
         Insert: {
           id?: number;
           codigo?: string;
+          tipo?: string;
           share_token?: string;
           created_at?: string;
           estado?: string;
-          payload: Json;
+          payload?: Json | null;
           detalle?: Json | null;
           cliente?: string | null;
           cliente_documento?: string | null;
@@ -1785,6 +1787,36 @@ export type Database = {
           numero_contrato?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["cotizaciones"]["Insert"]>;
+        Relationships: [];
+      };
+      cotizacion_servicios: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          orden: number;
+          tipo_servicio: string;
+          plataforma: string | null;
+          nombre_servicio: string | null;
+          proveedor: string | null;
+          costo_neto: number;
+          pct_markup: number;
+          valor: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          cotizacion_id: number;
+          orden?: number;
+          tipo_servicio: string;
+          plataforma?: string | null;
+          nombre_servicio?: string | null;
+          proveedor?: string | null;
+          costo_neto?: number;
+          pct_markup?: number;
+          valor?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["cotizacion_servicios"]["Insert"]>;
         Relationships: [];
       };
       hotel_fotos: {
