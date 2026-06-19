@@ -345,6 +345,90 @@ export async function cambiarEstadoSilla(
   return { ok: true };
 }
 
+// ── Contrato MANUAL en una silla (venta externa al sistema) ────────────────
+// Excluyente con el contrato orgánico: si la silla ya nació de una venta del
+// sistema (numero_contrato), NO se le puede poner manual. Al asignarlo, la
+// silla queda CONFIRMADA (ocupa el cupo).
+export async function asignarContratoManual(
+  sillaId: number,
+  contratoManual: string,
+  bloqueoId: number
+): Promise<Result> {
+  const sb = await createClient();
+  const num = (contratoManual ?? "").trim();
+  if (!num) return { ok: false, error: "Escribe el número de contrato manual." };
+
+  const { data: s } = await sb.from("sillas").select("numero_contrato, estado").eq("id", sillaId).maybeSingle();
+  if (!s) return { ok: false, error: "Silla no encontrada." };
+  if (s.numero_contrato)
+    return { ok: false, error: `Esta silla ya tiene el contrato orgánico ${s.numero_contrato}. No puede tener uno manual.` };
+  if (s.estado === "cambio" || s.estado === "cambio_entrante")
+    return { ok: false, error: "Una silla en cambio no admite contrato manual." };
+
+  const { error } = await sb
+    .from("sillas")
+    // Cast: los tipos generados aún no incluyen contrato_manual (migración 085).
+    .update({ contrato_manual: num, estado: "confirmada", updated_at: new Date().toISOString() } as never)
+    .eq("id", sillaId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
+
+export async function quitarContratoManual(sillaId: number, bloqueoId: number): Promise<Result> {
+  const sb = await createClient();
+  const { data: s } = await (sb.from("sillas").select("contrato_manual").eq("id", sillaId).maybeSingle() as unknown as Promise<{ data: { contrato_manual: string | null } | null }>);
+  if (!s) return { ok: false, error: "Silla no encontrada." };
+  if (!s.contrato_manual) return { ok: false, error: "Esta silla no tiene contrato manual." };
+  const { error } = await sb
+    .from("sillas")
+    .update({ contrato_manual: null, estado: "disponible", updated_at: new Date().toISOString() } as never)
+    .eq("id", sillaId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
+
+// ── Eliminar un cupo (silla) del bloqueo ───────────────────────────────────
+// Solo se permite quitar sillas DISPONIBLES (o cambio_entrante sin asignar): si
+// había 10 cupos y se elimina uno, quedan 9. Decrementa cupos_total y registra
+// el movimiento en el historial de cambios.
+export async function eliminarCupo(sillaId: number, bloqueoId: number): Promise<Result> {
+  const sb = await createClient();
+  const { data: s } = await (sb
+    .from("sillas")
+    .select("estado, numero_silla, numero_contrato, contrato_manual")
+    .eq("id", sillaId)
+    .maybeSingle() as unknown as Promise<{ data: { estado: string; numero_silla: number | null; numero_contrato: string | null; contrato_manual: string | null } | null }>);
+  if (!s) return { ok: false, error: "Silla no encontrada." };
+  if (!["disponible", "cambio_entrante"].includes(s.estado) || s.numero_contrato || s.contrato_manual)
+    return { ok: false, error: "Solo se pueden eliminar cupos disponibles (sin venta ni contrato)." };
+
+  // movimientos_silla referencia la silla (FK sin cascade): limpiar primero.
+  await sb.from("movimientos_silla").delete().eq("silla_id", sillaId);
+  const { error } = await sb.from("sillas").delete().eq("id", sillaId);
+  if (error) return { ok: false, error: error.message };
+
+  // Decrementar cupos_total del bloqueo (no baja de 0).
+  const { data: b } = await sb.from("bloqueos_vuelo").select("cupos_total").eq("id", bloqueoId).maybeSingle();
+  const nuevo = Math.max(0, (Number(b?.cupos_total) || 0) - 1);
+  await sb.from("bloqueos_vuelo").update({ cupos_total: nuevo }).eq("id", bloqueoId);
+
+  // Registrar en el historial de cambios del bloqueo.
+  const { data: { user } } = await sb.auth.getUser();
+  await sb.from("bloqueo_cambios").insert({
+    bloqueo_id: bloqueoId,
+    detalle: `Cupo eliminado (silla ${s.numero_silla ?? "?"}). Cupos: ${nuevo}.`,
+    registrado_por: user?.email ?? null,
+  });
+
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
+
 export async function eliminarBloqueo(id: number): Promise<Result> {
   const sb = await createClient();
   // Captura los paquetes que usaban el bloqueo ANTES de borrarlo; se regeneran
