@@ -22,7 +22,7 @@ export type ServicioManual = {
 };
 
 export type CotizacionManualInput = {
-  cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
+  cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string; nacimiento?: string };
   destino: string;
   fechaIda: string;
   fechaRegreso: string;
@@ -42,13 +42,28 @@ const TIPO_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
 };
 
-// Descripción del servicio para documentos al CLIENTE (cotización/contrato).
-// NO incluye la plataforma: es info interna (dónde se cotizó), no va al cliente.
-function descripcionServicioCliente(tipo: string, nombre?: string | null, proveedor?: string | null): string {
-  const t = TIPO_LABEL[tipo] ?? tipo;
-  const n = (nombre || "").trim() || "—";
-  const p = (proveedor || "").trim();
-  return `${t}: ${n}${p ? ` (${p})` : ""}`;
+// Fecha YYYY-MM-DD → DD/MM/YYYY (para el nombre del ítem de paquete).
+function fmtDMY(iso?: string | null): string {
+  const m = String(iso ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso || "—");
+}
+
+// Nombre del ÍTEM ÚNICO agrupado que ve el cliente (cotización dinámica).
+// No revela hoteles ni proveedores: ese detalle va a los vouchers.
+function nombrePaqueteItem(destino?: string | null, ida?: string | null, regreso?: string | null): string {
+  const d = (destino || "").trim().toUpperCase() || "DESTINO";
+  return `PAQUETE TURÍSTICO A ${d} DEL ${fmtDMY(ida)} AL ${fmtDMY(regreso)}`;
+}
+
+// Recuadros "Hoteles y Servicios" del contrato, según los servicios elegidos:
+// hotel → Servicio/Plan, traslado → Tours y traslados, asistencia → Sí.
+function cajasDesdeServicios(servs: { tipo_servicio: string; nombre_servicio: string | null }[]) {
+  const nombres = (t: string) => servs.filter((s) => s.tipo_servicio === t).map((s) => (s.nombre_servicio || "").trim()).filter(Boolean);
+  return {
+    asistencia_medica: servs.some((s) => s.tipo_servicio === "asistencia"),
+    plan_nombre: nombres("hotel").join(", ") || null,
+    tours_traslados: nombres("traslado").join(", ") || null,
+  };
 }
 
 // Valor de venta de un servicio:
@@ -125,15 +140,19 @@ export async function crearCotizacionManual(
     pasajeros: [],
     hoteles: [],
     vuelos: [],
-    items: filas.map((f) => ({
+    // ÍTEM ÚNICO agrupado: el cliente ve "PAQUETE TURÍSTICO A …" con el total.
+    // El detalle por servicio se conserva en cotizacion_servicios (interno).
+    // En el documento de COTIZACIÓN, tarifa_adulto representa el valor total de
+    // la fila (el doc suma esa columna), por eso va el precioVenta completo.
+    items: [{
       numero_contrato: "",
-      descripcion: descripcionServicioCliente(f.tipo_servicio, f.nombre_servicio, f.proveedor),
+      descripcion: nombrePaqueteItem(input.destino, input.fechaIda, input.fechaRegreso),
       adultos: 1,
       ninos: 0,
-      tarifa_adulto: f.valor,
+      tarifa_adulto: precioVenta,
       tarifa_nino: 0,
-      orden: f.orden,
-    })),
+      orden: 0,
+    }],
   };
 
   const { data: cot, error } = await sb
@@ -196,15 +215,30 @@ export async function convertirCotizacionManualAContrato(
   const payload = (cot.payload ?? {}) as CotizacionManualInput;
   const detalle = (cot.detalle ?? {}) as Record<string, unknown>;
 
+  // Datos del titular OBLIGATORIOS para pasar de cotización a contrato.
+  const cl = payload.cliente ?? ({} as CotizacionManualInput["cliente"]);
+  const faltan: string[] = [];
+  if (!`${cl.nombres ?? ""}${cl.apellidos ?? ""}`.trim()) faltan.push("nombre");
+  if (!(cl.tipoDoc ?? "").trim()) faltan.push("tipo de documento");
+  if (!(cl.numeroDoc ?? "").trim()) faltan.push("número de documento");
+  if (!(cl.nacimiento ?? "").trim()) faltan.push("fecha de nacimiento");
+  if (faltan.length) return { ok: false, error: `Completa los datos del titular antes de generar el contrato: ${faltan.join(", ")}.` };
+
+  const ss = servicios ?? [];
+
   // Número de contrato (secuencia BD)
   const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
   if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
 
-  // Costos netos agregados por tipo (para la venta)
-  const ss = servicios ?? [];
-  const costoAereo   = ss.filter(s => s.tipo_servicio === "aereo").reduce((a, s) => a + (s.costo_neto ?? 0), 0);
-  const costoHotel   = ss.filter(s => s.tipo_servicio === "hotel").reduce((a, s) => a + (s.costo_neto ?? 0), 0);
-  const costoOtros   = ss.filter(s => !["aereo","hotel"].includes(s.tipo_servicio)).reduce((a, s) => a + (s.costo_neto ?? 0), 0);
+  // Costos netos por tipo, cada uno EN SU LUGAR (rentabilidad / flujo de caja):
+  // aéreo, hotel, receptivo (traslados), asistencia y otros.
+  const sumTipo = (pred: (t: string) => boolean) => ss.filter((s) => pred(s.tipo_servicio)).reduce((a, s) => a + (s.costo_neto ?? 0), 0);
+  const costoAereo      = sumTipo((t) => t === "aereo");
+  const costoHotel      = sumTipo((t) => t === "hotel");
+  const costoReceptivo  = sumTipo((t) => t === "traslado");
+  const costoAsistencia = sumTipo((t) => t === "asistencia");
+  const costoOtros      = sumTipo((t) => t === "otro");
+  const cajas = cajasDesdeServicios(ss);
 
   const canal = payload.tipoAsesor === "interno" ? "B2C" : "B2B";
   const ventaSnap = (detalle.venta ?? {}) as Record<string, unknown>;
@@ -224,31 +258,51 @@ export async function convertirCotizacionManualAContrato(
     asesor: cot.asesor ?? undefined,
     canal,
     tipo_cliente: payload.tipoAsesor ?? undefined,
-    hotel: typeof ventaSnap.hotel === "string" ? ventaSnap.hotel : undefined,
+    hotel: cajas.plan_nombre ?? (typeof ventaSnap.hotel === "string" ? ventaSnap.hotel : undefined),
     aerolinea: typeof ventaSnap.aerolinea === "string" ? ventaSnap.aerolinea : undefined,
+    // Recuadros "Hoteles y Servicios" del contrato según la selección.
+    plan_nombre: cajas.plan_nombre ?? undefined,
+    tours_traslados: cajas.tours_traslados ?? undefined,
+    asistencia_medica: cajas.asistencia_medica,
     costo_aereo: costoAereo,
     costo_hotel: costoHotel,
+    costo_receptivo: costoReceptivo,
+    costo_asistencia: costoAsistencia,
     otros_costos: costoOtros,
     estado: "pendiente",
     observaciones: payload.observaciones || undefined,
   });
   if (ve) return { ok: false, error: ve.message };
 
-  // Ítems del contrato (uno por servicio)
-  if (ss.length) {
-    const items = ss.map(s => ({
+  // ÍTEM ÚNICO agrupado: "PAQUETE TURÍSTICO A {destino} DEL {ida} AL {regreso}".
+  // adultos = pax, tarifa_adulto = total/pax (por persona); el doc del contrato
+  // multiplica adultos × tarifa_adulto. El detalle de hoteles/servicios va a los
+  // vouchers, no al ítem.
+  {
+    const pax = Math.max(Number(cot.pax) || 1, 1);
+    const total = Number(cot.precio_venta) || 0;
+    const { error: ie } = await sb.from("contrato_items").insert([{
       numero_contrato: numero,
-      descripcion: descripcionServicioCliente(s.tipo_servicio, s.nombre_servicio, s.proveedor),
-      adultos: cot.pax ?? 1,
+      descripcion: nombrePaqueteItem(cot.destino, cot.fecha_salida, cot.fecha_regreso),
+      adultos: pax,
       ninos: 0,
-      // tarifa_adulto = precio por persona; total = adultos × tarifa_adulto
-      tarifa_adulto: Math.round((s.valor ?? 0) / Math.max(cot.pax ?? 1, 1)),
+      tarifa_adulto: Math.round(total / pax),
       tarifa_nino: 0,
-      orden: s.orden,
-    }));
-    const { error: ie } = await sb.from("contrato_items").insert(items);
+      orden: 0,
+    }]);
     if (ie) return { ok: false, error: ie.message };
   }
+
+  // Titular como pasajero del contrato (datos validados arriba).
+  await sb.from("contrato_pasajeros").insert({
+    numero_contrato: numero,
+    nombre: `${cl.nombres ?? ""} ${cl.apellidos ?? ""}`.trim(),
+    tipo_id: cl.tipoDoc || "CC",
+    identificacion: cl.numeroDoc || null,
+    fecha_nacimiento: cl.nacimiento || null,
+    es_infante: false,
+    orden: 0,
+  });
 
   // Cuentas por pagar (CxP) de la cotización DINÁMICA. A diferencia del tarifario
   // (proveedor negociado del catálogo), aquí el servicio se cotizó en una
