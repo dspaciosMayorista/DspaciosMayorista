@@ -1,5 +1,5 @@
 -- ───────────────────────────────────────────────────────────────────────────
--- 079 · RECOBRO en ventas + parámetro "Distribución B2B"
+-- 086 · RECOBRO en ventas + parámetro "Distribución B2B"
 --
 --  RECOBRO = mayor valor cobrado que entra en el total de la venta pero NO
 --  corresponde a ningún servicio y NO se le muestra al cliente.
