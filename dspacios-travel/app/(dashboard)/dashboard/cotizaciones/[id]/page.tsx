@@ -60,6 +60,15 @@ export default async function CotizacionDetallePage({
     numeroDoc: payload.cliente?.numeroDoc ?? "",
   };
 
+  // Desglose interno: servicios + niños + recobro (oculto al cliente) = total.
+  const detalleM = (c.detalle ?? {}) as { recobro?: { total?: number; empresa?: number; aliado?: number }; venta?: { ninos?: number } };
+  const serviciosSubtotal = (serviciosManual ?? []).reduce((s, x) => s + (Number(x.valor) || 0), 0);
+  const recobroTotal = Number(detalleM.recobro?.total ?? 0);
+  const recobroEmpresa = Number(detalleM.recobro?.empresa ?? 0);
+  const recobroAliado = Number(detalleM.recobro?.aliado ?? 0);
+  const ninosSubtotal = Math.max((Number(c.precio_venta) || 0) - serviciosSubtotal - recobroTotal, 0);
+  const numNinos = Number(detalleM.venta?.ninos ?? 0);
+
   return (
     <div className="mx-auto max-w-3xl p-4 md:p-8">
       <Link href="/dashboard/cotizaciones" className="text-sm text-gray-400 hover:text-gray-600">
@@ -118,10 +127,30 @@ export default async function CotizacionDetallePage({
                 ))}
                 {!serviciosManual?.length && <tr><td colSpan={5} className="px-4 py-4 text-center text-gray-400">Sin servicios.</td></tr>}
               </tbody>
-              <tfoot><tr className="border-t border-gray-200 font-medium">
-                <td className="px-4 py-2" colSpan={4}>Total</td>
-                <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(c.precio_venta ?? 0, moneda)}</td>
-              </tr></tfoot>
+              <tfoot className="text-sm">
+                <tr className="border-t border-gray-100 text-gray-500">
+                  <td className="px-4 py-2" colSpan={4}>Subtotal servicios</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(serviciosSubtotal, moneda)}</td>
+                </tr>
+                {numNinos > 0 && (
+                  <tr className="text-gray-500">
+                    <td className="px-4 py-2" colSpan={4}>Niños ({numNinos})</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(ninosSubtotal, moneda)}</td>
+                  </tr>
+                )}
+                {recobroTotal > 0 && (
+                  <tr className="text-amber-700">
+                    <td className="px-4 py-2" colSpan={4}>
+                      Recobro <span className="text-[11px] text-amber-600">(oculto al cliente · empresa {formatMoneda(recobroEmpresa, moneda)}{recobroAliado > 0 ? ` · aliado ${formatMoneda(recobroAliado, moneda)}` : ""})</span>
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(recobroTotal, moneda)}</td>
+                  </tr>
+                )}
+                <tr className="border-t border-gray-200 font-medium">
+                  <td className="px-4 py-2" colSpan={4}>Total</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(c.precio_venta ?? 0, moneda)}</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>

@@ -73,10 +73,13 @@ export default async function CotizacionImprimiblePage({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const payload = (cot.payload ?? {}) as any;
     const ventaSnap = (d?.venta ?? {}) as Record<string, unknown>;
-    const items: { descripcion: string; tarifa_adulto: number }[] = (d?.items ?? []).map(
+    const items: { descripcion: string; cantidad?: number; tarifa_unit?: number; valor: number }[] = (d?.items ?? []).map(
       (it: Record<string, unknown>) => ({
         descripcion: String(it.descripcion ?? ""),
-        tarifa_adulto: Number(it.tarifa_adulto ?? 0),
+        cantidad: it.cantidad != null ? Number(it.cantidad) : undefined,
+        tarifa_unit: it.tarifa_unit != null ? Number(it.tarifa_unit) : undefined,
+        // Compat: cotizaciones viejas guardaban el valor en tarifa_adulto.
+        valor: Number(it.valor ?? it.tarifa_adulto ?? 0),
       })
     );
 

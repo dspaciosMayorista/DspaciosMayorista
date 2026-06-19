@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,8 +35,8 @@ function valor(f: { costoNeto: number; modo: "mk" | "ta"; pctMarkup: number; ta:
   return Math.round(c / (1 - m));
 }
 
-export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }: {
-  asesores: Asesor[]; aliados: Aliado[]; miNombre: string; miRolVenta: boolean;
+export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, pctAliadoB2B }: {
+  asesores: Asesor[]; aliados: Aliado[]; miNombre: string; miRolVenta: boolean; pctAliadoB2B: number;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -48,7 +48,12 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
   const [fechaIda, setFechaIda] = useState("");
   const [fechaRegreso, setFechaRegreso] = useState("");
   const [pax, setPax] = useState("1");
+  const [numNinos, setNumNinos] = useState("0");
+  const [tarifaNino, setTarifaNino] = useState("0");
   const [moneda, setMoneda] = useState("COP");
+  // Recobro: mayor valor cobrado (oculto al cliente). Distribución según canal.
+  const [recobro, setRecobro] = useState("0");
+  const [recobroAliado, setRecobroAliado] = useState("0");
   const [plazo, setPlazo] = useState("");
   const [vigencia, setVigencia] = useState(masDias(3));
   const [observaciones, setObservaciones] = useState("");
@@ -66,8 +71,25 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
 
   // El modo TA solo aplica al aéreo (igual que en el servidor).
   const efModo = (f: Fila): "mk" | "ta" => (f.tipo === "aereo" && f.modo === "ta" ? "ta" : "mk");
-  const total = useMemo(() => filas.reduce((s, f) => s + valor({ ...f, modo: efModo(f) }), 0), [filas]);
+  const totalServicios = useMemo(() => filas.reduce((s, f) => s + valor({ ...f, modo: efModo(f) }), 0), [filas]);
   const fmt = (n: number) => formatMoneda(n, moneda);
+
+  const nNinos = Math.max(Number(numNinos) || 0, 0);
+  const valorNino = Math.max(Number(tarifaNino) || 0, 0);
+  const totalNinos = nNinos * valorNino;
+  const recobroN = Math.max(Number(recobro) || 0, 0);
+  const totalCotizacion = totalServicios + totalNinos + recobroN;
+
+  const esB2B = tipoAsesor !== "interno";
+  const recobroAliadoN = esB2B ? Math.min(Math.max(Number(recobroAliado) || 0, 0), recobroN) : 0;
+  const recobroEmpresaN = recobroN - recobroAliadoN;
+
+  // Cliente final = 100% empresa. Al pasar a B2B, sugiere el % de la config.
+  useEffect(() => {
+    if (!esB2B) { setRecobroAliado("0"); return; }
+    setRecobroAliado((prev) => (Number(prev) > 0 ? prev : String(Math.round(recobroN * pctAliadoB2B))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipoAsesor]);
 
   function agregar(tipo: string) {
     setFilas((f) => [...f, { _id: _seq++, tipo, plataforma: "", nombre: "", proveedor: "", costoNeto: 0, modo: "mk", pctMarkup: Number(markupGeneral) || 0, ta: 0 }]);
@@ -86,6 +108,8 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
     start(async () => {
       const r = await crearCotizacionManual({
         cliente: cli, destino, fechaIda, fechaRegreso, pax: Number(pax) || 0, moneda,
+        ninos: nNinos, tarifaNino: valorNino,
+        recobro: recobroN, recobroAliado: recobroAliadoN,
         tipoAsesor,
         asesorInterno: tipoAsesor === "interno" ? asesorInterno : "",
         agenciaNombre: tipoAsesor === "agencia" ? aliadoNombre : "",
@@ -129,7 +153,11 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
           <div className="col-span-2 md:col-span-2"><label className={lbl}>Destino</label><Input value={destino} onChange={(e) => setDestino(e.target.value)} placeholder="Ej. San Andrés" /></div>
           <div><label className={lbl}>Fecha ida</label><Input type="date" value={fechaIda} min={hoy} onChange={(e) => setFechaIda(e.target.value)} /></div>
           <div><label className={lbl}>Fecha regreso</label><Input type="date" value={fechaRegreso} min={fechaIda || hoy} onChange={(e) => setFechaRegreso(e.target.value)} /></div>
-          <div><label className={lbl}>Pax</label><Input type="number" min={1} value={pax} onChange={(e) => setPax(e.target.value)} /></div>
+          <div><label className={lbl}>Adultos</label><Input type="number" min={1} value={pax} onChange={(e) => setPax(e.target.value)} /></div>
+          <div><label className={lbl}>Niños</label><Input type="number" min={0} value={numNinos} onChange={(e) => setNumNinos(e.target.value)} /></div>
+          {Number(numNinos) > 0 && (
+            <div><label className={lbl}>Tarifa por niño</label><Input type="number" min={0} value={tarifaNino} onChange={(e) => setTarifaNino(e.target.value)} /></div>
+          )}
           <div>
             <label className={lbl}>Moneda</label>
             <select value={moneda} onChange={(e) => setMoneda(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
@@ -239,8 +267,53 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
         )}
 
         <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
-          <span className="text-sm font-medium text-gray-600">Total cotización</span>
-          <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(total)}</span>
+          <span className="text-sm font-medium text-gray-600">Subtotal servicios</span>
+          <span className="text-lg font-semibold tabular-nums text-gray-700">{fmt(totalServicios)}</span>
+        </div>
+      </section>
+
+      {/* Recobro (oculto al cliente) */}
+      <section className="rounded-xl border border-gray-200 bg-white p-5">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-gray-700">Recobro</h2>
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">No se muestra al cliente</span>
+        </div>
+        <p className="mb-3 text-xs text-gray-400">Mayor valor que entra al total pero no corresponde a un servicio. Va oculto dentro de la tarifa.</p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div><label className={lbl}>Valor del recobro</label><Input type="number" min={0} value={recobro} onChange={(e) => setRecobro(e.target.value)} /></div>
+          {esB2B ? (
+            <>
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className={lbl}>Para el aliado (free/agencia)</label>
+                  <button type="button" onClick={() => setRecobroAliado(String(Math.round(recobroN * pctAliadoB2B)))}
+                    className="text-[11px] font-medium text-[#1D7C9A] hover:underline">Sugerir {Math.round(pctAliadoB2B * 100)}%</button>
+                </div>
+                <Input type="number" min={0} max={recobroN} value={recobroAliado} onChange={(e) => setRecobroAliado(e.target.value)} />
+              </div>
+              <div>
+                <label className={lbl}>Para la empresa</label>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold tabular-nums text-gray-700">{fmt(recobroEmpresaN)}</div>
+              </div>
+            </>
+          ) : (
+            <div className="md:col-span-2 flex items-end">
+              <p className="text-xs text-gray-500">Cliente final → recobro <b>100% para la empresa</b>.</p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Total cotización */}
+      <section className="rounded-xl border p-5" style={{ borderColor: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.04)" }}>
+        <div className="space-y-1 text-sm text-gray-600">
+          <div className="flex items-center justify-between"><span>Servicios (adultos)</span><span className="tabular-nums">{fmt(totalServicios)}</span></div>
+          {nNinos > 0 && <div className="flex items-center justify-between"><span>Niños ({nNinos} × {fmt(valorNino)})</span><span className="tabular-nums">{fmt(totalNinos)}</span></div>}
+          {recobroN > 0 && <div className="flex items-center justify-between text-gray-400"><span>Recobro (oculto)</span><span className="tabular-nums">{fmt(recobroN)}</span></div>}
+        </div>
+        <div className="mt-3 flex items-center justify-between border-t border-gray-200 pt-3">
+          <span className="text-sm font-semibold text-gray-700">Total cotización</span>
+          <span className="text-2xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(totalCotizacion)}</span>
         </div>
       </section>
 
