@@ -347,6 +347,29 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 **PRODUCTO** (costos netos) → **PAQUETES** (armas + margen) → **TARIFARIO** (resultado,
 interno y público) → **RESERVAR** (genera contrato/venta).
 
+### Cotización dinámica / manual — estado (rama `claude/modest-clarke-Ehftt`)
+> Base: migración **084** (`cotizacion_manual`). El asesor arma una cotización a mano
+> (servicios sueltos: aéreo/hotel/traslado/asistencia/otro con plataforma, proveedor, costo,
+> markup/TA). Vive en `app/(dashboard)/dashboard/cotizaciones/` (`nueva/CotizacionManualForm.tsx`,
+> `manual-actions.ts`, `[id]/` detalle + editores), documento al cliente en
+> `components/contrato/CotizacionManualDocumento.tsx`, página imprimible `app/cotizacion/[id]/`.
+> Convierte a contrato (`convertirCotizacionManualAContrato`): venta `dinamico` + contrato + CxP
+> (proveedor = plataforma) + titular como pasajero.
+- **Ítem agrupado**: el cliente ve **un solo** "PAQUETE TURÍSTICO A {destino} DEL {ida} AL {regreso}"
+  (no se listan hoteles/proveedores; el detalle por servicio queda interno en `cotizacion_servicios`).
+- **Titular obligatorio** para generar contrato: nombre, tipo y número de doc y **fecha de nacimiento**
+  (campo nuevo en el form). Editable luego en el detalle (`TitularEditor`).
+- **Incluye / No incluye**: texto libre editable (helper `lib/cotizacion/incluye.ts`: `sugerirIncluye`
+  + `NO_INCLUYE_DEFAULT`); se ve en el documento. Editable luego (`IncluyeEditor`).
+- **Tarifa de niño**: campos Niños + Tarifa por niño (suma al total; pax = adultos). El documento
+  muestra desglose Adultos/Niños y `contrato_items` lleva `ninos`/`tarifa_nino`.
+- **Recobro** (mayor valor cobrado, **NUNCA visible al cliente** — va oculto dentro de la tarifa de
+  adulto): cliente final → 100% empresa; agencia/freelance → se reparte (parte al aliado), default
+  desde parámetro `recobro_pct_aliado_b2b` ("Distribución B2B"). Al convertir guarda
+  `recobro_total/empresa/aliado` en `ventas` y crea `aliados_b2b` + `comision_b2b`. **Migración 086.**
+  Solo en cotización dinámica; **falta replicar en tarifario/reservar**. Recobro/niños hoy se editan
+  solo al crear (no hay editor posterior aún).
+
 ### Módulos construidos
 - **Producto:** Destinos (`/dashboard/producto/destinos`, MAYÚSCULAS + IATA), Proveedores,
   Configuración (categorías de habitación, regímenes), **Hoteles** (temporadas propias +
@@ -408,31 +431,36 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — correr en orden 016→067
-> Las migraciones nuevas usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el
-> número NNN. Correr en orden las que falten en tu base.
-016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
-019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
-023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
-026 servicio_incluido · 027 hotel_acomodaciones (reservar por habitaciones + config acomod.) ·
-028 formas_pago (catálogo de formas de pago para abonos) ·
-029 servicio_categoria (tour_traslado/asistencia/otro → ubica el servicio en el contrato) ·
-030 contrato_vuelo_hotel_extra (record/horas/números de vuelo + categoría/proveedor de hotel) ·
-031 programas (9 tablas de circuitos de proveedor + `moneda` en ventas y cuentas_por_pagar).
-**032→065** (ramas intermedias): CxP automáticas, cartera/pagos, CRM (contactos/email/campañas),
-adjuntos de contrato, política/datos bancarios de proveedor, país de destino, nota de régimen,
-documentos/fotos/estrellas/ubicación de hotel, cotizaciones (+share_token), config de
-solicitudes, vouchers, eliminar contrato, cobros, notificaciones, `ventas_asesor` sin FK,
-blackouts de hotel. *(Ver nombres exactos en `supabase/migrations/`.)*
-**066** programas_vitrina (`desde_precio`, `incluye_aereo`, `portada_url`) ·
-**067** programas_asistencia (`asistencia_medica_dia`) ·
-**078** web_cms (tablas `web_paquetes/destinos/testimonios/blog/config` del sitio
-público + RLS: lectura pública de lo activo, escritura solo superadmin) ·
-**079** recobro_cotizacion (`recobro_total/empresa/aliado` en `ventas` + parámetro
-`recobro_pct_aliado_b2b` = Distribución B2B, editable en Configuración → Parámetros). ← **pendientes de correr.**
+### Migraciones Supabase — total en repo: **086** (correr en orden las que falten)
+> Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
+> Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
+> `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
+> migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
+> ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
+> `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 085**.
+>
+> Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
+> paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
+> servicio_categoria, contrato_vuelo_hotel_extra, **031** programas (circuitos de proveedor + `moneda`).
+> Rango **032→067**: CxP automáticas, cartera/pagos, CRM, adjuntos de contrato, datos bancarios de
+> proveedor, país de destino, documentos/fotos/estrellas/ubicación de hotel, cotizaciones
+> (+share_token), solicitudes, vouchers, eliminar contrato, cobros, notificaciones, blackouts,
+> **066** programas_vitrina, **067** programas_asistencia.
+> Rango **068→085** (recientes): 068 programas_salidas · 069 videos_fondo · 070 bloqueo_cambios ·
+> 071 bloqueo_origen_tarifa_neta · 072 permisos · 073 ventas_b2b (`b2b_usuario_id`, `modo_compra`,
+> `comision_b2b`, `comision_estado`) · 074 b2b_solicitudes · 075 link_pago · 076 usuario_agencia ·
+> 077 usuario_pct_comision · 078 web_cms · **079 web_paginas** (CMS por páginas/secciones) ·
+> 080 web_storage (bucket `web-cms`) · 081 programa_edades · 082 crm_subcategoria ·
+> 083 hotel_min_noches · **084 cotizacion_manual** (cotización dinámica: tablas/campos) ·
+> **085 silla_contrato_manual** (contrato manual en la silla, fuera del flujo).
+> **086 recobro_cotizacion** ← *creada en esta rama, PENDIENTE de correr*: `recobro_total/
+> empresa/aliado` en `ventas` + parámetro `recobro_pct_aliado_b2b` (Distribución B2B, editable
+> en Configuración → Parámetros tributarios).
+> *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
-`supabase/scripts/seed_web_cms.sql` (contenido inicial del CMS; correr tras la 078).
+`supabase/scripts/seed_web_cms.sql` (contenido inicial del CMS).
 Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`,
 `RESEND_API_KEY` + dominio verificado para notificaciones/cobros (migr. 056/061/062);
 configurar destinatarios en `config_solicitudes`/`config_cobros`/`config_notificaciones`.
