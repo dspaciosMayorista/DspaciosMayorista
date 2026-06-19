@@ -7,6 +7,7 @@ import { CotizacionAcciones } from "./CotizacionAcciones";
 import { VigenciaCotizacion } from "./VigenciaCotizacion";
 import { DescartarBtn } from "./DescartarBtn";
 import { ConvertirManualBtn } from "./ConvertirManualBtn";
+import { TitularEditor } from "./TitularEditor";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -49,7 +50,7 @@ export default async function CotizacionDetallePage({
   const esSuperadmin = perfil?.rol === "superadmin";
   // Los asesores internos son los usuarios con rol 'venta'.
   const { data: asesores } = await sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre");
-  const payload = (c.payload ?? {}) as { pasajeros?: unknown[]; infantes?: number; cliente?: { nombres?: string; apellidos?: string; tipoDoc?: string; numeroDoc?: string } };
+  const payload = (c.payload ?? {}) as { pasajeros?: unknown[]; infantes?: number; cliente?: { nombres?: string; apellidos?: string; tipoDoc?: string; numeroDoc?: string; nacimiento?: string; telefono?: string; email?: string } };
   const tienePasajeros = Array.isArray(payload.pasajeros) && payload.pasajeros.length > 0;
   const clientePre = {
     nombres: payload.cliente?.nombres ?? "",
@@ -122,6 +123,23 @@ export default async function CotizacionDetallePage({
               </tr></tfoot>
             </table>
           </div>
+        </div>
+      )}
+
+      {esManual && c.estado === "abierta" && (
+        <div className="mt-6">
+          <TitularEditor
+            id={c.id}
+            inicial={{
+              nombres: payload.cliente?.nombres ?? "",
+              apellidos: payload.cliente?.apellidos ?? "",
+              tipoDoc: payload.cliente?.tipoDoc ?? "CC",
+              numeroDoc: payload.cliente?.numeroDoc ?? "",
+              nacimiento: payload.cliente?.nacimiento ?? "",
+              telefono: payload.cliente?.telefono ?? "",
+              email: payload.cliente?.email ?? "",
+            }}
+          />
         </div>
       )}
 

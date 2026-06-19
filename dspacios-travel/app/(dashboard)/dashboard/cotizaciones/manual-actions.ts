@@ -189,6 +189,58 @@ export async function crearCotizacionManual(
   return { ok: true, id: cot.id };
 }
 
+// ── Editar los datos del titular de una cotización dinámica ─────────────────
+// Permite completar/corregir el titular (incl. fecha de nacimiento) antes de
+// generar el contrato. Solo en estado 'abierta'.
+export type TitularInput = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; nacimiento: string; telefono: string; email: string };
+
+export async function actualizarTitularCotizacionManual(
+  cotizacionId: number,
+  titular: TitularInput
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const sb = await createClient();
+  const { data: cot } = await sb
+    .from("cotizaciones")
+    .select("payload, detalle, estado, tipo")
+    .eq("id", cotizacionId)
+    .maybeSingle();
+  if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  if (cot.tipo !== "manual" || cot.estado !== "abierta")
+    return { ok: false, error: "Solo se puede editar el titular de una cotización dinámica abierta." };
+  if (!`${titular.nombres ?? ""}${titular.apellidos ?? ""}`.trim())
+    return { ok: false, error: "El nombre del titular es obligatorio." };
+
+  const nombre = `${titular.nombres ?? ""} ${titular.apellidos ?? ""}`.trim();
+  const payload = { ...((cot.payload ?? {}) as Record<string, unknown>) };
+  payload.cliente = {
+    nombres: (titular.nombres || "").trim(),
+    apellidos: (titular.apellidos || "").trim(),
+    tipoDoc: (titular.tipoDoc || "CC").trim(),
+    numeroDoc: (titular.numeroDoc || "").trim(),
+    nacimiento: (titular.nacimiento || "").trim(),
+    telefono: (titular.telefono || "").trim(),
+    email: (titular.email || "").trim(),
+  };
+  const detalle = { ...((cot.detalle ?? {}) as Record<string, unknown>) };
+  const ventaSnap = { ...((detalle.venta ?? {}) as Record<string, unknown>), cliente: nombre };
+  detalle.venta = ventaSnap;
+
+  const { error } = await sb
+    .from("cotizaciones")
+    .update({
+      payload: JSON.parse(JSON.stringify(payload)),
+      detalle: JSON.parse(JSON.stringify(detalle)),
+      cliente: nombre,
+      cliente_documento: (titular.numeroDoc || "").trim() || null,
+    })
+    .eq("id", cotizacionId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
+  revalidatePath(`/cotizacion/${cotizacionId}`);
+  return { ok: true };
+}
+
 // ── Convertir cotización dinámica a contrato ───────────────────────────────
 // Genera numero_contrato, crea la venta y los contrato_items. La cotización
 // queda en estado 'convertida' enlazada al nuevo contrato.
