@@ -90,6 +90,8 @@ export default async function CotizacionImprimiblePage({
               venta={ventaSnap as Parameters<typeof CotizacionManualDocumento>[0]["venta"]}
               items={items}
               cliente={payload?.cliente ?? {}}
+              incluye={d?.incluye ?? null}
+              noIncluye={d?.noIncluye ?? null}
               vigenciaHasta={cot.vigencia_hasta}
               fechaEmision={cot.created_at ? String(cot.created_at).slice(0, 10) : null}
             />

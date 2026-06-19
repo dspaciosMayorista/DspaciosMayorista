@@ -8,6 +8,7 @@ import { VigenciaCotizacion } from "./VigenciaCotizacion";
 import { DescartarBtn } from "./DescartarBtn";
 import { ConvertirManualBtn } from "./ConvertirManualBtn";
 import { TitularEditor } from "./TitularEditor";
+import { IncluyeEditor } from "./IncluyeEditor";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -127,7 +128,7 @@ export default async function CotizacionDetallePage({
       )}
 
       {esManual && c.estado === "abierta" && (
-        <div className="mt-6">
+        <div className="mt-6 space-y-4">
           <TitularEditor
             id={c.id}
             inicial={{
@@ -139,6 +140,11 @@ export default async function CotizacionDetallePage({
               telefono: payload.cliente?.telefono ?? "",
               email: payload.cliente?.email ?? "",
             }}
+          />
+          <IncluyeEditor
+            id={c.id}
+            incluye={String((c.detalle as { incluye?: string } | null)?.incluye ?? "")}
+            noIncluye={String((c.detalle as { noIncluye?: string } | null)?.noIncluye ?? "")}
           />
         </div>
       )}
