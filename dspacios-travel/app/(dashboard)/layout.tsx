@@ -85,6 +85,7 @@ const NAV: NavItem[] = [
     children: [{ href: "/dashboard/usuarios/permisos", label: "Permisos" }],
   },
   { href: "/dashboard/usuarios/b2b", label: "Aprobaciones B2B", iconKey: "b2b", modulo: "b2b" },
+  { href: "/dashboard/auditoria", label: "Auditoría", iconKey: "auditoria", rolesPermitidos: ["superadmin", "gerencia"] },
   { href: "/dashboard/configuracion", label: "Configuración", iconKey: "configuracion", modulo: "configuracion" },
 
   // Sitio web público (CMS) — solo superadmin
@@ -114,6 +115,7 @@ export default async function DashboardLayout({
   const { rol } = await permisosDelUsuario();
   const nav = NAV.filter((n) => {
     if (n.soloSuperadmin && rol !== "superadmin") return false;
+    if (n.rolesPermitidos) return n.rolesPermitidos.includes(rol ?? "");
     return !n.modulo || permitidos.has(n.modulo);
   });
 

@@ -404,6 +404,10 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   record); bloqueos con **destino** + rangos de edad; editar bloqueo; carga masiva. El tarifario
   y Reservar muestran cupos y **ocultan/bloquean** salidas sin cupos.
 - **Configuración:** asesores, parámetros tributarios, **rangos de edad**, **formas de pago**.
+- **Auditoría** (`/dashboard/auditoria`, solo superadmin/gerencia): log de trazabilidad de
+  todo el CRUD vía trigger de BD (migración 087). Tabla con filtros (tabla, acción,
+  N° contrato/record/id, usuario, rango de fechas), paginada, con diff antes→después
+  expandible por fila. Ítem de menú gateado con `rolesPermitidos` en el nav del dashboard.
 
 ### Motor de cálculo (`lib/calc/paquetes.ts`)
 - Hotel: liquida **noche por noche** (mezcla temporadas), `costo/(1−%mk)`.
@@ -431,7 +435,7 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **086** (correr en orden las que falten)
+### Migraciones Supabase — total en repo: **087** (correr en orden las que falten)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
@@ -454,9 +458,18 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > 080 web_storage (bucket `web-cms`) · 081 programa_edades · 082 crm_subcategoria ·
 > 083 hotel_min_noches · **084 cotizacion_manual** (cotización dinámica: tablas/campos) ·
 > **085 silla_contrato_manual** (contrato manual en la silla, fuera del flujo).
-> **086 recobro_cotizacion** ← *creada en esta rama, PENDIENTE de correr*: `recobro_total/
-> empresa/aliado` en `ventas` + parámetro `recobro_pct_aliado_b2b` (Distribución B2B, editable
-> en Configuración → Parámetros tributarios).
+> **086 recobro_cotizacion** ← *PENDIENTE de correr*: `recobro_total/empresa/aliado` en
+> `ventas` + parámetro `recobro_pct_aliado_b2b` (Distribución B2B, editable en
+> Configuración → Parámetros tributarios).
+> **087 auditoria** ← *creada en esta rama, PENDIENTE de correr*: log de trazabilidad de
+> TODO el CRUD. Tabla `auditoria` + función `fn_auditoria()` (SECURITY DEFINER) + un trigger
+> genérico `trg_auditoria` adjuntado por un bloque `DO` a **todas** las tablas base de
+> `public` (excepto `auditoria` y `tarifario_resultado`). Registra quién (auth.uid() +
+> snapshot email/nombre/rol), qué (tabla + registro_id = contrato/record/id) y los cambios
+> (antes/después jsonb + `cambios` solo de campos modificados). RLS: solo leen `superadmin`
+> y `gerencia`. ⚠️ Escrituras con `service_role` (sillas/costos al reservar) NO traen actor
+> → quedan como "Sistema" (el cambio sí se registra). Re-correr el bloque DO adjunta el
+> trigger a tablas nuevas.
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·

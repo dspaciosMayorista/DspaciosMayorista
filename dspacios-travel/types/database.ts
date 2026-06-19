@@ -12,6 +12,51 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      auditoria: {
+        Row: {
+          id: number;
+          creado_en: string;
+          actor_id: string | null;
+          actor_email: string | null;
+          actor_nombre: string | null;
+          actor_rol: string | null;
+          accion: string;
+          tabla: string;
+          registro_id: string | null;
+          antes: Json | null;
+          despues: Json | null;
+          cambios: Json | null;
+        };
+        Insert: {
+          id?: number;
+          creado_en?: string;
+          actor_id?: string | null;
+          actor_email?: string | null;
+          actor_nombre?: string | null;
+          actor_rol?: string | null;
+          accion: string;
+          tabla: string;
+          registro_id?: string | null;
+          antes?: Json | null;
+          despues?: Json | null;
+          cambios?: Json | null;
+        };
+        Update: {
+          id?: number;
+          creado_en?: string;
+          actor_id?: string | null;
+          actor_email?: string | null;
+          actor_nombre?: string | null;
+          actor_rol?: string | null;
+          accion?: string;
+          tabla?: string;
+          registro_id?: string | null;
+          antes?: Json | null;
+          despues?: Json | null;
+          cambios?: Json | null;
+        };
+        Relationships: [];
+      };
       usuarios: {
         Row: {
           id: string;
