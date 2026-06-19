@@ -306,6 +306,77 @@ export async function actualizarIncluyeCotizacionManual(
   return { ok: true };
 }
 
+// ── Editar niños y recobro de una cotización dinámica ──────────────────────
+// Permite ajustar la cantidad/tarifa de niños y el recobro (oculto al cliente)
+// después de creada la cotización. Recalcula la tarifa de adulto (que esconde
+// el recobro), el subtotal de niños y el total. Solo en estado 'abierta'.
+export type RecobroNinosInput = { ninos: number; tarifaNino: number; recobro: number; recobroAliado: number };
+
+export async function actualizarRecobroNinosCotizacionManual(
+  cotizacionId: number,
+  input: RecobroNinosInput
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const sb = await createClient();
+  const { data: cot } = await sb
+    .from("cotizaciones")
+    .select("payload, detalle, estado, tipo, pax, destino, fecha_salida, fecha_regreso")
+    .eq("id", cotizacionId)
+    .maybeSingle();
+  if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  if (cot.tipo !== "manual" || cot.estado !== "abierta")
+    return { ok: false, error: "Solo se puede editar una cotización dinámica abierta." };
+
+  const payload = { ...((cot.payload ?? {}) as CotizacionManualInput) };
+  const tipoAsesor = (payload.tipoAsesor ?? "interno") as "interno" | "agencia" | "freelance";
+  const adultos = Math.max(Number(payload.pax ?? cot.pax) || 1, 1);
+
+  // Subtotal de servicios ya liquidados (columna valor); no se re-liquida.
+  const { data: servs } = await sb.from("cotizacion_servicios").select("valor").eq("cotizacion_id", cotizacionId);
+  const totalServicios = (servs ?? []).reduce((a, s) => a + (Number(s.valor) || 0), 0);
+
+  // Niños y recobro con la MISMA lógica que la creación.
+  const rec = calcularRecobroNinos({
+    pax: adultos, ninos: input.ninos, tarifaNino: input.tarifaNino,
+    recobro: input.recobro, recobroAliado: input.recobroAliado, tipoAsesor,
+  });
+  const adultSubtotal = totalServicios + rec.recobroN;          // servicios + recobro (oculto)
+  const tarifaAdultoUnit = Math.round(adultSubtotal / adultos);
+  const precioVenta = adultSubtotal + rec.totalNinos;
+
+  // Filas visibles para el cliente (adultos + niños si hay).
+  const itemsDoc: { descripcion: string; cantidad: number; tarifa_unit: number; valor: number; orden: number }[] = [
+    { descripcion: nombrePaqueteItem(cot.destino, cot.fecha_salida, cot.fecha_regreso), cantidad: adultos, tarifa_unit: tarifaAdultoUnit, valor: adultSubtotal, orden: 0 },
+  ];
+  if (rec.nNinos > 0) {
+    itemsDoc.push({ descripcion: "Tarifa por niño", cantidad: rec.nNinos, tarifa_unit: rec.valorNino, valor: rec.totalNinos, orden: 1 });
+  }
+
+  payload.ninos = rec.nNinos;
+  payload.tarifaNino = rec.valorNino;
+  payload.recobro = rec.recobroN;
+  payload.recobroAliado = rec.recobroAliadoN;
+
+  const detalle = { ...((cot.detalle ?? {}) as Record<string, unknown>) };
+  const ventaSnap = { ...((detalle.venta ?? {}) as Record<string, unknown>), pax: adultos, ninos: rec.nNinos, precio_venta: precioVenta };
+  detalle.venta = ventaSnap;
+  detalle.recobro = { total: rec.recobroN, empresa: rec.recobroEmpresaN, aliado: rec.recobroAliadoN };
+  detalle.items = itemsDoc;
+
+  const { error } = await sb
+    .from("cotizaciones")
+    .update({
+      payload: JSON.parse(JSON.stringify(payload)),
+      detalle: JSON.parse(JSON.stringify(detalle)),
+      precio_venta: precioVenta,
+    })
+    .eq("id", cotizacionId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
+  revalidatePath(`/cotizacion/${cotizacionId}`);
+  return { ok: true };
+}
+
 // ── Convertir cotización dinámica a contrato ───────────────────────────────
 // Genera numero_contrato, crea la venta y los contrato_items. La cotización
 // queda en estado 'convertida' enlazada al nuevo contrato.

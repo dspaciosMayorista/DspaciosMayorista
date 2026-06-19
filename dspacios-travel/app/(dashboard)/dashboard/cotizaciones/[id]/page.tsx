@@ -9,6 +9,7 @@ import { DescartarBtn } from "./DescartarBtn";
 import { ConvertirManualBtn } from "./ConvertirManualBtn";
 import { TitularEditor } from "./TitularEditor";
 import { IncluyeEditor } from "./IncluyeEditor";
+import { RecobroNinosEditor } from "./RecobroNinosEditor";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -51,7 +52,16 @@ export default async function CotizacionDetallePage({
   const esSuperadmin = perfil?.rol === "superadmin";
   // Los asesores internos son los usuarios con rol 'venta'.
   const { data: asesores } = await sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre");
-  const payload = (c.payload ?? {}) as { pasajeros?: unknown[]; infantes?: number; cliente?: { nombres?: string; apellidos?: string; tipoDoc?: string; numeroDoc?: string; nacimiento?: string; telefono?: string; email?: string } };
+  // % por defecto del recobro para el aliado en B2B (editor de niños/recobro).
+  const { data: paramDist } = await sb.from("parametros_tributarios").select("valor").eq("parametro", "recobro_pct_aliado_b2b").maybeSingle();
+  const pctAliadoB2B = Number(paramDist?.valor ?? 0.5);
+  const payload = (c.payload ?? {}) as {
+    pasajeros?: unknown[]; infantes?: number;
+    cliente?: { nombres?: string; apellidos?: string; tipoDoc?: string; numeroDoc?: string; nacimiento?: string; telefono?: string; email?: string };
+    ninos?: number; tarifaNino?: number; recobro?: number; recobroAliado?: number;
+    tipoAsesor?: "interno" | "agencia" | "freelance";
+  };
+  const esB2B = (payload.tipoAsesor ?? "interno") !== "interno";
   const tienePasajeros = Array.isArray(payload.pasajeros) && payload.pasajeros.length > 0;
   const clientePre = {
     nombres: payload.cliente?.nombres ?? "",
@@ -174,6 +184,18 @@ export default async function CotizacionDetallePage({
             id={c.id}
             incluye={String((c.detalle as { incluye?: string } | null)?.incluye ?? "")}
             noIncluye={String((c.detalle as { noIncluye?: string } | null)?.noIncluye ?? "")}
+          />
+          <RecobroNinosEditor
+            id={c.id}
+            moneda={moneda}
+            esB2B={esB2B}
+            pctAliadoB2B={pctAliadoB2B}
+            inicial={{
+              ninos: Number(payload.ninos ?? detalleM.venta?.ninos ?? 0),
+              tarifaNino: Number(payload.tarifaNino ?? 0),
+              recobro: Number(payload.recobro ?? detalleM.recobro?.total ?? 0),
+              recobroAliado: Number(payload.recobroAliado ?? detalleM.recobro?.aliado ?? 0),
+            }}
           />
         </div>
       )}
