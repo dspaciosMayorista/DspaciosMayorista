@@ -38,10 +38,17 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
     [filas, fRuta, fMes]
   );
 
+  // TOTAL real = sillas que pertenecen al record AHORA (todas menos las que
+  // salieron a otro record en estado 'cambio', que no se cuentan en ningún
+  // estado). Así el total y la ocupación quedan siempre consistentes con las
+  // sillas reales, aunque el campo cupos_total guardado se haya desfasado por
+  // cambios entre records.
+  const totalReal = (b: BloqueoFila) => b.disp + b.plazo + b.conf + b.dev + b.nven;
+
   const tot = vis.reduce(
     (a, b) => ({
       disp: a.disp + b.disp, plazo: a.plazo + b.plazo, conf: a.conf + b.conf,
-      dev: a.dev + b.dev, nven: a.nven + b.nven, total: a.total + (b.cupos_total ?? 0),
+      dev: a.dev + b.dev, nven: a.nven + b.nven, total: a.total + totalReal(b),
     }),
     { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0, total: 0 }
   );
@@ -89,7 +96,7 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
           </thead>
           <tbody>
             {vis.map((b) => {
-              const total = b.cupos_total ?? 0;
+              const total = totalReal(b);
               const ocup = total > 0 ? Math.round(((b.plazo + b.conf) / total) * 100) : 0;
               return (
                 <tr key={b.id} className="border-t border-gray-50">

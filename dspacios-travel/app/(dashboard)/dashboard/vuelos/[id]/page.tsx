@@ -62,6 +62,9 @@ export default async function BloqueoDetallePage({
     return acc;
   }, {});
   const disponibles = (conteo["disponible"] ?? 0) + (conteo["cambio_entrante"] ?? 0);
+  // Total REAL = sillas que pertenecen al record ahora (todas menos las que
+  // salieron a otro record en estado 'cambio'). Consistente con la lista.
+  const totalReal = (sillas ?? []).filter((s) => s.estado !== "cambio").length;
 
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
@@ -77,7 +80,7 @@ export default async function BloqueoDetallePage({
         Regreso {formatFechaLarga(b.fecha_regreso)} ({b.vuelo_regreso ?? "—"} · {b.hora_salida_reg ?? "—"})
       </p>
       <p className="mt-1 text-xs text-gray-400">
-        Cupos {b.cupos_total} · Tarifa empaquetar {formatCOP(b.tarifa_para_empaquetar)} ·
+        Cupos {totalReal}{totalReal !== (b.cupos_total ?? 0) ? ` (contratados ${b.cupos_total})` : ""} · Tarifa empaquetar {formatCOP(b.tarifa_para_empaquetar)} ·
         Devolución {formatFechaLarga(b.fecha_devolucion)}
       </p>
 
