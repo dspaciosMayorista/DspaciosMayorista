@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { marcar } from "@/lib/calc/paquetes";
+import { sugerirIncluye } from "@/lib/cotizacion/incluye";
 
 // Tipo de servicio de la cotización dinámica → tipo de proveedor de la CxP.
 const TIPO_PROVEEDOR: Record<string, string> = {
@@ -35,6 +36,8 @@ export type CotizacionManualInput = {
   plazo: string;
   vigenciaHasta: string;
   observaciones: string;
+  incluye?: string;      // qué incluye (texto libre, una línea por ítem)
+  noIncluye?: string;    // qué no incluye (texto libre)
   servicios: ServicioManual[];
 };
 
@@ -140,6 +143,10 @@ export async function crearCotizacionManual(
     pasajeros: [],
     hoteles: [],
     vuelos: [],
+    // Qué incluye / no incluye (texto libre editable). Si el asesor no escribió
+    // el "incluye", se sugiere a partir de los servicios elegidos.
+    incluye: (input.incluye || "").trim() || sugerirIncluye(input.servicios.map((s) => ({ tipo: s.tipo, nombre: s.nombre }))),
+    noIncluye: (input.noIncluye || "").trim(),
     // ÍTEM ÚNICO agrupado: el cliente ve "PAQUETE TURÍSTICO A …" con el total.
     // El detalle por servicio se conserva en cotizacion_servicios (interno).
     // En el documento de COTIZACIÓN, tarifa_adulto representa el valor total de
@@ -233,6 +240,36 @@ export async function actualizarTitularCotizacionManual(
       cliente: nombre,
       cliente_documento: (titular.numeroDoc || "").trim() || null,
     })
+    .eq("id", cotizacionId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
+  revalidatePath(`/cotizacion/${cotizacionId}`);
+  return { ok: true };
+}
+
+// ── Editar "Incluye / No incluye" de una cotización dinámica ───────────────
+export async function actualizarIncluyeCotizacionManual(
+  cotizacionId: number,
+  incluye: string,
+  noIncluye: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const sb = await createClient();
+  const { data: cot } = await sb
+    .from("cotizaciones")
+    .select("detalle, payload, estado, tipo")
+    .eq("id", cotizacionId)
+    .maybeSingle();
+  if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  if (cot.tipo !== "manual" || cot.estado !== "abierta")
+    return { ok: false, error: "Solo se puede editar una cotización dinámica abierta." };
+
+  const detalle = { ...((cot.detalle ?? {}) as Record<string, unknown>), incluye: (incluye || "").trim(), noIncluye: (noIncluye || "").trim() };
+  const payload = { ...((cot.payload ?? {}) as Record<string, unknown>), incluye: (incluye || "").trim(), noIncluye: (noIncluye || "").trim() };
+
+  const { error } = await sb
+    .from("cotizaciones")
+    .update({ detalle: JSON.parse(JSON.stringify(detalle)), payload: JSON.parse(JSON.stringify(payload)) })
     .eq("id", cotizacionId);
   if (error) return { ok: false, error: error.message };
 

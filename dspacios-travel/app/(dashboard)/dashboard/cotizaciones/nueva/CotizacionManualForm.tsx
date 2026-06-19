@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
 import { Plane, Hotel, Car, HeartPulse, Plus, Trash2, type LucideIcon } from "lucide-react";
 import { crearCotizacionManual, type ServicioManual } from "../manual-actions";
+import { sugerirIncluye, NO_INCLUYE_DEFAULT } from "@/lib/cotizacion/incluye";
 
 type Asesor = { nombre: string | null; email: string };
 type Aliado = { id: number; nombre: string; tipo: string | null };
@@ -51,6 +52,8 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
   const [plazo, setPlazo] = useState("");
   const [vigencia, setVigencia] = useState(masDias(3));
   const [observaciones, setObservaciones] = useState("");
+  const [incluye, setIncluye] = useState("");
+  const [noIncluye, setNoIncluye] = useState("");
 
   // Canal
   const [tipoAsesor, setTipoAsesor] = useState<"interno" | "agencia" | "freelance">("interno");
@@ -87,7 +90,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
         asesorInterno: tipoAsesor === "interno" ? asesorInterno : "",
         agenciaNombre: tipoAsesor === "agencia" ? aliadoNombre : "",
         freelanceNombre: tipoAsesor === "freelance" ? aliadoNombre : "",
-        plazo, vigenciaHasta: vigencia, observaciones,
+        plazo, vigenciaHasta: vigencia, observaciones, incluye, noIncluye,
         servicios: filas.map(({ tipo, plataforma, nombre, proveedor, costoNeto, modo, pctMarkup, ta }) => ({ tipo, plataforma, nombre, proveedor, costoNeto: Number(costoNeto) || 0, modo, pctMarkup: Number(pctMarkup) || 0, ta: Number(ta) || 0 })),
       });
       if (r.ok) router.push(`/dashboard/cotizaciones/${r.id}`);
@@ -238,6 +241,32 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
         <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
           <span className="text-sm font-medium text-gray-600">Total cotización</span>
           <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(total)}</span>
+        </div>
+      </section>
+
+      {/* Incluye / No incluye */}
+      <section className="rounded-xl border border-gray-200 bg-white p-5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-gray-700">Incluye / No incluye</h2>
+          <p className="text-xs text-gray-400">Aparece en la cotización para que el cliente sepa qué cubre. Editable.</p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <label className={lbl}>Incluye</label>
+              <button type="button" onClick={() => setIncluye(sugerirIncluye(filas.map((f) => ({ tipo: f.tipo, nombre: f.nombre }))))}
+                className="text-[11px] font-medium text-[#1D7C9A] hover:underline">Generar desde servicios</button>
+            </div>
+            <textarea value={incluye} onChange={(e) => setIncluye(e.target.value)} rows={5} placeholder="Una línea por ítem…" className="w-full rounded-lg border border-gray-300 p-2 text-sm" />
+          </div>
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <label className={lbl}>No incluye</label>
+              <button type="button" onClick={() => setNoIncluye(NO_INCLUYE_DEFAULT)}
+                className="text-[11px] font-medium text-[#1D7C9A] hover:underline">Usar texto sugerido</button>
+            </div>
+            <textarea value={noIncluye} onChange={(e) => setNoIncluye(e.target.value)} rows={5} placeholder="Una línea por ítem…" className="w-full rounded-lg border border-gray-300 p-2 text-sm" />
+          </div>
         </div>
       </section>
 

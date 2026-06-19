@@ -41,9 +41,19 @@ type Props = {
   venta: VentaSnap;
   items: ItemSnap[];
   cliente: ClienteSnap;
+  incluye?: string | null;
+  noIncluye?: string | null;
   vigenciaHasta?: string | null;
   fechaEmision?: string | null;
 };
+
+// Convierte texto libre (una línea por ítem) en lista de viñetas.
+function lineas(texto?: string | null): string[] {
+  return (texto || "")
+    .split(/\r?\n|·|;/)
+    .map((s) => s.replace(/^[-•*\s]+/, "").trim())
+    .filter(Boolean);
+}
 
 function Pill({ label, value }: { label: string; value: string }) {
   return (
@@ -54,11 +64,13 @@ function Pill({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function CotizacionManualDocumento({ codigo, venta, items, cliente, vigenciaHasta, fechaEmision }: Props) {
+export function CotizacionManualDocumento({ codigo, venta, items, cliente, incluye, noIncluye, vigenciaHasta, fechaEmision }: Props) {
   const moneda = venta.moneda ?? "COP";
   const total = items.reduce((s, it) => s + (it.tarifa_adulto ?? 0), 0);
   const anio = new Date().getFullYear();
   const hoy = fechaEmision ?? new Date().toISOString().slice(0, 10);
+  const incluyeList = lineas(incluye);
+  const noIncluyeList = lineas(noIncluye);
 
   return (
     <div className="contrato-doc mx-auto max-w-3xl bg-white text-gray-800">
@@ -158,6 +170,32 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, vigen
             </div>
           )}
         </section>
+
+        {/* ── Incluye / No incluye ─────────────────────────────── */}
+        {(incluyeList.length > 0 || noIncluyeList.length > 0) && (
+          <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="rounded-lg border border-gray-100 p-3">
+              <h3 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>Incluye</h3>
+              {incluyeList.length ? (
+                <ul className="space-y-1 text-xs text-gray-700">
+                  {incluyeList.map((t, i) => (
+                    <li key={i} className="flex gap-2"><span style={{ color: PRIMARY }}>✓</span><span>{t}</span></li>
+                  ))}
+                </ul>
+              ) : <p className="text-xs text-gray-400">—</p>}
+            </div>
+            <div className="rounded-lg border border-gray-100 p-3">
+              <h3 className="mb-2 text-sm font-semibold text-gray-500">No incluye</h3>
+              {noIncluyeList.length ? (
+                <ul className="space-y-1 text-xs text-gray-600">
+                  {noIncluyeList.map((t, i) => (
+                    <li key={i} className="flex gap-2"><span className="text-gray-400">✕</span><span>{t}</span></li>
+                  ))}
+                </ul>
+              ) : <p className="text-xs text-gray-400">—</p>}
+            </div>
+          </section>
+        )}
 
         {/* ── Valores ──────────────────────────────────────────── */}
         <section>
