@@ -427,7 +427,9 @@ blackouts de hotel. *(Ver nombres exactos en `supabase/migrations/`.)*
 **066** programas_vitrina (`desde_precio`, `incluye_aereo`, `portada_url`) ·
 **067** programas_asistencia (`asistencia_medica_dia`) ·
 **078** web_cms (tablas `web_paquetes/destinos/testimonios/blog/config` del sitio
-público + RLS: lectura pública de lo activo, escritura solo superadmin). ← **pendientes de correr.**
+público + RLS: lectura pública de lo activo, escritura solo superadmin) ·
+**079** recobro_cotizacion (`recobro_total/empresa/aliado` en `ventas` + parámetro
+`recobro_pct_aliado_b2b` = Distribución B2B, editable en Configuración → Parámetros). ← **pendientes de correr.**
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
 `supabase/scripts/seed_web_cms.sql` (contenido inicial del CMS; correr tras la 078).

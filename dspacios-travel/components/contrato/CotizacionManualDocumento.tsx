@@ -13,7 +13,9 @@ const PRIMARY = "#1D7C9A";
 
 type ItemSnap = {
   descripcion: string;
-  tarifa_adulto: number;
+  cantidad?: number;
+  tarifa_unit?: number;
+  valor: number;
 };
 
 type VentaSnap = {
@@ -23,6 +25,7 @@ type VentaSnap = {
   fecha_salida?: string;
   fecha_regreso?: string;
   pax?: number;
+  ninos?: number;
   precio_venta?: number;
   moneda?: string;
   asesor?: string;
@@ -66,7 +69,9 @@ function Pill({ label, value }: { label: string; value: string }) {
 
 export function CotizacionManualDocumento({ codigo, venta, items, cliente, incluye, noIncluye, vigenciaHasta, fechaEmision }: Props) {
   const moneda = venta.moneda ?? "COP";
-  const total = items.reduce((s, it) => s + (it.tarifa_adulto ?? 0), 0);
+  const total = items.reduce((s, it) => s + (it.valor ?? 0), 0);
+  const ninos = Number(venta.ninos ?? 0);
+  const paxTexto = `${venta.pax ?? 0} adulto${(venta.pax ?? 0) === 1 ? "" : "s"}${ninos > 0 ? ` + ${ninos} niño${ninos === 1 ? "" : "s"}` : ""}`;
   const anio = new Date().getFullYear();
   const hoy = fechaEmision ?? new Date().toISOString().slice(0, 10);
   const incluyeList = lineas(incluye);
@@ -127,7 +132,7 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
           <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>Detalles del viaje</h2>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
             <Pill label="Destino" value={venta.destino ?? ""} />
-            <Pill label="Pasajeros" value={String(venta.pax ?? "")} />
+            <Pill label="Pasajeros" value={paxTexto} />
             <Pill label="Ida" value={formatFechaLarga(venta.fecha_salida)} />
             <Pill label="Regreso" value={formatFechaLarga(venta.fecha_regreso)} />
           </div>
@@ -137,10 +142,12 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
         <section>
           <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>Servicios cotizados</h2>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[360px] border-collapse text-xs">
+            <table className="w-full min-w-[420px] border-collapse text-xs">
               <thead>
                 <tr className="bg-gray-50 text-left text-gray-500">
-                  <th className="border border-gray-200 px-3 py-2">Descripción</th>
+                  <th className="border border-gray-200 px-3 py-2">Concepto</th>
+                  <th className="border border-gray-200 px-3 py-2 text-center">Cant.</th>
+                  <th className="border border-gray-200 px-3 py-2 text-right">Tarifa</th>
                   <th className="border border-gray-200 px-3 py-2 text-right">Valor</th>
                 </tr>
               </thead>
@@ -148,15 +155,19 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
                 {items.map((it, i) => (
                   <tr key={i}>
                     <td className="border border-gray-200 px-3 py-2">{it.descripcion}</td>
+                    <td className="border border-gray-200 px-3 py-2 text-center tabular-nums">{it.cantidad ?? "—"}</td>
                     <td className="border border-gray-200 px-3 py-2 text-right tabular-nums">
-                      {formatMoneda(it.tarifa_adulto, moneda)}
+                      {it.tarifa_unit != null ? formatMoneda(it.tarifa_unit, moneda) : "—"}
+                    </td>
+                    <td className="border border-gray-200 px-3 py-2 text-right tabular-nums">
+                      {formatMoneda(it.valor, moneda)}
                     </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="font-semibold">
-                  <td className="border border-gray-200 px-3 py-2">Total</td>
+                  <td className="border border-gray-200 px-3 py-2" colSpan={3}>Total</td>
                   <td className="border border-gray-200 px-3 py-2 text-right tabular-nums">
                     {formatMoneda(total, moneda)}
                   </td>

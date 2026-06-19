@@ -27,7 +27,11 @@ export type CotizacionManualInput = {
   destino: string;
   fechaIda: string;
   fechaRegreso: string;
-  pax: number;
+  pax: number;           // adultos
+  ninos?: number;        // cantidad de niños
+  tarifaNino?: number;   // valor por niño (suma al total)
+  recobro?: number;      // mayor valor cobrado, oculto al cliente
+  recobroAliado?: number;// parte del recobro para el aliado (B2B)
   moneda: string;        // COP / USD
   tipoAsesor: "interno" | "agencia" | "freelance";
   asesorInterno: string;
@@ -56,6 +60,24 @@ function fmtDMY(iso?: string | null): string {
 function nombrePaqueteItem(destino?: string | null, ida?: string | null, regreso?: string | null): string {
   const d = (destino || "").trim().toUpperCase() || "DESTINO";
   return `PAQUETE TURÍSTICO A ${d} DEL ${fmtDMY(ida)} AL ${fmtDMY(regreso)}`;
+}
+
+// Niños + recobro de la cotización dinámica.
+//  · Niños: cantidad × tarifa por niño (suma al total).
+//  · Recobro: cliente final (interno) → 100% empresa; agencia/freelance → se
+//    reparte (lo que va al aliado se acota a [0, recobro]).
+function calcularRecobroNinos(input: {
+  pax: number; ninos?: number; tarifaNino?: number; recobro?: number; recobroAliado?: number;
+  tipoAsesor: "interno" | "agencia" | "freelance";
+}) {
+  const nNinos = Math.max(Math.trunc(Number(input.ninos) || 0), 0);
+  const valorNino = Math.max(Number(input.tarifaNino) || 0, 0);
+  const totalNinos = nNinos * valorNino;
+  const recobroN = Math.max(Number(input.recobro) || 0, 0);
+  const esB2B = input.tipoAsesor !== "interno";
+  const recobroAliadoN = esB2B ? Math.min(Math.max(Number(input.recobroAliado) || 0, 0), recobroN) : 0;
+  const recobroEmpresaN = recobroN - recobroAliadoN;
+  return { nNinos, valorNino, totalNinos, recobroN, recobroAliadoN, recobroEmpresaN, esB2B };
 }
 
 // Recuadros "Hoteles y Servicios" del contrato, según los servicios elegidos:
@@ -118,10 +140,25 @@ export async function crearCotizacionManual(
       valor,
     };
   });
-  const precioVenta = filas.reduce((acc, f) => acc + f.valor, 0);
+  const totalServicios = filas.reduce((acc, f) => acc + f.valor, 0);
 
-  // Snapshot para el documento/PDF (mismo formato que las cotizaciones del
-  // tarifario: venta + items). Cada servicio es un ítem (cantidad 1 × valor).
+  // Niños y recobro (ver helper). adultSubtotal "esconde" el recobro dentro de
+  // la tarifa de adulto: el cliente nunca ve el recobro como línea aparte.
+  const rec = calcularRecobroNinos(input);
+  const adultos = Math.max(Number(input.pax) || 1, 1);
+  const adultSubtotal = totalServicios + rec.recobroN;        // servicios + recobro
+  const tarifaAdultoUnit = Math.round(adultSubtotal / adultos);
+  const precioVenta = adultSubtotal + rec.totalNinos;         // total que paga el cliente
+
+  // Filas visibles para el cliente: una de adultos y otra de niños (si hay).
+  const itemsDoc: { descripcion: string; cantidad: number; tarifa_unit: number; valor: number; orden: number }[] = [
+    { descripcion: nombrePaqueteItem(input.destino, input.fechaIda, input.fechaRegreso), cantidad: adultos, tarifa_unit: tarifaAdultoUnit, valor: adultSubtotal, orden: 0 },
+  ];
+  if (rec.nNinos > 0) {
+    itemsDoc.push({ descripcion: "Tarifa por niño", cantidad: rec.nNinos, tarifa_unit: rec.valorNino, valor: rec.totalNinos, orden: 1 });
+  }
+
+  // Snapshot para el documento/PDF (venta + items).
   const detalle = {
     venta: {
       numero_contrato: "",
@@ -129,7 +166,8 @@ export async function crearCotizacionManual(
       destino: input.destino || null,
       fecha_salida: input.fechaIda || null,
       fecha_regreso: input.fechaRegreso || null,
-      pax: Number(input.pax) || 0,
+      pax: adultos,
+      ninos: rec.nNinos,
       precio_venta: precioVenta,
       moneda,
       asesor: asesor || null,
@@ -147,19 +185,9 @@ export async function crearCotizacionManual(
     // el "incluye", se sugiere a partir de los servicios elegidos.
     incluye: (input.incluye || "").trim() || sugerirIncluye(input.servicios.map((s) => ({ tipo: s.tipo, nombre: s.nombre }))),
     noIncluye: (input.noIncluye || "").trim(),
-    // ÍTEM ÚNICO agrupado: el cliente ve "PAQUETE TURÍSTICO A …" con el total.
-    // El detalle por servicio se conserva en cotizacion_servicios (interno).
-    // En el documento de COTIZACIÓN, tarifa_adulto representa el valor total de
-    // la fila (el doc suma esa columna), por eso va el precioVenta completo.
-    items: [{
-      numero_contrato: "",
-      descripcion: nombrePaqueteItem(input.destino, input.fechaIda, input.fechaRegreso),
-      adultos: 1,
-      ninos: 0,
-      tarifa_adulto: precioVenta,
-      tarifa_nino: 0,
-      orden: 0,
-    }],
+    // Recobro (INTERNO, nunca se muestra al cliente).
+    recobro: { total: rec.recobroN, empresa: rec.recobroEmpresaN, aliado: rec.recobroAliadoN },
+    items: itemsDoc,
   };
 
   const { data: cot, error } = await sb
@@ -332,6 +360,13 @@ export async function convertirCotizacionManualAContrato(
   const canal = payload.tipoAsesor === "interno" ? "B2C" : "B2B";
   const ventaSnap = (detalle.venta ?? {}) as Record<string, unknown>;
 
+  // Niños y recobro (mismo cálculo que en la creación; el recobro va oculto
+  // dentro de la tarifa de adulto). El total ya está en cot.precio_venta.
+  const rec = calcularRecobroNinos({
+    pax: Number(cot.pax) || 1, ninos: payload.ninos, tarifaNino: payload.tarifaNino,
+    recobro: payload.recobro, recobroAliado: payload.recobroAliado, tipoAsesor: payload.tipoAsesor,
+  });
+
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
     cliente: cot.cliente ?? "",
@@ -358,28 +393,48 @@ export async function convertirCotizacionManualAContrato(
     costo_receptivo: costoReceptivo,
     costo_asistencia: costoAsistencia,
     otros_costos: costoOtros,
+    // Recobro (oculto al cliente): total + reparto empresa/aliado.
+    recobro_total: rec.recobroN,
+    recobro_empresa: rec.recobroEmpresaN,
+    recobro_aliado: rec.recobroAliadoN,
+    comision_b2b: rec.recobroAliadoN > 0 ? rec.recobroAliadoN : undefined,
+    comision_estado: rec.recobroAliadoN > 0 ? "pendiente" : undefined,
     estado: "pendiente",
     observaciones: payload.observaciones || undefined,
   });
   if (ve) return { ok: false, error: ve.message };
 
-  // ÍTEM ÚNICO agrupado: "PAQUETE TURÍSTICO A {destino} DEL {ida} AL {regreso}".
-  // adultos = pax, tarifa_adulto = total/pax (por persona); el doc del contrato
-  // multiplica adultos × tarifa_adulto. El detalle de hoteles/servicios va a los
-  // vouchers, no al ítem.
+  // Ítem del paquete: adultos + niños. tarifa_adulto incluye el recobro (oculto);
+  // tarifa_nino = valor por niño. El doc multiplica cantidad × tarifa.
   {
     const pax = Math.max(Number(cot.pax) || 1, 1);
     const total = Number(cot.precio_venta) || 0;
+    const adultSubtotal = total - rec.totalNinos;           // servicios + recobro
     const { error: ie } = await sb.from("contrato_items").insert([{
       numero_contrato: numero,
       descripcion: nombrePaqueteItem(cot.destino, cot.fecha_salida, cot.fecha_regreso),
       adultos: pax,
-      ninos: 0,
-      tarifa_adulto: Math.round(total / pax),
-      tarifa_nino: 0,
+      ninos: rec.nNinos,
+      tarifa_adulto: Math.round(adultSubtotal / pax),
+      tarifa_nino: rec.valorNino,
       orden: 0,
     }]);
     if (ie) return { ok: false, error: ie.message };
+  }
+
+  // Comisión del aliado B2B por el recobro (entra al módulo de comisiones).
+  if (rec.esB2B && rec.recobroAliadoN > 0) {
+    const aliado = (payload.tipoAsesor === "agencia" ? payload.agenciaNombre : payload.freelanceNombre) || cot.asesor || "Aliado";
+    await sb.from("aliados_b2b").insert({
+      numero_contrato: numero,
+      aliado,
+      tipo_aliado: payload.tipoAsesor,
+      precio_venta: Number(cot.precio_venta) || 0,
+      base_comision: rec.recobroAliadoN,
+      recobro_total: rec.recobroN,
+      pct_recobro_aliado: rec.recobroN > 0 ? rec.recobroAliadoN / rec.recobroN : 0,
+      estado: "pendiente",
+    });
   }
 
   // Titular como pasajero del contrato (datos validados arriba).

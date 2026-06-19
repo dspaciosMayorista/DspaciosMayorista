@@ -223,6 +223,9 @@ export type Database = {
           modo_compra: string | null;
           comision_b2b: number | null;
           comision_estado: string | null;
+          recobro_total: number | null;
+          recobro_empresa: number | null;
+          recobro_aliado: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -279,6 +282,9 @@ export type Database = {
           modo_compra?: string | null;
           comision_b2b?: number | null;
           comision_estado?: string | null;
+          recobro_total?: number | null;
+          recobro_empresa?: number | null;
+          recobro_aliado?: number | null;
           created_at?: string;
           updated_at?: string;
         };
