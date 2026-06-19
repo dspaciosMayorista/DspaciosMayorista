@@ -311,6 +311,18 @@ export async function cambiarSillas(input: {
   const { error: e2 } = await sb.from("sillas").insert(nuevas);
   if (e2) return { ok: false, error: e2.message };
 
+  // Mantener cupos_total en sincronía: el origen pierde N cupos (salieron a otro
+  // record) y el destino gana N. Así el campo guardado no se desfasa del conteo
+  // real de sillas.
+  const [{ data: bo }, { data: bd }] = await Promise.all([
+    sb.from("bloqueos_vuelo").select("cupos_total").eq("id", input.origenId).maybeSingle(),
+    sb.from("bloqueos_vuelo").select("cupos_total").eq("id", input.destinoId).maybeSingle(),
+  ]);
+  await Promise.all([
+    sb.from("bloqueos_vuelo").update({ cupos_total: Math.max(0, (Number(bo?.cupos_total) || 0) - input.cantidad) }).eq("id", input.origenId),
+    sb.from("bloqueos_vuelo").update({ cupos_total: (Number(bd?.cupos_total) || 0) + input.cantidad }).eq("id", input.destinoId),
+  ]);
+
   // Registrar movimientos
   await sb.from("movimientos_silla").insert(
     ids.map((silla_id) => ({
