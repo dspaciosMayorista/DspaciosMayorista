@@ -42,7 +42,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
   const [err, setErr] = useState("");
 
   // Cliente / cabecera
-  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "" });
+  const [cli, setCli] = useState({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", telefono: "", email: "", nacimiento: "" });
   const [destino, setDestino] = useState("");
   const [fechaIda, setFechaIda] = useState("");
   const [fechaRegreso, setFechaRegreso] = useState("");
@@ -112,9 +112,11 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta }
             </select>
           </div>
           <div><label className={lbl}>N° documento</label><Input value={cli.numeroDoc} onChange={(e) => setCli({ ...cli, numeroDoc: e.target.value })} /></div>
+          <div><label className={lbl}>Fecha de nacimiento</label><Input type="date" value={cli.nacimiento} onChange={(e) => setCli({ ...cli, nacimiento: e.target.value })} /></div>
           <div><label className={lbl}>Teléfono</label><Input value={cli.telefono} onChange={(e) => setCli({ ...cli, telefono: e.target.value })} /></div>
           <div><label className={lbl}>Email</label><Input value={cli.email} onChange={(e) => setCli({ ...cli, email: e.target.value })} /></div>
         </div>
+        <p className="mt-2 text-xs text-gray-400">Para generar el contrato se exige nombre, tipo y número de documento y fecha de nacimiento del titular.</p>
       </section>
 
       {/* Datos del viaje */}
