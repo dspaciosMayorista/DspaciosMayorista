@@ -1,22 +1,24 @@
 "use client";
 
-import { useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { eliminarBloqueo } from "./actions";
 
 export function EliminarBloqueoBtn({ id, record }: { id: number; record: string }) {
-  const [pending, start] = useTransition();
+  const router = useRouter();
   return (
-    <button
-      type="button"
-      disabled={pending}
-      onClick={() => {
-        if (confirm(`¿Eliminar el bloqueo ${record} y sus sillas?`)) {
-          start(() => { void eliminarBloqueo(id); });
-        }
-      }}
-      className="text-xs text-gray-400 hover:text-red-500"
-    >
-      {pending ? "…" : "Eliminar"}
-    </button>
+    <ConfirmDialog
+      title={`¿Eliminar el bloqueo ${record}?`}
+      description="Se borrarán también sus sillas y movimientos. Esta acción no se puede deshacer."
+      confirmLabel="Eliminar"
+      destructive
+      onConfirm={() => eliminarBloqueo(id)}
+      onDone={() => router.refresh()}
+      trigger={
+        <button type="button" className="text-xs text-gray-400 hover:text-red-500">
+          Eliminar
+        </button>
+      }
+    />
   );
 }

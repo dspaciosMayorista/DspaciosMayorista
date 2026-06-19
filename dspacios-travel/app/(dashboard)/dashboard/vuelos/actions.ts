@@ -351,10 +351,29 @@ export async function eliminarBloqueo(id: number): Promise<Result> {
   // DESPUÉS para que el tarifario deje de publicar esa salida.
   const { data: usados } = await sb.from("armado_vuelos").select("paquete_id").eq("bloqueo_id", id);
   const paqIds = [...new Set((usados ?? []).map((u) => u.paquete_id))];
-  // Borrar sillas primero (no hay cascade declarado)
-  await sb.from("sillas").delete().eq("bloqueo_id", id);
+
+  // Dependencias sin cascade que bloquean el borrado:
+  // 1) movimientos_silla → silla_id de las sillas de este bloqueo, y los
+  //    movimientos donde este bloqueo es origen o destino de un cambio.
+  const { data: sillasDel } = await sb.from("sillas").select("id").eq("bloqueo_id", id);
+  const sillaIds = (sillasDel ?? []).map((s) => s.id);
+  if (sillaIds.length) await sb.from("movimientos_silla").delete().in("silla_id", sillaIds);
+  await sb.from("movimientos_silla").delete().eq("bloqueo_origen_id", id);
+  await sb.from("movimientos_silla").delete().eq("bloqueo_destino_id", id);
+
+  // 2) Sillas del bloqueo.
+  const { error: es } = await sb.from("sillas").delete().eq("bloqueo_id", id);
+  if (es) return { ok: false, error: `No se pudieron borrar las sillas: ${es.message}` };
+
+  // 3) El bloqueo. Si aún lo referencia un contrato/paquete, Postgres lo impide;
+  //    devolvemos el motivo claro en vez de tragarnos el error.
   const { error } = await sb.from("bloqueos_vuelo").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    const fk = /foreign key|violates|referenced/i.test(error.message);
+    return { ok: false, error: fk
+      ? "No se puede eliminar: el bloqueo está referenciado por un contrato o paquete. Quita esas referencias primero."
+      : error.message };
+  }
   for (const pid of paqIds) { try { await generarTarifario(pid); } catch { /* sigue */ } }
   revalidatePath("/dashboard/vuelos");
   return { ok: true };
