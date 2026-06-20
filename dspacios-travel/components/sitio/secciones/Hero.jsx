@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { MessageCircle, CalendarCheck } from 'lucide-react';
 import { Button } from '@/components/sitio/ui/button';
 import { useRouter } from 'next/navigation';
-import { EditableText, EditableImage } from '@/components/sitio/edicion/Editable';
+import { EditableText, EditableImage, EditableUrl } from '@/components/sitio/edicion/Editable';
 import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección HERO. datos: { titulo, subtitulo, imagen, cta_texto, cta_url }
@@ -78,7 +78,7 @@ const Hero = ({ datos = {}, config }) => {
               <Button
                 size="lg"
                 className="bg-[#25D366] hover:bg-[#1ebc57] text-white font-bold text-lg px-8 py-7 rounded-xl shadow-2xl hover:shadow-[#25D366]/30 transition-all flex items-center gap-3"
-                onClick={() => window.open(whatsappLink, '_blank')}
+                onClick={() => { if (!editable) window.open(whatsappLink, '_blank'); }}
               >
                 <MessageCircle className="h-6 w-6" />
                 Cotizar por WhatsApp
@@ -91,6 +91,7 @@ const Hero = ({ datos = {}, config }) => {
                 <CalendarCheck className="h-6 w-6" />
                 <EditableText as="span" campo="cta_texto" placeholder="Texto del botón">{ctaTexto}</EditableText>
               </Button>
+              <EditableUrl campo="cta_url" className="self-center" />
             </motion.div>
           </motion.div>
         </div>

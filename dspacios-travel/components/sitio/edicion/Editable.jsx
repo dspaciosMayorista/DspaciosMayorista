@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { Link2 } from "lucide-react";
 import { useEdicion } from "./EdicionContext";
 
 // Texto editable IN-SITU. Fuera del CMS (sin provider) renderiza `children` tal
@@ -82,5 +83,34 @@ export function EditableImage({
         Cambiar imagen
       </button>
     </>
+  );
+}
+
+// Editor IN-SITU del ENLACE (URL) de un botón. Fuera del CMS no renderiza nada
+// (el botón se ve igual). Dentro del CMS muestra un chip "Enlace" que abre un
+// prompt para fijar la URL de redirección. Los botones quedan INACTIVOS en el
+// CMS (no navegan); este chip es la forma de editar su destino.
+export function EditableUrl({ campo, className = "" }) {
+  const ctx = useEdicion();
+  if (!ctx?.editable) return null;
+
+  const actual = String(ctx.datos?.[campo] ?? "");
+  const editar = (e) => {
+    e.stopPropagation();
+    const url = window.prompt("Enlace del botón (URL de redirección):", actual);
+    if (url != null) ctx.set(campo, url.trim());
+  };
+
+  return (
+    <button
+      type="button"
+      data-cms-tb=""
+      onClick={editar}
+      onPointerDown={(e) => e.stopPropagation()}
+      title={actual || "Sin enlace"}
+      className={`inline-flex items-center gap-1 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-semibold text-white shadow hover:bg-black/80 ${className}`}
+    >
+      <Link2 size={12} /> Enlace
+    </button>
   );
 }

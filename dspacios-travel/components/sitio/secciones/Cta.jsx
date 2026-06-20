@@ -3,7 +3,7 @@
 import React from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/sitio/ui/button';
-import { EditableText } from '@/components/sitio/edicion/Editable';
+import { EditableText, EditableUrl } from '@/components/sitio/edicion/Editable';
 import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección CTA. datos: { titulo, texto, boton_texto, boton_url }
@@ -35,8 +35,9 @@ const Cta = ({ datos = {} }) => {
                 else router.push(botonUrl);
               }}
             >
-              {botonTexto}
+              <EditableText as="span" campo="boton_texto" placeholder="Texto del botón">{botonTexto}</EditableText>
             </Button>
+            {editable ? <div className="mt-3"><EditableUrl campo="boton_url" /></div> : null}
           </div>
         </div>
       </div>

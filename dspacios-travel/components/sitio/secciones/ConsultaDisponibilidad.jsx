@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
-import { EditableText } from '@/components/sitio/edicion/Editable';
+import { EditableText, EditableUrl } from '@/components/sitio/edicion/Editable';
 import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección "Consulta Disponibilidad": CTA que lleva a la vista booking del portal
@@ -41,6 +41,7 @@ const ConsultaDisponibilidad = ({ datos = {} }) => {
         >
           <EditableText as="span" campo="boton_texto" placeholder="Texto del botón">{botonTexto}</EditableText>
         </button>
+        {editable ? <div className="mt-4"><EditableUrl campo="url" /></div> : null}
       </div>
     </section>
   );
