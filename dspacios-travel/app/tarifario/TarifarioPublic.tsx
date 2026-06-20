@@ -44,6 +44,8 @@ export type FilaTarifario = {
   regimen: string | null;
   acomodacion: string | null;
   precio_pvp: number;
+  descripcion?: string | null;
+  recargo_individual?: number | null;
 };
 
 const MODULOS: { key: FilaTarifario["modulo"]; label: string }[] = [
@@ -451,10 +453,15 @@ function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]
                   {[...servicios.entries()].map(([nombre, srows]) => {
                     const esGrupo = (srows[0].tipo_tarifa ?? "persona") === "grupo";
                     const escalas = [...srows].sort((a, b) => (a.pax_desde ?? 0) - (b.pax_desde ?? 0));
+                    const descripcion = srows[0].descripcion?.trim() || "";
+                    const recargo = Math.max(Number(srows[0].recargo_individual) || 0, 0);
                     return esGrupo ? (
                       escalas.map((e, i) => (
                         <tr key={`${nombre}-${i}`} className="border-t border-gray-100">
-                          <td className="px-3 py-1.5 font-medium text-gray-800">{i === 0 ? nombre : ""}</td>
+                          <td className="px-3 py-1.5 font-medium text-gray-800">
+                            {i === 0 ? nombre : ""}
+                            {i === 0 && descripcion && <div className="text-xs font-normal text-gray-500">{descripcion}</div>}
+                          </td>
                           <td className="px-3 py-1.5 text-gray-500">{e.pax_desde}–{e.pax_hasta} pax</td>
                           <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
                             {formatCOP(e.precio_pvp)} <span className="text-xs text-gray-400">/grupo</span>
@@ -463,7 +470,11 @@ function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]
                       ))
                     ) : (
                       <tr key={nombre} className="border-t border-gray-100">
-                        <td className="px-3 py-1.5 font-medium text-gray-800">{nombre}</td>
+                        <td className="px-3 py-1.5 font-medium text-gray-800">
+                          {nombre}
+                          {descripcion && <div className="text-xs font-normal text-gray-500">{descripcion}</div>}
+                          {recargo > 0 && <div className="text-xs font-normal text-amber-600">+{formatCOP(recargo)} si viaja 1 pax (recargo individual)</div>}
+                        </td>
                         <td className="px-3 py-1.5 text-gray-500">Por persona</td>
                         <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
                           {formatCOP(srows[0].precio_pvp)} <span className="text-xs text-gray-400">/persona</span>

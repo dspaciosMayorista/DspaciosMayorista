@@ -376,7 +376,9 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   tarifa neta por categoría/régimen/temporada con **Niño 1 y Niño 2**; editar tarifa; config
   de edades y rangos; **config de acomodaciones** — pax mín/máx del hotel y, por acomodación,
   `pax_tarifa` (multiplicador por habitación) + mín/máx de adt/niños/inf), **Servicios** (precio **por persona** y/o **por grupo con rangos de
-  pax**; destino vacío = nacional). **Carga masiva CSV** en hoteles, tarifas, servicios y
+  pax**; destino vacío = nacional; **descripción del tour** y **recargo individual** —
+  suplemento fijo que se suma a la tarifa si va 1 pax en cobro por persona, migr. 088).
+  **Carga masiva CSV** en hoteles, tarifas, servicios y
   bloqueos (plantillas con `sep=;`, listas con `|`).
 - **Paquetes (armado):** config inicial (nombre, **tipo** bloqueo/porción/servicios, **noches**
   para porción, destino, vigencia compra, rango viaje, **%mk**, impuesto tiquete/fijo). Adición
@@ -435,7 +437,7 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **087** (correr en orden las que falten)
+### Migraciones Supabase — total en repo: **088** (correr en orden las que falten)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
@@ -470,6 +472,11 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > y `gerencia`. ⚠️ Escrituras con `service_role` (sillas/costos al reservar) NO traen actor
 > → quedan como "Sistema" (el cambio sí se registra). Re-correr el bloque DO adjunta el
 > trigger a tablas nuevas.
+> **088 servicio_descripcion_recargo** ← *creada en esta rama, PENDIENTE de correr*:
+> `descripcion` + `recargo_individual` en `servicios_adicionales` (y denormalizadas a
+> `tarifario_resultado`). El recargo individual es un monto FIJO que se suma a la tarifa
+> cuando el servicio (cobro POR PERSONA) se vende a 1 solo pax; se aplica en Reservar
+> (`reservar/actions.ts`) y se publica en la vitrina pública de Servicios.
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·

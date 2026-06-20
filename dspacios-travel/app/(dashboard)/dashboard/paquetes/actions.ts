@@ -288,7 +288,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion)")
+      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion, descripcion, recargo_individual)")
       .eq("paquete_id", paqueteId),
   ]);
 
@@ -492,7 +492,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // sin importar el tipo. Persona = una fila; grupo = una fila por rango de pax.
   for (const s of servicios) {
     if (s.incluido as boolean) continue; // los incluidos se hornean, no se publican
-    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null } | null;
+    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null; descripcion: string | null; recargo_individual: number | null } | null;
     if (!srv) continue;
     const fLiq = factorLiquidacion(srv.liquidacion, nochesPaq);
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
@@ -507,6 +507,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       destino_nombre: destinoNombre,
       tipo_tarifa: modo,
       impuesto: 0,
+      descripcion: srv.descripcion ?? null,
     };
     if (modo === "grupo") {
       for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
@@ -515,7 +516,10 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       }
     } else if (srv.precio_persona != null) {
       const pvp = redondearMilArriba(marcar(Number(srv.precio_persona) || 0, pctMk) * fLiq);
-      filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp });
+      // Recargo individual: monto fijo que se suma a la tarifa si va 1 pax
+      // (solo cobro por persona). Se guarda para que Reservar lo sume.
+      const recargo = Math.max(Number(srv.recargo_individual) || 0, 0);
+      filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, recargo_individual: recargo });
     }
   }
 

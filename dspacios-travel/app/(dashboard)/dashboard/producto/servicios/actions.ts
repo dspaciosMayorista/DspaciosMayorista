@@ -20,6 +20,8 @@ export type ServicioInput = {
   rangosEdad?: number[];
   categoria?: string;             // tour_traslado | asistencia | otro
   liquidacion?: Liquidacion;      // tipo de cobro: dia | noche | paquete
+  descripcion?: string;           // texto del tour (se muestra al cliente)
+  recargoIndividual?: number;     // suplemento que se suma a la tarifa si va 1 pax
 };
 
 function servicioToRow(input: ServicioInput) {
@@ -33,6 +35,8 @@ function servicioToRow(input: ServicioInput) {
     rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
     categoria: input.categoria || "otro",
     liquidacion: input.liquidacion ?? "paquete",
+    descripcion: oNull(input.descripcion ?? ""),
+    recargo_individual: Math.max(Number(input.recargoIndividual) || 0, 0),
   };
 }
 
@@ -150,6 +154,8 @@ export async function cargarServiciosMasivo(
       liquidacion, activo: true,
       categoria: normCategoria(r.categoria),
       rangos_edad: rangosEdad.length ? rangosEdad : null,
+      descripcion: oNull(r.descripcion || ""),
+      recargo_individual: numCsv(r.recargo_individual),
     }).select("id").single();
     if (error || !sv) { errores.push(`Fila ${linea} (${nombre}): ${error?.message ?? "no se insertó"}`); continue; }
     if (tiers.length) {

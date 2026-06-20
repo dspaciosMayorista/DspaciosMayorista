@@ -503,23 +503,26 @@ async function computarReserva(
   if (input.servicios?.length) {
     const { data: srvRows } = await sb
       .from("tarifario_resultado")
-      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp")
+      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, recargo_individual")
       .eq("paquete_id", input.paqueteId)
       .eq("modulo", "servicios")
       .in("servicio_id", input.servicios);
-    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; grupos: { pax_desde: number; pax_hasta: number; precio: number }[] }>();
+    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; recargoIndividual: number; grupos: { pax_desde: number; pax_hasta: number; precio: number }[] }>();
     for (const r of srvRows ?? []) {
       if (r.servicio_id == null) continue;
       let s = byServ.get(r.servicio_id);
       if (!s) {
-        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [] };
+        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, recargoIndividual: 0, grupos: [] };
         byServ.set(r.servicio_id, s);
       }
       if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
-      else s.personaPvp = r.precio_pvp;
+      else { s.personaPvp = r.precio_pvp; s.recargoIndividual = Math.max(Number(r.recargo_individual) || 0, 0); }
     }
     for (const s of byServ.values()) {
-      const p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+      let p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+      // Recargo individual: si el servicio va a 1 solo pax (cobro por persona),
+      // se suma el suplemento a la tarifa.
+      if (s.modo === "persona" && totalPax === 1 && s.recargoIndividual > 0) p += s.recargoIndividual;
       if (p > 0) { precioVenta += p; serviciosItems.push({ nombre: s.nombre, precio: p }); }
     }
   }

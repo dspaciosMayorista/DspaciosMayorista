@@ -16,6 +16,8 @@ type Servicio = {
   proveedor_id: number | null; destino_id: number | null; rangos_edad: number[] | null;
   categoria?: string | null;
   liquidacion?: string | null;
+  descripcion?: string | null;
+  recargo_individual?: number | null;
   proveedores: { nombre: string } | null; destinos: { nombre: string } | null;
   servicio_tarifa_pax: Tier[];
 };
@@ -41,6 +43,9 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
   const [pPersona, setPPersona] = useState("");
   const [categoria, setCategoria] = useState("otro");
   const [liquidacion, setLiquidacion] = useState<"dia" | "noche" | "paquete">("paquete");
+  const [descripcion, setDescripcion] = useState("");
+  const [recargoOn, setRecargoOn] = useState(false);
+  const [recargoVal, setRecargoVal] = useState("");
   const [grupo, setGrupo] = useState<TierForm[]>([tierVacio()]);
   const [editId, setEditId] = useState<number | null>(null);
   const [pending, start] = useTransition();
@@ -57,7 +62,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
   const visibles = filtrados.slice(paginaActual * PAGE_SIZE, paginaActual * PAGE_SIZE + PAGE_SIZE);
 
   function resetForm() {
-    setNombre(""); setProvId(""); setDestId(""); setTemp(""); setPPersona(""); setCategoria("otro"); setLiquidacion("paquete"); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
+    setNombre(""); setProvId(""); setDestId(""); setTemp(""); setPPersona(""); setCategoria("otro"); setLiquidacion("paquete"); setDescripcion(""); setRecargoOn(false); setRecargoVal(""); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
   }
 
   function startEdit(s: Servicio) {
@@ -70,6 +75,9 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
     setPPersona(s.precio_persona != null ? String(s.precio_persona) : "");
     setCategoria(s.categoria ?? "otro");
     setLiquidacion((s.liquidacion as "dia" | "noche" | "paquete") ?? "paquete");
+    setDescripcion(s.descripcion ?? "");
+    setRecargoOn((Number(s.recargo_individual) || 0) > 0);
+    setRecargoVal((Number(s.recargo_individual) || 0) > 0 ? String(s.recargo_individual) : "");
     const t = (s.servicio_tarifa_pax ?? []).map((x) => ({ paxDesde: String(x.pax_desde), paxHasta: String(x.pax_hasta), precio: String(x.precio) }));
     setGrupo(t.length ? t : [tierVacio()]);
     setRangosSel(s.rangos_edad ?? []);
@@ -91,6 +99,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
     const input: ServicioInput = {
       nombre, proveedorId: provId === "" ? null : Number(provId), destinoId: destId === "" ? null : Number(destId),
       precioPersona: persona, grupoTiers, temporada: temp, rangosEdad: rangosSel, categoria, liquidacion,
+      descripcion, recargoIndividual: recargoOn ? Number(recargoVal) || 0 : 0,
     };
     start(async () => {
       const r = editId ? await actualizarServicio(editId, input) : await crearServicio(input);
@@ -155,6 +164,38 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
         <p className="mt-2 text-[11px] text-gray-400">
           Llena precio por persona y/o rangos por grupo. En el paquete eliges cuál se cobra para ese paquete.
         </p>
+
+        {/* Descripción del tour */}
+        <div className="mt-4">
+          <label className={lbl}>Descripción del tour (se muestra al cliente)</label>
+          <textarea
+            value={descripcion}
+            onChange={(e) => setDescripcion(e.target.value)}
+            rows={3}
+            placeholder="Qué incluye el tour, recorrido, horarios, punto de encuentro…"
+            className="w-full rounded-lg border border-gray-300 p-2 text-sm"
+          />
+        </div>
+
+        {/* Recargo individual (1 pax) */}
+        <div className="mt-4 rounded-lg border border-gray-100 p-3">
+          <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <input type="checkbox" checked={recargoOn} onChange={(e) => setRecargoOn(e.target.checked)} className="h-4 w-4" />
+            Recargo individual (cuando va 1 pax)
+          </label>
+          {recargoOn && (
+            <div className="mt-2 flex flex-wrap items-end gap-2">
+              <div className="w-48">
+                <label className={lbl}>Valor adicional</label>
+                <Input type="number" min={0} value={recargoVal} onChange={(e) => setRecargoVal(e.target.value)} placeholder="—" />
+              </div>
+              <p className="pb-2 text-[11px] text-gray-400">
+                Solo aplica al cobro <b>por persona</b>. Si el servicio se vende a 1 pasajero, el sistema suma este valor a la tarifa.
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="mt-3">
           <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} />
         </div>
@@ -208,7 +249,12 @@ function Row({ s, onEdit }: { s: Servicio; onEdit: (s: Servicio) => void }) {
       <td className="px-4 py-2 text-gray-700">{s.nombre}</td>
       <td className="px-4 py-2 text-gray-500">{s.proveedores?.nombre ?? "—"}</td>
       <td className="px-4 py-2 text-gray-500">{s.destinos?.nombre ?? "Nacional"}</td>
-      <td className="px-4 py-2 text-right tabular-nums">{s.precio_persona != null ? formatCOP(s.precio_persona) : "—"}</td>
+      <td className="px-4 py-2 text-right tabular-nums">
+        {s.precio_persona != null ? formatCOP(s.precio_persona) : "—"}
+        {(Number(s.recargo_individual) || 0) > 0 && (
+          <div className="text-[11px] font-normal text-amber-600">+{formatCOP(Number(s.recargo_individual))} si 1 pax</div>
+        )}
+      </td>
       <td className="px-4 py-2 text-xs text-gray-500">{resumenGrupo}</td>
       <td className="px-4 py-2 text-right">
         <div className="flex items-center justify-end gap-3">
