@@ -517,16 +517,30 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
   (fallbacks en `paginasFallback.ts`/`data.js`). Render: `components/sitio/secciones/*`.
   Migraciones 078/079/080. La separación por subdominio del handoff **NO está** en
   `proxy.ts` (el sitio queda bajo `/sitio_web`; tendrá dominio propio luego — OK por ahora).
-- **CMS → Page builder VISUAL (en curso, rama `claude/peaceful-noether-713c7c`):** el
-  dueño pidió cambiar el tipo de CMS a page builder. **Fase 1 HECHA:** lienzo de bloques
-  `app/cms/editors/BloquesCanvas.tsx` — drag-and-drop para reordenar (framer-motion
-  `Reorder`, sin nueva dependencia), tarjetas visuales (miniatura/resumen), paleta visual
-  "+ Agregar bloque", acciones Editar/Duplicar/Ocultar/Eliminar; reusa `SeccionForm` y la
-  vista en vivo (iframe) del `CmsClient`. Server actions nuevas: `reordenarSecciones`,
-  `duplicarSeccion`. **Bugs corregidos:** slug con `/` (daba 404), `notFound`/SEO en
-  `blog/[id]`, reordenar con rollback. **Pendiente (Fase 2):** edición lateral/WYSIWYG por
-  bloque, toggle de preview escritorio/móvil, hacer `cotizar` y contacto CMS-driven
-  (hoy `cotizar` es página hardcodeada y hay WhatsApp quemado en `BlogDetalle`/`cotizar`).
+- **CMS → edición IN-SITU sobre la página real (en curso, rama `claude/peaceful-noether-713c7c`):**
+  el dueño pidió cambiar el tipo de CMS a edición directa "click en un texto y editarlo en la
+  vista en vivo" (estilo Webflow), NO un panel/lista aparte (se descartó el `BloquesCanvas`).
+  - **Framework de edición in-situ:** `components/sitio/edicion/EdicionContext.jsx` (provider
+    `EdicionSeccion` con `{editable, datos, set}`) + `Editable.jsx` (`EditableText` =
+    contentEditable que guarda al `onBlur`). En el sitio público NO hay provider → `editable`
+    false y todo renderiza idéntico. Secciones ya cableadas inline: **Hero, Texto, Cta**
+    (las demás se editan por el panel ⚙ Campos). Para cablear otra sección: envolver sus
+    textos con `<EditableText as=.. campo=.. >{valor}</EditableText>` y guardar `tipo` en el set
+    `INLINE` de `LienzoVivo`.
+  - **`app/cms/editors/LienzoVivo.tsx`:** renderiza las secciones REALES (`SeccionRenderer`)
+    dentro del CMS con su `contexto` (config/testimonios/blog/destinos en forma "inglesa" de
+    `lib/sitio/cms`, + `hijos` derivados del árbol). Cada bloque: barra flotante (arrastrar
+    para reordenar con framer-motion `Reorder`, ⚙ campos en slide-over con `SeccionForm`,
+    duplicar, ocultar, eliminar), selección, y `onClickCapture` que bloquea la navegación de
+    los botones del sitio mientras editas. Guardado de campos con debounce (700ms) vía
+    `actualizarSeccion`, sin refrescar (no pierde el foco).
+  - `CmsClient` ya no usa iframe: muestra árbol (izq) + ajustes de página colapsables +
+    `LienzoVivo`. `page.tsx` carga además los datos del sitio para el lienzo.
+  - Server actions nuevas: `reordenarSecciones`, `duplicarSeccion`. **Bugs corregidos:**
+    slug con `/` (404), `notFound`/SEO en `blog/[id]`, reordenar con rollback.
+  - **Pendiente:** cablear inline el resto de secciones; edición in-situ de imágenes (hoy por
+    ⚙ panel); toggle preview escritorio/móvil; hacer `cotizar`/contacto CMS-driven (hoy
+    `cotizar` es página hardcodeada y hay WhatsApp quemado en `BlogDetalle`/`cotizar`).
 - Merge de la rama a `main` cuando todo esté validado.
 
 ### REDISEÑO DE RESERVAR (anotaciones del dueño — pendiente, prioridad alta)

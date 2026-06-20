@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { PaginaConSecciones } from "../tipos";
 import { actualizarPagina, type WebPaginaInput } from "../actions";
-import { BloquesCanvas } from "./BloquesCanvas";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const ta = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -118,9 +117,6 @@ export function PaginaEditor({
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
       </div>
-
-      {/* ── Bloques (page builder) ── */}
-      <BloquesCanvas paginaId={pagina.id} secciones={pagina.secciones} onChanged={onChanged} />
     </div>
   );
 }

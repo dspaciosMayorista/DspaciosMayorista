@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { CmsClient } from "./CmsClient";
 import type { PaginaConSecciones, SeccionRow } from "./tipos";
+import { getConfig, getTestimonios, getBlog, getDestinos } from "@/lib/sitio/cms";
 
 export const dynamic = "force-dynamic";
 
@@ -32,12 +33,21 @@ export default async function CmsPage() {
     { data: testimonios },
     { data: blog },
     { data: config },
+    sitioConfig,
+    sitioTestimonios,
+    sitioBlog,
+    sitioDestinos,
   ] = await Promise.all([
     sb.from("web_paginas").select("*").order("orden", { ascending: true }),
     sb.from("web_secciones").select("*").order("orden", { ascending: true }),
     sb.from("web_testimonios").select("*").order("orden", { ascending: true }),
     sb.from("web_blog").select("*").order("orden", { ascending: true }),
     sb.from("web_config").select("*").eq("id", 1).maybeSingle(),
+    // Forma "inglesa" (misma que consume el sitio público) para el lienzo vivo.
+    getConfig(),
+    getTestimonios(),
+    getBlog(),
+    getDestinos(),
   ]);
 
   // Agrupa secciones por página.
@@ -69,6 +79,12 @@ export default async function CmsPage() {
         testimonios={testimonios ?? []}
         blog={blog ?? []}
         config={config ?? null}
+        sitio={{
+          config: sitioConfig,
+          testimonios: sitioTestimonios,
+          blog: sitioBlog,
+          destinos: sitioDestinos,
+        }}
       />
     </div>
   );
