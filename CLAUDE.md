@@ -509,6 +509,24 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
   `docs/sitio-web/despliegue-dominio.md`); subida de imágenes a Storage (hoy URLs);
   título/favicon propios; borrar `sitio-web/` (export Vite, hoy solo referencia).
   La carpeta `sitio-web/` NO se despliega.
+- **CMS — estado real (rama actual):** el sitio público vive en `app/sitio_web/`
+  (route group), NO en `app/(sitio)`; el CMS en `/cms` (no `/dashboard/cms`). Modelo
+  **páginas + secciones tipadas**: `web_paginas` (árbol por `parent_id`, slug de UN solo
+  segmento) → `web_secciones` (`datos` jsonb), + `web_blog`/`web_testimonios`/`web_config`.
+  Lectura pública con fallback estático: `lib/sitio/paginas.ts` + `lib/sitio/cms.ts`
+  (fallbacks en `paginasFallback.ts`/`data.js`). Render: `components/sitio/secciones/*`.
+  Migraciones 078/079/080. La separación por subdominio del handoff **NO está** en
+  `proxy.ts` (el sitio queda bajo `/sitio_web`; tendrá dominio propio luego — OK por ahora).
+- **CMS → Page builder VISUAL (en curso, rama `claude/peaceful-noether-713c7c`):** el
+  dueño pidió cambiar el tipo de CMS a page builder. **Fase 1 HECHA:** lienzo de bloques
+  `app/cms/editors/BloquesCanvas.tsx` — drag-and-drop para reordenar (framer-motion
+  `Reorder`, sin nueva dependencia), tarjetas visuales (miniatura/resumen), paleta visual
+  "+ Agregar bloque", acciones Editar/Duplicar/Ocultar/Eliminar; reusa `SeccionForm` y la
+  vista en vivo (iframe) del `CmsClient`. Server actions nuevas: `reordenarSecciones`,
+  `duplicarSeccion`. **Bugs corregidos:** slug con `/` (daba 404), `notFound`/SEO en
+  `blog/[id]`, reordenar con rollback. **Pendiente (Fase 2):** edición lateral/WYSIWYG por
+  bloque, toggle de preview escritorio/móvil, hacer `cotizar` y contacto CMS-driven
+  (hoy `cotizar` es página hardcodeada y hay WhatsApp quemado en `BlogDetalle`/`cotizar`).
 - Merge de la rama a `main` cuando todo esté validado.
 
 ### REDISEÑO DE RESERVAR (anotaciones del dueño — pendiente, prioridad alta)

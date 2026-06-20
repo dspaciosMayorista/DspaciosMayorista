@@ -3,16 +3,9 @@
 import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { PaginaConSecciones, SeccionRow } from "../tipos";
-import {
-  actualizarPagina,
-  crearSeccion,
-  eliminarSeccion,
-  moverSeccion,
-  toggleSeccionVisible,
-  type WebPaginaInput,
-} from "../actions";
-import { SeccionForm } from "./SeccionForm";
+import type { PaginaConSecciones } from "../tipos";
+import { actualizarPagina, type WebPaginaInput } from "../actions";
+import { BloquesCanvas } from "./BloquesCanvas";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const ta = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -29,26 +22,6 @@ const TIPOS_PAGINA: { value: string; label: string }[] = [
   { value: "generica", label: "Genérica" },
 ];
 
-const TIPOS_SECCION: { value: string; label: string }[] = [
-  { value: "hero", label: "Hero (portada)" },
-  { value: "texto", label: "Texto" },
-  { value: "galeria", label: "Galería" },
-  { value: "destinos_grid", label: "Grilla de destinos" },
-  { value: "experiencias", label: "Experiencias" },
-  { value: "testimonios", label: "Testimonios" },
-  { value: "blog_grid", label: "Grilla de blog" },
-  { value: "cta", label: "CTA" },
-  { value: "contacto", label: "Contacto" },
-  { value: "actividades", label: "Actividades imperdibles" },
-  { value: "plan", label: "El plan incluye / no incluye" },
-  { value: "flyers", label: "Flyers (botones + modal)" },
-  { value: "consulta_disponibilidad", label: "Consulta disponibilidad (→ tarifario)" },
-];
-
-const TIPO_SECCION_LBL = Object.fromEntries(
-  TIPOS_SECCION.map((t) => [t.value, t.label])
-);
-
 export function PaginaEditor({
   pagina,
   onChanged,
@@ -60,8 +33,6 @@ export function PaginaEditor({
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [pending, start] = useTransition();
-  const [nuevoTipo, setNuevoTipo] = useState("texto");
-  const [seccionAbierta, setSeccionAbierta] = useState<number | null>(null);
 
   useEffect(() => {
     setForm(toInput(pagina));
@@ -82,14 +53,6 @@ export function PaginaEditor({
         setMsg("Página guardada.");
         onChanged();
       } else setErr(r.error);
-    });
-  }
-
-  function agregarSeccion() {
-    start(async () => {
-      const r = await crearSeccion(pagina.id, nuevoTipo);
-      if (r.ok) onChanged();
-      else setErr(r.error);
     });
   }
 
@@ -156,131 +119,8 @@ export function PaginaEditor({
         </div>
       </div>
 
-      {/* ── Secciones ── */}
-      <div className="rounded-xl border border-gray-200 bg-white p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm font-semibold text-gray-700">Secciones de la página</p>
-          <div className="flex items-center gap-2">
-            <select className={ta} value={nuevoTipo} onChange={(e) => setNuevoTipo(e.target.value)} style={{ width: "auto" }}>
-              {TIPOS_SECCION.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
-            <Button type="button" variant="outline" onClick={agregarSeccion} disabled={pending}>
-              + Agregar sección
-            </Button>
-          </div>
-        </div>
-
-        {pagina.secciones.length === 0 ? (
-          <p className="text-sm text-gray-400">
-            Esta página no tiene secciones aún. Agrega una para construir su contenido.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {pagina.secciones.map((sec, i) => (
-              <SeccionFila
-                key={sec.id}
-                seccion={sec}
-                primera={i === 0}
-                ultima={i === pagina.secciones.length - 1}
-                abierta={seccionAbierta === sec.id}
-                onToggleAbrir={() =>
-                  setSeccionAbierta((id) => (id === sec.id ? null : sec.id))
-                }
-                onChanged={onChanged}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SeccionFila({
-  seccion,
-  primera,
-  ultima,
-  abierta,
-  onToggleAbrir,
-  onChanged,
-}: {
-  seccion: SeccionRow;
-  primera: boolean;
-  ultima: boolean;
-  abierta: boolean;
-  onToggleAbrir: () => void;
-  onChanged: () => void;
-}) {
-  const [pending, start] = useTransition();
-  const datos =
-    seccion.datos && typeof seccion.datos === "object" && !Array.isArray(seccion.datos)
-      ? (seccion.datos as Record<string, unknown>)
-      : {};
-
-  return (
-    <div className="rounded-lg border border-gray-200">
-      <div className="flex items-center justify-between gap-2 px-3 py-2">
-        <button
-          type="button"
-          onClick={onToggleAbrir}
-          className="flex items-center gap-2 text-left text-sm font-medium text-gray-700"
-        >
-          <span className="text-gray-400">{abierta ? "▾" : "▸"}</span>
-          {TIPO_SECCION_LBL[seccion.tipo] ?? seccion.tipo}
-          {!seccion.visible && (
-            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-400">oculta</span>
-          )}
-        </button>
-        <div className="flex items-center gap-3 text-xs">
-          <button
-            type="button"
-            disabled={pending || primera}
-            onClick={() => start(async () => { await moverSeccion(seccion.id, "up"); onChanged(); })}
-            className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
-          >
-            ↑
-          </button>
-          <button
-            type="button"
-            disabled={pending || ultima}
-            onClick={() => start(async () => { await moverSeccion(seccion.id, "down"); onChanged(); })}
-            className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
-          >
-            ↓
-          </button>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => start(async () => { await toggleSeccionVisible(seccion.id, !seccion.visible); onChanged(); })}
-            className="text-gray-500 hover:underline"
-          >
-            {seccion.visible ? "Ocultar" : "Mostrar"}
-          </button>
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => {
-              if (confirm("¿Eliminar esta sección?"))
-                start(async () => { await eliminarSeccion(seccion.id); onChanged(); });
-            }}
-            className="text-gray-400 hover:text-red-500"
-          >
-            Eliminar
-          </button>
-        </div>
-      </div>
-      {abierta && (
-        <div className="border-t border-gray-100 px-3 py-3">
-          <SeccionForm
-            seccionId={seccion.id}
-            tipo={seccion.tipo}
-            datosIniciales={datos}
-            onSaved={onChanged}
-          />
-        </div>
-      )}
+      {/* ── Bloques (page builder) ── */}
+      <BloquesCanvas paginaId={pagina.id} secciones={pagina.secciones} onChanged={onChanged} />
     </div>
   );
 }

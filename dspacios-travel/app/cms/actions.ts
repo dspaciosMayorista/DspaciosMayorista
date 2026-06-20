@@ -313,6 +313,71 @@ export async function toggleSeccionVisible(
   return { ok: true };
 }
 
+// Reordena TODAS las secciones de una página según el arreglo de ids recibido
+// (page builder: drag-and-drop). Asigna orden = índice. Valida que los ids
+// pertenezcan a la página.
+export async function reordenarSecciones(
+  pagina_id: number,
+  ids: number[]
+): Promise<Result> {
+  const auth = await exigirSuperadmin();
+  if (!auth.ok) return auth;
+
+  const { data: actuales } = await auth.sb
+    .from("web_secciones")
+    .select("id")
+    .eq("pagina_id", pagina_id);
+  const validos = new Set((actuales ?? []).map((s) => s.id));
+  const orden = ids.filter((id) => validos.has(id));
+  if (orden.length !== validos.size)
+    return { ok: false, error: "La lista de secciones no coincide con la página." };
+
+  for (let i = 0; i < orden.length; i++) {
+    const { error } = await auth.sb
+      .from("web_secciones")
+      .update({ orden: i })
+      .eq("id", orden[i])
+      .eq("pagina_id", pagina_id);
+    if (error) return { ok: false, error: error.message };
+  }
+  revalidarSitio();
+  return { ok: true };
+}
+
+// Duplica una sección (mismo tipo y datos) al final de su página.
+export async function duplicarSeccion(id: number): Promise<ResultId> {
+  const auth = await exigirSuperadmin();
+  if (!auth.ok) return auth;
+
+  const { data: orig } = await auth.sb
+    .from("web_secciones")
+    .select("pagina_id, tipo, datos, visible")
+    .eq("id", id)
+    .maybeSingle();
+  if (!orig) return { ok: false, error: "Sección no encontrada." };
+
+  const { data: hermanas } = await auth.sb
+    .from("web_secciones")
+    .select("orden")
+    .eq("pagina_id", orig.pagina_id);
+  const maxOrden = (hermanas ?? []).reduce((m, r) => Math.max(m, r.orden ?? 0), -1);
+
+  const { data, error } = await auth.sb
+    .from("web_secciones")
+    .insert({
+      pagina_id: orig.pagina_id,
+      tipo: orig.tipo,
+      datos: (orig.datos ?? {}) as Json,
+      visible: orig.visible,
+      orden: maxOrden + 1,
+    })
+    .select("id")
+    .single();
+  if (error) return { ok: false, error: error.message };
+  revalidarSitio();
+  return { ok: true, id: data.id };
+}
+
 export async function moverSeccion(
   id: number,
   dir: "up" | "down"
