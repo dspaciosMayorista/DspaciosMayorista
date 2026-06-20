@@ -46,3 +46,41 @@ export function EditableText({
     </Tag>
   );
 }
+
+// Imagen editable IN-SITU. Fuera del CMS renderiza el <img> tal cual. Dentro del
+// CMS muestra además un botón "Cambiar imagen" (sobre el contenedor posicionado
+// padre). `fallback` es la imagen efectiva que ya calcula el componente.
+export function EditableImage({
+  campo,
+  fallback = "",
+  alt = "",
+  className = "",
+}) {
+  const ctx = useEdicion();
+  const editable = !!ctx?.editable;
+  const valor = editable ? String(ctx.datos?.[campo] ?? "") : "";
+  const src = editable ? valor || fallback : fallback;
+
+  if (!editable) {
+    return <img src={src} alt={alt} className={className} />;
+  }
+
+  const cambiar = () => {
+    const url = window.prompt("Pega la URL de la imagen:", String(ctx.datos?.[campo] ?? ""));
+    if (url != null) ctx.set(campo, url.trim());
+  };
+
+  return (
+    <>
+      <img src={src} alt={alt} className={className} />
+      <button
+        type="button"
+        data-cms-tb=""
+        onClick={cambiar}
+        className="absolute left-3 top-3 z-30 inline-flex items-center gap-1 rounded-lg bg-black/60 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-black/80"
+      >
+        Cambiar imagen
+      </button>
+    </>
+  );
+}

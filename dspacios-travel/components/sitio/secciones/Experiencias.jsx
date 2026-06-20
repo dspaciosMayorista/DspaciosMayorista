@@ -6,6 +6,8 @@ import {
   ShieldCheck, Headphones, Globe, Lock, HeartHandshake,
   Award, Star, Compass, Plane, Map,
 } from 'lucide-react';
+import { EditableText } from '@/components/sitio/edicion/Editable';
+import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Mapa de íconos disponibles (lucide-react de este repo no exporta todos).
 const ICONOS = {
@@ -23,6 +25,7 @@ const ICONOS = {
 
 // Sección EXPERIENCIAS. datos: { titulo?, subtitulo?, items?: [{titulo, texto, icono?}] }
 const Experiencias = ({ datos = {} }) => {
+  const editable = !!useEdicion()?.editable;
   const titulo = datos.titulo || "¿Por Qué Elegirnos?";
   const subtitulo = datos.subtitulo ||
     "Más que una agencia, somos tu socio de confianza en cada aventura.";
@@ -47,9 +50,9 @@ const Experiencias = ({ datos = {} }) => {
           className="text-center mb-16"
         >
           <span className="text-[#d8f511] font-bold uppercase tracking-wider text-sm bg-[#120573] px-3 py-1 rounded-full">Experiencia Premium</span>
-          <h2 className="text-4xl md:text-5xl font-bold text-[#120573] mt-4 mb-6">{titulo}</h2>
-          {subtitulo ? (
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto font-light">{subtitulo}</p>
+          <EditableText as="h2" campo="titulo" placeholder="Título" className="text-4xl md:text-5xl font-bold text-[#120573] mt-4 mb-6">{titulo}</EditableText>
+          {(subtitulo || editable) ? (
+            <EditableText as="p" campo="subtitulo" placeholder="Subtítulo" className="text-xl text-gray-600 max-w-2xl mx-auto font-light">{subtitulo}</EditableText>
           ) : null}
         </motion.div>
 

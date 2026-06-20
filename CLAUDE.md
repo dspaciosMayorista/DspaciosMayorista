@@ -538,9 +538,15 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
     `LienzoVivo`. `page.tsx` carga además los datos del sitio para el lienzo.
   - Server actions nuevas: `reordenarSecciones`, `duplicarSeccion`. **Bugs corregidos:**
     slug con `/` (404), `notFound`/SEO en `blog/[id]`, reordenar con rollback.
-  - **Pendiente:** cablear inline el resto de secciones; edición in-situ de imágenes (hoy por
-    ⚙ panel); toggle preview escritorio/móvil; hacer `cotizar`/contacto CMS-driven (hoy
-    `cotizar` es página hardcodeada y hay WhatsApp quemado en `BlogDetalle`/`cotizar`).
+  - **Iconos lucide** (no emojis) en la paleta y la barra de bloques. **Todas las secciones**
+    tienen sus encabezados editables inline (titulo/subtitulo/intro/textos); el contenido por
+    ítem (listas, tarjetas, galería) e imágenes secundarias se editan por ⚙ panel. **Hero**
+    edita su imagen de fondo in-situ (`EditableImage`, botón "Cambiar imagen"). **Toggle
+    escritorio/móvil**: móvil = iframe real (publicado) en marco angosto. **`cotizar`**
+    ahora es server + `CotizarClient` y toma el WhatsApp de `web_config` (ya no hardcodeado).
+  - **Pendiente:** edición in-situ de imágenes en más secciones (Actividades/Consulta/Galería,
+    hoy por ⚙); edición inline de ítems de lista (experiencias/actividades/plan); subir imagen
+    (no solo URL) desde el botón in-situ.
 - Merge de la rama a `main` cuando todo esté validado.
 
 ### REDISEÑO DE RESERVAR (anotaciones del dueño — pendiente, prioridad alta)

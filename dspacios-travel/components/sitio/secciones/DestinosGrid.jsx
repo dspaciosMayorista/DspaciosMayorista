@@ -4,11 +4,14 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { rutaSitio } from '@/lib/sitio/rutas';
+import { EditableText } from '@/components/sitio/edicion/Editable';
+import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección DESTINOS_GRID. datos: { titulo?, subtitulo? }
 // hijos: subpáginas (PaginaHijo[]) → tarjetas que enlazan a /[slug].
 // destinos: fallback con tarjetas de web_destinos (sin enlace de subpágina).
 const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
+  const editable = !!useEdicion()?.editable;
   const titulo = datos.titulo || "Nuestros Destinos";
   const subtitulo = datos.subtitulo || "";
 
@@ -39,9 +42,9 @@ const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
           transition={{ duration: 0.6 }}
           className="text-center mb-12"
         >
-          <h2 className="text-4xl md:text-5xl font-bold text-[#120573] mb-4">{titulo}</h2>
-          {subtitulo ? (
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">{subtitulo}</p>
+          <EditableText as="h2" campo="titulo" placeholder="Título" className="text-4xl md:text-5xl font-bold text-[#120573] mb-4">{titulo}</EditableText>
+          {(subtitulo || editable) ? (
+            <EditableText as="p" campo="subtitulo" placeholder="Subtítulo" className="text-xl text-gray-600 max-w-2xl mx-auto">{subtitulo}</EditableText>
           ) : null}
         </motion.div>
 

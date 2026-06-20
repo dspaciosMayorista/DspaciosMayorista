@@ -3,6 +3,7 @@
 import React from 'react';
 import { Button } from '@/components/sitio/ui/button';
 import { Send, MapPin, Phone, Mail } from 'lucide-react';
+import { EditableText } from '@/components/sitio/edicion/Editable';
 
 // Sección CONTACTO. datos: { titulo?, texto? }
 // config: SitioConfig (email/telefono/direccion). Reusa el layout del ContactForm.
@@ -20,8 +21,8 @@ const Contacto = ({ datos = {}, config }) => {
         <div className="grid lg:grid-cols-2 gap-12 items-center">
           {/* Info */}
           <div>
-            <h2 className="text-4xl md:text-5xl font-bold text-[#120573] mb-6">{titulo}</h2>
-            <p className="text-xl text-gray-600 mb-12 leading-relaxed">{texto}</p>
+            <EditableText as="h2" campo="titulo" placeholder="Título" className="text-4xl md:text-5xl font-bold text-[#120573] mb-6">{titulo}</EditableText>
+            <EditableText as="p" campo="texto" placeholder="Texto" className="text-xl text-gray-600 mb-12 leading-relaxed">{texto}</EditableText>
 
             <div className="space-y-8">
               <div className="flex items-start gap-4">

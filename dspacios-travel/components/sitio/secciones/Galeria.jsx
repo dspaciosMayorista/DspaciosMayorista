@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
+import { EditableText } from '@/components/sitio/edicion/Editable';
 
 // Sección GALERÍA. datos: { titulo?, imagenes: string[] }
 const Galeria = ({ datos = {} }) => {
@@ -13,9 +14,9 @@ const Galeria = ({ datos = {} }) => {
     <section className="py-20 bg-gray-50">
       <div className="container mx-auto px-4">
         {titulo ? (
-          <h2 className="text-3xl md:text-4xl font-bold text-[#120573] mb-10 text-center">
+          <EditableText as="h2" campo="titulo" placeholder="Título" className="text-3xl md:text-4xl font-bold text-[#120573] mb-10 text-center">
             {titulo}
-          </h2>
+          </EditableText>
         ) : null}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {imagenes.map((src, i) => (

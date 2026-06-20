@@ -1,9 +1,14 @@
+"use client";
+
 import React from 'react';
+import { EditableText } from '@/components/sitio/edicion/Editable';
+import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección ACTIVIDADES ("Actividades Imperdibles").
 // datos: { titulo, intro, imagen_fondo, items: [{ titulo, texto }] }
 // Render: título + intro + lista numerada de actividades, sobre imagen de fondo opcional.
 const Actividades = ({ datos = {} }) => {
+  const editable = !!useEdicion()?.editable;
   const titulo = datos.titulo || 'Actividades Imperdibles';
   const intro = datos.intro || '';
   const fondo = typeof datos.imagen_fondo === 'string' ? datos.imagen_fondo : '';
@@ -22,13 +27,13 @@ const Actividades = ({ datos = {} }) => {
 
       <div className={`relative z-10 py-16 ${fondo ? '' : 'bg-[#120573]'}`}>
         <div className="container mx-auto px-4">
-          <h2 className="text-3xl md:text-4xl font-extrabold text-white mb-3">
+          <EditableText as="h2" campo="titulo" placeholder="Título" className="text-3xl md:text-4xl font-extrabold text-white mb-3">
             {titulo}
-          </h2>
-          {intro ? (
-            <p className="text-lg text-gray-200 mb-8 max-w-2xl whitespace-pre-line">
+          </EditableText>
+          {(intro || editable) ? (
+            <EditableText as="p" campo="intro" placeholder="Introducción" className="text-lg text-gray-200 mb-8 max-w-2xl whitespace-pre-line">
               {intro}
-            </p>
+            </EditableText>
           ) : null}
 
           <ol className="space-y-5">

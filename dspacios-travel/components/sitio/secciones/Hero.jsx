@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { MessageCircle, CalendarCheck } from 'lucide-react';
 import { Button } from '@/components/sitio/ui/button';
 import { useRouter } from 'next/navigation';
-import { EditableText } from '@/components/sitio/edicion/Editable';
+import { EditableText, EditableImage } from '@/components/sitio/edicion/Editable';
 import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección HERO. datos: { titulo, subtitulo, imagen, cta_texto, cta_url }
@@ -29,7 +29,7 @@ const Hero = ({ datos = {}, config }) => {
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
       <div className="absolute inset-0 z-0">
-        <img className="w-full h-full object-cover" alt={titulo} src={heroImg} />
+        <EditableImage campo="imagen" fallback={heroImg} alt={titulo} className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-r from-[#120573]/90 via-[#120573]/60 to-transparent"></div>
       </div>
 

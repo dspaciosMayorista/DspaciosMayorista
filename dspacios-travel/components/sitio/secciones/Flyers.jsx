@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { urlEmbebible, requiereIframe } from '@/lib/sitio/flyers';
+import { EditableText } from '@/components/sitio/edicion/Editable';
 
 // Sección FLYERS. datos: { titulo?, items: [{ titulo, tipo: 'imagen'|'pdf', url }] }
 // Botones tipo "pill" que abren el flyer en un MODAL dentro de la misma página
@@ -21,7 +22,7 @@ const Flyers = ({ datos = {} }) => {
     <section className="bg-[#120573] pb-12">
       <div className="container mx-auto px-4">
         {titulo ? (
-          <h2 className="mb-5 text-2xl font-extrabold text-white">{titulo}</h2>
+          <EditableText as="h2" campo="titulo" placeholder="Título" className="mb-5 text-2xl font-extrabold text-white">{titulo}</EditableText>
         ) : null}
         <div className="flex flex-wrap gap-3">
           {items.map((it, i) => (

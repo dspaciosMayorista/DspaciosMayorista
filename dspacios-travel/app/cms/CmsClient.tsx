@@ -155,6 +155,7 @@ export function CmsClient({
                   pagina={paginaSel}
                   paginas={paginas}
                   sitio={sitio}
+                  previewSrc={previewSrc}
                   onChanged={recargar}
                 />
               </>
