@@ -516,10 +516,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       }
     } else if (srv.precio_persona != null) {
       const pvp = redondearMilArriba(marcar(Number(srv.precio_persona) || 0, pctMk) * fLiq);
-      // Recargo individual: monto fijo que se suma a la tarifa si va 1 pax
-      // (solo cobro por persona). Se guarda para que Reservar lo sume.
-      const recargo = Math.max(Number(srv.recargo_individual) || 0, 0);
-      filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, recargo_individual: recargo });
+      // Recargo individual: suplemento del proveedor cuando va 1 pax (cobro por
+      // persona). Es un COSTO, así que el lado de venta sube con su markup; el
+      // costo neto lo toma Reservar del catálogo para la CxP del proveedor.
+      const recargoNeto = Math.max(Number(srv.recargo_individual) || 0, 0);
+      const recargoPvp = recargoNeto > 0 ? redondearMilArriba(marcar(recargoNeto, pctMk)) : 0;
+      filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, recargo_individual: recargoPvp });
     }
   }
 

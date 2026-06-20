@@ -377,7 +377,8 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   de edades y rangos; **config de acomodaciones** — pax mín/máx del hotel y, por acomodación,
   `pax_tarifa` (multiplicador por habitación) + mín/máx de adt/niños/inf), **Servicios** (precio **por persona** y/o **por grupo con rangos de
   pax**; destino vacío = nacional; **descripción del tour** y **recargo individual** —
-  suplemento fijo que se suma a la tarifa si va 1 pax en cobro por persona, migr. 088).
+  costo neto del proveedor (tarifa de individual) que entra al costo/CxP y sube el PVP
+  con markup cuando va 1 pax en cobro por persona, migr. 088).
   **Carga masiva CSV** en hoteles, tarifas, servicios y
   bloqueos (plantillas con `sep=;`, listas con `|`).
 - **Paquetes (armado):** config inicial (nombre, **tipo** bloqueo/porción/servicios, **noches**
@@ -474,9 +475,11 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > trigger a tablas nuevas.
 > **088 servicio_descripcion_recargo** ← *creada en esta rama, PENDIENTE de correr*:
 > `descripcion` + `recargo_individual` en `servicios_adicionales` (y denormalizadas a
-> `tarifario_resultado`). El recargo individual es un monto FIJO que se suma a la tarifa
-> cuando el servicio (cobro POR PERSONA) se vende a 1 solo pax; se aplica en Reservar
-> (`reservar/actions.ts`) y se publica en la vitrina pública de Servicios.
+> `tarifario_resultado`). El recargo individual es un **costo NETO del proveedor** (tarifa
+> de individual) que aplica cuando el servicio (cobro POR PERSONA) se vende a 1 solo pax:
+> entra al `costo_receptivo` y a la **CxP del proveedor** (Reservar lo toma del catálogo),
+> y el PVP sube con su markup (en `tarifario_resultado.recargo_individual` se guarda ya con
+> markup). Se publica en la vitrina pública de Servicios.
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·

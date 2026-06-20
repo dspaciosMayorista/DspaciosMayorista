@@ -186,11 +186,12 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
           {recargoOn && (
             <div className="mt-2 flex flex-wrap items-end gap-2">
               <div className="w-48">
-                <label className={lbl}>Valor adicional</label>
+                <label className={lbl}>Costo adicional (neto)</label>
                 <Input type="number" min={0} value={recargoVal} onChange={(e) => setRecargoVal(e.target.value)} placeholder="—" />
               </div>
               <p className="pb-2 text-[11px] text-gray-400">
-                Solo aplica al cobro <b>por persona</b>. Si el servicio se vende a 1 pasajero, el sistema suma este valor a la tarifa.
+                Tarifa de individual: <b>costo neto</b> que cobra el proveedor cuando va 1 solo pax (cobro
+                <b> por persona</b>). Entra al costo/CxP y el precio sube con su markup.
               </p>
             </div>
           )}

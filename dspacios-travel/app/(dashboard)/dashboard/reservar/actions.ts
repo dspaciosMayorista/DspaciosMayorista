@@ -920,7 +920,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       const admin = createAdminClient();
       const [{ data: arm }, { data: gruposNet }] = await Promise.all([
         admin.from("armado_servicios")
-          .select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre, liquidacion, proveedores(nombre, aplica_retencion, pct_retencion))")
+          .select("servicio_id, modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedores(nombre, aplica_retencion, pct_retencion))")
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
           .select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", input.servicios),
@@ -937,8 +937,11 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       let hayAsistencia = false;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedores: ProvFact } | null;
-        const costoServ = precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
+        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedores: ProvFact } | null;
+        let costoServ = precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
+        // Recargo individual: suplemento NETO del proveedor cuando va 1 pax (cobro
+        // por persona). Entra al COSTO y a la CxP para liquidar correcto al proveedor.
+        if (modo === "persona" && totalPax === 1) costoServ += Math.max(Number(srv?.recargo_individual) || 0, 0);
         costoReceptivo += costoServ;
         const cat = srv?.categoria ?? "otro";
         if (cat === "asistencia") hayAsistencia = true;
