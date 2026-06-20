@@ -21,6 +21,7 @@ const Hero = ({ datos = {}, config }) => {
 
   const titulo = datos.titulo || "Tu Próxima Aventura Comienza Aquí";
   const subtitulo = datos.subtitulo || "";
+  const waTexto = datos.wa_texto || "Cotizar por WhatsApp";
   const ctaTexto = datos.cta_texto || "Ver Tarifario";
   const ctaUrl = datos.cta_url || "/tarifario";
   const heroImg = datos.imagen || config?.heroImagenUrl ||
@@ -81,7 +82,7 @@ const Hero = ({ datos = {}, config }) => {
                 onClick={() => { if (!editable) window.open(whatsappLink, '_blank'); }}
               >
                 <MessageCircle className="h-6 w-6" />
-                Cotizar por WhatsApp
+                <EditableText as="span" campo="wa_texto" placeholder="Texto del botón">{waTexto}</EditableText>
               </Button>
               <Button
                 size="lg"
