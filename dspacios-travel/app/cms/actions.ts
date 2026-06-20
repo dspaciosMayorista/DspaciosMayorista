@@ -65,17 +65,18 @@ async function exigirSuperadmin(): Promise<
   return { ok: true, sb };
 }
 
-// Normaliza un slug: minúsculas, sin espacios ni caracteres raros.
+// Normaliza un slug: minúsculas, sin espacios ni caracteres raros. NO se permite
+// "/" porque el sitio enruta cada página en un solo segmento (app/sitio_web/[slug]);
+// un slug con "/" daría 404.
 function normalizarSlug(raw: string): string {
   return (raw || "")
     .trim()
     .toLowerCase()
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9/-]+/g, "-")
+    .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .replace(/^\/+|\/+$/g, "");
+    .replace(/^-|-$/g, "");
 }
 
 // ───────────────────────── PÁGINAS ─────────────────────────
@@ -230,12 +231,16 @@ export async function moverPagina(
     .from("web_paginas")
     .update({ orden: b.orden })
     .eq("id", a.id);
+  if (e1) return { ok: false, error: e1.message };
   const { error: e2 } = await auth.sb
     .from("web_paginas")
     .update({ orden: a.orden })
     .eq("id", b.id);
-  if (e1 || e2)
-    return { ok: false, error: (e1 || e2)!.message };
+  if (e2) {
+    // Revierte el primer update para no dejar el orden inconsistente.
+    await auth.sb.from("web_paginas").update({ orden: a.orden }).eq("id", a.id);
+    return { ok: false, error: e2.message };
+  }
   revalidarSitio();
   return { ok: true };
 }
@@ -338,11 +343,16 @@ export async function moverSeccion(
     .from("web_secciones")
     .update({ orden: b.orden })
     .eq("id", a.id);
+  if (e1) return { ok: false, error: e1.message };
   const { error: e2 } = await auth.sb
     .from("web_secciones")
     .update({ orden: a.orden })
     .eq("id", b.id);
-  if (e1 || e2) return { ok: false, error: (e1 || e2)!.message };
+  if (e2) {
+    // Revierte el primer update para no dejar el orden inconsistente.
+    await auth.sb.from("web_secciones").update({ orden: a.orden }).eq("id", a.id);
+    return { ok: false, error: e2.message };
+  }
   revalidarSitio();
   return { ok: true };
 }
