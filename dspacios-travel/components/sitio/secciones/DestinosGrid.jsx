@@ -30,7 +30,7 @@ const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
         href: null,
       }));
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && !editable) return null;
 
   return (
     <section className="py-20 bg-white">
@@ -48,6 +48,12 @@ const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
           ) : null}
         </motion.div>
 
+        {items.length === 0 ? (
+          <div className="rounded-2xl border-2 border-dashed border-gray-300 py-16 text-center text-gray-400">
+            Esta grilla se llena automáticamente con las <strong>subpáginas</strong> de esta página
+            (o los destinos del sitio). Crea subpáginas en el árbol de la izquierda.
+          </div>
+        ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
           {items.map((item, index) => {
             const card = (
@@ -84,6 +90,7 @@ const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
             );
           })}
         </div>
+        )}
       </div>
     </section>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { Upload } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { subirArchivoWeb } from "../upload";
 
@@ -50,9 +51,9 @@ export function SubirArchivo({
           type="button"
           onClick={() => ref.current?.click()}
           disabled={pending}
-          className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
-          {pending ? "Subiendo…" : "⬆ Subir archivo"}
+          <Upload size={13} /> {pending ? "Subiendo…" : "Subir archivo"}
         </button>
         {value ? (
           <a
