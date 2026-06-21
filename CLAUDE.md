@@ -445,7 +445,7 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 085**.
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 088** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -461,10 +461,10 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > 080 web_storage (bucket `web-cms`) · 081 programa_edades · 082 crm_subcategoria ·
 > 083 hotel_min_noches · **084 cotizacion_manual** (cotización dinámica: tablas/campos) ·
 > **085 silla_contrato_manual** (contrato manual en la silla, fuera del flujo).
-> **086 recobro_cotizacion** ← *PENDIENTE de correr*: `recobro_total/empresa/aliado` en
+> **086 recobro_cotizacion** ← *aplicada*: `recobro_total/empresa/aliado` en
 > `ventas` + parámetro `recobro_pct_aliado_b2b` (Distribución B2B, editable en
 > Configuración → Parámetros tributarios).
-> **087 auditoria** ← *creada en esta rama, PENDIENTE de correr*: log de trazabilidad de
+> **087 auditoria** ← *aplicada*: log de trazabilidad de
 > TODO el CRUD. Tabla `auditoria` + función `fn_auditoria()` (SECURITY DEFINER) + un trigger
 > genérico `trg_auditoria` adjuntado por un bloque `DO` a **todas** las tablas base de
 > `public` (excepto `auditoria` y `tarifario_resultado`). Registra quién (auth.uid() +
@@ -473,7 +473,7 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > y `gerencia`. ⚠️ Escrituras con `service_role` (sillas/costos al reservar) NO traen actor
 > → quedan como "Sistema" (el cambio sí se registra). Re-correr el bloque DO adjunta el
 > trigger a tablas nuevas.
-> **088 servicio_descripcion_recargo** ← *creada en esta rama, PENDIENTE de correr*:
+> **088 servicio_descripcion_recargo** ← *aplicada*:
 > `descripcion` + `recargo_individual` en `servicios_adicionales` (y denormalizadas a
 > `tarifario_resultado`). El recargo individual es un **costo NETO del proveedor** (tarifa
 > de individual) que aplica cuando el servicio (cobro POR PERSONA) se vende a 1 solo pax:
@@ -505,10 +505,10 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
   **CMS** `/dashboard/cms` (solo superadmin) → tablas `web_*` (migración **078**), con
   **fallback** a `lib/sitio/data.js` mientras no se corra la 078/seed. Separación por
   subdominio en `proxy.ts` vía envs `NEXT_PUBLIC_SITIO_HOST`/`NEXT_PUBLIC_PORTAL_HOST`.
-  *Pendientes:* correr 078 + `seed_web_cms.sql`; configurar dominios/DNS (ver
-  `docs/sitio-web/despliegue-dominio.md`); subida de imágenes a Storage (hoy URLs);
-  título/favicon propios; borrar `sitio-web/` (export Vite, hoy solo referencia).
-  La carpeta `sitio-web/` NO se despliega.
+  *Pendientes:* (078/079/080 ya aplicadas → CMS y subida a Storage `web-cms` activos)
+  opcional `seed_web_cms.sql`; configurar dominios/DNS (ver
+  `docs/sitio-web/despliegue-dominio.md`); título/favicon propios; borrar `sitio-web/`
+  (export Vite, hoy solo referencia). La carpeta `sitio-web/` NO se despliega.
 - **CMS — estado real (rama actual):** el sitio público vive en `app/sitio_web/`
   (route group), NO en `app/(sitio)`; el CMS en `/cms` (no `/dashboard/cms`). Modelo
   **páginas + secciones tipadas**: `web_paginas` (árbol por `parent_id`, slug de UN solo
