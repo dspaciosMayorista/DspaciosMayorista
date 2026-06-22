@@ -10,6 +10,56 @@ const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 export type Liquidacion = "dia" | "noche" | "paquete";
 export type TierPax = { paxDesde: number; paxHasta: number; precio: number };
 
+// ── Temporadas del servicio (tarifa por fecha + vigencia de compra) ─────────
+export type TemporadaServicioInput = {
+  nombre: string;
+  fechaInicio: string;
+  fechaFin: string;
+  compraInicio: string;
+  compraFin: string;
+  prioridad: number;
+  precioPersona: number | null;
+};
+
+function temporadaRow(servicioId: number, input: TemporadaServicioInput) {
+  return {
+    servicio_id: servicioId,
+    nombre: input.nombre.trim() || "Temporada",
+    fecha_inicio: oNull(input.fechaInicio),
+    fecha_fin: oNull(input.fechaFin),
+    compra_inicio: oNull(input.compraInicio),
+    compra_fin: oNull(input.compraFin),
+    prioridad: Number(input.prioridad) || 1,
+    precio_persona: input.precioPersona,
+  };
+}
+
+export async function crearTemporadaServicio(servicioId: number, input: TemporadaServicioInput): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("servicio_temporadas").insert(temporadaRow(servicioId, input));
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
+export async function actualizarTemporadaServicio(id: number, input: TemporadaServicioInput): Promise<Result> {
+  const sb = await createClient();
+  const { servicio_id: _omit, ...row } = temporadaRow(0, input);
+  void _omit;
+  const { error } = await sb.from("servicio_temporadas").update(row).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
+export async function eliminarTemporadaServicio(id: number): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("servicio_temporadas").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
 export type ServicioInput = {
   nombre: string;
   proveedorId: number | null;

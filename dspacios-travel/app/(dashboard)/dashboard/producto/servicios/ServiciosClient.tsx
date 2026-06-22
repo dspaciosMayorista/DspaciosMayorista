@@ -1,16 +1,27 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
-import { crearServicio, actualizarServicio, eliminarServicio, type ServicioInput, type TierPax } from "./actions";
+import {
+  crearServicio, actualizarServicio, eliminarServicio,
+  crearTemporadaServicio, actualizarTemporadaServicio, eliminarTemporadaServicio,
+  type ServicioInput, type TierPax, type TemporadaServicioInput,
+} from "./actions";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { Paginador } from "@/components/Paginador";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 
 type Opt = { id: number; nombre: string };
 type Tier = { pax_desde: number; pax_hasta: number; precio: number };
+export type TemporadaServicio = {
+  id: number; servicio_id: number; nombre: string;
+  fecha_inicio: string | null; fecha_fin: string | null;
+  compra_inicio: string | null; compra_fin: string | null;
+  prioridad: number; precio_persona: number | null;
+};
 type Servicio = {
   id: number; nombre: string; temporada: string | null; precio_persona: number | null;
   proveedor_id: number | null; destino_id: number | null; rangos_edad: number[] | null;
@@ -34,7 +45,7 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 type TierForm = { paxDesde: string; paxHasta: string; precio: string };
 const tierVacio = (): TierForm => ({ paxDesde: "1", paxHasta: "4", precio: "" });
 
-export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { servicios: Servicio[]; proveedores: Opt[]; destinos: DestinoOpt[]; rangos: RangoEdad[] }) {
+export function ServiciosClient({ servicios, proveedores, destinos, rangos, temporadas }: { servicios: Servicio[]; proveedores: Opt[]; destinos: DestinoOpt[]; rangos: RangoEdad[]; temporadas: Record<number, TemporadaServicio[]> }) {
   const [nombre, setNombre] = useState("");
   const [provId, setProvId] = useState<number | "">("");
   const [destId, setDestId] = useState<number | "">("");
@@ -207,6 +218,11 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
           {editId && <Button variant="outline" onClick={resetForm} disabled={pending}>Cancelar</Button>}
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
+
+        {/* Temporadas (tarifa por fecha) — solo al editar un servicio guardado */}
+        {editId && (
+          <TemporadasServicio servicioId={editId} lista={temporadas[editId] ?? []} />
+        )}
       </div>
 
       {servicios.length > 0 && (
@@ -235,6 +251,121 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos }: { 
           <Paginador page={paginaActual} totalPaginas={totalPaginas} onPage={setPage} />
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Editor de temporadas (tarifa por fecha + vigencia de compra) ────────────
+const vacia = (): TemporadaServicioInput => ({
+  nombre: "", fechaInicio: "", fechaFin: "", compraInicio: "", compraFin: "", prioridad: 1, precioPersona: null,
+});
+
+function aInput(t: TemporadaServicio): TemporadaServicioInput {
+  return {
+    nombre: t.nombre, fechaInicio: t.fecha_inicio ?? "", fechaFin: t.fecha_fin ?? "",
+    compraInicio: t.compra_inicio ?? "", compraFin: t.compra_fin ?? "",
+    prioridad: t.prioridad ?? 1, precioPersona: t.precio_persona,
+  };
+}
+
+function TemporadasServicio({ servicioId, lista }: { servicioId: number; lista: TemporadaServicio[] }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [nueva, setNueva] = useState<TemporadaServicioInput>(vacia());
+  const [err, setErr] = useState("");
+
+  function refrescar() { router.refresh(); }
+
+  function agregar() {
+    if (!nueva.nombre.trim()) { setErr("Pon un nombre (ej. ALTA, TEMPORADA NAVIDAD)."); return; }
+    setErr("");
+    start(async () => {
+      const r = await crearTemporadaServicio(servicioId, nueva);
+      if (r.ok) { setNueva(vacia()); refrescar(); } else setErr(r.error);
+    });
+  }
+
+  return (
+    <div className="mt-5 rounded-lg border border-[var(--brand-accent)]/40 bg-[var(--brand-accent)]/5 p-3">
+      <p className="mb-1 text-sm font-semibold text-gray-700">Temporadas (tarifa por fecha del viaje)</p>
+      <p className="mb-3 text-[11px] text-gray-500">
+        La tarifa de arriba es la <b>GENERAL</b> (aplica siempre). Aquí defines tarifas que ganan cuando la
+        <b> fecha del viaje</b> cae en su rango y están en <b>vigencia de compra</b>. Gana la de mayor prioridad.
+      </p>
+
+      <div className="space-y-2">
+        {lista.map((t) => (
+          <TemporadaFila key={t.id} t={t} onChanged={refrescar} setErr={setErr} />
+        ))}
+      </div>
+
+      {/* Agregar */}
+      <div className="mt-3 rounded-lg border border-dashed border-gray-300 bg-white p-3">
+        <p className="mb-2 text-xs font-medium text-gray-600">+ Agregar temporada</p>
+        <CamposTemporada value={nueva} onChange={setNueva} />
+        <div className="mt-2 flex items-center gap-2">
+          <Button type="button" variant="outline" onClick={agregar} disabled={pending}>Agregar temporada</Button>
+          {err && <span className="text-xs text-red-600">{err}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TemporadaFila({ t, onChanged, setErr }: { t: TemporadaServicio; onChanged: () => void; setErr: (s: string) => void }) {
+  const [pending, start] = useTransition();
+  const [v, setV] = useState<TemporadaServicioInput>(aInput(t));
+  const [editando, setEditando] = useState(false);
+
+  function guardar() {
+    start(async () => {
+      const r = await actualizarTemporadaServicio(t.id, v);
+      if (r.ok) { setEditando(false); onChanged(); } else setErr(r.error);
+    });
+  }
+  function borrar() {
+    if (!confirm(`¿Eliminar la temporada "${t.nombre}"?`)) return;
+    start(async () => { const r = await eliminarTemporadaServicio(t.id); if (r.ok) onChanged(); else setErr(r.error); });
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      {!editando ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span className="font-medium text-gray-700">{t.nombre}</span>
+          <span className="text-xs text-gray-500">
+            {t.fecha_inicio || "—"} → {t.fecha_fin || "—"} · compra {t.compra_inicio || "—"}→{t.compra_fin || "—"} · prio {t.prioridad}
+          </span>
+          <span className="tabular-nums text-gray-700">{t.precio_persona != null ? formatCOP(Number(t.precio_persona)) : "—"}/persona</span>
+          <span className="flex gap-3">
+            <button type="button" onClick={() => setEditando(true)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
+            <button type="button" disabled={pending} onClick={borrar} className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+          </span>
+        </div>
+      ) : (
+        <>
+          <CamposTemporada value={v} onChange={setV} />
+          <div className="mt-2 flex items-center gap-2">
+            <Button type="button" onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>Guardar</Button>
+            <button type="button" onClick={() => { setEditando(false); setV(aInput(t)); }} className="text-sm text-gray-500 hover:text-gray-800">Cancelar</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CamposTemporada({ value, onChange }: { value: TemporadaServicioInput; onChange: (v: TemporadaServicioInput) => void }) {
+  const set = (k: keyof TemporadaServicioInput, val: string | number | null) => onChange({ ...value, [k]: val });
+  return (
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+      <div className="col-span-2 md:col-span-1"><label className={lbl}>Nombre</label><Input value={value.nombre} onChange={(e) => set("nombre", e.target.value)} placeholder="ALTA, NAVIDAD…" /></div>
+      <div><label className={lbl}>Viaje desde</label><Input type="date" value={value.fechaInicio} onChange={(e) => set("fechaInicio", e.target.value)} /></div>
+      <div><label className={lbl}>Viaje hasta</label><Input type="date" value={value.fechaFin} onChange={(e) => set("fechaFin", e.target.value)} /></div>
+      <div><label className={lbl}>Precio por persona</label><Input type="number" min={0} value={value.precioPersona ?? ""} onChange={(e) => set("precioPersona", e.target.value === "" ? null : Number(e.target.value))} /></div>
+      <div><label className={lbl}>Compra desde</label><Input type="date" value={value.compraInicio} onChange={(e) => set("compraInicio", e.target.value)} /></div>
+      <div><label className={lbl}>Compra hasta</label><Input type="date" value={value.compraFin} onChange={(e) => set("compraFin", e.target.value)} /></div>
+      <div><label className={lbl}>Prioridad</label><Input type="number" min={1} value={value.prioridad} onChange={(e) => set("prioridad", Number(e.target.value) || 1)} /></div>
     </div>
   );
 }

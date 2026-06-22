@@ -22,13 +22,20 @@ const COLS_SERVICIOS = [
 
 export default async function ServiciosPage() {
   const sb = await createClient();
-  const [{ data: serviciosRaw }, { data: proveedores }, { data: destinos }, { data: rangos }] = await Promise.all([
+  const [{ data: serviciosRaw }, { data: proveedores }, { data: destinos }, { data: rangos }, { data: temporadasRaw }] = await Promise.all([
     sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, rangos_edad, categoria, liquidacion, descripcion, recargo_individual, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio)").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "servicios").order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
+    sb.from("servicio_temporadas").select("id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona").order("prioridad", { ascending: false }),
   ]);
   const servicios = (serviciosRaw ?? []) as unknown as Parameters<typeof ServiciosClient>[0]["servicios"];
+  // Agrupa las temporadas por servicio para pasarlas al cliente.
+  type TempRow = NonNullable<typeof temporadasRaw>[number];
+  const temporadasPorServicio: Record<number, TempRow[]> = {};
+  for (const t of temporadasRaw ?? []) {
+    (temporadasPorServicio[t.servicio_id] ??= []).push(t);
+  }
 
   return (
     <div className="mx-auto max-w-7xl p-4 md:p-8">
@@ -45,7 +52,7 @@ export default async function ServiciosPage() {
           nombreArchivo="plantilla_servicios"
         />
       </div>
-      <ServiciosClient servicios={servicios} proveedores={proveedores ?? []} destinos={destinos ?? []} rangos={rangos ?? []} />
+      <ServiciosClient servicios={servicios} proveedores={proveedores ?? []} destinos={destinos ?? []} rangos={rangos ?? []} temporadas={temporadasPorServicio} />
     </div>
   );
 }
