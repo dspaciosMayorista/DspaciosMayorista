@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 // ─────────────────────────────────────────────────────────────────────────
 // SaaS multi-tenant — resolución de la ORGANIZACIÓN (tenant) en el servidor.
@@ -23,4 +24,34 @@ export async function orgActual(): Promise<string | null> {
     .eq("id", user.id)
     .maybeSingle();
   return (data?.org_id as string | null) ?? null;
+}
+
+export type OrgPublica = {
+  id: string; slug: string; nombre: string;
+  logo_url: string | null; logo_white_url: string | null;
+  color_primario: string | null; color_acento: string | null;
+};
+
+// ── Resolución del tenant por el SLUG del path (`/o/<slug>/...`) ────────────
+// Para páginas PÚBLICAS (tarifario/sitio sin sesión): el org sale del slug, no de
+// `mi_org()`. Se lee con service-role (bypasea RLS) y se cachea por request.
+const _cacheSlug = new Map<string, OrgPublica | null>();
+
+export async function orgPorSlug(slug: string): Promise<OrgPublica | null> {
+  const s = (slug || "").trim().toLowerCase();
+  if (!s || !process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  if (_cacheSlug.has(s)) return _cacheSlug.get(s) ?? null;
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("organizaciones")
+    .select("id, slug, nombre, logo_url, logo_white_url, color_primario, color_acento, estado")
+    .eq("slug", s)
+    .maybeSingle();
+  const org = data && data.estado !== "cancelada" ? {
+    id: data.id, slug: data.slug, nombre: data.nombre,
+    logo_url: data.logo_url, logo_white_url: data.logo_white_url,
+    color_primario: data.color_primario, color_acento: data.color_acento,
+  } : null;
+  _cacheSlug.set(s, org);
+  return org;
 }

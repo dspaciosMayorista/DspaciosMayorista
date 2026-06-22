@@ -130,8 +130,12 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
     service-role bypasea. Excluye `usuarios`/`organizaciones`/`auditoria`.
   - ⏳ **Paso 3b:** scope por org de las lecturas PÚBLICAS (tarifario/sitio) — depende del
     Paso 4; + RLS de `usuarios` por org + `org_id NOT NULL` (quitar default).
-  - ⏳ **Paso 4:** rutas `/o/<slug>` (tarifario/sitio público por org) + resolución del
-    org en el server desde el slug + `org_id` en inserts públicos (registro B2B, checkout).
+  - 🚧 **Paso 4 (en curso):** ✅ base — `lib/org.ts: orgPorSlug(slug)` (resuelve el org
+    público por el slug del path con service-role, cacheado) + tipo `organizaciones` en
+    `database.ts`. ⏳ FALTA (lo grande, validar corriendo): route group `app/o/[slug]/…`
+    que envuelva tarifario/sitio público, resolver el org del slug y acotar las queries
+    públicas por `org_id` (tarifario_resultado, hoteles, destinos, web_*…); `org_id`
+    explícito en inserts públicos (registro B2B, checkout) desde el slug; branding por org.
 - ⏳ **Fase 2 — Marca por org + onboarding self-service.** Fusionar marca en
   `organizaciones`, des-hardcodear "D'spacios" (~55 referencias), wizard de alta de
   agencia + semilla de catálogos, (luego) subdominios.
@@ -154,6 +158,9 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
   `docs/saas/DESPLIEGUE-DESDE-CERO.md`.
 - **Fase 1/Paso 3a** — migr. 103. Policy RESTRICTIVE `org_isolation` (aísla a usuarios
   logueados por org; anónimo y service-role exentos). Sin cambio en mono-tenant.
+- **Fase 1/Paso 4 (base)** — `lib/org.ts: orgPorSlug()` + tipo `organizaciones`. Resuelve
+  el tenant por el slug del path para lo público. Falta el route group y rescopear las
+  queries públicas (lo grande).
 
 ---
 

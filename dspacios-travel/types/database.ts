@@ -12,6 +12,24 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      organizaciones: {
+        Row: {
+          id: string; slug: string; nombre: string; nit: string | null; ciudad: string | null;
+          pais: string | null; contacto: string | null; email: string | null; telefono: string | null;
+          logo_url: string | null; logo_white_url: string | null; color_primario: string | null; color_acento: string | null;
+          contrato_encabezado: string | null; contrato_pie: string | null; contrato_terminos: string | null;
+          plan: string; estado: string; trial_hasta: string | null; created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: string; slug: string; nombre: string; nit?: string | null; ciudad?: string | null;
+          pais?: string | null; contacto?: string | null; email?: string | null; telefono?: string | null;
+          logo_url?: string | null; logo_white_url?: string | null; color_primario?: string | null; color_acento?: string | null;
+          contrato_encabezado?: string | null; contrato_pie?: string | null; contrato_terminos?: string | null;
+          plan?: string; estado?: string; trial_hasta?: string | null; created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["organizaciones"]["Insert"]>;
+        Relationships: [];
+      };
       auditoria: {
         Row: {
           id: number;
