@@ -78,8 +78,12 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
   - **102** `saas_org_default_mi_org` — Fase 1/Paso 2 (parcial): el DEFAULT de `org_id`
     pasa a `coalesce(mi_org(), org#1)` → los inserts CON SESIÓN reciben el org del
     usuario automáticamente. Los service-role/públicos caen a org #1 (puente).
+  - **103** `saas_rls_org_isolation` — Fase 1/Paso 3a: policy RESTRICTIVE `org_isolation`
+    (`org_id = mi_org() OR auth.uid() is null`) en toda tabla con RLS + `org_id`. Aísla
+    a los usuarios logueados por su org; el anónimo queda exento (lo público se acota por
+    el path en Paso 4). No cambia nada en mono-tenant.
 - ⚠️ Antes de crear una nueva: `ls supabase/migrations/ | sort | tail` y tomar el
-  **siguiente número libre** (la SaaS va por la **102**; la próxima es **103**).
+  **siguiente número libre** (la SaaS va por la **103**; la próxima es **104**).
 - Idempotentes (`add column if not exists`, `on conflict do nothing`). No editar una ya
   creada: crear la siguiente.
 
@@ -121,9 +125,13 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
     a usuarios, cuentas_por_pagar, cotizaciones, crm_contactos.
     **Falta del Paso 2:** quitar el default temporal y poner `org_id NOT NULL` (después
     del Paso 4, cuando las rutas públicas resuelvan el org).
-  - ⏳ **Paso 3:** RLS por org tabla por tabla (las públicas, por el slug del path).
+  - ✅ **Paso 3a (aislamiento RLS):** policy RESTRICTIVE `org_isolation` (migr. 103) en
+    todas las tablas con RLS + `org_id`. Usuario logueado → solo su org; anónimo exento;
+    service-role bypasea. Excluye `usuarios`/`organizaciones`/`auditoria`.
+  - ⏳ **Paso 3b:** scope por org de las lecturas PÚBLICAS (tarifario/sitio) — depende del
+    Paso 4; + RLS de `usuarios` por org + `org_id NOT NULL` (quitar default).
   - ⏳ **Paso 4:** rutas `/o/<slug>` (tarifario/sitio público por org) + resolución del
-    org en el server desde el slug.
+    org en el server desde el slug + `org_id` en inserts públicos (registro B2B, checkout).
 - ⏳ **Fase 2 — Marca por org + onboarding self-service.** Fusionar marca en
   `organizaciones`, des-hardcodear "D'spacios" (~55 referencias), wizard de alta de
   agencia + semilla de catálogos, (luego) subdominios.
@@ -143,7 +151,9 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
 - **Fase 1/Paso 2** — migr. 102 (default `org_id` = `coalesce(mi_org(), org#1)`) +
   `lib/org.ts`. Inserts con sesión org-scoped por default; inserts service-role estampan
   `org_id` con `orgActual()` en los 7 archivos. Docs creados: `CLAUDE-SAAS.md`,
-  `docs/saas/DESPLIEGUE-DESDE-CERO.md`. Falta: `NOT NULL` (tras Paso 4).
+  `docs/saas/DESPLIEGUE-DESDE-CERO.md`.
+- **Fase 1/Paso 3a** — migr. 103. Policy RESTRICTIVE `org_isolation` (aísla a usuarios
+  logueados por org; anónimo y service-role exentos). Sin cambio en mono-tenant.
 
 ---
 
