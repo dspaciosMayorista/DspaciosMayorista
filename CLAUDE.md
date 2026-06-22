@@ -378,7 +378,13 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   `pax_tarifa` (multiplicador por habitación) + mín/máx de adt/niños/inf), **Servicios** (precio **por persona** y/o **por grupo con rangos de
   pax**; destino vacío = nacional; **descripción del tour** y **recargo individual** —
   costo neto del proveedor (tarifa de individual) que entra al costo/CxP y sube el PVP
-  con markup cuando va 1 pax en cobro por persona, migr. 088).
+  con markup cuando va 1 pax en cobro por persona, migr. 088;
+  **temporadas por servicio** —tarifa por fecha del viaje + vigencia de compra +
+  prioridad, igual que hoteles, migr. 089: la actual = temporada GENERAL, y las
+  temporadas con fechas ganan cuando la fecha del viaje las cubre. Se editan en el
+  form del servicio y se aplican en Reservar (venta = escala el PVP del snapshot por
+  `neto_temporada/neto_general`; costo = usa el neto de la temporada). Motor:
+  `temporadaVigenteParaFecha` en `lib/calc/paquetes.ts`).
   **Carga masiva CSV** en hoteles, tarifas, servicios y
   bloqueos (plantillas con `sep=;`, listas con `|`).
 - **Paquetes (armado):** config inicial (nombre, **tipo** bloqueo/porción/servicios, **noches**
@@ -438,7 +444,7 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **088** (correr en orden las que falten)
+### Migraciones Supabase — total en repo: **089** (correr en orden las que falten)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una

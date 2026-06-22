@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, toTemporadaRango, minNochesAplicable, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
+import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, temporadaVigenteParaFecha, toTemporadaRango, minNochesAplicable, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, paxDeAcomodacion, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
@@ -518,6 +518,38 @@ async function computarReserva(
       if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
       else { s.personaPvp = r.precio_pvp; s.recargoIndividual = Math.max(Number(r.recargo_individual) || 0, 0); }
     }
+
+    // Tarifa por TEMPORADA del servicio: si la fecha del viaje cae en una temporada
+    // vigente, se escala el PVP del snapshot por la razón neto_temporada/neto_general
+    // (conserva markup, liquidación y redondeo del GENERAL proporcionalmente).
+    const fechaViaje = meta.fecha_ida;
+    if (fechaViaje && byServ.size) {
+      const ids = [...byServ.keys()];
+      const [{ data: baseSrv }, { data: temps }] = await Promise.all([
+        sb.from("servicios_adicionales").select("id, precio_persona").in("id", ids),
+        sb.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona").in("servicio_id", ids),
+      ]);
+      const netoGen = new Map((baseSrv ?? []).map((b) => [b.id, Number(b.precio_persona) || 0]));
+      const tempsByServ = new Map<number, TemporadaRango[]>();
+      const netoTemp = new Map<string, number>();
+      for (const t of temps ?? []) {
+        const arr = tempsByServ.get(t.servicio_id) ?? [];
+        arr.push(toTemporadaRango(t));
+        tempsByServ.set(t.servicio_id, arr);
+        if (t.precio_persona != null) netoTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+      }
+      const d = new Date(`${fechaViaje}T00:00:00`);
+      for (const [id, s] of byServ) {
+        if (s.modo !== "persona" || s.personaPvp == null) continue;
+        const tt = tempsByServ.get(id);
+        if (!tt?.length) continue;
+        const nombre = temporadaVigenteParaFecha(d, tt);
+        const nt = nombre ? netoTemp.get(`${id}|${nombre}`) : undefined;
+        const ng = netoGen.get(id) || 0;
+        if (nt != null && ng > 0) s.personaPvp = Math.round(s.personaPvp * (nt / ng));
+      }
+    }
+
     for (const s of byServ.values()) {
       let p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
       // Recargo individual: si el servicio va a 1 solo pax (cobro por persona),
@@ -918,12 +950,14 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   if (input.servicios?.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
-      const [{ data: arm }, { data: gruposNet }] = await Promise.all([
+      const [{ data: arm }, { data: gruposNet }, { data: tempsNet }] = await Promise.all([
         admin.from("armado_servicios")
           .select("servicio_id, modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedores(nombre, aplica_retencion, pct_retencion))")
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
           .select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", input.servicios),
+        admin.from("servicio_temporadas")
+          .select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona").in("servicio_id", input.servicios),
       ]);
       const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
       for (const g of gruposNet ?? []) {
@@ -931,6 +965,24 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
         arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
         gruposPorServ.set(g.servicio_id, arr);
       }
+      // Temporadas por servicio: el NETO del costo cambia según la fecha del viaje.
+      const tempsPorServ = new Map<number, TemporadaRango[]>();
+      const netoTempServ = new Map<string, number>();
+      for (const t of tempsNet ?? []) {
+        const arr = tempsPorServ.get(t.servicio_id) ?? [];
+        arr.push(toTemporadaRango(t));
+        tempsPorServ.set(t.servicio_id, arr);
+        if (t.precio_persona != null) netoTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+      }
+      const fechaViajeCosto = meta.fecha_ida ? new Date(`${meta.fecha_ida}T00:00:00`) : null;
+      const netoPersonaServicio = (servId: number, general: number | null): number | null => {
+        if (!fechaViajeCosto) return general ?? null;
+        const tt = tempsPorServ.get(servId);
+        if (!tt?.length) return general ?? null;
+        const nombre = temporadaVigenteParaFecha(fechaViajeCosto, tt);
+        const nt = nombre ? netoTempServ.get(`${servId}|${nombre}`) : undefined;
+        return nt != null ? nt : (general ?? null);
+      };
       const nochesStay = meta.fecha_ida && meta.fecha_regreso ? noches(meta.fecha_ida, meta.fecha_regreso) : 1;
       let costoReceptivo = 0;
       const tours: string[] = [];
@@ -938,7 +990,8 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
         const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedores: ProvFact } | null;
-        let costoServ = precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
+        const netoPersona = netoPersonaServicio(s.servicio_id, srv?.precio_persona ?? null);
+        let costoServ = precioServicio(modo, netoPersona, gruposPorServ.get(s.servicio_id) ?? [], totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
         // Recargo individual: suplemento NETO del proveedor cuando va 1 pax (cobro
         // por persona). Entra al COSTO y a la CxP para liquidar correcto al proveedor.
         if (modo === "persona" && totalPax === 1) costoServ += Math.max(Number(srv?.recargo_individual) || 0, 0);
