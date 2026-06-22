@@ -156,6 +156,21 @@ export function temporadaParaFecha(
 }
 
 /**
+ * Nombre de la temporada de mayor prioridad que cubre una fecha Y está en
+ * vigencia de compra. Para SERVICIOS por temporada: la fecha del viaje elige la
+ * tarifa, respetando la vigencia de compra (igual que el hotel). Devuelve null si
+ * ninguna temporada con fechas aplica (→ se usa la tarifa 'GENERAL').
+ */
+export function temporadaVigenteParaFecha(
+  fecha: Date,
+  temporadas: TemporadaRango[],
+  hoy: string = hoyISO()
+): string | null {
+  const top = entradasNoche(fecha.getTime(), temporadas, hoy)[0];
+  return top?.nombre ?? null;
+}
+
+/**
  * Neto efectivo de UNA noche, resolviendo por prioridad + vigencia de compra:
  *  - gana la entrada de mayor prioridad que cubra la fecha y esté en vigencia de compra;
  *  - si es 'tarifa', usa su neto cargado;

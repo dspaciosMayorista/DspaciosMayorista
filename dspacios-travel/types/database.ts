@@ -1384,9 +1384,15 @@ export type Database = {
         Relationships: [];
       };
       servicio_tarifa_pax: {
-        Row: { id: number; servicio_id: number; pax_desde: number; pax_hasta: number; precio: number; created_at: string };
-        Insert: { id?: number; servicio_id: number; pax_desde?: number; pax_hasta?: number; precio?: number; created_at?: string };
+        Row: { id: number; servicio_id: number; pax_desde: number; pax_hasta: number; precio: number; temporada: string; created_at: string };
+        Insert: { id?: number; servicio_id: number; pax_desde?: number; pax_hasta?: number; precio?: number; temporada?: string; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["servicio_tarifa_pax"]["Insert"]>;
+        Relationships: [];
+      };
+      servicio_temporadas: {
+        Row: { id: number; servicio_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; prioridad: number; compra_inicio: string | null; compra_fin: string | null; precio_persona: number | null; orden: number; created_at: string };
+        Insert: { id?: number; servicio_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; precio_persona?: number | null; orden?: number; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["servicio_temporadas"]["Insert"]>;
         Relationships: [];
       };
       rangos_edad: {
