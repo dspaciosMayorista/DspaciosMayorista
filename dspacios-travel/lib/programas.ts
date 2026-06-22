@@ -38,7 +38,7 @@ export function pvpPrograma(neto: number, opt: PvpOpciones): number {
 }
 
 /** Resumen de programas para el tarifario (con precio "desde" en PVP). */
-export async function getProgramasResumen(sb: SB, soloPublicados = true): Promise<ProgramaResumen[]> {
+export async function getProgramasResumen(sb: SB, soloPublicados = true, orgId?: string | null): Promise<ProgramaResumen[]> {
   let q = sb
     .from("programas")
     .select(
@@ -46,6 +46,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
     )
     .eq("activo", true);
   if (soloPublicados) q = q.eq("publicado", true);
+  if (orgId) q = q.eq("org_id", orgId); // SaaS: solo los programas de esta organización
   const { data: programas } = await q.order("nombre");
   if (!programas?.length) return [];
 

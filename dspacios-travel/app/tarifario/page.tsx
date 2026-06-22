@@ -149,8 +149,8 @@ export default async function TarifarioPublicoPage() {
     for (const p of pqs ?? []) ventanaPorPaquete[p.id as number] = { min: p.fecha_viaje_inicio as string | null, max: p.fecha_viaje_fin as string | null };
   }
 
-  // Programas publicados (fuente propia, en su moneda).
-  const programas = await getProgramasResumen(sb, true);
+  // Programas publicados (fuente propia, en su moneda) — de esta organización.
+  const programas = await getProgramasResumen(sb, true, org?.id ?? null);
 
   // Video de fondo del tarifario (global, opcional).
   const { data: cfgSitio } = await sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle();
@@ -168,7 +168,12 @@ export default async function TarifarioPublicoPage() {
         )}
         <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-end justify-between gap-4">
           <div>
-            <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
+            {org?.logo_white_url ? (
+              // SaaS: branding por organización (logo propio). eslint-disable-next-line @next/next/no-img-element
+              <img src={org.logo_white_url} alt={org.nombre} className="h-12 w-auto md:h-14" />
+            ) : (
+              <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
+            )}
             <p className="mt-2 text-sm opacity-90">Tarifario 2026</p>
           </div>
           <div className="flex flex-col items-end gap-2">

@@ -1549,6 +1549,7 @@ export type Database = {
       programas: {
         Row: {
           id: number;
+          org_id: string | null;
           proveedor_id: number | null;
           nombre: string;
           subtitulo: string | null;
@@ -1970,13 +1971,13 @@ export type Database = {
           id: number; tipo: string; nombre: string; nit: string | null; contacto: string | null;
           email: string; telefono: string | null; ciudad: string | null; notas: string | null;
           acepta_notificaciones: boolean; estado: string; usuario_id: string | null;
-          revisado_por: string | null; revisado_at: string | null; created_at: string;
+          revisado_por: string | null; revisado_at: string | null; org_id: string | null; created_at: string;
         };
         Insert: {
           id?: number; tipo?: string; nombre: string; nit?: string | null; contacto?: string | null;
           email: string; telefono?: string | null; ciudad?: string | null; notas?: string | null;
           acepta_notificaciones?: boolean; estado?: string; usuario_id?: string | null;
-          revisado_por?: string | null; revisado_at?: string | null; created_at?: string;
+          revisado_por?: string | null; revisado_at?: string | null; org_id?: string | null; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["b2b_solicitudes"]["Insert"]>;
         Relationships: [];

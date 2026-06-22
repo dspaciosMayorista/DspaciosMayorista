@@ -133,10 +133,14 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
   - 🚧 **Paso 4 (en curso):** ✅ mecanismo — `proxy.ts` reescribe `/o/<slug>/...` → `/...`
     con header `x-org-slug` (sin duplicar rutas); `lib/org.ts: orgPorSlug(slug)` +
     `orgDelRequest()` (org del header o la default `dspacios`); tipo `organizaciones`.
-    ✅ tarifario público filtra `tarifario_resultado` por `org.id` (sin slug → org default,
-    mono-tenant sigue igual). ⏳ FALTA (mismo patrón `orgDelRequest()` + `.eq("org_id")`):
-    resto de consultas públicas del tarifario (programas, cupos, fotos), `app/sitio_web`,
-    inserts públicos (registro B2B, checkout) con el `org_id` del slug, y branding por org.
+    ✅ tarifario público filtra por `org.id`: `tarifario_resultado` **y programas**
+    (`getProgramasResumen(sb, true, orgId)`). Cupos/fotos/hoteles ya quedan acotados
+    transitivamente (derivan de filas ya filtradas). ✅ **branding**: el header del
+    tarifario usa `org.logo_white_url` si la org tiene logo propio. ✅ **inserts públicos**
+    con `org_id` del slug: registro B2B (`usuarios` + `b2b_solicitudes`) y el contacto CRM
+    del checkout. (sin slug → org default, mono-tenant sigue igual). ⏳ FALTA: `app/sitio_web`
+    por org; atribuir el `org_id` de la **cotización** del checkout público (requiere pasar
+    org al motor `crearCotizacion`/reservar); branding de colores (CSS vars por org).
     Validar corriendo con una 2ª org.
 - ⏳ **Fase 2 — Marca por org + onboarding self-service.** Fusionar marca en
   `organizaciones`, des-hardcodear "D'spacios" (~55 referencias), wizard de alta de
@@ -163,8 +167,10 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
 - **Fase 1/Paso 4 (base)** — `lib/org.ts: orgPorSlug()` + tipo `organizaciones`. Resuelve
   el tenant por el slug del path para lo público.
 - **Fase 1/Paso 4 (mecanismo + tarifario)** — `proxy.ts` reescribe `/o/<slug>/...` con
-  header `x-org-slug`; `orgDelRequest()`; el tarifario público filtra por `org.id`. Falta
-  rescopear el resto de superficies públicas (sitio, programas, checkout/registro) y branding.
+  header `x-org-slug`; `orgDelRequest()`; el tarifario público filtra por `org.id`.
+- **Fase 1/Paso 4 (programas + branding + inserts)** — tarifario filtra **programas** por org;
+  header usa el **logo del org**; registro B2B y contacto CRM del checkout estampan el `org_id`
+  del slug. Falta `app/sitio_web`, la cotización del checkout y branding de colores.
 
 ---
 

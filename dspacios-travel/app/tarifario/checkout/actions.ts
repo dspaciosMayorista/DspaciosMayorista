@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { orgActual } from "@/lib/org";
+import { orgActual, orgDelRequest } from "@/lib/org";
 import { crearCotizacion, type ReservaInput } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { formatCOP } from "@/lib/utils";
@@ -219,8 +219,8 @@ export async function crearSolicitudReserva(input: {
     if (nombre) {
       // Si ya existe (índice único por documento/email/teléfono) el insert falla
       // con 23505 y simplemente se ignora (no se duplica ni bloquea la solicitud).
-      // SaaS: estampar org si hay sesión (B2B); público cae al default de la columna.
-      const org = await orgActual();
+      // SaaS: org de la sesión (B2B) o, en público, la del slug del tarifario (/o/<slug>).
+      const org = (await orgActual()) ?? (await orgDelRequest())?.id ?? null;
       await admin.from("crm_contactos").insert({
         ...(org ? { org_id: org } : {}),
         categoria: "cliente_final",

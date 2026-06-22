@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { orgDelRequest } from "@/lib/org";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -18,9 +19,9 @@ export async function enviarSolicitudB2B(input: SolicitudB2BInput): Promise<Resu
   if (input.password !== input.passwordConfirm) return { ok: false, error: "Las contraseñas no coinciden." };
 
   const tipo = input.tipo === "freelance" ? "freelance" : "agencia";
-  // SaaS: registro PÚBLICO (sin sesión). El `org_id` del usuario y de la solicitud lo
-  // pone el default = org #1 mientras haya una sola org; en multi-tenant saldrá del
-  // slug del path `/o/<slug>` (Paso 4) y se seteará explícito aquí.
+  // SaaS: registro PÚBLICO (sin sesión, service-role). El aliado pertenece a la
+  // organización del slug del path `/o/<slug>` (o la default si se entró sin slug).
+  const orgId = (await orgDelRequest())?.id ?? null;
   const admin = createAdminClient();
 
   // Crea la cuenta (queda PENDIENTE: inactiva hasta que la apruebe un admin).
@@ -43,9 +44,11 @@ export async function enviarSolicitudB2B(input: SolicitudB2BInput): Promise<Resu
   await admin.from("usuarios").update({
     rol: tipo, activo: false, nombre: input.nombre.trim(),
     pct_comision: tipo === "agencia" ? 0.12 : 0.11,
+    ...(orgId ? { org_id: orgId } : {}),
   }).eq("id", uid);
 
   const { error } = await admin.from("b2b_solicitudes").insert({
+    ...(orgId ? { org_id: orgId } : {}),
     tipo,
     nombre: input.nombre.trim(),
     nit: input.nit.trim() || null,
