@@ -18,6 +18,9 @@ export async function enviarSolicitudB2B(input: SolicitudB2BInput): Promise<Resu
   if (input.password !== input.passwordConfirm) return { ok: false, error: "Las contraseñas no coinciden." };
 
   const tipo = input.tipo === "freelance" ? "freelance" : "agencia";
+  // SaaS: registro PÚBLICO (sin sesión). El `org_id` del usuario y de la solicitud lo
+  // pone el default = org #1 mientras haya una sola org; en multi-tenant saldrá del
+  // slug del path `/o/<slug>` (Paso 4) y se seteará explícito aquí.
   const admin = createAdminClient();
 
   // Crea la cuenta (queda PENDIENTE: inactiva hasta que la apruebe un admin).

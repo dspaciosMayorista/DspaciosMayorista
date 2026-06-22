@@ -401,6 +401,7 @@ export type Database = {
           valor_irt: number | null;
           moneda: string;
           created_at: string;
+          org_id: string | null;
         };
         Insert: {
           id?: number;
@@ -426,6 +427,7 @@ export type Database = {
           valor_irt?: number | null;
           moneda?: string;
           created_at?: string;
+          org_id?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["cuentas_por_pagar"]["Insert"]>;
         Relationships: [];
@@ -1293,6 +1295,7 @@ export type Database = {
           fecha_nacimiento: string | null; genero: string | null; origen: string | null; etiquetas: string[] | null;
           subcategoria: string | null;
           acepta_publicidad: boolean; no_contactar: boolean; notas: string | null; created_at: string; updated_at: string;
+          org_id: string | null;
         };
         Insert: {
           id?: number; categoria?: string; nombre: string; tipo_doc?: string | null; documento?: string | null;
@@ -1300,6 +1303,7 @@ export type Database = {
           fecha_nacimiento?: string | null; genero?: string | null; origen?: string | null; etiquetas?: string[] | null;
           subcategoria?: string | null;
           acepta_publicidad?: boolean; no_contactar?: boolean; notas?: string | null; created_at?: string; updated_at?: string;
+          org_id?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["crm_contactos"]["Insert"]>;
         Relationships: [];
@@ -1819,12 +1823,14 @@ export type Database = {
           creado_por: string | null;
           numero_contrato: string | null;
           share_token: string;
+          org_id: string | null;
         };
         Insert: {
           id?: number;
           codigo?: string;
           tipo?: string;
           share_token?: string;
+          org_id?: string | null;
           created_at?: string;
           estado?: string;
           payload?: Json | null;

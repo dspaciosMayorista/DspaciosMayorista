@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { orgActual } from "@/lib/org";
 import { revalidatePath } from "next/cache";
 
 const ROLES = ["superadmin", "gerencia", "administracion"];
@@ -65,7 +66,9 @@ export async function cargarAgenciasB2B(
         if (error || !created?.user) {
           info.push(`Fila ${linea} (${nombre}): acceso no creado (${error?.message ?? "error"}).`);
         } else {
-          await admin.from("usuarios").update({ rol: tipo as "agencia" | "freelance", nombre }).eq("id", created.user.id);
+          // SaaS: el aliado nuevo pertenece a la org del admin que lo importa.
+          const org = await orgActual();
+          await admin.from("usuarios").update({ rol: tipo as "agencia" | "freelance", nombre, ...(org ? { org_id: org } : {}) }).eq("id", created.user.id);
           info.push(`✓ Acceso ${tipo} para ${email} · contraseña temporal: ${pass}`);
         }
       }

@@ -111,11 +111,16 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
 - 🚧 **Fase 1 — `org_id` en todo + RLS por org** (EN CURSO, el grueso, por pasos):
   - ✅ **Paso 1** (migr. 101): org #1, backfill de `org_id` a todas las tablas (default
     temporal = org #1). No cambia el comportamiento (sigue mono-tenant).
-  - 🚧 **Paso 2 (en curso):** los inserts CON SESIÓN ya reciben `org_id` por el default
-    `coalesce(mi_org(), org#1)` (migr. 102) + helper `lib/org.ts` (`orgActual()`).
-    **Falta:** pasar `org_id` explícito en los **inserts service-role** (7 archivos:
-    reservar, cotización manual, contratos, checkout, registro B2B, usuarios, crm/b2b);
-    luego quitar el default y poner `NOT NULL`.
+  - ✅ **Paso 2 (inserts org-aware):** los inserts CON SESIÓN reciben `org_id` por el
+    default `coalesce(mi_org(), org#1)` (migr. 102). Los inserts **service-role** ya
+    estampan `org_id` con `orgActual()` (helper `lib/org.ts`), de forma segura (solo si
+    hay sesión; público/anónimo cae al default). Cubiertos: usuarios (nuevo→org del
+    admin), reservar (CxP×3 + cotización), cotización manual (CxP), checkout
+    (crm_contactos), crm/b2b (aliado nuevo→org del admin). contratos = solo updates.
+    registro B2B = público (su org saldrá del path en Paso 4). Tipos: `org_id` agregado
+    a usuarios, cuentas_por_pagar, cotizaciones, crm_contactos.
+    **Falta del Paso 2:** quitar el default temporal y poner `org_id NOT NULL` (después
+    del Paso 4, cuando las rutas públicas resuelvan el org).
   - ⏳ **Paso 3:** RLS por org tabla por tabla (las públicas, por el slug del path).
   - ⏳ **Paso 4:** rutas `/o/<slug>` (tarifario/sitio público por org) + resolución del
     org en el server desde el slug.
@@ -135,10 +140,10 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
 - **Fase 1/Paso 1** — migr. 101. Org #1 + `org_id` + backfill en todas las tablas.
   Rama sincronizada con `main` (trae auditoría, recargo de servicios, CMS in-situ,
   imagen OG, etc.) antes de empezar.
-- **Fase 1/Paso 2 (parcial)** — migr. 102 (default `org_id` = `coalesce(mi_org(),
-  org#1)`) + `lib/org.ts`. Inserts con sesión ya quedan org-scoped. Docs creados:
-  `CLAUDE-SAAS.md`, `docs/saas/DESPLIEGUE-DESDE-CERO.md`. Pendiente: inserts service-role
-  explícitos (7 archivos).
+- **Fase 1/Paso 2** — migr. 102 (default `org_id` = `coalesce(mi_org(), org#1)`) +
+  `lib/org.ts`. Inserts con sesión org-scoped por default; inserts service-role estampan
+  `org_id` con `orgActual()` en los 7 archivos. Docs creados: `CLAUDE-SAAS.md`,
+  `docs/saas/DESPLIEGUE-DESDE-CERO.md`. Falta: `NOT NULL` (tras Paso 4).
 
 ---
 

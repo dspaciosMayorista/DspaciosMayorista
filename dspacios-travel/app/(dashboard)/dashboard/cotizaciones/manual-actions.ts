@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { orgActual } from "@/lib/org";
 import { revalidatePath } from "next/cache";
 import { marcar } from "@/lib/calc/paquetes";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
@@ -557,7 +558,10 @@ export async function convertirCotizacionManualAContrato(
             observaciones: "Generado automáticamente desde cotización dinámica",
           };
         });
-      if (cxp.length) await admin.from("cuentas_por_pagar").insert(cxp);
+      if (cxp.length) {
+        const org = await orgActual();
+        await admin.from("cuentas_por_pagar").insert(org ? cxp.map((c) => ({ ...c, org_id: org })) : cxp);
+      }
     } catch {
       // No bloquear la conversión si falla la creación automática de CxP.
     }

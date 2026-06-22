@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
+import { orgActual } from "@/lib/org";
 import type { RolUsuario } from "@/types/database";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -26,13 +27,16 @@ export async function crearUsuario(input: {
   });
   if (error) return { ok: false, error: error.message };
 
-  // Asegurar el perfil con su rol (por si el trigger no tomó el metadato)
+  // Asegurar el perfil con su rol (por si el trigger no tomó el metadato).
+  // El usuario nuevo pertenece a la MISMA organización del admin que lo crea.
   if (data.user) {
+    const org = await orgActual();
     await admin.from("usuarios").upsert({
       id: data.user.id,
       email: input.email.trim(),
       nombre: input.nombre.trim(),
       rol: input.rol,
+      org_id: org,
     });
   }
   revalidatePath("/dashboard/usuarios");

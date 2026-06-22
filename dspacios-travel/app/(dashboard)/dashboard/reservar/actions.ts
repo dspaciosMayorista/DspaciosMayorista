@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { orgActual } from "@/lib/org";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, toTemporadaRango, minNochesAplicable, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, paxDeAcomodacion, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
@@ -964,7 +965,10 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   if (cxp.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
-      await admin.from("cuentas_por_pagar").insert(cxp);
+      // SaaS: insert con service-role → estampar el org del asesor (si no hay sesión,
+      // dejar que el default de la columna resuelva). NO setear org_id a null explícito.
+      const org = await orgActual();
+      await admin.from("cuentas_por_pagar").insert(org ? cxp.map((c) => ({ ...c, org_id: org })) : cxp);
     } catch {
       // No bloquear la reserva si falla la creación automática de CxP.
     }
@@ -1101,7 +1105,10 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   // disponible (si no, cae al cliente con sesión = sólo internos).
   const sbCot = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
 
+  // SaaS: si hay sesión, estampar el org; si es público (sin sesión), dejar el default.
+  const orgCot = await orgActual();
   const { data: row, error } = await sbCot.from("cotizaciones").insert({
+    ...(orgCot ? { org_id: orgCot } : {}),
     payload: input as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: clienteNombre,
@@ -1263,7 +1270,8 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
 
   if (!rows.length) return { ok: true, creadas: 0 };
 
-  const { error } = await admin.from("cuentas_por_pagar").insert(rows);
+  const org = await orgActual();
+  const { error } = await admin.from("cuentas_por_pagar").insert(org ? rows.map((r) => ({ ...r, org_id: org })) : rows);
   if (error) return { ok: false, creadas: 0, error: error.message };
   revalidatePath("/dashboard/pagos");
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
@@ -1571,8 +1579,10 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
     try {
       const admin = createAdminClient();
       const pr = prog.proveedores as unknown as { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
+      const orgP = await orgActual();
       await admin.from("ventas").update({ costo_receptivo: costoNeto }).eq("numero_contrato", numero);
       await admin.from("cuentas_por_pagar").insert({
+        ...(orgP ? { org_id: orgP } : {}),
         numero_contrato: numero,
         proveedor: pr?.nombre ?? null,
         tipo_proveedor: "programa",
