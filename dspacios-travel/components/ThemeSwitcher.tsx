@@ -33,6 +33,27 @@ export function ThemeSwitcher() {
     } catch { /* ignore */ }
   }, []);
 
+  // Al abrir la barra, si el panel de opciones se sale de la pantalla, reencuadra
+  // toda la barra para que quede completa dentro del viewport (no se corta nada).
+  useEffect(() => {
+    if (!mostrar) return;
+    const el = cont.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const m = 8;
+    let x = r.left;
+    let y = r.top;
+    let need = false;
+    if (r.right > window.innerWidth - m) { x = window.innerWidth - m - r.width; need = true; }
+    if (x < m) { x = m; need = true; }
+    if (r.bottom > window.innerHeight - m) { y = window.innerHeight - m - r.height; need = true; }
+    if (y < m) { y = m; need = true; }
+    if (need) {
+      setPos({ x, y });
+      try { localStorage.setItem(POS_KEY, JSON.stringify({ x, y })); } catch { /* ignore */ }
+    }
+  }, [mostrar]);
+
   function aplicar(t: Tema) {
     setTema(t);
     const el = document.documentElement;
