@@ -9,7 +9,14 @@
 ## Qué es
 Una sola aplicación que sirve a **muchas agencias** (tenants = "organizaciones"),
 con aislamiento de datos por `org_id` + RLS, marca propia por agencia, onboarding
-y planes/cobro. El plano completo está en `docs/saas/arquitectura-multitenant.md`.
+y planes/cobro.
+
+## Documentación (leer en este orden)
+- **`CLAUDE-SAAS.md`** — el **cerebro** de este producto (reglas de separación,
+  decisiones, convenciones multi-tenant, migraciones, registro de avances). Empieza aquí.
+- **`docs/saas/arquitectura-multitenant.md`** — el plano arquitectónico completo.
+- **`docs/saas/DESPLIEGUE-DESDE-CERO.md`** — montar una instancia nueva paso a paso
+  (Supabase, migraciones, buckets, OAuth, env vars, Vercel, primera org).
 
 ## Decisiones tomadas (Fase 1)
 - **Identificación del tenant:** **path `/o/<slug>/...`** para lo público; el tenant
