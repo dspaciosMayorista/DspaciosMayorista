@@ -1509,11 +1509,13 @@ export type Database = {
           precio_pvp: number;
           descripcion: string | null;
           recargo_individual: number | null;
+          org_id: string | null;
           created_at: string;
         };
         Insert: {
           id?: number;
           paquete_id: number;
+          org_id?: string | null;
           paquete_nombre?: string | null;
           paquete_activo?: boolean;
           pax_desde?: number | null;

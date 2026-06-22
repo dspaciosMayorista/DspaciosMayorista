@@ -7,11 +7,16 @@ import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
+import { orgDelRequest } from "@/lib/org";
 
 export const revalidate = 120; // revalida cada 2 min
 
 export default async function TarifarioPublicoPage() {
   const sb = await createClient();
+
+  // SaaS: tarifario PÚBLICO de la organización del path (`/o/<slug>`) o, sin slug,
+  // la org por defecto. Se filtran las consultas públicas por `org.id`.
+  const org = await orgDelRequest();
 
   // Detectar sesión (badge de agencia + permiso de reservar)
   const { data: { user } } = await sb.auth.getUser();
@@ -27,12 +32,14 @@ export default async function TarifarioPublicoPage() {
   let filas: FilaTarifario[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
-    const { data: page } = await sb
+    let q = sb
       .from("tarifario_resultado")
       .select(
         "modulo, bloqueo_label, bloqueo_id, paquete_id, hotel_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual"
       )
-      .eq("paquete_activo", true)
+      .eq("paquete_activo", true);
+    if (org) q = q.eq("org_id", org.id);
+    const { data: page } = await q
       .order("destino_nombre")
       .order("bloqueo_label")
       .order("hotel_nombre")

@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -54,4 +55,17 @@ export async function orgPorSlug(slug: string): Promise<OrgPublica | null> {
   } : null;
   _cacheSlug.set(s, org);
   return org;
+}
+
+// Slug de la primera organización (D'spacios): DEFAULT cuando una página pública
+// se abre SIN `/o/<slug>` (así el mono-tenant sigue funcionando).
+const ORG_SLUG_DEFAULT = "dspacios";
+
+// Organización de la petición PÚBLICA: del header `x-org-slug` (lo pone `proxy.ts`
+// al reescribir `/o/<slug>/...`) o, si no hay, la org por defecto. Las páginas
+// públicas (tarifario/sitio) filtran sus consultas por `org.id`.
+export async function orgDelRequest(): Promise<OrgPublica | null> {
+  const h = await headers();
+  const slug = h.get("x-org-slug") || ORG_SLUG_DEFAULT;
+  return orgPorSlug(slug);
 }

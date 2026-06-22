@@ -130,12 +130,14 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
     service-role bypasea. Excluye `usuarios`/`organizaciones`/`auditoria`.
   - ⏳ **Paso 3b:** scope por org de las lecturas PÚBLICAS (tarifario/sitio) — depende del
     Paso 4; + RLS de `usuarios` por org + `org_id NOT NULL` (quitar default).
-  - 🚧 **Paso 4 (en curso):** ✅ base — `lib/org.ts: orgPorSlug(slug)` (resuelve el org
-    público por el slug del path con service-role, cacheado) + tipo `organizaciones` en
-    `database.ts`. ⏳ FALTA (lo grande, validar corriendo): route group `app/o/[slug]/…`
-    que envuelva tarifario/sitio público, resolver el org del slug y acotar las queries
-    públicas por `org_id` (tarifario_resultado, hoteles, destinos, web_*…); `org_id`
-    explícito en inserts públicos (registro B2B, checkout) desde el slug; branding por org.
+  - 🚧 **Paso 4 (en curso):** ✅ mecanismo — `proxy.ts` reescribe `/o/<slug>/...` → `/...`
+    con header `x-org-slug` (sin duplicar rutas); `lib/org.ts: orgPorSlug(slug)` +
+    `orgDelRequest()` (org del header o la default `dspacios`); tipo `organizaciones`.
+    ✅ tarifario público filtra `tarifario_resultado` por `org.id` (sin slug → org default,
+    mono-tenant sigue igual). ⏳ FALTA (mismo patrón `orgDelRequest()` + `.eq("org_id")`):
+    resto de consultas públicas del tarifario (programas, cupos, fotos), `app/sitio_web`,
+    inserts públicos (registro B2B, checkout) con el `org_id` del slug, y branding por org.
+    Validar corriendo con una 2ª org.
 - ⏳ **Fase 2 — Marca por org + onboarding self-service.** Fusionar marca en
   `organizaciones`, des-hardcodear "D'spacios" (~55 referencias), wizard de alta de
   agencia + semilla de catálogos, (luego) subdominios.
@@ -159,8 +161,10 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
 - **Fase 1/Paso 3a** — migr. 103. Policy RESTRICTIVE `org_isolation` (aísla a usuarios
   logueados por org; anónimo y service-role exentos). Sin cambio en mono-tenant.
 - **Fase 1/Paso 4 (base)** — `lib/org.ts: orgPorSlug()` + tipo `organizaciones`. Resuelve
-  el tenant por el slug del path para lo público. Falta el route group y rescopear las
-  queries públicas (lo grande).
+  el tenant por el slug del path para lo público.
+- **Fase 1/Paso 4 (mecanismo + tarifario)** — `proxy.ts` reescribe `/o/<slug>/...` con
+  header `x-org-slug`; `orgDelRequest()`; el tarifario público filtra por `org.id`. Falta
+  rescopear el resto de superficies públicas (sitio, programas, checkout/registro) y branding.
 
 ---
 

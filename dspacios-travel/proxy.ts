@@ -14,6 +14,19 @@ const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/auth", "/portal", "/pag
 const EXTERNOS = ["agencia", "freelance", "cliente_final"];
 
 export async function proxy(request: NextRequest) {
+  // ── SaaS: tenant por PATH. `/o/<slug>/...` (público) se reescribe a `/...`
+  // poniendo el header `x-org-slug` para que las páginas resuelvan el org del
+  // slug (ver lib/org.ts: orgDelRequest). No duplica rutas. `/o/<slug>` solo =
+  // tarifario público de esa agencia.
+  const mOrg = request.nextUrl.pathname.match(/^\/o\/([^/]+)(\/.*)?$/);
+  if (mOrg) {
+    const url = request.nextUrl.clone();
+    url.pathname = mOrg[2] || "/tarifario";
+    const headers = new Headers(request.headers);
+    headers.set("x-org-slug", mOrg[1].toLowerCase());
+    return NextResponse.rewrite(url, { request: { headers } });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
