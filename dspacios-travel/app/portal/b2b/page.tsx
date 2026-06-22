@@ -103,6 +103,18 @@ export default async function PortalB2BPage() {
   const { data: cfg } = await sb.from("config_sitio").select("link_pago").eq("id", 1).maybeSingle();
   const linkPago = cfg?.link_pago ?? null;
 
+  // Cotizaciones del aliado: el checkout las guarda con creado_por = su email.
+  // Mostramos las vigentes (no convertidas/descartadas); las convertidas ya
+  // figuran como contrato. cotizaciones es interna (RLS) → service-role.
+  const { data: cotsRaw } = nombre || user.email
+    ? await admin
+        .from("cotizaciones")
+        .select("id, codigo, cliente, destino, hotel, pax, precio_venta, moneda, fecha_salida, vigencia_hasta, estado, share_token, numero_contrato, created_at")
+        .eq("creado_por", user.email ?? "")
+        .order("created_at", { ascending: false })
+    : { data: [] as Record<string, unknown>[] };
+  const cotizaciones = (cotsRaw ?? []).filter((c) => c.estado !== "descartada");
+
   return (
     <Shell nombre={nombre}>
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3">
@@ -117,28 +129,87 @@ export default async function PortalB2BPage() {
         <span className="text-sm text-gray-600">Tu comisión: <b>{Math.round(pctEfectivo * 1000) / 10}%</b> sobre la base comisionable</span>
       </div>
 
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-gray-900">Mis contratos</h2>
-        <div className="flex flex-wrap gap-2">
-          {esTitularAgencia && (
-            <Link href="/portal/b2b/agentes" className="rounded-lg border px-4 py-2 text-sm font-semibold" style={{ borderColor: "#9ca3af", color: "#4b5563" }}>👥 Agentes</Link>
-          )}
-          {linkPago && (
-            <a href={linkPago} target="_blank" rel="noopener noreferrer" className="rounded-lg border px-4 py-2 text-sm font-semibold" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>💳 Pagar en línea</a>
-          )}
-          <Link href="/tarifario" className="rounded-lg px-4 py-2 text-sm font-semibold text-white" style={{ backgroundColor: "var(--brand-primary)" }}>Cotizar / comprar →</Link>
+      {/* Barra de menú del portal B2B */}
+      <nav className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2">
+        <Link href="/tarifario" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Tarifario</Link>
+        <Link href="#mis-cotizaciones" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Cotizaciones</Link>
+        <Link href="#mis-ventas" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Mis ventas</Link>
+        <Link href="#cartera" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Cartera</Link>
+        {esTitularAgencia && (
+          <Link href="/portal/b2b/agentes" className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100">Agentes</Link>
+        )}
+        {linkPago && (
+          <a href={linkPago} target="_blank" rel="noopener noreferrer" className="ml-auto rounded-lg border px-3 py-1.5 text-sm font-semibold" style={{ borderColor: "var(--brand-primary)", color: "var(--brand-primary)" }}>Pagar en línea</a>
+        )}
+        <Link href="/tarifario" className={`rounded-lg px-3 py-1.5 text-sm font-semibold text-white ${linkPago ? "" : "ml-auto"}`} style={{ backgroundColor: "var(--brand-primary)" }}>Cotizar / comprar →</Link>
+      </nav>
+
+      {/* Mis cotizaciones */}
+      <div id="mis-cotizaciones" className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-gray-900">Mis cotizaciones</h2>
+        <p className="text-xs text-gray-500">Las cotizaciones que generaste desde el tarifario.</p>
+      </div>
+      {cotizaciones.length === 0 ? (
+        <p className="mb-8 rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-400">
+          Aún no tienes cotizaciones. Arma una desde el <Link href="/tarifario" className="font-semibold" style={{ color: "var(--brand-primary)" }}>tarifario</Link>.
+        </p>
+      ) : (
+        <div className="mb-8 overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <table className="w-full min-w-[820px] text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+                <th className="px-3 py-2">Código</th><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Destino</th>
+                <th className="px-3 py-2">Salida</th><th className="px-3 py-2 text-right">Valor</th><th className="px-3 py-2">Vigencia</th>
+                <th className="px-3 py-2">Estado</th><th className="px-3 py-2 text-right">Documento</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cotizaciones.map((c) => {
+                const moneda = (c.moneda as string) ?? "COP";
+                const conv = c.estado === "convertida" && c.numero_contrato;
+                return (
+                  <tr key={c.id as number} className="border-t border-gray-50">
+                    <td className="px-3 py-2 font-mono font-semibold text-[#1D7C9A]">{(c.codigo as string) ?? `#${c.id}`}</td>
+                    <td className="px-3 py-2 text-gray-700">{(c.cliente as string) ?? "—"}</td>
+                    <td className="px-3 py-2 text-gray-600">{(c.destino as string) ?? (c.hotel as string) ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(c.fecha_salida as string)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{formatMoneda(Number(c.precio_venta ?? 0), moneda)}</td>
+                    <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(c.vigencia_hasta as string)}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {conv
+                        ? <span className="rounded-full bg-[rgba(102,181,150,0.18)] px-2 py-0.5 font-medium" style={{ color: "#3f7d63" }}>Convertida</span>
+                        : <span className="rounded-full bg-gray-100 px-2 py-0.5 font-medium text-gray-500">Vigente</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {conv ? (
+                        <span className="text-xs text-gray-400">Contrato {c.numero_contrato as string}</span>
+                      ) : c.share_token ? (
+                        <a href={`/cot/${c.share_token as string}`} target="_blank" rel="noopener noreferrer" className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Ver / descargar ↗</a>
+                      ) : <span className="text-xs text-gray-400">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
+      )}
+
+      <div id="mis-ventas" className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-gray-900">Mis ventas y cartera</h2>
+        <p className="text-xs text-gray-500">Descarga el estado de cuenta y los recibos de cada pago.</p>
       </div>
       {contratos.length === 0 ? (
         <p className="rounded-xl border border-gray-200 bg-white px-4 py-10 text-center text-gray-400">Aún no tienes contratos. Empieza en el tarifario.</p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[860px] text-sm">
+        <div id="cartera" className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+          <table className="w-full min-w-[940px] text-sm">
             <thead>
               <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
                 <th className="px-3 py-2">Contrato</th><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Destino</th>
                 <th className="px-3 py-2">Salida</th><th className="px-3 py-2 text-right">Valor</th><th className="px-3 py-2 text-right">Saldo</th>
                 <th className="px-3 py-2">Estado</th><th className="px-3 py-2">Compra</th><th className="px-3 py-2 text-right">Comisión</th>
+                <th className="px-3 py-2 text-right">Cuenta</th>
               </tr>
             </thead>
             <tbody>
@@ -164,6 +235,9 @@ export default async function PortalB2BPage() {
                       {c.modo_compra === "comisionable" && com != null && com > 0 && (
                         <Link href={`/portal/comision/${encodeURIComponent(num)}`} className="block text-[10px] font-medium" style={{ color: "var(--brand-accent)" }}>Cuenta de cobro →</Link>
                       )}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Link href={`/estado-cuenta/${encodeURIComponent(num)}`} target="_blank" className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Estado de cuenta ↗</Link>
                     </td>
                   </tr>
                 );

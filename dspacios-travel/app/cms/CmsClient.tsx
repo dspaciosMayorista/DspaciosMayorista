@@ -6,6 +6,7 @@ import type { Database } from "@/types/database";
 import type { PaginaConSecciones, PaginaNodo } from "./tipos";
 import { PaginasTree } from "./editors/PaginasTree";
 import { PaginaEditor } from "./editors/PaginaEditor";
+import { LienzoVivo } from "./editors/LienzoVivo";
 import { TestimoniosEditor } from "./editors/TestimoniosEditor";
 import { BlogEditor } from "./editors/BlogEditor";
 import { ConfigEditor } from "./editors/ConfigEditor";
@@ -13,6 +14,14 @@ import { ConfigEditor } from "./editors/ConfigEditor";
 type Testimonio = Database["public"]["Tables"]["web_testimonios"]["Row"];
 type Blog = Database["public"]["Tables"]["web_blog"]["Row"];
 type Config = Database["public"]["Tables"]["web_config"]["Row"];
+
+// Datos del sitio (forma inglesa de lib/sitio/cms) para renderizar las secciones reales.
+export type SitioData = {
+  config: unknown;
+  testimonios: unknown[];
+  blog: unknown[];
+  destinos: unknown[];
+};
 
 type Tab = "paginas" | "blog" | "testimonios" | "config";
 
@@ -49,18 +58,19 @@ export function CmsClient({
   testimonios,
   blog,
   config,
+  sitio,
 }: {
   paginas: PaginaConSecciones[];
   testimonios: Testimonio[];
   blog: Blog[];
   config: Config | null;
+  sitio: SitioData;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("paginas");
   const [seleccionada, setSeleccionada] = useState<number | null>(
     paginas[0]?.id ?? null
   );
-  const [iframeKey, setIframeKey] = useState(0);
 
   const arbol = useMemo(() => construirArbol(paginas), [paginas]);
   const paginaSel = useMemo(
@@ -68,10 +78,9 @@ export function CmsClient({
     [paginas, seleccionada]
   );
 
-  // Tras cualquier cambio: recarga datos del server y refresca la vista en vivo.
+  // Tras cualquier cambio estructural: recarga datos del server.
   function recargar() {
     router.refresh();
-    setIframeKey((k) => k + 1);
   }
 
   const previewSrc = paginaSel
@@ -129,48 +138,33 @@ export function CmsClient({
             </div>
           </aside>
 
-          {/* Centro — editor */}
-          <section className="xl:col-span-5">
+          {/* Derecha — edición in-situ sobre la página real */}
+          <section className="space-y-4 xl:col-span-9">
             {paginaSel ? (
-              <PaginaEditor pagina={paginaSel} onChanged={recargar} />
+              <>
+                <details className="rounded-xl border border-gray-200 bg-white">
+                  <summary className="cursor-pointer px-4 py-2 text-sm font-semibold text-gray-700">
+                    ⚙ Ajustes de la página (slug, menú, SEO)
+                  </summary>
+                  <div className="border-t border-gray-100 p-4">
+                    <PaginaEditor pagina={paginaSel} onChanged={recargar} />
+                  </div>
+                </details>
+
+                <LienzoVivo
+                  pagina={paginaSel}
+                  paginas={paginas}
+                  sitio={sitio}
+                  previewSrc={previewSrc}
+                  onChanged={recargar}
+                />
+              </>
             ) : (
               <div className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-400">
                 Selecciona o crea una página para editarla.
               </div>
             )}
           </section>
-
-          {/* Derecha — vista en vivo */}
-          <aside className="xl:col-span-4">
-            <div className="sticky top-4 rounded-xl border border-gray-200 bg-white p-2">
-              <div className="mb-2 flex items-center justify-between px-1">
-                <p className="text-xs font-semibold text-gray-500">Vista en vivo</p>
-                <button
-                  type="button"
-                  onClick={() => setIframeKey((k) => k + 1)}
-                  className="text-xs text-[var(--brand-accent)] hover:underline"
-                >
-                  Recargar
-                </button>
-              </div>
-              {paginaSel ? (
-                <iframe
-                  key={iframeKey}
-                  src={previewSrc}
-                  title="Vista previa del sitio"
-                  className="h-[70vh] w-full rounded-lg border border-gray-100"
-                />
-              ) : (
-                <p className="p-6 text-center text-sm text-gray-400">
-                  Sin página seleccionada.
-                </p>
-              )}
-              <p className="mt-2 px-1 text-[11px] text-gray-400">
-                Muestra la página publicada (lo activo/visible). Guarda los cambios y
-                pulsa “Recargar” para verlos reflejados.
-              </p>
-            </div>
-          </aside>
         </div>
       )}
 

@@ -4,11 +4,14 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { rutaSitio } from '@/lib/sitio/rutas';
+import { EditableText } from '@/components/sitio/edicion/Editable';
+import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección DESTINOS_GRID. datos: { titulo?, subtitulo? }
 // hijos: subpáginas (PaginaHijo[]) → tarjetas que enlazan a /[slug].
 // destinos: fallback con tarjetas de web_destinos (sin enlace de subpágina).
 const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
+  const editable = !!useEdicion()?.editable;
   const titulo = datos.titulo || "Nuestros Destinos";
   const subtitulo = datos.subtitulo || "";
 
@@ -27,7 +30,7 @@ const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
         href: null,
       }));
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && !editable) return null;
 
   return (
     <section className="py-20 bg-white">
@@ -39,12 +42,18 @@ const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
           transition={{ duration: 0.6 }}
           className="text-center mb-12"
         >
-          <h2 className="text-4xl md:text-5xl font-bold text-[#120573] mb-4">{titulo}</h2>
-          {subtitulo ? (
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">{subtitulo}</p>
+          <EditableText as="h2" campo="titulo" placeholder="Título" className="text-4xl md:text-5xl font-bold text-[#120573] mb-4">{titulo}</EditableText>
+          {(subtitulo || editable) ? (
+            <EditableText as="p" campo="subtitulo" placeholder="Subtítulo" className="text-xl text-gray-600 max-w-2xl mx-auto">{subtitulo}</EditableText>
           ) : null}
         </motion.div>
 
+        {items.length === 0 ? (
+          <div className="rounded-2xl border-2 border-dashed border-gray-300 py-16 text-center text-gray-400">
+            Esta grilla se llena automáticamente con las <strong>subpáginas</strong> de esta página
+            (o los destinos del sitio). Crea subpáginas en el árbol de la izquierda.
+          </div>
+        ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
           {items.map((item, index) => {
             const card = (
@@ -81,6 +90,7 @@ const DestinosGrid = ({ datos = {}, hijos = [], destinos = [] }) => {
             );
           })}
         </div>
+        )}
       </div>
     </section>
   );

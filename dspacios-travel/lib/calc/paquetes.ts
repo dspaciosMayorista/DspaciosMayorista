@@ -33,6 +33,7 @@ export interface TemporadaRango {
   // Fase 4: múltiples rangos de cobertura + black-outs (exclusiones).
   rangos?: RangoFechas[];        // si está vacío, se usa fecha_inicio/fecha_fin
   blackouts?: RangoFechas[];     // fechas excluidas de la cobertura
+  min_noches?: number;           // mínimo de noches de esta vigencia (default 1)
 }
 
 /** Fecha de hoy (yyyy-mm-dd) en zona horaria Colombia, para la vigencia de compra. */
@@ -89,7 +90,7 @@ export function toTemporadaRango(t: {
   nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
   prioridad?: number | null; compra_inicio?: string | null; compra_fin?: string | null;
   tipo?: string | null; descuento_valor?: number | null;
-  rangos?: unknown; blackouts?: unknown;
+  rangos?: unknown; blackouts?: unknown; min_noches?: number | null;
 }): TemporadaRango {
   return {
     nombre: t.nombre,
@@ -102,7 +103,19 @@ export function toTemporadaRango(t: {
     descuento_valor: t.descuento_valor ?? null,
     rangos: normRangos(t.rangos),
     blackouts: normRangos(t.blackouts),
+    min_noches: t.min_noches ?? 1,
   };
+}
+
+/**
+ * Mínimo de noches aplicable a una estadía: el de la temporada (vigencia) que
+ * cubre la NOCHE DE ENTRADA (la de mayor prioridad). Default 1 si no aplica.
+ * Sirve para filtrar hoteles cuando se busca menos noches de las exigidas.
+ */
+export function minNochesAplicable(temporadas: TemporadaRango[], fechaIda: string, hoy = hoyISO()): number {
+  const t0 = new Date(`${fechaIda}T00:00:00`).getTime();
+  const top = entradasNoche(t0, temporadas, hoy)[0];
+  return Math.max(1, top?.min_noches ?? 1);
 }
 
 /** Redondeo a peso entero (COP). */

@@ -1,14 +1,15 @@
 import Link from "next/link";
+import { Settings, Users2, Building2, Plane, Wrench, Map } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
 const SECCIONES = [
-  { href: "/dashboard/producto/configuracion", icon: "⚙️", label: "Configuración general de hoteles", desc: "Categorías de habitación y régimen de alimentación" },
-  { href: "/dashboard/producto/proveedores", icon: "🤝", label: "Proveedores", desc: "Hoteleros, aéreos y de servicios" },
-  { href: "/dashboard/producto/hoteles", icon: "🏨", label: "Hoteles y tarifas", desc: "Habitaciones, temporadas y tarifa neta" },
-  { href: "/dashboard/vuelos", icon: "✈️", label: "Aéreo (bloqueos)", desc: "Aerolínea, vuelos, cupos y valor neto" },
-  { href: "/dashboard/producto/servicios", icon: "🧰", label: "Servicios adicionales", desc: "Asistencia, traslados, tours" },
-  { href: "/dashboard/producto/programas", icon: "🗺️", label: "Programas (circuitos)", desc: "Circuitos multi-ciudad de un proveedor, en USD" },
+  { href: "/dashboard/producto/configuracion", Icon: Settings, label: "Configuración general de hoteles", desc: "Categorías de habitación y régimen de alimentación" },
+  { href: "/dashboard/producto/proveedores", Icon: Users2, label: "Proveedores", desc: "Hoteleros, aéreos y de servicios" },
+  { href: "/dashboard/producto/hoteles", Icon: Building2, label: "Hoteles y tarifas", desc: "Habitaciones, temporadas y tarifa neta" },
+  { href: "/dashboard/vuelos", Icon: Plane, label: "Aéreo (bloqueos)", desc: "Aerolínea, vuelos, cupos y valor neto" },
+  { href: "/dashboard/producto/servicios", Icon: Wrench, label: "Servicios adicionales", desc: "Asistencia, traslados, tours" },
+  { href: "/dashboard/producto/programas", Icon: Map, label: "Programas (circuitos)", desc: "Circuitos multi-ciudad de un proveedor, en USD" },
 ];
 
 export default function ProductoPage() {
@@ -20,13 +21,13 @@ export default function ProductoPage() {
       </p>
 
       <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {SECCIONES.map((s) => (
-          <Link key={s.href} href={s.href}
+        {SECCIONES.map(({ href, Icon, label, desc }) => (
+          <Link key={href} href={href}
             className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-[#1D7C9A] hover:shadow-sm">
-            <span className="text-2xl">{s.icon}</span>
+            <Icon size={22} className="mt-0.5 shrink-0 text-[#1D7C9A]" />
             <div>
-              <span className="font-semibold text-gray-800">{s.label}</span>
-              <p className="text-xs text-gray-500">{s.desc}</p>
+              <span className="font-semibold text-gray-800">{label}</span>
+              <p className="text-xs text-gray-500">{desc}</p>
             </div>
           </Link>
         ))}

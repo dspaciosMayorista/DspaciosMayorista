@@ -228,6 +228,8 @@ export default async function ContratoDetallePage({
         puedeAsesor={verFinanzas}
         pasajeros={(pasajerosC ?? []) as unknown as PasajeroRow[]}
         fechaSalida={venta.fecha_salida}
+        pax={venta.pax ?? 0}
+        titularNombre={venta.cliente ?? ""}
       />
 
       <VouchersPanel

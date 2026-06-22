@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 
@@ -246,6 +247,198 @@ html[data-theme="verde"] nav a[aria-current="page"] {
    Solo el logo (.brand-logo); NO otras imágenes del header/aside (ej. la foto
    del hotel en el carrito), que se verían en blanco. */
 html[data-theme="verde"] .brand-logo { filter: brightness(0) invert(1); }
+
+/* ── Tema WEB · "Travel Ops" (índigo) ───────────────────────────────────────
+   data-theme="web". Identidad del sitio (índigo/turquesa/lima) en todo el
+   portal: sidebar índigo, fondo de PLAYA (.app-bg general), texto sobrio,
+   bordes finos, tipografía Inter. Es la OPCIÓN 1. */
+html[data-theme="web"] {
+  --brand-primary:   #16006E;   /* índigo profundo */
+  --brand-accent:    #14B8C4;   /* turquesa (links/acento) */
+  --brand-success:   #25D366;   /* verde acción */
+  --brand-highlight: #D7FF00;   /* lima CTA */
+  --brand-gradient:  linear-gradient(125deg, #16006E 0%, #3425A7 52%, #14B8C4 122%);
+
+  --primary: #16006E;
+  --accent:  #14B8C4;
+  --ring:    #3425A7;
+  --chart-1: #16006E; --chart-2: #3425A7; --chart-3: #14B8C4; --chart-4: #D7FF00;
+  --sidebar-primary: #16006E; --sidebar-ring: #3425A7;
+
+  --nav-fg:    #c7caee;
+  --nav-subfg: #9296cf;
+
+  --background: #F5F7FB;
+  --secondary:  #eef1f8;
+  --muted:      #eef1f8;
+}
+
+html[data-theme="web"] body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+html[data-theme="web"] h1, html[data-theme="web"] h2, html[data-theme="web"] h3 { letter-spacing: -0.015em; }
+
+html[data-theme="web"] body,
+html[data-theme="web"] .bg-gray-50  { background-color: #F5F7FB !important; }
+html[data-theme="web"] .bg-gray-100 { background-color: #eceef4 !important; }
+
+html[data-theme="web"] .text-gray-900, html[data-theme="web"] .text-gray-800 { color: #172033 !important; }
+html[data-theme="web"] .text-gray-700 { color: #344054 !important; }
+html[data-theme="web"] .text-gray-600 { color: #475467 !important; }
+html[data-theme="web"] .text-gray-500 { color: #667085 !important; }
+html[data-theme="web"] .text-gray-400 { color: #98A2B3 !important; }
+
+html[data-theme="web"] .border-gray-200 { border-color: #E4E7EF !important; }
+html[data-theme="web"] .border-gray-300 { border-color: #D0D5DD !important; }
+
+html[data-theme="web"] aside.bg-white {
+  background: linear-gradient(190deg, #1B1178 0%, #16006E 60%, #12005a 100%) !important;
+  border-right-color: rgba(255, 255, 255, 0.08) !important;
+}
+html[data-theme="web"] aside .border-gray-100 { border-color: rgba(255, 255, 255, 0.10) !important; }
+html[data-theme="web"] aside .border-l        { border-color: rgba(255, 255, 255, 0.14) !important; }
+html[data-theme="web"] aside .brand-logo      { filter: brightness(0) invert(1); }
+html[data-theme="web"] aside nav a:hover { background-color: rgba(255, 255, 255, 0.07) !important; color: #ffffff !important; }
+html[data-theme="web"] aside .text-gray-400,
+html[data-theme="web"] aside .text-gray-500,
+html[data-theme="web"] aside .text-gray-600 { color: #c7caee !important; }
+html[data-theme="web"] aside .hover\:text-gray-700:hover,
+html[data-theme="web"] aside .hover\:text-gray-800:hover { color: #ffffff !important; }
+html[data-theme="web"] aside nav a[aria-current="page"] {
+  background-color: rgba(215, 255, 0, 0.13) !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  box-shadow: inset 3px 0 0 #D7FF00;
+  font-weight: 600 !important;
+}
+html[data-theme="web"] .bg-white.border.rounded-xl,
+html[data-theme="web"] .bg-white.border.rounded-2xl {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.05);
+}
+
+/* ── Tema BLUEPRINT · "Travel Operations Blueprint" (navy/papel) ─────────────
+   data-theme="blueprint". No es un dashboard SaaS genérico: fondo papel técnico con
+   grilla sutil, azul marino, bordes navy, conectores terracota. Es la OPCIÓN 2. */
+html[data-theme="blueprint"] {
+  --brand-primary:   #08233F;   /* navy principal */
+  --brand-accent:    #0B2545;   /* azul profundo (links) */
+  --brand-success:   #5E8C6A;   /* verde operativo (legible) */
+  --brand-highlight: #D7FF00;   /* lima CTA */
+  --brand-connector: #B9785F;   /* terracota (conectores/flechas) */
+  --brand-gradient:  linear-gradient(135deg, #08233F 0%, #0B2545 100%);
+
+  --primary: #08233F;
+  --accent:  #0B2545;
+  --ring:    #1E3448;
+  --chart-1: #08233F; --chart-2: #1E5A8A; --chart-3: #B9785F; --chart-4: #5E8C6A;
+  --sidebar-primary: #08233F; --sidebar-ring: #1E3448;
+
+  /* Texto del nav sobre el sidebar de PAPEL (navy oscuro) */
+  --nav-fg:    #33424f;
+  --nav-subfg: #64707D;
+
+  --background: #F6F1E8;
+  --secondary:  #efe8da;
+  --muted:      #efe8da;
+}
+
+/* Tipografía Inter + jerarquía marcada */
+html[data-theme="blueprint"] body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+html[data-theme="blueprint"] h1 { letter-spacing: -0.02em; }
+html[data-theme="blueprint"] h2, html[data-theme="blueprint"] h3 { letter-spacing: -0.01em; }
+
+/* Lienzo PAPEL TÉCNICO #F6F1E8 (la grilla la pone .app-bg) */
+html[data-theme="blueprint"] body,
+html[data-theme="blueprint"] .bg-gray-50  { background-color: #F6F1E8 !important; }
+html[data-theme="blueprint"] .bg-gray-100 { background-color: #ece4d4 !important; }
+
+/* Texto del sistema sobrio (#1A2B3C / #64707D) */
+html[data-theme="blueprint"] .text-gray-900, html[data-theme="blueprint"] .text-gray-800 { color: #14283b !important; }
+html[data-theme="blueprint"] .text-gray-700 { color: #33424f !important; }
+html[data-theme="blueprint"] .text-gray-600 { color: #4b5762 !important; }
+html[data-theme="blueprint"] .text-gray-500 { color: #64707D !important; }
+html[data-theme="blueprint"] .text-gray-400 { color: #8d97a1 !important; }
+
+/* Bordes TÉCNICOS navy (más definidos que el gris de plantilla) */
+html[data-theme="blueprint"] .border-gray-100 { border-color: #e4dccc !important; }
+html[data-theme="blueprint"] .border-gray-200 { border-color: #d8cdb8 !important; }
+html[data-theme="blueprint"] .border-gray-300 { border-color: #c7bca6 !important; }
+
+/* Tarjetas/módulos: superficie papel claro con borde navy fino y sombra
+   controlada (no card blanca flotante genérica) */
+html[data-theme="blueprint"] .bg-white { background-color: #FFFDF8 !important; }
+html[data-theme="blueprint"] .bg-white.border,
+html[data-theme="blueprint"] .bg-white.rounded-lg.border,
+html[data-theme="blueprint"] .bg-white.border.rounded-xl,
+html[data-theme="blueprint"] .bg-white.border.rounded-2xl {
+  border-color: rgba(30, 52, 72, 0.22) !important;
+  box-shadow: 0 1px 0 rgba(30, 52, 72, 0.05), 0 2px 4px rgba(30, 52, 72, 0.06) !important;
+}
+
+/* SIDEBAR en PAPEL LISO (mismo fondo que la pantalla, sin cuadrícula) */
+html[data-theme="blueprint"] aside.bg-white {
+  background-color: #F6F1E8 !important;
+  background-image: none !important;
+  border-right-color: #d8cdb8 !important;
+}
+html[data-theme="blueprint"] aside .border-gray-100 { border-color: #e0d8c6 !important; }
+html[data-theme="blueprint"] aside .border-l        { border-color: #d8cdb8 !important; }
+html[data-theme="blueprint"] aside nav a:hover {
+  background-color: rgba(8, 35, 63, 0.06) !important;
+  color: #08233F !important;
+}
+html[data-theme="blueprint"] aside .text-gray-400,
+html[data-theme="blueprint"] aside .text-gray-500,
+html[data-theme="blueprint"] aside .text-gray-600 { color: #4b5762 !important; }
+html[data-theme="blueprint"] aside .hover\:text-gray-700:hover,
+html[data-theme="blueprint"] aside .hover\:text-gray-800:hover { color: #08233F !important; }
+/* Activo: relleno navy + barra lima (evidente sobre el papel) */
+html[data-theme="blueprint"] aside nav a[aria-current="page"] {
+  background-color: #08233F !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  box-shadow: inset 3px 0 0 #D7FF00;
+  font-weight: 600 !important;
+}
+
+/* Fondo de la pantalla principal en blueprint: imagen del sitio (playa) con un
+   velo en tono PAPEL (#F6F1E8) para legibilidad y para que combine con el menú.
+   Gana sobre .app-bg. */
+html[data-theme="blueprint"] .app-bg {
+  background-image:
+    linear-gradient(180deg, rgba(246, 241, 232, 0.55) 0%, rgba(246, 241, 232, 0.84) 46%, rgba(246, 241, 232, 0.94) 100%),
+    url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80") !important;
+  background-color: #F6F1E8 !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-attachment: fixed !important;
+  background-repeat: no-repeat !important;
+}
+
+/* ── Fondo de pantalla con imagen de PLAYA (portal + tarifario público) ──────
+   Imagen fija tipo wallpaper con un wash claro encima para legibilidad; las
+   tarjetas blancas flotan sobre la playa. Se aplica con la clase .app-bg. */
+.app-bg {
+  background-image:
+    linear-gradient(180deg, rgba(244, 247, 251, 0.60) 0%, rgba(244, 247, 251, 0.82) 44%, rgba(244, 247, 251, 0.93) 100%),
+    url("https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=80");
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+/* En el tema oscuro la playa no aplica (rompería el negro). */
+html[data-theme="verde"] .app-bg { background: #000 !important; }
+
+/* Tipografía del sitio (Inter) — para el tarifario público, así su “letra”
+   coincide con el portal/sitio sin depender del tema. */
+.font-sitio { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+
+/* ── Home: dos opciones de layout según el tema ──────────────────────────────
+   Por defecto se muestra la versión CLÁSICA (Travel Ops). El layout BLUEPRINT
+   (mapa operativo + alertas) se muestra solo con data-theme="blueprint". Así
+   son dos opciones reales, no una encima de la otra. */
+.home-blueprint { display: none; }
+html[data-theme="blueprint"] .home-clasica  { display: none; }
+html[data-theme="blueprint"] .home-blueprint { display: block; }
 
 .dark {
   --background: oklch(0.145 0 0);

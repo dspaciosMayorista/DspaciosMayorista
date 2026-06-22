@@ -39,21 +39,30 @@ export async function actualizarPasajerosContrato(numero: string, pasajeros: Pas
   const { data: venta } = await sb.from("ventas").select("fecha_salida").eq("numero_contrato", numero).maybeSingle();
   const ref = venta?.fecha_salida ?? null;
 
-  const limpios = pasajeros.filter((p) => p.nombre.trim());
-  if (!limpios.length) return { ok: false, error: "Debe haber al menos un pasajero." };
+  // Solo se descartan filas totalmente vacías (sin ningún dato). El resto debe
+  // venir completo: mismos validadores del contrato del tarifario.
+  const filasConDato = pasajeros.filter(
+    (p) => p.nombre.trim() || p.identificacion.trim() || p.fechaNacimiento.trim()
+  );
+  if (!filasConDato.length) return { ok: false, error: "Debe haber al menos un pasajero." };
 
-  // Validaciones: menor con CC y documento repetido.
+  const docOk = (tipo: string, num: string) => tipo === "PAS" || /^\d+$/.test(num.trim());
+
+  // Validaciones por pasajero: datos completos + edad + documento repetido.
   const vistos = new Set<string>();
-  for (let i = 0; i < limpios.length; i++) {
-    const p = limpios[i];
+  for (let i = 0; i < filasConDato.length; i++) {
+    const p = filasConDato[i];
+    if (!p.nombre.trim()) return { ok: false, error: `Pasajero ${i + 1}: el nombre es obligatorio.` };
+    if (!p.identificacion.trim()) return { ok: false, error: `Pasajero ${i + 1}: el número de documento es obligatorio.` };
+    if (!docOk(p.tipoId, p.identificacion)) return { ok: false, error: `Pasajero ${i + 1}: el documento debe ser solo números (excepto Pasaporte).` };
+    if (!p.fechaNacimiento.trim()) return { ok: false, error: `Pasajero ${i + 1}: la fecha de nacimiento es obligatoria.` };
     const edad = calcularEdad(p.fechaNacimiento, ref);
     if (edad != null && edad < 18 && p.tipoId === "CC") return { ok: false, error: `Pasajero ${i + 1}: un menor no puede tener CC (usa RC o TI).` };
-    if (p.identificacion.trim()) {
-      const k = `${p.tipoId}-${p.identificacion.trim()}`;
-      if (vistos.has(k)) return { ok: false, error: `Pasajero ${i + 1}: documento repetido.` };
-      vistos.add(k);
-    }
+    const k = `${p.tipoId}-${p.identificacion.trim()}`;
+    if (vistos.has(k)) return { ok: false, error: `Pasajero ${i + 1}: documento repetido.` };
+    vistos.add(k);
   }
+  const limpios = filasConDato;
 
   await sb.from("contrato_pasajeros").delete().eq("numero_contrato", numero);
   const filas = limpios.map((p, i) => {

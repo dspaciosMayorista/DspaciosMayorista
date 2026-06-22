@@ -288,7 +288,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion)")
+      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion, descripcion, recargo_individual)")
       .eq("paquete_id", paqueteId),
   ]);
 
@@ -492,7 +492,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // sin importar el tipo. Persona = una fila; grupo = una fila por rango de pax.
   for (const s of servicios) {
     if (s.incluido as boolean) continue; // los incluidos se hornean, no se publican
-    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null } | null;
+    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null; descripcion: string | null; recargo_individual: number | null } | null;
     if (!srv) continue;
     const fLiq = factorLiquidacion(srv.liquidacion, nochesPaq);
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
@@ -507,6 +507,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       destino_nombre: destinoNombre,
       tipo_tarifa: modo,
       impuesto: 0,
+      descripcion: srv.descripcion ?? null,
     };
     if (modo === "grupo") {
       for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
@@ -515,7 +516,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       }
     } else if (srv.precio_persona != null) {
       const pvp = redondearMilArriba(marcar(Number(srv.precio_persona) || 0, pctMk) * fLiq);
-      filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp });
+      // Recargo individual: suplemento del proveedor cuando va 1 pax (cobro por
+      // persona). Es un COSTO, así que el lado de venta sube con su markup; el
+      // costo neto lo toma Reservar del catálogo para la CxP del proveedor.
+      const recargoNeto = Math.max(Number(srv.recargo_individual) || 0, 0);
+      const recargoPvp = recargoNeto > 0 ? redondearMilArriba(marcar(recargoNeto, pctMk)) : 0;
+      filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, recargo_individual: recargoPvp });
     }
   }
 
@@ -536,4 +542,62 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   revalidatePath("/tarifario");
   return { ok: true, id: filas.length };
+}
+
+// ── AUTO-RECÁLCULO ─────────────────────────────────────────────────────────
+// Regenera el tarifario de TODOS los paquetes activos que usan un hotel. Se
+// llama tras editar tarifas/vigencias del hotel para que el tarifario (y el PVP
+// que lee Reservar) se actualice solo, sin volver a "Generar" a mano. No lanza:
+// un fallo de un paquete no debe tumbar el guardado de la tarifa.
+export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void> {
+  if (!hotelId) return;
+  try {
+    const sb = await createClient();
+    const { data: pkgs } = await sb
+      .from("armado_hoteles")
+      .select("paquete_id, armado_paquetes!inner(activo)")
+      .eq("hotel_id", hotelId);
+    const ids = [...new Set((pkgs ?? [])
+      .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
+      .map((p) => p.paquete_id))];
+    for (const id of ids) {
+      try { await generarTarifario(id); } catch { /* un paquete malo no frena el resto */ }
+    }
+  } catch {
+    /* el auto-recálculo es best-effort; nunca bloquea la edición */
+  }
+}
+
+// Regenera el tarifario de los paquetes activos que usan un BLOQUEO aéreo. Se
+// llama tras editar/eliminar el bloqueo (tarifa de empaquetar, fechas, ruta).
+export async function regenerarTarifariosDeBloqueo(bloqueoId: number): Promise<void> {
+  if (!bloqueoId) return;
+  try {
+    const sb = await createClient();
+    const { data: pkgs } = await sb
+      .from("armado_vuelos")
+      .select("paquete_id, armado_paquetes!inner(activo)")
+      .eq("bloqueo_id", bloqueoId);
+    const ids = [...new Set((pkgs ?? [])
+      .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
+      .map((p) => p.paquete_id))];
+    for (const id of ids) { try { await generarTarifario(id); } catch { /* sigue */ } }
+  } catch { /* best-effort */ }
+}
+
+// Regenera el tarifario de los paquetes activos que usan un SERVICIO. Se llama
+// tras editar/eliminar el servicio (precio por persona o tarifas por grupo).
+export async function regenerarTarifariosDeServicio(servicioId: number): Promise<void> {
+  if (!servicioId) return;
+  try {
+    const sb = await createClient();
+    const { data: pkgs } = await sb
+      .from("armado_servicios")
+      .select("paquete_id, armado_paquetes!inner(activo)")
+      .eq("servicio_id", servicioId);
+    const ids = [...new Set((pkgs ?? [])
+      .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
+      .map((p) => p.paquete_id))];
+    for (const id of ids) { try { await generarTarifario(id); } catch { /* sigue */ } }
+  } catch { /* best-effort */ }
 }

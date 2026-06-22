@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Palette } from "lucide-react";
 
-type Tema = "marca" | "indigo" | "verde";
+type Tema = "marca" | "verde" | "blueprint";
 const KEY = "dsp-theme";
 const POS_KEY = "dsp-theme-pos";
 
@@ -21,9 +22,37 @@ export function ThemeSwitcher() {
     setTema(saved);
     try {
       const p = localStorage.getItem(POS_KEY);
-      if (p) setPos(JSON.parse(p) as { x: number; y: number });
+      if (p) {
+        const raw = JSON.parse(p) as { x: number; y: number };
+        // Re-encuadra dentro del viewport actual: si quedó fuera (por arrastre o
+        // cambio de tamaño), vuelve a un punto visible en vez de desaparecer.
+        const x = Math.min(Math.max(8, raw.x), window.innerWidth - 48);
+        const y = Math.min(Math.max(8, raw.y), window.innerHeight - 48);
+        setPos({ x, y });
+      }
     } catch { /* ignore */ }
   }, []);
+
+  // Al abrir la barra, si el panel de opciones se sale de la pantalla, reencuadra
+  // toda la barra para que quede completa dentro del viewport (no se corta nada).
+  useEffect(() => {
+    if (!mostrar) return;
+    const el = cont.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const m = 8;
+    let x = r.left;
+    let y = r.top;
+    let need = false;
+    if (r.right > window.innerWidth - m) { x = window.innerWidth - m - r.width; need = true; }
+    if (x < m) { x = m; need = true; }
+    if (r.bottom > window.innerHeight - m) { y = window.innerHeight - m - r.height; need = true; }
+    if (y < m) { y = m; need = true; }
+    if (need) {
+      setPos({ x, y });
+      try { localStorage.setItem(POS_KEY, JSON.stringify({ x, y })); } catch { /* ignore */ }
+    }
+  }, [mostrar]);
 
   function aplicar(t: Tema) {
     setTema(t);
@@ -80,18 +109,20 @@ export function ThemeSwitcher() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        className="flex h-9 w-9 cursor-grab items-center justify-center rounded-full border border-gray-200 bg-white/95 text-base shadow-lg backdrop-blur select-none active:cursor-grabbing"
+        className="flex h-10 cursor-grab items-center gap-2 rounded-full border border-white/30 px-3.5 text-sm font-semibold text-white shadow-lg backdrop-blur select-none active:cursor-grabbing"
+        style={{ backgroundColor: "var(--brand-primary)" }}
         title="Estilo · clic para mostrar/ocultar · arrastra para mover"
         aria-label="Barra de estilo"
       >
-        🎨
+        <Palette size={17} />
+        <span className="hidden sm:inline">Estilo</span>
       </button>
       {mostrar && (
         <div className="flex items-center gap-1 rounded-full border border-gray-200 bg-white/95 p-1 shadow-lg backdrop-blur">
           <span className="pl-2 pr-1 text-[10px] uppercase tracking-wide text-gray-400">Estilo</span>
           {btn("marca", "Turquesa")}
-          {btn("indigo", "Índigo")}
           {btn("verde", "Verde")}
+          {btn("blueprint", "Blueprint")}
         </div>
       )}
     </div>

@@ -65,6 +65,7 @@ export type CampanaInput = {
   botonTexto: string;
   botonUrl: string;
   categoria: string;
+  subcategoria?: string;
 };
 
 export async function enviarCampana(input: CampanaInput): Promise<EnvioCampanaResult> {
@@ -76,13 +77,14 @@ export async function enviarCampana(input: CampanaInput): Promise<EnvioCampanaRe
   let q = sb.from("crm_contactos").select("email, nombre")
     .eq("acepta_publicidad", true).eq("no_contactar", false).not("email", "is", null);
   if (input.categoria && input.categoria !== "todos") q = q.eq("categoria", input.categoria);
+  if (input.subcategoria && input.subcategoria !== "todos") q = q.eq("subcategoria", input.subcategoria);
   const { data } = await q;
   const dest = (data ?? []).filter((c) => c.email).map((c) => ({ email: c.email as string, nombre: c.nombre }));
 
   return enviarA(sb, dest, input.asunto, {
     mensaje: input.mensaje, imagenUrl: input.imagenUrl || null,
     botonTexto: input.botonTexto || null, botonUrl: input.botonUrl || null,
-  }, input.categoria || "todos", (input.tipo || "campaña").trim());
+  }, input.subcategoria && input.subcategoria !== "todos" ? `${input.categoria || "todos"} · ${input.subcategoria}` : (input.categoria || "todos"), (input.tipo || "campaña").trim());
 }
 
 // Felicitaciones de cumpleaños (informativo): respeta 'no contactar' pero no exige

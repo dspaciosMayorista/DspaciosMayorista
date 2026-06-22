@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
+import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, toTemporadaRango, minNochesAplicable, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, paxDeAcomodacion, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
@@ -19,7 +19,7 @@ const COL_NETO: Record<string, string> = {
   multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2",
 };
 
-export type ComboCotizado = { categoria: string; regimen: string; precios: Record<string, number> };
+export type ComboCotizado = { categoria: string; regimen: string; precios: Record<string, number>; netos?: Record<string, number> };
 
 // ── Liquidación EN VIVO de un hotel para fechas elegidas (motor por fechas) ──
 // Reutiliza el mismo motor del generador de tarifario, pero para las noches que
@@ -32,7 +32,7 @@ async function liquidarHotelPaquete(
   hotelId: number,
   fechaIda: string,
   numNoches: number
-): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null } | null> {
+): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number } | null> {
   if (numNoches <= 0) return null;
   const { data: pq } = await admin
     .from("armado_paquetes")
@@ -46,7 +46,7 @@ async function liquidarHotelPaquete(
 
   const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }, { data: blackouts }] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", hotelId),
+    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones").eq("hotel_id", hotelId),
@@ -65,7 +65,7 @@ async function liquidarHotelPaquete(
     if (b.total) cierreTotal = true;
     else for (const a of ((b.acomodaciones as string[] | null) ?? [])) acomCerradas.add(a);
   }
-  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null };
+  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null, minNoches: 1 };
   const filtroCat = (hsel?.categorias as string[] | null) ?? null;
   const filtroReg = (hsel?.regimenes as string[] | null) ?? null;
   const hotelNombre = (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
@@ -96,6 +96,7 @@ async function liquidarHotelPaquete(
     if (filtroCat && filtroCat.length && !filtroCat.includes(categoria)) continue;
     if (filtroReg && filtroReg.length && !filtroReg.includes(regimen)) continue;
     const precios: Record<string, number> = {};
+    const netos: Record<string, number> = {};
     for (const acom of ACOM_ALL) {
       const col = COL_NETO[acom];
       const netoPorTemporada: Record<string, number | null> = {};
@@ -108,15 +109,16 @@ async function liquidarHotelPaquete(
       if (esRoom && costoHotel <= 0) continue;
       const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto });
       precios[acom] = t.pvp;
+      netos[acom] = costoHotel; // costo neto/persona — fuente del costo al reservar
     }
-    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios });
+    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos });
   }
   // Quita las acomodaciones cerradas por blackout; descarta combos sin habitación.
   if (acomCerradas.size) {
-    for (const c of combos) for (const a of acomCerradas) delete c.precios[a];
+    for (const c of combos) for (const a of acomCerradas) { delete c.precios[a]; delete c.netos?.[a]; }
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2"));
-  return { combos: combosF, destinoNombre, hotelNombre };
+  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda) };
 }
 
 export type CotizarResult =
@@ -142,10 +144,13 @@ export async function cotizarPorFechas(input: {
   if (pq?.fecha_viaje_fin && input.fechaRegreso > pq.fecha_viaje_fin)
     return { ok: false, error: `El regreso no puede ser después del ${pq.fecha_viaje_fin} (rango del paquete).` };
   const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda, numNoches);
+  if (res && numNoches < (res.minNoches ?? 1)) {
+    return { ok: false, error: `Este alojamiento exige un mínimo de ${res.minNoches} noche(s) para esas fechas.` };
+  }
   if (!res || !res.combos.length) {
     // Diagnóstico: ¿qué temporada de las noches elegidas no tiene tarifa cargada?
     const [{ data: temps }, { data: tars }] = await Promise.all([
-      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", input.hotelId),
+      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", input.hotelId),
       admin.from("tarifa_hotel").select("temporada").eq("hotel_id", input.hotelId),
     ]);
     const temporadas = (temps ?? []).map(toTemporadaRango);
@@ -163,7 +168,9 @@ export async function cotizarPorFechas(input: {
     else if (hayNocheSinTemp) error = "Hay noches que no caen en ninguna temporada del hotel; define la temporada para esas fechas.";
     return { ok: false, error };
   }
-  return { ok: true, combos: res.combos, noches: numNoches };
+  // Se devuelve al cliente SIN `netos` (el costo interno no sale del servidor).
+  const combosPublicos = res.combos.map((c) => ({ categoria: c.categoria, regimen: c.regimen, precios: c.precios }));
+  return { ok: true, combos: combosPublicos, noches: numNoches };
 }
 
 // ── Mini-motor de búsqueda (público): liquida TODOS los hoteles de porción para
@@ -219,6 +226,7 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
   for (const { paquete, hotel } of pares.values()) {
     const res = await liquidarHotelPaquete(admin, paquete, hotel, input.fechaIda, numNoches);
     if (!res || !res.combos.length) continue;
+    if (numNoches < (res.minNoches ?? 1)) continue; // exige más noches de las buscadas
     const { data: acomCfg } = await admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, chd_max").eq("hotel_id", hotel);
     const reglas = (acomCfg ?? []) as { acomodacion: string; pax_tarifa: number; chd_max: number }[];
     const paxTarifa = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
@@ -303,6 +311,7 @@ export type ReservaResult = { ok: true; numero: string } | { ok: false; error: s
 type ComputoReserva = {
   meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   pvpPorAcom: Record<string, number>;
+  netoPorAcom: Record<string, number>; // costo neto/persona por acomodación (autoritativo)
   precioVenta: number;
   paxConSilla: number;
   totalPax: number;
@@ -320,6 +329,7 @@ async function computarReserva(
   const esServicios = input.modulo === "servicios";
 
   const pvpPorAcom: Record<string, number> = {};
+  const netoPorAcom: Record<string, number> = {};
   let precioVenta = 0;
   let paxConSilla = 0;
   const lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[] = [];
@@ -338,6 +348,7 @@ async function computarReserva(
     const combo = res?.combos.find((c) => c.categoria === input.categoria && c.regimen === input.regimen);
     if (!combo) return { ok: false, error: "No hay tarifa para esas fechas / categoría / régimen." };
     for (const [acom, p] of Object.entries(combo.precios)) pvpPorAcom[acom] = p;
+    if (combo.netos) for (const [acom, n] of Object.entries(combo.netos)) netoPorAcom[acom] = n;
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
 
     const { data: acomCfgF } = await sb
@@ -415,6 +426,39 @@ async function computarReserva(
 
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
+    // Costo neto del hotel + control de VIGENCIA DE COMPRA. El PVP del tarifario
+    // está congelado, pero la tarifa neta se liquida con la vigencia de HOY: si
+    // la vigencia de compra del hotel ya venció (o ya no hay tarifa), NO se vende
+    // —antes se creaba la venta con costo 0 (rentabilidad inflada y sin CxP de
+    // hotel). Decisión del negocio: no dejar vender lo vencido. (Bloqueo: fechas
+    // fijas del record.) Requiere service-role: la tarifa neta es interna.
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY && meta.fecha_ida && meta.fecha_regreso) {
+      const admin = createAdminClient();
+      const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
+      const [{ data: temps }, { data: tarRows }] = await Promise.all([
+        admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", input.hotelId),
+        admin.from("tarifa_hotel").select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
+      ]);
+      type TarRow = { temporada: string | null; neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null };
+      const rows = (tarRows ?? []) as TarRow[];
+      const temporadas = (temps ?? []).map(toTemporadaRango);
+      const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2" };
+      const netoDe = (acom: string): number | null => {
+        const col = colDe[acom]; if (!col) return null;
+        const netoPorTemporada: Record<string, number | null> = {};
+        for (const r of rows) if (r.temporada) netoPorTemporada[r.temporada] = r[col] as number | null;
+        return liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches, temporadas, netoPorTemporada });
+      };
+      const TARIFA_VENCIDA = "Esta tarifa ya no está vigente para compra (la vigencia del hotel venció). Pide regenerar el tarifario con vigencias vigentes antes de reservar.";
+      for (const l of lineasHab) {
+        const per = netoDe(l.acom);
+        if (per == null) return { ok: false, error: TARIFA_VENCIDA };
+        netoPorAcom[l.acom] = per;
+      }
+      if (numNinos > 0) { const per = netoDe("nino"); if (per == null) return { ok: false, error: TARIFA_VENCIDA }; netoPorAcom["nino"] = per; }
+      if (numNinos2 > 0) { const per = netoDe("nino2"); if (per == null) return { ok: false, error: TARIFA_VENCIDA }; netoPorAcom["nino2"] = per; }
+    }
+
     const { data: hotelRow } = await sb
       .from("hoteles")
       .select("edad_infante_max, edad_nino_max, pax_min, pax_max")
@@ -459,23 +503,26 @@ async function computarReserva(
   if (input.servicios?.length) {
     const { data: srvRows } = await sb
       .from("tarifario_resultado")
-      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp")
+      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, recargo_individual")
       .eq("paquete_id", input.paqueteId)
       .eq("modulo", "servicios")
       .in("servicio_id", input.servicios);
-    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; grupos: { pax_desde: number; pax_hasta: number; precio: number }[] }>();
+    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; recargoIndividual: number; grupos: { pax_desde: number; pax_hasta: number; precio: number }[] }>();
     for (const r of srvRows ?? []) {
       if (r.servicio_id == null) continue;
       let s = byServ.get(r.servicio_id);
       if (!s) {
-        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, grupos: [] };
+        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, recargoIndividual: 0, grupos: [] };
         byServ.set(r.servicio_id, s);
       }
       if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
-      else s.personaPvp = r.precio_pvp;
+      else { s.personaPvp = r.precio_pvp; s.recargoIndividual = Math.max(Number(r.recargo_individual) || 0, 0); }
     }
     for (const s of byServ.values()) {
-      const p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+      let p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
+      // Recargo individual: si el servicio va a 1 solo pax (cobro por persona),
+      // se suma el suplemento a la tarifa.
+      if (s.modo === "persona" && totalPax === 1 && s.recargoIndividual > 0) p += s.recargoIndividual;
       if (p > 0) { precioVenta += p; serviciosItems.push({ nombre: s.nombre, precio: p }); }
     }
   }
@@ -497,7 +544,7 @@ async function computarReserva(
 
   return {
     ok: true,
-    data: { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal },
+    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal },
   };
 }
 
@@ -511,7 +558,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal } = comp.data;
+  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal } = comp.data;
 
   // 2c) Validar cupos del bloqueo ANTES de crear nada (no sobre-vender sillas).
   if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -778,18 +825,18 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     aplica_retencion: boolean; pct_retencion: number; observaciones: string;
   };
   const cxp: CxPRow[] = [];
-  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null) => {
-    if (!(valor > 0)) return;
+  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, opts?: { permitirCero?: boolean }) => {
+    if (!(valor > 0) && !opts?.permitirCero) return;
     cxp.push({
       numero_contrato: numero,
       proveedor: pr?.nombre ?? nombreFallback ?? null,
       tipo_proveedor: tipo,
       servicio,
-      valor_total: valor,
+      valor_total: Math.max(0, valor),
       fecha_obligacion: hoyISO,
       aplica_retencion: pr?.aplica_retencion ?? false,
       pct_retencion: Number(pr?.pct_retencion) || 0,
-      observaciones: OBS_AUTO,
+      observaciones: valor > 0 ? OBS_AUTO : `${OBS_AUTO} · costo neto pendiente`,
     });
   };
 
@@ -843,48 +890,24 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     }
   }
 
-  // 10) Costo neto del HOTEL (liquidado noche por noche) — admin, oculto al asesor.
-  //     La tarifa neta (tarifa_hotel) es interna; por eso se lee con service-role.
-  if (!esServicios && meta.fecha_ida && meta.fecha_regreso && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // 10) Costo neto del HOTEL y su cuenta por pagar. El neto YA se calculó en
+  //     computarReserva (netoPorAcom), con la vigencia de compra: si hubiera
+  //     vencido, la venta ni siquiera se habría creado (se bloquea allá). Aquí
+  //     solo se suma por pax y se crea la CxP con el proveedor del hotel. Una
+  //     sola fuente del costo evita la divergencia que generaba costo 0.
+  if (!esServicios && Object.keys(netoPorAcom).length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
-      const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
-      if (numNoches > 0) {
-        const [{ data: temps }, { data: tarRows }, { data: hprov }] = await Promise.all([
-          admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").eq("hotel_id", input.hotelId),
-          admin.from("tarifa_hotel")
-            .select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2")
-            .eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
-          admin.from("hoteles").select("nombre, proveedores(nombre, aplica_retencion, pct_retencion)").eq("id", input.hotelId).maybeSingle(),
-        ]);
-        type TarRow = {
-          temporada: string | null; neto_sencilla: number | null; neto_doble: number | null;
-          neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null;
-        };
-        const rows = (tarRows ?? []) as TarRow[];
-        const temporadas = (temps ?? []).map(toTemporadaRango);
-        const colDe: Record<string, keyof TarRow> = {
-          sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple",
-          multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2",
-        };
-        const netoPersona = (acom: string): number | null => {
-          const col = colDe[acom];
-          const netoPorTemporada: Record<string, number | null> = {};
-          for (const r of rows) if (r.temporada) netoPorTemporada[r.temporada] = r[col] as number | null;
-          return liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches, temporadas, netoPorTemporada });
-        };
-        let costoHotel = 0;
-        for (const l of lineasHab) {
-          const per = netoPersona(l.acom);
-          if (per != null) costoHotel += per * l.pax;
-        }
-        if (numNinos > 0) { const per = netoPersona("nino"); if (per != null) costoHotel += per * numNinos; }
-        if (numNinos2 > 0) { const per = netoPersona("nino2"); if (per != null) costoHotel += per * numNinos2; }
-        if (costoHotel > 0) {
-          await admin.from("ventas").update({ costo_hotel: costoHotel }).eq("numero_contrato", numero);
-          const prH = hprov?.proveedores as unknown as ProvFact;
-          pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? hprov?.nombre ?? ""}`.trim(), costoHotel, prH);
-        }
+      let costoHotel = 0;
+      for (const l of lineasHab) { const per = netoPorAcom[l.acom]; if (per != null) costoHotel += per * l.pax; }
+      if (numNinos > 0 && netoPorAcom["nino"] != null) costoHotel += netoPorAcom["nino"] * numNinos;
+      if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotel += netoPorAcom["nino2"] * numNinos2;
+      const { data: hprov } = await admin
+        .from("hoteles").select("nombre, proveedores(nombre, aplica_retencion, pct_retencion)").eq("id", input.hotelId).maybeSingle();
+      if (costoHotel > 0) {
+        await admin.from("ventas").update({ costo_hotel: costoHotel }).eq("numero_contrato", numero);
+        const prH = hprov?.proveedores as unknown as ProvFact;
+        pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? hprov?.nombre ?? ""}`.trim(), costoHotel, prH);
       }
     } catch {
       // El costo neto es informativo para rentabilidad; no bloquea la reserva.
@@ -897,7 +920,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       const admin = createAdminClient();
       const [{ data: arm }, { data: gruposNet }] = await Promise.all([
         admin.from("armado_servicios")
-          .select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre, liquidacion, proveedores(nombre, aplica_retencion, pct_retencion))")
+          .select("servicio_id, modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedores(nombre, aplica_retencion, pct_retencion))")
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
           .select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", input.servicios),
@@ -914,8 +937,11 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       let hayAsistencia = false;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedores: ProvFact } | null;
-        const costoServ = precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
+        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedores: ProvFact } | null;
+        let costoServ = precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
+        // Recargo individual: suplemento NETO del proveedor cuando va 1 pax (cobro
+        // por persona). Entra al COSTO y a la CxP para liquidar correcto al proveedor.
+        if (modo === "persona" && totalPax === 1) costoServ += Math.max(Number(srv?.recargo_individual) || 0, 0);
         costoReceptivo += costoServ;
         const cat = srv?.categoria ?? "otro";
         if (cat === "asistencia") hayAsistencia = true;
@@ -1069,7 +1095,13 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
   const { data: { user } } = await sb.auth.getUser();
 
-  const { data: row, error } = await sb.from("cotizaciones").insert({
+  // El precio se calcula en el servidor (autoritativo) y el checkout debe servir
+  // tanto a aliados B2B como a usuarios públicos. La RLS de `cotizaciones` es solo
+  // para roles internos, así que el insert va por service-role cuando está
+  // disponible (si no, cae al cliente con sesión = sólo internos).
+  const sbCot = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+
+  const { data: row, error } = await sbCot.from("cotizaciones").insert({
     payload: input as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: clienteNombre,
@@ -1168,54 +1200,71 @@ export async function confirmarVenta(numeroContrato: string): Promise<{ ok: bool
 }
 
 // ── Respaldo de cuentas por pagar ──────────────────────────────────────────
-// Si un contrato NO tiene cuentas por pagar, las crea a partir de sus costos
-// (hotel/aéreo/receptivo/asistencia/otros). No duplica: si ya hay alguna CxP
-// (p. ej. creada al reservar desde el tarifario con su proveedor), no hace nada.
-// El proveedor queda sin asignar para que el área contable lo elija en el contrato.
-export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{ ok: boolean; creadas: number }> {
+// Crea las cuentas por pagar que FALTEN para un contrato a partir de sus costos
+// (hotel/aéreo/receptivo/asistencia/otros). NO duplica: solo agrega los tipos de
+// proveedor que aún no tengan CxP. Útil cuando al reservar solo se generó parte
+// (p. ej. "solo el aéreo" porque el costo neto del hotel salió 0). El proveedor
+// del hotel/aéreo se jala del contrato; los demás quedan para que contabilidad
+// los asigne. El hotel se crea aunque el costo sea 0 (queda pendiente de valor).
+export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{ ok: boolean; creadas: number; error?: string }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, creadas: 0 };
   const admin = createAdminClient();
 
-  const { count } = await admin
-    .from("cuentas_por_pagar")
-    .select("id", { count: "exact", head: true })
-    .eq("numero_contrato", numeroContrato);
-  if ((count ?? 0) > 0) return { ok: true, creadas: 0 }; // ya tiene CxP
-
-  const { data: v } = await admin
-    .from("ventas")
-    .select("costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida")
-    .eq("numero_contrato", numeroContrato)
-    .maybeSingle();
+  const [{ data: existentes }, { data: v }, { data: ch }, { data: cv }, { data: provs }] = await Promise.all([
+    admin.from("cuentas_por_pagar").select("tipo_proveedor").eq("numero_contrato", numeroContrato),
+    admin.from("ventas").select("costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida").eq("numero_contrato", numeroContrato).maybeSingle(),
+    admin.from("contrato_hoteles").select("nombre, proveedor").eq("numero_contrato", numeroContrato).order("orden").limit(1),
+    admin.from("contrato_vuelos").select("aerolinea").eq("numero_contrato", numeroContrato).order("orden").limit(1),
+    admin.from("proveedores").select("nombre, aplica_retencion, pct_retencion"),
+  ]);
   if (!v) return { ok: false, creadas: 0 };
 
+  const yaTiene = new Set(((existentes ?? []).map((r) => r.tipo_proveedor).filter(Boolean)) as string[]);
   const hoy = new Date().toISOString().slice(0, 10);
   const vence = (v.plazo as string | null) ?? (v.fecha_salida as string | null) ?? null;
   const moneda = (v.moneda as string | null) ?? "COP";
+  const hotelRow = (ch ?? [])[0] as { nombre: string | null; proveedor: string | null } | undefined;
+  const vueloRow = (cv ?? [])[0] as { aerolinea: string | null } | undefined;
 
-  const defs: { costo: number; tipo: string; servicio: string }[] = [
-    { costo: Number(v.costo_hotel) || 0, tipo: "hotel", servicio: `Hotel ${v.hotel ?? ""}`.trim() },
-    { costo: Number(v.costo_aereo) || 0, tipo: "aereo", servicio: `Aéreo ${v.aerolinea ?? ""}`.trim() },
-    { costo: Number(v.costo_receptivo) || 0, tipo: "receptivo", servicio: "Servicios receptivos" },
-    { costo: Number(v.costo_asistencia) || 0, tipo: "asistencia", servicio: "Asistencia médica" },
-    { costo: Number(v.otros_costos) || 0, tipo: "otro", servicio: "Otros costos" },
-  ];
-  const rows = defs
-    .filter((d) => d.costo > 0)
-    .map((d) => ({
-      numero_contrato: numeroContrato,
-      proveedor: null,
-      tipo_proveedor: d.tipo,
-      servicio: d.servicio,
-      valor_total: d.costo,
-      moneda,
-      fecha_obligacion: hoy,
-      fecha_vencimiento: vence,
-    }));
+  // Retención del catálogo de proveedores por nombre (case-insensitive).
+  const retDe = (nombre: string | null) => {
+    const p = (provs ?? []).find((x) => x.nombre && nombre && x.nombre.trim().toLowerCase() === nombre.trim().toLowerCase());
+    return { aplica_retencion: p?.aplica_retencion ?? false, pct_retencion: Number(p?.pct_retencion) || 0 };
+  };
+
+  type Row = {
+    numero_contrato: string; proveedor: string | null; tipo_proveedor: string; servicio: string;
+    valor_total: number; moneda: string; fecha_obligacion: string; fecha_vencimiento: string | null;
+    aplica_retencion: boolean; pct_retencion: number; observaciones: string;
+  };
+  const rows: Row[] = [];
+  const OBS = "Completado automáticamente (faltaba el proveedor)";
+  const add = (tipo: string, servicio: string, valor: number, proveedor: string | null) => {
+    const r = retDe(proveedor);
+    rows.push({
+      numero_contrato: numeroContrato, proveedor: proveedor || null, tipo_proveedor: tipo, servicio,
+      valor_total: Math.max(0, valor), moneda, fecha_obligacion: hoy, fecha_vencimiento: vence,
+      aplica_retencion: r.aplica_retencion, pct_retencion: r.pct_retencion, observaciones: OBS,
+    });
+  };
+
+  // Crea solo los tipos de proveedor que falten y tengan costo real (> 0). El
+  // proveedor del hotel/aéreo se jala del contrato; los demás quedan sin asignar.
+  if (hotelRow && !yaTiene.has("hotel") && (Number(v.costo_hotel) || 0) > 0)
+    add("hotel", `Hotel ${hotelRow.nombre ?? v.hotel ?? ""}`.trim(), Number(v.costo_hotel) || 0, hotelRow.proveedor);
+  if (!yaTiene.has("aereo") && (Number(v.costo_aereo) || 0) > 0)
+    add("aereo", `Aéreo ${vueloRow?.aerolinea ?? v.aerolinea ?? ""}`.trim(), Number(v.costo_aereo) || 0, vueloRow?.aerolinea ?? (v.aerolinea as string | null));
+  if (!yaTiene.has("receptivo") && (Number(v.costo_receptivo) || 0) > 0)
+    add("receptivo", "Servicios receptivos", Number(v.costo_receptivo) || 0, null);
+  if (!yaTiene.has("asistencia") && (Number(v.costo_asistencia) || 0) > 0)
+    add("asistencia", "Asistencia médica", Number(v.costo_asistencia) || 0, null);
+  if (!yaTiene.has("otro") && (Number(v.otros_costos) || 0) > 0)
+    add("otro", "Otros costos", Number(v.otros_costos) || 0, null);
+
   if (!rows.length) return { ok: true, creadas: 0 };
 
   const { error } = await admin.from("cuentas_por_pagar").insert(rows);
-  if (error) return { ok: false, creadas: 0 };
+  if (error) return { ok: false, creadas: 0, error: error.message };
   revalidatePath("/dashboard/pagos");
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   return { ok: true, creadas: rows.length };

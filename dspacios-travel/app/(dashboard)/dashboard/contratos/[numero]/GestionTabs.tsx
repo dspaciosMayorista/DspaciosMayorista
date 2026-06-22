@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
@@ -16,6 +17,7 @@ import {
   crearCuentaPorPagar,
   actualizarCuentaPorPagar,
   eliminarCuentaPorPagar,
+  completarProveedores,
   crearComisionB2B,
   eliminarComisionB2B,
   crearFactura,
@@ -194,10 +196,17 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas }: 
       </div>
       {abonos.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[480px] text-sm">
+          <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2">
+            <span className="text-xs font-semibold uppercase text-gray-400">Pagos registrados</span>
+            <Link href={`/estado-cuenta/${encodeURIComponent(numero)}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">
+              Estado de cuenta ↗
+            </Link>
+          </div>
+          <table className="w-full min-w-[560px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Fecha</th><th className="px-4 py-2 text-right">Valor</th>
               <th className="px-4 py-2">Forma</th><th className="px-4 py-2">Referencia</th>
+              <th className="px-4 py-2 text-right">Recibo</th>
             </tr></thead>
             <tbody>{abonos.map((a) => (
               <tr key={a.id} className="border-t border-gray-50">
@@ -205,6 +214,9 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas }: 
                 <td className="px-4 py-2 text-right tabular-nums">{formatCOP(a.valor_abono)}</td>
                 <td className="px-4 py-2 text-gray-500">{a.forma_pago ?? "—"}</td>
                 <td className="px-4 py-2 text-gray-500">{a.referencia ?? "—"}</td>
+                <td className="px-4 py-2 text-right">
+                  <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">Recibo ↗</Link>
+                </td>
               </tr>))}</tbody>
           </table>
         </div>
@@ -226,8 +238,19 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
   const [iva, setIva] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  const [completando, startCompletar] = useTransition();
+  const [msgCompletar, setMsgCompletar] = useState("");
   const totalCxP = filas.reduce((s, f) => s + f.valor_total, 0);
   const totalIva = filas.reduce((s, f) => s + (f.iva_proveedor ?? 0), 0);
+
+  function completar() {
+    setMsgCompletar("");
+    startCompletar(async () => {
+      const r = await completarProveedores(numero);
+      if (!r.ok) setMsgCompletar(r.error ?? "Error");
+      else setMsgCompletar(r.creadas ? `Se agregaron ${r.creadas} proveedor(es).` : "Ya están todos los proveedores.");
+    });
+  }
 
   const valorNum = Number(valor) || 0;
   const ivaNum = esFactura ? Number(iva) || 0 : 0;
@@ -251,7 +274,21 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
   return (
     <div className="space-y-4">
       <div className={card}>
-        <p className={lbl}>Agregar cuenta por pagar</p>
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <p className={lbl + " !mb-0"}>Agregar cuenta por pagar</p>
+          <div className="flex items-center gap-2">
+            {msgCompletar && <span className="text-xs text-gray-500">{msgCompletar}</span>}
+            <button
+              type="button"
+              onClick={completar}
+              disabled={completando}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              title="Crea las cuentas por pagar que falten (hotel, aéreo, servicios) según los costos del contrato. No duplica."
+            >
+              {completando ? "Completando…" : "Completar proveedores"}
+            </button>
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
           <Input placeholder="Proveedor" value={proveedor} onChange={(e) => setProveedor(e.target.value)} />
           <Input placeholder="Tipo (hotel, aéreo…)" value={tipo} onChange={(e) => setTipo(e.target.value)} />

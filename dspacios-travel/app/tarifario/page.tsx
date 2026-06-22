@@ -6,6 +6,7 @@ import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { AcomConfig } from "@/lib/acomodaciones";
+import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
 
 export const revalidate = 120; // revalida cada 2 min
 
@@ -23,13 +24,13 @@ export default async function TarifarioPublicoPage() {
   }
 
   // Resultado del tarifario (solo paquetes activos). Paginado por si supera 1000.
-  const filas: FilaTarifario[] = [];
+  let filas: FilaTarifario[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data: page } = await sb
       .from("tarifario_resultado")
       .select(
-        "modulo, bloqueo_label, bloqueo_id, paquete_id, hotel_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp"
+        "modulo, bloqueo_label, bloqueo_id, paquete_id, hotel_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual"
       )
       .eq("paquete_activo", true)
       .order("destino_nombre")
@@ -62,6 +63,13 @@ export default async function TarifarioPublicoPage() {
       const ori = (b.origen ?? "").trim() || (b.ruta ? b.ruta.split("-")[0].trim() : "");
       if (ori) origenPorBloqueo[b.id as number] = ori.toUpperCase();
     }
+  }
+
+  // Oculta del tarifario las tarifas de hotel cuya vigencia de COMPRA ya venció:
+  // el PVP quedó congelado en el snapshot, pero ya no es comprable. Se re-liquida
+  // HOY en el servidor (el costo neto no sale al cliente).
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    filas = await filtrarTarifarioVencidas(createAdminClient(), filas);
   }
 
   // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
@@ -142,9 +150,15 @@ export default async function TarifarioPublicoPage() {
   const videoFondo = cfgSitio?.video_fondo_url ?? null;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className={`relative overflow-hidden bg-brand-gradient px-6 py-8 text-white ${videoFondo ? "flex min-h-[60vh] flex-col justify-end" : ""}`}>
+    <div className="app-bg min-h-screen bg-gray-50">
+      <header className={`relative overflow-hidden bg-brand-gradient px-6 pt-8 pb-16 text-white ${videoFondo ? "flex min-h-[60vh] flex-col justify-end" : "min-h-[200px] flex flex-col justify-end"}`}>
         <BackgroundVideo url={videoFondo} overlay={0.4} />
+        {!videoFondo && (
+          <div
+            className="absolute inset-0 bg-cover bg-center opacity-15"
+            style={{ backgroundImage: "url('https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1920&fit=crop&auto=format')" }}
+          />
+        )}
         <div className="relative mx-auto flex w-full max-w-[1700px] flex-wrap items-end justify-between gap-4">
           <div>
             <Logo variant="white" height={56} priority className="h-12 w-auto md:h-14" />
@@ -175,7 +189,7 @@ export default async function TarifarioPublicoPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[1700px] px-4 py-8 md:px-6">
+      <main className="mx-auto max-w-[1700px] px-4 pt-0 pb-8 md:px-6">
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (

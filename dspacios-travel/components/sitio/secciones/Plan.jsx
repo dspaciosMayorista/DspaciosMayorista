@@ -1,4 +1,7 @@
+"use client";
+
 import React from 'react';
+import { EditableText } from '@/components/sitio/edicion/Editable';
 
 // Sección PLAN ("El plan incluye / no incluye").
 // datos: { incluye_titulo, incluye: string[], no_incluye_titulo, no_incluye: string[] }
@@ -18,9 +21,9 @@ const Plan = ({ datos = {} }) => {
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-sm md:p-8">
           <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
             <div>
-              <h3 className="mb-4 text-xl font-extrabold text-[#d8f511]">
+              <EditableText as="h3" campo="incluye_titulo" placeholder="El plan incluye:" className="mb-4 text-xl font-extrabold text-[#d8f511]">
                 {incluyeTitulo}
-              </h3>
+              </EditableText>
               <ul className="space-y-2">
                 {incluye.map((t, i) => (
                   <li key={i} className="flex gap-2 text-gray-100">
@@ -31,9 +34,9 @@ const Plan = ({ datos = {} }) => {
               </ul>
             </div>
             <div>
-              <h3 className="mb-4 text-xl font-extrabold text-white">
+              <EditableText as="h3" campo="no_incluye_titulo" placeholder="El plan no incluye:" className="mb-4 text-xl font-extrabold text-white">
                 {noIncluyeTitulo}
-              </h3>
+              </EditableText>
               <ul className="space-y-2">
                 {noIncluye.map((t, i) => (
                   <li key={i} className="flex gap-2 text-gray-300">

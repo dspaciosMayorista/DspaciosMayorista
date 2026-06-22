@@ -2,6 +2,8 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
+import { EditableText, EditableUrl } from '@/components/sitio/edicion/Editable';
+import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección "Consulta Disponibilidad": CTA que lleva a la vista booking del portal
 // (el tarifario público). datos: {
@@ -10,6 +12,7 @@ import { useRouter } from 'next/navigation';
 // }
 const ConsultaDisponibilidad = ({ datos = {} }) => {
   const router = useRouter();
+  const editable = !!useEdicion()?.editable;
   const titulo = datos.titulo || "Elige tu fecha Favorita aquí";
   const botonTexto = datos.boton_texto || "Consulta Disponibilidad";
   const base = datos.url || "/tarifario";
@@ -30,14 +33,15 @@ const ConsultaDisponibilidad = ({ datos = {} }) => {
     >
       {imagenFondo ? <div className="absolute inset-0 bg-white/40" /> : null}
       <div className="relative z-10 container mx-auto px-4 text-center">
-        <h2 className="text-4xl md:text-5xl font-bold text-[#120573] mb-8">{titulo}</h2>
+        <EditableText as="h2" campo="titulo" placeholder="Título" className="text-4xl md:text-5xl font-bold text-[#120573] mb-8">{titulo}</EditableText>
         <button
           type="button"
-          onClick={ir}
+          onClick={() => { if (!editable) ir(); }}
           className="inline-block bg-[#d8f511] text-[#120573] font-bold text-xl md:text-2xl px-12 py-5 rounded-3xl shadow-lg hover:bg-[#c4e000] hover:scale-105 transition-all"
         >
-          {botonTexto}
+          <EditableText as="span" campo="boton_texto" placeholder="Texto del botón">{botonTexto}</EditableText>
         </button>
+        {editable ? <div className="mt-4"><EditableUrl campo="url" /></div> : null}
       </div>
     </section>
   );

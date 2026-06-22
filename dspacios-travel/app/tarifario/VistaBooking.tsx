@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import Image from "next/image";
+import { Star } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart } from "@/lib/cart/CartContext";
@@ -32,7 +34,11 @@ type HotelCard = {
 // Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
 function Categoria({ estrellas, clasificacion, className = "" }: { estrellas: number | null; clasificacion: string | null; className?: string }) {
   if (estrellas && estrellas > 0) {
-    return <span className={`text-amber-400 ${className}`} title={`${estrellas} estrellas`}>{"★".repeat(estrellas)}</span>;
+    return (
+      <span className={`inline-flex align-middle text-amber-400 ${className}`} title={`${estrellas} estrellas`}>
+        {Array.from({ length: estrellas }).map((_, i) => <Star key={i} size={12} fill="currentColor" strokeWidth={0} />)}
+      </span>
+    );
   }
   if (clasificacion?.trim()) {
     return <span className={`rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600 ${className}`}>{clasificacion}</span>;
@@ -300,7 +306,7 @@ export function VistaBooking({
             key={h.hotelId}
             type="button"
             onClick={() => setAbierto(h)}
-            className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-0.5 hover:shadow-md"
+            className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
           >
             <div className="relative aspect-[16/10] w-full bg-gray-100">
               {h.foto ? (
@@ -308,6 +314,17 @@ export function VistaBooking({
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
               )}
+              {/* Cupos disponibles (solo para bloqueos con datos) */}
+              {(() => {
+                const ids = [...new Set(h.filas.filter((f) => f.bloqueo_id != null).map((f) => f.bloqueo_id as number))];
+                const vals = ids.map((id) => cuposPorBloqueo[id]).filter((c): c is number => c != null && c > 0);
+                const min = vals.length ? Math.min(...vals) : null;
+                return min !== null ? (
+                  <span className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "rgba(0,0,0,0.55)" }}>
+                    {min} cupo{min !== 1 ? "s" : ""}
+                  </span>
+                ) : null;
+              })()}
             </div>
             <div className="flex flex-1 flex-col p-4">
               <div className="flex items-center gap-2">
@@ -322,11 +339,11 @@ export function VistaBooking({
                 {h.desde != null ? (
                   <div>
                     <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
-                    <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(h.desde)}</div>
+                    <div className="text-xl font-extrabold tracking-tight" style={{ color: "var(--brand-primary)" }}>{formatCOP(h.desde)}</div>
                     <div className="text-[10px] text-gray-400">por persona</div>
                   </div>
                 ) : <span className="text-sm text-gray-400">Consultar</span>}
-                <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white" style={{ backgroundColor: "var(--brand-accent)" }}>
+                <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "var(--brand-accent)" }}>
                   Ver opciones →
                 </span>
               </div>
@@ -354,6 +371,9 @@ function HotelModal({
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }; onClose: () => void;
 }) {
   const { add } = useCart();
+  const pathname = usePathname();
+  const router = useRouter();
+  const esDashboard = pathname?.startsWith("/dashboard") ?? false;
 
   const opciones = useMemo<Opcion[]>(() => {
     const map = new Map<string, Opcion>();
@@ -489,7 +509,16 @@ function HotelModal({
                   ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
                   planesInfo={planesInfo}
                   cap={cap}
-                  onAgregar={(item) => { add(item); onClose(); }}
+                  btnLabel={esDashboard ? "Reservar →" : undefined}
+                  onAgregar={(item) => {
+                    if (esDashboard) {
+                      const q = new URLSearchParams({ paquete: String(opcion.paqueteId), hotel: String(hotel.hotelId), modulo: opcion.modulo });
+                      router.push(`/dashboard/reservar/nuevo?${q}`);
+                    } else {
+                      add(item);
+                    }
+                    onClose();
+                  }}
                 />
               ) : (
                 <Selector
@@ -499,7 +528,17 @@ function HotelModal({
                   puedeReservar={puedeReservar}
                   planesInfo={planesInfo}
                   cap={cap}
-                  onAgregar={(item) => { add(item); onClose(); }}
+                  btnLabel={esDashboard ? "Reservar →" : undefined}
+                  onAgregar={(item) => {
+                    if (esDashboard) {
+                      const q = new URLSearchParams({ paquete: String(opcion.paqueteId), hotel: String(hotel.hotelId), modulo: opcion.modulo });
+                      if (opcion.bloqueoId != null) q.set("bloqueo", String(opcion.bloqueoId));
+                      router.push(`/dashboard/reservar/nuevo?${q}`);
+                    } else {
+                      add(item);
+                    }
+                    onClose();
+                  }}
                 />
               )}
             </>
@@ -511,11 +550,12 @@ function HotelModal({
 }
 
 function Selector({
-  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar,
+  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar, btnLabel,
 }: {
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
+  btnLabel?: string;
 }) {
   const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
   const [cat, setCat] = useState(cats[0] ?? "");
@@ -570,7 +610,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
+      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} btnLabel={btnLabel} onAgregar={agregarItem} />
     </div>
   );
 }
@@ -578,7 +618,7 @@ function Selector({
 // Editor de habitaciones/niños + total + botón. Recibe el PVP por acomodación y
 // reporta la selección (no conoce fechas ni módulo). Reutilizado por bloqueo y porción.
 function EditorPax({
-  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota, onAgregar,
+  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota, onAgregar, btnLabel = "Agregar al carrito",
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -587,6 +627,7 @@ function EditorPax({
   nota?: string;
   edadesNota?: string | null;
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) => void;
+  btnLabel?: string;
 }) {
   const [habs, setHabs] = useState<Record<string, number>>({});
   const [ninos, setNinos] = useState(0);
@@ -706,7 +747,7 @@ function EditorPax({
         <button type="button" onClick={agregar} disabled={!puede}
           className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
           style={{ backgroundColor: "var(--brand-primary)" }}>
-          Agregar al carrito
+          {btnLabel}
         </button>
       </div>
       {nota && <p className="text-[11px] text-gray-400">{nota}</p>}
@@ -717,11 +758,12 @@ function EditorPax({
 // Motor por fechas (porción/dinámico): el usuario elige las fechas reales y se
 // liquida la tarifa noche por noche (cotizarPorFechas, service-role, solo PVP).
 function SelectorPorFechas({
-  opcion, hotel, ventana, planesInfo, cap, onAgregar,
+  opcion, hotel, ventana, planesInfo, cap, onAgregar, btnLabel,
 }: {
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
+  btnLabel?: string;
 }) {
   // No se permite check-in en el pasado: el mínimo es HOY (o el inicio del rango
   // del paquete si es posterior). Si el paquete empieza antes de hoy, arranca hoy.
@@ -823,7 +865,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} onAgregar={agregarItem} />
+          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} btnLabel={btnLabel} onAgregar={agregarItem} />
         </>
       )}
     </div>

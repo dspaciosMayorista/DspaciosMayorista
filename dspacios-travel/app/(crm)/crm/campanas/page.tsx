@@ -20,7 +20,7 @@ export default async function CampanasPage() {
   }
 
   const [{ data: elegibles }, { data: cumples }, { data: campanas }] = await Promise.all([
-    sb.from("crm_contactos").select("categoria").eq("acepta_publicidad", true).eq("no_contactar", false).not("email", "is", null),
+    sb.from("crm_contactos").select("categoria, subcategoria").eq("acepta_publicidad", true).eq("no_contactar", false).not("email", "is", null),
     sb.from("crm_contactos").select("fecha_nacimiento").eq("no_contactar", false).not("email", "is", null).not("fecha_nacimiento", "is", null),
     sb.from("crm_campanas").select("id, asunto, categoria, tipo, total, enviados, fallidos, created_at").order("created_at", { ascending: false }).limit(30),
   ]);
@@ -28,6 +28,8 @@ export default async function CampanasPage() {
   const porCat: Record<string, number> = {};
   let total = 0;
   for (const c of elegibles ?? []) { porCat[c.categoria] = (porCat[c.categoria] ?? 0) + 1; total++; }
+  // Lista mínima (categoría + subcategoría) para segmentar por subcategoría en el cliente.
+  const eleg = (elegibles ?? []).map((c) => ({ categoria: c.categoria, subcategoria: c.subcategoria ?? "" }));
 
   const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Bogota" });
   const [, mm, dd] = hoy.split("-");
@@ -42,7 +44,7 @@ export default async function CampanasPage() {
       <Link href="/crm" className="text-sm text-gray-500 hover:text-gray-800">← Contactos</Link>
       <h1 className="mb-1 mt-2 text-2xl font-bold text-gray-900">Campañas y felicitaciones</h1>
       <p className="mb-6 text-sm text-gray-500">Solo se envía a contactos con email, que <b>aceptan publicidad</b> y no marcados &quot;no contactar&quot;.</p>
-      <CampanaClient porCat={porCat} total={total} cumpleHoy={cumpleHoy} cumpleMes={cumpleMes} campanas={(campanas ?? []) as Campana[]} />
+      <CampanaClient porCat={porCat} total={total} eleg={eleg} cumpleHoy={cumpleHoy} cumpleMes={cumpleMes} campanas={(campanas ?? []) as Campana[]} />
     </div>
   );
 }

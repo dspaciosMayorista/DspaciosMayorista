@@ -3,10 +3,13 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Star, Quote } from 'lucide-react';
+import { EditableText } from '@/components/sitio/edicion/Editable';
+import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección TESTIMONIOS. datos: { titulo?, subtitulo? }
 // items: SitioTestimonio[] (de web_testimonios) pasados por prop.
 const Testimonios = ({ datos = {}, items = [] }) => {
+  const editable = !!useEdicion()?.editable;
   const titulo = datos.titulo || "Lo Que Dicen Nuestros Clientes";
   const subtitulo = datos.subtitulo || "Testimonios reales de viajeros satisfechos";
 
@@ -28,9 +31,9 @@ const Testimonios = ({ datos = {}, items = [] }) => {
           transition={{ duration: 0.6 }}
           className="text-center mb-16"
         >
-          <h2 className="text-4xl md:text-5xl font-bold text-[#120573] mb-4">{titulo}</h2>
-          {subtitulo ? (
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">{subtitulo}</p>
+          <EditableText as="h2" campo="titulo" placeholder="Título" className="text-4xl md:text-5xl font-bold text-[#120573] mb-4">{titulo}</EditableText>
+          {(subtitulo || editable) ? (
+            <EditableText as="p" campo="subtitulo" placeholder="Subtítulo" className="text-xl text-gray-600 max-w-2xl mx-auto">{subtitulo}</EditableText>
           ) : null}
         </motion.div>
 

@@ -115,15 +115,10 @@ export function SeccionForm({
           <Field label="Título (opcional)">
             <Input value={s("titulo")} onChange={(e) => set("titulo", e.target.value)} />
           </Field>
-          <Field label="Imágenes (una URL por línea)">
-            <textarea
-              className={ta}
-              rows={6}
-              value={arr(datos.imagenes).join("\n")}
-              onChange={(e) => set("imagenes", lineasToArr(e.target.value))}
-              placeholder={"https://…\nhttps://…"}
-            />
-          </Field>
+          <GaleriaImagenesEditor
+            imagenes={arr(datos.imagenes)}
+            onChange={(imgs) => set("imagenes", imgs)}
+          />
         </>
       )}
 
@@ -494,6 +489,57 @@ function FlyersItemsEditor({
       ))}
       <Button type="button" variant="outline" onClick={() => onChange([...lista, { titulo: "", tipo: "imagen", url: "" }])}>
         + Agregar flyer
+      </Button>
+    </div>
+  );
+}
+
+// ── Editor de imágenes de la GALERÍA (subir o pegar URL) ──
+function GaleriaImagenesEditor({
+  imagenes,
+  onChange,
+}: {
+  imagenes: string[];
+  onChange: (imgs: string[]) => void;
+}) {
+  const lista = imagenes.filter((x) => typeof x === "string");
+  function upd(i: number, url: string) {
+    const next = lista.slice();
+    next[i] = url;
+    onChange(next);
+  }
+  function mover(i: number, dir: -1 | 1) {
+    const j = i + dir;
+    if (j < 0 || j >= lista.length) return;
+    const next = lista.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  }
+  return (
+    <div className="space-y-2">
+      <label className={lbl}>Imágenes de la galería (sube cada una o pega su URL)</label>
+      {lista.length === 0 && (
+        <p className="text-xs text-gray-400">Aún no hay imágenes. Agrega la primera.</p>
+      )}
+      {lista.map((url, i) => (
+        <div key={i} className="rounded-lg border border-gray-200 p-3">
+          <div className="mb-2 flex items-center gap-2">
+            {url ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={url} alt={`Imagen ${i + 1}`} className="h-12 w-16 shrink-0 rounded object-cover" />
+            ) : (
+              <span className="grid h-12 w-16 shrink-0 place-items-center rounded bg-gray-50 text-xs text-gray-400">{i + 1}</span>
+            )}
+            <span className="flex-1 text-xs text-gray-500">Imagen {i + 1}</span>
+            <button type="button" onClick={() => mover(i, -1)} className="text-xs text-gray-400 hover:text-gray-700">↑</button>
+            <button type="button" onClick={() => mover(i, 1)} className="text-xs text-gray-400 hover:text-gray-700">↓</button>
+            <button type="button" onClick={() => onChange(lista.filter((_, j) => j !== i))} className="text-xs text-gray-400 hover:text-red-500">✕</button>
+          </div>
+          <SubirArchivo value={url} onChange={(u) => upd(i, u)} carpeta="galeria" accept="image/*" />
+        </div>
+      ))}
+      <Button type="button" variant="outline" onClick={() => onChange([...lista, ""])}>
+        + Agregar imagen
       </Button>
     </div>
   );

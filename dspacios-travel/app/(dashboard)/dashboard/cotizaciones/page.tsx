@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ export default async function CotizacionesPage() {
   const sb = await createClient();
   const { data: cots } = await sb
     .from("cotizaciones")
-    .select("id, codigo, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at")
+    .select("id, codigo, tipo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at")
     .order("created_at", { ascending: false });
 
   return (
@@ -27,11 +27,16 @@ export default async function CotizacionesPage() {
             Presupuestos sin número de contrato. Al confirmar se convierten en contrato.
           </p>
         </div>
-        <Link href="/dashboard/reservar">
-          <Button style={{ backgroundColor: "var(--brand-primary)" }}>
-            + Nueva cotización
-          </Button>
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/dashboard/cotizaciones/nueva">
+            <Button variant="outline">+ Cotización dinámica</Button>
+          </Link>
+          <Link href="/dashboard/reservar">
+            <Button style={{ backgroundColor: "var(--brand-primary)" }}>
+              + Desde tarifario
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {!cots?.length ? (
@@ -58,6 +63,9 @@ export default async function CotizacionesPage() {
                 <tr key={c.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-3 font-mono font-medium text-gray-800">
                     {c.codigo}
+                    {c.tipo === "manual" && (
+                      <span className="ml-1.5 rounded bg-[color:var(--brand-accent)]/15 px-1.5 py-0.5 align-middle font-sans text-[9px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>Dinámica</span>
+                    )}
                     {c.numero_contrato && (
                       <span className="ml-1 text-[10px] font-normal text-gray-400">→ {c.numero_contrato}</span>
                     )}
@@ -65,7 +73,7 @@ export default async function CotizacionesPage() {
                   <td className="px-4 py-3 text-gray-700">{c.cliente ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500">{c.destino ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500">{formatFechaLarga(c.fecha_salida)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatCOP(c.precio_venta ?? 0)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatMoneda(c.precio_venta ?? 0, c.moneda)}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-xs ${ESTADO_BADGE[c.estado] ?? "bg-gray-100 text-gray-600"}`}>
                       {c.estado}

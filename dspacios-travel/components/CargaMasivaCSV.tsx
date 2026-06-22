@@ -79,7 +79,12 @@ export function CargaMasivaCSV({
     }
     if (!delim) {
       const primera = lineas[0] ?? "";
-      delim = primera.split(";").length > primera.split(",").length ? ";" : ",";
+      const tabCount = (primera.match(/\t/g) ?? []).length;
+      const semiCount = (primera.match(/;/g) ?? []).length;
+      const commaCount = (primera.match(/,/g) ?? []).length;
+      if (tabCount > 0 && tabCount >= semiCount && tabCount >= commaCount) delim = "\t";
+      else if (semiCount >= commaCount) delim = ";";
+      else delim = ",";
     }
     const matriz = parseCSV(lineas.join("\n"), delim);
     if (matriz.length < 2) { setErrParse("El archivo necesita una fila de encabezados y al menos una fila de datos."); setFilas([]); return; }

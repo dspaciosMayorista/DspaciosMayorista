@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { regenerarTarifariosDeServicio, generarTarifario } from "../../paquetes/actions";
 
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -19,6 +20,8 @@ export type ServicioInput = {
   rangosEdad?: number[];
   categoria?: string;             // tour_traslado | asistencia | otro
   liquidacion?: Liquidacion;      // tipo de cobro: dia | noche | paquete
+  descripcion?: string;           // texto del tour (se muestra al cliente)
+  recargoIndividual?: number;     // suplemento que se suma a la tarifa si va 1 pax
 };
 
 function servicioToRow(input: ServicioInput) {
@@ -32,6 +35,8 @@ function servicioToRow(input: ServicioInput) {
     rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
     categoria: input.categoria || "otro",
     liquidacion: input.liquidacion ?? "paquete",
+    descripcion: oNull(input.descripcion ?? ""),
+    recargo_individual: Math.max(Number(input.recargoIndividual) || 0, 0),
   };
 }
 
@@ -69,13 +74,18 @@ export async function actualizarServicio(id: number, input: ServicioInput): Prom
   if (error) return { ok: false, error: error.message };
   await guardarGrupoTiers(sb, id, input.grupoTiers);
   revalidatePath("/dashboard/producto/servicios");
+  await regenerarTarifariosDeServicio(id); // cambió el precio del servicio → recalcula paquetes
   return { ok: true };
 }
 
 export async function eliminarServicio(id: number): Promise<Result> {
   const sb = await createClient();
+  // Captura los paquetes que lo usaban ANTES de borrar; se regeneran después.
+  const { data: usados } = await sb.from("armado_servicios").select("paquete_id").eq("servicio_id", id);
+  const paqIds = [...new Set((usados ?? []).map((u) => u.paquete_id))];
   const { error } = await sb.from("servicios_adicionales").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
+  for (const pid of paqIds) { try { await generarTarifario(pid); } catch { /* sigue */ } }
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }
@@ -144,6 +154,8 @@ export async function cargarServiciosMasivo(
       liquidacion, activo: true,
       categoria: normCategoria(r.categoria),
       rangos_edad: rangosEdad.length ? rangosEdad : null,
+      descripcion: oNull(r.descripcion || ""),
+      recargo_individual: numCsv(r.recargo_individual),
     }).select("id").single();
     if (error || !sv) { errores.push(`Fila ${linea} (${nombre}): ${error?.message ?? "no se insertó"}`); continue; }
     if (tiers.length) {

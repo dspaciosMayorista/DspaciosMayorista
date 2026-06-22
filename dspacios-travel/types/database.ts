@@ -12,6 +12,51 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      auditoria: {
+        Row: {
+          id: number;
+          creado_en: string;
+          actor_id: string | null;
+          actor_email: string | null;
+          actor_nombre: string | null;
+          actor_rol: string | null;
+          accion: string;
+          tabla: string;
+          registro_id: string | null;
+          antes: Json | null;
+          despues: Json | null;
+          cambios: Json | null;
+        };
+        Insert: {
+          id?: number;
+          creado_en?: string;
+          actor_id?: string | null;
+          actor_email?: string | null;
+          actor_nombre?: string | null;
+          actor_rol?: string | null;
+          accion: string;
+          tabla: string;
+          registro_id?: string | null;
+          antes?: Json | null;
+          despues?: Json | null;
+          cambios?: Json | null;
+        };
+        Update: {
+          id?: number;
+          creado_en?: string;
+          actor_id?: string | null;
+          actor_email?: string | null;
+          actor_nombre?: string | null;
+          actor_rol?: string | null;
+          accion?: string;
+          tabla?: string;
+          registro_id?: string | null;
+          antes?: Json | null;
+          despues?: Json | null;
+          cambios?: Json | null;
+        };
+        Relationships: [];
+      };
       usuarios: {
         Row: {
           id: string;
@@ -223,6 +268,9 @@ export type Database = {
           modo_compra: string | null;
           comision_b2b: number | null;
           comision_estado: string | null;
+          recobro_total: number | null;
+          recobro_empresa: number | null;
+          recobro_aliado: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -279,6 +327,9 @@ export type Database = {
           modo_compra?: string | null;
           comision_b2b?: number | null;
           comision_estado?: string | null;
+          recobro_total?: number | null;
+          recobro_empresa?: number | null;
+          recobro_aliado?: number | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1203,8 +1254,8 @@ export type Database = {
         Relationships: [];
       };
       hotel_temporadas: {
-        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json };
-        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json };
+        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number };
+        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number };
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
         Relationships: [];
       };
@@ -1237,12 +1288,14 @@ export type Database = {
           id: number; categoria: string; nombre: string; tipo_doc: string | null; documento: string | null;
           email: string | null; telefono: string | null; ciudad: string | null; pais: string | null;
           fecha_nacimiento: string | null; genero: string | null; origen: string | null; etiquetas: string[] | null;
+          subcategoria: string | null;
           acepta_publicidad: boolean; no_contactar: boolean; notas: string | null; created_at: string; updated_at: string;
         };
         Insert: {
           id?: number; categoria?: string; nombre: string; tipo_doc?: string | null; documento?: string | null;
           email?: string | null; telefono?: string | null; ciudad?: string | null; pais?: string | null;
           fecha_nacimiento?: string | null; genero?: string | null; origen?: string | null; etiquetas?: string[] | null;
+          subcategoria?: string | null;
           acepta_publicidad?: boolean; no_contactar?: boolean; notas?: string | null; created_at?: string; updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["crm_contactos"]["Insert"]>;
@@ -1317,12 +1370,14 @@ export type Database = {
           id: number; nombre: string; proveedor_id: number | null; destino_id: number | null;
           tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null; tipo_tarifa: string;
           precio_persona: number | null; precio_grupo: number | null; categoria: string;
+          descripcion: string | null; recargo_individual: number | null;
           liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; activo: boolean; created_at: string;
         };
         Insert: {
           id?: number; nombre: string; proveedor_id?: number | null; destino_id?: number | null;
           tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null; tipo_tarifa?: string;
           precio_persona?: number | null; precio_grupo?: number | null; categoria?: string;
+          descripcion?: string | null; recargo_individual?: number | null;
           liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
@@ -1427,6 +1482,8 @@ export type Database = {
           base_comisionable: number;
           impuesto: number;
           precio_pvp: number;
+          descripcion: string | null;
+          recargo_individual: number | null;
           created_at: string;
         };
         Insert: {
@@ -1455,6 +1512,8 @@ export type Database = {
           base_comisionable?: number;
           impuesto?: number;
           precio_pvp?: number;
+          descripcion?: string | null;
+          recargo_individual?: number | null;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["tarifario_resultado"]["Insert"]>;
@@ -1735,9 +1794,10 @@ export type Database = {
         Row: {
           id: number;
           codigo: string;
+          tipo: string;
           created_at: string;
           estado: string;
-          payload: Json;
+          payload: Json | null;
           detalle: Json | null;
           cliente: string | null;
           cliente_documento: string | null;
@@ -1760,10 +1820,11 @@ export type Database = {
         Insert: {
           id?: number;
           codigo?: string;
+          tipo?: string;
           share_token?: string;
           created_at?: string;
           estado?: string;
-          payload: Json;
+          payload?: Json | null;
           detalle?: Json | null;
           cliente?: string | null;
           cliente_documento?: string | null;
@@ -1783,6 +1844,40 @@ export type Database = {
           numero_contrato?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["cotizaciones"]["Insert"]>;
+        Relationships: [];
+      };
+      cotizacion_servicios: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          orden: number;
+          tipo_servicio: string;
+          plataforma: string | null;
+          nombre_servicio: string | null;
+          proveedor: string | null;
+          costo_neto: number;
+          modo: string;
+          pct_markup: number;
+          ta: number;
+          valor: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          cotizacion_id: number;
+          orden?: number;
+          tipo_servicio: string;
+          plataforma?: string | null;
+          nombre_servicio?: string | null;
+          proveedor?: string | null;
+          costo_neto?: number;
+          modo?: string;
+          pct_markup?: number;
+          ta?: number;
+          valor?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["cotizacion_servicios"]["Insert"]>;
         Relationships: [];
       };
       hotel_fotos: {

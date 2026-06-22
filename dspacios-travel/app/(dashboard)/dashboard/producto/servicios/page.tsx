@@ -16,12 +16,14 @@ const COLS_SERVICIOS = [
   { key: "rangos_edad", label: "Rangos de edad (nombres separados por |)", ejemplo: "" },
   { key: "temporada", label: "Temporada", ejemplo: "" },
   { key: "liquidacion", label: "Liquidación (dia/noche/paquete)", ejemplo: "paquete" },
+  { key: "descripcion", label: "Descripción del tour", ejemplo: "" },
+  { key: "recargo_individual", label: "Recargo individual (1 pax)", ejemplo: "0" },
 ];
 
 export default async function ServiciosPage() {
   const sb = await createClient();
   const [{ data: serviciosRaw }, { data: proveedores }, { data: destinos }, { data: rangos }] = await Promise.all([
-    sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, rangos_edad, categoria, liquidacion, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio)").order("nombre"),
+    sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, rangos_edad, categoria, liquidacion, descripcion, recargo_individual, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio)").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "servicios").order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),

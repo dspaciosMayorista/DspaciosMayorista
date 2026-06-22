@@ -255,6 +255,22 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 
 ---
 
+## 12.bis Convenciones técnicas críticas (NO romper el build)
+
+- **⚠️ Middleware = `proxy.ts` (Next.js 16).** Este proyecto corre **Next 16**, que
+  renombró el middleware a **`proxy.ts`** (raíz de `dspacios-travel/`, exporta
+  `proxy` + `config`). **NO crear `middleware.ts`**: tener AMBOS rompe el build con
+  *"Both middleware file and proxy file are detected. Please use ./proxy.ts only"*.
+  Toda lógica de middleware (auth por sesión, redirecciones por rol) va DENTRO de
+  `proxy.ts`. Ahí vive: protección de rutas no públicas (→ `/login`) y el **bloqueo
+  de roles externos (B2B) al dashboard interno** (agencia/freelance/cliente_final →
+  `/portal/b2b`, salvo `/dashboard/reservar` donde sí generan contrato).
+- **Verificar siempre con `npm run build`** (no solo `tsc --noEmit`) antes de subir:
+  errores de Next/Turbopack (archivos de convención duplicados, rutas, etc.) NO los
+  detecta el typecheck y SÍ tumban el deploy en Vercel.
+
+---
+
 ## 13. Estado del proyecto (handoff) — actualizado en desarrollo
 
 > Rama de trabajo actual: **`claude/modest-clarke-Ehftt`** (última; ramas previas:
@@ -331,13 +347,39 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 **PRODUCTO** (costos netos) → **PAQUETES** (armas + margen) → **TARIFARIO** (resultado,
 interno y público) → **RESERVAR** (genera contrato/venta).
 
+### Cotización dinámica / manual — estado (rama `claude/modest-clarke-Ehftt`)
+> Base: migración **084** (`cotizacion_manual`). El asesor arma una cotización a mano
+> (servicios sueltos: aéreo/hotel/traslado/asistencia/otro con plataforma, proveedor, costo,
+> markup/TA). Vive en `app/(dashboard)/dashboard/cotizaciones/` (`nueva/CotizacionManualForm.tsx`,
+> `manual-actions.ts`, `[id]/` detalle + editores), documento al cliente en
+> `components/contrato/CotizacionManualDocumento.tsx`, página imprimible `app/cotizacion/[id]/`.
+> Convierte a contrato (`convertirCotizacionManualAContrato`): venta `dinamico` + contrato + CxP
+> (proveedor = plataforma) + titular como pasajero.
+- **Ítem agrupado**: el cliente ve **un solo** "PAQUETE TURÍSTICO A {destino} DEL {ida} AL {regreso}"
+  (no se listan hoteles/proveedores; el detalle por servicio queda interno en `cotizacion_servicios`).
+- **Titular obligatorio** para generar contrato: nombre, tipo y número de doc y **fecha de nacimiento**
+  (campo nuevo en el form). Editable luego en el detalle (`TitularEditor`).
+- **Incluye / No incluye**: texto libre editable (helper `lib/cotizacion/incluye.ts`: `sugerirIncluye`
+  + `NO_INCLUYE_DEFAULT`); se ve en el documento. Editable luego (`IncluyeEditor`).
+- **Tarifa de niño**: campos Niños + Tarifa por niño (suma al total; pax = adultos). El documento
+  muestra desglose Adultos/Niños y `contrato_items` lleva `ninos`/`tarifa_nino`.
+- **Recobro** (mayor valor cobrado, **NUNCA visible al cliente** — va oculto dentro de la tarifa de
+  adulto): cliente final → 100% empresa; agencia/freelance → se reparte (parte al aliado), default
+  desde parámetro `recobro_pct_aliado_b2b` ("Distribución B2B"). Al convertir guarda
+  `recobro_total/empresa/aliado` en `ventas` y crea `aliados_b2b` + `comision_b2b`. **Migración 086.**
+  Solo en cotización dinámica; **falta replicar en tarifario/reservar**. Recobro/niños hoy se editan
+  solo al crear (no hay editor posterior aún).
+
 ### Módulos construidos
 - **Producto:** Destinos (`/dashboard/producto/destinos`, MAYÚSCULAS + IATA), Proveedores,
   Configuración (categorías de habitación, regímenes), **Hoteles** (temporadas propias +
   tarifa neta por categoría/régimen/temporada con **Niño 1 y Niño 2**; editar tarifa; config
   de edades y rangos; **config de acomodaciones** — pax mín/máx del hotel y, por acomodación,
   `pax_tarifa` (multiplicador por habitación) + mín/máx de adt/niños/inf), **Servicios** (precio **por persona** y/o **por grupo con rangos de
-  pax**; destino vacío = nacional). **Carga masiva CSV** en hoteles, tarifas, servicios y
+  pax**; destino vacío = nacional; **descripción del tour** y **recargo individual** —
+  costo neto del proveedor (tarifa de individual) que entra al costo/CxP y sube el PVP
+  con markup cuando va 1 pax en cobro por persona, migr. 088).
+  **Carga masiva CSV** en hoteles, tarifas, servicios y
   bloqueos (plantillas con `sep=;`, listas con `|`).
 - **Paquetes (armado):** config inicial (nombre, **tipo** bloqueo/porción/servicios, **noches**
   para porción, destino, vigencia compra, rango viaje, **%mk**, impuesto tiquete/fijo). Adición
@@ -365,6 +407,10 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   record); bloqueos con **destino** + rangos de edad; editar bloqueo; carga masiva. El tarifario
   y Reservar muestran cupos y **ocultan/bloquean** salidas sin cupos.
 - **Configuración:** asesores, parámetros tributarios, **rangos de edad**, **formas de pago**.
+- **Auditoría** (`/dashboard/auditoria`, solo superadmin/gerencia): log de trazabilidad de
+  todo el CRUD vía trigger de BD (migración 087). Tabla con filtros (tabla, acción,
+  N° contrato/record/id, usuario, rango de fechas), paginada, con diff antes→después
+  expandible por fila. Ítem de menú gateado con `rolesPermitidos` en el nav del dashboard.
 
 ### Motor de cálculo (`lib/calc/paquetes.ts`)
 - Hotel: liquida **noche por noche** (mezcla temporadas), `costo/(1−%mk)`.
@@ -392,29 +438,52 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — correr en orden 016→067
-> Las migraciones nuevas usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el
-> número NNN. Correr en orden las que falten en tu base.
-016 producto · 017 config_hoteles · 018 armado_paquetes (+`tarifario_resultado`) ·
-019 armado_hotel_filtros · 020 dos_ninos · 021 rangos_edad · 022 reserva_tarifario ·
-023 paquete_tipo · 024 servicio_tarifas_pax · 025 porcion_noches_servicio_modo ·
-026 servicio_incluido · 027 hotel_acomodaciones (reservar por habitaciones + config acomod.) ·
-028 formas_pago (catálogo de formas de pago para abonos) ·
-029 servicio_categoria (tour_traslado/asistencia/otro → ubica el servicio en el contrato) ·
-030 contrato_vuelo_hotel_extra (record/horas/números de vuelo + categoría/proveedor de hotel) ·
-031 programas (9 tablas de circuitos de proveedor + `moneda` en ventas y cuentas_por_pagar).
-**032→065** (ramas intermedias): CxP automáticas, cartera/pagos, CRM (contactos/email/campañas),
-adjuntos de contrato, política/datos bancarios de proveedor, país de destino, nota de régimen,
-documentos/fotos/estrellas/ubicación de hotel, cotizaciones (+share_token), config de
-solicitudes, vouchers, eliminar contrato, cobros, notificaciones, `ventas_asesor` sin FK,
-blackouts de hotel. *(Ver nombres exactos en `supabase/migrations/`.)*
-**066** programas_vitrina (`desde_precio`, `incluye_aereo`, `portada_url`) ·
-**067** programas_asistencia (`asistencia_medica_dia`) ·
-**078** web_cms (tablas `web_paquetes/destinos/testimonios/blog/config` del sitio
-público + RLS: lectura pública de lo activo, escritura solo superadmin). ← **pendientes de correr.**
+### Migraciones Supabase — total en repo: **088** (correr en orden las que falten)
+> Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
+> Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
+> `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
+> migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
+> ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
+> `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 088** (todas aplicadas).
+>
+> Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
+> paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
+> servicio_categoria, contrato_vuelo_hotel_extra, **031** programas (circuitos de proveedor + `moneda`).
+> Rango **032→067**: CxP automáticas, cartera/pagos, CRM, adjuntos de contrato, datos bancarios de
+> proveedor, país de destino, documentos/fotos/estrellas/ubicación de hotel, cotizaciones
+> (+share_token), solicitudes, vouchers, eliminar contrato, cobros, notificaciones, blackouts,
+> **066** programas_vitrina, **067** programas_asistencia.
+> Rango **068→085** (recientes): 068 programas_salidas · 069 videos_fondo · 070 bloqueo_cambios ·
+> 071 bloqueo_origen_tarifa_neta · 072 permisos · 073 ventas_b2b (`b2b_usuario_id`, `modo_compra`,
+> `comision_b2b`, `comision_estado`) · 074 b2b_solicitudes · 075 link_pago · 076 usuario_agencia ·
+> 077 usuario_pct_comision · 078 web_cms · **079 web_paginas** (CMS por páginas/secciones) ·
+> 080 web_storage (bucket `web-cms`) · 081 programa_edades · 082 crm_subcategoria ·
+> 083 hotel_min_noches · **084 cotizacion_manual** (cotización dinámica: tablas/campos) ·
+> **085 silla_contrato_manual** (contrato manual en la silla, fuera del flujo).
+> **086 recobro_cotizacion** ← *aplicada*: `recobro_total/empresa/aliado` en
+> `ventas` + parámetro `recobro_pct_aliado_b2b` (Distribución B2B, editable en
+> Configuración → Parámetros tributarios).
+> **087 auditoria** ← *aplicada*: log de trazabilidad de
+> TODO el CRUD. Tabla `auditoria` + función `fn_auditoria()` (SECURITY DEFINER) + un trigger
+> genérico `trg_auditoria` adjuntado por un bloque `DO` a **todas** las tablas base de
+> `public` (excepto `auditoria` y `tarifario_resultado`). Registra quién (auth.uid() +
+> snapshot email/nombre/rol), qué (tabla + registro_id = contrato/record/id) y los cambios
+> (antes/después jsonb + `cambios` solo de campos modificados). RLS: solo leen `superadmin`
+> y `gerencia`. ⚠️ Escrituras con `service_role` (sillas/costos al reservar) NO traen actor
+> → quedan como "Sistema" (el cambio sí se registra). Re-correr el bloque DO adjunta el
+> trigger a tablas nuevas.
+> **088 servicio_descripcion_recargo** ← *aplicada*:
+> `descripcion` + `recargo_individual` en `servicios_adicionales` (y denormalizadas a
+> `tarifario_resultado`). El recargo individual es un **costo NETO del proveedor** (tarifa
+> de individual) que aplica cuando el servicio (cobro POR PERSONA) se vende a 1 solo pax:
+> entra al `costo_receptivo` y a la **CxP del proveedor** (Reservar lo toma del catálogo),
+> y el PVP sube con su markup (en `tarifario_resultado.recargo_individual` se guarda ya con
+> markup). Se publica en la vitrina pública de Servicios.
+> *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
-`supabase/scripts/seed_web_cms.sql` (contenido inicial del CMS; correr tras la 078).
+`supabase/scripts/seed_web_cms.sql` (contenido inicial del CMS).
 Env en Vercel: `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos), opcional `CRON_SECRET`,
 `RESEND_API_KEY` + dominio verificado para notificaciones/cobros (migr. 056/061/062);
 configurar destinatarios en `config_solicitudes`/`config_cobros`/`config_notificaciones`.
@@ -436,10 +505,48 @@ Google OAuth: callback `/auth/callback`; Site URL = producción.
   **CMS** `/dashboard/cms` (solo superadmin) → tablas `web_*` (migración **078**), con
   **fallback** a `lib/sitio/data.js` mientras no se corra la 078/seed. Separación por
   subdominio en `proxy.ts` vía envs `NEXT_PUBLIC_SITIO_HOST`/`NEXT_PUBLIC_PORTAL_HOST`.
-  *Pendientes:* correr 078 + `seed_web_cms.sql`; configurar dominios/DNS (ver
-  `docs/sitio-web/despliegue-dominio.md`); subida de imágenes a Storage (hoy URLs);
-  título/favicon propios; borrar `sitio-web/` (export Vite, hoy solo referencia).
-  La carpeta `sitio-web/` NO se despliega.
+  *Pendientes:* (078/079/080 ya aplicadas → CMS y subida a Storage `web-cms` activos)
+  opcional `seed_web_cms.sql`; configurar dominios/DNS (ver
+  `docs/sitio-web/despliegue-dominio.md`); título/favicon propios; borrar `sitio-web/`
+  (export Vite, hoy solo referencia). La carpeta `sitio-web/` NO se despliega.
+- **CMS — estado real (rama actual):** el sitio público vive en `app/sitio_web/`
+  (route group), NO en `app/(sitio)`; el CMS en `/cms` (no `/dashboard/cms`). Modelo
+  **páginas + secciones tipadas**: `web_paginas` (árbol por `parent_id`, slug de UN solo
+  segmento) → `web_secciones` (`datos` jsonb), + `web_blog`/`web_testimonios`/`web_config`.
+  Lectura pública con fallback estático: `lib/sitio/paginas.ts` + `lib/sitio/cms.ts`
+  (fallbacks en `paginasFallback.ts`/`data.js`). Render: `components/sitio/secciones/*`.
+  Migraciones 078/079/080. La separación por subdominio del handoff **NO está** en
+  `proxy.ts` (el sitio queda bajo `/sitio_web`; tendrá dominio propio luego — OK por ahora).
+- **CMS → edición IN-SITU sobre la página real (en curso, rama `claude/peaceful-noether-713c7c`):**
+  el dueño pidió cambiar el tipo de CMS a edición directa "click en un texto y editarlo en la
+  vista en vivo" (estilo Webflow), NO un panel/lista aparte (se descartó el `BloquesCanvas`).
+  - **Framework de edición in-situ:** `components/sitio/edicion/EdicionContext.jsx` (provider
+    `EdicionSeccion` con `{editable, datos, set}`) + `Editable.jsx` (`EditableText` =
+    contentEditable que guarda al `onBlur`). En el sitio público NO hay provider → `editable`
+    false y todo renderiza idéntico. Secciones ya cableadas inline: **Hero, Texto, Cta**
+    (las demás se editan por el panel ⚙ Campos). Para cablear otra sección: envolver sus
+    textos con `<EditableText as=.. campo=.. >{valor}</EditableText>` y guardar `tipo` en el set
+    `INLINE` de `LienzoVivo`.
+  - **`app/cms/editors/LienzoVivo.tsx`:** renderiza las secciones REALES (`SeccionRenderer`)
+    dentro del CMS con su `contexto` (config/testimonios/blog/destinos en forma "inglesa" de
+    `lib/sitio/cms`, + `hijos` derivados del árbol). Cada bloque: barra flotante (arrastrar
+    para reordenar con framer-motion `Reorder`, ⚙ campos en slide-over con `SeccionForm`,
+    duplicar, ocultar, eliminar), selección, y `onClickCapture` que bloquea la navegación de
+    los botones del sitio mientras editas. Guardado de campos con debounce (700ms) vía
+    `actualizarSeccion`, sin refrescar (no pierde el foco).
+  - `CmsClient` ya no usa iframe: muestra árbol (izq) + ajustes de página colapsables +
+    `LienzoVivo`. `page.tsx` carga además los datos del sitio para el lienzo.
+  - Server actions nuevas: `reordenarSecciones`, `duplicarSeccion`. **Bugs corregidos:**
+    slug con `/` (404), `notFound`/SEO en `blog/[id]`, reordenar con rollback.
+  - **Iconos lucide** (no emojis) en la paleta y la barra de bloques. **Todas las secciones**
+    tienen sus encabezados editables inline (titulo/subtitulo/intro/textos); el contenido por
+    ítem (listas, tarjetas, galería) e imágenes secundarias se editan por ⚙ panel. **Hero**
+    edita su imagen de fondo in-situ (`EditableImage`, botón "Cambiar imagen"). **Toggle
+    escritorio/móvil**: móvil = iframe real (publicado) en marco angosto. **`cotizar`**
+    ahora es server + `CotizarClient` y toma el WhatsApp de `web_config` (ya no hardcodeado).
+  - **Pendiente:** edición in-situ de imágenes en más secciones (Actividades/Consulta/Galería,
+    hoy por ⚙); edición inline de ítems de lista (experiencias/actividades/plan); subir imagen
+    (no solo URL) desde el botón in-situ.
 - Merge de la rama a `main` cuando todo esté validado.
 
 ### REDISEÑO DE RESERVAR (anotaciones del dueño — pendiente, prioridad alta)

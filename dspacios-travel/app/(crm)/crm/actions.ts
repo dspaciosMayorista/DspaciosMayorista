@@ -10,7 +10,9 @@ type CrmInsert = Database["public"]["Tables"]["crm_contactos"]["Insert"];
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
-export const CATEGORIAS = ["cliente_final", "agencia", "freelance", "empresa", "pasajero"] as const;
+// Un archivo "use server" SOLO puede exportar funciones async. Por eso este
+// catálogo queda interno (sin export); el tipo derivado sí puede exportarse.
+const CATEGORIAS = ["cliente_final", "agencia", "freelance", "empresa", "pasajero"] as const;
 export type Categoria = (typeof CATEGORIAS)[number];
 
 function normCategoria(s?: string): Categoria {
@@ -38,6 +40,7 @@ export type ContactoInput = {
   fechaNacimiento: string;
   genero: string;
   origen: string;
+  subcategoria: string;
   aceptaPublicidad: boolean;
   noContactar: boolean;
   notas: string;
@@ -58,6 +61,7 @@ export async function crearContacto(input: ContactoInput): Promise<Result> {
     fecha_nacimiento: oNull(input.fechaNacimiento),
     genero: oNull(input.genero),
     origen: oNull(input.origen),
+    subcategoria: oNull(input.subcategoria),
     acepta_publicidad: input.aceptaPublicidad,
     no_contactar: input.noContactar,
     notas: oNull(input.notas),
@@ -85,6 +89,7 @@ export async function actualizarContacto(id: number, input: ContactoInput): Prom
     fecha_nacimiento: oNull(input.fechaNacimiento),
     genero: oNull(input.genero),
     origen: oNull(input.origen),
+    subcategoria: oNull(input.subcategoria),
     acepta_publicidad: input.aceptaPublicidad,
     no_contactar: input.noContactar,
     notas: oNull(input.notas),
@@ -144,6 +149,7 @@ export async function cargarContactosMasivo(
       fecha_nacimiento: /^\d{4}-\d{2}-\d{2}$/.test((r.fecha_nacimiento || "").trim()) ? r.fecha_nacimiento.trim() : null,
       genero: oNull(r.genero || ""),
       origen: oNull(r.origen || ""),
+      subcategoria: oNull(r.subcategoria || ""),
       acepta_publicidad: toBool(r.acepta_publicidad),
       no_contactar: toBool(r.no_contactar),
       notas: oNull(r.notas || ""),

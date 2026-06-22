@@ -5,11 +5,14 @@ import { motion } from 'framer-motion';
 import { MessageCircle, CalendarCheck } from 'lucide-react';
 import { Button } from '@/components/sitio/ui/button';
 import { useRouter } from 'next/navigation';
+import { EditableText, EditableImage, EditableUrl } from '@/components/sitio/edicion/Editable';
+import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección HERO. datos: { titulo, subtitulo, imagen, cta_texto, cta_url }
 // contexto.config provee el WhatsApp para el botón secundario.
 const Hero = ({ datos = {}, config }) => {
   const router = useRouter();
+  const editable = !!useEdicion()?.editable;
   const waNumero = config?.whatsappNumero || "573212150582";
   const waMensaje = config?.whatsappMensaje
     ? encodeURIComponent(config.whatsappMensaje)
@@ -18,6 +21,7 @@ const Hero = ({ datos = {}, config }) => {
 
   const titulo = datos.titulo || "Tu Próxima Aventura Comienza Aquí";
   const subtitulo = datos.subtitulo || "";
+  const waTexto = datos.wa_texto || "Cotizar por WhatsApp";
   const ctaTexto = datos.cta_texto || "Ver Tarifario";
   const ctaUrl = datos.cta_url || "/tarifario";
   const heroImg = datos.imagen || config?.heroImagenUrl ||
@@ -26,7 +30,7 @@ const Hero = ({ datos = {}, config }) => {
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
       <div className="absolute inset-0 z-0">
-        <img className="w-full h-full object-cover" alt={titulo} src={heroImg} />
+        <EditableImage campo="imagen" fallback={heroImg} alt={titulo} className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-r from-[#120573]/90 via-[#120573]/60 to-transparent"></div>
       </div>
 
@@ -52,17 +56,17 @@ const Hero = ({ datos = {}, config }) => {
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.8, delay: 0.2 }}
             >
-              {titulo}
+              <EditableText as="span" campo="titulo" placeholder="Título de la portada">{titulo}</EditableText>
             </motion.h1>
 
-            {subtitulo ? (
+            {(subtitulo || editable) ? (
               <motion.p
                 className="text-xl md:text-2xl text-gray-200 mb-10 leading-relaxed max-w-2xl font-light"
                 initial={{ opacity: 0, x: -50 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.8, delay: 0.4 }}
               >
-                {subtitulo}
+                <EditableText as="span" campo="subtitulo" placeholder="Subtítulo">{subtitulo}</EditableText>
               </motion.p>
             ) : null}
 
@@ -75,19 +79,20 @@ const Hero = ({ datos = {}, config }) => {
               <Button
                 size="lg"
                 className="bg-[#25D366] hover:bg-[#1ebc57] text-white font-bold text-lg px-8 py-7 rounded-xl shadow-2xl hover:shadow-[#25D366]/30 transition-all flex items-center gap-3"
-                onClick={() => window.open(whatsappLink, '_blank')}
+                onClick={() => { if (!editable) window.open(whatsappLink, '_blank'); }}
               >
                 <MessageCircle className="h-6 w-6" />
-                Cotizar por WhatsApp
+                <EditableText as="span" campo="wa_texto" placeholder="Texto del botón">{waTexto}</EditableText>
               </Button>
               <Button
                 size="lg"
                 className="bg-[#d8f511] text-[#120573] hover:bg-[#cbe610] font-bold text-lg px-8 py-7 rounded-xl shadow-2xl hover:shadow-[#d8f511]/30 transition-all flex items-center gap-3"
-                onClick={() => router.push(ctaUrl)}
+                onClick={() => { if (!editable) router.push(ctaUrl); }}
               >
                 <CalendarCheck className="h-6 w-6" />
-                {ctaTexto}
+                <EditableText as="span" campo="cta_texto" placeholder="Texto del botón">{ctaTexto}</EditableText>
               </Button>
+              <EditableUrl campo="cta_url" className="self-center" />
             </motion.div>
           </motion.div>
         </div>

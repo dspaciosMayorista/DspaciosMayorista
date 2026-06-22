@@ -1,11 +1,16 @@
+"use client";
+
 import React from 'react';
 import Link from 'next/link';
 import { Calendar, ArrowRight, Tag } from 'lucide-react';
 import { SITIO_BASE } from '@/lib/sitio/rutas';
+import { EditableText } from '@/components/sitio/edicion/Editable';
+import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
 
 // Sección BLOG_GRID. datos: { titulo?, subtitulo? }
 // items: SitioBlog[] (de web_blog) pasados por prop. Detalle en /blog/[id].
 const BlogGrid = ({ datos = {}, items = [] }) => {
+  const editable = !!useEdicion()?.editable;
   const titulo = datos.titulo || "Revista del Viajero";
   const subtitulo = datos.subtitulo ||
     "Consejos expertos, guías detalladas y todo lo que necesitas saber para tu próxima aventura.";
@@ -16,9 +21,9 @@ const BlogGrid = ({ datos = {}, items = [] }) => {
       <div className="container mx-auto px-4">
         <div className="text-center mb-16">
           <span className="text-[#120573] font-bold tracking-wider uppercase text-sm mb-4 block">Inspiración & Guías</span>
-          <h2 className="text-4xl md:text-5xl font-bold text-[#120573] mb-6">{titulo}</h2>
-          {subtitulo ? (
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">{subtitulo}</p>
+          <EditableText as="h2" campo="titulo" placeholder="Título" className="text-4xl md:text-5xl font-bold text-[#120573] mb-6">{titulo}</EditableText>
+          {(subtitulo || editable) ? (
+            <EditableText as="p" campo="subtitulo" placeholder="Subtítulo" className="text-xl text-gray-600 max-w-2xl mx-auto">{subtitulo}</EditableText>
           ) : null}
         </div>
 

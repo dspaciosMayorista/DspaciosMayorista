@@ -2,9 +2,11 @@
 
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
+import { Star, Plane } from "lucide-react";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
+import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
@@ -42,6 +44,8 @@ export type FilaTarifario = {
   regimen: string | null;
   acomodacion: string | null;
   precio_pvp: number;
+  descripcion?: string | null;
+  recargo_individual?: number | null;
 };
 
 const MODULOS: { key: FilaTarifario["modulo"]; label: string }[] = [
@@ -74,6 +78,8 @@ type Pivotada = {
   hotel_id?: number | null;
   bloqueo_id?: number | null;
   modulo: FilaTarifario["modulo"];
+  destino?: string | null;
+  noches?: number | null;
 };
 
 function pivotar(filas: FilaTarifario[]): Pivotada[] {
@@ -88,6 +94,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
       row = {
         hotel, categoria, regimen, precios: {},
         paquete_id: f.paquete_id, hotel_id: f.hotel_id, bloqueo_id: f.bloqueo_id, modulo: f.modulo,
+        destino: f.destino_nombre, noches: f.noches,
       };
       map.set(key, row);
     }
@@ -111,7 +118,11 @@ const rangoEdades = (info?: Parameters<typeof textoEdadesHotel>[0]): string | nu
 function CategoriaInline({ info }: { info?: { estrellas: number | null; clasificacion: string | null } }) {
   if (!info) return null;
   if (info.estrellas && info.estrellas > 0)
-    return <span className="ml-1 text-amber-400" title={`${info.estrellas} estrellas`}>{"★".repeat(info.estrellas)}</span>;
+    return (
+      <span className="ml-1 inline-flex align-middle text-amber-400" title={`${info.estrellas} estrellas`}>
+        {Array.from({ length: info.estrellas }).map((_, i) => <Star key={i} size={12} fill="currentColor" strokeWidth={0} />)}
+      </span>
+    );
   if (info.clasificacion?.trim())
     return <span className="ml-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">{info.clasificacion}</span>;
   return null;
@@ -185,54 +196,61 @@ export function TarifarioPublic({
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700";
 
   return (
-    <div>
-      {/* Toggle de vista: tabla (estático) · Booking (dinámico) · Programas (circuitos) */}
-      <div className="mb-4 inline-flex rounded-full border border-gray-200 bg-white p-1">
-        {([["tabla", "Vista tabla"], ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
-          <button
-            key={v}
-            type="button"
-            onClick={() => setVista(v)}
-            className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
-            style={vista === v ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#4b5563" }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <div className="relative">
+      {/* Card flotante que solapa el borde inferior del header */}
+      <div className="-mt-10 mb-6 relative z-10 px-0">
+        <div className="rounded-2xl border border-gray-100 bg-white p-3 shadow-[0_6px_32px_rgba(0,0,0,0.12)]">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Toggle de vista: tabla (estático) · Booking (dinámico) · Programas (circuitos) */}
+            <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 p-1">
+              {([["tabla", "Vista tabla"], ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setVista(v)}
+                  className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
+                  style={vista === v ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#4b5563" }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
-      {/* Barra de filtros y buscador (solo para hoteles: tabla/booking) */}
-      {vista !== "programas" && (
-      <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white p-3">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Buscar hotel por nombre…"
-          className="min-w-[180px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-        />
-        <select value={fCat} onChange={(e) => setFCat(e.target.value)} className={selCls} aria-label="Categoría de habitación">
-          <option value="">Categoría: todas</option>
-          {cats.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select value={fReg} onChange={(e) => setFReg(e.target.value)} className={selCls} aria-label="Alimentación / régimen">
-          <option value="">Alimentación: todas</option>
-          {regs.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <select value={fAcom} onChange={(e) => setFAcom(e.target.value)} className={selCls} aria-label="Acomodación">
-          <option value="">Acomodación: todas</option>
-          {ACOM_OPCIONES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-        </select>
-        {hayFiltro && (
-          <button
-            type="button"
-            onClick={() => { setQ(""); setFCat(""); setFReg(""); setFAcom(""); }}
-            className="text-xs font-medium text-gray-500 hover:text-gray-800"
-          >
-            Limpiar
-          </button>
-        )}
+            {/* Filtros inline (solo para hoteles: tabla/booking) */}
+            {vista !== "programas" && (
+              <>
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Buscar hotel por nombre…"
+                  className="min-w-[160px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                />
+                <select value={fCat} onChange={(e) => setFCat(e.target.value)} className={selCls} aria-label="Categoría de habitación">
+                  <option value="">Categoría: todas</option>
+                  {cats.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select value={fReg} onChange={(e) => setFReg(e.target.value)} className={selCls} aria-label="Alimentación / régimen">
+                  <option value="">Alimentación: todas</option>
+                  {regs.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <select value={fAcom} onChange={(e) => setFAcom(e.target.value)} className={selCls} aria-label="Acomodación">
+                  <option value="">Acomodación: todas</option>
+                  {ACOM_OPCIONES.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </select>
+                {hayFiltro && (
+                  <button
+                    type="button"
+                    onClick={() => { setQ(""); setFCat(""); setFReg(""); setFAcom(""); }}
+                    className="text-xs font-medium text-gray-500 hover:text-gray-800"
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       </div>
-      )}
 
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
@@ -435,10 +453,15 @@ function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]
                   {[...servicios.entries()].map(([nombre, srows]) => {
                     const esGrupo = (srows[0].tipo_tarifa ?? "persona") === "grupo";
                     const escalas = [...srows].sort((a, b) => (a.pax_desde ?? 0) - (b.pax_desde ?? 0));
+                    const descripcion = srows[0].descripcion?.trim() || "";
+                    const recargo = Math.max(Number(srows[0].recargo_individual) || 0, 0);
                     return esGrupo ? (
                       escalas.map((e, i) => (
                         <tr key={`${nombre}-${i}`} className="border-t border-gray-100">
-                          <td className="px-3 py-1.5 font-medium text-gray-800">{i === 0 ? nombre : ""}</td>
+                          <td className="px-3 py-1.5 font-medium text-gray-800">
+                            {i === 0 ? nombre : ""}
+                            {i === 0 && descripcion && <div className="text-xs font-normal text-gray-500">{descripcion}</div>}
+                          </td>
                           <td className="px-3 py-1.5 text-gray-500">{e.pax_desde}–{e.pax_hasta} pax</td>
                           <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
                             {formatCOP(e.precio_pvp)} <span className="text-xs text-gray-400">/grupo</span>
@@ -447,7 +470,11 @@ function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]
                       ))
                     ) : (
                       <tr key={nombre} className="border-t border-gray-100">
-                        <td className="px-3 py-1.5 font-medium text-gray-800">{nombre}</td>
+                        <td className="px-3 py-1.5 font-medium text-gray-800">
+                          {nombre}
+                          {descripcion && <div className="text-xs font-normal text-gray-500">{descripcion}</div>}
+                          {recargo > 0 && <div className="text-xs font-normal text-amber-600">+{formatCOP(recargo)} si viaja 1 pax (recargo individual)</div>}
+                        </td>
                         <td className="px-3 py-1.5 text-gray-500">Por persona</td>
                         <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
                           {formatCOP(srows[0].precio_pvp)} <span className="text-xs text-gray-400">/persona</span>
@@ -533,6 +560,16 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                         <Link href={reservarHref(r)} className="mt-0.5 block text-xs font-normal" style={{ color: "var(--brand-accent)" }}>
                           Reservar →
                         </Link>
+                      )}
+                      {i === 0 && puedeReservar && (
+                        <BriefFlyerButton
+                          className="mt-0.5 block"
+                          datos={{
+                            destino: r.destino, hotel: r.hotel, categoria: r.categoria, regimen: r.regimen,
+                            noches: r.noches, precios: r.precios,
+                            edadNino: r.hotel_id != null ? rangoEdades(infoPorHotel[r.hotel_id]) : null,
+                          }}
+                        />
                       )}
                     </td>
                     <td className="px-3 py-2 text-gray-600">{r.categoria}</td>
@@ -627,19 +664,19 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-500">Aéreo</label>
           <div className="flex gap-1">
-            {([["", "Todos"], ["si", "✈ Con aéreo"], ["no", "Solo terrestre"]] as const).map(([v, l]) => (
+            {([["", "Todos"], ["si", "Con aéreo"], ["no", "Solo terrestre"]] as const).map(([v, l]) => (
               <button
                 key={v}
                 type="button"
                 onClick={() => setAereo(v)}
-                className="rounded-lg border px-3 py-2 text-xs font-medium transition-all"
+                className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium transition-all"
                 style={
                   aereo === v
                     ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
                     : { borderColor: "#e5e7eb", color: "#6b7280" }
                 }
               >
-                {l}
+                {v === "si" && <Plane size={12} />}{l}
               </button>
             ))}
           </div>
@@ -670,14 +707,14 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
               <div className="flex items-start justify-between gap-2">
                 <div className="font-semibold text-gray-800">{p.nombre}</div>
                 <span
-                  className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
                   style={
                     p.incluye_aereo
                       ? { backgroundColor: "rgba(29,124,154,0.12)", color: "var(--brand-primary)" }
                       : { backgroundColor: "#f3f4f6", color: "#6b7280" }
                   }
                 >
-                  {p.incluye_aereo ? "✈ Con aéreo" : "Solo terrestre"}
+                  {p.incluye_aereo ? <><Plane size={11} /> Con aéreo</> : "Solo terrestre"}
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-gray-500">

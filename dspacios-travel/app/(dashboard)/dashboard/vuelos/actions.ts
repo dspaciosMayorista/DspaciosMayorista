@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { regenerarTarifariosDeBloqueo, generarTarifario } from "../paquetes/actions";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -110,6 +111,7 @@ export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Pr
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/vuelos/${id}`);
+  await regenerarTarifariosDeBloqueo(id); // la tarifa/fechas del aéreo cambió → recalcula paquetes
   return { ok: true, id };
 }
 
@@ -186,11 +188,30 @@ export async function registrarCambioOperacional(
   if (le) return { ok: false, error: le.message };
 
   revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  await regenerarTarifariosDeBloqueo(bloqueoId); // fechas/vuelos cambiaron → recalcula
   return { ok: true, id: bloqueoId };
 }
 
 // ── Carga masiva de bloqueos (CSV) ─────────────────────────────────────────
 const numCsv = (s?: string) => (s ? parseInt(String(s).replace(/[^\d-]/g, ""), 10) || 0 : 0);
+
+// Convierte fecha CSV a YYYY-MM-DD.
+// Acepta: dd/mm/aa · dd/mm/aaaa · ya en YYYY-MM-DD. Ignora vacíos.
+function parseFechaCSV(s?: string): string | null {
+  if (!s || s.trim() === "") return null;
+  const t = s.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (m) {
+    const dd = m[1].padStart(2, "0");
+    const mm = m[2].padStart(2, "0");
+    const yy = m[3].length === 2 ? `20${m[3]}` : m[3];
+    return `${yy}-${mm}-${dd}`;
+  }
+  return t;
+}
+
+// Hora CSV: ya se asume HH:MM (24h). Solo normaliza vacíos.
 const dCsv = (s?: string) => (s && s.trim() !== "" ? s.trim() : null);
 
 export async function cargarBloqueosMasivo(
@@ -226,10 +247,10 @@ export async function cargarBloqueosMasivo(
       .from("bloqueos_vuelo")
       .insert({
         record, aerolinea: oNull(r.aerolinea || ""), proveedor_id: provId, destino_id: destinoId, ruta: oNull(r.ruta || ""), origen: oNull(r.origen || ""),
-        vuelo_ida: oNull(r.vuelo_ida || ""), fecha_ida: dCsv(r.fecha_ida), hora_salida_ida: dCsv(r.hora_salida_ida), hora_llegada_ida: dCsv(r.hora_llegada_ida),
-        vuelo_regreso: oNull(r.vuelo_regreso || ""), fecha_regreso: dCsv(r.fecha_regreso), hora_salida_reg: dCsv(r.hora_salida_reg), hora_llegada_reg: dCsv(r.hora_llegada_reg),
+        vuelo_ida: oNull(r.vuelo_ida || ""), fecha_ida: parseFechaCSV(r.fecha_ida), hora_salida_ida: dCsv(r.hora_salida_ida), hora_llegada_ida: dCsv(r.hora_llegada_ida),
+        vuelo_regreso: oNull(r.vuelo_regreso || ""), fecha_regreso: parseFechaCSV(r.fecha_regreso), hora_salida_reg: dCsv(r.hora_salida_reg), hora_llegada_reg: dCsv(r.hora_llegada_reg),
         cupos_total: cupos, tarifa_neta: numCsv(r.tarifa_neta) || null, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
-        fecha_devolucion: dCsv(r.fecha_devolucion), fecha_emision: dCsv(r.fecha_emision), notas: oNull(r.notas || ""),
+        fecha_devolucion: parseFechaCSV(r.fecha_devolucion), fecha_emision: parseFechaCSV(r.fecha_emision), notas: oNull(r.notas || ""),
         rangos_edad: rangosEdad.length ? rangosEdad : null,
       })
       .select("id")
@@ -290,6 +311,18 @@ export async function cambiarSillas(input: {
   const { error: e2 } = await sb.from("sillas").insert(nuevas);
   if (e2) return { ok: false, error: e2.message };
 
+  // Mantener cupos_total en sincronía: el origen pierde N cupos (salieron a otro
+  // record) y el destino gana N. Así el campo guardado no se desfasa del conteo
+  // real de sillas.
+  const [{ data: bo }, { data: bd }] = await Promise.all([
+    sb.from("bloqueos_vuelo").select("cupos_total").eq("id", input.origenId).maybeSingle(),
+    sb.from("bloqueos_vuelo").select("cupos_total").eq("id", input.destinoId).maybeSingle(),
+  ]);
+  await Promise.all([
+    sb.from("bloqueos_vuelo").update({ cupos_total: Math.max(0, (Number(bo?.cupos_total) || 0) - input.cantidad) }).eq("id", input.origenId),
+    sb.from("bloqueos_vuelo").update({ cupos_total: (Number(bd?.cupos_total) || 0) + input.cantidad }).eq("id", input.destinoId),
+  ]);
+
   // Registrar movimientos
   await sb.from("movimientos_silla").insert(
     ids.map((silla_id) => ({
@@ -324,12 +357,120 @@ export async function cambiarEstadoSilla(
   return { ok: true };
 }
 
+// ── Contrato MANUAL en una silla (venta externa al sistema) ────────────────
+// Excluyente con el contrato orgánico: si la silla ya nació de una venta del
+// sistema (numero_contrato), NO se le puede poner manual. Al asignarlo, la
+// silla queda CONFIRMADA (ocupa el cupo).
+export async function asignarContratoManual(
+  sillaId: number,
+  contratoManual: string,
+  bloqueoId: number
+): Promise<Result> {
+  const sb = await createClient();
+  const num = (contratoManual ?? "").trim();
+  if (!num) return { ok: false, error: "Escribe el número de contrato manual." };
+
+  const { data: s } = await sb.from("sillas").select("numero_contrato, estado").eq("id", sillaId).maybeSingle();
+  if (!s) return { ok: false, error: "Silla no encontrada." };
+  if (s.numero_contrato)
+    return { ok: false, error: `Esta silla ya tiene el contrato orgánico ${s.numero_contrato}. No puede tener uno manual.` };
+  if (s.estado === "cambio" || s.estado === "cambio_entrante")
+    return { ok: false, error: "Una silla en cambio no admite contrato manual." };
+
+  const { error } = await sb
+    .from("sillas")
+    // Cast: los tipos generados aún no incluyen contrato_manual (migración 085).
+    .update({ contrato_manual: num, estado: "confirmada", updated_at: new Date().toISOString() } as never)
+    .eq("id", sillaId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
+
+export async function quitarContratoManual(sillaId: number, bloqueoId: number): Promise<Result> {
+  const sb = await createClient();
+  const { data: s } = await (sb.from("sillas").select("contrato_manual").eq("id", sillaId).maybeSingle() as unknown as Promise<{ data: { contrato_manual: string | null } | null }>);
+  if (!s) return { ok: false, error: "Silla no encontrada." };
+  if (!s.contrato_manual) return { ok: false, error: "Esta silla no tiene contrato manual." };
+  const { error } = await sb
+    .from("sillas")
+    .update({ contrato_manual: null, estado: "disponible", updated_at: new Date().toISOString() } as never)
+    .eq("id", sillaId);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
+
+// ── Eliminar un cupo (silla) del bloqueo ───────────────────────────────────
+// Solo se permite quitar sillas DISPONIBLES (o cambio_entrante sin asignar): si
+// había 10 cupos y se elimina uno, quedan 9. Decrementa cupos_total y registra
+// el movimiento en el historial de cambios.
+export async function eliminarCupo(sillaId: number, bloqueoId: number): Promise<Result> {
+  const sb = await createClient();
+  const { data: s } = await (sb
+    .from("sillas")
+    .select("estado, numero_silla, numero_contrato, contrato_manual")
+    .eq("id", sillaId)
+    .maybeSingle() as unknown as Promise<{ data: { estado: string; numero_silla: number | null; numero_contrato: string | null; contrato_manual: string | null } | null }>);
+  if (!s) return { ok: false, error: "Silla no encontrada." };
+  if (!["disponible", "cambio_entrante"].includes(s.estado) || s.numero_contrato || s.contrato_manual)
+    return { ok: false, error: "Solo se pueden eliminar cupos disponibles (sin venta ni contrato)." };
+
+  // movimientos_silla referencia la silla (FK sin cascade): limpiar primero.
+  await sb.from("movimientos_silla").delete().eq("silla_id", sillaId);
+  const { error } = await sb.from("sillas").delete().eq("id", sillaId);
+  if (error) return { ok: false, error: error.message };
+
+  // Decrementar cupos_total del bloqueo (no baja de 0).
+  const { data: b } = await sb.from("bloqueos_vuelo").select("cupos_total").eq("id", bloqueoId).maybeSingle();
+  const nuevo = Math.max(0, (Number(b?.cupos_total) || 0) - 1);
+  await sb.from("bloqueos_vuelo").update({ cupos_total: nuevo }).eq("id", bloqueoId);
+
+  // Registrar en el historial de cambios del bloqueo.
+  const { data: { user } } = await sb.auth.getUser();
+  await sb.from("bloqueo_cambios").insert({
+    bloqueo_id: bloqueoId,
+    detalle: `Cupo eliminado (silla ${s.numero_silla ?? "?"}). Cupos: ${nuevo}.`,
+    registrado_por: user?.email ?? null,
+  });
+
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos");
+  return { ok: true };
+}
+
 export async function eliminarBloqueo(id: number): Promise<Result> {
   const sb = await createClient();
-  // Borrar sillas primero (no hay cascade declarado)
-  await sb.from("sillas").delete().eq("bloqueo_id", id);
+  // Captura los paquetes que usaban el bloqueo ANTES de borrarlo; se regeneran
+  // DESPUÉS para que el tarifario deje de publicar esa salida.
+  const { data: usados } = await sb.from("armado_vuelos").select("paquete_id").eq("bloqueo_id", id);
+  const paqIds = [...new Set((usados ?? []).map((u) => u.paquete_id))];
+
+  // Dependencias sin cascade que bloquean el borrado:
+  // 1) movimientos_silla → silla_id de las sillas de este bloqueo, y los
+  //    movimientos donde este bloqueo es origen o destino de un cambio.
+  const { data: sillasDel } = await sb.from("sillas").select("id").eq("bloqueo_id", id);
+  const sillaIds = (sillasDel ?? []).map((s) => s.id);
+  if (sillaIds.length) await sb.from("movimientos_silla").delete().in("silla_id", sillaIds);
+  await sb.from("movimientos_silla").delete().eq("bloqueo_origen_id", id);
+  await sb.from("movimientos_silla").delete().eq("bloqueo_destino_id", id);
+
+  // 2) Sillas del bloqueo.
+  const { error: es } = await sb.from("sillas").delete().eq("bloqueo_id", id);
+  if (es) return { ok: false, error: `No se pudieron borrar las sillas: ${es.message}` };
+
+  // 3) El bloqueo. Si aún lo referencia un contrato/paquete, Postgres lo impide;
+  //    devolvemos el motivo claro en vez de tragarnos el error.
   const { error } = await sb.from("bloqueos_vuelo").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    const fk = /foreign key|violates|referenced/i.test(error.message);
+    return { ok: false, error: fk
+      ? "No se puede eliminar: el bloqueo está referenciado por un contrato o paquete. Quita esas referencias primero."
+      : error.message };
+  }
+  for (const pid of paqIds) { try { await generarTarifario(pid); } catch { /* sigue */ } }
   revalidatePath("/dashboard/vuelos");
   return { ok: true };
 }
@@ -437,4 +578,116 @@ export async function moverPasajeroSilla(
   revalidatePath(`/dashboard/vuelos/${destinoId}`);
   revalidatePath("/dashboard/vuelos");
   return { ok: true };
+}
+
+// ── Carga masiva de PASAJEROS ──────────────────────────────────────────────
+// Cada fila trae su PNR (record). El pasajero se asigna a una silla LIBRE de ese
+// record (sin pasajero, estado disponible/cambio_entrante). Reglas pedidas:
+//  - Repetido por documento en el MISMO PNR → se omite (ya está ahí).
+//  - Mismo documento en OTRO PNR → alarma para revisar (no bloquea).
+//  - PNR que no existe → se cuenta y se avisa cuántos pasajeros lo traen.
+//  - Si un PNR no tiene cupos libres suficientes → se avisa.
+export async function cargarPasajerosMasivo(
+  rows: Record<string, string>[]
+): Promise<{ ok: boolean; insertados: number; errores: string[] }> {
+  const sb = await createClient();
+  const errores: string[] = [];
+
+  // PNR (record) → bloqueo. record es único.
+  const { data: bloqueos } = await sb.from("bloqueos_vuelo").select("id, record");
+  const recordToId = new Map<string, number>();
+  for (const b of bloqueos ?? []) {
+    const r = (b.record ?? "").trim().toUpperCase();
+    if (r) recordToId.set(r, b.id);
+  }
+
+  // Documento → records donde ya aparece (pasajeros ya cargados). Se va
+  // actualizando con el propio lote para detectar repetidos dentro del archivo.
+  const { data: existentes } = await sb
+    .from("sillas")
+    .select("numero_doc, bloqueos_vuelo(record)")
+    .not("numero_doc", "is", null);
+  const docRecords = new Map<string, Set<string>>();
+  for (const s of existentes ?? []) {
+    const doc = (s.numero_doc ?? "").trim();
+    if (!doc) continue;
+    const rec = ((s.bloqueos_vuelo as unknown as { record: string | null } | null)?.record ?? "").trim().toUpperCase();
+    const set = docRecords.get(doc) ?? new Set<string>();
+    if (rec) set.add(rec);
+    docRecords.set(doc, set);
+  }
+
+  type Pas = { nombres: string; apellidos: string; tipoDoc: string; doc: string; nacimiento: string | null };
+  const aCargarPorPnr = new Map<string, Pas[]>();
+  const pnrInexistente = new Set<string>();
+  let pnrInexistenteCount = 0;
+  let omitidos = 0;
+  const reFecha = /^\d{4}-\d{2}-\d{2}$/;
+
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const linea = i + 2;
+    const pnr = (r.pnr || r.record || "").trim().toUpperCase();
+    const nombres = (r.nombres || "").trim();
+    const apellidos = (r.apellidos || "").trim();
+    const tipoDoc = (r.tipo_doc || "").trim();
+    const doc = (r.numero_doc || "").trim();
+    const nacRaw = (r.nacimiento || "").trim();
+    const nacimiento = reFecha.test(nacRaw) ? nacRaw : null;
+
+    if (!pnr) { errores.push(`Fila ${linea}: sin PNR.`); continue; }
+    if (!doc) { errores.push(`Fila ${linea}: sin número de documento.`); continue; }
+    if (!nombres && !apellidos) { errores.push(`Fila ${linea}: sin nombre.`); continue; }
+
+    const records = docRecords.get(doc) ?? new Set<string>();
+    if (records.has(pnr)) { omitidos++; continue; } // ya está en ese PNR → omitir
+    if (records.size > 0) {
+      errores.push(`⚠️ Revisar: ${nombres} ${apellidos} (doc ${doc}) ya aparece en el PNR ${[...records].join(", ")} y ahora en ${pnr}.`);
+    }
+    records.add(pnr);
+    docRecords.set(doc, records);
+
+    if (!recordToId.has(pnr)) { pnrInexistenteCount++; pnrInexistente.add(pnr); continue; }
+    const arr = aCargarPorPnr.get(pnr) ?? [];
+    arr.push({ nombres, apellidos, tipoDoc, doc, nacimiento });
+    aCargarPorPnr.set(pnr, arr);
+  }
+
+  if (pnrInexistenteCount > 0)
+    errores.push(`⚠️ ${pnrInexistenteCount} pasajero(s) tienen un PNR que no existe: ${[...pnrInexistente].join(", ")}.`);
+  if (omitidos > 0)
+    errores.push(`${omitidos} pasajero(s) omitido(s): ya estaban en el mismo PNR (documento repetido).`);
+
+  // Asignación a sillas libres por record.
+  let insertados = 0;
+  for (const [pnr, pas] of aCargarPorPnr) {
+    const bloqueoId = recordToId.get(pnr)!;
+    const { data: libres } = await sb
+      .from("sillas")
+      .select("id")
+      .eq("bloqueo_id", bloqueoId)
+      .in("estado", ["disponible", "cambio_entrante"])
+      .is("pasajero_nombres", null)
+      .order("numero_silla")
+      .limit(pas.length);
+    const ids = (libres ?? []).map((s) => s.id);
+    if (ids.length < pas.length)
+      errores.push(`PNR ${pnr}: faltaron ${pas.length - ids.length} cupo(s) libre(s) para ${pas.length} pasajero(s).`);
+    for (let k = 0; k < ids.length && k < pas.length; k++) {
+      const p = pas[k];
+      const { error } = await sb.from("sillas").update({
+        pasajero_nombres: p.nombres || null,
+        pasajero_apellidos: p.apellidos || null,
+        tipo_doc: p.tipoDoc || null,
+        numero_doc: p.doc || null,
+        nacimiento: p.nacimiento,
+        updated_at: new Date().toISOString(),
+      }).eq("id", ids[k]);
+      if (error) errores.push(`PNR ${pnr}: ${error.message}`);
+      else insertados++;
+    }
+    revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  }
+  revalidatePath("/dashboard/vuelos/pasajeros");
+  return { ok: errores.length === 0, insertados, errores };
 }
