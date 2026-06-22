@@ -379,12 +379,18 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   pax**; destino vacío = nacional; **descripción del tour** y **recargo individual** —
   costo neto del proveedor (tarifa de individual) que entra al costo/CxP y sube el PVP
   con markup cuando va 1 pax en cobro por persona, migr. 088;
-  **temporadas por servicio** —tarifa por fecha del viaje + vigencia de compra +
-  prioridad, igual que hoteles, migr. 089: la actual = temporada GENERAL, y las
-  temporadas con fechas ganan cuando la fecha del viaje las cubre. Se editan en el
-  form del servicio y se aplican en Reservar (venta = escala el PVP del snapshot por
-  `neto_temporada/neto_general`; costo = usa el neto de la temporada). Motor:
-  `temporadaVigenteParaFecha` en `lib/calc/paquetes.ts`).
+  **temporadas por servicio** (migr. 089/090) — una temporada es una tarifa COMPLETA
+  por fecha del viaje: **precio por persona + recargo individual + rangos por grupo**,
+  con vigencia de compra y prioridad, igual que hoteles. La tarifa de siempre = temporada
+  **GENERAL** (la base del form); las temporadas con fechas ganan cuando la fecha del viaje
+  las cubre. El editor de temporadas aparece al **Editar** un servicio guardado (cada
+  temporada cuelga del servicio por FK). Los rangos por grupo de una temporada viven en
+  `servicio_tarifa_pax` con `temporada=<nombre>` (GENERAL = base). Se aplican en Reservar
+  (venta = escala el PVP del snapshot por `neto_temporada/neto_general`, incl. recargo via
+  factor de markup, y los rangos por grupo por su razón de netos; costo = usa neto+recargo+
+  rangos de la temporada). El snapshot del tarifario y la edición de servicios del contrato
+  usan SOLO la GENERAL. Motor: `temporadaVigenteParaFecha` en `lib/calc/paquetes.ts`.
+  *(Se quitó el viejo campo "Temporada (opcional)" — era solo una etiqueta.)*
   **Carga masiva CSV** en hoteles, tarifas, servicios y
   bloqueos (plantillas con `sep=;`, listas con `|`).
 - **Paquetes (armado):** config inicial (nombre, **tipo** bloqueo/porción/servicios, **noches**
@@ -444,7 +450,7 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **089** (correr en orden las que falten)
+### Migraciones Supabase — total en repo: **090** (correr en orden las que falten)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
@@ -486,6 +492,14 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > entra al `costo_receptivo` y a la **CxP del proveedor** (Reservar lo toma del catálogo),
 > y el PVP sube con su markup (en `tarifario_resultado.recargo_individual` se guarda ya con
 > markup). Se publica en la vitrina pública de Servicios.
+> **089 servicio_temporadas** ← *aplicada*: `servicio_temporadas` (tarifa por fecha del viaje
+> + vigencia de compra + prioridad + `precio_persona`) y `servicio_tarifa_pax.temporada`
+> (rangos por grupo por temporada; la base = 'GENERAL').
+> **090 servicio_temporada_recargo** ← *pendiente de correr*: `recargo_individual` en
+> `servicio_temporadas`. Cierra el modelo: una temporada es una tarifa COMPLETA (persona +
+> recargo + rangos por grupo). El editor de temporadas (al **Editar** un servicio) ya carga
+> los tres; Reservar aplica los tres por fecha; el snapshot del tarifario y la edición de
+> servicios del contrato usan SOLO la GENERAL. Se quitó el campo "Temporada (opcional)".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·

@@ -23,18 +23,30 @@ const COLS_SERVICIOS = [
 export default async function ServiciosPage() {
   const sb = await createClient();
   const [{ data: serviciosRaw }, { data: proveedores }, { data: destinos }, { data: rangos }, { data: temporadasRaw }] = await Promise.all([
-    sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, rangos_edad, categoria, liquidacion, descripcion, recargo_individual, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio)").order("nombre"),
+    sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, rangos_edad, categoria, liquidacion, descripcion, recargo_individual, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio, temporada)").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "servicios").order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
-    sb.from("servicio_temporadas").select("id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona").order("prioridad", { ascending: false }),
+    sb.from("servicio_temporadas").select("id, servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").order("prioridad", { ascending: false }),
   ]);
   const servicios = (serviciosRaw ?? []) as unknown as Parameters<typeof ServiciosClient>[0]["servicios"];
-  // Agrupa las temporadas por servicio para pasarlas al cliente.
-  type TempRow = NonNullable<typeof temporadasRaw>[number];
+
+  // Rangos por grupo de cada TEMPORADA (servicio_tarifa_pax.temporada != GENERAL),
+  // tomados de los rangos ya embebidos en cada servicio. Clave: servicioId|temporada.
+  type Tier = { pax_desde: number; pax_hasta: number; precio: number; temporada?: string | null };
+  const gruposTemp: Record<string, Tier[]> = {};
+  for (const s of serviciosRaw ?? []) {
+    for (const t of ((s as unknown as { servicio_tarifa_pax?: Tier[] }).servicio_tarifa_pax ?? [])) {
+      const tmp = t.temporada ?? "GENERAL";
+      if (tmp !== "GENERAL") (gruposTemp[`${s.id}|${tmp}`] ??= []).push(t);
+    }
+  }
+
+  // Agrupa las temporadas por servicio (con sus rangos por grupo) para el cliente.
+  type TempRow = NonNullable<typeof temporadasRaw>[number] & { grupos: Tier[] };
   const temporadasPorServicio: Record<number, TempRow[]> = {};
   for (const t of temporadasRaw ?? []) {
-    (temporadasPorServicio[t.servicio_id] ??= []).push(t);
+    (temporadasPorServicio[t.servicio_id] ??= []).push({ ...t, grupos: gruposTemp[`${t.servicio_id}|${t.nombre}`] ?? [] });
   }
 
   return (

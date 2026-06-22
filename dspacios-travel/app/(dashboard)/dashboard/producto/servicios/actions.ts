@@ -11,6 +11,10 @@ export type Liquidacion = "dia" | "noche" | "paquete";
 export type TierPax = { paxDesde: number; paxHasta: number; precio: number };
 
 // ── Temporadas del servicio (tarifa por fecha + vigencia de compra) ─────────
+// Una temporada es una tarifa COMPLETA para su rango de fechas: precio por
+// persona + recargo individual + rangos por grupo. La tarifa de siempre es la
+// temporada 'GENERAL' (sin fechas). Los rangos por grupo de una temporada viven
+// en servicio_tarifa_pax con temporada = nombre de la temporada.
 export type TemporadaServicioInput = {
   nombre: string;
   fechaInicio: string;
@@ -19,6 +23,8 @@ export type TemporadaServicioInput = {
   compraFin: string;
   prioridad: number;
   precioPersona: number | null;
+  recargoIndividual: number | null;
+  grupoTiers: TierPax[];
 };
 
 function temporadaRow(servicioId: number, input: TemporadaServicioInput) {
@@ -31,31 +37,49 @@ function temporadaRow(servicioId: number, input: TemporadaServicioInput) {
     compra_fin: oNull(input.compraFin),
     prioridad: Number(input.prioridad) || 1,
     precio_persona: input.precioPersona,
+    recargo_individual: input.recargoIndividual,
   };
 }
 
 export async function crearTemporadaServicio(servicioId: number, input: TemporadaServicioInput): Promise<Result> {
   const sb = await createClient();
+  const nombre = input.nombre.trim() || "Temporada";
+  if (nombre.toUpperCase() === "GENERAL") return { ok: false, error: "'GENERAL' es la tarifa base; usa otro nombre para la temporada." };
   const { error } = await sb.from("servicio_temporadas").insert(temporadaRow(servicioId, input));
   if (error) return { ok: false, error: error.message };
+  await guardarGrupoTiers(sb, servicioId, input.grupoTiers ?? [], nombre);
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }
 
 export async function actualizarTemporadaServicio(id: number, input: TemporadaServicioInput): Promise<Result> {
   const sb = await createClient();
+  const nombre = input.nombre.trim() || "Temporada";
+  if (nombre.toUpperCase() === "GENERAL") return { ok: false, error: "'GENERAL' es la tarifa base; usa otro nombre para la temporada." };
+  // Datos previos: el servicio y el nombre anterior (los rangos por grupo se
+  // guardan con el nombre de la temporada, hay que reubicarlos si se renombró).
+  const { data: prev } = await sb.from("servicio_temporadas").select("servicio_id, nombre").eq("id", id).maybeSingle();
+  if (!prev) return { ok: false, error: "Temporada no encontrada." };
   const { servicio_id: _omit, ...row } = temporadaRow(0, input);
   void _omit;
   const { error } = await sb.from("servicio_temporadas").update(row).eq("id", id);
   if (error) return { ok: false, error: error.message };
+  // Si cambió el nombre, limpia los rangos del nombre viejo antes de reescribir.
+  if (prev.nombre && prev.nombre !== nombre) {
+    await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", prev.servicio_id).eq("temporada", prev.nombre);
+  }
+  await guardarGrupoTiers(sb, prev.servicio_id, input.grupoTiers ?? [], nombre);
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }
 
 export async function eliminarTemporadaServicio(id: number): Promise<Result> {
   const sb = await createClient();
+  const { data: prev } = await sb.from("servicio_temporadas").select("servicio_id, nombre").eq("id", id).maybeSingle();
   const { error } = await sb.from("servicio_temporadas").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
+  // Borra también los rangos por grupo de esa temporada.
+  if (prev) await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", prev.servicio_id).eq("temporada", prev.nombre);
   revalidatePath("/dashboard/producto/servicios");
   return { ok: true };
 }
@@ -90,12 +114,16 @@ function servicioToRow(input: ServicioInput) {
   };
 }
 
+// Reemplaza los rangos por grupo de UNA temporada (default 'GENERAL' = base).
+// Acotar por temporada es clave: guardar la base NO debe borrar los rangos de
+// las temporadas, y viceversa.
 async function guardarGrupoTiers(
   sb: Awaited<ReturnType<typeof createClient>>,
   servicioId: number,
-  tiers: TierPax[]
+  tiers: TierPax[],
+  temporada = "GENERAL"
 ) {
-  await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", servicioId);
+  await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", servicioId).eq("temporada", temporada);
   const validos = tiers.filter((t) => Number(t.precio) > 0);
   if (validos.length) {
     await sb.from("servicio_tarifa_pax").insert(
@@ -104,6 +132,7 @@ async function guardarGrupoTiers(
         pax_desde: Number(t.paxDesde) || 1,
         pax_hasta: Number(t.paxHasta) || Number(t.paxDesde) || 1,
         precio: Number(t.precio) || 0,
+        temporada,
       }))
     );
   }

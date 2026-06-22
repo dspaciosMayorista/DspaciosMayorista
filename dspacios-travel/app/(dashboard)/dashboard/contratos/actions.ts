@@ -536,7 +536,7 @@ export async function actualizarServiciosContrato(
       if (serviciosIds.length) {
         const [{ data: arm }, { data: gruposNet }] = await Promise.all([
           admin.from("armado_servicios").select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre, liquidacion)").eq("paquete_id", venta.paquete_armado_id).in("servicio_id", serviciosIds),
-          admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", serviciosIds),
+          admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio").eq("temporada", "GENERAL").in("servicio_id", serviciosIds),
         ]);
         const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
         for (const g of gruposNet ?? []) {

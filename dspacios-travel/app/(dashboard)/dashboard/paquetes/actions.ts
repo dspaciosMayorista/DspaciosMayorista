@@ -296,9 +296,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
   const gruposPorServicio = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
   if (servicioIds.length) {
+    // El snapshot del tarifario usa la tarifa BASE (GENERAL); las temporadas se
+    // aplican al reservar (re-escala por fecha del viaje).
     const { data: gr } = await sb
       .from("servicio_tarifa_pax")
       .select("servicio_id, pax_desde, pax_hasta, precio")
+      .eq("temporada", "GENERAL")
       .in("servicio_id", servicioIds);
     for (const g of gr ?? []) {
       const arr = gruposPorServicio.get(g.servicio_id) ?? [];

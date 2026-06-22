@@ -521,32 +521,58 @@ async function computarReserva(
 
     // Tarifa por TEMPORADA del servicio: si la fecha del viaje cae en una temporada
     // vigente, se escala el PVP del snapshot por la razón neto_temporada/neto_general
-    // (conserva markup, liquidación y redondeo del GENERAL proporcionalmente).
+    // (conserva markup, liquidación y redondeo del GENERAL proporcionalmente). Una
+    // temporada es una tarifa COMPLETA: persona + recargo individual + rangos por grupo.
     const fechaViaje = meta.fecha_ida;
     if (fechaViaje && byServ.size) {
       const ids = [...byServ.keys()];
-      const [{ data: baseSrv }, { data: temps }] = await Promise.all([
+      const [{ data: baseSrv }, { data: temps }, { data: tarifaPax }] = await Promise.all([
         sb.from("servicios_adicionales").select("id, precio_persona").in("id", ids),
-        sb.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona").in("servicio_id", ids),
+        sb.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", ids),
+        sb.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", ids),
       ]);
       const netoGen = new Map((baseSrv ?? []).map((b) => [b.id, Number(b.precio_persona) || 0]));
       const tempsByServ = new Map<number, TemporadaRango[]>();
-      const netoTemp = new Map<string, number>();
+      const netoTemp = new Map<string, number>();   // servId|nombre -> neto persona
+      const recTemp = new Map<string, number>();    // servId|nombre -> recargo neto
       for (const t of temps ?? []) {
         const arr = tempsByServ.get(t.servicio_id) ?? [];
         arr.push(toTemporadaRango(t));
         tempsByServ.set(t.servicio_id, arr);
         if (t.precio_persona != null) netoTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+        if (t.recargo_individual != null) recTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
       }
+      // Netos por GRUPO por temporada (incl. GENERAL): para rescatar por rango de pax.
+      const grpRanges = new Map<string, { d: number; h: number; p: number }[]>();
+      for (const g of tarifaPax ?? []) {
+        const k = `${g.servicio_id}|${g.temporada ?? "GENERAL"}`;
+        const list = grpRanges.get(k) ?? [];
+        list.push({ d: g.pax_desde, h: g.pax_hasta, p: Number(g.precio) || 0 });
+        grpRanges.set(k, list);
+      }
+      const netoGrupo = (servId: number, temp: string, pax: number): number | undefined =>
+        grpRanges.get(`${servId}|${temp}`)?.find((x) => pax >= x.d && pax <= x.h)?.p;
+
       const d = new Date(`${fechaViaje}T00:00:00`);
       for (const [id, s] of byServ) {
-        if (s.modo !== "persona" || s.personaPvp == null) continue;
         const tt = tempsByServ.get(id);
         if (!tt?.length) continue;
         const nombre = temporadaVigenteParaFecha(d, tt);
-        const nt = nombre ? netoTemp.get(`${id}|${nombre}`) : undefined;
-        const ng = netoGen.get(id) || 0;
-        if (nt != null && ng > 0) s.personaPvp = Math.round(s.personaPvp * (nt / ng));
+        if (!nombre) continue;
+        if (s.modo === "persona" && s.personaPvp != null) {
+          const ng = netoGen.get(id) || 0;
+          const mkf = ng > 0 ? s.personaPvp / ng : null;   // factor de markup del snapshot
+          const nt = netoTemp.get(`${id}|${nombre}`);
+          if (nt != null && ng > 0) s.personaPvp = Math.round(s.personaPvp * (nt / ng));
+          const rt = recTemp.get(`${id}|${nombre}`);        // recargo NETO de la temporada
+          if (rt != null && mkf != null) s.recargoIndividual = Math.round(rt * mkf);
+        } else if (s.modo === "grupo") {
+          for (const g of s.grupos) {
+            const ngG = netoGrupo(id, "GENERAL", g.pax_desde) ?? netoGrupo(id, "GENERAL", g.pax_hasta);
+            const ntG = netoGrupo(id, nombre, g.pax_desde) ?? netoGrupo(id, nombre, g.pax_hasta);
+            if (ntG != null && ngG != null && ngG > 0) g.precio = Math.round(g.precio * (ntG / ngG));
+          }
+        }
       }
     }
 
@@ -955,33 +981,36 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
           .select("servicio_id, modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedores(nombre, aplica_retencion, pct_retencion))")
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
-          .select("servicio_id, pax_desde, pax_hasta, precio").in("servicio_id", input.servicios),
+          .select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", input.servicios),
         admin.from("servicio_temporadas")
-          .select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona").in("servicio_id", input.servicios),
+          .select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", input.servicios),
       ]);
-      const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+      // Rangos por grupo (NETO) por servicio y temporada (incl. GENERAL).
+      const gruposPorServ = new Map<string, { pax_desde: number; pax_hasta: number; precio: number }[]>();
       for (const g of gruposNet ?? []) {
-        const arr = gruposPorServ.get(g.servicio_id) ?? [];
+        const k = `${g.servicio_id}|${g.temporada ?? "GENERAL"}`;
+        const arr = gruposPorServ.get(k) ?? [];
         arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
-        gruposPorServ.set(g.servicio_id, arr);
+        gruposPorServ.set(k, arr);
       }
       // Temporadas por servicio: el NETO del costo cambia según la fecha del viaje.
       const tempsPorServ = new Map<number, TemporadaRango[]>();
-      const netoTempServ = new Map<string, number>();
+      const netoTempServ = new Map<string, number>();   // servId|nombre -> neto persona
+      const recTempServ = new Map<string, number>();    // servId|nombre -> recargo neto
       for (const t of tempsNet ?? []) {
         const arr = tempsPorServ.get(t.servicio_id) ?? [];
         arr.push(toTemporadaRango(t));
         tempsPorServ.set(t.servicio_id, arr);
         if (t.precio_persona != null) netoTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+        if (t.recargo_individual != null) recTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
       }
       const fechaViajeCosto = meta.fecha_ida ? new Date(`${meta.fecha_ida}T00:00:00`) : null;
-      const netoPersonaServicio = (servId: number, general: number | null): number | null => {
-        if (!fechaViajeCosto) return general ?? null;
+      // Temporada vigente del servicio para la fecha del viaje (o null = GENERAL).
+      const tempVigente = (servId: number): string | null => {
+        if (!fechaViajeCosto) return null;
         const tt = tempsPorServ.get(servId);
-        if (!tt?.length) return general ?? null;
-        const nombre = temporadaVigenteParaFecha(fechaViajeCosto, tt);
-        const nt = nombre ? netoTempServ.get(`${servId}|${nombre}`) : undefined;
-        return nt != null ? nt : (general ?? null);
+        if (!tt?.length) return null;
+        return temporadaVigenteParaFecha(fechaViajeCosto, tt);
       };
       const nochesStay = meta.fecha_ida && meta.fecha_regreso ? noches(meta.fecha_ida, meta.fecha_regreso) : 1;
       let costoReceptivo = 0;
@@ -990,11 +1019,19 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
         const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedores: ProvFact } | null;
-        const netoPersona = netoPersonaServicio(s.servicio_id, srv?.precio_persona ?? null);
-        let costoServ = precioServicio(modo, netoPersona, gruposPorServ.get(s.servicio_id) ?? [], totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
+        const nombreTemp = tempVigente(s.servicio_id);
+        // Neto por persona: el de la temporada vigente, o el base.
+        const netoPersona = (nombreTemp ? netoTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined) ?? srv?.precio_persona ?? null;
+        // Rangos por grupo: los de la temporada vigente si existen, si no GENERAL.
+        const gruposTemp = nombreTemp ? gruposPorServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined;
+        const grupos = gruposTemp?.length ? gruposTemp : (gruposPorServ.get(`${s.servicio_id}|GENERAL`) ?? []);
+        let costoServ = precioServicio(modo, netoPersona, grupos, totalPax) * factorLiquidacion(srv?.liquidacion, nochesStay);
         // Recargo individual: suplemento NETO del proveedor cuando va 1 pax (cobro
-        // por persona). Entra al COSTO y a la CxP para liquidar correcto al proveedor.
-        if (modo === "persona" && totalPax === 1) costoServ += Math.max(Number(srv?.recargo_individual) || 0, 0);
+        // por persona). El de la temporada vigente si lo define, si no el base.
+        if (modo === "persona" && totalPax === 1) {
+          const recTemp = nombreTemp ? recTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined;
+          costoServ += Math.max(recTemp ?? (Number(srv?.recargo_individual) || 0), 0);
+        }
         costoReceptivo += costoServ;
         const cat = srv?.categoria ?? "otro";
         if (cat === "asistencia") hayAsistencia = true;
