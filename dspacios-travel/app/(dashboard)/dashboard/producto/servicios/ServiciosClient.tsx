@@ -219,9 +219,19 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
 
-        {/* Temporadas (tarifa por fecha) — solo al editar un servicio guardado */}
-        {editId && (
+        {/* Temporadas (tarifa por fecha) — necesitan el servicio ya guardado (FK),
+            así que el editor solo aparece al EDITAR. En creación, una guía. */}
+        {editId ? (
           <TemporadasServicio servicioId={editId} lista={temporadas[editId] ?? []} />
+        ) : (
+          <div className="mt-4 rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3">
+            <p className="text-sm font-semibold text-gray-700">Temporadas (tarifa por fecha del viaje)</p>
+            <p className="mt-1 text-xs text-gray-500">
+              Guarda primero el servicio con <b>«Agregar servicio»</b>; luego ábrelo con <b>Editar</b> (en
+              la lista de abajo) y aquí podrás cargar tarifas por temporada con sus fechas y vigencia de
+              compra. El campo <b>«Temporada (opcional)»</b> de arriba es solo una etiqueta de la tarifa base.
+            </p>
+          </div>
         )}
       </div>
 
