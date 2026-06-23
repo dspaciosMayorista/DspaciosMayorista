@@ -143,10 +143,10 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
     todos los getters de `lib/sitio` filtran `web_*` por org), **branding** (logo +
     colores de marca via CSS vars), **inserts públicos** con `org_id` del slug (registro
     B2B, contacto CRM y **cotización** del checkout). Sin slug = org default → mono-tenant
-    igual. ⏳ Pendiente menor: branding de colores también en el sitio web; lecturas por
-    id/token sueltas (vouchers/recibos) siguen por unicidad de id (no enumerable). **Falta
-    VALIDAR corriendo con una 2ª org** (crear org+slug, paquetes/programas, y verificar
-    `/o/<slug>` aísla; `/tarifario` sigue mostrando la default).
+    igual. Branding de colores también en `app/sitio_web` ✅. ⏳ Pendiente menor: lecturas
+    por id/token sueltas (vouchers/recibos) siguen por unicidad de id (no enumerable).
+    **Falta VALIDAR corriendo con una 2ª org** — guía paso a paso en
+    `docs/saas/validar-multitenant.md`.
 - 🚧 **Fase 2 — Marca por org + onboarding.**
   - ✅ **Admin de organizaciones** (`/dashboard/organizaciones`, solo superadmin de la
     plataforma): listar/crear/editar tenants (slug, datos, **colores**, logos, plan,
