@@ -82,8 +82,14 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
     (`org_id = mi_org() OR auth.uid() is null`) en toda tabla con RLS + `org_id`. Aísla
     a los usuarios logueados por su org; el anónimo queda exento (lo público se acota por
     el path en Paso 4). No cambia nada en mono-tenant.
+  - **104** `saas_uniques_por_org` — Fase 2: convierte los UNIQUE globales de catálogos
+    (`parametros_tributarios.parametro`, `destinos.nombre`, `planes_alimentacion.codigo`,
+    `categorias_habitacion.nombre`, `formas_pago.nombre`) a UNIQUE por org `(org_id, col)`.
+    Necesario para que dos agencias tengan los mismos nombres/códigos. Seguro: relaja la
+    restricción. ⚠️ **Correr antes de crear la 2ª org** (si no, la siembra de catálogos
+    chocará con los uniques globales).
 - ⚠️ Antes de crear una nueva: `ls supabase/migrations/ | sort | tail` y tomar el
-  **siguiente número libre** (la SaaS va por la **103**; la próxima es **104**).
+  **siguiente número libre** (la SaaS va por la **104**; la próxima es **105**).
 - Idempotentes (`add column if not exists`, `on conflict do nothing`). No editar una ya
   creada: crear la siguiente.
 
@@ -148,9 +154,11 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
     Al crear puede crear el **primer superadmin** de la org (email + contraseña temporal),
     dejándola usable. Botón "Ver tarifario ↗" a `/o/<slug>/tarifario`. **Esto desbloquea
     crear la 2ª org para validar el Paso 4.**
+  - ✅ **UNIQUE por org** (migr. 104) + **siembra de catálogos** al crear org: copia
+    `parametros_tributarios` y `formas_pago` de la org default → la nueva nace usable
+    (best-effort; requiere la migr. 104 corrida).
   - ⏳ FALTA: des-hardcodear "D'spacios" (~55 referencias) en contrato/PDF/emails →
-    leer de `organizaciones`; semilla de catálogos base al crear org (parámetros
-    tributarios, formas de pago, rangos de edad); wizard self-service; (luego) subdominios.
+    leer de `organizaciones`; wizard self-service; (luego) subdominios.
 - ⏳ **Fase 3 — Planes, límites y cobro.** Tabla `planes`, estados `suspendida/cancelada`,
   rol `plataforma_admin` + panel de administración del SaaS, pasarela (Stripe/Wompi/MP).
 

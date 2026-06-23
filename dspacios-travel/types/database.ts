@@ -218,6 +218,7 @@ export type Database = {
       parametros_tributarios: {
         Row: {
           id: number;
+          org_id: string | null;
           parametro: string;
           valor: number;
           base_calculo: string | null;
@@ -226,6 +227,7 @@ export type Database = {
         };
         Insert: {
           id?: number;
+          org_id?: string | null;
           parametro: string;
           valor: number;
           base_calculo?: string | null;
@@ -1289,8 +1291,8 @@ export type Database = {
         Relationships: [];
       };
       formas_pago: {
-        Row: { id: number; nombre: string; activo: boolean; orden: number; created_at: string };
-        Insert: { id?: number; nombre: string; activo?: boolean; orden?: number; created_at?: string };
+        Row: { id: number; org_id: string | null; nombre: string; activo: boolean; orden: number; created_at: string };
+        Insert: { id?: number; org_id?: string | null; nombre: string; activo?: boolean; orden?: number; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["formas_pago"]["Insert"]>;
         Relationships: [];
       };

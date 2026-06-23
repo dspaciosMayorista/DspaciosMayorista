@@ -50,6 +50,47 @@ function tempPassword(): string {
   return Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6).toUpperCase();
 }
 
+// Siembra catálogos base en una org NUEVA copiándolos de la org de origen (la
+// default). Así nace usable: parámetros tributarios (rentabilidad/IVA) y formas
+// de pago (abonos). Best-effort: si falla (p. ej. falta correr la migración 104
+// de uniques por-org), no rompe la creación de la org.
+async function sembrarCatalogos(
+  admin: ReturnType<typeof createAdminClient>,
+  fromOrg: string,
+  toOrg: string
+): Promise<void> {
+  try {
+    const { data: params } = await admin
+      .from("parametros_tributarios")
+      .select("parametro, valor, base_calculo, descripcion")
+      .eq("org_id", fromOrg);
+    if (params?.length) {
+      await admin.from("parametros_tributarios").insert(
+        params.map((p) => ({ ...p, org_id: toOrg }))
+      );
+    }
+  } catch { /* best-effort */ }
+  try {
+    const { data: formas } = await admin
+      .from("formas_pago")
+      .select("nombre, activo, orden")
+      .eq("org_id", fromOrg);
+    if (formas?.length) {
+      await admin.from("formas_pago").insert(
+        formas.map((f) => ({ ...f, org_id: toOrg }))
+      );
+    }
+  } catch { /* best-effort */ }
+}
+
+// org de origen para sembrar: la de slug 'dspacios' o, si no, la más antigua.
+async function orgOrigen(admin: ReturnType<typeof createAdminClient>): Promise<string | null> {
+  const { data: d } = await admin.from("organizaciones").select("id").eq("slug", "dspacios").maybeSingle();
+  if (d?.id) return d.id;
+  const { data: first } = await admin.from("organizaciones").select("id").order("created_at", { ascending: true }).limit(1).maybeSingle();
+  return first?.id ?? null;
+}
+
 export async function crearOrganizacion(input: OrgInput): Promise<Result> {
   const guard = await exigirSuperadmin();
   if (!guard.ok) return guard;
@@ -75,6 +116,10 @@ export async function crearOrganizacion(input: OrgInput): Promise<Result> {
     const dup = (error?.message ?? "").toLowerCase().includes("duplicate") || (error?.code === "23505");
     return { ok: false, error: dup ? `Ya existe una organización con el slug "${slug}".` : (error?.message ?? "No se pudo crear.") };
   }
+
+  // Catálogos base para que nazca usable (copiados de la org default).
+  const origen = await orgOrigen(admin);
+  if (origen && origen !== org.id) await sembrarCatalogos(admin, origen, org.id);
 
   let mensaje = `Organización "${input.nombre.trim()}" creada · tarifario en /o/${slug}/tarifario`;
 
