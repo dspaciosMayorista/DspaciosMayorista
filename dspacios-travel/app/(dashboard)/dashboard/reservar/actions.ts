@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { orgActual } from "@/lib/org";
+import { orgActual, orgDelRequest } from "@/lib/org";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, toTemporadaRango, minNochesAplicable, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, paxDeAcomodacion, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
@@ -1105,8 +1105,8 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   // disponible (si no, cae al cliente con sesión = sólo internos).
   const sbCot = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
 
-  // SaaS: si hay sesión, estampar el org; si es público (sin sesión), dejar el default.
-  const orgCot = await orgActual();
+  // SaaS: org de la sesión (B2B) o, en checkout público, la del slug del tarifario.
+  const orgCot = (await orgActual()) ?? (await orgDelRequest())?.id ?? null;
   const { data: row, error } = await sbCot.from("cotizaciones").insert({
     ...(orgCot ? { org_id: orgCot } : {}),
     payload: input as unknown as Json,
