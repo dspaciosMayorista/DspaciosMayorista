@@ -2047,32 +2047,32 @@ export type Database = {
         Relationships: [];
       };
       web_destinos: {
-        Row: { id: number; nombre: string; region: string | null; imagen_url: string | null; tips: string[]; orden: number; activo: boolean; created_at: string; updated_at: string };
-        Insert: { id?: number; nombre: string; region?: string | null; imagen_url?: string | null; tips?: string[]; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
+        Row: { id: number; org_id: string | null; nombre: string; region: string | null; imagen_url: string | null; tips: string[]; orden: number; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; org_id?: string | null; nombre: string; region?: string | null; imagen_url?: string | null; tips?: string[]; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["web_destinos"]["Insert"]>;
         Relationships: [];
       };
       web_testimonios: {
-        Row: { id: number; nombre: string; ubicacion: string | null; rating: number; comentario: string; imagen_url: string | null; orden: number; activo: boolean; created_at: string; updated_at: string };
-        Insert: { id?: number; nombre: string; ubicacion?: string | null; rating?: number; comentario: string; imagen_url?: string | null; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
+        Row: { id: number; org_id: string | null; nombre: string; ubicacion: string | null; rating: number; comentario: string; imagen_url: string | null; orden: number; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; org_id?: string | null; nombre: string; ubicacion?: string | null; rating?: number; comentario: string; imagen_url?: string | null; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["web_testimonios"]["Insert"]>;
         Relationships: [];
       };
       web_blog: {
-        Row: { id: number; titulo: string; slug: string | null; categoria: string | null; fecha: string | null; resumen: string | null; contenido: string | null; imagen_url: string | null; orden: number; activo: boolean; created_at: string; updated_at: string };
-        Insert: { id?: number; titulo: string; slug?: string | null; categoria?: string | null; fecha?: string | null; resumen?: string | null; contenido?: string | null; imagen_url?: string | null; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
+        Row: { id: number; org_id: string | null; titulo: string; slug: string | null; categoria: string | null; fecha: string | null; resumen: string | null; contenido: string | null; imagen_url: string | null; orden: number; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; org_id?: string | null; titulo: string; slug?: string | null; categoria?: string | null; fecha?: string | null; resumen?: string | null; contenido?: string | null; imagen_url?: string | null; orden?: number; activo?: boolean; created_at?: string; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["web_blog"]["Insert"]>;
         Relationships: [];
       };
       web_config: {
-        Row: { id: number; hero_titulo: string | null; hero_subtitulo: string | null; hero_imagen_url: string | null; hero_cta_texto: string | null; hero_cta_url: string | null; nosotros_titulo: string | null; nosotros_texto: string | null; nosotros_imagen_url: string | null; contacto_email: string | null; contacto_telefono: string | null; whatsapp_numero: string | null; whatsapp_mensaje: string | null; direccion: string | null; instagram_url: string | null; facebook_url: string | null; tiktok_url: string | null; extra: Json; updated_at: string };
-        Insert: { id?: number; hero_titulo?: string | null; hero_subtitulo?: string | null; hero_imagen_url?: string | null; hero_cta_texto?: string | null; hero_cta_url?: string | null; nosotros_titulo?: string | null; nosotros_texto?: string | null; nosotros_imagen_url?: string | null; contacto_email?: string | null; contacto_telefono?: string | null; whatsapp_numero?: string | null; whatsapp_mensaje?: string | null; direccion?: string | null; instagram_url?: string | null; facebook_url?: string | null; tiktok_url?: string | null; extra?: Json; updated_at?: string };
+        Row: { id: number; org_id: string | null; hero_titulo: string | null; hero_subtitulo: string | null; hero_imagen_url: string | null; hero_cta_texto: string | null; hero_cta_url: string | null; nosotros_titulo: string | null; nosotros_texto: string | null; nosotros_imagen_url: string | null; contacto_email: string | null; contacto_telefono: string | null; whatsapp_numero: string | null; whatsapp_mensaje: string | null; direccion: string | null; instagram_url: string | null; facebook_url: string | null; tiktok_url: string | null; extra: Json; updated_at: string };
+        Insert: { id?: number; org_id?: string | null; hero_titulo?: string | null; hero_subtitulo?: string | null; hero_imagen_url?: string | null; hero_cta_texto?: string | null; hero_cta_url?: string | null; nosotros_titulo?: string | null; nosotros_texto?: string | null; nosotros_imagen_url?: string | null; contacto_email?: string | null; contacto_telefono?: string | null; whatsapp_numero?: string | null; whatsapp_mensaje?: string | null; direccion?: string | null; instagram_url?: string | null; facebook_url?: string | null; tiktok_url?: string | null; extra?: Json; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["web_config"]["Insert"]>;
         Relationships: [];
       };
       web_paginas: {
-        Row: { id: number; parent_id: number | null; slug: string; titulo: string; etiqueta_menu: string | null; tipo: string; es_grupo_menu: boolean; en_menu: boolean; orden: number; seo_titulo: string | null; seo_descripcion: string | null; imagen_portada: string | null; activo: boolean; created_at: string; updated_at: string };
-        Insert: { id?: number; parent_id?: number | null; slug: string; titulo: string; etiqueta_menu?: string | null; tipo?: string; es_grupo_menu?: boolean; en_menu?: boolean; orden?: number; seo_titulo?: string | null; seo_descripcion?: string | null; imagen_portada?: string | null; activo?: boolean; created_at?: string; updated_at?: string };
+        Row: { id: number; org_id: string | null; parent_id: number | null; slug: string; titulo: string; etiqueta_menu: string | null; tipo: string; es_grupo_menu: boolean; en_menu: boolean; orden: number; seo_titulo: string | null; seo_descripcion: string | null; imagen_portada: string | null; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; org_id?: string | null; parent_id?: number | null; slug: string; titulo: string; etiqueta_menu?: string | null; tipo?: string; es_grupo_menu?: boolean; en_menu?: boolean; orden?: number; seo_titulo?: string | null; seo_descripcion?: string | null; imagen_portada?: string | null; activo?: boolean; created_at?: string; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["web_paginas"]["Insert"]>;
         Relationships: [];
       };

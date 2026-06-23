@@ -8,6 +8,7 @@ import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
 import { orgDelRequest } from "@/lib/org";
+import type { CSSProperties } from "react";
 
 export const revalidate = 120; // revalida cada 2 min
 
@@ -156,8 +157,20 @@ export default async function TarifarioPublicoPage() {
   const { data: cfgSitio } = await sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle();
   const videoFondo = cfgSitio?.video_fondo_url ?? null;
 
+  // SaaS: branding de COLORES por org (sobre-escribe las CSS vars de marca). Si la
+  // org no define colores, se usan los de D'spacios de globals.css.
+  const brandStyle: CSSProperties | undefined = org && (org.color_primario || org.color_acento)
+    ? ({
+        ...(org.color_primario ? { "--brand-primary": org.color_primario } : {}),
+        ...(org.color_acento ? { "--brand-accent": org.color_acento } : {}),
+        ...(org.color_primario && org.color_acento
+          ? { "--brand-gradient": `linear-gradient(120deg, ${org.color_primario}, ${org.color_acento})` }
+          : {}),
+      } as CSSProperties)
+    : undefined;
+
   return (
-    <div className="app-bg min-h-screen bg-gray-50">
+    <div className="app-bg min-h-screen bg-gray-50" style={brandStyle}>
       <header className={`relative overflow-hidden bg-brand-gradient px-6 pt-8 pb-16 text-white ${videoFondo ? "flex min-h-[60vh] flex-col justify-end" : "min-h-[200px] flex flex-col justify-end"}`}>
         <BackgroundVideo url={videoFondo} overlay={0.4} />
         {!videoFondo && (

@@ -7,6 +7,7 @@
 // El sitio nunca se ve vacío.
 // ─────────────────────────────────────────────────────────────────────────
 import { createClient } from "@/lib/supabase/server";
+import { orgDelRequest } from "@/lib/org";
 import {
   PAGINAS_FALLBACK,
   type PaginaFallback,
@@ -136,14 +137,16 @@ function fbHijos(slug: string): PaginaHijo[] {
 export async function getMenu(): Promise<MenuItem[]> {
   try {
     const sb = await createClient();
-    const { data, error } = await sb
+    const org = await orgDelRequest();
+    let q = sb
       .from("web_paginas")
       .select(
         "id, parent_id, slug, titulo, etiqueta_menu, tipo, es_grupo_menu, en_menu, activo, orden"
       )
       .eq("en_menu", true)
-      .eq("activo", true)
-      .order("orden", { ascending: true });
+      .eq("activo", true);
+    if (org) q = q.eq("org_id", org.id);
+    const { data, error } = await q.order("orden", { ascending: true });
     if (error || !data || data.length === 0) return fbMenu();
 
     const byId = new Map<number, MenuItem>();
@@ -179,14 +182,17 @@ export async function getPagina(slug: string): Promise<Pagina | null> {
   const realSlug = slug === "/" || slug === "" ? "inicio" : slug;
   try {
     const sb = await createClient();
-    const { data: pagina, error } = await sb
+    const org = await orgDelRequest();
+    // slug NO es único entre orgs → hay que acotar por org_id.
+    let pq = sb
       .from("web_paginas")
       .select(
         "id, slug, titulo, tipo, seo_titulo, seo_descripcion, imagen_portada, activo"
       )
       .eq("slug", realSlug)
-      .eq("activo", true)
-      .maybeSingle();
+      .eq("activo", true);
+    if (org) pq = pq.eq("org_id", org.id);
+    const { data: pagina, error } = await pq.maybeSingle();
     if (error || !pagina) return fbPagina(realSlug);
 
     const { data: secciones } = await sb
@@ -220,12 +226,14 @@ export async function getPagina(slug: string): Promise<Pagina | null> {
 export async function getHijos(slug: string): Promise<PaginaHijo[]> {
   try {
     const sb = await createClient();
-    const { data: padre, error } = await sb
+    const org = await orgDelRequest();
+    let pq = sb
       .from("web_paginas")
       .select("id")
       .eq("slug", slug)
-      .eq("activo", true)
-      .maybeSingle();
+      .eq("activo", true);
+    if (org) pq = pq.eq("org_id", org.id);
+    const { data: padre, error } = await pq.maybeSingle();
     if (error || !padre) return fbHijos(slug);
 
     const { data: hijos } = await sb

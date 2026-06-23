@@ -10,6 +10,7 @@
 // El sitio nunca se ve vacío.
 // ─────────────────────────────────────────────────────────────────────────
 import { createClient } from "@/lib/supabase/server";
+import { orgDelRequest } from "@/lib/org";
 import {
   destinations as estDestinations,
   testimonials as estTestimonials,
@@ -141,11 +142,10 @@ function parseLineasAtencion(v: unknown): string[] {
 export async function getDestinos(): Promise<SitioDestino[]> {
   try {
     const sb = await createClient();
-    const { data, error } = await sb
-      .from("web_destinos")
-      .select("*")
-      .eq("activo", true)
-      .order("orden", { ascending: true });
+    const org = await orgDelRequest();
+    let q = sb.from("web_destinos").select("*").eq("activo", true);
+    if (org) q = q.eq("org_id", org.id);
+    const { data, error } = await q.order("orden", { ascending: true });
     if (error || !data || data.length === 0) return fbDestinos();
     return data.map((d) => ({
       id: d.id,
@@ -162,11 +162,10 @@ export async function getDestinos(): Promise<SitioDestino[]> {
 export async function getTestimonios(): Promise<SitioTestimonio[]> {
   try {
     const sb = await createClient();
-    const { data, error } = await sb
-      .from("web_testimonios")
-      .select("*")
-      .eq("activo", true)
-      .order("orden", { ascending: true });
+    const org = await orgDelRequest();
+    let q = sb.from("web_testimonios").select("*").eq("activo", true);
+    if (org) q = q.eq("org_id", org.id);
+    const { data, error } = await q.order("orden", { ascending: true });
     if (error || !data || data.length === 0) return fbTestimonios();
     return data.map((t) => ({
       id: t.id,
@@ -184,11 +183,10 @@ export async function getTestimonios(): Promise<SitioTestimonio[]> {
 export async function getBlog(): Promise<SitioBlog[]> {
   try {
     const sb = await createClient();
-    const { data, error } = await sb
-      .from("web_blog")
-      .select("*")
-      .eq("activo", true)
-      .order("orden", { ascending: true });
+    const org = await orgDelRequest();
+    let q = sb.from("web_blog").select("*").eq("activo", true);
+    if (org) q = q.eq("org_id", org.id);
+    const { data, error } = await q.order("orden", { ascending: true });
     if (error || !data || data.length === 0) return fbBlog();
     return data.map((b) => ({
       id: b.id,
@@ -216,11 +214,11 @@ export async function getBlogPost(id: string): Promise<SitioBlog | null> {
 export async function getConfig(): Promise<SitioConfig> {
   try {
     const sb = await createClient();
-    const { data, error } = await sb
-      .from("web_config")
-      .select("*")
-      .eq("id", 1)
-      .maybeSingle();
+    const org = await orgDelRequest();
+    // web_config: una fila por org. Sin org (mono-tenant) cae a la fila id=1.
+    let q = sb.from("web_config").select("*");
+    q = org ? q.eq("org_id", org.id) : q.eq("id", 1);
+    const { data, error } = await q.maybeSingle();
     if (error || !data) return { ...CONFIG_FALLBACK };
     const extra = (data.extra ?? {}) as Record<string, unknown>;
     return {
