@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
+import { orgDelRequest } from "@/lib/org";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { PrintButton } from "@/components/contrato/PrintButton";
 
@@ -37,7 +38,8 @@ export default async function ProgramaDocPage({ params }: { params: Promise<{ id
   }
   const esInterno = !!rol && ["superadmin", "operaciones", "gerencia", "administracion", "venta"].includes(rol);
 
-  const det = await getProgramaDetalle(sb, id);
+  const org = await orgDelRequest();
+  const det = await getProgramaDetalle(sb, id, org?.id ?? null);
   if (!det) notFound();
   if (!det.programa.publicado && !esInterno) notFound();
 

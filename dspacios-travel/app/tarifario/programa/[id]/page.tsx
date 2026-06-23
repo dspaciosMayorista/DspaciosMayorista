@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
+import { orgDelRequest } from "@/lib/org";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
@@ -41,7 +42,8 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
   const esInterno = !!rol && ["superadmin", "operaciones", "gerencia", "administracion", "venta"].includes(rol);
   const puedeReservar = !!rol && ["superadmin", "operaciones", "gerencia", "administracion", "venta", "agencia", "freelance"].includes(rol);
 
-  const det = await getProgramaDetalle(sb, id);
+  const org = await orgDelRequest();
+  const det = await getProgramaDetalle(sb, id, org?.id ?? null);
   if (!det) notFound();
   // No mostrar borradores al público.
   if (!det.programa.publicado && !esInterno) notFound();

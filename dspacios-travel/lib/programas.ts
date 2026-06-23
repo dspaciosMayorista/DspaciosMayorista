@@ -154,12 +154,13 @@ export type ProgramaDetalle = {
 };
 
 /** Detalle completo de un programa (para la vitrina pública y para reservar). */
-export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDetalle | null> {
-  const { data: programa } = await sb
+export async function getProgramaDetalle(sb: SB, id: number, orgId?: string | null): Promise<ProgramaDetalle | null> {
+  let q = sb
     .from("programas")
     .select("*, proveedores(nombre)")
-    .eq("id", id)
-    .maybeSingle();
+    .eq("id", id);
+  if (orgId) q = q.eq("org_id", orgId); // SaaS: el programa debe ser de esta org
+  const { data: programa } = await q.maybeSingle();
   if (!programa) return null;
   const proveedorNombre = (programa.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
   const prow = programa as ProgramaRow;

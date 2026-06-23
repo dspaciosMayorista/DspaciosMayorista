@@ -130,18 +130,17 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
     service-role bypasea. Excluye `usuarios`/`organizaciones`/`auditoria`.
   - ⏳ **Paso 3b:** scope por org de las lecturas PÚBLICAS (tarifario/sitio) — depende del
     Paso 4; + RLS de `usuarios` por org + `org_id NOT NULL` (quitar default).
-  - 🚧 **Paso 4 (en curso):** ✅ mecanismo — `proxy.ts` reescribe `/o/<slug>/...` → `/...`
-    con header `x-org-slug` (sin duplicar rutas); `lib/org.ts: orgPorSlug(slug)` +
-    `orgDelRequest()` (org del header o la default `dspacios`); tipo `organizaciones`.
-    ✅ tarifario público filtra por `org.id`: `tarifario_resultado` **y programas**
-    (`getProgramasResumen(sb, true, orgId)`). Cupos/fotos/hoteles ya quedan acotados
-    transitivamente (derivan de filas ya filtradas). ✅ **branding**: el header del
-    tarifario usa `org.logo_white_url` si la org tiene logo propio. ✅ **inserts públicos**
-    con `org_id` del slug: registro B2B (`usuarios` + `b2b_solicitudes`) y el contacto CRM
-    del checkout. (sin slug → org default, mono-tenant sigue igual). ⏳ FALTA: `app/sitio_web`
-    por org; atribuir el `org_id` de la **cotización** del checkout público (requiere pasar
-    org al motor `crearCotizacion`/reservar); branding de colores (CSS vars por org).
-    Validar corriendo con una 2ª org.
+  - ✅ **Paso 4 (completo para superficies públicas):** mecanismo `/o/<slug>` (proxy
+    reescribe → header `x-org-slug`; `orgPorSlug`/`orgDelRequest`; tipo `organizaciones`).
+    Aislado por org: **tarifario** (`tarifario_resultado`, **programas**, detalle de
+    programa por id, cupos/fotos/hoteles transitivos), **sitio web** (`app/sitio_web`:
+    todos los getters de `lib/sitio` filtran `web_*` por org), **branding** (logo +
+    colores de marca via CSS vars), **inserts públicos** con `org_id` del slug (registro
+    B2B, contacto CRM y **cotización** del checkout). Sin slug = org default → mono-tenant
+    igual. ⏳ Pendiente menor: branding de colores también en el sitio web; lecturas por
+    id/token sueltas (vouchers/recibos) siguen por unicidad de id (no enumerable). **Falta
+    VALIDAR corriendo con una 2ª org** (crear org+slug, paquetes/programas, y verificar
+    `/o/<slug>` aísla; `/tarifario` sigue mostrando la default).
 - ⏳ **Fase 2 — Marca por org + onboarding self-service.** Fusionar marca en
   `organizaciones`, des-hardcodear "D'spacios" (~55 referencias), wizard de alta de
   agencia + semilla de catálogos, (luego) subdominios.
@@ -170,7 +169,11 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
   header `x-org-slug`; `orgDelRequest()`; el tarifario público filtra por `org.id`.
 - **Fase 1/Paso 4 (programas + branding + inserts)** — tarifario filtra **programas** por org;
   header usa el **logo del org**; registro B2B y contacto CRM del checkout estampan el `org_id`
-  del slug. Falta `app/sitio_web`, la cotización del checkout y branding de colores.
+  del slug.
+- **Fase 1/Paso 4 (sitio + colores + cotización + detalle programa)** — `app/sitio_web`
+  acotado por org (todos los getters de `lib/sitio`); branding de **colores** (CSS vars);
+  `crearCotizacion` estampa el org del slug; `getProgramaDetalle` verifica que el programa
+  sea de la org. **Paso 4 completo** para superficies públicas. Falta validar con 2ª org.
 
 ---
 
