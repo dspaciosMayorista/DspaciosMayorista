@@ -6,7 +6,7 @@ import { useState } from "react";
 import {
   Tags, Ticket, FileText, ShoppingBag, FileSignature, Plane, Package, Boxes,
   Wallet, Users, UserCheck, Settings, Globe, Contact, ChevronDown, ChevronRight,
-  Circle, History, type LucideIcon,
+  Circle, History, Building2, type LucideIcon,
 } from "lucide-react";
 
 export type NavItem = {
@@ -25,7 +25,7 @@ const ICONS: Record<string, LucideIcon> = {
   tarifario: Tags, reservar: Ticket, cotizaciones: FileText, ventas: ShoppingBag,
   contratos: FileSignature, vuelos: Plane, paquetes: Package, producto: Boxes,
   finanzas: Wallet, usuarios: Users, b2b: UserCheck, configuracion: Settings,
-  cms: Globe, crm: Contact, auditoria: History,
+  cms: Globe, crm: Contact, auditoria: History, organizaciones: Building2,
 };
 
 export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?: boolean }) {

@@ -89,6 +89,8 @@ const NAV: NavItem[] = [
 
   // Sitio web público (CMS) — solo superadmin
   { href: "/cms", label: "Sitio web", iconKey: "cms", modulo: "configuracion", soloSuperadmin: true },
+  // SaaS · administración de organizaciones (tenants) — solo superadmin (plataforma)
+  { href: "/dashboard/organizaciones", label: "Organizaciones", iconKey: "organizaciones", soloSuperadmin: true },
 
   // CRM
   { href: "/crm", label: "CRM ↗", separadorAntes: true, grupo: "Externo", iconKey: "crm", modulo: "crm" },

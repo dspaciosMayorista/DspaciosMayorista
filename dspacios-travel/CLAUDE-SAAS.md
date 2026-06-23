@@ -141,9 +141,16 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
     id/token sueltas (vouchers/recibos) siguen por unicidad de id (no enumerable). **Falta
     VALIDAR corriendo con una 2ª org** (crear org+slug, paquetes/programas, y verificar
     `/o/<slug>` aísla; `/tarifario` sigue mostrando la default).
-- ⏳ **Fase 2 — Marca por org + onboarding self-service.** Fusionar marca en
-  `organizaciones`, des-hardcodear "D'spacios" (~55 referencias), wizard de alta de
-  agencia + semilla de catálogos, (luego) subdominios.
+- 🚧 **Fase 2 — Marca por org + onboarding.**
+  - ✅ **Admin de organizaciones** (`/dashboard/organizaciones`, solo superadmin de la
+    plataforma): listar/crear/editar tenants (slug, datos, **colores**, logos, plan,
+    estado) por **service-role** (gateado; la RLS normal solo deja ver la propia org).
+    Al crear puede crear el **primer superadmin** de la org (email + contraseña temporal),
+    dejándola usable. Botón "Ver tarifario ↗" a `/o/<slug>/tarifario`. **Esto desbloquea
+    crear la 2ª org para validar el Paso 4.**
+  - ⏳ FALTA: des-hardcodear "D'spacios" (~55 referencias) en contrato/PDF/emails →
+    leer de `organizaciones`; semilla de catálogos base al crear org (parámetros
+    tributarios, formas de pago, rangos de edad); wizard self-service; (luego) subdominios.
 - ⏳ **Fase 3 — Planes, límites y cobro.** Tabla `planes`, estados `suspendida/cancelada`,
   rol `plataforma_admin` + panel de administración del SaaS, pasarela (Stripe/Wompi/MP).
 
