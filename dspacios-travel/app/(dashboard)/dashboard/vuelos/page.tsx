@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button";
 import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
 import { cargarBloqueosMasivo } from "./actions";
 import { BloqueosTabla } from "./BloqueosTabla";
+import { History } from "lucide-react";
+import { conteoPorBloqueo, sumarConteos, esPasado, ocupacionPct } from "@/lib/vuelos/stats";
+import { hoyISO } from "@/lib/calc/paquetes";
 
 export const dynamic = "force-dynamic";
 
@@ -31,9 +34,7 @@ const COLS_BLOQUEOS = [
   { key: "notas", label: "Notas", ejemplo: "" },
 ];
 
-type Conteo = { disp: number; plazo: number; conf: number; dev: number; nven: number };
-
-function ResumenCard({ label, valor, color }: { label: string; valor: number; color: string }) {
+function ResumenCard({ label, valor, color }: { label: string; valor: number | string; color: string }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="text-xs uppercase tracking-wide text-gray-400">{label}</div>
@@ -49,28 +50,18 @@ export default async function VuelosPage() {
     sb.from("sillas").select("bloqueo_id, estado"),
   ]);
 
+  // Activos vs pasados: un bloqueo cuya fecha de ida ya pasó queda INACTIVO y se
+  // mueve al histórico (/dashboard/vuelos/historico). El control solo ve activos.
+  const hoy = hoyISO();
+  const todos = bloqueos ?? [];
+  const activos = todos.filter((b) => !esPasado(b.fecha_ida, hoy));
+  const pasados = todos.filter((b) => esPasado(b.fecha_ida, hoy));
+
   // Conteo de sillas por estado para cada bloqueo (control de vuelos).
-  const conteo = new Map<number, Conteo>();
-  for (const s of sillas ?? []) {
-    const c = conteo.get(s.bloqueo_id) ?? { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0 };
-    if (s.estado === "disponible" || s.estado === "cambio_entrante") c.disp++;
-    else if (s.estado === "en_plazo") c.plazo++;
-    else if (s.estado === "confirmada") c.conf++;
-    else if (s.estado === "devuelta") c.dev++;
-    else if (s.estado === "no_vendida") c.nven++;
-    conteo.set(s.bloqueo_id, c);
-  }
-  const cZero: Conteo = { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0 };
-  const tot = (bloqueos ?? []).reduce(
-    (a, b) => {
-      const c = conteo.get(b.id) ?? cZero;
-      return {
-        disp: a.disp + c.disp, plazo: a.plazo + c.plazo, conf: a.conf + c.conf,
-        dev: a.dev + c.dev, nven: a.nven + c.nven,
-      };
-    },
-    { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0 }
-  );
+  const conteo = conteoPorBloqueo(sillas);
+  const cZero = { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0, total: 0 };
+  const tot = sumarConteos(conteo, activos.map((b) => b.id));
+  const ocup = ocupacionPct(tot);
 
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
@@ -79,9 +70,14 @@ export default async function VuelosPage() {
           <h1 className="text-2xl font-semibold text-gray-900">Inventario de vuelos</h1>
           <p className="mt-1 text-sm text-gray-500">Bloqueos de sillas negociadas con la aerolínea</p>
         </div>
-        <Link href="/dashboard/vuelos/nuevo">
-          <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo bloqueo</Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/dashboard/vuelos/historico">
+            <Button variant="outline" className="gap-2"><History size={16} /> Histórico ({pasados.length})</Button>
+          </Link>
+          <Link href="/dashboard/vuelos/nuevo">
+            <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo bloqueo</Button>
+          </Link>
+        </div>
       </div>
 
       <div className="mb-6">
@@ -95,25 +91,32 @@ export default async function VuelosPage() {
         />
       </div>
 
-      {!bloqueos?.length ? (
+      {!todos.length ? (
         <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">
           <p className="text-lg">No hay bloqueos cargados</p>
           <p className="mt-1 text-sm">Crea el primer record con el botón “Nuevo bloqueo”.</p>
         </div>
+      ) : !activos.length ? (
+        <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center text-gray-400">
+          <p className="text-lg">No hay vuelos activos</p>
+          <p className="mt-1 text-sm">Todos los bloqueos ya pasaron su fecha de ida. Revisa el <Link href="/dashboard/vuelos/historico" className="text-[var(--brand-accent)] hover:underline">histórico ({pasados.length})</Link>.</p>
+        </div>
       ) : (
         <>
-          {/* Tarjetas resumen (control de vuelos) */}
-          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            <ResumenCard label="Bloques" valor={bloqueos.length} color="var(--brand-primary)" />
+          {/* Mini-dashboard de vuelos ACTIVOS (fecha de ida futura) */}
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Vuelos activos</div>
+          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <ResumenCard label="Bloques activos" valor={activos.length} color="var(--brand-primary)" />
             <ResumenCard label="Disponibles" valor={tot.disp} color="var(--brand-success)" />
             <ResumenCard label="En plazo" valor={tot.plazo} color="#C99A2E" />
             <ResumenCard label="Confirmadas" valor={tot.conf} color="var(--brand-accent)" />
             <ResumenCard label="Devueltas" valor={tot.dev} color="#C0392B" />
+            <ResumenCard label="Ocupación" valor={`${ocup}%`} color="var(--brand-primary)" />
           </div>
 
-          {/* Tabla de salidas con filtros (Ruta, Mes) y totales */}
+          {/* Tabla de salidas ACTIVAS con filtros (Ruta, Mes) y totales */}
           <BloqueosTabla
-            filas={bloqueos.map((b) => {
+            filas={activos.map((b) => {
               const c = conteo.get(b.id) ?? cZero;
               return {
                 id: b.id, record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,

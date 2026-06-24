@@ -1,0 +1,83 @@
+import { createClient } from "@/lib/supabase/server";
+import Link from "next/link";
+import { BloqueosTabla } from "../BloqueosTabla";
+import { conteoPorBloqueo, sumarConteos, esPasado, ventaPct, ocupacionPct } from "@/lib/vuelos/stats";
+import { hoyISO } from "@/lib/calc/paquetes";
+
+export const dynamic = "force-dynamic";
+
+function Card({ label, valor, color, sub }: { label: string; valor: number | string; color?: string; sub?: string }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
+      <div className="text-xs uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="mt-1 text-2xl font-bold tabular-nums" style={{ color: color ?? "var(--brand-primary)" }}>{valor}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-gray-400">{sub}</div>}
+    </div>
+  );
+}
+
+export default async function HistoricoVuelosPage() {
+  const sb = await createClient();
+  const [{ data: bloqueos }, { data: sillas }] = await Promise.all([
+    sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: false }),
+    sb.from("sillas").select("bloqueo_id, estado"),
+  ]);
+
+  const hoy = hoyISO();
+  const todos = bloqueos ?? [];
+  const pasados = todos.filter((b) => esPasado(b.fecha_ida, hoy));
+  const conteo = conteoPorBloqueo(sillas);
+  const cZero = { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0, total: 0 };
+
+  // Conteo HISTÓRICO GENERAL = de TODOS los bloqueos (vida del inventario).
+  const gen = sumarConteos(conteo, todos.map((b) => b.id));
+  // Conteo de los bloqueos ya pasados (la lista del histórico).
+  const totPas = sumarConteos(conteo, pasados.map((b) => b.id));
+
+  return (
+    <div className="mx-auto max-w-[1500px] p-4 md:p-8">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <Link href="/dashboard/vuelos" className="text-sm text-gray-400 hover:text-gray-600">← Inventario de vuelos</Link>
+          <h1 className="mt-1 text-2xl font-semibold text-gray-900">Histórico de vuelos</h1>
+          <p className="mt-1 text-sm text-gray-500">Bloqueos cuya fecha de ida ya pasó (inactivos). Entra a un record para ver sus pasajeros.</p>
+        </div>
+      </div>
+
+      {/* Conteo histórico GENERAL (todos los bloqueos de la operación) */}
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Conteo histórico general (toda la operación)</div>
+      <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <Card label="Bloques totales" valor={todos.length} />
+        <Card label="Sillas totales" valor={gen.total} color="var(--brand-primary)" />
+        <Card label="Vendidas" valor={gen.conf} color="var(--brand-accent)" sub={`${ventaPct(gen)}% del total`} />
+        <Card label="En plazo" valor={gen.plazo} color="#C99A2E" />
+        <Card label="Devueltas" valor={gen.dev} color="#C0392B" />
+        <Card label="No vendidas" valor={gen.nven} color="#6b7280" />
+      </div>
+
+      {!pasados.length ? (
+        <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center text-gray-400">
+          <p className="text-lg">Aún no hay vuelos en el histórico</p>
+          <p className="mt-1 text-sm">Los bloqueos pasan aquí automáticamente cuando su fecha de ida queda atrás.</p>
+        </div>
+      ) : (
+        <>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            Bloqueos pasados ({pasados.length}) · vendidas {totPas.conf}/{totPas.total} · ocupación {ocupacionPct(totPas)}%
+          </div>
+          <BloqueosTabla
+            filas={pasados.map((b) => {
+              const c = conteo.get(b.id) ?? cZero;
+              return {
+                id: b.id, record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
+                fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
+                fecha_devolucion: b.fecha_devolucion, cupos_total: b.cupos_total ?? 0,
+                disp: c.disp, plazo: c.plazo, conf: c.conf, dev: c.dev, nven: c.nven,
+              };
+            })}
+          />
+        </>
+      )}
+    </div>
+  );
+}

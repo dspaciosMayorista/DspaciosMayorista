@@ -7,6 +7,7 @@ import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
+import { hoyISO } from "@/lib/calc/paquetes";
 
 export const revalidate = 120; // revalida cada 2 min
 
@@ -71,6 +72,12 @@ export default async function TarifarioPublicoPage() {
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     filas = await filtrarTarifarioVencidas(createAdminClient(), filas);
   }
+
+  // Oculta las salidas de BLOQUEO cuya fecha de ida ya pasó (vuelo ya salió =
+  // inactivo, vive en el histórico de vuelos). Solo afecta a los bloqueos; las
+  // porciones/servicios se rigen por su propia vigencia.
+  const hoyTarifa = hoyISO();
+  filas = filas.filter((f) => f.modulo !== "bloqueo" || !f.fecha_ida || f.fecha_ida >= hoyTarifa);
 
   // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
   // Los servicios de paquetes porción/bloqueo existen como add-on para Reservar,
