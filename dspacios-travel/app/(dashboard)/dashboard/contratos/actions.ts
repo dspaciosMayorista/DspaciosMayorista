@@ -87,6 +87,9 @@ export type ContratoInput = {
   // Canal / asesor. Todo contrato lleva asesor interno; B2B además agencia o freelance.
   tipoVenta?: "interno" | "agencia" | "freelance";
   aliadoId?: number | null;   // id del catálogo de agencias/freelance (B2B)
+  // Moneda del contrato. En empaquetado/dinámico (todo manual) el asesor puede
+  // venderlo en USD; el resto (abonos con TRM, estado de cuenta) fluye igual.
+  moneda?: string;
 };
 
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -173,6 +176,8 @@ export async function crearContrato(
     precio_venta: precioVenta,
     impuesto: bnc,
     estado: "activo",
+    // Solo empaquetado/dinámico (manual) pueden ir en USD; negociado sigue su producto (COP).
+    moneda: !negociado && (input.moneda ?? "COP") === "USD" ? "USD" : "COP",
     tipo_paquete: input.tipoPaquete,
     asesor: oNull(input.asesorNombre),
     canal,

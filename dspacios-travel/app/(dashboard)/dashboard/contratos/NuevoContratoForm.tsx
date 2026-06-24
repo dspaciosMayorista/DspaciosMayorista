@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
 import {
@@ -69,6 +69,11 @@ export function NuevoContratoForm({
   const [bloqueoId, setBloqueoId] = useState<number | "">("");
   const esNegociado = tipoPaquete === "bloqueo" || tipoPaquete === "porcion_terrestre";
   const paquetesFiltrados = paquetes.filter((p) => p.categoria === tipoPaquete);
+
+  // Moneda: solo empaquetado/dinámico (todo manual) pueden venderse en USD.
+  const [moneda, setMoneda] = useState<"COP" | "USD">("COP");
+  const monedaEfectiva = esNegociado ? "COP" : moneda;
+  const fmt = (n: number) => formatMoneda(n, monedaEfectiva);
 
   // Cliente
   const [clienteNombres, setClienteNombres] = useState("");
@@ -202,6 +207,7 @@ export function NuevoContratoForm({
           bncFijo: Number(bncFijo) || 0,
           tipoVenta,
           aliadoId: aliadoId === "" ? null : Number(aliadoId),
+          moneda: monedaEfectiva,
         });
         if (res.ok) {
           router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
@@ -230,6 +236,16 @@ export function NuevoContratoForm({
               {TIPOS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>
+          {!esNegociado && (
+            <div>
+              <label className={labelCls}>Moneda</label>
+              <select value={moneda} onChange={(e) => setMoneda(e.target.value as "COP" | "USD")}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="COP">Pesos (COP)</option>
+                <option value="USD">Dólares (USD)</option>
+              </select>
+            </div>
+          )}
           {esNegociado && (
             <div>
               <label className={labelCls}>Producto del tarifario</label>
@@ -540,7 +556,7 @@ export function NuevoContratoForm({
         <div className="flex items-center justify-end gap-2 border-t pt-3">
           <span className="text-sm text-gray-500">Total del contrato:</span>
           <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>
-            {formatCOP(total)}
+            {fmt(total)}
           </span>
         </div>
       </section>
@@ -573,8 +589,8 @@ export function NuevoContratoForm({
           )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3 text-sm">
-          <span className="text-gray-500">BNC: <b className="tabular-nums text-gray-700">{formatCOP(bnc)}</b></span>
-          <span className="text-gray-500">Base comisionable: <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(baseComisionable)}</b></span>
+          <span className="text-gray-500">BNC: <b className="tabular-nums text-gray-700">{fmt(bnc)}</b></span>
+          <span className="text-gray-500">Base comisionable: <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(baseComisionable)}</b></span>
         </div>
       </section>
 
