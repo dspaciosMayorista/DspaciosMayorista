@@ -217,6 +217,7 @@ export default async function ContratoDetallePage({
         comisionesB2B={b2b ?? []}
         facturas={facturasConItems}
         formasPago={formasPago}
+        moneda={(venta.moneda as string) ?? "COP"}
       />
 
       <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} />

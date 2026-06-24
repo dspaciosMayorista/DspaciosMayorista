@@ -4,22 +4,28 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { registrarAbono } from "../actions";
+import { formatUSD } from "@/lib/utils";
 
-export function AbonoForm({ numeroContrato, formasPago = [] }: { numeroContrato: string; formasPago?: string[] }) {
+export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: { numeroContrato: string; formasPago?: string[]; moneda?: string }) {
   const [valor, setValor] = useState("");
   const [forma, setForma] = useState("");
   const [ref, setRef] = useState("");
+  const [trm, setTrm] = useState("");
   const [pending, startTransition] = useTransition();
+  const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
+  const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
 
   function handle(e: React.FormEvent) {
     e.preventDefault();
     const v = Number(valor);
     if (!v || v <= 0) return;
+    if (esUSD && !(Number(trm) > 0)) return;
     startTransition(async () => {
-      await registrarAbono(numeroContrato, v, forma, ref);
+      await registrarAbono(numeroContrato, v, forma, ref, esUSD ? Number(trm) : undefined);
       setValor("");
       setForma("");
       setRef("");
+      setTrm("");
     });
   }
 
@@ -27,7 +33,7 @@ export function AbonoForm({ numeroContrato, formasPago = [] }: { numeroContrato:
     <form onSubmit={handle} className="flex flex-wrap items-end gap-3">
       <div>
         <label className="mb-1 block text-xs font-medium text-gray-600">
-          Valor del abono
+          {esUSD ? "Valor pagado (COP)" : "Valor del abono"}
         </label>
         <Input
           type="number"
@@ -38,6 +44,13 @@ export function AbonoForm({ numeroContrato, formasPago = [] }: { numeroContrato:
           className="w-40"
         />
       </div>
+      {esUSD && (
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">TRM del día</label>
+          <Input type="number" min={0} value={trm} onChange={(e) => setTrm(e.target.value)} placeholder="4000" className="w-32" />
+          <p className="mt-1 text-[11px] text-gray-400">{usdEq != null ? `= ${formatUSD(usdEq)}` : "COP por 1 USD"}</p>
+        </div>
+      )}
       <div>
         <label className="mb-1 block text-xs font-medium text-gray-600">
           Forma de pago

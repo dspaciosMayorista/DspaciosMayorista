@@ -261,6 +261,7 @@ export type Database = {
           observaciones: string | null;
           facturado: boolean;
           moneda: string;
+          trm_contrato: number | null;
           numero_documento: string | null;
           fecha_emision: string | null;
           cliente_documento: string | null;
@@ -320,6 +321,7 @@ export type Database = {
           observaciones?: string | null;
           facturado?: boolean;
           moneda?: string;
+          trm_contrato?: number | null;
           numero_documento?: string | null;
           fecha_emision?: string | null;
           cliente_documento?: string | null;
@@ -361,6 +363,8 @@ export type Database = {
           cliente: string | null;
           fecha_abono: string;
           valor_abono: number;
+          monto_cop: number | null;
+          trm: number | null;
           forma_pago: string | null;
           referencia: string | null;
           recibido_por: string | null;
@@ -374,6 +378,8 @@ export type Database = {
           cliente?: string | null;
           fecha_abono?: string;
           valor_abono: number;
+          monto_cop?: number | null;
+          trm?: number | null;
           forma_pago?: string | null;
           referencia?: string | null;
           recibido_por?: string | null;

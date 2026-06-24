@@ -413,28 +413,48 @@ export async function actualizarVenta(
 
 export async function registrarAbono(
   numeroContrato: string,
-  valor: number,
+  valor: number,            // monto PAGADO en COP (en USD se convierte con la TRM)
   formaPago: string,
-  referencia: string
+  referencia: string,
+  trmInput?: number,        // TRM del día (obligatoria si el contrato es USD)
 ) {
   const sb = await createClient();
+  const { data: venta } = await sb
+    .from("ventas")
+    .select("estado, precio_venta, tipo_paquete, moneda")
+    .eq("numero_contrato", numeroContrato)
+    .maybeSingle();
+  const esUSD = (venta?.moneda ?? "COP") === "USD";
+  const montoCop = Math.max(0, Number(valor) || 0);
+  const trm = esUSD ? (Number(trmInput) || 0) : 1;
+  if (esUSD && trm <= 0) throw new Error("Indica la TRM del día para el abono (contrato en USD).");
+  // El abono "vale" en la MONEDA DEL CONTRATO: USD = COP / TRM; COP = COP.
+  const valorAbono = esUSD ? montoCop / trm : montoCop;
+
   const { error } = await sb.from("abonos").insert({
     numero_contrato: numeroContrato,
-    valor_abono: valor,
+    valor_abono: valorAbono,
+    monto_cop: montoCop,
+    trm,
     forma_pago: formaPago || null,
     referencia: referencia || null,
   });
   if (error) throw new Error(error.message);
 
   // Regla de negocio: la venta pendiente se confirma cuando lo abonado alcanza el
-  // % mínimo configurado por tipo de contrato (default 30%), no con cualquier abono.
-  const { data: venta } = await sb
-    .from("ventas")
-    .select("estado, precio_venta, tipo_paquete")
-    .eq("numero_contrato", numeroContrato)
-    .maybeSingle();
-  const { data: abs } = await sb.from("abonos").select("valor_abono").eq("numero_contrato", numeroContrato);
-  const totalAbonado = (abs ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
+  // % mínimo configurado por tipo de contrato (default 30%). Se compara en la
+  // MONEDA DEL CONTRATO (valor_abono vs precio_venta), así USD y COP usan la misma regla.
+  const { data: abs } = await sb.from("abonos").select("valor_abono, monto_cop, trm").eq("numero_contrato", numeroContrato);
+  const totalAbonado = (abs ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);   // en moneda del contrato
+  const totalCop = (abs ?? []).reduce((s, a) => s + (Number(a.monto_cop) || 0), 0); // en pesos
+
+  // TRM efectiva del contrato = promedio ponderado (Σcop / Σmonto-en-moneda). En
+  // USD se mueve con cada abono; en COP queda 1.
+  if (esUSD) {
+    const trmProm = totalAbonado > 0 ? totalCop / totalAbonado : trm;
+    await sb.from("ventas").update({ trm_contrato: trmProm }).eq("numero_contrato", numeroContrato);
+  }
+
   const { data: cfg } = await sb.from("config_cobros").select("pct_abono").eq("tipo_paquete", venta?.tipo_paquete ?? "").maybeSingle();
   const pctMin = cfg?.pct_abono ?? 0.3;
   const alcanzaMinimo = totalAbonado >= (venta?.precio_venta ?? 0) * pctMin;

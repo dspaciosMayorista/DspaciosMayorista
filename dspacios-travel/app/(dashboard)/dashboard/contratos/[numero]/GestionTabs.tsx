@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatCOP, formatMoneda } from "@/lib/utils";
 import {
   calcComisionB2B,
   FISCAL_DEFAULT,
@@ -48,6 +48,7 @@ export type GestionProps = {
   comisionesB2B: B2B[];
   facturas: Factura[];
   formasPago: string[];
+  moneda?: string;       // moneda del contrato (USD muestra el estado de cuenta en dólares)
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -112,7 +113,7 @@ export function GestionTabs(p: GestionProps) {
       {/* Contenido */}
       <div className="min-w-0 flex-1">
         {tab === "cartera" && (
-          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} />
+          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.moneda ?? "COP"} />
         )}
         {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
         {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />}
@@ -180,19 +181,20 @@ function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["c
 }
 
 // ── CARTERA (abonos) ───────────────────────────────────────────────────
-function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[] }) {
+function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP" }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string }) {
   const saldo = Math.max(total - totalPagado, 0);
+  const fmt = (n: number) => formatMoneda(n, moneda);
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3">
-        <Mini label="Total" value={formatCOP(total)} />
-        <Mini label="Pagado" value={formatCOP(totalPagado)} color="var(--brand-success)" />
-        <Mini label="Saldo" value={formatCOP(saldo)} />
+        <Mini label="Total" value={fmt(total)} />
+        <Mini label="Pagado" value={fmt(totalPagado)} color="var(--brand-success)" />
+        <Mini label="Saldo" value={fmt(saldo)} />
       </div>
       <PlanCobroPanel numero={numero} cuotas={cuotas} pagado={totalPagado} />
       <div className={card}>
         <p className={lbl}>Registrar abono</p>
-        <AbonoForm numeroContrato={numero} formasPago={formasPago} />
+        <AbonoForm numeroContrato={numero} formasPago={formasPago} moneda={moneda} />
       </div>
       {abonos.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
@@ -211,7 +213,7 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas }: 
             <tbody>{abonos.map((a) => (
               <tr key={a.id} className="border-t border-gray-50">
                 <td className="px-4 py-2 text-gray-500">{a.fecha_abono}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{formatCOP(a.valor_abono)}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{fmt(a.valor_abono)}</td>
                 <td className="px-4 py-2 text-gray-500">{a.forma_pago ?? "—"}</td>
                 <td className="px-4 py-2 text-gray-500">{a.referencia ?? "—"}</td>
                 <td className="px-4 py-2 text-right">
