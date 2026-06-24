@@ -24,7 +24,20 @@ export function NuevoHotelForm({
 
   const [nombre, setNombre] = useState("");
   const [destinoId, setDestinoId] = useState<number | "">("");
+  const [moneda, setMoneda] = useState<"COP" | "USD">("COP");
+  const [monedaTocada, setMonedaTocada] = useState(false);
   const [proveedorId, setProveedorId] = useState<number | "">("");
+
+  // Default inteligente: al elegir un destino internacional (país ≠ Colombia) se
+  // propone USD; el usuario puede cambiarlo (queda "tocada" y ya no se auto-ajusta).
+  function onDestino(id: number | "") {
+    setDestinoId(id);
+    if (!monedaTocada) {
+      const d = destinos.find((x) => x.id === id);
+      const intl = !!d?.pais && !/^(colombia|co)$/i.test((d.pais ?? "").trim());
+      setMoneda(intl ? "USD" : "COP");
+    }
+  }
   const [zona, setZona] = useState("");
   const [infMin, setInfMin] = useState(0);
   const [infMax, setInfMax] = useState(2);
@@ -48,7 +61,7 @@ export function NuevoHotelForm({
         nombre, destinoId: Number(destinoId), proveedorId: proveedorId === "" ? null : Number(proveedorId),
         zona, edadInfanteMin: infMin, edadInfanteMax: infMax, edadNinoMin: ninoMin, edadNinoMax: ninoMax,
         categoriaIds: catSel, regimenIds: regSel, rangosEdad: rangosSel,
-        contactoTelefono: contactoTel, emailComercial: emailCom,
+        contactoTelefono: contactoTel, emailComercial: emailCom, moneda,
       });
       if (r.ok) router.push(`/dashboard/producto/hoteles/${r.id}`);
       else setErr(r.error);
@@ -64,7 +77,15 @@ export function NuevoHotelForm({
           <div><label className={lbl}>Zona / ubicación</label><Input value={zona} onChange={(e) => setZona(e.target.value)} placeholder="Crespo" /></div>
           <div>
             <label className={lbl}>Destino *</label>
-            <ComboDestino destinos={destinos} value={destinoId} onChange={setDestinoId} placeholder="Selecciona destino…" />
+            <ComboDestino destinos={destinos} value={destinoId} onChange={onDestino} placeholder="Selecciona destino…" />
+          </div>
+          <div>
+            <label className={lbl}>Moneda de las tarifas</label>
+            <select value={moneda} onChange={(e) => { setMoneda(e.target.value as "COP" | "USD"); setMonedaTocada(true); }} className={selCls}>
+              <option value="COP">COP — pesos</option>
+              <option value="USD">USD — dólares</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-400">Las tarifas netas de este hotel se cargan y liquidan en esta moneda. Internacional ⇒ USD por defecto.</p>
           </div>
           <div>
             <label className={lbl}>Proveedor hotelero</label>

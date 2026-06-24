@@ -96,6 +96,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             descripcion: h.descripcion ?? "",
             ubicacion: h.ubicacion ?? "",
             videoUrl: h.video_url ?? "",
+            moneda: ((h as { moneda?: string | null }).moneda) ?? "COP",
           }}
         />
         <HotelCategoriasRegimenesEditor

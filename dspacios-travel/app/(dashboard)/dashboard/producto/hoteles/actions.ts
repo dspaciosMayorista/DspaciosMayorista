@@ -24,6 +24,7 @@ export async function crearHotel(input: {
   rangosEdad?: number[];
   contactoTelefono?: string;
   emailComercial?: string;
+  moneda?: string;
 }): Promise<Result> {
   const sb = await createClient();
   const { data: hotel, error } = await sb
@@ -33,6 +34,7 @@ export async function crearHotel(input: {
       destino_id: input.destinoId,
       proveedor_id: input.proveedorId,
       zona: oNull(input.zona),
+      moneda: input.moneda === "USD" ? "USD" : "COP",
       edad_infante_min: input.edadInfanteMin,
       edad_infante_max: input.edadInfanteMax,
       edad_nino_min: input.edadNinoMin,
@@ -112,6 +114,7 @@ export async function actualizarHotelConfig(
     descripcion?: string;
     ubicacion?: string;
     videoUrl?: string;
+    moneda?: string;
   }
 ): Promise<Result> {
   const sb = await createClient();
@@ -119,6 +122,7 @@ export async function actualizarHotelConfig(
     .from("hoteles")
     .update({
       zona: oNull(input.zona),
+      ...(input.moneda ? { moneda: input.moneda === "USD" ? "USD" : "COP" } : {}),
       edad_infante_min: input.edadInfanteMin,
       edad_infante_max: input.edadInfanteMax,
       edad_nino_min: input.edadNinoMin,

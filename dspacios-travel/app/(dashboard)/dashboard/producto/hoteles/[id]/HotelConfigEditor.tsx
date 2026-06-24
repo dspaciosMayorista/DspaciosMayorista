@@ -26,11 +26,13 @@ export function HotelConfigEditor({
     descripcion: string;
     ubicacion: string;
     videoUrl: string;
+    moneda: string;
   };
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [zona, setZona] = useState(inicial.zona);
+  const [moneda, setMoneda] = useState<"COP" | "USD">(inicial.moneda === "USD" ? "USD" : "COP");
   const [contactoTel, setContactoTel] = useState(inicial.contactoTelefono);
   const [emailCom, setEmailCom] = useState(inicial.emailComercial);
   const [estrellas, setEstrellas] = useState(String(inicial.estrellas ?? 0));
@@ -55,7 +57,7 @@ export function HotelConfigEditor({
         edadNinoMin: Number(ninoMin) || 0, edadNinoMax: Number(ninoMax) || 0,
         rangosEdad: rangosSel,
         contactoTelefono: contactoTel, emailComercial: emailCom,
-        estrellas: Number(estrellas) || null, clasificacion, descripcion, ubicacion, videoUrl,
+        estrellas: Number(estrellas) || null, clasificacion, descripcion, ubicacion, videoUrl, moneda,
       });
       if (r.ok) { setMsg("Guardado."); router.refresh(); } else setMsg(r.error);
     });
@@ -91,6 +93,13 @@ export function HotelConfigEditor({
             <div>
               <label className={lbl}>Clasificación <span className="font-normal text-gray-400">(si no usa estrellas)</span></label>
               <Input value={clasificacion} onChange={(e) => setClasificacion(e.target.value)} placeholder="Boutique, Luxury, Villa…" />
+            </div>
+            <div>
+              <label className={lbl}>Moneda de las tarifas</label>
+              <select value={moneda} onChange={(e) => setMoneda(e.target.value as "COP" | "USD")} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="COP">COP — pesos</option>
+                <option value="USD">USD — dólares</option>
+              </select>
             </div>
           </div>
           <div>

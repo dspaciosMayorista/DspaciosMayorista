@@ -827,6 +827,7 @@ export type Database = {
           descripcion: string | null;
           ubicacion: string | null;
           video_url: string | null;
+          moneda: string;
         };
         Insert: {
           id?: number;
@@ -847,6 +848,7 @@ export type Database = {
           email_comercial?: string | null;
           estrellas?: number | null;
           clasificacion?: string | null;
+          moneda?: string;
           descripcion?: string | null;
           ubicacion?: string | null;
           video_url?: string | null;

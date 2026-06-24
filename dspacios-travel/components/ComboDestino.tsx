@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 
-export type DestinoOpt = { id: number; nombre: string; codigo_iata?: string | null };
+export type DestinoOpt = { id: number; nombre: string; codigo_iata?: string | null; pais?: string | null };
 
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
