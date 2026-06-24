@@ -64,7 +64,12 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
       <Link href="/dashboard/producto/hoteles" className="text-sm text-gray-400 hover:text-gray-600">← Hoteles</Link>
-      <h1 className="mb-1 mt-2 text-2xl font-semibold text-gray-900">{h.nombre}</h1>
+      <div className="mb-1 mt-2 flex flex-wrap items-center gap-2">
+        <h1 className="text-2xl font-semibold text-gray-900">{h.nombre}</h1>
+        {((h as { moneda?: string | null }).moneda) === "USD" && (
+          <span className="rounded-full bg-[var(--brand-accent)]/15 px-2.5 py-1 text-xs font-semibold text-[var(--brand-primary)]">Tarifas en USD</span>
+        )}
+      </div>
       <p className="text-sm text-gray-500">
         {h.destinos?.nombre ?? "—"}{h.zona ? ` · ${h.zona}` : ""} · {h.proveedores?.nombre ?? "Sin proveedor"}
       </p>

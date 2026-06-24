@@ -1492,11 +1492,13 @@ export type Database = {
           precio_pvp: number;
           descripcion: string | null;
           recargo_individual: number | null;
+          moneda: string;
           created_at: string;
         };
         Insert: {
           id?: number;
           paquete_id: number;
+          moneda?: string;
           paquete_nombre?: string | null;
           paquete_activo?: boolean;
           pax_desde?: number | null;

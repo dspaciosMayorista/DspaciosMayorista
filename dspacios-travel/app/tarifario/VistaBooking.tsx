@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Image from "next/image";
 import { Star } from "lucide-react";
-import { formatCOP } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart } from "@/lib/cart/CartContext";
 import { cotizarPorFechas, type ComboCotizado } from "@/app/(dashboard)/dashboard/reservar/actions";
@@ -29,6 +29,7 @@ type HotelCard = {
   video_url: string | null;
   ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null;
   filas: FilaTarifario[];
+  moneda?: string | null;
 };
 
 // Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
@@ -177,7 +178,7 @@ export function VistaBooking({
           estrellas: info?.estrellas ?? null, clasificacion: info?.clasificacion ?? null, descripcion: info?.descripcion ?? null,
           ubicacion: info?.ubicacion ?? null, video_url: info?.video_url ?? null,
           ninoMin: info?.ninoMin ?? null, ninoMax: info?.ninoMax ?? null, infMin: info?.infMin ?? null, infMax: info?.infMax ?? null,
-          filas: [],
+          filas: [], moneda: f.moneda ?? "COP",
         };
         map.set(id, c);
       }
@@ -195,12 +196,12 @@ export function VistaBooking({
 
   // Receptivos (servicios) para su submódulo: agrupados por nombre con su "desde".
   const receptivos = useMemo(() => {
-    const map = new Map<string, { nombre: string; destino: string | null; desde: number }>();
+    const map = new Map<string, { nombre: string; destino: string | null; desde: number; moneda?: string | null }>();
     for (const f of filas.filter((f) => f.modulo === "servicios" && f.servicio_nombre)) {
       const k = `${f.servicio_nombre}|${f.destino_nombre ?? ""}`;
       const prev = map.get(k);
       const p = f.precio_pvp ?? 0;
-      if (!prev) map.set(k, { nombre: f.servicio_nombre as string, destino: f.destino_nombre, desde: p });
+      if (!prev) map.set(k, { nombre: f.servicio_nombre as string, destino: f.destino_nombre, desde: p, moneda: f.moneda });
       else if (p > 0 && p < prev.desde) prev.desde = p;
     }
     return [...map.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
@@ -282,7 +283,7 @@ export function VistaBooking({
                 <div className="font-semibold text-gray-800">{r.nombre}</div>
                 {r.destino && <div className="text-xs text-gray-500">{r.destino}</div>}
                 <div className="mt-3 text-[10px] uppercase tracking-wide text-gray-400">desde</div>
-                <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(r.desde)}</div>
+                <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(r.desde, r.moneda)}</div>
                 <div className="text-[10px] text-gray-400">por persona</div>
               </div>
             ))}
@@ -339,7 +340,7 @@ export function VistaBooking({
                 {h.desde != null ? (
                   <div>
                     <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
-                    <div className="text-xl font-extrabold tracking-tight" style={{ color: "var(--brand-primary)" }}>{formatCOP(h.desde)}</div>
+                    <div className="text-xl font-extrabold tracking-tight" style={{ color: "var(--brand-primary)" }}>{formatMoneda(h.desde, h.moneda)}</div>
                     <div className="text-[10px] text-gray-400">por persona</div>
                   </div>
                 ) : <span className="text-sm text-gray-400">Consultar</span>}
@@ -610,7 +611,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} btnLabel={btnLabel} onAgregar={agregarItem} />
+      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} btnLabel={btnLabel} onAgregar={agregarItem} />
     </div>
   );
 }
@@ -618,7 +619,7 @@ function Selector({
 // Editor de habitaciones/niños + total + botón. Recibe el PVP por acomodación y
 // reporta la selección (no conoce fechas ni módulo). Reutilizado por bloqueo y porción.
 function EditorPax({
-  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota, onAgregar, btnLabel = "Agregar al carrito",
+  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota, onAgregar, btnLabel = "Agregar al carrito", moneda = "COP",
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -628,6 +629,7 @@ function EditorPax({
   edadesNota?: string | null;
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) => void;
   btnLabel?: string;
+  moneda?: string | null;
 }) {
   const [habs, setHabs] = useState<Record<string, number>>({});
   const [ninos, setNinos] = useState(0);
@@ -694,7 +696,7 @@ function EditorPax({
           {ACOM_ROOMS.map((a) => (
             <div key={a} className={`rounded-lg border p-2 ${pvp[a] == null ? "opacity-40" : ""}`}>
               <div className="text-xs font-medium text-gray-700">{ACOM_ROOM_LABEL[a]}</div>
-              <div className="text-[11px] text-gray-400">{pvp[a] != null ? `${formatCOP(pvp[a])}/pers` : "No aplica"}</div>
+              <div className="text-[11px] text-gray-400">{pvp[a] != null ? `${formatMoneda(pvp[a], moneda)}/pers` : "No aplica"}</div>
               <input type="number" min={0} value={habs[a] ?? 0} disabled={pvp[a] == null}
                 onChange={(e) => setHab(a, Number(e.target.value))} className={`${inputCls} mt-1`} />
             </div>
@@ -708,14 +710,14 @@ function EditorPax({
           <div className="flex flex-wrap gap-3">
             {pvp["nino"] != null && (
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">Niños 1 ({formatCOP(pvp["nino"])})</label>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Niños 1 ({formatMoneda(pvp["nino"], moneda)})</label>
                 <input type="number" min={0} max={Math.max(0, maxNinos - ninos2)} value={ninos} disabled={!hayHab}
                   onChange={(e) => setNinos(Math.min(Math.max(0, Number(e.target.value)), Math.max(0, maxNinos - ninos2)))} className={inputCls} />
               </div>
             )}
             {pvp["nino2"] != null && (
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">Niños 2 ({formatCOP(pvp["nino2"])})</label>
+                <label className="mb-1 block text-xs font-medium text-gray-600">Niños 2 ({formatMoneda(pvp["nino2"], moneda)})</label>
                 <input type="number" min={0} max={Math.max(0, maxNinos - ninos)} value={ninos2} disabled={!hayHab}
                   onChange={(e) => setNinos2(Math.min(Math.max(0, Number(e.target.value)), Math.max(0, maxNinos - ninos)))} className={inputCls} />
               </div>
@@ -742,7 +744,7 @@ function EditorPax({
       <div className="flex items-center justify-between border-t border-gray-100 pt-3">
         <div>
           <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
-          <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(precio)}</div>
+          <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
         </div>
         <button type="button" onClick={agregar} disabled={!puede}
           className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
@@ -865,7 +867,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} edadesNota={textoEdadesHotel(hotel)} btnLabel={btnLabel} onAgregar={agregarItem} />
+          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} btnLabel={btnLabel} onAgregar={agregarItem} />
         </>
       )}
     </div>

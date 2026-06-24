@@ -3,7 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { Star, Plane } from "lucide-react";
-import { formatCOP, formatMoneda } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
@@ -46,6 +46,7 @@ export type FilaTarifario = {
   precio_pvp: number;
   descripcion?: string | null;
   recargo_individual?: number | null;
+  moneda?: string | null;
 };
 
 const MODULOS: { key: FilaTarifario["modulo"]; label: string }[] = [
@@ -80,6 +81,7 @@ type Pivotada = {
   modulo: FilaTarifario["modulo"];
   destino?: string | null;
   noches?: number | null;
+  moneda?: string | null;
 };
 
 function pivotar(filas: FilaTarifario[]): Pivotada[] {
@@ -94,7 +96,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
       row = {
         hotel, categoria, regimen, precios: {},
         paquete_id: f.paquete_id, hotel_id: f.hotel_id, bloqueo_id: f.bloqueo_id, modulo: f.modulo,
-        destino: f.destino_nombre, noches: f.noches,
+        destino: f.destino_nombre, noches: f.noches, moneda: f.moneda ?? "COP",
       };
       map.set(key, row);
     }
@@ -464,7 +466,7 @@ function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]
                           </td>
                           <td className="px-3 py-1.5 text-gray-500">{e.pax_desde}–{e.pax_hasta} pax</td>
                           <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
-                            {formatCOP(e.precio_pvp)} <span className="text-xs text-gray-400">/grupo</span>
+                            {formatMoneda(e.precio_pvp, e.moneda)} <span className="text-xs text-gray-400">/grupo</span>
                           </td>
                         </tr>
                       ))
@@ -473,11 +475,11 @@ function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]
                         <td className="px-3 py-1.5 font-medium text-gray-800">
                           {nombre}
                           {descripcion && <div className="text-xs font-normal text-gray-500">{descripcion}</div>}
-                          {recargo > 0 && <div className="text-xs font-normal text-amber-600">+{formatCOP(recargo)} si viaja 1 pax (recargo individual)</div>}
+                          {recargo > 0 && <div className="text-xs font-normal text-amber-600">+{formatMoneda(recargo, srows[0].moneda)} si viaja 1 pax (recargo individual)</div>}
                         </td>
                         <td className="px-3 py-1.5 text-gray-500">Por persona</td>
                         <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
-                          {formatCOP(srows[0].precio_pvp)} <span className="text-xs text-gray-400">/persona</span>
+                          {formatMoneda(srows[0].precio_pvp, srows[0].moneda)} <span className="text-xs text-gray-400">/persona</span>
                         </td>
                       </tr>
                     );
@@ -585,7 +587,7 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                       return (
                         <td key={k} className="px-3 py-2 text-right tabular-nums">
                           {mostrar ? (
-                            <span style={{ color: "var(--brand-primary)" }}>{formatCOP(v)}</span>
+                            <span style={{ color: "var(--brand-primary)" }}>{formatMoneda(v, r.moneda)}</span>
                           ) : (
                             <span className="text-gray-300">—</span>
                           )}

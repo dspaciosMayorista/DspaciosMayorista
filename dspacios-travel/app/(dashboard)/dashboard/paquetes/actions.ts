@@ -284,7 +284,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, categorias, regimenes, hoteles(nombre)")
+      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
@@ -373,7 +373,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     if (numNoches <= 0) return;
     const aporteServ = aporteServiciosIncluidos(numNoches); // solo servicios incluidos
     for (const h of hoteles) {
-      const hotelNombre = (h.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
+      const hotelMeta = h.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
+      const hotelNombre = hotelMeta?.nombre ?? null;
+      const monedaHotel = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
       const filtroCat = (h.categorias as string[] | null) ?? null;
       const filtroReg = (h.regimenes as string[] | null) ?? null;
       const temporadas = temporadasPorHotel.get(h.hotel_id) ?? [];
@@ -413,6 +415,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             aporteServicios: aporteServ,
             aporteVuelo: aporteVueloVal,
             impuesto,
+            moneda: monedaHotel,
           });
           filas.push({
             paquete_id: paqueteId,
@@ -434,6 +437,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             base_comisionable: t.baseComisionable,
             impuesto: t.impuesto,
             precio_pvp: t.pvp,
+            moneda: monedaHotel,
           });
         }
       }
