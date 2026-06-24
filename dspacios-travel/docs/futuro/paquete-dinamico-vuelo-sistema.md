@@ -57,19 +57,55 @@ ni `sillas`**. Es una tabla nueva y un tipo nuevo. Reusa:
   inventario; meter ahí "salidas sin record" obliga a poner `if` en muchos lados
   (cupos, sillas, dashboards). Una tabla aparte mantiene esa lógica intacta.
 
-## Decisiones abiertas (confirmar con el dueño antes de construir)
-1. **¿Las salidas son por paquete** (se definen al armar ese paquete) **o un catálogo
-   reutilizable** por destino? → Propongo **por paquete** (rotan semanalmente con él).
-2. **Valor del vuelo**: ¿neto del tiquete por pax + markup/TA (como el bloqueo), o un
-   valor de venta fijo? → Propongo **neto + markup/TA** (consistente).
-3. **Tarifa de niño/infante en el vuelo**: ¿el sistema cobra distinto a niños? ¿hay
-   valor de tiquete por niño? → opcional `valor_tiquete_nino`.
-4. **Vigencia (rotación)**: la salida deja de venderse pasada su `compra_fin` (~1
-   semana) **y** pasada su fecha de ida (igual que ya ocultamos bloqueos vencidos). ✔️
-5. **Disponibilidad**: sin cupos (ilimitado por sistema). ¿O quieres un tope manual
-   opcional por salida?
-6. **Receptivo/servicios**: ¿estas salidas pueden llevar servicios adicionales
-   (traslados/asistencia) como los otros paquetes? → Propongo **sí** (reusa el add-on).
+## Decisiones (RESPONDIDAS por el dueño · jun-2026)
+1. **Salidas = por paquete.** Un **form** donde agrega las salidas que considere para ese
+   paquete. Cada salida agregada = una **opción en lista desplegable** al reservar; el
+   **hotel se liquida por las noches de ESA salida** (fecha_ida→fecha_regreso). ✔️
+2. **Valor del vuelo:** el dueño **pone el valor del tiquete** y elige **montarlo sobre
+   markup (mk)** o ponerle una **TA** (tarifa administrativa). Igual que el vuelo de bloqueo. ✔️
+3. **Edades del vuelo:** **NO es el mismo precio.**
+   - **0 a 1.99 años (infante):** tarifa de **fee** (opcional, configurable por salida).
+   - **2 años en adelante:** **tarifa de adulto** (tiquete completo).
+   - (No hay tarifa de "niño" intermedia en el vuelo.)
+4. **Vigencia (rotación):** la salida deja de venderse pasada su fecha de ida (igual que
+   ya ocultamos bloqueos vencidos) y opcionalmente por `compra_fin`. ✔️
+5. **Disponibilidad:** sin cupos (ilimitado por sistema). ✔️
+6. **Vista:** tabla aparte **+ vista tipo Booking** para este bloque dinámico. ✔️
+
+## ⚠️ MONEDA (USD) — bloqueante, verificado
+La mayoría de estos paquetes son en **USD** (hoteles internacionales y vuelo en dólares).
+Estado actual del soporte de moneda:
+- ✅ **`ventas.moneda` + `cuentas_por_pagar.moneda` + `cotizaciones.moneda`** existen
+  (default COP). Los **Programas** ya venden en USD usándolas.
+- ✅ **Programas**: USD nativo (motor aparte `pvpPrograma`).
+- ❌ **`tarifa_hotel` y `hoteles`**: NO tienen moneda → hoy las tarifas de hotel son
+  **COP implícito**.
+- ❌ **`armado_paquetes`**: no tiene moneda (paquetes = COP).
+- ❌ **Motor `lib/calc/paquetes.ts`**: redondea a **miles (COP)** (`redondearMilArriba`)
+  → para USD hay que redondear distinto.
+- ❌ **`ContratoDocumento`**: muestra **"COP" fijo** (hardcode, línea ~344) aunque
+  `ventas.moneda` exista.
+
+### Modelo de moneda propuesto (para el paquete dinámico internacional)
+- **`hoteles.moneda`** (default `COP`): un hotel internacional = **USD**; sus
+  `tarifa_hotel` se cargan en esa moneda. Un hotel es de UNA moneda.
+- **`armado_paquetes.moneda`**: el paquete dinámico declara su moneda (toma la de sus
+  hoteles; se valida que todos coincidan). El **valor del tiquete** va en esa misma moneda.
+- **Motor**: recibe `moneda`; el cálculo (hotel/(1−mk)+vuelo) es igual, solo cambia el
+  **redondeo** (miles en COP; centavos/entero en USD).
+- **Contrato/cotización/CxP**: usar `ventas.moneda` (ya existe) en vez del "COP" fijo →
+  arreglar el hardcode del documento.
+- **Caveat tributario:** el detalle de IVA/provisiones/rentabilidad es **colombiano (COP)**.
+  Para paquetes en USD queda con la **misma limitación que los Programas** (el detalle
+  tributario sigue en COP / se omite). Aceptado para esta fase.
+
+> Decisión pendiente del dueño: ¿confirmas **moneda por hotel** (un hotel internacional
+> es un hotel USD con sus tarifas en USD)? Es lo más fiel a "los hoteles que uso son en
+> dólares" y lo menos invasivo para los paquetes COP existentes.
+
+## Receptivo/servicios
+Estas salidas pueden llevar servicios adicionales como los demás paquetes → se reusa el
+add-on (en la moneda del paquete).
 
 ## Esqueleto técnico (cuando se apruebe)
 1. Migración: `armado_paquetes.tipo` admite `dinamico`; tabla `salidas_dinamicas`.
