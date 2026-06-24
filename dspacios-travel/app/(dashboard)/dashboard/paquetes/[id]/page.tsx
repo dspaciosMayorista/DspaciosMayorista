@@ -12,12 +12,15 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
 
   const { data: pq } = await sb
     .from("armado_paquetes")
-    .select("*, destinos(nombre)")
+    .select("*, destinos(nombre, pais)")
     .eq("id", paqueteId)
     .single();
   if (!pq) notFound();
 
   const destinoId = pq.destino_id;
+  // ¿El destino del paquete es internacional? (país distinto de Colombia → migr. 050).
+  const paisDestino = (pq.destinos as { pais?: string | null } | null)?.pais ?? null;
+  const destinoEsInternacional = !!paisDestino && !/^(colombia|co)$/i.test(paisDestino.trim());
   const viajeIni = pq.fecha_viaje_inicio;
   const viajeFin = pq.fecha_viaje_fin;
 
@@ -40,7 +43,13 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     .select("id, nombre, precio_persona, destino_id, servicio_tarifa_pax(pax_desde)")
     .eq("activo", true)
     .order("nombre");
-  if (destinoId) qServicios = qServicios.or(`destino_id.eq.${destinoId},destino_id.is.null`);
+  // Servicio aplica si: es del destino puntual, O es catch-all del MISMO alcance
+  // que el destino del paquete (nacional vs internacional). Así las asistencias
+  // marcadas "todos internacionales" solo salen en paquetes internacionales.
+  if (destinoId) {
+    const alc = destinoEsInternacional ? "internacional" : "nacional";
+    qServicios = qServicios.or(`destino_id.eq.${destinoId},and(destino_id.is.null,alcance.eq.${alc})`);
+  }
 
   const [
     { data: destinos },

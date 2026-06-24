@@ -26,7 +26,7 @@ export type TemporadaServicio = {
 };
 type Servicio = {
   id: number; nombre: string; temporada: string | null; precio_persona: number | null;
-  proveedor_id: number | null; destino_id: number | null; rangos_edad: number[] | null;
+  proveedor_id: number | null; destino_id: number | null; alcance?: string | null; rangos_edad: number[] | null;
   categoria?: string | null;
   liquidacion?: string | null;
   descripcion?: string | null;
@@ -51,6 +51,8 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   const [nombre, setNombre] = useState("");
   const [provId, setProvId] = useState<number | "">("");
   const [destId, setDestId] = useState<number | "">("");
+  // Cobertura del servicio: un destino puntual, todos los nacionales, o todos los internacionales.
+  const [cobertura, setCobertura] = useState<"destino" | "nacional" | "internacional">("nacional");
   const [rangosSel, setRangosSel] = useState<number[]>([]);
   const [pPersona, setPPersona] = useState("");
   const [categoria, setCategoria] = useState("otro");
@@ -74,7 +76,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   const visibles = filtrados.slice(paginaActual * PAGE_SIZE, paginaActual * PAGE_SIZE + PAGE_SIZE);
 
   function resetForm() {
-    setNombre(""); setProvId(""); setDestId(""); setPPersona(""); setCategoria("otro"); setLiquidacion("paquete"); setDescripcion(""); setRecargoOn(false); setRecargoVal(""); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
+    setNombre(""); setProvId(""); setDestId(""); setCobertura("nacional"); setPPersona(""); setCategoria("otro"); setLiquidacion("paquete"); setDescripcion(""); setRecargoOn(false); setRecargoVal(""); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
   }
 
   function startEdit(s: Servicio) {
@@ -83,6 +85,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
     setNombre(s.nombre);
     setProvId(s.proveedor_id ?? "");
     setDestId(s.destino_id ?? "");
+    setCobertura(s.destino_id != null ? "destino" : (s.alcance === "internacional" ? "internacional" : "nacional"));
     setPPersona(s.precio_persona != null ? String(s.precio_persona) : "");
     setCategoria(s.categoria ?? "otro");
     setLiquidacion((s.liquidacion as "dia" | "noche" | "paquete") ?? "paquete");
@@ -111,8 +114,12 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
       .map((t) => ({ paxDesde: Number(t.paxDesde) || 1, paxHasta: Number(t.paxHasta) || Number(t.paxDesde) || 1, precio: Number(t.precio) || 0 }));
     if (persona == null && !grupoTiers.length) { setErr("Pon el precio por persona y/o al menos un rango por grupo."); return; }
     setErr("");
+    // Cobertura → destinoId/alcance: "destino" usa el combo; los catch-all van sin destino.
+    const destinoId = cobertura === "destino" ? (destId === "" ? null : Number(destId)) : null;
+    const alcance: "nacional" | "internacional" = cobertura === "internacional" ? "internacional" : "nacional";
+    if (cobertura === "destino" && destinoId == null) { setErr("Elige un destino o cambia la cobertura."); return; }
     const input: ServicioInput = {
-      nombre, proveedorId: provId === "" ? null : Number(provId), destinoId: destId === "" ? null : Number(destId),
+      nombre, proveedorId: provId === "" ? null : Number(provId), destinoId, alcance,
       precioPersona: persona, grupoTiers, temporada: "", rangosEdad: rangosSel, categoria, liquidacion,
       descripcion, recargoIndividual: recargoOn ? Number(recargoVal) || 0 : 0,
     };
@@ -137,8 +144,15 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
             </select>
           </div>
           <div>
-            <label className={lbl}>Destino</label>
-            <ComboDestino destinos={destinos} value={destId} onChange={setDestId} placeholder="Todos los destinos (nacional)…" />
+            <label className={lbl}>Destino / cobertura</label>
+            <select value={cobertura} onChange={(e) => setCobertura(e.target.value as "destino" | "nacional" | "internacional")} className={`${sel} mb-2`}>
+              <option value="nacional">Todos los destinos nacionales</option>
+              <option value="internacional">Todos los destinos internacionales</option>
+              <option value="destino">Un destino específico…</option>
+            </select>
+            {cobertura === "destino" && (
+              <ComboDestino destinos={destinos} value={destId} onChange={setDestId} placeholder="Escribe el destino o su IATA…" />
+            )}
           </div>
           <div><label className={lbl}>Precio por persona <span className="font-normal text-gray-400">(tarifa base)</span></label><Input type="number" min={0} value={pPersona} onChange={(e) => setPPersona(e.target.value)} placeholder="—" /></div>
           <div>
@@ -430,7 +444,7 @@ function Row({ s, onEdit }: { s: Servicio; onEdit: (s: Servicio) => void }) {
     <tr className="border-t border-gray-50">
       <td className="px-4 py-2 text-gray-700">{s.nombre}</td>
       <td className="px-4 py-2 text-gray-500">{s.proveedores?.nombre ?? "—"}</td>
-      <td className="px-4 py-2 text-gray-500">{s.destinos?.nombre ?? "Nacional"}</td>
+      <td className="px-4 py-2 text-gray-500">{s.destinos?.nombre ?? (s.alcance === "internacional" ? "Todos internacionales" : "Todos nacionales")}</td>
       <td className="px-4 py-2 text-right tabular-nums">
         {s.precio_persona != null ? formatCOP(s.precio_persona) : "—"}
         {(Number(s.recargo_individual) || 0) > 0 && (

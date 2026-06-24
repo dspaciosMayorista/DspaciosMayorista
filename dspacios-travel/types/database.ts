@@ -1371,14 +1371,14 @@ export type Database = {
           tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null; tipo_tarifa: string;
           precio_persona: number | null; precio_grupo: number | null; categoria: string;
           descripcion: string | null; recargo_individual: number | null;
-          liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; activo: boolean; created_at: string;
+          liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; alcance: string; activo: boolean; created_at: string;
         };
         Insert: {
           id?: number; nombre: string; proveedor_id?: number | null; destino_id?: number | null;
           tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null; tipo_tarifa?: string;
           precio_persona?: number | null; precio_grupo?: number | null; categoria?: string;
           descripcion?: string | null; recargo_individual?: number | null;
-          liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; activo?: boolean; created_at?: string;
+          liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; alcance?: string; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
         Relationships: [];
