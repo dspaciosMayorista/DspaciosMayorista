@@ -9,13 +9,14 @@ export const dynamic = "force-dynamic";
 export default async function NuevaReservaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ paquete?: string; hotel?: string; bloqueo?: string; modulo?: string }>;
+  searchParams: Promise<{ paquete?: string; hotel?: string; bloqueo?: string; salida?: string; modulo?: string }>;
 }) {
   const sp = await searchParams;
   const paqueteId = Number(sp.paquete);
   const hotelId = Number(sp.hotel) || 0;
   const bloqueoId = sp.bloqueo ? Number(sp.bloqueo) : null;
-  const modulo = (sp.modulo === "porcion_terrestre" ? "porcion_terrestre" : sp.modulo === "servicios" ? "servicios" : "bloqueo") as Meta["modulo"];
+  const salidaId = sp.salida ? Number(sp.salida) : null;
+  const modulo = (sp.modulo === "porcion_terrestre" ? "porcion_terrestre" : sp.modulo === "servicios" ? "servicios" : sp.modulo === "dinamico" ? "dinamico" : "bloqueo") as Meta["modulo"];
   const esServicios = modulo === "servicios";
 
   const sb = await createClient();
@@ -26,10 +27,10 @@ export default async function NuevaReservaPage({
   if (!esServicios) {
     let q = sb
       .from("tarifario_resultado")
-      .select("categoria, regimen, acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, noches, bloqueo_label")
+      .select("categoria, regimen, acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, noches, bloqueo_label, moneda")
       .eq("paquete_id", paqueteId)
       .eq("hotel_id", hotelId);
-    q = bloqueoId ? q.eq("bloqueo_id", bloqueoId) : q.is("bloqueo_id", null);
+    q = modulo === "dinamico" && salidaId ? q.eq("salida_id", salidaId) : (bloqueoId ? q.eq("bloqueo_id", bloqueoId) : q.is("bloqueo_id", null));
     const { data: filas } = await q;
     if (!filas || !filas.length) {
       return (
@@ -48,7 +49,8 @@ export default async function NuevaReservaPage({
       .eq("id", hotelId)
       .maybeSingle();
     meta = {
-      paqueteId, hotelId, bloqueoId, modulo,
+      paqueteId, hotelId, bloqueoId, salidaId, modulo,
+      moneda: (filas[0] as { moneda?: string | null }).moneda ?? "COP",
       hotelNombre: filas[0].hotel_nombre ?? "",
       destino: filas[0].destino_nombre ?? "",
       fechaIda: filas[0].fecha_ida,

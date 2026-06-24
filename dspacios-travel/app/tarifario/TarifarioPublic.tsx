@@ -28,6 +28,7 @@ export type FilaTarifario = {
   modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   bloqueo_label: string | null;
   bloqueo_id?: number | null;
+  salida_id?: number | null;
   paquete_id?: number;
   hotel_id?: number | null;
   fecha_ida: string | null;
@@ -51,6 +52,7 @@ export type FilaTarifario = {
 
 const MODULOS: { key: FilaTarifario["modulo"]; label: string }[] = [
   { key: "bloqueo", label: "Paquetes" },
+  { key: "dinamico", label: "Salidas dinámicas" },
   { key: "porcion_terrestre", label: "Porción terrestre" },
   { key: "servicios", label: "Servicios" },
 ];
@@ -78,6 +80,7 @@ type Pivotada = {
   paquete_id?: number;
   hotel_id?: number | null;
   bloqueo_id?: number | null;
+  salida_id?: number | null;
   modulo: FilaTarifario["modulo"];
   destino?: string | null;
   noches?: number | null;
@@ -95,7 +98,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
     if (!row) {
       row = {
         hotel, categoria, regimen, precios: {},
-        paquete_id: f.paquete_id, hotel_id: f.hotel_id, bloqueo_id: f.bloqueo_id, modulo: f.modulo,
+        paquete_id: f.paquete_id, hotel_id: f.hotel_id, bloqueo_id: f.bloqueo_id, salida_id: f.salida_id, modulo: f.modulo,
         destino: f.destino_nombre, noches: f.noches, moneda: f.moneda ?? "COP",
       };
       map.set(key, row);
@@ -283,6 +286,8 @@ export function TarifarioPublic({
             <p className="py-12 text-center text-sm text-gray-400">No hay resultados para los filtros aplicados.</p>
           ) : modulo === "bloqueo" ? (
             <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+          ) : modulo === "dinamico" ? (
+            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "dinamico")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : modulo === "porcion_terrestre" ? (
             <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : (
@@ -499,6 +504,7 @@ function reservarHref(r: Pivotada): string {
   if (r.paquete_id != null) p.set("paquete", String(r.paquete_id));
   if (r.hotel_id != null) p.set("hotel", String(r.hotel_id));
   if (r.bloqueo_id != null) p.set("bloqueo", String(r.bloqueo_id));
+  if (r.salida_id != null) p.set("salida", String(r.salida_id));
   p.set("modulo", r.modulo);
   return `/dashboard/reservar/nuevo?${p.toString()}`;
 }

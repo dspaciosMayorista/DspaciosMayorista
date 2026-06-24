@@ -278,7 +278,8 @@ export type PasajeroReserva = {
 export type ReservaInput = {
   paqueteId: number;
   bloqueoId: number | null;
-  modulo: "bloqueo" | "porcion_terrestre" | "servicios";
+  salidaId?: number | null;   // salida dinámica (modulo 'dinamico')
+  modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   hotelId: number;
   paxServicios?: number;   // pax cuando es paquete tipo servicios (sin hotel)
   fechaIda?: string;       // motor por fechas (porción/dinámico): fechas elegidas
@@ -320,6 +321,7 @@ type ComputoReserva = {
   lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[];
   serviciosItems: { nombre: string; precio: number }[];
   impuestoTotal: number;
+  monedaReserva: string;
 };
 
 async function computarReserva(
@@ -336,9 +338,10 @@ async function computarReserva(
   const numNinos = Math.max(0, Math.trunc(Number(input.ninos) || 0));
   const numNinos2 = Math.max(0, Math.trunc(Number(input.ninos2) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
+  let monedaReserva = "COP";  // moneda del paquete (USD si los hoteles son internacionales)
 
   const usarFechas =
-    input.modulo !== "bloqueo" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+    input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!esServicios && usarFechas) {
     const numNoches = noches(input.fechaIda!, input.fechaRegreso!);
@@ -370,7 +373,8 @@ async function computarReserva(
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
     const { data: hotelRowF } = await sb
-      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max").eq("id", input.hotelId).maybeSingle();
+      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max, moneda").eq("id", input.hotelId).maybeSingle();
+    monedaReserva = ((hotelRowF as { moneda?: string | null } | null)?.moneda) ?? "COP";
     const realF = clasificarPorEdad(
       input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
       hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10
@@ -390,17 +394,19 @@ async function computarReserva(
   } else if (!esServicios) {
     let q = sb
       .from("tarifario_resultado")
-      .select("acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso")
+      .select("acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
       .eq("paquete_id", input.paqueteId)
       .eq("hotel_id", input.hotelId)
       .eq("categoria", input.categoria)
       .eq("regimen", input.regimen);
-    q = input.bloqueoId ? q.eq("bloqueo_id", input.bloqueoId) : q.is("bloqueo_id", null);
+    if (input.modulo === "dinamico" && input.salidaId) q = q.eq("salida_id", input.salidaId);
+    else q = input.bloqueoId ? q.eq("bloqueo_id", input.bloqueoId) : q.is("bloqueo_id", null);
     const { data: filas, error: fe } = await q;
     if (fe) return { ok: false, error: fe.message };
     if (!filas || !filas.length) return { ok: false, error: "No se encontró la tarifa seleccionada en el tarifario." };
     for (const f of filas) if (f.acomodacion) pvpPorAcom[f.acomodacion] = f.precio_pvp;
     meta = filas[0];
+    monedaReserva = (filas[0] as { moneda?: string | null }).moneda ?? "COP";
 
     const { data: acomCfg } = await sb
       .from("hotel_acomodaciones")
@@ -602,7 +608,7 @@ async function computarReserva(
 
   return {
     ok: true,
-    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal },
+    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva },
   };
 }
 
@@ -616,7 +622,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal } = comp.data;
+  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva } = comp.data;
 
   // 2c) Validar cupos del bloqueo ANTES de crear nada (no sobre-vender sillas).
   if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -690,6 +696,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     cliente_email: oNull(input.cliente.email),
     destino: meta.destino_nombre,
     tipo_paquete: input.modulo,
+    moneda: monedaReserva,
     fecha_salida: meta.fecha_ida,
     fecha_regreso: meta.fecha_regreso,
     pax: totalPax || paxConSilla,
@@ -948,6 +955,25 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     }
   }
 
+  // 9-bis) Costo aéreo de la SALIDA DINÁMICA (vuelo por sistema, SIN sillas).
+  // Adultos (2+) y niños pagan valor_tiquete; infantes pagan fee_infante.
+  if (input.modulo === "dinamico" && input.salidaId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      const { data: sal } = await admin
+        .from("salidas_dinamicas")
+        .select("valor_tiquete, fee_infante, aerolinea")
+        .eq("id", input.salidaId)
+        .maybeSingle();
+      if (sal) {
+        const infs = Math.max(0, Math.trunc(Number(input.infantes) || 0));
+        const costoAereo = (Number(sal.valor_tiquete) || 0) * paxConSilla + (Number(sal.fee_infante) || 0) * infs;
+        await admin.from("ventas").update({ costo_aereo: costoAereo, aerolinea: sal.aerolinea }).eq("numero_contrato", numero);
+        pushCxP("aereo", `Aéreo ${sal.aerolinea ?? ""}`.trim(), costoAereo, null, sal.aerolinea);
+      }
+    } catch { /* no bloquear */ }
+  }
+
   // 10) Costo neto del HOTEL y su cuenta por pagar. El neto YA se calculó en
   //     computarReserva (netoPorAcom), con la vigencia de compra: si hubiera
   //     vencido, la venta ni siquiera se habría creado (se bloquea allá). Aquí
@@ -1078,7 +1104,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   const esServicios = input.modulo === "servicios";
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems } = comp.data;
+  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva } = comp.data;
 
   const hoy = new Date().toISOString().slice(0, 10);
   const asesorNombre = input.asesorInterno;
@@ -1105,7 +1131,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     asesor_firma_cargo: "Asesor/a",
     asesor_firma_cc: null,
     asesor_firma_tel: null,
-    moneda: "COP",
+    moneda: monedaReserva,
   };
 
   const pasajerosSnap: Record<string, unknown>[] = input.pasajeros.map((p, i) => ({
@@ -1163,6 +1189,23 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
         servicios: bq.ruta, fecha_salida: bq.fecha_ida, fecha_regreso: bq.fecha_regreso,
       });
     }
+  } else if (input.modulo === "dinamico" && input.salidaId) {
+    const { data: sal } = await sb
+      .from("salidas_dinamicas")
+      .select("aerolinea, ruta, fecha_ida, fecha_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg")
+      .eq("id", input.salidaId).maybeSingle();
+    if (sal) {
+      const r = parseRuta(sal.ruta);
+      vuelosSnap.push({
+        id: 1, aerolinea: sal.aerolinea, record: null,
+        origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
+        destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+        vuelo_ida: null, vuelo_regreso: null,
+        hora_salida_ida: sal.hora_salida_ida, hora_llegada_ida: sal.hora_llegada_ida,
+        hora_salida_reg: sal.hora_salida_reg, hora_llegada_reg: sal.hora_llegada_reg,
+        servicios: sal.ruta, fecha_salida: sal.fecha_ida, fecha_regreso: sal.fecha_regreso,
+      });
+    }
   }
 
   const itemsSnap: Record<string, unknown>[] = [];
@@ -1202,7 +1245,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     plan_nombre: planNombre,
     pax: totalPax || paxConSilla,
     precio_venta: precioVenta,
-    moneda: "COP",
+    moneda: monedaReserva,
     fecha_salida: meta.fecha_ida,
     fecha_regreso: meta.fecha_regreso,
     vigencia_hasta: vigencia,
