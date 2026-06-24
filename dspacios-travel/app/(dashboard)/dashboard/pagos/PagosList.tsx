@@ -361,8 +361,11 @@ function PagoInline({
 }) {
   const [valor, setValor] = useState("");
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [trm, setTrm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
+  const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
 
   function handle(e: React.FormEvent) {
     e.preventDefault();
@@ -372,13 +375,18 @@ function PagoInline({
       setError("Ingresa un valor mayor a 0.");
       return;
     }
+    if (esUSD && !(Number(trm) > 0)) {
+      setError("Indica la TRM del día (cuenta en USD).");
+      return;
+    }
     startTransition(async () => {
-      const res = await registrarPagoProveedor(id, v, fecha);
+      const res = await registrarPagoProveedor(id, v, fecha, esUSD ? Number(trm) : undefined);
       if (!res.ok) {
         setError(res.error);
         return;
       }
       setValor("");
+      setTrm("");
     });
   }
 
@@ -386,7 +394,7 @@ function PagoInline({
     <form onSubmit={handle} className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">Valor</label>
+          <label className="mb-1 block text-xs font-medium text-gray-600">{esUSD ? "Pagado (COP)" : "Valor"}</label>
           <Input
             type="number"
             min={0}
@@ -396,6 +404,13 @@ function PagoInline({
             className="w-36"
           />
         </div>
+        {esUSD && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">TRM del día</label>
+            <Input type="number" min={0} value={trm} onChange={(e) => setTrm(e.target.value)} placeholder="4000" className="w-28" />
+            <p className="mt-1 text-[11px] text-gray-400">{usdEq != null ? `abona ${formatMoneda(usdEq, "USD")}` : "COP por 1 USD"}</p>
+          </div>
+        )}
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Fecha del pago</label>
           <Input

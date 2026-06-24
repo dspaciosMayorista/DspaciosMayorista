@@ -411,10 +411,13 @@ export type Database = {
           pct_retencion: number;
           abono1: number | null;
           fecha_abono1: string | null;
+          trm1: number | null;
           abono2: number | null;
           fecha_abono2: string | null;
+          trm2: number | null;
           abono3: number | null;
           fecha_abono3: string | null;
+          trm3: number | null;
           observaciones: string | null;
           tipo_facturacion: string | null;
           base_gravable: number | null;
@@ -436,10 +439,13 @@ export type Database = {
           pct_retencion?: number;
           abono1?: number | null;
           fecha_abono1?: string | null;
+          trm1?: number | null;
           abono2?: number | null;
           fecha_abono2?: string | null;
+          trm2?: number | null;
           abono3?: number | null;
           fecha_abono3?: string | null;
+          trm3?: number | null;
           observaciones?: string | null;
           tipo_facturacion?: string | null;
           base_gravable?: number | null;

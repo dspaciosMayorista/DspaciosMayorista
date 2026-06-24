@@ -24,7 +24,7 @@ export default async function RentabilidadPage() {
   }
 
   const [{ data: ventas }, { data: b2b }, { data: facturas }, { data: cxp }, { data: asesores }] = await Promise.all([
-    sb.from("ventas").select("numero_contrato, cliente, asesor, asesor_firma_nombre, destino, canal, fecha_venta, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos").order("fecha_venta", { ascending: false }),
+    sb.from("ventas").select("numero_contrato, cliente, asesor, asesor_firma_nombre, destino, canal, fecha_venta, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, trm_contrato").order("fecha_venta", { ascending: false }),
     sb.from("aliados_b2b").select("numero_contrato, precio_venta, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion"),
     sb.from("facturacion").select("numero_contrato, base_gravable, iva_descontable"),
     sb.from("cuentas_por_pagar").select("numero_contrato, iva_proveedor"),
@@ -33,6 +33,12 @@ export default async function RentabilidadPage() {
 
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
   const fiscal = fiscalFromParams(paramsRows ?? []);
+  // TRM de referencia (fallback para contratos USD sin abonos todavía).
+  const trmReferencia = Number((paramsRows ?? []).find((p) => p.parametro === "trm_referencia")?.valor) || 0;
+  // Factor de conversión a COP: contratos USD se liquidan a su TRM promedio vigente
+  // (ventas.trm_contrato) o, si aún no tiene abonos, a la TRM de referencia.
+  const factorCop = (v: { moneda?: string | null; trm_contrato?: number | null }) =>
+    (v.moneda ?? "COP") === "USD" ? (Number(v.trm_contrato) || trmReferencia || 0) : 1;
 
   // Comisión B2B total a pagar por contrato.
   const b2bPorContrato = new Map<string, number>();
@@ -52,14 +58,18 @@ export default async function RentabilidadPage() {
   }
 
   const rows: RentRow[] = (ventas ?? []).map((v) => {
-    const costoDirecto = (v.costo_hotel ?? 0) + (v.costo_aereo ?? 0) + (v.costo_receptivo ?? 0) + (v.costo_asistencia ?? 0) + (v.otros_costos ?? 0);
-    const comB2B = b2bPorContrato.get(v.numero_contrato) ?? 0;
+    // Contratos USD → todo a COP a la TRM promedio vigente (PVP, costos y comisión
+    // B2B están en la moneda del contrato). IVA generado/descontable también.
+    const f = factorCop(v);
+    const costoDirecto = ((v.costo_hotel ?? 0) + (v.costo_aereo ?? 0) + (v.costo_receptivo ?? 0) + (v.costo_asistencia ?? 0) + (v.otros_costos ?? 0)) * f;
+    const comB2B = (b2bPorContrato.get(v.numero_contrato) ?? 0) * f;
     const asesorRow = (asesores ?? []).find((a) => a.email === v.asesor || a.nombre === (v.asesor_firma_nombre ?? v.asesor));
     // La comisión del asesor interno NO se descuenta por contrato: se liquida en
     // el global (módulo Liquidación) y solo si el asesor cumple su meta.
     const comAsesor = 0;
     const rent = calcRentabilidad({
-      precioVenta: v.precio_venta, costoDirecto, comB2B, comAsesor,
+      precioVenta: (v.precio_venta ?? 0) * f, costoDirecto, comB2B, comAsesor,
+      // IVA en COP: las facturas DIAN ya se emiten en pesos, no se reconvierten.
       ivaGenerado: ivaGenPorContrato.get(v.numero_contrato) ?? 0,
       ivaDescontable: ivaDescPorContrato.get(v.numero_contrato) ?? 0,
       fiscal,

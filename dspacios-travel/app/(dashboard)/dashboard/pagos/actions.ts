@@ -8,35 +8,46 @@ type Result = { ok: true } | { ok: false; error: string };
 type CxPUpdate = {
   abono1?: number | null;
   fecha_abono1?: string | null;
+  trm1?: number | null;
   abono2?: number | null;
   fecha_abono2?: string | null;
+  trm2?: number | null;
   abono3?: number | null;
   fecha_abono3?: string | null;
+  trm3?: number | null;
 };
 
 // Registra un PAGO a proveedor sobre una cuenta por pagar. El modelo guarda
 // hasta 3 pagos (abono1/2/3 + su fecha); se llena el primer cupo libre.
 export async function registrarPagoProveedor(
   id: number,
-  valor: number,
-  fecha: string
+  valor: number,        // monto pagado en COP (en CxP USD se convierte con la TRM)
+  fecha: string,
+  trmInput?: number,    // TRM del día de pago (obligatoria en CxP USD)
 ): Promise<Result> {
   if (!(valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0" };
   const sb = await createClient();
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
-    .select("abono1, abono2, abono3, valor_total")
+    .select("abono1, abono2, abono3, valor_total, moneda")
     .eq("id", id)
     .maybeSingle();
   if (e1) return { ok: false, error: e1.message };
   if (!cxp) return { ok: false, error: "Cuenta por pagar no encontrada" };
 
+  // En CxP USD se paga en pesos a la TRM del día: el abono se guarda en USD
+  // (= COP/TRM, reduce la obligación) y se registra la TRM del pago.
+  const esUSD = ((cxp as { moneda?: string | null }).moneda ?? "COP") === "USD";
+  const trm = esUSD ? (Number(trmInput) || 0) : 1;
+  if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día (cuenta en USD)." };
+  const abono = esUSD ? valor / trm : valor;
+
   const f = fecha || new Date().toISOString().slice(0, 10);
   const libre = (v: number | null | undefined) => v == null || v === 0;
   let upd: CxPUpdate;
-  if (libre(cxp.abono1)) upd = { abono1: valor, fecha_abono1: f };
-  else if (libre(cxp.abono2)) upd = { abono2: valor, fecha_abono2: f };
-  else if (libre(cxp.abono3)) upd = { abono3: valor, fecha_abono3: f };
+  if (libre(cxp.abono1)) upd = { abono1: abono, fecha_abono1: f, trm1: trm };
+  else if (libre(cxp.abono2)) upd = { abono2: abono, fecha_abono2: f, trm2: trm };
+  else if (libre(cxp.abono3)) upd = { abono3: abono, fecha_abono3: f, trm3: trm };
   else
     return {
       ok: false,
@@ -92,9 +103,9 @@ export async function deshacerUltimoPago(id: number): Promise<Result> {
 
   const ocupado = (v: number | null | undefined) => v != null && v !== 0;
   let upd: CxPUpdate | null = null;
-  if (ocupado(cxp.abono3)) upd = { abono3: null, fecha_abono3: null };
-  else if (ocupado(cxp.abono2)) upd = { abono2: null, fecha_abono2: null };
-  else if (ocupado(cxp.abono1)) upd = { abono1: null, fecha_abono1: null };
+  if (ocupado(cxp.abono3)) upd = { abono3: null, fecha_abono3: null, trm3: null };
+  else if (ocupado(cxp.abono2)) upd = { abono2: null, fecha_abono2: null, trm2: null };
+  else if (ocupado(cxp.abono1)) upd = { abono1: null, fecha_abono1: null, trm1: null };
   if (!upd) return { ok: false, error: "No hay pagos para deshacer" };
 
   const { error: e2 } = await sb.from("cuentas_por_pagar").update(upd).eq("id", id);
