@@ -35,7 +35,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   if (viajeIni) qVuelos = qVuelos.gte("fecha_ida", viajeIni);
   if (viajeFin) qVuelos = qVuelos.lte("fecha_ida", viajeFin);
 
-  let qHoteles = sb.from("hoteles").select("id, nombre, zona, destino_id").eq("activo", true).order("nombre");
+  let qHoteles = sb.from("hoteles").select("id, nombre, zona, destino_id, moneda").eq("activo", true).order("nombre");
   if (destinoId) qHoteles = qHoteles.eq("destino_id", destinoId);
 
   let qServicios = sb
@@ -68,6 +68,13 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     sb.from("armado_hoteles").select("hotel_id, categorias, regimenes").eq("paquete_id", paqueteId),
     sb.from("armado_servicios").select("servicio_id, modo, incluido").eq("paquete_id", paqueteId),
   ]);
+
+  // Salidas dinámicas (solo aplican al tipo 'dinamico').
+  const { data: salidas } = pq.tipo === "dinamico"
+    ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).order("fecha_ida")
+    : { data: null };
+  // Moneda del paquete = la de sus hoteles (USD si hay alguno internacional en USD).
+  const monedaPaquete = (hotelesDisp ?? []).some((h) => (h as { moneda?: string | null }).moneda === "USD") ? "USD" : "COP";
 
   // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.
   const resultado: Record<string, unknown>[] = [];
@@ -128,6 +135,8 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         selHoteles={selHoteles ?? []}
         selServicios={selServicios ?? []}
         resultado={resultado as unknown as Parameters<typeof ArmadoClient>[0]["resultado"]}
+        salidas={(salidas ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["salidas"]}
+        moneda={monedaPaquete}
       />
     </div>
   );

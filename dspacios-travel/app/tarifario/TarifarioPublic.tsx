@@ -25,7 +25,7 @@ export type ProgramaResumen = {
 };
 
 export type FilaTarifario = {
-  modulo: "bloqueo" | "porcion_terrestre" | "servicios";
+  modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   bloqueo_label: string | null;
   bloqueo_id?: number | null;
   paquete_id?: number;

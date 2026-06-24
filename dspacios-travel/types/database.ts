@@ -12,6 +12,24 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      salidas_dinamicas: {
+        Row: {
+          id: number; paquete_id: number; aerolinea: string | null; ruta: string | null; origen: string | null;
+          fecha_ida: string; fecha_regreso: string | null;
+          hora_salida_ida: string | null; hora_llegada_ida: string | null; hora_salida_reg: string | null; hora_llegada_reg: string | null;
+          valor_tiquete: number; aplica_mk: boolean; ta: number; fee_infante: number;
+          compra_inicio: string | null; compra_fin: string | null; activo: boolean; notas: string | null; orden: number; created_at: string;
+        };
+        Insert: {
+          id?: number; paquete_id: number; aerolinea?: string | null; ruta?: string | null; origen?: string | null;
+          fecha_ida: string; fecha_regreso?: string | null;
+          hora_salida_ida?: string | null; hora_llegada_ida?: string | null; hora_salida_reg?: string | null; hora_llegada_reg?: string | null;
+          valor_tiquete?: number; aplica_mk?: boolean; ta?: number; fee_infante?: number;
+          compra_inicio?: string | null; compra_fin?: string | null; activo?: boolean; notas?: string | null; orden?: number; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["salidas_dinamicas"]["Insert"]>;
+        Relationships: [];
+      };
       auditoria: {
         Row: {
           id: number;
@@ -1493,12 +1511,14 @@ export type Database = {
           descripcion: string | null;
           recargo_individual: number | null;
           moneda: string;
+          salida_id: number | null;
           created_at: string;
         };
         Insert: {
           id?: number;
           paquete_id: number;
           moneda?: string;
+          salida_id?: number | null;
           paquete_nombre?: string | null;
           paquete_activo?: boolean;
           pax_desde?: number | null;
@@ -2122,7 +2142,7 @@ export type Database = {
       paquete_categoria: "bloqueo" | "porcion_terrestre";
       liquidacion_tipo: "dia" | "noche" | "paquete";
       impuesto_tipo: "tiquete" | "fijo";
-      tarifario_modulo: "bloqueo" | "porcion_terrestre" | "servicios";
+      tarifario_modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
     };
     CompositeTypes: {
       [_ in never]: never;

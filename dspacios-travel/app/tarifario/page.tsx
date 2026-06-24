@@ -77,7 +77,7 @@ export default async function TarifarioPublicoPage() {
   // inactivo, vive en el histórico de vuelos). Solo afecta a los bloqueos; las
   // porciones/servicios se rigen por su propia vigencia.
   const hoyTarifa = hoyISO();
-  filas = filas.filter((f) => f.modulo !== "bloqueo" || !f.fecha_ida || f.fecha_ida >= hoyTarifa);
+  filas = filas.filter((f) => (f.modulo !== "bloqueo" && f.modulo !== "dinamico") || !f.fecha_ida || f.fecha_ida >= hoyTarifa);
 
   // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
   // Los servicios de paquetes porción/bloqueo existen como add-on para Reservar,
