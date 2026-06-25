@@ -423,6 +423,58 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["contrato_facturacion"]["Insert"]>;
         Relationships: [];
       };
+      pe_empleados: {
+        Row: {
+          id: number;
+          nombre: string;
+          tipo: string;
+          salario: number;
+          auxilio: boolean;
+          riesgo: string;
+          declarante: boolean;
+          contrato_path: string | null;
+          contrato_nombre: string | null;
+          activo: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          tipo?: string;
+          salario?: number;
+          auxilio?: boolean;
+          riesgo?: string;
+          declarante?: boolean;
+          contrato_path?: string | null;
+          contrato_nombre?: string | null;
+          activo?: boolean;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["pe_empleados"]["Insert"]>;
+        Relationships: [];
+      };
+      pe_costos: {
+        Row: {
+          id: number;
+          concepto: string;
+          categoria: string | null;
+          clasificacion: string;
+          valor: number;
+          activo: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          concepto: string;
+          categoria?: string | null;
+          clasificacion?: string;
+          valor?: number;
+          activo?: boolean;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["pe_costos"]["Insert"]>;
+        Relationships: [];
+      };
       cuentas_por_pagar: {
         Row: {
           id: number;

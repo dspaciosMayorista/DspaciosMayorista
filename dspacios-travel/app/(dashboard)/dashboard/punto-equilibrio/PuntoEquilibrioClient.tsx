@@ -1,219 +1,415 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { formatCOP } from "@/lib/utils";
 import { SMMLV } from "@/lib/constants";
-import { liquidarEmpleadoContrato, aplicaAuxilio, ARL, type ClaseRiesgo } from "@/lib/calc/nomina";
+import { createClient } from "@/lib/supabase/client";
+import { liquidarEmpleadoContrato, ARL, type ClaseRiesgo } from "@/lib/calc/nomina";
+import {
+  guardarEmpleado, eliminarEmpleado, registrarContratoEmpleado, quitarContratoEmpleado, urlContratoEmpleado,
+  guardarCosto, eliminarCosto,
+} from "./actions";
 
-type Linea = { concepto: string; valor: string };
-type EmpContrato = { nombre: string; salario: string; auxilio: boolean; riesgo: ClaseRiesgo };
-type EmpServicio = { nombre: string; honorario: string };
+export type EmpRow = {
+  id: number; nombre: string; tipo: "empleado" | "servicios"; salario: number;
+  auxilio: boolean; riesgo: string; declarante: boolean;
+  contratoPath: string | null; contratoNombre: string | null;
+};
+export type CostoRow = { id: number; concepto: string; categoria: string; clasificacion: "fijo" | "variable"; valor: number };
 
 const n = (s: string) => Number(s) || 0;
-const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
-export function PuntoEquilibrioClient({ margenAuto = 30 }: { margenAuto?: number }) {
-  const [fijos, setFijos] = useState<Linea[]>([{ concepto: "Arriendo oficina", valor: "" }]);
-  const [variables, setVariables] = useState<Linea[]>([{ concepto: "Comisiones / costo variable", valor: "" }]);
-  const [contrato, setContrato] = useState<EmpContrato[]>([]);
-  const [servicios, setServicios] = useState<EmpServicio[]>([]);
-  const [margen, setMargen] = useState(String(margenAuto));
+function liquidar(e: EmpRow) {
+  if (e.tipo === "servicios") {
+    return { segSocial: 0, prestaciones: 0, auxilio: 0, costoTotal: e.salario };
+  }
+  const l = liquidarEmpleadoContrato(e.salario, e.auxilio, (e.riesgo as ClaseRiesgo) || "I", e.declarante);
+  return { segSocial: l.seguridadSocial + l.parafiscales, prestaciones: l.prestaciones, auxilio: l.auxilio, costoTotal: l.costoTotalMensual };
+}
+
+export function PuntoEquilibrioClient({ empleados, costos, margenNeto, margenBruto }: {
+  empleados: EmpRow[]; costos: CostoRow[]; margenNeto: number; margenBruto: number;
+}) {
+  const [tab, setTab] = useState<"dashboard" | "config">("dashboard");
   const [usarAuto, setUsarAuto] = useState(true);
-  const [declarante, setDeclarante] = useState(true);
-  const [detalle, setDetalle] = useState<number | null>(null);
+  const [margenManual, setMargenManual] = useState(String(Math.round(margenNeto * 10) / 10));
+  const margenEf = usarAuto ? margenNeto : n(margenManual);
 
-  const margenEf = usarAuto ? margenAuto : (n(margen) || 0);
+  const totNomina = useMemo(() => empleados.reduce((a, e) => a + liquidar(e).costoTotal, 0), [empleados]);
+  const totFijos = useMemo(() => costos.filter((c) => c.clasificacion === "fijo").reduce((a, c) => a + c.valor, 0), [costos]);
+  const totVariables = useMemo(() => costos.filter((c) => c.clasificacion === "variable").reduce((a, c) => a + c.valor, 0), [costos]);
 
-  // Totales
-  const totFijos = fijos.reduce((a, x) => a + n(x.valor), 0);
-  const totVariables = variables.reduce((a, x) => a + n(x.valor), 0);
-  const liqs = contrato.map((e) => liquidarEmpleadoContrato(n(e.salario), e.auxilio, e.riesgo, declarante));
-  const totNomina = liqs.reduce((a, l) => a + l.costoTotalMensual, 0);
-  const totServicios = servicios.reduce((a, x) => a + n(x.honorario), 0);
-
-  const costosFijosTotales = totFijos + totNomina + totServicios; // fijos del negocio
-  const costosTotales = costosFijosTotales + totVariables;
+  const totalCubrir = totFijos + totNomina; // fijos del negocio + nómina
   const m = margenEf / 100;
-  const peVentas = m > 0 ? Math.round(costosFijosTotales / m) : 0;
-
-  const cell = "rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm";
+  const ventasMin = m > 0 ? Math.round(totalCubrir / m) : 0;
 
   return (
     <div className="space-y-6">
-      {/* Costos y gastos fijos */}
-      <Seccion titulo="Costos y gastos fijos (mensuales)" total={totFijos}>
-        {fijos.map((x, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <Input value={x.concepto} onChange={(e) => setFijos((p) => p.map((r, j) => j === i ? { ...r, concepto: e.target.value } : r))} placeholder="Concepto" className="flex-1" />
-            <Input type="number" value={x.valor} onChange={(e) => setFijos((p) => p.map((r, j) => j === i ? { ...r, valor: e.target.value } : r))} placeholder="0" className="w-40 text-right" />
-            <Del onClick={() => setFijos((p) => p.filter((_, j) => j !== i))} />
-          </div>
+      {/* Pestañas */}
+      <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
+        {([["dashboard", "Dashboard"], ["config", "Configuración"]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className="rounded-md px-4 py-2 text-sm font-medium transition-colors"
+            style={tab === k ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#6b7280" }}>
+            {label}
+          </button>
         ))}
-        <Add onClick={() => setFijos((p) => [...p, { concepto: "", valor: "" }])}>+ Agregar costo fijo</Add>
-      </Seccion>
+      </div>
 
-      {/* Costos y gastos variables */}
-      <Seccion titulo="Costos y gastos variables (mensuales)" total={totVariables}>
-        {variables.map((x, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <Input value={x.concepto} onChange={(e) => setVariables((p) => p.map((r, j) => j === i ? { ...r, concepto: e.target.value } : r))} placeholder="Concepto" className="flex-1" />
-            <Input type="number" value={x.valor} onChange={(e) => setVariables((p) => p.map((r, j) => j === i ? { ...r, valor: e.target.value } : r))} placeholder="0" className="w-40 text-right" />
-            <Del onClick={() => setVariables((p) => p.filter((_, j) => j !== i))} />
-          </div>
-        ))}
-        <Add onClick={() => setVariables((p) => [...p, { concepto: "", valor: "" }])}>+ Agregar costo variable</Add>
-      </Seccion>
-
-      {/* Empleados por contrato */}
-      <Seccion titulo="Empleados por contrato (liquidación 2026)" total={totNomina}>
-        <p className="mb-2 text-xs text-gray-400">Incluye seguridad social, parafiscales y prestaciones sociales. El auxilio de transporte aplica a salarios ≤ 2 SMMLV.</p>
-        <label className="mb-3 flex items-start gap-2 rounded-lg border border-gray-100 bg-[rgba(102,181,150,0.08)] px-3 py-2 text-xs text-gray-600">
-          <input type="checkbox" checked={declarante} onChange={(ev) => setDeclarante(ev.target.checked)} className="mt-0.5" />
-          <span>
-            <b>Empresa declarante de renta</b> (sociedad). Aplica la <b>exoneración de aportes</b> (Art. 114-1 E.T.,
-            Ley 1819/2016): no se pagan <b>Salud (8,5%)</b>, <b>SENA (2%)</b> ni <b>ICBF (3%)</b> por los empleados que
-            ganen menos de <b>10 SMMLV</b> ({formatCOP(SMMLV * 10)}). Pensión, ARL y Caja siempre se pagan.
-          </span>
-        </label>
-        {contrato.map((e, i) => {
-          const l = liqs[i];
-          const abierto = detalle === i;
-          return (
-            <div key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="flex-1"><label className={lbl}>Nombre / cargo</label><Input value={e.nombre} onChange={(ev) => setContrato((p) => p.map((r, j) => j === i ? { ...r, nombre: ev.target.value } : r))} /></div>
-                <div><label className={lbl}>Salario base</label><Input type="number" value={e.salario} onChange={(ev) => setContrato((p) => p.map((r, j) => j === i ? { ...r, salario: ev.target.value } : r))} className="w-36 text-right" /></div>
-                <div>
-                  <label className={lbl}>Riesgo ARL</label>
-                  <select value={e.riesgo} onChange={(ev) => setContrato((p) => p.map((r, j) => j === i ? { ...r, riesgo: ev.target.value as ClaseRiesgo } : r))} className={cell}>
-                    {Object.keys(ARL).map((k) => <option key={k} value={k}>{k}</option>)}
-                  </select>
-                </div>
-                <label className="flex items-center gap-1 pb-2 text-xs text-gray-600">
-                  <input type="checkbox" checked={e.auxilio} onChange={(ev) => setContrato((p) => p.map((r, j) => j === i ? { ...r, auxilio: ev.target.checked } : r))} /> Auxilio transporte
-                </label>
-                <Del onClick={() => setContrato((p) => p.filter((_, j) => j !== i))} />
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500">
-                <span>SS: {formatCOP(l.seguridadSocial)}</span>
-                <span>Parafiscales: {formatCOP(l.parafiscales)}</span>
-                <span>Prestaciones: {formatCOP(l.prestaciones)}</span>
-                {l.auxilio > 0 && <span>Auxilio: {formatCOP(l.auxilio)}</span>}
-                <span className="font-semibold" style={{ color: "var(--brand-primary)" }}>Costo total: {formatCOP(l.costoTotalMensual)}</span>
-                {l.exonerado && <span className="rounded bg-[rgba(102,181,150,0.18)] px-1.5 py-0.5 font-medium text-[#3d7a63]">exonerado de Salud/SENA/ICBF</span>}
-                {n(e.salario) > 0 && !aplicaAuxilio(n(e.salario)) && e.auxilio && <span className="text-amber-600">⚠ salario &gt; 2 SMMLV: por ley no llevaría auxilio</span>}
-                <button type="button" onClick={() => setDetalle(abierto ? null : i)} className="font-medium text-[#1D7C9A] hover:underline">{abierto ? "Ocultar detalle" : "Ver detalle"}</button>
-              </div>
-              {abierto && (
-                <div className="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-gray-100 bg-white p-3 sm:grid-cols-3">
-                  <DetalleGrupo titulo="Seguridad social" total={l.seguridadSocial}>
-                    <DLinea label="Salud (8,5%)" valor={l.salud} tachado={l.exonerado} />
-                    <DLinea label="Pensión (12%)" valor={l.pension} />
-                    <DLinea label={`ARL (${(ARL[e.riesgo] * 100).toFixed(3)}%)`} valor={l.arl} />
-                  </DetalleGrupo>
-                  <DetalleGrupo titulo="Parafiscales" total={l.parafiscales}>
-                    <DLinea label="SENA (2%)" valor={l.sena} tachado={l.exonerado} />
-                    <DLinea label="ICBF (3%)" valor={l.icbf} tachado={l.exonerado} />
-                    <DLinea label="Caja comp. (4%)" valor={l.caja} />
-                  </DetalleGrupo>
-                  <DetalleGrupo titulo="Prestaciones sociales" total={l.prestaciones}>
-                    <DLinea label="Prima (8,33%)" valor={l.prima} />
-                    <DLinea label="Cesantías (8,33%)" valor={l.cesantias} />
-                    <DLinea label="Int. cesantías (1%)" valor={l.interesesCesantias} />
-                    <DLinea label="Vacaciones (4,17%)" valor={l.vacaciones} />
-                  </DetalleGrupo>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        <Add onClick={() => setContrato((p) => [...p, { nombre: "", salario: "", auxilio: true, riesgo: "I" }])}>+ Agregar empleado por contrato</Add>
-      </Seccion>
-
-      {/* Empleados por prestación de servicios */}
-      <Seccion titulo="Empleados por prestación de servicios" total={totServicios}>
-        <p className="mb-2 text-xs text-gray-400">Honorario mensual (sin prestaciones; el contratista asume su seguridad social).</p>
-        {servicios.map((e, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <Input value={e.nombre} onChange={(ev) => setServicios((p) => p.map((r, j) => j === i ? { ...r, nombre: ev.target.value } : r))} placeholder="Nombre / servicio" className="flex-1" />
-            <Input type="number" value={e.honorario} onChange={(ev) => setServicios((p) => p.map((r, j) => j === i ? { ...r, honorario: ev.target.value } : r))} placeholder="Honorario mensual" className="w-40 text-right" />
-            <Del onClick={() => setServicios((p) => p.filter((_, j) => j !== i))} />
-          </div>
-        ))}
-        <Add onClick={() => setServicios((p) => [...p, { nombre: "", honorario: "" }])}>+ Agregar prestación de servicios</Add>
-      </Seccion>
-
-      {/* Punto de equilibrio */}
-      <section className="rounded-xl border-2 p-5" style={{ borderColor: "var(--brand-primary)" }}>
-        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>Punto de equilibrio</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Resumen label="Costos y gastos fijos (incl. nómina)" valor={costosFijosTotales} />
-          <Resumen label="Costos y gastos variables" valor={totVariables} />
-          <Resumen label="Costos y gastos totales" valor={costosTotales} />
-          <div>
-            <label className={lbl}>Margen de contribución / utilidad %</label>
-            <div className="flex items-center gap-2">
-              <Input type="number" value={usarAuto ? String(margenAuto) : margen} onChange={(e) => setMargen(e.target.value)} disabled={usarAuto} className="w-32 disabled:bg-gray-50 disabled:text-gray-500" />
-              <span className="text-lg font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{margenEf.toFixed(1)}%</span>
-            </div>
-            <label className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-500">
-              <input type="checkbox" checked={usarAuto} onChange={(e) => { setUsarAuto(e.target.checked); if (!e.target.checked) setMargen(String(margenAuto)); }} />
-              Automático de Rentabilidad (margen promedio ponderado: <b>{margenAuto.toFixed(1)}%</b>)
-            </label>
-          </div>
-        </div>
-        <div className="mt-4 flex items-center justify-between rounded-lg bg-[rgba(29,124,154,0.06)] px-4 py-3">
-          <span className="text-sm font-semibold text-gray-700">Ventas necesarias para el punto de equilibrio (mes)</span>
-          <span className="text-2xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(peVentas)}</span>
-        </div>
-        <p className="mt-2 text-xs text-gray-400">Fórmula: costos y gastos fijos ÷ margen de contribución. Por encima de ese nivel de ventas, el negocio genera utilidad.</p>
-      </section>
+      {tab === "dashboard" ? (
+        <Dashboard ventasMin={ventasMin} totalCubrir={totalCubrir} totFijos={totFijos} totNomina={totNomina} margenEf={margenEf} />
+      ) : (
+        <Config
+          empleados={empleados} costos={costos}
+          totFijos={totFijos} totVariables={totVariables} totNomina={totNomina}
+          totalCubrir={totalCubrir} ventasMin={ventasMin} margenEf={margenEf} margenNeto={margenNeto} margenBruto={margenBruto}
+          usarAuto={usarAuto} setUsarAuto={setUsarAuto} margenManual={margenManual} setMargenManual={setMargenManual}
+        />
+      )}
     </div>
   );
 }
 
-function Seccion({ titulo, total, children }: { titulo: string; total: number; children: React.ReactNode }) {
+// ── Pestaña DASHBOARD ─────────────────────────────────────────────────────────
+function Dashboard({ ventasMin, totalCubrir, totFijos, totNomina, margenEf }: {
+  ventasMin: number; totalCubrir: number; totFijos: number; totNomina: number; margenEf: number;
+}) {
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-gray-700">{titulo}</h2>
-        <span className="text-sm font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(total)}</span>
+    <div className="space-y-5">
+      <div className="rounded-2xl p-8 text-center text-white shadow-sm" style={{ background: "var(--brand-gradient, var(--brand-primary))", backgroundColor: "var(--brand-primary)" }}>
+        <p className="text-sm font-medium uppercase tracking-wide opacity-90">Ventas mínimas del mes para no perder</p>
+        <p className="mt-2 text-5xl font-extrabold tabular-nums">{formatCOP(ventasMin)}</p>
+        <p className="mt-2 text-sm opacity-80">Con el margen neto corriendo de Rentabilidad ({margenEf.toFixed(1)}%).</p>
       </div>
-      <div className="space-y-2">{children}</div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Card titulo="Total a cubrir / mes" valor={formatCOP(totalCubrir)} />
+        <Card titulo="Nómina (costo empleador)" valor={formatCOP(totNomina)} />
+        <Card titulo="Costos y gastos fijos" valor={formatCOP(totFijos)} />
+      </div>
+      <p className="text-xs text-gray-400">
+        Fórmula: (costos fijos + nómina) ÷ margen neto. El margen neto sale de la rentabilidad real de los contratos
+        (ya descuenta costo directo, provisiones e IVA). Ajusta empleados y costos en la pestaña Configuración.
+      </p>
+    </div>
+  );
+}
+function Card({ titulo, valor }: { titulo: string; valor: string }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="text-[11px] uppercase tracking-wide text-gray-400">{titulo}</div>
+      <div className="mt-1 text-xl font-bold tabular-nums text-gray-800">{valor}</div>
+    </div>
+  );
+}
+
+// ── Pestaña CONFIGURACIÓN ─────────────────────────────────────────────────────
+function Config(p: {
+  empleados: EmpRow[]; costos: CostoRow[];
+  totFijos: number; totVariables: number; totNomina: number; totalCubrir: number; ventasMin: number;
+  margenEf: number; margenNeto: number; margenBruto: number;
+  usarAuto: boolean; setUsarAuto: (v: boolean) => void; margenManual: string; setMargenManual: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      {/* Cálculo del Punto de Equilibrio */}
+      <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>⚖️ Cálculo del punto de equilibrio</h2>
+        <table className="w-full text-sm">
+          <tbody>
+            <Linea k="Costos y gastos fijos" v={formatCOP(p.totFijos)} />
+            <Linea k="Nómina (costo empleadores)" v={formatCOP(p.totNomina)} />
+            <Linea k="Total a cubrir" v={formatCOP(p.totalCubrir)} bold />
+            <tr className="border-t border-gray-100">
+              <td className="py-2 text-gray-600">÷ Margen neto</td>
+              <td className="py-2 text-right">
+                <span className="inline-flex items-center gap-2">
+                  {!p.usarAuto && <Input type="number" value={p.margenManual} onChange={(e) => p.setMargenManual(e.target.value)} className="w-24 text-right" />}
+                  <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{p.margenEf.toFixed(1)}%</b>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div className="mt-3 flex items-center justify-between rounded-lg bg-[rgba(102,181,150,0.12)] px-4 py-3">
+          <span className="text-sm font-semibold text-gray-700">Ventas mínimas para no perder</span>
+          <span className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(p.ventasMin)}</span>
+        </div>
+        <label className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-500">
+          <input type="checkbox" checked={p.usarAuto} onChange={(e) => p.setUsarAuto(e.target.checked)} />
+          Margen neto automático de Rentabilidad (<b>{p.margenNeto.toFixed(1)}%</b>) · margen bruto {p.margenBruto.toFixed(1)}%
+        </label>
+        <p className="mt-2 text-xs text-gray-400">Los costos variables ({formatCOP(p.totVariables)}) no entran aquí porque el margen neto ya descuenta el costo directo de cada venta.</p>
+      </section>
+
+      <EmpleadosSection empleados={p.empleados} totNomina={p.totNomina} />
+      <CostosSection costos={p.costos} totFijos={p.totFijos} totVariables={p.totVariables} />
+    </div>
+  );
+}
+function Linea({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
+  return (
+    <tr className="border-t border-gray-100 first:border-t-0">
+      <td className={`py-2 text-gray-600 ${bold ? "font-semibold" : ""}`}>{k}</td>
+      <td className={`py-2 text-right tabular-nums ${bold ? "font-bold text-gray-900" : "text-gray-800"}`}>{v}</td>
+    </tr>
+  );
+}
+
+// ── Empleados ─────────────────────────────────────────────────────────────────
+function EmpleadosSection({ empleados, totNomina }: { empleados: EmpRow[]; totNomina: number }) {
+  const [editor, setEditor] = useState<EmpRow | "nuevo" | null>(null);
+  return (
+    <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>👥 Empleados y costo de contratación</h2>
+        <Button onClick={() => setEditor("nuevo")} style={{ backgroundColor: "var(--brand-primary)" }}>+ Agregar</Button>
+      </div>
+      {editor && <EmpleadoEditor row={editor === "nuevo" ? null : editor} onClose={() => setEditor(null)} />}
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[760px] text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 text-left text-xs uppercase tracking-wide text-gray-400">
+              <th className="px-3 py-2">Nombre</th><th className="px-3 py-2">Tipo</th>
+              <th className="px-3 py-2 text-right">Salario</th><th className="px-3 py-2 text-right">Aux</th>
+              <th className="px-3 py-2 text-right">Seg. social</th><th className="px-3 py-2 text-right">Prestaciones</th>
+              <th className="px-3 py-2 text-right">Costo total</th><th className="px-3 py-2 text-center">Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {empleados.length === 0 ? (
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-gray-400">Sin empleados. Agrega el primero.</td></tr>
+            ) : empleados.map((e) => <EmpleadoFila key={e.id} e={e} onEdit={() => setEditor(e)} />)}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-gray-200 font-semibold">
+              <td className="px-3 py-2" colSpan={6}>Total nómina mensual</td>
+              <td className="px-3 py-2 text-right tabular-nums">{formatCOP(totNomina)}</td><td />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </section>
   );
 }
-function Resumen({ label, valor }: { label: string; valor: number }) {
+
+function EmpleadoFila({ e, onEdit }: { e: EmpRow; onEdit: () => void }) {
+  const router = useRouter();
+  const l = liquidar(e);
+  const [pending, start] = useTransition();
+  const [subiendo, setSubiendo] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function subir(file: File) {
+    setErr(""); setSubiendo(true);
+    try {
+      const sb = createClient();
+      const ext = file.name.split(".").pop() || "bin";
+      const path = `pe-empleados/${e.id}-${Date.now()}.${ext}`;
+      const { error } = await sb.storage.from("contratos").upload(path, file, { upsert: false });
+      if (error) throw error;
+      const r = await registrarContratoEmpleado(e.id, path, file.name);
+      if (!r.ok) throw new Error(r.error);
+      router.refresh();
+    } catch (ex) { setErr(ex instanceof Error ? ex.message : "No se pudo subir."); }
+    finally { setSubiendo(false); }
+  }
+  async function verContrato() {
+    if (!e.contratoPath) return;
+    const r = await urlContratoEmpleado(e.contratoPath);
+    if (r.ok) window.open(r.url, "_blank");
+  }
+
   return (
-    <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-      <div className="text-[11px] uppercase tracking-wide text-gray-400">{label}</div>
-      <div className="text-lg font-bold tabular-nums text-gray-800">{formatCOP(valor)}</div>
-    </div>
+    <tr className="border-b border-gray-50">
+      <td className="px-3 py-2.5 font-medium text-gray-800">
+        {e.nombre}
+        {err && <span className="ml-2 text-[11px] text-red-500">{err}</span>}
+      </td>
+      <td className="px-3 py-2.5 text-gray-500">
+        {e.tipo === "servicios" ? "Prestación de servicios" : "Empleado"}
+        {e.tipo === "empleado" && e.declarante && <span className="ml-1 rounded bg-[rgba(102,181,150,0.18)] px-1 text-[10px] text-[#3d7a63]">exo</span>}
+      </td>
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-600">{formatCOP(e.salario)}</td>
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{l.auxilio > 0 ? formatCOP(l.auxilio) : "—"}</td>
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{e.tipo === "empleado" ? formatCOP(l.segSocial) : "—"}</td>
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{e.tipo === "empleado" ? formatCOP(l.prestaciones) : "—"}</td>
+      <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatCOP(l.costoTotal)}</td>
+      <td className="px-3 py-2.5">
+        <div className="flex items-center justify-center gap-2">
+          {e.contratoPath ? (
+            <button onClick={verContrato} title={e.contratoNombre ?? "Ver contrato"} className="text-[#1D7C9A] hover:underline text-xs">📄 Contrato</button>
+          ) : (
+            <label className="cursor-pointer text-xs text-gray-500 hover:text-[#1D7C9A]" title="Cargar contrato (escaneado o digital)">
+              {subiendo ? "Subiendo…" : "⬆ Contrato"}
+              <input type="file" accept="application/pdf,image/*" className="hidden" onChange={(ev) => ev.target.files?.[0] && subir(ev.target.files[0])} />
+            </label>
+          )}
+          <button onClick={onEdit} className="text-gray-400 hover:text-gray-700" title="Editar">✎</button>
+          <button disabled={pending} onClick={() => start(async () => { await eliminarEmpleado(e.id, e.contratoPath); router.refresh(); })} className="text-gray-400 hover:text-red-500" title="Eliminar">🗑</button>
+        </div>
+      </td>
+    </tr>
   );
 }
-function DetalleGrupo({ titulo, total, children }: { titulo: string; total: number; children: React.ReactNode }) {
+
+function EmpleadoEditor({ row, onClose }: { row: EmpRow | null; onClose: () => void }) {
+  const router = useRouter();
+  const [nombre, setNombre] = useState(row?.nombre ?? "");
+  const [tipo, setTipo] = useState<"empleado" | "servicios">(row?.tipo ?? "empleado");
+  const [salario, setSalario] = useState(String(row?.salario ?? ""));
+  const [auxilio, setAuxilio] = useState(row?.auxilio ?? true);
+  const [riesgo, setRiesgo] = useState<string>(row?.riesgo ?? "I");
+  const [declarante, setDeclarante] = useState(row?.declarante ?? true);
+  const [err, setErr] = useState("");
+  const [pending, start] = useTransition();
+
+  function guardar() {
+    if (!nombre.trim()) { setErr("El nombre es obligatorio."); return; }
+    setErr("");
+    start(async () => {
+      const r = await guardarEmpleado({ id: row?.id, nombre, tipo, salario: n(salario), auxilio, riesgo, declarante });
+      if (r.ok) { onClose(); router.refresh(); } else setErr(r.error);
+    });
+  }
   return (
-    <div>
-      <div className="mb-1 flex items-center justify-between border-b border-gray-100 pb-1">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{titulo}</span>
-        <span className="text-[11px] font-semibold tabular-nums text-gray-700">{formatCOP(total)}</span>
+    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="md:col-span-2">
+          <label className="mb-1 block text-xs font-medium text-gray-600">Nombre / cargo</label>
+          <Input value={nombre} onChange={(e) => setNombre(e.target.value)} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Tipo</label>
+          <select value={tipo} onChange={(e) => setTipo(e.target.value as "empleado" | "servicios")} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+            <option value="empleado">Empleado (nómina)</option>
+            <option value="servicios">Prestación de servicios</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">{tipo === "servicios" ? "Honorario mensual" : "Salario base"}</label>
+          <Input type="number" value={salario} onChange={(e) => setSalario(e.target.value)} className="text-right" />
+        </div>
+        {tipo === "empleado" && (
+          <>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">Riesgo ARL</label>
+              <select value={riesgo} onChange={(e) => setRiesgo(e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                {Object.keys(ARL).map((k) => <option key={k} value={k}>{k}</option>)}
+              </select>
+            </div>
+            <div className="flex items-end gap-4 pb-2 text-sm text-gray-600">
+              <label className="flex items-center gap-1.5"><input type="checkbox" checked={auxilio} onChange={(e) => setAuxilio(e.target.checked)} /> Auxilio</label>
+              <label className="flex items-center gap-1.5" title="Empresa declarante: exoneración de Salud/SENA/ICBF (<10 SMMLV)">
+                <input type="checkbox" checked={declarante} onChange={(e) => setDeclarante(e.target.checked)} /> Declarante
+              </label>
+            </div>
+          </>
+        )}
       </div>
-      <div className="space-y-0.5">{children}</div>
+      {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+      <div className="mt-3 flex items-center gap-3">
+        <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : "Guardar"}</Button>
+        <button onClick={onClose} className="text-sm text-gray-500 hover:underline">Cancelar</button>
+        <span className="text-[11px] text-gray-400">Exoneración aplica a empleados &lt; 10 SMMLV ({formatCOP(SMMLV * 10)}).</span>
+      </div>
     </div>
   );
 }
-function DLinea({ label, valor, tachado }: { label: string; valor: number; tachado?: boolean }) {
+
+// ── Otros costos y gastos ─────────────────────────────────────────────────────
+function CostosSection({ costos, totFijos, totVariables }: { costos: CostoRow[]; totFijos: number; totVariables: number }) {
+  const [editor, setEditor] = useState<CostoRow | "nuevo" | null>(null);
   return (
-    <div className="flex items-center justify-between text-[11px]">
-      <span className={tachado ? "text-gray-400 line-through" : "text-gray-500"}>{label}</span>
-      <span className={`tabular-nums ${tachado ? "text-[#3d7a63]" : "text-gray-700"}`}>{tachado ? "exonerado" : formatCOP(valor)}</span>
-    </div>
+    <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>📒 Otros costos y gastos</h2>
+        <Button onClick={() => setEditor("nuevo")} style={{ backgroundColor: "var(--brand-primary)" }}>+ Agregar</Button>
+      </div>
+      {editor && <CostoEditor row={editor === "nuevo" ? null : editor} onClose={() => setEditor(null)} />}
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 text-left text-xs uppercase tracking-wide text-gray-400">
+              <th className="px-3 py-2">Concepto</th><th className="px-3 py-2">Categoría</th>
+              <th className="px-3 py-2">Clasificación</th><th className="px-3 py-2 text-right">Valor mensual</th>
+              <th className="px-3 py-2 text-center">Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {costos.length === 0 ? (
+              <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-400">Sin costos. Agrega el primero.</td></tr>
+            ) : costos.map((c) => <CostoFila key={c.id} c={c} onEdit={() => setEditor(c)} />)}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-gray-200 font-semibold">
+              <td className="px-3 py-2" colSpan={3}>Fijos {formatCOP(totFijos)} · Variables {formatCOP(totVariables)}</td>
+              <td className="px-3 py-2 text-right tabular-nums">{formatCOP(totFijos + totVariables)}</td><td />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
   );
 }
-function Add({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
-  return <button type="button" onClick={onClick} className="text-sm font-medium text-[#1D7C9A] hover:underline">{children}</button>;
+function CostoFila({ c, onEdit }: { c: CostoRow; onEdit: () => void }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  return (
+    <tr className="border-b border-gray-50">
+      <td className="px-3 py-2.5 font-medium text-gray-800">{c.concepto}</td>
+      <td className="px-3 py-2.5 text-gray-500">{c.categoria || "—"}</td>
+      <td className="px-3 py-2.5">
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${c.clasificacion === "fijo" ? "bg-[rgba(102,181,150,0.15)] text-[#3d7a63]" : "bg-amber-50 text-amber-700"}`}>
+          {c.clasificacion === "fijo" ? "Fijo" : "Variable"}
+        </span>
+      </td>
+      <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{formatCOP(c.valor)}</td>
+      <td className="px-3 py-2.5">
+        <div className="flex items-center justify-center gap-2">
+          <button onClick={onEdit} className="text-gray-400 hover:text-gray-700" title="Editar">✎</button>
+          <button disabled={pending} onClick={() => start(async () => { await eliminarCosto(c.id); router.refresh(); })} className="text-gray-400 hover:text-red-500" title="Eliminar">🗑</button>
+        </div>
+      </td>
+    </tr>
+  );
 }
-function Del({ onClick }: { onClick: () => void }) {
-  return <button type="button" onClick={onClick} className="text-gray-400 hover:text-red-500" aria-label="Quitar">✕</button>;
+function CostoEditor({ row, onClose }: { row: CostoRow | null; onClose: () => void }) {
+  const router = useRouter();
+  const [concepto, setConcepto] = useState(row?.concepto ?? "");
+  const [categoria, setCategoria] = useState(row?.categoria ?? "");
+  const [clasificacion, setClasificacion] = useState<"fijo" | "variable">(row?.clasificacion ?? "fijo");
+  const [valor, setValor] = useState(String(row?.valor ?? ""));
+  const [err, setErr] = useState("");
+  const [pending, start] = useTransition();
+  function guardar() {
+    if (!concepto.trim()) { setErr("El concepto es obligatorio."); return; }
+    setErr("");
+    start(async () => {
+      const r = await guardarCosto({ id: row?.id, concepto, categoria, clasificacion, valor: n(valor) });
+      if (r.ok) { onClose(); router.refresh(); } else setErr(r.error);
+    });
+  }
+  return (
+    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="md:col-span-2"><label className="mb-1 block text-xs font-medium text-gray-600">Concepto</label><Input value={concepto} onChange={(e) => setConcepto(e.target.value)} /></div>
+        <div><label className="mb-1 block text-xs font-medium text-gray-600">Categoría</label><Input value={categoria} onChange={(e) => setCategoria(e.target.value)} placeholder="Gasto, servicio…" /></div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Clasificación</label>
+          <select value={clasificacion} onChange={(e) => setClasificacion(e.target.value as "fijo" | "variable")} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+            <option value="fijo">Fijo</option><option value="variable">Variable</option>
+          </select>
+        </div>
+        <div><label className="mb-1 block text-xs font-medium text-gray-600">Valor mensual</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="text-right" /></div>
+      </div>
+      {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+      <div className="mt-3 flex items-center gap-3">
+        <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : "Guardar"}</Button>
+        <button onClick={onClose} className="text-sm text-gray-500 hover:underline">Cancelar</button>
+      </div>
+    </div>
+  );
 }
