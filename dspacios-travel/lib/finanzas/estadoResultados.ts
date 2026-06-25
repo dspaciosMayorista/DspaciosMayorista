@@ -89,7 +89,9 @@ export async function calcularEstadosFinancieros(mesPedido?: string): Promise<Es
     const f = factor(v);
     const cfg = cfgMap.get(v.numero_contrato);
     if (cfg) {
-      const liq = liquidarFacturacion({ pvp: Number(v.precio_venta) || 0, irt: cfg.irt, ingresoExento: cfg.exento }, fiscal.IVA);
+      // IRT en vivo = suma de las CxP marcadas IRT del contrato.
+      const irtLive = (cxpPorContrato.get(v.numero_contrato) ?? []).filter((c) => ((c.clasificacion as string) ?? "costo") === "irt").reduce((a, c) => a + (Number(c.valor_total) || 0), 0);
+      const liq = liquidarFacturacion({ pvp: Number(v.precio_venta) || 0, irt: irtLive, ingresoExento: cfg.exento }, fiscal.IVA);
       ingresoPropio += liq.ingresoPropio * f;
     }
     for (const c of cxpPorContrato.get(v.numero_contrato) ?? []) {

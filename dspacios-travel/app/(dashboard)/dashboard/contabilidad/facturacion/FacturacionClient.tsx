@@ -146,7 +146,7 @@ function DianFila({ row, marcado, disabled, onToggle }: { row: FactRow; marcado:
 
 function Fila({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   const [abierto, setAbierto] = useState(false);
-  const liq = row.cfg ? liquidarFacturacion({ pvp: row.precio_venta, irt: row.cfg.irt, ingresoExento: row.cfg.ingresoExento }, ivaPct) : null;
+  const liq = row.cfg ? liquidarFacturacion({ pvp: row.precio_venta, irt: row.irtProveedores, ingresoExento: row.cfg.ingresoExento }, ivaPct) : null;
   const fmt = (n: number) => formatMoneda(n, row.moneda);
 
   return (
@@ -182,7 +182,8 @@ function Fila({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
 }
 
 function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
-  const [irt, setIrt] = useState(String(row.cfg?.irt ?? 0));
+  // El IRT se toma AUTOMÁTICAMENTE de los proveedores marcados IRT del contrato.
+  const irt = row.irtProveedores;
   const [exento, setExento] = useState(String(row.cfg?.ingresoExento ?? 0));
   const [tipoExento, setTipoExento] = useState<"exento" | "excluido">(row.cfg?.tipoExento ?? "exento");
   const [obs, setObs] = useState(row.cfg?.observacion ?? "");
@@ -190,9 +191,8 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   const [pending, start] = useTransition();
   const fmt = (n: number) => formatMoneda(n, row.moneda);
 
-  const liq = liquidarFacturacion({ pvp: row.precio_venta, irt: Number(irt) || 0, ingresoExento: Number(exento) || 0 }, ivaPct);
-  const excede = (Number(irt) || 0) + (Number(exento) || 0) > row.precio_venta + 0.5;
-  const irtCuadra = Math.abs((Number(irt) || 0) - row.irtProveedores) <= 1;
+  const liq = liquidarFacturacion({ pvp: row.precio_venta, irt, ingresoExento: Number(exento) || 0 }, ivaPct);
+  const excede = irt + (Number(exento) || 0) > row.precio_venta + 0.5;
 
   function guardar() {
     setError(null);
@@ -200,7 +200,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
       const r = await guardarFacturacion({
         numeroContrato: row.numero_contrato,
         pvp: row.precio_venta,
-        irt: Number(irt) || 0,
+        irt,
         ingresoExento: Number(exento) || 0,
         tipoExento,
         observacion: obs,
@@ -222,30 +222,21 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">IRT (para terceros)</label>
-            <Input type="number" min={0} value={irt} onChange={(e) => setIrt(e.target.value)} />
+            <label className="mb-1 block text-xs font-medium text-gray-600">IRT (automático · de proveedores)</label>
+            <div className="flex h-[38px] items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm">
+              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: "var(--brand-accent)" }} />
+              <b className="tabular-nums text-gray-700">{fmt(irt)}</b>
+            </div>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Ingreso exento / excluido</label>
             <Input type="number" min={0} value={exento} onChange={(e) => setExento(e.target.value)} />
           </div>
         </div>
-        {/* IRT según proveedores (CxP marcadas IRT) */}
-        <div className="flex flex-wrap items-center gap-2 rounded-md bg-gray-50 px-3 py-2 text-xs">
-          <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: irtCuadra ? "var(--brand-success)" : "#C0392B" }} />
-          <span className="text-gray-500">IRT según proveedores:</span>
-          <b className="tabular-nums text-gray-700">{fmt(row.irtProveedores)}</b>
-          {irtCuadra ? (
-            <span className="text-[#3d7a63]">cuadra con la factura ✓</span>
-          ) : (
-            <>
-              <span className="text-amber-600">no cuadra con el IRT ingresado ({fmt(Number(irt) || 0)})</span>
-              {row.irtProveedores > 0 && (
-                <button type="button" onClick={() => setIrt(String(row.irtProveedores))} className="font-medium text-[#1D7C9A] hover:underline">Usar este</button>
-              )}
-            </>
-          )}
-        </div>
+        <p className="text-[11px] text-gray-400">
+          El IRT es la suma de las CxP marcadas <b>IRT</b> del contrato (lo que cobran los terceros). Configúralas en
+          <b> Finanzas → Proveedores</b>. El ingreso propio = PVP − IRT se calcula solo.
+        </p>
         <div className="flex items-center gap-4 text-sm text-gray-700">
           <span className="text-xs text-gray-500">El ingreso exento/excluido es:</span>
           {(["exento", "excluido"] as const).map((t) => (

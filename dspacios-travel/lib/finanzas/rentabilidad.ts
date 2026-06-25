@@ -49,7 +49,7 @@ export async function calcularRentabilidad(): Promise<{
     sb.from("ventas").select("numero_contrato, cliente, asesor, asesor_firma_nombre, destino, canal, fecha_venta, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, trm_contrato").order("fecha_venta", { ascending: false }),
     sb.from("aliados_b2b").select("numero_contrato, precio_venta, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion"),
     sb.from("facturacion").select("numero_contrato, base_gravable, iva_descontable"),
-    sb.from("cuentas_por_pagar").select("numero_contrato, iva_proveedor, clasificacion"),
+    sb.from("cuentas_por_pagar").select("numero_contrato, iva_proveedor, clasificacion, valor_total"),
     sb.from("asesores").select("nombre, email, pct_comision_base"),
     sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento"),
   ]);
@@ -75,8 +75,12 @@ export async function calcularRentabilidad(): Promise<{
     ivaGenPorContrato.set(f.numero_contrato, (ivaGenPorContrato.get(f.numero_contrato) ?? 0) + (f.base_gravable ?? 0) * fiscal.IVA);
     ivaDescPorContrato.set(f.numero_contrato, (ivaDescPorContrato.get(f.numero_contrato) ?? 0) + (f.iva_descontable ?? 0));
   }
+  const irtProvPorContrato = new Map<string, number>();
   for (const c of cxp ?? []) {
-    if (((c.clasificacion as string) ?? "costo") === "irt") continue; // IRT no descuenta IVA
+    if (((c.clasificacion as string) ?? "costo") === "irt") {
+      irtProvPorContrato.set(c.numero_contrato, (irtProvPorContrato.get(c.numero_contrato) ?? 0) + (Number(c.valor_total) || 0));
+      continue; // IRT no descuenta IVA
+    }
     ivaDescPorContrato.set(c.numero_contrato, (ivaDescPorContrato.get(c.numero_contrato) ?? 0) + (c.iva_proveedor ?? 0));
   }
 
@@ -91,7 +95,9 @@ export async function calcularRentabilidad(): Promise<{
 
     const cfg = factCfg.get(v.numero_contrato);
     const pvpRaw = v.precio_venta ?? 0;
-    const liq = cfg ? liquidarFacturacion({ pvp: pvpRaw, irt: cfg.irt, ingresoExento: cfg.exento }, fiscal.IVA) : null;
+    // IRT en vivo de los proveedores marcados IRT (no del valor guardado).
+    const irtLive = irtProvPorContrato.get(v.numero_contrato) ?? 0;
+    const liq = cfg ? liquidarFacturacion({ pvp: pvpRaw, irt: irtLive, ingresoExento: cfg.exento }, fiscal.IVA) : null;
     const baseProvisiones = liq ? liq.ingresoPropio * f : undefined;
     const ivaGenerado = liq ? liq.ivaGenerado * f : (ivaGenPorContrato.get(v.numero_contrato) ?? 0);
 
