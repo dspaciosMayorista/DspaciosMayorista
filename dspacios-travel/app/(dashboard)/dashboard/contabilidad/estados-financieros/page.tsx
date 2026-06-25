@@ -115,9 +115,11 @@ export default async function EstadosFinancierosPage({ searchParams }: { searchP
             <tbody>
               <Fila k="Cuentas por cobrar (cartera)" v={s.cuentasPorCobrar} />
               <Fila k="= Total activo (parcial)" v={s.cuentasPorCobrar} bold linea />
-              <Fila k="Cuentas por pagar (proveedores)" v={s.cuentasPorPagar} />
+              <Fila k="Cuentas por pagar proveedores (IP)" v={s.cuentasPorPagar} />
+              <Fila k="IRT por pagar (a terceros)" v={s.irtPorPagar} />
+              <Fila k="› Total proveedores (IP + IRT)" v={s.cuentasPorPagar + s.irtPorPagar} />
               <Fila k="IVA por pagar" v={s.ivaPorPagar} />
-              <Fila k="= Total pasivo (parcial)" v={s.cuentasPorPagar + s.ivaPorPagar} bold linea />
+              <Fila k="= Total pasivo (parcial)" v={s.cuentasPorPagar + s.irtPorPagar + s.ivaPorPagar} bold linea />
               <Fila k="= Patrimonio (residual)" v={s.patrimonioResidual} bold linea color="var(--brand-primary)" />
             </tbody>
           </table>

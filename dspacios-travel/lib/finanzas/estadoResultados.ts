@@ -38,9 +38,10 @@ export type EstadosFinancieros = {
   };
   situacion: {
     cuentasPorCobrar: number;   // cartera (saldo de contratos)
-    cuentasPorPagar: number;    // saldo CxP
+    cuentasPorPagar: number;    // saldo CxP de proveedores 'costo' (IP)
+    irtPorPagar: number;        // saldo CxP IRT (se debe al tercero, no es costo)
     ivaPorPagar: number;
-    patrimonioResidual: number; // CxCobrar − (CxPagar + IVA)
+    patrimonioResidual: number; // CxCobrar − (CxPagar + IRT + IVA)
   };
   validador: { contratos: ContratoEstado[]; completos: number; incompletos: number };
 };
@@ -131,13 +132,18 @@ export async function calcularEstadosFinancieros(mesPedido?: string): Promise<Es
     const saldo = (Number(v.precio_venta) || 0) - (abonadoPorContrato.get(v.numero_contrato) ?? 0);
     if (saldo > 0) cuentasPorCobrar += saldo * factor(v);
   }
-  let cuentasPorPagar = 0, ivaPorPagar = 0;
+  let cuentasPorPagar = 0, irtPorPagar = 0, ivaPorPagar = 0;
   for (const c of cxp ?? []) {
     const pagado = (Number(c.abono1) || 0) + (Number(c.abono2) || 0) + (Number(c.abono3) || 0);
-    cuentasPorPagar += Math.max(0, (Number(c.valor_total) || 0) - pagado);
-    if (((c.clasificacion as string) ?? "costo") !== "irt") ivaPorPagar += Number(c.iva_proveedor) || 0;
+    const saldo = Math.max(0, (Number(c.valor_total) || 0) - pagado);
+    if (((c.clasificacion as string) ?? "costo") === "irt") {
+      irtPorPagar += saldo; // se debe al tercero (hotel/aerolínea), no es costo propio
+    } else {
+      cuentasPorPagar += saldo;
+      ivaPorPagar += Number(c.iva_proveedor) || 0;
+    }
   }
-  const patrimonioResidual = cuentasPorCobrar - (cuentasPorPagar + ivaPorPagar);
+  const patrimonioResidual = cuentasPorCobrar - (cuentasPorPagar + irtPorPagar + ivaPorPagar);
 
   // ── Validador de configuración (contratos del mes) ────────────────────────
   const contratos: ContratoEstado[] = ventasMes.map((v) => {
@@ -163,7 +169,7 @@ export async function calcularEstadosFinancieros(mesPedido?: string): Promise<Es
       provIca, provFontur, provBomberil, totalProvisiones, utilidadOperacional,
       otrosIngresos, utilidadAntesImp, impuestoRenta, utilidadNeta, margenNeto,
     },
-    situacion: { cuentasPorCobrar, cuentasPorPagar, ivaPorPagar, patrimonioResidual },
+    situacion: { cuentasPorCobrar, cuentasPorPagar, irtPorPagar, ivaPorPagar, patrimonioResidual },
     validador: { contratos, completos, incompletos: contratos.length - completos },
   };
 }
