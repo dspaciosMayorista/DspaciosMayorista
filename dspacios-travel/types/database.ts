@@ -44,6 +44,7 @@ export type Database = {
           antes: Json | null;
           despues: Json | null;
           cambios: Json | null;
+          tenant: string;
         };
         Insert: {
           id?: number;
