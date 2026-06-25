@@ -35,11 +35,14 @@ export type RentabilidadFila = {
   facturacion?: { irt: number; ingresoPropio: number; exento: number };
 };
 
+export type TasasProvision = { ica: number; bomberil: number; fontur: number; renta: number; iva: number };
+
 export async function calcularRentabilidad(): Promise<{
   filas: RentabilidadFila[];
   margenNeto: number;   // % (Σ utilNeta / Σ ingreso)
   margenBruto: number;  // % ((Σpvp − Σcosto) / Σpvp)
   totales: { ingreso: number; costoNeto: number; comisiones: number; provisiones: number; ivaPorPagar: number; utilNeta: number; pvp: number; costo: number };
+  tasas: TasasProvision;
 }> {
   const sb = await createClient();
   const [{ data: ventas }, { data: b2b }, { data: facturas }, { data: cxp }, { data: asesores }, { data: facturacionCfg }] = await Promise.all([
@@ -126,5 +129,6 @@ export async function calcularRentabilidad(): Promise<{
 
   const margenNeto = totales.ingreso > 0 ? (totales.utilNeta / totales.ingreso) * 100 : 0;
   const margenBruto = totales.pvp > 0 ? ((totales.pvp - totales.costo) / totales.pvp) * 100 : 0;
-  return { filas, margenNeto, margenBruto, totales };
+  const tasas: TasasProvision = { ica: fiscal.ICA, bomberil: fiscal.BOMBERIL, fontur: fiscal.FONTUR, renta: fiscal.RETENCION_RENTA, iva: fiscal.IVA };
+  return { filas, margenNeto, margenBruto, totales, tasas };
 }

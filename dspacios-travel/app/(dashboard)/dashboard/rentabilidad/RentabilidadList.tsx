@@ -45,7 +45,9 @@ const colorClase = (c: string) =>
 
 const TODOS = "__todos__";
 
-export function RentabilidadList({ rows }: { rows: RentRow[] }) {
+export type Tasas = { ica: number; bomberil: number; fontur: number; renta: number; iva: number };
+
+export function RentabilidadList({ rows, tasas }: { rows: RentRow[]; tasas?: Tasas }) {
   const [q, setQ] = useState("");
   const [asesor, setAsesor] = useState(TODOS);
   const [destino, setDestino] = useState(TODOS);
@@ -148,7 +150,7 @@ export function RentabilidadList({ rows }: { rows: RentRow[] }) {
             {visibles.length === 0 && (
               <tr><td colSpan={11} className="px-4 py-10 text-center text-gray-400">No hay contratos en este filtro.</td></tr>
             )}
-            {visibles.map((r) => <Fila key={r.numero_contrato} r={r} />)}
+            {visibles.map((r) => <Fila key={r.numero_contrato} r={r} tasas={tasas} />)}
           </tbody>
           {visibles.length > 0 && (
             <tfoot>
@@ -171,8 +173,13 @@ export function RentabilidadList({ rows }: { rows: RentRow[] }) {
   );
 }
 
-function Fila({ r }: { r: RentRow }) {
+function Fila({ r, tasas }: { r: RentRow; tasas?: Tasas }) {
   const [abierto, setAbierto] = useState(false);
+  const pct = (x: number) => `${(x * 100).toFixed(x < 0.01 ? 2 : 1).replace(/\.0$/, "")}%`;
+  const tICA = tasas ? ` (${pct(tasas.ica)})` : "";
+  const tBOM = tasas ? ` (${pct(tasas.bomberil)} del ICA)` : "";
+  const tFON = tasas ? ` (${pct(tasas.fontur)})` : "";
+  const tREN = tasas ? ` (${pct(tasas.renta)})` : "";
   return (
     <>
       <tr className="border-b border-gray-50 hover:bg-gray-50">
@@ -224,10 +231,10 @@ function Fila({ r }: { r: RentRow }) {
                 { k: "(−) Costo (total proveedor)", v: `− ${formatCOP(r.costoNeto)}` },
                 { k: "= Utilidad bruta", v: formatCOP(r.utilBruta), total: true },
                 ...(r.comB2B > 0 ? [{ k: "(−) Comisión B2B", v: `− ${formatCOP(r.comB2B)}` }] : []),
-                { k: "(−) Provisión ICA", v: `− ${formatCOP(r.provIca)}` },
-                { k: "(−) Provisión Bomberil", v: `− ${formatCOP(r.provBomberil)}` },
-                { k: "(−) Provisión Fontur", v: `− ${formatCOP(r.provFontur)}` },
-                { k: "(−) Provisión Renta", v: `− ${formatCOP(r.provRenta)}` },
+                { k: `(−) Provisión ICA${tICA}`, v: `− ${formatCOP(r.provIca)}` },
+                { k: `(−) Provisión Bomberil${tBOM}`, v: `− ${formatCOP(r.provBomberil)}` },
+                { k: `(−) Provisión Fontur${tFON}`, v: `− ${formatCOP(r.provFontur)}` },
+                { k: `(−) Provisión Renta${tREN}`, v: `− ${formatCOP(r.provRenta)}` },
                 { k: "= Total provisiones", v: formatCOP(r.totalProvisiones), total: true },
                 { k: "(−) IVA por pagar", v: `− ${formatCOP(r.ivaPorPagar)}` },
                 { k: "= Utilidad neta", v: formatCOP(r.utilNeta), total: true, color: r.utilNeta < 0 ? "#C0392B" : "var(--brand-primary)" },

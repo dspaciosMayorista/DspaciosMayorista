@@ -23,7 +23,7 @@ export default async function RentabilidadPage() {
     );
   }
 
-  const { filas } = await calcularRentabilidad();
+  const { filas, tasas } = await calcularRentabilidad();
   const rows = filas as RentRow[];
 
   return (
@@ -35,7 +35,7 @@ export default async function RentabilidadPage() {
           comisiones e IVA. Filtra por asesor, destino, mes o clasificación; abre cada fila para ver el desglose.
         </p>
       </div>
-      <RentabilidadList rows={rows} />
+      <RentabilidadList rows={rows} tasas={tasas} />
     </div>
   );
 }

@@ -31,8 +31,10 @@ function liquidar(e: EmpRow): { segSocial: number; prestaciones: number; auxilio
   return { segSocial: l.seguridadSocial + l.parafiscales, prestaciones: l.prestaciones, auxilio: l.auxilio, costoTotal: l.costoTotalMensual, det: l };
 }
 
-export function PuntoEquilibrioClient({ empleados, costos, margenNeto, margenBruto }: {
-  empleados: EmpRow[]; costos: CostoRow[]; margenNeto: number; margenBruto: number;
+const MARGEN_ERROR = 0.15; // colchón sobre el punto de equilibrio → meta del mes
+
+export function PuntoEquilibrioClient({ empleados, costos, margenNeto, margenBruto, ventasMes = 0, contratosMes = 0 }: {
+  empleados: EmpRow[]; costos: CostoRow[]; margenNeto: number; margenBruto: number; ventasMes?: number; contratosMes?: number;
 }) {
   const [tab, setTab] = useState<"dashboard" | "config">("dashboard");
   const [usarAuto, setUsarAuto] = useState(true);
@@ -46,6 +48,7 @@ export function PuntoEquilibrioClient({ empleados, costos, margenNeto, margenBru
   const totalCubrir = totFijos + totNomina; // fijos del negocio + nómina
   const m = margenEf / 100;
   const ventasMin = m > 0 ? Math.round(totalCubrir / m) : 0;
+  const metaMes = Math.round(ventasMin * (1 + MARGEN_ERROR)); // ventas mínimas + 15%
 
   return (
     <div className="space-y-6">
@@ -61,7 +64,7 @@ export function PuntoEquilibrioClient({ empleados, costos, margenNeto, margenBru
       </div>
 
       {tab === "dashboard" ? (
-        <Dashboard ventasMin={ventasMin} totalCubrir={totalCubrir} totFijos={totFijos} totNomina={totNomina} margenEf={margenEf} />
+        <Dashboard ventasMin={ventasMin} metaMes={metaMes} ventasMes={ventasMes} contratosMes={contratosMes} totalCubrir={totalCubrir} margenEf={margenEf} />
       ) : (
         <Config
           empleados={empleados} costos={costos}
@@ -75,24 +78,56 @@ export function PuntoEquilibrioClient({ empleados, costos, margenNeto, margenBru
 }
 
 // ── Pestaña DASHBOARD ─────────────────────────────────────────────────────────
-function Dashboard({ ventasMin, totalCubrir, totFijos, totNomina, margenEf }: {
-  ventasMin: number; totalCubrir: number; totFijos: number; totNomina: number; margenEf: number;
+function Dashboard({ ventasMin, metaMes, ventasMes, contratosMes, totalCubrir, margenEf }: {
+  ventasMin: number; metaMes: number; ventasMes: number; contratosMes: number; totalCubrir: number; margenEf: number;
 }) {
+  const pctMeta = metaMes > 0 ? (ventasMes / metaMes) * 100 : 0;
+  const pctBarra = Math.min(100, Math.max(0, pctMeta));
+  const faltaMeta = Math.max(0, metaMes - ventasMes);
+  const cubreEquilibrio = ventasMes >= ventasMin;
+  const cubreMeta = ventasMes >= metaMes;
+  const color = cubreMeta ? "var(--brand-success)" : cubreEquilibrio ? "var(--brand-accent)" : "#C0392B";
+
   return (
     <div className="space-y-5">
+      {/* Meta del mes EN GRANDE */}
       <div className="rounded-2xl p-8 text-center text-white shadow-sm" style={{ background: "var(--brand-gradient, var(--brand-primary))", backgroundColor: "var(--brand-primary)" }}>
-        <p className="text-sm font-medium uppercase tracking-wide opacity-90">Ventas mínimas del mes para no perder</p>
-        <p className="mt-2 text-5xl font-extrabold tabular-nums">{formatCOP(ventasMin)}</p>
-        <p className="mt-2 text-sm opacity-80">Con el margen neto corriendo de Rentabilidad ({margenEf.toFixed(1)}%).</p>
+        <p className="text-sm font-medium uppercase tracking-wide opacity-90">Meta de ventas del mes</p>
+        <p className="mt-2 text-5xl font-extrabold tabular-nums">{formatCOP(metaMes)}</p>
+        <p className="mt-2 text-sm opacity-80">Ventas mínimas ({formatCOP(ventasMin)}) + 15% de margen de error · margen neto {margenEf.toFixed(1)}%.</p>
       </div>
+
+      {/* Cómo vamos */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="mb-2 flex items-end justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-gray-400">Ventas del mes en curso</p>
+            <p className="text-2xl font-bold tabular-nums text-gray-800">{formatCOP(ventasMes)}</p>
+            <p className="text-xs text-gray-400">{contratosMes} contrato(s) este mes</p>
+          </div>
+          <div className="text-right">
+            <p className="text-3xl font-extrabold tabular-nums" style={{ color }}>{pctMeta.toFixed(0)}%</p>
+            <p className="text-xs text-gray-400">de la meta</p>
+          </div>
+        </div>
+        <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-gray-100">
+          <div className="h-full rounded-full transition-all" style={{ width: `${pctBarra}%`, backgroundColor: color }} />
+        </div>
+        <p className="mt-2 text-sm font-medium" style={{ color }}>
+          {cubreMeta ? "¡Meta alcanzada! El mes va con utilidad sobre el colchón."
+            : cubreEquilibrio ? `Ya cubres el punto de equilibrio. Faltan ${formatCOP(faltaMeta)} para la meta.`
+            : `Aún por debajo del equilibrio. Faltan ${formatCOP(Math.max(0, ventasMin - ventasMes))} para no perder y ${formatCOP(faltaMeta)} para la meta.`}
+        </p>
+      </div>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Card titulo="Punto de equilibrio (no perder)" valor={formatCOP(ventasMin)} />
         <Card titulo="Total a cubrir / mes" valor={formatCOP(totalCubrir)} />
-        <Card titulo="Nómina (costo empleador)" valor={formatCOP(totNomina)} />
-        <Card titulo="Costos y gastos fijos" valor={formatCOP(totFijos)} />
+        <Card titulo="Vendido este mes" valor={formatCOP(ventasMes)} />
       </div>
       <p className="text-xs text-gray-400">
-        Fórmula: (costos fijos + nómina) ÷ margen neto. El margen neto sale de la rentabilidad real de los contratos
-        (ya descuenta costo directo, provisiones e IVA). Ajusta empleados y costos en la pestaña Configuración.
+        Meta = (costos fijos + nómina) ÷ margen neto, + 15%. Las ventas del mes salen de los contratos vendidos en el mes
+        en curso (ingreso sin IVA, de Rentabilidad). Ajusta empleados y costos en la pestaña Configuración.
       </p>
     </div>
   );

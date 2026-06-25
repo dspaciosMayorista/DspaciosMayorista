@@ -32,6 +32,14 @@ export default async function PuntoEquilibrioPage() {
   const margenNeto = rent.margenNeto;
   const margenBruto = rent.margenBruto;
 
+  // Ventas del mes en curso (ingreso de los contratos vendidos este mes).
+  const ahora = new Date();
+  const mesActual = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, "0")}`;
+  let ventasMes = 0, contratosMes = 0;
+  for (const f of rent.filas) {
+    if (f.mes === mesActual) { ventasMes += f.ingreso; contratosMes += 1; }
+  }
+
   const emps: EmpRow[] = (empleados ?? []).map((e) => ({
     id: e.id, nombre: e.nombre, tipo: (e.tipo as "empleado" | "servicios"),
     salario: Number(e.salario) || 0, auxilio: !!e.auxilio, riesgo: e.riesgo || "I",
@@ -48,7 +56,7 @@ export default async function PuntoEquilibrioPage() {
       <p className="mb-6 mt-1 text-sm text-gray-500">
         Cuánto debes vender al mes para cubrir costos y gastos, con el margen neto que viene corriendo de Rentabilidad.
       </p>
-      <PuntoEquilibrioClient empleados={emps} costos={cs} margenNeto={margenNeto} margenBruto={margenBruto} />
+      <PuntoEquilibrioClient empleados={emps} costos={cs} margenNeto={margenNeto} margenBruto={margenBruto} ventasMes={ventasMes} contratosMes={contratosMes} />
     </div>
   );
 }
