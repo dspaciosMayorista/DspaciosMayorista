@@ -179,14 +179,27 @@ function FilaPago({
 }) {
   const pagada = row.saldo <= 0;
   const atrasada = vencida(row.fecha_vencimiento, row.saldo);
+  // Configurada = se definió IRT, o IP (costo) con su base gravable.
+  const configurada = row.clasificacion === "irt" || row.base_gravable != null;
   return (
     <>
       <tr className="cursor-pointer border-b border-gray-50 hover:bg-gray-50" onClick={onToggle}>
         <td className="px-4 py-3 text-gray-800">
+          <span
+            className="mr-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full align-middle"
+            style={{ backgroundColor: configurada ? "var(--brand-success)" : "#dc2626" }}
+            title={configurada ? (row.clasificacion === "irt" ? "Configurada: IRT" : "Configurada: Ingreso propio (IP)") : "Sin configurar (IRT / IP + base gravable)"}
+          />
           {row.proveedor ?? <span className="text-amber-600">Sin proveedor</span>}
           {row.tipo_proveedor && (
             <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
               {row.tipo_proveedor}
+            </span>
+          )}
+          {configurada && (
+            <span className="ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+              style={{ backgroundColor: "rgba(102,181,150,0.15)", color: "#3d7a63" }}>
+              {row.clasificacion === "irt" ? "IRT" : "IP"}
             </span>
           )}
         </td>
@@ -354,7 +367,7 @@ function FacturaProveedor({ row, ivaPct }: { row: PagoRow; ivaPct: number }) {
           <label className="mb-1 block text-xs font-medium text-gray-600">Tratamiento</label>
           <select value={clasif} onChange={(e) => setClasif(e.target.value as "costo" | "irt")}
             className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm">
-            <option value="costo">Costo (ingreso propio)</option>
+            <option value="costo">Ingreso propio (IP)</option>
             <option value="irt">IRT (para tercero)</option>
           </select>
         </div>
