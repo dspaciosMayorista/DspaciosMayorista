@@ -453,6 +453,36 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["pe_empleados"]["Insert"]>;
         Relationships: [];
       };
+      contabilidad_movimientos: {
+        Row: {
+          id: number;
+          fecha: string;
+          tipo: string;
+          concepto: string;
+          tercero: string | null;
+          categoria: string | null;
+          medio_pago: string | null;
+          valor: number;
+          comprobante: string | null;
+          observacion: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          fecha?: string;
+          tipo?: string;
+          concepto: string;
+          tercero?: string | null;
+          categoria?: string | null;
+          medio_pago?: string | null;
+          valor?: number;
+          comprobante?: string | null;
+          observacion?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contabilidad_movimientos"]["Insert"]>;
+        Relationships: [];
+      };
       pe_costos: {
         Row: {
           id: number;

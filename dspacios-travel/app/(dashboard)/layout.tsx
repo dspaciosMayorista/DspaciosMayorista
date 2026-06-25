@@ -83,6 +83,9 @@ const NAV: NavItem[] = [
     rolesPermitidos: ["superadmin", "gerencia", "administracion"],
     children: [
       { href: "/dashboard/contabilidad/facturacion", label: "Facturación" },
+      { href: "/dashboard/contabilidad/movimientos", label: "Movimientos de pagos" },
+      { href: "/dashboard/contabilidad/conciliaciones", label: "Conciliaciones bancarias" },
+      { href: "/dashboard/contabilidad/estados-financieros", label: "Estados financieros" },
     ],
   },
   {
