@@ -21,7 +21,10 @@ const NAV: NavItem[] = [
     label: "Contratos",
     iconKey: "contratos",
     modulo: "contratos",
-    children: [{ href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" }],
+    children: [
+      { href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" },
+      { href: "/dashboard/contratos/importar", label: "Importar histórico" },
+    ],
   },
   {
     href: "/dashboard/vuelos",

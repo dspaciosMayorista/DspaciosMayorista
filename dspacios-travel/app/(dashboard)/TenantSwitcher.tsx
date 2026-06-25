@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Building2 } from "lucide-react";
 import { cambiarTenant } from "./tenant-actions";
 import { TENANT_LABEL, type Tenant } from "@/lib/tenant";
@@ -11,7 +10,6 @@ import { TENANT_LABEL, type Tenant } from "@/lib/tenant";
 export function TenantSwitcher({ tenant, permitidos, puedeCambiar, compact }: {
   tenant: Tenant; permitidos: Tenant[]; puedeCambiar: boolean; compact?: boolean;
 }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
 
   const minorista = tenant === "minorista";
@@ -33,7 +31,12 @@ export function TenantSwitcher({ tenant, permitidos, puedeCambiar, compact }: {
       <select
         value={tenant}
         disabled={pending}
-        onChange={(e) => start(async () => { await cambiarTenant(e.target.value as Tenant); router.refresh(); })}
+        onChange={(e) => start(async () => {
+          await cambiarTenant(e.target.value as Tenant);
+          // Recarga completa: refresca datos del servidor Y reinicia el estado de
+          // cualquier pantalla/cliente abierto (que de otro modo quedaría estática).
+          window.location.reload();
+        })}
         className="cursor-pointer bg-transparent font-semibold outline-none"
         style={{ color: "inherit" }}
         aria-label="Cambiar de agencia"

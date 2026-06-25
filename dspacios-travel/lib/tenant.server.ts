@@ -15,7 +15,9 @@ export async function tenantContext(): Promise<{
     : { data: null };
   const rol = (perfil?.rol as string) ?? "";
   const userTenant: Tenant = esTenant((perfil as { tenant?: string } | null)?.tenant) ? ((perfil as { tenant: Tenant }).tenant) : "mayorista";
-  const puedeCambiar = rol === "superadmin" || rol === "gerencia";
+  // Solo el superadmin se comparte entre agencias (puede alternar). Los demás
+  // usuarios se crean por separado en cada agencia y quedan fijos a la suya.
+  const puedeCambiar = rol === "superadmin";
   const permitidos: Tenant[] = puedeCambiar ? TENANTS : [userTenant];
 
   const ck = (await cookies()).get(COOKIE_TENANT)?.value;
