@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatMoneda } from "@/lib/utils";
 import { liquidarFacturacion } from "@/lib/contabilidad/facturacion";
-import { guardarFacturacion, quitarFacturacion } from "./actions";
+import { guardarFacturacion, quitarFacturacion, marcarDian } from "./actions";
+import { useRouter } from "next/navigation";
 
 export type FactRow = {
   numero_contrato: string;
@@ -16,12 +17,31 @@ export type FactRow = {
   precio_venta: number;
   moneda: string;
   estado: string;
+  irtProveedores: number;
+  dianEmitida: boolean;
   cfg: { irt: number; ingresoExento: number; tipoExento: "exento" | "excluido" | null; observacion: string } | null;
 };
 
 type Filtro = "sin_configurar" | "configurados" | "todos";
 
 export function FacturacionClient({ rows, ivaPct }: { rows: FactRow[]; ivaPct: number }) {
+  const [vista, setVista] = useState<"config" | "dian">("config");
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
+        {([["config", "Configuración"], ["dian", "DIAN"]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setVista(k)} className="rounded-md px-4 py-2 text-sm font-medium transition-colors"
+            style={vista === k ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#6b7280" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {vista === "config" ? <Configuracion rows={rows} ivaPct={ivaPct} /> : <DianTab rows={rows} />}
+    </div>
+  );
+}
+
+function Configuracion({ rows, ivaPct }: { rows: FactRow[]; ivaPct: number }) {
   const [filtro, setFiltro] = useState<Filtro>("sin_configurar");
   const [q, setQ] = useState("");
 
@@ -77,6 +97,53 @@ export function FacturacionClient({ rows, ivaPct }: { rows: FactRow[]; ivaPct: n
   );
 }
 
+function DianTab({ rows }: { rows: FactRow[] }) {
+  const router = useRouter();
+  const [q, setQ] = useState("");
+  const [pending, start] = useTransition();
+  const fil = (r: FactRow) => !q.trim() || `${r.numero_contrato} ${r.cliente ?? ""}`.toLowerCase().includes(q.toLowerCase());
+  const sinFacturar = rows.filter((r) => !r.dianEmitida && fil(r));
+  const facturados = rows.filter((r) => r.dianEmitida && fil(r));
+  const toggle = (nc: string, emitida: boolean) => start(async () => { await marcarDian(nc, emitida); router.refresh(); });
+
+  return (
+    <div className="space-y-3">
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar contrato o cliente…" className="w-72" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Columna titulo={`Sin facturar a la DIAN (${sinFacturar.length})`} tono="#C0392B">
+          {sinFacturar.length === 0 ? <ColVacia>Todo facturado.</ColVacia> : sinFacturar.map((r) => (
+            <DianFila key={r.numero_contrato} row={r} marcado={false} disabled={pending} onToggle={() => toggle(r.numero_contrato, true)} />
+          ))}
+        </Columna>
+        <Columna titulo={`Facturados / emitidos (${facturados.length})`} tono="var(--brand-success)">
+          {facturados.length === 0 ? <ColVacia>Aún no marcas ninguno.</ColVacia> : facturados.map((r) => (
+            <DianFila key={r.numero_contrato} row={r} marcado disabled={pending} onToggle={() => toggle(r.numero_contrato, false)} />
+          ))}
+        </Columna>
+      </div>
+    </div>
+  );
+}
+function Columna({ titulo, tono, children }: { titulo: string; tono: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white">
+      <div className="border-b border-gray-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide" style={{ color: tono }}>{titulo}</div>
+      <div className="max-h-[32rem] space-y-1 overflow-y-auto p-2">{children}</div>
+    </div>
+  );
+}
+function ColVacia({ children }: { children: React.ReactNode }) { return <p className="px-3 py-6 text-center text-sm text-gray-400">{children}</p>; }
+function DianFila({ row, marcado, disabled, onToggle }: { row: FactRow; marcado: boolean; disabled: boolean; onToggle: () => void }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-sm hover:bg-gray-50">
+      <input type="checkbox" checked={marcado} disabled={disabled} onChange={onToggle} className="h-4 w-4" />
+      <span className="font-mono text-[#1D7C9A]">{row.numero_contrato}</span>
+      <span className="flex-1 truncate text-gray-700">{row.cliente ?? "—"}</span>
+      <span className="shrink-0 tabular-nums text-gray-500">{formatMoneda(row.precio_venta, row.moneda)}</span>
+    </label>
+  );
+}
+
 function Fila({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   const [abierto, setAbierto] = useState(false);
   const liq = row.cfg ? liquidarFacturacion({ pvp: row.precio_venta, irt: row.cfg.irt, ingresoExento: row.cfg.ingresoExento }, ivaPct) : null;
@@ -125,6 +192,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
 
   const liq = liquidarFacturacion({ pvp: row.precio_venta, irt: Number(irt) || 0, ingresoExento: Number(exento) || 0 }, ivaPct);
   const excede = (Number(irt) || 0) + (Number(exento) || 0) > row.precio_venta + 0.5;
+  const irtCuadra = Math.abs((Number(irt) || 0) - row.irtProveedores) <= 1;
 
   function guardar() {
     setError(null);
@@ -161,6 +229,22 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
             <label className="mb-1 block text-xs font-medium text-gray-600">Ingreso exento / excluido</label>
             <Input type="number" min={0} value={exento} onChange={(e) => setExento(e.target.value)} />
           </div>
+        </div>
+        {/* IRT según proveedores (CxP marcadas IRT) */}
+        <div className="flex flex-wrap items-center gap-2 rounded-md bg-gray-50 px-3 py-2 text-xs">
+          <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: irtCuadra ? "var(--brand-success)" : "#C0392B" }} />
+          <span className="text-gray-500">IRT según proveedores:</span>
+          <b className="tabular-nums text-gray-700">{fmt(row.irtProveedores)}</b>
+          {irtCuadra ? (
+            <span className="text-[#3d7a63]">cuadra con la factura ✓</span>
+          ) : (
+            <>
+              <span className="text-amber-600">no cuadra con el IRT ingresado ({fmt(Number(irt) || 0)})</span>
+              {row.irtProveedores > 0 && (
+                <button type="button" onClick={() => setIrt(String(row.irtProveedores))} className="font-medium text-[#1D7C9A] hover:underline">Usar este</button>
+              )}
+            </>
+          )}
         </div>
         <div className="flex items-center gap-4 text-sm text-gray-700">
           <span className="text-xs text-gray-500">El ingreso exento/excluido es:</span>

@@ -22,16 +22,23 @@ export default async function FacturacionPage() {
     );
   }
 
-  const [{ data: ventas }, { data: cfgs }, { data: params }] = await Promise.all([
+  const [{ data: ventas }, { data: cfgs }, { data: cxp }, { data: params }] = await Promise.all([
     sb.from("ventas")
       .select("numero_contrato, cliente, destino, fecha_venta, precio_venta, moneda, estado")
       .order("fecha_venta", { ascending: false }),
-    sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento, tipo_exento, observacion"),
+    sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento, tipo_exento, observacion, dian_emitida"),
+    sb.from("cuentas_por_pagar").select("numero_contrato, valor_total, clasificacion"),
     sb.from("parametros_tributarios").select("valor").eq("parametro", "IVA").maybeSingle(),
   ]);
 
   const ivaPct = Number(params?.valor) || 0.19;
   const cfgMap = new Map((cfgs ?? []).map((c) => [c.numero_contrato, c]));
+  // IRT según proveedores: suma de las CxP marcadas IRT por contrato.
+  const irtProvMap = new Map<string, number>();
+  for (const c of cxp ?? []) {
+    if (((c.clasificacion as string) ?? "costo") !== "irt") continue;
+    irtProvMap.set(c.numero_contrato, (irtProvMap.get(c.numero_contrato) ?? 0) + (Number(c.valor_total) || 0));
+  }
 
   const rows: FactRow[] = (ventas ?? []).map((v) => {
     const c = cfgMap.get(v.numero_contrato);
@@ -43,6 +50,8 @@ export default async function FacturacionPage() {
       precio_venta: Number(v.precio_venta) || 0,
       moneda: (v.moneda as string) ?? "COP",
       estado: (v.estado as string) ?? "",
+      irtProveedores: irtProvMap.get(v.numero_contrato) ?? 0,
+      dianEmitida: !!c?.dian_emitida,
       cfg: c
         ? {
             irt: Number(c.irt) || 0,

@@ -44,6 +44,23 @@ export async function guardarFacturacion(input: {
   return { ok: true };
 }
 
+// Marca (o desmarca) un contrato como facturado y emitido a la DIAN.
+export async function marcarDian(numeroContrato: string, emitida: boolean): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("contrato_facturacion").upsert(
+    {
+      numero_contrato: numeroContrato,
+      dian_emitida: emitida,
+      dian_fecha: emitida ? new Date().toISOString().slice(0, 10) : null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "numero_contrato" }
+  );
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/contabilidad/facturacion");
+  return { ok: true };
+}
+
 // Quita la configuración (el contrato vuelve al cálculo por defecto en rentabilidad).
 export async function quitarFacturacion(numeroContrato: string): Promise<Result> {
   const sb = await createClient();

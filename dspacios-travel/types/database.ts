@@ -408,6 +408,8 @@ export type Database = {
           tipo_exento: string | null;
           lleva_iva: boolean;
           observacion: string | null;
+          dian_emitida: boolean;
+          dian_fecha: string | null;
           updated_at: string;
         };
         Insert: {
@@ -418,6 +420,8 @@ export type Database = {
           tipo_exento?: string | null;
           lleva_iva?: boolean;
           observacion?: string | null;
+          dian_emitida?: boolean;
+          dian_fecha?: string | null;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_facturacion"]["Insert"]>;
