@@ -234,7 +234,7 @@ function Fila({ r, tasas }: { r: RentRow; tasas?: Tasas }) {
                 { k: `(−) Provisión ICA${tICA}`, v: `− ${formatCOP(r.provIca)}` },
                 { k: `(−) Provisión Bomberil${tBOM}`, v: `− ${formatCOP(r.provBomberil)}` },
                 { k: `(−) Provisión Fontur${tFON}`, v: `− ${formatCOP(r.provFontur)}` },
-                { k: `(−) Provisión Renta${tREN}`, v: `− ${formatCOP(r.provRenta)}` },
+                { k: `(−) Retención fuente${tREN}`, v: `− ${formatCOP(r.provRenta)}` },
                 { k: "= Total provisiones", v: formatCOP(r.totalProvisiones), total: true },
                 { k: "(−) IVA por pagar", v: `− ${formatCOP(r.ivaPorPagar)}` },
                 { k: "= Utilidad neta", v: formatCOP(r.utilNeta), total: true, color: r.utilNeta < 0 ? "#C0392B" : "var(--brand-primary)" },

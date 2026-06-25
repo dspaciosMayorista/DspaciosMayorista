@@ -122,8 +122,9 @@ export async function calcularEstadosFinancieros(mesPedido?: string): Promise<Es
   const totalProvisiones = provIca + provBomberil + provFontur;
 
   const utilidadOperacional = utilidadBruta - gastosPersonal - gastosGenerales - totalProvisiones;
-  const utilidadAntesImp = utilidadOperacional + otrosIngresos;
-  const impuestoRenta = Math.max(0, utilidadAntesImp) * fiscal.RETENCION_RENTA;
+  const utilidadAntesImp = utilidadOperacional + otrosIngresos; // renta líquida
+  // Impuesto de renta PyME: 35% sobre la renta líquida (ingresos − costos − gastos).
+  const impuestoRenta = Math.max(0, utilidadAntesImp) * fiscal.IMPUESTO_RENTA;
   const utilidadNeta = utilidadAntesImp - impuestoRenta;
   const margenNeto = ingresoPropio > 0 ? (utilidadNeta / ingresoPropio) * 100 : 0;
 

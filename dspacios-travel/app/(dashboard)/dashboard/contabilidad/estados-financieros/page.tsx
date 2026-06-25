@@ -96,8 +96,8 @@ export default async function EstadosFinancierosPage({ searchParams }: { searchP
               <Fila k="(−) Provisión Fontur" v={-r.provFontur} />
               <Fila k="= Utilidad operacional" v={r.utilidadOperacional} bold linea />
               <Fila k="(+) Otros ingresos (movimientos)" v={r.otrosIngresos} />
-              <Fila k="= Utilidad antes de impuestos" v={r.utilidadAntesImp} bold linea />
-              <Fila k="(−) Provisión impuesto de renta" v={-r.impuestoRenta} />
+              <Fila k="= Utilidad antes de impuestos (renta líquida)" v={r.utilidadAntesImp} bold linea />
+              <Fila k="(−) Impuesto de renta (35% renta líquida)" v={-r.impuestoRenta} />
               <Fila k="= Utilidad neta del periodo" v={r.utilidadNeta} bold linea color="var(--brand-primary)" />
             </tbody>
           </table>

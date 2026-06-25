@@ -7,7 +7,8 @@ export const TRIBUTARIO = {
   ICA: 0.01,          // sobre ingresos brutos
   BOMBERIL: 0.01,     // sobre el ICA
   FONTUR: 0.025,      // sobre utilidad bruta
-  RETENCION_RENTA: 0.035,
+  RETENCION_RENTA: 0.035,   // retención en la fuente (anticipo de renta)
+  IMPUESTO_RENTA: 0.35,     // impuesto de renta PyME sobre la renta líquida
   IVA: 0.19,
   RETENCION_HONORARIOS: 0.11,
 } as const;

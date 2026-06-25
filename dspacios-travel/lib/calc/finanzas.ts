@@ -12,7 +12,8 @@ export type ParamsFiscales = {
   ICA: number;
   BOMBERIL: number;
   FONTUR: number;
-  RETENCION_RENTA: number;
+  RETENCION_RENTA: number;   // retención en la fuente (anticipo)
+  IMPUESTO_RENTA: number;    // impuesto de renta sobre la renta líquida
   IVA: number;
   RETENCION_HONORARIOS: number;
 };
@@ -30,6 +31,7 @@ export function fiscalFromParams(
       case "BOMBERIL": f.BOMBERIL = r.valor; break;
       case "FONTUR": f.FONTUR = r.valor; break;
       case "RETENCION_RENTA": f.RETENCION_RENTA = r.valor; break;
+      case "IMPUESTO_RENTA": f.IMPUESTO_RENTA = r.valor; break;
       case "IVA": f.IVA = r.valor; break;
       case "RETENCION_HONORARIOS": f.RETENCION_HONORARIOS = r.valor; break;
     }
