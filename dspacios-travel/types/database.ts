@@ -397,6 +397,26 @@ export type Database = {
           }
         ];
       };
+      contrato_facturacion: {
+        Row: {
+          numero_contrato: string;
+          irt: number;
+          ingreso_propio: number;
+          lleva_iva: boolean;
+          observacion: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          numero_contrato: string;
+          irt?: number;
+          ingreso_propio?: number;
+          lleva_iva?: boolean;
+          observacion?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_facturacion"]["Insert"]>;
+        Relationships: [];
+      };
       cuentas_por_pagar: {
         Row: {
           id: number;

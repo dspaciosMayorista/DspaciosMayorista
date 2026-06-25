@@ -77,6 +77,15 @@ const NAV: NavItem[] = [
     ],
   },
   {
+    href: "/dashboard/contabilidad/facturacion",
+    label: "Contabilidad",
+    iconKey: "contabilidad",
+    rolesPermitidos: ["superadmin", "gerencia", "administracion"],
+    children: [
+      { href: "/dashboard/contabilidad/facturacion", label: "Facturación" },
+    ],
+  },
+  {
     href: "/dashboard/usuarios",
     label: "Usuarios",
     iconKey: "usuarios",
