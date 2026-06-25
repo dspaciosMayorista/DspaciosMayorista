@@ -87,6 +87,7 @@ export type Database = {
           aplica_retencion: boolean;
           agencia_id: string | null;
           pct_comision: number | null;
+          tenant: string;
         };
         Insert: {
           id?: string;
@@ -99,6 +100,7 @@ export type Database = {
           aplica_retencion?: boolean;
           agencia_id?: string | null;
           pct_comision?: number | null;
+          tenant?: string;
         };
         Update: {
           id?: string;
@@ -264,6 +266,7 @@ export type Database = {
           facturado: boolean;
           moneda: string;
           trm_contrato: number | null;
+          tenant: string;
           numero_documento: string | null;
           fecha_emision: string | null;
           cliente_documento: string | null;
@@ -324,6 +327,7 @@ export type Database = {
           facturado?: boolean;
           moneda?: string;
           trm_contrato?: number | null;
+          tenant?: string;
           numero_documento?: string | null;
           fecha_emision?: string | null;
           cliente_documento?: string | null;
@@ -367,6 +371,7 @@ export type Database = {
           valor_abono: number;
           monto_cop: number | null;
           trm: number | null;
+          tenant: string;
           forma_pago: string | null;
           referencia: string | null;
           recibido_por: string | null;
@@ -382,6 +387,7 @@ export type Database = {
           valor_abono: number;
           monto_cop?: number | null;
           trm?: number | null;
+          tenant?: string;
           forma_pago?: string | null;
           referencia?: string | null;
           recibido_por?: string | null;
@@ -439,6 +445,7 @@ export type Database = {
           contrato_path: string | null;
           contrato_nombre: string | null;
           activo: boolean;
+          tenant: string;
           created_at: string;
         };
         Insert: {
@@ -452,6 +459,7 @@ export type Database = {
           contrato_path?: string | null;
           contrato_nombre?: string | null;
           activo?: boolean;
+          tenant?: string;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["pe_empleados"]["Insert"]>;
@@ -469,6 +477,7 @@ export type Database = {
           valor: number;
           comprobante: string | null;
           observacion: string | null;
+          tenant: string;
           created_at: string;
         };
         Insert: {
@@ -482,6 +491,7 @@ export type Database = {
           valor?: number;
           comprobante?: string | null;
           observacion?: string | null;
+          tenant?: string;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["contabilidad_movimientos"]["Insert"]>;
@@ -490,20 +500,20 @@ export type Database = {
       conciliacion_extracto: {
         Row: {
           id: number; fecha: string; descripcion: string | null; valor: number;
-          saldo: number | null; periodo: string; cuenta: string | null;
+          saldo: number | null; periodo: string; cuenta: string | null; tenant: string;
           conciliacion_id: number | null; created_at: string;
         };
         Insert: {
           id?: number; fecha: string; descripcion?: string | null; valor: number;
-          saldo?: number | null; periodo: string; cuenta?: string | null;
+          saldo?: number | null; periodo: string; cuenta?: string | null; tenant?: string;
           conciliacion_id?: number | null; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["conciliacion_extracto"]["Insert"]>;
         Relationships: [];
       };
       conciliacion: {
-        Row: { id: number; nota: string | null; total: number; created_at: string };
-        Insert: { id?: number; nota?: string | null; total?: number; created_at?: string };
+        Row: { id: number; nota: string | null; total: number; tenant: string; created_at: string };
+        Insert: { id?: number; nota?: string | null; total?: number; tenant?: string; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["conciliacion"]["Insert"]>;
         Relationships: [];
       };
@@ -527,6 +537,7 @@ export type Database = {
           clasificacion: string;
           valor: number;
           activo: boolean;
+          tenant: string;
           created_at: string;
         };
         Insert: {
@@ -536,6 +547,7 @@ export type Database = {
           clasificacion?: string;
           valor?: number;
           activo?: boolean;
+          tenant?: string;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["pe_costos"]["Insert"]>;
@@ -568,6 +580,7 @@ export type Database = {
           iva_proveedor: number | null;
           valor_irt: number | null;
           clasificacion: string;
+          tenant: string;
           moneda: string;
           created_at: string;
         };
@@ -597,6 +610,7 @@ export type Database = {
           iva_proveedor?: number | null;
           valor_irt?: number | null;
           clasificacion?: string;
+          tenant?: string;
           moneda?: string;
           created_at?: string;
         };

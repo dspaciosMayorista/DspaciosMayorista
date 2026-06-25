@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { calcularRentabilidad } from "@/lib/finanzas/rentabilidad";
+import { getTenant } from "@/lib/tenant.server";
 import { PuntoEquilibrioClient, type EmpRow, type CostoRow } from "./PuntoEquilibrioClient";
 
 export const dynamic = "force-dynamic";
@@ -23,9 +24,10 @@ export default async function PuntoEquilibrioPage() {
     );
   }
 
+  const tenantId = await getTenant();
   const [{ data: empleados }, { data: costos }, rent] = await Promise.all([
-    sb.from("pe_empleados").select("*").eq("activo", true).order("created_at"),
-    sb.from("pe_costos").select("*").eq("activo", true).order("created_at"),
+    sb.from("pe_empleados").select("*").eq("activo", true).eq("tenant", tenantId).order("created_at"),
+    sb.from("pe_costos").select("*").eq("activo", true).eq("tenant", tenantId).order("created_at"),
     // Mismo cálculo (helper) que el módulo Rentabilidad → margen idéntico.
     calcularRentabilidad(),
   ]);

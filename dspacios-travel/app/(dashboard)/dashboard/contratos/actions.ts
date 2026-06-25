@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
 import { asegurarCuentasPorPagar } from "../reservar/actions";
 import { formatMoneda } from "@/lib/utils";
+import { getTenant } from "@/lib/tenant.server";
 
 // Margen mínimo que debe dejar un contrato manual (dinámico/empaquetado):
 // PVP ≥ total de costos ÷ (1 − 20%).
@@ -189,9 +190,11 @@ export async function crearContrato(
     if (tipoVenta === "agencia") agenciaNombre = data.nombre; else freelanceNombre = data.nombre;
   }
 
-  // 2. Crear la venta (cabecera del contrato)
+  // 2. Crear la venta (cabecera del contrato) — estampada con la agencia activa.
+  const tenant = await getTenant();
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
+    tenant,
     cliente: input.cliente.trim(),
     destino: oNull(input.destino),
     fecha_salida: oNull(input.fechaSalida),
@@ -321,6 +324,7 @@ export async function crearContrato(
           const p = provMap.get(r.proveedor);
           return {
             numero_contrato: numero,
+            tenant,
             proveedor: r.proveedor,
             tipo_proveedor: r.tipo,
             servicio: r.servicio,
@@ -489,7 +493,7 @@ export async function registrarAbono(
   const sb = await createClient();
   const { data: venta } = await sb
     .from("ventas")
-    .select("estado, precio_venta, tipo_paquete, moneda")
+    .select("estado, precio_venta, tipo_paquete, moneda, tenant")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
   const esUSD = (venta?.moneda ?? "COP") === "USD";
@@ -501,6 +505,7 @@ export async function registrarAbono(
 
   const { error } = await sb.from("abonos").insert({
     numero_contrato: numeroContrato,
+    tenant: (venta as { tenant?: string } | null)?.tenant ?? "mayorista",
     valor_abono: valorAbono,
     monto_cop: montoCop,
     trm,

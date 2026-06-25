@@ -19,6 +19,7 @@ export type NavItem = {
   modulo?: string;            // módulo de permisos (para ocultar según rol)
   soloSuperadmin?: boolean;   // visible solo para el rol superadmin
   rolesPermitidos?: string[]; // visible solo para estos roles (ignora `modulo`)
+  minoristaOculto?: boolean;  // se oculta cuando la agencia activa es minorista
 };
 
 const ICONS: Record<string, LucideIcon> = {

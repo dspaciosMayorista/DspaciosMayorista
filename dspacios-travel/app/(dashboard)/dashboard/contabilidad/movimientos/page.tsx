@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { MovimientosClient, type MovRow } from "./MovimientosClient";
 
 export const dynamic = "force-dynamic";
@@ -20,9 +21,11 @@ export default async function MovimientosPage() {
     );
   }
 
+  const tenant = await getTenant();
   const { data: movs } = await sb
     .from("contabilidad_movimientos")
     .select("*")
+    .eq("tenant", tenant)
     .order("fecha", { ascending: false })
     .order("id", { ascending: false });
 

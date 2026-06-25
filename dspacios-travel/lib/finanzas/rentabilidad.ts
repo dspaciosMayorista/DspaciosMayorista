@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { calcComisionB2B, calcRentabilidad, fiscalFromParams } from "@/lib/calc/finanzas";
 import { liquidarFacturacion } from "@/lib/contabilidad/facturacion";
+import { getTenant } from "@/lib/tenant.server";
 
 // Fila de rentabilidad por contrato (ya en COP). Fuente ÚNICA usada por el módulo
 // Rentabilidad y por Punto de equilibrio, para que el margen neto sea idéntico.
@@ -45,8 +46,9 @@ export async function calcularRentabilidad(): Promise<{
   tasas: TasasProvision;
 }> {
   const sb = await createClient();
+  const tenant = await getTenant();
   const [{ data: ventas }, { data: b2b }, { data: facturas }, { data: cxp }, { data: asesores }, { data: facturacionCfg }] = await Promise.all([
-    sb.from("ventas").select("numero_contrato, cliente, asesor, asesor_firma_nombre, destino, canal, fecha_venta, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, trm_contrato").order("fecha_venta", { ascending: false }),
+    sb.from("ventas").select("numero_contrato, cliente, asesor, asesor_firma_nombre, destino, canal, fecha_venta, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, trm_contrato").eq("tenant", tenant).order("fecha_venta", { ascending: false }),
     sb.from("aliados_b2b").select("numero_contrato, precio_venta, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion"),
     sb.from("facturacion").select("numero_contrato, base_gravable, iva_descontable"),
     sb.from("cuentas_por_pagar").select("numero_contrato, iva_proveedor, clasificacion, valor_total"),

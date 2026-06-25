@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { liquidarEmpleadoContrato, type ClaseRiesgo } from "@/lib/calc/nomina";
 import { FlujoCajaClient, type ContratoFlujo } from "./FlujoCajaClient";
 
@@ -26,23 +27,24 @@ export default async function FlujoCajaPage() {
     );
   }
 
+  const tenant = await getTenant();
   // Ventas: cada contrato pertenece a un mes (por viaje = fecha_salida, por venta = fecha_venta).
   const { data: ventas } = await sb
     .from("ventas")
     .select(
       "numero_contrato, fecha_salida, fecha_venta, moneda, trm_contrato, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, estado"
-    );
+    ).eq("tenant", tenant);
 
   // Entradas reales: abonos de cartera. Ya entran en PESOS (monto_cop).
   const { data: abonos } = await sb
     .from("abonos")
-    .select("numero_contrato, valor_abono, monto_cop");
+    .select("numero_contrato, valor_abono, monto_cop").eq("tenant", tenant);
 
   // Salidas reales: pagos a proveedores. En USD se pagan en pesos a la TRM del
   // día (abonoN × trmN); en COP, trmN = 1.
   const { data: cxp } = await sb
     .from("cuentas_por_pagar")
-    .select("numero_contrato, abono1, trm1, abono2, trm2, abono3, trm3");
+    .select("numero_contrato, abono1, trm1, abono2, trm2, abono3, trm3").eq("tenant", tenant);
 
   // TRM de referencia (fallback para esperado de contratos USD sin abonos).
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
@@ -50,9 +52,9 @@ export default async function FlujoCajaPage() {
 
   // Costos fijos mensuales desde Punto de equilibrio (nómina + costos fijos).
   const [{ data: empleados }, { data: peCostos }, { data: movs }] = await Promise.all([
-    sb.from("pe_empleados").select("salario, tipo, auxilio, riesgo").eq("activo", true),
-    sb.from("pe_costos").select("valor, clasificacion").eq("activo", true),
-    sb.from("contabilidad_movimientos").select("fecha, tipo, valor"),
+    sb.from("pe_empleados").select("salario, tipo, auxilio, riesgo").eq("activo", true).eq("tenant", tenant),
+    sb.from("pe_costos").select("valor, clasificacion").eq("activo", true).eq("tenant", tenant),
+    sb.from("contabilidad_movimientos").select("fecha, tipo, valor").eq("tenant", tenant),
   ]);
   const nominaMes = (empleados ?? []).reduce((a, e) => {
     if ((e.tipo as string) === "servicios") return a + (Number(e.salario) || 0);

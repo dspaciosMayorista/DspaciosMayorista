@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { getTenant } from "@/lib/tenant.server";
 import { parseExtracto } from "@/lib/contabilidad/extracto";
 
 type Result = { ok: true; n?: number } | { ok: false; error: string };
@@ -11,10 +12,11 @@ export async function importarExtracto(texto: string, anio?: number, cuenta?: st
   const sb = await createClient();
   const { lineas } = parseExtracto(texto, anio);
   if (!lineas.length) return { ok: false, error: "No se detectaron movimientos. Pega las filas del extracto (fecha, descripción, valor)." };
+  const tenant = await getTenant();
   const { error } = await sb.from("conciliacion_extracto").insert(
     lineas.map((l) => ({
       fecha: l.fecha, descripcion: l.descripcion || null, valor: l.valor, saldo: l.saldo,
-      periodo: l.periodo, cuenta: cuenta?.trim() || null,
+      periodo: l.periodo, cuenta: cuenta?.trim() || null, tenant,
     }))
   );
   if (error) return { ok: false, error: error.message };
@@ -50,7 +52,7 @@ export async function cruzar(input: {
     return { ok: false, error: `Las sumas no coinciden: extracto ${totalExtracto.toLocaleString("es-CO")} vs sistema ${totalSistema.toLocaleString("es-CO")}.` };
   }
 
-  const { data: conc, error: e1 } = await sb.from("conciliacion").insert({ nota: input.nota?.trim() || null, total: totalExtracto }).select("id").single();
+  const { data: conc, error: e1 } = await sb.from("conciliacion").insert({ nota: input.nota?.trim() || null, total: totalExtracto, tenant: await getTenant() }).select("id").single();
   if (e1 || !conc) return { ok: false, error: e1?.message ?? "No se pudo crear el cruce." };
 
   const { error: e2 } = await sb.from("conciliacion_extracto").update({ conciliacion_id: conc.id }).in("id", input.extractoIds);

@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { getTenant } from "@/lib/tenant.server";
 
 type Result = { ok: true } | { ok: false; error: string };
 const BUCKET = "contratos"; // bucket privado existente; carpeta pe-empleados/
@@ -28,7 +29,7 @@ export async function guardarEmpleado(input: {
   };
   const { error } = input.id
     ? await sb.from("pe_empleados").update(row).eq("id", input.id)
-    : await sb.from("pe_empleados").insert(row);
+    : await sb.from("pe_empleados").insert({ ...row, tenant: await getTenant() });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/punto-equilibrio");
   return { ok: true };
@@ -86,7 +87,7 @@ export async function guardarCosto(input: {
   };
   const { error } = input.id
     ? await sb.from("pe_costos").update(row).eq("id", input.id)
-    : await sb.from("pe_costos").insert(row);
+    : await sb.from("pe_costos").insert({ ...row, tenant: await getTenant() });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/punto-equilibrio");
   return { ok: true };

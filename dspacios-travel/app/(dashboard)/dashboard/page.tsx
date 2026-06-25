@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 import {
@@ -23,13 +24,14 @@ export default async function DashboardPage() {
   const hoyStr = new Date().toISOString().slice(0, 10);
   const mesActual = hoyStr.slice(0, 7);
 
+  const tenant = await getTenant();
   const [{ count: nPaquetes }, { data: ventas }, { data: abonos }, { data: cupos }, { count: nSalidas }, { count: nPagos }] = await Promise.all([
     supabase.from("paquetes").select("id", { count: "exact", head: true }),
-    supabase.from("ventas").select("precio_venta, fecha_venta, fecha_salida, estado"),
-    supabase.from("abonos").select("valor_abono"),
+    supabase.from("ventas").select("precio_venta, fecha_venta, fecha_salida, estado").eq("tenant", tenant),
+    supabase.from("abonos").select("valor_abono").eq("tenant", tenant),
     supabase.from("cupos_por_bloqueo").select("cupos_disponibles"),
     supabase.from("bloqueos_vuelo").select("id", { count: "exact", head: true }).gte("fecha_ida", hoyStr).lte("fecha_ida", addDays(14)),
-    supabase.from("cuentas_por_pagar").select("id", { count: "exact", head: true }).gte("fecha_vencimiento", hoyStr).lte("fecha_vencimiento", addDays(15)),
+    supabase.from("cuentas_por_pagar").select("id", { count: "exact", head: true }).eq("tenant", tenant).gte("fecha_vencimiento", hoyStr).lte("fecha_vencimiento", addDays(15)),
   ]);
 
   const vts = ventas ?? [];

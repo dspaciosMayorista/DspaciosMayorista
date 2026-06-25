@@ -5,12 +5,14 @@ import { type NavItem } from "./SidebarNav";
 import { DesktopSidebar } from "./DesktopSidebar";
 import { Logo } from "@/components/Logo";
 import { modulosConsultables, permisosDelUsuario } from "@/lib/permisos";
+import { tenantContext } from "@/lib/tenant.server";
+import { TenantSwitcher } from "./TenantSwitcher";
 
 const NAV: NavItem[] = [
   // Comercial / venta
-  { href: "/tarifario", label: "Tarifario ↗", grupo: "Comercial", iconKey: "tarifario", modulo: "tarifario" },
-  { href: "/dashboard/reservar", label: "Reservar", iconKey: "reservar", modulo: "reservar" },
-  { href: "/dashboard/cotizaciones", label: "Cotizaciones", iconKey: "cotizaciones", modulo: "cotizaciones" },
+  { href: "/tarifario", label: "Tarifario ↗", grupo: "Comercial", iconKey: "tarifario", modulo: "tarifario", minoristaOculto: true },
+  { href: "/dashboard/reservar", label: "Reservar", iconKey: "reservar", modulo: "reservar", minoristaOculto: true },
+  { href: "/dashboard/cotizaciones", label: "Cotizaciones", iconKey: "cotizaciones", modulo: "cotizaciones", minoristaOculto: true },
 
   // Operación
   { href: "/dashboard/ventas", label: "Ventas", separadorAntes: true, grupo: "Operación", iconKey: "ventas", modulo: "ventas" },
@@ -26,6 +28,7 @@ const NAV: NavItem[] = [
     label: "Vuelos",
     iconKey: "vuelos",
     modulo: "vuelos",
+    minoristaOculto: true,
     children: [
       { href: "/dashboard/vuelos/pasajeros", label: "Pasajeros" },
       { href: "/dashboard/vuelos/nuevo", label: "Nuevo bloqueo" },
@@ -40,6 +43,7 @@ const NAV: NavItem[] = [
     grupo: "Producto",
     iconKey: "paquetes",
     modulo: "paquetes",
+    minoristaOculto: true,
     children: [{ href: "/dashboard/paquetes/nuevo", label: "Nuevo paquete" }],
   },
   {
@@ -47,6 +51,7 @@ const NAV: NavItem[] = [
     label: "Netas",
     iconKey: "producto",
     modulo: "producto",
+    minoristaOculto: true,
     children: [
       { href: "/dashboard/producto/destinos", label: "Destinos" },
       { href: "/dashboard/producto/hoteles", label: "Hoteles" },
@@ -100,7 +105,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard/configuracion", label: "Configuración", iconKey: "configuracion", modulo: "configuracion" },
 
   // Sitio web público (CMS) — solo superadmin
-  { href: "/cms", label: "Sitio web", iconKey: "cms", modulo: "configuracion", soloSuperadmin: true },
+  { href: "/cms", label: "Sitio web", iconKey: "cms", modulo: "configuracion", soloSuperadmin: true, minoristaOculto: true },
 
   // CRM
   { href: "/crm", label: "CRM ↗", separadorAntes: true, grupo: "Externo", iconKey: "crm", modulo: "crm" },
@@ -124,7 +129,9 @@ export default async function DashboardLayout({
   // (La seguridad de datos la garantiza RLS; esto es solo visibilidad.)
   const permitidos = await modulosConsultables();
   const { rol } = await permisosDelUsuario();
+  const { tenant, puedeCambiar, permitidos: tenantsPermitidos } = await tenantContext();
   const nav = NAV.filter((n) => {
+    if (tenant === "minorista" && n.minoristaOculto) return false; // sin tarifario/montaje en minorista
     if (n.soloSuperadmin && rol !== "superadmin") return false;
     if (n.rolesPermitidos) return n.rolesPermitidos.includes(rol ?? "");
     return !n.modulo || permitidos.has(n.modulo);
@@ -141,7 +148,10 @@ export default async function DashboardLayout({
           <a href="/dashboard" aria-label="D'spacios Travel — inicio">
             <Logo variant="full" height={32} className="h-7 w-auto" priority />
           </a>
-          <LogoutButton className="text-xs text-gray-500 hover:text-gray-800" />
+          <div className="flex items-center gap-2">
+            <TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} />
+            <LogoutButton className="text-xs text-gray-500 hover:text-gray-800" />
+          </div>
         </div>
         <nav className="-mx-1 flex gap-1 overflow-x-auto pb-1">
           {nav.map((n) => (
@@ -157,7 +167,7 @@ export default async function DashboardLayout({
       </header>
 
       {/* Sidebar (escritorio) — recogible */}
-      <DesktopSidebar nav={nav} />
+      <DesktopSidebar nav={nav} switcher={<TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} />} />
 
       {/* Contenido: la página entera hace scroll (un solo scrollbar); el menú
           queda fijo (sticky). Sin scroll interno propio. */}

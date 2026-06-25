@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { PagosList, type PagoRow } from "./PagosList";
 
 export const dynamic = "force-dynamic";
@@ -25,11 +26,13 @@ export default async function PagosPage() {
     );
   }
 
+  const tenant = await getTenant();
   const { data: cxp } = await sb
     .from("cuentas_por_pagar")
     .select(
       "id, numero_contrato, proveedor, tipo_proveedor, servicio, valor_total, moneda, fecha_obligacion, fecha_vencimiento, aplica_retencion, pct_retencion, clasificacion, base_gravable, iva_proveedor, abono1, fecha_abono1, trm1, abono2, fecha_abono2, trm2, abono3, fecha_abono3, trm3"
     )
+    .eq("tenant", tenant)
     .order("fecha_vencimiento", { ascending: true, nullsFirst: false });
 
   const rows: PagoRow[] = (cxp ?? []).map((c) => {

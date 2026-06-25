@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
 import { ComisionesList, type ComB2BRow } from "./ComisionesList";
 
@@ -8,6 +9,7 @@ const ROLES = ["superadmin", "gerencia", "administracion"];
 
 export default async function ComisionesPage() {
   const sb = await createClient();
+  const tenant = await getTenant();
   const { data: { user } } = await sb.auth.getUser();
   const { data: perfil } = user
     ? await sb.from("usuarios").select("rol").eq("id", user.id).single()
@@ -25,7 +27,7 @@ export default async function ComisionesPage() {
 
   const [{ data: b2b }, { data: ventas }] = await Promise.all([
     sb.from("aliados_b2b").select("*").order("id", { ascending: false }),
-    sb.from("ventas").select("numero_contrato, cliente, canal, tipo_asesor, agencia_nombre, freelance_nombre"),
+    sb.from("ventas").select("numero_contrato, cliente, canal, tipo_asesor, agencia_nombre, freelance_nombre").eq("tenant", tenant),
   ]);
   const clientePorContrato = new Map<string, string>();
   for (const v of ventas ?? []) clientePorContrato.set(v.numero_contrato, v.cliente ?? "");

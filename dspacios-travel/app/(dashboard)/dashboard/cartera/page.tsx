@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { CarteraList, type CarteraRow } from "./CarteraList";
 
 export const dynamic = "force-dynamic";
@@ -26,10 +27,12 @@ export default async function CarteraPage() {
     );
   }
 
+  const tenant = await getTenant();
   const [{ data: ventas }, { data: abonos }, { data: formasPagoRows }] = await Promise.all([
     sb
       .from("ventas")
       .select("numero_contrato, cliente, destino, precio_venta, estado, fecha_salida, moneda, created_at")
+      .eq("tenant", tenant)
       .order("created_at", { ascending: false }),
     sb
       .from("abonos")

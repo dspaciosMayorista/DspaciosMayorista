@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { getTenant } from "@/lib/tenant.server";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -34,7 +35,7 @@ export async function guardarMovimiento(input: {
   };
   const { error } = input.id
     ? await sb.from("contabilidad_movimientos").update(row).eq("id", input.id)
-    : await sb.from("contabilidad_movimientos").insert(row);
+    : await sb.from("contabilidad_movimientos").insert({ ...row, tenant: await getTenant() });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/contabilidad/movimientos");
   return { ok: true };

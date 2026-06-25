@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { ConciliacionesClient, type ExtractoItem, type SistemaItem, type Cruce } from "./ConciliacionesClient";
 
 export const dynamic = "force-dynamic";
@@ -17,13 +18,14 @@ export default async function ConciliacionesPage() {
     );
   }
 
+  const tenant = await getTenant();
   const [{ data: extracto }, { data: concs }, { data: concSis }, { data: abonos }, { data: cxp }, { data: movs }] = await Promise.all([
-    sb.from("conciliacion_extracto").select("*").order("fecha"),
-    sb.from("conciliacion").select("*").order("created_at", { ascending: false }),
+    sb.from("conciliacion_extracto").select("*").eq("tenant", tenant).order("fecha"),
+    sb.from("conciliacion").select("*").eq("tenant", tenant).order("created_at", { ascending: false }),
     sb.from("conciliacion_sistema").select("*"),
-    sb.from("abonos").select("id, numero_contrato, fecha_abono, valor_abono, monto_cop"),
-    sb.from("cuentas_por_pagar").select("id, proveedor, numero_contrato, abono1, fecha_abono1, trm1, abono2, fecha_abono2, trm2, abono3, fecha_abono3, trm3"),
-    sb.from("contabilidad_movimientos").select("id, fecha, tipo, concepto, valor"),
+    sb.from("abonos").select("id, numero_contrato, fecha_abono, valor_abono, monto_cop").eq("tenant", tenant),
+    sb.from("cuentas_por_pagar").select("id, proveedor, numero_contrato, abono1, fecha_abono1, trm1, abono2, fecha_abono2, trm2, abono3, fecha_abono3, trm3").eq("tenant", tenant),
+    sb.from("contabilidad_movimientos").select("id, fecha, tipo, concepto, valor").eq("tenant", tenant),
   ]);
 
   const usados = new Set((concSis ?? []).map((s) => s.ref as string));

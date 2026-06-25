@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { FacturacionClient, type FactRow } from "./FacturacionClient";
 
 export const dynamic = "force-dynamic";
@@ -22,12 +23,14 @@ export default async function FacturacionPage() {
     );
   }
 
+  const tenant = await getTenant();
   const [{ data: ventas }, { data: cfgs }, { data: cxp }, { data: params }] = await Promise.all([
     sb.from("ventas")
       .select("numero_contrato, cliente, destino, fecha_venta, precio_venta, moneda, trm_contrato, estado")
+      .eq("tenant", tenant)
       .order("fecha_venta", { ascending: false }),
     sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento, tipo_exento, observacion"),
-    sb.from("cuentas_por_pagar").select("numero_contrato, valor_total, clasificacion"),
+    sb.from("cuentas_por_pagar").select("numero_contrato, valor_total, clasificacion").eq("tenant", tenant),
     sb.from("parametros_tributarios").select("parametro, valor"),
   ]);
 

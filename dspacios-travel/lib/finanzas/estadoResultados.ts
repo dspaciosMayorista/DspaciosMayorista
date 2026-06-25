@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 import { liquidarFacturacion } from "@/lib/contabilidad/facturacion";
 import { liquidarEmpleadoContrato, type ClaseRiesgo } from "@/lib/calc/nomina";
+import { getTenant } from "@/lib/tenant.server";
 
 // Estados financieros del periodo (mes YYYY-MM). A diferencia del "estado de
 // resultado" por contrato (que es un flujo: PVP total vs todo lo pagado), aquí el
@@ -53,14 +54,15 @@ function cxpConfigurada(c: { clasificacion: string | null; base_gravable: number
 
 export async function calcularEstadosFinancieros(mesPedido?: string): Promise<EstadosFinancieros> {
   const sb = await createClient();
+  const tenant = await getTenant();
   const [{ data: ventas }, { data: cfgs }, { data: cxp }, { data: abonos }, { data: emps }, { data: costos }, { data: movs }, { data: paramsRows }] = await Promise.all([
-    sb.from("ventas").select("numero_contrato, cliente, fecha_venta, precio_venta, moneda, trm_contrato"),
+    sb.from("ventas").select("numero_contrato, cliente, fecha_venta, precio_venta, moneda, trm_contrato").eq("tenant", tenant),
     sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento"),
-    sb.from("cuentas_por_pagar").select("numero_contrato, valor_total, iva_proveedor, clasificacion, base_gravable, abono1, abono2, abono3"),
+    sb.from("cuentas_por_pagar").select("numero_contrato, valor_total, iva_proveedor, clasificacion, base_gravable, abono1, abono2, abono3").eq("tenant", tenant),
     sb.from("abonos").select("numero_contrato, valor_abono"),
-    sb.from("pe_empleados").select("*").eq("activo", true),
-    sb.from("pe_costos").select("*").eq("activo", true),
-    sb.from("contabilidad_movimientos").select("fecha, tipo, valor"),
+    sb.from("pe_empleados").select("*").eq("activo", true).eq("tenant", tenant),
+    sb.from("pe_costos").select("*").eq("activo", true).eq("tenant", tenant),
+    sb.from("contabilidad_movimientos").select("fecha, tipo, valor").eq("tenant", tenant),
     sb.from("parametros_tributarios").select("parametro, valor"),
   ]);
 

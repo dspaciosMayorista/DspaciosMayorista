@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
@@ -8,11 +9,13 @@ export const dynamic = "force-dynamic";
 
 export default async function ContratosPage() {
   const sb = await createClient();
+  const tenant = await getTenant();
   const { data: ventas } = await sb
     .from("ventas")
     .select(
       "numero_contrato, cliente, destino, fecha_salida, precio_venta, estado, created_at"
     )
+    .eq("tenant", tenant)
     .order("created_at", { ascending: false });
 
   return (
