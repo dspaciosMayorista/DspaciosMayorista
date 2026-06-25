@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Scale, Users, BookText, FileText, Upload, Pencil, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatCOP } from "@/lib/utils";
@@ -116,7 +117,7 @@ function Config(p: {
     <div className="space-y-6">
       {/* Cálculo del Punto de Equilibrio */}
       <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 className="mb-3 text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>⚖️ Cálculo del punto de equilibrio</h2>
+        <h2 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}><Scale size={16} /> Cálculo del punto de equilibrio</h2>
         <table className="w-full text-sm">
           <tbody>
             <Linea k="Costos y gastos fijos" v={formatCOP(p.totFijos)} />
@@ -164,7 +165,7 @@ function EmpleadosSection({ empleados, totNomina }: { empleados: EmpRow[]; totNo
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>👥 Empleados y costo de contratación</h2>
+        <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}><Users size={16} /> Empleados y costo de contratación</h2>
         <Button onClick={() => setEditor("nuevo")} style={{ backgroundColor: "var(--brand-primary)" }}>+ Agregar</Button>
       </div>
       {editor && <EmpleadoEditor row={editor === "nuevo" ? null : editor} onClose={() => setEditor(null)} />}
@@ -240,15 +241,15 @@ function EmpleadoFila({ e, onEdit }: { e: EmpRow; onEdit: () => void }) {
       <td className="px-3 py-2.5">
         <div className="flex items-center justify-center gap-2">
           {e.contratoPath ? (
-            <button onClick={verContrato} title={e.contratoNombre ?? "Ver contrato"} className="text-[#1D7C9A] hover:underline text-xs">📄 Contrato</button>
+            <button onClick={verContrato} title={e.contratoNombre ?? "Ver contrato"} className="inline-flex items-center gap-1 text-xs text-[#1D7C9A] hover:underline"><FileText size={14} /> Contrato</button>
           ) : (
-            <label className="cursor-pointer text-xs text-gray-500 hover:text-[#1D7C9A]" title="Cargar contrato (escaneado o digital)">
-              {subiendo ? "Subiendo…" : "⬆ Contrato"}
+            <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-gray-500 hover:text-[#1D7C9A]" title="Cargar contrato (escaneado o digital)">
+              <Upload size={14} /> {subiendo ? "Subiendo…" : "Contrato"}
               <input type="file" accept="application/pdf,image/*" className="hidden" onChange={(ev) => ev.target.files?.[0] && subir(ev.target.files[0])} />
             </label>
           )}
-          <button onClick={onEdit} className="text-gray-400 hover:text-gray-700" title="Editar">✎</button>
-          <button disabled={pending} onClick={() => start(async () => { await eliminarEmpleado(e.id, e.contratoPath); router.refresh(); })} className="text-gray-400 hover:text-red-500" title="Eliminar">🗑</button>
+          <button onClick={onEdit} className="text-gray-400 hover:text-gray-700" title="Editar"><Pencil size={15} /></button>
+          <button disabled={pending} onClick={() => start(async () => { await eliminarEmpleado(e.id, e.contratoPath); router.refresh(); })} className="text-gray-400 hover:text-red-500" title="Eliminar"><Trash2 size={15} /></button>
         </div>
       </td>
     </tr>
@@ -325,7 +326,7 @@ function CostosSection({ costos, totFijos, totVariables }: { costos: CostoRow[];
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>📒 Otros costos y gastos</h2>
+        <h2 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}><BookText size={16} /> Otros costos y gastos</h2>
         <Button onClick={() => setEditor("nuevo")} style={{ backgroundColor: "var(--brand-primary)" }}>+ Agregar</Button>
       </div>
       {editor && <CostoEditor row={editor === "nuevo" ? null : editor} onClose={() => setEditor(null)} />}
@@ -369,8 +370,8 @@ function CostoFila({ c, onEdit }: { c: CostoRow; onEdit: () => void }) {
       <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{formatCOP(c.valor)}</td>
       <td className="px-3 py-2.5">
         <div className="flex items-center justify-center gap-2">
-          <button onClick={onEdit} className="text-gray-400 hover:text-gray-700" title="Editar">✎</button>
-          <button disabled={pending} onClick={() => start(async () => { await eliminarCosto(c.id); router.refresh(); })} className="text-gray-400 hover:text-red-500" title="Eliminar">🗑</button>
+          <button onClick={onEdit} className="text-gray-400 hover:text-gray-700" title="Editar"><Pencil size={15} /></button>
+          <button disabled={pending} onClick={() => start(async () => { await eliminarCosto(c.id); router.refresh(); })} className="text-gray-400 hover:text-red-500" title="Eliminar"><Trash2 size={15} /></button>
         </div>
       </td>
     </tr>
