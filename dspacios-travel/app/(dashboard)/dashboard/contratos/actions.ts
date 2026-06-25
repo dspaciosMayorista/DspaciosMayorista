@@ -5,6 +5,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
 import { asegurarCuentasPorPagar } from "../reservar/actions";
+import { formatMoneda } from "@/lib/utils";
+
+// Margen mínimo que debe dejar un contrato manual (dinámico/empaquetado):
+// PVP ≥ total de costos ÷ (1 − 20%).
+const MARKUP_MIN = 0.20;
 
 export type TipoPaquete = "bloqueo" | "porcion_terrestre" | "empaquetado" | "dinamico";
 
@@ -27,6 +32,7 @@ export type HotelInput = {
   detalleAcomodacion: string;
   fechaIngreso: string;
   fechaSalida: string;
+  costo?: number;   // costo neto del hotel (alimenta costo_hotel + CxP al proveedor)
 };
 
 export type VueloInput = {
@@ -45,6 +51,7 @@ export type VueloInput = {
   servicios: string;
   fechaSalida: string;
   fechaRegreso: string;
+  costo?: number;   // costo neto del vuelo (alimenta costo_aereo + CxP a la aerolínea)
 };
 
 export type ItemInput = {
@@ -150,6 +157,24 @@ export async function crearContrato(
   }
   if (bnc > precioVenta) return { ok: false, error: "La BNC no puede ser mayor al valor total del contrato (PVP)." };
 
+  // Costos netos del contrato manual (dinámico/empaquetado): el asesor conoce el
+  // costo del hotel y del vuelo; alimentan costo_hotel/costo_aereo, las CxP al
+  // proveedor y la rentabilidad. (En negociado los costos vienen del producto.)
+  const monedaContrato = !negociado && (input.moneda ?? "COP") === "USD" ? "USD" : "COP";
+  const costoHotelManual = !negociado ? input.hoteles.reduce((s, h) => s + Math.max(0, Number(h.costo) || 0), 0) : 0;
+  const costoAereoManual = !negociado ? input.vuelos.reduce((s, v) => s + Math.max(0, Number(v.costo) || 0), 0) : 0;
+  const totalCostosManual = costoHotelManual + costoAereoManual;
+  // Validación de margen mínimo: PVP ≥ costos ÷ (1 − 20%).
+  if (!negociado && totalCostosManual > 0) {
+    const pvpMin = totalCostosManual / (1 - MARKUP_MIN);
+    if (precioVenta + 0.5 < pvpMin) {
+      return {
+        ok: false,
+        error: `El PVP (${formatMoneda(precioVenta, monedaContrato)}) no cubre el margen mínimo del ${MARKUP_MIN * 100}%. Con costos de ${formatMoneda(totalCostosManual, monedaContrato)}, el PVP mínimo es ${formatMoneda(Math.ceil(pvpMin), monedaContrato)}.`,
+      };
+    }
+  }
+
   // Canal / asesor: B2C = solo interno; B2B = interno + agencia o freelance.
   const tipoVenta = input.tipoVenta ?? "interno";
   const canal = tipoVenta === "interno" ? "B2C" : "B2B";
@@ -177,7 +202,8 @@ export async function crearContrato(
     impuesto: bnc,
     estado: "activo",
     // Solo empaquetado/dinámico (manual) pueden ir en USD; negociado sigue su producto (COP).
-    moneda: !negociado && (input.moneda ?? "COP") === "USD" ? "USD" : "COP",
+    moneda: monedaContrato,
+    ...(!negociado ? { costo_hotel: costoHotelManual, costo_aereo: costoAereoManual } : {}),
     tipo_paquete: input.tipoPaquete,
     asesor: oNull(input.asesorNombre),
     canal,
@@ -270,6 +296,43 @@ export async function crearContrato(
       }))
     );
     if (error) return { ok: false, error: error.message };
+  }
+
+  // ── CxP automáticas del contrato manual (dinámico/empaquetado) ────────────
+  // Una cuenta por pagar por hotel y por vuelo con costo > 0 y proveedor, en la
+  // moneda del contrato. Toma la retención del catálogo de proveedores.
+  if (!negociado) {
+    const cxpRows: { proveedor: string; tipo: string; servicio: string; valor: number }[] = [];
+    for (const h of input.hoteles) {
+      const costo = Math.max(0, Number(h.costo) || 0);
+      if (costo > 0 && h.proveedor?.trim()) cxpRows.push({ proveedor: h.proveedor.trim(), tipo: "hotel", servicio: `Hotel ${h.nombre}`.trim(), valor: costo });
+    }
+    for (const v of input.vuelos) {
+      const costo = Math.max(0, Number(v.costo) || 0);
+      if (costo > 0 && v.aerolinea?.trim()) cxpRows.push({ proveedor: v.aerolinea.trim(), tipo: "aereo", servicio: `Vuelo ${v.aerolinea}`.trim(), valor: costo });
+    }
+    if (cxpRows.length) {
+      const nombres = [...new Set(cxpRows.map((r) => r.proveedor))];
+      const { data: provs } = await sb.from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres);
+      const provMap = new Map((provs ?? []).map((p) => [p.nombre, p]));
+      const hoyCxP = oNull(input.fechaEmision) ?? new Date().toISOString().slice(0, 10);
+      await sb.from("cuentas_por_pagar").insert(
+        cxpRows.map((r) => {
+          const p = provMap.get(r.proveedor);
+          return {
+            numero_contrato: numero,
+            proveedor: r.proveedor,
+            tipo_proveedor: r.tipo,
+            servicio: r.servicio,
+            valor_total: r.valor,
+            moneda: monedaContrato,
+            fecha_obligacion: hoyCxP,
+            aplica_retencion: p?.aplica_retencion ?? false,
+            pct_retencion: p?.pct_retencion ?? 0,
+          };
+        })
+      );
+    }
   }
 
   // ── Productos negociados: costos desde el módulo de producto + cupos ──────

@@ -24,7 +24,7 @@ import {
   eliminarFactura,
 } from "./gestion-actions";
 
-type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string };
+type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string; trm: number | null; monto_cop: number | null };
 type CxP = { id: number; proveedor: string | null; servicio: string | null; valor_total: number; base_gravable: number | null; iva_proveedor: number | null; fecha_vencimiento: string | null; aplica_retencion: boolean; pct_retencion: number };
 type B2B = { id: number; aliado: string | null; precio_venta: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
 type FacturaItem = { descripcion: string | null; valor: number; gravable: boolean };
@@ -184,6 +184,7 @@ function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["c
 function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP" }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string }) {
   const saldo = Math.max(total - totalPagado, 0);
   const fmt = (n: number) => formatMoneda(n, moneda);
+  const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3">
@@ -207,6 +208,8 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
           <table className="w-full min-w-[560px] text-sm">
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Fecha</th><th className="px-4 py-2 text-right">Valor</th>
+              {esUSD && <th className="px-4 py-2 text-right">TRM</th>}
+              {esUSD && <th className="px-4 py-2 text-right">Pagado (COP)</th>}
               <th className="px-4 py-2">Forma</th><th className="px-4 py-2">Referencia</th>
               <th className="px-4 py-2 text-right">Recibo</th>
             </tr></thead>
@@ -214,6 +217,8 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
               <tr key={a.id} className="border-t border-gray-50">
                 <td className="px-4 py-2 text-gray-500">{a.fecha_abono}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{fmt(a.valor_abono)}</td>
+                {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500">{a.trm ? formatCOP(a.trm) : "—"}</td>}
+                {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500">{a.monto_cop ? formatCOP(a.monto_cop) : "—"}</td>}
                 <td className="px-4 py-2 text-gray-500">{a.forma_pago ?? "—"}</td>
                 <td className="px-4 py-2 text-gray-500">{a.referencia ?? "—"}</td>
                 <td className="px-4 py-2 text-right">

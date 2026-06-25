@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga, formatCOP } from "@/lib/utils";
 import { registrarPagoProveedor, deshacerUltimoPago, asignarProveedorCuentaPorPagar } from "./actions";
 
 export type PagoRow = {
@@ -19,7 +19,7 @@ export type PagoRow = {
   fecha_vencimiento: string | null;
   aplica_retencion: boolean | null;
   pct_retencion: number | null;
-  pagos: { n: number; valor: number; fecha: string | null }[];
+  pagos: { n: number; valor: number; fecha: string | null; trm: number | null }[];
   pagado: number;
   saldo: number;
 };
@@ -265,6 +265,9 @@ function EstadoCuentaProveedor({ row, catalogo }: { row: PagoRow; catalogo: stri
                   <tr key={p.n} className="border-b border-gray-50">
                     <td className="px-3 py-2 text-gray-500">
                       Pago {p.n} · {formatFechaLarga(p.fecha)}
+                      {row.moneda === "USD" && p.trm ? (
+                        <span className="ml-2 text-xs text-gray-400">TRM {formatCOP(p.trm)} · {formatCOP(p.valor * p.trm)}</span>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-700">
                       {formatMoneda(p.valor, row.moneda)}

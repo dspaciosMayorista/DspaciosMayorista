@@ -28,15 +28,15 @@ export default async function PagosPage() {
   const { data: cxp } = await sb
     .from("cuentas_por_pagar")
     .select(
-      "id, numero_contrato, proveedor, tipo_proveedor, servicio, valor_total, moneda, fecha_obligacion, fecha_vencimiento, aplica_retencion, pct_retencion, abono1, fecha_abono1, abono2, fecha_abono2, abono3, fecha_abono3"
+      "id, numero_contrato, proveedor, tipo_proveedor, servicio, valor_total, moneda, fecha_obligacion, fecha_vencimiento, aplica_retencion, pct_retencion, abono1, fecha_abono1, trm1, abono2, fecha_abono2, trm2, abono3, fecha_abono3, trm3"
     )
     .order("fecha_vencimiento", { ascending: true, nullsFirst: false });
 
   const rows: PagoRow[] = (cxp ?? []).map((c) => {
     const pagos = [
-      { n: 1, valor: c.abono1 ?? 0, fecha: c.fecha_abono1 as string | null },
-      { n: 2, valor: c.abono2 ?? 0, fecha: c.fecha_abono2 as string | null },
-      { n: 3, valor: c.abono3 ?? 0, fecha: c.fecha_abono3 as string | null },
+      { n: 1, valor: c.abono1 ?? 0, fecha: c.fecha_abono1 as string | null, trm: c.trm1 as number | null },
+      { n: 2, valor: c.abono2 ?? 0, fecha: c.fecha_abono2 as string | null, trm: c.trm2 as number | null },
+      { n: 3, valor: c.abono3 ?? 0, fecha: c.fecha_abono3 as string | null, trm: c.trm3 as number | null },
     ].filter((p) => p.valor > 0);
     const pagado = pagos.reduce((s, p) => s + p.valor, 0);
     const valorTotal = c.valor_total ?? 0;
