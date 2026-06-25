@@ -99,6 +99,9 @@ export default async function RentabilidadPage() {
       utilNeta: rent.utilNeta,
       margenNeto: rent.margenNeto,
       clasificacion: rent.clasificacion,
+      moneda: (v.moneda as string) ?? "COP",
+      pvpUsd: (v.moneda ?? "COP") === "USD" ? (v.precio_venta ?? 0) : undefined,
+      trm: (v.moneda ?? "COP") === "USD" ? f : undefined,
     };
   });
 

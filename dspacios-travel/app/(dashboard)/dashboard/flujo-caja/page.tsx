@@ -29,30 +29,41 @@ export default async function FlujoCajaPage() {
   const { data: ventas } = await sb
     .from("ventas")
     .select(
-      "numero_contrato, fecha_salida, fecha_venta, moneda, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, estado"
+      "numero_contrato, fecha_salida, fecha_venta, moneda, trm_contrato, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, estado"
     );
 
-  // Entradas reales: abonos de cartera (lo cobrado por contrato).
+  // Entradas reales: abonos de cartera. Ya entran en PESOS (monto_cop).
   const { data: abonos } = await sb
     .from("abonos")
-    .select("numero_contrato, valor_abono");
+    .select("numero_contrato, valor_abono, monto_cop");
 
-  // Salidas reales: pagos a proveedores (abonos de cuentas por pagar).
+  // Salidas reales: pagos a proveedores. En USD se pagan en pesos a la TRM del
+  // día (abonoN × trmN); en COP, trmN = 1.
   const { data: cxp } = await sb
     .from("cuentas_por_pagar")
-    .select("numero_contrato, abono1, abono2, abono3");
+    .select("numero_contrato, abono1, trm1, abono2, trm2, abono3, trm3");
 
+  // TRM de referencia (fallback para esperado de contratos USD sin abonos).
+  const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
+  const trmReferencia = Number((paramsRows ?? []).find((p) => p.parametro === "trm_referencia")?.valor) || 0;
+
+  // Cobrado real en pesos (suma de monto_cop; en abonos viejos COP = valor_abono).
   const cobradoPorContrato = new Map<string, number>();
   for (const a of abonos ?? []) {
     const k = a.numero_contrato as string;
     if (!k) continue;
-    cobradoPorContrato.set(k, (cobradoPorContrato.get(k) ?? 0) + (Number(a.valor_abono) || 0));
+    const cop = Number(a.monto_cop) || Number(a.valor_abono) || 0;
+    cobradoPorContrato.set(k, (cobradoPorContrato.get(k) ?? 0) + cop);
   }
+  // Pagado real en pesos (abonoN × trmN; trmN 1 si null = COP).
   const pagadoPorContrato = new Map<string, number>();
   for (const c of cxp ?? []) {
     const k = c.numero_contrato as string;
     if (!k) continue;
-    const pag = (Number(c.abono1) || 0) + (Number(c.abono2) || 0) + (Number(c.abono3) || 0);
+    const pag =
+      (Number(c.abono1) || 0) * (Number(c.trm1) || 1) +
+      (Number(c.abono2) || 0) * (Number(c.trm2) || 1) +
+      (Number(c.abono3) || 0) * (Number(c.trm3) || 1);
     pagadoPorContrato.set(k, (pagadoPorContrato.get(k) ?? 0) + pag);
   }
 
@@ -64,14 +75,18 @@ export default async function FlujoCajaPage() {
       (Number(v.costo_receptivo) || 0) +
       (Number(v.costo_asistencia) || 0) +
       (Number(v.otros_costos) || 0);
+    // Factor a COP para el ESPERADO (PVP/costos en USD): TRM promedio del contrato
+    // o, si aún no tiene abonos, la TRM de referencia.
+    const esUSD = ((v.moneda as string) ?? "COP") === "USD";
+    const factor = esUSD ? (Number(v.trm_contrato) || trmReferencia || 0) : 1;
     return {
       numero_contrato: nc,
       fecha_salida: (v.fecha_salida as string | null) ?? null,
       fecha_venta: (v.fecha_venta as string | null) ?? null,
-      moneda: (v.moneda as string) ?? "COP",
       estado: (v.estado as string) ?? "",
-      precio_venta: Number(v.precio_venta) || 0,
-      costo_total: costoTotal,
+      // Todo ya en PESOS: el módulo no necesita una TRM manual.
+      precio_venta: (Number(v.precio_venta) || 0) * factor,
+      costo_total: costoTotal * factor,
       cobrado: cobradoPorContrato.get(nc) ?? 0,
       pagado: pagadoPorContrato.get(nc) ?? 0,
     };

@@ -8,8 +8,9 @@ export type ContratoFlujo = {
   numero_contrato: string;
   fecha_salida: string | null;
   fecha_venta: string | null;
-  moneda: string;
   estado: string;
+  // Todos los montos llegan ya en PESOS (la conversión USD→COP se hace en el
+  // servidor con la TRM promedio de cada contrato).
   precio_venta: number;
   costo_total: number;
   cobrado: number;
@@ -55,10 +56,8 @@ function sumarMes(key: string, delta: number): string {
 export function FlujoCajaClient({ contratos }: { contratos: ContratoFlujo[] }) {
   const [lente, setLente] = useState<Lente>("viaje");
   const [base, setBase] = useState<Base>("esperado");
-  const [trmStr, setTrmStr] = useState("4200");
   const [fijosStr, setFijosStr] = useState("0");
 
-  const trm = n(trmStr) || 1;
   const fijosMes = n(fijosStr);
   const mesActual = useMemo(() => {
     const d = new Date();
@@ -66,15 +65,15 @@ export function FlujoCajaClient({ contratos }: { contratos: ContratoFlujo[] }) {
   }, []);
 
   const filas = useMemo<MesFila[]>(() => {
-    const conv = (valor: number, moneda: string) => (moneda === "USD" ? valor * trm : valor);
-    // Agregación por mes según el lente y la base elegida.
+    // Agregación por mes según el lente y la base elegida. Los montos ya vienen
+    // en pesos desde el servidor.
     const acc = new Map<string, { ingresos: number; egresosVar: number; contratos: number }>();
     for (const c of contratos) {
       const fecha = lente === "viaje" ? c.fecha_salida : c.fecha_venta;
       const key = mesKeyDe(fecha);
       if (!key) continue;
-      const ingreso = base === "esperado" ? conv(c.precio_venta, c.moneda) : conv(c.cobrado, c.moneda);
-      const egreso = base === "esperado" ? conv(c.costo_total, c.moneda) : conv(c.pagado, c.moneda);
+      const ingreso = base === "esperado" ? c.precio_venta : c.cobrado;
+      const egreso = base === "esperado" ? c.costo_total : c.pagado;
       const cur = acc.get(key) ?? { ingresos: 0, egresosVar: 0, contratos: 0 };
       cur.ingresos += ingreso;
       cur.egresosVar += egreso;
@@ -116,7 +115,7 @@ export function FlujoCajaClient({ contratos }: { contratos: ContratoFlujo[] }) {
         estado,
       };
     });
-  }, [contratos, lente, base, trm, fijosMes, mesActual]);
+  }, [contratos, lente, base, fijosMes, mesActual]);
 
   const totales = useMemo(() => {
     const ingresos = filas.reduce((a, f) => a + f.ingresos, 0);
@@ -156,11 +155,11 @@ export function FlujoCajaClient({ contratos }: { contratos: ContratoFlujo[] }) {
           <label className="mb-1 block text-xs font-medium text-gray-600">Costos fijos / mes</label>
           <Input type="number" value={fijosStr} onChange={(e) => setFijosStr(e.target.value)} className="w-36 text-right" placeholder="0" />
         </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">TRM (USD→COP)</label>
-          <Input type="number" value={trmStr} onChange={(e) => setTrmStr(e.target.value)} className="w-28 text-right" />
-        </div>
       </div>
+      <p className="-mt-2 text-[11px] text-gray-400">
+        Los contratos en USD ya vienen convertidos a pesos con la TRM promedio de cada contrato
+        (la misma de Rentabilidad); por eso aquí no se configura TRM.
+      </p>
       <p className="-mt-3 text-[11px] text-gray-400">
         {base === "esperado"
           ? "Esperado: ingreso = precio de venta del contrato; egreso = costos directos. Útil para proyectar el futuro."

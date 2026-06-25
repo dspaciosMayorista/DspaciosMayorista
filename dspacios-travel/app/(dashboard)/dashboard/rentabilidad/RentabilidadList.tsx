@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatCOP, formatUSD } from "@/lib/utils";
 
 export type RentRow = {
   numero_contrato: string;
@@ -30,6 +30,10 @@ export type RentRow = {
   utilNeta: number;
   margenNeto: number;
   clasificacion: "Alta" | "Media" | "Baja";
+  // Informativo para contratos en USD convertidos a COP.
+  moneda?: string;
+  pvpUsd?: number;
+  trm?: number;
 };
 
 type Clase = "Todas" | "Alta" | "Media" | "Baja";
@@ -197,6 +201,12 @@ function Fila({ r }: { r: RentRow }) {
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
               Desglose · {r.destino ?? "—"}{r.mes ? ` · ${r.mes}` : ""}{r.canal ? ` · ${r.canal}` : ""}
             </p>
+            {(r.moneda ?? "COP") === "USD" && (
+              <p className="mb-3 rounded-lg border border-[#26BBD9]/30 bg-[#26BBD9]/5 px-3 py-2 text-xs text-gray-600">
+                Contrato en <b>USD</b>: PVP <b>{formatUSD(r.pvpUsd ?? 0)}</b> · convertido a COP a la TRM promedio{" "}
+                <b>{r.trm ? formatCOP(r.trm) : "—"}</b> {r.trm ? `(= ${formatCOP(r.ingreso + r.ivaGenerado)} aprox.)` : ""}. Las cifras de abajo están en pesos.
+              </p>
+            )}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {/* Columna 1 — Estado de resultados (sin IVA) */}
               <Bloque titulo="Estado de resultados" filas={[
