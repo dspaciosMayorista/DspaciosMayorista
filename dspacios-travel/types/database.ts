@@ -483,6 +483,38 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["contabilidad_movimientos"]["Insert"]>;
         Relationships: [];
       };
+      conciliacion_extracto: {
+        Row: {
+          id: number; fecha: string; descripcion: string | null; valor: number;
+          saldo: number | null; periodo: string; cuenta: string | null;
+          conciliacion_id: number | null; created_at: string;
+        };
+        Insert: {
+          id?: number; fecha: string; descripcion?: string | null; valor: number;
+          saldo?: number | null; periodo: string; cuenta?: string | null;
+          conciliacion_id?: number | null; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["conciliacion_extracto"]["Insert"]>;
+        Relationships: [];
+      };
+      conciliacion: {
+        Row: { id: number; nota: string | null; total: number; created_at: string };
+        Insert: { id?: number; nota?: string | null; total?: number; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["conciliacion"]["Insert"]>;
+        Relationships: [];
+      };
+      conciliacion_sistema: {
+        Row: {
+          id: number; conciliacion_id: number; ref: string;
+          descripcion: string | null; fecha: string | null; valor: number; created_at: string;
+        };
+        Insert: {
+          id?: number; conciliacion_id: number; ref: string;
+          descripcion?: string | null; fecha?: string | null; valor: number; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["conciliacion_sistema"]["Insert"]>;
+        Relationships: [];
+      };
       pe_costos: {
         Row: {
           id: number;
