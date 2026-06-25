@@ -16,7 +16,7 @@ export type FactRow = {
   precio_venta: number;
   moneda: string;
   estado: string;
-  cfg: { irt: number; ingresoPropio: number; llevaIva: boolean; observacion: string } | null;
+  cfg: { irt: number; ingresoExento: number; tipoExento: "exento" | "excluido" | null; observacion: string } | null;
 };
 
 type Filtro = "sin_configurar" | "configurados" | "todos";
@@ -79,7 +79,7 @@ export function FacturacionClient({ rows, ivaPct }: { rows: FactRow[]; ivaPct: n
 
 function Fila({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   const [abierto, setAbierto] = useState(false);
-  const liq = row.cfg ? liquidarFacturacion({ irt: row.cfg.irt, ingreso_propio: row.cfg.ingresoPropio, lleva_iva: row.cfg.llevaIva }, ivaPct) : null;
+  const liq = row.cfg ? liquidarFacturacion({ pvp: row.precio_venta, irt: row.cfg.irt, ingresoExento: row.cfg.ingresoExento }, ivaPct) : null;
   const fmt = (n: number) => formatMoneda(n, row.moneda);
 
   return (
@@ -116,24 +116,25 @@ function Fila({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
 
 function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   const [irt, setIrt] = useState(String(row.cfg?.irt ?? 0));
-  const [ingreso, setIngreso] = useState(String(row.cfg?.ingresoPropio ?? row.precio_venta));
-  const [llevaIva, setLlevaIva] = useState(row.cfg?.llevaIva ?? true);
+  const [exento, setExento] = useState(String(row.cfg?.ingresoExento ?? 0));
+  const [tipoExento, setTipoExento] = useState<"exento" | "excluido">(row.cfg?.tipoExento ?? "exento");
   const [obs, setObs] = useState(row.cfg?.observacion ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const fmt = (n: number) => formatMoneda(n, row.moneda);
 
-  const liq = liquidarFacturacion({ irt: Number(irt) || 0, ingreso_propio: Number(ingreso) || 0, lleva_iva: llevaIva }, ivaPct);
-  const descuadre = Math.abs(liq.total - row.precio_venta) > 0.5;
+  const liq = liquidarFacturacion({ pvp: row.precio_venta, irt: Number(irt) || 0, ingresoExento: Number(exento) || 0 }, ivaPct);
+  const excede = (Number(irt) || 0) + (Number(exento) || 0) > row.precio_venta + 0.5;
 
   function guardar() {
     setError(null);
     start(async () => {
       const r = await guardarFacturacion({
         numeroContrato: row.numero_contrato,
+        pvp: row.precio_venta,
         irt: Number(irt) || 0,
-        ingresoPropio: Number(ingreso) || 0,
-        llevaIva,
+        ingresoExento: Number(exento) || 0,
+        tipoExento,
         observacion: obs,
       });
       if (!r.ok) setError(r.error);
@@ -147,31 +148,36 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Configuración</p>
+        <div className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2 text-sm">
+          <span className="text-gray-500">PVP del contrato</span>
+          <b className="tabular-nums text-gray-800">{fmt(row.precio_venta)}</b>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">IRT (para terceros)</label>
             <Input type="number" min={0} value={irt} onChange={(e) => setIrt(e.target.value)} />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">Ingreso propio</label>
-            <Input type="number" min={0} value={ingreso} onChange={(e) => setIngreso(e.target.value)} />
+            <label className="mb-1 block text-xs font-medium text-gray-600">Ingreso exento / excluido</label>
+            <Input type="number" min={0} value={exento} onChange={(e) => setExento(e.target.value)} />
           </div>
         </div>
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
-          <input type="checkbox" checked={llevaIva} onChange={(e) => setLlevaIva(e.target.checked)} className="rounded" />
-          El ingreso propio lleva IVA incluido ({(ivaPct * 100).toFixed(0)}%)
-        </label>
-        <button type="button" onClick={() => { setIrt("0"); setIngreso(String(row.precio_venta)); }}
-          className="text-xs font-medium text-[#1D7C9A] hover:underline">
-          Todo como ingreso propio (= PVP)
-        </button>
+        <div className="flex items-center gap-4 text-sm text-gray-700">
+          <span className="text-xs text-gray-500">El ingreso exento/excluido es:</span>
+          {(["exento", "excluido"] as const).map((t) => (
+            <label key={t} className="flex cursor-pointer items-center gap-1.5">
+              <input type="radio" name={`tipo-${row.numero_contrato}`} checked={tipoExento === t} onChange={() => setTipoExento(t)} />
+              <span className="capitalize">{t}</span>
+            </label>
+          ))}
+        </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Observación</label>
           <Input value={obs} onChange={(e) => setObs(e.target.value)} placeholder="Nota tributaria (opcional)" />
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <div className="flex items-center gap-3">
-          <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+          <Button onClick={guardar} disabled={pending || excede} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Guardando…" : "Guardar"}
           </Button>
           {row.cfg && (
@@ -187,15 +193,16 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
         <table className="w-full text-sm">
           <tbody>
             <tr className="border-b border-gray-50"><td className="py-1.5 text-gray-500">IRT (no provisiona)</td><td className="py-1.5 text-right tabular-nums">{fmt(liq.irt)}</td></tr>
-            <tr className="border-b border-gray-50"><td className="py-1.5 text-gray-500">Ingreso propio</td><td className="py-1.5 text-right tabular-nums">{fmt(liq.ingresoPropio)}</td></tr>
-            <tr className="border-b border-gray-50"><td className="py-1.5 text-gray-500">› Base gravable</td><td className="py-1.5 text-right tabular-nums text-gray-600">{fmt(liq.baseGravable)}</td></tr>
-            <tr className="border-b border-gray-50"><td className="py-1.5 text-gray-500">› IVA generado</td><td className="py-1.5 text-right tabular-nums text-gray-600">{fmt(liq.ivaGenerado)}</td></tr>
-            <tr className="font-semibold"><td className="py-1.5">Total facturado</td><td className="py-1.5 text-right tabular-nums" style={{ color: descuadre ? "#C0392B" : "var(--brand-primary)" }}>{fmt(liq.total)}</td></tr>
+            <tr className="border-b border-gray-50"><td className="py-1.5 font-medium text-gray-700">Ingreso propio (PVP − IRT)</td><td className="py-1.5 text-right font-medium tabular-nums">{fmt(liq.ingresoPropio)}</td></tr>
+            <tr className="border-b border-gray-50"><td className="py-1.5 pl-3 text-gray-500">› Base gravable (lleva IVA)</td><td className="py-1.5 text-right tabular-nums text-gray-600">{fmt(liq.baseGravable)}</td></tr>
+            <tr className="border-b border-gray-50"><td className="py-1.5 pl-3 text-gray-500">› {tipoExento === "excluido" ? "Excluido" : "Exento"} (sin IVA)</td><td className="py-1.5 text-right tabular-nums text-gray-600">{fmt(liq.ingresoExento)}</td></tr>
+            <tr className="border-b border-gray-50"><td className="py-1.5 pl-3 text-gray-500">› Base sin IVA</td><td className="py-1.5 text-right tabular-nums text-gray-500">{fmt(liq.baseNeta)}</td></tr>
+            <tr className="font-semibold"><td className="py-1.5">IVA generado ({(ivaPct * 100).toFixed(0)}%)</td><td className="py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(liq.ivaGenerado)}</td></tr>
           </tbody>
         </table>
-        {descuadre && (
+        {excede && (
           <p className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-700">
-            IRT + Ingreso propio ({fmt(liq.total)}) no cuadra con el PVP del contrato ({fmt(row.precio_venta)}).
+            IRT + exento/excluido supera el PVP del contrato ({fmt(row.precio_venta)}).
           </p>
         )}
         <p className="text-[11px] text-gray-400">Las provisiones de rentabilidad se calculan sobre el ingreso propio.</p>

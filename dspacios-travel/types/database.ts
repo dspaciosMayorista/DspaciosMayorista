@@ -402,6 +402,8 @@ export type Database = {
           numero_contrato: string;
           irt: number;
           ingreso_propio: number;
+          ingreso_exento: number;
+          tipo_exento: string | null;
           lleva_iva: boolean;
           observacion: string | null;
           updated_at: string;
@@ -410,6 +412,8 @@ export type Database = {
           numero_contrato: string;
           irt?: number;
           ingreso_propio?: number;
+          ingreso_exento?: number;
+          tipo_exento?: string | null;
           lleva_iva?: boolean;
           observacion?: string | null;
           updated_at?: string;

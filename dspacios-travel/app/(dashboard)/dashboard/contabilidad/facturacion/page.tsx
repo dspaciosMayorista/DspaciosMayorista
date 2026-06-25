@@ -26,7 +26,7 @@ export default async function FacturacionPage() {
     sb.from("ventas")
       .select("numero_contrato, cliente, destino, fecha_venta, precio_venta, moneda, estado")
       .order("fecha_venta", { ascending: false }),
-    sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_propio, lleva_iva, observacion"),
+    sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento, tipo_exento, observacion"),
     sb.from("parametros_tributarios").select("valor").eq("parametro", "IVA").maybeSingle(),
   ]);
 
@@ -44,7 +44,12 @@ export default async function FacturacionPage() {
       moneda: (v.moneda as string) ?? "COP",
       estado: (v.estado as string) ?? "",
       cfg: c
-        ? { irt: Number(c.irt) || 0, ingresoPropio: Number(c.ingreso_propio) || 0, llevaIva: !!c.lleva_iva, observacion: c.observacion ?? "" }
+        ? {
+            irt: Number(c.irt) || 0,
+            ingresoExento: Number(c.ingreso_exento) || 0,
+            tipoExento: (c.tipo_exento as "exento" | "excluido" | null) ?? null,
+            observacion: c.observacion ?? "",
+          }
         : null,
     };
   });
