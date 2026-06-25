@@ -24,20 +24,21 @@ export default async function FacturacionPage() {
 
   const [{ data: ventas }, { data: cfgs }, { data: cxp }, { data: params }] = await Promise.all([
     sb.from("ventas")
-      .select("numero_contrato, cliente, destino, fecha_venta, precio_venta, moneda, estado")
+      .select("numero_contrato, cliente, destino, fecha_venta, precio_venta, moneda, trm_contrato, estado")
       .order("fecha_venta", { ascending: false }),
     sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento, tipo_exento, observacion"),
     sb.from("cuentas_por_pagar").select("numero_contrato, valor_total, clasificacion"),
-    sb.from("parametros_tributarios").select("valor").eq("parametro", "IVA").maybeSingle(),
+    sb.from("parametros_tributarios").select("parametro, valor"),
   ]);
 
   // Estado DIAN aparte (tolerante si aún no se corrió la migración 105).
   const { data: dianRows } = await sb.from("contrato_facturacion").select("numero_contrato, dian_emitida");
   const dianMap = new Map((dianRows ?? []).map((d) => [d.numero_contrato, !!(d as { dian_emitida?: boolean }).dian_emitida]));
 
-  const ivaPct = Number(params?.valor) || 0.19;
+  const ivaPct = Number((params ?? []).find((p) => p.parametro === "IVA")?.valor) || 0.19;
+  const trmRef = Number((params ?? []).find((p) => p.parametro === "trm_referencia")?.valor) || 0;
   const cfgMap = new Map((cfgs ?? []).map((c) => [c.numero_contrato, c]));
-  // IRT según proveedores: suma de las CxP marcadas IRT por contrato.
+  // IRT según proveedores: suma de las CxP marcadas IRT por contrato (moneda del contrato).
   const irtProvMap = new Map<string, number>();
   for (const c of cxp ?? []) {
     if (((c.clasificacion as string) ?? "costo") !== "irt") continue;
@@ -46,15 +47,20 @@ export default async function FacturacionPage() {
 
   const rows: FactRow[] = (ventas ?? []).map((v) => {
     const c = cfgMap.get(v.numero_contrato);
+    // USD → COP a la TRM del contrato (se factura en pesos), igual que Rentabilidad.
+    const esUSD = ((v.moneda as string) ?? "COP") === "USD";
+    const factor = esUSD ? (Number(v.trm_contrato) || trmRef || 0) : 1;
     return {
       numero_contrato: v.numero_contrato,
       cliente: v.cliente ?? null,
       destino: v.destino ?? null,
       mes: v.fecha_venta ? String(v.fecha_venta).slice(0, 7) : "",
-      precio_venta: Number(v.precio_venta) || 0,
-      moneda: (v.moneda as string) ?? "COP",
+      precio_venta: (Number(v.precio_venta) || 0) * factor,
+      moneda: "COP", // se factura en pesos; USD ya viene convertido
+      monedaOrig: (v.moneda as string) ?? "COP",
+      trm: esUSD ? factor : null,
       estado: (v.estado as string) ?? "",
-      irtProveedores: irtProvMap.get(v.numero_contrato) ?? 0,
+      irtProveedores: (irtProvMap.get(v.numero_contrato) ?? 0) * factor,
       dianEmitida: dianMap.get(v.numero_contrato) ?? false,
       cfg: c
         ? {

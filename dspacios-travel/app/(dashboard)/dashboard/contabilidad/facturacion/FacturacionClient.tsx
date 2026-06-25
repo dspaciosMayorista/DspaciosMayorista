@@ -14,8 +14,10 @@ export type FactRow = {
   cliente: string | null;
   destino: string | null;
   mes: string;
-  precio_venta: number;
-  moneda: string;
+  precio_venta: number;     // en COP (USD ya convertido a su TRM)
+  moneda: string;           // siempre "COP" para facturar
+  monedaOrig: string;       // moneda original del contrato (USD/COP)
+  trm: number | null;       // TRM usada si el contrato era USD
   estado: string;
   irtProveedores: number;
   dianEmitida: boolean;
@@ -219,7 +221,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Configuración</p>
         <div className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2 text-sm">
-          <span className="text-gray-500">PVP del contrato</span>
+          <span className="text-gray-500">PVP del contrato{row.monedaOrig === "USD" && row.trm ? <span className="ml-1 text-[11px] text-gray-400">(USD → COP a TRM {formatMoneda(row.trm, "COP")})</span> : null}</span>
           <b className="tabular-nums text-gray-800">{fmt(row.precio_venta)}</b>
         </div>
         <div className="grid grid-cols-2 gap-3">

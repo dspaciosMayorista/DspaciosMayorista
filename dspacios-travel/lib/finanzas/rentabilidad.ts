@@ -97,9 +97,10 @@ export async function calcularRentabilidad(): Promise<{
     const pvpRaw = v.precio_venta ?? 0;
     // IRT en vivo de los proveedores marcados IRT (no del valor guardado).
     const irtLive = irtProvPorContrato.get(v.numero_contrato) ?? 0;
-    const liq = cfg ? liquidarFacturacion({ pvp: pvpRaw, irt: irtLive, ingresoExento: cfg.exento }, fiscal.IVA) : null;
-    const baseProvisiones = liq ? liq.ingresoPropio * f : undefined;
-    const ivaGenerado = liq ? liq.ivaGenerado * f : (ivaGenPorContrato.get(v.numero_contrato) ?? 0);
+    // El exento se guarda en COP; pvp/irt se convierten a COP (factor) → todo en pesos.
+    const liq = cfg ? liquidarFacturacion({ pvp: pvpRaw * f, irt: irtLive * f, ingresoExento: cfg.exento }, fiscal.IVA) : null;
+    const baseProvisiones = liq ? liq.ingresoPropio : undefined;
+    const ivaGenerado = liq ? liq.ivaGenerado : (ivaGenPorContrato.get(v.numero_contrato) ?? 0);
 
     const rent = calcRentabilidad({
       precioVenta: pvpRaw * f, costoDirecto, comB2B, comAsesor,
@@ -129,7 +130,7 @@ export async function calcularRentabilidad(): Promise<{
       moneda: (v.moneda as string) ?? "COP",
       pvpUsd: (v.moneda ?? "COP") === "USD" ? (v.precio_venta ?? 0) : undefined,
       trm: (v.moneda ?? "COP") === "USD" ? f : undefined,
-      facturacion: liq ? { irt: liq.irt * f, ingresoPropio: liq.ingresoPropio * f, exento: liq.ingresoExento * f } : undefined,
+      facturacion: liq ? { irt: liq.irt, ingresoPropio: liq.ingresoPropio, exento: liq.ingresoExento } : undefined,
     };
   });
 
