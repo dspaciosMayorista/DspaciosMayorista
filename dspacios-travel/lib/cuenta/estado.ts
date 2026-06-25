@@ -21,6 +21,7 @@ export type EstadoCuenta = {
   fecha_salida: string | null;
   estado: string | null;
   moneda: string;
+  tenant: string;
   precio_venta: number;
   pagado: number;
   saldo: number;
@@ -48,7 +49,7 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
   const admin = createAdminClient();
   const { data: v } = await admin
     .from("ventas")
-    .select("numero_contrato, cliente, destino, fecha_salida, estado, precio_venta, moneda, b2b_usuario_id, agencia_nombre, freelance_nombre")
+    .select("numero_contrato, cliente, destino, fecha_salida, estado, precio_venta, moneda, tenant, b2b_usuario_id, agencia_nombre, freelance_nombre")
     .eq("numero_contrato", numero)
     .maybeSingle();
   if (!v) return null;
@@ -88,6 +89,7 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
     fecha_salida: v.fecha_salida as string | null,
     estado: v.estado as string | null,
     moneda: (v.moneda as string) ?? "COP",
+    tenant: (v.tenant as string) ?? "mayorista",
     precio_venta: precio,
     pagado: acum,
     saldo: Math.max(precio - acum, 0),

@@ -25,7 +25,7 @@ export default async function EstadoCuentaPage({ params }: { params: Promise<{ n
       </div>
       <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">
         <div className="doc-print rounded-xl bg-white p-8 shadow-sm print:rounded-none print:shadow-none">
-          <DocHeader />
+          <DocHeader tenant={ec.tenant} />
 
           <div className="mt-5 flex items-end justify-between">
             <div>

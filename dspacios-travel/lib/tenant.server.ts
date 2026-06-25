@@ -26,3 +26,12 @@ export async function tenantContext(): Promise<{
 export async function getTenant(): Promise<Tenant> {
   return (await tenantContext()).tenant;
 }
+
+// Datos fiscales/legales de una agencia (del RUT). Si no se pasa tenant, usa la
+// agencia activa. Devuelve null si no existe la fila (tabla sin sembrar).
+export async function agenciaDe(t?: Tenant) {
+  const sb = await createClient();
+  const tenant = t ?? (await getTenant());
+  const { data } = await sb.from("agencias").select("*").eq("tenant", tenant).maybeSingle();
+  return data ?? null;
+}

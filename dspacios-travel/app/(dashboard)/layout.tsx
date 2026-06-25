@@ -91,6 +91,7 @@ const NAV: NavItem[] = [
       { href: "/dashboard/contabilidad/movimientos", label: "Movimientos de pagos" },
       { href: "/dashboard/contabilidad/conciliaciones", label: "Conciliaciones bancarias" },
       { href: "/dashboard/contabilidad/estados-financieros", label: "Estados financieros" },
+      { href: "/dashboard/contabilidad/agencia", label: "Datos de la agencia" },
     ],
   },
   {

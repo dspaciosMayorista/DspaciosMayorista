@@ -406,6 +406,50 @@ export type Database = {
           }
         ];
       };
+      agencias: {
+        Row: {
+          tenant: string;
+          razon_social: string | null;
+          nombre_comercial: string | null;
+          nit: string | null;
+          dv: string | null;
+          rnt: string | null;
+          direccion: string | null;
+          ciudad: string | null;
+          correo: string | null;
+          telefono: string | null;
+          actividad_economica: string | null;
+          responsabilidades: string | null;
+          representante_legal: string | null;
+          factura_electronica: boolean;
+          banco: string | null;
+          tipo_cuenta: string | null;
+          numero_cuenta: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          tenant: string;
+          razon_social?: string | null;
+          nombre_comercial?: string | null;
+          nit?: string | null;
+          dv?: string | null;
+          rnt?: string | null;
+          direccion?: string | null;
+          ciudad?: string | null;
+          correo?: string | null;
+          telefono?: string | null;
+          actividad_economica?: string | null;
+          responsabilidades?: string | null;
+          representante_legal?: string | null;
+          factura_electronica?: boolean;
+          banco?: string | null;
+          tipo_cuenta?: string | null;
+          numero_cuenta?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["agencias"]["Insert"]>;
+        Relationships: [];
+      };
       contrato_facturacion: {
         Row: {
           numero_contrato: string;
