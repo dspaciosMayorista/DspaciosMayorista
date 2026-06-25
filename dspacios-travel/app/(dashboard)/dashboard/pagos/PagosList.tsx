@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga, formatCOP } from "@/lib/utils";
-import { registrarPagoProveedor, deshacerUltimoPago, asignarProveedorCuentaPorPagar } from "./actions";
+import { registrarPagoProveedor, deshacerUltimoPago, asignarProveedorCuentaPorPagar, configurarFacturaProveedor } from "./actions";
 
 export type PagoRow = {
   id: number;
@@ -19,6 +19,9 @@ export type PagoRow = {
   fecha_vencimiento: string | null;
   aplica_retencion: boolean | null;
   pct_retencion: number | null;
+  clasificacion: "costo" | "irt";
+  base_gravable: number | null;
+  iva_proveedor: number | null;
   pagos: { n: number; valor: number; fecha: string | null; trm: number | null }[];
   pagado: number;
   saldo: number;
@@ -26,7 +29,7 @@ export type PagoRow = {
 
 type Filtro = "por_pagar" | "pagadas" | "todas";
 
-export function PagosList({ rows, proveedores, catalogo = [] }: { rows: PagoRow[]; proveedores: string[]; catalogo?: string[] }) {
+export function PagosList({ rows, proveedores, catalogo = [], ivaPct = 0.19 }: { rows: PagoRow[]; proveedores: string[]; catalogo?: string[]; ivaPct?: number }) {
   const [filtro, setFiltro] = useState<Filtro>("por_pagar");
   const [proveedor, setProveedor] = useState("");
   const [q, setQ] = useState("");
@@ -142,6 +145,7 @@ export function PagosList({ rows, proveedores, catalogo = [] }: { rows: PagoRow[
                 key={r.id}
                 row={r}
                 catalogo={catalogo}
+                ivaPct={ivaPct}
                 abierto={abierto === r.id}
                 onToggle={() => setAbierto(abierto === r.id ? null : r.id)}
               />
@@ -163,11 +167,13 @@ function vencida(fecha: string | null, saldo: number): boolean {
 function FilaPago({
   row,
   catalogo,
+  ivaPct,
   abierto,
   onToggle,
 }: {
   row: PagoRow;
   catalogo: string[];
+  ivaPct: number;
   abierto: boolean;
   onToggle: () => void;
 }) {
@@ -209,7 +215,7 @@ function FilaPago({
       {abierto && (
         <tr className="bg-gray-50/60">
           <td colSpan={8} className="px-4 py-4">
-            <EstadoCuentaProveedor row={row} catalogo={catalogo} />
+            <EstadoCuentaProveedor row={row} catalogo={catalogo} ivaPct={ivaPct} />
           </td>
         </tr>
       )}
@@ -217,12 +223,16 @@ function FilaPago({
   );
 }
 
-function EstadoCuentaProveedor({ row, catalogo }: { row: PagoRow; catalogo: string[] }) {
+function EstadoCuentaProveedor({ row, catalogo, ivaPct }: { row: PagoRow; catalogo: string[]; ivaPct: number }) {
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
       {/* Asignar / cambiar proveedor (ancho completo) */}
       <div className="lg:col-span-2">
         <AsignarProveedor id={row.id} actual={row.proveedor} catalogo={catalogo} />
+      </div>
+      {/* Factura del proveedor: IRT / Costo + base gravable (ancho completo) */}
+      <div className="lg:col-span-2">
+        <FacturaProveedor row={row} ivaPct={ivaPct} />
       </div>
       {/* Estado de cuenta */}
       <div>
@@ -314,6 +324,64 @@ function EstadoCuentaProveedor({ row, catalogo }: { row: PagoRow; catalogo: stri
   );
 }
 
+function FacturaProveedor({ row, ivaPct }: { row: PagoRow; ivaPct: number }) {
+  const [clasif, setClasif] = useState<"costo" | "irt">(row.clasificacion ?? "costo");
+  const [base, setBase] = useState(String(row.base_gravable ?? ""));
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const esCosto = clasif === "costo";
+  const baseNum = Number(base) || 0;
+  const ivaCalc = esCosto ? Math.round(baseNum * ivaPct) : 0;
+  const costoNeto = esCosto ? Math.max(0, row.valor_total - ivaCalc) : row.valor_total;
+
+  function guardar() {
+    setError(null); setOk(false);
+    startTransition(async () => {
+      const res = await configurarFacturaProveedor({ id: row.id, clasificacion: clasif, baseGravable: baseNum });
+      if (!res.ok) setError(res.error); else setOk(true);
+    });
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Factura del proveedor</span>
+        <span className="text-xs text-gray-400">Total obligación: <b className="text-gray-600">{formatMoneda(row.valor_total, row.moneda)}</b></span>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Tratamiento</label>
+          <select value={clasif} onChange={(e) => setClasif(e.target.value as "costo" | "irt")}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm">
+            <option value="costo">Costo (ingreso propio)</option>
+            <option value="irt">IRT (para tercero)</option>
+          </select>
+        </div>
+        {esCosto && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Base gravable (IVA)</label>
+            <Input type="number" min={0} value={base} onChange={(e) => setBase(e.target.value)} className="w-40 text-right" placeholder="0" />
+          </div>
+        )}
+        <Button type="button" onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+          {pending ? "Guardando…" : "Guardar"}
+        </Button>
+        {ok && <span className="text-xs text-[#3d7a63]">Guardado ✓</span>}
+        {error && <span className="text-sm text-red-600">{error}</span>}
+      </div>
+      {esCosto ? (
+        <p className="mt-2 text-[11px] text-gray-500">
+          IVA descontable ({(ivaPct * 100).toFixed(0)}%): <b>{formatMoneda(ivaCalc, row.moneda)}</b> ·
+          Costo neto (total − IVA): <b>{formatMoneda(costoNeto, row.moneda)}</b>
+        </p>
+      ) : (
+        <p className="mt-2 text-[11px] text-gray-500">IRT: ingreso para tercero. No descuenta IVA ni es costo propio.</p>
+      )}
+    </div>
+  );
+}
+
 function AsignarProveedor({ id, actual, catalogo }: { id: number; actual: string | null; catalogo: string[] }) {
   const [sel, setSel] = useState(actual ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -335,14 +403,16 @@ function AsignarProveedor({ id, actual, catalogo }: { id: number; actual: string
       <span className="text-xs font-medium text-gray-500">
         {actual ? "Cambiar proveedor:" : "Asignar proveedor del catálogo:"}
       </span>
-      <select
+      <input
+        list={`prov-cat-${id}`}
         value={sel}
         onChange={(e) => setSel(e.target.value)}
-        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm"
-      >
-        <option value="">— elegir —</option>
-        {catalogo.map((p) => <option key={p} value={p}>{p}</option>)}
-      </select>
+        placeholder="Escribe para buscar…"
+        className="min-w-[16rem] rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm"
+      />
+      <datalist id={`prov-cat-${id}`}>
+        {catalogo.map((p) => <option key={p} value={p} />)}
+      </datalist>
       <Button type="button" onClick={guardar} disabled={pending || sel === (actual ?? "")} style={{ backgroundColor: "var(--brand-primary)" }}>
         {pending ? "Guardando…" : "Asignar"}
       </Button>

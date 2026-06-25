@@ -5,6 +5,30 @@ import { revalidatePath } from "next/cache";
 
 type Result = { ok: true } | { ok: false; error: string };
 
+// Configura la factura del proveedor sobre una CxP: si es Costo (ingreso propio)
+// se indica la base gravable y se autoliquida el IVA descontable (base × IVA);
+// si es IRT (ingreso para tercero) no hay base ni IVA. El total ya está (valor_total).
+export async function configurarFacturaProveedor(input: {
+  id: number;
+  clasificacion: "costo" | "irt";
+  baseGravable: number;
+}): Promise<Result> {
+  const sb = await createClient();
+  const { data: param } = await sb.from("parametros_tributarios").select("valor").eq("parametro", "IVA").maybeSingle();
+  const ivaPct = Number(param?.valor) || 0.19;
+  const esCosto = input.clasificacion !== "irt";
+  const base = esCosto ? Math.max(0, Number(input.baseGravable) || 0) : 0;
+  const { error } = await sb.from("cuentas_por_pagar").update({
+    clasificacion: esCosto ? "costo" : "irt",
+    base_gravable: esCosto ? base : null,
+    iva_proveedor: esCosto ? Math.round(base * ivaPct) : null,
+  }).eq("id", input.id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/pagos");
+  revalidatePath("/dashboard/rentabilidad");
+  return { ok: true };
+}
+
 type CxPUpdate = {
   abono1?: number | null;
   fecha_abono1?: string | null;

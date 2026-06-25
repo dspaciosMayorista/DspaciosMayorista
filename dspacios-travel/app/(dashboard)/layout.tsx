@@ -70,7 +70,7 @@ const NAV: NavItem[] = [
       { href: "/dashboard/flujo-caja", label: "Flujo de caja" },
       { href: "/dashboard/punto-equilibrio", label: "Punto de equilibrio" },
       { href: "/dashboard/cartera", label: "Cartera (por cobrar)" },
-      { href: "/dashboard/pagos", label: "Pagos a proveedores" },
+      { href: "/dashboard/pagos", label: "Proveedores" },
       { href: "/dashboard/comisiones", label: "Comisiones B2B" },
       { href: "/dashboard/liquidacion", label: "Liquidación asesores" },
       { href: "/dashboard/aliados", label: "Agencias y freelance" },

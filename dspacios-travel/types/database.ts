@@ -501,6 +501,7 @@ export type Database = {
           base_gravable: number | null;
           iva_proveedor: number | null;
           valor_irt: number | null;
+          clasificacion: string;
           moneda: string;
           created_at: string;
         };
@@ -529,6 +530,7 @@ export type Database = {
           base_gravable?: number | null;
           iva_proveedor?: number | null;
           valor_irt?: number | null;
+          clasificacion?: string;
           moneda?: string;
           created_at?: string;
         };
