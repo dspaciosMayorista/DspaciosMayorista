@@ -20,10 +20,8 @@ export async function guardarFacturacion(input: {
   const sb = await createClient();
   const pvp = Math.max(0, Number(input.pvp) || 0);
   const irt = Math.max(0, Number(input.irt) || 0);
-  const ingresoExento = Math.max(0, Number(input.ingresoExento) || 0);
-  if (irt + ingresoExento > pvp + 0.5) {
-    return { ok: false, error: "IRT + ingreso exento/excluido no puede superar el PVP del contrato." };
-  }
+  // El exento no puede pasarse de lo que queda para ingreso propio (PVP − IRT).
+  const ingresoExento = Math.min(Math.max(0, Number(input.ingresoExento) || 0), Math.max(0, pvp - irt));
   const ingresoPropio = Math.max(0, pvp - irt); // snapshot para rentabilidad
 
   const { error } = await sb.from("contrato_facturacion").upsert(

@@ -26,10 +26,14 @@ export default async function FacturacionPage() {
     sb.from("ventas")
       .select("numero_contrato, cliente, destino, fecha_venta, precio_venta, moneda, estado")
       .order("fecha_venta", { ascending: false }),
-    sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento, tipo_exento, observacion, dian_emitida"),
+    sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento, tipo_exento, observacion"),
     sb.from("cuentas_por_pagar").select("numero_contrato, valor_total, clasificacion"),
     sb.from("parametros_tributarios").select("valor").eq("parametro", "IVA").maybeSingle(),
   ]);
+
+  // Estado DIAN aparte (tolerante si aún no se corrió la migración 105).
+  const { data: dianRows } = await sb.from("contrato_facturacion").select("numero_contrato, dian_emitida");
+  const dianMap = new Map((dianRows ?? []).map((d) => [d.numero_contrato, !!(d as { dian_emitida?: boolean }).dian_emitida]));
 
   const ivaPct = Number(params?.valor) || 0.19;
   const cfgMap = new Map((cfgs ?? []).map((c) => [c.numero_contrato, c]));
@@ -51,7 +55,7 @@ export default async function FacturacionPage() {
       moneda: (v.moneda as string) ?? "COP",
       estado: (v.estado as string) ?? "",
       irtProveedores: irtProvMap.get(v.numero_contrato) ?? 0,
-      dianEmitida: !!c?.dian_emitida,
+      dianEmitida: dianMap.get(v.numero_contrato) ?? false,
       cfg: c
         ? {
             irt: Number(c.irt) || 0,

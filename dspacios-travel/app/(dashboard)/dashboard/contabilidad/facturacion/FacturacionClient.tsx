@@ -182,12 +182,14 @@ function Fila({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
 }
 
 function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
+  const router = useRouter();
   // El IRT se toma AUTOMÁTICAMENTE de los proveedores marcados IRT del contrato.
   const irt = row.irtProveedores;
   const [exento, setExento] = useState(String(row.cfg?.ingresoExento ?? 0));
   const [tipoExento, setTipoExento] = useState<"exento" | "excluido">(row.cfg?.tipoExento ?? "exento");
   const [obs, setObs] = useState(row.cfg?.observacion ?? "");
   const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
   const [pending, start] = useTransition();
   const fmt = (n: number) => formatMoneda(n, row.moneda);
 
@@ -195,7 +197,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
   const excede = irt + (Number(exento) || 0) > row.precio_venta + 0.5;
 
   function guardar() {
-    setError(null);
+    setError(null); setOk(false);
     start(async () => {
       const r = await guardarFacturacion({
         numeroContrato: row.numero_contrato,
@@ -205,11 +207,11 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
         tipoExento,
         observacion: obs,
       });
-      if (!r.ok) setError(r.error);
+      if (!r.ok) setError(r.error); else { setOk(true); router.refresh(); }
     });
   }
   function quitar() {
-    start(async () => { await quitarFacturacion(row.numero_contrato); });
+    start(async () => { await quitarFacturacion(row.numero_contrato); router.refresh(); });
   }
 
   return (
@@ -252,9 +254,10 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <div className="flex items-center gap-3">
-          <Button onClick={guardar} disabled={pending || excede} style={{ backgroundColor: "var(--brand-primary)" }}>
+          <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Guardando…" : "Guardar"}
           </Button>
+          {ok && <span className="text-xs text-[#3d7a63]">Guardado ✓</span>}
           {row.cfg && (
             <button type="button" onClick={quitar} disabled={pending} className="text-xs font-medium text-red-500 hover:underline disabled:opacity-50">
               Quitar (volver al por defecto)
