@@ -313,10 +313,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const hoteles = hotelesSel ?? [];
   const servicios = serviciosSel ?? [];
 
-  // ── Consistencia de moneda ─────────────────────────────────────────────
-  // Un paquete es de UNA sola moneda. Todos los hoteles deben coincidir, y los
-  // servicios INCLUIDOS (que se hornean en la tarifa del hotel) también; de lo
-  // contrario el PVP mezclaría COP y USD y daría un número sin sentido.
+  // ── Consistencia de moneda (CERO mezcla) ───────────────────────────────
+  // Un paquete es de UNA sola moneda. Todos los hoteles Y todos los servicios
+  // (incluidos u opcionales) deben coincidir; si no, el PVP mezclaría COP y USD.
   const monedaDe = (m: string | null | undefined) => (m === "USD" ? "USD" : "COP");
   const svcMoneda = (s: { servicios_adicionales: unknown }) =>
     monedaDe((s.servicios_adicionales as { moneda?: string | null } | null)?.moneda);
@@ -325,15 +324,20 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   );
   if (monedasHotel.length > 1)
     return { ok: false, error: "Los hoteles del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda." };
-  // Moneda del paquete: la de sus hoteles; si es de solo servicios, la de ellos.
-  let paqueteMoneda = monedasHotel[0] ?? "COP";
-  if (!hoteles.length) {
-    const ms = Array.from(new Set(servicios.filter((s) => !(s.incluido as boolean)).map(svcMoneda)));
-    paqueteMoneda = ms.length === 1 ? ms[0] : "COP";
+  const monedasServicio = Array.from(new Set(servicios.map(svcMoneda)));
+
+  let paqueteMoneda: "COP" | "USD";
+  if (hoteles.length) {
+    // La moneda la fija el hotel; cualquier servicio en otra moneda se rechaza.
+    paqueteMoneda = monedasHotel[0];
+    if (monedasServicio.some((m) => m !== paqueteMoneda))
+      return { ok: false, error: `El paquete está en ${paqueteMoneda} (por el hotel) pero hay servicios en otra moneda. Todo el paquete debe estar en ${paqueteMoneda}.` };
+  } else {
+    // Paquete de solo servicios: todos deben compartir moneda.
+    if (monedasServicio.length > 1)
+      return { ok: false, error: "Los servicios del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda." };
+    paqueteMoneda = monedasServicio[0] ?? "COP";
   }
-  const incluidosMalMoneda = servicios.filter((s) => (s.incluido as boolean) && svcMoneda(s) !== paqueteMoneda);
-  if (hoteles.length && incluidosMalMoneda.length)
-    return { ok: false, error: `Hay servicios INCLUIDOS en una moneda distinta a la del hotel (${paqueteMoneda}). Ponlos en ${paqueteMoneda} o márcalos como opcionales.` };
 
   // Temporadas y tarifas netas de cada hotel involucrado
   const hotelIds = hoteles.map((h) => h.hotel_id);
