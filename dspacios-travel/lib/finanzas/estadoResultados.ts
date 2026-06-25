@@ -102,7 +102,7 @@ export async function calcularEstadosFinancieros(mesPedido?: string): Promise<Es
   // Gastos operacionales (mensuales).
   const gastosPersonal = (emps ?? []).reduce((a, e) => {
     if ((e.tipo as string) === "servicios") return a + (Number(e.salario) || 0);
-    const l = liquidarEmpleadoContrato(Number(e.salario) || 0, !!e.auxilio, (e.riesgo as ClaseRiesgo) || "I", !!e.declarante);
+    const l = liquidarEmpleadoContrato(Number(e.salario) || 0, !!e.auxilio, (e.riesgo as ClaseRiesgo) || "I", true);
     return a + l.costoTotalMensual;
   }, 0);
   const costosFijos = (costos ?? []).filter((c) => (c.clasificacion as string) === "fijo").reduce((a, c) => a + (Number(c.valor) || 0), 0);

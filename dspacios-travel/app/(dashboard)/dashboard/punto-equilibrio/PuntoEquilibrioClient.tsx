@@ -27,7 +27,8 @@ function liquidar(e: EmpRow): { segSocial: number; prestaciones: number; auxilio
   if (e.tipo === "servicios") {
     return { segSocial: 0, prestaciones: 0, auxilio: 0, costoTotal: e.salario, det: null };
   }
-  const l = liquidarEmpleadoContrato(e.salario, e.auxilio, (e.riesgo as ClaseRiesgo) || "I", e.declarante);
+  // La empresa es declarante de renta → exoneración automática para salarios < 10 SMMLV.
+  const l = liquidarEmpleadoContrato(e.salario, e.auxilio, (e.riesgo as ClaseRiesgo) || "I", true);
   return { segSocial: l.seguridadSocial + l.parafiscales, prestaciones: l.prestaciones, auxilio: l.auxilio, costoTotal: l.costoTotalMensual, det: l };
 }
 
@@ -274,7 +275,7 @@ function EmpleadoFila({ e, onEdit }: { e: EmpRow; onEdit: () => void }) {
       </td>
       <td className="px-3 py-2.5 text-gray-500">
         {e.tipo === "servicios" ? "Prestación de servicios" : "Empleado"}
-        {e.tipo === "empleado" && e.declarante && <span className="ml-1 rounded bg-[rgba(102,181,150,0.18)] px-1 text-[10px] text-[#3d7a63]">exo</span>}
+        {l.det?.exonerado && <span className="ml-1 rounded bg-[rgba(102,181,150,0.18)] px-1 text-[10px] text-[#3d7a63]">exo</span>}
       </td>
       <td className="px-3 py-2.5 text-right tabular-nums text-gray-600">{formatCOP(e.salario)}</td>
       <td className="px-3 py-2.5 text-right tabular-nums text-gray-500">{l.auxilio > 0 ? formatCOP(l.auxilio) : "—"}</td>
@@ -352,7 +353,6 @@ function EmpleadoEditor({ row, onClose }: { row: EmpRow | null; onClose: () => v
   const [salario, setSalario] = useState(String(row?.salario ?? ""));
   const [auxilio, setAuxilio] = useState(row?.auxilio ?? true);
   const [riesgo, setRiesgo] = useState<string>(row?.riesgo ?? "I");
-  const [declarante, setDeclarante] = useState(row?.declarante ?? true);
   const [err, setErr] = useState("");
   const [pending, start] = useTransition();
 
@@ -360,7 +360,7 @@ function EmpleadoEditor({ row, onClose }: { row: EmpRow | null; onClose: () => v
     if (!nombre.trim()) { setErr("El nombre es obligatorio."); return; }
     setErr("");
     start(async () => {
-      const r = await guardarEmpleado({ id: row?.id, nombre, tipo, salario: n(salario), auxilio, riesgo, declarante });
+      const r = await guardarEmpleado({ id: row?.id, nombre, tipo, salario: n(salario), auxilio, riesgo, declarante: true });
       if (r.ok) { onClose(); router.refresh(); } else setErr(r.error);
     });
   }
@@ -392,9 +392,6 @@ function EmpleadoEditor({ row, onClose }: { row: EmpRow | null; onClose: () => v
             </div>
             <div className="flex items-end gap-4 pb-2 text-sm text-gray-600">
               <label className="flex items-center gap-1.5"><input type="checkbox" checked={auxilio} onChange={(e) => setAuxilio(e.target.checked)} /> Auxilio</label>
-              <label className="flex items-center gap-1.5" title="Empresa declarante: exoneración de Salud/SENA/ICBF (<10 SMMLV)">
-                <input type="checkbox" checked={declarante} onChange={(e) => setDeclarante(e.target.checked)} /> Declarante
-              </label>
             </div>
           </>
         )}
