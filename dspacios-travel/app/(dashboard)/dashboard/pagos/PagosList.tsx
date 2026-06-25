@@ -32,8 +32,14 @@ type Filtro = "por_pagar" | "pagadas" | "todas";
 export function PagosList({ rows, proveedores, catalogo = [], ivaPct = 0.19 }: { rows: PagoRow[]; proveedores: string[]; catalogo?: string[]; ivaPct?: number }) {
   const [filtro, setFiltro] = useState<Filtro>("por_pagar");
   const [proveedor, setProveedor] = useState("");
+  const [clasif, setClasif] = useState<"todos" | "ip" | "irt" | "sin">("todos");
+  const [tipo, setTipo] = useState("");
   const [q, setQ] = useState("");
   const [abierto, setAbierto] = useState<number | null>(null);
+
+  // Categoría de configuración de una CxP.
+  const cat = (r: PagoRow): "ip" | "irt" | "sin" => r.clasificacion === "irt" ? "irt" : (r.base_gravable != null ? "ip" : "sin");
+  const tipos = useMemo(() => Array.from(new Set(rows.map((r) => r.tipo_proveedor).filter((t): t is string => !!t))).sort(), [rows]);
 
   const visibles = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -41,21 +47,24 @@ export function PagosList({ rows, proveedores, catalogo = [], ivaPct = 0.19 }: {
       if (filtro === "por_pagar" && r.saldo <= 0) return false;
       if (filtro === "pagadas" && r.saldo > 0) return false;
       if (proveedor && r.proveedor !== proveedor) return false;
+      if (tipo && r.tipo_proveedor !== tipo) return false;
+      if (clasif !== "todos" && cat(r) !== clasif) return false;
       if (term) {
         const hay = `${r.numero_contrato} ${r.proveedor ?? ""} ${r.servicio ?? ""} ${r.tipo_proveedor ?? ""}`.toLowerCase();
         if (!hay.includes(term)) return false;
       }
       return true;
     });
-  }, [rows, filtro, proveedor, q]);
+  }, [rows, filtro, proveedor, tipo, clasif, q]);
 
   const totales = useMemo(() => {
-    const m = new Map<string, { total: number; pagado: number; saldo: number }>();
+    const m = new Map<string, { total: number; pagado: number; saldo: number; ip: number; irt: number; sin: number }>();
     for (const r of visibles) {
-      const t = m.get(r.moneda) ?? { total: 0, pagado: 0, saldo: 0 };
+      const t = m.get(r.moneda) ?? { total: 0, pagado: 0, saldo: 0, ip: 0, irt: 0, sin: 0 };
       t.total += r.valor_total;
       t.pagado += r.pagado;
       t.saldo += r.saldo;
+      t[cat(r)] += r.valor_total;
       m.set(r.moneda, t);
     }
     return [...m.entries()];
@@ -72,6 +81,11 @@ export function PagosList({ rows, proveedores, catalogo = [], ivaPct = 0.19 }: {
               <Tarjeta titulo="Total obligaciones" valor={t.total} moneda={moneda} />
               <Tarjeta titulo="Pagado" valor={t.pagado} moneda={moneda} tono="success" />
               <Tarjeta titulo="Por pagar" valor={t.saldo} moneda={moneda} tono="primary" />
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full align-middle" style={{ backgroundColor: "var(--brand-success)" }} />IP (ingreso propio): <b className="tabular-nums text-gray-700">{formatMoneda(t.ip, moneda)}</b></span>
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full align-middle" style={{ backgroundColor: "var(--brand-accent)" }} />IRT (terceros): <b className="tabular-nums text-gray-700">{formatMoneda(t.irt, moneda)}</b></span>
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full align-middle bg-red-500" />Sin configurar: <b className="tabular-nums text-gray-700">{formatMoneda(t.sin, moneda)}</b></span>
             </div>
           </div>
         ))}
@@ -108,6 +122,19 @@ export function PagosList({ rows, proveedores, catalogo = [], ivaPct = 0.19 }: {
             </option>
           ))}
         </select>
+        <select value={clasif} onChange={(e) => setClasif(e.target.value as "todos" | "ip" | "irt" | "sin")}
+          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+          <option value="todos">Toda clasificación</option>
+          <option value="ip">IP (ingreso propio)</option>
+          <option value="irt">IRT (terceros)</option>
+          <option value="sin">Sin configurar</option>
+        </select>
+        {tipos.length > 0 && (
+          <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+            <option value="">Todo tipo</option>
+            {tipos.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        )}
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
