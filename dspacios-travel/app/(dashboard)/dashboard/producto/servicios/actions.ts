@@ -89,6 +89,7 @@ export type ServicioInput = {
   proveedorId: number | null;
   destinoId: number | null;
   alcance?: "nacional" | "internacional"; // cuando destinoId es null: catch-all nacional o internacional
+  moneda?: "COP" | "USD";         // un servicio = una moneda (su tarifa va en ella)
   precioPersona: number | null;
   grupoTiers: TierPax[];          // rangos de pax para cobro POR GRUPO
   temporada: string;
@@ -106,6 +107,7 @@ function servicioToRow(input: ServicioInput) {
     destino_id: input.destinoId,
     // El alcance solo aplica como catch-all cuando NO hay destino específico.
     alcance: input.destinoId == null ? (input.alcance === "internacional" ? "internacional" : "nacional") : "nacional",
+    moneda: input.moneda === "USD" ? "USD" : "COP",
     precio_persona: input.precioPersona,
     tarifa_neta: input.precioPersona ?? 0,
     temporada: oNull(input.temporada),
@@ -232,8 +234,9 @@ export async function cargarServiciosMasivo(
 
     // Alcance del catch-all (solo si no hay destino puntual): nacional/internacional.
     const alcance = destinoId == null && /interna?c/i.test((r.alcance || "").trim()) ? "internacional" : "nacional";
+    const moneda = /usd|d[oó]lar/i.test((r.moneda || "").trim()) ? "USD" : "COP";
     const { data: sv, error } = await sb.from("servicios_adicionales").insert({
-      nombre, proveedor_id: provId, destino_id: destinoId, alcance,
+      nombre, proveedor_id: provId, destino_id: destinoId, alcance, moneda,
       tarifa_neta: precio, precio_persona: precio, temporada: oNull(r.temporada || ""),
       liquidacion, activo: true,
       categoria: normCategoria(r.categoria),

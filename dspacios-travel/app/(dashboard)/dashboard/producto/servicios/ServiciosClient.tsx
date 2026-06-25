@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatCOP, formatMoneda } from "@/lib/utils";
 import {
   crearServicio, actualizarServicio, eliminarServicio,
   crearTemporadaServicio, actualizarTemporadaServicio, eliminarTemporadaServicio,
@@ -27,6 +27,7 @@ export type TemporadaServicio = {
 type Servicio = {
   id: number; nombre: string; temporada: string | null; precio_persona: number | null;
   proveedor_id: number | null; destino_id: number | null; alcance?: string | null; rangos_edad: number[] | null;
+  moneda?: string | null;
   categoria?: string | null;
   liquidacion?: string | null;
   descripcion?: string | null;
@@ -54,6 +55,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   // Cobertura del servicio: un destino puntual, todos los nacionales, o todos los internacionales.
   const [cobertura, setCobertura] = useState<"destino" | "nacional" | "internacional">("nacional");
   const [rangosSel, setRangosSel] = useState<number[]>([]);
+  const [moneda, setMoneda] = useState<"COP" | "USD">("COP");
   const [pPersona, setPPersona] = useState("");
   const [categoria, setCategoria] = useState("otro");
   const [liquidacion, setLiquidacion] = useState<"dia" | "noche" | "paquete">("paquete");
@@ -76,7 +78,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   const visibles = filtrados.slice(paginaActual * PAGE_SIZE, paginaActual * PAGE_SIZE + PAGE_SIZE);
 
   function resetForm() {
-    setNombre(""); setProvId(""); setDestId(""); setCobertura("nacional"); setPPersona(""); setCategoria("otro"); setLiquidacion("paquete"); setDescripcion(""); setRecargoOn(false); setRecargoVal(""); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
+    setNombre(""); setProvId(""); setDestId(""); setCobertura("nacional"); setMoneda("COP"); setPPersona(""); setCategoria("otro"); setLiquidacion("paquete"); setDescripcion(""); setRecargoOn(false); setRecargoVal(""); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
   }
 
   function startEdit(s: Servicio) {
@@ -86,6 +88,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
     setProvId(s.proveedor_id ?? "");
     setDestId(s.destino_id ?? "");
     setCobertura(s.destino_id != null ? "destino" : (s.alcance === "internacional" ? "internacional" : "nacional"));
+    setMoneda(s.moneda === "USD" ? "USD" : "COP");
     setPPersona(s.precio_persona != null ? String(s.precio_persona) : "");
     setCategoria(s.categoria ?? "otro");
     setLiquidacion((s.liquidacion as "dia" | "noche" | "paquete") ?? "paquete");
@@ -119,7 +122,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
     const alcance: "nacional" | "internacional" = cobertura === "internacional" ? "internacional" : "nacional";
     if (cobertura === "destino" && destinoId == null) { setErr("Elige un destino o cambia la cobertura."); return; }
     const input: ServicioInput = {
-      nombre, proveedorId: provId === "" ? null : Number(provId), destinoId, alcance,
+      nombre, proveedorId: provId === "" ? null : Number(provId), destinoId, alcance, moneda,
       precioPersona: persona, grupoTiers, temporada: "", rangosEdad: rangosSel, categoria, liquidacion,
       descripcion, recargoIndividual: recargoOn ? Number(recargoVal) || 0 : 0,
     };
@@ -154,7 +157,14 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
               <ComboDestino destinos={destinos} value={destId} onChange={setDestId} placeholder="Escribe el destino o su IATA…" />
             )}
           </div>
-          <div><label className={lbl}>Precio por persona <span className="font-normal text-gray-400">(tarifa base)</span></label><Input type="number" min={0} value={pPersona} onChange={(e) => setPPersona(e.target.value)} placeholder="—" /></div>
+          <div>
+            <label className={lbl}>Moneda</label>
+            <select value={moneda} onChange={(e) => setMoneda(e.target.value as "COP" | "USD")} className={sel}>
+              <option value="COP">COP (pesos)</option>
+              <option value="USD">USD (dólares)</option>
+            </select>
+          </div>
+          <div><label className={lbl}>Precio por persona <span className="font-normal text-gray-400">(tarifa base · {moneda})</span></label><Input type="number" min={0} value={pPersona} onChange={(e) => setPPersona(e.target.value)} placeholder="—" /></div>
           <div>
             <label className={lbl}>Categoría (en el contrato)</label>
             <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className={sel}>
@@ -436,19 +446,24 @@ function CamposTemporada({ value, onChange }: { value: TemporadaServicioInput; o
 
 function Row({ s, onEdit }: { s: Servicio; onEdit: (s: Servicio) => void }) {
   const [pending, start] = useTransition();
+  const moneda = s.moneda === "USD" ? "USD" : "COP";
+  const fmt = (n: number) => formatMoneda(n, moneda);
   const grupo = s.servicio_tarifa_pax ?? [];
   const resumenGrupo = grupo.length
-    ? grupo.map((t) => `${t.pax_desde}–${t.pax_hasta}: ${formatCOP(t.precio)}`).join(" · ")
+    ? grupo.map((t) => `${t.pax_desde}–${t.pax_hasta}: ${fmt(t.precio)}`).join(" · ")
     : "—";
   return (
     <tr className="border-t border-gray-50">
-      <td className="px-4 py-2 text-gray-700">{s.nombre}</td>
+      <td className="px-4 py-2 text-gray-700">
+        {s.nombre}
+        {moneda === "USD" && <span className="ml-1 rounded bg-[#1D7C9A]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#1D7C9A]">USD</span>}
+      </td>
       <td className="px-4 py-2 text-gray-500">{s.proveedores?.nombre ?? "—"}</td>
       <td className="px-4 py-2 text-gray-500">{s.destinos?.nombre ?? (s.alcance === "internacional" ? "Todos internacionales" : "Todos nacionales")}</td>
       <td className="px-4 py-2 text-right tabular-nums">
-        {s.precio_persona != null ? formatCOP(s.precio_persona) : "—"}
+        {s.precio_persona != null ? fmt(s.precio_persona) : "—"}
         {(Number(s.recargo_individual) || 0) > 0 && (
-          <div className="text-[11px] font-normal text-amber-600">+{formatCOP(Number(s.recargo_individual))} si 1 pax</div>
+          <div className="text-[11px] font-normal text-amber-600">+{fmt(Number(s.recargo_individual))} si 1 pax</div>
         )}
       </td>
       <td className="px-4 py-2 text-xs text-gray-500">{resumenGrupo}</td>

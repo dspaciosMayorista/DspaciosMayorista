@@ -10,7 +10,7 @@ import {
   marcar,
   aporteVuelo,
   componerTarifa,
-  redondearMilArriba,
+  redondearVenta,
   factorLiquidacion,
   toTemporadaRango,
   type TemporadaRango,
@@ -288,7 +288,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion, descripcion, recargo_individual)")
+      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion, descripcion, recargo_individual, moneda)")
       .eq("paquete_id", paqueteId),
   ]);
 
@@ -312,6 +312,28 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   const hoteles = hotelesSel ?? [];
   const servicios = serviciosSel ?? [];
+
+  // ── Consistencia de moneda ─────────────────────────────────────────────
+  // Un paquete es de UNA sola moneda. Todos los hoteles deben coincidir, y los
+  // servicios INCLUIDOS (que se hornean en la tarifa del hotel) también; de lo
+  // contrario el PVP mezclaría COP y USD y daría un número sin sentido.
+  const monedaDe = (m: string | null | undefined) => (m === "USD" ? "USD" : "COP");
+  const svcMoneda = (s: { servicios_adicionales: unknown }) =>
+    monedaDe((s.servicios_adicionales as { moneda?: string | null } | null)?.moneda);
+  const monedasHotel = Array.from(
+    new Set(hoteles.map((h) => monedaDe((h.hoteles as unknown as { moneda?: string | null } | null)?.moneda)))
+  );
+  if (monedasHotel.length > 1)
+    return { ok: false, error: "Los hoteles del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda." };
+  // Moneda del paquete: la de sus hoteles; si es de solo servicios, la de ellos.
+  let paqueteMoneda = monedasHotel[0] ?? "COP";
+  if (!hoteles.length) {
+    const ms = Array.from(new Set(servicios.filter((s) => !(s.incluido as boolean)).map(svcMoneda)));
+    paqueteMoneda = ms.length === 1 ? ms[0] : "COP";
+  }
+  const incluidosMalMoneda = servicios.filter((s) => (s.incluido as boolean) && svcMoneda(s) !== paqueteMoneda);
+  if (hoteles.length && incluidosMalMoneda.length)
+    return { ok: false, error: `Hay servicios INCLUIDOS en una moneda distinta a la del hotel (${paqueteMoneda}). Ponlos en ${paqueteMoneda} o márcalos como opcionales.` };
 
   // Temporadas y tarifas netas de cada hotel involucrado
   const hotelIds = hoteles.map((h) => h.hotel_id);
@@ -526,10 +548,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // sin importar el tipo. Persona = una fila; grupo = una fila por rango de pax.
   for (const s of servicios) {
     if (s.incluido as boolean) continue; // los incluidos se hornean, no se publican
-    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null; descripcion: string | null; recargo_individual: number | null } | null;
+    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null; descripcion: string | null; recargo_individual: number | null; moneda: string | null } | null;
     if (!srv) continue;
     const fLiq = factorLiquidacion(srv.liquidacion, nochesPaq);
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
+    // Cada servicio se publica en SU moneda (redondeo a mil en COP, a dólar en USD).
+    const monedaSrv = svcMoneda(s);
     const comun = {
       paquete_id: paqueteId,
       paquete_nombre: paqueteNombre,
@@ -541,20 +565,21 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       destino_nombre: destinoNombre,
       tipo_tarifa: modo,
       impuesto: 0,
+      moneda: monedaSrv,
       descripcion: srv.descripcion ?? null,
     };
     if (modo === "grupo") {
       for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
-        const pvp = redondearMilArriba(marcar(Number(g.precio) || 0, pctMk) * fLiq);
+        const pvp = redondearVenta(marcar(Number(g.precio) || 0, pctMk) * fLiq, monedaSrv);
         filas.push({ ...comun, pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, base_comisionable: pvp, precio_pvp: pvp });
       }
     } else if (srv.precio_persona != null) {
-      const pvp = redondearMilArriba(marcar(Number(srv.precio_persona) || 0, pctMk) * fLiq);
+      const pvp = redondearVenta(marcar(Number(srv.precio_persona) || 0, pctMk) * fLiq, monedaSrv);
       // Recargo individual: suplemento del proveedor cuando va 1 pax (cobro por
       // persona). Es un COSTO, así que el lado de venta sube con su markup; el
       // costo neto lo toma Reservar del catálogo para la CxP del proveedor.
       const recargoNeto = Math.max(Number(srv.recargo_individual) || 0, 0);
-      const recargoPvp = recargoNeto > 0 ? redondearMilArriba(marcar(recargoNeto, pctMk)) : 0;
+      const recargoPvp = recargoNeto > 0 ? redondearVenta(marcar(recargoNeto, pctMk), monedaSrv) : 0;
       filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, recargo_individual: recargoPvp });
     }
   }
@@ -572,6 +597,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         "No se generaron tarifas. Revisa que el hotel tenga temporadas y tarifas netas que cubran el rango de fechas del viaje.",
     };
   }
+
+  // Guarda la moneda resuelta en el paquete (la usan reservar/vitrina como pista).
+  await sb.from("armado_paquetes").update({ moneda: paqueteMoneda }).eq("id", paqueteId);
 
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   revalidatePath("/tarifario");

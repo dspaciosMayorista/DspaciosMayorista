@@ -24,7 +24,7 @@ const COLS_SERVICIOS = [
 export default async function ServiciosPage() {
   const sb = await createClient();
   const [{ data: serviciosRaw }, { data: proveedores }, { data: destinos }, { data: rangos }, { data: temporadasRaw }] = await Promise.all([
-    sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, alcance, rangos_edad, categoria, liquidacion, descripcion, recargo_individual, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio, temporada)").order("nombre"),
+    sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, alcance, moneda, rangos_edad, categoria, liquidacion, descripcion, recargo_individual, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio, temporada)").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "servicios").order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),

@@ -1607,14 +1607,14 @@ export type Database = {
           id: number; nombre: string; proveedor_id: number | null; destino_id: number | null;
           tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null; tipo_tarifa: string;
           precio_persona: number | null; precio_grupo: number | null; categoria: string;
-          descripcion: string | null; recargo_individual: number | null;
+          descripcion: string | null; recargo_individual: number | null; moneda: string;
           liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; alcance: string; activo: boolean; created_at: string;
         };
         Insert: {
           id?: number; nombre: string; proveedor_id?: number | null; destino_id?: number | null;
           tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null; tipo_tarifa?: string;
           precio_persona?: number | null; precio_grupo?: number | null; categoria?: string;
-          descripcion?: string | null; recargo_individual?: number | null;
+          descripcion?: string | null; recargo_individual?: number | null; moneda?: string;
           liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; alcance?: string; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
@@ -1653,6 +1653,7 @@ export type Database = {
           pct_mk: number;
           impuesto_tipo: Database["public"]["Enums"]["impuesto_tipo"];
           impuesto_fijo: number;
+          moneda: string;
           imagen_url: string | null;
           notas: string | null;
           created_at: string;
@@ -1672,6 +1673,7 @@ export type Database = {
           pct_mk?: number;
           impuesto_tipo?: Database["public"]["Enums"]["impuesto_tipo"];
           impuesto_fijo?: number;
+          moneda?: string;
           imagen_url?: string | null;
           notas?: string | null;
           created_at?: string;
