@@ -34,6 +34,8 @@ export type RentRow = {
   moneda?: string;
   pvpUsd?: number;
   trm?: number;
+  // Facturación configurada (Contabilidad): split IRT / Ingreso propio (en COP).
+  facturacion?: { irt: number; ingresoPropio: number; exento: number };
 };
 
 type Clase = "Todas" | "Alta" | "Media" | "Baja";
@@ -206,6 +208,14 @@ function Fila({ r }: { r: RentRow }) {
                 Contrato en <b>USD</b>: PVP <b>{formatUSD(r.pvpUsd ?? 0)}</b> · convertido a COP a la TRM promedio{" "}
                 <b>{r.trm ? formatCOP(r.trm) : "—"}</b> {r.trm ? `(= ${formatCOP(r.ingreso + r.ivaGenerado)} aprox.)` : ""}. Las cifras de abajo están en pesos.
               </p>
+            )}
+            {r.facturacion && (
+              <div className="mb-3 rounded-lg border border-[#66B596]/30 bg-[#66B596]/5 px-3 py-2 text-xs text-gray-600">
+                <b>Facturación configurada</b> (Contabilidad): IRT <b>{formatCOP(r.facturacion.irt)}</b> ·
+                Ingreso propio <b>{formatCOP(r.facturacion.ingresoPropio)}</b>
+                {r.facturacion.exento > 0 ? <> · exento/excluido <b>{formatCOP(r.facturacion.exento)}</b></> : null}.
+                Las provisiones se liquidan sobre el <b>ingreso propio</b> (el IRT no provisiona).
+              </div>
             )}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {/* Columna 1 — Estado de resultados (sin IVA) */}

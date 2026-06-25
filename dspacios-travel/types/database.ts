@@ -158,6 +158,7 @@ export type Database = {
           politica_reservas: string | null;
           aplica_retencion: boolean;
           pct_retencion: number;
+          clasificacion: string;
           created_at: string;
           voucher_contacto: string | null;
         };
@@ -176,6 +177,7 @@ export type Database = {
           politica_reservas?: string | null;
           aplica_retencion?: boolean;
           pct_retencion?: number;
+          clasificacion?: string;
           created_at?: string;
           voucher_contacto?: string | null;
         };

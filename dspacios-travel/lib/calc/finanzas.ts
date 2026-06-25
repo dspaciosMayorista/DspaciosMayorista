@@ -149,6 +149,9 @@ export type RentabilidadInput = {
   comAsesor?: number;    // comisión neta del asesor
   ivaGenerado?: number;
   ivaDescontable?: number;
+  // Base para las provisiones de ingreso (ICA/Renta). Si el contrato tiene
+  // facturación configurada, es el INGRESO PROPIO (PVP − IRT); si no, el PVP.
+  baseProvisiones?: number;
   fiscal?: ParamsFiscales;
 };
 export type Rentabilidad = {
@@ -185,11 +188,13 @@ export function calcRentabilidad(i: RentabilidadInput): Rentabilidad {
   const costoNeto = costoDirecto; // Costo = total proveedor (con IVA incluido)
   const utilBruta = ingreso - costoNeto;
 
-  // Provisiones sobre el INGRESO (base gravable), no sobre el PVP.
-  const provIca = ingreso * f.ICA;
+  // Provisiones de ingreso (ICA/Renta) sobre la base de ingreso: el INGRESO
+  // PROPIO si hay facturación configurada, o el PVP por defecto.
+  const baseProv = i.baseProvisiones != null ? i.baseProvisiones : ingreso;
+  const provIca = baseProv * f.ICA;
   const provBomberil = provIca * f.BOMBERIL;            // % del ICA
   const provFontur = Math.max(0, utilBruta) * f.FONTUR; // sobre la utilidad bruta
-  const provRenta = ingreso * f.RETENCION_RENTA;
+  const provRenta = baseProv * f.RETENCION_RENTA;
   const totalProvisiones = provIca + provBomberil + provFontur + provRenta;
 
   const ivaPorPagar = ivaGenerado - ivaDescontable;
