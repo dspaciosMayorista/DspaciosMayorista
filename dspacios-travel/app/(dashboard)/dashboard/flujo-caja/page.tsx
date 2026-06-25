@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { liquidarEmpleadoContrato, type ClaseRiesgo } from "@/lib/calc/nomina";
 import { FlujoCajaClient, type ContratoFlujo } from "./FlujoCajaClient";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +47,32 @@ export default async function FlujoCajaPage() {
   // TRM de referencia (fallback para esperado de contratos USD sin abonos).
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
   const trmReferencia = Number((paramsRows ?? []).find((p) => p.parametro === "trm_referencia")?.valor) || 0;
+
+  // Costos fijos mensuales desde Punto de equilibrio (nómina + costos fijos).
+  const [{ data: empleados }, { data: peCostos }, { data: movs }] = await Promise.all([
+    sb.from("pe_empleados").select("salario, tipo, auxilio, riesgo").eq("activo", true),
+    sb.from("pe_costos").select("valor, clasificacion").eq("activo", true),
+    sb.from("contabilidad_movimientos").select("fecha, tipo, valor"),
+  ]);
+  const nominaMes = (empleados ?? []).reduce((a, e) => {
+    if ((e.tipo as string) === "servicios") return a + (Number(e.salario) || 0);
+    const l = liquidarEmpleadoContrato(Number(e.salario) || 0, !!e.auxilio, (e.riesgo as ClaseRiesgo) || "I", true);
+    return a + l.costoTotalMensual;
+  }, 0);
+  const fijosPe = (peCostos ?? []).filter((c) => (c.clasificacion as string) === "fijo").reduce((a, c) => a + (Number(c.valor) || 0), 0);
+  const fijosDefault = nominaMes + fijosPe;
+
+  // Movimientos de pagos (fuera de contrato) imputados por mes.
+  const movMap = new Map<string, { ingresos: number; egresos: number }>();
+  for (const m of movs ?? []) {
+    const mes = m.fecha ? String(m.fecha).slice(0, 7) : "";
+    if (!mes) continue;
+    const cur = movMap.get(mes) ?? { ingresos: 0, egresos: 0 };
+    if ((m.tipo as string) === "ingreso") cur.ingresos += Number(m.valor) || 0;
+    else cur.egresos += Number(m.valor) || 0;
+    movMap.set(mes, cur);
+  }
+  const movimientos = [...movMap.entries()].map(([mes, v]) => ({ mes, ...v }));
 
   // Cobrado real en pesos (suma de monto_cop; en abonos viejos COP = valor_abono).
   const cobradoPorContrato = new Map<string, number>();
@@ -102,7 +129,7 @@ export default async function FlujoCajaPage() {
           lo proyectado.
         </p>
       </div>
-      <FlujoCajaClient contratos={contratos} />
+      <FlujoCajaClient contratos={contratos} fijosDefault={fijosDefault} movimientos={movimientos} />
     </div>
   );
 }

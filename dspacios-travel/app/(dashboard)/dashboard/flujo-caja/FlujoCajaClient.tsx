@@ -53,10 +53,12 @@ function sumarMes(key: string, delta: number): string {
   return `${ny}-${String(nm).padStart(2, "0")}`;
 }
 
-export function FlujoCajaClient({ contratos }: { contratos: ContratoFlujo[] }) {
+export type MovMes = { mes: string; ingresos: number; egresos: number };
+
+export function FlujoCajaClient({ contratos, fijosDefault = 0, movimientos = [] }: { contratos: ContratoFlujo[]; fijosDefault?: number; movimientos?: MovMes[] }) {
   const [lente, setLente] = useState<Lente>("viaje");
   const [base, setBase] = useState<Base>("esperado");
-  const [fijosStr, setFijosStr] = useState("0");
+  const [fijosStr, setFijosStr] = useState(String(Math.round(fijosDefault)));
 
   const fijosMes = n(fijosStr);
   const mesActual = useMemo(() => {
@@ -79,6 +81,14 @@ export function FlujoCajaClient({ contratos }: { contratos: ContratoFlujo[] }) {
       cur.egresosVar += egreso;
       cur.contratos += 1;
       acc.set(key, cur);
+    }
+    // Movimientos de pagos (fuera de contrato): se imputan a su mes en ambas bases.
+    for (const m of movimientos) {
+      if (!m.mes) continue;
+      const cur = acc.get(m.mes) ?? { ingresos: 0, egresosVar: 0, contratos: 0 };
+      cur.ingresos += m.ingresos;
+      cur.egresosVar += m.egresos;
+      acc.set(m.mes, cur);
     }
     if (acc.size === 0) return [];
 
@@ -115,7 +125,7 @@ export function FlujoCajaClient({ contratos }: { contratos: ContratoFlujo[] }) {
         estado,
       };
     });
-  }, [contratos, lente, base, fijosMes, mesActual]);
+  }, [contratos, movimientos, lente, base, fijosMes, mesActual]);
 
   const totales = useMemo(() => {
     const ingresos = filas.reduce((a, f) => a + f.ingresos, 0);
@@ -154,6 +164,7 @@ export function FlujoCajaClient({ contratos }: { contratos: ContratoFlujo[] }) {
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Costos fijos / mes</label>
           <Input type="number" value={fijosStr} onChange={(e) => setFijosStr(e.target.value)} className="w-36 text-right" placeholder="0" />
+          <p className="mt-1 text-[11px] text-gray-400">Viene de Punto de equilibrio (nómina + fijos). Editable.</p>
         </div>
       </div>
       <p className="-mt-2 text-[11px] text-gray-400">
