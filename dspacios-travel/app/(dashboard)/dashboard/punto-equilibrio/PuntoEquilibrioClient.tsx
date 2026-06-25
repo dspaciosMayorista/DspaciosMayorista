@@ -2,13 +2,13 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Scale, Users, BookText, FileText, Upload, Pencil, Trash2 } from "lucide-react";
+import { Scale, Users, BookText, FileText, Upload, Pencil, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatCOP } from "@/lib/utils";
 import { SMMLV } from "@/lib/constants";
 import { createClient } from "@/lib/supabase/client";
-import { liquidarEmpleadoContrato, ARL, type ClaseRiesgo } from "@/lib/calc/nomina";
+import { liquidarEmpleadoContrato, ARL, type ClaseRiesgo, type LiquidacionEmpleado } from "@/lib/calc/nomina";
 import {
   guardarEmpleado, eliminarEmpleado, registrarContratoEmpleado, quitarContratoEmpleado, urlContratoEmpleado,
   guardarCosto, eliminarCosto,
@@ -23,12 +23,12 @@ export type CostoRow = { id: number; concepto: string; categoria: string; clasif
 
 const n = (s: string) => Number(s) || 0;
 
-function liquidar(e: EmpRow) {
+function liquidar(e: EmpRow): { segSocial: number; prestaciones: number; auxilio: number; costoTotal: number; det: LiquidacionEmpleado | null } {
   if (e.tipo === "servicios") {
-    return { segSocial: 0, prestaciones: 0, auxilio: 0, costoTotal: e.salario };
+    return { segSocial: 0, prestaciones: 0, auxilio: 0, costoTotal: e.salario, det: null };
   }
   const l = liquidarEmpleadoContrato(e.salario, e.auxilio, (e.riesgo as ClaseRiesgo) || "I", e.declarante);
-  return { segSocial: l.seguridadSocial + l.parafiscales, prestaciones: l.prestaciones, auxilio: l.auxilio, costoTotal: l.costoTotalMensual };
+  return { segSocial: l.seguridadSocial + l.parafiscales, prestaciones: l.prestaciones, auxilio: l.auxilio, costoTotal: l.costoTotalMensual, det: l };
 }
 
 export function PuntoEquilibrioClient({ empleados, costos, margenNeto, margenBruto }: {
@@ -223,9 +223,17 @@ function EmpleadoFila({ e, onEdit }: { e: EmpRow; onEdit: () => void }) {
     if (r.ok) window.open(r.url, "_blank");
   }
 
+  const [abierto, setAbierto] = useState(false);
+
   return (
+    <>
     <tr className="border-b border-gray-50">
       <td className="px-3 py-2.5 font-medium text-gray-800">
+        {l.det && (
+          <button onClick={() => setAbierto((v) => !v)} className="mr-1 align-middle text-gray-400 hover:text-gray-700" title="Ver discriminado">
+            {abierto ? <ChevronDown size={14} className="inline" /> : <ChevronRight size={14} className="inline" />}
+          </button>
+        )}
         {e.nombre}
         {err && <span className="ml-2 text-[11px] text-red-500">{err}</span>}
       </td>
@@ -253,6 +261,52 @@ function EmpleadoFila({ e, onEdit }: { e: EmpRow; onEdit: () => void }) {
         </div>
       </td>
     </tr>
+    {abierto && l.det && (
+      <tr className="border-b border-gray-100 bg-gray-50/60">
+        <td colSpan={8} className="px-3 py-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <DetGrupo titulo="Seguridad social" total={l.det.seguridadSocial}>
+              <DLin label="Salud (8,5%)" valor={l.det.salud} tachado={l.det.exonerado} />
+              <DLin label="Pensión (12%)" valor={l.det.pension} />
+              <DLin label={`ARL (${(ARL[(e.riesgo as ClaseRiesgo) || "I"] * 100).toFixed(3)}%)`} valor={l.det.arl} />
+            </DetGrupo>
+            <DetGrupo titulo="Parafiscales" total={l.det.parafiscales}>
+              <DLin label="SENA (2%)" valor={l.det.sena} tachado={l.det.exonerado} />
+              <DLin label="ICBF (3%)" valor={l.det.icbf} tachado={l.det.exonerado} />
+              <DLin label="Caja comp. (4%)" valor={l.det.caja} />
+            </DetGrupo>
+            <DetGrupo titulo="Prestaciones sociales" total={l.det.prestaciones}>
+              <DLin label="Prima (8,33%)" valor={l.det.prima} />
+              <DLin label="Cesantías (8,33%)" valor={l.det.cesantias} />
+              <DLin label="Int. cesantías (1%)" valor={l.det.interesesCesantias} />
+              <DLin label="Vacaciones (4,17%)" valor={l.det.vacaciones} />
+            </DetGrupo>
+          </div>
+          {l.det.exonerado && <p className="mt-2 text-[11px] text-[#3d7a63]">Empresa declarante: exonerado de Salud, SENA e ICBF (salario &lt; 10 SMMLV).</p>}
+        </td>
+      </tr>
+    )}
+    </>
+  );
+}
+
+function DetGrupo({ titulo, total, children }: { titulo: string; total: number; children: React.ReactNode }) {
+  return (
+    <div className="rounded-lg border border-gray-100 bg-white p-3">
+      <div className="mb-1 flex items-center justify-between border-b border-gray-100 pb-1">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{titulo}</span>
+        <span className="text-[11px] font-semibold tabular-nums text-gray-700">{formatCOP(total)}</span>
+      </div>
+      <div className="space-y-0.5">{children}</div>
+    </div>
+  );
+}
+function DLin({ label, valor, tachado }: { label: string; valor: number; tachado?: boolean }) {
+  return (
+    <div className="flex items-center justify-between text-[11px]">
+      <span className={tachado ? "text-gray-400 line-through" : "text-gray-500"}>{label}</span>
+      <span className={`tabular-nums ${tachado ? "text-[#3d7a63]" : "text-gray-700"}`}>{tachado ? "exonerado" : formatCOP(valor)}</span>
+    </div>
   );
 }
 
