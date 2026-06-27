@@ -101,6 +101,7 @@ export async function actualizarHotelCategoriasRegimenes(
 export async function actualizarHotelConfig(
   hotelId: number,
   input: {
+    nombre?: string;
     destinoId?: number | null;
     zona: string;
     edadInfanteMin: number;
@@ -122,6 +123,7 @@ export async function actualizarHotelConfig(
   const { error } = await sb
     .from("hoteles")
     .update({
+      ...(input.nombre && input.nombre.trim() ? { nombre: input.nombre.trim() } : {}),
       ...(input.destinoId != null ? { destino_id: input.destinoId } : {}),
       zona: oNull(input.zona),
       ...(input.moneda ? { moneda: input.moneda === "USD" ? "USD" : "COP" } : {}),

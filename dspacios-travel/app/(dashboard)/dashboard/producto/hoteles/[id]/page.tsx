@@ -93,6 +93,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           rangos={rangos ?? []}
           destinos={destinos ?? []}
           inicial={{
+            nombre: h.nombre ?? "",
             destinoId: h.destino_id ?? null,
             zona: h.zona ?? "",
             edadInfanteMin: h.edad_infante_min, edadInfanteMax: h.edad_infante_max,

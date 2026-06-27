@@ -16,6 +16,7 @@ export function HotelConfigEditor({
   rangos: RangoEdad[];
   destinos?: { id: number; nombre: string }[];
   inicial: {
+    nombre: string;
     destinoId: number | null;
     zona: string;
     edadInfanteMin: number; edadInfanteMax: number;
@@ -33,6 +34,7 @@ export function HotelConfigEditor({
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [nombre, setNombre] = useState(inicial.nombre);
   const [destinoId, setDestinoId] = useState<number | "">(inicial.destinoId ?? "");
   const [zona, setZona] = useState(inicial.zona);
   const [moneda, setMoneda] = useState<"COP" | "USD">(inicial.moneda === "USD" ? "USD" : "COP");
@@ -55,6 +57,7 @@ export function HotelConfigEditor({
     setMsg("");
     start(async () => {
       const r = await actualizarHotelConfig(hotelId, {
+        nombre,
         destinoId: destinoId === "" ? null : Number(destinoId),
         zona,
         edadInfanteMin: Number(infMin) || 0, edadInfanteMax: Number(infMax) || 0,
@@ -75,6 +78,10 @@ export function HotelConfigEditor({
       </button>
       {open && (
         <div className="space-y-4 border-t border-gray-100 p-4">
+          <div>
+            <label className={lbl}>Nombre del hotel <span className="font-normal text-gray-400">(si te equivocaste, corrígelo aquí)</span></label>
+            <Input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre del hotel" />
+          </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className={lbl}>Destino <span className="font-normal text-gray-400">(si lo asignaste mal, cámbialo aquí)</span></label>
