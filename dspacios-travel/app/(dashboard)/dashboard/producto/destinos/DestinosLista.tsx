@@ -57,9 +57,17 @@ export function DestinosLista({ destinos }: { destinos: Dest[] }) {
                         {d.nombre?.toUpperCase()}
                         {d.codigo_iata && <span className="font-normal text-gray-400"> ({d.codigo_iata})</span>}
                       </h3>
-                      <span className="rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-500">
-                        {hoteles.length} {hoteles.length === 1 ? "hotel" : "hoteles"}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full bg-gray-50 px-2 py-1 text-xs text-gray-500">
+                          {hoteles.length} {hoteles.length === 1 ? "hotel" : "hoteles"}
+                        </span>
+                        <EliminarDestinoBtn
+                          id={d.id}
+                          nombre={d.nombre}
+                          hoteles={hoteles.length}
+                          destinos={destinos.map((x) => ({ id: x.id, nombre: x.nombre }))}
+                        />
+                      </div>
                     </div>
                     {hoteles.length > 0 && (
                       <ul className="mt-3 space-y-1">
@@ -72,9 +80,6 @@ export function DestinosLista({ destinos }: { destinos: Dest[] }) {
                         ))}
                       </ul>
                     )}
-                    <div className="absolute right-3 top-3 opacity-0 transition-opacity group-hover:opacity-100">
-                      <EliminarDestinoBtn id={d.id} nombre={d.nombre} />
-                    </div>
                   </div>
                   );
                 })}

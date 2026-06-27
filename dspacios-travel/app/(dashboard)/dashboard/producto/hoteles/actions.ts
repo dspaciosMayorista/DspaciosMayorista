@@ -101,6 +101,7 @@ export async function actualizarHotelCategoriasRegimenes(
 export async function actualizarHotelConfig(
   hotelId: number,
   input: {
+    destinoId?: number | null;
     zona: string;
     edadInfanteMin: number;
     edadInfanteMax: number;
@@ -121,6 +122,7 @@ export async function actualizarHotelConfig(
   const { error } = await sb
     .from("hoteles")
     .update({
+      ...(input.destinoId != null ? { destino_id: input.destinoId } : {}),
       zona: oNull(input.zona),
       ...(input.moneda ? { moneda: input.moneda === "USD" ? "USD" : "COP" } : {}),
       edad_infante_min: input.edadInfanteMin,
@@ -139,6 +141,8 @@ export async function actualizarHotelConfig(
     .eq("id", hotelId);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  revalidatePath("/dashboard/producto/hoteles");
+  revalidatePath("/dashboard/producto/destinos");
   return { ok: true };
 }
 

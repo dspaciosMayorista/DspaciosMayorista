@@ -2324,6 +2324,10 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: Database["public"]["Enums"]["rol_usuario"];
       };
+      fn_fusionar_destino: {
+        Args: { p_origen: number; p_destino: number };
+        Returns: undefined;
+      };
       siguiente_numero_contrato: {
         Args: Record<PropertyKey, never>;
         Returns: string;
