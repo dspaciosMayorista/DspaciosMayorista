@@ -1,5 +1,18 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { COOKIE_TENANT } from "@/lib/tenant";
+
+// Módulos NO habilitados en la agencia Minorista (deben coincidir con los ítems
+// `minoristaOculto` del nav en app/(dashboard)/layout.tsx). Si la agencia activa
+// es minorista y se entra a uno de estos, se redirige al dashboard.
+const MINORISTA_OCULTAS = [
+  "/dashboard/reservar",
+  "/dashboard/cotizaciones",
+  "/dashboard/vuelos",
+  "/dashboard/paquetes",
+  "/dashboard/producto",
+  "/cms",
+];
 
 // `/auth` debe ser pública: el callback de OAuth (/auth/callback) corre ANTES de
 // que exista la sesión; si el middleware lo bloquea, el login con Google falla.
@@ -68,6 +81,17 @@ export async function proxy(request: NextRequest) {
       .maybeSingle();
     if (perfil && EXTERNOS.includes(perfil.rol ?? "")) {
       return NextResponse.redirect(new URL("/portal/b2b", request.url));
+    }
+  }
+
+  // ── Minorista: módulos ocultos → al dashboard ───────────────────────────
+  // Si la agencia activa es minorista y la pantalla pertenece a un módulo no
+  // habilitado (netas/producto, paquetes, vuelos, etc.), redirige al dashboard
+  // (p. ej. al cambiar de agencia estando en esa pantalla).
+  if (user) {
+    const tenant = request.cookies.get(COOKIE_TENANT)?.value;
+    if (tenant === "minorista" && MINORISTA_OCULTAS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
     }
   }
 

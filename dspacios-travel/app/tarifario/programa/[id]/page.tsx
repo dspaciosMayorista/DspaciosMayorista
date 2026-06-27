@@ -56,8 +56,16 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className={`relative overflow-hidden bg-brand-gradient px-6 py-8 text-white ${p.video_url ? "flex min-h-[55vh] flex-col justify-end" : ""}`}>
+      <header className={`relative overflow-hidden bg-brand-gradient px-6 py-8 text-white ${(p.video_url || p.portada_url) ? "flex min-h-[55vh] flex-col justify-end" : ""}`}>
         <BackgroundVideo url={p.video_url} overlay={0.4} />
+        {/* Portada subida como FONDO del encabezado (si no hay video). */}
+        {!p.video_url && p.portada_url && (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={p.portada_url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.55) 100%)" }} />
+          </>
+        )}
         <div className="relative mx-auto w-full max-w-5xl">
           <div className="mb-4 flex items-center justify-between">
             <Link href="/tarifario" aria-label="Tarifario">
@@ -94,10 +102,6 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
       </header>
 
       <main className="mx-auto max-w-5xl space-y-8 px-4 py-8 md:px-6">
-        {p.portada_url && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={p.portada_url} alt={p.nombre} className="h-64 w-full rounded-xl object-cover" />
-        )}
         <div className="flex flex-wrap justify-end gap-3">
           <Link
             href={`/tarifario/programa/${p.id}/doc`}

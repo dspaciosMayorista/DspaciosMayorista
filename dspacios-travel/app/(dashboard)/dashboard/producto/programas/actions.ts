@@ -122,6 +122,24 @@ export async function guardarCabecera(id: number, input: CabeceraInput): Promise
   return { ok: true, id };
 }
 
+// Guarda la URL pública de una pieza/imagen subida del programa (o la quita con null).
+export async function guardarImagenPrograma(
+  id: number,
+  campo: "portada_url" | "flyer_url" | "historia_url",
+  url: string | null
+): Promise<Result> {
+  const sb = await createClient();
+  const patch =
+    campo === "portada_url" ? { portada_url: url }
+    : campo === "flyer_url" ? { flyer_url: url }
+    : { historia_url: url };
+  const { error } = await sb.from("programas").update(patch).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  rev(id);
+  revalidatePath("/tarifario");
+  return { ok: true, id };
+}
+
 export async function setPublicado(id: number, publicado: boolean): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("programas").update({ publicado }).eq("id", id);

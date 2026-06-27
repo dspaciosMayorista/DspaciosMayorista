@@ -1797,6 +1797,8 @@ export type Database = {
           desde_precio: number | null;
           incluye_aereo: boolean;
           portada_url: string | null;
+          flyer_url: string | null;
+          historia_url: string | null;
           asistencia_medica_dia: number;
           modo_precio: string;
           video_url: string | null;
@@ -1832,6 +1834,8 @@ export type Database = {
           desde_precio?: number | null;
           incluye_aereo?: boolean;
           portada_url?: string | null;
+          flyer_url?: string | null;
+          historia_url?: string | null;
           asistencia_medica_dia?: number;
           modo_precio?: string;
           video_url?: string | null;

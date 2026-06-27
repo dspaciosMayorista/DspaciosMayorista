@@ -97,7 +97,12 @@ export default async function ProgramaDocPage({
   return (
     <div className="min-h-screen bg-gray-100 py-6">
       <div className="mx-auto mb-4 max-w-3xl px-4 print:hidden">
-        <DocToolbar id={id} marcaBlanca={marcaBlanca} />
+        <DocToolbar
+          marcaBlanca={marcaBlanca}
+          flyerUrl={(p as { flyer_url?: string | null }).flyer_url ?? null}
+          historiaUrl={(p as { historia_url?: string | null }).historia_url ?? null}
+          portadaUrl={p.portada_url}
+        />
       </div>
 
       <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">

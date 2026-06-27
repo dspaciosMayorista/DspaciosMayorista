@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CabeceraForm } from "../CabeceraForm";
+import { ProgramaImagenes } from "./ProgramaImagenes";
 import type { Database } from "@/types/database";
 import {
   guardarCabecera,
@@ -167,12 +168,22 @@ export function ProgramaEditor(props: {
       </div>
 
       {tab === "general" && (
-        <CabeceraForm
-          initial={initialCab}
-          proveedores={props.proveedores}
-          onSubmit={(input) => guardarCabecera(programa.id, input)}
-          submitLabel="Guardar cabecera"
-        />
+        <>
+          <ProgramaImagenes
+            programaId={programa.id}
+            valores={{
+              portada_url: programa.portada_url ?? null,
+              flyer_url: (programa as { flyer_url?: string | null }).flyer_url ?? null,
+              historia_url: (programa as { historia_url?: string | null }).historia_url ?? null,
+            }}
+          />
+          <CabeceraForm
+            initial={initialCab}
+            proveedores={props.proveedores}
+            onSubmit={(input) => guardarCabecera(programa.id, input)}
+            submitLabel="Guardar cabecera"
+          />
+        </>
       )}
       {tab === "importar" && <ImportarEditor programaId={programa.id} onDone={() => router.refresh()} />}
       {tab === "ruta" && <RutaEditor programaId={programa.id} ciudades={props.ciudades} destinos={props.destinos ?? []} />}
