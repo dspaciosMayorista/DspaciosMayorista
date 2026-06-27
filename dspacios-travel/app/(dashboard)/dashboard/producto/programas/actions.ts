@@ -8,6 +8,9 @@ type Result = { ok: true; id?: number } | { ok: false; error: string };
 
 const oNull = (s?: string | null) => (s && String(s).trim() !== "" ? String(s).trim() : null);
 const num = (v: unknown) => {
+  // OJO: Number("") === 0 en JS. Un campo vacío NO es 0 → debe ser null, o se
+  // guardaría una tarifa de 0 (que luego inventa precios fantasma con asistencia/fee).
+  if (v == null || (typeof v === "string" && v.trim() === "")) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
@@ -208,11 +211,16 @@ export async function guardarMatriz(
     }
 
     const precios = cat.precios
-      .filter((p) => p.acomodacion.trim() && (num(p.neto) != null || p.bajoSolicitud))
+      // Solo se guarda una tarifa si tiene neto > 0 o está "a solicitud".
+      // Un neto 0/vacío no es una acomodación válida (evita columnas fantasma).
+      .filter((p) => {
+        const n = num(p.neto);
+        return p.acomodacion.trim() && ((n != null && n > 0) || p.bajoSolicitud);
+      })
       .map((p) => ({
         categoria_id: catId,
         acomodacion: p.acomodacion.trim(),
-        neto: num(p.neto),
+        neto: p.bajoSolicitud ? null : num(p.neto),
         bajo_solicitud: !!p.bajoSolicitud,
       }));
     if (precios.length) {

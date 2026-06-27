@@ -26,6 +26,9 @@ export type PvpOpciones = {
  * El orden replica el montaje de D'spacios (neto → +MK → +asistencia → +fee).
  */
 export function pvpPrograma(neto: number, opt: PvpOpciones): number {
+  // Sin neto de hotel (0 o negativo) NO hay precio: devolver 0 evita fabricar un
+  // PVP que sería solo la asistencia médica + fee sobre nada (columna fantasma).
+  if (!(Number(neto) > 0)) return 0;
   const mk = Number(opt.pctMk) || 0;
   const fee = Number(opt.pctFee) || 0;
   const asis = Number(opt.asistenciaDia) || 0;
@@ -191,10 +194,14 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
       .map((h) => ({ ciudad: h.ciudad, hotel: h.hotel })),
     precios: (precios ?? [])
       .filter((p) => p.categoria_id === c.id)
+      // Descarta tarifas en 0/negativas (no son acomodaciones reales): así no
+      // generan columnas fantasma con solo el costo de asistencia/fee. Las "a
+      // solicitud" sí se conservan (sin precio).
+      .filter((p) => p.bajo_solicitud || (p.neto != null && p.neto > 0))
       .map((p) => ({
         acomodacion: p.acomodacion,
         neto: p.neto,
-        pvp: p.neto != null && !p.bajo_solicitud ? pvpPrograma(p.neto, pvpOpt) : null,
+        pvp: p.neto != null && p.neto > 0 && !p.bajo_solicitud ? pvpPrograma(p.neto, pvpOpt) : null,
         bajo_solicitud: p.bajo_solicitud,
       })),
   }));
@@ -225,9 +232,9 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
         return {
           acomodacion: acom,
           neto,
-          pvp: neto != null && !s.bajo_solicitud ? pvpPrograma(neto, optSalida) : null,
+          pvp: neto != null && neto > 0 && !s.bajo_solicitud ? pvpPrograma(neto, optSalida) : null,
         };
-      }).filter((p) => p.neto != null),
+      }).filter((p) => p.neto != null && p.neto > 0),
     };
   });
 
