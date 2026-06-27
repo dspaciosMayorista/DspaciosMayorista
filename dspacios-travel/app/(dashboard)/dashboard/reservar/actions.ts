@@ -32,7 +32,7 @@ async function liquidarHotelPaquete(
   hotelId: number,
   fechaIda: string,
   numNoches: number
-): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number } | null> {
+): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number; moneda: string } | null> {
   if (numNoches <= 0) return null;
   const { data: pq } = await admin
     .from("armado_paquetes")
@@ -45,7 +45,7 @@ async function liquidarHotelPaquete(
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
   const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }, { data: blackouts }] = await Promise.all([
-    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
+    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
     admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
@@ -65,10 +65,12 @@ async function liquidarHotelPaquete(
     if (b.total) cierreTotal = true;
     else for (const a of ((b.acomodaciones as string[] | null) ?? [])) acomCerradas.add(a);
   }
-  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null, minNoches: 1 };
+  const hotelMeta = hsel?.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
+  const monedaHotel = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
+  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: hotelMeta?.nombre ?? null, minNoches: 1, moneda: monedaHotel };
   const filtroCat = (hsel?.categorias as string[] | null) ?? null;
   const filtroReg = (hsel?.regimenes as string[] | null) ?? null;
-  const hotelNombre = (hsel?.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
+  const hotelNombre = hotelMeta?.nombre ?? null;
   const temporadas: TemporadaRango[] = (temps ?? []).map(toTemporadaRango);
 
   // Servicios INCLUIDOS se hornean por persona (igual que el generador).
@@ -107,7 +109,7 @@ async function liquidarHotelPaquete(
       const esRoom = acom !== "nino" && acom !== "nino2";
       if (costoHotel == null) continue;
       if (esRoom && costoHotel <= 0) continue;
-      const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto });
+      const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto, moneda: monedaHotel });
       precios[acom] = t.pvp;
       netos[acom] = costoHotel; // costo neto/persona — fuente del costo al reservar
     }
@@ -118,11 +120,11 @@ async function liquidarHotelPaquete(
     for (const c of combos) for (const a of acomCerradas) { delete c.precios[a]; delete c.netos?.[a]; }
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2"));
-  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda) };
+  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel };
 }
 
 export type CotizarResult =
-  | { ok: true; combos: ComboCotizado[]; noches: number }
+  | { ok: true; combos: ComboCotizado[]; noches: number; moneda: string }
   | { ok: false; error: string };
 
 /** Cotiza un hotel para las fechas que elige el asesor (porción/dinámico). */
@@ -170,7 +172,7 @@ export async function cotizarPorFechas(input: {
   }
   // Se devuelve al cliente SIN `netos` (el costo interno no sale del servidor).
   const combosPublicos = res.combos.map((c) => ({ categoria: c.categoria, regimen: c.regimen, precios: c.precios }));
-  return { ok: true, combos: combosPublicos, noches: numNoches };
+  return { ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda };
 }
 
 // ── Mini-motor de búsqueda (público): liquida TODOS los hoteles de porción para

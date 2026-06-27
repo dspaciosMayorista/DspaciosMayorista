@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP, calcularEdad } from "@/lib/utils";
+import { formatMoneda, calcularEdad } from "@/lib/utils";
 import { crearCotizacion, cotizarPorFechas, type PasajeroReserva } from "../actions";
 import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
@@ -72,6 +72,10 @@ export function ReservaForm({
   // re-liquida; en bloqueo las fechas son fijas (del record).
   const esPorFechas = meta.modulo === "porcion_terrestre";
 
+  // Moneda activa (USD/COP). En porción se actualiza al cotizar por fechas.
+  const [monedaState, setMonedaState] = useState<string>(meta.moneda ?? "COP");
+  const fmt = (n: number) => formatMoneda(n, monedaState);
+
   // Combos (categoría/régimen → precios) pueden recargarse al cotizar por fechas.
   const [combosState, setCombosState] = useState<Combo[]>(combos);
   const [fIda, setFIda] = useState(meta.fechaIda ?? "");
@@ -91,7 +95,7 @@ export function ReservaForm({
     setCotErr("");
     startCot(async () => {
       const r = await cotizarPorFechas({ paqueteId: meta.paqueteId, hotelId: meta.hotelId, fechaIda: fIda, fechaRegreso: fReg });
-      if (r.ok) { setCombosState(r.combos); setNochesCot(r.noches); }
+      if (r.ok) { setCombosState(r.combos); setNochesCot(r.noches); setMonedaState(r.moneda); }
       else setCotErr(r.error);
     });
   }
@@ -265,7 +269,7 @@ export function ReservaForm({
             <Input type="number" min={1} value={paxServ} onChange={(e) => setPaxServ(e.target.value)} />
           </div>
           <p className="mt-3 text-sm text-gray-600">
-            {totalPax} pasajero(s) · Total <b style={{ color: "var(--brand-primary)" }}>{formatCOP(totalPrecio)}</b>
+            {totalPax} pasajero(s) · Total <b style={{ color: "var(--brand-primary)" }}>{fmt(totalPrecio)}</b>
           </p>
         </section>
       )}
@@ -314,7 +318,7 @@ export function ReservaForm({
               <div key={a}>
                 <label className={lbl}>
                   {ACOM_ROOM_LABEL[a]} · {pt} pax<br />
-                  <span className="text-[11px] text-gray-400">{formatCOP(precios[a]! * pt)} / hab</span>
+                  <span className="text-[11px] text-gray-400">{fmt(precios[a]! * pt)} / hab</span>
                 </label>
                 <Input type="number" min={0} value={habs[a] ?? ""} onChange={(e) => setHabs({ ...habs, [a]: e.target.value })} placeholder="0" />
               </div>
@@ -326,13 +330,13 @@ export function ReservaForm({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {precios["nino"] != null && (
             <div>
-              <label className={lbl}>Niño 1 · {formatCOP(precios["nino"]!)}</label>
+              <label className={lbl}>Niño 1 · {fmt(precios["nino"]!)}</label>
               <Input type="number" min={0} value={ninos} onChange={(e) => setNinos(e.target.value)} />
             </div>
           )}
           {precios["nino2"] != null && (
             <div>
-              <label className={lbl}>Niño 2 · {formatCOP(precios["nino2"]!)}</label>
+              <label className={lbl}>Niño 2 · {fmt(precios["nino2"]!)}</label>
               <Input type="number" min={0} value={ninos2} onChange={(e) => setNinos2(e.target.value)} />
             </div>
           )}
@@ -342,9 +346,9 @@ export function ReservaForm({
           </div>
         </div>
         <p className="mt-3 text-sm text-gray-600">
-          {numHabitaciones} habitación(es) · {totalPax} pasajero(s) · Hotel <b>{formatCOP(totalHotel)}</b>
-          {totalServicios > 0 && <> + servicios <b>{formatCOP(totalServicios)}</b></>}
-          {" "}· Total <b style={{ color: "var(--brand-primary)" }}>{formatCOP(totalPrecio)}</b>
+          {numHabitaciones} habitación(es) · {totalPax} pasajero(s) · Hotel <b>{fmt(totalHotel)}</b>
+          {totalServicios > 0 && <> + servicios <b>{fmt(totalServicios)}</b></>}
+          {" "}· Total <b style={{ color: "var(--brand-primary)" }}>{fmt(totalPrecio)}</b>
         </p>
       </section>
       )}
@@ -376,7 +380,7 @@ export function ReservaForm({
                       <span className="text-xs text-gray-400">({s.modo === "grupo" ? `por grupo · ${totalPax} pax` : "por persona"})</span>
                     </span>
                   </label>
-                  <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(precio)}</span>
+                  <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(precio)}</span>
                 </li>
               );
             })}

@@ -82,13 +82,14 @@ export default async function NuevaReservaPage({
   } else {
     const { data: m } = await sb
       .from("tarifario_resultado")
-      .select("paquete_nombre, destino_nombre")
+      .select("paquete_nombre, destino_nombre, moneda")
       .eq("paquete_id", paqueteId)
       .eq("modulo", "servicios")
       .limit(1)
       .maybeSingle();
     meta = {
       paqueteId, hotelId: 0, bloqueoId: null, modulo,
+      moneda: (m as { moneda?: string | null } | null)?.moneda ?? "COP",
       hotelNombre: m?.paquete_nombre ?? "Servicios",
       destino: m?.destino_nombre ?? "",
       fechaIda: null, fechaRegreso: null, noches: null, bloqueoLabel: null,
