@@ -192,7 +192,7 @@ export function CabeceraForm({
               onChange={(e) => set("incluyeAereo", e.target.value === "1")}
               className={sel}
             >
-              <option value="0">Solo terrestre</option>
+              <option value="0">Porción terrestre</option>
               <option value="1">Con aéreo</option>
             </select>
           </div>

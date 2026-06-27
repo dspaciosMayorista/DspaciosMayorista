@@ -85,7 +85,7 @@ export default async function ProgramaDocPage({
   const desde = p.desde_precio && p.desde_precio > 0 ? Number(p.desde_precio) : (pvps.length ? Math.min(...pvps) : null);
 
   const sellos = [
-    p.incluye_aereo ? "Con aéreo" : "Solo terrestre",
+    p.incluye_aereo ? "Con aéreo" : "Porción terrestre",
     "Servicios compartidos",
     "Tarifa por persona",
     "Sujeto a disponibilidad",

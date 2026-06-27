@@ -672,7 +672,7 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-500">Aéreo</label>
           <div className="flex gap-1">
-            {([["", "Todos"], ["si", "Con aéreo"], ["no", "Solo terrestre"]] as const).map(([v, l]) => (
+            {([["", "Todos"], ["si", "Con aéreo"], ["no", "Porción terrestre"]] as const).map(([v, l]) => (
               <button
                 key={v}
                 type="button"
@@ -722,7 +722,7 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
                       : { backgroundColor: "#f3f4f6", color: "#6b7280" }
                   }
                 >
-                  {p.incluye_aereo ? <><Plane size={11} /> Con aéreo</> : "Solo terrestre"}
+                  {p.incluye_aereo ? <><Plane size={11} /> Con aéreo</> : "Porción terrestre"}
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-gray-500">

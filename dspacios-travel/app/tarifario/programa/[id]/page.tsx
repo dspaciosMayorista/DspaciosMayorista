@@ -78,7 +78,7 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-3xl font-semibold">{p.nombre}</h1>
             <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-medium">
-              {p.incluye_aereo ? <><Plane size={12} /> Con aéreo</> : "Solo terrestre"}
+              {p.incluye_aereo ? <><Plane size={12} /> Con aéreo</> : "Porción terrestre"}
             </span>
           </div>
           <p className="mt-1 text-sm opacity-90">
