@@ -45,7 +45,8 @@ export type CabeceraInput = {
   textoCondiciones: string;
   textoCancelacion: string;
   textoPagos: string;
-  notas: string;
+  notas: string;            // observaciones internas (NO salen en el PDF público)
+  highlights: string;       // atractivos del programa, uno por línea
   desdePrecio: number | null;
   incluyeAereo: boolean;
   portadaUrl: string;
@@ -53,6 +54,14 @@ export type CabeceraInput = {
   modoPrecio: string;
   videoUrl: string;
 };
+
+// "uno por línea" (o separado por '|') → array limpio para text[].
+function parseHighlights(s: string): string[] {
+  return (s || "")
+    .split(/\r?\n|\|/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
 
 function cabeceraRow(input: CabeceraInput) {
   return {
@@ -78,6 +87,7 @@ function cabeceraRow(input: CabeceraInput) {
     texto_cancelacion: oNull(input.textoCancelacion),
     texto_pagos: oNull(input.textoPagos),
     notas: oNull(input.notas),
+    highlights: parseHighlights(input.highlights),
     desde_precio: input.desdePrecio,
     incluye_aereo: !!input.incluyeAereo,
     portada_url: oNull(input.portadaUrl),

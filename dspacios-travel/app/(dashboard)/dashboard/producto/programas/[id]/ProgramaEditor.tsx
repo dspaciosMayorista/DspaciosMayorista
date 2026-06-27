@@ -106,6 +106,7 @@ export function ProgramaEditor(props: {
     textoCancelacion: programa.texto_cancelacion ?? "",
     textoPagos: programa.texto_pagos ?? "",
     notas: programa.notas ?? "",
+    highlights: (programa.highlights ?? []).join("\n"),
     desdePrecio: programa.desde_precio,
     incluyeAereo: programa.incluye_aereo,
     portadaUrl: programa.portada_url ?? "",
