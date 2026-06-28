@@ -1,6 +1,6 @@
 -- ─────────────────────────────────────────────────────────────────────────
 -- SaaS multi-tenant · Fase 1 — Paso 1: ORG #1 + `org_id` en todas las tablas
--- de negocio + backfill.  (SOLO rama `saas-whitelabel`; migración 101.)
+-- de negocio + backfill.  (SOLO rama `saas-whitelabel`; migración 115.)
 --
 -- Qué hace y por qué NO rompe nada (sigue operando como una sola agencia):
 --   1) Crea la organización #1 = "D'spacios Travel" (los datos actuales son suyos).
@@ -25,7 +25,7 @@ do $$
 declare
   v_org uuid;
   t text;
-  -- No llevan org_id: la tabla de tenants, usuarios (ya lo tiene, migr. 100) y el
+  -- No llevan org_id: la tabla de tenants, usuarios (ya lo tiene, migr. 114) y el
   -- log de auditoría (se le dará scope por org en un paso posterior, junto con su
   -- trigger).
   excluidas text[] := array['organizaciones', 'usuarios', 'auditoria'];

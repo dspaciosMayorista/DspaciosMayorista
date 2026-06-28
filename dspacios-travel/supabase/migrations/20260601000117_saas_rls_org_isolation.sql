@@ -1,6 +1,6 @@
 -- ─────────────────────────────────────────────────────────────────────────
 -- SaaS multi-tenant · Fase 1 — Paso 3a: AISLAMIENTO por organización (RLS).
--- (SOLO rama `saas-whitelabel`; migración 103.)
+-- (SOLO rama `saas-whitelabel`; migración 117.)
 --
 -- Agrega una policy RESTRICTIVE uniforme `org_isolation` a cada tabla de negocio
 -- que YA tenga RLS habilitada y columna `org_id`:
@@ -17,7 +17,7 @@
 -- son de la org #1, así que `org_id = mi_org()` es siempre verdadero; y el anónimo
 -- queda exento. Para multi-tenant, ya aísla a los usuarios logueados.
 --
--- Excluidas: `organizaciones` (policy propia, migr. 100), `usuarios` (RLS sensible de
+-- Excluidas: `organizaciones` (policy propia, migr. 114), `usuarios` (RLS sensible de
 -- login/perfil — se le dará scope por org en un paso aparte) y `auditoria`.
 -- ─────────────────────────────────────────────────────────────────────────
 

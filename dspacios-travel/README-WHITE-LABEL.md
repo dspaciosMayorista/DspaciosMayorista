@@ -26,10 +26,10 @@ y planes/cobro.
   **copiados por organización** (defaults colombianos sembrados al crear cada org).
 
 ## Estado por fases
-- ✅ **Fase 0 — Fundación** (migración `..._100_saas_organizaciones.sql`):
+- ✅ **Fase 0 — Fundación** (migración `..._114_saas_organizaciones.sql`):
   tabla `organizaciones`, `usuarios.org_id`, helper `mi_org()`, RLS de la org.
 - ⏳ **Fase 1 — `org_id` en todas las tablas + RLS por org.** *El grueso, por pasos:*
-  - ✅ **Paso 1** (migración `..._101_saas_org_id_backfill.sql`): crea la **org #1
+  - ✅ **Paso 1** (migración `..._115_saas_org_id_backfill.sql`): crea la **org #1
     (D'spacios)**, asigna los usuarios actuales, agrega `org_id` (default temporal =
     org #1) + índice + backfill a TODAS las tablas de negocio. **No cambia el
     comportamiento** (sigue como una sola agencia). *Sincronizada con `main` (88
@@ -47,5 +47,5 @@ y planes/cobro.
 ## Importante
 - Esta es una rama de desarrollo en progreso: hasta completar la Fase 1, NO está
   lista para producción multi-tenant (aún no aísla todas las tablas).
-- Las migraciones de esta rama numeradas `..._100+` son EXCLUSIVAS del SaaS; no
+- Las migraciones de esta rama numeradas `..._114+` son EXCLUSIVAS del SaaS; no
   existen en la base de D'spacios.

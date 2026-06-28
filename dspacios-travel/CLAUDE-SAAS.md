@@ -66,30 +66,34 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
 
 ## 3. Migraciones — convención CRÍTICA
 
-- Las migraciones **001 → 088** son **heredadas de D'spacios** (el código base). Se
-  corren igual en la base del SaaS.
-- Las migraciones **100+** son **EXCLUSIVAS del SaaS** (no existen en D'spacios). Se
-  numeran a partir de 100 para no chocar con D'spacios.
-  - **100** `saas_organizaciones` — Fase 0: tabla `organizaciones`, `usuarios.org_id`,
-    helper `mi_org()`, RLS de `organizaciones`.
-  - **101** `saas_org_id_backfill` — Fase 1/Paso 1: org #1 (D'spacios), asigna usuarios,
+- Las migraciones **001 → 113** son **heredadas de D'spacios** (el código base). Se
+  corren igual en la base del SaaS. ⚠️ **OJO:** D'spacios siguió creando migraciones más
+  allá de la 088; al sincronizar `main` se **renumeraron las del SaaS** para quedar
+  **consecutivas DESPUÉS** de la última heredada (hoy la 113), conservando su orden.
+- Las migraciones **114 → 118** son **EXCLUSIVAS del SaaS** (no existen en D'spacios). Van
+  DESPUÉS de todas las heredadas, así el backfill de `org_id` alcanza también las tablas
+  nuevas que trajo `main` (contabilidad, conciliaciones, punto_equilibrio, agencias, etc.).
+  - **114** `saas_organizaciones` — Fase 0: tabla `organizaciones`, `usuarios.org_id`,
+    helper `mi_org()`, RLS de `organizaciones`. *(antes 100)*
+  - **115** `saas_org_id_backfill` — Fase 1/Paso 1: org #1 (D'spacios), asigna usuarios,
     agrega `org_id` (default temporal = org #1) + índice + backfill a TODAS las tablas
     de negocio (loop sobre `public`, menos `organizaciones`/`usuarios`/`auditoria`).
-  - **102** `saas_org_default_mi_org` — Fase 1/Paso 2 (parcial): el DEFAULT de `org_id`
+    *(antes 101 — al correr tras la 113 ahora abarca las tablas nuevas de D'spacios.)*
+  - **116** `saas_org_default_mi_org` — Fase 1/Paso 2 (parcial): el DEFAULT de `org_id`
     pasa a `coalesce(mi_org(), org#1)` → los inserts CON SESIÓN reciben el org del
-    usuario automáticamente. Los service-role/públicos caen a org #1 (puente).
-  - **103** `saas_rls_org_isolation` — Fase 1/Paso 3a: policy RESTRICTIVE `org_isolation`
+    usuario automáticamente. Los service-role/públicos caen a org #1 (puente). *(antes 102)*
+  - **117** `saas_rls_org_isolation` — Fase 1/Paso 3a: policy RESTRICTIVE `org_isolation`
     (`org_id = mi_org() OR auth.uid() is null`) en toda tabla con RLS + `org_id`. Aísla
     a los usuarios logueados por su org; el anónimo queda exento (lo público se acota por
-    el path en Paso 4). No cambia nada en mono-tenant.
-  - **104** `saas_uniques_por_org` — Fase 2: convierte los UNIQUE globales de catálogos
+    el path en Paso 4). No cambia nada en mono-tenant. *(antes 103)*
+  - **118** `saas_uniques_por_org` — Fase 2: convierte los UNIQUE globales de catálogos
     (`parametros_tributarios.parametro`, `destinos.nombre`, `planes_alimentacion.codigo`,
     `categorias_habitacion.nombre`, `formas_pago.nombre`) a UNIQUE por org `(org_id, col)`.
-    Necesario para que dos agencias tengan los mismos nombres/códigos. Seguro: relaja la
-    restricción. ⚠️ **Correr antes de crear la 2ª org** (si no, la siembra de catálogos
-    chocará con los uniques globales).
+    ⚠️ **Correr antes de crear la 2ª org**. *(antes 104)*
 - ⚠️ Antes de crear una nueva: `ls supabase/migrations/ | sort | tail` y tomar el
-  **siguiente número libre** (la SaaS va por la **104**; la próxima es **105**).
+  **siguiente número libre** (la SaaS va por la **118**; la próxima es **119**). Si vuelves
+  a sincronizar `main` y trajo heredadas más allá de la 118, **renumera otra vez** las del
+  SaaS para que sigan consecutivas al final.
 - Idempotentes (`add column if not exists`, `on conflict do nothing`). No editar una ya
   creada: crear la siguiente.
 
@@ -189,6 +193,23 @@ El **plano arquitectónico completo** está en `docs/saas/arquitectura-multitena
   acotado por org (todos los getters de `lib/sitio`); branding de **colores** (CSS vars);
   `crearCotizacion` estampa el org del slug; `getProgramaDetalle` verifica que el programa
   sea de la org. **Paso 4 completo** para superficies públicas. Falta validar con 2ª org.
+- **Sync `main` → saas-whitelabel** (sesión actual) — traídos de D'spacios: **multitenant
+  mayorista/minorista** (columna `tenant` — concepto de D'spacios, distinto de `org_id`;
+  en el SaaS es inerte/heredada), **Contabilidad** (facturación/DIAN, movimientos,
+  conciliaciones, estados financieros, datos de agencia), **Punto de equilibrio**, **USD/TRM**
+  (servicios en USD, reservar redondea a dólar, formato `USD $`), **Programas** (doc comercial,
+  marca blanca, highlights/obs internas, **piezas subibles** flyer/historia/portada, fix
+  columna fantasma), **destinos** (fusionar/eliminar duplicados) y **editar nombre/destino del
+  hotel**. Conflictos (5) resueltos a favor del SaaS conservando los features. **Migraciones
+  del SaaS renumeradas 100-104 → 114-118** (consecutivas tras la heredada 113). Build OK.
+  > ⏳ **PENDIENTE (org_id de las tablas nuevas de D'spacios):** el backfill (migr. 115) ya
+  > corre tras la 113, así que las tablas nuevas (contabilidad_*, conciliacion*, pe_*,
+  > agencias, contrato_facturacion…) **reciben la columna `org_id`** y, con sesión, el default
+  > `coalesce(mi_org(),org#1)` las estampa. **Falta revisar los inserts**: los de **service-role**
+  > (p. ej. el **importador de histórico minorista**, que usa admin client) NO estampan `org_id`
+  > explícito → caen a org #1 (ok en mono-tenant, NO en multi-org). Auditar cada feature nuevo
+  > con §4 antes de habilitar multi-org. (El módulo minorista es específico de D'spacios; en el
+  > SaaS probablemente se retire o se reinterprete como otra organización.)
 
 ---
 

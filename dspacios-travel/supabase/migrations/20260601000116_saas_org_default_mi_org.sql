@@ -1,9 +1,9 @@
 -- ─────────────────────────────────────────────────────────────────────────
 -- SaaS multi-tenant · Fase 1 — Paso 2 (parcial): el org_id de inserts CON SESIÓN
--- sale de `mi_org()` automáticamente.  (SOLO rama `saas-whitelabel`; migración 102.)
+-- sale de `mi_org()` automáticamente.  (SOLO rama `saas-whitelabel`; migración 116.)
 --
 -- Cambia el DEFAULT de `org_id` en todas las tablas de negocio:
---   antes (migr. 101):  org #1 fijo
+--   antes (migr. 115):  org #1 fijo
 --   ahora:              coalesce(public.mi_org(), org #1)
 --
 -- Efecto:
