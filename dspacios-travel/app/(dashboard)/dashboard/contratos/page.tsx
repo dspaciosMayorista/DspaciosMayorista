@@ -1,18 +1,22 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { EstadoBadge } from "@/components/EstadoBadge";
+import { numeroVisible } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 
 export default async function ContratosPage() {
   const sb = await createClient();
+  const tenant = await getTenant();
   const { data: ventas } = await sb
     .from("ventas")
     .select(
       "numero_contrato, cliente, destino, fecha_salida, precio_venta, estado, created_at"
     )
+    .eq("tenant", tenant)
     .order("created_at", { ascending: false });
 
   return (
@@ -59,7 +63,7 @@ export default async function ContratosPage() {
                   className="border-b border-gray-50 hover:bg-gray-50"
                 >
                   <td className="px-4 py-3 font-mono font-medium text-gray-800">
-                    {v.numero_contrato}
+                    {numeroVisible(v.numero_contrato)}
                   </td>
                   <td className="px-4 py-3 text-gray-700">{v.cliente}</td>
                   <td className="px-4 py-3 text-gray-500">

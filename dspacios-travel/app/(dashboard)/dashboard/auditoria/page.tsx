@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { permisosDelUsuario } from "@/lib/permisos";
 import { redirect } from "next/navigation";
 import Link from "next/link";
@@ -69,9 +70,11 @@ export default async function AuditoriaPage({
   const pagina = Math.max(Number(sp.page) || 1, 1);
 
   const sb = await createClient();
+  const tenant = await getTenant();
   let query = sb
     .from("auditoria")
     .select("id, creado_en, actor_email, actor_nombre, actor_rol, accion, tabla, registro_id, antes, despues, cambios", { count: "exact" })
+    .eq("tenant", tenant)
     .order("creado_en", { ascending: false });
 
   if (fTabla) query = query.eq("tabla", fTabla);

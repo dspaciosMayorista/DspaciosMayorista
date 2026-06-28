@@ -8,6 +8,9 @@ type Result = { ok: true; id?: number } | { ok: false; error: string };
 
 const oNull = (s?: string | null) => (s && String(s).trim() !== "" ? String(s).trim() : null);
 const num = (v: unknown) => {
+  // OJO: Number("") === 0 en JS. Un campo vacío NO es 0 → debe ser null, o se
+  // guardaría una tarifa de 0 (que luego inventa precios fantasma con asistencia/fee).
+  if (v == null || (typeof v === "string" && v.trim() === "")) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
@@ -42,7 +45,8 @@ export type CabeceraInput = {
   textoCondiciones: string;
   textoCancelacion: string;
   textoPagos: string;
-  notas: string;
+  notas: string;            // observaciones internas (NO salen en el PDF público)
+  highlights: string;       // atractivos del programa, uno por línea
   desdePrecio: number | null;
   incluyeAereo: boolean;
   portadaUrl: string;
@@ -50,6 +54,14 @@ export type CabeceraInput = {
   modoPrecio: string;
   videoUrl: string;
 };
+
+// "uno por línea" (o separado por '|') → array limpio para text[].
+function parseHighlights(s: string): string[] {
+  return (s || "")
+    .split(/\r?\n|\|/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
 
 function cabeceraRow(input: CabeceraInput) {
   return {
@@ -75,6 +87,7 @@ function cabeceraRow(input: CabeceraInput) {
     texto_cancelacion: oNull(input.textoCancelacion),
     texto_pagos: oNull(input.textoPagos),
     notas: oNull(input.notas),
+    highlights: parseHighlights(input.highlights),
     desde_precio: input.desdePrecio,
     incluye_aereo: !!input.incluyeAereo,
     portada_url: oNull(input.portadaUrl),
@@ -106,6 +119,24 @@ export async function guardarCabecera(id: number, input: CabeceraInput): Promise
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   rev(id);
+  return { ok: true, id };
+}
+
+// Guarda la URL pública de una pieza/imagen subida del programa (o la quita con null).
+export async function guardarImagenPrograma(
+  id: number,
+  campo: "portada_url" | "flyer_url" | "historia_url",
+  url: string | null
+): Promise<Result> {
+  const sb = await createClient();
+  const patch =
+    campo === "portada_url" ? { portada_url: url }
+    : campo === "flyer_url" ? { flyer_url: url }
+    : { historia_url: url };
+  const { error } = await sb.from("programas").update(patch).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  rev(id);
+  revalidatePath("/tarifario");
   return { ok: true, id };
 }
 
@@ -208,11 +239,16 @@ export async function guardarMatriz(
     }
 
     const precios = cat.precios
-      .filter((p) => p.acomodacion.trim() && (num(p.neto) != null || p.bajoSolicitud))
+      // Solo se guarda una tarifa si tiene neto > 0 o está "a solicitud".
+      // Un neto 0/vacío no es una acomodación válida (evita columnas fantasma).
+      .filter((p) => {
+        const n = num(p.neto);
+        return p.acomodacion.trim() && ((n != null && n > 0) || p.bajoSolicitud);
+      })
       .map((p) => ({
         categoria_id: catId,
         acomodacion: p.acomodacion.trim(),
-        neto: num(p.neto),
+        neto: p.bajoSolicitud ? null : num(p.neto),
         bajo_solicitud: !!p.bajoSolicitud,
       }));
     if (precios.length) {

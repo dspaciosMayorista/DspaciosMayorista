@@ -48,6 +48,7 @@ export function CabeceraForm({
     textoCancelacion: initial?.textoCancelacion ?? "",
     textoPagos: initial?.textoPagos ?? "",
     notas: initial?.notas ?? "",
+    highlights: initial?.highlights ?? "",
     desdePrecio: initial?.desdePrecio ?? null,
     incluyeAereo: initial?.incluyeAereo ?? false,
     portadaUrl: initial?.portadaUrl ?? "",
@@ -191,7 +192,7 @@ export function CabeceraForm({
               onChange={(e) => set("incluyeAereo", e.target.value === "1")}
               className={sel}
             >
-              <option value="0">Solo terrestre</option>
+              <option value="0">Porción terrestre</option>
               <option value="1">Con aéreo</option>
             </select>
           </div>
@@ -281,8 +282,18 @@ export function CabeceraForm({
         </div>
       </div>
       <div>
-        <label className={lbl}>Notas internas</label>
-        <textarea value={f.notas} onChange={(e) => set("notas", e.target.value)} rows={2} className={sel} />
+        <label className={lbl}>Highlights del programa <span className="font-normal text-gray-400">(uno por línea — salen como chips en la portada)</span></label>
+        <textarea
+          value={f.highlights}
+          onChange={(e) => set("highlights", e.target.value)}
+          rows={3}
+          className={sel}
+          placeholder={"Canal de Panamá\nComunidad Emberá\nPortobelo\nAgua Clara\nCasco Antiguo\nBiomuseo"}
+        />
+      </div>
+      <div>
+        <label className={lbl}>Observaciones internas <span className="font-normal text-gray-400">(NO salen en el PDF — tarifa neta, proveedor, markup, seguro/fee, política real del proveedor…)</span></label>
+        <textarea value={f.notas} onChange={(e) => set("notas", e.target.value)} rows={3} className={sel} />
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}

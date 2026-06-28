@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 import {
@@ -23,13 +24,16 @@ export default async function DashboardPage() {
   const hoyStr = new Date().toISOString().slice(0, 10);
   const mesActual = hoyStr.slice(0, 7);
 
+  const tenant = await getTenant();
+  // La minorista no maneja vuelos ni montaje de producto: esos datos no aplican.
+  const esMinorista = tenant === "minorista";
   const [{ count: nPaquetes }, { data: ventas }, { data: abonos }, { data: cupos }, { count: nSalidas }, { count: nPagos }] = await Promise.all([
-    supabase.from("paquetes").select("id", { count: "exact", head: true }),
-    supabase.from("ventas").select("precio_venta, fecha_venta, fecha_salida, estado"),
-    supabase.from("abonos").select("valor_abono"),
-    supabase.from("cupos_por_bloqueo").select("cupos_disponibles"),
-    supabase.from("bloqueos_vuelo").select("id", { count: "exact", head: true }).gte("fecha_ida", hoyStr).lte("fecha_ida", addDays(14)),
-    supabase.from("cuentas_por_pagar").select("id", { count: "exact", head: true }).gte("fecha_vencimiento", hoyStr).lte("fecha_vencimiento", addDays(15)),
+    esMinorista ? Promise.resolve({ count: 0 }) : supabase.from("paquetes").select("id", { count: "exact", head: true }),
+    supabase.from("ventas").select("precio_venta, fecha_venta, fecha_salida, estado").eq("tenant", tenant),
+    supabase.from("abonos").select("valor_abono").eq("tenant", tenant),
+    esMinorista ? Promise.resolve({ data: [] as { cupos_disponibles: number }[] }) : supabase.from("cupos_por_bloqueo").select("cupos_disponibles"),
+    esMinorista ? Promise.resolve({ count: 0 }) : supabase.from("bloqueos_vuelo").select("id", { count: "exact", head: true }).gte("fecha_ida", hoyStr).lte("fecha_ida", addDays(14)),
+    supabase.from("cuentas_por_pagar").select("id", { count: "exact", head: true }).eq("tenant", tenant).gte("fecha_vencimiento", hoyStr).lte("fecha_vencimiento", addDays(15)),
   ]);
 
   const vts = ventas ?? [];
@@ -46,7 +50,8 @@ export default async function DashboardPage() {
   const hoy = new Date().toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" });
   const nombre = (perfil?.nombre ?? user?.email ?? "").split("@")[0];
 
-  const modulos = MODULOS.filter((m) => !m.interno || interno);
+  const OCULTOS_MINORISTA = new Set(["/dashboard/tarifario", "/dashboard/reservar", "/dashboard/producto", "/dashboard/paquetes", "/dashboard/vuelos"]);
+  const modulos = MODULOS.filter((m) => (!m.interno || interno) && !(esMinorista && OCULTOS_MINORISTA.has(m.href)));
 
   return (
     <>
@@ -65,8 +70,8 @@ export default async function DashboardPage() {
 
         <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
           <Metric icon={FileSignature} label="Contratos" value={String(nActivos)} color="var(--brand-primary)" />
-          <Metric icon={Package} label="Paquetes activos" value={String(nPaquetes ?? 0)} color="var(--brand-accent)" />
-          <Metric icon={Armchair} label="Cupos disponibles" value={String(cuposDisponibles)} color="var(--brand-success)" />
+          {!esMinorista && <Metric icon={Package} label="Paquetes activos" value={String(nPaquetes ?? 0)} color="var(--brand-accent)" />}
+          {!esMinorista && <Metric icon={Armchair} label="Cupos disponibles" value={String(cuposDisponibles)} color="var(--brand-success)" />}
           {interno && <Metric icon={Wallet} label="Ventas del mes" value={formatCOP(ventaMes)} color="var(--brand-primary)" sub={hoy.split(",")[0]} highlight />}
         </section>
 
@@ -107,18 +112,18 @@ export default async function DashboardPage() {
 
         <section className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
           <Kpi icon={FileSignature} label="Contratos activos" value={String(nActivos)} />
-          <Kpi icon={Armchair} label="Cupos disponibles" value={String(cuposDisponibles)} />
+          {!esMinorista && <Kpi icon={Armchair} label="Cupos disponibles" value={String(cuposDisponibles)} />}
           {interno && <Kpi icon={Wallet} label="Ventas del mes" value={formatCOP(ventaMes)} sub={hoy.split(",")[0]} />}
           {interno && <Kpi icon={HandCoins} label="Cartera por cobrar" value={formatCOP(cartera)} />}
-          {!interno && <Kpi icon={Package} label="Paquetes" value={String(nPaquetes ?? 0)} />}
+          {!interno && !esMinorista && <Kpi icon={Package} label="Paquetes" value={String(nPaquetes ?? 0)} />}
         </section>
 
         <section className="mt-5">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Alertas operativas</h2>
           <div className="flex flex-wrap gap-2">
             <Alerta icon={Clock} label="Contratos pendientes" n={nPendientes} href="/dashboard/contratos" tone="warn" />
-            <Alerta icon={PlaneTakeoff} label="Salidas próximas (14d)" n={nSalidas ?? 0} href="/dashboard/vuelos" tone="info" />
-            <Alerta icon={AlertTriangle} label="Cupos críticos" n={cuposCriticos} href="/dashboard/vuelos" tone="crit" />
+            {!esMinorista && <Alerta icon={PlaneTakeoff} label="Salidas próximas (14d)" n={nSalidas ?? 0} href="/dashboard/vuelos" tone="info" />}
+            {!esMinorista && <Alerta icon={AlertTriangle} label="Cupos críticos" n={cuposCriticos} href="/dashboard/vuelos" tone="crit" />}
             {interno && <Alerta icon={Receipt} label="Pagos por vencer (15d)" n={nPagos ?? 0} href="/dashboard/pagos" tone="warn" />}
           </div>
         </section>

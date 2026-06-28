@@ -9,6 +9,7 @@ import type { AcomConfig } from "@/lib/acomodaciones";
 import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
 import { orgDelRequest } from "@/lib/org";
 import type { CSSProperties } from "react";
+import { hoyISO } from "@/lib/calc/paquetes";
 
 export const revalidate = 120; // revalida cada 2 min
 
@@ -36,7 +37,7 @@ export default async function TarifarioPublicoPage() {
     let q = sb
       .from("tarifario_resultado")
       .select(
-        "modulo, bloqueo_label, bloqueo_id, paquete_id, hotel_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual"
+        "modulo, bloqueo_label, bloqueo_id, salida_id, paquete_id, hotel_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda"
       )
       .eq("paquete_activo", true);
     if (org) q = q.eq("org_id", org.id);
@@ -79,6 +80,12 @@ export default async function TarifarioPublicoPage() {
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     filas = await filtrarTarifarioVencidas(createAdminClient(), filas);
   }
+
+  // Oculta las salidas de BLOQUEO cuya fecha de ida ya pasó (vuelo ya salió =
+  // inactivo, vive en el histórico de vuelos). Solo afecta a los bloqueos; las
+  // porciones/servicios se rigen por su propia vigencia.
+  const hoyTarifa = hoyISO();
+  filas = filas.filter((f) => (f.modulo !== "bloqueo" && f.modulo !== "dinamico") || !f.fecha_ida || f.fecha_ida >= hoyTarifa);
 
   // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
   // Los servicios de paquetes porción/bloqueo existen como add-on para Reservar,

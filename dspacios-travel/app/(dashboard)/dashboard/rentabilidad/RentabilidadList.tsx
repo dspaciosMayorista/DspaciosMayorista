@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatCOP, formatUSD } from "@/lib/utils";
 
 export type RentRow = {
   numero_contrato: string;
@@ -30,6 +30,12 @@ export type RentRow = {
   utilNeta: number;
   margenNeto: number;
   clasificacion: "Alta" | "Media" | "Baja";
+  // Informativo para contratos en USD convertidos a COP.
+  moneda?: string;
+  pvpUsd?: number;
+  trm?: number;
+  // Facturación configurada (Contabilidad): split IRT / Ingreso propio (en COP).
+  facturacion?: { irt: number; ingresoPropio: number; exento: number };
 };
 
 type Clase = "Todas" | "Alta" | "Media" | "Baja";
@@ -39,7 +45,9 @@ const colorClase = (c: string) =>
 
 const TODOS = "__todos__";
 
-export function RentabilidadList({ rows }: { rows: RentRow[] }) {
+export type Tasas = { ica: number; bomberil: number; fontur: number; renta: number; iva: number };
+
+export function RentabilidadList({ rows, tasas }: { rows: RentRow[]; tasas?: Tasas }) {
   const [q, setQ] = useState("");
   const [asesor, setAsesor] = useState(TODOS);
   const [destino, setDestino] = useState(TODOS);
@@ -142,7 +150,7 @@ export function RentabilidadList({ rows }: { rows: RentRow[] }) {
             {visibles.length === 0 && (
               <tr><td colSpan={11} className="px-4 py-10 text-center text-gray-400">No hay contratos en este filtro.</td></tr>
             )}
-            {visibles.map((r) => <Fila key={r.numero_contrato} r={r} />)}
+            {visibles.map((r) => <Fila key={r.numero_contrato} r={r} tasas={tasas} />)}
           </tbody>
           {visibles.length > 0 && (
             <tfoot>
@@ -165,8 +173,13 @@ export function RentabilidadList({ rows }: { rows: RentRow[] }) {
   );
 }
 
-function Fila({ r }: { r: RentRow }) {
+function Fila({ r, tasas }: { r: RentRow; tasas?: Tasas }) {
   const [abierto, setAbierto] = useState(false);
+  const pct = (x: number) => `${(x * 100).toFixed(x < 0.01 ? 2 : 1).replace(/\.0$/, "")}%`;
+  const tICA = tasas ? ` (${pct(tasas.ica)})` : "";
+  const tBOM = tasas ? ` (${pct(tasas.bomberil)} del ICA)` : "";
+  const tFON = tasas ? ` (${pct(tasas.fontur)})` : "";
+  const tREN = tasas ? ` (${pct(tasas.renta)})` : "";
   return (
     <>
       <tr className="border-b border-gray-50 hover:bg-gray-50">
@@ -197,6 +210,20 @@ function Fila({ r }: { r: RentRow }) {
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
               Desglose · {r.destino ?? "—"}{r.mes ? ` · ${r.mes}` : ""}{r.canal ? ` · ${r.canal}` : ""}
             </p>
+            {(r.moneda ?? "COP") === "USD" && (
+              <p className="mb-3 rounded-lg border border-[#26BBD9]/30 bg-[#26BBD9]/5 px-3 py-2 text-xs text-gray-600">
+                Contrato en <b>USD</b>: PVP <b>{formatUSD(r.pvpUsd ?? 0)}</b> · convertido a COP a la TRM promedio{" "}
+                <b>{r.trm ? formatCOP(r.trm) : "—"}</b> {r.trm ? `(= ${formatCOP(r.ingreso + r.ivaGenerado)} aprox.)` : ""}. Las cifras de abajo están en pesos.
+              </p>
+            )}
+            {r.facturacion && (
+              <div className="mb-3 rounded-lg border border-[#66B596]/30 bg-[#66B596]/5 px-3 py-2 text-xs text-gray-600">
+                <b>Facturación configurada</b> (Contabilidad): IRT <b>{formatCOP(r.facturacion.irt)}</b> ·
+                Ingreso propio <b>{formatCOP(r.facturacion.ingresoPropio)}</b>
+                {r.facturacion.exento > 0 ? <> · exento/excluido <b>{formatCOP(r.facturacion.exento)}</b></> : null}.
+                Las provisiones se liquidan sobre el <b>ingreso propio</b> (el IRT no provisiona).
+              </div>
+            )}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {/* Columna 1 — Estado de resultados (sin IVA) */}
               <Bloque titulo="Estado de resultados" filas={[
@@ -204,10 +231,10 @@ function Fila({ r }: { r: RentRow }) {
                 { k: "(−) Costo (total proveedor)", v: `− ${formatCOP(r.costoNeto)}` },
                 { k: "= Utilidad bruta", v: formatCOP(r.utilBruta), total: true },
                 ...(r.comB2B > 0 ? [{ k: "(−) Comisión B2B", v: `− ${formatCOP(r.comB2B)}` }] : []),
-                { k: "(−) Provisión ICA", v: `− ${formatCOP(r.provIca)}` },
-                { k: "(−) Provisión Bomberil", v: `− ${formatCOP(r.provBomberil)}` },
-                { k: "(−) Provisión Fontur", v: `− ${formatCOP(r.provFontur)}` },
-                { k: "(−) Provisión Renta", v: `− ${formatCOP(r.provRenta)}` },
+                { k: `(−) Provisión ICA${tICA}`, v: `− ${formatCOP(r.provIca)}` },
+                { k: `(−) Provisión Bomberil${tBOM}`, v: `− ${formatCOP(r.provBomberil)}` },
+                { k: `(−) Provisión Fontur${tFON}`, v: `− ${formatCOP(r.provFontur)}` },
+                { k: `(−) Retención fuente${tREN}`, v: `− ${formatCOP(r.provRenta)}` },
                 { k: "= Total provisiones", v: formatCOP(r.totalProvisiones), total: true },
                 { k: "(−) IVA por pagar", v: `− ${formatCOP(r.ivaPorPagar)}` },
                 { k: "= Utilidad neta", v: formatCOP(r.utilNeta), total: true, color: r.utilNeta < 0 ? "#C0392B" : "var(--brand-primary)" },

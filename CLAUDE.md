@@ -273,13 +273,64 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 
 ## 13. Estado del proyecto (handoff) — actualizado en desarrollo
 
-> Rama de trabajo actual: **`claude/modest-clarke-Ehftt`** (última; ramas previas:
-> `claude/dazzling-planck-MsBCZ` PR #1, `claude/laughing-goodall-e59PS`). Producción
-> = `main` (se mergeará al terminar). La **base de datos Supabase es única** y compartida
-> entre `main` y las ramas; las migraciones ya aplicadas afectan también a producción.
-> App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha: hasta la 067** (correr en orden las que falten — ver más abajo).
-> *Pendiente del dueño:* correr **066** (vitrina de programas) y **067** (asistencia médica).
+> Rama de trabajo actual: **`claude/peaceful-noether-713c7c`** (ya **mergeada a `main`**).
+> Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
+> y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
+> producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
+> **Migraciones a la fecha en repo: hasta la 113** (correr en orden las que falten).
+> *Pendiente del dueño:* el dueño reporta haber corrido hasta la **111**; faltan por correr
+> **112** (`fn_fusionar_destino`) y **113** (`programa_piezas`: bucket `programas` + flyer/historia).
+
+> **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Multitenant — dos agencias en una sola app:** **Mayorista** (actual, completa) y
+>   **Minorista** (agencia anterior, solo para terminar de gestionar + histórico; sin
+>   tarifario/montaje). Misma BD + columna `tenant` ('mayorista'/'minorista', default
+>   mayorista) en ventas/abonos/CxP/facturación/aliados/comisiones/pe_*/movimientos/
+>   conciliación/usuarios/auditoría. Cookie de agencia activa + `lib/tenant.ts`
+>   (compartido) y `lib/tenant.server.ts` (`tenantContext`, `getTenant`, `agenciaDe`).
+>   **Solo superadmin alterna** agencias (`TenantSwitcher`, recarga completa al cambiar);
+>   los demás usuarios se crean por agencia. **Numeración independiente**: la minorista usa
+>   el MISMO formato `00-XXXX` que la mayorista, así que sus contratos se guardan con
+>   **prefijo `MIN-`** (`numeroConTenant`/`numeroVisible`) para NO colisionar con la PK
+>   global. `proxy.ts` redirige al dashboard si en minorista entras a un módulo oculto.
+>   Migr. **107** (tenant), **108** (auditoría tenant), **109** (`agencias`: identidad
+>   fiscal del RUT por agencia).
+> - **Importador de histórico minorista** (`/dashboard/contratos/importar`): pegar de
+>   Google Sheets → "Relación de utilidades" (ventas + costos) y "Resumen de pagos"
+>   (titular/asesor/doc + abonos por cuota). Parser puro `lib/minorista/importMinorista.ts`
+>   (COP/USD por fila, fechas dd/mm/yyyy y "05 SEP 2023", salta SALTO/ANULADO, anotaciones,
+>   negativos). **Candado: solo corre en agencia minorista** (prefijo MIN-). Sin migración.
+> - **Contabilidad** (módulo nuevo): **Facturación** (IRT vs Ingreso propio/IP por contrato,
+>   pestaña **DIAN**), **Movimientos de pagos**, **Conciliaciones bancarias** (pegar extracto
+>   + cruce manual N:M con validador de sumas), **Estados financieros**, **Datos de la
+>   agencia** (RUT). Provisiones sobre ingreso propio; IRT separado al pasivo (no costo);
+>   **impuesto de renta 35% sobre renta líquida** (la retención 3.5% es otro concepto).
+>   Migr. **098-106**.
+> - **Punto de equilibrio** (2 pestañas: Dashboard con ventas mínimas del mes = breakeven
+>   +15% dinámico; Configuración con empleados + costos fijos). Nómina con **exoneración
+>   automática por empresa declarante** (no por empleado; solo ≥10 SMMLV no exonera).
+>   Costos fijos alimentan flujo de caja; gastos variables desde Movimientos. Margen
+>   consistente con Rentabilidad (helper `lib/finanzas/rentabilidad.ts`). Migr. **101**.
+> - **Finanzas USD/TRM:** confirmación con abono ≥30% toma su TRM; CxP a proveedor en pesos
+>   a la TRM del día de pago; rentabilidad/IVA con TRM promedio. Display **"USD $2.200"** en
+>   todas las pantallas (`formatMoneda`/`formatUSD`). Migr. **095-097**.
+> - **Servicios en USD** (migr. **110**) + **guard de cero-mezcla de monedas** en el
+>   tarifario: un paquete es de UNA moneda; hoteles y servicios (incluidos u opcionales)
+>   deben coincidir o no genera.
+> - **Reservar en USD:** `liquidarHotelPaquete`/`cotizarPorFechas` pasan la moneda del hotel
+>   a `componerTarifa` → redondeo a **dólar entero** (antes redondeaba al millar de pesos:
+>   "$2.000"). `ReservaForm` muestra `USD $xxx`.
+> - **Programas — documento comercial + piezas:** portada (imagen subible que es el FONDO del
+>   encabezado, ajustada con object-cover), sellos en chips, Incluye/No incluye ítem por línea
+>   con íconos, **highlights** (migr. **111**), **observaciones internas** (no salen en el
+>   PDF), **marca blanca vs D'Spacios** (auto por rol agencia/freelance + toggle `?marca=`).
+>   **Piezas SUBIDAS** (no generadas): el dueño sube flyer/historia/portada (bucket
+>   `programas`, migr. **113**) y el cliente las descarga. **Bug corregido:** columna
+>   fantasma (acomodación con neto 0 → PVP de solo asistencia) en `pvpPrograma`/montaje.
+> - **Catálogo:** **fusionar/eliminar destinos duplicados** desde la UI (si tiene hoteles,
+>   pregunta a qué destino moverlos → `fn_fusionar_destino`, migr. **112**, re-apunta toda
+>   FK y borra). **Editar nombre y destino del hotel** desde su configuración.
+> - Etiqueta **"Porción terrestre"** en vez de "Solo terrestre" (config/vitrina/doc/tarifario).
 
 > **Novedades rama `claude/laughing-goodall-e59PS`:**
 > - **CxP automáticas:** al reservar desde el tarifario se crean solas las cuentas
@@ -378,7 +429,19 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   `pax_tarifa` (multiplicador por habitación) + mín/máx de adt/niños/inf), **Servicios** (precio **por persona** y/o **por grupo con rangos de
   pax**; destino vacío = nacional; **descripción del tour** y **recargo individual** —
   costo neto del proveedor (tarifa de individual) que entra al costo/CxP y sube el PVP
-  con markup cuando va 1 pax en cobro por persona, migr. 088).
+  con markup cuando va 1 pax en cobro por persona, migr. 088;
+  **temporadas por servicio** (migr. 089/090) — una temporada es una tarifa COMPLETA
+  por fecha del viaje: **precio por persona + recargo individual + rangos por grupo**,
+  con vigencia de compra y prioridad, igual que hoteles. La tarifa de siempre = temporada
+  **GENERAL** (la base del form); las temporadas con fechas ganan cuando la fecha del viaje
+  las cubre. El editor de temporadas aparece al **Editar** un servicio guardado (cada
+  temporada cuelga del servicio por FK). Los rangos por grupo de una temporada viven en
+  `servicio_tarifa_pax` con `temporada=<nombre>` (GENERAL = base). Se aplican en Reservar
+  (venta = escala el PVP del snapshot por `neto_temporada/neto_general`, incl. recargo via
+  factor de markup, y los rangos por grupo por su razón de netos; costo = usa neto+recargo+
+  rangos de la temporada). El snapshot del tarifario y la edición de servicios del contrato
+  usan SOLO la GENERAL. Motor: `temporadaVigenteParaFecha` en `lib/calc/paquetes.ts`.
+  *(Se quitó el viejo campo "Temporada (opcional)" — era solo una etiqueta.)*
   **Carga masiva CSV** en hoteles, tarifas, servicios y
   bloqueos (plantillas con `sep=;`, listas con `|`).
 - **Paquetes (armado):** config inicial (nombre, **tipo** bloqueo/porción/servicios, **noches**
@@ -438,7 +501,7 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **088** (correr en orden las que falten)
+### Migraciones Supabase — total en repo: **113** (correr en orden las que falten)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
@@ -480,6 +543,28 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > entra al `costo_receptivo` y a la **CxP del proveedor** (Reservar lo toma del catálogo),
 > y el PVP sube con su markup (en `tarifario_resultado.recargo_individual` se guarda ya con
 > markup). Se publica en la vitrina pública de Servicios.
+> **089 servicio_temporadas** ← *aplicada*: `servicio_temporadas` (tarifa por fecha del viaje
+> + vigencia de compra + prioridad + `precio_persona`) y `servicio_tarifa_pax.temporada`
+> (rangos por grupo por temporada; la base = 'GENERAL').
+> **090 servicio_temporada_recargo** ← *pendiente de correr*: `recargo_individual` en
+> `servicio_temporadas`. Cierra el modelo: una temporada es una tarifa COMPLETA (persona +
+> recargo + rangos por grupo). El editor de temporadas (al **Editar** un servicio) ya carga
+> los tres; Reservar aplica los tres por fecha; el snapshot del tarifario y la edición de
+> servicios del contrato usan SOLO la GENERAL. Se quitó el campo "Temporada (opcional)".
+> Rango **091→106**: 091 servicio_alcance_internacional · 092 hotel_moneda · 093
+> paquete_tarifario_moneda · 094 (salidas dinámicas/USD) · 095 finanzas_usd_abono_trm
+> (`abonos.trm`/`monto_cop`, `ventas.trm_contrato`) · 096 trm_referencia · 097 cxp_trm ·
+> 098 contabilidad_facturacion (`contrato_facturacion`: irt/ingreso_propio/lleva_iva) ·
+> 099 contabilidad_exento · 100 proveedor_clasificacion · 101 punto_equilibrio
+> (`pe_empleados`/`pe_costos`) · 102 cxp_clasificacion · 103 contabilidad_movimientos ·
+> 104 conciliaciones · 105 facturacion_dian · 106 impuesto_renta (`IMPUESTO_RENTA` 0.35).
+> Rango **107→113** (multitenant + catálogo): **107 multitenant** (columna `tenant` en
+> ventas/abonos/CxP/facturación/aliados/comisiones/pe_*/movimientos/conciliación/usuarios +
+> `mi_tenant()`/`puede_ver_tenant()`) · **108 auditoria_tenant** · **109 agencias** (identidad
+> fiscal del RUT por agencia; lectura pública) · **110 servicio_moneda** (`servicios_adicionales.moneda`) ·
+> **111 programa_highlights** (`programas.highlights` text[]) · **112 fusionar_destino**
+> (`fn_fusionar_destino(origen,destino)` SECURITY DEFINER: re-apunta toda FK a destinos y borra) ·
+> **113 programa_piezas** (bucket público `programas` + `programas.flyer_url`/`historia_url`).
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·

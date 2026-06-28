@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { getTenant } from "@/lib/tenant.server";
 import { formatCOP } from "@/lib/utils";
 import { VentasTable, AnioSelect, type VentaRow } from "./VentasTable";
 
@@ -32,10 +33,11 @@ export default async function VentasPage({
     );
   }
 
+  const tenant = await getTenant();
   const [{ data: ventasRaw }, { data: abonos }] = await Promise.all([
     sb.from("ventas").select(
       "numero_contrato, cliente, asesor, asesor_firma_nombre, destino, tipo_paquete, fecha_venta, fecha_salida, fecha_regreso, precio_venta, estado, moneda, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos"
-    ),
+    ).eq("tenant", tenant),
     sb.from("abonos").select("numero_contrato, valor_abono"),
   ]);
   const ventas = ventasRaw ?? [];

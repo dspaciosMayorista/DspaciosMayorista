@@ -12,12 +12,15 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
 
   const { data: pq } = await sb
     .from("armado_paquetes")
-    .select("*, destinos(nombre)")
+    .select("*, destinos(nombre, pais)")
     .eq("id", paqueteId)
     .single();
   if (!pq) notFound();
 
   const destinoId = pq.destino_id;
+  // ¿El destino del paquete es internacional? (país distinto de Colombia → migr. 050).
+  const paisDestino = (pq.destinos as { pais?: string | null } | null)?.pais ?? null;
+  const destinoEsInternacional = !!paisDestino && !/^(colombia|co)$/i.test(paisDestino.trim());
   const viajeIni = pq.fecha_viaje_inicio;
   const viajeFin = pq.fecha_viaje_fin;
 
@@ -32,7 +35,7 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   if (viajeIni) qVuelos = qVuelos.gte("fecha_ida", viajeIni);
   if (viajeFin) qVuelos = qVuelos.lte("fecha_ida", viajeFin);
 
-  let qHoteles = sb.from("hoteles").select("id, nombre, zona, destino_id").eq("activo", true).order("nombre");
+  let qHoteles = sb.from("hoteles").select("id, nombre, zona, destino_id, moneda").eq("activo", true).order("nombre");
   if (destinoId) qHoteles = qHoteles.eq("destino_id", destinoId);
 
   let qServicios = sb
@@ -40,7 +43,13 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     .select("id, nombre, precio_persona, destino_id, servicio_tarifa_pax(pax_desde)")
     .eq("activo", true)
     .order("nombre");
-  if (destinoId) qServicios = qServicios.or(`destino_id.eq.${destinoId},destino_id.is.null`);
+  // Servicio aplica si: es del destino puntual, O es catch-all del MISMO alcance
+  // que el destino del paquete (nacional vs internacional). Así las asistencias
+  // marcadas "todos internacionales" solo salen en paquetes internacionales.
+  if (destinoId) {
+    const alc = destinoEsInternacional ? "internacional" : "nacional";
+    qServicios = qServicios.or(`destino_id.eq.${destinoId},and(destino_id.is.null,alcance.eq.${alc})`);
+  }
 
   const [
     { data: destinos },
@@ -59,6 +68,13 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
     sb.from("armado_hoteles").select("hotel_id, categorias, regimenes").eq("paquete_id", paqueteId),
     sb.from("armado_servicios").select("servicio_id, modo, incluido").eq("paquete_id", paqueteId),
   ]);
+
+  // Salidas dinámicas (solo aplican al tipo 'dinamico').
+  const { data: salidas } = pq.tipo === "dinamico"
+    ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).order("fecha_ida")
+    : { data: null };
+  // Moneda del paquete = la de sus hoteles (USD si hay alguno internacional en USD).
+  const monedaPaquete = (hotelesDisp ?? []).some((h) => (h as { moneda?: string | null }).moneda === "USD") ? "USD" : "COP";
 
   // El resultado puede superar el tope de 1000 filas de PostgREST; paginamos.
   const resultado: Record<string, unknown>[] = [];
@@ -119,6 +135,8 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         selHoteles={selHoteles ?? []}
         selServicios={selServicios ?? []}
         resultado={resultado as unknown as Parameters<typeof ArmadoClient>[0]["resultado"]}
+        salidas={(salidas ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["salidas"]}
+        moneda={monedaPaquete}
       />
     </div>
   );

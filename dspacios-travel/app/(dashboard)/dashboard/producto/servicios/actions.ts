@@ -10,10 +10,86 @@ const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 export type Liquidacion = "dia" | "noche" | "paquete";
 export type TierPax = { paxDesde: number; paxHasta: number; precio: number };
 
+// ── Temporadas del servicio (tarifa por fecha + vigencia de compra) ─────────
+// Una temporada es una tarifa COMPLETA para su rango de fechas: precio por
+// persona + recargo individual + rangos por grupo. La tarifa de siempre es la
+// temporada 'GENERAL' (sin fechas). Los rangos por grupo de una temporada viven
+// en servicio_tarifa_pax con temporada = nombre de la temporada.
+export type TemporadaServicioInput = {
+  nombre: string;
+  fechaInicio: string;
+  fechaFin: string;
+  compraInicio: string;
+  compraFin: string;
+  prioridad: number;
+  precioPersona: number | null;
+  recargoIndividual: number | null;
+  grupoTiers: TierPax[];
+};
+
+function temporadaRow(servicioId: number, input: TemporadaServicioInput) {
+  return {
+    servicio_id: servicioId,
+    nombre: input.nombre.trim() || "Temporada",
+    fecha_inicio: oNull(input.fechaInicio),
+    fecha_fin: oNull(input.fechaFin),
+    compra_inicio: oNull(input.compraInicio),
+    compra_fin: oNull(input.compraFin),
+    prioridad: Number(input.prioridad) || 1,
+    precio_persona: input.precioPersona,
+    recargo_individual: input.recargoIndividual,
+  };
+}
+
+export async function crearTemporadaServicio(servicioId: number, input: TemporadaServicioInput): Promise<Result> {
+  const sb = await createClient();
+  const nombre = input.nombre.trim() || "Temporada";
+  if (nombre.toUpperCase() === "GENERAL") return { ok: false, error: "'GENERAL' es la tarifa base; usa otro nombre para la temporada." };
+  const { error } = await sb.from("servicio_temporadas").insert(temporadaRow(servicioId, input));
+  if (error) return { ok: false, error: error.message };
+  await guardarGrupoTiers(sb, servicioId, input.grupoTiers ?? [], nombre);
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
+export async function actualizarTemporadaServicio(id: number, input: TemporadaServicioInput): Promise<Result> {
+  const sb = await createClient();
+  const nombre = input.nombre.trim() || "Temporada";
+  if (nombre.toUpperCase() === "GENERAL") return { ok: false, error: "'GENERAL' es la tarifa base; usa otro nombre para la temporada." };
+  // Datos previos: el servicio y el nombre anterior (los rangos por grupo se
+  // guardan con el nombre de la temporada, hay que reubicarlos si se renombró).
+  const { data: prev } = await sb.from("servicio_temporadas").select("servicio_id, nombre").eq("id", id).maybeSingle();
+  if (!prev) return { ok: false, error: "Temporada no encontrada." };
+  const { servicio_id: _omit, ...row } = temporadaRow(0, input);
+  void _omit;
+  const { error } = await sb.from("servicio_temporadas").update(row).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  // Si cambió el nombre, limpia los rangos del nombre viejo antes de reescribir.
+  if (prev.nombre && prev.nombre !== nombre) {
+    await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", prev.servicio_id).eq("temporada", prev.nombre);
+  }
+  await guardarGrupoTiers(sb, prev.servicio_id, input.grupoTiers ?? [], nombre);
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
+export async function eliminarTemporadaServicio(id: number): Promise<Result> {
+  const sb = await createClient();
+  const { data: prev } = await sb.from("servicio_temporadas").select("servicio_id, nombre").eq("id", id).maybeSingle();
+  const { error } = await sb.from("servicio_temporadas").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  // Borra también los rangos por grupo de esa temporada.
+  if (prev) await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", prev.servicio_id).eq("temporada", prev.nombre);
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
 export type ServicioInput = {
   nombre: string;
   proveedorId: number | null;
   destinoId: number | null;
+  alcance?: "nacional" | "internacional"; // cuando destinoId es null: catch-all nacional o internacional
+  moneda?: "COP" | "USD";         // un servicio = una moneda (su tarifa va en ella)
   precioPersona: number | null;
   grupoTiers: TierPax[];          // rangos de pax para cobro POR GRUPO
   temporada: string;
@@ -29,6 +105,9 @@ function servicioToRow(input: ServicioInput) {
     nombre: input.nombre.trim(),
     proveedor_id: input.proveedorId,
     destino_id: input.destinoId,
+    // El alcance solo aplica como catch-all cuando NO hay destino específico.
+    alcance: input.destinoId == null ? (input.alcance === "internacional" ? "internacional" : "nacional") : "nacional",
+    moneda: input.moneda === "USD" ? "USD" : "COP",
     precio_persona: input.precioPersona,
     tarifa_neta: input.precioPersona ?? 0,
     temporada: oNull(input.temporada),
@@ -40,12 +119,16 @@ function servicioToRow(input: ServicioInput) {
   };
 }
 
+// Reemplaza los rangos por grupo de UNA temporada (default 'GENERAL' = base).
+// Acotar por temporada es clave: guardar la base NO debe borrar los rangos de
+// las temporadas, y viceversa.
 async function guardarGrupoTiers(
   sb: Awaited<ReturnType<typeof createClient>>,
   servicioId: number,
-  tiers: TierPax[]
+  tiers: TierPax[],
+  temporada = "GENERAL"
 ) {
-  await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", servicioId);
+  await sb.from("servicio_tarifa_pax").delete().eq("servicio_id", servicioId).eq("temporada", temporada);
   const validos = tiers.filter((t) => Number(t.precio) > 0);
   if (validos.length) {
     await sb.from("servicio_tarifa_pax").insert(
@@ -54,6 +137,7 @@ async function guardarGrupoTiers(
         pax_desde: Number(t.paxDesde) || 1,
         pax_hasta: Number(t.paxHasta) || Number(t.paxDesde) || 1,
         precio: Number(t.precio) || 0,
+        temporada,
       }))
     );
   }
@@ -148,8 +232,11 @@ export async function cargarServiciosMasivo(
       .split(/[|;]/).map((x) => rmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
     const tiers = parseTiersCsv(r.precio_grupo);
 
+    // Alcance del catch-all (solo si no hay destino puntual): nacional/internacional.
+    const alcance = destinoId == null && /interna?c/i.test((r.alcance || "").trim()) ? "internacional" : "nacional";
+    const moneda = /usd|d[oó]lar/i.test((r.moneda || "").trim()) ? "USD" : "COP";
     const { data: sv, error } = await sb.from("servicios_adicionales").insert({
-      nombre, proveedor_id: provId, destino_id: destinoId,
+      nombre, proveedor_id: provId, destino_id: destinoId, alcance, moneda,
       tarifa_neta: precio, precio_persona: precio, temporada: oNull(r.temporada || ""),
       liquidacion, activo: true,
       categoria: normCategoria(r.categoria),

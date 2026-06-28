@@ -1,23 +1,33 @@
 import { Logo } from "@/components/Logo";
 import { EMPRESA } from "@/lib/contrato/plantilla";
+import { agenciaDe } from "@/lib/tenant.server";
+import type { Tenant } from "@/lib/tenant";
 
-// Encabezado de marca reutilizable para documentos imprimibles (recibo de caja,
-// estado de cuenta). Mantiene el look del resto de documentos.
-export function DocHeader() {
+// Encabezado de marca para documentos imprimibles (recibo, estado de cuenta).
+// Muestra la identidad de la AGENCIA del documento (por tenant); si no hay datos
+// en la tabla `agencias`, cae a la constante EMPRESA.
+export async function DocHeader({ tenant }: { tenant?: string }) {
+  const ag = await agenciaDe((tenant as Tenant) ?? "mayorista").catch(() => null);
+  const razonSocial = ag?.razon_social ?? EMPRESA.razonSocial;
+  const nit = ag?.nit ? `${ag.nit}${ag.dv ? `-${ag.dv}` : ""}` : EMPRESA.nit;
+  const rnt = ag?.rnt || EMPRESA.rnt;
+  const correo = ag?.correo ?? EMPRESA.correo;
+  const ciudad = ag?.ciudad ?? EMPRESA.ciudadEmision;
+
   return (
     <div className="flex items-start justify-between border-b border-gray-200 pb-4">
       <div>
         <Logo variant="full" height={40} className="h-9 w-auto" />
         <p className="mt-2 text-[11px] leading-tight text-gray-500">
-          {EMPRESA.razonSocial}
+          {razonSocial}
           <br />
-          NIT {EMPRESA.nit} · RNT {EMPRESA.rnt}
+          NIT {nit}{rnt ? ` · RNT ${rnt}` : ""}
           <br />
-          {EMPRESA.correo}
+          {correo}
         </p>
       </div>
       <div className="text-right text-[11px] leading-tight text-gray-500">
-        <p>{EMPRESA.ciudadEmision}</p>
+        <p>{ciudad}</p>
         <p>{EMPRESA.sitio}</p>
       </div>
     </div>

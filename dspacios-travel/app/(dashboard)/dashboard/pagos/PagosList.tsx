@@ -4,8 +4,8 @@ import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
-import { registrarPagoProveedor, deshacerUltimoPago, asignarProveedorCuentaPorPagar } from "./actions";
+import { formatMoneda, formatFechaLarga, formatCOP } from "@/lib/utils";
+import { registrarPagoProveedor, deshacerUltimoPago, asignarProveedorCuentaPorPagar, configurarFacturaProveedor } from "./actions";
 
 export type PagoRow = {
   id: number;
@@ -19,18 +19,27 @@ export type PagoRow = {
   fecha_vencimiento: string | null;
   aplica_retencion: boolean | null;
   pct_retencion: number | null;
-  pagos: { n: number; valor: number; fecha: string | null }[];
+  clasificacion: "costo" | "irt";
+  base_gravable: number | null;
+  iva_proveedor: number | null;
+  pagos: { n: number; valor: number; fecha: string | null; trm: number | null }[];
   pagado: number;
   saldo: number;
 };
 
 type Filtro = "por_pagar" | "pagadas" | "todas";
 
-export function PagosList({ rows, proveedores, catalogo = [] }: { rows: PagoRow[]; proveedores: string[]; catalogo?: string[] }) {
+export function PagosList({ rows, proveedores, catalogo = [], ivaPct = 0.19 }: { rows: PagoRow[]; proveedores: string[]; catalogo?: string[]; ivaPct?: number }) {
   const [filtro, setFiltro] = useState<Filtro>("por_pagar");
   const [proveedor, setProveedor] = useState("");
+  const [clasif, setClasif] = useState<"todos" | "ip" | "irt" | "sin">("todos");
+  const [tipo, setTipo] = useState("");
   const [q, setQ] = useState("");
   const [abierto, setAbierto] = useState<number | null>(null);
+
+  // Categoría de configuración de una CxP.
+  const cat = (r: PagoRow): "ip" | "irt" | "sin" => r.clasificacion === "irt" ? "irt" : (r.base_gravable != null ? "ip" : "sin");
+  const tipos = useMemo(() => Array.from(new Set(rows.map((r) => r.tipo_proveedor).filter((t): t is string => !!t))).sort(), [rows]);
 
   const visibles = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -38,21 +47,24 @@ export function PagosList({ rows, proveedores, catalogo = [] }: { rows: PagoRow[
       if (filtro === "por_pagar" && r.saldo <= 0) return false;
       if (filtro === "pagadas" && r.saldo > 0) return false;
       if (proveedor && r.proveedor !== proveedor) return false;
+      if (tipo && r.tipo_proveedor !== tipo) return false;
+      if (clasif !== "todos" && cat(r) !== clasif) return false;
       if (term) {
         const hay = `${r.numero_contrato} ${r.proveedor ?? ""} ${r.servicio ?? ""} ${r.tipo_proveedor ?? ""}`.toLowerCase();
         if (!hay.includes(term)) return false;
       }
       return true;
     });
-  }, [rows, filtro, proveedor, q]);
+  }, [rows, filtro, proveedor, tipo, clasif, q]);
 
   const totales = useMemo(() => {
-    const m = new Map<string, { total: number; pagado: number; saldo: number }>();
+    const m = new Map<string, { total: number; pagado: number; saldo: number; ip: number; irt: number; sin: number }>();
     for (const r of visibles) {
-      const t = m.get(r.moneda) ?? { total: 0, pagado: 0, saldo: 0 };
+      const t = m.get(r.moneda) ?? { total: 0, pagado: 0, saldo: 0, ip: 0, irt: 0, sin: 0 };
       t.total += r.valor_total;
       t.pagado += r.pagado;
       t.saldo += r.saldo;
+      t[cat(r)] += r.valor_total;
       m.set(r.moneda, t);
     }
     return [...m.entries()];
@@ -69,6 +81,11 @@ export function PagosList({ rows, proveedores, catalogo = [] }: { rows: PagoRow[
               <Tarjeta titulo="Total obligaciones" valor={t.total} moneda={moneda} />
               <Tarjeta titulo="Pagado" valor={t.pagado} moneda={moneda} tono="success" />
               <Tarjeta titulo="Por pagar" valor={t.saldo} moneda={moneda} tono="primary" />
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full align-middle" style={{ backgroundColor: "var(--brand-success)" }} />IP (ingreso propio): <b className="tabular-nums text-gray-700">{formatMoneda(t.ip, moneda)}</b></span>
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full align-middle" style={{ backgroundColor: "var(--brand-accent)" }} />IRT (terceros): <b className="tabular-nums text-gray-700">{formatMoneda(t.irt, moneda)}</b></span>
+              <span><span className="mr-1 inline-block h-2 w-2 rounded-full align-middle bg-red-500" />Sin configurar: <b className="tabular-nums text-gray-700">{formatMoneda(t.sin, moneda)}</b></span>
             </div>
           </div>
         ))}
@@ -105,6 +122,19 @@ export function PagosList({ rows, proveedores, catalogo = [] }: { rows: PagoRow[
             </option>
           ))}
         </select>
+        <select value={clasif} onChange={(e) => setClasif(e.target.value as "todos" | "ip" | "irt" | "sin")}
+          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+          <option value="todos">Toda clasificación</option>
+          <option value="ip">IP (ingreso propio)</option>
+          <option value="irt">IRT (terceros)</option>
+          <option value="sin">Sin configurar</option>
+        </select>
+        {tipos.length > 0 && (
+          <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+            <option value="">Todo tipo</option>
+            {tipos.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        )}
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -142,6 +172,7 @@ export function PagosList({ rows, proveedores, catalogo = [] }: { rows: PagoRow[
                 key={r.id}
                 row={r}
                 catalogo={catalogo}
+                ivaPct={ivaPct}
                 abierto={abierto === r.id}
                 onToggle={() => setAbierto(abierto === r.id ? null : r.id)}
               />
@@ -163,24 +194,39 @@ function vencida(fecha: string | null, saldo: number): boolean {
 function FilaPago({
   row,
   catalogo,
+  ivaPct,
   abierto,
   onToggle,
 }: {
   row: PagoRow;
   catalogo: string[];
+  ivaPct: number;
   abierto: boolean;
   onToggle: () => void;
 }) {
   const pagada = row.saldo <= 0;
   const atrasada = vencida(row.fecha_vencimiento, row.saldo);
+  // Configurada = se definió IRT, o IP (costo) con su base gravable.
+  const configurada = row.clasificacion === "irt" || row.base_gravable != null;
   return (
     <>
       <tr className="cursor-pointer border-b border-gray-50 hover:bg-gray-50" onClick={onToggle}>
         <td className="px-4 py-3 text-gray-800">
+          <span
+            className="mr-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full align-middle"
+            style={{ backgroundColor: configurada ? "var(--brand-success)" : "#dc2626" }}
+            title={configurada ? (row.clasificacion === "irt" ? "Configurada: IRT" : "Configurada: Ingreso propio (IP)") : "Sin configurar (IRT / IP + base gravable)"}
+          />
           {row.proveedor ?? <span className="text-amber-600">Sin proveedor</span>}
           {row.tipo_proveedor && (
             <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
               {row.tipo_proveedor}
+            </span>
+          )}
+          {configurada && (
+            <span className="ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+              style={{ backgroundColor: "rgba(102,181,150,0.15)", color: "#3d7a63" }}>
+              {row.clasificacion === "irt" ? "IRT" : "IP"}
             </span>
           )}
         </td>
@@ -209,7 +255,7 @@ function FilaPago({
       {abierto && (
         <tr className="bg-gray-50/60">
           <td colSpan={8} className="px-4 py-4">
-            <EstadoCuentaProveedor row={row} catalogo={catalogo} />
+            <EstadoCuentaProveedor row={row} catalogo={catalogo} ivaPct={ivaPct} />
           </td>
         </tr>
       )}
@@ -217,12 +263,16 @@ function FilaPago({
   );
 }
 
-function EstadoCuentaProveedor({ row, catalogo }: { row: PagoRow; catalogo: string[] }) {
+function EstadoCuentaProveedor({ row, catalogo, ivaPct }: { row: PagoRow; catalogo: string[]; ivaPct: number }) {
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
       {/* Asignar / cambiar proveedor (ancho completo) */}
       <div className="lg:col-span-2">
         <AsignarProveedor id={row.id} actual={row.proveedor} catalogo={catalogo} />
+      </div>
+      {/* Factura del proveedor: IRT / Costo + base gravable (ancho completo) */}
+      <div className="lg:col-span-2">
+        <FacturaProveedor row={row} ivaPct={ivaPct} />
       </div>
       {/* Estado de cuenta */}
       <div>
@@ -265,6 +315,9 @@ function EstadoCuentaProveedor({ row, catalogo }: { row: PagoRow; catalogo: stri
                   <tr key={p.n} className="border-b border-gray-50">
                     <td className="px-3 py-2 text-gray-500">
                       Pago {p.n} · {formatFechaLarga(p.fecha)}
+                      {row.moneda === "USD" && p.trm ? (
+                        <span className="ml-2 text-xs text-gray-400">TRM {formatCOP(p.trm)} · {formatCOP(p.valor * p.trm)}</span>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-700">
                       {formatMoneda(p.valor, row.moneda)}
@@ -311,6 +364,64 @@ function EstadoCuentaProveedor({ row, catalogo }: { row: PagoRow; catalogo: stri
   );
 }
 
+function FacturaProveedor({ row, ivaPct }: { row: PagoRow; ivaPct: number }) {
+  const [clasif, setClasif] = useState<"costo" | "irt">(row.clasificacion ?? "costo");
+  const [base, setBase] = useState(String(row.base_gravable ?? ""));
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const esCosto = clasif === "costo";
+  const baseNum = Number(base) || 0;
+  const ivaCalc = esCosto ? Math.round(baseNum * ivaPct) : 0;
+  const costoNeto = esCosto ? Math.max(0, row.valor_total - ivaCalc) : row.valor_total;
+
+  function guardar() {
+    setError(null); setOk(false);
+    startTransition(async () => {
+      const res = await configurarFacturaProveedor({ id: row.id, clasificacion: clasif, baseGravable: baseNum });
+      if (!res.ok) setError(res.error); else setOk(true);
+    });
+  }
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Factura del proveedor</span>
+        <span className="text-xs text-gray-400">Total obligación: <b className="text-gray-600">{formatMoneda(row.valor_total, row.moneda)}</b></span>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Tratamiento</label>
+          <select value={clasif} onChange={(e) => setClasif(e.target.value as "costo" | "irt")}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm">
+            <option value="costo">Ingreso propio (IP)</option>
+            <option value="irt">IRT (para tercero)</option>
+          </select>
+        </div>
+        {esCosto && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Base gravable (IVA)</label>
+            <Input type="number" min={0} value={base} onChange={(e) => setBase(e.target.value)} className="w-40 text-right" placeholder="0" />
+          </div>
+        )}
+        <Button type="button" onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
+          {pending ? "Guardando…" : "Guardar"}
+        </Button>
+        {ok && <span className="text-xs text-[#3d7a63]">Guardado ✓</span>}
+        {error && <span className="text-sm text-red-600">{error}</span>}
+      </div>
+      {esCosto ? (
+        <p className="mt-2 text-[11px] text-gray-500">
+          IVA descontable ({(ivaPct * 100).toFixed(0)}%): <b>{formatMoneda(ivaCalc, row.moneda)}</b> ·
+          Costo neto (total − IVA): <b>{formatMoneda(costoNeto, row.moneda)}</b>
+        </p>
+      ) : (
+        <p className="mt-2 text-[11px] text-gray-500">IRT: ingreso para tercero. No descuenta IVA ni es costo propio.</p>
+      )}
+    </div>
+  );
+}
+
 function AsignarProveedor({ id, actual, catalogo }: { id: number; actual: string | null; catalogo: string[] }) {
   const [sel, setSel] = useState(actual ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -332,14 +443,16 @@ function AsignarProveedor({ id, actual, catalogo }: { id: number; actual: string
       <span className="text-xs font-medium text-gray-500">
         {actual ? "Cambiar proveedor:" : "Asignar proveedor del catálogo:"}
       </span>
-      <select
+      <input
+        list={`prov-cat-${id}`}
         value={sel}
         onChange={(e) => setSel(e.target.value)}
-        className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm"
-      >
-        <option value="">— elegir —</option>
-        {catalogo.map((p) => <option key={p} value={p}>{p}</option>)}
-      </select>
+        placeholder="Escribe para buscar…"
+        className="min-w-[16rem] rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm"
+      />
+      <datalist id={`prov-cat-${id}`}>
+        {catalogo.map((p) => <option key={p} value={p} />)}
+      </datalist>
       <Button type="button" onClick={guardar} disabled={pending || sel === (actual ?? "")} style={{ backgroundColor: "var(--brand-primary)" }}>
         {pending ? "Guardando…" : "Asignar"}
       </Button>
@@ -361,8 +474,11 @@ function PagoInline({
 }) {
   const [valor, setValor] = useState("");
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [trm, setTrm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
+  const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
 
   function handle(e: React.FormEvent) {
     e.preventDefault();
@@ -372,13 +488,18 @@ function PagoInline({
       setError("Ingresa un valor mayor a 0.");
       return;
     }
+    if (esUSD && !(Number(trm) > 0)) {
+      setError("Indica la TRM del día (cuenta en USD).");
+      return;
+    }
     startTransition(async () => {
-      const res = await registrarPagoProveedor(id, v, fecha);
+      const res = await registrarPagoProveedor(id, v, fecha, esUSD ? Number(trm) : undefined);
       if (!res.ok) {
         setError(res.error);
         return;
       }
       setValor("");
+      setTrm("");
     });
   }
 
@@ -386,7 +507,7 @@ function PagoInline({
     <form onSubmit={handle} className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">Valor</label>
+          <label className="mb-1 block text-xs font-medium text-gray-600">{esUSD ? "Pagado (COP)" : "Valor"}</label>
           <Input
             type="number"
             min={0}
@@ -396,6 +517,13 @@ function PagoInline({
             className="w-36"
           />
         </div>
+        {esUSD && (
+          <div>
+            <label className="mb-1 block text-xs font-medium text-gray-600">TRM del día</label>
+            <Input type="number" min={0} value={trm} onChange={(e) => setTrm(e.target.value)} placeholder="4000" className="w-28" />
+            <p className="mt-1 text-[11px] text-gray-400">{usdEq != null ? `abona ${formatMoneda(usdEq, "USD")}` : "COP por 1 USD"}</p>
+          </div>
+        )}
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Fecha del pago</label>
           <Input

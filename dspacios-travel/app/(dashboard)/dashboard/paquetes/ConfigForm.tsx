@@ -9,7 +9,7 @@ import { ComboDestino } from "@/components/ComboDestino";
 
 type Opt = { id: number; nombre: string; codigo_iata?: string | null };
 
-type Tipo = "bloqueo" | "porcion_terrestre" | "servicios";
+type Tipo = "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
 type Initial = Partial<{
   nombre: string;
   tipo: Tipo;
@@ -98,16 +98,19 @@ export function ConfigForm({
           <select value={tipo} onChange={(e) => setTipo(e.target.value as Tipo)} className={sel}>
             <option value="bloqueo">Bloqueo (vuelo + hotel)</option>
             <option value="porcion_terrestre">Porción terrestre (solo hotel)</option>
+            <option value="dinamico">Dinámico (hotel + vuelo por sistema, sin record)</option>
             <option value="servicios">Servicios (solo servicios)</option>
           </select>
           <p className="mt-1 text-[11px] text-gray-400">Define qué adicionas y en qué módulo del tarifario aparece.</p>
         </div>
 
-        {tipo === "porcion_terrestre" && (
+        {(tipo === "porcion_terrestre" || tipo === "dinamico") && (
           <div>
-            <label className={lbl}>Noches (porción terrestre)</label>
+            <label className={lbl}>Noches por defecto</label>
             <Input type="number" min={1} value={noches} onChange={(e) => setNoches(e.target.value)} placeholder="3" />
-            <p className="mt-1 text-[11px] text-gray-400">Se liquida desde la fecha de inicio del viaje.</p>
+            <p className="mt-1 text-[11px] text-gray-400">
+              {tipo === "dinamico" ? "Referencia; cada salida liquida el hotel por sus propias noches (ida→regreso)." : "Se liquida desde la fecha de inicio del viaje."}
+            </p>
           </div>
         )}
 

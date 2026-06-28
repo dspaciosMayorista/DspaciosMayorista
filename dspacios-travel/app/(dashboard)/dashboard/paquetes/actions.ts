@@ -10,7 +10,7 @@ import {
   marcar,
   aporteVuelo,
   componerTarifa,
-  redondearMilArriba,
+  redondearVenta,
   factorLiquidacion,
   toTemporadaRango,
   type TemporadaRango,
@@ -35,7 +35,7 @@ const COL_NETO: Record<Acomodacion, string> = {
 
 export interface PaqueteConfig {
   nombre: string;
-  tipo: "bloqueo" | "porcion_terrestre" | "servicios";
+  tipo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   noches: number;
   destinoId: number | null;
   fechaCompraInicio: string;
@@ -284,11 +284,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, categorias, regimenes, hoteles(nombre)")
+      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
-      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion, descripcion, recargo_individual)")
+      .select("servicio_id, modo, incluido, servicios_adicionales(nombre, precio_persona, liquidacion, descripcion, recargo_individual, moneda)")
       .eq("paquete_id", paqueteId),
   ]);
 
@@ -296,9 +296,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const servicioIds = (serviciosSel ?? []).map((s) => s.servicio_id);
   const gruposPorServicio = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
   if (servicioIds.length) {
+    // El snapshot del tarifario usa la tarifa BASE (GENERAL); las temporadas se
+    // aplican al reservar (re-escala por fecha del viaje).
     const { data: gr } = await sb
       .from("servicio_tarifa_pax")
       .select("servicio_id, pax_desde, pax_hasta, precio")
+      .eq("temporada", "GENERAL")
       .in("servicio_id", servicioIds);
     for (const g of gr ?? []) {
       const arr = gruposPorServicio.get(g.servicio_id) ?? [];
@@ -309,6 +312,32 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   const hoteles = hotelesSel ?? [];
   const servicios = serviciosSel ?? [];
+
+  // ── Consistencia de moneda (CERO mezcla) ───────────────────────────────
+  // Un paquete es de UNA sola moneda. Todos los hoteles Y todos los servicios
+  // (incluidos u opcionales) deben coincidir; si no, el PVP mezclaría COP y USD.
+  const monedaDe = (m: string | null | undefined) => (m === "USD" ? "USD" : "COP");
+  const svcMoneda = (s: { servicios_adicionales: unknown }) =>
+    monedaDe((s.servicios_adicionales as { moneda?: string | null } | null)?.moneda);
+  const monedasHotel = Array.from(
+    new Set(hoteles.map((h) => monedaDe((h.hoteles as unknown as { moneda?: string | null } | null)?.moneda)))
+  );
+  if (monedasHotel.length > 1)
+    return { ok: false, error: "Los hoteles del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda." };
+  const monedasServicio = Array.from(new Set(servicios.map(svcMoneda)));
+
+  let paqueteMoneda: "COP" | "USD";
+  if (hoteles.length) {
+    // La moneda la fija el hotel; cualquier servicio en otra moneda se rechaza.
+    paqueteMoneda = monedasHotel[0];
+    if (monedasServicio.some((m) => m !== paqueteMoneda))
+      return { ok: false, error: `El paquete está en ${paqueteMoneda} (por el hotel) pero hay servicios en otra moneda. Todo el paquete debe estar en ${paqueteMoneda}.` };
+  } else {
+    // Paquete de solo servicios: todos deben compartir moneda.
+    if (monedasServicio.length > 1)
+      return { ok: false, error: "Los servicios del paquete tienen monedas distintas (COP y USD). Un paquete debe ser de una sola moneda." };
+    paqueteMoneda = monedasServicio[0] ?? "COP";
+  }
 
   // Temporadas y tarifas netas de cada hotel involucrado
   const hotelIds = hoteles.map((h) => h.hotel_id);
@@ -365,12 +394,15 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // Tarifario "desde": toma la tarifa más barata de la ventana de viaje
     // [fechaIda, fechaRegreso] en vez de liquidar una fecha fija. Para porción,
     // donde el asesor elige fecha al reservar (re-liquida). Bloqueo = fecha fija.
-    masBarato = false
+    masBarato = false,
+    salidaId: number | null = null,
   ) {
     if (numNoches <= 0) return;
     const aporteServ = aporteServiciosIncluidos(numNoches); // solo servicios incluidos
     for (const h of hoteles) {
-      const hotelNombre = (h.hoteles as unknown as { nombre: string } | null)?.nombre ?? null;
+      const hotelMeta = h.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
+      const hotelNombre = hotelMeta?.nombre ?? null;
+      const monedaHotel = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
       const filtroCat = (h.categorias as string[] | null) ?? null;
       const filtroReg = (h.regimenes as string[] | null) ?? null;
       const temporadas = temporadasPorHotel.get(h.hotel_id) ?? [];
@@ -410,6 +442,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             aporteServicios: aporteServ,
             aporteVuelo: aporteVueloVal,
             impuesto,
+            moneda: monedaHotel,
           });
           filas.push({
             paquete_id: paqueteId,
@@ -431,6 +464,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             base_comisionable: t.baseComisionable,
             impuesto: t.impuesto,
             precio_pvp: t.pvp,
+            moneda: monedaHotel,
+            salida_id: salidaId,
           });
         }
       }
@@ -452,14 +487,22 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     }))
     .filter((v): v is typeof v & { b: NonNullable<typeof v.b> } => !!v.b && !!v.b.fecha_ida && !!v.b.fecha_regreso);
 
-  const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios";
+  const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
+
+  // Salidas dinámicas (vuelo por sistema): solo para el tipo 'dinamico'.
+  const { data: salidasRaw } = tipo === "dinamico"
+    ? await sb.from("salidas_dinamicas").select("*").eq("paquete_id", paqueteId).eq("activo", true).order("fecha_ida")
+    : { data: null };
+  const salidas = salidasRaw ?? [];
 
   // Validaciones según el tipo (mensajes claros en vez de 0 silencioso)
   if (tipo === "bloqueo" && !vuelos.length)
     return { ok: false, error: "Bloqueo: selecciona al menos un vuelo." };
   if (tipo === "porcion_terrestre" && (!pq.fecha_viaje_inicio || !pq.fecha_viaje_fin))
     return { ok: false, error: "Porción terrestre: define el rango de viaje (fechas) en la Configuración inicial." };
-  if ((tipo === "bloqueo" || tipo === "porcion_terrestre") && !hoteles.length)
+  if (tipo === "dinamico" && !salidas.length)
+    return { ok: false, error: "Dinámico: agrega al menos una salida (vuelo por sistema)." };
+  if ((tipo === "bloqueo" || tipo === "porcion_terrestre" || tipo === "dinamico") && !hoteles.length)
     return { ok: false, error: "Agrega al menos un hotel." };
   if (tipo === "servicios" && !servicios.length)
     return { ok: false, error: "Agrega al menos un servicio." };
@@ -480,6 +523,23 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // MÓDULO PORCIÓN TERRESTRE: sin vuelo; noches del paquete desde la fecha inicio
     const numNoches = Number(pq.noches) || 3;
     filasHoteles(pq.fecha_viaje_inicio, numNoches, 0, Number(pq.impuesto_fijo) || 0, "porcion_terrestre", null, null, pq.fecha_viaje_fin, true);
+  } else if (tipo === "dinamico") {
+    // MÓDULO DINÁMICO: una liquidación por SALIDA (vuelo por sistema, sin record).
+    // El hotel se liquida por las noches de la salida; el vuelo es valor_tiquete
+    // (adulto 2+) con mk o TA. fecha fija → no "más barato".
+    for (const sal of salidas) {
+      const fIda = sal.fecha_ida as string;
+      const fReg = (sal.fecha_regreso as string | null) ?? null;
+      if (!fIda || !fReg) continue;
+      const numNoches = calcNoches(fIda, fReg);
+      if (numNoches <= 0) continue;
+      const costoTiquete = Number(sal.valor_tiquete) || 0;
+      const aporteVueloVal = aporteVuelo(costoTiquete, sal.aplica_mk as boolean, pctMk, Number(sal.ta) || 0);
+      const impuesto = pq.impuesto_tipo === "tiquete" ? costoTiquete : Number(pq.impuesto_fijo) || 0;
+      // Etiqueta pública de la salida: ruta + fecha (NO hay record/PNR).
+      const label = `${sal.ruta || ""}${sal.ruta && fIda ? " · " : ""}${fIda ? fIda.split("-").reverse().join("/") : ""}`.trim();
+      filasHoteles(fIda, numNoches, aporteVueloVal, impuesto, "dinamico", null, label || (sal.ruta ?? "Salida"), fReg, false, sal.id as number);
+    }
   }
 
   // Noches del paquete para amarrar el cobro de los servicios por día/noche.
@@ -492,10 +552,12 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   // sin importar el tipo. Persona = una fila; grupo = una fila por rango de pax.
   for (const s of servicios) {
     if (s.incluido as boolean) continue; // los incluidos se hornean, no se publican
-    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null; descripcion: string | null; recargo_individual: number | null } | null;
+    const srv = s.servicios_adicionales as unknown as { nombre: string; precio_persona: number | null; liquidacion: string | null; descripcion: string | null; recargo_individual: number | null; moneda: string | null } | null;
     if (!srv) continue;
     const fLiq = factorLiquidacion(srv.liquidacion, nochesPaq);
     const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
+    // Cada servicio se publica en SU moneda (redondeo a mil en COP, a dólar en USD).
+    const monedaSrv = svcMoneda(s);
     const comun = {
       paquete_id: paqueteId,
       paquete_nombre: paqueteNombre,
@@ -507,20 +569,21 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       destino_nombre: destinoNombre,
       tipo_tarifa: modo,
       impuesto: 0,
+      moneda: monedaSrv,
       descripcion: srv.descripcion ?? null,
     };
     if (modo === "grupo") {
       for (const g of gruposPorServicio.get(s.servicio_id) ?? []) {
-        const pvp = redondearMilArriba(marcar(Number(g.precio) || 0, pctMk) * fLiq);
+        const pvp = redondearVenta(marcar(Number(g.precio) || 0, pctMk) * fLiq, monedaSrv);
         filas.push({ ...comun, pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, base_comisionable: pvp, precio_pvp: pvp });
       }
     } else if (srv.precio_persona != null) {
-      const pvp = redondearMilArriba(marcar(Number(srv.precio_persona) || 0, pctMk) * fLiq);
+      const pvp = redondearVenta(marcar(Number(srv.precio_persona) || 0, pctMk) * fLiq, monedaSrv);
       // Recargo individual: suplemento del proveedor cuando va 1 pax (cobro por
       // persona). Es un COSTO, así que el lado de venta sube con su markup; el
       // costo neto lo toma Reservar del catálogo para la CxP del proveedor.
       const recargoNeto = Math.max(Number(srv.recargo_individual) || 0, 0);
-      const recargoPvp = recargoNeto > 0 ? redondearMilArriba(marcar(recargoNeto, pctMk)) : 0;
+      const recargoPvp = recargoNeto > 0 ? redondearVenta(marcar(recargoNeto, pctMk), monedaSrv) : 0;
       filas.push({ ...comun, base_comisionable: pvp, precio_pvp: pvp, recargo_individual: recargoPvp });
     }
   }
@@ -538,6 +601,9 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         "No se generaron tarifas. Revisa que el hotel tenga temporadas y tarifas netas que cubran el rango de fechas del viaje.",
     };
   }
+
+  // Guarda la moneda resuelta en el paquete (la usan reservar/vitrina como pista).
+  await sb.from("armado_paquetes").update({ moneda: paqueteMoneda }).eq("id", paqueteId);
 
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   revalidatePath("/tarifario");
@@ -600,4 +666,83 @@ export async function regenerarTarifariosDeServicio(servicioId: number): Promise
       .map((p) => p.paquete_id))];
     for (const id of ids) { try { await generarTarifario(id); } catch { /* sigue */ } }
   } catch { /* best-effort */ }
+}
+
+// ── SALIDAS DINÁMICAS (vuelo por sistema, sin record) ───────────────────────
+export type SalidaDinamicaInput = {
+  aerolinea: string;
+  ruta: string;
+  origen: string;
+  fechaIda: string;
+  fechaRegreso: string;
+  horaSalidaIda: string;
+  horaLlegadaIda: string;
+  horaSalidaReg: string;
+  horaLlegadaReg: string;
+  valorTiquete: number;       // NETO adulto (2+) por pax, en la moneda del paquete
+  aplicaMk: boolean;          // true: valor/(1-mk) · false: valor + ta
+  ta: number;
+  feeInfante: number;         // 0–1.99 años
+  compraInicio: string;
+  compraFin: string;
+  notas: string;
+};
+
+function salidaRow(paqueteId: number, input: SalidaDinamicaInput) {
+  return {
+    paquete_id: paqueteId,
+    aerolinea: oNull(input.aerolinea),
+    ruta: oNull(input.ruta),
+    origen: oNull(input.origen)?.toUpperCase() ?? null,
+    fecha_ida: input.fechaIda,
+    fecha_regreso: dNull(input.fechaRegreso),
+    hora_salida_ida: oNull(input.horaSalidaIda),
+    hora_llegada_ida: oNull(input.horaLlegadaIda),
+    hora_salida_reg: oNull(input.horaSalidaReg),
+    hora_llegada_reg: oNull(input.horaLlegadaReg),
+    valor_tiquete: Math.max(Number(input.valorTiquete) || 0, 0),
+    aplica_mk: !!input.aplicaMk,
+    ta: Math.max(Number(input.ta) || 0, 0),
+    fee_infante: Math.max(Number(input.feeInfante) || 0, 0),
+    compra_inicio: dNull(input.compraInicio),
+    compra_fin: dNull(input.compraFin),
+    notas: oNull(input.notas),
+  };
+}
+
+export async function crearSalidaDinamica(paqueteId: number, input: SalidaDinamicaInput): Promise<Result> {
+  const sb = await createClient();
+  if (!input.fechaIda) return { ok: false, error: "La fecha de ida es obligatoria." };
+  const { error } = await sb.from("salidas_dinamicas").insert(salidaRow(paqueteId, input));
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+  try { await generarTarifario(paqueteId); } catch { /* sigue */ }
+  return { ok: true };
+}
+
+export async function actualizarSalidaDinamica(id: number, input: SalidaDinamicaInput): Promise<Result> {
+  const sb = await createClient();
+  if (!input.fechaIda) return { ok: false, error: "La fecha de ida es obligatoria." };
+  const { data: prev } = await sb.from("salidas_dinamicas").select("paquete_id").eq("id", id).maybeSingle();
+  const { paquete_id: _omit, ...row } = salidaRow(prev?.paquete_id ?? 0, input);
+  void _omit;
+  const { error } = await sb.from("salidas_dinamicas").update(row).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  if (prev?.paquete_id) {
+    revalidatePath(`/dashboard/paquetes/${prev.paquete_id}`);
+    try { await generarTarifario(prev.paquete_id); } catch { /* sigue */ }
+  }
+  return { ok: true };
+}
+
+export async function eliminarSalidaDinamica(id: number): Promise<Result> {
+  const sb = await createClient();
+  const { data: prev } = await sb.from("salidas_dinamicas").select("paquete_id").eq("id", id).maybeSingle();
+  const { error } = await sb.from("salidas_dinamicas").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  if (prev?.paquete_id) {
+    revalidatePath(`/dashboard/paquetes/${prev.paquete_id}`);
+    try { await generarTarifario(prev.paquete_id); } catch { /* sigue */ }
+  }
+  return { ok: true };
 }

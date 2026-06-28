@@ -3,7 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import { Star, Plane } from "lucide-react";
-import { formatCOP, formatMoneda } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
@@ -25,9 +25,10 @@ export type ProgramaResumen = {
 };
 
 export type FilaTarifario = {
-  modulo: "bloqueo" | "porcion_terrestre" | "servicios";
+  modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   bloqueo_label: string | null;
   bloqueo_id?: number | null;
+  salida_id?: number | null;
   paquete_id?: number;
   hotel_id?: number | null;
   fecha_ida: string | null;
@@ -46,10 +47,12 @@ export type FilaTarifario = {
   precio_pvp: number;
   descripcion?: string | null;
   recargo_individual?: number | null;
+  moneda?: string | null;
 };
 
 const MODULOS: { key: FilaTarifario["modulo"]; label: string }[] = [
   { key: "bloqueo", label: "Paquetes" },
+  { key: "dinamico", label: "Salidas dinámicas" },
   { key: "porcion_terrestre", label: "Porción terrestre" },
   { key: "servicios", label: "Servicios" },
 ];
@@ -77,9 +80,11 @@ type Pivotada = {
   paquete_id?: number;
   hotel_id?: number | null;
   bloqueo_id?: number | null;
+  salida_id?: number | null;
   modulo: FilaTarifario["modulo"];
   destino?: string | null;
   noches?: number | null;
+  moneda?: string | null;
 };
 
 function pivotar(filas: FilaTarifario[]): Pivotada[] {
@@ -93,8 +98,8 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
     if (!row) {
       row = {
         hotel, categoria, regimen, precios: {},
-        paquete_id: f.paquete_id, hotel_id: f.hotel_id, bloqueo_id: f.bloqueo_id, modulo: f.modulo,
-        destino: f.destino_nombre, noches: f.noches,
+        paquete_id: f.paquete_id, hotel_id: f.hotel_id, bloqueo_id: f.bloqueo_id, salida_id: f.salida_id, modulo: f.modulo,
+        destino: f.destino_nombre, noches: f.noches, moneda: f.moneda ?? "COP",
       };
       map.set(key, row);
     }
@@ -281,6 +286,8 @@ export function TarifarioPublic({
             <p className="py-12 text-center text-sm text-gray-400">No hay resultados para los filtros aplicados.</p>
           ) : modulo === "bloqueo" ? (
             <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+          ) : modulo === "dinamico" ? (
+            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "dinamico")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : modulo === "porcion_terrestre" ? (
             <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : (
@@ -464,7 +471,7 @@ function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]
                           </td>
                           <td className="px-3 py-1.5 text-gray-500">{e.pax_desde}–{e.pax_hasta} pax</td>
                           <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
-                            {formatCOP(e.precio_pvp)} <span className="text-xs text-gray-400">/grupo</span>
+                            {formatMoneda(e.precio_pvp, e.moneda)} <span className="text-xs text-gray-400">/grupo</span>
                           </td>
                         </tr>
                       ))
@@ -473,11 +480,11 @@ function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]
                         <td className="px-3 py-1.5 font-medium text-gray-800">
                           {nombre}
                           {descripcion && <div className="text-xs font-normal text-gray-500">{descripcion}</div>}
-                          {recargo > 0 && <div className="text-xs font-normal text-amber-600">+{formatCOP(recargo)} si viaja 1 pax (recargo individual)</div>}
+                          {recargo > 0 && <div className="text-xs font-normal text-amber-600">+{formatMoneda(recargo, srows[0].moneda)} si viaja 1 pax (recargo individual)</div>}
                         </td>
                         <td className="px-3 py-1.5 text-gray-500">Por persona</td>
                         <td className="px-3 py-1.5 text-right tabular-nums" style={{ color: "var(--brand-primary)" }}>
-                          {formatCOP(srows[0].precio_pvp)} <span className="text-xs text-gray-400">/persona</span>
+                          {formatMoneda(srows[0].precio_pvp, srows[0].moneda)} <span className="text-xs text-gray-400">/persona</span>
                         </td>
                       </tr>
                     );
@@ -497,6 +504,7 @@ function reservarHref(r: Pivotada): string {
   if (r.paquete_id != null) p.set("paquete", String(r.paquete_id));
   if (r.hotel_id != null) p.set("hotel", String(r.hotel_id));
   if (r.bloqueo_id != null) p.set("bloqueo", String(r.bloqueo_id));
+  if (r.salida_id != null) p.set("salida", String(r.salida_id));
   p.set("modulo", r.modulo);
   return `/dashboard/reservar/nuevo?${p.toString()}`;
 }
@@ -585,7 +593,7 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                       return (
                         <td key={k} className="px-3 py-2 text-right tabular-nums">
                           {mostrar ? (
-                            <span style={{ color: "var(--brand-primary)" }}>{formatCOP(v)}</span>
+                            <span style={{ color: "var(--brand-primary)" }}>{formatMoneda(v, r.moneda)}</span>
                           ) : (
                             <span className="text-gray-300">—</span>
                           )}
@@ -664,7 +672,7 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-500">Aéreo</label>
           <div className="flex gap-1">
-            {([["", "Todos"], ["si", "Con aéreo"], ["no", "Solo terrestre"]] as const).map(([v, l]) => (
+            {([["", "Todos"], ["si", "Con aéreo"], ["no", "Porción terrestre"]] as const).map(([v, l]) => (
               <button
                 key={v}
                 type="button"
@@ -714,7 +722,7 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
                       : { backgroundColor: "#f3f4f6", color: "#6b7280" }
                   }
                 >
-                  {p.incluye_aereo ? <><Plane size={11} /> Con aéreo</> : "Solo terrestre"}
+                  {p.incluye_aereo ? <><Plane size={11} /> Con aéreo</> : "Porción terrestre"}
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-gray-500">

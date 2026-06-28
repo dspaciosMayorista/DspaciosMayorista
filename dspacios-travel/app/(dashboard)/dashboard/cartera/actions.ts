@@ -10,11 +10,12 @@ export async function registrarAbonoCartera(
   numeroContrato: string,
   valor: number,
   formaPago: string,
-  referencia: string
+  referencia: string,
+  trm?: number,   // TRM del día (contratos en USD)
 ): Promise<{ ok: boolean; error?: string }> {
   if (!(valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0" };
   try {
-    await registrarAbono(numeroContrato, valor, formaPago, referencia);
+    await registrarAbono(numeroContrato, valor, formaPago, referencia, trm);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "No se pudo registrar el abono" };
   }

@@ -15,9 +15,9 @@ export function formatCOP(value: number): string {
   }).format(value);
 }
 
-/** Formatea un número como dólares: US$1,839 */
+/** Formatea un número como dólares con prefijo: USD $1,839 */
 export function formatUSD(value: number): string {
-  return new Intl.NumberFormat("en-US", {
+  return "USD " + new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: 0,

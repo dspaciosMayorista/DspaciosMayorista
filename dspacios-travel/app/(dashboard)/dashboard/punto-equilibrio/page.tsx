@@ -1,34 +1,64 @@
-import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { SMMLV, SUBSIDIO_TRANSPORTE } from "@/lib/constants";
-import { formatCOP } from "@/lib/utils";
-import { PuntoEquilibrioClient } from "./PuntoEquilibrioClient";
+import { calcularRentabilidad } from "@/lib/finanzas/rentabilidad";
+import { getTenant } from "@/lib/tenant.server";
+import { PuntoEquilibrioClient, type EmpRow, type CostoRow } from "./PuntoEquilibrioClient";
 
 export const dynamic = "force-dynamic";
 
+const ROLES = ["superadmin", "gerencia", "administracion"];
+
 export default async function PuntoEquilibrioPage() {
-  // Margen de contribución promedio (de Rentabilidad): ponderado por ventas.
   const sb = await createClient();
-  const { data: ventas } = await sb
-    .from("ventas")
-    .select("precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos");
-  let totPrecio = 0, totCosto = 0;
-  for (const v of ventas ?? []) {
-    const precio = Number(v.precio_venta) || 0;
-    const costo = (Number(v.costo_hotel) || 0) + (Number(v.costo_aereo) || 0) + (Number(v.costo_receptivo) || 0) + (Number(v.costo_asistencia) || 0) + (Number(v.otros_costos) || 0);
-    totPrecio += precio; totCosto += costo;
+  const { data: { user } } = await sb.auth.getUser();
+  const { data: perfil } = user
+    ? await sb.from("usuarios").select("rol").eq("id", user.id).single()
+    : { data: null };
+  if (!ROLES.includes(perfil?.rol ?? "")) {
+    return (
+      <div className="mx-auto max-w-3xl p-8">
+        <h1 className="text-2xl font-semibold text-gray-900">Punto de equilibrio</h1>
+        <p className="mt-3 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          Este módulo es de uso interno (administración / gerencia).
+        </p>
+      </div>
+    );
   }
-  const margenAuto = totPrecio > 0 ? Math.round(((totPrecio - totCosto) / totPrecio) * 1000) / 10 : 30;
+
+  const tenantId = await getTenant();
+  const [{ data: empleados }, { data: costos }, rent] = await Promise.all([
+    sb.from("pe_empleados").select("*").eq("activo", true).eq("tenant", tenantId).order("created_at"),
+    sb.from("pe_costos").select("*").eq("activo", true).eq("tenant", tenantId).order("created_at"),
+    // Mismo cálculo (helper) que el módulo Rentabilidad → margen idéntico.
+    calcularRentabilidad(),
+  ]);
+  const margenNeto = rent.margenNeto;
+  const margenBruto = rent.margenBruto;
+
+  // Ventas del mes en curso (ingreso de los contratos vendidos este mes).
+  const ahora = new Date();
+  const mesActual = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, "0")}`;
+  let ventasMes = 0, contratosMes = 0;
+  for (const f of rent.filas) {
+    if (f.mes === mesActual) { ventasMes += f.ingreso; contratosMes += 1; }
+  }
+
+  const emps: EmpRow[] = (empleados ?? []).map((e) => ({
+    id: e.id, nombre: e.nombre, tipo: (e.tipo as "empleado" | "servicios"),
+    salario: Number(e.salario) || 0, auxilio: !!e.auxilio, riesgo: e.riesgo || "I",
+    declarante: !!e.declarante, contratoPath: e.contrato_path ?? null, contratoNombre: e.contrato_nombre ?? null,
+  }));
+  const cs: CostoRow[] = (costos ?? []).map((c) => ({
+    id: c.id, concepto: c.concepto, categoria: c.categoria ?? "",
+    clasificacion: (c.clasificacion as "fijo" | "variable"), valor: Number(c.valor) || 0,
+  }));
 
   return (
-    <div className="mx-auto max-w-4xl p-4 md:p-8">
-      <Link href="/dashboard/rentabilidad" className="text-sm text-gray-400 hover:text-gray-700">← Finanzas</Link>
-      <h1 className="mt-2 text-2xl font-semibold text-gray-900">Punto de equilibrio</h1>
-      <p className="mb-6 text-sm text-gray-500">
-        Cuánto debes vender al mes para cubrir costos y gastos. Liquidación de nómina a normatividad <b>2026</b>
-        (SMMLV {formatCOP(SMMLV)} · auxilio transporte {formatCOP(SUBSIDIO_TRANSPORTE)}).
+    <div className="mx-auto max-w-6xl p-4 md:p-8">
+      <h1 className="text-2xl font-semibold text-gray-900">Punto de equilibrio</h1>
+      <p className="mb-6 mt-1 text-sm text-gray-500">
+        Cuánto debes vender al mes para cubrir costos y gastos, con el margen neto que viene corriendo de Rentabilidad.
       </p>
-      <PuntoEquilibrioClient margenAuto={margenAuto} />
+      <PuntoEquilibrioClient empleados={emps} costos={cs} margenNeto={margenNeto} margenBruto={margenBruto} ventasMes={ventasMes} contratosMes={contratosMes} />
     </div>
   );
 }

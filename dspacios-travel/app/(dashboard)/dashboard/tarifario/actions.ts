@@ -26,11 +26,45 @@ export async function crearDestino(nombre: string, codigoIata?: string, pais?: s
   revalidatePath("/dashboard/producto/destinos");
 }
 
-export async function eliminarDestino(id: number) {
+// Elimina un destino. Si `reasignarA` viene, primero MUEVE todo lo del destino
+// (hoteles, servicios, paquetes, tarifario…) al destino de llegada y luego lo
+// borra (fusión de duplicados). Sin reasignar, solo borra si no está en uso.
+export async function eliminarDestino(
+  id: number,
+  reasignarA?: number
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const sb = await createClient();
+
+  if (reasignarA) {
+    if (reasignarA === id) return { ok: false, error: "Elige un destino distinto al que vas a eliminar." };
+    const { error } = await sb.rpc("fn_fusionar_destino", { p_origen: id, p_destino: reasignarA });
+    if (error) return { ok: false, error: error.message };
+    revalidatePath("/dashboard/tarifario");
+    revalidatePath("/dashboard/producto/destinos");
+    return { ok: true };
+  }
+
+  // Pista útil: cuántos hoteles lo usan (la causa más común de bloqueo).
+  const { count: nHoteles } = await sb
+    .from("hoteles")
+    .select("id", { count: "exact", head: true })
+    .eq("destino_id", id);
+
   const { error } = await sb.from("destinos").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) {
+    // 23503 = llave foránea: el destino está en uso en otra tabla.
+    if (error.code === "23503") {
+      const hint = nHoteles ? ` por ${nHoteles} hotel(es)` : "";
+      return {
+        ok: false,
+        error: `No se puede eliminar: el destino está en uso${hint}. Elige a qué destino mover su contenido y vuelve a intentar.`,
+      };
+    }
+    return { ok: false, error: error.message };
+  }
   revalidatePath("/dashboard/tarifario");
+  revalidatePath("/dashboard/producto/destinos");
+  return { ok: true };
 }
 
 // Lista curada de destinos turísticos famosos (nombre + IATA) para cargar de una.

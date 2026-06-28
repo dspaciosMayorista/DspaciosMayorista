@@ -12,7 +12,8 @@ export type ParamsFiscales = {
   ICA: number;
   BOMBERIL: number;
   FONTUR: number;
-  RETENCION_RENTA: number;
+  RETENCION_RENTA: number;   // retención en la fuente (anticipo)
+  IMPUESTO_RENTA: number;    // impuesto de renta sobre la renta líquida
   IVA: number;
   RETENCION_HONORARIOS: number;
 };
@@ -30,6 +31,7 @@ export function fiscalFromParams(
       case "BOMBERIL": f.BOMBERIL = r.valor; break;
       case "FONTUR": f.FONTUR = r.valor; break;
       case "RETENCION_RENTA": f.RETENCION_RENTA = r.valor; break;
+      case "IMPUESTO_RENTA": f.IMPUESTO_RENTA = r.valor; break;
       case "IVA": f.IVA = r.valor; break;
       case "RETENCION_HONORARIOS": f.RETENCION_HONORARIOS = r.valor; break;
     }
@@ -149,6 +151,9 @@ export type RentabilidadInput = {
   comAsesor?: number;    // comisión neta del asesor
   ivaGenerado?: number;
   ivaDescontable?: number;
+  // Base para las provisiones de ingreso (ICA/Renta). Si el contrato tiene
+  // facturación configurada, es el INGRESO PROPIO (PVP − IRT); si no, el PVP.
+  baseProvisiones?: number;
   fiscal?: ParamsFiscales;
 };
 export type Rentabilidad = {
@@ -185,11 +190,13 @@ export function calcRentabilidad(i: RentabilidadInput): Rentabilidad {
   const costoNeto = costoDirecto; // Costo = total proveedor (con IVA incluido)
   const utilBruta = ingreso - costoNeto;
 
-  // Provisiones sobre el INGRESO (base gravable), no sobre el PVP.
-  const provIca = ingreso * f.ICA;
+  // Provisiones de ingreso (ICA/Renta) sobre la base de ingreso: el INGRESO
+  // PROPIO si hay facturación configurada, o el PVP por defecto.
+  const baseProv = i.baseProvisiones != null ? i.baseProvisiones : ingreso;
+  const provIca = baseProv * f.ICA;
   const provBomberil = provIca * f.BOMBERIL;            // % del ICA
   const provFontur = Math.max(0, utilBruta) * f.FONTUR; // sobre la utilidad bruta
-  const provRenta = ingreso * f.RETENCION_RENTA;
+  const provRenta = baseProv * f.RETENCION_RENTA;
   const totalProvisiones = provIca + provBomberil + provFontur + provRenta;
 
   const ivaPorPagar = ivaGenerado - ivaDescontable;

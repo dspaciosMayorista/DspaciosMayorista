@@ -58,8 +58,16 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className={`relative overflow-hidden bg-brand-gradient px-6 py-8 text-white ${p.video_url ? "flex min-h-[55vh] flex-col justify-end" : ""}`}>
+      <header className={`relative overflow-hidden bg-brand-gradient px-6 py-8 text-white ${(p.video_url || p.portada_url) ? "flex min-h-[55vh] flex-col justify-end" : ""}`}>
         <BackgroundVideo url={p.video_url} overlay={0.4} />
+        {/* Portada subida como FONDO del encabezado (si no hay video). */}
+        {!p.video_url && p.portada_url && (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={p.portada_url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.55) 100%)" }} />
+          </>
+        )}
         <div className="relative mx-auto w-full max-w-5xl">
           <div className="mb-4 flex items-center justify-between">
             <Link href="/tarifario" aria-label="Tarifario">
@@ -72,7 +80,7 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-3xl font-semibold">{p.nombre}</h1>
             <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-medium">
-              {p.incluye_aereo ? <><Plane size={12} /> Con aéreo</> : "Solo terrestre"}
+              {p.incluye_aereo ? <><Plane size={12} /> Con aéreo</> : "Porción terrestre"}
             </span>
           </div>
           <p className="mt-1 text-sm opacity-90">
@@ -96,10 +104,6 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
       </header>
 
       <main className="mx-auto max-w-5xl space-y-8 px-4 py-8 md:px-6">
-        {p.portada_url && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={p.portada_url} alt={p.nombre} className="h-64 w-full rounded-xl object-cover" />
-        )}
         <div className="flex flex-wrap justify-end gap-3">
           <Link
             href={`/tarifario/programa/${p.id}/doc`}

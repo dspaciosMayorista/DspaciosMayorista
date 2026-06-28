@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { ConfigForm } from "../ConfigForm";
+import { SalidasDinamicasEditor, type SalidaDinamica } from "./SalidasDinamicasEditor";
 import {
   setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, generarTarifario,
   getTarifasHotel, setHotelFiltros, type TarifaHotelPreview,
@@ -44,9 +45,11 @@ export function ArmadoClient(props: {
   selHoteles: SelHotel[];
   selServicios: SelServicio[];
   resultado: Resultado[];
+  salidas?: SalidaDinamica[];
+  moneda?: string;
 }) {
   const router = useRouter();
-  const tipo = (props.config?.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios";
+  const tipo = (props.config?.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   const [openCfg, setOpenCfg] = useState(false);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -133,8 +136,15 @@ export function ArmadoClient(props: {
 
       )}
 
+      {/* Salidas dinámicas (vuelo por sistema) */}
+      {tipo === "dinamico" && (
+      <Section title={`Salidas dinámicas (${props.salidas?.length ?? 0})`} open onToggle={() => {}}>
+        <SalidasDinamicasEditor paqueteId={props.paqueteId} salidas={props.salidas ?? []} moneda={props.moneda ?? "COP"} />
+      </Section>
+      )}
+
       {/* Adición de hoteles */}
-      {(tipo === "bloqueo" || tipo === "porcion_terrestre") && (
+      {(tipo === "bloqueo" || tipo === "porcion_terrestre" || tipo === "dinamico") && (
       <Section title={`Adición de hoteles (${hotelSel.size})`} open onToggle={() => {}}>
         {!props.hotelesDisp.length ? (
           <Empty>No hay hoteles del destino.</Empty>

@@ -7,7 +7,7 @@ import {
   FIRMA_ETIQUETAS,
   COPYRIGHT_PREFIJO,
 } from "@/lib/contrato/plantilla";
-import { formatCOP, formatFechaLarga, calcularEdad } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import type {
   Venta,
@@ -57,6 +57,7 @@ export function ContratoDocumento({
   codigo,
   vigenciaHasta,
 }: Props) {
+  const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
   const total = items.reduce(
     (s, it) => s + it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino,
     0
@@ -337,11 +338,11 @@ export function ContratoDocumento({
               <div className="text-[10px] uppercase opacity-80">
                 Total del contrato
               </div>
-              <div className="text-base font-bold">{formatCOP(total)}</div>
+              <div className="text-base font-bold">{formatMoneda(total, moneda)}</div>
             </div>
-            <Pill label="Total pagado" value={formatCOP(totalPagado)} />
-            <Pill label="Saldo pendiente" value={formatCOP(saldo)} />
-            <Pill label="Moneda" value="COP" />
+            <Pill label="Total pagado" value={formatMoneda(totalPagado, moneda)} />
+            <Pill label="Saldo pendiente" value={formatMoneda(saldo, moneda)} />
+            <Pill label="Moneda" value={moneda} />
           </div>
 
           {alojItems.length > 0 && (
@@ -376,13 +377,13 @@ export function ContratoDocumento({
                       {it.ninos}
                     </td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {formatCOP(it.tarifa_adulto)}
+                      {formatMoneda(it.tarifa_adulto, moneda)}
                     </td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {formatCOP(it.tarifa_nino)}
+                      {formatMoneda(it.tarifa_nino, moneda)}
                     </td>
                     <td className="border border-gray-200 px-2 py-1 font-medium">
-                      {formatCOP(it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino)}
+                      {formatMoneda(it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino, moneda)}
                     </td>
                   </tr>
                 ))}
@@ -410,7 +411,7 @@ export function ContratoDocumento({
                       </td>
                       <td className="border border-gray-200 px-2 py-1">{venta.pax ?? "—"}</td>
                       <td className="border border-gray-200 px-2 py-1 font-medium">
-                        {formatCOP(it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino)}
+                        {formatMoneda(it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino, moneda)}
                       </td>
                     </tr>
                   ))}

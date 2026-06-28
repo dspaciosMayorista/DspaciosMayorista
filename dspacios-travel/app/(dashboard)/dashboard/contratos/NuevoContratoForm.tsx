@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
 import {
@@ -70,6 +70,11 @@ export function NuevoContratoForm({
   const esNegociado = tipoPaquete === "bloqueo" || tipoPaquete === "porcion_terrestre";
   const paquetesFiltrados = paquetes.filter((p) => p.categoria === tipoPaquete);
 
+  // Moneda: solo empaquetado/dinámico (todo manual) pueden venderse en USD.
+  const [moneda, setMoneda] = useState<"COP" | "USD">("COP");
+  const monedaEfectiva = esNegociado ? "COP" : moneda;
+  const fmt = (n: number) => formatMoneda(n, monedaEfectiva);
+
   // Cliente
   const [clienteNombres, setClienteNombres] = useState("");
   const [clienteApellidos, setClienteApellidos] = useState("");
@@ -111,6 +116,13 @@ export function NuevoContratoForm({
   const [bncModo, setBncModo] = useState<"tiquetes" | "fijo">("tiquetes");
   const [valorTiquetes, setValorTiquetes] = useState("");
   const [bncFijo, setBncFijo] = useState("");
+
+  // Costos netos (solo manual) → validación de margen mínimo PVP ≥ costos/(1−20%).
+  const MARKUP_MIN = 0.20;
+  const totalCostos = esNegociado ? 0
+    : hoteles.reduce((s, h) => s + Math.max(0, Number(h.costo) || 0), 0)
+    + vuelos.reduce((s, v) => s + Math.max(0, Number(v.costo) || 0), 0);
+  const pvpMinimo = totalCostos > 0 ? totalCostos / (1 - MARKUP_MIN) : 0;
 
   const total = items.reduce(
     (s, it) => s + it.adultos * it.tarifaAdulto + it.ninos * it.tarifaNino,
@@ -165,6 +177,10 @@ export function NuevoContratoForm({
       setError("La BNC no puede ser mayor al total del contrato (PVP).");
       return;
     }
+    if (totalCostos > 0 && total + 0.5 < pvpMinimo) {
+      setError(`El PVP (${fmt(total)}) no cubre el margen mínimo del ${MARKUP_MIN * 100}%. Con costos de ${fmt(totalCostos)}, el PVP mínimo es ${fmt(Math.ceil(pvpMinimo))}.`);
+      return;
+    }
     if (!asesorNombre.trim()) { setError("Selecciona el asesor interno."); return; }
     if (tipoVenta !== "interno" && !aliadoId) { setError(`Selecciona la ${tipoVenta} del catálogo.`); return; }
     const pasajerosOk = pasajeros.filter((p) => p.nombres.trim() !== "" || p.apellidos.trim() !== "");
@@ -202,6 +218,7 @@ export function NuevoContratoForm({
           bncFijo: Number(bncFijo) || 0,
           tipoVenta,
           aliadoId: aliadoId === "" ? null : Number(aliadoId),
+          moneda: monedaEfectiva,
         });
         if (res.ok) {
           router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
@@ -230,6 +247,16 @@ export function NuevoContratoForm({
               {TIPOS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>
+          {!esNegociado && (
+            <div>
+              <label className={labelCls}>Moneda</label>
+              <select value={moneda} onChange={(e) => setMoneda(e.target.value as "COP" | "USD")}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="COP">Pesos (COP)</option>
+                <option value="USD">Dólares (USD)</option>
+              </select>
+            </div>
+          )}
           {esNegociado && (
             <div>
               <label className={labelCls}>Producto del tarifario</label>
@@ -386,7 +413,7 @@ export function NuevoContratoForm({
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() =>
-              setVuelos((a) => [...a, { aerolinea: "", record: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", vueloIda: "", vueloRegreso: "", horaSalidaIda: "", horaLlegadaIda: "", horaSalidaReg: "", horaLlegadaReg: "", servicios: "", fechaSalida: "", fechaRegreso: "" }])
+              setVuelos((a) => [...a, { aerolinea: "", record: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", vueloIda: "", vueloRegreso: "", horaSalidaIda: "", horaLlegadaIda: "", horaSalidaReg: "", horaLlegadaReg: "", servicios: "", fechaSalida: "", fechaRegreso: "", costo: 0 }])
             }
           >
             + Agregar trayecto
@@ -411,7 +438,10 @@ export function NuevoContratoForm({
             <Input placeholder="Hora llegada ida" value={v.horaLlegadaIda} onChange={(e) => setVuelo(i, { horaLlegadaIda: e.target.value })} />
             <Input placeholder="Hora salida regreso" value={v.horaSalidaReg} onChange={(e) => setVuelo(i, { horaSalidaReg: e.target.value })} />
             <Input placeholder="Hora llegada regreso" value={v.horaLlegadaReg} onChange={(e) => setVuelo(i, { horaLlegadaReg: e.target.value })} />
-            <Input className="md:col-span-3" placeholder="Servicios (equipaje…)" value={v.servicios} onChange={(e) => setVuelo(i, { servicios: e.target.value })} />
+            <Input className="md:col-span-2" placeholder="Servicios (equipaje…)" value={v.servicios} onChange={(e) => setVuelo(i, { servicios: e.target.value })} />
+            {!esNegociado && (
+              <Input type="number" min={0} placeholder={`Costo neto (${monedaEfectiva})`} value={v.costo ?? ""} onChange={(e) => setVuelo(i, { costo: Number(e.target.value) || 0 })} title="Costo neto del vuelo (interno)" />
+            )}
             <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setVuelos((a) => a.filter((_, j) => j !== i))}>
               Quitar
             </button>
@@ -429,7 +459,7 @@ export function NuevoContratoForm({
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() =>
-              setHoteles((a) => [...a, { nombre: "", categoria: "", proveedor: "", ciudad: "", alimentacion: "", acomodacion: "", detalleAcomodacion: "", fechaIngreso: "", fechaSalida: "" }])
+              setHoteles((a) => [...a, { nombre: "", categoria: "", proveedor: "", ciudad: "", alimentacion: "", acomodacion: "", detalleAcomodacion: "", fechaIngreso: "", fechaSalida: "", costo: 0 }])
             }
           >
             + Agregar hotel
@@ -444,7 +474,10 @@ export function NuevoContratoForm({
             <ComboCiudad destinos={destinos} value={h.ciudad} onChange={(val) => setHotel(i, { ciudad: val })} modo="nombre" permitirLibre placeholder="Ciudad" />
             <Input placeholder="Alimentación (P.A, PAM…)" value={h.alimentacion} onChange={(e) => setHotel(i, { alimentacion: e.target.value })} />
             <Input placeholder="Acomodación (Doble…)" value={h.acomodacion} onChange={(e) => setHotel(i, { acomodacion: e.target.value })} />
-            <Input className="md:col-span-2" placeholder="Detalle acomodación" value={h.detalleAcomodacion} onChange={(e) => setHotel(i, { detalleAcomodacion: e.target.value })} />
+            <Input placeholder="Detalle acomodación" value={h.detalleAcomodacion} onChange={(e) => setHotel(i, { detalleAcomodacion: e.target.value })} />
+            {!esNegociado && (
+              <Input type="number" min={0} placeholder={`Costo neto (${monedaEfectiva})`} value={h.costo ?? ""} onChange={(e) => setHotel(i, { costo: Number(e.target.value) || 0 })} title="Costo neto del hotel (interno)" />
+            )}
             <Input type="date" value={h.fechaIngreso} onChange={(e) => setHotel(i, { fechaIngreso: e.target.value })} />
             <Input type="date" value={h.fechaSalida} onChange={(e) => setHotel(i, { fechaSalida: e.target.value })} />
             <button type="button" className="text-xs text-gray-400 hover:text-red-500 md:col-span-4 md:text-right" onClick={() => setHoteles((a) => a.filter((_, j) => j !== i))}>
@@ -537,10 +570,16 @@ export function NuevoContratoForm({
             </div>
           ))}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t pt-3">
+        <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3">
+          {totalCostos > 0 && (
+            <span className="text-xs text-gray-500">
+              Costos: <b className="tabular-nums text-gray-700">{fmt(totalCostos)}</b> · PVP mínimo (margen {MARKUP_MIN * 100}%):{" "}
+              <b className="tabular-nums" style={{ color: total + 0.5 < pvpMinimo ? "#C0392B" : "var(--brand-success)" }}>{fmt(Math.ceil(pvpMinimo))}</b>
+            </span>
+          )}
           <span className="text-sm text-gray-500">Total del contrato:</span>
           <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>
-            {formatCOP(total)}
+            {fmt(total)}
           </span>
         </div>
       </section>
@@ -573,8 +612,8 @@ export function NuevoContratoForm({
           )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-x-6 gap-y-1 border-t pt-3 text-sm">
-          <span className="text-gray-500">BNC: <b className="tabular-nums text-gray-700">{formatCOP(bnc)}</b></span>
-          <span className="text-gray-500">Base comisionable: <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(baseComisionable)}</b></span>
+          <span className="text-gray-500">BNC: <b className="tabular-nums text-gray-700">{fmt(bnc)}</b></span>
+          <span className="text-gray-500">Base comisionable: <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(baseComisionable)}</b></span>
         </div>
       </section>
 

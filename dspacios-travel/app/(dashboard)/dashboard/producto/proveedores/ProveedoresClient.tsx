@@ -14,6 +14,7 @@ type Proveedor = {
   politica_reservas: string | null;
   voucher_contacto: string | null;
   aplica_retencion: boolean; pct_retencion: number;
+  clasificacion: string | null;
 };
 
 const TIPOS: { value: TipoProveedor; label: string }[] = [
@@ -50,6 +51,7 @@ export function ProveedoresClient({ proveedores, destinos }: { proveedores: Prov
   const [origenPol, setOrigenPol] = useState<number | "">("");
   const [ret, setRet] = useState(false);
   const [pctRet, setPctRet] = useState("");
+  const [clasif, setClasif] = useState<"costo" | "irt">("costo");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [query, setQuery] = useState("");
@@ -66,7 +68,7 @@ export function ProveedoresClient({ proveedores, destinos }: { proveedores: Prov
   function reset() {
     setEditId(null); setTipo("hotelero"); setNombre(""); setRazon(""); setNit("");
     setCiudad(""); setContacto(""); setBanco(""); setTipoCuenta(""); setNumeroCuenta("");
-    setPolitica(""); setVoucherCon(""); setOrigenPol(""); setRet(false); setPctRet(""); setErr("");
+    setPolitica(""); setVoucherCon(""); setOrigenPol(""); setRet(false); setPctRet(""); setClasif("costo"); setErr("");
   }
 
   // Copia la política de reservas de otro proveedor a este formulario (muchos
@@ -91,6 +93,7 @@ export function ProveedoresClient({ proveedores, destinos }: { proveedores: Prov
     setBanco(p.banco ?? ""); setTipoCuenta(p.tipo_cuenta ?? ""); setNumeroCuenta(p.numero_cuenta ?? "");
     setPolitica(p.politica_reservas ?? ""); setVoucherCon(p.voucher_contacto ?? "");
     setRet(p.aplica_retencion); setPctRet(p.aplica_retencion ? String(p.pct_retencion * 100) : "");
+    setClasif((p.clasificacion as "costo" | "irt") ?? "costo");
     setErr("");
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -102,6 +105,7 @@ export function ProveedoresClient({ proveedores, destinos }: { proveedores: Prov
       tipo, nombre, razonSocial: razon, nit, ciudad, contacto,
       banco, tipoCuenta, numeroCuenta, politicaReservas: politica, voucherContacto: voucherCon,
       aplicaRetencion: ret, pctRetencion: Number(pctRet) / 100 || 0,
+      clasificacion: clasif,
     };
     start(async () => {
       const r = editId == null ? await crearProveedor(input) : await actualizarProveedor(editId, input);
@@ -159,6 +163,19 @@ export function ProveedoresClient({ proveedores, destinos }: { proveedores: Prov
           <div className="md:col-span-3">
             <label className={lbl}>Contacto para voucher <span className="font-normal text-gray-400">(sale en el voucher de servicios)</span></label>
             <Input value={voucherCon} onChange={(e) => setVoucherCon(e.target.value)} placeholder="Ej. Angie Mendoza · Cels 320-500.88.48 · Operador Transturismo Cartagena" />
+          </div>
+          <div>
+            <label className={lbl}>Tratamiento contable</label>
+            <select value={clasif} onChange={(e) => setClasif(e.target.value as "costo" | "irt")}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+              <option value="costo">Costo (ingreso propio · descuenta IVA)</option>
+              <option value="irt">IRT (ingreso para tercero · no provisiona)</option>
+            </select>
+            <p className="mt-1 text-[11px] text-gray-400">
+              {clasif === "irt"
+                ? "Hotel/aerolínea que solo se intermedia: no es costo propio ni descuenta IVA."
+                : "Se factura como ingreso propio: su IVA (base gravable de la CxP) es descontable."}
+            </p>
           </div>
           <div className="flex items-end gap-2">
             <label className="flex items-center gap-2 text-sm text-gray-600">

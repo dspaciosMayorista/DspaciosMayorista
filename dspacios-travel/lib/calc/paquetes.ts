@@ -156,6 +156,21 @@ export function temporadaParaFecha(
 }
 
 /**
+ * Nombre de la temporada de mayor prioridad que cubre una fecha Y está en
+ * vigencia de compra. Para SERVICIOS por temporada: la fecha del viaje elige la
+ * tarifa, respetando la vigencia de compra (igual que el hotel). Devuelve null si
+ * ninguna temporada con fechas aplica (→ se usa la tarifa 'GENERAL').
+ */
+export function temporadaVigenteParaFecha(
+  fecha: Date,
+  temporadas: TemporadaRango[],
+  hoy: string = hoyISO()
+): string | null {
+  const top = entradasNoche(fecha.getTime(), temporadas, hoy)[0];
+  return top?.nombre ?? null;
+}
+
+/**
  * Neto efectivo de UNA noche, resolviendo por prioridad + vigencia de compra:
  *  - gana la entrada de mayor prioridad que cubra la fecha y esté en vigencia de compra;
  *  - si es 'tarifa', usa su neto cargado;
@@ -278,14 +293,26 @@ export interface TarifaPaquete {
  * El impuesto (BNC) se RESTA del PVP para obtener la base comisionable;
  * no se suma encima (ya está contenido en el aporte del vuelo / hotel).
  */
+/**
+ * Redondeo de venta según la MONEDA:
+ *  - COP: hacia arriba al siguiente múltiplo de mil (pesos).
+ *  - USD: hacia arriba al dólar entero.
+ */
+export function redondearVenta(n: number, moneda = "COP"): number {
+  if ((moneda ?? "COP").toUpperCase() === "USD") return Number.isFinite(n) && n > 0 ? Math.ceil(n) : 0;
+  return redondearMilArriba(n);
+}
+
 export function componerTarifa(args: {
   aporteHotel: number;
   aporteServicios: number;
   aporteVuelo: number;
   impuesto: number;
+  moneda?: string;
 }): TarifaPaquete {
-  // El PVP (precio de venta) se redondea hacia ARRIBA al siguiente múltiplo de mil.
-  const pvp = redondearMilArriba(args.aporteHotel + args.aporteServicios + args.aporteVuelo);
+  // El PVP (precio de venta) se redondea hacia ARRIBA según la moneda (mil en COP,
+  // dólar entero en USD).
+  const pvp = redondearVenta(args.aporteHotel + args.aporteServicios + args.aporteVuelo, args.moneda);
   return {
     pvp,
     impuesto: redondear(args.impuesto),

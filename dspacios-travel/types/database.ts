@@ -30,6 +30,24 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["organizaciones"]["Insert"]>;
         Relationships: [];
       };
+      salidas_dinamicas: {
+        Row: {
+          id: number; paquete_id: number; aerolinea: string | null; ruta: string | null; origen: string | null;
+          fecha_ida: string; fecha_regreso: string | null;
+          hora_salida_ida: string | null; hora_llegada_ida: string | null; hora_salida_reg: string | null; hora_llegada_reg: string | null;
+          valor_tiquete: number; aplica_mk: boolean; ta: number; fee_infante: number;
+          compra_inicio: string | null; compra_fin: string | null; activo: boolean; notas: string | null; orden: number; created_at: string;
+        };
+        Insert: {
+          id?: number; paquete_id: number; aerolinea?: string | null; ruta?: string | null; origen?: string | null;
+          fecha_ida: string; fecha_regreso?: string | null;
+          hora_salida_ida?: string | null; hora_llegada_ida?: string | null; hora_salida_reg?: string | null; hora_llegada_reg?: string | null;
+          valor_tiquete?: number; aplica_mk?: boolean; ta?: number; fee_infante?: number;
+          compra_inicio?: string | null; compra_fin?: string | null; activo?: boolean; notas?: string | null; orden?: number; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["salidas_dinamicas"]["Insert"]>;
+        Relationships: [];
+      };
       auditoria: {
         Row: {
           id: number;
@@ -44,6 +62,7 @@ export type Database = {
           antes: Json | null;
           despues: Json | null;
           cambios: Json | null;
+          tenant: string;
         };
         Insert: {
           id?: number;
@@ -88,6 +107,7 @@ export type Database = {
           agencia_id: string | null;
           pct_comision: number | null;
           org_id: string | null;
+          tenant: string;
         };
         Insert: {
           id?: string;
@@ -101,6 +121,7 @@ export type Database = {
           agencia_id?: string | null;
           pct_comision?: number | null;
           org_id?: string | null;
+          tenant?: string;
         };
         Update: {
           id?: string;
@@ -161,6 +182,7 @@ export type Database = {
           politica_reservas: string | null;
           aplica_retencion: boolean;
           pct_retencion: number;
+          clasificacion: string;
           created_at: string;
           voucher_contacto: string | null;
         };
@@ -179,6 +201,7 @@ export type Database = {
           politica_reservas?: string | null;
           aplica_retencion?: boolean;
           pct_retencion?: number;
+          clasificacion?: string;
           created_at?: string;
           voucher_contacto?: string | null;
         };
@@ -266,6 +289,8 @@ export type Database = {
           observaciones: string | null;
           facturado: boolean;
           moneda: string;
+          trm_contrato: number | null;
+          tenant: string;
           numero_documento: string | null;
           fecha_emision: string | null;
           cliente_documento: string | null;
@@ -325,6 +350,8 @@ export type Database = {
           observaciones?: string | null;
           facturado?: boolean;
           moneda?: string;
+          trm_contrato?: number | null;
+          tenant?: string;
           numero_documento?: string | null;
           fecha_emision?: string | null;
           cliente_documento?: string | null;
@@ -366,6 +393,9 @@ export type Database = {
           cliente: string | null;
           fecha_abono: string;
           valor_abono: number;
+          monto_cop: number | null;
+          trm: number | null;
+          tenant: string;
           forma_pago: string | null;
           referencia: string | null;
           recibido_por: string | null;
@@ -379,6 +409,9 @@ export type Database = {
           cliente?: string | null;
           fecha_abono?: string;
           valor_abono: number;
+          monto_cop?: number | null;
+          trm?: number | null;
+          tenant?: string;
           forma_pago?: string | null;
           referencia?: string | null;
           recibido_por?: string | null;
@@ -396,6 +429,198 @@ export type Database = {
           }
         ];
       };
+      agencias: {
+        Row: {
+          tenant: string;
+          razon_social: string | null;
+          nombre_comercial: string | null;
+          nit: string | null;
+          dv: string | null;
+          rnt: string | null;
+          direccion: string | null;
+          ciudad: string | null;
+          correo: string | null;
+          telefono: string | null;
+          actividad_economica: string | null;
+          responsabilidades: string | null;
+          representante_legal: string | null;
+          factura_electronica: boolean;
+          banco: string | null;
+          tipo_cuenta: string | null;
+          numero_cuenta: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          tenant: string;
+          razon_social?: string | null;
+          nombre_comercial?: string | null;
+          nit?: string | null;
+          dv?: string | null;
+          rnt?: string | null;
+          direccion?: string | null;
+          ciudad?: string | null;
+          correo?: string | null;
+          telefono?: string | null;
+          actividad_economica?: string | null;
+          responsabilidades?: string | null;
+          representante_legal?: string | null;
+          factura_electronica?: boolean;
+          banco?: string | null;
+          tipo_cuenta?: string | null;
+          numero_cuenta?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["agencias"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_facturacion: {
+        Row: {
+          numero_contrato: string;
+          irt: number;
+          ingreso_propio: number;
+          ingreso_exento: number;
+          tipo_exento: string | null;
+          lleva_iva: boolean;
+          observacion: string | null;
+          dian_emitida: boolean;
+          dian_fecha: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          numero_contrato: string;
+          irt?: number;
+          ingreso_propio?: number;
+          ingreso_exento?: number;
+          tipo_exento?: string | null;
+          lleva_iva?: boolean;
+          observacion?: string | null;
+          dian_emitida?: boolean;
+          dian_fecha?: string | null;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_facturacion"]["Insert"]>;
+        Relationships: [];
+      };
+      pe_empleados: {
+        Row: {
+          id: number;
+          nombre: string;
+          tipo: string;
+          salario: number;
+          auxilio: boolean;
+          riesgo: string;
+          declarante: boolean;
+          contrato_path: string | null;
+          contrato_nombre: string | null;
+          activo: boolean;
+          tenant: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          tipo?: string;
+          salario?: number;
+          auxilio?: boolean;
+          riesgo?: string;
+          declarante?: boolean;
+          contrato_path?: string | null;
+          contrato_nombre?: string | null;
+          activo?: boolean;
+          tenant?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["pe_empleados"]["Insert"]>;
+        Relationships: [];
+      };
+      contabilidad_movimientos: {
+        Row: {
+          id: number;
+          fecha: string;
+          tipo: string;
+          concepto: string;
+          tercero: string | null;
+          categoria: string | null;
+          medio_pago: string | null;
+          valor: number;
+          comprobante: string | null;
+          observacion: string | null;
+          tenant: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          fecha?: string;
+          tipo?: string;
+          concepto: string;
+          tercero?: string | null;
+          categoria?: string | null;
+          medio_pago?: string | null;
+          valor?: number;
+          comprobante?: string | null;
+          observacion?: string | null;
+          tenant?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contabilidad_movimientos"]["Insert"]>;
+        Relationships: [];
+      };
+      conciliacion_extracto: {
+        Row: {
+          id: number; fecha: string; descripcion: string | null; valor: number;
+          saldo: number | null; periodo: string; cuenta: string | null; tenant: string;
+          conciliacion_id: number | null; created_at: string;
+        };
+        Insert: {
+          id?: number; fecha: string; descripcion?: string | null; valor: number;
+          saldo?: number | null; periodo: string; cuenta?: string | null; tenant?: string;
+          conciliacion_id?: number | null; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["conciliacion_extracto"]["Insert"]>;
+        Relationships: [];
+      };
+      conciliacion: {
+        Row: { id: number; nota: string | null; total: number; tenant: string; created_at: string };
+        Insert: { id?: number; nota?: string | null; total?: number; tenant?: string; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["conciliacion"]["Insert"]>;
+        Relationships: [];
+      };
+      conciliacion_sistema: {
+        Row: {
+          id: number; conciliacion_id: number; ref: string;
+          descripcion: string | null; fecha: string | null; valor: number; created_at: string;
+        };
+        Insert: {
+          id?: number; conciliacion_id: number; ref: string;
+          descripcion?: string | null; fecha?: string | null; valor: number; created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["conciliacion_sistema"]["Insert"]>;
+        Relationships: [];
+      };
+      pe_costos: {
+        Row: {
+          id: number;
+          concepto: string;
+          categoria: string | null;
+          clasificacion: string;
+          valor: number;
+          activo: boolean;
+          tenant: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          concepto: string;
+          categoria?: string | null;
+          clasificacion?: string;
+          valor?: number;
+          activo?: boolean;
+          tenant?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["pe_costos"]["Insert"]>;
+        Relationships: [];
+      };
       cuentas_por_pagar: {
         Row: {
           id: number;
@@ -410,15 +635,20 @@ export type Database = {
           pct_retencion: number;
           abono1: number | null;
           fecha_abono1: string | null;
+          trm1: number | null;
           abono2: number | null;
           fecha_abono2: string | null;
+          trm2: number | null;
           abono3: number | null;
           fecha_abono3: string | null;
+          trm3: number | null;
           observaciones: string | null;
           tipo_facturacion: string | null;
           base_gravable: number | null;
           iva_proveedor: number | null;
           valor_irt: number | null;
+          clasificacion: string;
+          tenant: string;
           moneda: string;
           created_at: string;
           org_id: string | null;
@@ -436,15 +666,20 @@ export type Database = {
           pct_retencion?: number;
           abono1?: number | null;
           fecha_abono1?: string | null;
+          trm1?: number | null;
           abono2?: number | null;
           fecha_abono2?: string | null;
+          trm2?: number | null;
           abono3?: number | null;
           fecha_abono3?: string | null;
+          trm3?: number | null;
           observaciones?: string | null;
           tipo_facturacion?: string | null;
           base_gravable?: number | null;
           iva_proveedor?: number | null;
           valor_irt?: number | null;
+          clasificacion?: string;
+          tenant?: string;
           moneda?: string;
           created_at?: string;
           org_id?: string | null;
@@ -852,6 +1087,7 @@ export type Database = {
           descripcion: string | null;
           ubicacion: string | null;
           video_url: string | null;
+          moneda: string;
         };
         Insert: {
           id?: number;
@@ -872,6 +1108,7 @@ export type Database = {
           email_comercial?: string | null;
           estrellas?: number | null;
           clasificacion?: string | null;
+          moneda?: string;
           descripcion?: string | null;
           ubicacion?: string | null;
           video_url?: string | null;
@@ -1397,23 +1634,29 @@ export type Database = {
           id: number; nombre: string; proveedor_id: number | null; destino_id: number | null;
           tarifa_neta: number; temporada: string | null; rangos_edad: number[] | null; tipo_tarifa: string;
           precio_persona: number | null; precio_grupo: number | null; categoria: string;
-          descripcion: string | null; recargo_individual: number | null;
-          liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; activo: boolean; created_at: string;
+          descripcion: string | null; recargo_individual: number | null; moneda: string;
+          liquidacion: Database["public"]["Enums"]["liquidacion_tipo"]; alcance: string; activo: boolean; created_at: string;
         };
         Insert: {
           id?: number; nombre: string; proveedor_id?: number | null; destino_id?: number | null;
           tarifa_neta?: number; temporada?: string | null; rangos_edad?: number[] | null; tipo_tarifa?: string;
           precio_persona?: number | null; precio_grupo?: number | null; categoria?: string;
-          descripcion?: string | null; recargo_individual?: number | null;
-          liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; activo?: boolean; created_at?: string;
+          descripcion?: string | null; recargo_individual?: number | null; moneda?: string;
+          liquidacion?: Database["public"]["Enums"]["liquidacion_tipo"]; alcance?: string; activo?: boolean; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["servicios_adicionales"]["Insert"]>;
         Relationships: [];
       };
       servicio_tarifa_pax: {
-        Row: { id: number; servicio_id: number; pax_desde: number; pax_hasta: number; precio: number; created_at: string };
-        Insert: { id?: number; servicio_id: number; pax_desde?: number; pax_hasta?: number; precio?: number; created_at?: string };
+        Row: { id: number; servicio_id: number; pax_desde: number; pax_hasta: number; precio: number; temporada: string; created_at: string };
+        Insert: { id?: number; servicio_id: number; pax_desde?: number; pax_hasta?: number; precio?: number; temporada?: string; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["servicio_tarifa_pax"]["Insert"]>;
+        Relationships: [];
+      };
+      servicio_temporadas: {
+        Row: { id: number; servicio_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; prioridad: number; compra_inicio: string | null; compra_fin: string | null; precio_persona: number | null; recargo_individual: number | null; orden: number; created_at: string };
+        Insert: { id?: number; servicio_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; precio_persona?: number | null; recargo_individual?: number | null; orden?: number; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["servicio_temporadas"]["Insert"]>;
         Relationships: [];
       };
       rangos_edad: {
@@ -1437,6 +1680,7 @@ export type Database = {
           pct_mk: number;
           impuesto_tipo: Database["public"]["Enums"]["impuesto_tipo"];
           impuesto_fijo: number;
+          moneda: string;
           imagen_url: string | null;
           notas: string | null;
           created_at: string;
@@ -1456,6 +1700,7 @@ export type Database = {
           pct_mk?: number;
           impuesto_tipo?: Database["public"]["Enums"]["impuesto_tipo"];
           impuesto_fijo?: number;
+          moneda?: string;
           imagen_url?: string | null;
           notas?: string | null;
           created_at?: string;
@@ -1512,12 +1757,16 @@ export type Database = {
           descripcion: string | null;
           recargo_individual: number | null;
           org_id: string | null;
+          moneda: string;
+          salida_id: number | null;
           created_at: string;
         };
         Insert: {
           id?: number;
           paquete_id: number;
           org_id?: string | null;
+          moneda?: string;
+          salida_id?: number | null;
           paquete_nombre?: string | null;
           paquete_activo?: boolean;
           pax_desde?: number | null;
@@ -1574,9 +1823,12 @@ export type Database = {
           texto_cancelacion: string | null;
           texto_pagos: string | null;
           notas: string | null;
+          highlights: string[];
           desde_precio: number | null;
           incluye_aereo: boolean;
           portada_url: string | null;
+          flyer_url: string | null;
+          historia_url: string | null;
           asistencia_medica_dia: number;
           modo_precio: string;
           video_url: string | null;
@@ -1608,9 +1860,12 @@ export type Database = {
           texto_cancelacion?: string | null;
           texto_pagos?: string | null;
           notas?: string | null;
+          highlights?: string[];
           desde_precio?: number | null;
           incluye_aereo?: boolean;
           portada_url?: string | null;
+          flyer_url?: string | null;
+          historia_url?: string | null;
           asistencia_medica_dia?: number;
           modo_precio?: string;
           video_url?: string | null;
@@ -2105,6 +2360,10 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: Database["public"]["Enums"]["rol_usuario"];
       };
+      fn_fusionar_destino: {
+        Args: { p_origen: number; p_destino: number };
+        Returns: undefined;
+      };
       siguiente_numero_contrato: {
         Args: Record<PropertyKey, never>;
         Returns: string;
@@ -2144,7 +2403,7 @@ export type Database = {
       paquete_categoria: "bloqueo" | "porcion_terrestre";
       liquidacion_tipo: "dia" | "noche" | "paquete";
       impuesto_tipo: "tiquete" | "fijo";
-      tarifario_modulo: "bloqueo" | "porcion_terrestre" | "servicios";
+      tarifario_modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
     };
     CompositeTypes: {
       [_ in never]: never;

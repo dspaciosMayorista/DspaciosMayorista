@@ -22,6 +22,7 @@ export type ProveedorInput = {
   voucherContacto: string;
   aplicaRetencion: boolean;
   pctRetencion: number;
+  clasificacion: "costo" | "irt";  // costo = ingreso propio (descuenta IVA); irt = para tercero
 };
 
 function toRow(input: ProveedorInput) {
@@ -39,6 +40,7 @@ function toRow(input: ProveedorInput) {
     voucher_contacto: oNull(input.voucherContacto),
     aplica_retencion: input.aplicaRetencion,
     pct_retencion: input.pctRetencion,
+    clasificacion: input.clasificacion === "irt" ? "irt" : "costo",
   };
 }
 

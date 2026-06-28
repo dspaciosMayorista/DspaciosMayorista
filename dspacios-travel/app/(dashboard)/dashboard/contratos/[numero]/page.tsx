@@ -49,7 +49,7 @@ export default async function ContratoDetallePage({
     { data: destinos },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
-    sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
+    sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
     sb.from("cuentas_por_pagar").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("aliados_b2b").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("facturacion").select("*").eq("numero_contrato", numero).order("id"),
@@ -217,6 +217,7 @@ export default async function ContratoDetallePage({
         comisionesB2B={b2b ?? []}
         facturas={facturasConItems}
         formasPago={formasPago}
+        moneda={(venta.moneda as string) ?? "COP"}
       />
 
       <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} />
