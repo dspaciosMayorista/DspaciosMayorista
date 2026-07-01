@@ -238,6 +238,9 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 ## 11. Convenciones de código
 
 - TypeScript estricto. Componentes y lógica de negocio separados.
+- **ÍCONOS, NUNCA EMOJIS.** Toda la UI usa íconos **lucide-react** (ej. `Megaphone`,
+  `ExternalLink`, `X`). Nada de emojis (📣, ✕, 👌, ⚙️…) en botones, menús, títulos ni
+  estados. Regla permanente pedida por el dueño.
 - Lógica de cálculo como **funciones puras** y testeables (heredar el patrón de `calcCostos`/`calcComision`).
 - Tokens de marca como variables CSS (sección 2). Nada de colores sueltos hardcodeados.
 - Montos en `numeric`; formatear en UI con separador de miles colombiano.

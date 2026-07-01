@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ExternalLink, X, CheckCircle2 } from "lucide-react";
 import type { Database } from "@/types/database";
 import {
   TIPOS_MATERIAL, ESTADOS_MATERIAL, PRIORIDADES, CANALES, LISTAS, OBJETIVOS, RESULTADOS, ESTADOS_PLAN,
@@ -96,7 +97,7 @@ function TabSemana({ materiales, onEnviar }: { materiales: MaterialConRot[]; onE
     <div>
       <p className="mb-3 text-sm text-gray-600">{lista.length} material(es) listos para enviar (prioridad de envío o ya cumplieron los 21 días).</p>
       {!lista.length ? (
-        <p className="rounded-xl border border-dashed border-gray-200 py-14 text-center text-gray-400">Nada por enviar ahora mismo. 👌</p>
+        <p className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-gray-200 py-14 text-center text-gray-400"><CheckCircle2 size={16} /> Nada por enviar ahora mismo.</p>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <table className="w-full min-w-[720px] text-sm">
@@ -108,7 +109,7 @@ function TabSemana({ materiales, onEnviar }: { materiales: MaterialConRot[]; onE
               {lista.map((m) => (
                 <tr key={m.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="px-4 py-2 text-gray-600">{m.destino ?? "—"}</td>
-                  <td className="px-4 py-2 font-medium text-gray-800">{m.hotel_producto}{m.link_archivo && <a href={m.link_archivo} target="_blank" rel="noreferrer" className="ml-1 text-xs text-[var(--brand-accent)]">↗</a>}</td>
+                  <td className="px-4 py-2 font-medium text-gray-800"><span className="inline-flex items-center gap-1">{m.hotel_producto}{m.link_archivo && <a href={m.link_archivo} target="_blank" rel="noreferrer" className="text-[var(--brand-accent)]"><ExternalLink size={13} /></a>}</span></td>
                   <td className="px-4 py-2 text-gray-500">{label(TIPOS_MATERIAL, m.tipo_material)}</td>
                   <td className="px-4 py-2 text-gray-500">{label(PRIORIDADES, m.prioridad)}</td>
                   <td className="px-4 py-2 text-gray-500">{fmt(m.rotacion.ultimaFecha)}{m.rotacion.diasDesde != null ? ` · hace ${m.rotacion.diasDesde}d` : ""}</td>
@@ -350,7 +351,7 @@ function TabCalendario({ plan, materiales, destinoOpts, hoy }: { plan: PlanRow[]
                   <select value={p.estado} onChange={(e) => start(async () => { await cambiarEstadoPlan(p.id, e.target.value); router.refresh(); })} className="rounded border border-gray-300 bg-white px-1 py-0.5 text-xs">
                     {ESTADOS_PLAN.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
                   </select>
-                  <button onClick={() => { if (confirm("¿Eliminar programación?")) start(async () => { await eliminarPlan(p.id); router.refresh(); }); }} className="text-red-500 hover:underline">✕</button>
+                  <button onClick={() => { if (confirm("¿Eliminar programación?")) start(async () => { await eliminarPlan(p.id); router.refresh(); }); }} className="text-red-500 hover:text-red-700" title="Eliminar"><X size={14} /></button>
                 </div>
               </div>
             ))}

@@ -3,6 +3,15 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "../(dashboard)/LogoutButton";
+import { Contact, Send, Upload, Settings, Megaphone } from "lucide-react";
+
+const NAV = [
+  { href: "/crm", label: "Contactos", Icon: Contact },
+  { href: "/crm/campanas", label: "Campañas", Icon: Send },
+  { href: "/crm/difusion", label: "Difusión", Icon: Megaphone },
+  { href: "/crm/b2b", label: "Cargar B2B", Icon: Upload },
+  { href: "/crm/email", label: "Config email", Icon: Settings },
+];
 
 // Layout PROPIO del CRM: toma toda la pantalla (sin el sidebar del portal) para
 // que quien lo opera sienta que es una app aparte. El botón "PORTAL" regresa al
@@ -24,11 +33,12 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
             <Logo variant="white" height={26} className="h-6 w-auto" />
             <span className="rounded-md bg-white/15 px-2 py-0.5 text-sm font-semibold tracking-wide">CRM</span>
           </Link>
-          <nav className="ml-2 flex items-center gap-1 text-sm">
-            <Link href="/crm" className="rounded-lg px-3 py-1.5 hover:bg-white/15">Contactos</Link>
-            <Link href="/crm/campanas" className="rounded-lg px-3 py-1.5 hover:bg-white/15">Campañas</Link>
-            <Link href="/crm/b2b" className="rounded-lg px-3 py-1.5 hover:bg-white/15">Cargar B2B</Link>
-            <Link href="/crm/email" className="rounded-lg px-3 py-1.5 hover:bg-white/15">Config email</Link>
+          <nav className="ml-2 flex flex-wrap items-center gap-1 text-sm">
+            {NAV.map(({ href, label, Icon }) => (
+              <Link key={href} href={href} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 hover:bg-white/15">
+                <Icon size={15} /> {label}
+              </Link>
+            ))}
           </nav>
           <div className="ml-auto flex items-center gap-2">
             <Link
