@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
-import { marcarComisionB2BPagada, marcarComisionB2BPendiente, actualizarBaseComisionB2B } from "./actions";
+import { marcarComisionB2BPagada, marcarComisionB2BPendiente, actualizarComisionB2B } from "./actions";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 export type ComB2BRow = {
@@ -191,7 +191,13 @@ function Fila({ row }: { row: ComB2BRow }) {
 // comisión base + recobro − retención = a pagar), con la base comisionable
 // editable (por defecto es PVP − impuesto/BNC, a veces hay que ajustarla).
 function FilaDetalle({ row }: { row: ComB2BRow }) {
-  const [base, setBase] = useState(String(row.baseComision ?? row.precioVenta ?? 0));
+  const baseInicial = row.baseComision ?? row.precioVenta ?? 0;
+  const recobroInicial = row.recobroTotal ?? 0;
+  const pctRecobroInicial = row.pctRecobroAliado ?? 0.5;
+
+  const [base, setBase] = useState(String(baseInicial));
+  const [recobro, setRecobro] = useState(String(recobroInicial));
+  const [pctRecobro, setPctRecobro] = useState(String(Math.round(pctRecobroInicial * 100)));
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
 
@@ -199,17 +205,24 @@ function FilaDetalle({ row }: { row: ComB2BRow }) {
     precioVenta: row.precioVenta ?? 0,
     baseComisionable: Number(base) || 0,
     pctComision: row.pct_comision ?? 0,
-    recobroTotal: row.recobroTotal ?? 0,
-    pctRecobroAliado: row.pctRecobroAliado ?? 0.5,
+    recobroTotal: Number(recobro) || 0,
+    pctRecobroAliado: (Number(pctRecobro) || 0) / 100,
     aplicaRetencion: row.aplicaRetencion ?? false,
     pctRetencion: row.pctRetencion ?? 0,
   });
-  const cambio = Number(base) !== (row.baseComision ?? row.precioVenta ?? 0);
+  const cambio =
+    Number(base) !== baseInicial ||
+    Number(recobro) !== recobroInicial ||
+    (Number(pctRecobro) || 0) / 100 !== pctRecobroInicial;
 
   function guardar() {
     setMsg("");
     start(async () => {
-      const r = await actualizarBaseComisionB2B(row.id, Number(base) || 0);
+      const r = await actualizarComisionB2B(row.id, {
+        baseComision: Number(base) || 0,
+        recobroTotal: Number(recobro) || 0,
+        pctRecobroAliado: (Number(pctRecobro) || 0) / 100,
+      });
       if (r.ok) setMsg("Guardado ✓"); else setMsg(r.error);
     });
   }
@@ -220,30 +233,42 @@ function FilaDetalle({ row }: { row: ComB2BRow }) {
       <div className="tabular-nums text-gray-700">{valor}</div>
     </div>
   );
+  const Campo = ({ label, value, onChange, width = "w-24" }: { label: string; value: string; onChange: (v: string) => void; width?: string }) => (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
+      <Input type="number" min={0} value={value} onChange={(e) => onChange(e.target.value)} className={`mt-0.5 h-7 ${width} text-xs`} />
+    </div>
+  );
 
   return (
     <tr className="border-b border-gray-100 bg-gray-50/60">
       <td colSpan={7} className="px-4 py-3">
-        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-4 lg:grid-cols-7">
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">De dónde sale la comisión</p>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs sm:grid-cols-4 lg:grid-cols-8">
           <Dato label="Precio de venta (PVP)" valor={formatCOP(row.precioVenta ?? 0)} />
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-gray-400">Base comisionable</div>
-            <div className="mt-0.5 flex items-center gap-1">
-              <Input type="number" min={0} value={base} onChange={(e) => setBase(e.target.value)} className="h-7 w-28 text-xs" />
-              {cambio && (
-                <Button type="button" disabled={pending} onClick={guardar} className="h-7 px-2 text-[11px]" style={{ backgroundColor: "var(--brand-primary)" }}>
-                  {pending ? "…" : "Guardar"}
-                </Button>
-              )}
-            </div>
-          </div>
+          <Campo label="Base comisionable" value={base} onChange={setBase} />
           <Dato label="% comisión" valor={`${((row.pct_comision ?? 0) * 100).toFixed(1)}%`} />
           <Dato label="Comisión (base × %)" valor={formatCOP(preview.comisionBase)} />
-          <Dato label="Recobro aliado" valor={formatCOP(preview.recobroAliado)} />
+          <Campo label="Recobro total" value={recobro} onChange={setRecobro} />
+          <Campo label="% recobro al aliado" value={pctRecobro} onChange={setPctRecobro} width="w-16" />
+          <Dato label="+ Recobro aliado" valor={formatCOP(preview.recobroAliado)} />
           <Dato label="Retención" valor={row.aplicaRetencion ? `− ${formatCOP(preview.retencion)}` : "No aplica"} />
-          <Dato label="Total a pagar" valor={formatCOP(preview.totalPagar)} />
         </div>
-        {msg && <p className="mt-2 text-[11px] text-gray-500">{msg}</p>}
+        <div className="mt-3 flex items-center justify-between border-t border-gray-200 pt-2">
+          <span className="text-xs text-gray-500">
+            Comisión ({formatCOP(preview.comisionBase)}) + recobro aliado ({formatCOP(preview.recobroAliado)})
+            {row.aplicaRetencion ? ` − retención (${formatCOP(preview.retencion)})` : ""} ={" "}
+            <b className="text-sm" style={{ color: "var(--brand-primary)" }}>{formatCOP(preview.totalPagar)}</b>
+          </span>
+          <div className="flex items-center gap-2">
+            {msg && <span className="text-[11px] text-gray-500">{msg}</span>}
+            {cambio && (
+              <Button type="button" disabled={pending} onClick={guardar} className="h-7 px-3 text-[11px]" style={{ backgroundColor: "var(--brand-primary)" }}>
+                {pending ? "Guardando…" : "Guardar cambios"}
+              </Button>
+            )}
+          </div>
+        </div>
       </td>
     </tr>
   );
