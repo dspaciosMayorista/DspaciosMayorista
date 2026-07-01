@@ -34,7 +34,7 @@ export default async function ComisionesPage() {
 
   const rowsRegistradas: ComB2BRow[] = (b2b ?? []).map((b) => {
     const c = calcComisionB2B({
-      precioVenta: b.precio_venta, pctComision: b.pct_comision,
+      precioVenta: b.precio_venta, baseComisionable: b.base_comision, pctComision: b.pct_comision,
       recobroTotal: b.recobro_total, pctRecobroAliado: b.pct_recobro_aliado,
       aplicaRetencion: b.aplica_retencion, pctRetencion: b.pct_retencion,
     });
@@ -44,7 +44,15 @@ export default async function ComisionesPage() {
       cliente: clientePorContrato.get(b.numero_contrato) ?? null,
       aliado: b.aliado,
       nit: b.nit,
+      precioVenta: b.precio_venta,
+      baseComision: b.base_comision,
       pct_comision: b.pct_comision,
+      recobroTotal: b.recobro_total,
+      pctRecobroAliado: b.pct_recobro_aliado,
+      aplicaRetencion: b.aplica_retencion,
+      pctRetencion: b.pct_retencion,
+      comisionBase: c.comisionBase,
+      recobroAliado: c.recobroAliado,
       totalComision: c.totalComision,
       retencion: c.retencion,
       totalPagar: c.totalPagar,

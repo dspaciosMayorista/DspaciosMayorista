@@ -7,6 +7,7 @@ import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
 import { asegurarCuentasPorPagar } from "../reservar/actions";
 import { formatMoneda } from "@/lib/utils";
 import { getTenant } from "@/lib/tenant.server";
+import { numeroConTenant } from "@/lib/tenant";
 
 // Margen mínimo que debe dejar un contrato manual (dinámico/empaquetado):
 // PVP ≥ total de costos ÷ (1 − 20%).
@@ -63,6 +64,16 @@ export type ItemInput = {
   tarifaNino: number;
 };
 
+// Servicio con proveedor propio (asistencia médica, traslados, tours…), aparte
+// de hotel/vuelo: alimenta el costo interno correspondiente y su CxP.
+export type TipoServicio = "asistencia" | "traslado" | "tour" | "otro";
+export type ServicioInput = {
+  tipo: TipoServicio;
+  descripcion: string;
+  proveedor: string;
+  costo?: number;
+};
+
 export type ContratoInput = {
   tipoPaquete: TipoPaquete;
   paqueteId: number | null;
@@ -85,6 +96,7 @@ export type ContratoInput = {
   pasajeros: PasajeroInput[];
   hoteles: HotelInput[];
   vuelos: VueloInput[];
+  servicios?: ServicioInput[];
   items: ItemInput[];
   // BNC (Base No Comisionable) — se elige al crear el contrato (dinámico/empaquetado
   // no la traen). modo 'tiquetes' = BNC es el valor de los tiquetes; 'fijo' = un
@@ -108,10 +120,14 @@ export async function crearContrato(
   input: ContratoInput
 ): Promise<CrearContratoResult> {
   const sb = await createClient();
+  const tenant = await getTenant();
 
-  // 1. Número de contrato (00-NNNN) vía secuencia en la BD
-  const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
-  if (ne || !numero) {
+  // 1. Número de contrato (00-NNNN) vía secuencia GLOBAL en la BD. La secuencia es
+  // compartida con la mayorista, así que en minorista se le antepone el prefijo
+  // MIN- (numeroConTenant) para que NUNCA choque ni se confunda con la numeración
+  // real de la mayorista (dos agencias, misma secuencia, PK distinta).
+  const { data: numeroRaw, error: ne } = await sb.rpc("siguiente_numero_contrato");
+  if (ne || !numeroRaw) {
     return {
       ok: false,
       error:
@@ -119,6 +135,7 @@ export async function crearContrato(
         " — Verifica que la migración 010 esté aplicada en Supabase.",
     };
   }
+  const numero = numeroConTenant(numeroRaw, tenant);
 
   // Precio BLOQUEADO del producto para negociados: se ignoran las tarifas que
   // venga del cliente y se usan las del paquete (el asesor no puede cambiarlas).
@@ -164,7 +181,14 @@ export async function crearContrato(
   const monedaContrato = !negociado && (input.moneda ?? "COP") === "USD" ? "USD" : "COP";
   const costoHotelManual = !negociado ? input.hoteles.reduce((s, h) => s + Math.max(0, Number(h.costo) || 0), 0) : 0;
   const costoAereoManual = !negociado ? input.vuelos.reduce((s, v) => s + Math.max(0, Number(v.costo) || 0), 0) : 0;
-  const totalCostosManual = costoHotelManual + costoAereoManual;
+  const servicios = input.servicios ?? [];
+  // Costo de servicios con proveedor propio, repartido por tipo (columnas ya
+  // existentes en ventas): asistencia → costo_asistencia; traslado/tour →
+  // costo_receptivo; otro → otros_costos.
+  const costoAsistenciaManual = !negociado ? servicios.filter((s) => s.tipo === "asistencia").reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0) : 0;
+  const costoReceptivoManual = !negociado ? servicios.filter((s) => s.tipo === "traslado" || s.tipo === "tour").reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0) : 0;
+  const otrosCostosManual = !negociado ? servicios.filter((s) => s.tipo === "otro").reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0) : 0;
+  const totalCostosManual = costoHotelManual + costoAereoManual + costoAsistenciaManual + costoReceptivoManual + otrosCostosManual;
   // Validación de margen mínimo: PVP ≥ costos ÷ (1 − 20%).
   if (!negociado && totalCostosManual > 0) {
     const pvpMin = totalCostosManual / (1 - MARKUP_MIN);
@@ -191,7 +215,6 @@ export async function crearContrato(
   }
 
   // 2. Crear la venta (cabecera del contrato) — estampada con la agencia activa.
-  const tenant = await getTenant();
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
     tenant,
@@ -206,7 +229,15 @@ export async function crearContrato(
     estado: "activo",
     // Solo empaquetado/dinámico (manual) pueden ir en USD; negociado sigue su producto (COP).
     moneda: monedaContrato,
-    ...(!negociado ? { costo_hotel: costoHotelManual, costo_aereo: costoAereoManual } : {}),
+    ...(!negociado
+      ? {
+          costo_hotel: costoHotelManual,
+          costo_aereo: costoAereoManual,
+          costo_asistencia: costoAsistenciaManual,
+          costo_receptivo: costoReceptivoManual,
+          otros_costos: otrosCostosManual,
+        }
+      : {}),
     tipo_paquete: input.tipoPaquete,
     asesor: oNull(input.asesorNombre),
     canal,
@@ -286,6 +317,20 @@ export async function crearContrato(
     if (error) return { ok: false, error: error.message };
   }
 
+  if (servicios.length) {
+    const { error } = await sb.from("contrato_servicios").insert(
+      servicios.filter((s) => s.descripcion.trim()).map((s, i) => ({
+        numero_contrato: numero,
+        tipo: s.tipo,
+        descripcion: s.descripcion.trim(),
+        proveedor: oNull(s.proveedor),
+        costo: Math.max(0, Number(s.costo) || 0),
+        orden: i,
+      }))
+    );
+    if (error) return { ok: false, error: error.message };
+  }
+
   if (items.length) {
     const { error } = await sb.from("contrato_items").insert(
       items.map((it, i) => ({
@@ -313,6 +358,10 @@ export async function crearContrato(
     for (const v of input.vuelos) {
       const costo = Math.max(0, Number(v.costo) || 0);
       if (costo > 0 && v.aerolinea?.trim()) cxpRows.push({ proveedor: v.aerolinea.trim(), tipo: "aereo", servicio: `Vuelo ${v.aerolinea}`.trim(), valor: costo });
+    }
+    for (const s of servicios) {
+      const costo = Math.max(0, Number(s.costo) || 0);
+      if (costo > 0 && s.proveedor?.trim()) cxpRows.push({ proveedor: s.proveedor.trim(), tipo: "servicio", servicio: s.descripcion.trim() || s.tipo, valor: costo });
     }
     if (cxpRows.length) {
       const nombres = [...new Set(cxpRows.map((r) => r.proveedor))];

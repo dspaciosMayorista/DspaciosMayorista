@@ -1352,6 +1352,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["contrato_vuelos"]["Insert"]>;
         Relationships: [];
       };
+      contrato_servicios: {
+        Row: { id: number; numero_contrato: string; tipo: string; descripcion: string; proveedor: string | null; costo: number | null; orden: number | null };
+        Insert: { id?: number; numero_contrato: string; tipo?: string; descripcion: string; proveedor?: string | null; costo?: number | null; orden?: number | null };
+        Update: Partial<Database["public"]["Tables"]["contrato_servicios"]["Insert"]>;
+        Relationships: [];
+      };
       contrato_items: {
         Row: {
           id: number;

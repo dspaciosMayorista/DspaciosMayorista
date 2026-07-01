@@ -26,7 +26,7 @@ import {
 
 type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string; trm: number | null; monto_cop: number | null };
 type CxP = { id: number; proveedor: string | null; servicio: string | null; valor_total: number; base_gravable: number | null; iva_proveedor: number | null; fecha_vencimiento: string | null; aplica_retencion: boolean; pct_retencion: number };
-type B2B = { id: number; aliado: string | null; precio_venta: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
+type B2B = { id: number; aliado: string | null; precio_venta: number; base_comision: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
 type FacturaItem = { descripcion: string | null; valor: number; gravable: boolean };
 type Factura = { id: number; numero_factura: string | null; fecha_factura: string | null; base_gravable: number; base_no_gravable: number; estado_dian: string | null; items: FacturaItem[] };
 
@@ -63,7 +63,7 @@ export function GestionTabs(p: GestionProps) {
 
   const comB2BTotal = p.comisionesB2B.reduce(
     (s, b) => s + calcComisionB2B({
-      precioVenta: b.precio_venta, pctComision: b.pct_comision,
+      precioVenta: b.precio_venta, baseComisionable: b.base_comision, pctComision: b.pct_comision,
       recobroTotal: b.recobro_total, pctRecobroAliado: b.pct_recobro_aliado,
       aplicaRetencion: b.aplica_retencion, pctRetencion: b.pct_retencion,
     }).totalPagar, 0
@@ -483,7 +483,7 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal }: {
               <th className="px-4 py-2 text-right">A pagar</th><th className="px-4 py-2"></th>
             </tr></thead>
             <tbody>{filas.map((b) => {
-              const c = calcComisionB2B({ precioVenta: b.precio_venta, pctComision: b.pct_comision, recobroTotal: b.recobro_total, pctRecobroAliado: b.pct_recobro_aliado, aplicaRetencion: b.aplica_retencion, pctRetencion: b.pct_retencion });
+              const c = calcComisionB2B({ precioVenta: b.precio_venta, baseComisionable: b.base_comision, pctComision: b.pct_comision, recobroTotal: b.recobro_total, pctRecobroAliado: b.pct_recobro_aliado, aplicaRetencion: b.aplica_retencion, pctRetencion: b.pct_retencion });
               return (
                 <tr key={b.id} className="border-t border-gray-50">
                   <td className="px-4 py-2 text-gray-700">{b.aliado ?? "—"}</td>

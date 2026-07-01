@@ -2,9 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
-import { EstadoBadge } from "@/components/EstadoBadge";
-import { numeroVisible } from "@/lib/tenant";
+import { ContratosList } from "./ContratosList";
 
 export const dynamic = "force-dynamic";
 
@@ -14,10 +12,11 @@ export default async function ContratosPage() {
   const { data: ventas } = await sb
     .from("ventas")
     .select(
-      "numero_contrato, cliente, destino, fecha_salida, precio_venta, estado, created_at"
+      "numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, estado, created_at"
     )
     .eq("tenant", tenant)
-    .order("created_at", { ascending: false });
+    // Z-A por número de contrato: el más reciente (mayor consecutivo) primero.
+    .order("numero_contrato", { ascending: false });
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
@@ -43,54 +42,7 @@ export default async function ContratosPage() {
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[640px] text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
-                <th className="px-4 py-3">Contrato</th>
-                <th className="px-4 py-3">Cliente</th>
-                <th className="px-4 py-3">Destino</th>
-                <th className="px-4 py-3">Salida</th>
-                <th className="px-4 py-3 text-right">Valor</th>
-                <th className="px-4 py-3">Estado</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {ventas.map((v) => (
-                <tr
-                  key={v.numero_contrato}
-                  className="border-b border-gray-50 hover:bg-gray-50"
-                >
-                  <td className="px-4 py-3 font-mono font-medium text-gray-800">
-                    {numeroVisible(v.numero_contrato)}
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">{v.cliente}</td>
-                  <td className="px-4 py-3 text-gray-500">
-                    {v.destino ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500">
-                    {formatFechaLarga(v.fecha_salida)}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-gray-700">
-                    {formatCOP(v.precio_venta)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <EstadoBadge estado={v.estado} />
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link
-                      href={`/dashboard/contratos/${encodeURIComponent(v.numero_contrato)}`}
-                      className="text-xs font-medium text-[#1D7C9A] hover:underline"
-                    >
-                      Ver →
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ContratosList ventas={ventas} />
       )}
     </div>
   );

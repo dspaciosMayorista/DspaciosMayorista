@@ -7,14 +7,24 @@ import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
+import { ciudadIata } from "@/lib/iata";
 import {
   crearContrato,
   type PasajeroInput,
   type HotelInput,
   type VueloInput,
   type ItemInput,
+  type ServicioInput,
+  type TipoServicio,
   type TipoPaquete,
 } from "./actions";
+
+const TIPOS_SERVICIO: { value: TipoServicio; label: string }[] = [
+  { value: "asistencia", label: "Asistencia médica" },
+  { value: "traslado", label: "Traslado" },
+  { value: "tour", label: "Tour" },
+  { value: "otro", label: "Otro" },
+];
 
 const hoy = new Date().toISOString().slice(0, 10);
 
@@ -104,6 +114,7 @@ export function NuevoContratoForm({
   ]);
   const [hoteles, setHoteles] = useState<HotelInput[]>([]);
   const [vuelos, setVuelos] = useState<VueloInput[]>([]);
+  const [servicios, setServicios] = useState<ServicioInput[]>([]);
   const [items, setItems] = useState<ItemInput[]>([
     { descripcion: "Plan turístico", adultos: 1, ninos: 0, tarifaAdulto: 0, tarifaNino: 0 },
   ]);
@@ -121,7 +132,8 @@ export function NuevoContratoForm({
   const MARKUP_MIN = 0.20;
   const totalCostos = esNegociado ? 0
     : hoteles.reduce((s, h) => s + Math.max(0, Number(h.costo) || 0), 0)
-    + vuelos.reduce((s, v) => s + Math.max(0, Number(v.costo) || 0), 0);
+    + vuelos.reduce((s, v) => s + Math.max(0, Number(v.costo) || 0), 0)
+    + servicios.reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0);
   const pvpMinimo = totalCostos > 0 ? totalCostos / (1 - MARKUP_MIN) : 0;
 
   const total = items.reduce(
@@ -140,8 +152,20 @@ export function NuevoContratoForm({
   function setHotel(i: number, patch: Partial<HotelInput>) {
     setHoteles((arr) => arr.map((h, j) => (j === i ? { ...h, ...patch } : h)));
   }
+  function setServicio(i: number, patch: Partial<ServicioInput>) {
+    setServicios((arr) => arr.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  }
+  // Al escribir el código IATA, deriva la ciudad sola (catálogo lib/iata.ts) para
+  // no tener que digitarla dos veces. Si el código no está en el catálogo, la
+  // ciudad queda como el usuario la haya puesto (edición libre, sin pisarla).
   function setVuelo(i: number, patch: Partial<VueloInput>) {
-    setVuelos((arr) => arr.map((v, j) => (j === i ? { ...v, ...patch } : v)));
+    setVuelos((arr) => arr.map((v, j) => {
+      if (j !== i) return v;
+      const next = { ...v, ...patch };
+      if (patch.origenCodigo !== undefined) next.origenCiudad = ciudadIata(patch.origenCodigo) ?? next.origenCiudad;
+      if (patch.destinoCodigo !== undefined) next.destinoCiudad = ciudadIata(patch.destinoCodigo) ?? next.destinoCiudad;
+      return next;
+    }));
   }
 
   function aplicarPaquete(idStr: string) {
@@ -186,6 +210,7 @@ export function NuevoContratoForm({
     const pasajerosOk = pasajeros.filter((p) => p.nombres.trim() !== "" || p.apellidos.trim() !== "");
     const hotelesOk = hoteles.filter((h) => h.nombre.trim() !== "");
     const vuelosOk = vuelos.filter((v) => v.aerolinea.trim() !== "");
+    const serviciosOk = servicios.filter((s) => s.descripcion.trim() !== "");
     const itemsOk = items.filter((it) => it.descripcion.trim() !== "");
 
     startTransition(async () => {
@@ -212,6 +237,7 @@ export function NuevoContratoForm({
           pasajeros: pasajerosOk,
           hoteles: hotelesOk,
           vuelos: vuelosOk,
+          servicios: serviciosOk,
           items: itemsOk,
           bncModo,
           valorTiquetes: Number(valorTiquetes) || 0,
@@ -481,6 +507,41 @@ export function NuevoContratoForm({
             <Input type="date" value={h.fechaIngreso} onChange={(e) => setHotel(i, { fechaIngreso: e.target.value })} />
             <Input type="date" value={h.fechaSalida} onChange={(e) => setHotel(i, { fechaSalida: e.target.value })} />
             <button type="button" className="text-xs text-gray-400 hover:text-red-500 md:col-span-4 md:text-right" onClick={() => setHoteles((a) => a.filter((_, j) => j !== i))}>
+              Quitar
+            </button>
+          </div>
+        ))}
+      </section>
+
+      {/* Servicios y proveedores (asistencia médica, traslados, tours…) */}
+      <section className={sectionCls}>
+        <div className="flex items-center justify-between">
+          <p className={titleCls} style={{ color: "var(--brand-primary)" }}>
+            Servicios y proveedores
+          </p>
+          <button
+            type="button"
+            className="text-xs font-medium text-[#1D7C9A] hover:underline"
+            onClick={() => setServicios((a) => [...a, { tipo: "asistencia", descripcion: "", proveedor: "", costo: 0 }])}
+          >
+            + Agregar servicio
+          </button>
+        </div>
+        <p className="text-xs text-gray-400">
+          Asistencia médica, traslados, tours… con su proveedor y costo: genera la cuenta por pagar sola (igual que hotel/vuelo).
+        </p>
+        {servicios.length === 0 && <p className="text-xs text-gray-400">Sin servicios cargados.</p>}
+        {servicios.map((s, i) => (
+          <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4">
+            <select className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" value={s.tipo} onChange={(e) => setServicio(i, { tipo: e.target.value as TipoServicio })}>
+              {TIPOS_SERVICIO.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+            <Input placeholder="Descripción (Traslado aeropuerto-hotel…)" className="md:col-span-2" value={s.descripcion} onChange={(e) => setServicio(i, { descripcion: e.target.value })} />
+            <Input placeholder="Proveedor" value={s.proveedor} onChange={(e) => setServicio(i, { proveedor: e.target.value })} />
+            {!esNegociado && (
+              <Input type="number" min={0} placeholder={`Costo neto (${monedaEfectiva})`} value={s.costo ?? ""} onChange={(e) => setServicio(i, { costo: Number(e.target.value) || 0 })} title="Costo neto del servicio (interno)" />
+            )}
+            <button type="button" className="text-xs text-gray-400 hover:text-red-500 md:col-span-4 md:text-right" onClick={() => setServicios((a) => a.filter((_, j) => j !== i))}>
               Quitar
             </button>
           </div>

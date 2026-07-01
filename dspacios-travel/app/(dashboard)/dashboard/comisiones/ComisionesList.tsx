@@ -5,7 +5,9 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
-import { marcarComisionB2BPagada, marcarComisionB2BPendiente } from "./actions";
+import { calcComisionB2B } from "@/lib/calc/finanzas";
+import { marcarComisionB2BPagada, marcarComisionB2BPendiente, actualizarBaseComisionB2B } from "./actions";
+import { ChevronDown, ChevronRight } from "lucide-react";
 
 export type ComB2BRow = {
   id: number;
@@ -20,6 +22,15 @@ export type ComB2BRow = {
   estado: string;
   fecha_pago: string | null;
   sinComision?: boolean;
+  // Discriminación de la base comisionable (de dónde sale la comisión).
+  precioVenta?: number;
+  baseComision?: number;
+  recobroTotal?: number;
+  pctRecobroAliado?: number;
+  aplicaRetencion?: boolean;
+  pctRetencion?: number;
+  comisionBase?: number;
+  recobroAliado?: number;
 };
 
 type Filtro = "pendientes" | "pagadas" | "todas";
@@ -105,6 +116,7 @@ function Fila({ row }: { row: ComB2BRow }) {
   const pagada = esPagada(row.estado);
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
   const [pending, start] = useTransition();
+  const [abierto, setAbierto] = useState(false);
 
   const linkContrato = (
     <Link href={`/dashboard/contratos/${encodeURIComponent(row.numero_contrato)}`} className="font-mono font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
@@ -132,36 +144,106 @@ function Fila({ row }: { row: ComB2BRow }) {
   }
 
   return (
-    <tr className="border-b border-gray-50 hover:bg-gray-50">
-      <td className="px-4 py-3">{linkContrato}</td>
-      <td className="px-4 py-3 text-gray-700">{row.aliado ?? "—"}</td>
-      <td className="px-4 py-3 text-gray-500">{row.cliente ?? "—"}</td>
-      <td className="px-4 py-3 text-right tabular-nums text-gray-600">{((row.pct_comision ?? 0) * 100).toFixed(1)}%</td>
-      <td className="px-4 py-3 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(row.totalPagar ?? 0)}</td>
-      <td className="px-4 py-3">
-        {pagada ? (
-          <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">Pagada{row.fecha_pago ? ` · ${row.fecha_pago}` : ""}</span>
-        ) : (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">Pendiente</span>
-        )}
-      </td>
-      <td className="px-4 py-3 text-right">
-        {pagada ? (
-          <button type="button" disabled={pending}
-            onClick={() => start(async () => void (await marcarComisionB2BPendiente(row.id)))}
-            className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-50">
-            Deshacer
+    <>
+      <tr className="border-b border-gray-50 hover:bg-gray-50">
+        <td className="px-4 py-3">
+          <button type="button" onClick={() => setAbierto((o) => !o)} className="mr-1 align-middle text-gray-400 hover:text-gray-600">
+            {abierto ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
-        ) : (
-          <div className="flex items-center justify-end gap-2">
-            <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8 w-36" />
-            <Button type="button" disabled={pending}
-              onClick={() => start(async () => void (await marcarComisionB2BPagada(row.id, fecha)))}
-              className="h-8" style={{ backgroundColor: "var(--brand-success)" }}>
-              {pending ? "…" : "Marcar pagada"}
-            </Button>
+          {linkContrato}
+        </td>
+        <td className="px-4 py-3 text-gray-700">{row.aliado ?? "—"}</td>
+        <td className="px-4 py-3 text-gray-500">{row.cliente ?? "—"}</td>
+        <td className="px-4 py-3 text-right tabular-nums text-gray-600">{((row.pct_comision ?? 0) * 100).toFixed(1)}%</td>
+        <td className="px-4 py-3 text-right font-semibold tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(row.totalPagar ?? 0)}</td>
+        <td className="px-4 py-3">
+          {pagada ? (
+            <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">Pagada{row.fecha_pago ? ` · ${row.fecha_pago}` : ""}</span>
+          ) : (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">Pendiente</span>
+          )}
+        </td>
+        <td className="px-4 py-3 text-right">
+          {pagada ? (
+            <button type="button" disabled={pending}
+              onClick={() => start(async () => void (await marcarComisionB2BPendiente(row.id)))}
+              className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-50">
+              Deshacer
+            </button>
+          ) : (
+            <div className="flex items-center justify-end gap-2">
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="h-8 w-36" />
+              <Button type="button" disabled={pending}
+                onClick={() => start(async () => void (await marcarComisionB2BPagada(row.id, fecha)))}
+                className="h-8" style={{ backgroundColor: "var(--brand-success)" }}>
+                {pending ? "…" : "Marcar pagada"}
+              </Button>
+            </div>
+          )}
+        </td>
+      </tr>
+      {abierto && <FilaDetalle row={row} />}
+    </>
+  );
+}
+
+// Discriminación: de dónde sale la comisión (PVP → base comisionable → % →
+// comisión base + recobro − retención = a pagar), con la base comisionable
+// editable (por defecto es PVP − impuesto/BNC, a veces hay que ajustarla).
+function FilaDetalle({ row }: { row: ComB2BRow }) {
+  const [base, setBase] = useState(String(row.baseComision ?? row.precioVenta ?? 0));
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState("");
+
+  const preview = calcComisionB2B({
+    precioVenta: row.precioVenta ?? 0,
+    baseComisionable: Number(base) || 0,
+    pctComision: row.pct_comision ?? 0,
+    recobroTotal: row.recobroTotal ?? 0,
+    pctRecobroAliado: row.pctRecobroAliado ?? 0.5,
+    aplicaRetencion: row.aplicaRetencion ?? false,
+    pctRetencion: row.pctRetencion ?? 0,
+  });
+  const cambio = Number(base) !== (row.baseComision ?? row.precioVenta ?? 0);
+
+  function guardar() {
+    setMsg("");
+    start(async () => {
+      const r = await actualizarBaseComisionB2B(row.id, Number(base) || 0);
+      if (r.ok) setMsg("Guardado ✓"); else setMsg(r.error);
+    });
+  }
+
+  const Dato = ({ label, valor }: { label: string; valor: string }) => (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="tabular-nums text-gray-700">{valor}</div>
+    </div>
+  );
+
+  return (
+    <tr className="border-b border-gray-100 bg-gray-50/60">
+      <td colSpan={7} className="px-4 py-3">
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-4 lg:grid-cols-7">
+          <Dato label="Precio de venta (PVP)" valor={formatCOP(row.precioVenta ?? 0)} />
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-gray-400">Base comisionable</div>
+            <div className="mt-0.5 flex items-center gap-1">
+              <Input type="number" min={0} value={base} onChange={(e) => setBase(e.target.value)} className="h-7 w-28 text-xs" />
+              {cambio && (
+                <Button type="button" disabled={pending} onClick={guardar} className="h-7 px-2 text-[11px]" style={{ backgroundColor: "var(--brand-primary)" }}>
+                  {pending ? "…" : "Guardar"}
+                </Button>
+              )}
+            </div>
           </div>
-        )}
+          <Dato label="% comisión" valor={`${((row.pct_comision ?? 0) * 100).toFixed(1)}%`} />
+          <Dato label="Comisión (base × %)" valor={formatCOP(preview.comisionBase)} />
+          <Dato label="Recobro aliado" valor={formatCOP(preview.recobroAliado)} />
+          <Dato label="Retención" valor={row.aplicaRetencion ? `− ${formatCOP(preview.retencion)}` : "No aplica"} />
+          <Dato label="Total a pagar" valor={formatCOP(preview.totalPagar)} />
+        </div>
+        {msg && <p className="mt-2 text-[11px] text-gray-500">{msg}</p>}
       </td>
     </tr>
   );

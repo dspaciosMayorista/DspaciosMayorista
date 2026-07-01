@@ -42,6 +42,9 @@ export function fiscalFromParams(
 // ── Comisión B2B (aliado) ────────────────────────────────────────────────
 export type ComisionB2BInput = {
   precioVenta: number;
+  // Base sobre la que se calcula la comisión (normalmente PVP − impuesto/BNC).
+  // Si no viene o es 0, cae al precio de venta completo (comportamiento legado).
+  baseComisionable?: number;
   pctComision: number; // ej 0.10
   recobroTotal?: number;
   pctRecobroAliado?: number; // def 0.5
@@ -49,6 +52,7 @@ export type ComisionB2BInput = {
   pctRetencion?: number;
 };
 export type ComisionB2B = {
+  baseUsada: number;      // la base que realmente se usó (transparencia)
   comisionBase: number;
   recobroAliado: number;
   totalComision: number;
@@ -58,16 +62,17 @@ export type ComisionB2B = {
 
 export function calcComisionB2B(i: ComisionB2BInput): ComisionB2B {
   const pvp = i.precioVenta || 0;
+  const base = i.baseComisionable || pvp;
   const pct = i.pctComision || 0;
   const rec = i.recobroTotal || 0;
   const prec = i.pctRecobroAliado ?? 0.5;
   const pret = i.aplicaRetencion ? i.pctRetencion || 0 : 0;
-  const comisionBase = pvp * pct;
+  const comisionBase = base * pct;
   const recobroAliado = rec * prec;
   const totalComision = comisionBase + recobroAliado;
   const retencion = totalComision * pret;
   const totalPagar = totalComision - retencion;
-  return { comisionBase, recobroAliado, totalComision, retencion, totalPagar };
+  return { baseUsada: base, comisionBase, recobroAliado, totalComision, retencion, totalPagar };
 }
 
 // ── Comisión del asesor ──────────────────────────────────────────────────
