@@ -100,6 +100,9 @@ export function CrmClient({ contactos }: { contactos: Contacto[] }) {
         <Button onClick={() => setAbrirNuevo((o) => !o)} style={{ backgroundColor: "var(--brand-primary)" }}>
           {abrirNuevo ? "Cerrar" : "+ Nuevo contacto"}
         </Button>
+        <Link href="/crm/difusion" className="rounded-lg border px-3 py-2 text-sm font-medium text-white" style={{ backgroundColor: "var(--brand-accent)", borderColor: "var(--brand-accent)" }}>
+          📣 Difusión
+        </Link>
         <Link href="/crm/email" className="rounded-lg border border-gray-300 bg-white/90 px-3 py-2 text-sm text-gray-700 hover:bg-white">
           ⚙️ Config email
         </Link>

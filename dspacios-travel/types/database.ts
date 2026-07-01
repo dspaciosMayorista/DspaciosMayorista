@@ -1550,6 +1550,24 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["crm_campanas"]["Insert"]>;
         Relationships: [];
       };
+      crm_material: {
+        Row: { id: number; destino: string | null; hotel_producto: string; hotel_id: number | null; tipo_material: string | null; fuente: string | null; estado: string; prioridad: string; link_archivo: string | null; fecha_material: string | null; observaciones: string | null; activo: boolean; created_at: string; updated_at: string };
+        Insert: { id?: number; destino?: string | null; hotel_producto: string; hotel_id?: number | null; tipo_material?: string | null; fuente?: string | null; estado?: string; prioridad?: string; link_archivo?: string | null; fecha_material?: string | null; observaciones?: string | null; activo?: boolean; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["crm_material"]["Insert"]>;
+        Relationships: [];
+      };
+      crm_envio: {
+        Row: { id: number; material_id: number | null; destino: string | null; hotel_producto: string; tipo_material: string | null; fecha_envio: string; lista_enviada: string | null; canal: string | null; objetivo: string | null; enfoque: string | null; resultado: string; responsable: string | null; observaciones: string | null; created_at: string };
+        Insert: { id?: number; material_id?: number | null; destino?: string | null; hotel_producto: string; tipo_material?: string | null; fecha_envio: string; lista_enviada?: string | null; canal?: string | null; objetivo?: string | null; enfoque?: string | null; resultado?: string; responsable?: string | null; observaciones?: string | null; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["crm_envio"]["Insert"]>;
+        Relationships: [];
+      };
+      crm_difusion_plan: {
+        Row: { id: number; material_id: number | null; fecha_programada: string; destino: string | null; hotel_producto: string | null; tipo_material: string | null; canal: string | null; lista_objetivo: string | null; enfoque: string | null; estado: string; observaciones: string | null; created_at: string; updated_at: string };
+        Insert: { id?: number; material_id?: number | null; fecha_programada: string; destino?: string | null; hotel_producto?: string | null; tipo_material?: string | null; canal?: string | null; lista_objetivo?: string | null; enfoque?: string | null; estado?: string; observaciones?: string | null; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["crm_difusion_plan"]["Insert"]>;
+        Relationships: [];
+      };
       contrato_adjuntos: {
         Row: { id: number; numero_contrato: string; tipo: string; nombre: string | null; path: string; size_bytes: number | null; subido_por: string | null; created_at: string };
         Insert: { id?: number; numero_contrato: string; tipo?: string; nombre?: string | null; path: string; size_bytes?: number | null; subido_por?: string | null; created_at?: string };
