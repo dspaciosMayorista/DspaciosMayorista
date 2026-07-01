@@ -6,7 +6,7 @@ import { useState } from "react";
 import {
   Tags, Ticket, FileText, ShoppingBag, FileSignature, Plane, Package, Boxes,
   Wallet, Users, UserCheck, Settings, Globe, Contact, ChevronDown, ChevronRight,
-  Circle, History, Calculator, type LucideIcon,
+  Circle, History, Calculator, Upload, type LucideIcon,
 } from "lucide-react";
 
 export type NavItem = {
@@ -20,13 +20,14 @@ export type NavItem = {
   soloSuperadmin?: boolean;   // visible solo para el rol superadmin
   rolesPermitidos?: string[]; // visible solo para estos roles (ignora `modulo`)
   minoristaOculto?: boolean;  // se oculta cuando la agencia activa es minorista
+  soloMinorista?: boolean;    // visible SOLO cuando la agencia activa es minorista
 };
 
 const ICONS: Record<string, LucideIcon> = {
   tarifario: Tags, reservar: Ticket, cotizaciones: FileText, ventas: ShoppingBag,
   contratos: FileSignature, vuelos: Plane, paquetes: Package, producto: Boxes,
   finanzas: Wallet, usuarios: Users, b2b: UserCheck, configuracion: Settings,
-  cms: Globe, crm: Contact, auditoria: History, contabilidad: Calculator,
+  cms: Globe, crm: Contact, auditoria: History, contabilidad: Calculator, importar: Upload,
 };
 
 export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?: boolean }) {

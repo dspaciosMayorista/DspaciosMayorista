@@ -47,7 +47,8 @@ export default async function DashboardPage() {
   const cuposDisponibles = (cupos ?? []).reduce((s, c) => s + Number(c.cupos_disponibles ?? 0), 0);
   const cuposCriticos = (cupos ?? []).filter((c) => { const n = Number(c.cupos_disponibles ?? 0); return n > 0 && n <= 3; }).length;
 
-  const hoy = new Date().toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" });
+  // Zona horaria Colombia: el server (UTC) no debe adelantar el día en la noche.
+  const hoy = new Date().toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Bogota" });
   const nombre = (perfil?.nombre ?? user?.email ?? "").split("@")[0];
 
   const OCULTOS_MINORISTA = new Set(["/dashboard/tarifario", "/dashboard/reservar", "/dashboard/producto", "/dashboard/paquetes", "/dashboard/vuelos"]);

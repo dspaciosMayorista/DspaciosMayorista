@@ -21,11 +21,11 @@ const NAV: NavItem[] = [
     label: "Contratos",
     iconKey: "contratos",
     modulo: "contratos",
-    children: [
-      { href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" },
-      { href: "/dashboard/contratos/importar", label: "Importar histórico" },
-    ],
+    children: [{ href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" }],
   },
+  // Importador de histórico — SOLO visible en la agencia Minorista (ítem propio y
+  // visible, no enterrado como sub-ítem, para encontrarlo fácil al probar).
+  { href: "/dashboard/contratos/importar", label: "Importar histórico", iconKey: "importar", soloMinorista: true },
   {
     href: "/dashboard/vuelos",
     label: "Vuelos",
@@ -136,6 +136,7 @@ export default async function DashboardLayout({
   const { tenant, puedeCambiar, permitidos: tenantsPermitidos } = await tenantContext();
   const nav = NAV.filter((n) => {
     if (tenant === "minorista" && n.minoristaOculto) return false; // sin tarifario/montaje en minorista
+    if (n.soloMinorista && tenant !== "minorista") return false;   // importador solo en minorista
     if (n.soloSuperadmin && rol !== "superadmin") return false;
     if (n.rolesPermitidos) return n.rolesPermitidos.includes(rol ?? "");
     return !n.modulo || permitidos.has(n.modulo);
