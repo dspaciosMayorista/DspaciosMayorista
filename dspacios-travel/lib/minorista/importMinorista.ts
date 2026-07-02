@@ -15,7 +15,8 @@ export type FilaUtilidad = {
   aerolinea: string | null;
   costo_aereo: number;
   hotel: string | null;
-  receptivo: string | null;   // proveedor de traslados (puede ir vacío)
+  hotelProveedor: string | null; // proveedor/operador del hotel (columna 9)
+  receptivo: string | null;   // proveedor de traslados (columna 11, puede ir vacío)
   costo_receptivo: number;
   costo_asistencia: number;
   otros_costos: number;       // tours
@@ -158,7 +159,8 @@ export function parseUtilidades(texto: string): ParseResult<FilaUtilidad> {
       costo_aereo: parseMontoCO(c[6] ?? "") ?? 0,
       hotel: (c[7] ?? "").trim() || null,
       costo_hotel: parseMontoCO(c[8] ?? "") ?? 0,
-      receptivo: (c[11] ?? "").trim() || (c[9] ?? "").trim() || null,
+      hotelProveedor: (c[9] ?? "").trim() || null,
+      receptivo: (c[11] ?? "").trim() || null,
       costo_receptivo: parseMontoCO(c[10] ?? "") ?? 0,
       costo_asistencia: parseMontoCO(c[12] ?? "") ?? 0,
       otros_costos: parseMontoCO(c[13] ?? "") ?? 0,

@@ -49,6 +49,7 @@ export type GestionProps = {
   facturas: Factura[];
   formasPago: string[];
   moneda?: string;       // moneda del contrato (USD muestra el estado de cuenta en dólares)
+  proveedoresCatalogo?: string[]; // nombres del catálogo, para sugerir/autocompletar
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -116,7 +117,7 @@ export function GestionTabs(p: GestionProps) {
           <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.moneda ?? "COP"} />
         )}
         {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
-        {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} />}
+        {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} catalogo={p.proveedoresCatalogo ?? []} />}
         {p.verFinanzas && tab === "comisiones" && (
           <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} filas={p.comisionesB2B} comB2BTotal={comB2BTotal} />
         )}
@@ -233,7 +234,7 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
 }
 
 // ── PROVEEDORES (cuentas por pagar) ────────────────────────────────────
-function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
+function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: CxP[]; catalogo: string[] }) {
   const [proveedor, setProveedor] = useState("");
   const [tipo, setTipo] = useState("");
   const [servicio, setServicio] = useState("");
@@ -280,6 +281,9 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
 
   return (
     <div className="space-y-4">
+      <datalist id={`proveedores-${numero}`}>
+        {catalogo.map((n) => <option key={n} value={n} />)}
+      </datalist>
       <div className={card}>
         <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
           <p className={lbl + " !mb-0"}>Agregar cuenta por pagar</p>
@@ -297,7 +301,7 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-          <Input placeholder="Proveedor" value={proveedor} onChange={(e) => setProveedor(e.target.value)} />
+          <Input placeholder="Proveedor" list={`proveedores-${numero}`} value={proveedor} onChange={(e) => setProveedor(e.target.value)} />
           <Input placeholder="Tipo (hotel, aéreo…)" value={tipo} onChange={(e) => setTipo(e.target.value)} />
           <Input placeholder="Servicio" value={servicio} onChange={(e) => setServicio(e.target.value)} />
           <Input type="number" min={0} placeholder="Valor total" value={valor} onChange={(e) => setValor(e.target.value)} />
@@ -345,6 +349,7 @@ function ProveedoresTab({ numero, filas }: { numero: string; filas: CxP[] }) {
               <th className="px-4 py-2 text-right">Valor</th><th className="px-4 py-2">Vence</th><th className="px-4 py-2"></th>
             </tr></thead>
             <tbody>{filas.map((f) => <FilaCxP key={f.id} f={f} numero={numero} />)}</tbody>
+            {/* Nota: la fila editable reutiliza el mismo datalist "proveedores-{numero}" declarado arriba. */}
             <tfoot><tr className="border-t border-gray-200 font-medium">
               <td className="px-4 py-2" colSpan={3}>Total por pagar</td>
               <td className="px-4 py-2 text-right tabular-nums text-gray-500">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
@@ -389,7 +394,7 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
       <tr className="border-t border-gray-100 bg-gray-50/60">
         <td className="px-4 py-2" colSpan={7}>
           <div className="flex flex-wrap items-end gap-2">
-            <div><label className="block text-[11px] text-gray-500">Proveedor</label><Input value={proveedor} onChange={(e) => setProveedor(e.target.value)} className="w-40" /></div>
+            <div><label className="block text-[11px] text-gray-500">Proveedor</label><Input value={proveedor} onChange={(e) => setProveedor(e.target.value)} className="w-40" list={`proveedores-${numero}`} /></div>
             <div><label className="block text-[11px] text-gray-500">Servicio</label><Input value={servicio} onChange={(e) => setServicio(e.target.value)} className="w-44" /></div>
             <div><label className="block text-[11px] text-gray-500">Valor total</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" /></div>
             <div><label className="block text-[11px] text-gray-500">IVA descontable</label><Input type="number" value={iva} onChange={(e) => setIva(e.target.value)} className="w-32" placeholder="0" /></div>

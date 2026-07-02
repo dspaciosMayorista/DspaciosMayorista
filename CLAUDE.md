@@ -303,6 +303,19 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   (titular/asesor/doc + abonos por cuota). Parser puro `lib/minorista/importMinorista.ts`
 >   (COP/USD por fila, fechas dd/mm/yyyy y "05 SEP 2023", salta SALTO/ANULADO, anotaciones,
 >   negativos). **Candado: solo corre en agencia minorista** (prefijo MIN-). Sin migración.
+>   **Genera CxP (proveedores) automáticamente**: por cada costo > 0 (hotel/aéreo/
+>   receptivo/asistencia/otros) crea su `cuentas_por_pagar`; toma el proveedor real
+>   cuando la hoja lo trae (col. 9 = proveedor de hotel, col. 11 = proveedor de
+>   traslados — antes se confundían, ya corregido) y usa **"Sin especificar"** cuando
+>   no hay nombre (asistencia/otros no traen proveedor en la hoja). Editable después
+>   en el contrato → pestaña **Proveedores** (texto libre o autocompletar del catálogo
+>   `proveedores` vía `<datalist>`). **No duplica** (solo agrega los tipos que le
+>   falten a cada contrato) → re-pegar/re-importar las mismas hojas también sirve
+>   como *backfill* retroactivo para los contratos importados antes de este fix, sin
+>   pisar ediciones manuales ya hechas. El botón genérico "Completar proveedores"
+>   (`asegurarCuentasPorPagar`) ya no exige que exista `contrato_hoteles` para crear
+>   la CxP de hotel, y también cae a "Sin especificar" en vez de dejar el proveedor
+>   vacío.
 > - **Contabilidad** (módulo nuevo): **Facturación** (IRT vs Ingreso propio/IP por contrato,
 >   pestaña **DIAN**), **Movimientos de pagos**, **Conciliaciones bancarias** (pegar extracto
 >   + cruce manual N:M con validador de sumas), **Estados financieros**, **Datos de la

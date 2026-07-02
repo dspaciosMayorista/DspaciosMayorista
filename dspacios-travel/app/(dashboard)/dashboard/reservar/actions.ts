@@ -1374,19 +1374,22 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
   };
   const rows: Row[] = [];
   const OBS = "Completado automáticamente (faltaba el proveedor)";
+  const SIN_ESPECIFICAR = "Sin especificar";
   const add = (tipo: string, servicio: string, valor: number, proveedor: string | null) => {
+    const nombre = proveedor?.trim() || SIN_ESPECIFICAR;
     const r = retDe(proveedor);
     rows.push({
-      numero_contrato: numeroContrato, proveedor: proveedor || null, tipo_proveedor: tipo, servicio,
+      numero_contrato: numeroContrato, proveedor: nombre, tipo_proveedor: tipo, servicio,
       valor_total: Math.max(0, valor), moneda, fecha_obligacion: hoy, fecha_vencimiento: vence,
       aplica_retencion: r.aplica_retencion, pct_retencion: r.pct_retencion, observaciones: OBS,
     });
   };
 
   // Crea solo los tipos de proveedor que falten y tengan costo real (> 0). El
-  // proveedor del hotel/aéreo se jala del contrato; los demás quedan sin asignar.
-  if (hotelRow && !yaTiene.has("hotel") && (Number(v.costo_hotel) || 0) > 0)
-    add("hotel", `Hotel ${hotelRow.nombre ?? v.hotel ?? ""}`.trim(), Number(v.costo_hotel) || 0, hotelRow.proveedor);
+  // proveedor del hotel/aéreo se jala del contrato si existe; si no, queda
+  // "Sin especificar" (editable luego desde la pestaña Proveedores).
+  if (!yaTiene.has("hotel") && (Number(v.costo_hotel) || 0) > 0)
+    add("hotel", `Hotel ${hotelRow?.nombre ?? v.hotel ?? ""}`.trim(), Number(v.costo_hotel) || 0, hotelRow?.proveedor ?? null);
   if (!yaTiene.has("aereo") && (Number(v.costo_aereo) || 0) > 0)
     add("aereo", `Aéreo ${vueloRow?.aerolinea ?? v.aerolinea ?? ""}`.trim(), Number(v.costo_aereo) || 0, vueloRow?.aerolinea ?? (v.aerolinea as string | null));
   if (!yaTiene.has("receptivo") && (Number(v.costo_receptivo) || 0) > 0)
