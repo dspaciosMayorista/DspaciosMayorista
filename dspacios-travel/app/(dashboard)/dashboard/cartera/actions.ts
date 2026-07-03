@@ -14,11 +14,8 @@ export async function registrarAbonoCartera(
   trm?: number,   // TRM del día (contratos en USD)
 ): Promise<{ ok: boolean; error?: string }> {
   if (!(valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0" };
-  try {
-    await registrarAbono(numeroContrato, valor, formaPago, referencia, trm);
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "No se pudo registrar el abono" };
-  }
+  const r = await registrarAbono(numeroContrato, valor, formaPago, referencia, trm);
+  if (!r.ok) return r;
   revalidatePath("/dashboard/cartera");
   return { ok: true };
 }

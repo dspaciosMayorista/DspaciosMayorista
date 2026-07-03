@@ -75,37 +75,6 @@ export function calcComisionB2B(i: ComisionB2BInput): ComisionB2B {
   return { baseUsada: base, comisionBase, recobroAliado, totalComision, retencion, totalPagar };
 }
 
-// ── Comisión del asesor ──────────────────────────────────────────────────
-export type ComisionAsesorInput = {
-  precioVenta: number;
-  costoTotal: number;
-  comB2BPagada?: number;
-  pctBase?: number; // def 0.08
-  retHonorarios?: number; // def 0.11
-};
-export type ComisionAsesor = {
-  pctComision: number;
-  utilidadNeta: number;
-  comisionBruta: number;
-  retencion: number;
-  comisionNeta: number;
-};
-
-export function calcComisionAsesor(i: ComisionAsesorInput): ComisionAsesor {
-  const pct = i.pctBase ?? 0.08;
-  const retH = i.retHonorarios ?? TRIBUTARIO.RETENCION_HONORARIOS;
-  const un = (i.precioVenta || 0) - (i.costoTotal || 0) - (i.comB2BPagada || 0);
-  const comisionBruta = Math.max(0, un) * pct;
-  const retencion = comisionBruta * retH;
-  return {
-    pctComision: pct,
-    utilidadNeta: un,
-    comisionBruta,
-    retencion,
-    comisionNeta: comisionBruta - retencion,
-  };
-}
-
 // ── Comisión del asesor SOBRE BASE COMISIONABLE (PVP − BNC) ───────────────
 // Regla del negocio: la comisión se calcula sobre la base comisionable, que es
 // el PVP menos el BNC (impuesto no comisionable del paquete). Si el contrato no

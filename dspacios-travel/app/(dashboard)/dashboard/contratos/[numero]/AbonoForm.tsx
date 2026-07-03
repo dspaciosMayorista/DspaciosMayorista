@@ -12,16 +12,19 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
   const [ref, setRef] = useState("");
   const [trm, setTrm] = useState("");
   const [pending, startTransition] = useTransition();
+  const [error, setError] = useState("");
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
   const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
 
   function handle(e: React.FormEvent) {
     e.preventDefault();
+    setError("");
     const v = Number(valor);
     if (!v || v <= 0) return;
     if (esUSD && !(Number(trm) > 0)) return;
     startTransition(async () => {
-      await registrarAbono(numeroContrato, v, forma, ref, esUSD ? Number(trm) : undefined);
+      const r = await registrarAbono(numeroContrato, v, forma, ref, esUSD ? Number(trm) : undefined);
+      if (!r.ok) { setError(r.error ?? "No se pudo registrar el abono."); return; }
       setValor("");
       setForma("");
       setRef("");
@@ -84,6 +87,7 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
       >
         {pending ? "Guardando…" : "Registrar abono"}
       </Button>
+      {error && <span className="text-sm text-red-600">{error}</span>}
     </form>
   );
 }

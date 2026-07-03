@@ -551,7 +551,7 @@ export async function registrarAbono(
   formaPago: string,
   referencia: string,
   trmInput?: number,        // TRM del día (obligatoria si el contrato es USD)
-) {
+): Promise<{ ok: boolean; error?: string }> {
   const sb = await createClient();
   const { data: venta } = await sb
     .from("ventas")
@@ -561,7 +561,7 @@ export async function registrarAbono(
   const esUSD = (venta?.moneda ?? "COP") === "USD";
   const montoCop = Math.max(0, Number(valor) || 0);
   const trm = esUSD ? (Number(trmInput) || 0) : 1;
-  if (esUSD && trm <= 0) throw new Error("Indica la TRM del día para el abono (contrato en USD).");
+  if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día para el abono (contrato en USD)." };
   // El abono "vale" en la MONEDA DEL CONTRATO: USD = COP / TRM; COP = COP.
   const valorAbono = esUSD ? montoCop / trm : montoCop;
 
@@ -574,7 +574,7 @@ export async function registrarAbono(
     forma_pago: formaPago || null,
     referencia: referencia || null,
   });
-  if (error) throw new Error(error.message);
+  if (error) return { ok: false, error: error.message };
 
   // Regla de negocio: la venta pendiente se confirma cuando lo abonado alcanza el
   // % mínimo configurado por tipo de contrato (default 30%). Se compara en la
@@ -606,6 +606,7 @@ export async function registrarAbono(
   }
 
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+  return { ok: true };
 }
 
 // ── Editar servicios adicionales de un contrato PENDIENTE ───────────────────
