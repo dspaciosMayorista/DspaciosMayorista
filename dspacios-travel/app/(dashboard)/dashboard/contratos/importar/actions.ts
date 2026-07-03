@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTenant } from "@/lib/tenant.server";
 import { numeroConTenant } from "@/lib/tenant";
@@ -18,11 +19,20 @@ function lotes<T>(arr: T[], n: number): T[][] {
   return out;
 }
 
-// CANDADO de seguridad: la importación SOLO se permite en la agencia minorista.
-// Si se corriera en mayorista, los números 00-XXXX colisionarían con su PK.
+// CANDADO de seguridad: la importación SOLO se permite en la agencia minorista,
+// y SOLO a superadmin/administración — es una reescritura masiva de ventas y
+// abonos históricos (delete+insert por contrato), no una operación de venta
+// normal. Usa el cliente con sesión (RLS) antes de pasar al admin client.
 async function tenantMinoristaOFalla(): Promise<
   { ok: true; tenant: "minorista" } | { ok: false; error: string }
 > {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "No autenticado." };
+  const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).single();
+  if (!perfil || !["superadmin", "administracion"].includes(perfil.rol))
+    return { ok: false, error: "Solo superadmin / administración pueden importar el histórico." };
+
   const tenant = await getTenant();
   if (tenant !== "minorista")
     return {

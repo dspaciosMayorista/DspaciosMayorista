@@ -280,13 +280,15 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
 > y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
 > producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo: hasta la 116** (correr en orden las que falten).
+> **Migraciones a la fecha en repo: hasta la 117** (correr en orden las que falten).
 > *Pendiente del dueño:* el dueño reporta haber corrido hasta la **111**; faltan por correr
 > **112** (`fn_fusionar_destino`), **113** (`programa_piezas`: bucket `programas` +
 > flyer/historia), **114** (`crm_difusion`), **115** (fix numeración minorista +
-> `contrato_servicios`) y **116** (`rls_tenant_isolation` — **importante, de
+> `contrato_servicios`), **116** (`rls_tenant_isolation` — **importante, de
 > seguridad**: antes de correrla, verificar que todo usuario interno no-superadmin
-> tenga bien puesto su `usuarios.tenant` — ver sección de Seguridad más abajo).
+> tenga bien puesto su `usuarios.tenant` — ver sección de Seguridad más abajo) y
+> **117** (`eliminar_contrato_rol`, seguridad — sin dependencias, se puede correr
+> en cualquier momento).
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -313,9 +315,23 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >      con la URL. Ahora fallan cerrado (503) si `CRON_SECRET` no está configurada
 >      — **es obligatoria**, no opcional (Vercel la manda sola como Bearer en sus
 >      cron jobs).
->   Quedan pendientes de una siguiente pasada: headers de seguridad (CSP/
->   X-Frame-Options) y una revisión de inyección/validación de inputs + estructura
->   de código (fases 2 y 3 de la auditoría, no iniciadas todavía).
+>   **Fase 2 (inyección/validación de inputs) — 3 hallazgos más corregidos:**
+>   5. **`eliminar_contrato()` sin candado dentro de la función**: es
+>      `SECURITY DEFINER` (bypassa RLS) pero no validaba `mi_rol()` — la Server
+>      Action sí exigía superadmin, pero se podía saltar llamando el RPC directo
+>      desde el navegador con el JWT propio. **Migración 117** agrega el mismo
+>      candado que ya usan `fn_renumerar_contrato`/`fn_fusionar_destino`.
+>   6. **Importador de histórico minorista sin candado de rol**: `importarHistorico`
+>      (reescribe masivamente ventas/abonos) solo validaba el tenant, cualquier
+>      usuario autenticado (incl. `venta`) podía invocarlo. Ahora exige
+>      `superadmin`/`administracion`, en la Server Action y en el nav (`layout.tsx`).
+>   7. **`crearContrato`**: las tarifas/cantidades de los ítems (vienen del
+>      cliente) no se validaban como números finitos ≥ 0 antes de sumar el PVP;
+>      y un paquete "negociado" sin tarifas configuradas en el catálogo caía en
+>      silencio a aceptar la tarifa que mandara el cliente. Ahora valida los
+>      ítems y falla si el paquete negociado no tiene tarifas configuradas.
+>   Queda pendiente: headers de seguridad (CSP/X-Frame-Options) y la fase 3
+>   (estructura de código/dependencias), no iniciada todavía.
 > - **Multitenant — dos agencias en una sola app:** **Mayorista** (actual, completa) y
 >   **Minorista** (agencia anterior, solo para terminar de gestionar + histórico; sin
 >   tarifario/montaje). Misma BD + columna `tenant` ('mayorista'/'minorista', default

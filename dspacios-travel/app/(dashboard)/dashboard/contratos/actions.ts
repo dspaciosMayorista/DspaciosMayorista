@@ -153,6 +153,19 @@ export async function crearContrato(
         Math.min(...precios.map((p) => p.precio));
       const nino = precios.find((p) => p.acomodacion === "nino")?.precio ?? 0;
       items = input.items.map((it) => ({ ...it, tarifaAdulto: doble, tarifaNino: nino }));
+    } else {
+      // Sin tarifas configuradas en el catálogo no hay precio confiable que
+      // bloquear: mejor fallar que aceptar en silencio la tarifa que mande el
+      // cliente para un contrato marcado como negociado.
+      return { ok: false, error: "El paquete negociado no tiene tarifas configuradas. Configúralas antes de reservar." };
+    }
+  }
+
+  // Las tarifas/cantidades de un item vienen del cliente (aun en no-negociado);
+  // deben ser números finitos y no negativos antes de sumar el PVP.
+  for (const it of items) {
+    if (![it.adultos, it.ninos, it.tarifaAdulto, it.tarifaNino].every((n) => Number.isFinite(n) && n >= 0)) {
+      return { ok: false, error: "Cantidades o tarifas inválidas en los ítems del contrato." };
     }
   }
 
