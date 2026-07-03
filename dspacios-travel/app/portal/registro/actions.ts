@@ -20,6 +20,24 @@ export async function enviarSolicitudB2B(input: SolicitudB2BInput): Promise<Resu
   const tipo = input.tipo === "freelance" ? "freelance" : "agencia";
   const admin = createAdminClient();
 
+  // Candado anti-suplantación: los contratos de un aliado B2B se vinculan (para
+  // datos históricos sin b2b_usuario_id) también por nombre de agencia/freelance
+  // en texto libre. Si alguien se registra con el MISMO nombre que un aliado ya
+  // aprobado, vería sus contratos y comisiones. Bloqueamos el duplicado aquí.
+  const { data: dup } = await admin
+    .from("usuarios")
+    .select("id")
+    .in("rol", ["agencia", "freelance"])
+    .ilike("nombre", input.nombre.trim())
+    .limit(1)
+    .maybeSingle();
+  if (dup) {
+    return {
+      ok: false,
+      error: "Ya existe una cuenta de aliado registrada con ese nombre. Si es tu empresa, contáctanos para verificar el acceso en vez de crear una cuenta nueva.",
+    };
+  }
+
   // Crea la cuenta (queda PENDIENTE: inactiva hasta que la apruebe un admin).
   const { data: created, error: ce } = await admin.auth.admin.createUser({
     email,

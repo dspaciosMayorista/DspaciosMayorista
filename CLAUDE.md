@@ -280,11 +280,42 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
 > y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
 > producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo: hasta la 113** (correr en orden las que falten).
+> **Migraciones a la fecha en repo: hasta la 116** (correr en orden las que falten).
 > *Pendiente del dueño:* el dueño reporta haber corrido hasta la **111**; faltan por correr
-> **112** (`fn_fusionar_destino`) y **113** (`programa_piezas`: bucket `programas` + flyer/historia).
+> **112** (`fn_fusionar_destino`), **113** (`programa_piezas`: bucket `programas` +
+> flyer/historia), **114** (`crm_difusion`), **115** (fix numeración minorista +
+> `contrato_servicios`) y **116** (`rls_tenant_isolation` — **importante, de
+> seguridad**: antes de correrla, verificar que todo usuario interno no-superadmin
+> tenga bien puesto su `usuarios.tenant` — ver sección de Seguridad más abajo).
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
+>   1. **Escalación de privilegios**: `dashboard/usuarios/actions.ts` usaba el
+>      cliente service-role (bypassa RLS) sin validar el rol de quien llamaba —
+>      cualquier usuario interno autenticado podía volverse `superadmin`. Ahora
+>      exige sesión + rol `superadmin`/`administracion` en la Server Action misma,
+>      y **solo superadmin** puede asignar/crear el rol `superadmin`.
+>   2. **Aislamiento por tenant en RLS**: `puede_ver_tenant()` (migr. 107) existía
+>      pero ninguna policy la usaba — un `administracion`/`operaciones` de una
+>      agencia podía leer/escribir ventas, abonos, CxP, comisiones y facturación de
+>      la OTRA agencia (la separación era solo de UI). **Migración 116** agrega el
+>      filtro de tenant a esas policies. **⚠️ Antes de correrla**, confirmar que
+>      todo usuario interno no-superadmin tenga `usuarios.tenant` correcto (ya es
+>      un supuesto del que depende `tenantContext()`/el selector de agencia hoy).
+>   3. **Suplantación en portal B2B**: la pertenencia de un contrato se resolvía
+>      también por `agencia_nombre`/`freelance_nombre` en texto libre (sin
+>      unicidad) — alguien podía registrarse con el mismo nombre que un aliado real
+>      y ver sus contratos/comisiones. Ahora el registro (`portal/registro/actions.ts`)
+>      y la creación interna de usuarios bloquean nombres de agencia/freelance
+>      duplicados.
+>   4. **Cron jobs sin `CRON_SECRET`**: `/api/cron/*` solo validaban el secreto
+>      *si* la env var existía; si faltaba en Vercel quedaban abiertos a cualquiera
+>      con la URL. Ahora fallan cerrado (503) si `CRON_SECRET` no está configurada
+>      — **es obligatoria**, no opcional (Vercel la manda sola como Bearer en sus
+>      cron jobs).
+>   Quedan pendientes de una siguiente pasada: headers de seguridad (CSP/
+>   X-Frame-Options) y una revisión de inyección/validación de inputs + estructura
+>   de código (fases 2 y 3 de la auditoría, no iniciadas todavía).
 > - **Multitenant — dos agencias en una sola app:** **Mayorista** (actual, completa) y
 >   **Minorista** (agencia anterior, solo para terminar de gestionar + histórico; sin
 >   tarifario/montaje). Misma BD + columna `tenant` ('mayorista'/'minorista', default
