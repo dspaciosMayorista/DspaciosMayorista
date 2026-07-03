@@ -280,15 +280,8 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
 > y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
 > producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo: hasta la 117** (correr en orden las que falten).
-> *Pendiente del dueño:* el dueño reporta haber corrido hasta la **111**; faltan por correr
-> **112** (`fn_fusionar_destino`), **113** (`programa_piezas`: bucket `programas` +
-> flyer/historia), **114** (`crm_difusion`), **115** (fix numeración minorista +
-> `contrato_servicios`), **116** (`rls_tenant_isolation` — **importante, de
-> seguridad**: antes de correrla, verificar que todo usuario interno no-superadmin
-> tenga bien puesto su `usuarios.tenant` — ver sección de Seguridad más abajo) y
-> **117** (`eliminar_contrato_rol`, seguridad — sin dependencias, se puede correr
-> en cualquier momento).
+> **Migraciones a la fecha en repo: hasta la 117 — todas corridas por el dueño.**
+> (correr en orden cualquier migración nueva que se agregue después de esta).
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
