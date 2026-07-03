@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, calcularEdad } from "@/lib/utils";
-import { crearCotizacion, cotizarPorFechas, type PasajeroReserva } from "../actions";
+import { crearCotizacion, cotizarPorFechas } from "../actions";
+import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 
