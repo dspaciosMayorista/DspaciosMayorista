@@ -326,6 +326,21 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >      ítems y falla si el paquete negociado no tiene tarifas configuradas.
 >   Queda pendiente: headers de seguridad (CSP/X-Frame-Options) y la fase 3
 >   (estructura de código/dependencias), no iniciada todavía.
+> - **Cuenta de cobro B2B — solo freelance (persona natural):** las agencias
+>   (persona jurídica) deben facturar electrónicamente, no generan cuenta de
+>   cobro. `portal/b2b/page.tsx` ya no muestra el link "Cuenta de cobro" para
+>   contratos con `tipo_asesor='agencia'` (muestra "Factura electrónica" en su
+>   lugar); `portal/comision/[numero]/page.tsx` bloquea el acceso directo con un
+>   mensaje explicativo. De paso, 3 bugs corregidos encontrados al revisar esto:
+>   el membrete de la cuenta de cobro tenía fijo "Mayorista de Turismo" (ahora
+>   usa `agencias.nombre_comercial`/`razon_social` del tenant real vía
+>   `agenciaDe()`); el insert de `aliados_b2b` en `crearContrato` no estampaba
+>   `tenant` (quedaba siempre 'mayorista' por default); y `dashboard/comisiones`
+>   no filtraba `aliados_b2b` por tenant, así que superadmin/gerencia veían
+>   comisiones de ambas agencias mezcladas sin indicarlo. **Nota:** minorista no
+>   tiene tarifario/reservar (`minoristaOculto: true`), así que hoy no genera
+>   comisiones B2B nuevas de todas formas — el importador de histórico tampoco
+>   crea `aliados_b2b`.
 > - **Multitenant — dos agencias en una sola app:** **Mayorista** (actual, completa) y
 >   **Minorista** (agencia anterior, solo para terminar de gestionar + histórico; sin
 >   tarifario/montaje). Misma BD + columna `tenant` ('mayorista'/'minorista', default

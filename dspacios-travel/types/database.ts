@@ -680,6 +680,7 @@ export type Database = {
           estado: string;
           fecha_pago: string | null;
           created_at: string;
+          tenant: string;
         };
         Insert: {
           id?: number;
@@ -698,6 +699,7 @@ export type Database = {
           estado?: string;
           fecha_pago?: string | null;
           created_at?: string;
+          tenant?: string;
         };
         Update: Partial<Database["public"]["Tables"]["aliados_b2b"]["Insert"]>;
         Relationships: [];

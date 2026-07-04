@@ -476,6 +476,7 @@ export async function crearContrato(
     const pct = aliado.pct_comision ?? Number(p?.valor) ?? (tipoVenta === "agencia" ? 0.12 : 0.11);
     await sb.from("aliados_b2b").insert({
       numero_contrato: numero,
+      tenant,
       aliado: aliado.nombre,
       nit: aliado.nit,
       precio_venta: precioVenta,
