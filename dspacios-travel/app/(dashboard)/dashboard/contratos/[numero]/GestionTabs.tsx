@@ -23,9 +23,18 @@ import {
   crearFactura,
   eliminarFactura,
 } from "./gestion-actions";
+import { registrarPagoProveedor, deshacerUltimoPago } from "../../pagos/actions";
+import { actualizarAbono, eliminarAbono } from "../actions";
 
 type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string; trm: number | null; monto_cop: number | null };
-type CxP = { id: number; proveedor: string | null; servicio: string | null; valor_total: number; base_gravable: number | null; iva_proveedor: number | null; fecha_vencimiento: string | null; aplica_retencion: boolean; pct_retencion: number };
+type CxP = {
+  id: number; proveedor: string | null; servicio: string | null; valor_total: number;
+  base_gravable: number | null; iva_proveedor: number | null; fecha_vencimiento: string | null;
+  aplica_retencion: boolean; pct_retencion: number; moneda?: string | null;
+  abono1: number | null; fecha_abono1: string | null; trm1: number | null;
+  abono2: number | null; fecha_abono2: string | null; trm2: number | null;
+  abono3: number | null; fecha_abono3: string | null; trm3: number | null;
+};
 type B2B = { id: number; aliado: string | null; precio_venta: number; base_comision: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
 type FacturaItem = { descripcion: string | null; valor: number; gravable: boolean };
 type Factura = { id: number; numero_factura: string | null; fecha_factura: string | null; base_gravable: number; base_no_gravable: number; estado_dian: string | null; items: FacturaItem[] };
@@ -212,24 +221,83 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
               {esUSD && <th className="px-4 py-2 text-right">TRM</th>}
               {esUSD && <th className="px-4 py-2 text-right">Pagado (COP)</th>}
               <th className="px-4 py-2">Forma</th><th className="px-4 py-2">Referencia</th>
-              <th className="px-4 py-2 text-right">Recibo</th>
+              <th className="px-4 py-2 text-right">Recibo</th><th className="px-4 py-2"></th>
             </tr></thead>
             <tbody>{abonos.map((a) => (
-              <tr key={a.id} className="border-t border-gray-50">
-                <td className="px-4 py-2 text-gray-500">{a.fecha_abono}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{fmt(a.valor_abono)}</td>
-                {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500">{a.trm ? formatCOP(a.trm) : "—"}</td>}
-                {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500">{a.monto_cop ? formatCOP(a.monto_cop) : "—"}</td>}
-                <td className="px-4 py-2 text-gray-500">{a.forma_pago ?? "—"}</td>
-                <td className="px-4 py-2 text-gray-500">{a.referencia ?? "—"}</td>
-                <td className="px-4 py-2 text-right">
-                  <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">Recibo ↗</Link>
-                </td>
-              </tr>))}</tbody>
+              <FilaAbono key={a.id} a={a} numero={numero} esUSD={esUSD} moneda={moneda} formasPago={formasPago} />
+            ))}</tbody>
           </table>
         </div>
       )}
     </div>
+  );
+}
+
+// Fila de abono con edición inline (corregir valor/fecha/forma/referencia sin
+// tener que registrar un segundo abono para "cuadrar" el saldo) y eliminar.
+function FilaAbono({ a, numero, esUSD, moneda, formasPago }: { a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[] }) {
+  const [editar, setEditar] = useState(false);
+  const [valor, setValor] = useState(String(a.valor_abono));
+  const [fecha, setFecha] = useState(a.fecha_abono);
+  const [forma, setForma] = useState(a.forma_pago ?? "");
+  const [ref, setRef] = useState(a.referencia ?? "");
+  const [trm, setTrm] = useState(a.trm ? String(a.trm) : "");
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState("");
+  const fmt = (n: number) => formatMoneda(n, moneda);
+
+  function guardar() {
+    setErr("");
+    start(async () => {
+      const r = await actualizarAbono(a.id, numero, {
+        valor: Number(valor) || 0, fecha, formaPago: forma, referencia: ref,
+        trmInput: esUSD ? Number(trm) || 0 : undefined,
+      });
+      if (r.ok) setEditar(false); else setErr(r.error ?? "Error");
+    });
+  }
+
+  if (editar) {
+    return (
+      <tr className="border-t border-gray-100 bg-gray-50/60">
+        <td className="px-4 py-2" colSpan={esUSD ? 8 : 6}>
+          <div className="flex flex-wrap items-end gap-2">
+            <div><label className="block text-[11px] text-gray-500">Valor{esUSD ? " pagado (COP)" : ""}</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" /></div>
+            {esUSD && <div><label className="block text-[11px] text-gray-500">TRM</label><Input type="number" value={trm} onChange={(e) => setTrm(e.target.value)} className="w-28" /></div>}
+            <div><label className="block text-[11px] text-gray-500">Fecha</label><Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" /></div>
+            <div>
+              <label className="block text-[11px] text-gray-500">Forma</label>
+              <select value={forma} onChange={(e) => setForma(e.target.value)} className="h-8 rounded-lg border border-gray-300 bg-white px-2 text-sm">
+                <option value="">—</option>
+                {formasPago.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            <div><label className="block text-[11px] text-gray-500">Referencia</label><Input value={ref} onChange={(e) => setRef(e.target.value)} className="w-44" /></div>
+            <Button onClick={guardar} disabled={pending} className="h-9" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Guardar"}</Button>
+            <button type="button" onClick={() => setEditar(false)} className="pb-2 text-xs text-gray-400 hover:text-gray-700">Cancelar</button>
+            {err && <span className="pb-2 text-xs text-red-600">{err}</span>}
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr className="border-t border-gray-50">
+      <td className="px-4 py-2 text-gray-500">{a.fecha_abono}</td>
+      <td className="px-4 py-2 text-right tabular-nums">{fmt(a.valor_abono)}</td>
+      {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500">{a.trm ? formatCOP(a.trm) : "—"}</td>}
+      {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500">{a.monto_cop ? formatCOP(a.monto_cop) : "—"}</td>}
+      <td className="px-4 py-2 text-gray-500">{a.forma_pago ?? "—"}</td>
+      <td className="px-4 py-2 text-gray-500">{a.referencia ?? "—"}</td>
+      <td className="px-4 py-2 text-right">
+        <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">Recibo ↗</Link>
+      </td>
+      <td className="px-4 py-2 text-right whitespace-nowrap">
+        <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
+        <DeleteBtn onClick={() => eliminarAbono(a.id, numero)} />
+      </td>
+    </tr>
   );
 }
 
@@ -346,14 +414,15 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
             <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Servicio</th>
               <th className="px-4 py-2 text-right">Costo</th><th className="px-4 py-2 text-right">IVA desc.</th>
-              <th className="px-4 py-2 text-right">Valor</th><th className="px-4 py-2">Vence</th><th className="px-4 py-2"></th>
+              <th className="px-4 py-2 text-right">Valor</th><th className="px-4 py-2">Vence</th>
+              <th className="px-4 py-2">Estado</th><th className="px-4 py-2"></th>
             </tr></thead>
             <tbody>{filas.map((f) => <FilaCxP key={f.id} f={f} numero={numero} />)}</tbody>
             {/* Nota: la fila editable reutiliza el mismo datalist "proveedores-{numero}" declarado arriba. */}
             <tfoot><tr className="border-t border-gray-200 font-medium">
               <td className="px-4 py-2" colSpan={3}>Total por pagar</td>
               <td className="px-4 py-2 text-right tabular-nums text-gray-500">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
-              <td className="px-4 py-2 text-right tabular-nums">{formatCOP(totalCxP)}</td><td colSpan={2} />
+              <td className="px-4 py-2 text-right tabular-nums">{formatCOP(totalCxP)}</td><td colSpan={3} />
             </tr></tfoot>
           </table>
         </div>
@@ -366,8 +435,12 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
 // creadas automáticamente con el contrato, o corregir cualquier dato).
 function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
   const [editar, setEditar] = useState(false);
+  const [verPago, setVerPago] = useState(false);
   const ivaF = f.iva_proveedor ?? 0;
   const costoF = f.base_gravable ?? (f.valor_total - ivaF);
+  const pagado = (f.abono1 ?? 0) + (f.abono2 ?? 0) + (f.abono3 ?? 0);
+  const saldo = Math.max(0, f.valor_total - pagado);
+  const estaPagada = saldo <= 0 && f.valor_total > 0;
 
   const [proveedor, setProveedor] = useState(f.proveedor ?? "");
   const [servicio, setServicio] = useState(f.servicio ?? "");
@@ -410,18 +483,139 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
   }
 
   return (
-    <tr className="border-t border-gray-50">
-      <td className="px-4 py-2 text-gray-700">{f.proveedor ?? "—"}</td>
-      <td className="px-4 py-2 text-gray-500">{f.servicio ?? "—"}</td>
-      <td className="px-4 py-2 text-right tabular-nums text-gray-600">{formatCOP(costoF)}</td>
-      <td className="px-4 py-2 text-right tabular-nums text-gray-500">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
-      <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.valor_total)}</td>
-      <td className="px-4 py-2 text-gray-500">{f.fecha_vencimiento ?? "—"}</td>
-      <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
-        <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
-      </td>
-    </tr>
+    <>
+      <tr className="border-t border-gray-50">
+        <td className="px-4 py-2 text-gray-700">{f.proveedor ?? "—"}</td>
+        <td className="px-4 py-2 text-gray-500">{f.servicio ?? "—"}</td>
+        <td className="px-4 py-2 text-right tabular-nums text-gray-600">{formatCOP(costoF)}</td>
+        <td className="px-4 py-2 text-right tabular-nums text-gray-500">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
+        <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.valor_total)}</td>
+        <td className="px-4 py-2 text-gray-500">{f.fecha_vencimiento ?? "—"}</td>
+        <td className="px-4 py-2">
+          <button
+            type="button"
+            onClick={() => setVerPago((v) => !v)}
+            className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+            style={estaPagada
+              ? { backgroundColor: "rgba(102,181,150,0.18)", color: "#3d7a63" }
+              : { backgroundColor: "rgba(29,124,154,0.10)", color: "var(--brand-primary)" }}
+          >
+            {estaPagada ? "Pagado" : `Pendiente · ${formatMoneda(saldo, f.moneda ?? "COP")}`}
+          </button>
+        </td>
+        <td className="px-4 py-2 text-right whitespace-nowrap">
+          <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
+          <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
+        </td>
+      </tr>
+      {verPago && (
+        <tr className="border-t border-gray-100 bg-gray-50/60">
+          <td className="px-4 py-3" colSpan={8}>
+            <PagoProveedorPanel f={f} pagado={pagado} saldo={saldo} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// Registro de pago a proveedor (hasta 3 abonos) + deshacer, reutilizando la
+// misma regla de negocio del módulo Pagos (dashboard/pagos/actions.ts).
+function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; saldo: number }) {
+  const moneda = f.moneda ?? "COP";
+  const esUSD = moneda.toUpperCase() === "USD";
+  const pagos = [
+    f.abono1 != null && f.abono1 !== 0 ? { n: 1, valor: f.abono1, fecha: f.fecha_abono1, trm: f.trm1 } : null,
+    f.abono2 != null && f.abono2 !== 0 ? { n: 2, valor: f.abono2, fecha: f.fecha_abono2, trm: f.trm2 } : null,
+    f.abono3 != null && f.abono3 !== 0 ? { n: 3, valor: f.abono3, fecha: f.fecha_abono3, trm: f.trm3 } : null,
+  ].filter((p): p is { n: number; valor: number; fecha: string | null; trm: number | null } => p != null);
+
+  const [valor, setValor] = useState("");
+  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [trm, setTrm] = useState("");
+  const [err, setErr] = useState("");
+  const [pending, start] = useTransition();
+  const [pendingUndo, startUndo] = useTransition();
+
+  function registrar() {
+    setErr("");
+    const v = Number(valor);
+    if (!v || v <= 0) { setErr("Ingresa un valor mayor a 0."); return; }
+    if (esUSD && !(Number(trm) > 0)) { setErr("Indica la TRM del día (cuenta en USD)."); return; }
+    start(async () => {
+      const r = await registrarPagoProveedor(f.id, v, fecha, esUSD ? Number(trm) : undefined);
+      if (!r.ok) { setErr(r.error); return; }
+      setValor(""); setTrm("");
+    });
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Pagos registrados</p>
+        {pagos.length === 0 ? (
+          <p className="text-sm text-gray-400">Sin pagos registrados.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <tbody>
+              {pagos.map((p) => (
+                <tr key={p.n} className="border-b border-gray-100">
+                  <td className="py-1 text-gray-500">
+                    Pago {p.n} · {p.fecha ?? "—"}
+                    {esUSD && p.trm ? <span className="ml-2 text-xs text-gray-400">TRM {formatCOP(p.trm)}</span> : null}
+                  </td>
+                  <td className="py-1 text-right tabular-nums text-gray-700">{formatMoneda(p.valor, moneda)}</td>
+                </tr>
+              ))}
+              <tr className="font-medium">
+                <td className="py-1 text-gray-600">Total pagado</td>
+                <td className="py-1 text-right tabular-nums" style={{ color: "var(--brand-success)" }}>{formatMoneda(pagado, moneda)}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+        {pagos.length > 0 && (
+          <button
+            type="button"
+            disabled={pendingUndo}
+            onClick={() => startUndo(async () => void (await deshacerUltimoPago(f.id)))}
+            className="mt-2 text-xs font-medium text-red-500 hover:underline disabled:opacity-50"
+          >
+            {pendingUndo ? "…" : "Deshacer último pago"}
+          </button>
+        )}
+      </div>
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Registrar pago</p>
+        {saldo <= 0 ? (
+          <p className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">Esta cuenta está totalmente pagada.</p>
+        ) : pagos.length >= 3 ? (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">Ya hay 3 pagos registrados (máximo del modelo). Deshaz uno para corregir.</p>
+        ) : (
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="block text-[11px] text-gray-500">{esUSD ? "Pagado (COP)" : "Valor"}</label>
+              <Input type="number" min={0} value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0" className="w-32" />
+            </div>
+            {esUSD && (
+              <div>
+                <label className="block text-[11px] text-gray-500">TRM del día</label>
+                <Input type="number" min={0} value={trm} onChange={(e) => setTrm(e.target.value)} placeholder="4000" className="w-28" />
+              </div>
+            )}
+            <div>
+              <label className="block text-[11px] text-gray-500">Fecha del pago</label>
+              <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" />
+            </div>
+            <Button onClick={registrar} disabled={pending} className="h-9" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Registrar pago"}</Button>
+            <button type="button" onClick={() => setValor(String(saldo))} className="pb-2 text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
+              Saldo total ({formatMoneda(saldo, moneda)})
+            </button>
+          </div>
+        )}
+        {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+      </div>
+    </div>
   );
 }
 

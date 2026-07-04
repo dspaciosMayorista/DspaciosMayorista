@@ -174,6 +174,8 @@ export default async function ContratoDetallePage({
           asesorNombre: venta.asesor_firma_nombre ?? "",
           planNombre: venta.plan_nombre ?? "",
           observaciones: venta.observaciones ?? "",
+          precioVenta: String(venta.precio_venta ?? 0),
+          pax: String(venta.pax ?? 1),
         }}
         destinos={destinos ?? []}
       />

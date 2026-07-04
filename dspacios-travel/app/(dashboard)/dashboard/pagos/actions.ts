@@ -53,7 +53,7 @@ export async function registrarPagoProveedor(
   const sb = await createClient();
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
-    .select("abono1, abono2, abono3, valor_total, moneda")
+    .select("abono1, abono2, abono3, valor_total, moneda, numero_contrato")
     .eq("id", id)
     .maybeSingle();
   if (e1) return { ok: false, error: e1.message };
@@ -81,6 +81,7 @@ export async function registrarPagoProveedor(
   const { error: e2 } = await sb.from("cuentas_por_pagar").update(upd).eq("id", id);
   if (e2) return { ok: false, error: e2.message };
   revalidatePath("/dashboard/pagos");
+  if (cxp.numero_contrato) revalidatePath(`/dashboard/contratos/${cxp.numero_contrato}`);
   return { ok: true };
 }
 
@@ -119,7 +120,7 @@ export async function deshacerUltimoPago(id: number): Promise<Result> {
   const sb = await createClient();
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
-    .select("abono1, abono2, abono3")
+    .select("abono1, abono2, abono3, numero_contrato")
     .eq("id", id)
     .maybeSingle();
   if (e1) return { ok: false, error: e1.message };
@@ -135,5 +136,6 @@ export async function deshacerUltimoPago(id: number): Promise<Result> {
   const { error: e2 } = await sb.from("cuentas_por_pagar").update(upd).eq("id", id);
   if (e2) return { ok: false, error: e2.message };
   revalidatePath("/dashboard/pagos");
+  if (cxp.numero_contrato) revalidatePath(`/dashboard/contratos/${cxp.numero_contrato}`);
   return { ok: true };
 }

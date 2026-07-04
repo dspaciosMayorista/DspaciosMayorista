@@ -52,6 +52,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     infante_cargo_desc: string | null;
     infante_nota: string | null;
     nino_nota: string | null;
+    adults_only: boolean | null;
     destinos: { nombre: string } | null;
     proveedores: { nombre: string; politica_reservas: string | null } | null;
   };
@@ -115,6 +116,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             infanteCargoDesc: h.infante_cargo_desc ?? "",
             infanteNota: h.infante_nota ?? "",
             ninoNota: h.nino_nota ?? "",
+            adultsOnly: h.adults_only ?? false,
           }}
         />
         <HotelCategoriasRegimenesEditor

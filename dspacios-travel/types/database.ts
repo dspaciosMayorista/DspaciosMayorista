@@ -1069,6 +1069,7 @@ export type Database = {
           infante_cargo_desc: string | null;
           infante_nota: string | null;
           nino_nota: string | null;
+          adults_only: boolean;
         };
         Insert: {
           id?: number;
@@ -1097,6 +1098,7 @@ export type Database = {
           infante_cargo_desc?: string | null;
           infante_nota?: string | null;
           nino_nota?: string | null;
+          adults_only?: boolean;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [
@@ -1579,8 +1581,8 @@ export type Database = {
         Relationships: [];
       };
       crm_difusion_plan: {
-        Row: { id: number; material_id: number | null; fecha_programada: string; destino: string | null; hotel_producto: string | null; tipo_material: string | null; canal: string | null; lista_objetivo: string | null; enfoque: string | null; estado: string; observaciones: string | null; created_at: string; updated_at: string };
-        Insert: { id?: number; material_id?: number | null; fecha_programada: string; destino?: string | null; hotel_producto?: string | null; tipo_material?: string | null; canal?: string | null; lista_objetivo?: string | null; enfoque?: string | null; estado?: string; observaciones?: string | null; created_at?: string; updated_at?: string };
+        Row: { id: number; material_id: number | null; fecha_programada: string; destino: string | null; hotel_producto: string | null; tipo_material: string | null; canal: string | null; lista_objetivo: string | null; enfoque: string | null; estado: string; observaciones: string | null; created_at: string; updated_at: string; vigencia_hasta: string | null };
+        Insert: { id?: number; material_id?: number | null; fecha_programada: string; destino?: string | null; hotel_producto?: string | null; tipo_material?: string | null; canal?: string | null; lista_objetivo?: string | null; enfoque?: string | null; estado?: string; observaciones?: string | null; created_at?: string; updated_at?: string; vigencia_hasta?: string | null };
         Update: Partial<Database["public"]["Tables"]["crm_difusion_plan"]["Insert"]>;
         Relationships: [];
       };

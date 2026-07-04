@@ -121,6 +121,7 @@ export async function actualizarHotelConfig(
     infanteCargoDesc?: string;
     infanteNota?: string;
     ninoNota?: string;
+    adultsOnly?: boolean;
   }
 ): Promise<Result> {
   const sb = await createClient();
@@ -147,6 +148,7 @@ export async function actualizarHotelConfig(
       infante_cargo_desc: oNull(input.infanteCargoDesc ?? ""),
       infante_nota: oNull(input.infanteNota ?? ""),
       nino_nota: oNull(input.ninoNota ?? ""),
+      adults_only: !!input.adultsOnly,
     })
     .eq("id", hotelId);
   if (error) return { ok: false, error: error.message };

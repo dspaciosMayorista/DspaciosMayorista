@@ -112,6 +112,12 @@ export async function computarReserva(
   const usarFechas =
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+  // Adults Only: el hotel no acepta niños ni infantes bajo ninguna circunstancia.
+  if (!esServicios && (numNinos > 0 || numNinos2 > 0 || numInfantes > 0)) {
+    const { data: hotelAO } = await sb.from("hoteles").select("adults_only").eq("id", input.hotelId).maybeSingle();
+    if (hotelAO?.adults_only) return { ok: false, error: "Este hotel es Adults Only: no acepta niños ni infantes." };
+  }
+
   // % de markup del paquete: el cargo de infante se configura a nivel NETO y
   // lleva el mismo margen que el resto de costos del hotel/servicios.
   let pctMk = 0;

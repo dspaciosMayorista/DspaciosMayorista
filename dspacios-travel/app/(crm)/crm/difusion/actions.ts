@@ -107,6 +107,7 @@ export async function eliminarEnvio(id: number): Promise<Result> {
 export type PlanInput = {
   materialId: number | null; fechaProgramada: string; destino: string; hotelProducto: string;
   tipoMaterial: string; canal: string; listaObjetivo: string; enfoque: string; estado: string; observaciones: string;
+  vigenciaHasta: string; // fecha de vencimiento de la promoción/tarifa enviada (vacío = sin vigencia fija)
 };
 
 export async function crearPlan(i: PlanInput): Promise<Result> {
@@ -123,7 +124,32 @@ export async function crearPlan(i: PlanInput): Promise<Result> {
     enfoque: oNull(i.enfoque),
     estado: i.estado || "pendiente",
     observaciones: oNull(i.observaciones),
+    vigencia_hasta: oNull(i.vigenciaHasta),
   });
+  if (error) return { ok: false, error: error.message };
+  rev();
+  return { ok: true };
+}
+
+// Edita una promoción ya programada — típicamente para renovar su vigencia
+// cuando está por vencer, sin tener que borrarla y crear una nueva.
+export async function actualizarPlan(id: number, i: PlanInput): Promise<Result> {
+  if (!i.fechaProgramada) return { ok: false, error: "Indica la fecha programada." };
+  const sb = await createClient();
+  const { error } = await sb.from("crm_difusion_plan").update({
+    material_id: i.materialId,
+    fecha_programada: i.fechaProgramada,
+    destino: oNull(i.destino),
+    hotel_producto: oNull(i.hotelProducto),
+    tipo_material: oNull(i.tipoMaterial),
+    canal: oNull(i.canal),
+    lista_objetivo: oNull(i.listaObjetivo),
+    enfoque: oNull(i.enfoque),
+    estado: i.estado || "pendiente",
+    observaciones: oNull(i.observaciones),
+    vigencia_hasta: oNull(i.vigenciaHasta),
+    updated_at: new Date().toISOString(),
+  }).eq("id", id);
   if (error) return { ok: false, error: error.message };
   rev();
   return { ok: true };

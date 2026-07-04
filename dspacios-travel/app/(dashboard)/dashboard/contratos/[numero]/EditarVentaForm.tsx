@@ -47,6 +47,8 @@ export function EditarVentaForm({ numero, inicial, destinos = [] }: { numero: st
             <div><label className={lbl}>Fecha regreso</label><Input type="date" value={f.fechaRegreso} onChange={set("fechaRegreso")} /></div>
             <div><label className={lbl}>Plazo</label><Input type="date" value={f.plazo} onChange={set("plazo")} /></div>
             <div><label className={lbl}>Plan</label><Input value={f.planNombre} onChange={set("planNombre")} /></div>
+            <div><label className={lbl}>Precio de venta (total)</label><Input type="number" min={0} value={f.precioVenta} onChange={set("precioVenta")} /></div>
+            <div><label className={lbl}>Cantidad de pasajeros</label><Input type="number" min={1} value={f.pax} onChange={set("pax")} /></div>
             <div>
               <label className={lbl}>Tipo de venta</label>
               <select value={f.tipoAsesor} onChange={set("tipoAsesor")} className={selCls}>

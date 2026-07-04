@@ -280,9 +280,10 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
 > y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
 > producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo: hasta la 118** (117 corrida por el dueño;
-> **falta correr la 118**, `hotel_infante_cargo` — sin dependencias, agrega 4
-> columnas a `hoteles`, ver sección "Motor de cálculo" más abajo).
+> **Migraciones a la fecha en repo: hasta la 120** (117 corrida por el dueño;
+> **faltan 118, 119 y 120**, todas sin dependencias entre sí: `hotel_infante_cargo`
+> (4 columnas en `hoteles`, ver "Motor de cálculo"), `hotel_adults_only`
+> (`hoteles.adults_only`) y `crm_plan_vigencia` (`crm_difusion_plan.vigencia_hasta`)).
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -341,6 +342,36 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   tiene tarifario/reservar (`minoristaOculto: true`), así que hoy no genera
 >   comisiones B2B nuevas de todas formas — el importador de histórico tampoco
 >   crea `aliados_b2b`.
+> - **Mejoras portal minorista/mayorista (jul-2026), 6 pedidos del dueño:**
+>   1. **CxP: botón pagado/pendiente.** `GestionTabs.tsx` (pestaña Proveedores)
+>      solo tenía editar/eliminar; ahora cada cuenta muestra su estado
+>      (Pagado/Pendiente · saldo) y un panel para registrar pagos (hasta 3,
+>      con TRM si es USD) y deshacer el último — reutiliza la regla de
+>      `dashboard/pagos/actions.ts`. Esas acciones ahora también revalidan la
+>      página del contrato (antes solo `/dashboard/pagos`, quedaba desactualizada).
+>   2. **Comisiones B2B: inputs incómodos.** Los campos de base comisionable/
+>      recobro/% eran `type="number"` (spinners +/- nativos, tediosos para
+>      montos grandes). Ahora son texto + `inputMode="numeric"` con
+>      selección automática al enfocar — se puede escribir/pegar de una vez.
+>   3. **Editar precio de venta y pasajeros de un contrato.** El panel
+>      "Editar datos del contrato" no tenía `precio_venta` ni `pax` (solo
+>      cliente/destino/fechas) — no había forma de corregirlos después de
+>      creado. Se agregaron ambos campos a `EditarVentaForm`/`actualizarVenta`.
+>   4. **Cartera: fecha de abono + corregir un abono mal digitado.**
+>      `registrarAbono` no aceptaba fecha (siempre quedaba "hoy"); ahora
+>      `AbonoForm`/Cartera tienen selector de fecha. Se agregaron
+>      `actualizarAbono`/`eliminarAbono` (editar/eliminar un abono ya
+>      registrado, en vez de tener que crear uno nuevo para "cuadrar" un
+>      error) en el detalle del contrato y en `/dashboard/cartera`.
+>   5. **Hotel "Adults Only".** Migración **119** (`hoteles.adults_only`):
+>      toggle en `HotelConfigEditor` que bloquea la reserva si declaran
+>      niños/infantes (`lib/reservar/computo.ts`) y muestra el aviso "Adults
+>      Only" en el tarifario público.
+>   6. **CRM Difusión: vigencia de la promoción.** Migración **120**
+>      (`crm_difusion_plan.vigencia_hasta`): cada envío programado en el
+>      Calendario puede llevar fecha de vencimiento; se ve como badge
+>      (vigente/vence pronto/vencida) y ya se puede **editar** una
+>      programación existente (antes solo cambiar estado o eliminar).
 > - **Multitenant — dos agencias en una sola app:** **Mayorista** (actual, completa) y
 >   **Minorista** (agencia anterior, solo para terminar de gestionar + histórico; sin
 >   tarifario/montaje). Misma BD + columna `tenant` ('mayorista'/'minorista', default

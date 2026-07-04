@@ -12,7 +12,7 @@ import {
 } from "@/lib/crm/difusion";
 import {
   crearMaterial, actualizarMaterial, eliminarMaterial, registrarEnvio, eliminarEnvio,
-  crearPlan, cambiarEstadoPlan, eliminarPlan, marcarPlanEnviado,
+  crearPlan, actualizarPlan, cambiarEstadoPlan, eliminarPlan, marcarPlanEnviado,
   type MaterialInput, type EnvioInput, type PlanInput,
 } from "./actions";
 
@@ -37,6 +37,16 @@ function RotBadge({ r }: { r: Rotacion }) {
 
 const fmt = (f: string | null) => (f ? new Date(`${f}T00:00:00`).toLocaleDateString("es-CO", { day: "2-digit", month: "short" }) : "—");
 const diaSemana = (f: string) => new Date(`${f}T00:00:00`).toLocaleDateString("es-CO", { weekday: "long" });
+// Estado de vigencia de la promoción/tarifa programada (para saber cuándo renovar).
+function vigenciaInfo(vigenciaHasta: string | null, hoy: string): { texto: string; color: string } | null {
+  if (!vigenciaHasta) return null;
+  const dias = Math.round((new Date(`${vigenciaHasta}T00:00:00`).getTime() - new Date(`${hoy}T00:00:00`).getTime()) / 86_400_000);
+  if (dias < 0) return { texto: `Vencida hace ${-dias}d`, color: "bg-red-100 text-red-700" };
+  if (dias === 0) return { texto: "Vence hoy", color: "bg-red-100 text-red-700" };
+  if (dias <= 7) return { texto: `Vence en ${dias}d — renovar`, color: "bg-amber-100 text-amber-700" };
+  return { texto: `Vigente hasta ${fmt(vigenciaHasta)}`, color: "bg-gray-100 text-gray-500" };
+}
+
 function isoSemana(f: string): string {
   const d = new Date(`${f}T00:00:00`);
   const day = (d.getDay() + 6) % 7;
@@ -320,6 +330,7 @@ const PLAN_COLOR: Record<string, string> = {
 function TabCalendario({ plan, materiales, destinoOpts, hoy }: { plan: PlanRow[]; materiales: MaterialConRot[]; destinoOpts: string[]; hoy: string }) {
   const router = useRouter();
   const [abrir, setAbrir] = useState(false);
+  const [editando, setEditando] = useState<PlanRow | null>(null);
   const [, start] = useTransition();
   const futuros = plan.filter((p) => p.estado !== "cancelado");
   const grupos = useMemo(() => {
@@ -334,27 +345,33 @@ function TabCalendario({ plan, materiales, destinoOpts, hoy }: { plan: PlanRow[]
         <Button onClick={() => setAbrir(true)} style={{ backgroundColor: "var(--brand-primary)" }}>+ Programar</Button>
       </div>
       {abrir && <PlanForm materiales={materiales} destinoOpts={destinoOpts} hoy={hoy} onClose={() => setAbrir(false)} />}
+      {editando && <PlanForm materiales={materiales} destinoOpts={destinoOpts} hoy={hoy} editando={editando} onClose={() => setEditando(null)} />}
       {!grupos.length ? (
         <p className="rounded-xl border border-dashed border-gray-200 py-14 text-center text-gray-400">Nada programado. Usa “+ Programar”.</p>
       ) : grupos.map(([semana, items]) => (
         <div key={semana} className="mb-5">
           <h3 className="mb-2 text-sm font-semibold text-gray-500">{semana}</h3>
           <div className="space-y-2">
-            {items.map((p) => (
-              <div key={p.id} className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 text-sm ${PLAN_COLOR[p.estado] ?? "border-gray-200"}`}>
-                <span className="font-medium text-gray-700">{fmt(p.fecha_programada)} <span className="text-xs font-normal capitalize text-gray-400">{diaSemana(p.fecha_programada)}</span></span>
-                <span className="text-gray-700">{p.hotel_producto ?? "—"}</span>
-                <span className="text-xs text-gray-500">{p.destino ?? ""} · {label(TIPOS_MATERIAL, p.tipo_material)} · {label(CANALES, p.canal)}</span>
-                <span className="ml-auto text-xs font-medium capitalize text-gray-500">{label(ESTADOS_PLAN, p.estado)}</span>
-                <div className="flex items-center gap-2 text-xs">
-                  {p.estado !== "enviado" && <button onClick={() => start(async () => { await marcarPlanEnviado(p.id); router.refresh(); })} className="text-[#2f6b54] hover:underline">Enviado</button>}
-                  <select value={p.estado} onChange={(e) => start(async () => { await cambiarEstadoPlan(p.id, e.target.value); router.refresh(); })} className="rounded border border-gray-300 bg-white px-1 py-0.5 text-xs">
-                    {ESTADOS_PLAN.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
-                  </select>
-                  <button onClick={() => { if (confirm("¿Eliminar programación?")) start(async () => { await eliminarPlan(p.id); router.refresh(); }); }} className="text-red-500 hover:text-red-700" title="Eliminar"><X size={14} /></button>
+            {items.map((p) => {
+              const vig = vigenciaInfo(p.vigencia_hasta, hoy);
+              return (
+                <div key={p.id} className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 text-sm ${PLAN_COLOR[p.estado] ?? "border-gray-200"}`}>
+                  <span className="font-medium text-gray-700">{fmt(p.fecha_programada)} <span className="text-xs font-normal capitalize text-gray-400">{diaSemana(p.fecha_programada)}</span></span>
+                  <span className="text-gray-700">{p.hotel_producto ?? "—"}</span>
+                  <span className="text-xs text-gray-500">{p.destino ?? ""} · {label(TIPOS_MATERIAL, p.tipo_material)} · {label(CANALES, p.canal)}</span>
+                  {vig && <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${vig.color}`}>{vig.texto}</span>}
+                  <span className="ml-auto text-xs font-medium capitalize text-gray-500">{label(ESTADOS_PLAN, p.estado)}</span>
+                  <div className="flex items-center gap-2 text-xs">
+                    {p.estado !== "enviado" && <button onClick={() => start(async () => { await marcarPlanEnviado(p.id); router.refresh(); })} className="text-[#2f6b54] hover:underline">Enviado</button>}
+                    <select value={p.estado} onChange={(e) => start(async () => { await cambiarEstadoPlan(p.id, e.target.value); router.refresh(); })} className="rounded border border-gray-300 bg-white px-1 py-0.5 text-xs">
+                      {ESTADOS_PLAN.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+                    </select>
+                    <button onClick={() => setEditando(p)} className="hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
+                    <button onClick={() => { if (confirm("¿Eliminar programación?")) start(async () => { await eliminarPlan(p.id); router.refresh(); }); }} className="text-red-500 hover:text-red-700" title="Eliminar"><X size={14} /></button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ))}
@@ -362,9 +379,14 @@ function TabCalendario({ plan, materiales, destinoOpts, hoy }: { plan: PlanRow[]
   );
 }
 
-function PlanForm({ materiales, destinoOpts, hoy, onClose }: { materiales: MaterialConRot[]; destinoOpts: string[]; hoy: string; onClose: () => void }) {
+function PlanForm({ materiales, destinoOpts, hoy, onClose, editando }: { materiales: MaterialConRot[]; destinoOpts: string[]; hoy: string; onClose: () => void; editando?: PlanRow }) {
   const router = useRouter();
-  const [f, setF] = useState<PlanInput>({ materialId: null, fechaProgramada: hoy, destino: "", hotelProducto: "", tipoMaterial: "flyer", canal: "difusion_wpp", listaObjetivo: "agencias", enfoque: "", estado: "programado", observaciones: "" });
+  const [f, setF] = useState<PlanInput>(editando ? {
+    materialId: editando.material_id, fechaProgramada: editando.fecha_programada, destino: editando.destino ?? "",
+    hotelProducto: editando.hotel_producto ?? "", tipoMaterial: editando.tipo_material ?? "flyer", canal: editando.canal ?? "difusion_wpp",
+    listaObjetivo: editando.lista_objetivo ?? "agencias", enfoque: editando.enfoque ?? "", estado: editando.estado,
+    observaciones: editando.observaciones ?? "", vigenciaHasta: editando.vigencia_hasta ?? "",
+  } : { materialId: null, fechaProgramada: hoy, destino: "", hotelProducto: "", tipoMaterial: "flyer", canal: "difusion_wpp", listaObjetivo: "agencias", enfoque: "", estado: "programado", observaciones: "", vigenciaHasta: "" });
   const [err, setErr] = useState("");
   const [pending, start] = useTransition();
   const set = <K extends keyof PlanInput>(k: K, v: PlanInput[K]) => setF((p) => ({ ...p, [k]: v }));
@@ -373,10 +395,16 @@ function PlanForm({ materiales, destinoOpts, hoy, onClose }: { materiales: Mater
     const m = materiales.find((x) => x.id === Number(id));
     if (m) setF((p) => ({ ...p, materialId: m.id, hotelProducto: m.hotel_producto, destino: m.destino ?? p.destino, tipoMaterial: m.tipo_material ?? p.tipoMaterial }));
   }
-  function guardar() { setErr(""); start(async () => { const r = await crearPlan(f); if (r.ok) { onClose(); router.refresh(); } else setErr(r.error); }); }
+  function guardar() {
+    setErr("");
+    start(async () => {
+      const r = editando ? await actualizarPlan(editando.id, f) : await crearPlan(f);
+      if (r.ok) { onClose(); router.refresh(); } else setErr(r.error);
+    });
+  }
   return (
     <div className="mb-4 rounded-xl border border-gray-200 bg-white p-4">
-      <p className="mb-3 text-sm font-semibold text-gray-700">Programar envío</p>
+      <p className="mb-3 text-sm font-semibold text-gray-700">{editando ? "Editar programación" : "Programar envío"}</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div><label className={lbl}>Fecha *</label><Input type="date" value={f.fechaProgramada} onChange={(e) => set("fechaProgramada", e.target.value)} /></div>
         <div><label className={lbl}>Material del inventario</label><select value={f.materialId ?? ""} onChange={(e) => elegirMaterial(e.target.value)} className={sel}><option value="">— Suelto —</option>{materiales.map((m) => <option key={m.id} value={m.id}>{m.hotel_producto}</option>)}</select></div>
@@ -386,11 +414,15 @@ function PlanForm({ materiales, destinoOpts, hoy, onClose }: { materiales: Mater
         <div><label className={lbl}>Canal</label><select value={f.canal} onChange={(e) => set("canal", e.target.value)} className={sel}>{CANALES.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
         <div><label className={lbl}>Lista objetivo</label><select value={f.listaObjetivo} onChange={(e) => set("listaObjetivo", e.target.value)} className={sel}>{LISTAS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
         <div><label className={lbl}>Estado</label><select value={f.estado} onChange={(e) => set("estado", e.target.value)} className={sel}>{ESTADOS_PLAN.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}</select></div>
+        <div>
+          <label className={lbl}>Vigente hasta <span className="font-normal text-gray-400">(vencimiento de la promo/tarifa)</span></label>
+          <Input type="date" value={f.vigenciaHasta} onChange={(e) => set("vigenciaHasta", e.target.value)} />
+        </div>
         <div className="sm:col-span-3"><label className={lbl}>Enfoque comercial</label><Input value={f.enfoque} onChange={(e) => set("enfoque", e.target.value)} /></div>
       </div>
       {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
       <div className="mt-3 flex items-center gap-2">
-        <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : "Programar"}</Button>
+        <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : editando ? "Guardar cambios" : "Programar"}</Button>
         <button onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600">Cancelar</button>
       </div>
     </div>

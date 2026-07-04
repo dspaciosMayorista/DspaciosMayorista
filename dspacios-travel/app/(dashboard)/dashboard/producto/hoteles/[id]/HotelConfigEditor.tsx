@@ -34,6 +34,7 @@ export function HotelConfigEditor({
     infanteCargoDesc: string;
     infanteNota: string;
     ninoNota: string;
+    adultsOnly: boolean;
   };
 }) {
   const router = useRouter();
@@ -57,6 +58,7 @@ export function HotelConfigEditor({
   const [infanteCargoDesc, setInfanteCargoDesc] = useState(inicial.infanteCargoDesc);
   const [infanteNota, setInfanteNota] = useState(inicial.infanteNota);
   const [ninoNota, setNinoNota] = useState(inicial.ninoNota);
+  const [adultsOnly, setAdultsOnly] = useState(inicial.adultsOnly);
   const [rangosSel, setRangosSel] = useState<number[]>(inicial.rangosEdad);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -73,7 +75,7 @@ export function HotelConfigEditor({
         rangosEdad: rangosSel,
         contactoTelefono: contactoTel, emailComercial: emailCom,
         estrellas: Number(estrellas) || null, clasificacion, descripcion, ubicacion, videoUrl, moneda,
-        infanteCargoNeto: Number(infanteCargoNeto) || 0, infanteCargoDesc, infanteNota, ninoNota,
+        infanteCargoNeto: Number(infanteCargoNeto) || 0, infanteCargoDesc, infanteNota, ninoNota, adultsOnly,
       });
       if (r.ok) { setMsg("Guardado."); router.refresh(); } else setMsg(r.error);
     });
@@ -101,11 +103,16 @@ export function HotelConfigEditor({
             </div>
             <div><label className={lbl}>Zona</label><Input value={zona} onChange={(e) => setZona(e.target.value)} /></div>
           </div>
+          <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700">
+            <input type="checkbox" checked={adultsOnly} onChange={(e) => setAdultsOnly(e.target.checked)} />
+            Adults Only — este hotel NO acepta niños ni infantes
+          </label>
+
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div><label className={lbl}>Infante mín.</label><Input type="number" value={infMin} onChange={(e) => setInfMin(e.target.value)} /></div>
-            <div><label className={lbl}>Infante máx.</label><Input type="number" value={infMax} onChange={(e) => setInfMax(e.target.value)} /></div>
-            <div><label className={lbl}>Niño mín.</label><Input type="number" value={ninoMin} onChange={(e) => setNinoMin(e.target.value)} /></div>
-            <div><label className={lbl}>Niño máx.</label><Input type="number" value={ninoMax} onChange={(e) => setNinoMax(e.target.value)} /></div>
+            <div><label className={lbl}>Infante mín.</label><Input type="number" value={infMin} onChange={(e) => setInfMin(e.target.value)} disabled={adultsOnly} /></div>
+            <div><label className={lbl}>Infante máx.</label><Input type="number" value={infMax} onChange={(e) => setInfMax(e.target.value)} disabled={adultsOnly} /></div>
+            <div><label className={lbl}>Niño mín.</label><Input type="number" value={ninoMin} onChange={(e) => setNinoMin(e.target.value)} disabled={adultsOnly} /></div>
+            <div><label className={lbl}>Niño máx.</label><Input type="number" value={ninoMax} onChange={(e) => setNinoMax(e.target.value)} disabled={adultsOnly} /></div>
           </div>
 
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">

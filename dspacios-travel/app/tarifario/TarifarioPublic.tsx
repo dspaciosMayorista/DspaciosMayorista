@@ -112,7 +112,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
 
 type ModuloKey = FilaTarifario["modulo"] | "programas";
 
-type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; infanteCargo?: boolean; infanteCargoDesc?: string | null; infanteNota?: string | null; ninoNota?: string | null }>;
+type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; infanteCargo?: boolean; infanteCargoDesc?: string | null; infanteNota?: string | null; ninoNota?: string | null; adultsOnly?: boolean }>;
 
 // Texto de rango de edad de niño/infante (helper centralizado en lib).
 // Tolera `info` undefined (hoteles sin config) devolviendo null.
@@ -142,6 +142,16 @@ function CategoriaInline({ info }: { info?: { estrellas: number | null; clasific
   if (info.clasificacion?.trim())
     return <span className="ml-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">{info.clasificacion}</span>;
   return null;
+}
+
+// Aviso "Adults Only" — hotel que no acepta niños ni infantes.
+function AdultsOnlyBadge({ info }: { info?: { adultsOnly?: boolean } }) {
+  if (!info?.adultsOnly) return null;
+  return (
+    <span className="ml-1 rounded-full bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white" title="Este hotel no acepta niños ni infantes">
+      Adults Only
+    </span>
+  );
 }
 
 // Acomodaciones para el filtro (mismas claves que COLS).
@@ -572,6 +582,7 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                     <td className="px-3 py-2 font-medium text-gray-800">
                       {i === 0 ? r.hotel : ""}
                       {i === 0 && r.hotel_id != null && <CategoriaInline info={infoPorHotel[r.hotel_id]} />}
+                      {i === 0 && r.hotel_id != null && <AdultsOnlyBadge info={infoPorHotel[r.hotel_id]} />}
                       {i === 0 && r.hotel_id != null && rangoEdades(infoPorHotel[r.hotel_id]) && (
                         <span className="mt-0.5 block text-[11px] font-normal text-gray-400">{rangoEdades(infoPorHotel[r.hotel_id])}</span>
                       )}
