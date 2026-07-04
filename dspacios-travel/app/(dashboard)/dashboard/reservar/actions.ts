@@ -47,7 +47,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva } = comp.data;
+  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoInfante } = comp.data;
 
   // 2c) Validar cupos del bloqueo ANTES de crear nada (no sobre-vender sillas).
   if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -300,6 +300,16 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       orden: 100 + i,
     });
   });
+  // Cargo obligatorio de infante (ej. alimentación), ya incluido en precioVenta
+  // — se itemiza aparte para que el cliente vea de dónde sale.
+  if (cargoInfante) {
+    items.push({
+      numero_contrato: numero,
+      descripcion: cargoInfante.descripcion ? `Infante · ${cargoInfante.descripcion}` : "Cargo obligatorio de infante",
+      adultos: 0, ninos: 0, tarifa_adulto: cargoInfante.total, tarifa_nino: 0,
+      orden: 200,
+    });
+  }
   if (items.length) await sb.from("contrato_items").insert(items);
 
   // Cuentas por pagar (CxP) generadas AUTOMÁTICAMENTE porque la venta sale del
@@ -529,7 +539,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   const esServicios = input.modulo === "servicios";
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva } = comp.data;
+  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva, cargoInfante } = comp.data;
 
   const hoy = new Date().toISOString().slice(0, 10);
   const asesorNombre = input.asesorInterno;
@@ -644,6 +654,13 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   if (numNinos2 > 0 && pvpPorAcom["nino2"] != null)
     itemsSnap.push({ id: 51, descripcion: `Niño 2 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"] });
   serviciosItems.forEach((s, i) => itemsSnap.push({ id: 100 + i, descripcion: `Servicio · ${s.nombre}`, adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0 }));
+  if (cargoInfante) {
+    itemsSnap.push({
+      id: 200,
+      descripcion: cargoInfante.descripcion ? `Infante · ${cargoInfante.descripcion}` : "Cargo obligatorio de infante",
+      adultos: 0, ninos: 0, tarifa_adulto: cargoInfante.total, tarifa_nino: 0,
+    });
+  }
 
   const detalle = { venta: ventaSnap, pasajeros: pasajerosSnap, hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
 

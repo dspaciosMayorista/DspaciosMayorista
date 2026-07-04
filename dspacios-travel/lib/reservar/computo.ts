@@ -15,6 +15,7 @@ import {
   liquidarHotelNoches,
   temporadaVigenteParaFecha,
   toTemporadaRango,
+  marcar,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import {
@@ -79,6 +80,9 @@ export type ComputoReserva = {
   serviciosItems: { nombre: string; precio: number }[];
   impuestoTotal: number;
   monedaReserva: string;
+  cargoInfante: { total: number; descripcion: string | null } | null; // cargo obligatorio (ej. alimentación), ya incluido en precioVenta
+  notaInfante: string | null;  // anotación informativa (ej. "comparte cama con los padres")
+  notaNino: string | null;     // anotación informativa (ej. "debe pagar seguro hotelero obligatorio")
 };
 
 export async function computarReserva(
@@ -94,11 +98,27 @@ export async function computarReserva(
   const lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[] = [];
   const numNinos = Math.max(0, Math.trunc(Number(input.ninos) || 0));
   const numNinos2 = Math.max(0, Math.trunc(Number(input.ninos2) || 0));
+  const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   let monedaReserva = "COP";  // moneda del paquete (USD si los hoteles son internacionales)
+  // Cargo obligatorio de infante (ej. alimentación) + notas especiales de
+  // niño/infante del hotel — se leen junto con el resto de datos del hotel en
+  // cada rama y se aplican después, una sola vez (ver más abajo).
+  let infanteCargoNeto = 0;
+  let infanteCargoDesc: string | null = null;
+  let infanteNotaTxt: string | null = null;
+  let ninoNotaTxt: string | null = null;
 
   const usarFechas =
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  // % de markup del paquete: el cargo de infante se configura a nivel NETO y
+  // lleva el mismo margen que el resto de costos del hotel/servicios.
+  let pctMk = 0;
+  if (!esServicios) {
+    const { data: pqMk } = await sb.from("armado_paquetes").select("pct_mk").eq("id", input.paqueteId).maybeSingle();
+    pctMk = Number(pqMk?.pct_mk) || 0;
+  }
 
   if (!esServicios && usarFechas) {
     const numNoches = noches(input.fechaIda!, input.fechaRegreso!);
@@ -130,8 +150,12 @@ export async function computarReserva(
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
     const { data: hotelRowF } = await sb
-      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max, moneda").eq("id", input.hotelId).maybeSingle();
+      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max, moneda, infante_cargo_neto, infante_cargo_desc, infante_nota, nino_nota").eq("id", input.hotelId).maybeSingle();
     monedaReserva = ((hotelRowF as { moneda?: string | null } | null)?.moneda) ?? "COP";
+    infanteCargoNeto = Number(hotelRowF?.infante_cargo_neto) || 0;
+    infanteCargoDesc = hotelRowF?.infante_cargo_desc ?? null;
+    infanteNotaTxt = hotelRowF?.infante_nota ?? null;
+    ninoNotaTxt = hotelRowF?.nino_nota ?? null;
     const realF = clasificarPorEdad(
       input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
       hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10
@@ -224,9 +248,13 @@ export async function computarReserva(
 
     const { data: hotelRow } = await sb
       .from("hoteles")
-      .select("edad_infante_max, edad_nino_max, pax_min, pax_max")
+      .select("edad_infante_max, edad_nino_max, pax_min, pax_max, infante_cargo_neto, infante_cargo_desc, infante_nota, nino_nota")
       .eq("id", input.hotelId)
       .maybeSingle();
+    infanteCargoNeto = Number(hotelRow?.infante_cargo_neto) || 0;
+    infanteCargoDesc = hotelRow?.infante_cargo_desc ?? null;
+    infanteNotaTxt = hotelRow?.infante_nota ?? null;
+    ninoNotaTxt = hotelRow?.nino_nota ?? null;
     const real = clasificarPorEdad(
       input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
       hotelRow?.edad_infante_max ?? 2,
@@ -258,6 +286,20 @@ export async function computarReserva(
       .limit(1)
       .maybeSingle();
     meta = { hotel_nombre: m?.paquete_nombre ?? "Servicios", destino_nombre: m?.destino_nombre ?? null, fecha_ida: null, fecha_regreso: null };
+  }
+
+  // Cargo OBLIGATORIO de infante (ej. alimentación no incluida aunque no pague
+  // habitación): costo neto configurado por hotel × noches × infantes, con el
+  // mismo markup del paquete. Se aplica una sola vez, tras resolver `meta`
+  // (fecha_ida/fecha_regreso), sea cual sea la rama que se haya tomado arriba.
+  let cargoInfante: { total: number; descripcion: string | null } | null = null;
+  if (!esServicios && numInfantes > 0 && infanteCargoNeto > 0 && meta.fecha_ida && meta.fecha_regreso) {
+    const nochesInfante = noches(meta.fecha_ida, meta.fecha_regreso) || 1;
+    const totalInfante = Math.round(numInfantes * nochesInfante * marcar(infanteCargoNeto, pctMk));
+    if (totalInfante > 0) {
+      precioVenta += totalInfante;
+      cargoInfante = { total: totalInfante, descripcion: infanteCargoDesc };
+    }
   }
 
   // Servicios (en tipo servicios es el total; en hotel son add-ons).
@@ -365,6 +407,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva },
+    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoInfante, notaInfante: infanteNotaTxt, notaNino: ninoNotaTxt },
   };
 }

@@ -1063,6 +1063,10 @@ export type Database = {
           ubicacion: string | null;
           video_url: string | null;
           moneda: string;
+          infante_cargo_neto: number;
+          infante_cargo_desc: string | null;
+          infante_nota: string | null;
+          nino_nota: string | null;
         };
         Insert: {
           id?: number;
@@ -1087,6 +1091,10 @@ export type Database = {
           descripcion?: string | null;
           ubicacion?: string | null;
           video_url?: string | null;
+          infante_cargo_neto?: number;
+          infante_cargo_desc?: string | null;
+          infante_nota?: string | null;
+          nino_nota?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [

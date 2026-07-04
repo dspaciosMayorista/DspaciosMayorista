@@ -30,6 +30,10 @@ export function HotelConfigEditor({
     ubicacion: string;
     videoUrl: string;
     moneda: string;
+    infanteCargoNeto: number;
+    infanteCargoDesc: string;
+    infanteNota: string;
+    ninoNota: string;
   };
 }) {
   const router = useRouter();
@@ -49,6 +53,10 @@ export function HotelConfigEditor({
   const [infMax, setInfMax] = useState(String(inicial.edadInfanteMax));
   const [ninoMin, setNinoMin] = useState(String(inicial.edadNinoMin));
   const [ninoMax, setNinoMax] = useState(String(inicial.edadNinoMax));
+  const [infanteCargoNeto, setInfanteCargoNeto] = useState(String(inicial.infanteCargoNeto || ""));
+  const [infanteCargoDesc, setInfanteCargoDesc] = useState(inicial.infanteCargoDesc);
+  const [infanteNota, setInfanteNota] = useState(inicial.infanteNota);
+  const [ninoNota, setNinoNota] = useState(inicial.ninoNota);
   const [rangosSel, setRangosSel] = useState<number[]>(inicial.rangosEdad);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -65,6 +73,7 @@ export function HotelConfigEditor({
         rangosEdad: rangosSel,
         contactoTelefono: contactoTel, emailComercial: emailCom,
         estrellas: Number(estrellas) || null, clasificacion, descripcion, ubicacion, videoUrl, moneda,
+        infanteCargoNeto: Number(infanteCargoNeto) || 0, infanteCargoDesc, infanteNota, ninoNota,
       });
       if (r.ok) { setMsg("Guardado."); router.refresh(); } else setMsg(r.error);
     });
@@ -97,6 +106,38 @@ export function HotelConfigEditor({
             <div><label className={lbl}>Infante máx.</label><Input type="number" value={infMax} onChange={(e) => setInfMax(e.target.value)} /></div>
             <div><label className={lbl}>Niño mín.</label><Input type="number" value={ninoMin} onChange={(e) => setNinoMin(e.target.value)} /></div>
             <div><label className={lbl}>Niño máx.</label><Input type="number" value={ninoMax} onChange={(e) => setNinoMax(e.target.value)} /></div>
+          </div>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <p className="mb-3 text-xs font-semibold text-amber-800">
+              Cargo obligatorio de infante y notas especiales
+              <span className="ml-1 font-normal text-amber-700">(ej. alimentación obligatoria, comparte cama con los padres, seguro hotelero)</span>
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className={lbl}>Cargo neto por infante / noche</label>
+                <Input type="number" min={0} value={infanteCargoNeto} onChange={(e) => setInfanteCargoNeto(e.target.value)} placeholder="0" />
+                <p className="mt-1 text-[11px] text-gray-500">Se cobra a cada infante, multiplicado por las noches de la estadía. Lleva el mismo % de markup del paquete.</p>
+              </div>
+              <div>
+                <label className={lbl}>Descripción del cargo</label>
+                <Input value={infanteCargoDesc} onChange={(e) => setInfanteCargoDesc(e.target.value)} placeholder="Ej. Alimentación obligatoria" />
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className={lbl}>Nota sobre infantes</label>
+                <textarea value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} rows={2}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                  placeholder="Ej. Comparte cama con los padres." />
+              </div>
+              <div>
+                <label className={lbl}>Nota sobre niños</label>
+                <textarea value={ninoNota} onChange={(e) => setNinoNota(e.target.value)} rows={2}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                  placeholder="Ej. Debe pagar seguro hotelero obligatorio en el hotel." />
+              </div>
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div><label className={lbl}>Teléfono de contacto (reservas)</label><Input value={contactoTel} onChange={(e) => setContactoTel(e.target.value)} placeholder="+57 ..." /></div>

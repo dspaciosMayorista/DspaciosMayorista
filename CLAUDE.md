@@ -280,8 +280,9 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
 > y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
 > producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo: hasta la 117 — todas corridas por el dueño.**
-> (correr en orden cualquier migración nueva que se agregue después de esta).
+> **Migraciones a la fecha en repo: hasta la 118** (117 corrida por el dueño;
+> **falta correr la 118**, `hotel_infante_cargo` — sin dependencias, agrega 4
+> columnas a `hoteles`, ver sección "Motor de cálculo" más abajo).
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -536,6 +537,20 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - Vuelo: por vuelo eliges `costo/(1−mk)` **o** `costo + TA`.
 - PVP = hotel + servicios + vuelo. **Impuesto (BNC)** = tiquete neto o fijo. Base com. = PVP − imp.
 - Niño 1 / Niño 2 = acomodaciones `nino` / `nino2` (0 = gratis, sí se publica).
+- **Cargo obligatorio de infante + notas** (migración 118, `hoteles.infante_cargo_neto/
+  infante_cargo_desc/infante_nota/nino_nota`, editable en `HotelConfigEditor.tsx`):
+  antes el infante SIEMPRE sumaba $0. Ahora un hotel puede configurar un cargo NETO
+  por infante **por noche** (ej. alimentación obligatoria aunque no pague habitación),
+  que se multiplica por noches × infantes y lleva el mismo **% de markup del
+  paquete** — decisión tomada sin confirmar con el dueño (falló la pregunta por un
+  error técnico), ajustar si no es el criterio correcto. Se calcula en
+  `lib/reservar/computo.ts` (`cargoInfante`, ya incluido en `precioVenta`) y se
+  itemiza aparte en `contrato_items` ("Infante · <descripción>") en
+  `reservarDesdeTarifario`/`crearCotizacion`. Las notas libres (`infante_nota`/
+  `nino_nota`, ej. "comparte cama con los padres", "seguro hotelero obligatorio")
+  son informativas (no suman al precio) y se muestran en el tarifario público
+  junto al rango de edades — **sin exponer el costo neto**, solo la descripción/
+  aviso de que aplica un cargo (el valor exacto se confirma al reservar).
 
 ### Editar reserva pendiente
 - **HECHO (servicios):** en un contrato `pendiente`, `ServiciosContratoEditor` +
