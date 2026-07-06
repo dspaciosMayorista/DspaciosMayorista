@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTenant } from "@/lib/tenant.server";
 import { numeroConTenant } from "@/lib/tenant";
@@ -18,11 +19,20 @@ function lotes<T>(arr: T[], n: number): T[][] {
   return out;
 }
 
-// CANDADO de seguridad: la importación SOLO se permite en la agencia minorista.
-// Si se corriera en mayorista, los números 00-XXXX colisionarían con su PK.
+// CANDADO de seguridad: la importación SOLO se permite en la agencia minorista,
+// y SOLO a superadmin/administración — es una reescritura masiva de ventas y
+// abonos históricos (delete+insert por contrato), no una operación de venta
+// normal. Usa el cliente con sesión (RLS) antes de pasar al admin client.
 async function tenantMinoristaOFalla(): Promise<
   { ok: true; tenant: "minorista" } | { ok: false; error: string }
 > {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return { ok: false, error: "No autenticado." };
+  const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).single();
+  if (!perfil || !["superadmin", "administracion"].includes(perfil.rol))
+    return { ok: false, error: "Solo superadmin / administración pueden importar el histórico." };
+
   const tenant = await getTenant();
   if (tenant !== "minorista")
     return {
@@ -129,13 +139,82 @@ export async function importarHistorico(textoRelacion: string, textoResumen: str
     nAbonos += lote.length;
   }
 
+  // (c) Cuentas por pagar (proveedores) por cada costo con valor > 0. Sin nombre
+  // en la hoja → "Sin especificar" (editable luego). NO duplica: solo agrega los
+  // tipos (hotel/aereo/receptivo/asistencia/otro) que le falten a cada contrato,
+  // así re-importar sirve también para completar los contratos ya importados
+  // antes de este fix, sin pisar ediciones manuales de proveedor ya hechas.
+  const SIN_ESPECIFICAR = "Sin especificar";
+  const { data: existentesCxP } = await sb
+    .from("cuentas_por_pagar")
+    .select("numero_contrato, tipo_proveedor")
+    .eq("tenant", tenant)
+    .in("numero_contrato", numeros);
+  const tiposPorContrato = new Map<string, Set<string>>();
+  for (const c of existentesCxP ?? []) {
+    if (!c.tipo_proveedor) continue;
+    const s = tiposPorContrato.get(c.numero_contrato) ?? new Set<string>();
+    s.add(c.tipo_proveedor);
+    tiposPorContrato.set(c.numero_contrato, s);
+  }
+
+  type CxpRow = { numero_contrato: string; proveedor: string; tipo: string; servicio: string; valor: number; fecha: string | null; moneda: string };
+  const cxpRows: CxpRow[] = [];
+  for (const num of enAmbos) {
+    const r = relPorNum.get(num)!;
+    const p = pagPorNum.get(num)!;
+    const numero_contrato = numeroConTenant(num, tenant);
+    const ya = tiposPorContrato.get(numero_contrato) ?? new Set<string>();
+    const fecha = r.fecha_venta ?? p.fecha_venta ?? null;
+    const add = (tipo: string, proveedor: string | null, servicio: string, valor: number) => {
+      if (valor <= 0 || ya.has(tipo)) return;
+      cxpRows.push({ numero_contrato, proveedor: proveedor?.trim() || SIN_ESPECIFICAR, tipo, servicio, valor, fecha, moneda: r.moneda });
+    };
+    add("hotel", r.hotelProveedor, `Hotel ${r.hotel ?? ""}`.trim(), r.costo_hotel);
+    add("aereo", r.aerolinea, `Aéreo ${r.aerolinea ?? ""}`.trim(), r.costo_aereo);
+    add("receptivo", r.receptivo, "Traslados", r.costo_receptivo);
+    add("asistencia", null, "Asistencia médica", r.costo_asistencia);
+    add("otro", null, "Tours / otros costos", r.otros_costos);
+  }
+
+  let nCxP = 0;
+  if (cxpRows.length) {
+    const nombres = [...new Set(cxpRows.map((r) => r.proveedor).filter((n) => n !== SIN_ESPECIFICAR))];
+    const { data: provs } = nombres.length
+      ? await sb.from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres)
+      : { data: [] as { nombre: string; aplica_retencion: boolean; pct_retencion: number }[] };
+    const provMap = new Map((provs ?? []).map((p) => [p.nombre, p]));
+    const hoy = new Date().toISOString().slice(0, 10);
+    const cxpPayload = cxpRows.map((r) => {
+      const pr = provMap.get(r.proveedor);
+      return {
+        numero_contrato: r.numero_contrato,
+        tenant,
+        proveedor: r.proveedor,
+        tipo_proveedor: r.tipo,
+        servicio: r.servicio,
+        valor_total: r.valor,
+        moneda: r.moneda,
+        fecha_obligacion: r.fecha ?? hoy,
+        aplica_retencion: pr?.aplica_retencion ?? false,
+        pct_retencion: pr?.pct_retencion ?? 0,
+      };
+    });
+    for (const lote of lotes(cxpPayload, 400)) {
+      const { error } = await sb.from("cuentas_por_pagar").insert(lote);
+      if (error) return { ok: false, error: error.message };
+      nCxP += lote.length;
+    }
+  }
+
   revalidatePath("/dashboard/contratos");
   revalidatePath("/dashboard/ventas");
   revalidatePath("/dashboard/cartera");
+  revalidatePath("/dashboard/pagos");
   const omitidos = soloRelacion.length + soloResumen.length;
   return {
     ok: true,
-    resumen: `${nVentas} contratos importados (en ambas hojas) con ${nAbonos} abonos.${omitidos ? ` ${omitidos} omitido(s) por estar en una sola hoja.` : ""}`,
+    resumen: `${nVentas} contratos importados (en ambas hojas) con ${nAbonos} abonos y ${nCxP} cuenta(s) por pagar generada(s).${omitidos ? ` ${omitidos} omitido(s) por estar en una sola hoja.` : ""}`,
     notas,
   };
 }

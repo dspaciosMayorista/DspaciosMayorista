@@ -233,10 +233,20 @@ function FilaDetalle({ row }: { row: ComB2BRow }) {
       <div className="tabular-nums text-gray-700">{valor}</div>
     </div>
   );
+  // Texto + inputMode (no type="number"): así se puede escribir/pegar el valor
+  // de una vez y seleccionar todo con un click, en vez de los spinners +/− del
+  // input numérico nativo (incómodos para montos grandes en pesos).
   const Campo = ({ label, value, onChange, width = "w-24" }: { label: string; value: string; onChange: (v: string) => void; width?: string }) => (
     <div>
       <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
-      <Input type="number" min={0} value={value} onChange={(e) => onChange(e.target.value)} className={`mt-0.5 h-7 ${width} text-xs`} />
+      <Input
+        type="text"
+        inputMode="numeric"
+        value={value}
+        onChange={(e) => onChange(e.target.value.replace(/[^\d]/g, ""))}
+        onFocus={(e) => e.target.select()}
+        className={`mt-0.5 h-7 ${width} text-xs`}
+      />
     </div>
   );
 

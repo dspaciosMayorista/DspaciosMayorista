@@ -48,6 +48,15 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null;
     video_url: string | null;
     destino_id: number | null;
+    infante_cargo_neto: number | null;
+    infante_cargo_desc: string | null;
+    infante_nota: string | null;
+    nino_nota: string | null;
+    adults_only: boolean | null;
+    pet_friendly: boolean | null;
+    pet_costo_neto: number | null;
+    pet_costo_desc: string | null;
+    pet_nota: string | null;
     destinos: { nombre: string } | null;
     proveedores: { nombre: string; politica_reservas: string | null } | null;
   };
@@ -107,6 +116,15 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             ubicacion: h.ubicacion ?? "",
             videoUrl: h.video_url ?? "",
             moneda: ((h as { moneda?: string | null }).moneda) ?? "COP",
+            infanteCargoNeto: h.infante_cargo_neto ?? 0,
+            infanteCargoDesc: h.infante_cargo_desc ?? "",
+            infanteNota: h.infante_nota ?? "",
+            ninoNota: h.nino_nota ?? "",
+            adultsOnly: h.adults_only ?? false,
+            petFriendly: h.pet_friendly ?? false,
+            petCostoNeto: h.pet_costo_neto ?? 0,
+            petCostoDesc: h.pet_costo_desc ?? "",
+            petNota: h.pet_nota ?? "",
           }}
         />
         <HotelCategoriasRegimenesEditor

@@ -117,6 +117,15 @@ export async function actualizarHotelConfig(
     ubicacion?: string;
     videoUrl?: string;
     moneda?: string;
+    infanteCargoNeto?: number;
+    infanteCargoDesc?: string;
+    infanteNota?: string;
+    ninoNota?: string;
+    adultsOnly?: boolean;
+    petFriendly?: boolean;
+    petCostoNeto?: number;
+    petCostoDesc?: string;
+    petNota?: string;
   }
 ): Promise<Result> {
   const sb = await createClient();
@@ -139,6 +148,15 @@ export async function actualizarHotelConfig(
       descripcion: oNull(input.descripcion ?? ""),
       ubicacion: oNull(input.ubicacion ?? ""),
       video_url: oNull(input.videoUrl ?? ""),
+      infante_cargo_neto: Math.max(0, Number(input.infanteCargoNeto) || 0),
+      infante_cargo_desc: oNull(input.infanteCargoDesc ?? ""),
+      infante_nota: oNull(input.infanteNota ?? ""),
+      nino_nota: oNull(input.ninoNota ?? ""),
+      adults_only: !!input.adultsOnly,
+      pet_friendly: !!input.petFriendly,
+      pet_costo_neto: Math.max(0, Number(input.petCostoNeto) || 0),
+      pet_costo_desc: oNull(input.petCostoDesc ?? ""),
+      pet_nota: oNull(input.petNota ?? ""),
     })
     .eq("id", hotelId);
   if (error) return { ok: false, error: error.message };

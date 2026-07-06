@@ -280,11 +280,100 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
 > y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
 > producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo: hasta la 113** (correr en orden las que falten).
-> *Pendiente del dueño:* el dueño reporta haber corrido hasta la **111**; faltan por correr
-> **112** (`fn_fusionar_destino`) y **113** (`programa_piezas`: bucket `programas` + flyer/historia).
+> **Migraciones a la fecha en repo: hasta la 121** (117 corrida por el dueño;
+> **faltan 118, 119, 120 y 121**, todas sin dependencias entre sí: `hotel_infante_cargo`
+> (4 columnas en `hoteles`, ver "Motor de cálculo"), `hotel_adults_only`
+> (`hoteles.adults_only`), `crm_plan_vigencia` (`crm_difusion_plan.vigencia_hasta`) y
+> `hotel_pet_friendly` (4 columnas en `hoteles`: `pet_friendly`, `pet_costo_neto`,
+> `pet_costo_desc`, `pet_nota`, ver "Motor de cálculo").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
+>   1. **Escalación de privilegios**: `dashboard/usuarios/actions.ts` usaba el
+>      cliente service-role (bypassa RLS) sin validar el rol de quien llamaba —
+>      cualquier usuario interno autenticado podía volverse `superadmin`. Ahora
+>      exige sesión + rol `superadmin`/`administracion` en la Server Action misma,
+>      y **solo superadmin** puede asignar/crear el rol `superadmin`.
+>   2. **Aislamiento por tenant en RLS**: `puede_ver_tenant()` (migr. 107) existía
+>      pero ninguna policy la usaba — un `administracion`/`operaciones` de una
+>      agencia podía leer/escribir ventas, abonos, CxP, comisiones y facturación de
+>      la OTRA agencia (la separación era solo de UI). **Migración 116** agrega el
+>      filtro de tenant a esas policies. **⚠️ Antes de correrla**, confirmar que
+>      todo usuario interno no-superadmin tenga `usuarios.tenant` correcto (ya es
+>      un supuesto del que depende `tenantContext()`/el selector de agencia hoy).
+>   3. **Suplantación en portal B2B**: la pertenencia de un contrato se resolvía
+>      también por `agencia_nombre`/`freelance_nombre` en texto libre (sin
+>      unicidad) — alguien podía registrarse con el mismo nombre que un aliado real
+>      y ver sus contratos/comisiones. Ahora el registro (`portal/registro/actions.ts`)
+>      y la creación interna de usuarios bloquean nombres de agencia/freelance
+>      duplicados.
+>   4. **Cron jobs sin `CRON_SECRET`**: `/api/cron/*` solo validaban el secreto
+>      *si* la env var existía; si faltaba en Vercel quedaban abiertos a cualquiera
+>      con la URL. Ahora fallan cerrado (503) si `CRON_SECRET` no está configurada
+>      — **es obligatoria**, no opcional (Vercel la manda sola como Bearer en sus
+>      cron jobs).
+>   **Fase 2 (inyección/validación de inputs) — 3 hallazgos más corregidos:**
+>   5. **`eliminar_contrato()` sin candado dentro de la función**: es
+>      `SECURITY DEFINER` (bypassa RLS) pero no validaba `mi_rol()` — la Server
+>      Action sí exigía superadmin, pero se podía saltar llamando el RPC directo
+>      desde el navegador con el JWT propio. **Migración 117** agrega el mismo
+>      candado que ya usan `fn_renumerar_contrato`/`fn_fusionar_destino`.
+>   6. **Importador de histórico minorista sin candado de rol**: `importarHistorico`
+>      (reescribe masivamente ventas/abonos) solo validaba el tenant, cualquier
+>      usuario autenticado (incl. `venta`) podía invocarlo. Ahora exige
+>      `superadmin`/`administracion`, en la Server Action y en el nav (`layout.tsx`).
+>   7. **`crearContrato`**: las tarifas/cantidades de los ítems (vienen del
+>      cliente) no se validaban como números finitos ≥ 0 antes de sumar el PVP;
+>      y un paquete "negociado" sin tarifas configuradas en el catálogo caía en
+>      silencio a aceptar la tarifa que mandara el cliente. Ahora valida los
+>      ítems y falla si el paquete negociado no tiene tarifas configuradas.
+>   Queda pendiente: headers de seguridad (CSP/X-Frame-Options) y la fase 3
+>   (estructura de código/dependencias), no iniciada todavía.
+> - **Cuenta de cobro B2B — solo freelance (persona natural):** las agencias
+>   (persona jurídica) deben facturar electrónicamente, no generan cuenta de
+>   cobro. `portal/b2b/page.tsx` ya no muestra el link "Cuenta de cobro" para
+>   contratos con `tipo_asesor='agencia'` (muestra "Factura electrónica" en su
+>   lugar); `portal/comision/[numero]/page.tsx` bloquea el acceso directo con un
+>   mensaje explicativo. De paso, 3 bugs corregidos encontrados al revisar esto:
+>   el membrete de la cuenta de cobro tenía fijo "Mayorista de Turismo" (ahora
+>   usa `agencias.nombre_comercial`/`razon_social` del tenant real vía
+>   `agenciaDe()`); el insert de `aliados_b2b` en `crearContrato` no estampaba
+>   `tenant` (quedaba siempre 'mayorista' por default); y `dashboard/comisiones`
+>   no filtraba `aliados_b2b` por tenant, así que superadmin/gerencia veían
+>   comisiones de ambas agencias mezcladas sin indicarlo. **Nota:** minorista no
+>   tiene tarifario/reservar (`minoristaOculto: true`), así que hoy no genera
+>   comisiones B2B nuevas de todas formas — el importador de histórico tampoco
+>   crea `aliados_b2b`.
+> - **Mejoras portal minorista/mayorista (jul-2026), 6 pedidos del dueño:**
+>   1. **CxP: botón pagado/pendiente.** `GestionTabs.tsx` (pestaña Proveedores)
+>      solo tenía editar/eliminar; ahora cada cuenta muestra su estado
+>      (Pagado/Pendiente · saldo) y un panel para registrar pagos (hasta 3,
+>      con TRM si es USD) y deshacer el último — reutiliza la regla de
+>      `dashboard/pagos/actions.ts`. Esas acciones ahora también revalidan la
+>      página del contrato (antes solo `/dashboard/pagos`, quedaba desactualizada).
+>   2. **Comisiones B2B: inputs incómodos.** Los campos de base comisionable/
+>      recobro/% eran `type="number"` (spinners +/- nativos, tediosos para
+>      montos grandes). Ahora son texto + `inputMode="numeric"` con
+>      selección automática al enfocar — se puede escribir/pegar de una vez.
+>   3. **Editar precio de venta y pasajeros de un contrato.** El panel
+>      "Editar datos del contrato" no tenía `precio_venta` ni `pax` (solo
+>      cliente/destino/fechas) — no había forma de corregirlos después de
+>      creado. Se agregaron ambos campos a `EditarVentaForm`/`actualizarVenta`.
+>   4. **Cartera: fecha de abono + corregir un abono mal digitado.**
+>      `registrarAbono` no aceptaba fecha (siempre quedaba "hoy"); ahora
+>      `AbonoForm`/Cartera tienen selector de fecha. Se agregaron
+>      `actualizarAbono`/`eliminarAbono` (editar/eliminar un abono ya
+>      registrado, en vez de tener que crear uno nuevo para "cuadrar" un
+>      error) en el detalle del contrato y en `/dashboard/cartera`.
+>   5. **Hotel "Adults Only".** Migración **119** (`hoteles.adults_only`):
+>      toggle en `HotelConfigEditor` que bloquea la reserva si declaran
+>      niños/infantes (`lib/reservar/computo.ts`) y muestra el aviso "Adults
+>      Only" en el tarifario público.
+>   6. **CRM Difusión: vigencia de la promoción.** Migración **120**
+>      (`crm_difusion_plan.vigencia_hasta`): cada envío programado en el
+>      Calendario puede llevar fecha de vencimiento; se ve como badge
+>      (vigente/vence pronto/vencida) y ya se puede **editar** una
+>      programación existente (antes solo cambiar estado o eliminar).
 > - **Multitenant — dos agencias en una sola app:** **Mayorista** (actual, completa) y
 >   **Minorista** (agencia anterior, solo para terminar de gestionar + histórico; sin
 >   tarifario/montaje). Misma BD + columna `tenant` ('mayorista'/'minorista', default
@@ -303,6 +392,19 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   (titular/asesor/doc + abonos por cuota). Parser puro `lib/minorista/importMinorista.ts`
 >   (COP/USD por fila, fechas dd/mm/yyyy y "05 SEP 2023", salta SALTO/ANULADO, anotaciones,
 >   negativos). **Candado: solo corre en agencia minorista** (prefijo MIN-). Sin migración.
+>   **Genera CxP (proveedores) automáticamente**: por cada costo > 0 (hotel/aéreo/
+>   receptivo/asistencia/otros) crea su `cuentas_por_pagar`; toma el proveedor real
+>   cuando la hoja lo trae (col. 9 = proveedor de hotel, col. 11 = proveedor de
+>   traslados — antes se confundían, ya corregido) y usa **"Sin especificar"** cuando
+>   no hay nombre (asistencia/otros no traen proveedor en la hoja). Editable después
+>   en el contrato → pestaña **Proveedores** (texto libre o autocompletar del catálogo
+>   `proveedores` vía `<datalist>`). **No duplica** (solo agrega los tipos que le
+>   falten a cada contrato) → re-pegar/re-importar las mismas hojas también sirve
+>   como *backfill* retroactivo para los contratos importados antes de este fix, sin
+>   pisar ediciones manuales ya hechas. El botón genérico "Completar proveedores"
+>   (`asegurarCuentasPorPagar`) ya no exige que exista `contrato_hoteles` para crear
+>   la CxP de hotel, y también cae a "Sin especificar" en vez de dejar el proveedor
+>   vacío.
 > - **Contabilidad** (módulo nuevo): **Facturación** (IRT vs Ingreso propio/IP por contrato,
 >   pestaña **DIAN**), **Movimientos de pagos**, **Conciliaciones bancarias** (pegar extracto
 >   + cruce manual N:M con validador de sumas), **Estados financieros**, **Datos de la
@@ -483,6 +585,34 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - Vuelo: por vuelo eliges `costo/(1−mk)` **o** `costo + TA`.
 - PVP = hotel + servicios + vuelo. **Impuesto (BNC)** = tiquete neto o fijo. Base com. = PVP − imp.
 - Niño 1 / Niño 2 = acomodaciones `nino` / `nino2` (0 = gratis, sí se publica).
+- **Cargo obligatorio de infante + notas** (migración 118, `hoteles.infante_cargo_neto/
+  infante_cargo_desc/infante_nota/nino_nota`, editable en `HotelConfigEditor.tsx`):
+  antes el infante SIEMPRE sumaba $0. Ahora un hotel puede configurar un cargo NETO
+  por infante **por noche** (ej. alimentación obligatoria aunque no pague habitación),
+  que se multiplica por noches × infantes y lleva el mismo **% de markup del
+  paquete** — decisión tomada sin confirmar con el dueño (falló la pregunta por un
+  error técnico), ajustar si no es el criterio correcto. Se calcula en
+  `lib/reservar/computo.ts` (`cargoInfante`, ya incluido en `precioVenta`) y se
+  itemiza aparte en `contrato_items` ("Infante · <descripción>") en
+  `reservarDesdeTarifario`/`crearCotizacion`. Las notas libres (`infante_nota`/
+  `nino_nota`, ej. "comparte cama con los padres", "seguro hotelero obligatorio")
+  son informativas (no suman al precio) y se muestran en el tarifario público
+  junto al rango de edades — **sin exponer el costo neto**, solo la descripción/
+  aviso de que aplica un cargo (el valor exacto se confirma al reservar). El
+  editor ahora oculta precio/descripción/nota de infante detrás de un checkbox
+  "Este hotel cobra tarifa a infantes" (antes siempre visibles).
+- **Hoteles pet friendly** (migración 121, `hoteles.pet_friendly/pet_costo_neto/
+  pet_costo_desc/pet_nota`, editable en `HotelConfigEditor.tsx` detrás de un
+  checkbox "Acepta mascotas"): misma mecánica que el cargo de infante —
+  `pet_costo_neto` en 0 = mascota gratis, > 0 se cobra por mascota × noches con
+  el mismo % de markup del paquete (`cargoMascota` en `lib/reservar/computo.ts`,
+  itemizado aparte en `contrato_items`/`itemsSnap` como "Mascota · <descripción>").
+  Si el hotel NO es `pet_friendly`, reservar con mascotas declaradas falla
+  (validado en el motor, junto al chequeo de Adults Only). `ReservaForm.tsx`
+  agrega el campo "Cantidad de mascotas" solo si el hotel es pet friendly (si no,
+  muestra el aviso "Este hotel no acepta mascotas" y no permite declararlas). El
+  tarifario público muestra el badge "Pet friendly" + la nota/aviso de cargo
+  (sin exponer el costo neto), igual criterio que Adults Only/infante.
 
 ### Editar reserva pendiente
 - **HECHO (servicios):** en un contrato `pendiente`, `ServiciosContratoEditor` +

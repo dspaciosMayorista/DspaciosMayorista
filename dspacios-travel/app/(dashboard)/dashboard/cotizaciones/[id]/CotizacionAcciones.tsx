@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
-import { convertirCotizacion, descartarCotizacion, type PasajeroReserva } from "../../reservar/actions";
+import { convertirCotizacion, descartarCotizacion } from "../../reservar/actions";
+import { type PasajeroReserva } from "@/lib/reservar/computo";
 
 type ClientePrefill = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string };
 

@@ -26,7 +26,7 @@ export default async function ComisionesPage() {
   }
 
   const [{ data: b2b }, { data: ventas }] = await Promise.all([
-    sb.from("aliados_b2b").select("*").order("id", { ascending: false }),
+    sb.from("aliados_b2b").select("*").eq("tenant", tenant).order("id", { ascending: false }),
     sb.from("ventas").select("numero_contrato, cliente, canal, tipo_asesor, agencia_nombre, freelance_nombre").eq("tenant", tenant),
   ]);
   const clientePorContrato = new Map<string, string>();

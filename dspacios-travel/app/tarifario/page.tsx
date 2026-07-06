@@ -106,15 +106,18 @@ export default async function TarifarioPublicoPage() {
   }
 
   // Estrellas / clasificación / descripción por hotel (hoteles es lectura pública).
-  const infoPorHotel: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url: string | null; ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null }> = {};
+  // Nota: NO se expone infante_cargo_neto (costo neto/proveedor) al público —
+  // solo la descripción/anotación (política), igual que el resto de costos
+  // internos. El valor exacto ya con markup se ve al reservar (contrato).
+  const infoPorHotel: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url: string | null; ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null; infanteCargo: boolean; infanteCargoDesc: string | null; infanteNota: string | null; ninoNota: string | null; adultsOnly: boolean; petFriendly: boolean; petCargo: boolean; petCostoDesc: string | null; petNota: string | null }> = {};
   // Capacidades por hotel (pax mín/máx + config de acomodaciones) para validar el
   // carrito. pax_min/max viven en `hoteles` (público); la config de acomodaciones
   // (`hotel_acomodaciones`) NO es pública → se lee con service-role.
   const capPorHotel: Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }> = {};
   if (hotelIds.length) {
-    const { data: hs } = await sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, ubicacion, video_url, pax_min, pax_max, edad_nino_min, edad_nino_max, edad_infante_min, edad_infante_max").in("id", hotelIds);
+    const { data: hs } = await sb.from("hoteles").select("id, estrellas, clasificacion, descripcion, ubicacion, video_url, pax_min, pax_max, edad_nino_min, edad_nino_max, edad_infante_min, edad_infante_max, infante_cargo_neto, infante_cargo_desc, infante_nota, nino_nota, adults_only, pet_friendly, pet_costo_neto, pet_costo_desc, pet_nota").in("id", hotelIds);
     for (const h of hs ?? []) {
-      infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion, ubicacion: h.ubicacion, video_url: h.video_url, ninoMin: h.edad_nino_min, ninoMax: h.edad_nino_max, infMin: h.edad_infante_min, infMax: h.edad_infante_max };
+      infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion, ubicacion: h.ubicacion, video_url: h.video_url, ninoMin: h.edad_nino_min, ninoMax: h.edad_nino_max, infMin: h.edad_infante_min, infMax: h.edad_infante_max, infanteCargo: (Number(h.infante_cargo_neto) || 0) > 0, infanteCargoDesc: h.infante_cargo_desc, infanteNota: h.infante_nota, ninoNota: h.nino_nota, adultsOnly: h.adults_only ?? false, petFriendly: h.pet_friendly ?? false, petCargo: (Number(h.pet_costo_neto) || 0) > 0, petCostoDesc: h.pet_costo_desc, petNota: h.pet_nota };
       capPorHotel[h.id] = { paxMin: h.pax_min, paxMax: h.pax_max, acom: [] };
     }
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {

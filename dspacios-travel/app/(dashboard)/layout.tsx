@@ -25,7 +25,7 @@ const NAV: NavItem[] = [
   },
   // Importador de histórico — SOLO visible en la agencia Minorista (ítem propio y
   // visible, no enterrado como sub-ítem, para encontrarlo fácil al probar).
-  { href: "/dashboard/contratos/importar", label: "Importar histórico", iconKey: "importar", soloMinorista: true },
+  { href: "/dashboard/contratos/importar", label: "Importar histórico", iconKey: "importar", soloMinorista: true, rolesPermitidos: ["superadmin", "administracion"] },
   {
     href: "/dashboard/vuelos",
     label: "Vuelos",

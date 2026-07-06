@@ -3,616 +3,39 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { precioServicio, noches, liquidarHotelNoches, marcar, componerTarifa, temporadaParaFecha, temporadaVigenteParaFecha, toTemporadaRango, minNochesAplicable, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
-import { ACOM_ROOMS, ACOM_ROOM_LABEL, PAX_TARIFA_DEFAULT, paxDeAcomodacion, clasificarPorEdad, validarReservaHabitaciones, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
+import { precioServicio, noches, temporadaVigenteParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
+import { ACOM_ROOM_LABEL, paxDeAcomodacion, clasificarPorEdad, type AcomRoom } from "@/lib/acomodaciones";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
 import { pvpPrograma } from "@/lib/programas";
 import type { Json } from "@/types/database";
+import {
+  cotizarPorFechas as cotizarPorFechasImpl,
+  buscarHoteles as buscarHotelesImpl,
+  type CotizarResult,
+  type BusquedaInput,
+  type BusquedaResultado,
+} from "@/lib/reservar/cotizar";
+import {
+  computarReserva,
+  type ReservaInput,
+  type PasajeroReserva,
+} from "@/lib/reservar/computo";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
-
-// Acomodaciones (incluye niños) y su columna neta en tarifa_hotel.
-const ACOM_ALL = ["sencilla", "doble", "triple", "multiple", "nino", "nino2"] as const;
-const COL_NETO: Record<string, string> = {
-  sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple",
-  multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2",
-};
-
-export type ComboCotizado = { categoria: string; regimen: string; precios: Record<string, number>; netos?: Record<string, number> };
-
-// ── Liquidación EN VIVO de un hotel para fechas elegidas (motor por fechas) ──
-// Reutiliza el mismo motor del generador de tarifario, pero para las noches que
-// el asesor elige en Reservar (porción/dinámico). Devuelve SOLO PVP por
-// categoría/régimen/acomodación (los costos netos no se exponen). Requiere
-// service-role porque `tarifa_hotel` es interno.
-async function liquidarHotelPaquete(
-  admin: ReturnType<typeof createAdminClient>,
-  paqueteId: number,
-  hotelId: number,
-  fechaIda: string,
-  numNoches: number
-): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number; moneda: string } | null> {
-  if (numNoches <= 0) return null;
-  const { data: pq } = await admin
-    .from("armado_paquetes")
-    .select("pct_mk, impuesto_fijo, destino_id, destinos(nombre)")
-    .eq("id", paqueteId)
-    .maybeSingle();
-  if (!pq) return null;
-  const pctMk = Number(pq.pct_mk) || 0;
-  const impuesto = Number(pq.impuesto_fijo) || 0;
-  const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
-
-  const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }, { data: blackouts }] = await Promise.all([
-    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", hotelId),
-    admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
-    admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
-    admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones").eq("hotel_id", hotelId),
-  ]);
-
-  // Black out general del hotel: cierra noches (total o por acomodación) por encima
-  // de cualquier vigencia. Si alguna noche de la estadía cae en un blackout total,
-  // el hotel no se vende; si es por acomodación, esas acomodaciones quedan fuera.
-  const nochesStay: string[] = [];
-  { const base = new Date(`${fechaIda}T00:00:00`).getTime(); for (let n = 0; n < numNoches; n++) nochesStay.push(new Date(base + n * 86_400_000).toISOString().slice(0, 10)); }
-  const acomCerradas = new Set<string>();
-  let cierreTotal = false;
-  for (const b of blackouts ?? []) {
-    const cubre = nochesStay.some((d) => (b.fecha_inicio as string) <= d && d <= (b.fecha_fin as string));
-    if (!cubre) continue;
-    if (b.total) cierreTotal = true;
-    else for (const a of ((b.acomodaciones as string[] | null) ?? [])) acomCerradas.add(a);
-  }
-  const hotelMeta = hsel?.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
-  const monedaHotel = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
-  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: hotelMeta?.nombre ?? null, minNoches: 1, moneda: monedaHotel };
-  const filtroCat = (hsel?.categorias as string[] | null) ?? null;
-  const filtroReg = (hsel?.regimenes as string[] | null) ?? null;
-  const hotelNombre = hotelMeta?.nombre ?? null;
-  const temporadas: TemporadaRango[] = (temps ?? []).map(toTemporadaRango);
-
-  // Servicios INCLUIDOS se hornean por persona (igual que el generador).
-  let aporteServ = 0;
-  for (const s of servSel ?? []) {
-    if (!(s.incluido as boolean)) continue;
-    const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; liquidacion: string | null } | null;
-    if (srv?.precio_persona == null) continue;
-    aporteServ += marcar(Number(srv.precio_persona) || 0, pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
-  }
-
-  type TarifaRow = Record<string, unknown>;
-  const grupos = new Map<string, Map<string, TarifaRow>>();
-  for (const r of (tarifas ?? []) as TarifaRow[]) {
-    const cat = (r.tipo_habitacion as string) ?? "";
-    const reg = (r.alimentacion as string) ?? "";
-    const key = `${cat}|||${reg}`;
-    if (!grupos.has(key)) grupos.set(key, new Map());
-    grupos.get(key)!.set((r.temporada as string) ?? "", r);
-  }
-
-  const combos: ComboCotizado[] = [];
-  for (const [key, tempMap] of grupos) {
-    const [categoria, regimen] = key.split("|||");
-    if (filtroCat && filtroCat.length && !filtroCat.includes(categoria)) continue;
-    if (filtroReg && filtroReg.length && !filtroReg.includes(regimen)) continue;
-    const precios: Record<string, number> = {};
-    const netos: Record<string, number> = {};
-    for (const acom of ACOM_ALL) {
-      const col = COL_NETO[acom];
-      const netoPorTemporada: Record<string, number | null> = {};
-      for (const [temp, row] of tempMap) { const v = row[col]; netoPorTemporada[temp] = v == null ? null : Number(v); }
-      const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
-      // null = no aplica. En habitaciones, 0 también es "no aplica" (no gratis);
-      // solo en niños el 0 es válido.
-      const esRoom = acom !== "nino" && acom !== "nino2";
-      if (costoHotel == null) continue;
-      if (esRoom && costoHotel <= 0) continue;
-      const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto, moneda: monedaHotel });
-      precios[acom] = t.pvp;
-      netos[acom] = costoHotel; // costo neto/persona — fuente del costo al reservar
-    }
-    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos });
-  }
-  // Quita las acomodaciones cerradas por blackout; descarta combos sin habitación.
-  if (acomCerradas.size) {
-    for (const c of combos) for (const a of acomCerradas) { delete c.precios[a]; delete c.netos?.[a]; }
-  }
-  const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2"));
-  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel };
-}
-
-export type CotizarResult =
-  | { ok: true; combos: ComboCotizado[]; noches: number; moneda: string }
-  | { ok: false; error: string };
 
 /** Cotiza un hotel para las fechas que elige el asesor (porción/dinámico). */
 export async function cotizarPorFechas(input: {
   paqueteId: number; hotelId: number; fechaIda: string; fechaRegreso: string;
 }): Promise<CotizarResult> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Cotización por fechas no disponible (falta service-role)." };
-  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y de regreso." };
-  const numNoches = noches(input.fechaIda, input.fechaRegreso);
-  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
-  const admin = createAdminClient();
-  const { data: pq } = await admin
-    .from("armado_paquetes")
-    .select("fecha_viaje_inicio, fecha_viaje_fin")
-    .eq("id", input.paqueteId)
-    .maybeSingle();
-  if (pq?.fecha_viaje_inicio && input.fechaIda < pq.fecha_viaje_inicio)
-    return { ok: false, error: `La ida no puede ser antes del ${pq.fecha_viaje_inicio} (rango del paquete).` };
-  if (pq?.fecha_viaje_fin && input.fechaRegreso > pq.fecha_viaje_fin)
-    return { ok: false, error: `El regreso no puede ser después del ${pq.fecha_viaje_fin} (rango del paquete).` };
-  const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda, numNoches);
-  if (res && numNoches < (res.minNoches ?? 1)) {
-    return { ok: false, error: `Este alojamiento exige un mínimo de ${res.minNoches} noche(s) para esas fechas.` };
-  }
-  if (!res || !res.combos.length) {
-    // Diagnóstico: ¿qué temporada de las noches elegidas no tiene tarifa cargada?
-    const [{ data: temps }, { data: tars }] = await Promise.all([
-      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", input.hotelId),
-      admin.from("tarifa_hotel").select("temporada").eq("hotel_id", input.hotelId),
-    ]);
-    const temporadas = (temps ?? []).map(toTemporadaRango);
-    const conTarifa = new Set((tars ?? []).map((t) => (t.temporada ?? "").trim()));
-    const base = new Date(`${input.fechaIda}T00:00:00`).getTime();
-    const faltan = new Set<string>();
-    let hayNocheSinTemp = false;
-    for (let n = 0; n < numNoches; n++) {
-      const temp = temporadaParaFecha(new Date(base + n * 86_400_000), temporadas);
-      if (!temp) hayNocheSinTemp = true;
-      else if (!conTarifa.has(temp.trim())) faltan.add(temp);
-    }
-    let error = "No hay tarifa para esas fechas (revisa temporadas del hotel).";
-    if (faltan.size) error = `Falta cargar la tarifa de la temporada: ${[...faltan].join(", ")} (cae dentro de tu rango de fechas).`;
-    else if (hayNocheSinTemp) error = "Hay noches que no caen en ninguna temporada del hotel; define la temporada para esas fechas.";
-    return { ok: false, error };
-  }
-  // Se devuelve al cliente SIN `netos` (el costo interno no sale del servidor).
-  const combosPublicos = res.combos.map((c) => ({ categoria: c.categoria, regimen: c.regimen, precios: c.precios }));
-  return { ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda };
+  return cotizarPorFechasImpl(input);
 }
-
-// ── Mini-motor de búsqueda (público): liquida TODOS los hoteles de porción para
-// las fechas y la composición de habitaciones, y devuelve los que CABEN ya con
-// precio (el combo categoría/régimen más barato por hotel). ───────────────────
-export type BusquedaInput = {
-  fechaIda: string;
-  fechaRegreso: string;
-  habitaciones: { acom: AcomRoom; ninos: number }[]; // una entrada por habitación
-  infantes: number;
-  destino?: string; // filtra por destino (vacío = todos)
-};
-export type BusquedaResultado = {
-  hotelId: number; hotelNombre: string | null; destino: string | null;
-  paqueteId: number; categoria: string; regimen: string;
-  total: number; noches: number; fechaIda: string; fechaRegreso: string;
-  habitaciones: Record<string, number>; ninos: number; pax: number;
-  // Todos los combos válidos (categoría × régimen) para esta composición, con su
-  // precio. El top-level categoria/regimen/total es el más barato (predeterminado).
-  combos: { categoria: string; regimen: string; total: number; pax: number }[];
-};
 
 export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; resultados: BusquedaResultado[] } | { ok: false; error: string }> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
-  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y regreso." };
-  const numNoches = noches(input.fechaIda, input.fechaRegreso);
-  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
-  if (!input.habitaciones.length) return { ok: false, error: "Indica al menos una habitación." };
-
-  const admin = createAdminClient();
-  let q = admin
-    .from("tarifario_resultado")
-    .select("paquete_id, hotel_id, destino_nombre")
-    .eq("modulo", "porcion_terrestre")
-    .eq("paquete_activo", true);
-  if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
-  const { data: filas } = await q;
-  const pares = new Map<string, { paquete: number; hotel: number }>();
-  for (const f of filas ?? []) if (f.paquete_id != null && f.hotel_id != null) pares.set(`${f.paquete_id}-${f.hotel_id}`, { paquete: f.paquete_id, hotel: f.hotel_id });
-
-  // Composición agregada por acomodación: nº de habitaciones y niños asignados.
-  const porAcom = new Map<AcomRoom, { count: number; ninos: number }>();
-  for (const r of input.habitaciones) {
-    const g = porAcom.get(r.acom) ?? { count: 0, ninos: 0 };
-    g.count += 1; g.ninos += Math.max(0, Math.trunc(r.ninos) || 0);
-    porAcom.set(r.acom, g);
-  }
-  const totalNinos = [...porAcom.values()].reduce((s, g) => s + g.ninos, 0);
-  const habitaciones: Record<string, number> = {};
-  for (const [a, g] of porAcom) habitaciones[a] = g.count;
-
-  const resultados: BusquedaResultado[] = [];
-  for (const { paquete, hotel } of pares.values()) {
-    const res = await liquidarHotelPaquete(admin, paquete, hotel, input.fechaIda, numNoches);
-    if (!res || !res.combos.length) continue;
-    if (numNoches < (res.minNoches ?? 1)) continue; // exige más noches de las buscadas
-    const { data: acomCfg } = await admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, chd_max").eq("hotel_id", hotel);
-    const reglas = (acomCfg ?? []) as { acomodacion: string; pax_tarifa: number; chd_max: number }[];
-    const paxTarifa = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
-    const chdMax = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.chd_max ?? PAX_TARIFA_DEFAULT[a];
-
-    const combosValidos: { total: number; categoria: string; regimen: string; pax: number }[] = [];
-    for (const combo of res.combos) {
-      let total = 0; let pax = 0; let ok = true;
-      for (const [acom, g] of porAcom) {
-        const pvp = combo.precios[acom];
-        if (pvp == null) { ok = false; break; }
-        const adultos = g.count * paxTarifa(acom);
-        total += adultos * pvp; pax += adultos;
-        if (g.ninos > 0) {
-          if (g.ninos > g.count * chdMax(acom)) { ok = false; break; }
-          const pvpN = combo.precios["nino"];
-          if (pvpN == null) { ok = false; break; }
-          total += g.ninos * pvpN; pax += g.ninos;
-        }
-      }
-      if (ok) combosValidos.push({ total, categoria: combo.categoria, regimen: combo.regimen, pax });
-    }
-    if (combosValidos.length) {
-      combosValidos.sort((a, b) => a.total - b.total); // más barato primero (predeterminado)
-      const mejor = combosValidos[0];
-      resultados.push({
-        hotelId: hotel, hotelNombre: res.hotelNombre, destino: res.destinoNombre,
-        paqueteId: paquete, categoria: mejor.categoria, regimen: mejor.regimen,
-        total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso,
-        habitaciones, ninos: totalNinos, pax: mejor.pax,
-        combos: combosValidos,
-      });
-    }
-  }
-  resultados.sort((a, b) => a.total - b.total);
-  return { ok: true, resultados };
+  return buscarHotelesImpl(input);
 }
-
-export type PasajeroReserva = {
-  nombres: string;
-  apellidos: string;
-  tipoDoc: string;
-  numeroDoc: string;
-  fechaNacimiento: string;
-  nacionalidad: string;
-  esInfante: boolean;
-};
-
-export type ReservaInput = {
-  paqueteId: number;
-  bloqueoId: number | null;
-  salidaId?: number | null;   // salida dinámica (modulo 'dinamico')
-  modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
-  hotelId: number;
-  paxServicios?: number;   // pax cuando es paquete tipo servicios (sin hotel)
-  fechaIda?: string;       // motor por fechas (porción/dinámico): fechas elegidas
-  fechaRegreso?: string;
-  categoria: string;
-  regimen: string;
-  habitaciones: Record<string, number>; // CANTIDAD DE HABITACIONES por tipo (sencilla/doble/…)
-  ninos: number;                          // cantidad de niños (Niño 1)
-  ninos2: number;                         // cantidad de niños (Niño 2)
-  infantes: number;                       // cantidad de infantes (sin silla, $0)
-  cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
-  tipoAsesor: "interno" | "agencia" | "freelance";
-  asesorInterno: string;
-  agenciaNombre: string;
-  agenciaAsesor: string;
-  freelanceNombre: string;
-  aliadoId?: number | null;   // id del catálogo de agencias/freelance (B2B)
-  modoCompra?: "neta" | "comisionable";  // B2B: cómo compra el aliado
-  plazo: string;
-  pasajeros: PasajeroReserva[];
-  servicios?: number[];   // ids de servicios add-on seleccionados
-};
 
 export type ReservaResult = { ok: true; numero: string } | { ok: false; error: string };
-
-// ── Cálculo de la reserva (SIN efectos): precios, líneas, pax, impuesto ──────
-// Bloque de solo-lectura compartido por reservarDesdeTarifario (que luego inserta
-// contrato/sillas/CxP) y por crearCotizacion (que solo guarda el snapshot). Tener
-// una única fuente del precio evita que cotización y contrato diverjan.
-type ComputoReserva = {
-  meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
-  pvpPorAcom: Record<string, number>;
-  netoPorAcom: Record<string, number>; // costo neto/persona por acomodación (autoritativo)
-  precioVenta: number;
-  paxConSilla: number;
-  totalPax: number;
-  numNinos: number;
-  numNinos2: number;
-  lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[];
-  serviciosItems: { nombre: string; precio: number }[];
-  impuestoTotal: number;
-  monedaReserva: string;
-};
-
-async function computarReserva(
-  sb: Awaited<ReturnType<typeof createClient>>,
-  input: ReservaInput
-): Promise<{ ok: true; data: ComputoReserva } | { ok: false; error: string }> {
-  const esServicios = input.modulo === "servicios";
-
-  const pvpPorAcom: Record<string, number> = {};
-  const netoPorAcom: Record<string, number> = {};
-  let precioVenta = 0;
-  let paxConSilla = 0;
-  const lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[] = [];
-  const numNinos = Math.max(0, Math.trunc(Number(input.ninos) || 0));
-  const numNinos2 = Math.max(0, Math.trunc(Number(input.ninos2) || 0));
-  let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
-  let monedaReserva = "COP";  // moneda del paquete (USD si los hoteles son internacionales)
-
-  const usarFechas =
-    input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!esServicios && usarFechas) {
-    const numNoches = noches(input.fechaIda!, input.fechaRegreso!);
-    if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
-    const admin = createAdminClient();
-    const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda!, numNoches);
-    const combo = res?.combos.find((c) => c.categoria === input.categoria && c.regimen === input.regimen);
-    if (!combo) return { ok: false, error: "No hay tarifa para esas fechas / categoría / régimen." };
-    for (const [acom, p] of Object.entries(combo.precios)) pvpPorAcom[acom] = p;
-    if (combo.netos) for (const [acom, n] of Object.entries(combo.netos)) netoPorAcom[acom] = n;
-    meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
-
-    const { data: acomCfgF } = await sb
-      .from("hotel_acomodaciones")
-      .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
-      .eq("hotel_id", input.hotelId);
-    const reglasF = (acomCfgF ?? []) as AcomConfig[];
-    const paxTarifaF = (a: AcomRoom) => reglasF.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
-    for (const a of ACOM_ROOMS) {
-      const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
-      if (rooms <= 0 || pvpPorAcom[a] == null) continue;
-      const pax = rooms * paxTarifaF(a);
-      precioVenta += pax * pvpPorAcom[a];
-      paxConSilla += pax;
-      lineasHab.push({ acom: a, habitaciones: rooms, pax, pvp: pvpPorAcom[a] });
-    }
-    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
-    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
-    if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
-
-    const { data: hotelRowF } = await sb
-      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max, moneda").eq("id", input.hotelId).maybeSingle();
-    monedaReserva = ((hotelRowF as { moneda?: string | null } | null)?.moneda) ?? "COP";
-    const realF = clasificarPorEdad(
-      input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
-      hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10
-    );
-    // Sin pasajeros (cotización preliminar desde el carrito público) se omite la
-    // validación de edades vs acomodación; se revalida al convertir en contrato.
-    if (input.pasajeros.length) {
-      const habNumF: Record<string, number> = {};
-      for (const a of ACOM_ROOMS) { const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0)); if (n > 0) habNumF[a] = n; }
-      const valF = validarReservaHabitaciones({
-        habitaciones: habNumF, reglas: reglasF, ninosDeclarados: numNinos + numNinos2,
-        infantesDeclarados: Math.max(0, Math.trunc(Number(input.infantes) || 0)),
-        paxMinHotel: hotelRowF?.pax_min ?? null, paxMaxHotel: hotelRowF?.pax_max ?? null, real: realF,
-      });
-      if (valF.errores.length) return { ok: false, error: valF.errores.join(" ") };
-    }
-  } else if (!esServicios) {
-    let q = sb
-      .from("tarifario_resultado")
-      .select("acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, moneda")
-      .eq("paquete_id", input.paqueteId)
-      .eq("hotel_id", input.hotelId)
-      .eq("categoria", input.categoria)
-      .eq("regimen", input.regimen);
-    if (input.modulo === "dinamico" && input.salidaId) q = q.eq("salida_id", input.salidaId);
-    else q = input.bloqueoId ? q.eq("bloqueo_id", input.bloqueoId) : q.is("bloqueo_id", null);
-    const { data: filas, error: fe } = await q;
-    if (fe) return { ok: false, error: fe.message };
-    if (!filas || !filas.length) return { ok: false, error: "No se encontró la tarifa seleccionada en el tarifario." };
-    for (const f of filas) if (f.acomodacion) pvpPorAcom[f.acomodacion] = f.precio_pvp;
-    meta = filas[0];
-    monedaReserva = (filas[0] as { moneda?: string | null }).moneda ?? "COP";
-
-    const { data: acomCfg } = await sb
-      .from("hotel_acomodaciones")
-      .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
-      .eq("hotel_id", input.hotelId);
-    const reglas = (acomCfg ?? []) as AcomConfig[];
-    const paxTarifa = (a: AcomRoom) => {
-      const c = reglas.find((x) => x.acomodacion === a);
-      return c?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
-    };
-
-    for (const a of ACOM_ROOMS) {
-      const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
-      if (rooms <= 0 || pvpPorAcom[a] == null) continue;
-      const pvp = pvpPorAcom[a];
-      const pax = rooms * paxTarifa(a);
-      precioVenta += pax * pvp;
-      paxConSilla += pax;
-      lineasHab.push({ acom: a, habitaciones: rooms, pax, pvp });
-    }
-    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
-    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
-
-    if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
-
-    // Costo neto del hotel + control de VIGENCIA DE COMPRA. El PVP del tarifario
-    // está congelado, pero la tarifa neta se liquida con la vigencia de HOY: si
-    // la vigencia de compra del hotel ya venció (o ya no hay tarifa), NO se vende
-    // —antes se creaba la venta con costo 0 (rentabilidad inflada y sin CxP de
-    // hotel). Decisión del negocio: no dejar vender lo vencido. (Bloqueo: fechas
-    // fijas del record.) Requiere service-role: la tarifa neta es interna.
-    if (process.env.SUPABASE_SERVICE_ROLE_KEY && meta.fecha_ida && meta.fecha_regreso) {
-      const admin = createAdminClient();
-      const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
-      const [{ data: temps }, { data: tarRows }] = await Promise.all([
-        admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", input.hotelId),
-        admin.from("tarifa_hotel").select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
-      ]);
-      type TarRow = { temporada: string | null; neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null };
-      const rows = (tarRows ?? []) as TarRow[];
-      const temporadas = (temps ?? []).map(toTemporadaRango);
-      const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2" };
-      const netoDe = (acom: string): number | null => {
-        const col = colDe[acom]; if (!col) return null;
-        const netoPorTemporada: Record<string, number | null> = {};
-        for (const r of rows) if (r.temporada) netoPorTemporada[r.temporada] = r[col] as number | null;
-        return liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches, temporadas, netoPorTemporada });
-      };
-      const TARIFA_VENCIDA = "Esta tarifa ya no está vigente para compra (la vigencia del hotel venció). Pide regenerar el tarifario con vigencias vigentes antes de reservar.";
-      for (const l of lineasHab) {
-        const per = netoDe(l.acom);
-        if (per == null) return { ok: false, error: TARIFA_VENCIDA };
-        netoPorAcom[l.acom] = per;
-      }
-      if (numNinos > 0) { const per = netoDe("nino"); if (per == null) return { ok: false, error: TARIFA_VENCIDA }; netoPorAcom["nino"] = per; }
-      if (numNinos2 > 0) { const per = netoDe("nino2"); if (per == null) return { ok: false, error: TARIFA_VENCIDA }; netoPorAcom["nino2"] = per; }
-    }
-
-    const { data: hotelRow } = await sb
-      .from("hoteles")
-      .select("edad_infante_max, edad_nino_max, pax_min, pax_max")
-      .eq("id", input.hotelId)
-      .maybeSingle();
-    const real = clasificarPorEdad(
-      input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
-      hotelRow?.edad_infante_max ?? 2,
-      hotelRow?.edad_nino_max ?? 10
-    );
-    if (input.pasajeros.length) {
-      const habitacionesNum: Record<string, number> = {};
-      for (const a of ACOM_ROOMS) {
-        const n = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
-        if (n > 0) habitacionesNum[a] = n;
-      }
-      const val = validarReservaHabitaciones({
-        habitaciones: habitacionesNum,
-        reglas,
-        ninosDeclarados: numNinos + numNinos2,
-        infantesDeclarados: Math.max(0, Math.trunc(Number(input.infantes) || 0)),
-        paxMinHotel: hotelRow?.pax_min ?? null,
-        paxMaxHotel: hotelRow?.pax_max ?? null,
-        real,
-      });
-      if (val.errores.length) return { ok: false, error: val.errores.join(" ") };
-    }
-  } else {
-    const { data: m } = await sb
-      .from("tarifario_resultado")
-      .select("destino_nombre, paquete_nombre")
-      .eq("paquete_id", input.paqueteId)
-      .eq("modulo", "servicios")
-      .limit(1)
-      .maybeSingle();
-    meta = { hotel_nombre: m?.paquete_nombre ?? "Servicios", destino_nombre: m?.destino_nombre ?? null, fecha_ida: null, fecha_regreso: null };
-  }
-
-  // Servicios (en tipo servicios es el total; en hotel son add-ons).
-  const totalPax = esServicios ? (Number(input.paxServicios) || 0) : paxConSilla + (Number(input.infantes) || 0);
-  const serviciosItems: { nombre: string; precio: number }[] = [];
-  if (input.servicios?.length) {
-    const { data: srvRows } = await sb
-      .from("tarifario_resultado")
-      .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, recargo_individual")
-      .eq("paquete_id", input.paqueteId)
-      .eq("modulo", "servicios")
-      .in("servicio_id", input.servicios);
-    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; recargoIndividual: number; grupos: { pax_desde: number; pax_hasta: number; precio: number }[] }>();
-    for (const r of srvRows ?? []) {
-      if (r.servicio_id == null) continue;
-      let s = byServ.get(r.servicio_id);
-      if (!s) {
-        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, recargoIndividual: 0, grupos: [] };
-        byServ.set(r.servicio_id, s);
-      }
-      if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
-      else { s.personaPvp = r.precio_pvp; s.recargoIndividual = Math.max(Number(r.recargo_individual) || 0, 0); }
-    }
-
-    // Tarifa por TEMPORADA del servicio: si la fecha del viaje cae en una temporada
-    // vigente, se escala el PVP del snapshot por la razón neto_temporada/neto_general
-    // (conserva markup, liquidación y redondeo del GENERAL proporcionalmente). Una
-    // temporada es una tarifa COMPLETA: persona + recargo individual + rangos por grupo.
-    const fechaViaje = meta.fecha_ida;
-    if (fechaViaje && byServ.size) {
-      const ids = [...byServ.keys()];
-      const [{ data: baseSrv }, { data: temps }, { data: tarifaPax }] = await Promise.all([
-        sb.from("servicios_adicionales").select("id, precio_persona").in("id", ids),
-        sb.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", ids),
-        sb.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", ids),
-      ]);
-      const netoGen = new Map((baseSrv ?? []).map((b) => [b.id, Number(b.precio_persona) || 0]));
-      const tempsByServ = new Map<number, TemporadaRango[]>();
-      const netoTemp = new Map<string, number>();   // servId|nombre -> neto persona
-      const recTemp = new Map<string, number>();    // servId|nombre -> recargo neto
-      for (const t of temps ?? []) {
-        const arr = tempsByServ.get(t.servicio_id) ?? [];
-        arr.push(toTemporadaRango(t));
-        tempsByServ.set(t.servicio_id, arr);
-        if (t.precio_persona != null) netoTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
-        if (t.recargo_individual != null) recTemp.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
-      }
-      // Netos por GRUPO por temporada (incl. GENERAL): para rescatar por rango de pax.
-      const grpRanges = new Map<string, { d: number; h: number; p: number }[]>();
-      for (const g of tarifaPax ?? []) {
-        const k = `${g.servicio_id}|${g.temporada ?? "GENERAL"}`;
-        const list = grpRanges.get(k) ?? [];
-        list.push({ d: g.pax_desde, h: g.pax_hasta, p: Number(g.precio) || 0 });
-        grpRanges.set(k, list);
-      }
-      const netoGrupo = (servId: number, temp: string, pax: number): number | undefined =>
-        grpRanges.get(`${servId}|${temp}`)?.find((x) => pax >= x.d && pax <= x.h)?.p;
-
-      const d = new Date(`${fechaViaje}T00:00:00`);
-      for (const [id, s] of byServ) {
-        const tt = tempsByServ.get(id);
-        if (!tt?.length) continue;
-        const nombre = temporadaVigenteParaFecha(d, tt);
-        if (!nombre) continue;
-        if (s.modo === "persona" && s.personaPvp != null) {
-          const ng = netoGen.get(id) || 0;
-          const mkf = ng > 0 ? s.personaPvp / ng : null;   // factor de markup del snapshot
-          const nt = netoTemp.get(`${id}|${nombre}`);
-          if (nt != null && ng > 0) s.personaPvp = Math.round(s.personaPvp * (nt / ng));
-          const rt = recTemp.get(`${id}|${nombre}`);        // recargo NETO de la temporada
-          if (rt != null && mkf != null) s.recargoIndividual = Math.round(rt * mkf);
-        } else if (s.modo === "grupo") {
-          for (const g of s.grupos) {
-            const ngG = netoGrupo(id, "GENERAL", g.pax_desde) ?? netoGrupo(id, "GENERAL", g.pax_hasta);
-            const ntG = netoGrupo(id, nombre, g.pax_desde) ?? netoGrupo(id, nombre, g.pax_hasta);
-            if (ntG != null && ngG != null && ngG > 0) g.precio = Math.round(g.precio * (ntG / ngG));
-          }
-        }
-      }
-    }
-
-    for (const s of byServ.values()) {
-      let p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
-      // Recargo individual: si el servicio va a 1 solo pax (cobro por persona),
-      // se suma el suplemento a la tarifa.
-      if (s.modo === "persona" && totalPax === 1 && s.recargoIndividual > 0) p += s.recargoIndividual;
-      if (p > 0) { precioVenta += p; serviciosItems.push({ nombre: s.nombre, precio: p }); }
-    }
-  }
-
-  if (esServicios && precioVenta <= 0) {
-    return { ok: false, error: "Selecciona al menos un servicio y el número de pasajeros." };
-  }
-
-  // BNC (Base No Comisionable) total = "Valor fijo del impuesto" × pax con tiquete.
-  let impuestoTotal = 0;
-  if (!esServicios) {
-    const { data: pqImp } = await sb
-      .from("armado_paquetes")
-      .select("impuesto_fijo")
-      .eq("id", input.paqueteId)
-      .maybeSingle();
-    impuestoTotal = (Number(pqImp?.impuesto_fijo) || 0) * paxConSilla;
-  }
-
-  return {
-    ok: true,
-    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva },
-  };
-}
 
 export async function reservarDesdeTarifario(input: ReservaInput): Promise<ReservaResult> {
   const sb = await createClient();
@@ -624,7 +47,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva } = comp.data;
+  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoInfante, cargoMascota } = comp.data;
 
   // 2c) Validar cupos del bloqueo ANTES de crear nada (no sobre-vender sillas).
   if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -778,6 +201,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
     if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
     if ((Number(input.infantes) || 0) > 0) partes.push(`${Number(input.infantes)} Infante(s)`);
+    if ((Number(input.mascotas) || 0) > 0) partes.push(`${Number(input.mascotas)} Mascota(s)`);
     const resumenAcom = partes.join(", ");
     // Proveedor del hotel (se arrastra al contrato). proveedores es interno, se
     // lee con service-role si está disponible.
@@ -877,6 +301,25 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       orden: 100 + i,
     });
   });
+  // Cargo obligatorio de infante (ej. alimentación), ya incluido en precioVenta
+  // — se itemiza aparte para que el cliente vea de dónde sale.
+  if (cargoInfante) {
+    items.push({
+      numero_contrato: numero,
+      descripcion: cargoInfante.descripcion ? `Infante · ${cargoInfante.descripcion}` : "Cargo obligatorio de infante",
+      adultos: 0, ninos: 0, tarifa_adulto: cargoInfante.total, tarifa_nino: 0,
+      orden: 200,
+    });
+  }
+  // Cargo de mascota (pet friendly), itemizado aparte igual que el de infante.
+  if (cargoMascota) {
+    items.push({
+      numero_contrato: numero,
+      descripcion: cargoMascota.descripcion ? `Mascota · ${cargoMascota.descripcion}` : "Cargo de mascota",
+      adultos: 0, ninos: 0, tarifa_adulto: cargoMascota.total, tarifa_nino: 0,
+      orden: 201,
+    });
+  }
   if (items.length) await sb.from("contrato_items").insert(items);
 
   // Cuentas por pagar (CxP) generadas AUTOMÁTICAMENTE porque la venta sale del
@@ -1106,7 +549,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   const esServicios = input.modulo === "servicios";
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva } = comp.data;
+  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva, cargoInfante, cargoMascota } = comp.data;
 
   const hoy = new Date().toISOString().slice(0, 10);
   const asesorNombre = input.asesorInterno;
@@ -1151,6 +594,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
     if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
     if ((Number(input.infantes) || 0) > 0) partes.push(`${Number(input.infantes)} Infante(s)`);
+    if ((Number(input.mascotas) || 0) > 0) partes.push(`${Number(input.mascotas)} Mascota(s)`);
     // Foto de portada del hotel (para mostrarla junto al nombre en el documento).
     let fotoUrl: string | null = null;
     if (input.hotelId) {
@@ -1221,6 +665,20 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   if (numNinos2 > 0 && pvpPorAcom["nino2"] != null)
     itemsSnap.push({ id: 51, descripcion: `Niño 2 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"] });
   serviciosItems.forEach((s, i) => itemsSnap.push({ id: 100 + i, descripcion: `Servicio · ${s.nombre}`, adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0 }));
+  if (cargoInfante) {
+    itemsSnap.push({
+      id: 200,
+      descripcion: cargoInfante.descripcion ? `Infante · ${cargoInfante.descripcion}` : "Cargo obligatorio de infante",
+      adultos: 0, ninos: 0, tarifa_adulto: cargoInfante.total, tarifa_nino: 0,
+    });
+  }
+  if (cargoMascota) {
+    itemsSnap.push({
+      id: 201,
+      descripcion: cargoMascota.descripcion ? `Mascota · ${cargoMascota.descripcion}` : "Cargo de mascota",
+      adultos: 0, ninos: 0, tarifa_adulto: cargoMascota.total, tarifa_nino: 0,
+    });
+  }
 
   const detalle = { venta: ventaSnap, pasajeros: pasajerosSnap, hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
 
@@ -1374,19 +832,22 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
   };
   const rows: Row[] = [];
   const OBS = "Completado automáticamente (faltaba el proveedor)";
+  const SIN_ESPECIFICAR = "Sin especificar";
   const add = (tipo: string, servicio: string, valor: number, proveedor: string | null) => {
+    const nombre = proveedor?.trim() || SIN_ESPECIFICAR;
     const r = retDe(proveedor);
     rows.push({
-      numero_contrato: numeroContrato, proveedor: proveedor || null, tipo_proveedor: tipo, servicio,
+      numero_contrato: numeroContrato, proveedor: nombre, tipo_proveedor: tipo, servicio,
       valor_total: Math.max(0, valor), moneda, fecha_obligacion: hoy, fecha_vencimiento: vence,
       aplica_retencion: r.aplica_retencion, pct_retencion: r.pct_retencion, observaciones: OBS,
     });
   };
 
   // Crea solo los tipos de proveedor que falten y tengan costo real (> 0). El
-  // proveedor del hotel/aéreo se jala del contrato; los demás quedan sin asignar.
-  if (hotelRow && !yaTiene.has("hotel") && (Number(v.costo_hotel) || 0) > 0)
-    add("hotel", `Hotel ${hotelRow.nombre ?? v.hotel ?? ""}`.trim(), Number(v.costo_hotel) || 0, hotelRow.proveedor);
+  // proveedor del hotel/aéreo se jala del contrato si existe; si no, queda
+  // "Sin especificar" (editable luego desde la pestaña Proveedores).
+  if (!yaTiene.has("hotel") && (Number(v.costo_hotel) || 0) > 0)
+    add("hotel", `Hotel ${hotelRow?.nombre ?? v.hotel ?? ""}`.trim(), Number(v.costo_hotel) || 0, hotelRow?.proveedor ?? null);
   if (!yaTiene.has("aereo") && (Number(v.costo_aereo) || 0) > 0)
     add("aereo", `Aéreo ${vueloRow?.aerolinea ?? v.aerolinea ?? ""}`.trim(), Number(v.costo_aereo) || 0, vueloRow?.aerolinea ?? (v.aerolinea as string | null));
   if (!yaTiene.has("receptivo") && (Number(v.costo_receptivo) || 0) > 0)

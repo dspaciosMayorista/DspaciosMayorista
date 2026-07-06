@@ -30,6 +30,15 @@ export function HotelConfigEditor({
     ubicacion: string;
     videoUrl: string;
     moneda: string;
+    infanteCargoNeto: number;
+    infanteCargoDesc: string;
+    infanteNota: string;
+    ninoNota: string;
+    adultsOnly: boolean;
+    petFriendly: boolean;
+    petCostoNeto: number;
+    petCostoDesc: string;
+    petNota: string;
   };
 }) {
   const router = useRouter();
@@ -49,6 +58,16 @@ export function HotelConfigEditor({
   const [infMax, setInfMax] = useState(String(inicial.edadInfanteMax));
   const [ninoMin, setNinoMin] = useState(String(inicial.edadNinoMin));
   const [ninoMax, setNinoMax] = useState(String(inicial.edadNinoMax));
+  const [infanteCargoNeto, setInfanteCargoNeto] = useState(String(inicial.infanteCargoNeto || ""));
+  const [infanteCargoDesc, setInfanteCargoDesc] = useState(inicial.infanteCargoDesc);
+  const [infanteNota, setInfanteNota] = useState(inicial.infanteNota);
+  const [ninoNota, setNinoNota] = useState(inicial.ninoNota);
+  const [adultsOnly, setAdultsOnly] = useState(inicial.adultsOnly);
+  const [cobraInfante, setCobraInfante] = useState(inicial.infanteCargoNeto > 0 || !!inicial.infanteNota);
+  const [petFriendly, setPetFriendly] = useState(inicial.petFriendly);
+  const [petCostoNeto, setPetCostoNeto] = useState(String(inicial.petCostoNeto || ""));
+  const [petCostoDesc, setPetCostoDesc] = useState(inicial.petCostoDesc);
+  const [petNota, setPetNota] = useState(inicial.petNota);
   const [rangosSel, setRangosSel] = useState<number[]>(inicial.rangosEdad);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -65,6 +84,14 @@ export function HotelConfigEditor({
         rangosEdad: rangosSel,
         contactoTelefono: contactoTel, emailComercial: emailCom,
         estrellas: Number(estrellas) || null, clasificacion, descripcion, ubicacion, videoUrl, moneda,
+        infanteCargoNeto: cobraInfante ? (Number(infanteCargoNeto) || 0) : 0,
+        infanteCargoDesc: cobraInfante ? infanteCargoDesc : "",
+        infanteNota: cobraInfante ? infanteNota : "",
+        ninoNota, adultsOnly,
+        petFriendly,
+        petCostoNeto: petFriendly ? (Number(petCostoNeto) || 0) : 0,
+        petCostoDesc: petFriendly ? petCostoDesc : "",
+        petNota: petFriendly ? petNota : "",
       });
       if (r.ok) { setMsg("Guardado."); router.refresh(); } else setMsg(r.error);
     });
@@ -92,11 +119,80 @@ export function HotelConfigEditor({
             </div>
             <div><label className={lbl}>Zona</label><Input value={zona} onChange={(e) => setZona(e.target.value)} /></div>
           </div>
+          <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-700">
+            <input type="checkbox" checked={adultsOnly} onChange={(e) => setAdultsOnly(e.target.checked)} />
+            Adults Only — este hotel NO acepta niños ni infantes
+          </label>
+
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div><label className={lbl}>Infante mín.</label><Input type="number" value={infMin} onChange={(e) => setInfMin(e.target.value)} /></div>
-            <div><label className={lbl}>Infante máx.</label><Input type="number" value={infMax} onChange={(e) => setInfMax(e.target.value)} /></div>
-            <div><label className={lbl}>Niño mín.</label><Input type="number" value={ninoMin} onChange={(e) => setNinoMin(e.target.value)} /></div>
-            <div><label className={lbl}>Niño máx.</label><Input type="number" value={ninoMax} onChange={(e) => setNinoMax(e.target.value)} /></div>
+            <div><label className={lbl}>Infante mín.</label><Input type="number" value={infMin} onChange={(e) => setInfMin(e.target.value)} disabled={adultsOnly} /></div>
+            <div><label className={lbl}>Infante máx.</label><Input type="number" value={infMax} onChange={(e) => setInfMax(e.target.value)} disabled={adultsOnly} /></div>
+            <div><label className={lbl}>Niño mín.</label><Input type="number" value={ninoMin} onChange={(e) => setNinoMin(e.target.value)} disabled={adultsOnly} /></div>
+            <div><label className={lbl}>Niño máx.</label><Input type="number" value={ninoMax} onChange={(e) => setNinoMax(e.target.value)} disabled={adultsOnly} /></div>
+          </div>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+            <label className="mb-3 flex items-center gap-2 text-xs font-semibold text-amber-800">
+              <input type="checkbox" checked={cobraInfante} onChange={(e) => setCobraInfante(e.target.checked)} />
+              Este hotel cobra tarifa a infantes / tiene notas especiales
+              <span className="font-normal text-amber-700">(ej. alimentación obligatoria, comparte cama con los padres, seguro hotelero)</span>
+            </label>
+            {cobraInfante && (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={lbl}>Cargo neto por infante / noche</label>
+                    <Input type="number" min={0} value={infanteCargoNeto} onChange={(e) => setInfanteCargoNeto(e.target.value)} placeholder="0" />
+                    <p className="mt-1 text-[11px] text-gray-500">Se cobra a cada infante, multiplicado por las noches de la estadía. Lleva el mismo % de markup del paquete.</p>
+                  </div>
+                  <div>
+                    <label className={lbl}>Descripción del cargo</label>
+                    <Input value={infanteCargoDesc} onChange={(e) => setInfanteCargoDesc(e.target.value)} placeholder="Ej. Alimentación obligatoria" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <label className={lbl}>Nota sobre infantes</label>
+                  <textarea value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} rows={2}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Ej. Comparte cama con los padres." />
+                </div>
+              </>
+            )}
+          </div>
+          <div>
+            <label className={lbl}>Nota sobre niños</label>
+            <textarea value={ninoNota} onChange={(e) => setNinoNota(e.target.value)} rows={2}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+              placeholder="Ej. Debe pagar seguro hotelero obligatorio en el hotel." />
+          </div>
+
+          <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
+            <label className="mb-3 flex items-center gap-2 text-xs font-semibold text-sky-800">
+              <input type="checkbox" checked={petFriendly} onChange={(e) => setPetFriendly(e.target.checked)} />
+              Pet friendly — este hotel acepta mascotas
+              <span className="font-normal text-sky-700">(tarifa y notas; 0 = gratis)</span>
+            </label>
+            {petFriendly && (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className={lbl}>Cargo neto por mascota / noche</label>
+                    <Input type="number" min={0} value={petCostoNeto} onChange={(e) => setPetCostoNeto(e.target.value)} placeholder="0" />
+                    <p className="mt-1 text-[11px] text-gray-500">0 = gratis. Si tiene costo, se cobra por mascota × noches de la estadía, con el mismo % de markup del paquete.</p>
+                  </div>
+                  <div>
+                    <label className={lbl}>Descripción del cargo</label>
+                    <Input value={petCostoDesc} onChange={(e) => setPetCostoDesc(e.target.value)} placeholder="Ej. Aseo adicional por mascota" />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <label className={lbl}>Nota sobre mascotas</label>
+                  <textarea value={petNota} onChange={(e) => setPetNota(e.target.value)} rows={2}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                    placeholder="Ej. Máximo 1 mascota por habitación, peso máximo 10kg." />
+                </div>
+              </>
+            )}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div><label className={lbl}>Teléfono de contacto (reservas)</label><Input value={contactoTel} onChange={(e) => setContactoTel(e.target.value)} placeholder="+57 ..." /></div>

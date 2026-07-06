@@ -153,6 +153,19 @@ export async function crearContrato(
         Math.min(...precios.map((p) => p.precio));
       const nino = precios.find((p) => p.acomodacion === "nino")?.precio ?? 0;
       items = input.items.map((it) => ({ ...it, tarifaAdulto: doble, tarifaNino: nino }));
+    } else {
+      // Sin tarifas configuradas en el catálogo no hay precio confiable que
+      // bloquear: mejor fallar que aceptar en silencio la tarifa que mande el
+      // cliente para un contrato marcado como negociado.
+      return { ok: false, error: "El paquete negociado no tiene tarifas configuradas. Configúralas antes de reservar." };
+    }
+  }
+
+  // Las tarifas/cantidades de un item vienen del cliente (aun en no-negociado);
+  // deben ser números finitos y no negativos antes de sumar el PVP.
+  for (const it of items) {
+    if (![it.adultos, it.ninos, it.tarifaAdulto, it.tarifaNino].every((n) => Number.isFinite(n) && n >= 0)) {
+      return { ok: false, error: "Cantidades o tarifas inválidas en los ítems del contrato." };
     }
   }
 
@@ -463,6 +476,7 @@ export async function crearContrato(
     const pct = aliado.pct_comision ?? Number(p?.valor) ?? (tipoVenta === "agencia" ? 0.12 : 0.11);
     await sb.from("aliados_b2b").insert({
       numero_contrato: numero,
+      tenant,
       aliado: aliado.nombre,
       nit: aliado.nit,
       precio_venta: precioVenta,
@@ -497,6 +511,8 @@ export type VentaEditInput = {
   asesorNombre: string;
   planNombre: string;
   observaciones: string;
+  precioVenta: string;
+  pax: string;
 };
 
 export async function actualizarVenta(
@@ -504,6 +520,10 @@ export async function actualizarVenta(
   input: VentaEditInput
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!input.cliente.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
+  const precioVenta = Number(input.precioVenta);
+  if (!Number.isFinite(precioVenta) || precioVenta < 0) return { ok: false, error: "El precio de venta debe ser un número ≥ 0." };
+  const pax = Math.trunc(Number(input.pax));
+  if (!Number.isFinite(pax) || pax < 1) return { ok: false, error: "La cantidad de pasajeros debe ser al menos 1." };
   const sb = await createClient();
   const { error } = await sb
     .from("ventas")
@@ -524,6 +544,8 @@ export async function actualizarVenta(
       asesor_firma_nombre: oNull(input.asesorNombre),
       plan_nombre: oNull(input.planNombre),
       observaciones: oNull(input.observaciones),
+      precio_venta: precioVenta,
+      pax,
       updated_at: new Date().toISOString(),
     })
     .eq("numero_contrato", numero);
@@ -532,49 +554,23 @@ export async function actualizarVenta(
   return { ok: true };
 }
 
-export async function registrarAbono(
-  numeroContrato: string,
-  valor: number,            // monto PAGADO en COP (en USD se convierte con la TRM)
-  formaPago: string,
-  referencia: string,
-  trmInput?: number,        // TRM del día (obligatoria si el contrato es USD)
-) {
-  const sb = await createClient();
+// Recalcula TRM promedio (USD) y confirma la venta pendiente si el abonado ya
+// alcanza el % mínimo — compartido por registrar/editar un abono (el umbral se
+// revisa igual después de cualquiera de las dos operaciones).
+async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>>, numeroContrato: string): Promise<void> {
   const { data: venta } = await sb
     .from("ventas")
-    .select("estado, precio_venta, tipo_paquete, moneda, tenant")
+    .select("estado, precio_venta, tipo_paquete, moneda")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
   const esUSD = (venta?.moneda ?? "COP") === "USD";
-  const montoCop = Math.max(0, Number(valor) || 0);
-  const trm = esUSD ? (Number(trmInput) || 0) : 1;
-  if (esUSD && trm <= 0) throw new Error("Indica la TRM del día para el abono (contrato en USD).");
-  // El abono "vale" en la MONEDA DEL CONTRATO: USD = COP / TRM; COP = COP.
-  const valorAbono = esUSD ? montoCop / trm : montoCop;
-
-  const { error } = await sb.from("abonos").insert({
-    numero_contrato: numeroContrato,
-    tenant: (venta as { tenant?: string } | null)?.tenant ?? "mayorista",
-    valor_abono: valorAbono,
-    monto_cop: montoCop,
-    trm,
-    forma_pago: formaPago || null,
-    referencia: referencia || null,
-  });
-  if (error) throw new Error(error.message);
-
-  // Regla de negocio: la venta pendiente se confirma cuando lo abonado alcanza el
-  // % mínimo configurado por tipo de contrato (default 30%). Se compara en la
-  // MONEDA DEL CONTRATO (valor_abono vs precio_venta), así USD y COP usan la misma regla.
-  const { data: abs } = await sb.from("abonos").select("valor_abono, monto_cop, trm").eq("numero_contrato", numeroContrato);
+  const { data: abs } = await sb.from("abonos").select("valor_abono, monto_cop").eq("numero_contrato", numeroContrato);
   const totalAbonado = (abs ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);   // en moneda del contrato
   const totalCop = (abs ?? []).reduce((s, a) => s + (Number(a.monto_cop) || 0), 0); // en pesos
 
-  // TRM efectiva del contrato = promedio ponderado (Σcop / Σmonto-en-moneda). En
-  // USD se mueve con cada abono; en COP queda 1.
-  if (esUSD) {
-    const trmProm = totalAbonado > 0 ? totalCop / totalAbonado : trm;
-    await sb.from("ventas").update({ trm_contrato: trmProm }).eq("numero_contrato", numeroContrato);
+  // TRM efectiva del contrato = promedio ponderado (Σcop / Σmonto-en-moneda).
+  if (esUSD && totalAbonado > 0) {
+    await sb.from("ventas").update({ trm_contrato: totalCop / totalAbonado }).eq("numero_contrato", numeroContrato);
   }
 
   const { data: cfg } = await sb.from("config_cobros").select("pct_abono").eq("tipo_paquete", venta?.tipo_paquete ?? "").maybeSingle();
@@ -591,8 +587,87 @@ export async function registrarAbono(
     // Respaldo: generar cuentas por pagar desde los costos si aún no existen.
     await asegurarCuentasPorPagar(numeroContrato);
   }
+}
 
+export async function registrarAbono(
+  numeroContrato: string,
+  valor: number,            // monto PAGADO en COP (en USD se convierte con la TRM)
+  formaPago: string,
+  referencia: string,
+  trmInput?: number,        // TRM del día (obligatoria si el contrato es USD)
+  fecha?: string,           // fecha del abono (por defecto hoy; editable para registrar abonos atrasados)
+): Promise<{ ok: boolean; error?: string }> {
+  const sb = await createClient();
+  const { data: venta } = await sb
+    .from("ventas")
+    .select("estado, precio_venta, tipo_paquete, moneda, tenant")
+    .eq("numero_contrato", numeroContrato)
+    .maybeSingle();
+  const esUSD = (venta?.moneda ?? "COP") === "USD";
+  const montoCop = Math.max(0, Number(valor) || 0);
+  const trm = esUSD ? (Number(trmInput) || 0) : 1;
+  if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día para el abono (contrato en USD)." };
+  // El abono "vale" en la MONEDA DEL CONTRATO: USD = COP / TRM; COP = COP.
+  const valorAbono = esUSD ? montoCop / trm : montoCop;
+
+  const { error } = await sb.from("abonos").insert({
+    numero_contrato: numeroContrato,
+    tenant: (venta as { tenant?: string } | null)?.tenant ?? "mayorista",
+    valor_abono: valorAbono,
+    monto_cop: montoCop,
+    trm,
+    fecha_abono: fecha || new Date().toISOString().slice(0, 10),
+    forma_pago: formaPago || null,
+    referencia: referencia || null,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  await recalcularEstadoAbono(sb, numeroContrato);
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+  revalidatePath("/dashboard/cartera");
+  return { ok: true };
+}
+
+// Corrige un abono ya registrado (valor, fecha, forma de pago o referencia) —
+// para cuando el asesor se equivoca al digitar y no quiere crear un segundo
+// abono para "cuadrar" el saldo.
+export async function actualizarAbono(
+  id: number,
+  numeroContrato: string,
+  input: { valor: number; fecha: string; formaPago: string; referencia: string; trmInput?: number }
+): Promise<{ ok: boolean; error?: string }> {
+  if (!(input.valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0." };
+  const sb = await createClient();
+  const { data: venta } = await sb.from("ventas").select("moneda").eq("numero_contrato", numeroContrato).maybeSingle();
+  const esUSD = (venta?.moneda ?? "COP") === "USD";
+  const montoCop = Math.max(0, Number(input.valor) || 0);
+  const trm = esUSD ? (Number(input.trmInput) || 0) : 1;
+  if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día (contrato en USD)." };
+  const valorAbono = esUSD ? montoCop / trm : montoCop;
+
+  const { error } = await sb.from("abonos").update({
+    valor_abono: valorAbono,
+    monto_cop: montoCop,
+    trm,
+    fecha_abono: input.fecha || new Date().toISOString().slice(0, 10),
+    forma_pago: input.formaPago || null,
+    referencia: input.referencia || null,
+  }).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+
+  await recalcularEstadoAbono(sb, numeroContrato);
+  revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+  revalidatePath("/dashboard/cartera");
+  return { ok: true };
+}
+
+export async function eliminarAbono(id: number, numeroContrato: string): Promise<{ ok: boolean; error?: string }> {
+  const sb = await createClient();
+  const { error } = await sb.from("abonos").delete().eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+  revalidatePath("/dashboard/cartera");
+  return { ok: true };
 }
 
 // ── Editar servicios adicionales de un contrato PENDIENTE ───────────────────

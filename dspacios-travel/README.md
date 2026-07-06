@@ -18,7 +18,9 @@ de verdad del diseño global está en `../CLAUDE.md` y la plantilla del contrato
   Vercel). La **web y el correo** del cliente siguen en Hostinger (no se tocan). Su web
   está en `www.` / raíz; nosotros usamos el subdominio `portal.`.
 - **Variables en Vercel (Production) — YA puestas:** `NEXT_PUBLIC_SUPABASE_URL`,
-  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`. (`CRON_SECRET` opcional.)
+  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`. **`CRON_SECRET`
+  obligatoria** (los endpoints `/api/cron/*` rechazan todo si falta — Vercel la
+  manda sola como `Authorization: Bearer` en sus cron jobs si está configurada).
 - **Supabase:** **un solo proyecto, compartido** entre `main` y las ramas. Las
   **migraciones se aplican A MANO** en el **SQL Editor** (el dueño las corre cuando se le
   indica; no usamos `supabase db push`). Cada PR lista sus migraciones pendientes.
@@ -163,7 +165,8 @@ Viven en `supabase/migrations/` (idempotentes). **Correr en orden `0001 → 0046
 | 046 | Bucket privado `contratos` + `contrato_adjuntos` (cédulas/soportes) |
 
 > Env en Vercel (ya puestas): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-> `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos/liquidación/storage), opcional `CRON_SECRET`.
+> `SUPABASE_SERVICE_ROLE_KEY` (sillas/costos/liquidación/storage), **`CRON_SECRET`
+> obligatoria** (protege `/api/cron/*`; sin ella esos endpoints quedan bloqueados).
 
 ## CRM (app aparte, mismo código)
 

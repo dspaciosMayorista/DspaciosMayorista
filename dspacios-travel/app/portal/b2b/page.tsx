@@ -83,7 +83,7 @@ export default async function PortalB2BPage() {
   const pctEfectivo = pctAgencia ?? defCom;
   const cat = categoriaAliado(rol ?? "agencia", pctEfectivo, defCom);
 
-  const sel = "numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado";
+  const sel = "numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor";
   const [{ data: porId }, { data: porNombre }] = await Promise.all([
     admin.from("ventas").select(sel).eq("b2b_usuario_id", user.id),
     nombre ? admin.from("ventas").select(sel).or(`agencia_nombre.eq.${nombre},freelance_nombre.eq.${nombre}`) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
@@ -232,8 +232,13 @@ export default async function PortalB2BPage() {
                     <td className="px-3 py-2 text-right text-xs tabular-nums">
                       {com != null && com > 0 ? `${formatMoneda(com, moneda)}` : "—"}
                       {c.comision_estado ? <span className="block text-[10px] text-gray-400">{ESTADO_COMISION[c.comision_estado as string] ?? (c.comision_estado as string)}</span> : null}
-                      {c.modo_compra === "comisionable" && com != null && com > 0 && (
+                      {/* Cuenta de cobro: solo freelance (persona natural). Las agencias
+                          (persona jurídica) deben enviar su factura electrónica. */}
+                      {c.tipo_asesor === "freelance" && c.modo_compra === "comisionable" && com != null && com > 0 && (
                         <Link href={`/portal/comision/${encodeURIComponent(num)}`} className="block text-[10px] font-medium" style={{ color: "var(--brand-accent)" }}>Cuenta de cobro →</Link>
+                      )}
+                      {c.tipo_asesor === "agencia" && c.modo_compra === "comisionable" && com != null && com > 0 && (
+                        <span className="block text-[10px] text-gray-400">Factura electrónica</span>
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">

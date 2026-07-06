@@ -3,7 +3,8 @@
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { crearCotizacion, type ReservaInput } from "@/app/(dashboard)/dashboard/reservar/actions";
+import { crearCotizacion } from "@/app/(dashboard)/dashboard/reservar/actions";
+import { type ReservaInput } from "@/lib/reservar/computo";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { formatCOP } from "@/lib/utils";
 import { comisionDefault, categoriaAliado } from "@/lib/b2b";

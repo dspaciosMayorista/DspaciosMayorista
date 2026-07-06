@@ -112,12 +112,25 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
 
 type ModuloKey = FilaTarifario["modulo"] | "programas";
 
-type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null }>;
+type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; infanteCargo?: boolean; infanteCargoDesc?: string | null; infanteNota?: string | null; ninoNota?: string | null; adultsOnly?: boolean; petFriendly?: boolean; petCargo?: boolean; petCostoDesc?: string | null; petNota?: string | null }>;
 
 // Texto de rango de edad de niño/infante (helper centralizado en lib).
 // Tolera `info` undefined (hoteles sin config) devolviendo null.
 const rangoEdades = (info?: Parameters<typeof textoEdadesHotel>[0]): string | null =>
   info ? textoEdadesHotel(info) : null;
+
+// Notas especiales de niño/infante (ej. "comparte cama con los padres", cargo
+// obligatorio de alimentación) — informativo, el valor exacto se ve al reservar.
+function notasNinoInfante(info?: InfoHotel[number]): string | null {
+  if (!info) return null;
+  const partes: string[] = [];
+  if (info.infanteCargo) partes.push(`Infantes: aplica cargo adicional obligatorio${info.infanteCargoDesc ? ` (${info.infanteCargoDesc})` : ""}, se confirma al reservar.`);
+  if (info.infanteNota?.trim()) partes.push(info.infanteNota.trim());
+  if (info.ninoNota?.trim()) partes.push(info.ninoNota.trim());
+  if (info.petFriendly) partes.push(`Acepta mascotas${info.petCargo ? " (aplica cargo adicional, se confirma al reservar)" : " (sin costo)"}${info.petCostoDesc ? ` — ${info.petCostoDesc}` : ""}.`);
+  if (info.petNota?.trim()) partes.push(info.petNota.trim());
+  return partes.length ? partes.join(" ") : null;
+}
 
 // Estrellas (★) o clasificación (Boutique/Luxury…) al lado del nombre del hotel.
 function CategoriaInline({ info }: { info?: { estrellas: number | null; clasificacion: string | null } }) {
@@ -131,6 +144,26 @@ function CategoriaInline({ info }: { info?: { estrellas: number | null; clasific
   if (info.clasificacion?.trim())
     return <span className="ml-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">{info.clasificacion}</span>;
   return null;
+}
+
+// Aviso "Adults Only" — hotel que no acepta niños ni infantes.
+function AdultsOnlyBadge({ info }: { info?: { adultsOnly?: boolean } }) {
+  if (!info?.adultsOnly) return null;
+  return (
+    <span className="ml-1 rounded-full bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white" title="Este hotel no acepta niños ni infantes">
+      Adults Only
+    </span>
+  );
+}
+
+// Aviso "Pet friendly" — hotel que acepta mascotas.
+function PetFriendlyBadge({ info }: { info?: { petFriendly?: boolean } }) {
+  if (!info?.petFriendly) return null;
+  return (
+    <span className="ml-1 rounded-full bg-[var(--brand-success)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-success)]" title="Este hotel acepta mascotas">
+      Pet friendly
+    </span>
+  );
 }
 
 // Acomodaciones para el filtro (mismas claves que COLS).
@@ -561,8 +594,13 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                     <td className="px-3 py-2 font-medium text-gray-800">
                       {i === 0 ? r.hotel : ""}
                       {i === 0 && r.hotel_id != null && <CategoriaInline info={infoPorHotel[r.hotel_id]} />}
+                      {i === 0 && r.hotel_id != null && <AdultsOnlyBadge info={infoPorHotel[r.hotel_id]} />}
+                      {i === 0 && r.hotel_id != null && <PetFriendlyBadge info={infoPorHotel[r.hotel_id]} />}
                       {i === 0 && r.hotel_id != null && rangoEdades(infoPorHotel[r.hotel_id]) && (
                         <span className="mt-0.5 block text-[11px] font-normal text-gray-400">{rangoEdades(infoPorHotel[r.hotel_id])}</span>
+                      )}
+                      {i === 0 && r.hotel_id != null && notasNinoInfante(infoPorHotel[r.hotel_id]) && (
+                        <span className="mt-0.5 block text-[11px] font-normal text-amber-600">{notasNinoInfante(infoPorHotel[r.hotel_id])}</span>
                       )}
                       {i === 0 && puedeReservar && r.paquete_id != null && r.hotel_id != null && (
                         <Link href={reservarHref(r)} className="mt-0.5 block text-xs font-normal" style={{ color: "var(--brand-accent)" }}>

@@ -11,21 +11,26 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
   const [forma, setForma] = useState("");
   const [ref, setRef] = useState("");
   const [trm, setTrm] = useState("");
+  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
   const [pending, startTransition] = useTransition();
+  const [error, setError] = useState("");
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
   const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
 
   function handle(e: React.FormEvent) {
     e.preventDefault();
+    setError("");
     const v = Number(valor);
     if (!v || v <= 0) return;
     if (esUSD && !(Number(trm) > 0)) return;
     startTransition(async () => {
-      await registrarAbono(numeroContrato, v, forma, ref, esUSD ? Number(trm) : undefined);
+      const r = await registrarAbono(numeroContrato, v, forma, ref, esUSD ? Number(trm) : undefined, fecha);
+      if (!r.ok) { setError(r.error ?? "No se pudo registrar el abono."); return; }
       setValor("");
       setForma("");
       setRef("");
       setTrm("");
+      setFecha(new Date().toISOString().slice(0, 10));
     });
   }
 
@@ -77,6 +82,10 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
           className="w-44"
         />
       </div>
+      <div>
+        <label className="mb-1 block text-xs font-medium text-gray-600">Fecha del abono</label>
+        <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" />
+      </div>
       <Button
         type="submit"
         disabled={pending}
@@ -84,6 +93,7 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP" }: {
       >
         {pending ? "Guardando…" : "Registrar abono"}
       </Button>
+      {error && <span className="text-sm text-red-600">{error}</span>}
     </form>
   );
 }

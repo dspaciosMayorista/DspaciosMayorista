@@ -4,7 +4,8 @@ import { useMemo, useState, useTransition } from "react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem } from "@/lib/cart/CartContext";
-import { buscarHoteles, type BusquedaResultado } from "@/app/(dashboard)/dashboard/reservar/actions";
+import { buscarHoteles } from "@/app/(dashboard)/dashboard/reservar/actions";
+import { type BusquedaResultado } from "@/lib/reservar/cotizar";
 
 type Hab = { acom: AcomRoom; ninos: number };
 

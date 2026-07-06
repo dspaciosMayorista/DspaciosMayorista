@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
-import { registrarAbonoCartera } from "./actions";
+import { registrarAbonoCartera, actualizarAbonoCartera, eliminarAbonoCartera } from "./actions";
 
 export type CarteraRow = {
   numero_contrato: string;
@@ -23,6 +23,7 @@ export type CarteraRow = {
     valor_abono: number;
     forma_pago: string | null;
     referencia: string | null;
+    trm: number | null;
   }[];
 };
 
@@ -223,23 +224,12 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
                   <th className="px-3 py-2">Referencia</th>
                   <th className="px-3 py-2 text-right">Valor</th>
                   <th className="px-3 py-2 text-right">Recibo</th>
+                  <th className="px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
                 {row.abonos.map((a) => (
-                  <tr key={a.id} className="border-t border-gray-50">
-                    <td className="px-3 py-2 text-gray-600">{formatFechaLarga(a.fecha_abono)}</td>
-                    <td className="px-3 py-2 text-gray-600">{a.forma_pago ?? "—"}</td>
-                    <td className="px-3 py-2 text-gray-500">{a.referencia ?? "—"}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-gray-700">
-                      {formatMoneda(a.valor_abono, row.moneda)}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">
-                        Recibo ↗
-                      </Link>
-                    </td>
-                  </tr>
+                  <FilaAbonoCartera key={a.id} a={a} numeroContrato={row.numero_contrato} moneda={row.moneda} formasPago={formasPago} />
                 ))}
               </tbody>
               <tfoot>
@@ -273,6 +263,82 @@ function EstadoCuenta({ row, formasPago }: { row: CarteraRow; formasPago: string
   );
 }
 
+// Fila de abono con edición inline (corregir un error de digitación sin tener
+// que registrar un segundo abono para "cuadrar" el saldo) y eliminar.
+function FilaAbonoCartera({
+  a, numeroContrato, moneda, formasPago,
+}: {
+  a: CarteraRow["abonos"][number]; numeroContrato: string; moneda: string; formasPago: string[];
+}) {
+  const [editar, setEditar] = useState(false);
+  const [valor, setValor] = useState(String(a.valor_abono));
+  const [fecha, setFecha] = useState(a.fecha_abono);
+  const [forma, setForma] = useState(a.forma_pago ?? "");
+  const [ref, setRef] = useState(a.referencia ?? "");
+  const [trm, setTrm] = useState(a.trm ? String(a.trm) : "");
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState("");
+  const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
+
+  function guardar() {
+    setErr("");
+    start(async () => {
+      const r = await actualizarAbonoCartera(a.id, numeroContrato, {
+        valor: Number(valor) || 0, fecha, formaPago: forma, referencia: ref,
+        trmInput: esUSD ? Number(trm) || 0 : undefined,
+      });
+      if (r.ok) setEditar(false); else setErr(r.error ?? "Error");
+    });
+  }
+
+  if (editar) {
+    return (
+      <tr className="border-t border-gray-100 bg-gray-50/60">
+        <td className="px-3 py-2" colSpan={6}>
+          <div className="flex flex-wrap items-end gap-2">
+            <div><label className="block text-[11px] text-gray-500">Valor{esUSD ? " pagado (COP)" : ""}</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" /></div>
+            {esUSD && <div><label className="block text-[11px] text-gray-500">TRM</label><Input type="number" value={trm} onChange={(e) => setTrm(e.target.value)} className="w-28" /></div>}
+            <div><label className="block text-[11px] text-gray-500">Fecha</label><Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" /></div>
+            <div>
+              <label className="block text-[11px] text-gray-500">Forma</label>
+              <select value={forma} onChange={(e) => setForma(e.target.value)} className="h-8 rounded-lg border border-gray-300 bg-white px-2 text-sm">
+                <option value="">—</option>
+                {formasPago.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            <div><label className="block text-[11px] text-gray-500">Referencia</label><Input value={ref} onChange={(e) => setRef(e.target.value)} className="w-44" /></div>
+            <Button onClick={guardar} disabled={pending} className="h-9" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Guardar"}</Button>
+            <button type="button" onClick={() => setEditar(false)} className="pb-2 text-xs text-gray-400 hover:text-gray-700">Cancelar</button>
+            {err && <span className="pb-2 text-xs text-red-600">{err}</span>}
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr className="border-t border-gray-50">
+      <td className="px-3 py-2 text-gray-600">{formatFechaLarga(a.fecha_abono)}</td>
+      <td className="px-3 py-2 text-gray-600">{a.forma_pago ?? "—"}</td>
+      <td className="px-3 py-2 text-gray-500">{a.referencia ?? "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums text-gray-700">{formatMoneda(a.valor_abono, moneda)}</td>
+      <td className="px-3 py-2 text-right">
+        <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">Recibo ↗</Link>
+      </td>
+      <td className="px-3 py-2 text-right whitespace-nowrap">
+        <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
+        <button
+          type="button"
+          onClick={() => { if (confirm("¿Eliminar este abono?")) eliminarAbonoCartera(a.id, numeroContrato); }}
+          className="text-xs font-medium text-red-500 hover:underline"
+        >
+          Eliminar
+        </button>
+      </td>
+    </tr>
+  );
+}
+
 function AbonoInline({
   numeroContrato,
   formasPago,
@@ -288,6 +354,7 @@ function AbonoInline({
   const [forma, setForma] = useState("");
   const [ref, setRef] = useState("");
   const [trm, setTrm] = useState("");
+  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
@@ -306,7 +373,7 @@ function AbonoInline({
       return;
     }
     startTransition(async () => {
-      const res = await registrarAbonoCartera(numeroContrato, v, forma, ref, esUSD ? Number(trm) : undefined);
+      const res = await registrarAbonoCartera(numeroContrato, v, forma, ref, esUSD ? Number(trm) : undefined, fecha);
       if (!res.ok) {
         setError(res.error ?? "No se pudo registrar el abono.");
         return;
@@ -315,6 +382,7 @@ function AbonoInline({
       setForma("");
       setRef("");
       setTrm("");
+      setFecha(new Date().toISOString().slice(0, 10));
     });
   }
 
@@ -362,6 +430,10 @@ function AbonoInline({
             placeholder="Comprobante / nota"
             className="w-44"
           />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Fecha del abono</label>
+          <Input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="w-40" />
         </div>
         <Button type="submit" disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Registrar abono"}

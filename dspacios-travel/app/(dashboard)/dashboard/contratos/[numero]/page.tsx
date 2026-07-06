@@ -47,6 +47,7 @@ export default async function ContratoDetallePage({
     { data: pasajerosC },
     { data: asesoresVenta },
     { data: destinos },
+    { data: proveedoresCatalogo },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
@@ -61,6 +62,7 @@ export default async function ContratoDetallePage({
     sb.from("contrato_pasajeros").select("id, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante").eq("numero_contrato", numero).order("orden"),
     sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
+    sb.from("proveedores").select("nombre").order("nombre"),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
@@ -172,6 +174,8 @@ export default async function ContratoDetallePage({
           asesorNombre: venta.asesor_firma_nombre ?? "",
           planNombre: venta.plan_nombre ?? "",
           observaciones: venta.observaciones ?? "",
+          precioVenta: String(venta.precio_venta ?? 0),
+          pax: String(venta.pax ?? 1),
         }}
         destinos={destinos ?? []}
       />
@@ -218,6 +222,7 @@ export default async function ContratoDetallePage({
         facturas={facturasConItems}
         formasPago={formasPago}
         moneda={(venta.moneda as string) ?? "COP"}
+        proveedoresCatalogo={(proveedoresCatalogo ?? []).map((p) => p.nombre)}
       />
 
       <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} />

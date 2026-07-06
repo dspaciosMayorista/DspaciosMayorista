@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { agenciaDe } from "@/lib/tenant.server";
+import { esTenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +19,7 @@ export default async function CuentaCobroPage({ params }: { params: Promise<{ nu
   const admin = createAdminClient();
   const { data: v } = await admin
     .from("ventas")
-    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, comision_estado, b2b_usuario_id, agencia_nombre, freelance_nombre")
+    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, comision_estado, b2b_usuario_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant")
     .eq("numero_contrato", numero)
     .maybeSingle();
   if (!v) notFound();
@@ -27,10 +29,27 @@ export default async function CuentaCobroPage({ params }: { params: Promise<{ nu
   const esDueno = v.b2b_usuario_id === user.id || [v.agencia_nombre, v.freelance_nombre].includes(perfil?.nombre ?? "");
   if (!esInterno && !esDueno) notFound();
   if (v.modo_compra !== "comisionable" || !v.comision_b2b) notFound();
+  // Cuenta de cobro = documento de PERSONA NATURAL (freelance). Las agencias
+  // (persona jurídica) deben facturar electrónicamente, no generan este documento.
+  if (v.tipo_asesor === "agencia" && !esInterno) {
+    return (
+      <div className="mx-auto max-w-xl px-4 py-16 text-center">
+        <p className="text-sm text-gray-600">
+          Esta comisión corresponde a una agencia (persona jurídica). Las agencias deben
+          enviar su factura electrónica para cobrar la comisión, no una cuenta de cobro.
+        </p>
+      </div>
+    );
+  }
 
   const moneda = v.moneda ?? "COP";
   const aliado = v.freelance_nombre || v.agencia_nombre || perfil?.nombre || "";
   const hoy = new Date().toISOString().slice(0, 10);
+  // Membrete: razón/nombre comercial de la agencia dueña del contrato (mayorista
+  // o minorista) — antes estaba fijo en "Mayorista", incorrecto para minorista.
+  const tenantVenta = esTenant(v.tenant) ? v.tenant : "mayorista";
+  const agencia = await agenciaDe(tenantVenta);
+  const nombreAgencia = agencia?.nombre_comercial || agencia?.razon_social || "D'SPACIOS TRAVEL";
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">
@@ -45,7 +64,7 @@ export default async function CuentaCobroPage({ params }: { params: Promise<{ nu
 
           <div className="mt-6 text-sm text-gray-700">
             <p>Señores</p>
-            <p className="font-semibold">D&apos;SPACIOS TRAVEL — Mayorista de Turismo</p>
+            <p className="font-semibold">{nombreAgencia}</p>
           </div>
 
           <p className="mt-4 text-sm text-gray-700">
