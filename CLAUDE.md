@@ -280,10 +280,12 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
 > y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
 > producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo: hasta la 120** (117 corrida por el dueño;
-> **faltan 118, 119 y 120**, todas sin dependencias entre sí: `hotel_infante_cargo`
+> **Migraciones a la fecha en repo: hasta la 121** (117 corrida por el dueño;
+> **faltan 118, 119, 120 y 121**, todas sin dependencias entre sí: `hotel_infante_cargo`
 > (4 columnas en `hoteles`, ver "Motor de cálculo"), `hotel_adults_only`
-> (`hoteles.adults_only`) y `crm_plan_vigencia` (`crm_difusion_plan.vigencia_hasta`)).
+> (`hoteles.adults_only`), `crm_plan_vigencia` (`crm_difusion_plan.vigencia_hasta`) y
+> `hotel_pet_friendly` (4 columnas en `hoteles`: `pet_friendly`, `pet_costo_neto`,
+> `pet_costo_desc`, `pet_nota`, ver "Motor de cálculo").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -596,7 +598,21 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   `nino_nota`, ej. "comparte cama con los padres", "seguro hotelero obligatorio")
   son informativas (no suman al precio) y se muestran en el tarifario público
   junto al rango de edades — **sin exponer el costo neto**, solo la descripción/
-  aviso de que aplica un cargo (el valor exacto se confirma al reservar).
+  aviso de que aplica un cargo (el valor exacto se confirma al reservar). El
+  editor ahora oculta precio/descripción/nota de infante detrás de un checkbox
+  "Este hotel cobra tarifa a infantes" (antes siempre visibles).
+- **Hoteles pet friendly** (migración 121, `hoteles.pet_friendly/pet_costo_neto/
+  pet_costo_desc/pet_nota`, editable en `HotelConfigEditor.tsx` detrás de un
+  checkbox "Acepta mascotas"): misma mecánica que el cargo de infante —
+  `pet_costo_neto` en 0 = mascota gratis, > 0 se cobra por mascota × noches con
+  el mismo % de markup del paquete (`cargoMascota` en `lib/reservar/computo.ts`,
+  itemizado aparte en `contrato_items`/`itemsSnap` como "Mascota · <descripción>").
+  Si el hotel NO es `pet_friendly`, reservar con mascotas declaradas falla
+  (validado en el motor, junto al chequeo de Adults Only). `ReservaForm.tsx`
+  agrega el campo "Cantidad de mascotas" solo si el hotel es pet friendly (si no,
+  muestra el aviso "Este hotel no acepta mascotas" y no permite declararlas). El
+  tarifario público muestra el badge "Pet friendly" + la nota/aviso de cargo
+  (sin exponer el costo neto), igual criterio que Adults Only/infante.
 
 ### Editar reserva pendiente
 - **HECHO (servicios):** en un contrato `pendiente`, `ServiciosContratoEditor` +

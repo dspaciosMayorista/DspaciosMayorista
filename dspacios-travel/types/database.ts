@@ -1070,6 +1070,10 @@ export type Database = {
           infante_nota: string | null;
           nino_nota: string | null;
           adults_only: boolean;
+          pet_friendly: boolean;
+          pet_costo_neto: number;
+          pet_costo_desc: string | null;
+          pet_nota: string | null;
         };
         Insert: {
           id?: number;
@@ -1099,6 +1103,10 @@ export type Database = {
           infante_nota?: string | null;
           nino_nota?: string | null;
           adults_only?: boolean;
+          pet_friendly?: boolean;
+          pet_costo_neto?: number;
+          pet_costo_desc?: string | null;
+          pet_nota?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [

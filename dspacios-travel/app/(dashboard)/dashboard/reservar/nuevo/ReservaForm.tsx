@@ -49,6 +49,8 @@ export type Meta = {
   edadNinoMax: number;
   paxMinHotel: number | null;
   paxMaxHotel: number | null;
+  petFriendly: boolean;
+  petNota: string | null;
 };
 export type Combo = { categoria: string; regimen: string; precios: Record<string, number> };
 
@@ -116,6 +118,7 @@ export function ReservaForm({
   const [ninos, setNinos] = useState("0");
   const [ninos2, setNinos2] = useState("0");
   const [infantes, setInfantes] = useState("0");
+  const [mascotas, setMascotas] = useState("0");
   const [paxServ, setPaxServ] = useState("1");
 
   // Nota informativa de edades del hotel (junto a los inputs de niño/infante).
@@ -137,6 +140,7 @@ export function ReservaForm({
   const numNinos = precios["nino"] != null ? (Number(ninos) || 0) : 0;
   const numNinos2 = precios["nino2"] != null ? (Number(ninos2) || 0) : 0;
   const numInfantes = Number(infantes) || 0;
+  const numMascotas = meta.petFriendly ? (Number(mascotas) || 0) : 0;
   const paxConSilla = paxRooms + numNinos + numNinos2;
   const totalPax = esServicios ? (Number(paxServ) || 0) : paxConSilla + numInfantes;
   const numHabitaciones = roomTypes.reduce((s, a) => s + (Number(habs[a]) || 0), 0);
@@ -249,7 +253,7 @@ export function ReservaForm({
         categoria: esServicios ? "" : catSel, regimen: esServicios ? "" : reg,
         fechaIda: esPorFechas ? (fIda || undefined) : undefined,
         fechaRegreso: esPorFechas ? (fReg || undefined) : undefined,
-        habitaciones, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes,
+        habitaciones, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, mascotas: numMascotas,
         paxServicios: totalPax,
         cliente: cli, tipoAsesor, asesorInterno, agenciaNombre, agenciaAsesor, freelanceNombre,
         aliadoId: aliadoId === "" ? null : Number(aliadoId), modoCompra: tipoAsesor === "interno" ? undefined : modoCompra, plazo, pasajeros,
@@ -346,6 +350,20 @@ export function ReservaForm({
             <Input type="number" min={0} value={infantes} onChange={(e) => setInfantes(e.target.value)} />
           </div>
         </div>
+        <p className="mt-4 mb-1 text-xs font-medium text-gray-500">Mascotas</p>
+        {meta.petFriendly ? (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div>
+              <label className={lbl}>Cantidad de mascotas</label>
+              <Input type="number" min={0} value={mascotas} onChange={(e) => setMascotas(e.target.value)} />
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-400">Este hotel no acepta mascotas.</p>
+        )}
+        {meta.petFriendly && meta.petNota && (
+          <p className="mt-1 text-[11px] text-gray-500">{meta.petNota}</p>
+        )}
         <p className="mt-3 text-sm text-gray-600">
           {numHabitaciones} habitación(es) · {totalPax} pasajero(s) · Hotel <b>{fmt(totalHotel)}</b>
           {totalServicios > 0 && <> + servicios <b>{fmt(totalServicios)}</b></>}

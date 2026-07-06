@@ -112,7 +112,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
 
 type ModuloKey = FilaTarifario["modulo"] | "programas";
 
-type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; infanteCargo?: boolean; infanteCargoDesc?: string | null; infanteNota?: string | null; ninoNota?: string | null; adultsOnly?: boolean }>;
+type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; infanteCargo?: boolean; infanteCargoDesc?: string | null; infanteNota?: string | null; ninoNota?: string | null; adultsOnly?: boolean; petFriendly?: boolean; petCargo?: boolean; petCostoDesc?: string | null; petNota?: string | null }>;
 
 // Texto de rango de edad de niño/infante (helper centralizado en lib).
 // Tolera `info` undefined (hoteles sin config) devolviendo null.
@@ -127,6 +127,8 @@ function notasNinoInfante(info?: InfoHotel[number]): string | null {
   if (info.infanteCargo) partes.push(`Infantes: aplica cargo adicional obligatorio${info.infanteCargoDesc ? ` (${info.infanteCargoDesc})` : ""}, se confirma al reservar.`);
   if (info.infanteNota?.trim()) partes.push(info.infanteNota.trim());
   if (info.ninoNota?.trim()) partes.push(info.ninoNota.trim());
+  if (info.petFriendly) partes.push(`Acepta mascotas${info.petCargo ? " (aplica cargo adicional, se confirma al reservar)" : " (sin costo)"}${info.petCostoDesc ? ` — ${info.petCostoDesc}` : ""}.`);
+  if (info.petNota?.trim()) partes.push(info.petNota.trim());
   return partes.length ? partes.join(" ") : null;
 }
 
@@ -150,6 +152,16 @@ function AdultsOnlyBadge({ info }: { info?: { adultsOnly?: boolean } }) {
   return (
     <span className="ml-1 rounded-full bg-gray-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white" title="Este hotel no acepta niños ni infantes">
       Adults Only
+    </span>
+  );
+}
+
+// Aviso "Pet friendly" — hotel que acepta mascotas.
+function PetFriendlyBadge({ info }: { info?: { petFriendly?: boolean } }) {
+  if (!info?.petFriendly) return null;
+  return (
+    <span className="ml-1 rounded-full bg-[var(--brand-success)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-success)]" title="Este hotel acepta mascotas">
+      Pet friendly
     </span>
   );
 }
@@ -583,6 +595,7 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                       {i === 0 ? r.hotel : ""}
                       {i === 0 && r.hotel_id != null && <CategoriaInline info={infoPorHotel[r.hotel_id]} />}
                       {i === 0 && r.hotel_id != null && <AdultsOnlyBadge info={infoPorHotel[r.hotel_id]} />}
+                      {i === 0 && r.hotel_id != null && <PetFriendlyBadge info={infoPorHotel[r.hotel_id]} />}
                       {i === 0 && r.hotel_id != null && rangoEdades(infoPorHotel[r.hotel_id]) && (
                         <span className="mt-0.5 block text-[11px] font-normal text-gray-400">{rangoEdades(infoPorHotel[r.hotel_id])}</span>
                       )}

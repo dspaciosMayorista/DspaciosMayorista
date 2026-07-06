@@ -47,7 +47,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoInfante } = comp.data;
+  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoInfante, cargoMascota } = comp.data;
 
   // 2c) Validar cupos del bloqueo ANTES de crear nada (no sobre-vender sillas).
   if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -201,6 +201,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
     if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
     if ((Number(input.infantes) || 0) > 0) partes.push(`${Number(input.infantes)} Infante(s)`);
+    if ((Number(input.mascotas) || 0) > 0) partes.push(`${Number(input.mascotas)} Mascota(s)`);
     const resumenAcom = partes.join(", ");
     // Proveedor del hotel (se arrastra al contrato). proveedores es interno, se
     // lee con service-role si está disponible.
@@ -308,6 +309,15 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       descripcion: cargoInfante.descripcion ? `Infante · ${cargoInfante.descripcion}` : "Cargo obligatorio de infante",
       adultos: 0, ninos: 0, tarifa_adulto: cargoInfante.total, tarifa_nino: 0,
       orden: 200,
+    });
+  }
+  // Cargo de mascota (pet friendly), itemizado aparte igual que el de infante.
+  if (cargoMascota) {
+    items.push({
+      numero_contrato: numero,
+      descripcion: cargoMascota.descripcion ? `Mascota · ${cargoMascota.descripcion}` : "Cargo de mascota",
+      adultos: 0, ninos: 0, tarifa_adulto: cargoMascota.total, tarifa_nino: 0,
+      orden: 201,
     });
   }
   if (items.length) await sb.from("contrato_items").insert(items);
@@ -539,7 +549,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   const esServicios = input.modulo === "servicios";
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva, cargoInfante } = comp.data;
+  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva, cargoInfante, cargoMascota } = comp.data;
 
   const hoy = new Date().toISOString().slice(0, 10);
   const asesorNombre = input.asesorInterno;
@@ -584,6 +594,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
     if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
     if ((Number(input.infantes) || 0) > 0) partes.push(`${Number(input.infantes)} Infante(s)`);
+    if ((Number(input.mascotas) || 0) > 0) partes.push(`${Number(input.mascotas)} Mascota(s)`);
     // Foto de portada del hotel (para mostrarla junto al nombre en el documento).
     let fotoUrl: string | null = null;
     if (input.hotelId) {
@@ -659,6 +670,13 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
       id: 200,
       descripcion: cargoInfante.descripcion ? `Infante · ${cargoInfante.descripcion}` : "Cargo obligatorio de infante",
       adultos: 0, ninos: 0, tarifa_adulto: cargoInfante.total, tarifa_nino: 0,
+    });
+  }
+  if (cargoMascota) {
+    itemsSnap.push({
+      id: 201,
+      descripcion: cargoMascota.descripcion ? `Mascota · ${cargoMascota.descripcion}` : "Cargo de mascota",
+      adultos: 0, ninos: 0, tarifa_adulto: cargoMascota.total, tarifa_nino: 0,
     });
   }
 

@@ -54,6 +54,7 @@ export type ReservaInput = {
   ninos: number;                          // cantidad de niños (Niño 1)
   ninos2: number;                         // cantidad de niños (Niño 2)
   infantes: number;                       // cantidad de infantes (sin silla, $0)
+  mascotas?: number;                      // cantidad de mascotas (pet friendly)
   cliente: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; telefono: string; email: string };
   tipoAsesor: "interno" | "agencia" | "freelance";
   asesorInterno: string;
@@ -83,6 +84,8 @@ export type ComputoReserva = {
   cargoInfante: { total: number; descripcion: string | null } | null; // cargo obligatorio (ej. alimentación), ya incluido en precioVenta
   notaInfante: string | null;  // anotación informativa (ej. "comparte cama con los padres")
   notaNino: string | null;     // anotación informativa (ej. "debe pagar seguro hotelero obligatorio")
+  cargoMascota: { total: number; descripcion: string | null } | null; // cargo de mascota (0 = gratis), ya incluido en precioVenta
+  notaMascota: string | null;  // anotación informativa (ej. "máximo 1 mascota por habitación")
 };
 
 export async function computarReserva(
@@ -99,6 +102,7 @@ export async function computarReserva(
   const numNinos = Math.max(0, Math.trunc(Number(input.ninos) || 0));
   const numNinos2 = Math.max(0, Math.trunc(Number(input.ninos2) || 0));
   const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
+  const numMascotas = Math.max(0, Math.trunc(Number(input.mascotas) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   let monedaReserva = "COP";  // moneda del paquete (USD si los hoteles son internacionales)
   // Cargo obligatorio de infante (ej. alimentación) + notas especiales de
@@ -108,14 +112,21 @@ export async function computarReserva(
   let infanteCargoDesc: string | null = null;
   let infanteNotaTxt: string | null = null;
   let ninoNotaTxt: string | null = null;
+  let petCostoNeto = 0;
+  let petCostoDesc: string | null = null;
+  let petNotaTxt: string | null = null;
 
   const usarFechas =
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   // Adults Only: el hotel no acepta niños ni infantes bajo ninguna circunstancia.
-  if (!esServicios && (numNinos > 0 || numNinos2 > 0 || numInfantes > 0)) {
-    const { data: hotelAO } = await sb.from("hoteles").select("adults_only").eq("id", input.hotelId).maybeSingle();
-    if (hotelAO?.adults_only) return { ok: false, error: "Este hotel es Adults Only: no acepta niños ni infantes." };
+  // Pet friendly: el hotel debe aceptar mascotas para poder declararlas.
+  if (!esServicios && (numNinos > 0 || numNinos2 > 0 || numInfantes > 0 || numMascotas > 0)) {
+    const { data: hotelFlags } = await sb.from("hoteles").select("adults_only, pet_friendly").eq("id", input.hotelId).maybeSingle();
+    if ((numNinos > 0 || numNinos2 > 0 || numInfantes > 0) && hotelFlags?.adults_only)
+      return { ok: false, error: "Este hotel es Adults Only: no acepta niños ni infantes." };
+    if (numMascotas > 0 && !hotelFlags?.pet_friendly)
+      return { ok: false, error: "Este hotel no acepta mascotas." };
   }
 
   // % de markup del paquete: el cargo de infante se configura a nivel NETO y
@@ -156,12 +167,15 @@ export async function computarReserva(
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
     const { data: hotelRowF } = await sb
-      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max, moneda, infante_cargo_neto, infante_cargo_desc, infante_nota, nino_nota").eq("id", input.hotelId).maybeSingle();
+      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max, moneda, infante_cargo_neto, infante_cargo_desc, infante_nota, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota").eq("id", input.hotelId).maybeSingle();
     monedaReserva = ((hotelRowF as { moneda?: string | null } | null)?.moneda) ?? "COP";
     infanteCargoNeto = Number(hotelRowF?.infante_cargo_neto) || 0;
     infanteCargoDesc = hotelRowF?.infante_cargo_desc ?? null;
     infanteNotaTxt = hotelRowF?.infante_nota ?? null;
     ninoNotaTxt = hotelRowF?.nino_nota ?? null;
+    petCostoNeto = Number(hotelRowF?.pet_costo_neto) || 0;
+    petCostoDesc = hotelRowF?.pet_costo_desc ?? null;
+    petNotaTxt = hotelRowF?.pet_nota ?? null;
     const realF = clasificarPorEdad(
       input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
       hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10
@@ -254,13 +268,16 @@ export async function computarReserva(
 
     const { data: hotelRow } = await sb
       .from("hoteles")
-      .select("edad_infante_max, edad_nino_max, pax_min, pax_max, infante_cargo_neto, infante_cargo_desc, infante_nota, nino_nota")
+      .select("edad_infante_max, edad_nino_max, pax_min, pax_max, infante_cargo_neto, infante_cargo_desc, infante_nota, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota")
       .eq("id", input.hotelId)
       .maybeSingle();
     infanteCargoNeto = Number(hotelRow?.infante_cargo_neto) || 0;
     infanteCargoDesc = hotelRow?.infante_cargo_desc ?? null;
     infanteNotaTxt = hotelRow?.infante_nota ?? null;
     ninoNotaTxt = hotelRow?.nino_nota ?? null;
+    petCostoNeto = Number(hotelRow?.pet_costo_neto) || 0;
+    petCostoDesc = hotelRow?.pet_costo_desc ?? null;
+    petNotaTxt = hotelRow?.pet_nota ?? null;
     const real = clasificarPorEdad(
       input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
       hotelRow?.edad_infante_max ?? 2,
@@ -305,6 +322,19 @@ export async function computarReserva(
     if (totalInfante > 0) {
       precioVenta += totalInfante;
       cargoInfante = { total: totalInfante, descripcion: infanteCargoDesc };
+    }
+  }
+
+  // Cargo de mascota (pet friendly), igual mecánica que el de infante: costo
+  // neto configurado por hotel × noches × mascotas, con el mismo markup del
+  // paquete. 0 = gratis (no genera ítem, pero la reserva con mascota sí queda permitida).
+  let cargoMascota: { total: number; descripcion: string | null } | null = null;
+  if (!esServicios && numMascotas > 0 && petCostoNeto > 0 && meta.fecha_ida && meta.fecha_regreso) {
+    const nochesMascota = noches(meta.fecha_ida, meta.fecha_regreso) || 1;
+    const totalMascota = Math.round(numMascotas * nochesMascota * marcar(petCostoNeto, pctMk));
+    if (totalMascota > 0) {
+      precioVenta += totalMascota;
+      cargoMascota = { total: totalMascota, descripcion: petCostoDesc };
     }
   }
 
@@ -413,6 +443,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoInfante, notaInfante: infanteNotaTxt, notaNino: ninoNotaTxt },
+    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoInfante, notaInfante: infanteNotaTxt, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
   };
 }

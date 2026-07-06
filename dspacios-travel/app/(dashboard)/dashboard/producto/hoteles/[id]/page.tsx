@@ -53,6 +53,10 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     infante_nota: string | null;
     nino_nota: string | null;
     adults_only: boolean | null;
+    pet_friendly: boolean | null;
+    pet_costo_neto: number | null;
+    pet_costo_desc: string | null;
+    pet_nota: string | null;
     destinos: { nombre: string } | null;
     proveedores: { nombre: string; politica_reservas: string | null } | null;
   };
@@ -117,6 +121,10 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             infanteNota: h.infante_nota ?? "",
             ninoNota: h.nino_nota ?? "",
             adultsOnly: h.adults_only ?? false,
+            petFriendly: h.pet_friendly ?? false,
+            petCostoNeto: h.pet_costo_neto ?? 0,
+            petCostoDesc: h.pet_costo_desc ?? "",
+            petNota: h.pet_nota ?? "",
           }}
         />
         <HotelCategoriasRegimenesEditor
