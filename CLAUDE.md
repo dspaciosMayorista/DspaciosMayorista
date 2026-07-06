@@ -271,17 +271,42 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 - **Verificar siempre con `npm run build`** (no solo `tsc --noEmit`) antes de subir:
   errores de Next/Turbopack (archivos de convención duplicados, rutas, etc.) NO los
   detecta el typecheck y SÍ tumban el deploy en Vercel.
+- **⚠️ NUNCA mezclar migraciones de D'spacios (`main`) con las de `saas-whitelabel`.**
+  Este mismo repo tiene DOS líneas de producto que **divergen a partir de la
+  migración 113**, cada una con su propia base de datos Supabase: `main` (D'spacios
+  Travel, este documento) y la rama `saas-whitelabel` (el mismo código, pero
+  genérico multi-organización para otros clientes). A partir de la **114 los
+  números YA COLISIONAN con contenido distinto**: `main` tiene 114 `crm_difusion`,
+  115 `fix_numeracion_y_servicios`, 116 `rls_tenant_isolation`, 117
+  `eliminar_contrato_rol`, 118 `hotel_infante_cargo`… mientras que `saas-whitelabel`
+  tiene 114 `saas_organizaciones`, 115 `saas_org_id_backfill`, 116
+  `saas_org_default_mi_org`, 117 `saas_rls_org_isolation`, 118
+  `saas_uniques_por_org`… **Mismo número, contenido totalmente distinto.** Reglas:
+  - Antes de crear una migración nueva, confirmar en QUÉ rama se está trabajando
+    y correr `ls supabase/migrations/ | sort | tail` **en esa rama** (no asumir
+    el número libre de la otra).
+  - Una migración pensada para D'spacios (hoteles, tarifario, contratos, CRM,
+    etc.) **no aplica** a `saas-whitelabel` y viceversa (multi-org genérico).
+    No copiar/portar una migración de una rama a la otra sin revisar a
+    conciencia si el cambio tiene sentido para esa línea de producto.
+  - Si algún día se vuelve a sincronizar `main` → `saas-whitelabel` (como ya se
+    hizo una vez, ver changelog), hay que **renumerar** las migraciones que
+    colisionen — nunca asumir que el mismo número significa lo mismo en las
+    dos ramas.
 
 ---
 
 ## 13. Estado del proyecto (handoff) — actualizado en desarrollo
 
 > Rama de trabajo actual: **`claude/peaceful-noether-713c7c`** (ya **mergeada a `main`**).
-> Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
-> y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
-> producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo: hasta la 121, TODAS corridas por el dueño**
-> (confirmado). Ninguna migración pendiente en este momento.
+> Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase de D'spacios
+> es única** y compartida entre `main` y sus ramas de trabajo (`claude/*`); las migraciones
+> ya aplicadas afectan también a producción. **⚠️ Esto NO incluye `saas-whitelabel`**: esa
+> rama es otra línea de producto con su propia base de datos Supabase separada — ver el
+> aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
+> App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 121, TODAS corridas
+> por el dueño** (confirmado). Ninguna migración pendiente en este momento.
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
