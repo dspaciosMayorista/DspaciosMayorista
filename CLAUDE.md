@@ -280,12 +280,8 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase es única**
 > y compartida entre `main` y las ramas; las migraciones ya aplicadas afectan también a
 > producción. App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo: hasta la 121** (117 corrida por el dueño;
-> **faltan 118, 119, 120 y 121**, todas sin dependencias entre sí: `hotel_infante_cargo`
-> (4 columnas en `hoteles`, ver "Motor de cálculo"), `hotel_adults_only`
-> (`hoteles.adults_only`), `crm_plan_vigencia` (`crm_difusion_plan.vigencia_hasta`) y
-> `hotel_pet_friendly` (4 columnas en `hoteles`: `pet_friendly`, `pet_costo_neto`,
-> `pet_costo_desc`, `pet_nota`, ver "Motor de cálculo").
+> **Migraciones a la fecha en repo: hasta la 121, TODAS corridas por el dueño**
+> (confirmado). Ninguna migración pendiente en este momento.
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -297,10 +293,10 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   2. **Aislamiento por tenant en RLS**: `puede_ver_tenant()` (migr. 107) existía
 >      pero ninguna policy la usaba — un `administracion`/`operaciones` de una
 >      agencia podía leer/escribir ventas, abonos, CxP, comisiones y facturación de
->      la OTRA agencia (la separación era solo de UI). **Migración 116** agrega el
->      filtro de tenant a esas policies. **⚠️ Antes de correrla**, confirmar que
->      todo usuario interno no-superadmin tenga `usuarios.tenant` correcto (ya es
->      un supuesto del que depende `tenantContext()`/el selector de agencia hoy).
+>      la OTRA agencia (la separación era solo de UI). **Migración 116** (ya
+>      corrida) agrega el filtro de tenant a esas policies — depende de que todo
+>      usuario interno no-superadmin tenga `usuarios.tenant` correcto (supuesto
+>      del que ya dependía `tenantContext()`/el selector de agencia).
 >   3. **Suplantación en portal B2B**: la pertenencia de un contrato se resolvía
 >      también por `agencia_nombre`/`freelance_nombre` en texto libre (sin
 >      unicidad) — alguien podía registrarse con el mismo nombre que un aliado real
@@ -634,14 +630,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **113** (correr en orden las que falten)
+### Migraciones Supabase — total en repo: **121** (todas corridas por el dueño, confirmado)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 088** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 121** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -679,7 +675,7 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > **089 servicio_temporadas** ← *aplicada*: `servicio_temporadas` (tarifa por fecha del viaje
 > + vigencia de compra + prioridad + `precio_persona`) y `servicio_tarifa_pax.temporada`
 > (rangos por grupo por temporada; la base = 'GENERAL').
-> **090 servicio_temporada_recargo** ← *pendiente de correr*: `recargo_individual` en
+> **090 servicio_temporada_recargo** ← *aplicada*: `recargo_individual` en
 > `servicio_temporadas`. Cierra el modelo: una temporada es una tarifa COMPLETA (persona +
 > recargo + rangos por grupo). El editor de temporadas (al **Editar** un servicio) ya carga
 > los tres; Reservar aplica los tres por fecha; el snapshot del tarifario y la edición de
@@ -698,6 +694,15 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > **111 programa_highlights** (`programas.highlights` text[]) · **112 fusionar_destino**
 > (`fn_fusionar_destino(origen,destino)` SECURITY DEFINER: re-apunta toda FK a destinos y borra) ·
 > **113 programa_piezas** (bucket público `programas` + `programas.flyer_url`/`historia_url`).
+> Rango **114→121** (CRM, seguridad, minorista, hoteles): **114 crm_difusion** (material/
+> envío/plan) · 115 minorista_numeracion (fix numeración duplicada + `contrato_servicios`) ·
+> **116 rls_tenant_isolation** (filtro de tenant en policies de ventas/abonos/CxP/comisiones/
+> facturación) · **117 eliminar_contrato_rol** (candado de rol dentro del RPC) ·
+> **118 hotel_infante_cargo** (`hoteles.infante_cargo_neto/infante_cargo_desc/infante_nota/
+> nino_nota`) · **119 hotel_adults_only** (`hoteles.adults_only`) · **120 crm_plan_vigencia**
+> (`crm_difusion_plan.vigencia_hasta`) · **121 hotel_pet_friendly** (`hoteles.pet_friendly/
+> pet_costo_neto/pet_costo_desc/pet_nota`). Detalle de cada una en "Novedades recientes" más
+> arriba y en "Motor de cálculo" (118/121).
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
