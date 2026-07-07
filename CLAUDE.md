@@ -305,9 +305,9 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 122, TODAS corridas
-> por el dueño** (confirmado, incl. 122 — tarifa de infante por temporada, ver "Motor de
-> cálculo"). Ninguna migración pendiente en este momento.
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 123** — hasta la 122
+> confirmadas corridas por el dueño; **123 pendiente** (`hotel_temporadas.regimen_restringido`
+> + promo "N noches, 1 gratis" — ver "Motor de cálculo").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -405,7 +405,7 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   pet friendly; el tarifario público muestra el badge + aviso sin exponer el
 >   costo neto.
 > - **Tarifa de infante reorganizada — igual que Niño 1/Niño 2 (jul-2026).**
->   Migración **122** (*pendiente de correr*), reemplaza el mecanismo de la 118:
+>   Migración **122** (ya corrida), reemplaza el mecanismo de la 118:
 >   un hotel real (Virrey Cartagena) cobra la tarifa de infante distinto según
 >   el plan/temporada, así que un valor plano por hotel no alcanzaba. Ahora
 >   `infante` es una acomodación más (`tarifa_hotel.neto_infante`/`nota_infante`,
@@ -422,6 +422,20 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   cálculo". Los campos viejos de la 118 (`hoteles.infante_cargo_neto/
 >   infante_cargo_desc/infante_nota`) no se borraron (no se borran columnas en
 >   este proyecto) pero la app ya no los lee ni los escribe.
+> - **Calculadora Dubai: promos por régimen + "N noches, 1 gratis" (jul-2026).**
+>   Migración **123** (*pendiente de correr*), `hotel_temporadas.regimen_restringido`:
+>   dos pedidos puntuales de la calculadora Dubai que terminaron siendo mecanismos
+>   generales. (1) El % de descuento de una promo ahora solo se aplica a la
+>   tarifa BASE, nunca al suplemento de régimen — la propia calculadora Dubai
+>   genera la temporada promocional ya con la matemática correcta
+>   (`DubaiParams.promos[]` en `lib/calc/calculadoras.ts`); (2) nuevo tipo de
+>   vigencia `promo_noche_gratis` ("compra 3 noches, paga 2" — siempre se regala
+>   exactamente 1 noche, sin importar si son 3, 4 o más), que a diferencia de
+>   tarifa/descuento_pct/descuento_monto se resuelve a nivel de la ESTADÍA
+>   completa, no noche por noche (`promoNocheGratisFactor` en
+>   `lib/calc/paquetes.ts`). Ambas piezas pueden restringirse a **un solo
+>   régimen** aunque el hotel tenga varios (`regimen_restringido`, null =
+>   todos). Detalle completo en "Motor de cálculo".
 > - **Multitenant — dos agencias en una sola app:** **Mayorista** (actual, completa) y
 >   **Minorista** (agencia anterior, solo para terminar de gestionar + histórico; sin
 >   tarifario/montaje). Misma BD + columna `tenant` ('mayorista'/'minorista', default
@@ -675,6 +689,44 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   muestra el aviso "Este hotel no acepta mascotas" y no permite declararlas). El
   tarifario público muestra el badge "Pet friendly" + la nota/aviso de cargo
   (sin exponer el costo neto), igual criterio que Adults Only/infante.
+- **Promociones restringidas a un régimen + promo "N noches, 1 gratis"**
+  (migración 123, `hotel_temporadas.regimen_restringido` — pedido puntual para
+  la calculadora Dubai, pero es un mecanismo general): cualquier vigencia
+  (`tarifa`/`descuento_pct`/`descuento_monto`/la nueva `promo_noche_gratis`)
+  puede restringirse a UN solo régimen (`regimen_restringido`, null = todos)
+  aunque el hotel tenga varios — se filtra en `entradasNoche` (paquetes.ts),
+  hay que pasar `regimen` a `liquidarHotelNoches`/`liquidarHotelMasBarato` en
+  cada call site (cotizar.ts, computo.ts, paquetes/actions.ts, vigencia.ts).
+  **`promo_noche_gratis`** es un tipo de vigencia nuevo y estructuralmente
+  distinto a los demás: NO se resuelve noche por noche (se excluye de
+  `entradasNoche` dentro de `netoNoche`/`minNochesAplicable`), sino a nivel de
+  la ESTADÍA completa — `promoNocheGratisFactor()` revisa si hay una vigencia
+  de ese tipo que cubra la noche de entrada, esté vigente para compra, coincida
+  el régimen (si está restringida) y la estadía tenga al menos `min_noches`
+  noches (aquí `min_noches` se reinterpreta como "noches mínimas de la
+  estadía para la promo", no como mínimo de noches para vender). Si aplica,
+  se regala **siempre exactamente 1 noche** sin importar si son 3, 4 o más
+  (decisión del dueño): se descuenta 1/N del total ya liquidado (no depende de
+  qué noche puntual "sale gratis", robusto aunque la estadía cruce temporadas).
+  Aplicado en `liquidarHotelNoches`/`liquidarHotelMasBarato`
+  (`lib/calc/paquetes.ts`). UI en `HotelDetalleClient.tsx` (`TemporadasBox`):
+  nuevo tipo en el selector + selector de régimen (vacío = todos) + aviso
+  explicando la mecánica cuando se elige "N noches, 1 gratis".
+- **Calculadora Dubai: promociones con descuento SOLO sobre la base**
+  (`lib/calc/calculadoras.ts`, `DubaiParams.promos[]`): antes, un `descuento_pct`
+  genérico de `hotel_temporadas` aplicado sobre una tarifa Dubai ya generada
+  descontaba TODO (base + suplemento de régimen), cuando el hotel real solo
+  descuenta la base. Ahora la propia calculadora Dubai genera la temporada
+  promocional: cada promo (`temporadaBase` → `temporadaPromo`, `regimen`,
+  `descuentoPct`) aplica el % **antes** de derivar sencilla/triple/múltiple/niño
+  y de sumar el suplemento de régimen — el suplemento nunca se descuenta.
+  Solo aplica al **régimen elegido** (aunque el hotel tenga varios). La
+  `temporadaPromo` debe existir como vigencia real en `hotel_temporadas` (con
+  su propia fecha/vigencia de compra, creada en Temporadas como cualquier
+  otra) — la calculadora solo calcula los números y los escribe ahí; toda la
+  vigencia/prioridad/compra la maneja el mecanismo genérico de siempre. UI en
+  `CalculadoraEditor.tsx` (`DubaiForm`): sección "Promociones" (lista
+  repetible) + vista previa aparte (puede ser de otro régimen que el base).
 
 ### Editar reserva pendiente
 - **HECHO (servicios):** en un contrato `pendiente`, `ServiciosContratoEditor` +
@@ -696,14 +748,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **122** (hasta la 121 corridas por el dueño; 122 pendiente)
+### Migraciones Supabase — total en repo: **123** (hasta la 122 corridas por el dueño; 123 pendiente)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 121** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 122** (todas aplicadas; 123 pendiente).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -760,7 +812,7 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > **111 programa_highlights** (`programas.highlights` text[]) · **112 fusionar_destino**
 > (`fn_fusionar_destino(origen,destino)` SECURITY DEFINER: re-apunta toda FK a destinos y borra) ·
 > **113 programa_piezas** (bucket público `programas` + `programas.flyer_url`/`historia_url`).
-> Rango **114→122** (CRM, seguridad, minorista, hoteles): **114 crm_difusion** (material/
+> Rango **114→123** (CRM, seguridad, minorista, hoteles): **114 crm_difusion** (material/
 > envío/plan) · 115 minorista_numeracion (fix numeración duplicada + `contrato_servicios`) ·
 > **116 rls_tenant_isolation** (filtro de tenant en policies de ventas/abonos/CxP/comisiones/
 > facturación) · **117 eliminar_contrato_rol** (candado de rol dentro del RPC) ·
@@ -771,8 +823,13 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > **122 tarifa_infante** (ya corrida) — agrega `'infante'` al enum
 > `acomodacion_tipo` (mismo patrón que `'nino2'` en la migración 020) +
 > `tarifa_hotel.neto_infante/nota_infante`, con backfill desde los campos planos
-> de la 118 (no los borra, solo deja de usarlos la app). Detalle de cada una en
-> "Novedades recientes" más arriba y en "Motor de cálculo" (118 ya no se usa/121/122).
+> de la 118 (no los borra, solo deja de usarlos la app) ·
+> **123 temporada_regimen_restringido** (*pendiente de correr*) —
+> `hotel_temporadas.regimen_restringido` (texto libre, null = todos los régimen),
+> usada tanto por la promo "N noches, 1 gratis" como por cualquier vigencia
+> existente (tarifa/descuento_pct/descuento_monto) que se quiera limitar a un
+> solo régimen. Detalle de cada una en "Novedades recientes" más arriba y en
+> "Motor de cálculo" (118 ya no se usa/121/122/123).
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·

@@ -13,6 +13,7 @@ export type TempRow = {
   hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
   prioridad: number | null; compra_inicio: string | null; compra_fin: string | null;
   tipo: string | null; descuento_valor: number | null; rangos: unknown; blackouts: unknown; min_noches: number | null;
+  regimen_restringido: string | null;
 };
 export type TarRow = {
   hotel_id: number; tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
@@ -54,7 +55,7 @@ function buildVigenciaChecker(temps: TempRow[], tarifas: TarRow[]) {
       let ok = false;
       if (tempMap && temporadas.length && numNoches > 0) {
         for (const col of ROOM_COLS) {
-          const c = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col) });
+          const c = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined });
           if (c != null && c > 0) { ok = true; break; }
         }
       }
@@ -68,7 +69,7 @@ function buildVigenciaChecker(temps: TempRow[], tarifas: TarRow[]) {
       let ok = false;
       if (tempMap && temporadas.length && numNoches > 0) {
         for (const col of ROOM_COLS) {
-          const c = liquidarHotelMasBarato({ desde, hasta, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col) });
+          const c = liquidarHotelMasBarato({ desde, hasta, numNoches, temporadas, netoPorTemporada: netoMap(tempMap, col), regimen: regimen ?? undefined });
           if (c != null && c > 0) { ok = true; break; }
         }
       }
@@ -97,7 +98,7 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
   if (!hIds.length) return filas;
 
   const [{ data: temps }, { data: tars }] = await Promise.all([
-    admin.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").in("hotel_id", hIds),
+    admin.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").in("hotel_id", hIds),
     admin.from("tarifa_hotel").select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple").in("hotel_id", hIds),
   ]);
   const chk = buildVigenciaChecker((temps ?? []) as TempRow[], (tars ?? []) as TarRow[]);

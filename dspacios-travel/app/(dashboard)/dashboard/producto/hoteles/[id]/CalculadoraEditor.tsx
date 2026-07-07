@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import {
-  generarTarifasDubai, type DubaiParams,
+  generarTarifasDubai, type DubaiParams, type DubaiPromo,
   generarTarifasMixta, type MixtaParams, type MixtaAcom, MIXTA_ACOMS, type CalcTipo,
 } from "@/lib/calc/calculadoras";
 import { PAX_TARIFA_DEFAULT } from "@/lib/acomodaciones";
@@ -78,8 +78,19 @@ function DubaiForm({
   for (const b of inicial?.bases ?? []) baseInicial[`${b.categoria}|${b.temporada}`] = String(b.precio);
   const [bases, setBases] = useState<Record<string, string>>(baseInicial);
 
+  const [promos, setPromos] = useState<DubaiPromo[]>(inicial?.promos ?? []);
+
   const setSup = (r: string, v: string) => setSuplementos((s) => ({ ...s, [r]: v }));
   const setBase = (c: string, t: string, v: string) => setBases((s) => ({ ...s, [`${c}|${t}`]: v }));
+  function agregarPromo() {
+    setPromos((ps) => [...ps, { temporadaBase: temporadas[0] ?? "", temporadaPromo: "", regimen: regimenBase, descuentoPct: 10 }]);
+  }
+  function editarPromo(i: number, patch: Partial<DubaiPromo>) {
+    setPromos((ps) => ps.map((p, n) => (n === i ? { ...p, ...patch } : p)));
+  }
+  function quitarPromo(i: number) {
+    setPromos((ps) => ps.filter((_, n) => n !== i));
+  }
 
   const params = useMemo<DubaiParams>(() => ({
     regimen_base: regimenBase,
@@ -91,9 +102,15 @@ function DubaiForm({
     },
     suplementos: regimenes.filter((r) => r !== regimenBase).map((r) => ({ regimen: r, monto: Number(suplementos[r]) || 0 })),
     bases: categorias.flatMap((c) => temporadas.map((t) => ({ categoria: c, temporada: t, precio: Number(bases[`${c}|${t}`]) || 0 }))).filter((b) => b.precio > 0),
-  }), [regimenBase, sencillaPct, pax3Pct, pax4Pct, ninoPct, suplementos, bases, regimenes, categorias, temporadas]);
+    promos,
+  }), [regimenBase, sencillaPct, pax3Pct, pax4Pct, ninoPct, suplementos, bases, regimenes, categorias, temporadas, promos]);
 
   const preview = useMemo(() => generarTarifasDubai(params).filter((f) => f.alimentacion === regimenBase), [params, regimenBase]);
+  // Vista previa de promos: se muestran aparte porque pueden ser de OTRO régimen.
+  const previewPromos = useMemo(() => {
+    const nombresPromo = new Set(promos.map((p) => p.temporadaPromo?.trim()).filter(Boolean));
+    return generarTarifasDubai(params).filter((f) => nombresPromo.has(f.temporada));
+  }, [params, promos]);
 
   function guardar(modo: "solo" | "agregar" | "reemplazar") {
     if (modo === "reemplazar" && !confirm("¿Borrar TODAS las tarifas de este hotel y dejar solo las generadas ahora?")) return;
@@ -157,7 +174,38 @@ function DubaiForm({
           </table>
         </div>
       </div>
+      <div>
+        <p className={lbl}>Promociones <span className="font-normal text-gray-400">(descuento % SOLO sobre la base, el suplemento de régimen nunca se descuenta)</span></p>
+        <p className="mb-2 text-[11px] text-gray-500">
+          La <b>temporada promo</b> debe existir como vigencia del hotel (créala arriba en Temporadas, con su propia fecha/vigencia de compra).
+          Cada promo aplica <b>solo al régimen elegido</b>, aunque el hotel tenga varios.
+        </p>
+        <div className="space-y-2">
+          {promos.map((p, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-100 p-2 text-xs">
+              <select value={p.temporadaBase} onChange={(e) => editarPromo(i, { temporadaBase: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
+                {temporadas.map((t) => <option key={t} value={t}>Base: {t}</option>)}
+              </select>
+              <span className="text-gray-400">→</span>
+              <select value={p.temporadaPromo} onChange={(e) => editarPromo(i, { temporadaPromo: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
+                <option value="">— Elige la temporada promo —</option>
+                {temporadas.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <select value={p.regimen} onChange={(e) => editarPromo(i, { regimen: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
+                {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <label className="flex items-center gap-1">
+                <Input type="number" min={0} max={100} className="h-7 w-20 text-xs" value={String(p.descuentoPct)} onChange={(e) => editarPromo(i, { descuentoPct: Number(e.target.value) || 0 })} />
+                %
+              </label>
+              <button type="button" onClick={() => quitarPromo(i)} className="text-gray-400 hover:text-red-500">Quitar</button>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={agregarPromo} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>+ Agregar promoción</button>
+      </div>
       {preview.length > 0 && <PreviewTabla titulo={`Vista previa (${regimenBase})`} filas={preview} />}
+      {previewPromos.length > 0 && <PreviewTabla titulo="Vista previa — promociones" filas={previewPromos} />}
       <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
     </div>
   );

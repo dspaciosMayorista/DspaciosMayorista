@@ -16,7 +16,7 @@
 
 const MS_DIA = 86_400_000;
 
-export type TemporadaTipo = "tarifa" | "descuento_pct" | "descuento_monto";
+export type TemporadaTipo = "tarifa" | "descuento_pct" | "descuento_monto" | "promo_noche_gratis";
 
 export interface RangoFechas { fecha_inicio: string; fecha_fin: string }
 
@@ -34,6 +34,10 @@ export interface TemporadaRango {
   rangos?: RangoFechas[];        // si está vacío, se usa fecha_inicio/fecha_fin
   blackouts?: RangoFechas[];     // fechas excluidas de la cobertura
   min_noches?: number;           // mínimo de noches de esta vigencia (default 1)
+  // Fase 5: restringir esta vigencia a UN régimen (null = aplica a todos). Para
+  // 'promo_noche_gratis', min_noches se reinterpreta como "noches mínimas de la
+  // ESTADÍA para que la promo aplique" (no es un mínimo de noches para vender).
+  regimen_restringido?: string | null;
 }
 
 /** Fecha de hoy (yyyy-mm-dd) en zona horaria Colombia, para la vigencia de compra. */
@@ -67,10 +71,15 @@ function compraVigente(t: TemporadaRango, hoy: string): boolean {
   return true;
 }
 
-/** Entradas que cubren la fecha y están en vigencia de compra, por prioridad desc. */
-function entradasNoche(t0: number, temporadas: TemporadaRango[], hoy: string): TemporadaRango[] {
+/**
+ * Entradas que cubren la fecha, están en vigencia de compra y (si la vigencia
+ * está restringida a un régimen) coinciden con el régimen que se está
+ * liquidando, por prioridad desc. `regimen` se omite para usos ajenos al hotel
+ * (ej. servicio_temporadas, que no tiene este campo).
+ */
+function entradasNoche(t0: number, temporadas: TemporadaRango[], hoy: string, regimen?: string): TemporadaRango[] {
   return temporadas
-    .filter((t) => cubreFecha(t, t0) && compraVigente(t, hoy))
+    .filter((t) => cubreFecha(t, t0) && compraVigente(t, hoy) && (t.regimen_restringido == null || t.regimen_restringido === regimen))
     .sort((a, b) => (b.prioridad ?? 1) - (a.prioridad ?? 1));
 }
 
@@ -91,6 +100,7 @@ export function toTemporadaRango(t: {
   prioridad?: number | null; compra_inicio?: string | null; compra_fin?: string | null;
   tipo?: string | null; descuento_valor?: number | null;
   rangos?: unknown; blackouts?: unknown; min_noches?: number | null;
+  regimen_restringido?: string | null;
 }): TemporadaRango {
   return {
     nombre: t.nombre,
@@ -104,6 +114,7 @@ export function toTemporadaRango(t: {
     rangos: normRangos(t.rangos),
     blackouts: normRangos(t.blackouts),
     min_noches: t.min_noches ?? 1,
+    regimen_restringido: t.regimen_restringido ?? null,
   };
 }
 
@@ -114,7 +125,9 @@ export function toTemporadaRango(t: {
  */
 export function minNochesAplicable(temporadas: TemporadaRango[], fechaIda: string, hoy = hoyISO()): number {
   const t0 = new Date(`${fechaIda}T00:00:00`).getTime();
-  const top = entradasNoche(t0, temporadas, hoy)[0];
+  // 'promo_noche_gratis' no participa: su min_noches significa otra cosa (ver
+  // promoNocheGratisFactor), no un mínimo de noches para poder vender.
+  const top = entradasNoche(t0, temporadas, hoy).filter((t) => (t.tipo ?? "tarifa") !== "promo_noche_gratis")[0];
   return Math.max(1, top?.min_noches ?? 1);
 }
 
@@ -182,9 +195,12 @@ export function netoNoche(
   t0: number,
   temporadas: TemporadaRango[],
   netoPorTemporada: Record<string, number | null | undefined>,
-  hoy: string
+  hoy: string,
+  regimen?: string
 ): number | null {
-  const ents = entradasNoche(t0, temporadas, hoy);
+  // 'promo_noche_gratis' no es un precio por noche (ver promoNocheGratisFactor):
+  // se excluye de la resolución por-noche para que nunca "gane" un slot aquí.
+  const ents = entradasNoche(t0, temporadas, hoy, regimen).filter((t) => (t.tipo ?? "tarifa") !== "promo_noche_gratis");
   if (!ents.length) return null;
   const top = ents[0];
   const tipoTop = top.tipo ?? "tarifa";
@@ -207,9 +223,37 @@ export function netoNoche(
 }
 
 /**
+ * ¿Aplica una promo "N noches, 1 gratis" para esta estadía? A diferencia de
+ * tarifa/descuento_pct/descuento_monto (que se resuelven NOCHE POR NOCHE), esta
+ * promo depende del TOTAL de noches de la estadía — no cabe en `netoNoche`.
+ * Se ancla a la NOCHE DE ENTRADA (igual criterio que `minNochesAplicable`):
+ * si hay una vigencia tipo 'promo_noche_gratis' que cubre esa noche, está en
+ * vigencia de compra, coincide el régimen (si está restringida) y la estadía
+ * tiene al menos `min_noches` noches, se regala EXACTAMENTE 1 noche — sin
+ * importar si la estadía tiene 3, 4 o 10 noches. Devuelve el factor a aplicar
+ * sobre el total (1 = sin promo; (N-1)/N = 1 noche gratis de N).
+ */
+export function promoNocheGratisFactor(
+  temporadas: TemporadaRango[],
+  fechaIda: string,
+  numNoches: number,
+  hoy: string = hoyISO(),
+  regimen?: string
+): number {
+  if (numNoches <= 1) return 1;
+  const t0 = new Date(`${fechaIda}T00:00:00`).getTime();
+  if (Number.isNaN(t0)) return 1;
+  const aplica = entradasNoche(t0, temporadas, hoy, regimen)
+    .some((t) => (t.tipo ?? "tarifa") === "promo_noche_gratis" && numNoches >= (t.min_noches ?? 1));
+  return aplica ? (numNoches - 1) / numNoches : 1;
+}
+
+/**
  * Liquida el costo neto del hotel para una estadía, sumando noche por noche.
  * `netoPorTemporada` mapea nombre-de-temporada → neto de la acomodación elegida.
  * `hoy` (yyyy-mm-dd) evalúa la vigencia de compra; por defecto, hoy en Colombia.
+ * `regimen` filtra vigencias restringidas a un solo régimen (ver `regimen_restringido`)
+ * y también gobierna si aplica una promo "N noches, 1 gratis" (`promoNocheGratisFactor`).
  * Devuelve `null` si alguna noche no tiene tarifa aplicable.
  */
 export function liquidarHotelNoches(args: {
@@ -218,6 +262,7 @@ export function liquidarHotelNoches(args: {
   temporadas: TemporadaRango[];
   netoPorTemporada: Record<string, number | null | undefined>;
   hoy?: string;
+  regimen?: string;
 }): number | null {
   if (args.numNoches <= 0) return null;
   const base = new Date(`${args.fechaIda}T00:00:00`).getTime();
@@ -225,11 +270,12 @@ export function liquidarHotelNoches(args: {
   const hoy = args.hoy ?? hoyISO();
   let total = 0;
   for (let n = 0; n < args.numNoches; n++) {
-    const neto = netoNoche(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy);
+    const neto = netoNoche(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy, args.regimen);
     if (neto == null) return null;
     total += neto;
   }
-  return total;
+  const factor = promoNocheGratisFactor(args.temporadas, args.fechaIda, args.numNoches, hoy, args.regimen);
+  return factor === 1 ? total : total * factor;
 }
 
 /**
@@ -247,6 +293,7 @@ export function liquidarHotelMasBarato(args: {
   temporadas: TemporadaRango[];
   netoPorTemporada: Record<string, number | null | undefined>;
   hoy?: string;
+  regimen?: string;
 }): number | null {
   if (args.numNoches <= 0) return null;
   const lo = new Date(`${args.desde}T00:00:00`).getTime();
@@ -255,10 +302,14 @@ export function liquidarHotelMasBarato(args: {
   const hoy = args.hoy ?? hoyISO();
   let min: number | null = null;
   for (let t0 = lo; t0 <= hi; t0 += MS_DIA) {
-    const n = netoNoche(t0, args.temporadas, args.netoPorTemporada, hoy);
+    const n = netoNoche(t0, args.temporadas, args.netoPorTemporada, hoy, args.regimen);
     if (n != null && (min == null || n < min)) min = n;
   }
-  return min == null ? null : min * args.numNoches;
+  if (min == null) return null;
+  // Ancla la promo "N noches, 1 gratis" a `desde` (fecha de entrada de la
+  // ventana): es el precio "desde" publicado, se re-liquida real al reservar.
+  const factor = promoNocheGratisFactor(args.temporadas, args.desde, args.numNoches, hoy, args.regimen);
+  return min * args.numNoches * factor;
 }
 
 /** Marca un costo con el margen del paquete: costo / (1 - %mk). */

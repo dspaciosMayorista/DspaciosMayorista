@@ -224,9 +224,10 @@ export type TemporadaInput = {
   prioridad?: number;
   compraInicio?: string;
   compraFin?: string;
-  tipo?: string;                 // 'tarifa' | 'descuento_pct' | 'descuento_monto'
+  tipo?: string;                 // 'tarifa' | 'descuento_pct' | 'descuento_monto' | 'promo_noche_gratis'
   descuentoValor?: number | null;
-  minNoches?: number;            // mínimo de noches de esta vigencia (default 1)
+  minNoches?: number;            // mínimo de noches de esta vigencia (o, en 'promo_noche_gratis', noches mínimas de la estadía para que aplique)
+  regimenRestringido?: string | null; // null = aplica a todos los régimen
   rangos?: RangoFechasInput[];   // múltiples rangos de cobertura (Fase 4)
   blackouts?: RangoFechasInput[]; // fechas excluidas
 };
@@ -257,8 +258,9 @@ function payloadTemporada(input: TemporadaInput, rangos: RangoFechasInput[], bla
     compra_inicio: input.compraInicio || null,
     compra_fin: input.compraFin || null,
     tipo,
-    descuento_valor: tipo === "tarifa" ? null : Number(input.descuentoValor) || 0,
+    descuento_valor: (tipo === "descuento_pct" || tipo === "descuento_monto") ? Number(input.descuentoValor) || 0 : null,
     min_noches: Math.max(1, Math.trunc(Number(input.minNoches) || 1)),
+    regimen_restringido: oNull(input.regimenRestringido ?? ""),
     rangos: rangos as unknown as Json,
     blackouts: blackouts as unknown as Json,
   };
@@ -282,7 +284,7 @@ function validarTemporada(input: TemporadaInput): { ok: true; rangos: RangoFecha
     }
   }
   const tipo = input.tipo ?? "tarifa";
-  if (tipo !== "tarifa" && !(Number(input.descuentoValor) > 0)) {
+  if ((tipo === "descuento_pct" || tipo === "descuento_monto") && !(Number(input.descuentoValor) > 0)) {
     return { ok: false, error: "Una promoción de descuento necesita un valor (% o monto) mayor a 0." };
   }
   if (input.compraInicio && input.compraFin && input.compraFin < input.compraInicio) {
@@ -325,7 +327,7 @@ export async function copiarTemporadasDesdeHotel(
   const sb = await createClient();
   const { data: origen, error: e1 } = await sb
     .from("hotel_temporadas")
-    .select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden, min_noches")
+    .select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden, min_noches, regimen_restringido")
     .eq("hotel_id", hotelOrigen);
   if (e1) return { ok: false, error: e1.message };
   if (!origen?.length) return { ok: false, error: "El hotel de origen no tiene temporadas para copiar." };

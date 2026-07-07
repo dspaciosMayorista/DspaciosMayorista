@@ -347,7 +347,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
   if (hotelIds.length) {
     const [{ data: temps }, { data: tarifas }] = await Promise.all([
-      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts").in("hotel_id", hotelIds),
+      sb.from("hotel_temporadas").select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, regimen_restringido").in("hotel_id", hotelIds),
       sb.from("tarifa_hotel").select("*").in("hotel_id", hotelIds),
     ]);
     for (const t of temps ?? []) {
@@ -430,8 +430,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             netoPorTemporada[temp] = v == null ? null : Number(v);
           }
           const costoHotel = masBarato
-            ? liquidarHotelMasBarato({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada })
-            : liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
+            ? liquidarHotelMasBarato({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen })
+            : liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen });
           // null = no aplica (no se publica). En HABITACIONES, 0 también es "no
           // aplica" (no es gratis); en niños e infante el 0 sí es válido (gratis).
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";

@@ -33,6 +33,19 @@ export type TarifaGenerada = {
 //   múltiple = (base×2 + base×(1+3erPax%) + base×(1+4toPax%)) / 4
 //   niño     = base × (1 + niño%)
 // Luego cada régimen suma un monto fijo por persona (el base suma 0).
+// Promoción de temporada: descuento % sobre la BASE (antes de sumar el
+// suplemento de régimen) — el suplemento NUNCA se descuenta. Genera una
+// temporada NUEVA (`temporadaPromo`, debe existir como vigencia de `hotel_temporadas`
+// con su propia vigencia de compra/fechas) a partir de una base ya cargada
+// (`temporadaBase`), y SOLO para el régimen elegido (aunque el hotel tenga
+// varios) — el resto de régimen no se tocan para esa temporada promocional.
+export type DubaiPromo = {
+  temporadaBase: string;
+  temporadaPromo: string;
+  regimen: string;
+  descuentoPct: number;
+};
+
 export type DubaiParams = {
   regimen_base: string;                 // régimen incluido en la base (ej. "PC")
   modificadores: {
@@ -43,6 +56,7 @@ export type DubaiParams = {
   };
   suplementos: { regimen: string; monto: number }[];   // PAM +45000, etc.
   bases: { categoria: string; temporada: string; precio: number }[];
+  promos?: DubaiPromo[];
 };
 
 export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
@@ -51,32 +65,65 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
   const out: TarifaGenerada[] = [];
 
   // Régimen base (suplemento 0) + los suplementos configurados.
+  const regimenBase = (p.regimen_base || "PC").trim();
   const regimenes = [
-    { regimen: (p.regimen_base || "PC").trim(), monto: 0 },
+    { regimen: regimenBase, monto: 0 },
     ...(p.suplementos ?? []).filter((s) => s.regimen?.trim()),
   ];
+  const suplementoDe = (regimen: string) => regimenes.find((r) => r.regimen === regimen)?.monto ?? 0;
+
+  // Deriva sencilla/triple/múltiple/niño a partir de una base + su suplemento,
+  // igual fórmula para tarifa normal y para promo (la promo solo cambia `base`).
+  const derivar = (base: number, sup: number) => ({
+    sencilla: Math.round(base * f(m.sencilla_pct) + sup),
+    doble: Math.round(base + sup),
+    triple: Math.round((base * 2 + base * f(m.pax3_pct)) / 3 + sup),
+    multiple: Math.round((base * 2 + base * f(m.pax3_pct) + base * f(m.pax4_pct)) / 4 + sup),
+    nino: Math.round(base * f(m.nino_pct) + sup),
+  });
 
   for (const b of p.bases ?? []) {
     const base = Number(b.precio) || 0;
     if (base <= 0 || !b.categoria?.trim() || !b.temporada?.trim()) continue;
 
-    const doble = base;
-    const sencilla = base * f(m.sencilla_pct);
-    const triple = (base * 2 + base * f(m.pax3_pct)) / 3;
-    const multiple = (base * 2 + base * f(m.pax3_pct) + base * f(m.pax4_pct)) / 4;
-    const nino = base * f(m.nino_pct);
-
     for (const r of regimenes) {
-      const sup = Number(r.monto) || 0;
+      const d = derivar(base, Number(r.monto) || 0);
       out.push({
         tipo_habitacion: b.categoria.trim(),
         alimentacion: r.regimen.trim(),
         temporada: b.temporada.trim(),
-        neto_sencilla: Math.round(sencilla + sup),
-        neto_doble: Math.round(doble + sup),
-        neto_triple: Math.round(triple + sup),
-        neto_multiple: Math.round(multiple + sup),
-        neto_nino: Math.round(nino + sup),
+        neto_sencilla: d.sencilla,
+        neto_doble: d.doble,
+        neto_triple: d.triple,
+        neto_multiple: d.multiple,
+        neto_nino: d.nino,
+        neto_nino2: null,
+      });
+    }
+  }
+
+  // Promociones: % de descuento SOLO sobre la base, por régimen elegido.
+  for (const promo of p.promos ?? []) {
+    const regimen = promo.regimen?.trim();
+    const temporadaPromo = promo.temporadaPromo?.trim();
+    const pct = Number(promo.descuentoPct) || 0;
+    if (!regimen || !temporadaPromo || pct <= 0) continue;
+    const sup = suplementoDe(regimen);
+    for (const b of p.bases ?? []) {
+      if (b.temporada?.trim() !== promo.temporadaBase?.trim()) continue;
+      const base = Number(b.precio) || 0;
+      if (base <= 0 || !b.categoria?.trim()) continue;
+      const basePromo = base * (1 - pct / 100);
+      const d = derivar(basePromo, sup);
+      out.push({
+        tipo_habitacion: b.categoria.trim(),
+        alimentacion: regimen,
+        temporada: temporadaPromo,
+        neto_sencilla: d.sencilla,
+        neto_doble: d.doble,
+        neto_triple: d.triple,
+        neto_multiple: d.multiple,
+        neto_nino: d.nino,
         neto_nino2: null,
       });
     }
