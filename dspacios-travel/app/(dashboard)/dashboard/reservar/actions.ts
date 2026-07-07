@@ -47,7 +47,7 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoInfante, cargoMascota } = comp.data;
+  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
 
   // 2c) Validar cupos del bloqueo ANTES de crear nada (no sobre-vender sillas).
   if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -289,6 +289,17 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"], orden: 51,
     });
   }
+  // Infante: mismo tratamiento que Niño 1/2 (tarifa por temporada, 0 = gratis
+  // sí se itemiza). Si el hotel no configuró tarifa de infante, pvpPorAcom["infante"]
+  // no existe y simplemente no se cobra (no bloquea la reserva).
+  const numInfantesItem = Number(input.infantes) || 0;
+  if (numInfantesItem > 0 && pvpPorAcom["infante"] != null) {
+    items.push({
+      numero_contrato: numero,
+      descripcion: `Infante · ${input.categoria} / ${input.regimen}`,
+      adultos: 0, ninos: numInfantesItem, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"], orden: 52,
+    });
+  }
   // Servicios add-on como ítems (1 fila por servicio, total del grupo o por pax)
   serviciosItems.forEach((s, i) => {
     items.push({
@@ -301,16 +312,6 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
       orden: 100 + i,
     });
   });
-  // Cargo obligatorio de infante (ej. alimentación), ya incluido en precioVenta
-  // — se itemiza aparte para que el cliente vea de dónde sale.
-  if (cargoInfante) {
-    items.push({
-      numero_contrato: numero,
-      descripcion: cargoInfante.descripcion ? `Infante · ${cargoInfante.descripcion}` : "Cargo obligatorio de infante",
-      adultos: 0, ninos: 0, tarifa_adulto: cargoInfante.total, tarifa_nino: 0,
-      orden: 200,
-    });
-  }
   // Cargo de mascota (pet friendly), itemizado aparte igual que el de infante.
   if (cargoMascota) {
     items.push({
@@ -549,7 +550,7 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   const esServicios = input.modulo === "servicios";
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva, cargoInfante, cargoMascota } = comp.data;
+  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva, cargoMascota } = comp.data;
 
   const hoy = new Date().toISOString().slice(0, 10);
   const asesorNombre = input.asesorInterno;
@@ -664,14 +665,10 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     itemsSnap.push({ id: 50, descripcion: `Niño 1 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"] });
   if (numNinos2 > 0 && pvpPorAcom["nino2"] != null)
     itemsSnap.push({ id: 51, descripcion: `Niño 2 · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"] });
+  { const numInfantesSnap = Number(input.infantes) || 0;
+    if (numInfantesSnap > 0 && pvpPorAcom["infante"] != null)
+      itemsSnap.push({ id: 52, descripcion: `Infante · ${input.categoria} / ${input.regimen}`, adultos: 0, ninos: numInfantesSnap, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"] }); }
   serviciosItems.forEach((s, i) => itemsSnap.push({ id: 100 + i, descripcion: `Servicio · ${s.nombre}`, adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0 }));
-  if (cargoInfante) {
-    itemsSnap.push({
-      id: 200,
-      descripcion: cargoInfante.descripcion ? `Infante · ${cargoInfante.descripcion}` : "Cargo obligatorio de infante",
-      adultos: 0, ninos: 0, tarifa_adulto: cargoInfante.total, tarifa_nino: 0,
-    });
-  }
   if (cargoMascota) {
     itemsSnap.push({
       id: 201,

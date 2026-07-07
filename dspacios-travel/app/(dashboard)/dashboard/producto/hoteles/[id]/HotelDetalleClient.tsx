@@ -39,6 +39,7 @@ type Tarifa = {
   id: number; tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
   neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null;
   neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null;
+  neto_infante: number | null; nota_infante: string | null;
 };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -286,7 +287,8 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   const [tipo, setTipo] = useState("");
   const [alim, setAlim] = useState("");
   const [temp, setTemp] = useState("");
-  const [p, setP] = useState({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "" });
+  const [p, setP] = useState({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "", infante: "" });
+  const [notaInfante, setNotaInfante] = useState("");
   const [editId, setEditId] = useState<number | null>(null);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -296,7 +298,8 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
 
   function resetForm() {
     setTipo(""); setAlim(""); setTemp("");
-    setP({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "" });
+    setP({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "", infante: "" });
+    setNotaInfante("");
     setEditId(null);
   }
 
@@ -309,7 +312,9 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
     setP({
       sencilla: str(t.neto_sencilla), doble: str(t.neto_doble), triple: str(t.neto_triple),
       multiple: str(t.neto_multiple), nino: str(t.neto_nino), nino2: str(t.neto_nino2),
+      infante: str(t.neto_infante),
     });
+    setNotaInfante(t.nota_infante ?? "");
   }
 
   function add() {
@@ -319,6 +324,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
       tipoHabitacion: tipo, alimentacion: alim, temporada: temp,
       netoSencilla: num(p.sencilla), netoDoble: num(p.doble), netoTriple: num(p.triple),
       netoMultiple: num(p.multiple), netoNino: num(p.nino), netoNino2: num(p.nino2),
+      netoInfante: num(p.infante), notaInfante: notaInfante.trim() || null,
     };
     start(async () => {
       const r = editId
@@ -346,6 +352,10 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
       <td className="px-3 py-2 text-right tabular-nums">{t.neto_multiple ? formatCOP(t.neto_multiple) : "—"}</td>
       <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino != null ? formatCOP(t.neto_nino) : "—"}</td>
       <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino2 != null ? formatCOP(t.neto_nino2) : "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums" title={t.nota_infante ?? undefined}>
+        {t.neto_infante != null ? formatCOP(t.neto_infante) : "—"}
+        {t.nota_infante && <span className="ml-1 text-amber-500" title={t.nota_infante}>*</span>}
+      </td>
       <td className="px-3 py-2 text-right">
         <div className="flex items-center justify-end gap-3">
           <button type="button" onClick={() => startEdit(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
@@ -357,12 +367,13 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
 
   const tablaTarifas = (rows: Tarifa[]) => (
     <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-      <table className="w-full min-w-[680px] text-sm">
+      <table className="w-full min-w-[760px] text-sm">
         <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
           <th className="px-3 py-2">Categoría</th><th className="px-3 py-2">Régimen</th><th className="px-3 py-2">Temporada</th>
           <th className="px-3 py-2 text-right">Sencilla</th><th className="px-3 py-2 text-right">Doble</th>
           <th className="px-3 py-2 text-right">Triple</th><th className="px-3 py-2 text-right">Múltiple</th>
-          <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th><th className="px-3 py-2"></th>
+          <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th>
+          <th className="px-3 py-2 text-right">Infante</th><th className="px-3 py-2"></th>
         </tr></thead>
         <tbody>{rows.map((t) => filaTarifa(t))}</tbody>
       </table>
@@ -401,13 +412,17 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
             </select>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-6">
-          {([["sencilla","Sencilla"],["doble","Doble"],["triple","Triple"],["multiple","Múltiple"],["nino","Niño 1"],["nino2","Niño 2"]] as [keyof typeof p, string][]).map(([k, label]) => (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-7">
+          {([["sencilla","Sencilla"],["doble","Doble"],["triple","Triple"],["multiple","Múltiple"],["nino","Niño 1"],["nino2","Niño 2"],["infante","Infante"]] as [keyof typeof p, string][]).map(([k, label]) => (
             <div key={k}>
               <label className={lbl}>{label}</label>
               <Input type="number" min={0} value={p[k]} onChange={(e) => setP({ ...p, [k]: e.target.value })} placeholder="—" />
             </div>
           ))}
+        </div>
+        <div className="mt-3">
+          <label className={lbl}>Nota de infante <span className="font-normal text-gray-400">(ej. &quot;Comparte cama con los padres&quot;, &quot;Solo paga seguro hotelero&quot;)</span></label>
+          <Input value={notaInfante} onChange={(e) => setNotaInfante(e.target.value)} placeholder="Nota especial para esta tarifa de infante (opcional)" />
         </div>
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={add} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
@@ -417,7 +432,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
             <Button variant="outline" onClick={resetForm} disabled={pending}>Cancelar</Button>
           )}
           {err && <span className="text-sm text-red-600">{err}</span>}
-          {!editId && <span className="text-xs text-gray-400">Niño 1 puede ir gratis ($0); Niño 2 con su valor. Infante siempre $0.</span>}
+          {!editId && <span className="text-xs text-gray-400">Niño 1/Niño 2/Infante pueden ir en $0 (gratis) o con su valor por noche. Déjalos vacíos si no aplican a este hotel.</span>}
         </div>
       </div>
 

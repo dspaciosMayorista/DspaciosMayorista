@@ -23,14 +23,15 @@ const dNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s : null
 type ImpuestoTipo = Database["public"]["Enums"]["impuesto_tipo"];
 type Acomodacion = Database["public"]["Enums"]["acomodacion_tipo"];
 
-const ACOMODACIONES: Acomodacion[] = ["sencilla", "doble", "triple", "multiple", "nino", "nino2"];
+const ACOMODACIONES: Acomodacion[] = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "infante"];
 const COL_NETO: Record<Acomodacion, string> = {
   sencilla: "neto_sencilla",
   doble: "neto_doble",
   triple: "neto_triple",
   multiple: "neto_multiple",
-  nino: "neto_nino",     // Niño 1 (Chd1)
-  nino2: "neto_nino2",   // Niño 2 (Chd2)
+  nino: "neto_nino",       // Niño 1 (Chd1)
+  nino2: "neto_nino2",     // Niño 2 (Chd2)
+  infante: "neto_infante", // por noche, 0 = gratis (igual que niño)
 };
 
 export interface PaqueteConfig {
@@ -432,8 +433,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             ? liquidarHotelMasBarato({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada })
             : liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
           // null = no aplica (no se publica). En HABITACIONES, 0 también es "no
-          // aplica" (no es gratis); solo en niños el 0 es válido (niño gratis).
-          const esRoom = acom !== "nino" && acom !== "nino2";
+          // aplica" (no es gratis); en niños e infante el 0 sí es válido (gratis).
+          const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
           if (costoHotel == null) continue;
           if (esRoom && costoHotel <= 0) continue;
           const aporteHotel = marcar(costoHotel, pctMk); // hotel siempre con mk
