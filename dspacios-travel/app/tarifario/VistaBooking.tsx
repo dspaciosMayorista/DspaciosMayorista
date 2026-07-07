@@ -29,6 +29,8 @@ type HotelCard = {
   ubicacion: string | null;
   video_url: string | null;
   ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null;
+  adultsOnly: boolean;
+  petFriendly: boolean;
   filas: FilaTarifario[];
   moneda?: string | null;
 };
@@ -46,6 +48,26 @@ function Categoria({ estrellas, clasificacion, className = "" }: { estrellas: nu
     return <span className={`rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600 ${className}`}>{clasificacion}</span>;
   }
   return null;
+}
+
+// Adults Only / Pet friendly — mismos criterios que el tarifario público (tarifas
+// horizontales): informativos, sin exponer costo neto.
+function EtiquetasHotel({ adultsOnly, petFriendly, className = "" }: { adultsOnly: boolean; petFriendly: boolean; className?: string }) {
+  if (!adultsOnly && !petFriendly) return null;
+  return (
+    <>
+      {adultsOnly && (
+        <span className={`rounded-full bg-gray-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white ${className}`} title="Este hotel no acepta niños ni infantes">
+          Adults Only
+        </span>
+      )}
+      {petFriendly && (
+        <span className={`rounded-full bg-[var(--brand-success)]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-success)] ${className}`} title="Este hotel acepta mascotas">
+          Pet friendly
+        </span>
+      )}
+    </>
+  );
 }
 
 type Opcion = {
@@ -111,7 +133,7 @@ export function VistaBooking({
   origenPorBloqueo?: Record<number, string>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; adultsOnly?: boolean; petFriendly?: boolean }>;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
   soloAcom?: string | null;
@@ -122,6 +144,9 @@ export function VistaBooking({
   const [origenSel, setOrigenSel] = useState("");
   const [destinoSel, setDestinoSel] = useState("");
   const [salidaSel, setSalidaSel] = useState<number | "">("");
+  // Filtros de la grilla de hoteles: pet friendly / adults only.
+  const [soloPetFriendly, setSoloPetFriendly] = useState(false);
+  const [soloAdultsOnly, setSoloAdultsOnly] = useState(false);
 
   // Salidas (bloqueos) con cupos > 0, con su origen/destino/fechas/cupos.
   const salidasBloqueo = useMemo(() => {
@@ -179,6 +204,7 @@ export function VistaBooking({
           estrellas: info?.estrellas ?? null, clasificacion: info?.clasificacion ?? null, descripcion: info?.descripcion ?? null,
           ubicacion: info?.ubicacion ?? null, video_url: info?.video_url ?? null,
           ninoMin: info?.ninoMin ?? null, ninoMax: info?.ninoMax ?? null, infMin: info?.infMin ?? null, infMax: info?.infMax ?? null,
+          adultsOnly: info?.adultsOnly ?? false, petFriendly: info?.petFriendly ?? false,
           filas: [], moneda: f.moneda ?? "COP",
         };
         map.set(id, c);
@@ -189,9 +215,11 @@ export function VistaBooking({
     // Filtro de acomodación (de la barra superior): el hotel se muestra solo si
     // tiene tarifa para esa acomodación.
     if (soloAcom) arr = arr.filter((c) => c.filas.some((f) => f.acomodacion === soloAcom && f.precio_pvp > 0));
+    if (soloPetFriendly) arr = arr.filter((c) => c.petFriendly);
+    if (soloAdultsOnly) arr = arr.filter((c) => c.adultsOnly);
     for (const c of arr) c.desde = minRoomPvp(c.filas);
     return arr.sort((a, b) => a.hotelNombre.localeCompare(b.hotelNombre));
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, salidaSel, soloAcom]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
 
@@ -297,10 +325,22 @@ export function VistaBooking({
         <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} destinos={destinos} />
       )}
 
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
-        {sub === "bloqueo" ? "Hoteles disponibles" : "O explora todos los alojamientos"}
-        <span className="ml-2 font-normal normal-case text-gray-400">({hoteles.length})</span>
-      </p>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+          {sub === "bloqueo" ? "Hoteles disponibles" : "O explora todos los alojamientos"}
+          <span className="ml-2 font-normal normal-case text-gray-400">({hoteles.length})</span>
+        </p>
+        <div className="flex flex-wrap gap-3 text-xs text-gray-600">
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={soloPetFriendly} onChange={(e) => setSoloPetFriendly(e.target.checked)} />
+            Pet friendly
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={soloAdultsOnly} onChange={(e) => setSoloAdultsOnly(e.target.checked)} />
+            Adults Only
+          </label>
+        </div>
+      </div>
       {!hoteles.length && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados. Prueba quitar filtros o cambiar de pestaña (Paquetes/Porción).</p>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {hoteles.map((h) => (
@@ -329,9 +369,10 @@ export function VistaBooking({
               })()}
             </div>
             <div className="flex flex-1 flex-col p-4">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="font-semibold text-gray-800">{h.hotelNombre}</span>
                 <Categoria estrellas={h.estrellas} clasificacion={h.clasificacion} className="text-sm" />
+                <EtiquetasHotel adultsOnly={h.adultsOnly} petFriendly={h.petFriendly} />
               </div>
               <div className="mt-0.5 text-xs text-gray-500">{h.destino ?? ""}</div>
               {h.descripcion?.trim() && (
@@ -436,6 +477,7 @@ function HotelModal({
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-semibold text-gray-900">{hotel.hotelNombre}</h2>
               <Categoria estrellas={hotel.estrellas} clasificacion={hotel.clasificacion} className="text-base" />
+              <EtiquetasHotel adultsOnly={hotel.adultsOnly} petFriendly={hotel.petFriendly} />
             </div>
             <p className="text-sm text-gray-500">{hotel.destino ?? ""}</p>
             {hotel.descripcion?.trim() && (

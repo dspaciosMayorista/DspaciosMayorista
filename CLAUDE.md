@@ -305,9 +305,9 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 121, TODAS corridas
-> por el dueño** (confirmado). **Migración 122 pendiente** (tarifa de infante por
-> temporada, ver "Motor de cálculo").
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 122, TODAS corridas
+> por el dueño** (confirmado, incl. 122 — tarifa de infante por temporada, ver "Motor de
+> cálculo"). Ninguna migración pendiente en este momento.
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -768,7 +768,7 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > nino_nota` — **118 reemplazada/superada por la 122**, ver abajo) · **119 hotel_adults_only**
 > (`hoteles.adults_only`) · **120 crm_plan_vigencia** (`crm_difusion_plan.vigencia_hasta`) ·
 > **121 hotel_pet_friendly** (`hoteles.pet_friendly/pet_costo_neto/pet_costo_desc/pet_nota`) ·
-> **122 tarifa_infante** (*pendiente de correr*) — agrega `'infante'` al enum
+> **122 tarifa_infante** (ya corrida) — agrega `'infante'` al enum
 > `acomodacion_tipo` (mismo patrón que `'nino2'` en la migración 020) +
 > `tarifa_hotel.neto_infante/nota_infante`, con backfill desde los campos planos
 > de la 118 (no los borra, solo deja de usarlos la app). Detalle de cada una en
