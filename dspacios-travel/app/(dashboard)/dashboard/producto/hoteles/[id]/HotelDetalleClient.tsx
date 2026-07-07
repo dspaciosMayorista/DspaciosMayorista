@@ -15,7 +15,7 @@ type Temporada = {
   id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
   prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null;
   tipo?: string | null; descuento_valor?: number | null; min_noches?: number;
-  rangos?: unknown; blackouts?: unknown;
+  rangos?: unknown; blackouts?: unknown; regimen_restringido?: string | null;
 };
 
 // jsonb → lista de rangos válidos.
@@ -31,9 +31,10 @@ const TIPOS_TEMP: { value: string; label: string }[] = [
   { value: "tarifa", label: "Temporada / tarifa de reemplazo" },
   { value: "descuento_pct", label: "Promo: descuento %" },
   { value: "descuento_monto", label: "Promo: descuento $ por pax" },
+  { value: "promo_noche_gratis", label: "Promo: N noches, 1 gratis" },
 ];
 const TIPO_BADGE: Record<string, string> = {
-  tarifa: "tarifa", descuento_pct: "promo %", descuento_monto: "promo $",
+  tarifa: "tarifa", descuento_pct: "promo %", descuento_monto: "promo $", promo_noche_gratis: "noche gratis",
 };
 type Tarifa = {
   id: number; tipo_habitacion: string | null; alimentacion: string | null; temporada: string | null;
@@ -58,13 +59,13 @@ export function HotelDetalleClient({
   const vencidasNombres = new Set(temporadas.filter((t) => esVencida(t, hoy)).map((t) => t.nombre));
   return (
     <div className="space-y-8">
-      <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} />
+      <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} />
       <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} vencidasNombres={vencidasNombres} />
     </div>
   );
 }
 
-function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string }) {
+function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[] }) {
   const [editId, setEditId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [ini, setIni] = useState("");
@@ -75,17 +76,20 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy }: { hotelId: nu
   const [compraFin, setCompraFin] = useState("");
   const [tipo, setTipo] = useState("tarifa");
   const [descuento, setDescuento] = useState("");
+  const [regimenRestringido, setRegimenRestringido] = useState("");
   const [rangosExtra, setRangosExtra] = useState<RangoFechas[]>([]);
   const [blackouts, setBlackouts] = useState<RangoFechas[]>([]);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
   const esPromo = tipo !== "tarifa";
+  const esDescuento = tipo === "descuento_pct" || tipo === "descuento_monto";
+  const esNocheGratis = tipo === "promo_noche_gratis";
   const editando = editId != null;
 
   function reset() {
     setEditId(null); setNombre(""); setIni(""); setFin(""); setPrioridad("1"); setMinNoches("1");
-    setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento("");
+    setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento(""); setRegimenRestringido("");
     setRangosExtra([]); setBlackouts([]); setErr("");
   }
 
@@ -104,6 +108,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy }: { hotelId: nu
     setCompraFin(t.compra_fin ?? "");
     setTipo(t.tipo ?? "tarifa");
     setDescuento(t.descuento_valor != null ? String(t.descuento_valor) : "");
+    setRegimenRestringido(t.regimen_restringido ?? "");
     setErr("");
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -116,7 +121,8 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy }: { hotelId: nu
       prioridad: Number(prioridad) || 1,
       minNoches: Math.max(1, Number(minNoches) || 1),
       compraInicio: compraIni, compraFin: compraFin,
-      tipo, descuentoValor: esPromo ? Number(descuento) || 0 : null,
+      tipo, descuentoValor: esDescuento ? Number(descuento) || 0 : null,
+      regimenRestringido: regimenRestringido || null,
       rangos: rangosExtra, blackouts,
     };
     start(async () => {
@@ -137,10 +143,16 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy }: { hotelId: nu
           <b>{t.nombre}</b>
           <span className={`rounded-full px-2 py-0.5 text-[10px] ${promo ? "bg-[var(--brand-highlight)]/25 text-gray-700" : "bg-gray-100 text-gray-500"}`}>{TIPO_BADGE[tp] ?? tp}</span>
           <span className="text-[11px] text-gray-400">P{t.prioridad ?? 1}</span>
-          {promo && t.descuento_valor != null && (
+          {(tp === "descuento_pct" || tp === "descuento_monto") && t.descuento_valor != null && (
             <span className="text-[11px] font-medium text-[var(--brand-success)]">
               {tp === "descuento_pct" ? `−${t.descuento_valor}%` : `−${formatCOP(t.descuento_valor)}/pax`}
             </span>
+          )}
+          {tp === "promo_noche_gratis" && (
+            <span className="text-[11px] font-medium text-[var(--brand-success)]">1 noche gratis (mín. {t.min_noches ?? 1}N)</span>
+          )}
+          {t.regimen_restringido && (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">solo {t.regimen_restringido}</span>
           )}
           <span className="text-gray-400">· {formatFechaLarga(t.fecha_inicio)} → {formatFechaLarga(t.fecha_fin)}</span>
           {asRangos(t.rangos).length > 1 && (
@@ -168,6 +180,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy }: { hotelId: nu
         Las fechas <b>pueden cruzarse</b>: gana la de mayor <b>prioridad</b>. La <b>vigencia de compra</b> define
         cuándo está disponible para vender (si hoy está fuera, no aplica). Una promo descuenta la tarifa base de esas fechas.
         Usa <b>rangos adicionales</b> para una misma vigencia con varias fechas (ej. puentes) y <b>black-outs</b> para excluir fechas.
+        El <b>régimen</b> deja la vigencia (o promo) restringida a uno solo, aunque el hotel tenga varios (vacío = todos).
       </p>
       {!editando && <CopiarDeHotel hotelId={hotelId} otrosHoteles={otrosHoteles} />}
       <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -177,7 +190,10 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy }: { hotelId: nu
           <div><label className={lbl}>Viaje desde</label><Input type="date" value={ini} onChange={(e) => setIni(e.target.value)} /></div>
           <div><label className={lbl}>Viaje hasta</label><Input type="date" value={fin} onChange={(e) => setFin(e.target.value)} /></div>
           <div><label className={lbl}>Prioridad</label><Input type="number" min={1} value={prioridad} onChange={(e) => setPrioridad(e.target.value)} /></div>
-          <div><label className={lbl}>Mín. noches</label><Input type="number" min={1} value={minNoches} onChange={(e) => setMinNoches(e.target.value)} /></div>
+          <div>
+            <label className={lbl}>{esNocheGratis ? "Noches mín. para la promo" : "Mín. noches"}</label>
+            <Input type="number" min={1} value={minNoches} onChange={(e) => setMinNoches(e.target.value)} />
+          </div>
           <div><label className={lbl}>Compra desde</label><Input type="date" value={compraIni} onChange={(e) => setCompraIni(e.target.value)} /></div>
           <div><label className={lbl}>Compra hasta</label><Input type="date" value={compraFin} onChange={(e) => setCompraFin(e.target.value)} /></div>
           <div className="col-span-2 sm:col-span-1">
@@ -186,13 +202,27 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy }: { hotelId: nu
               {TIPOS_TEMP.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>
-          {esPromo && (
+          {esDescuento && (
             <div>
               <label className={lbl}>{tipo === "descuento_pct" ? "Descuento %" : "Descuento $/pax"}</label>
               <Input type="number" min={0} value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder={tipo === "descuento_pct" ? "20" : "50000"} />
             </div>
           )}
+          <div>
+            <label className={lbl}>Régimen <span className="font-normal text-gray-400">(vacío = todos)</span></label>
+            <select value={regimenRestringido} onChange={(e) => setRegimenRestringido(e.target.value)} className={`${sel} w-full`}>
+              <option value="">Todos los régimen</option>
+              {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
         </div>
+        {esNocheGratis && (
+          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            Se regala SIEMPRE exactamente 1 noche (nunca escala con más noches): una estadía de {Math.max(1, Number(minNoches) || 1)}
+            {" "}o más noches paga el equivalente a 1 noche menos del total (se descuenta 1/N del total, sin importar si son{" "}
+            {Math.max(1, Number(minNoches) || 1)}, {Math.max(1, Number(minNoches) || 1) + 1} o más noches).
+          </p>
+        )}
 
         <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <ListaRangos titulo="Rangos adicionales (misma vigencia)" items={rangosExtra} onChange={setRangosExtra} />

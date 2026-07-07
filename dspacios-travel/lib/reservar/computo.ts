@@ -241,7 +241,7 @@ export async function computarReserva(
       const admin = createAdminClient();
       const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
       const [{ data: temps }, { data: tarRows }] = await Promise.all([
-        admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", input.hotelId),
+        admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId),
         admin.from("tarifa_hotel").select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
       ]);
       type TarRow = { temporada: string | null; neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null };
@@ -252,7 +252,7 @@ export async function computarReserva(
         const col = colDe[acom]; if (!col) return null;
         const netoPorTemporada: Record<string, number | null> = {};
         for (const r of rows) if (r.temporada) netoPorTemporada[r.temporada] = r[col] as number | null;
-        return liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches, temporadas, netoPorTemporada });
+        return liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches, temporadas, netoPorTemporada, regimen: input.regimen });
       };
       const TARIFA_VENCIDA = "Esta tarifa ya no está vigente para compra (la vigencia del hotel venció). Pide regenerar el tarifario con vigencias vigentes antes de reservar.";
       for (const l of lineasHab) {

@@ -55,7 +55,7 @@ export async function liquidarHotelPaquete(
 
   const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }, { data: blackouts }] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", hotelId),
+    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones").eq("hotel_id", hotelId),
@@ -112,7 +112,7 @@ export async function liquidarHotelPaquete(
       const col = COL_NETO[acom];
       const netoPorTemporada: Record<string, number | null> = {};
       for (const [temp, row] of tempMap) { const v = row[col]; netoPorTemporada[temp] = v == null ? null : Number(v); }
-      const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
+      const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen });
       // null = no aplica. En habitaciones, 0 también es "no aplica" (no gratis);
       // en niños e infante el 0 sí es válido (gratis).
       const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
@@ -161,7 +161,7 @@ export async function cotizarPorFechas(input: {
   if (!res || !res.combos.length) {
     // Diagnóstico: ¿qué temporada de las noches elegidas no tiene tarifa cargada?
     const [{ data: temps }, { data: tars }] = await Promise.all([
-      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", input.hotelId),
+      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId),
       admin.from("tarifa_hotel").select("temporada").eq("hotel_id", input.hotelId),
     ]);
     const temporadas = (temps ?? []).map(toTemporadaRango);
