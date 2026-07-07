@@ -305,8 +305,8 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 123** — hasta la 122
-> confirmadas corridas por el dueño; **123 pendiente** (`hotel_temporadas.regimen_restringido`
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 123** — todas
+> confirmadas corridas por el dueño, incluida la **123** (`hotel_temporadas.regimen_restringido`
 > + promo "N noches, 1 gratis" — ver "Motor de cálculo").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
@@ -423,7 +423,7 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   infante_cargo_desc/infante_nota`) no se borraron (no se borran columnas en
 >   este proyecto) pero la app ya no los lee ni los escribe.
 > - **Calculadora Dubai: promos por régimen + "N noches, 1 gratis" (jul-2026).**
->   Migración **123** (*pendiente de correr*), `hotel_temporadas.regimen_restringido`:
+>   Migración **123** (ya corrida), `hotel_temporadas.regimen_restringido`:
 >   dos pedidos puntuales de la calculadora Dubai que terminaron siendo mecanismos
 >   generales. (1) El % de descuento de una promo ahora solo se aplica a la
 >   tarifa BASE, nunca al suplemento de régimen — la propia calculadora Dubai
@@ -436,6 +436,13 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   `lib/calc/paquetes.ts`). Ambas piezas pueden restringirse a **un solo
 >   régimen** aunque el hotel tenga varios (`regimen_restringido`, null =
 >   todos). Detalle completo en "Motor de cálculo".
+> - **Fix sitio público — crash en secciones de tipo Texto (jul-2026):**
+>   `components/sitio/secciones/Texto.jsx` era la única sección del CMS sin la
+>   directiva `"use client"` pese a llamar `useEdicion()` (hook de Context,
+>   solo cliente) — rompía en producción cualquier página con una sección
+>   Texto (ej. `/sitio_web/san-andres`) con "Attempted to call useEdicion()
+>   from the server but useEdicion is on the client". Corregido agregando la
+>   directiva (PR #156), sin dependencia de migración.
 > - **Multitenant — dos agencias en una sola app:** **Mayorista** (actual, completa) y
 >   **Minorista** (agencia anterior, solo para terminar de gestionar + histórico; sin
 >   tarifario/montaje). Misma BD + columna `tenant` ('mayorista'/'minorista', default
@@ -748,14 +755,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **123** (hasta la 122 corridas por el dueño; 123 pendiente)
+### Migraciones Supabase — total en repo: **123** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 122** (todas aplicadas; 123 pendiente).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 123** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -824,7 +831,7 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > `acomodacion_tipo` (mismo patrón que `'nino2'` en la migración 020) +
 > `tarifa_hotel.neto_infante/nota_infante`, con backfill desde los campos planos
 > de la 118 (no los borra, solo deja de usarlos la app) ·
-> **123 temporada_regimen_restringido** (*pendiente de correr*) —
+> **123 temporada_regimen_restringido** (ya corrida) —
 > `hotel_temporadas.regimen_restringido` (texto libre, null = todos los régimen),
 > usada tanto por la promo "N noches, 1 gratis" como por cualquier vigencia
 > existente (tarifa/descuento_pct/descuento_monto) que se quiera limitar a un
