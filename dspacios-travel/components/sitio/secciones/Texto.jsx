@@ -1,3 +1,5 @@
+"use client";
+
 import React from 'react';
 import { EditableText } from '@/components/sitio/edicion/Editable';
 import { useEdicion } from '@/components/sitio/edicion/EdicionContext';
