@@ -18,7 +18,7 @@ export function BuscadorBooking({
   fotosPorHotel = {}, infoPorHotel = {}, destinos = [],
 }: {
   fotosPorHotel?: Record<number, string>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; adultsOnly?: boolean; petFriendly?: boolean }>;
   destinos?: string[];
 }) {
   const hoy = new Date().toISOString().slice(0, 10);
@@ -34,6 +34,8 @@ export function BuscadorBooking({
   const [err, setErr] = useState("");
   const [avisoHab, setAvisoHab] = useState("");
   const [resultados, setResultados] = useState<BusquedaResultado[] | null>(null);
+  const [soloPetFriendly, setSoloPetFriendly] = useState(false);
+  const [soloAdultsOnly, setSoloAdultsOnly] = useState(false);
 
   // Ajusta el nº de filas de habitación (tope de 8; 9+ requiere asesor).
   function setCantidad(n: number) {
@@ -62,6 +64,16 @@ export function BuscadorBooking({
       else setErr(r.error);
     });
   }
+
+  const resultadosFiltrados = useMemo(() => {
+    if (!resultados) return null;
+    return resultados.filter((r) => {
+      const info = infoPorHotel[r.hotelId];
+      if (soloPetFriendly && !info?.petFriendly) return false;
+      if (soloAdultsOnly && !info?.adultsOnly) return false;
+      return true;
+    });
+  }, [resultados, infoPorHotel, soloPetFriendly, soloAdultsOnly]);
 
   const sel = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
@@ -114,14 +126,26 @@ export function BuscadorBooking({
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
       </div>
 
-      {resultados && (
+      {resultados && resultadosFiltrados && (
         <div className="mt-4">
-          <p className="mb-2 text-sm text-gray-500">{resultados.length} hotel(es) disponibles para tu búsqueda</p>
-          {resultados.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">No hay hoteles que cumplan esa composición/fechas. Prueba otra acomodación o fechas.</p>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-gray-500">{resultadosFiltrados.length} hotel(es) disponibles para tu búsqueda</p>
+            <div className="flex flex-wrap gap-3 text-xs text-gray-600">
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={soloPetFriendly} onChange={(e) => setSoloPetFriendly(e.target.checked)} />
+                Pet friendly
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={soloAdultsOnly} onChange={(e) => setSoloAdultsOnly(e.target.checked)} />
+                Adults Only
+              </label>
+            </div>
+          </div>
+          {resultadosFiltrados.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">No hay hoteles que cumplan esa composición/fechas/filtros. Prueba otra acomodación, fechas o quita un filtro.</p>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {resultados.map((r) => (
+              {resultadosFiltrados.map((r) => (
                 <Resultado
                   key={`${r.paqueteId}-${r.hotelId}`}
                   r={r}
@@ -138,7 +162,7 @@ export function BuscadorBooking({
   );
 }
 
-function Resultado({ r, foto, info, infantes = 0 }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null }; infantes?: number }) {
+function Resultado({ r, foto, info, infantes = 0 }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null; adultsOnly?: boolean; petFriendly?: boolean }; infantes?: number }) {
   const { items, add, remove } = useCart();
 
   // Combos disponibles → selectores de categoría y alimentación (el más barato
@@ -177,9 +201,15 @@ function Resultado({ r, foto, info, infantes = 0 }: { r: BusquedaResultado; foto
         ) : null}
       </div>
       <div className="flex flex-1 flex-col p-4">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="font-semibold text-gray-800">{r.hotelNombre}</span>
           {estrellas && <span className="text-sm text-amber-400">{estrellas}</span>}
+          {info?.adultsOnly && (
+            <span className="rounded-full bg-gray-800 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white" title="Este hotel no acepta niños ni infantes">Adults Only</span>
+          )}
+          {info?.petFriendly && (
+            <span className="rounded-full bg-[var(--brand-success)]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-success)]" title="Este hotel acepta mascotas">Pet friendly</span>
+          )}
         </div>
         <div className="text-xs text-gray-500">{r.destino ?? ""} · {r.noches}N</div>
 
