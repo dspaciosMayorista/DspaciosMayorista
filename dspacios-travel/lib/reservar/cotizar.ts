@@ -20,11 +20,11 @@ import {
 } from "@/lib/calc/paquetes";
 import { PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
 
-// Acomodaciones (incluye niños) y su columna neta en tarifa_hotel.
-const ACOM_ALL = ["sencilla", "doble", "triple", "multiple", "nino", "nino2"] as const;
+// Acomodaciones (incluye niños e infante) y su columna neta en tarifa_hotel.
+const ACOM_ALL = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "infante"] as const;
 const COL_NETO: Record<string, string> = {
   sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple",
-  multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2",
+  multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante",
 };
 
 export type ComboCotizado = { categoria: string; regimen: string; precios: Record<string, number>; netos?: Record<string, number> };
@@ -114,8 +114,8 @@ export async function liquidarHotelPaquete(
       for (const [temp, row] of tempMap) { const v = row[col]; netoPorTemporada[temp] = v == null ? null : Number(v); }
       const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada });
       // null = no aplica. En habitaciones, 0 también es "no aplica" (no gratis);
-      // solo en niños el 0 es válido.
-      const esRoom = acom !== "nino" && acom !== "nino2";
+      // en niños e infante el 0 sí es válido (gratis).
+      const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
       if (costoHotel == null) continue;
       if (esRoom && costoHotel <= 0) continue;
       const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto, moneda: monedaHotel });
@@ -128,7 +128,7 @@ export async function liquidarHotelPaquete(
   if (acomCerradas.size) {
     for (const c of combos) for (const a of acomCerradas) { delete c.precios[a]; delete c.netos?.[a]; }
   }
-  const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2"));
+  const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2" && a !== "infante"));
   return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel };
 }
 

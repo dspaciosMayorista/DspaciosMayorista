@@ -346,7 +346,7 @@ export function ReservaForm({
             </div>
           )}
           <div>
-            <label className={lbl}>Infantes (sin silla, $0)</label>
+            <label className={lbl}>Infantes (sin silla; el cargo, si aplica, se confirma al generar)</label>
             <Input type="number" min={0} value={infantes} onChange={(e) => setInfantes(e.target.value)} />
           </div>
         </div>

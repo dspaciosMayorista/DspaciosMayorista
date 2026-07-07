@@ -62,6 +62,8 @@ const COLS_TARIFAS = [
   { key: "neto_multiple", label: "Neto múltiple", ejemplo: "300000" },
   { key: "neto_nino", label: "Neto niño 1", ejemplo: "150000" },
   { key: "neto_nino2", label: "Neto niño 2", ejemplo: "" },
+  { key: "neto_infante", label: "Neto infante (por noche)", ejemplo: "" },
+  { key: "nota_infante", label: "Nota de infante", ejemplo: "" },
 ];
 
 export default async function HotelesPage() {
@@ -115,7 +117,7 @@ export default async function HotelesPage() {
         <CargaMasivaCSV
           titulo="Carga masiva de tarifas de hotel (CSV)"
           nota="Ya deben existir: el hotel, sus Categorías y Regímenes (Producto → Configuración) y las Temporadas con fechas (cargue de arriba). La tarifa referencia la temporada por su nombre."
-          descripcion="Cada fila = una tarifa (hotel + categoría + régimen + temporada + netos). El hotel y la temporada (con sus fechas) deben existir; usa 'destino' si hay hoteles con el mismo nombre. Niño 1 puede ir en 0 (gratis)."
+          descripcion="Cada fila = una tarifa (hotel + categoría + régimen + temporada + netos). El hotel y la temporada (con sus fechas) deben existir; usa 'destino' si hay hoteles con el mismo nombre. Niño 1/Niño 2/Infante pueden ir en 0 (gratis); vacío = no aplica a este hotel."
           columnas={COLS_TARIFAS}
           onSubmit={cargarTarifasMasivo}
           nombreArchivo="plantilla_tarifas_hotel"

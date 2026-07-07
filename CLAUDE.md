@@ -306,7 +306,8 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
 > **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 121, TODAS corridas
-> por el dueño** (confirmado). Ninguna migración pendiente en este momento.
+> por el dueño** (confirmado). **Migración 122 pendiente** (tarifa de infante por
+> temporada, ver "Motor de cálculo").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -395,6 +396,32 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >      Calendario puede llevar fecha de vencimiento; se ve como badge
 >      (vigente/vence pronto/vencida) y ya se puede **editar** una
 >      programación existente (antes solo cambiar estado o eliminar).
+> - **Hoteles pet friendly.** Migración **121** (`hoteles.pet_friendly/
+>   pet_costo_neto/pet_costo_desc/pet_nota`): checkbox "Acepta mascotas" en
+>   `HotelConfigEditor.tsx`, tarifa (0 = gratis) + nota. El motor
+>   (`lib/reservar/computo.ts`) bloquea declarar mascotas si el hotel no las
+>   acepta y cobra el cargo × noches con el mismo % de markup, itemizado aparte
+>   en el contrato. `ReservaForm.tsx` agrega "Cantidad de mascotas" solo si es
+>   pet friendly; el tarifario público muestra el badge + aviso sin exponer el
+>   costo neto.
+> - **Tarifa de infante reorganizada — igual que Niño 1/Niño 2 (jul-2026).**
+>   Migración **122** (*pendiente de correr*), reemplaza el mecanismo de la 118:
+>   un hotel real (Virrey Cartagena) cobra la tarifa de infante distinto según
+>   el plan/temporada, así que un valor plano por hotel no alcanzaba. Ahora
+>   `infante` es una acomodación más (`tarifa_hotel.neto_infante`/`nota_infante`,
+>   por categoría/régimen/temporada, agregada al enum `acomodacion_tipo` igual
+>   que se hizo con `nino2` en la migración 020) y se edita en
+>   `HotelDetalleClient.tsx` (pestaña Tarifa neta), no en la config del hotel.
+>   `$0` = gratis, igual que niño. El PVP fluye por el motor de siempre
+>   (`generarTarifario`/`lib/reservar/cotizar.ts`) hasta `computo.ts`/
+>   `ReservaForm`/tarifario público sin mecanismo aparte. **Asimetría
+>   deliberada:** a diferencia de niño, si el hotel no configuró tarifa de
+>   infante para un combo, la reserva NO se bloquea (queda gratis) — para no
+>   romper de un día para otro las reservas con infante de los hoteles que
+>   aún no han cargado esta tarifa nueva. Detalle completo en "Motor de
+>   cálculo". Los campos viejos de la 118 (`hoteles.infante_cargo_neto/
+>   infante_cargo_desc/infante_nota`) no se borraron (no se borran columnas en
+>   este proyecto) pero la app ya no los lee ni los escribe.
 > - **Multitenant — dos agencias en una sola app:** **Mayorista** (actual, completa) y
 >   **Minorista** (agencia anterior, solo para terminar de gestionar + histórico; sin
 >   tarifario/montaje). Misma BD + columna `tenant` ('mayorista'/'minorista', default
@@ -606,22 +633,36 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - Vuelo: por vuelo eliges `costo/(1−mk)` **o** `costo + TA`.
 - PVP = hotel + servicios + vuelo. **Impuesto (BNC)** = tiquete neto o fijo. Base com. = PVP − imp.
 - Niño 1 / Niño 2 = acomodaciones `nino` / `nino2` (0 = gratis, sí se publica).
-- **Cargo obligatorio de infante + notas** (migración 118, `hoteles.infante_cargo_neto/
-  infante_cargo_desc/infante_nota/nino_nota`, editable en `HotelConfigEditor.tsx`):
-  antes el infante SIEMPRE sumaba $0. Ahora un hotel puede configurar un cargo NETO
-  por infante **por noche** (ej. alimentación obligatoria aunque no pague habitación),
-  que se multiplica por noches × infantes y lleva el mismo **% de markup del
-  paquete** — decisión tomada sin confirmar con el dueño (falló la pregunta por un
-  error técnico), ajustar si no es el criterio correcto. Se calcula en
-  `lib/reservar/computo.ts` (`cargoInfante`, ya incluido en `precioVenta`) y se
-  itemiza aparte en `contrato_items` ("Infante · <descripción>") en
-  `reservarDesdeTarifario`/`crearCotizacion`. Las notas libres (`infante_nota`/
-  `nino_nota`, ej. "comparte cama con los padres", "seguro hotelero obligatorio")
-  son informativas (no suman al precio) y se muestran en el tarifario público
-  junto al rango de edades — **sin exponer el costo neto**, solo la descripción/
-  aviso de que aplica un cargo (el valor exacto se confirma al reservar). El
-  editor ahora oculta precio/descripción/nota de infante detrás de un checkbox
-  "Este hotel cobra tarifa a infantes" (antes siempre visibles).
+- **Tarifa de infante = igual que Niño 1/Niño 2** (migración 122, reemplaza el
+  mecanismo de la 118): un hotel real (Virrey Cartagena) cobra la tarifa de
+  infante distinto según el plan/temporada ("0-2 años: solo seguro hotelero
+  $19.000/noche"; "3-5 años: $79.000 PC / $99.000 PAM, comparte cama") — un
+  valor plano por hotel no alcanzaba. Ahora `infante` es una **acomodación más**
+  (`tarifa_hotel.neto_infante` + `nota_infante`, por categoría/régimen/
+  temporada, igual que `neto_nino`/`neto_nino2` — se agregó al enum
+  `acomodacion_tipo`, mismo patrón que `nino2` en la migración 020). Se edita
+  en `HotelDetalleClient.tsx` (pestaña Tarifa neta), **no** en la config del
+  hotel. `$0` = gratis (se publica igual, no es "no aplica"). El PVP se genera
+  automático por el motor de siempre (`generarTarifario`/`regenerarTarifariosDeHotel`
+  en `paquetes/actions.ts`, y `liquidarHotelPaquete` en `lib/reservar/cotizar.ts`
+  para porción/dinámico por fechas) — `pvpPorAcom["infante"]` llega a
+  `lib/reservar/computo.ts` y a `ReservaForm`/tarifario exactamente como
+  `pvpPorAcom["nino"]`. **Única asimetría deliberada con niño:** si el hotel NO
+  configuró `neto_infante` para un combo, la reserva **no se bloquea** (infante
+  gratis, a diferencia de niño que si no tiene tarifa cargada para ese combo/
+  temporada da error "tarifa vencida") — decisión tomada para no romper de un
+  día para otro las reservas con infante de TODOS los hoteles que aún no han
+  cargado esta tarifa nueva (niño ya llevaba tiempo en producción y se asume
+  configurado; infante no). Se itemiza en `contrato_items`/`itemsSnap` como
+  "Infante · categoría/régimen" (igual patrón que "Niño 1 ·"/"Niño 2 ·"). La
+  nota (`nota_infante`, ej. "comparte cama con los padres") se ve en el
+  tarifario público junto al rango de edades — se toma la primera nota que se
+  encuentre entre las tarifas del hotel (representativa, no exacta por
+  temporada), **sin exponer el costo neto**, con `hoteles.infante_cargo_neto/
+  infante_cargo_desc/infante_nota` (118) ya sin uso (columnas viejas, no se
+  borran por convención, simplemente no se leen/escriben más).
+- **`nino_nota`** (hotel-level, sin cambios): nota general de niño, editable en
+  `HotelConfigEditor.tsx`, independiente de la tarifa de infante.
 - **Hoteles pet friendly** (migración 121, `hoteles.pet_friendly/pet_costo_neto/
   pet_costo_desc/pet_nota`, editable en `HotelConfigEditor.tsx` detrás de un
   checkbox "Acepta mascotas"): misma mecánica que el cargo de infante —
@@ -655,7 +696,7 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **121** (todas corridas por el dueño, confirmado)
+### Migraciones Supabase — total en repo: **122** (hasta la 121 corridas por el dueño; 122 pendiente)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
@@ -719,15 +760,19 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > **111 programa_highlights** (`programas.highlights` text[]) · **112 fusionar_destino**
 > (`fn_fusionar_destino(origen,destino)` SECURITY DEFINER: re-apunta toda FK a destinos y borra) ·
 > **113 programa_piezas** (bucket público `programas` + `programas.flyer_url`/`historia_url`).
-> Rango **114→121** (CRM, seguridad, minorista, hoteles): **114 crm_difusion** (material/
+> Rango **114→122** (CRM, seguridad, minorista, hoteles): **114 crm_difusion** (material/
 > envío/plan) · 115 minorista_numeracion (fix numeración duplicada + `contrato_servicios`) ·
 > **116 rls_tenant_isolation** (filtro de tenant en policies de ventas/abonos/CxP/comisiones/
 > facturación) · **117 eliminar_contrato_rol** (candado de rol dentro del RPC) ·
 > **118 hotel_infante_cargo** (`hoteles.infante_cargo_neto/infante_cargo_desc/infante_nota/
-> nino_nota`) · **119 hotel_adults_only** (`hoteles.adults_only`) · **120 crm_plan_vigencia**
-> (`crm_difusion_plan.vigencia_hasta`) · **121 hotel_pet_friendly** (`hoteles.pet_friendly/
-> pet_costo_neto/pet_costo_desc/pet_nota`). Detalle de cada una en "Novedades recientes" más
-> arriba y en "Motor de cálculo" (118/121).
+> nino_nota` — **118 reemplazada/superada por la 122**, ver abajo) · **119 hotel_adults_only**
+> (`hoteles.adults_only`) · **120 crm_plan_vigencia** (`crm_difusion_plan.vigencia_hasta`) ·
+> **121 hotel_pet_friendly** (`hoteles.pet_friendly/pet_costo_neto/pet_costo_desc/pet_nota`) ·
+> **122 tarifa_infante** (*pendiente de correr*) — agrega `'infante'` al enum
+> `acomodacion_tipo` (mismo patrón que `'nino2'` en la migración 020) +
+> `tarifa_hotel.neto_infante/nota_infante`, con backfill desde los campos planos
+> de la 118 (no los borra, solo deja de usarlos la app). Detalle de cada una en
+> "Novedades recientes" más arriba y en "Motor de cálculo" (118 ya no se usa/121/122).
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·

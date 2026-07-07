@@ -81,8 +81,6 @@ export type ComputoReserva = {
   serviciosItems: { nombre: string; precio: number }[];
   impuestoTotal: number;
   monedaReserva: string;
-  cargoInfante: { total: number; descripcion: string | null } | null; // cargo obligatorio (ej. alimentación), ya incluido en precioVenta
-  notaInfante: string | null;  // anotación informativa (ej. "comparte cama con los padres")
   notaNino: string | null;     // anotación informativa (ej. "debe pagar seguro hotelero obligatorio")
   cargoMascota: { total: number; descripcion: string | null } | null; // cargo de mascota (0 = gratis), ya incluido en precioVenta
   notaMascota: string | null;  // anotación informativa (ej. "máximo 1 mascota por habitación")
@@ -105,12 +103,10 @@ export async function computarReserva(
   const numMascotas = Math.max(0, Math.trunc(Number(input.mascotas) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   let monedaReserva = "COP";  // moneda del paquete (USD si los hoteles son internacionales)
-  // Cargo obligatorio de infante (ej. alimentación) + notas especiales de
-  // niño/infante del hotel — se leen junto con el resto de datos del hotel en
-  // cada rama y se aplican después, una sola vez (ver más abajo).
-  let infanteCargoNeto = 0;
-  let infanteCargoDesc: string | null = null;
-  let infanteNotaTxt: string | null = null;
+  // Nota especial de niño del hotel — se lee junto con el resto de datos del
+  // hotel en cada rama. La tarifa/nota de INFANTE ya no vive aquí: vive en
+  // tarifa_hotel (neto_infante/nota_infante), igual que niño 1/niño 2 — ver
+  // el manejo de pvpPorAcom["infante"] más abajo.
   let ninoNotaTxt: string | null = null;
   let petCostoNeto = 0;
   let petCostoDesc: string | null = null;
@@ -164,14 +160,15 @@ export async function computarReserva(
     }
     if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
     if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
+    // Infante: igual que niño (0 = gratis), pero no ocupa silla/habitación.
+    // Si el hotel no configuró tarifa de infante para este combo, pvpPorAcom["infante"]
+    // simplemente no existe → gratis, sin bloquear la reserva (a diferencia de niño).
+    if (numInfantes > 0 && pvpPorAcom["infante"] != null) { precioVenta += numInfantes * pvpPorAcom["infante"]; }
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
     const { data: hotelRowF } = await sb
-      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max, moneda, infante_cargo_neto, infante_cargo_desc, infante_nota, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota").eq("id", input.hotelId).maybeSingle();
+      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max, moneda, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota").eq("id", input.hotelId).maybeSingle();
     monedaReserva = ((hotelRowF as { moneda?: string | null } | null)?.moneda) ?? "COP";
-    infanteCargoNeto = Number(hotelRowF?.infante_cargo_neto) || 0;
-    infanteCargoDesc = hotelRowF?.infante_cargo_desc ?? null;
-    infanteNotaTxt = hotelRowF?.infante_nota ?? null;
     ninoNotaTxt = hotelRowF?.nino_nota ?? null;
     petCostoNeto = Number(hotelRowF?.pet_costo_neto) || 0;
     petCostoDesc = hotelRowF?.pet_costo_desc ?? null;
@@ -230,6 +227,7 @@ export async function computarReserva(
     }
     if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
     if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
+    if (numInfantes > 0 && pvpPorAcom["infante"] != null) { precioVenta += numInfantes * pvpPorAcom["infante"]; }
 
     if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
@@ -244,12 +242,12 @@ export async function computarReserva(
       const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
       const [{ data: temps }, { data: tarRows }] = await Promise.all([
         admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches").eq("hotel_id", input.hotelId),
-        admin.from("tarifa_hotel").select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
+        admin.from("tarifa_hotel").select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
       ]);
-      type TarRow = { temporada: string | null; neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null };
+      type TarRow = { temporada: string | null; neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null };
       const rows = (tarRows ?? []) as TarRow[];
       const temporadas = (temps ?? []).map(toTemporadaRango);
-      const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2" };
+      const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante" };
       const netoDe = (acom: string): number | null => {
         const col = colDe[acom]; if (!col) return null;
         const netoPorTemporada: Record<string, number | null> = {};
@@ -264,16 +262,17 @@ export async function computarReserva(
       }
       if (numNinos > 0) { const per = netoDe("nino"); if (per == null) return { ok: false, error: TARIFA_VENCIDA }; netoPorAcom["nino"] = per; }
       if (numNinos2 > 0) { const per = netoDe("nino2"); if (per == null) return { ok: false, error: TARIFA_VENCIDA }; netoPorAcom["nino2"] = per; }
+      // Infante: a diferencia de niño, si no está configurado NO bloquea la
+      // reserva (queda gratis) — evita romper reservas de hoteles que todavía
+      // no han cargado su tarifa de infante en tarifa_hotel.
+      if (numInfantes > 0) { netoPorAcom["infante"] = netoDe("infante") ?? 0; }
     }
 
     const { data: hotelRow } = await sb
       .from("hoteles")
-      .select("edad_infante_max, edad_nino_max, pax_min, pax_max, infante_cargo_neto, infante_cargo_desc, infante_nota, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota")
+      .select("edad_infante_max, edad_nino_max, pax_min, pax_max, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota")
       .eq("id", input.hotelId)
       .maybeSingle();
-    infanteCargoNeto = Number(hotelRow?.infante_cargo_neto) || 0;
-    infanteCargoDesc = hotelRow?.infante_cargo_desc ?? null;
-    infanteNotaTxt = hotelRow?.infante_nota ?? null;
     ninoNotaTxt = hotelRow?.nino_nota ?? null;
     petCostoNeto = Number(hotelRow?.pet_costo_neto) || 0;
     petCostoDesc = hotelRow?.pet_costo_desc ?? null;
@@ -309,20 +308,6 @@ export async function computarReserva(
       .limit(1)
       .maybeSingle();
     meta = { hotel_nombre: m?.paquete_nombre ?? "Servicios", destino_nombre: m?.destino_nombre ?? null, fecha_ida: null, fecha_regreso: null };
-  }
-
-  // Cargo OBLIGATORIO de infante (ej. alimentación no incluida aunque no pague
-  // habitación): costo neto configurado por hotel × noches × infantes, con el
-  // mismo markup del paquete. Se aplica una sola vez, tras resolver `meta`
-  // (fecha_ida/fecha_regreso), sea cual sea la rama que se haya tomado arriba.
-  let cargoInfante: { total: number; descripcion: string | null } | null = null;
-  if (!esServicios && numInfantes > 0 && infanteCargoNeto > 0 && meta.fecha_ida && meta.fecha_regreso) {
-    const nochesInfante = noches(meta.fecha_ida, meta.fecha_regreso) || 1;
-    const totalInfante = Math.round(numInfantes * nochesInfante * marcar(infanteCargoNeto, pctMk));
-    if (totalInfante > 0) {
-      precioVenta += totalInfante;
-      cargoInfante = { total: totalInfante, descripcion: infanteCargoDesc };
-    }
   }
 
   // Cargo de mascota (pet friendly), igual mecánica que el de infante: costo
@@ -443,6 +428,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoInfante, notaInfante: infanteNotaTxt, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
+    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
   };
 }

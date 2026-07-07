@@ -1633,14 +1633,14 @@ export type Database = {
           id: number; hotel_id: number; tipo_habitacion: string | null; alimentacion: string | null;
           temporada: string | null; neto_sencilla: number | null; neto_doble: number | null;
           neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null;
-          neto_nino2: number | null;
+          neto_nino2: number | null; neto_infante: number | null; nota_infante: string | null;
           notas: string | null; created_at: string;
         };
         Insert: {
           id?: number; hotel_id: number; tipo_habitacion?: string | null; alimentacion?: string | null;
           temporada?: string | null; neto_sencilla?: number | null; neto_doble?: number | null;
           neto_triple?: number | null; neto_multiple?: number | null; neto_nino?: number | null;
-          neto_nino2?: number | null;
+          neto_nino2?: number | null; neto_infante?: number | null; nota_infante?: string | null;
           notas?: string | null; created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
@@ -2410,7 +2410,8 @@ export type Database = {
         | "triple"
         | "multiple"
         | "nino"
-        | "nino2";
+        | "nino2"
+        | "infante";
       temporada_tipo: "ALTA" | "MEDIA" | "BAJA";
       paquete_categoria: "bloqueo" | "porcion_terrestre";
       liquidacion_tipo: "dia" | "noche" | "paquete";

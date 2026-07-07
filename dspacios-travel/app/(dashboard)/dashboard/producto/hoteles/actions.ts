@@ -117,9 +117,6 @@ export async function actualizarHotelConfig(
     ubicacion?: string;
     videoUrl?: string;
     moneda?: string;
-    infanteCargoNeto?: number;
-    infanteCargoDesc?: string;
-    infanteNota?: string;
     ninoNota?: string;
     adultsOnly?: boolean;
     petFriendly?: boolean;
@@ -148,9 +145,6 @@ export async function actualizarHotelConfig(
       descripcion: oNull(input.descripcion ?? ""),
       ubicacion: oNull(input.ubicacion ?? ""),
       video_url: oNull(input.videoUrl ?? ""),
-      infante_cargo_neto: Math.max(0, Number(input.infanteCargoNeto) || 0),
-      infante_cargo_desc: oNull(input.infanteCargoDesc ?? ""),
-      infante_nota: oNull(input.infanteNota ?? ""),
       nino_nota: oNull(input.ninoNota ?? ""),
       adults_only: !!input.adultsOnly,
       pet_friendly: !!input.petFriendly,
@@ -368,6 +362,8 @@ export async function crearTarifa(input: {
   netoMultiple: number | null;
   netoNino: number | null;
   netoNino2: number | null;
+  netoInfante?: number | null;
+  notaInfante?: string | null;
 }): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("tarifa_hotel").insert({
@@ -381,6 +377,8 @@ export async function crearTarifa(input: {
     neto_multiple: input.netoMultiple,
     neto_nino: input.netoNino,
     neto_nino2: input.netoNino2,
+    neto_infante: input.netoInfante ?? null,
+    nota_infante: oNull(input.notaInfante ?? ""),
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
@@ -401,6 +399,8 @@ export async function actualizarTarifa(
     netoMultiple: number | null;
     netoNino: number | null;
     netoNino2: number | null;
+    netoInfante?: number | null;
+    notaInfante?: string | null;
   }
 ): Promise<Result> {
   const sb = await createClient();
@@ -416,6 +416,8 @@ export async function actualizarTarifa(
       neto_multiple: input.netoMultiple,
       neto_nino: input.netoNino,
       neto_nino2: input.netoNino2,
+      neto_infante: input.netoInfante ?? null,
+      nota_infante: oNull(input.notaInfante ?? ""),
     })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
@@ -519,6 +521,8 @@ export async function cargarTarifasMasivo(rows: Record<string, string>[]): Promi
       neto_multiple: numCsvN(r.neto_multiple),
       neto_nino: numCsvN(r.neto_nino),
       neto_nino2: numCsvN(r.neto_nino2),
+      neto_infante: numCsvN(r.neto_infante),
+      nota_infante: oNull(r.nota_infante || ""),
     });
     if (error) { errores.push(`Fila ${linea} (${r.hotel}): ${error.message}`); continue; }
     insertados++;
