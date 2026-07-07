@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { PaginaConSecciones } from "../tipos";
 import { actualizarPagina, type WebPaginaInput } from "../actions";
+import { SubirArchivo } from "./SubirArchivo";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const ta = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -85,8 +86,13 @@ export function PaginaEditor({
             </select>
           </div>
           <div className="md:col-span-2">
-            <label className={lbl}>Imagen de portada (URL)</label>
-            <Input value={form.imagen_portada} onChange={(e) => set("imagen_portada", e.target.value)} placeholder="https://…" />
+            <label className={lbl}>Imagen de portada</label>
+            <SubirArchivo
+              value={form.imagen_portada}
+              onChange={(url) => set("imagen_portada", url)}
+              carpeta="img"
+              accept="image/*"
+            />
           </div>
           <div>
             <label className={lbl}>SEO — título</label>

@@ -1,8 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link2 } from "lucide-react";
 import { useEdicion } from "./EdicionContext";
+import { subirArchivoWeb } from "@/app/cms/upload";
 
 // Texto editable IN-SITU. Fuera del CMS (sin provider) renderiza `children` tal
 // cual (el sitio público no cambia). Dentro del CMS se vuelve contentEditable y
@@ -61,27 +62,76 @@ export function EditableImage({
   const editable = !!ctx?.editable;
   const valor = editable ? String(ctx.datos?.[campo] ?? "") : "";
   const src = editable ? valor || fallback : fallback;
+  // Si la URL de la imagen falla (borrada, mal pegada), el navegador muestra
+  // el ícono roto + el `alt` como texto plano sin estilo — feo y sin contraste
+  // sobre fondos de color. Mejor no mostrar nada (el contenedor/gradiente de
+  // la sección queda como fondo).
+  const [error, setError] = useState(false);
+  useEffect(() => setError(false), [src]);
 
   if (!editable) {
-    return <img src={src} alt={alt} className={className} />;
+    if (!src || error) return null;
+    return <img src={src} alt={alt} className={className} onError={() => setError(true)} />;
   }
 
-  const cambiar = () => {
+  const fileRef = useRef(null);
+  const [subiendo, setSubiendo] = useState(false);
+
+  const elegirArchivo = () => fileRef.current?.click();
+
+  const onFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setSubiendo(true);
+    const fd = new FormData();
+    fd.set("file", file);
+    fd.set("carpeta", "img");
+    const r = await subirArchivoWeb(fd);
+    setSubiendo(false);
+    if (r.ok) ctx.set(campo, r.url);
+    else window.alert(r.error || "No se pudo subir la imagen.");
+  };
+
+  const pegarUrl = (e) => {
+    e.stopPropagation();
     const url = window.prompt("Pega la URL de la imagen:", String(ctx.datos?.[campo] ?? ""));
     if (url != null) ctx.set(campo, url.trim());
   };
 
   return (
     <>
-      <img src={src} alt={alt} className={className} />
-      <button
-        type="button"
+      {src && !error ? (
+        <img src={src} alt={alt} className={className} onError={() => setError(true)} />
+      ) : null}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        onChange={onFile}
+        className="hidden"
         data-cms-tb=""
-        onClick={cambiar}
-        className="absolute left-3 top-3 z-30 inline-flex items-center gap-1 rounded-lg bg-black/60 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-black/80"
-      >
-        Cambiar imagen
-      </button>
+      />
+      <div data-cms-tb="" className="absolute left-3 top-3 z-30 flex items-center gap-1">
+        <button
+          type="button"
+          data-cms-tb=""
+          onClick={elegirArchivo}
+          disabled={subiendo}
+          className="inline-flex items-center gap-1 rounded-lg bg-black/60 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-black/80 disabled:opacity-60"
+        >
+          {subiendo ? "Subiendo…" : "Cambiar imagen"}
+        </button>
+        <button
+          type="button"
+          data-cms-tb=""
+          onClick={pegarUrl}
+          title="Pegar una URL en vez de subir un archivo"
+          className="inline-flex items-center gap-1 rounded-lg bg-black/60 px-2 py-1.5 text-xs font-semibold text-white shadow hover:bg-black/80"
+        >
+          <Link2 size={13} />
+        </button>
+      </div>
     </>
   );
 }
