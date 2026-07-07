@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link2 } from "lucide-react";
 import { useEdicion } from "./EdicionContext";
 
@@ -61,9 +61,16 @@ export function EditableImage({
   const editable = !!ctx?.editable;
   const valor = editable ? String(ctx.datos?.[campo] ?? "") : "";
   const src = editable ? valor || fallback : fallback;
+  // Si la URL de la imagen falla (borrada, mal pegada), el navegador muestra
+  // el ícono roto + el `alt` como texto plano sin estilo — feo y sin contraste
+  // sobre fondos de color. Mejor no mostrar nada (el contenedor/gradiente de
+  // la sección queda como fondo).
+  const [error, setError] = useState(false);
+  useEffect(() => setError(false), [src]);
 
   if (!editable) {
-    return <img src={src} alt={alt} className={className} />;
+    if (!src || error) return null;
+    return <img src={src} alt={alt} className={className} onError={() => setError(true)} />;
   }
 
   const cambiar = () => {
@@ -73,7 +80,9 @@ export function EditableImage({
 
   return (
     <>
-      <img src={src} alt={alt} className={className} />
+      {src && !error ? (
+        <img src={src} alt={alt} className={className} onError={() => setError(true)} />
+      ) : null}
       <button
         type="button"
         data-cms-tb=""
