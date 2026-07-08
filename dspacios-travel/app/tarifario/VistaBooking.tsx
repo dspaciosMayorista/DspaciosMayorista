@@ -109,8 +109,11 @@ function sumarDias(fecha: string, n: number): string {
 const CICLO_NOCHES = 3;
 
 function minRoomPvp(filas: FilaTarifario[]): number | null {
+  // Solo acomodaciones de adulto (sencilla/doble/triple/multiple) — nino/nino2/
+  // infante quedan afuera del "desde" (si no, la tarifa de infante, casi
+  // siempre la más baja de todas, terminaba mostrándose como el precio).
   const precios = filas
-    .filter((f) => f.acomodacion && f.acomodacion !== "nino" && f.acomodacion !== "nino2" && f.precio_pvp > 0)
+    .filter((f) => ACOM_ROOMS.includes(f.acomodacion as AcomRoom) && f.precio_pvp > 0)
     .map((f) => f.precio_pvp);
   return precios.length ? Math.min(...precios) : null;
 }
