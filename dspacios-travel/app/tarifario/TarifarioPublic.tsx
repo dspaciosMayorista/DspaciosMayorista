@@ -627,8 +627,8 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
                     </td>
                     {cols.map(([k]) => {
                       // En habitaciones, 0 = no aplica (no gratis) → "—". En niños
-                      // (nino/nino2) el 0 es válido (gratis) y sí se muestra.
-                      const esRoom = k !== "nino" && k !== "nino2";
+                      // (nino/nino2) e infante el 0 es válido (gratis) y sí se muestra.
+                      const esRoom = k !== "nino" && k !== "nino2" && k !== "infante";
                       const v = r.precios[k];
                       const mostrar = v != null && (!esRoom || v > 0);
                       return (
