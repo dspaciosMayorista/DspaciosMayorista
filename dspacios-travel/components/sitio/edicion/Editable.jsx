@@ -84,13 +84,18 @@ export function EditableImage({
     e.target.value = "";
     if (!file) return;
     setSubiendo(true);
-    const fd = new FormData();
-    fd.set("file", file);
-    fd.set("carpeta", "img");
-    const r = await subirArchivoWeb(fd);
-    setSubiendo(false);
-    if (r.ok) ctx.set(campo, r.url);
-    else window.alert(r.error || "No se pudo subir la imagen.");
+    try {
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("carpeta", "img");
+      const r = await subirArchivoWeb(fd);
+      if (r.ok) ctx.set(campo, r.url);
+      else window.alert(r.error || "No se pudo subir la imagen.");
+    } catch {
+      window.alert("No se pudo subir la imagen (archivo muy pesado o falla de conexión). Intenta con un archivo más liviano.");
+    } finally {
+      setSubiendo(false);
+    }
   };
 
   const pegarUrl = (e) => {

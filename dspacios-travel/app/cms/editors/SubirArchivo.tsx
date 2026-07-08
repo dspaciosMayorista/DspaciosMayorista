@@ -32,10 +32,15 @@ export function SubirArchivo({
     fd.set("file", file);
     fd.set("carpeta", carpeta);
     start(async () => {
-      const r = await subirArchivoWeb(fd);
-      if (r.ok) onChange(r.url);
-      else setErr(r.error);
-      if (ref.current) ref.current.value = "";
+      try {
+        const r = await subirArchivoWeb(fd);
+        if (r.ok) onChange(r.url);
+        else setErr(r.error);
+      } catch {
+        setErr("No se pudo subir el archivo (muy pesado o falla de conexión).");
+      } finally {
+        if (ref.current) ref.current.value = "";
+      }
     });
   }
 
