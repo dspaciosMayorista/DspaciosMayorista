@@ -32,6 +32,16 @@ export async function eliminarLineaExtracto(id: number): Promise<Result> {
   return { ok: true };
 }
 
+// Borra en bloque (ej. un lote importado por error). Solo líneas no cruzadas.
+export async function eliminarLineasExtracto(ids: number[]): Promise<Result> {
+  if (!ids.length) return { ok: false, error: "Nada para borrar." };
+  const sb = await createClient();
+  const { error } = await sb.from("conciliacion_extracto").delete().in("id", ids).is("conciliacion_id", null);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/contabilidad/conciliaciones");
+  return { ok: true };
+}
+
 // Cruce MANUAL: N líneas de extracto contra M ítems del sistema. Las sumas
 // (en valor absoluto) deben coincidir.
 export async function cruzar(input: {

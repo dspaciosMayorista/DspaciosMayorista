@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Trash2, Link2, Undo2 } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
-import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto } from "./actions";
+import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto } from "./actions";
 
 export type ExtractoItem = { id: number; fecha: string; descripcion: string; valor: number; periodo: string };
 export type SistemaItem = { ref: string; tipo: string; descripcion: string; fecha: string | null; valor: number };
@@ -45,6 +45,27 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
 
   function toggleExt(id: number) { setSelExt((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
   function toggleSis(ref: string) { setSelSis((p) => { const n = new Set(p); n.has(ref) ? n.delete(ref) : n.add(ref); return n; }); }
+
+  const todoExtVisibleSel = extVis.length > 0 && extVis.every((e) => selExt.has(e.id));
+  function toggleTodoExtVisible() {
+    setSelExt((p) => {
+      const n = new Set(p);
+      if (todoExtVisibleSel) extVis.forEach((e) => n.delete(e.id));
+      else extVis.forEach((e) => n.add(e.id));
+      return n;
+    });
+  }
+  function eliminarSeleccionadasExt() {
+    const ids = extVis.filter((e) => selExt.has(e.id)).map((e) => e.id);
+    if (!ids.length) return;
+    if (!window.confirm(`¿Eliminar ${ids.length} línea(s) del extracto? Esto no se puede deshacer.`)) return;
+    start(async () => {
+      const r = await eliminarLineasExtracto(ids);
+      if (!r.ok) { setError(r.error); return; }
+      setSelExt((p) => { const n = new Set(p); ids.forEach((id) => n.delete(id)); return n; });
+      router.refresh();
+    });
+  }
 
   function hacerCruce() {
     setError(null);
@@ -96,6 +117,18 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
       {/* Dos columnas */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Columna titulo={`Extracto del banco (${extVis.length})`}>
+          {extVis.length > 0 && (
+            <div className="mb-1 flex items-center justify-between gap-2 px-1 py-1 text-xs">
+              <button onClick={toggleTodoExtVisible} className="text-gray-500 hover:underline">
+                {todoExtVisibleSel ? "Deseleccionar todo" : "Seleccionar todo (visible)"}
+              </button>
+              {selExt.size > 0 && (
+                <button onClick={eliminarSeleccionadasExt} disabled={pending} className="inline-flex items-center gap-1 font-medium text-red-500 hover:underline disabled:opacity-50">
+                  <Trash2 size={12} /> Eliminar seleccionadas ({[...selExt].filter((id) => extVis.some((e) => e.id === id)).length})
+                </button>
+              )}
+            </div>
+          )}
           {extVis.length === 0 ? <Vacio>Sin líneas. Importa el extracto arriba.</Vacio> : extVis.map((e) => (
             <ItemFila key={e.id} sel={selExt.has(e.id)} onClick={() => toggleExt(e.id)} fecha={e.fecha} desc={e.descripcion} valor={e.valor}
               onDel={() => start(async () => { await eliminarLineaExtracto(e.id); router.refresh(); })} />
