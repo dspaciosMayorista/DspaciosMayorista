@@ -24,6 +24,7 @@ export type PagoRow = {
   iva_proveedor: number | null;
   pagos: { n: number; valor: number; fecha: string | null; trm: number | null }[];
   pagado: number;
+  retenido: number;
   saldo: number;
 };
 
@@ -294,16 +295,31 @@ function EstadoCuentaProveedor({ row, catalogo, ivaPct }: { row: PagoRow; catalo
                   {formatMoneda(row.valor_total, row.moneda)}
                 </td>
               </tr>
-              {row.aplica_retencion && (
+              {row.retenido > 0 ? (
                 <tr className="border-b border-gray-50">
                   <td className="px-3 py-2 text-gray-500">
-                    Retención ({((row.pct_retencion ?? 0) * 100).toFixed(2)}%)
+                    Retención practicada
+                    <Link href="/dashboard/contabilidad/retenciones" className="ml-2 text-xs font-medium text-[#1D7C9A] hover:underline">
+                      ver detalle →
+                    </Link>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-gray-500">
+                    {formatMoneda(row.retenido, row.moneda)}
+                  </td>
+                </tr>
+              ) : row.aplica_retencion ? (
+                <tr className="border-b border-gray-50">
+                  <td className="px-3 py-2 text-gray-400">
+                    Retención estimada ({((row.pct_retencion ?? 0) * 100).toFixed(2)}%) — sin registrar aún
+                    <Link href="/dashboard/contabilidad/retenciones" className="ml-2 text-xs font-medium text-[#1D7C9A] hover:underline">
+                      registrar →
+                    </Link>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-gray-400">
                     {formatMoneda(row.valor_total * (row.pct_retencion ?? 0), row.moneda)}
                   </td>
                 </tr>
-              )}
+              ) : null}
               {row.pagos.length === 0 ? (
                 <tr className="border-b border-gray-50">
                   <td className="px-3 py-2 text-gray-400" colSpan={2}>

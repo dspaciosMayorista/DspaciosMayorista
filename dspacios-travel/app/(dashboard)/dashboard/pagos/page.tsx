@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
+import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 import { PagosList, type PagoRow } from "./PagosList";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,14 @@ export default async function PagosPage() {
     .eq("tenant", tenant)
     .order("fecha_vencimiento", { ascending: true, nullsFirst: false });
 
+  const cxpIds = (cxp ?? []).map((c) => c.id);
+  const { data: retenciones } = cxpIds.length
+    ? await sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", cxpIds)
+    : { data: [] };
+  const retenidoPorCuenta = sumarRetencionesPorCuenta(
+    (retenciones ?? []).map((r) => ({ cuenta_por_pagar_id: r.cuenta_por_pagar_id as number, valor: Number(r.valor) || 0 }))
+  );
+
   const rows: PagoRow[] = (cxp ?? []).map((c) => {
     const pagos = [
       { n: 1, valor: c.abono1 ?? 0, fecha: c.fecha_abono1 as string | null, trm: c.trm1 as number | null },
@@ -42,6 +51,7 @@ export default async function PagosPage() {
       { n: 3, valor: c.abono3 ?? 0, fecha: c.fecha_abono3 as string | null, trm: c.trm3 as number | null },
     ].filter((p) => p.valor > 0);
     const pagado = pagos.reduce((s, p) => s + p.valor, 0);
+    const retenido = retenidoPorCuenta[c.id] ?? 0;
     const valorTotal = c.valor_total ?? 0;
     return {
       id: c.id,
@@ -60,7 +70,8 @@ export default async function PagosPage() {
       iva_proveedor: c.iva_proveedor as number | null,
       pagos,
       pagado,
-      saldo: Math.max(valorTotal - pagado, 0),
+      retenido,
+      saldo: Math.max(valorTotal - pagado - retenido, 0),
     };
   });
 

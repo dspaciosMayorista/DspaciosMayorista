@@ -664,6 +664,30 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["cuentas_por_pagar"]["Insert"]>;
         Relationships: [];
       };
+      retenciones_cxp: {
+        Row: {
+          id: number;
+          cuenta_por_pagar_id: number;
+          valor: number;
+          fecha_practica: string;
+          mes_declaracion: string;
+          observaciones: string | null;
+          tenant: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          cuenta_por_pagar_id: number;
+          valor: number;
+          fecha_practica: string;
+          mes_declaracion: string;
+          observaciones?: string | null;
+          tenant?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["retenciones_cxp"]["Insert"]>;
+        Relationships: [];
+      };
       aliados_b2b: {
         Row: {
           id: number;

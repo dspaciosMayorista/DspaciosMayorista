@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
+import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 import { ConciliacionesClient, type ExtractoItem, type SistemaItem, type Cruce } from "./ConciliacionesClient";
 
 export const dynamic = "force-dynamic";
@@ -24,20 +25,33 @@ export default async function ConciliacionesPage() {
     sb.from("conciliacion").select("*").eq("tenant", tenant).order("created_at", { ascending: false }),
     sb.from("conciliacion_sistema").select("*"),
     sb.from("abonos").select("id, numero_contrato, fecha_abono, valor_abono, monto_cop").eq("tenant", tenant),
-    sb.from("cuentas_por_pagar").select("id, proveedor, numero_contrato, abono1, fecha_abono1, trm1, abono2, fecha_abono2, trm2, abono3, fecha_abono3, trm3").eq("tenant", tenant),
+    sb.from("cuentas_por_pagar").select("id, proveedor, tipo_proveedor, servicio, numero_contrato, valor_total, moneda, fecha_obligacion, fecha_vencimiento, abono1, fecha_abono1, trm1, abono2, fecha_abono2, trm2, abono3, fecha_abono3, trm3").eq("tenant", tenant),
     sb.from("contabilidad_movimientos").select("id, fecha, tipo, concepto, valor").eq("tenant", tenant),
   ]);
 
   const usados = new Set((concSis ?? []).map((s) => s.ref as string));
 
-  // Ítems del sistema (no conciliados): abonos de cartera, pagos a proveedores, movimientos.
+  // Retenciones ya practicadas por cuenta (se descuentan del saldo pendiente
+  // del proveedor, igual que en dashboard/pagos).
+  const cxpIds = (cxp ?? []).map((c) => c.id);
+  const { data: retenciones } = cxpIds.length
+    ? await sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", cxpIds)
+    : { data: [] };
+  const retenidoPorCuenta = sumarRetencionesPorCuenta(
+    (retenciones ?? []).map((r) => ({ cuenta_por_pagar_id: r.cuenta_por_pagar_id as number, valor: Number(r.valor) || 0 }))
+  );
+
+  // Ítems del sistema (no conciliados): abonos de cartera (+), pagos a
+  // proveedores y movimientos de egreso (−), y saldos pendientes de
+  // proveedor sugeridos (−) — para el caso de pagos hechos pero nunca
+  // registrados: al cruzarlos se auto-registra el pago real (ver cruzar()).
   const sistema: SistemaItem[] = [];
   for (const a of abonos ?? []) {
     const ref = `abono:${a.id}`;
     if (usados.has(ref)) continue;
     const cop = Number(a.monto_cop) || Number(a.valor_abono) || 0;
     if (cop <= 0) continue;
-    sistema.push({ ref, tipo: "Abono cartera", descripcion: `Abono ${a.numero_contrato}`, fecha: (a.fecha_abono as string) ?? null, valor: cop, numeroContrato: (a.numero_contrato as string) ?? null });
+    sistema.push({ ref, tipo: "Abono cartera", descripcion: `Abono ${a.numero_contrato}`, fecha: (a.fecha_abono as string) ?? null, valor: cop, numeroContrato: (a.numero_contrato as string) ?? null, categoria: "cartera" });
   }
   for (const c of cxp ?? []) {
     for (const n of [1, 2, 3] as const) {
@@ -47,13 +61,34 @@ export default async function ConciliacionesPage() {
       if (usados.has(ref)) continue;
       const trm = Number((c as Record<string, unknown>)[`trm${n}`]) || 1;
       const fecha = ((c as Record<string, unknown>)[`fecha_abono${n}`] as string) ?? null;
-      sistema.push({ ref, tipo: "Pago proveedor", descripcion: `Pago ${c.proveedor ?? c.numero_contrato}`, fecha, valor: val * trm, numeroContrato: (c.numero_contrato as string) ?? null });
+      sistema.push({ ref, tipo: "Pago proveedor", descripcion: `Pago ${c.proveedor ?? c.numero_contrato}`, fecha, valor: -(val * trm), numeroContrato: (c.numero_contrato as string) ?? null, categoria: "proveedor" });
     }
   }
   for (const m of movs ?? []) {
     const ref = `movimiento:${m.id}`;
     if (usados.has(ref)) continue;
-    sistema.push({ ref, tipo: (m.tipo as string) === "ingreso" ? "Ingreso" : "Egreso", descripcion: m.concepto, fecha: (m.fecha as string) ?? null, valor: Number(m.valor) || 0, numeroContrato: null });
+    const esIngreso = (m.tipo as string) === "ingreso";
+    const valorAbs = Math.abs(Number(m.valor) || 0);
+    sistema.push({ ref, tipo: esIngreso ? "Ingreso" : "Egreso", descripcion: m.concepto, fecha: (m.fecha as string) ?? null, valor: esIngreso ? valorAbs : -valorAbs, numeroContrato: null, categoria: esIngreso ? "cartera" : "proveedor" });
+  }
+  // Saldos pendientes de proveedor (sugeridos, no ligados a un pago ya
+  // registrado) — no se filtran por `usados`: su presencia depende del saldo
+  // actual (>0), que ya baja solo al registrarse un pago real.
+  for (const c of cxp ?? []) {
+    const pagado = (Number(c.abono1) || 0) + (Number(c.abono2) || 0) + (Number(c.abono3) || 0);
+    const retenido = retenidoPorCuenta[c.id] ?? 0;
+    const valorTotal = Number(c.valor_total) || 0;
+    const saldo = Math.max(valorTotal - pagado - retenido, 0);
+    if (saldo <= 0) continue;
+    sistema.push({
+      ref: `saldo-cxp:${c.id}`,
+      tipo: "Saldo pendiente proveedor",
+      descripcion: `${c.proveedor ?? c.tipo_proveedor ?? "Proveedor"}${c.servicio ? ` · ${c.servicio}` : ""} (${c.numero_contrato})`,
+      fecha: (c.fecha_vencimiento as string | null) ?? (c.fecha_obligacion as string | null) ?? null,
+      valor: -saldo,
+      numeroContrato: (c.numero_contrato as string) ?? null,
+      categoria: "proveedor",
+    });
   }
 
   const extractoPend: ExtractoItem[] = (extracto ?? []).filter((e) => e.conciliacion_id == null).map((e) => ({
@@ -65,7 +100,8 @@ export default async function ConciliacionesPage() {
   for (const s of concSis ?? []) {
     const k = s.conciliacion_id as number;
     if (!sisPorConc.has(k)) sisPorConc.set(k, []);
-    sisPorConc.get(k)!.push({ ref: s.ref, tipo: "", descripcion: s.descripcion ?? "", fecha: (s.fecha as string) ?? null, valor: Number(s.valor) || 0, numeroContrato: s.numero_contrato ?? null });
+    const valorSis = Number(s.valor) || 0;
+    sisPorConc.get(k)!.push({ ref: s.ref, tipo: "", descripcion: s.descripcion ?? "", fecha: (s.fecha as string) ?? null, valor: valorSis, numeroContrato: s.numero_contrato ?? null, categoria: valorSis < 0 ? "proveedor" : "cartera" });
   }
   const extPorConc = new Map<number, ExtractoItem[]>();
   for (const e of extracto ?? []) {

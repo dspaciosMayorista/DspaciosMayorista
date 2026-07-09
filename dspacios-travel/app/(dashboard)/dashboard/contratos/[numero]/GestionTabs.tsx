@@ -34,6 +34,7 @@ type CxP = {
   abono1: number | null; fecha_abono1: string | null; trm1: number | null;
   abono2: number | null; fecha_abono2: string | null; trm2: number | null;
   abono3: number | null; fecha_abono3: string | null; trm3: number | null;
+  retenido: number;
 };
 type B2B = { id: number; aliado: string | null; precio_venta: number; base_comision: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
 type FacturaItem = { descripcion: string | null; valor: number; gravable: boolean };
@@ -439,7 +440,7 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
   const ivaF = f.iva_proveedor ?? 0;
   const costoF = f.base_gravable ?? (f.valor_total - ivaF);
   const pagado = (f.abono1 ?? 0) + (f.abono2 ?? 0) + (f.abono3 ?? 0);
-  const saldo = Math.max(0, f.valor_total - pagado);
+  const saldo = Math.max(0, f.valor_total - pagado - (f.retenido ?? 0));
   const estaPagada = saldo <= 0 && f.valor_total > 0;
 
   const [proveedor, setProveedor] = useState(f.proveedor ?? "");
