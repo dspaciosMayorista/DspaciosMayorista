@@ -195,7 +195,7 @@ export function RetencionesClient({ contratos }: { contratos: string[] }) {
             </div>
           )}
 
-          <FormRetencion cuenta={cuenta} onDone={refrescarCuenta} />
+          <FormRetencion key={cuenta.id} cuenta={cuenta} onDone={refrescarCuenta} />
         </div>
       )}
     </div>
@@ -211,26 +211,49 @@ function Mini({ label, value, color }: { label: string; value: string; color?: s
   );
 }
 
+// Calculadora de retención: Valor retención = % retención × Base gravable,
+// donde Base gravable = Base (lo que se le va a pagar al proveedor) menos sus
+// propios impuestos (IVA, IPC/otro). Todos los % y la base mínima son
+// gestionables por fila — varían según el proveedor.
 function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () => void }) {
-  const [valor, setValor] = useState("");
+  const [base, setBase] = useState(String(Math.round(cuenta.saldo)));
+  const [ivaPct, setIvaPct] = useState("0");
+  const [ipcPct, setIpcPct] = useState("0");
+  const [pctRetencion, setPctRetencion] = useState(cuenta.pctRetencionSugerido ? String(cuenta.pctRetencionSugerido * 100) : "0");
+  const [baseMinima, setBaseMinima] = useState("0");
   const [fechaPractica, setFechaPractica] = useState(hoy());
   const [mesDeclaracion, setMesDeclaracion] = useState(hoy().slice(0, 7));
   const [observaciones, setObservaciones] = useState("");
   const [error, setError] = useState("");
   const [pending, start] = useTransition();
 
+  const baseNum = Number(base) || 0;
+  const ivaNum = Number(ivaPct) || 0;
+  const ipcNum = Number(ipcPct) || 0;
+  const pctNum = Number(pctRetencion) || 0;
+  const minimaNum = Number(baseMinima) || 0;
+
+  const valorIva = baseNum * (ivaNum / 100);
+  const valorIpc = baseNum * (ipcNum / 100);
+  const baseGravable = Math.max(0, baseNum - valorIva - valorIpc);
+  const aplica = baseGravable >= minimaNum && baseGravable > 0;
+  const valorRetencion = aplica ? Math.round(baseGravable * (pctNum / 100)) : 0;
+  const valorAPagar = baseNum - valorRetencion;
+
   function guardar() {
     setError("");
     start(async () => {
+      const detalle = `Base ${formatMoneda(baseNum, cuenta.moneda)} · IVA ${ivaNum}%: ${formatMoneda(valorIva, cuenta.moneda)} · IPC ${ipcNum}%: ${formatMoneda(valorIpc, cuenta.moneda)} · Base gravable ${formatMoneda(baseGravable, cuenta.moneda)} · Retención ${pctNum}%`;
+      const obs = [observaciones.trim(), detalle].filter(Boolean).join(" — ");
       const r = await registrarRetencion({
         cuentaId: cuenta.id,
-        valor: Number(valor) || 0,
+        valor: valorRetencion,
         fechaPractica,
         mesDeclaracion,
-        observaciones,
+        observaciones: obs,
       });
       if (!r.ok) { setError(r.error); return; }
-      setValor(""); setObservaciones("");
+      setObservaciones("");
       onDone();
     });
   }
@@ -238,13 +261,40 @@ function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () 
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
       <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-gray-600">
-        <Landmark size={13} /> Registrar retención practicada
+        <Landmark size={13} /> Calculadora de retención
       </p>
-      <div className="flex flex-wrap items-end gap-3">
-        <div>
-          <label className="mb-1 block text-xs text-gray-500">Valor ({cuenta.moneda})</label>
-          <Input type="number" min={0} value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" placeholder="0" />
-        </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <Campo label={`Base (${cuenta.moneda})`}>
+          <Input value={base} onChange={(e) => setBase(e.target.value)} inputMode="numeric" />
+        </Campo>
+        <Campo label="% IVA proveedor">
+          <Input value={ivaPct} onChange={(e) => setIvaPct(e.target.value)} inputMode="decimal" />
+        </Campo>
+        <Campo label="% IPC / otro imp.">
+          <Input value={ipcPct} onChange={(e) => setIpcPct(e.target.value)} inputMode="decimal" />
+        </Campo>
+        <Campo label="% Retención">
+          <Input value={pctRetencion} onChange={(e) => setPctRetencion(e.target.value)} inputMode="decimal" />
+        </Campo>
+        <Campo label="Base mínima aplicable">
+          <Input value={baseMinima} onChange={(e) => setBaseMinima(e.target.value)} inputMode="numeric" />
+        </Campo>
+      </div>
+
+      <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white text-sm">
+        <FilaCalc label="Valor base" value={formatMoneda(baseNum, cuenta.moneda)} />
+        <FilaCalc label={`Valor IVA (${ivaNum}%)`} value={formatMoneda(valorIva, cuenta.moneda)} />
+        <FilaCalc label={`Valor IPC / otro (${ipcNum}%)`} value={formatMoneda(valorIpc, cuenta.moneda)} />
+        <FilaCalc label="Base gravable retención" value={formatMoneda(baseGravable, cuenta.moneda)} bold />
+        <FilaCalc label={`Valor retención (${pctNum}%)`} value={formatMoneda(valorRetencion, cuenta.moneda)} bold color="#b45309" />
+        <FilaCalc label="Valor a pagar al proveedor" value={formatMoneda(valorAPagar, cuenta.moneda)} bold color="var(--brand-success)" />
+      </div>
+      {!aplica && baseNum > 0 && (
+        <p className="mt-1 text-xs text-amber-600">La base gravable no alcanza la base mínima — no aplica retención (valor $0).</p>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-end gap-3">
         <div>
           <label className="mb-1 block text-xs text-gray-500">Fecha en que se practicó</label>
           <Input type="date" value={fechaPractica} onChange={(e) => setFechaPractica(e.target.value)} className="w-40" />
@@ -255,13 +305,31 @@ function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () 
         </div>
         <div className="flex-1">
           <label className="mb-1 block text-xs text-gray-500">Observaciones (opcional)</label>
-          <Input value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="ej. retefuente servicios 4%" />
+          <Input value={observaciones} onChange={(e) => setObservaciones(e.target.value)} placeholder="ej. retefuente servicios" />
         </div>
-        <Button onClick={guardar} disabled={pending || !(Number(valor) > 0)} style={{ backgroundColor: "var(--brand-primary)" }}>
+        <Button onClick={guardar} disabled={pending || valorRetencion <= 0} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Registrar"}
         </Button>
       </div>
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function Campo({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-gray-500">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function FilaCalc({ label, value, bold, color }: { label: string; value: string; bold?: boolean; color?: string }) {
+  return (
+    <div className={`flex items-center justify-between border-t border-gray-100 px-3 py-1.5 first:border-t-0 ${bold ? "font-semibold" : ""}`}>
+      <span className="text-gray-500">{label}</span>
+      <span className="tabular-nums" style={{ color: color ?? "#374151" }}>{value}</span>
     </div>
   );
 }
