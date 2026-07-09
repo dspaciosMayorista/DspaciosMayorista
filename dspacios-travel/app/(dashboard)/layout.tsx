@@ -92,6 +92,7 @@ const NAV: NavItem[] = [
     children: [
       { href: "/dashboard/contabilidad/facturacion", label: "Facturación" },
       { href: "/dashboard/contabilidad/movimientos", label: "Movimientos de pagos" },
+      { href: "/dashboard/contabilidad/retenciones", label: "Retenciones a proveedores" },
       { href: "/dashboard/contabilidad/conciliaciones", label: "Conciliaciones bancarias" },
       { href: "/dashboard/contabilidad/estados-financieros", label: "Estados financieros" },
       { href: "/dashboard/contabilidad/agencia", label: "Datos de la agencia" },

@@ -14,6 +14,7 @@ import { type CuotaRow } from "./PlanCobroPanel";
 import { EditarAsesorPasajeros, type PasajeroRow } from "./EditarAsesorPasajeros";
 import { EliminarContrato } from "./EliminarContrato";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
+import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 
 export const dynamic = "force-dynamic";
 
@@ -80,6 +81,16 @@ export default async function ContratoDetallePage({
     }
   }
   const facturasConItems = (facturas ?? []).map((f) => ({ ...f, items: itemsPorFactura[f.id] ?? [] }));
+
+  // Retenciones practicadas por CxP (se descuentan del saldo, igual que un abono).
+  const cxpIds = (cxp ?? []).map((c) => c.id);
+  const { data: retenciones } = cxpIds.length
+    ? await sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", cxpIds)
+    : { data: [] };
+  const retenidoPorCuenta = sumarRetencionesPorCuenta(
+    (retenciones ?? []).map((r) => ({ cuenta_por_pagar_id: r.cuenta_por_pagar_id as number, valor: Number(r.valor) || 0 }))
+  );
+  const cxpConRetencion = (cxp ?? []).map((c) => ({ ...c, retenido: retenidoPorCuenta[c.id] ?? 0 }));
 
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
   const fiscal = fiscalFromParams(paramsRows ?? []);
@@ -217,7 +228,7 @@ export default async function ContratoDetallePage({
         abonos={abonos ?? []}
         cuotas={(cuotas ?? []) as unknown as CuotaRow[]}
         totalPagado={totalPagado}
-        cuentasPorPagar={cxp ?? []}
+        cuentasPorPagar={cxpConRetencion}
         comisionesB2B={b2b ?? []}
         facturas={facturasConItems}
         formasPago={formasPago}
