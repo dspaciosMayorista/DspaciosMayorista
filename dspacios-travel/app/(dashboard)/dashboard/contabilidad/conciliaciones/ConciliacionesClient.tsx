@@ -16,6 +16,17 @@ export type Cruce = { id: number; total: number; nota: string; fecha: string; ex
 const abs = (n: number) => Math.abs(n);
 const TOL = 1;
 
+// El orden siempre compara la fecha ISO completa (YYYY-MM-DD), así que ya
+// tiene en cuenta el año — pero mostrar solo "MM-DD" (sin año) hacía parecer
+// que el orden estaba mal cuando en realidad cruzaba de un año a otro
+// (datos históricos de varios años). Se muestra completa como DD/MM/AA.
+function fechaCorta(fecha: string | null): string {
+  if (!fecha) return "—";
+  const [y, m, d] = fecha.split("-");
+  if (!y || !m || !d) return fecha;
+  return `${d}/${m}/${y.slice(2)}`;
+}
+
 type Orden = { campo: "fecha" | "valor"; dir: "asc" | "desc" };
 const ORDEN_DEFAULT: Orden = { campo: "fecha", dir: "asc" };
 
@@ -438,7 +449,7 @@ function ItemFila({ sel, sugerido, onClick, fecha, desc, valor, contrato, onDel 
         ? { borderColor: "var(--brand-accent)", borderStyle: "dashed", backgroundColor: "rgba(38,187,217,0.06)" }
         : { borderColor: "transparent" }}>
       <input type="checkbox" checked={sel} readOnly className="pointer-events-none" />
-      <span className="w-14 shrink-0 text-xs text-gray-400">{fecha?.slice(5) ?? "—"}</span>
+      <span className="w-16 shrink-0 text-xs text-gray-400">{fechaCorta(fecha)}</span>
       <span className="flex-1 truncate text-gray-700" title={desc}>{desc}</span>
       {contrato && (
         <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500" title={`Contrato ${contrato}`}>{contrato}</span>
