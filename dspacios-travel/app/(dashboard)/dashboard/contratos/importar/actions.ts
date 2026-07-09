@@ -170,11 +170,11 @@ export async function importarHistorico(textoRelacion: string, textoResumen: str
       if (valor <= 0 || ya.has(tipo)) return;
       cxpRows.push({ numero_contrato, proveedor: proveedor?.trim() || SIN_ESPECIFICAR, tipo, servicio, valor, fecha, moneda: r.moneda });
     };
-    add("hotel", r.hotelProveedor, `Hotel ${r.hotel ?? ""}`.trim(), r.costo_hotel);
+    add("hotel", r.hotelProveedor, "Hotel", r.costo_hotel);
     add("aereo", r.aerolinea, `Aéreo ${r.aerolinea ?? ""}`.trim(), r.costo_aereo);
     add("receptivo", r.receptivo, "Traslados", r.costo_receptivo);
-    add("asistencia", null, "Asistencia médica", r.costo_asistencia);
-    add("otro", null, "Tours / otros costos", r.otros_costos);
+    add("asistencia", r.proveedorAsistencia, "Asistencia médica", r.costo_asistencia);
+    add("otro", r.proveedorTours, "Tours / otros costos", r.otros_costos);
   }
 
   let nCxP = 0;
