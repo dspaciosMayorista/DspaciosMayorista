@@ -37,7 +37,7 @@ export default async function ConciliacionesPage() {
     if (usados.has(ref)) continue;
     const cop = Number(a.monto_cop) || Number(a.valor_abono) || 0;
     if (cop <= 0) continue;
-    sistema.push({ ref, tipo: "Abono cartera", descripcion: `Abono ${a.numero_contrato}`, fecha: (a.fecha_abono as string) ?? null, valor: cop });
+    sistema.push({ ref, tipo: "Abono cartera", descripcion: `Abono ${a.numero_contrato}`, fecha: (a.fecha_abono as string) ?? null, valor: cop, numeroContrato: (a.numero_contrato as string) ?? null });
   }
   for (const c of cxp ?? []) {
     for (const n of [1, 2, 3] as const) {
@@ -47,13 +47,13 @@ export default async function ConciliacionesPage() {
       if (usados.has(ref)) continue;
       const trm = Number((c as Record<string, unknown>)[`trm${n}`]) || 1;
       const fecha = ((c as Record<string, unknown>)[`fecha_abono${n}`] as string) ?? null;
-      sistema.push({ ref, tipo: "Pago proveedor", descripcion: `Pago ${c.proveedor ?? c.numero_contrato}`, fecha, valor: val * trm });
+      sistema.push({ ref, tipo: "Pago proveedor", descripcion: `Pago ${c.proveedor ?? c.numero_contrato}`, fecha, valor: val * trm, numeroContrato: (c.numero_contrato as string) ?? null });
     }
   }
   for (const m of movs ?? []) {
     const ref = `movimiento:${m.id}`;
     if (usados.has(ref)) continue;
-    sistema.push({ ref, tipo: (m.tipo as string) === "ingreso" ? "Ingreso" : "Egreso", descripcion: m.concepto, fecha: (m.fecha as string) ?? null, valor: Number(m.valor) || 0 });
+    sistema.push({ ref, tipo: (m.tipo as string) === "ingreso" ? "Ingreso" : "Egreso", descripcion: m.concepto, fecha: (m.fecha as string) ?? null, valor: Number(m.valor) || 0, numeroContrato: null });
   }
 
   const extractoPend: ExtractoItem[] = (extracto ?? []).filter((e) => e.conciliacion_id == null).map((e) => ({
@@ -65,7 +65,7 @@ export default async function ConciliacionesPage() {
   for (const s of concSis ?? []) {
     const k = s.conciliacion_id as number;
     if (!sisPorConc.has(k)) sisPorConc.set(k, []);
-    sisPorConc.get(k)!.push({ ref: s.ref, tipo: "", descripcion: s.descripcion ?? "", fecha: (s.fecha as string) ?? null, valor: Number(s.valor) || 0 });
+    sisPorConc.get(k)!.push({ ref: s.ref, tipo: "", descripcion: s.descripcion ?? "", fecha: (s.fecha as string) ?? null, valor: Number(s.valor) || 0, numeroContrato: s.numero_contrato ?? null });
   }
   const extPorConc = new Map<number, ExtractoItem[]>();
   for (const e of extracto ?? []) {

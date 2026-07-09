@@ -566,10 +566,12 @@ export type Database = {
         Row: {
           id: number; conciliacion_id: number; ref: string;
           descripcion: string | null; fecha: string | null; valor: number; created_at: string;
+          numero_contrato: string | null;
         };
         Insert: {
           id?: number; conciliacion_id: number; ref: string;
           descripcion?: string | null; fecha?: string | null; valor: number; created_at?: string;
+          numero_contrato?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["conciliacion_sistema"]["Insert"]>;
         Relationships: [];

@@ -46,7 +46,7 @@ export async function eliminarLineasExtracto(ids: number[]): Promise<Result> {
 // (en valor absoluto) deben coincidir.
 export async function cruzar(input: {
   extractoIds: number[];
-  sistema: { ref: string; descripcion: string; fecha: string | null; valor: number }[];
+  sistema: { ref: string; descripcion: string; fecha: string | null; valor: number; numeroContrato?: string | null }[];
   nota?: string;
 }): Promise<Result> {
   const sb = await createClient();
@@ -69,7 +69,10 @@ export async function cruzar(input: {
   if (e2) return { ok: false, error: e2.message };
 
   const { error: e3 } = await sb.from("conciliacion_sistema").insert(
-    input.sistema.map((s) => ({ conciliacion_id: conc.id, ref: s.ref, descripcion: s.descripcion || null, fecha: s.fecha, valor: s.valor }))
+    input.sistema.map((s) => ({
+      conciliacion_id: conc.id, ref: s.ref, descripcion: s.descripcion || null, fecha: s.fecha, valor: s.valor,
+      numero_contrato: s.numeroContrato || null,
+    }))
   );
   if (e3) return { ok: false, error: e3.message };
 

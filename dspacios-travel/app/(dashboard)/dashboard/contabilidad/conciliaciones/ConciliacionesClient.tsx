@@ -4,15 +4,36 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Trash2, Link2, Undo2 } from "lucide-react";
+import Link from "next/link";
+import { Trash2, Link2, Undo2, Sparkles } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
 import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto } from "./actions";
 
 export type ExtractoItem = { id: number; fecha: string; descripcion: string; valor: number; periodo: string };
-export type SistemaItem = { ref: string; tipo: string; descripcion: string; fecha: string | null; valor: number };
+export type SistemaItem = { ref: string; tipo: string; descripcion: string; fecha: string | null; valor: number; numeroContrato: string | null };
 export type Cruce = { id: number; total: number; nota: string; fecha: string; extracto: ExtractoItem[]; sistema: SistemaItem[] };
 
 const abs = (n: number) => Math.abs(n);
+const TOL = 1;
+
+// Busca, entre candidatos no seleccionados, un ítem o un par cuya suma (en
+// valor absoluto) cuadre con el objetivo — la "sugerencia" del lado contrario.
+// Acotado a pares (no tríos+) para no explotar en listas grandes.
+function mejorCombo<T>(candidatos: { id: T; valor: number }[], objetivo: number): T[] | null {
+  if (objetivo <= 0 || !candidatos.length) return null;
+  for (const c of candidatos) {
+    if (Math.abs(abs(c.valor) - objetivo) <= TOL) return [c.id];
+  }
+  if (candidatos.length <= 200) {
+    for (let i = 0; i < candidatos.length; i++) {
+      for (let j = i + 1; j < candidatos.length; j++) {
+        const suma = abs(candidatos[i].valor) + abs(candidatos[j].valor);
+        if (Math.abs(suma - objetivo) <= TOL) return [candidatos[i].id, candidatos[j].id];
+      }
+    }
+  }
+  return null;
+}
 
 export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: ExtractoItem[]; sistema: SistemaItem[]; cruces: Cruce[] }) {
   const router = useRouter();
@@ -43,6 +64,26 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   const cuadra = selExt.size > 0 && selSis.size > 0 && abs(totExt - totSis) <= 1;
   const dif = totExt - totSis;
 
+  // Sugerencia automática: si solo hay selección de UN lado, busca en el otro
+  // lado un ítem (o par) cuya suma cuadre con el total ya seleccionado.
+  const sugerenciaExt = useMemo(() => {
+    if (!(selSis.size > 0 && selExt.size === 0)) return null;
+    const candidatos = extVis.filter((e) => !selExt.has(e.id)).map((e) => ({ id: e.id, valor: e.valor }));
+    return mejorCombo(candidatos, totSis);
+  }, [selSis, selExt, extVis, totSis]);
+  const sugerenciaSis = useMemo(() => {
+    if (!(selExt.size > 0 && selSis.size === 0)) return null;
+    const candidatos = sisVis.filter((s) => !selSis.has(s.ref)).map((s) => ({ id: s.ref, valor: s.valor }));
+    return mejorCombo(candidatos, totExt);
+  }, [selExt, selSis, sisVis, totExt]);
+  const sugIdsExt = useMemo(() => new Set(sugerenciaExt ?? []), [sugerenciaExt]);
+  const sugIdsSis = useMemo(() => new Set(sugerenciaSis ?? []), [sugerenciaSis]);
+
+  function usarSugerencia() {
+    if (sugerenciaExt) setSelExt((p) => { const n = new Set(p); sugerenciaExt.forEach((id) => n.add(id)); return n; });
+    if (sugerenciaSis) setSelSis((p) => { const n = new Set(p); sugerenciaSis.forEach((ref) => n.add(ref)); return n; });
+  }
+
   function toggleExt(id: number) { setSelExt((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
   function toggleSis(ref: string) { setSelSis((p) => { const n = new Set(p); n.has(ref) ? n.delete(ref) : n.add(ref); return n; }); }
 
@@ -69,7 +110,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
 
   function hacerCruce() {
     setError(null);
-    const items = sistema.filter((s) => selSis.has(s.ref)).map((s) => ({ ref: s.ref, descripcion: `${s.tipo}: ${s.descripcion}`, fecha: s.fecha, valor: s.valor }));
+    const items = sistema.filter((s) => selSis.has(s.ref)).map((s) => ({ ref: s.ref, descripcion: `${s.tipo}: ${s.descripcion}`, fecha: s.fecha, valor: s.valor, numeroContrato: s.numeroContrato }));
     start(async () => {
       const r = await cruzar({ extractoIds: [...selExt], sistema: items, nota });
       if (!r.ok) { setError(r.error); return; }
@@ -113,6 +154,14 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
       {!cuadra && selExt.size + selSis.size > 0 && (
         <p className="text-xs text-amber-600">Las sumas deben coincidir para cruzar. Puedes seleccionar varios de un lado (ej. una línea de 1.000 contra 700 + 300).</p>
       )}
+      {(sugerenciaExt || sugerenciaSis) && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2 text-sm" style={{ borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }}>
+          <span className="inline-flex items-center gap-1.5" style={{ color: "var(--brand-primary)" }}>
+            <Sparkles size={14} /> Encontramos {(sugerenciaExt ?? sugerenciaSis)!.length === 1 ? "un ítem que" : "una combinación que"} cuadra con el total seleccionado.
+          </span>
+          <button onClick={usarSugerencia} className="font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Usar sugerencia</button>
+        </div>
+      )}
 
       {/* Dos columnas */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -130,13 +179,13 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
             </div>
           )}
           {extVis.length === 0 ? <Vacio>Sin líneas. Importa el extracto arriba.</Vacio> : extVis.map((e) => (
-            <ItemFila key={e.id} sel={selExt.has(e.id)} onClick={() => toggleExt(e.id)} fecha={e.fecha} desc={e.descripcion} valor={e.valor}
+            <ItemFila key={e.id} sel={selExt.has(e.id)} sugerido={sugIdsExt.has(e.id)} onClick={() => toggleExt(e.id)} fecha={e.fecha} desc={e.descripcion} valor={e.valor}
               onDel={() => start(async () => { await eliminarLineaExtracto(e.id); router.refresh(); })} />
           ))}
         </Columna>
         <Columna titulo={`Movimientos del sistema (${sisVis.length})`}>
           {sisVis.length === 0 ? <Vacio>Sin movimientos sin conciliar en este rango.</Vacio> : sisVis.map((s) => (
-            <ItemFila key={s.ref} sel={selSis.has(s.ref)} onClick={() => toggleSis(s.ref)} fecha={s.fecha} desc={`${s.tipo} · ${s.descripcion}`} valor={s.valor} />
+            <ItemFila key={s.ref} sel={selSis.has(s.ref)} sugerido={sugIdsSis.has(s.ref)} onClick={() => toggleSis(s.ref)} fecha={s.fecha} desc={`${s.tipo} · ${s.descripcion}`} valor={s.valor} contrato={s.numeroContrato} />
           ))}
         </Columna>
       </div>
@@ -159,7 +208,16 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
                 </div>
                 <div className="mt-1 grid grid-cols-1 gap-1 text-xs text-gray-500 sm:grid-cols-2">
                   <div>{c.extracto.map((e) => <div key={e.id}>↤ {e.fecha} {e.descripcion} · {formatCOP(e.valor)}</div>)}</div>
-                  <div>{c.sistema.map((s, i) => <div key={i}>↦ {s.descripcion} · {formatCOP(s.valor)}</div>)}</div>
+                  <div>{c.sistema.map((s, i) => (
+                    <div key={i}>
+                      ↦ {s.descripcion} · {formatCOP(s.valor)}
+                      {s.numeroContrato && (
+                        <Link href={`/dashboard/contratos/${encodeURIComponent(s.numeroContrato)}`} className="ml-1 font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
+                          · {s.numeroContrato}
+                        </Link>
+                      )}
+                    </div>
+                  ))}</div>
                 </div>
               </div>
             ))}
@@ -217,13 +275,23 @@ function Columna({ titulo, children }: { titulo: string; children: React.ReactNo
     </div>
   );
 }
-function ItemFila({ sel, onClick, fecha, desc, valor, onDel }: { sel: boolean; onClick: () => void; fecha: string | null; desc: string; valor: number; onDel?: () => void }) {
+function ItemFila({ sel, sugerido, onClick, fecha, desc, valor, contrato, onDel }: { sel: boolean; sugerido?: boolean; onClick: () => void; fecha: string | null; desc: string; valor: number; contrato?: string | null; onDel?: () => void }) {
   return (
     <div onClick={onClick} className="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors"
-      style={sel ? { borderColor: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.06)" } : { borderColor: "transparent" }}>
+      style={sel
+        ? { borderColor: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.06)" }
+        : sugerido
+        ? { borderColor: "var(--brand-accent)", borderStyle: "dashed", backgroundColor: "rgba(38,187,217,0.06)" }
+        : { borderColor: "transparent" }}>
       <input type="checkbox" checked={sel} readOnly className="pointer-events-none" />
       <span className="w-14 shrink-0 text-xs text-gray-400">{fecha?.slice(5) ?? "—"}</span>
       <span className="flex-1 truncate text-gray-700" title={desc}>{desc}</span>
+      {contrato && (
+        <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-500" title={`Contrato ${contrato}`}>{contrato}</span>
+      )}
+      {sugerido && !sel && (
+        <span className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold" style={{ color: "var(--brand-accent)" }}><Sparkles size={11} /> Sugerido</span>
+      )}
       <span className="shrink-0 tabular-nums font-medium" style={{ color: valor < 0 ? "#C0392B" : "var(--brand-success)" }}>{formatCOP(valor)}</span>
       {onDel && <button onClick={(e) => { e.stopPropagation(); onDel(); }} className="text-gray-300 hover:text-red-500" title="Eliminar línea"><Trash2 size={13} /></button>}
     </div>
