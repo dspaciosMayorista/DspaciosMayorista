@@ -16,19 +16,26 @@ export type Cruce = { id: number; total: number; nota: string; fecha: string; ex
 const abs = (n: number) => Math.abs(n);
 const TOL = 1;
 
-// Busca, entre candidatos no seleccionados, un ítem o un par cuya suma (en
-// valor absoluto) cuadre con el objetivo — la "sugerencia" del lado contrario.
-// Acotado a pares (no tríos+) para no explotar en listas grandes.
-function mejorCombo<T>(candidatos: { id: T; valor: number }[], objetivo: number): T[] | null {
+type Sugerencia<T> = { ids: T[]; ambiguo: boolean };
+
+// Busca, entre candidatos no seleccionados, TODOS los que cuadran (en valor
+// absoluto) con el objetivo — como una búsqueda por valor, no "el primero que
+// aparezca". Si hay varios ítems sueltos con el mismo valor (ej. 7 pagos
+// iguales), se marcan los 7 como sugeridos y el usuario elige cuál es el
+// correcto (`ambiguo: true` — no se auto-selecciona). Si hay un solo ítem
+// suelto que cuadra, o (a falta de sueltos) un par cuya suma cuadra, se puede
+// auto-seleccionar de una (`ambiguo: false`). Los pares están acotados a listas
+// de hasta 200 para no explotar.
+function buscarSugerencia<T>(candidatos: { id: T; valor: number }[], objetivo: number): Sugerencia<T> | null {
   if (objetivo <= 0 || !candidatos.length) return null;
-  for (const c of candidatos) {
-    if (Math.abs(abs(c.valor) - objetivo) <= TOL) return [c.id];
-  }
+  const sueltos = candidatos.filter((c) => Math.abs(abs(c.valor) - objetivo) <= TOL).map((c) => c.id);
+  if (sueltos.length === 1) return { ids: sueltos, ambiguo: false };
+  if (sueltos.length > 1) return { ids: sueltos, ambiguo: true };
   if (candidatos.length <= 200) {
     for (let i = 0; i < candidatos.length; i++) {
       for (let j = i + 1; j < candidatos.length; j++) {
         const suma = abs(candidatos[i].valor) + abs(candidatos[j].valor);
-        if (Math.abs(suma - objetivo) <= TOL) return [candidatos[i].id, candidatos[j].id];
+        if (Math.abs(suma - objetivo) <= TOL) return { ids: [candidatos[i].id, candidatos[j].id], ambiguo: false };
       }
     }
   }
@@ -83,23 +90,23 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   const dif = totExt - totSis;
 
   // Sugerencia automática: si solo hay selección de UN lado, busca en el otro
-  // lado un ítem (o par) cuya suma cuadre con el total ya seleccionado.
+  // lado TODOS los ítems cuyo valor cuadre con el total ya seleccionado.
   const sugerenciaExt = useMemo(() => {
     if (!(selSis.size > 0 && selExt.size === 0)) return null;
     const candidatos = extVis.filter((e) => !selExt.has(e.id)).map((e) => ({ id: e.id, valor: e.valor }));
-    return mejorCombo(candidatos, totSis);
+    return buscarSugerencia(candidatos, totSis);
   }, [selSis, selExt, extVis, totSis]);
   const sugerenciaSis = useMemo(() => {
     if (!(selExt.size > 0 && selSis.size === 0)) return null;
     const candidatos = sisVis.filter((s) => !selSis.has(s.ref)).map((s) => ({ id: s.ref, valor: s.valor }));
-    return mejorCombo(candidatos, totExt);
+    return buscarSugerencia(candidatos, totExt);
   }, [selExt, selSis, sisVis, totExt]);
-  const sugIdsExt = useMemo(() => new Set(sugerenciaExt ?? []), [sugerenciaExt]);
-  const sugIdsSis = useMemo(() => new Set(sugerenciaSis ?? []), [sugerenciaSis]);
+  const sugIdsExt = useMemo(() => new Set(sugerenciaExt?.ids ?? []), [sugerenciaExt]);
+  const sugIdsSis = useMemo(() => new Set(sugerenciaSis?.ids ?? []), [sugerenciaSis]);
 
   function usarSugerencia() {
-    if (sugerenciaExt) setSelExt((p) => { const n = new Set(p); sugerenciaExt.forEach((id) => n.add(id)); return n; });
-    if (sugerenciaSis) setSelSis((p) => { const n = new Set(p); sugerenciaSis.forEach((ref) => n.add(ref)); return n; });
+    if (sugerenciaExt && !sugerenciaExt.ambiguo) setSelExt((p) => { const n = new Set(p); sugerenciaExt.ids.forEach((id) => n.add(id)); return n; });
+    if (sugerenciaSis && !sugerenciaSis.ambiguo) setSelSis((p) => { const n = new Set(p); sugerenciaSis.ids.forEach((ref) => n.add(ref)); return n; });
   }
 
   function toggleExt(id: number) { setSelExt((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
@@ -195,14 +202,22 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
       {!cuadra && selExt.size + selSis.size > 0 && (
         <p className="text-xs text-amber-600">Las sumas deben coincidir para cruzar. Puedes seleccionar varios de un lado (ej. una línea de 1.000 contra 700 + 300).</p>
       )}
-      {(sugerenciaExt || sugerenciaSis) && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2 text-sm" style={{ borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }}>
-          <span className="inline-flex items-center gap-1.5" style={{ color: "var(--brand-primary)" }}>
-            <Sparkles size={14} /> Encontramos {(sugerenciaExt ?? sugerenciaSis)!.length === 1 ? "un ítem que" : "una combinación que"} cuadra con el total seleccionado.
-          </span>
-          <button onClick={usarSugerencia} className="font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Usar sugerencia</button>
-        </div>
-      )}
+      {(sugerenciaExt || sugerenciaSis) && (() => {
+        const s = (sugerenciaExt ?? sugerenciaSis)!;
+        return (
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2 text-sm" style={{ borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }}>
+            <span className="inline-flex items-center gap-1.5" style={{ color: "var(--brand-primary)" }}>
+              <Sparkles size={14} />
+              {s.ambiguo
+                ? `Encontramos ${s.ids.length} valores iguales que cuadran con el total — elige el correcto abajo.`
+                : `Encontramos ${s.ids.length === 1 ? "un ítem que" : "una combinación que"} cuadra con el total seleccionado.`}
+            </span>
+            {!s.ambiguo && (
+              <button onClick={usarSugerencia} className="font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Usar sugerencia</button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Dos columnas */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
