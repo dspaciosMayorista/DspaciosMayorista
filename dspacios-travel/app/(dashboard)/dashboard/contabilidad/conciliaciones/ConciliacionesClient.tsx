@@ -10,7 +10,7 @@ import { formatCOP } from "@/lib/utils";
 import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto } from "./actions";
 
 export type ExtractoItem = { id: number; fecha: string; descripcion: string; valor: number; periodo: string };
-export type SistemaItem = { ref: string; tipo: string; descripcion: string; fecha: string | null; valor: number; numeroContrato: string | null };
+export type SistemaItem = { ref: string; tipo: string; descripcion: string; fecha: string | null; valor: number; numeroContrato: string | null; categoria: "cartera" | "proveedor" };
 export type Cruce = { id: number; total: number; nota: string; fecha: string; extracto: ExtractoItem[]; sistema: SistemaItem[] };
 
 const abs = (n: number) => Math.abs(n);
@@ -39,13 +39,23 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   const router = useRouter();
   const [selExt, setSelExt] = useState<Set<number>>(new Set());
   const [selSis, setSelSis] = useState<Set<string>>(new Set());
+  const [modo, setModo] = useState<"cartera" | "proveedor">("cartera");
   const [mes, setMes] = useState("");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [nota, setNota] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [verConciliados, setVerConciliados] = useState(false);
+
+  function cambiarModo(m: "cartera" | "proveedor") {
+    setModo(m);
+    setSelExt(new Set());
+    setSelSis(new Set());
+    setError(null);
+    setAviso(null);
+  }
 
   const meses = useMemo(() => Array.from(new Set(extracto.map((e) => e.periodo))).sort().reverse(), [extracto]);
 
@@ -56,8 +66,16 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     if (hasta && fecha > hasta) return false;
     return true;
   };
-  const extVis = useMemo(() => extracto.filter((e) => enRango(e.fecha)), [extracto, mes, desde, hasta]);
-  const sisVis = useMemo(() => sistema.filter((s) => enRango(s.fecha)), [sistema, mes, desde, hasta]);
+  // Cartera = valores positivos (abonos/ingresos) · Proveedores = negativos
+  // (pagos/egresos, incluidos los saldos pendientes sugeridos).
+  const extVis = useMemo(
+    () => extracto.filter((e) => enRango(e.fecha) && (modo === "cartera" ? e.valor > 0 : e.valor < 0)),
+    [extracto, mes, desde, hasta, modo]
+  );
+  const sisVis = useMemo(
+    () => sistema.filter((s) => enRango(s.fecha) && s.categoria === modo),
+    [sistema, mes, desde, hasta, modo]
+  );
 
   const totExt = extracto.filter((e) => selExt.has(e.id)).reduce((a, e) => a + abs(e.valor), 0);
   const totSis = sistema.filter((s) => selSis.has(s.ref)).reduce((a, s) => a + abs(s.valor), 0);
@@ -110,10 +128,12 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
 
   function hacerCruce() {
     setError(null);
+    setAviso(null);
     const items = sistema.filter((s) => selSis.has(s.ref)).map((s) => ({ ref: s.ref, descripcion: `${s.tipo}: ${s.descripcion}`, fecha: s.fecha, valor: s.valor, numeroContrato: s.numeroContrato }));
     start(async () => {
       const r = await cruzar({ extractoIds: [...selExt], sistema: items, nota });
       if (!r.ok) { setError(r.error); return; }
+      if (r.aviso) setAviso(r.aviso);
       setSelExt(new Set()); setSelSis(new Set()); setNota(""); router.refresh();
     });
   }
@@ -121,6 +141,26 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   return (
     <div className="space-y-5">
       <Importador />
+
+      {/* Cartera (positivos) vs Proveedores (negativos) */}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => cambiarModo("cartera")}
+          className="rounded-full px-4 py-1.5 text-sm font-semibold transition-colors"
+          style={modo === "cartera" ? { backgroundColor: "var(--brand-primary)", color: "white" } : { backgroundColor: "#f3f4f6", color: "#374151" }}
+        >
+          Cartera (+)
+        </button>
+        <button
+          type="button"
+          onClick={() => cambiarModo("proveedor")}
+          className="rounded-full px-4 py-1.5 text-sm font-semibold transition-colors"
+          style={modo === "proveedor" ? { backgroundColor: "var(--brand-primary)", color: "white" } : { backgroundColor: "#f3f4f6", color: "#374151" }}
+        >
+          Proveedores (−)
+        </button>
+      </div>
 
       {/* Filtros */}
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-3">
@@ -151,6 +191,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
         </div>
       </div>
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+      {aviso && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{aviso}</p>}
       {!cuadra && selExt.size + selSis.size > 0 && (
         <p className="text-xs text-amber-600">Las sumas deben coincidir para cruzar. Puedes seleccionar varios de un lado (ej. una línea de 1.000 contra 700 + 300).</p>
       )}
@@ -165,7 +206,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
 
       {/* Dos columnas */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Columna titulo={`Extracto del banco (${extVis.length})`}>
+        <Columna titulo={`Extracto del banco · ${modo === "cartera" ? "abonos" : "pagos"} (${extVis.length})`}>
           {extVis.length > 0 && (
             <div className="mb-1 flex items-center justify-between gap-2 px-1 py-1 text-xs">
               <button onClick={toggleTodoExtVisible} className="text-gray-500 hover:underline">
@@ -183,7 +224,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
               onDel={() => start(async () => { await eliminarLineaExtracto(e.id); router.refresh(); })} />
           ))}
         </Columna>
-        <Columna titulo={`Movimientos del sistema (${sisVis.length})`}>
+        <Columna titulo={`${modo === "cartera" ? "Cartera" : "Proveedores"} (${sisVis.length})`}>
           {sisVis.length === 0 ? <Vacio>Sin movimientos sin conciliar en este rango.</Vacio> : sisVis.map((s) => (
             <ItemFila key={s.ref} sel={selSis.has(s.ref)} sugerido={sugIdsSis.has(s.ref)} onClick={() => toggleSis(s.ref)} fecha={s.fecha} desc={`${s.tipo} · ${s.descripcion}`} valor={s.valor} contrato={s.numeroContrato} />
           ))}
