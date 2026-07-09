@@ -305,9 +305,9 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 124** — todas
-> confirmadas corridas por el dueño, incluida la **124** (`conciliacion_sistema.numero_contrato`
-> — ver "Novedades recientes").
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 125** — todas
+> confirmadas corridas por el dueño, incluida la **125** (`retenciones_cxp` — ver
+> "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -436,6 +436,28 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   `lib/calc/paquetes.ts`). Ambas piezas pueden restringirse a **un solo
 >   régimen** aunque el hotel tenga varios (`regimen_restringido`, null =
 >   todos). Detalle completo en "Motor de cálculo".
+> - **Retenciones a proveedores + Conciliaciones Cartera/Proveedores (jul-2026):**
+>   (1) Nuevo módulo `Contabilidad → Retenciones a proveedores`: se busca
+>   por número de contrato + **tipo de proveedor** (no el proveedor
+>   puntual — funciona igual esté o no especificado con nombre) para
+>   registrar la retefuente practicada: valor, fecha en que se practicó y
+>   mes en que se declara a la DIAN. Migración **125** (`retenciones_cxp`,
+>   log — puede haber más de una por cuenta) reemplaza el viejo
+>   `aplica_retencion`/`pct_retencion` que era solo un % fijo informativo,
+>   sin fecha y sin descontarse de nada. Ahora la retención SÍ se
+>   descuenta del saldo pendiente del proveedor, igual que un abono
+>   (`dashboard/pagos` y la pestaña Proveedores del contrato ya lo
+>   reflejan; `lib/finanzas/retenciones.ts` centraliza la suma).
+>   (2) Conciliaciones bancarias: se separó en dos pestañas — **Cartera**
+>   (valores positivos: abonos/ingresos) y **Proveedores** (negativos:
+>   pagos/egresos) — filtra ambos lados (extracto y sistema) a la vez.
+>   En Proveedores se sugiere además el **saldo pendiente** de cada CxP
+>   (valor_total − abonos − retenciones) como candidato de cruce, para el
+>   caso de pagos hechos pero nunca registrados en el sistema. Al cruzar
+>   un saldo sugerido se auto-registra el pago real sobre la cuenta (mismo
+>   motor de `dashboard/pagos`) — si la cuenta es en USD o ya tiene los 3
+>   pagos llenos, no bloquea la conciliación, solo avisa que se registre
+>   manual.
 > - **CMS del sitio: subir imagen directamente + fix imagen rota (jul-2026):**
 >   `components/sitio/edicion/Editable.jsx` (botón "Cambiar imagen" del editor
 >   in-situ) y `app/cms/editors/SubirArchivo.tsx` (panel ⚙ / Ajustes de página)
@@ -792,14 +814,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **124** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **125** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 124** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 125** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -856,7 +878,7 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > **111 programa_highlights** (`programas.highlights` text[]) · **112 fusionar_destino**
 > (`fn_fusionar_destino(origen,destino)` SECURITY DEFINER: re-apunta toda FK a destinos y borra) ·
 > **113 programa_piezas** (bucket público `programas` + `programas.flyer_url`/`historia_url`).
-> Rango **114→124** (CRM, seguridad, minorista, hoteles, contabilidad): **114 crm_difusion** (material/
+> Rango **114→125** (CRM, seguridad, minorista, hoteles, contabilidad): **114 crm_difusion** (material/
 > envío/plan) · 115 minorista_numeracion (fix numeración duplicada + `contrato_servicios`) ·
 > **116 rls_tenant_isolation** (filtro de tenant en policies de ventas/abonos/CxP/comisiones/
 > facturación) · **117 eliminar_contrato_rol** (candado de rol dentro del RPC) ·
@@ -877,7 +899,10 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > **124 conciliacion_sistema_contrato** (ya corrida) — agrega
 > `conciliacion_sistema.numero_contrato` (snapshot al cruzar, null para
 > movimientos genéricos sin contrato) para poder enlazar cada conciliado
-> a su contrato — ver "Novedades recientes".
+> a su contrato · **125 retenciones_cxp** (ya corrida) — tabla
+> `retenciones_cxp` (log de retenciones practicadas a proveedores: valor,
+> fecha_practica, mes_declaracion; puede haber más de una por cuenta) —
+> ver "Novedades recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
