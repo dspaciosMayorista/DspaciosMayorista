@@ -11,9 +11,11 @@ export default async function NuevoContratoPage() {
   } = await sb.auth.getUser();
 
   let asesorDefault = "";
+  let puedeForzarMargen = false;
   if (user) {
-    const { data: perfil } = await sb.from("usuarios").select("nombre").eq("id", user.id).single();
+    const { data: perfil } = await sb.from("usuarios").select("nombre, rol").eq("id", user.id).single();
     asesorDefault = perfil?.nombre ?? "";
+    puedeForzarMargen = ["superadmin", "administracion"].includes(perfil?.rol ?? "");
   }
 
   const [{ data: paquetesRaw }, { data: bloqueosRaw }, { data: vendedores }, { data: aliados }, { data: destinos }] = await Promise.all([
@@ -47,7 +49,8 @@ export default async function NuevoContratoPage() {
         </p>
       </div>
       <NuevoContratoForm asesorDefault={asesorDefault} paquetes={paquetes} bloqueos={bloqueos}
-        vendedores={vendedores ?? []} agencias={agencias} freelances={freelances} destinos={destinos ?? []} />
+        vendedores={vendedores ?? []} agencias={agencias} freelances={freelances} destinos={destinos ?? []}
+        puedeForzarMargen={puedeForzarMargen} />
     </div>
   );
 }

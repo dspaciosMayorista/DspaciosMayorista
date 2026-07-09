@@ -110,11 +110,17 @@ export type ContratoInput = {
   // Moneda del contrato. En empaquetado/dinámico (todo manual) el asesor puede
   // venderlo en USD; el resto (abonos con TRM, estado de cuenta) fluye igual.
   moneda?: string;
+  // Aprobación explícita de superadmin/administración para crear el contrato
+  // aunque el margen no cubra el mínimo (ver validación de MARKUP_MIN). El rol
+  // se revalida siempre en el servidor — nunca se confía en este flag solo.
+  forzarMargen?: boolean;
 };
 
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
-export type CrearContratoResult = { ok: true; numero: string } | { ok: false; error: string };
+export type CrearContratoResult =
+  | { ok: true; numero: string }
+  | { ok: false; error: string; margenInsuficiente?: true; margenActual?: number; pvpMinimo?: number };
 
 export async function crearContrato(
   input: ContratoInput
@@ -202,14 +208,31 @@ export async function crearContrato(
   const costoReceptivoManual = !negociado ? servicios.filter((s) => s.tipo === "traslado" || s.tipo === "tour").reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0) : 0;
   const otrosCostosManual = !negociado ? servicios.filter((s) => s.tipo === "otro").reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0) : 0;
   const totalCostosManual = costoHotelManual + costoAereoManual + costoAsistenciaManual + costoReceptivoManual + otrosCostosManual;
-  // Validación de margen mínimo: PVP ≥ costos ÷ (1 − 20%).
+  // Validación de margen mínimo: PVP ≥ costos ÷ (1 − 20%). Un superadmin o
+  // administración puede aprobar explícitamente un contrato que no lo cumpla
+  // (`forzarMargen`) — el rol se revalida aquí mismo, nunca se confía en el
+  // flag del cliente solo.
   if (!negociado && totalCostosManual > 0) {
     const pvpMin = totalCostosManual / (1 - MARKUP_MIN);
     if (precioVenta + 0.5 < pvpMin) {
-      return {
-        ok: false,
-        error: `El PVP (${formatMoneda(precioVenta, monedaContrato)}) no cubre el margen mínimo del ${MARKUP_MIN * 100}%. Con costos de ${formatMoneda(totalCostosManual, monedaContrato)}, el PVP mínimo es ${formatMoneda(Math.ceil(pvpMin), monedaContrato)}.`,
-      };
+      const margenActual = precioVenta > 0 ? 1 - totalCostosManual / precioVenta : 0;
+      let autorizado = false;
+      if (input.forzarMargen) {
+        const { data: { user } } = await sb.auth.getUser();
+        const { data: perfil } = user
+          ? await sb.from("usuarios").select("rol").eq("id", user.id).maybeSingle()
+          : { data: null };
+        if (perfil && ["superadmin", "administracion"].includes(perfil.rol)) autorizado = true;
+      }
+      if (!autorizado) {
+        return {
+          ok: false,
+          error: `El PVP (${formatMoneda(precioVenta, monedaContrato)}) no cubre el margen mínimo del ${MARKUP_MIN * 100}%. Con costos de ${formatMoneda(totalCostosManual, monedaContrato)}, el PVP mínimo es ${formatMoneda(Math.ceil(pvpMin), monedaContrato)}.`,
+          margenInsuficiente: true,
+          margenActual,
+          pvpMinimo: Math.ceil(pvpMin),
+        };
+      }
     }
   }
 

@@ -60,6 +60,7 @@ export function NuevoContratoForm({
   agencias = [],
   freelances = [],
   destinos = [],
+  puedeForzarMargen = false,
 }: {
   asesorDefault: string;
   paquetes?: PaqueteOpt[];
@@ -68,10 +69,12 @@ export function NuevoContratoForm({
   agencias?: Opt[];
   freelances?: Opt[];
   destinos?: DestinoOpt[];
+  puedeForzarMargen?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
+  const [advertenciaMargen, setAdvertenciaMargen] = useState("");
 
   // Tipo de paquete y producto negociado
   const [tipoPaquete, setTipoPaquete] = useState<TipoPaquete>("dinamico");
@@ -186,27 +189,7 @@ export function NuevoContratoForm({
     setItems([{ descripcion: pk.nombre, adultos: 1, ninos: 0, tarifaAdulto: precioDoble, tarifaNino: precioNino }]);
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError("");
-    if (!cliente.trim()) {
-      setError("El nombre del cliente es obligatorio.");
-      return;
-    }
-    if (bncModo === "fijo" && (Number(bncFijo) || 0) < (Number(valorTiquetes) || 0)) {
-      setError("La BNC fija no puede ser menor al valor de los tiquetes.");
-      return;
-    }
-    if (bnc > total) {
-      setError("La BNC no puede ser mayor al total del contrato (PVP).");
-      return;
-    }
-    if (totalCostos > 0 && total + 0.5 < pvpMinimo) {
-      setError(`El PVP (${fmt(total)}) no cubre el margen mínimo del ${MARKUP_MIN * 100}%. Con costos de ${fmt(totalCostos)}, el PVP mínimo es ${fmt(Math.ceil(pvpMinimo))}.`);
-      return;
-    }
-    if (!asesorNombre.trim()) { setError("Selecciona el asesor interno."); return; }
-    if (tipoVenta !== "interno" && !aliadoId) { setError(`Selecciona la ${tipoVenta} del catálogo.`); return; }
+  function enviar(forzarMargen: boolean) {
     const pasajerosOk = pasajeros.filter((p) => p.nombres.trim() !== "" || p.apellidos.trim() !== "");
     const hotelesOk = hoteles.filter((h) => h.nombre.trim() !== "");
     const vuelosOk = vuelos.filter((v) => v.aerolinea.trim() !== "");
@@ -245,9 +228,12 @@ export function NuevoContratoForm({
           tipoVenta,
           aliadoId: aliadoId === "" ? null : Number(aliadoId),
           moneda: monedaEfectiva,
+          forzarMargen,
         });
         if (res.ok) {
           router.push(`/dashboard/contratos/${encodeURIComponent(res.numero)}`);
+        } else if (res.margenInsuficiente && puedeForzarMargen) {
+          setAdvertenciaMargen(res.error);
         } else {
           setError(res.error);
         }
@@ -255,6 +241,34 @@ export function NuevoContratoForm({
         setError(err instanceof Error ? err.message : "Error al crear el contrato.");
       }
     });
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setAdvertenciaMargen("");
+    if (!cliente.trim()) {
+      setError("El nombre del cliente es obligatorio.");
+      return;
+    }
+    if (bncModo === "fijo" && (Number(bncFijo) || 0) < (Number(valorTiquetes) || 0)) {
+      setError("La BNC fija no puede ser menor al valor de los tiquetes.");
+      return;
+    }
+    if (bnc > total) {
+      setError("La BNC no puede ser mayor al total del contrato (PVP).");
+      return;
+    }
+    if (totalCostos > 0 && total + 0.5 < pvpMinimo) {
+      const margenActual = total > 0 ? 1 - totalCostos / total : 0;
+      const mensaje = `El PVP (${fmt(total)}) no cubre el margen mínimo del ${MARKUP_MIN * 100}%. Con costos de ${fmt(totalCostos)}, el PVP mínimo es ${fmt(Math.ceil(pvpMinimo))} (margen actual: ${(margenActual * 100).toFixed(1)}%).`;
+      if (puedeForzarMargen) setAdvertenciaMargen(mensaje);
+      else setError(mensaje);
+      return;
+    }
+    if (!asesorNombre.trim()) { setError("Selecciona el asesor interno."); return; }
+    if (tipoVenta !== "interno" && !aliadoId) { setError(`Selecciona la ${tipoVenta} del catálogo.`); return; }
+    enviar(false);
   }
 
   return (
@@ -702,6 +716,20 @@ export function NuevoContratoForm({
 
       {error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+      )}
+
+      {advertenciaMargen && (
+        <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+          <p>{advertenciaMargen}</p>
+          <Button
+            type="button"
+            disabled={pending}
+            onClick={() => enviar(true)}
+            style={{ backgroundColor: "#b45309" }}
+          >
+            {pending ? "Generando contrato…" : "Continuar con la aprobación a pesar del margen"}
+          </Button>
+        </div>
       )}
 
       <div className="flex items-center gap-3">
