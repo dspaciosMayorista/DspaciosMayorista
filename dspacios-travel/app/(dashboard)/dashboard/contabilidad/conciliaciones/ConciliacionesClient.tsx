@@ -16,6 +16,9 @@ export type Cruce = { id: number; total: number; nota: string; fecha: string; ex
 const abs = (n: number) => Math.abs(n);
 const TOL = 1;
 
+type Orden = { campo: "fecha" | "valor"; dir: "asc" | "desc" };
+const ORDEN_DEFAULT: Orden = { campo: "fecha", dir: "asc" };
+
 type Sugerencia<T> = { ids: T[]; ambiguo: boolean };
 
 // Busca, entre candidatos no seleccionados, TODOS los que cuadran (en valor
@@ -48,9 +51,18 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   const [selSis, setSelSis] = useState<Set<string>>(new Set());
   const [modo, setModo] = useState<"cartera" | "proveedor">("cartera");
   const [mes, setMes] = useState("");
-  const [desde, setDesde] = useState("");
-  const [hasta, setHasta] = useState("");
   const [nota, setNota] = useState("");
+  // Filtros y orden INDEPENDIENTES por columna (día preciso + valor + orden).
+  const [extDesde, setExtDesde] = useState("");
+  const [extHasta, setExtHasta] = useState("");
+  const [extValorMin, setExtValorMin] = useState("");
+  const [extValorMax, setExtValorMax] = useState("");
+  const [ordenExt, setOrdenExt] = useState<Orden>(ORDEN_DEFAULT);
+  const [sisDesde, setSisDesde] = useState("");
+  const [sisHasta, setSisHasta] = useState("");
+  const [sisValorMin, setSisValorMin] = useState("");
+  const [sisValorMax, setSisValorMax] = useState("");
+  const [ordenSis, setOrdenSis] = useState<Orden>(ORDEN_DEFAULT);
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -66,23 +78,53 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
 
   const meses = useMemo(() => Array.from(new Set(extracto.map((e) => e.periodo))).sort().reverse(), [extracto]);
 
-  const enRango = (fecha: string | null) => {
-    if (!fecha) return !mes && !desde && !hasta;
-    if (mes && fecha.slice(0, 7) !== mes) return false;
-    if (desde && fecha < desde) return false;
-    if (hasta && fecha > hasta) return false;
-    return true;
+  const enMes = (fecha: string | null) => {
+    if (!mes) return true;
+    if (!fecha) return false;
+    return fecha.slice(0, 7) === mes;
   };
+  function ordenar<T>(items: T[], orden: Orden, getFecha: (t: T) => string | null, getValor: (t: T) => number): T[] {
+    const arr = [...items];
+    arr.sort((a, b) => {
+      let cmp: number;
+      if (orden.campo === "fecha") {
+        const fa = getFecha(a) ?? "";
+        const fb = getFecha(b) ?? "";
+        cmp = fa < fb ? -1 : fa > fb ? 1 : 0;
+      } else {
+        cmp = abs(getValor(a)) - abs(getValor(b));
+      }
+      return orden.dir === "asc" ? cmp : -cmp;
+    });
+    return arr;
+  }
+
   // Cartera = valores positivos (abonos/ingresos) · Proveedores = negativos
-  // (pagos/egresos, incluidos los saldos pendientes sugeridos).
-  const extVis = useMemo(
-    () => extracto.filter((e) => enRango(e.fecha) && (modo === "cartera" ? e.valor > 0 : e.valor < 0)),
-    [extracto, mes, desde, hasta, modo]
-  );
-  const sisVis = useMemo(
-    () => sistema.filter((s) => enRango(s.fecha) && s.categoria === modo),
-    [sistema, mes, desde, hasta, modo]
-  );
+  // (pagos/egresos, incluidos los saldos pendientes sugeridos). Cada columna
+  // tiene su propio filtro de día/valor y su propio orden, independientes.
+  const extVis = useMemo(() => {
+    const filtrados = extracto.filter((e) =>
+      enMes(e.fecha) &&
+      (modo === "cartera" ? e.valor > 0 : e.valor < 0) &&
+      (!extDesde || e.fecha >= extDesde) &&
+      (!extHasta || e.fecha <= extHasta) &&
+      (!extValorMin || abs(e.valor) >= Number(extValorMin)) &&
+      (!extValorMax || abs(e.valor) <= Number(extValorMax))
+    );
+    return ordenar(filtrados, ordenExt, (e) => e.fecha, (e) => e.valor);
+  }, [extracto, mes, modo, extDesde, extHasta, extValorMin, extValorMax, ordenExt]);
+
+  const sisVis = useMemo(() => {
+    const filtrados = sistema.filter((s) =>
+      enMes(s.fecha) &&
+      s.categoria === modo &&
+      (!sisDesde || (s.fecha ?? "") >= sisDesde) &&
+      (!sisHasta || (s.fecha ?? "") <= sisHasta) &&
+      (!sisValorMin || abs(s.valor) >= Number(sisValorMin)) &&
+      (!sisValorMax || abs(s.valor) <= Number(sisValorMax))
+    );
+    return ordenar(filtrados, ordenSis, (s) => s.fecha, (s) => s.valor);
+  }, [sistema, mes, modo, sisDesde, sisHasta, sisValorMin, sisValorMax, ordenSis]);
 
   const totExt = extracto.filter((e) => selExt.has(e.id)).reduce((a, e) => a + abs(e.valor), 0);
   const totSis = sistema.filter((s) => selSis.has(s.ref)).reduce((a, s) => a + abs(s.valor), 0);
@@ -169,7 +211,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
         </button>
       </div>
 
-      {/* Filtros */}
+      {/* Filtro general de mes — el de día/valor va dentro de cada columna */}
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white p-3">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Mes</label>
@@ -178,9 +220,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
             {meses.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
-        <div><label className="mb-1 block text-xs font-medium text-gray-600">Desde</label><Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="w-40" /></div>
-        <div><label className="mb-1 block text-xs font-medium text-gray-600">Hasta</label><Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="w-40" /></div>
-        {(mes || desde || hasta) && <button onClick={() => { setMes(""); setDesde(""); setHasta(""); }} className="pb-1.5 text-xs text-gray-500 hover:underline">Limpiar</button>}
+        {mes && <button onClick={() => setMes("")} className="pb-1.5 text-xs text-gray-500 hover:underline">Limpiar</button>}
       </div>
 
       {/* Barra de cruce */}
@@ -222,6 +262,11 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
       {/* Dos columnas */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Columna titulo={`Extracto del banco · ${modo === "cartera" ? "abonos" : "pagos"} (${extVis.length})`}>
+          <FiltrosColumna
+            desde={extDesde} setDesde={setExtDesde} hasta={extHasta} setHasta={setExtHasta}
+            valorMin={extValorMin} setValorMin={setExtValorMin} valorMax={extValorMax} setValorMax={setExtValorMax}
+            orden={ordenExt} setOrden={setOrdenExt}
+          />
           {extVis.length > 0 && (
             <div className="mb-1 flex items-center justify-between gap-2 px-1 py-1 text-xs">
               <button onClick={toggleTodoExtVisible} className="text-gray-500 hover:underline">
@@ -234,13 +279,18 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
               )}
             </div>
           )}
-          {extVis.length === 0 ? <Vacio>Sin líneas. Importa el extracto arriba.</Vacio> : extVis.map((e) => (
+          {extVis.length === 0 ? <Vacio>Sin líneas para estos filtros.</Vacio> : extVis.map((e) => (
             <ItemFila key={e.id} sel={selExt.has(e.id)} sugerido={sugIdsExt.has(e.id)} onClick={() => toggleExt(e.id)} fecha={e.fecha} desc={e.descripcion} valor={e.valor}
               onDel={() => start(async () => { await eliminarLineaExtracto(e.id); router.refresh(); })} />
           ))}
         </Columna>
         <Columna titulo={`${modo === "cartera" ? "Cartera" : "Proveedores"} (${sisVis.length})`}>
-          {sisVis.length === 0 ? <Vacio>Sin movimientos sin conciliar en este rango.</Vacio> : sisVis.map((s) => (
+          <FiltrosColumna
+            desde={sisDesde} setDesde={setSisDesde} hasta={sisHasta} setHasta={setSisHasta}
+            valorMin={sisValorMin} setValorMin={setSisValorMin} valorMax={sisValorMax} setValorMax={setSisValorMax}
+            orden={ordenSis} setOrden={setOrdenSis}
+          />
+          {sisVis.length === 0 ? <Vacio>Sin movimientos para estos filtros.</Vacio> : sisVis.map((s) => (
             <ItemFila key={s.ref} sel={selSis.has(s.ref)} sugerido={sugIdsSis.has(s.ref)} onClick={() => toggleSis(s.ref)} fecha={s.fecha} desc={`${s.tipo} · ${s.descripcion}`} valor={s.valor} contrato={s.numeroContrato} />
           ))}
         </Columna>
@@ -328,6 +378,54 @@ function Columna({ titulo, children }: { titulo: string; children: React.ReactNo
     <div className="rounded-xl border border-gray-200 bg-white">
       <div className="border-b border-gray-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-400">{titulo}</div>
       <div className="max-h-[28rem] space-y-1 overflow-y-auto p-2">{children}</div>
+    </div>
+  );
+}
+
+// Filtro por día + valor y orden (fecha/valor, asc/desc) — independiente
+// por columna (Extracto y Cartera/Proveedores tienen cada uno el suyo).
+function FiltrosColumna({
+  desde, setDesde, hasta, setHasta, valorMin, setValorMin, valorMax, setValorMax, orden, setOrden,
+}: {
+  desde: string; setDesde: (v: string) => void;
+  hasta: string; setHasta: (v: string) => void;
+  valorMin: string; setValorMin: (v: string) => void;
+  valorMax: string; setValorMax: (v: string) => void;
+  orden: Orden; setOrden: (o: Orden) => void;
+}) {
+  function toggleOrden(campo: Orden["campo"]) {
+    setOrden(orden.campo === campo ? { campo, dir: orden.dir === "asc" ? "desc" : "asc" } : { campo, dir: "asc" });
+  }
+  const hayFiltro = desde || hasta || valorMin || valorMax;
+  const btnOrden = (campo: Orden["campo"], label: string) => (
+    <button
+      type="button"
+      onClick={() => toggleOrden(campo)}
+      className="rounded-full px-2 py-0.5 text-[11px] font-medium"
+      style={orden.campo === campo ? { backgroundColor: "var(--brand-primary)", color: "white" } : { backgroundColor: "#f3f4f6", color: "#6b7280" }}
+    >
+      {label} {orden.campo === campo ? (orden.dir === "asc" ? "↑" : "↓") : ""}
+    </button>
+  );
+  return (
+    <div className="mb-2 space-y-1.5 rounded-lg border border-gray-100 bg-gray-50/60 p-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="h-7 w-[8.5rem] text-xs" title="Desde (día)" />
+        <span className="text-xs text-gray-300">–</span>
+        <Input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="h-7 w-[8.5rem] text-xs" title="Hasta (día)" />
+        <Input value={valorMin} onChange={(e) => setValorMin(e.target.value)} placeholder="Valor mín" inputMode="numeric" className="h-7 w-20 text-xs" />
+        <Input value={valorMax} onChange={(e) => setValorMax(e.target.value)} placeholder="Valor máx" inputMode="numeric" className="h-7 w-20 text-xs" />
+        {hayFiltro && (
+          <button type="button" onClick={() => { setDesde(""); setHasta(""); setValorMin(""); setValorMax(""); }} className="text-xs text-gray-400 hover:underline">
+            Limpiar
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-[11px] text-gray-400">Ordenar:</span>
+        {btnOrden("fecha", "Fecha")}
+        {btnOrden("valor", "Valor")}
+      </div>
     </div>
   );
 }
