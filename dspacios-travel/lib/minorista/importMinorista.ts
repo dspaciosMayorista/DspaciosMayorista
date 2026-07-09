@@ -12,15 +12,17 @@ export type FilaUtilidad = {
   precio_venta: number;
   fecha_venta: string | null; // YYYY-MM-DD
   fecha_salida: string | null;
-  aerolinea: string | null;
+  aerolinea: string | null;       // proveedor aéreo (columna 5)
   costo_aereo: number;
-  hotel: string | null;
-  hotelProveedor: string | null; // proveedor/operador del hotel (columna 9)
-  receptivo: string | null;   // proveedor de traslados (columna 11, puede ir vacío)
-  costo_receptivo: number;
-  costo_asistencia: number;
-  otros_costos: number;       // tours
+  hotel: string | null;           // no hay columna de "nombre del hotel" en esta hoja: se usa el proveedor del hotel también como nombre a mostrar
+  hotelProveedor: string | null;  // proveedor/operador del hotel (columna 7)
   costo_hotel: number;
+  receptivo: string | null;       // proveedor de traslados (columna 9)
+  costo_receptivo: number;
+  proveedorAsistencia: string | null; // columna 11
+  costo_asistencia: number;
+  proveedorTours: string | null;     // columna 13
+  otros_costos: number;              // tours (columna 14)
 };
 
 export type AbonoImport = {
@@ -122,10 +124,12 @@ export function parseMontoCO(cel: string): number | null {
 const esSaltoOAnulado = (s: string) => /salto|anulad|correlativo/i.test(s);
 
 // ── 1) RELACIÓN DE UTILIDADES → ventas ──────────────────────────────────────
-// Orden de columnas (las que importan):
+// Orden de columnas (las que importan) — hoja 2026, un PROVEEDOR + COSTO por
+// categoría:
 // 0 MES · 1 N° RESERVA · 2 FECHA RESERVA · 3 FECHA VIAJE · 4 VALOR VENTA ·
-// 5 AEROLINEA · 6 COSTO TIQUETES · 7 NOMBRE HOTEL · 8 COSTO HOTEL · 9 PROVEEDOR ·
-// 10 COSTO TRASLADOS · 11 PROVEEDOR · 12 COSTO ASISTENCIA · 13 COSTO TOURS ...
+// 5 PROVEEDOR AEREO · 6 COSTO TIQUETES · 7 PROVEEDOR HOTEL · 8 COSTO HOTEL ·
+// 9 PROVEEDOR TRASLADOS · 10 COSTO TRASLADOS · 11 PROVEEDOR ASISTENCIA ·
+// 12 COSTO ASISTENCIA · 13 PROVEEDOR TOURS · 14 COSTO TOURS ...
 export function parseUtilidades(texto: string): ParseResult<FilaUtilidad> {
   const filas: FilaUtilidad[] = [];
   const notas: string[] = [];
@@ -149,6 +153,7 @@ export function parseUtilidades(texto: string): ParseResult<FilaUtilidad> {
       notas.push(`${numero}: sin valor de venta, omitido.`);
       continue;
     }
+    const proveedorHotel = (c[7] ?? "").trim() || null;
     filas.push({
       numero,
       moneda: monedaDe(c[4] ?? ""),
@@ -157,13 +162,15 @@ export function parseUtilidades(texto: string): ParseResult<FilaUtilidad> {
       fecha_salida: parseFechaEs(c[3] ?? ""),
       aerolinea: (c[5] ?? "").trim() || null,
       costo_aereo: parseMontoCO(c[6] ?? "") ?? 0,
-      hotel: (c[7] ?? "").trim() || null,
+      hotel: proveedorHotel, // no hay columna de nombre del hotel en esta hoja
+      hotelProveedor: proveedorHotel,
       costo_hotel: parseMontoCO(c[8] ?? "") ?? 0,
-      hotelProveedor: (c[9] ?? "").trim() || null,
-      receptivo: (c[11] ?? "").trim() || null,
+      receptivo: (c[9] ?? "").trim() || null,
       costo_receptivo: parseMontoCO(c[10] ?? "") ?? 0,
+      proveedorAsistencia: (c[11] ?? "").trim() || null,
       costo_asistencia: parseMontoCO(c[12] ?? "") ?? 0,
-      otros_costos: parseMontoCO(c[13] ?? "") ?? 0,
+      proveedorTours: (c[13] ?? "").trim() || null,
+      otros_costos: parseMontoCO(c[14] ?? "") ?? 0,
     });
   }
   return { filas, notas };
