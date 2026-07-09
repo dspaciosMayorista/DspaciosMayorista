@@ -8,6 +8,8 @@ import { parseUtilidades, parsePagos } from "@/lib/minorista/importMinorista";
 import { importarHistorico } from "./actions";
 
 type Estado = { ok: boolean; msg: string; notas?: string[] } | null;
+const SIN_ESPECIFICAR = "Sin especificar";
+type Tab = "contratos" | "proveedores" | "cartera";
 
 export function ImportarClient({ habilitado }: { habilitado: boolean }) {
   const router = useRouter();
@@ -15,6 +17,7 @@ export function ImportarClient({ habilitado }: { habilitado: boolean }) {
   const [pag, setPag] = useState("");
   const [estado, setEstado] = useState<Estado>(null);
   const [pending, start] = useTransition();
+  const [tab, setTab] = useState<Tab>("contratos");
 
   // Vista previa: cruza en el navegador para mostrar qué se importará y qué se omite.
   const previa = useMemo(() => {
@@ -41,7 +44,37 @@ export function ImportarClient({ habilitado }: { habilitado: boolean }) {
         totalAbon: formatCOP(tot),
       };
     });
-    return { enAmbos: enAmbos.length, soloRel, soloPag, filas, avisos: [...r.notas, ...p.notas] };
+
+    // Vista previa de PROVEEDORES/COSTOS — mismo criterio que generará el
+    // import real (ver app/.../importar/actions.ts, sección "(c)"): un
+    // proveedor+costo por categoría, sin nombre → "Sin especificar" (se
+    // resalta para poder corregir la hoja ANTES de importar).
+    type FilaProv = { numero: string; tipo: string; proveedor: string; servicio: string; valor: number; moneda: string };
+    const proveedores: FilaProv[] = [];
+    for (const n of enAmbos) {
+      const rf = relNums.get(n)!;
+      const add = (tipo: string, prov: string | null, servicio: string, valor: number) => {
+        if (valor <= 0) return;
+        proveedores.push({ numero: n, tipo, proveedor: prov?.trim() || SIN_ESPECIFICAR, servicio, valor, moneda: rf.moneda });
+      };
+      add("hotel", rf.hotelProveedor, "Hotel", rf.costo_hotel);
+      add("aereo", rf.aerolinea, `Aéreo ${rf.aerolinea ?? ""}`.trim(), rf.costo_aereo);
+      add("receptivo", rf.receptivo, "Traslados", rf.costo_receptivo);
+      add("asistencia", rf.proveedorAsistencia, "Asistencia médica", rf.costo_asistencia);
+      add("otro", rf.proveedorTours, "Tours / otros costos", rf.otros_costos);
+    }
+
+    // Vista previa de CARTERA — cada cuota/abono tal como quedará (recuerda:
+    // al importar se BORRAN los abonos previos de estos contratos y se
+    // re-crean desde esta hoja).
+    type FilaCartera = { numero: string; titular: string; fecha: string | null; valor: number; observacion: string | null };
+    const cartera: FilaCartera[] = [];
+    for (const n of enAmbos) {
+      const pf = pagNums.get(n)!;
+      for (const a of pf.abonos) cartera.push({ numero: n, titular: pf.cliente ?? "—", fecha: a.fecha, valor: a.valor, observacion: a.observacion });
+    }
+
+    return { enAmbos: enAmbos.length, soloRel, soloPag, filas, avisos: [...r.notas, ...p.notas], proveedores, cartera };
   }, [rel, pag]);
 
   function importar() {
@@ -82,32 +115,121 @@ export function ImportarClient({ habilitado }: { habilitado: boolean }) {
               {previa.soloPag.length > 0 && <span className="rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-700">{previa.soloPag.length} solo en Resumen → se omiten</span>}
             </div>
 
-            <div className="max-h-72 overflow-auto rounded-lg border border-gray-200">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-gray-50 text-left text-gray-500">
-                  <tr>
-                    <th className="px-3 py-2 font-medium">N° reserva</th>
-                    <th className="px-3 py-2 font-medium">Titular</th>
-                    <th className="px-3 py-2 font-medium">Asesor</th>
-                    <th className="px-3 py-2 font-medium">Valor</th>
-                    <th className="px-3 py-2 font-medium"># Abonos</th>
-                    <th className="px-3 py-2 font-medium">Total abonado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {previa.filas.map((f) => (
-                    <tr key={f.num} className="border-t border-gray-100">
-                      <td className="px-3 py-1.5 font-mono text-gray-700">{f.num}</td>
-                      <td className="px-3 py-1.5 text-gray-700">{f.titular}</td>
-                      <td className="px-3 py-1.5 text-gray-500">{f.asesor}</td>
-                      <td className="px-3 py-1.5 text-gray-700">{f.valor}</td>
-                      <td className="px-3 py-1.5 text-gray-500">{f.abonos}</td>
-                      <td className="px-3 py-1.5 text-gray-700">{f.totalAbon}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {/* Pestañas de previsualización */}
+            <div className="mb-2 flex gap-1 border-b border-gray-200">
+              {([
+                { id: "contratos", label: `Contratos (${previa.filas.length})` },
+                { id: "proveedores", label: `Costos / Proveedores (${previa.proveedores.length})` },
+                { id: "cartera", label: `Cartera (${previa.cartera.length})` },
+              ] as { id: Tab; label: string }[]).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className="rounded-t-lg px-3 py-1.5 text-xs font-medium"
+                  style={tab === t.id
+                    ? { backgroundColor: "white", color: "var(--brand-primary)", borderBottom: "2px solid var(--brand-primary)" }
+                    : { color: "#9ca3af" }}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
+
+            {tab === "contratos" && (
+              <div className="max-h-72 overflow-auto rounded-lg border border-gray-200">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-gray-50 text-left text-gray-500">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">N° reserva</th>
+                      <th className="px-3 py-2 font-medium">Titular</th>
+                      <th className="px-3 py-2 font-medium">Asesor</th>
+                      <th className="px-3 py-2 font-medium">Valor</th>
+                      <th className="px-3 py-2 font-medium"># Abonos</th>
+                      <th className="px-3 py-2 font-medium">Total abonado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previa.filas.map((f) => (
+                      <tr key={f.num} className="border-t border-gray-100">
+                        <td className="px-3 py-1.5 font-mono text-gray-700">{f.num}</td>
+                        <td className="px-3 py-1.5 text-gray-700">{f.titular}</td>
+                        <td className="px-3 py-1.5 text-gray-500">{f.asesor}</td>
+                        <td className="px-3 py-1.5 text-gray-700">{f.valor}</td>
+                        <td className="px-3 py-1.5 text-gray-500">{f.abonos}</td>
+                        <td className="px-3 py-1.5 text-gray-700">{f.totalAbon}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {tab === "proveedores" && (
+              <div>
+                <p className="mb-2 text-xs text-gray-500">
+                  Cada fila con costo &gt; 0 genera una cuenta por pagar. Las marcadas en{" "}
+                  <span className="font-medium text-amber-700">ámbar ("Sin especificar")</span> quedan sin nombre de
+                  proveedor — revisa la hoja si esperabas un nombre ahí antes de importar.
+                </p>
+                <div className="max-h-72 overflow-auto rounded-lg border border-gray-200">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-gray-50 text-left text-gray-500">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">N° reserva</th>
+                        <th className="px-3 py-2 font-medium">Tipo</th>
+                        <th className="px-3 py-2 font-medium">Proveedor</th>
+                        <th className="px-3 py-2 font-medium">Servicio</th>
+                        <th className="px-3 py-2 text-right font-medium">Valor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previa.proveedores.map((r, i) => (
+                        <tr key={i} className="border-t border-gray-100" style={r.proveedor === SIN_ESPECIFICAR ? { backgroundColor: "rgba(245,158,11,0.08)" } : undefined}>
+                          <td className="px-3 py-1.5 font-mono text-gray-700">{r.numero}</td>
+                          <td className="px-3 py-1.5 text-gray-500">{r.tipo}</td>
+                          <td className={`px-3 py-1.5 ${r.proveedor === SIN_ESPECIFICAR ? "font-medium text-amber-700" : "text-gray-700"}`}>{r.proveedor}</td>
+                          <td className="px-3 py-1.5 text-gray-500">{r.servicio}</td>
+                          <td className="px-3 py-1.5 text-right text-gray-700">{r.moneda === "USD" ? `USD ${r.valor.toLocaleString("es-CO")}` : formatCOP(r.valor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {tab === "cartera" && (
+              <div>
+                <p className="mb-2 text-xs text-gray-500">
+                  Al importar, los abonos ya registrados de estos contratos se <b>reemplazan</b> por esta lista.
+                </p>
+                <div className="max-h-72 overflow-auto rounded-lg border border-gray-200">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-gray-50 text-left text-gray-500">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">N° reserva</th>
+                        <th className="px-3 py-2 font-medium">Titular</th>
+                        <th className="px-3 py-2 font-medium">Fecha</th>
+                        <th className="px-3 py-2 text-right font-medium">Valor</th>
+                        <th className="px-3 py-2 font-medium">Observación</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previa.cartera.map((c, i) => (
+                        <tr key={i} className="border-t border-gray-100">
+                          <td className="px-3 py-1.5 font-mono text-gray-700">{c.numero}</td>
+                          <td className="px-3 py-1.5 text-gray-700">{c.titular}</td>
+                          <td className="px-3 py-1.5 text-gray-500">{c.fecha ?? "—"}</td>
+                          <td className="px-3 py-1.5 text-right text-gray-700">{formatCOP(c.valor)}</td>
+                          <td className="px-3 py-1.5 text-gray-400">{c.observacion ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {(previa.avisos.length > 0 || previa.soloRel.length > 0 || previa.soloPag.length > 0) && (
               <details className="mt-2 text-xs text-amber-700">
