@@ -55,10 +55,14 @@ export function parseExtracto(texto: string, anioDefault?: number): { lineas: Li
     }
     if (!fecha) continue;
 
-    // celdas numéricas (montos): las dos últimas suelen ser VALOR y SALDO
+    // celdas numéricas (montos): las dos últimas suelen ser VALOR y SALDO.
+    // Exige punto decimal (el banco siempre exporta montos con 2 decimales,
+    // ej. "2,300,000.00") — así se descarta cualquier columna extra de puros
+    // dígitos (número de cuenta, referencia, etc.) sin importar su posición:
+    // esas nunca traen decimales, un monto siempre sí.
     const numericas: { i: number; v: number }[] = [];
     for (let i = idxFecha + 1; i < celdas.length; i++) {
-      if (/^-?[\d.,]+$/.test(celdas[i]) && /[0-9]/.test(celdas[i])) {
+      if (/^-?[\d,]*\.\d+$/.test(celdas[i])) {
         const v = num(celdas[i]);
         if (v != null) numericas.push({ i, v });
       }
