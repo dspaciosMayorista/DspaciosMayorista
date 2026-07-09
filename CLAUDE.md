@@ -305,9 +305,9 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 123** — todas
-> confirmadas corridas por el dueño, incluida la **123** (`hotel_temporadas.regimen_restringido`
-> + promo "N noches, 1 gratis" — ver "Motor de cálculo").
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 124** — todas
+> confirmadas corridas por el dueño, incluida la **124** (`conciliacion_sistema.numero_contrato`
+> — ver "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
@@ -436,6 +436,43 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   `lib/calc/paquetes.ts`). Ambas piezas pueden restringirse a **un solo
 >   régimen** aunque el hotel tenga varios (`regimen_restringido`, null =
 >   todos). Detalle completo en "Motor de cálculo".
+> - **CMS del sitio: subir imagen directamente + fix imagen rota (jul-2026):**
+>   `components/sitio/edicion/Editable.jsx` (botón "Cambiar imagen" del editor
+>   in-situ) y `app/cms/editors/SubirArchivo.tsx` (panel ⚙ / Ajustes de página)
+>   solo aceptaban pegar una URL — un link de Google Drive (la página visor,
+>   no el archivo) dejaba la imagen rota, mostrando el `alt` (el título de la
+>   sección) como texto plano sin estilo encima del título real, como si
+>   estuviera duplicado. Ahora ambos suben el archivo directo al bucket
+>   `web-cms` (`subirArchivoWeb`); si la imagen falla igual no se muestra el
+>   alt roto (se oculta el `<img>`). De paso se encontró y corrigió que Next
+>   limita a 1 MB el body de un Server Action — las fotos reales (2-8 MB)
+>   nunca llegaban a la validación de 15 MB ya existente; se subió el límite
+>   a 16 MB (`experimental.serverActions.bodySizeLimit` en `next.config.ts`).
+> - **Vista Booking: "desde" tomaba la tarifa de infante (jul-2026):**
+>   `minRoomPvp` excluía Niño 1/Niño 2 del cálculo de la tarifa mínima
+>   ("desde") pero no Infante (agregado después, migración 122) — como
+>   infante casi siempre es la más barata (a veces $0), el "desde" de las
+>   tarjetas de hotel mostraba el precio de infante en vez del de adulto.
+>   Ahora usa la lista positiva `ACOM_ROOMS` en vez de exclusión manual
+>   (inmune a futuras acomodaciones). Mismo fix en `TarifarioPublic.tsx`
+>   (un `neto_infante` en $0 se mostraba como "—" en vez de "$0").
+> - **Conciliaciones bancarias — borrado en bloque, parser y sugerencias
+>   (jul-2026):** (1) hasta ahora solo se podía borrar línea por línea del
+>   extracto importado — se agregó "Seleccionar todo (visible)" + "Eliminar
+>   seleccionadas" (combinado con el filtro de Mes, permite deshacer un lote
+>   completo mal importado). (2) El parser (`lib/contabilidad/extracto.ts`)
+>   tomaba como "monto" cualquier celda de puros dígitos — un número de
+>   cuenta en su propia columna (sin separador decimal) se colaba como
+>   valor/saldo si quedaba en las últimas posiciones de la fila. Ahora exige
+>   punto decimal (el banco siempre exporta montos con 2 decimales), lo que
+>   descarta cualquier columna extra de puros dígitos sin importar su
+>   posición. (3) Sugerencia automática de cruce: al seleccionar ítems de un
+>   solo lado, se busca en el lado contrario un ítem o par cuya suma cuadre
+>   (`mejorCombo`, acotado a pares) — se resalta + botón "Usar sugerencia".
+>   (4) Migración **124** (ya corrida) agrega
+>   `conciliacion_sistema.numero_contrato` (snapshot al cruzar, desde el
+>   abono/CxP de origen) — se ve como badge y como link a
+>   `/dashboard/contratos/[numero]` en la sección de Conciliados.
 > - **Fix sitio público — crash en secciones de tipo Texto (jul-2026):**
 >   `components/sitio/secciones/Texto.jsx` era la única sección del CMS sin la
 >   directiva `"use client"` pese a llamar `useEdicion()` (hook de Context,
@@ -755,14 +792,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **123** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **124** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 123** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 124** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -819,7 +856,7 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > **111 programa_highlights** (`programas.highlights` text[]) · **112 fusionar_destino**
 > (`fn_fusionar_destino(origen,destino)` SECURITY DEFINER: re-apunta toda FK a destinos y borra) ·
 > **113 programa_piezas** (bucket público `programas` + `programas.flyer_url`/`historia_url`).
-> Rango **114→123** (CRM, seguridad, minorista, hoteles): **114 crm_difusion** (material/
+> Rango **114→124** (CRM, seguridad, minorista, hoteles, contabilidad): **114 crm_difusion** (material/
 > envío/plan) · 115 minorista_numeracion (fix numeración duplicada + `contrato_servicios`) ·
 > **116 rls_tenant_isolation** (filtro de tenant en policies de ventas/abonos/CxP/comisiones/
 > facturación) · **117 eliminar_contrato_rol** (candado de rol dentro del RPC) ·
@@ -836,7 +873,11 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > usada tanto por la promo "N noches, 1 gratis" como por cualquier vigencia
 > existente (tarifa/descuento_pct/descuento_monto) que se quiera limitar a un
 > solo régimen. Detalle de cada una en "Novedades recientes" más arriba y en
-> "Motor de cálculo" (118 ya no se usa/121/122/123).
+> "Motor de cálculo" (118 ya no se usa/121/122/123) ·
+> **124 conciliacion_sistema_contrato** (ya corrida) — agrega
+> `conciliacion_sistema.numero_contrato` (snapshot al cruzar, null para
+> movimientos genéricos sin contrato) para poder enlazar cada conciliado
+> a su contrato — ver "Novedades recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
