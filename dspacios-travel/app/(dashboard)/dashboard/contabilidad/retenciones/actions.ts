@@ -17,6 +17,7 @@ export type CuentaContrato = {
   pagado: number;
   retenido: number;
   saldo: number;
+  pctRetencionSugerido: number; // % de retención configurado para este proveedor/CxP, si lo hay (editable igual)
 };
 
 export type RetencionRow = {
@@ -38,7 +39,7 @@ export async function buscarCuentasPorContrato(
   const tenant = await getTenant();
   const { data: cxp, error } = await sb
     .from("cuentas_por_pagar")
-    .select("id, proveedor, tipo_proveedor, servicio, valor_total, moneda, abono1, abono2, abono3")
+    .select("id, proveedor, tipo_proveedor, servicio, valor_total, moneda, abono1, abono2, abono3, aplica_retencion, pct_retencion")
     .eq("numero_contrato", numero)
     .eq("tenant", tenant)
     .order("id");
@@ -65,6 +66,7 @@ export async function buscarCuentasPorContrato(
       pagado,
       retenido,
       saldo: Math.max(valorTotal - pagado - retenido, 0),
+      pctRetencionSugerido: c.aplica_retencion ? Number(c.pct_retencion) || 0 : 0,
     };
   });
   return { ok: true, cuentas };
