@@ -68,6 +68,8 @@ function DubaiForm({
   const [pax3Pct, setPax3Pct] = useState(String(inicial?.modificadores?.pax3_pct ?? -20));
   const [pax4Pct, setPax4Pct] = useState(String(inicial?.modificadores?.pax4_pct ?? -20));
   const [ninoPct, setNinoPct] = useState(String(inicial?.modificadores?.nino_pct ?? -50));
+  const [infantePct, setInfantePct] = useState(String(inicial?.modificadores?.infante_pct ?? -100));
+  const [infanteNota, setInfanteNota] = useState(inicial?.infante_nota ?? "");
 
   const [regimenBase, setRegimenBase] = useState(inicial?.regimen_base ?? regimenes[0] ?? "PC");
   const supInicial: Record<string, string> = {};
@@ -99,11 +101,13 @@ function DubaiForm({
       pax3_pct: Number(pax3Pct) || 0,
       pax4_pct: Number(pax4Pct) || 0,
       nino_pct: Number(ninoPct) || 0,
+      infante_pct: Number(infantePct) || 0,
     },
     suplementos: regimenes.filter((r) => r !== regimenBase).map((r) => ({ regimen: r, monto: Number(suplementos[r]) || 0 })),
     bases: categorias.flatMap((c) => temporadas.map((t) => ({ categoria: c, temporada: t, precio: Number(bases[`${c}|${t}`]) || 0 }))).filter((b) => b.precio > 0),
     promos,
-  }), [regimenBase, sencillaPct, pax3Pct, pax4Pct, ninoPct, suplementos, bases, regimenes, categorias, temporadas, promos]);
+    infante_nota: infanteNota,
+  }), [regimenBase, sencillaPct, pax3Pct, pax4Pct, ninoPct, infantePct, infanteNota, suplementos, bases, regimenes, categorias, temporadas, promos]);
 
   const preview = useMemo(() => generarTarifasDubai(params).filter((f) => f.alimentacion === regimenBase), [params, regimenBase]);
   // Vista previa de promos: se muestran aparte porque pueden ser de OTRO régimen.
@@ -134,11 +138,16 @@ function DubaiForm({
       <p className="text-xs text-gray-500">Carga una <b>base por persona/noche</b> (en doble, con el régimen base) por categoría y temporada; el sistema deriva sencilla/triple/múltiple/niño con los modificadores y suma los suplementos de régimen.</p>
       <div>
         <p className={lbl}>Modificadores (% sobre la base)</p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <div><label className="text-[11px] text-gray-500">Sencilla</label><Input type="number" value={sencillaPct} onChange={(e) => setSencillaPct(e.target.value)} /></div>
           <div><label className="text-[11px] text-gray-500">3er pax</label><Input type="number" value={pax3Pct} onChange={(e) => setPax3Pct(e.target.value)} /></div>
           <div><label className="text-[11px] text-gray-500">4to pax</label><Input type="number" value={pax4Pct} onChange={(e) => setPax4Pct(e.target.value)} /></div>
           <div><label className="text-[11px] text-gray-500">Niño</label><Input type="number" value={ninoPct} onChange={(e) => setNinoPct(e.target.value)} /></div>
+          <div><label className="text-[11px] text-gray-500">Infante</label><Input type="number" value={infantePct} onChange={(e) => setInfantePct(e.target.value)} /></div>
+        </div>
+        <div className="mt-2">
+          <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Comparte cama con los padres&quot;)</label>
+          <Input value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} placeholder="Nota especial para la tarifa de infante" />
         </div>
       </div>
       <div>
@@ -214,7 +223,7 @@ function DubaiForm({
 // ── Formulario MIXTA (por hab/pax + IVA) ───────────────────────────────────
 type AcomCfg = Record<MixtaAcom, { modo: "hab" | "pax"; iva: boolean }>;
 const ACOM_LABEL: Record<MixtaAcom, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple" };
-const CAMPOS = ["sencilla", "doble", "triple", "multiple", "nino", "nino2"] as const;
+const CAMPOS = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "infante"] as const;
 type Campo = (typeof CAMPOS)[number];
 
 function MixtaForm({
@@ -234,6 +243,7 @@ function MixtaForm({
     return def;
   });
   const [ninoIva, setNinoIva] = useState(inicial?.nino?.iva ?? false);
+  const [infanteNota, setInfanteNota] = useState(inicial?.infante_nota ?? "");
   const [pax, setPax] = useState<Record<MixtaAcom, string>>(() => {
     const def: Record<MixtaAcom, string> = {
       sencilla: String(inicial?.pax?.sencilla ?? PAX_TARIFA_DEFAULT.sencilla),
@@ -252,6 +262,7 @@ function MixtaForm({
     valInicial[`${b.categoria}|${b.temporada}|multiple`] = String(b.multiple ?? "");
     valInicial[`${b.categoria}|${b.temporada}|nino`] = String(b.nino ?? "");
     if (b.nino2 != null) valInicial[`${b.categoria}|${b.temporada}|nino2`] = String(b.nino2);
+    if (b.infante != null) valInicial[`${b.categoria}|${b.temporada}|infante`] = String(b.infante);
   }
   const [vals, setVals] = useState<Record<string, string>>(valInicial);
   const setVal = (c: string, t: string, campo: Campo, v: string) => setVals((s) => ({ ...s, [`${c}|${t}|${campo}`]: v }));
@@ -274,9 +285,11 @@ function MixtaForm({
       categoria: c, temporada: t,
       sencilla: num(c, t, "sencilla"), doble: num(c, t, "doble"), triple: num(c, t, "triple"), multiple: num(c, t, "multiple"),
       nino: num(c, t, "nino"), nino2: vals[`${c}|${t}|nino2`] ? Number(vals[`${c}|${t}|nino2`]) : null,
+      infante: vals[`${c}|${t}|infante`] ? Number(vals[`${c}|${t}|infante`]) : null,
     }))),
+    infante_nota: infanteNota,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [regimen, acom, ninoIva, pax, vals, categorias, temporadas]);
+  }), [regimen, acom, ninoIva, pax, vals, categorias, temporadas, infanteNota]);
 
   const preview = useMemo(() => generarTarifasMixta(params), [params]);
 
@@ -334,20 +347,24 @@ function MixtaForm({
           ))}
         </div>
         <label className="mt-2 flex items-center gap-1 text-xs text-gray-600">
-          <input type="checkbox" checked={ninoIva} onChange={(e) => setNinoIva(e.target.checked)} /> Niño + IVA 19% (el niño siempre es por persona)
+          <input type="checkbox" checked={ninoIva} onChange={(e) => setNinoIva(e.target.checked)} /> Niño/Infante + IVA 19% (siempre son por persona)
         </label>
+        <div className="mt-2">
+          <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Comparte cama con los padres&quot;)</label>
+          <Input value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} placeholder="Nota especial para la tarifa de infante" />
+        </div>
       </div>
 
       {/* Valores por categoría × temporada */}
       <div>
         <p className={lbl}>Valores por categoría y temporada (según el modo de cada acomodación)</p>
         <div className="overflow-x-auto rounded-lg border border-gray-200">
-          <table className="min-w-[760px] border-collapse text-sm">
+          <table className="min-w-[860px] border-collapse text-sm">
             <thead>
               <tr className="bg-gray-50 text-left text-xs text-gray-400">
                 <th className="px-2 py-1">Categoría · Temporada</th>
                 <th className="px-2 py-1">Sencilla</th><th className="px-2 py-1">Doble</th><th className="px-2 py-1">Triple</th><th className="px-2 py-1">Múltiple</th>
-                <th className="px-2 py-1">Niño 1</th><th className="px-2 py-1">Niño 2</th>
+                <th className="px-2 py-1">Niño 1</th><th className="px-2 py-1">Niño 2</th><th className="px-2 py-1">Infante</th>
               </tr>
             </thead>
             <tbody>
@@ -371,17 +388,22 @@ function MixtaForm({
 }
 
 // ── Compartidos ────────────────────────────────────────────────────────────
-type FilaPrev = { tipo_habitacion: string; temporada: string; neto_sencilla: number; neto_doble: number; neto_triple: number; neto_multiple: number; neto_nino: number };
+type FilaPrev = {
+  tipo_habitacion: string; temporada: string;
+  neto_sencilla: number; neto_doble: number; neto_triple: number; neto_multiple: number;
+  neto_nino: number; neto_infante?: number | null;
+};
 function PreviewTabla({ titulo, filas }: { titulo: string; filas: FilaPrev[] }) {
   return (
     <div>
       <p className={lbl}>{titulo}</p>
       <div className="overflow-x-auto rounded-lg border border-gray-200">
-        <table className="w-full min-w-[560px] text-xs">
+        <table className="w-full min-w-[620px] text-xs">
           <thead><tr className="bg-gray-50 text-left text-gray-400">
             <th className="px-2 py-1">Categoría</th><th className="px-2 py-1">Temporada</th>
             <th className="px-2 py-1 text-right">Sencilla</th><th className="px-2 py-1 text-right">Doble</th>
-            <th className="px-2 py-1 text-right">Triple</th><th className="px-2 py-1 text-right">Múltiple</th><th className="px-2 py-1 text-right">Niño</th>
+            <th className="px-2 py-1 text-right">Triple</th><th className="px-2 py-1 text-right">Múltiple</th>
+            <th className="px-2 py-1 text-right">Niño</th><th className="px-2 py-1 text-right">Infante</th>
           </tr></thead>
           <tbody>
             {filas.map((f, i) => (
@@ -393,6 +415,7 @@ function PreviewTabla({ titulo, filas }: { titulo: string; filas: FilaPrev[] }) 
                 <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_triple)}</td>
                 <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_multiple)}</td>
                 <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_nino)}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{f.neto_infante != null ? formatCOP(f.neto_infante) : "—"}</td>
               </tr>
             ))}
           </tbody>

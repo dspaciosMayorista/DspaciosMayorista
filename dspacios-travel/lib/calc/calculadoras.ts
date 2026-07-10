@@ -22,6 +22,8 @@ export type TarifaGenerada = {
   neto_multiple: number;
   neto_nino: number;
   neto_nino2: number | null;
+  neto_infante: number | null;
+  nota_infante: string | null;
 };
 
 // ── Calculadora "DUBAI" ────────────────────────────────────────────────────
@@ -53,15 +55,19 @@ export type DubaiParams = {
     pax3_pct: number;                   // -20  → ×0.8
     pax4_pct: number;                   // -20
     nino_pct: number;                   // -50  → ×0.5
+    infante_pct?: number;                // -100 → gratis (default si no se configura)
   };
   suplementos: { regimen: string; monto: number }[];   // PAM +45000, etc.
   bases: { categoria: string; temporada: string; precio: number }[];
   promos?: DubaiPromo[];
+  infante_nota?: string;                 // nota general (ej. "comparte cama con los padres")
 };
 
 export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
-  const m = p.modificadores ?? { sencilla_pct: 0, pax3_pct: 0, pax4_pct: 0, nino_pct: 0 };
+  const m = p.modificadores ?? { sencilla_pct: 0, pax3_pct: 0, pax4_pct: 0, nino_pct: 0, infante_pct: -100 };
+  const infantePct = m.infante_pct ?? -100;
   const f = (pct: number) => 1 + (Number(pct) || 0) / 100;
+  const notaInfante = p.infante_nota?.trim() || null;
   const out: TarifaGenerada[] = [];
 
   // Régimen base (suplemento 0) + los suplementos configurados.
@@ -72,14 +78,16 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
   ];
   const suplementoDe = (regimen: string) => regimenes.find((r) => r.regimen === regimen)?.monto ?? 0;
 
-  // Deriva sencilla/triple/múltiple/niño a partir de una base + su suplemento,
-  // igual fórmula para tarifa normal y para promo (la promo solo cambia `base`).
+  // Deriva sencilla/triple/múltiple/niño/infante a partir de una base + su
+  // suplemento, igual fórmula para tarifa normal y para promo (la promo solo
+  // cambia `base`).
   const derivar = (base: number, sup: number) => ({
     sencilla: Math.round(base * f(m.sencilla_pct) + sup),
     doble: Math.round(base + sup),
     triple: Math.round((base * 2 + base * f(m.pax3_pct)) / 3 + sup),
     multiple: Math.round((base * 2 + base * f(m.pax3_pct) + base * f(m.pax4_pct)) / 4 + sup),
     nino: Math.round(base * f(m.nino_pct) + sup),
+    infante: Math.max(0, Math.round(base * f(infantePct) + sup)),
   });
 
   for (const b of p.bases ?? []) {
@@ -98,6 +106,8 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
         neto_multiple: d.multiple,
         neto_nino: d.nino,
         neto_nino2: null,
+        neto_infante: d.infante,
+        nota_infante: notaInfante,
       });
     }
   }
@@ -125,6 +135,8 @@ export function generarTarifasDubai(p: DubaiParams): TarifaGenerada[] {
         neto_multiple: d.multiple,
         neto_nino: d.nino,
         neto_nino2: null,
+        neto_infante: d.infante,
+        nota_infante: notaInfante,
       });
     }
   }
@@ -151,13 +163,15 @@ export type MixtaParams = {
   bases: {
     categoria: string; temporada: string;
     sencilla: number; doble: number; triple: number; multiple: number;
-    nino: number; nino2: number | null;
+    nino: number; nino2: number | null; infante?: number | null;
   }[];
+  infante_nota?: string;                               // nota general (ej. "comparte cama con los padres")
 };
 
 export function generarTarifasMixta(p: MixtaParams): TarifaGenerada[] {
   const ivaPct = Number(p.iva_pct) || 19;
   const conIva = (v: number, iva: boolean) => (iva ? v * (1 + ivaPct / 100) : v);
+  const notaInfante = p.infante_nota?.trim() || null;
   // Por persona, según modo de la acomodación.
   const pp = (valor: number, acom: MixtaAcom) => {
     const v = Number(valor) || 0;
@@ -167,6 +181,7 @@ export function generarTarifasMixta(p: MixtaParams): TarifaGenerada[] {
     const base = cfg.modo === "hab" ? v / paxRoom : v;
     return Math.round(conIva(base, cfg.iva));
   };
+  // Niño 1/2 e Infante siempre son por persona; comparten el mismo IVA.
   const ppNino = (valor: number) => {
     const v = Number(valor) || 0;
     if (v <= 0) return 0;
@@ -191,6 +206,8 @@ export function generarTarifasMixta(p: MixtaParams): TarifaGenerada[] {
       neto_multiple: multiple,
       neto_nino: ppNino(b.nino),
       neto_nino2: b.nino2 != null ? ppNino(b.nino2) : null,
+      neto_infante: b.infante != null ? ppNino(b.infante) : null,
+      nota_infante: notaInfante,
     });
   }
   return out;
