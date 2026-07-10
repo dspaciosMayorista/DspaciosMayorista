@@ -627,9 +627,10 @@ export async function regenerarTarifariosDeHotel(hotelId: number): Promise<void>
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];
-    for (const id of ids) {
-      try { await generarTarifario(id); } catch { /* un paquete malo no frena el resto */ }
-    }
+    // En paralelo: son independientes (cada uno solo toca sus propias filas de
+    // tarifario_resultado) y un hotel usado en muchos paquetes tardaba segundos
+    // regenerando uno por uno.
+    await Promise.allSettled(ids.map((id) => generarTarifario(id)));
   } catch {
     /* el auto-recálculo es best-effort; nunca bloquea la edición */
   }
@@ -648,7 +649,7 @@ export async function regenerarTarifariosDeBloqueo(bloqueoId: number): Promise<v
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];
-    for (const id of ids) { try { await generarTarifario(id); } catch { /* sigue */ } }
+    await Promise.allSettled(ids.map((id) => generarTarifario(id)));
   } catch { /* best-effort */ }
 }
 
@@ -665,7 +666,7 @@ export async function regenerarTarifariosDeServicio(servicioId: number): Promise
     const ids = [...new Set((pkgs ?? [])
       .filter((p) => (p.armado_paquetes as unknown as { activo: boolean } | null)?.activo)
       .map((p) => p.paquete_id))];
-    for (const id of ids) { try { await generarTarifario(id); } catch { /* sigue */ } }
+    await Promise.allSettled(ids.map((id) => generarTarifario(id)));
   } catch { /* best-effort */ }
 }
 
