@@ -87,10 +87,12 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
         {regimenes.length > 0 && <> · Régimen: {regimenes.join(", ")}</>}
       </p>
       {h.proveedores?.politica_reservas && (
-        <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
-          <p className="mb-0.5 text-xs font-medium text-gray-500">Política de reservas del proveedor <span className="font-normal text-gray-400">(interno)</span></p>
-          <p className="whitespace-pre-wrap text-gray-700">{h.proveedores.politica_reservas}</p>
-        </div>
+        <details className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm">
+          <summary className="cursor-pointer select-none text-xs font-medium text-gray-500">
+            Política de reservas del proveedor <span className="font-normal text-gray-400">(interno · clic para ver/ocultar)</span>
+          </summary>
+          <p className="mt-2 whitespace-pre-wrap text-gray-700">{h.proveedores.politica_reservas}</p>
+        </details>
       )}
 
       <div className="mt-6">
