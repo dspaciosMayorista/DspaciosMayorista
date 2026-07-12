@@ -56,16 +56,24 @@ export function parseExtracto(texto: string, anioDefault?: number): { lineas: Li
     if (!fecha) continue;
 
     // celdas numéricas (montos): las dos últimas suelen ser VALOR y SALDO.
-    // Exige punto decimal (el banco siempre exporta montos con 2 decimales,
-    // ej. "2,300,000.00") — así se descarta cualquier columna extra de puros
-    // dígitos (número de cuenta, referencia, etc.) sin importar su posición:
-    // esas nunca traen decimales, un monto siempre sí.
+    // Antes se exigía punto decimal (el banco casi siempre exporta montos con
+    // 2 decimales, ej. "2,300,000.00") para descartar columnas de puros
+    // dígitos (número de cuenta, referencia, etc.). Pero un valor exacto en
+    // pesos a veces viene SIN decimales (ej. "-144", "988" en cuotas/4x1000):
+    // esas filas perdían su valor real y el parser terminaba tomando el SALDO
+    // (que sí siempre trae decimales) como si fuera el monto del movimiento.
+    // Ahora se acepta con o sin decimal, y solo se descarta un candidato sin
+    // coma NI decimal cuando es muy largo (7+ dígitos) — así se sigue
+    // filtrando números de cuenta/referencia (siempre largos y sin separador
+    // de miles) sin perder montos pequeños en pesos exactos.
     const numericas: { i: number; v: number }[] = [];
     for (let i = idxFecha + 1; i < celdas.length; i++) {
-      if (/^-?[\d,]*\.\d+$/.test(celdas[i])) {
-        const v = num(celdas[i]);
-        if (v != null) numericas.push({ i, v });
-      }
+      const c = celdas[i];
+      if (!/^-?[\d,]+(\.\d+)?$/.test(c)) continue;
+      const soloDigitos = /^-?\d+$/.test(c); // sin coma ni punto decimal
+      if (soloDigitos && c.replace("-", "").length >= 7) continue; // probable cuenta/referencia
+      const v = num(c);
+      if (v != null) numericas.push({ i, v });
     }
     if (numericas.length === 0) continue;
     let valor: number, saldo: number | null = null;
