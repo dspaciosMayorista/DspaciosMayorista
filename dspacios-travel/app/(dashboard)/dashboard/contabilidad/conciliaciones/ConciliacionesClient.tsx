@@ -1,13 +1,18 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import { Trash2, Link2, Undo2, Sparkles } from "lucide-react";
+import { Trash2, Link2, Undo2, Sparkles, Plus } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
 import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto, eliminarPeriodoExtracto } from "./actions";
+import { listarCuentasMovimiento } from "../libro-diario/actions";
+
+type CuentaMov = { id: number; codigo: string; nombre: string };
+type LineaGasto = { cuentaTexto: string; tercero: string; valor: string };
+const LINEA_GASTO_VACIA: LineaGasto = { cuentaTexto: "", tercero: "", valor: "" };
 
 export type ExtractoItem = { id: number; fecha: string; descripcion: string; valor: number; periodo: string };
 export type SistemaItem = { ref: string; tipo: string; descripcion: string; fecha: string | null; valor: number; numeroContrato: string | null; categoria: "cartera" | "proveedor" };
@@ -63,7 +68,12 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   const [modo, setModo] = useState<"cartera" | "proveedor">("cartera");
   const [mes, setMes] = useState("");
   const [nota, setNota] = useState("");
-  const [diferenciaCaja, setDiferenciaCaja] = useState(false);
+  // Tipo de diferencia justificada cuando las sumas no cuadran: "caja" (el
+  // sobrante quedó en efectivo) o "gasto" (un tercero se lo comió antes de
+  // consignar, ej. comisión del datáfono — se reparte en 1+ cuentas de gasto).
+  const [tipoDif, setTipoDif] = useState<"caja" | "gasto" | null>(null);
+  const [gastoLineas, setGastoLineas] = useState<LineaGasto[]>([{ ...LINEA_GASTO_VACIA }]);
+  const [cuentasMov, setCuentasMov] = useState<CuentaMov[]>([]);
   // Filtros y orden INDEPENDIENTES por columna (día preciso + valor + orden).
   const [extDesde, setExtDesde] = useState("");
   const [extHasta, setExtHasta] = useState("");
@@ -84,10 +94,30 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     setModo(m);
     setSelExt(new Set());
     setSelSis(new Set());
-    setDiferenciaCaja(false);
+    setTipoDif(null);
+    setGastoLineas([{ ...LINEA_GASTO_VACIA }]);
     setError(null);
     setAviso(null);
   }
+
+  // Cuentas de gasto (PUC) para la opción "es un gasto/comisión" — se traen
+  // solo la primera vez que se necesitan, no en cada carga de la página.
+  useEffect(() => {
+    if (tipoDif !== "gasto" || cuentasMov.length) return;
+    listarCuentasMovimiento().then((r) => { if (r.ok) setCuentasMov(r.cuentas); });
+  }, [tipoDif, cuentasMov.length]);
+
+  const cuentaMovPorLabel = useMemo(() => {
+    const m = new Map<string, CuentaMov>();
+    for (const c of cuentasMov) m.set(`${c.codigo} · ${c.nombre}`, c);
+    return m;
+  }, [cuentasMov]);
+
+  function setLineaGasto(i: number, patch: Partial<LineaGasto>) {
+    setGastoLineas((ls) => ls.map((l, n) => (n === i ? { ...l, ...patch } : l)));
+  }
+  function agregarLineaGasto() { setGastoLineas((ls) => [...ls, { ...LINEA_GASTO_VACIA }]); }
+  function quitarLineaGasto(i: number) { setGastoLineas((ls) => (ls.length > 1 ? ls.filter((_, n) => n !== i) : ls)); }
 
   const meses = useMemo(() => Array.from(new Set(extracto.map((e) => e.periodo))).sort().reverse(), [extracto]);
 
@@ -144,12 +174,18 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   const haySeleccion = selExt.size > 0 && selSis.size > 0;
   const sumasCuadran = haySeleccion && abs(totExt - totSis) <= 1;
   const dif = totExt - totSis;
-  // Diferencia justificada: el sobrante/faltante quedó en efectivo (caja),
-  // nunca pasa por el banco (ej. un abono en efectivo del que solo parte se
-  // consignó). Requiere marcar la casilla Y dejar una nota — se permite
-  // cruzar aunque las sumas no coincidan.
+  // Diferencia justificada: o el sobrante/faltante quedó en efectivo (caja,
+  // nunca pasa por el banco), o es un gasto real que un tercero descontó
+  // antes de consignar (ej. comisión del datáfono). Requiere elegir el tipo,
+  // dejar una nota y — si es gasto — que las líneas sumen exacto.
   const puedeForzarDiferencia = haySeleccion && !sumasCuadran;
-  const cuadra = sumasCuadran || (puedeForzarDiferencia && diferenciaCaja && nota.trim() !== "");
+  const gastoTotal = gastoLineas.reduce((a, l) => a + (Number(l.valor) || 0), 0);
+  const gastoValido =
+    modo === "cartera" &&
+    gastoLineas.length > 0 &&
+    gastoLineas.every((l) => l.cuentaTexto.trim() && cuentaMovPorLabel.has(l.cuentaTexto.trim()) && Number(l.valor) > 0) &&
+    Math.abs(gastoTotal - abs(dif)) <= 1;
+  const cuadra = sumasCuadran || (puedeForzarDiferencia && nota.trim() !== "" && (tipoDif === "caja" || (tipoDif === "gasto" && gastoValido)));
 
   // Sugerencia automática: si solo hay selección de UN lado, busca en el otro
   // lado TODOS los ítems cuyo valor cuadre con el total ya seleccionado.
@@ -214,11 +250,19 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     setError(null);
     setAviso(null);
     const items = sistema.filter((s) => selSis.has(s.ref)).map((s) => ({ ref: s.ref, descripcion: `${s.tipo}: ${s.descripcion}`, fecha: s.fecha, valor: s.valor, numeroContrato: s.numeroContrato }));
+    const esGasto = !sumasCuadran && tipoDif === "gasto";
+    const gastoLineasPayload = esGasto
+      ? gastoLineas.map((l) => ({ cuentaCodigo: cuentaMovPorLabel.get(l.cuentaTexto.trim())!.codigo, tercero: l.tercero, valor: Number(l.valor) || 0 }))
+      : undefined;
     start(async () => {
-      const r = await cruzar({ extractoIds: [...selExt], sistema: items, nota, diferenciaCaja: !sumasCuadran && diferenciaCaja });
+      const r = await cruzar({
+        extractoIds: [...selExt], sistema: items, nota,
+        diferenciaCaja: !sumasCuadran && tipoDif === "caja",
+        gastoLineas: gastoLineasPayload,
+      });
       if (!r.ok) { setError(r.error); return; }
       if (r.aviso) setAviso(r.aviso);
-      setSelExt(new Set()); setSelSis(new Set()); setNota(""); setDiferenciaCaja(false); router.refresh();
+      setSelExt(new Set()); setSelSis(new Set()); setNota(""); setTipoDif(null); setGastoLineas([{ ...LINEA_GASTO_VACIA }]); router.refresh();
     });
   }
 
@@ -274,7 +318,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
           <Input
             value={nota}
             onChange={(e) => setNota(e.target.value)}
-            placeholder={diferenciaCaja ? "Nota (obligatoria: explica la diferencia)" : "Nota (opcional)"}
+            placeholder={tipoDif ? "Nota (obligatoria: explica la diferencia)" : "Nota (opcional)"}
             className="w-56"
           />
           <Button onClick={hacerCruce} disabled={!cuadra || pending} style={{ backgroundColor: cuadra ? (sumasCuadran ? "var(--brand-primary)" : "#b45309") : "#9ca3af" }}>
@@ -286,15 +330,55 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
       {aviso && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{aviso}</p>}
       {puedeForzarDiferencia && (
         <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-          <label className="flex cursor-pointer items-start gap-2">
-            <input type="checkbox" checked={diferenciaCaja} onChange={(e) => setDiferenciaCaja(e.target.checked)} className="mt-0.5" />
-            <span>
-              La diferencia de <b className="tabular-nums">{formatCOP(abs(dif))}</b> no es un error: quedó (o salió) en <b>efectivo, en caja</b>, nunca pasó por el banco
-              (ej. un abono en efectivo del que solo parte se consignó). Marca esto y escribe la nota para poder cruzar igual — el movimiento del sistema
-              queda conciliado por su valor completo.
-            </span>
-          </label>
-          {!diferenciaCaja && (
+          <p className="mb-1.5">
+            La diferencia de <b className="tabular-nums">{formatCOP(abs(dif))}</b> no es un error — elige por qué, para poder cruzar igual
+            (el movimiento del sistema queda conciliado por su valor completo):
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <label className="flex cursor-pointer items-start gap-1.5">
+              <input type="radio" name="tipoDif" checked={tipoDif === "caja"} onChange={() => setTipoDif("caja")} className="mt-0.5" />
+              <span>Quedó (o salió) en <b>efectivo, en caja</b> — nunca pasó por el banco (ej. un abono en efectivo del que solo parte se consignó).</span>
+            </label>
+            {modo === "cartera" && (
+              <label className="flex cursor-pointer items-start gap-1.5">
+                <input type="radio" name="tipoDif" checked={tipoDif === "gasto"} onChange={() => setTipoDif("gasto")} className="mt-0.5" />
+                <span>Es un <b>gasto/comisión</b> que un tercero descontó antes de consignar (ej. comisión del datáfono).</span>
+              </label>
+            )}
+          </div>
+          {tipoDif === "gasto" && (
+            <div className="mt-2 space-y-1.5 rounded-lg border border-amber-200 bg-white p-2">
+              <datalist id="cuentas-gasto-conciliacion">
+                {cuentasMov.map((c) => <option key={c.id} value={`${c.codigo} · ${c.nombre}`} />)}
+              </datalist>
+              {gastoLineas.map((l, i) => (
+                <div key={i} className="flex flex-wrap items-end gap-2">
+                  <div className="w-64">
+                    <label className="block text-[10px] text-gray-500">Cuenta del gasto</label>
+                    <Input list="cuentas-gasto-conciliacion" value={l.cuentaTexto} onChange={(e) => setLineaGasto(i, { cuentaTexto: e.target.value })} placeholder="ej. 530525 · Comisiones bancarias" className="h-7 text-xs" />
+                  </div>
+                  <div className="w-36">
+                    <label className="block text-[10px] text-gray-500">Tercero</label>
+                    <Input value={l.tercero} onChange={(e) => setLineaGasto(i, { tercero: e.target.value })} placeholder="Opcional" className="h-7 text-xs" />
+                  </div>
+                  <div className="w-32">
+                    <label className="block text-[10px] text-gray-500">Valor</label>
+                    <Input value={l.valor} onChange={(e) => setLineaGasto(i, { valor: e.target.value })} inputMode="numeric" placeholder="0" className="h-7 text-xs" />
+                  </div>
+                  {gastoLineas.length > 1 && (
+                    <button type="button" onClick={() => quitarLineaGasto(i)} className="mb-1 text-gray-300 hover:text-red-500" title="Quitar línea"><Trash2 size={13} /></button>
+                  )}
+                </div>
+              ))}
+              <button type="button" onClick={agregarLineaGasto} className="inline-flex items-center gap-1 text-[11px] font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
+                <Plus size={11} /> Dividir en otra cuenta
+              </button>
+              <p className={gastoValido ? "text-[#3d7a63]" : "text-amber-700"}>
+                Total: <b className="tabular-nums">{formatCOP(gastoTotal)}</b> de <b className="tabular-nums">{formatCOP(abs(dif))}</b> requeridos
+              </p>
+            </div>
+          )}
+          {!tipoDif && (
             <p className="mt-1 text-gray-500">O ajusta la selección: puedes elegir varios ítems de un lado (ej. una línea de 1.000 contra 700 + 300).</p>
           )}
         </div>
@@ -371,7 +455,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
                     {c.fecha} · {formatCOP(c.total)}
                     {abs(difCaja) > 1 && (
                       <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                        Diferencia en caja: {formatCOP(abs(difCaja))}
+                        Diferencia justificada: {formatCOP(abs(difCaja))}
                       </span>
                     )}
                     {c.nota && <span className="text-gray-400"> · {c.nota}</span>}
