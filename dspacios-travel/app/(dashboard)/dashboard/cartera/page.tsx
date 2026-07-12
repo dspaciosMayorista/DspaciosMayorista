@@ -36,7 +36,7 @@ export default async function CarteraPage() {
       .order("created_at", { ascending: false }),
     sb
       .from("abonos")
-      .select("id, numero_contrato, fecha_abono, valor_abono, forma_pago, referencia, trm")
+      .select("id, numero_contrato, fecha_abono, valor_abono, forma_pago, referencia, trm, monto_cop")
       .order("fecha_abono", { ascending: true }),
     sb.from("formas_pago").select("nombre").eq("activo", true).order("orden"),
   ]);
@@ -52,6 +52,7 @@ export default async function CarteraPage() {
       forma_pago: a.forma_pago,
       referencia: a.referencia,
       trm: a.trm,
+      monto_cop: a.monto_cop,
     });
     abonosPorContrato.set(a.numero_contrato, arr);
   }
