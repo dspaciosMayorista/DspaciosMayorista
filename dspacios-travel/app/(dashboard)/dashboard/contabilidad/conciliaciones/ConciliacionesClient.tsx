@@ -397,7 +397,7 @@ function Importador() {
     start(async () => {
       const r = await importarExtracto(texto, Number(anio) || undefined, cuenta);
       if (!r.ok) setMsg(r.error);
-      else { setMsg(`Importadas ${r.n} líneas.`); setTexto(""); router.refresh(); }
+      else { setMsg(r.aviso ?? `Importadas ${r.n} líneas.`); setTexto(""); router.refresh(); }
     });
   }
   return (
