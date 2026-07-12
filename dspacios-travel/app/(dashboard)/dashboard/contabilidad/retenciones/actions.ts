@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
+import { postearAsientoRetencion, reemplazarAsiento } from "@/lib/contabilidad/asientos";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -102,7 +103,7 @@ export async function registrarRetencion(input: {
   const sb = await createClient();
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
-    .select("id, numero_contrato, valor_total, abono1, abono2, abono3")
+    .select("id, numero_contrato, valor_total, abono1, abono2, abono3, tipo_proveedor, proveedor")
     .eq("id", input.cuentaId)
     .maybeSingle();
   if (e1) return { ok: false, error: e1.message };
@@ -116,17 +117,21 @@ export async function registrarRetencion(input: {
     return { ok: false, error: `El valor supera el saldo pendiente (${saldoActual.toLocaleString("es-CO")}).` };
   }
 
-  const { error } = await sb.from("retenciones_cxp").insert({
+  const { data: nueva, error } = await sb.from("retenciones_cxp").insert({
     cuenta_por_pagar_id: input.cuentaId,
     valor: input.valor,
     fecha_practica: input.fechaPractica,
     mes_declaracion: input.mesDeclaracion,
     observaciones: input.observaciones?.trim() || null,
     tenant: await getTenant(),
+  }).select("id").single();
+  if (error || !nueva) return { ok: false, error: error?.message ?? "No se pudo registrar la retención." };
+  await postearAsientoRetencion({
+    retencionId: nueva.id, tipoProveedor: cxp.tipo_proveedor, proveedor: cxp.proveedor, valor: input.valor, fecha: input.fechaPractica,
   });
-  if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/contabilidad/retenciones");
   revalidatePath("/dashboard/pagos");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
   if (cxp.numero_contrato) revalidatePath(`/dashboard/contratos/${cxp.numero_contrato}`);
   return { ok: true };
 }
@@ -136,11 +141,13 @@ export async function eliminarRetencion(id: number): Promise<Result> {
   const { data: r } = await sb.from("retenciones_cxp").select("cuenta_por_pagar_id").eq("id", id).maybeSingle();
   const { error } = await sb.from("retenciones_cxp").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
+  await reemplazarAsiento("retencion", `retencion:${id}`, null);
   if (r?.cuenta_por_pagar_id) {
     const { data: cxp } = await sb.from("cuentas_por_pagar").select("numero_contrato").eq("id", r.cuenta_por_pagar_id).maybeSingle();
     if (cxp?.numero_contrato) revalidatePath(`/dashboard/contratos/${cxp.numero_contrato}`);
   }
   revalidatePath("/dashboard/contabilidad/retenciones");
   revalidatePath("/dashboard/pagos");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
   return { ok: true };
 }

@@ -8,6 +8,7 @@ import { ACOM_ROOM_LABEL, paxDeAcomodacion, clasificarPorEdad, type AcomRoom } f
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
 import { pvpPrograma } from "@/lib/programas";
+import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 import type { Json } from "@/types/database";
 import {
   cotizarPorFechas as cotizarPorFechasImpl,
@@ -526,7 +527,13 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   if (cxp.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
-      await admin.from("cuentas_por_pagar").insert(cxp);
+      const { data: creadas } = await admin.from("cuentas_por_pagar").insert(cxp).select("id, tipo_proveedor, proveedor, servicio, valor_total");
+      for (const c of creadas ?? []) {
+        await postearAsientoCxP({
+          cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
+          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO,
+        });
+      }
     } catch {
       // No bloquear la reserva si falla la creación automática de CxP.
     }
@@ -856,10 +863,18 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
 
   if (!rows.length) return { ok: true, creadas: 0 };
 
-  const { error } = await admin.from("cuentas_por_pagar").insert(rows);
+  const { data: creadas, error } = await admin.from("cuentas_por_pagar").insert(rows).select("id, tipo_proveedor, proveedor, servicio, valor_total");
   if (error) return { ok: false, creadas: 0, error: error.message };
+  for (const c of creadas ?? []) {
+    await postearAsientoCxP({
+      cuentaId: c.id, numeroContrato, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
+      servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoy,
+    });
+  }
   revalidatePath("/dashboard/pagos");
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+  revalidatePath("/dashboard/contabilidad/libro-diario");
+  revalidatePath("/dashboard/contabilidad/libro-auxiliar");
   return { ok: true, creadas: rows.length };
 }
 
@@ -1165,18 +1180,25 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
       const admin = createAdminClient();
       const pr = prog.proveedores as unknown as { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
       await admin.from("ventas").update({ costo_receptivo: costoNeto }).eq("numero_contrato", numero);
-      await admin.from("cuentas_por_pagar").insert({
+      const fechaProg = new Date().toISOString().slice(0, 10);
+      const { data: cProg } = await admin.from("cuentas_por_pagar").insert({
         numero_contrato: numero,
         proveedor: pr?.nombre ?? null,
         tipo_proveedor: "programa",
         servicio: prog.nombre,
         valor_total: costoNeto,
         moneda: prog.moneda,
-        fecha_obligacion: new Date().toISOString().slice(0, 10),
+        fecha_obligacion: fechaProg,
         aplica_retencion: pr?.aplica_retencion ?? false,
         pct_retencion: Number(pr?.pct_retencion) || 0,
         observaciones: "Generado automáticamente desde el tarifario (programa)",
-      });
+      }).select("id").single();
+      if (cProg) {
+        await postearAsientoCxP({
+          cuentaId: cProg.id, numeroContrato: numero, tipoProveedor: "programa", proveedor: pr?.nombre ?? null,
+          servicio: prog.nombre, valorTotal: costoNeto, fecha: fechaProg,
+        });
+      }
     } catch {
       // No bloquear la reserva si falla el paso administrativo.
     }

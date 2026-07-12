@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { marcar } from "@/lib/calc/paquetes";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
+import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 
 // Tipo de servicio de la cotización dinámica → tipo de proveedor de la CxP.
 const TIPO_PROVEEDOR: Record<string, string> = {
@@ -557,7 +558,15 @@ export async function convertirCotizacionManualAContrato(
             observaciones: "Generado automáticamente desde cotización dinámica",
           };
         });
-      if (cxp.length) await admin.from("cuentas_por_pagar").insert(cxp);
+      if (cxp.length) {
+        const { data: creadas } = await admin.from("cuentas_por_pagar").insert(cxp).select("id, tipo_proveedor, proveedor, servicio, valor_total");
+        for (const c of creadas ?? []) {
+          await postearAsientoCxP({
+            cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
+            servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO,
+          });
+        }
+      }
     } catch {
       // No bloquear la conversión si falla la creación automática de CxP.
     }

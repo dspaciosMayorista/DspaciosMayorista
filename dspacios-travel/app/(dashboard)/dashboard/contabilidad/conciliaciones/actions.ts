@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
 import { parseExtracto } from "@/lib/contabilidad/extracto";
-import { registrarAsientoAutomatico } from "../libro-diario/actions";
+import { postearAsiento, CUENTA } from "@/lib/contabilidad/asientos";
 
 type Result = { ok: true; n?: number; aviso?: string } | { ok: false; error: string };
 
@@ -132,39 +132,38 @@ export async function cruzar(input: {
   );
   if (e3) return { ok: false, error: e3.message };
 
-  // Diferencia justificada en efectivo/caja: lleva ese acumulado a un asiento
-  // contable real (Caja general vs. Clientes) — solo del lado Cartera, que es
-  // el caso "cobré en efectivo, parte no se consignó". Del lado Proveedores
-  // (pagar de más en efectivo) queda para registrar manual en el Libro diario
-  // por ahora — la mecánica contraria (extinguir el pasivo) necesita más
-  // contexto real para no adivinar mal la cuenta.
+  // Diferencia justificada en efectivo/caja: el abono/pago YA se pre-asentó
+  // (Debe/Haber Caja o Bancos según su forma de pago) al registrarse — así que
+  // conciliar NO vuelve a tocar Clientes/Anticipos/Proveedores. Solo
+  // RECLASIFICA entre Caja y Bancos, corrigiendo cuál de las dos cuentas
+  // realmente tenía el dinero: el pre-asiento asumió Bancos por defecto (salvo
+  // forma de pago "efectivo"); si el banco confirma menos de lo esperado, esa
+  // diferencia en realidad estaba (o se pagó) en Caja.
   if (input.diferenciaCaja && Math.abs(totalExtracto - totalSistema) > 1) {
     const esCartera = sistemaFinal.every((s) => s.valor >= 0);
-    const dif = totalSistema - totalExtracto; // > 0 = quedó dinero sin consignar (en caja)
+    const dif = totalSistema - totalExtracto; // > 0 = el sistema registra más de lo que confirma el banco
     const avisarPosting = (msg: string) => { aviso = aviso ? `${aviso} También: ${msg}` : msg; };
-    if (esCartera && dif > 0) {
-      const [{ data: caja }, { data: clientes }] = await Promise.all([
-        sb.from("puc_cuentas").select("id").eq("tenant", tenant).eq("codigo", "110505").maybeSingle(),
-        sb.from("puc_cuentas").select("id").eq("tenant", tenant).eq("codigo", "130505").maybeSingle(),
-      ]);
-      if (caja && clientes) {
-        const referencia = [...new Set(sistemaFinal.map((s) => s.numeroContrato).filter(Boolean))].join(", ") || undefined;
-        const asiento = await registrarAsientoAutomatico({
-          fecha: fechaPago,
-          descripcion: `Efectivo en caja no consignado — conciliación bancaria${input.nota ? `: ${input.nota.trim()}` : ""}`,
-          origen: "conciliacion",
-          referencia: `conciliacion:${conc.id}`,
-          lineas: [
-            { cuentaId: caja.id, tercero: referencia, descripcion: "Efectivo en caja (no consignado)", debe: dif, haber: 0 },
-            { cuentaId: clientes.id, tercero: referencia, descripcion: "Aplicación de abono en efectivo", debe: 0, haber: dif },
-          ],
-        });
-        if (!asiento.ok) avisarPosting(`el cruce quedó registrado, pero no se pudo generar el asiento contable automático: ${asiento.error}`);
-      } else {
-        avisarPosting("el cruce quedó registrado, pero faltan las cuentas 110505 (Caja general) / 130505 (Clientes) en el Plan de cuentas para el asiento automático — créalas o registra el asiento manual en el Libro diario.");
-      }
-    } else if (!esCartera) {
-      avisarPosting("el cruce quedó registrado; registra manualmente el asiento contable de esta diferencia en el Libro diario (Proveedores aún no genera el asiento automático).");
+    if (dif > 0) {
+      const referencia = [...new Set(sistemaFinal.map((s) => s.numeroContrato).filter(Boolean))].join(", ") || undefined;
+      const lineas = esCartera
+        ? [ // cartera: se asumió que llegaba al banco, pero quedó (parte) en caja
+            { cuentaCodigo: CUENTA.CAJA, tercero: referencia, descripcion: "Efectivo en caja (no consignado)", debe: dif, haber: 0 },
+            { cuentaCodigo: CUENTA.BANCOS_COP, tercero: referencia, descripcion: "Reclasificación — no se consignó", debe: 0, haber: dif },
+          ]
+        : [ // proveedores: se pagó (parte) en efectivo en vez de salir del banco
+            { cuentaCodigo: CUENTA.BANCOS_COP, tercero: referencia, descripcion: "Reclasificación — pagado en efectivo", debe: dif, haber: 0 },
+            { cuentaCodigo: CUENTA.CAJA, tercero: referencia, descripcion: "Efectivo pagado (no salió del banco)", debe: 0, haber: dif },
+          ];
+      const asiento = await postearAsiento({
+        fecha: fechaPago,
+        descripcion: `Reclasificación Caja/Bancos — conciliación bancaria${input.nota ? `: ${input.nota.trim()}` : ""}`,
+        origen: "conciliacion",
+        referencia: `conciliacion:${conc.id}`,
+        lineas,
+      });
+      if (!asiento.ok) avisarPosting(`el cruce quedó registrado, pero no se pudo generar el asiento contable automático: ${asiento.error}`);
+    } else {
+      avisarPosting("el cruce quedó registrado; el banco confirma más de lo que registra el sistema — revisa/registra ese ajuste manual en el Libro diario.");
     }
   }
 

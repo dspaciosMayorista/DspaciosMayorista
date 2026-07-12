@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { postearAsientoPago, eliminarAsientoPago } from "@/lib/contabilidad/asientos";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -53,7 +54,7 @@ export async function registrarPagoProveedor(
   const sb = await createClient();
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
-    .select("abono1, abono2, abono3, valor_total, moneda, numero_contrato")
+    .select("abono1, abono2, abono3, valor_total, moneda, numero_contrato, tipo_proveedor, proveedor")
     .eq("id", id)
     .maybeSingle();
   if (e1) return { ok: false, error: e1.message };
@@ -69,9 +70,10 @@ export async function registrarPagoProveedor(
   const f = fecha || new Date().toISOString().slice(0, 10);
   const libre = (v: number | null | undefined) => v == null || v === 0;
   let upd: CxPUpdate;
-  if (libre(cxp.abono1)) upd = { abono1: abono, fecha_abono1: f, trm1: trm };
-  else if (libre(cxp.abono2)) upd = { abono2: abono, fecha_abono2: f, trm2: trm };
-  else if (libre(cxp.abono3)) upd = { abono3: abono, fecha_abono3: f, trm3: trm };
+  let slot: 1 | 2 | 3;
+  if (libre(cxp.abono1)) { upd = { abono1: abono, fecha_abono1: f, trm1: trm }; slot = 1; }
+  else if (libre(cxp.abono2)) { upd = { abono2: abono, fecha_abono2: f, trm2: trm }; slot = 2; }
+  else if (libre(cxp.abono3)) { upd = { abono3: abono, fecha_abono3: f, trm3: trm }; slot = 3; }
   else
     return {
       ok: false,
@@ -80,7 +82,14 @@ export async function registrarPagoProveedor(
 
   const { error: e2 } = await sb.from("cuentas_por_pagar").update(upd).eq("id", id);
   if (e2) return { ok: false, error: e2.message };
+  // Pre-asiento del pago, siempre en COP (es lo que realmente salió de caja o
+  // banco, incluso si la CxP es en USD).
+  await postearAsientoPago({
+    cuentaId: id, slot, numeroContrato: cxp.numero_contrato, tipoProveedor: cxp.tipo_proveedor, proveedor: cxp.proveedor,
+    valor, formaPago: null, moneda: "COP", fecha: f,
+  });
   revalidatePath("/dashboard/pagos");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
   if (cxp.numero_contrato) revalidatePath(`/dashboard/contratos/${cxp.numero_contrato}`);
   return { ok: true };
 }
@@ -128,14 +137,17 @@ export async function deshacerUltimoPago(id: number): Promise<Result> {
 
   const ocupado = (v: number | null | undefined) => v != null && v !== 0;
   let upd: CxPUpdate | null = null;
-  if (ocupado(cxp.abono3)) upd = { abono3: null, fecha_abono3: null, trm3: null };
-  else if (ocupado(cxp.abono2)) upd = { abono2: null, fecha_abono2: null, trm2: null };
-  else if (ocupado(cxp.abono1)) upd = { abono1: null, fecha_abono1: null, trm1: null };
+  let slot: 1 | 2 | 3 | null = null;
+  if (ocupado(cxp.abono3)) { upd = { abono3: null, fecha_abono3: null, trm3: null }; slot = 3; }
+  else if (ocupado(cxp.abono2)) { upd = { abono2: null, fecha_abono2: null, trm2: null }; slot = 2; }
+  else if (ocupado(cxp.abono1)) { upd = { abono1: null, fecha_abono1: null, trm1: null }; slot = 1; }
   if (!upd) return { ok: false, error: "No hay pagos para deshacer" };
 
   const { error: e2 } = await sb.from("cuentas_por_pagar").update(upd).eq("id", id);
   if (e2) return { ok: false, error: e2.message };
+  if (slot) await eliminarAsientoPago(id, slot);
   revalidatePath("/dashboard/pagos");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
   if (cxp.numero_contrato) revalidatePath(`/dashboard/contratos/${cxp.numero_contrato}`);
   return { ok: true };
 }
