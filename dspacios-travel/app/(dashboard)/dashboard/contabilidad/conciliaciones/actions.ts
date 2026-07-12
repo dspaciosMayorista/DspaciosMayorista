@@ -14,7 +14,28 @@ export async function importarExtracto(texto: string, anio?: number, cuenta?: st
   const { lineas } = parseExtracto(texto, anio);
   if (!lineas.length) return { ok: false, error: "No se detectaron movimientos. Pega las filas del extracto (fecha, descripción, valor)." };
   const tenant = await getTenant();
-  const filas = lineas.map((l) => ({
+
+  // Evita duplicados si se vuelve a pegar el mismo extracto (o un rango que se
+  // superpone con uno ya importado antes): compara contra TODO lo que ya
+  // existe para esos períodos (esté o no conciliado) usando fecha + valor +
+  // saldo como huella — el saldo corrido de un banco prácticamente nunca
+  // coincide entre dos movimientos distintos, así que es una huella confiable
+  // sin exigir que el texto pegado sea carácter por carácter idéntico.
+  const periodos = [...new Set(lineas.map((l) => l.periodo))];
+  const { data: existentes } = await sb
+    .from("conciliacion_extracto")
+    .select("fecha, valor, saldo")
+    .eq("tenant", tenant)
+    .in("periodo", periodos);
+  const huella = (fecha: string, valor: number, saldo: number | null) => `${fecha}|${valor}|${saldo ?? ""}`;
+  const yaExisten = new Set((existentes ?? []).map((e) => huella(e.fecha, Number(e.valor), e.saldo != null ? Number(e.saldo) : null)));
+  const nuevas = lineas.filter((l) => !yaExisten.has(huella(l.fecha, l.valor, l.saldo)));
+  const duplicadas = lineas.length - nuevas.length;
+  if (!nuevas.length) {
+    return { ok: false, error: `Las ${lineas.length} líneas ya estaban importadas — no se agregó nada nuevo (evita duplicados).` };
+  }
+
+  const filas = nuevas.map((l) => ({
     fecha: l.fecha, descripcion: l.descripcion || null, valor: l.valor, saldo: l.saldo,
     periodo: l.periodo, cuenta: cuenta?.trim() || null, tenant,
   }));
@@ -37,8 +58,11 @@ export async function importarExtracto(texto: string, anio?: number, cuenta?: st
   if (insertadas < filas.length) {
     return {
       ok: true, n: insertadas,
-      aviso: `Se detectaron ${filas.length} líneas válidas pero solo se guardaron ${insertadas}${primerError ? ` (error: ${primerError})` : ""}. Vuelve a pegar el resto o intenta de nuevo.`,
+      aviso: `Se detectaron ${filas.length} líneas nuevas pero solo se guardaron ${insertadas}${primerError ? ` (error: ${primerError})` : ""}. Vuelve a pegar el resto o intenta de nuevo.`,
     };
+  }
+  if (duplicadas > 0) {
+    return { ok: true, n: insertadas, aviso: `Se agregaron ${insertadas} líneas nuevas. Se omitieron ${duplicadas} que ya estaban importadas.` };
   }
   return { ok: true, n: insertadas };
 }
@@ -59,6 +83,26 @@ export async function eliminarLineasExtracto(ids: number[]): Promise<Result> {
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/contabilidad/conciliaciones");
   return { ok: true };
+}
+
+// Vacía TODO lo pendiente (sin conciliar) de un período — para limpiar de una
+// sola vez lo acumulado por reimportar el mismo extracto varias veces (ya no
+// debería pasar con la deduplicación de importarExtracto, pero esto limpia lo
+// que ya quedó de antes). Nunca toca líneas ya conciliadas.
+export async function eliminarPeriodoExtracto(periodo: string): Promise<{ ok: true; n: number } | { ok: false; error: string }> {
+  if (!/^\d{4}-\d{2}$/.test(periodo)) return { ok: false, error: "Período inválido." };
+  const sb = await createClient();
+  const tenant = await getTenant();
+  const { data, error } = await sb
+    .from("conciliacion_extracto")
+    .delete()
+    .eq("tenant", tenant)
+    .eq("periodo", periodo)
+    .is("conciliacion_id", null)
+    .select("id");
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/contabilidad/conciliaciones");
+  return { ok: true, n: data?.length ?? 0 };
 }
 
 // Cruce MANUAL: N líneas de extracto contra M ítems del sistema. Las sumas

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { Trash2, Link2, Undo2, Sparkles } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
-import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto } from "./actions";
+import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto, eliminarPeriodoExtracto } from "./actions";
 
 export type ExtractoItem = { id: number; fecha: string; descripcion: string; valor: number; periodo: string };
 export type SistemaItem = { ref: string; tipo: string; descripcion: string; fecha: string | null; valor: number; numeroContrato: string | null; categoria: "cartera" | "proveedor" };
@@ -195,6 +195,21 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     });
   }
 
+  // Vacía TODO lo pendiente (sin conciliar) del mes filtrado — pensado para
+  // limpiar de una sola vez lo acumulado por reimportar el mismo extracto
+  // varias veces. Nunca toca líneas ya conciliadas.
+  function vaciarPeriodo() {
+    if (!mes) return;
+    if (!window.confirm(`¿Eliminar TODAS las líneas sin conciliar del extracto de ${mes}? Esto no se puede deshacer (lo ya conciliado no se toca).`)) return;
+    start(async () => {
+      const r = await eliminarPeriodoExtracto(mes);
+      if (!r.ok) { setError(r.error); return; }
+      setAviso(`Se eliminaron ${r.n} línea(s) sin conciliar de ${mes}.`);
+      setSelExt(new Set());
+      router.refresh();
+    });
+  }
+
   function hacerCruce() {
     setError(null);
     setAviso(null);
@@ -241,6 +256,11 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
           </select>
         </div>
         {mes && <button onClick={() => setMes("")} className="pb-1.5 text-xs text-gray-500 hover:underline">Limpiar</button>}
+        {mes && (
+          <button onClick={vaciarPeriodo} disabled={pending} className="inline-flex items-center gap-1 pb-1.5 text-xs font-medium text-red-500 hover:underline disabled:opacity-50">
+            <Trash2 size={12} /> Vaciar pendientes de {mes}
+          </button>
+        )}
       </div>
 
       {/* Barra de cruce */}
