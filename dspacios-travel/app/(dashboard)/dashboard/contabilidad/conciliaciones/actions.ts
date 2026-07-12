@@ -48,6 +48,13 @@ export async function cruzar(input: {
   extractoIds: number[];
   sistema: { ref: string; descripcion: string; fecha: string | null; valor: number; numeroContrato?: string | null }[];
   nota?: string;
+  // El usuario confirma que la diferencia entre extracto y sistema NO es un
+  // error: quedó (o salió) en efectivo, en caja, y nunca pasa por el banco
+  // (ej. un abono en efectivo del que solo parte se consignó). En ese caso se
+  // permite cruzar aunque las sumas no coincidan, siempre que quede la nota
+  // explicando cuánto y por qué — el ítem del sistema se marca como conciliado
+  // por su valor COMPLETO (no vuelve a aparecer pendiente).
+  diferenciaCaja?: boolean;
 }): Promise<Result> {
   const sb = await createClient();
   if (!input.extractoIds.length || !input.sistema.length) return { ok: false, error: "Selecciona al menos una línea de cada lado." };
@@ -59,7 +66,12 @@ export async function cruzar(input: {
   const totalExtracto = lineas.reduce((a, l) => a + Math.abs(Number(l.valor) || 0), 0);
   const totalSistema = input.sistema.reduce((a, s) => a + Math.abs(Number(s.valor) || 0), 0);
   if (Math.abs(totalExtracto - totalSistema) > 1) {
-    return { ok: false, error: `Las sumas no coinciden: extracto ${totalExtracto.toLocaleString("es-CO")} vs sistema ${totalSistema.toLocaleString("es-CO")}.` };
+    if (!input.diferenciaCaja) {
+      return { ok: false, error: `Las sumas no coinciden: extracto ${totalExtracto.toLocaleString("es-CO")} vs sistema ${totalSistema.toLocaleString("es-CO")}.` };
+    }
+    if (!input.nota?.trim()) {
+      return { ok: false, error: "Si la diferencia queda en efectivo (caja), escribe una nota explicando cuánto y por qué." };
+    }
   }
 
   // Fecha representativa del pago (la más antigua de las líneas cruzadas del
