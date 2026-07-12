@@ -1,10 +1,33 @@
 import { createClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getTenant } from "@/lib/tenant.server";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 import { ConciliacionesClient, type ExtractoItem, type SistemaItem, type Cruce } from "./ConciliacionesClient";
 
 export const dynamic = "force-dynamic";
 const ROLES = ["superadmin", "gerencia", "administracion"];
+
+// El proyecto de Supabase tiene un límite de filas por respuesta (Settings →
+// API → "Max rows", suele ser 1000 pero puede estar configurado más bajo) —
+// un solo `.select("*")` sobre una tabla con más filas que ese límite se
+// trunca EN SILENCIO (sin error), y como se pide `order("fecha")` sin un
+// desempate único, cada carga puede además devolver un corte distinto. Se
+// pagina con `.range()` avanzando por la cantidad REAL de filas recibidas
+// (nunca por el tamaño de página pedido) y solo se detiene con una página
+// vacía — así siempre trae todo sin importar el límite del proyecto.
+async function traerTodo<T>(sb: SupabaseClient, tabla: string, tenant: string): Promise<T[]> {
+  const PAGINA = 500;
+  let desde = 0;
+  const todo: T[] = [];
+  for (;;) {
+    const { data, error } = await sb.from(tabla).select("*").eq("tenant", tenant).order("fecha").order("id").range(desde, desde + PAGINA - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    todo.push(...(data as T[]));
+    desde += data.length;
+  }
+  return todo;
+}
 
 export default async function ConciliacionesPage() {
   const sb = await createClient();
@@ -20,8 +43,9 @@ export default async function ConciliacionesPage() {
   }
 
   const tenant = await getTenant();
-  const [{ data: extracto }, { data: concs }, { data: concSis }, { data: abonos }, { data: cxp }, { data: movs }] = await Promise.all([
-    sb.from("conciliacion_extracto").select("*").eq("tenant", tenant).order("fecha"),
+  type FilaExtracto = { id: number; fecha: string; descripcion: string | null; valor: number; saldo: number | null; periodo: string; conciliacion_id: number | null };
+  const [extracto, { data: concs }, { data: concSis }, { data: abonos }, { data: cxp }, { data: movs }] = await Promise.all([
+    traerTodo<FilaExtracto>(sb, "conciliacion_extracto", tenant),
     sb.from("conciliacion").select("*").eq("tenant", tenant).order("created_at", { ascending: false }),
     sb.from("conciliacion_sistema").select("*"),
     sb.from("abonos").select("id, numero_contrato, fecha_abono, valor_abono, monto_cop").eq("tenant", tenant),
