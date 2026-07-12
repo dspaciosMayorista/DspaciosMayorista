@@ -305,11 +305,93 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 125** — todas
-> confirmadas corridas por el dueño, incluida la **125** (`retenciones_cxp` — ver
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 126** — todas
+> confirmadas corridas por el dueño, incluida la **126** (`plan_cuentas_puc` — ver
 > "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Contabilidad — Plan de cuentas (PUC), Libro diario y Libro auxiliar (jul-2026):**
+>   base de contabilidad de partida doble, pedida por el dueño para que el libro
+>   diario/auxiliar alimenten los estados financieros de verdad (hoy calculados
+>   en caliente desde ventas/abonos/cxp/movimientos). Migración **126**
+>   (`puc_cuentas` jerárquico — clase/grupo/cuenta/subcuenta/auxiliar, naturaleza
+>   débito/crédito —, `asientos_contables` = libro diario, `asiento_lineas` =
+>   detalle debe/haber y fuente del libro auxiliar), sembrada con ~60 cuentas
+>   típicas de agencia de viajes (Caja, Bancos, Clientes, Proveedores por tipo,
+>   retenciones, IVA, ingresos por comisiones/paquetes, costos, gastos) para
+>   mayorista y minorista — editable/ampliable desde
+>   `/dashboard/contabilidad/plan-cuentas` (crear subcuentas bajo una cuenta
+>   madre, el código hereda el prefijo del padre; eliminar bloqueado si tiene
+>   subcuentas o movimientos). `/dashboard/contabilidad/libro-diario`: asientos
+>   manuales multi-línea, valida partida doble (débito = crédito) antes de
+>   guardar; los generados automáticamente por otros módulos quedan marcados
+>   "Automático" y solo se deshacen desde su origen. `/dashboard/contabilidad/
+>   libro-auxiliar`: movimientos de una cuenta con saldo corrido (arrastra saldo
+>   inicial si se filtra por fecha). **Conciliaciones bancarias** conectado: al
+>   cruzar con "diferencia en efectivo (caja)" del lado Cartera, además del
+>   cruce genera un asiento automático (Debe Caja general 110505 / Haber
+>   Clientes 130505) por el valor sin consignar — el efectivo en caja queda
+>   como acumulado real en la cuenta contable, no solo una nota; "Deshacer" el
+>   cruce borra también ese asiento. El lado Proveedores (pagar de más en
+>   efectivo) todavía NO autogenera el asiento — deja aviso para registrarlo
+>   manual en el Libro diario (la mecánica contraria necesita un caso real para
+>   no adivinar mal la cuenta). *Pendiente:* conectar Estados financieros
+>   directamente a estos libros (hoy siguen siendo cálculos derivados aparte).
+> - **Conciliaciones bancarias — cruzar con diferencia justificada en efectivo/
+>   caja:** antes de lo anterior, un abono cobrado en efectivo del que solo
+>   parte se consignó al banco bloqueaba el cruce (exigía sumas exactas) sin
+>   forma correcta de resolverlo — crear un "Movimiento de ingreso" por la
+>   diferencia solo agregaba otro ítem que también necesitaría cruzar contra el
+>   banco y nunca lo haría. Ahora, con ambos lados seleccionados y sumas que no
+>   cuadran, aparece la casilla "La diferencia quedó en efectivo (caja)" (nota
+>   obligatoria) que habilita "Cruzar con diferencia": el extracto queda
+>   conciliado por lo depositado, el ítem del sistema por su valor completo, y
+>   el historial de Conciliados muestra un badge "Diferencia en caja: $X".
+> - **Fix parser del extracto bancario — tomaba el saldo acumulado en vez del
+>   valor:** el parser exigía punto decimal para aceptar un monto (para
+>   descartar columnas de puros dígitos como un número de cuenta), pero algunos
+>   movimientos del banco vienen con el valor exacto en pesos SIN decimales
+>   (ej. "-144", "988" en cuotas/4x1000) — esas filas quedaban con un solo
+>   candidato numérico (el saldo, que siempre trae decimales) y el parser lo
+>   tomaba como si fuera el valor del movimiento. Ahora acepta montos con o sin
+>   decimal; solo descarta un candidato sin coma ni decimal si es muy largo (7+
+>   dígitos), lo que sigue filtrando números de cuenta/referencia sin perder
+>   montos pequeños en pesos exactos. Las líneas ya importadas con el valor
+>   equivocado hay que borrarlas y volver a pegarlas.
+> - **Fix: editar un abono USD corrompía `monto_cop` con el valor en dólares:**
+>   el formulario "Editar" de un abono (Cartera y detalle del contrato)
+>   precargaba el campo "Valor pagado (COP)" desde `valor_abono` (que en
+>   contratos USD está en dólares, no en pesos) — si alguien abría Editar solo
+>   para corregir fecha/forma de pago y guardaba sin tocar el valor,
+>   sobreescribía `monto_cop` con el monto en USD. Como Conciliaciones muestra
+>   los abonos usando `monto_cop`, un abono así quedaba mostrando el número en
+>   USD como si fueran pesos. Ahora ambos formularios precargan desde
+>   `monto_cop` en USD, igual que ya hacían `registrarAbono`/`actualizarAbono`
+>   al guardar. Abonos ya corrompidos por este bug se corrigen editándolos una
+>   vez con el valor real + TRM del día.
+> - **Fix de rendimiento — regeneración de tarifario en paralelo:**
+>   `regenerarTarifariosDe{Hotel,Bloqueo,Servicio}` regeneraba uno por uno
+>   (secuencial) el tarifario de cada paquete activo afectado — en un hotel con
+>   muchas tarifas usado en varios paquetes, guardar un solo cambio (ej. tarifa
+>   de infante en $0) esperaba la suma de todas esas regeneraciones antes de
+>   responder. Ahora corren en paralelo con `Promise.allSettled` (mismo
+>   criterio best-effort).
+> - **Infante habilitado en las calculadoras de hotel (Dubai y Mixta):** las
+>   calculadoras generaban sencilla/doble/triple/múltiple/niño pero no la
+>   tarifa de infante (migración 122) — había que editarla tarifa por tarifa a
+>   mano después de generar. Dubai: nuevo modificador % sobre la base (default
+>   -100% = gratis, igual criterio que niño) + nota general. Mixta: nueva
+>   columna Infante en la tabla de valores por categoría/temporada (comparte el
+>   IVA de niño, siempre por persona) + nota general.
+> - **Política de reservas del proveedor colapsable** en el detalle de hotel
+>   (`<details>`/`<summary>` nativo, cerrada por defecto) — ocupaba mucha
+>   pantalla siempre expandida.
+> - **Calculadora de retención con el estilo de hoja de cálculo del dueño:** el
+>   formulario "Registrar retención practicada" (`/dashboard/contabilidad/
+>   retenciones`) ahora calcula en vivo Base → %IVA/%IPC del proveedor → base
+>   gravable → %retención → valor a pagar, con todos los porcentajes y la base
+>   mínima editables por fila (varían según proveedor); sugiere el % desde
+>   `pct_retencion` de la CxP cuando ya está configurado.
 > - **Auditoría de seguridad (jul-2026) — 4 hallazgos críticos/altos corregidos:**
 >   1. **Escalación de privilegios**: `dashboard/usuarios/actions.ts` usaba el
 >      cliente service-role (bypassa RLS) sin validar el rol de quien llamaba —
@@ -814,14 +896,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **125** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **126** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 125** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 126** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -901,7 +983,11 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > movimientos genéricos sin contrato) para poder enlazar cada conciliado
 > a su contrato · **125 retenciones_cxp** (ya corrida) — tabla
 > `retenciones_cxp` (log de retenciones practicadas a proveedores: valor,
-> fecha_practica, mes_declaracion; puede haber más de una por cuenta) —
+> fecha_practica, mes_declaracion; puede haber más de una por cuenta) ·
+> **126 plan_cuentas_puc** (ya corrida) — `puc_cuentas` (plan de cuentas
+> jerárquico), `asientos_contables` (libro diario) y `asiento_lineas`
+> (detalle debe/haber, fuente del libro auxiliar), con seed de ~60 cuentas
+> típicas de agencia de viajes para mayorista/minorista —
 > ver "Novedades recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
