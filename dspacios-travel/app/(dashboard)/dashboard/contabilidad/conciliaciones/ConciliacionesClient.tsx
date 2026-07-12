@@ -63,6 +63,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   const [modo, setModo] = useState<"cartera" | "proveedor">("cartera");
   const [mes, setMes] = useState("");
   const [nota, setNota] = useState("");
+  const [diferenciaCaja, setDiferenciaCaja] = useState(false);
   // Filtros y orden INDEPENDIENTES por columna (día preciso + valor + orden).
   const [extDesde, setExtDesde] = useState("");
   const [extHasta, setExtHasta] = useState("");
@@ -83,6 +84,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     setModo(m);
     setSelExt(new Set());
     setSelSis(new Set());
+    setDiferenciaCaja(false);
     setError(null);
     setAviso(null);
   }
@@ -139,8 +141,15 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
 
   const totExt = extracto.filter((e) => selExt.has(e.id)).reduce((a, e) => a + abs(e.valor), 0);
   const totSis = sistema.filter((s) => selSis.has(s.ref)).reduce((a, s) => a + abs(s.valor), 0);
-  const cuadra = selExt.size > 0 && selSis.size > 0 && abs(totExt - totSis) <= 1;
+  const haySeleccion = selExt.size > 0 && selSis.size > 0;
+  const sumasCuadran = haySeleccion && abs(totExt - totSis) <= 1;
   const dif = totExt - totSis;
+  // Diferencia justificada: el sobrante/faltante quedó en efectivo (caja),
+  // nunca pasa por el banco (ej. un abono en efectivo del que solo parte se
+  // consignó). Requiere marcar la casilla Y dejar una nota — se permite
+  // cruzar aunque las sumas no coincidan.
+  const puedeForzarDiferencia = haySeleccion && !sumasCuadran;
+  const cuadra = sumasCuadran || (puedeForzarDiferencia && diferenciaCaja && nota.trim() !== "");
 
   // Sugerencia automática: si solo hay selección de UN lado, busca en el otro
   // lado TODOS los ítems cuyo valor cuadre con el total ya seleccionado.
@@ -191,10 +200,10 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     setAviso(null);
     const items = sistema.filter((s) => selSis.has(s.ref)).map((s) => ({ ref: s.ref, descripcion: `${s.tipo}: ${s.descripcion}`, fecha: s.fecha, valor: s.valor, numeroContrato: s.numeroContrato }));
     start(async () => {
-      const r = await cruzar({ extractoIds: [...selExt], sistema: items, nota });
+      const r = await cruzar({ extractoIds: [...selExt], sistema: items, nota, diferenciaCaja: !sumasCuadran && diferenciaCaja });
       if (!r.ok) { setError(r.error); return; }
       if (r.aviso) setAviso(r.aviso);
-      setSelExt(new Set()); setSelSis(new Set()); setNota(""); router.refresh();
+      setSelExt(new Set()); setSelSis(new Set()); setNota(""); setDiferenciaCaja(false); router.refresh();
     });
   }
 
@@ -242,16 +251,33 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
           <span className={abs(dif) <= 1 ? "text-[#3d7a63]" : "text-amber-600"}>Diferencia: <b className="tabular-nums">{formatCOP(dif)}</b></span>
         </div>
         <div className="flex items-center gap-2">
-          <Input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Nota (opcional)" className="w-48" />
-          <Button onClick={hacerCruce} disabled={!cuadra || pending} style={{ backgroundColor: cuadra ? "var(--brand-primary)" : "#9ca3af" }}>
-            <Link2 size={15} className="mr-1 inline" /> {pending ? "Cruzando…" : "Cruzar"}
+          <Input
+            value={nota}
+            onChange={(e) => setNota(e.target.value)}
+            placeholder={diferenciaCaja ? "Nota (obligatoria: explica la diferencia)" : "Nota (opcional)"}
+            className="w-56"
+          />
+          <Button onClick={hacerCruce} disabled={!cuadra || pending} style={{ backgroundColor: cuadra ? (sumasCuadran ? "var(--brand-primary)" : "#b45309") : "#9ca3af" }}>
+            <Link2 size={15} className="mr-1 inline" /> {pending ? "Cruzando…" : sumasCuadran ? "Cruzar" : "Cruzar con diferencia"}
           </Button>
         </div>
       </div>
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
       {aviso && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{aviso}</p>}
-      {!cuadra && selExt.size + selSis.size > 0 && (
-        <p className="text-xs text-amber-600">Las sumas deben coincidir para cruzar. Puedes seleccionar varios de un lado (ej. una línea de 1.000 contra 700 + 300).</p>
+      {puedeForzarDiferencia && (
+        <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          <label className="flex cursor-pointer items-start gap-2">
+            <input type="checkbox" checked={diferenciaCaja} onChange={(e) => setDiferenciaCaja(e.target.checked)} className="mt-0.5" />
+            <span>
+              La diferencia de <b className="tabular-nums">{formatCOP(abs(dif))}</b> no es un error: quedó (o salió) en <b>efectivo, en caja</b>, nunca pasó por el banco
+              (ej. un abono en efectivo del que solo parte se consignó). Marca esto y escribe la nota para poder cruzar igual — el movimiento del sistema
+              queda conciliado por su valor completo.
+            </span>
+          </label>
+          {!diferenciaCaja && (
+            <p className="mt-1 text-gray-500">O ajusta la selección: puedes elegir varios ítems de un lado (ej. una línea de 1.000 contra 700 + 300).</p>
+          )}
+        </div>
       )}
       {(sugerenciaExt || sugerenciaSis) && (() => {
         const s = (sugerenciaExt ?? sugerenciaSis)!;
@@ -315,10 +341,21 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
         </button>
         {verConciliados && (
           <div className="space-y-2 border-t border-gray-100 p-4">
-            {cruces.length === 0 ? <Vacio>Aún no hay cruces.</Vacio> : cruces.map((c) => (
+            {cruces.length === 0 ? <Vacio>Aún no hay cruces.</Vacio> : cruces.map((c) => {
+              const sumSistema = c.sistema.reduce((a, s) => a + abs(s.valor), 0);
+              const difCaja = c.total - sumSistema;
+              return (
               <div key={c.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-gray-700">{c.fecha} · {formatCOP(c.total)} {c.nota && <span className="text-gray-400">· {c.nota}</span>}</span>
+                  <span className="font-medium text-gray-700">
+                    {c.fecha} · {formatCOP(c.total)}
+                    {abs(difCaja) > 1 && (
+                      <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                        Diferencia en caja: {formatCOP(abs(difCaja))}
+                      </span>
+                    )}
+                    {c.nota && <span className="text-gray-400"> · {c.nota}</span>}
+                  </span>
                   <button onClick={() => start(async () => { await deshacerCruce(c.id); router.refresh(); })} className="inline-flex items-center gap-1 text-xs text-red-500 hover:underline">
                     <Undo2 size={13} /> Deshacer
                   </button>
@@ -337,7 +374,8 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
                   ))}</div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
