@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { asegurarCuentasPorPagar } from "../../reservar/actions";
+import { postearAsientoCxP, eliminarAsientoCxP } from "@/lib/contabilidad/asientos";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -59,7 +60,7 @@ export async function crearCuentaPorPagar(input: {
   const iva = Math.max(0, Number(input.ivaDescontable) || 0);
   // Costo (base) = valor total de la factura − IVA descontable.
   const base = Math.max(0, input.valorTotal - iva);
-  const { error } = await sb.from("cuentas_por_pagar").insert({
+  const { data: nueva, error } = await sb.from("cuentas_por_pagar").insert({
     numero_contrato: input.numeroContrato,
     proveedor: input.proveedor || null,
     tipo_proveedor: input.tipoProveedor || null,
@@ -70,9 +71,16 @@ export async function crearCuentaPorPagar(input: {
     fecha_vencimiento: input.fechaVencimiento || null,
     aplica_retencion: input.aplicaRetencion,
     pct_retencion: input.pctRetencion,
-  });
+  }).select("id").single();
   if (error) return { ok: false, error: error.message };
+  if (nueva) {
+    await postearAsientoCxP({
+      cuentaId: nueva.id, numeroContrato: input.numeroContrato, tipoProveedor: input.tipoProveedor, proveedor: input.proveedor,
+      servicio: input.servicio, valorTotal: input.valorTotal, fecha: new Date().toISOString().slice(0, 10),
+    });
+  }
   rev(input.numeroContrato);
+  revalidatePath("/dashboard/contabilidad/libro-diario");
   return { ok: true };
 }
 
@@ -88,7 +96,7 @@ export async function actualizarCuentaPorPagar(input: {
   const sb = await createClient();
   const iva = Math.max(0, Number(input.ivaDescontable) || 0);
   const base = Math.max(0, input.valorTotal - iva);
-  const { error } = await sb
+  const { data: actualizada, error } = await sb
     .from("cuentas_por_pagar")
     .update({
       proveedor: input.proveedor || null,
@@ -98,9 +106,16 @@ export async function actualizarCuentaPorPagar(input: {
       iva_proveedor: iva > 0 ? iva : null,
       fecha_vencimiento: input.fechaVencimiento || null,
     })
-    .eq("id", input.id);
+    .eq("id", input.id)
+    .select("tipo_proveedor")
+    .single();
   if (error) return { ok: false, error: error.message };
+  await postearAsientoCxP({
+    cuentaId: input.id, numeroContrato: input.numeroContrato, tipoProveedor: actualizada?.tipo_proveedor ?? null, proveedor: input.proveedor,
+    servicio: input.servicio, valorTotal: input.valorTotal, fecha: new Date().toISOString().slice(0, 10),
+  });
   rev(input.numeroContrato);
+  revalidatePath("/dashboard/contabilidad/libro-diario");
   return { ok: true };
 }
 
@@ -111,7 +126,9 @@ export async function eliminarCuentaPorPagar(
   const sb = await createClient();
   const { error } = await sb.from("cuentas_por_pagar").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
+  await eliminarAsientoCxP(id);
   rev(numeroContrato);
+  revalidatePath("/dashboard/contabilidad/libro-diario");
   return { ok: true };
 }
 

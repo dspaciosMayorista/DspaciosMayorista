@@ -8,6 +8,28 @@ import { asegurarCuentasPorPagar } from "../reservar/actions";
 import { formatMoneda } from "@/lib/utils";
 import { getTenant } from "@/lib/tenant.server";
 import { numeroConTenant } from "@/lib/tenant";
+import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
+
+// Postea (o reemplaza) el asiento de un abono: Debe Caja/Bancos (según forma
+// de pago) / Haber Anticipos de clientes (280505) si el contrato AÚN no está
+// facturado, o Clientes (130505) si ya lo está — best-effort, nunca bloquea
+// el registro del abono en sí.
+async function postearAsientoAbono(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  numeroContrato: string, abonoId: number, fecha: string, montoCop: number, formaPago: string | null, moneda: string
+): Promise<void> {
+  if (montoCop <= 0) return;
+  const { data: fact } = await sb.from("contrato_facturacion").select("numero_contrato").eq("numero_contrato", numeroContrato).maybeSingle();
+  const cuentaCredito = fact ? CUENTA.CLIENTES : CUENTA.ANTICIPOS_CLIENTES;
+  await reemplazarAsiento("abono", `abono:${abonoId}`, {
+    fecha,
+    descripcion: `Abono ${numeroContrato}${formaPago ? ` (${formaPago})` : ""}`,
+    lineas: [
+      { cuentaCodigo: cuentaDisponible(formaPago, moneda), tercero: numeroContrato, descripcion: "Abono recibido", debe: montoCop, haber: 0 },
+      { cuentaCodigo: cuentaCredito, tercero: numeroContrato, descripcion: fact ? "Aplicación a cartera" : "Anticipo de cliente", debe: 0, haber: montoCop },
+    ],
+  });
+}
 
 // Margen mínimo que debe dejar un contrato manual (dinámico/empaquetado):
 // PVP ≥ total de costos ÷ (1 − 20%).
@@ -404,7 +426,7 @@ export async function crearContrato(
       const { data: provs } = await sb.from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres);
       const provMap = new Map((provs ?? []).map((p) => [p.nombre, p]));
       const hoyCxP = oNull(input.fechaEmision) ?? new Date().toISOString().slice(0, 10);
-      await sb.from("cuentas_por_pagar").insert(
+      const { data: cxpCreadas } = await sb.from("cuentas_por_pagar").insert(
         cxpRows.map((r) => {
           const p = provMap.get(r.proveedor);
           return {
@@ -420,7 +442,13 @@ export async function crearContrato(
             pct_retencion: p?.pct_retencion ?? 0,
           };
         })
-      );
+      ).select("id, tipo_proveedor, proveedor, servicio, valor_total");
+      for (const c of cxpCreadas ?? []) {
+        await postearAsientoCxP({
+          cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
+          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyCxP,
+        });
+      }
     }
   }
 
@@ -633,21 +661,25 @@ export async function registrarAbono(
   // El abono "vale" en la MONEDA DEL CONTRATO: USD = COP / TRM; COP = COP.
   const valorAbono = esUSD ? montoCop / trm : montoCop;
 
-  const { error } = await sb.from("abonos").insert({
+  const fechaAbono = fecha || new Date().toISOString().slice(0, 10);
+  const { data: nuevoAbono, error } = await sb.from("abonos").insert({
     numero_contrato: numeroContrato,
     tenant: (venta as { tenant?: string } | null)?.tenant ?? "mayorista",
     valor_abono: valorAbono,
     monto_cop: montoCop,
     trm,
-    fecha_abono: fecha || new Date().toISOString().slice(0, 10),
+    fecha_abono: fechaAbono,
     forma_pago: formaPago || null,
     referencia: referencia || null,
-  });
-  if (error) return { ok: false, error: error.message };
+  }).select("id").single();
+  if (error || !nuevoAbono) return { ok: false, error: error?.message ?? "No se pudo registrar el abono." };
 
+  await postearAsientoAbono(sb, numeroContrato, nuevoAbono.id, fechaAbono, montoCop, formaPago, (venta as { moneda?: string } | null)?.moneda ?? "COP");
   await recalcularEstadoAbono(sb, numeroContrato);
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
+  revalidatePath("/dashboard/contabilidad/libro-auxiliar");
   return { ok: true };
 }
 
@@ -667,20 +699,24 @@ export async function actualizarAbono(
   const trm = esUSD ? (Number(input.trmInput) || 0) : 1;
   if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día (contrato en USD)." };
   const valorAbono = esUSD ? montoCop / trm : montoCop;
+  const fechaAbono = input.fecha || new Date().toISOString().slice(0, 10);
 
   const { error } = await sb.from("abonos").update({
     valor_abono: valorAbono,
     monto_cop: montoCop,
     trm,
-    fecha_abono: input.fecha || new Date().toISOString().slice(0, 10),
+    fecha_abono: fechaAbono,
     forma_pago: input.formaPago || null,
     referencia: input.referencia || null,
   }).eq("id", id);
   if (error) return { ok: false, error: error.message };
 
+  await postearAsientoAbono(sb, numeroContrato, id, fechaAbono, montoCop, input.formaPago, (venta as { moneda?: string } | null)?.moneda ?? "COP");
   await recalcularEstadoAbono(sb, numeroContrato);
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
+  revalidatePath("/dashboard/contabilidad/libro-auxiliar");
   return { ok: true };
 }
 
@@ -688,8 +724,11 @@ export async function eliminarAbono(id: number, numeroContrato: string): Promise
   const sb = await createClient();
   const { error } = await sb.from("abonos").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
+  await reemplazarAsiento("abono", `abono:${id}`, null);
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
+  revalidatePath("/dashboard/contabilidad/libro-auxiliar");
   return { ok: true };
 }
 

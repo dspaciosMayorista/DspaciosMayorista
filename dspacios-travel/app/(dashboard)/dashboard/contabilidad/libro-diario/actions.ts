@@ -137,44 +137,6 @@ export async function eliminarAsiento(id: number): Promise<Result> {
   return { ok: true };
 }
 
-// ── Posting automático desde otros módulos (ej. conciliaciones) ────────────
-// Best-effort: si algo falla (ej. no existe la cuenta), devuelve el error en
-// vez de lanzar, para que el módulo que llama decida si bloquea o solo avisa.
-export async function registrarAsientoAutomatico(input: {
-  fecha: string;
-  descripcion: string;
-  origen: string;
-  referencia?: string;
-  lineas: { cuentaId: number; tercero?: string; descripcion?: string; debe: number; haber: number }[];
-}): Promise<Result> {
-  const err = validarLineas(input.lineas);
-  if (err) return { ok: false, error: err };
-
-  const sb = await createClient();
-  const tenant = await getTenant();
-  const numero = await siguienteNumero(sb, tenant);
-  const { data: { user } } = await sb.auth.getUser();
-
-  const { data: asiento, error: e1 } = await sb.from("asientos_contables").insert({
-    tenant, numero, fecha: input.fecha, descripcion: input.descripcion,
-    origen: input.origen, referencia: input.referencia?.trim() || null, usuario_email: user?.email ?? null,
-  }).select("id").single();
-  if (e1 || !asiento) return { ok: false, error: e1?.message ?? "No se pudo crear el asiento." };
-
-  const { error: e2 } = await sb.from("asiento_lineas").insert(
-    input.lineas.map((l) => ({
-      tenant, asiento_id: asiento.id, cuenta_id: l.cuentaId,
-      tercero: l.tercero?.trim() || null, descripcion: l.descripcion?.trim() || null,
-      debe: Number(l.debe) || 0, haber: Number(l.haber) || 0,
-    }))
-  );
-  if (e2) { await sb.from("asientos_contables").delete().eq("id", asiento.id); return { ok: false, error: e2.message }; }
-
-  revalidatePath("/dashboard/contabilidad/libro-diario");
-  revalidatePath("/dashboard/contabilidad/libro-auxiliar");
-  return { ok: true };
-}
-
 // Cuentas habilitadas para recibir movimiento (para el selector del formulario).
 export async function listarCuentasMovimiento(): Promise<{ ok: true; cuentas: { id: number; codigo: string; nombre: string }[] } | { ok: false; error: string }> {
   const sb = await createClient();
