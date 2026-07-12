@@ -274,6 +274,82 @@ export async function cruzar(input: {
   return { ok: true, aviso };
 }
 
+// Concilia líneas del extracto que NO tienen contrapartida real en el
+// sistema — ni abono, ni pago, ni movimiento ya registrado. Dos casos:
+// (1) movimientos puramente contables (transferencias, comisiones, etc.),
+// (2) abonos de contratos que existen pero no están (y no se van a) cargar
+// al sistema. El usuario arma el asiento a mano: Bancos se autocompleta con
+// el total de las líneas elegidas del extracto, y el resto lo reparte en las
+// cuentas que indique (tercero opcional, puede quedar en blanco). Un
+// "contrato de referencia" en texto libre queda como nota, sin exigir que
+// exista un contrato real en el sistema.
+export async function registrarMovimientoDirecto(input: {
+  extractoIds: number[];
+  nota: string;
+  contratoReferencia?: string;
+  lineas: { cuentaCodigo: string; tercero?: string; descripcion?: string; valor: number }[];
+}): Promise<Result> {
+  const sb = await createClient();
+  if (!input.extractoIds.length) return { ok: false, error: "Selecciona al menos una línea del extracto." };
+  if (!input.nota?.trim()) return { ok: false, error: "Escribe una nota explicando el movimiento." };
+  if (!input.lineas.length || input.lineas.some((l) => !l.cuentaCodigo || !(Number(l.valor) > 0))) {
+    return { ok: false, error: "Completa cuenta y valor en cada línea." };
+  }
+
+  const { data: lineasExt } = await sb.from("conciliacion_extracto").select("id, valor, fecha, conciliacion_id").in("id", input.extractoIds);
+  if (!lineasExt || lineasExt.length !== input.extractoIds.length) return { ok: false, error: "Alguna línea del extracto ya no existe." };
+  if (lineasExt.some((l) => l.conciliacion_id != null)) return { ok: false, error: "Alguna línea ya está conciliada." };
+
+  const totalSigned = lineasExt.reduce((a, l) => a + (Number(l.valor) || 0), 0);
+  if (new Set(lineasExt.map((l) => Math.sign(Number(l.valor) || 0))).size > 1) {
+    return { ok: false, error: "No mezcles abonos y pagos en el mismo movimiento — selecciona solo ingresos o solo egresos." };
+  }
+  const esIngreso = totalSigned > 0;
+
+  const totalLineas = input.lineas.reduce((a, l) => a + (Number(l.valor) || 0), 0);
+  if (Math.abs(totalLineas - Math.abs(totalSigned)) > 1) {
+    return { ok: false, error: `Las líneas (${totalLineas.toLocaleString("es-CO")}) deben sumar exactamente el total del extracto (${Math.abs(totalSigned).toLocaleString("es-CO")}).` };
+  }
+
+  const tenant = await getTenant();
+  const fecha = lineasExt.map((l) => l.fecha as string).sort()[0] ?? new Date().toISOString().slice(0, 10);
+  const contratoRef = input.contratoReferencia?.trim() || null;
+  const descripcion = contratoRef ? `Movimiento contable directo — contrato ${contratoRef}` : "Movimiento contable directo";
+
+  const { data: conc, error: e1 } = await sb.from("conciliacion").insert({ nota: input.nota.trim(), total: Math.abs(totalSigned), tenant }).select("id").single();
+  if (e1 || !conc) return { ok: false, error: e1?.message ?? "No se pudo crear el cruce." };
+
+  const { error: e2 } = await sb.from("conciliacion_extracto").update({ conciliacion_id: conc.id }).in("id", input.extractoIds);
+  if (e2) return { ok: false, error: e2.message };
+
+  const { error: e3 } = await sb.from("conciliacion_sistema").insert({
+    conciliacion_id: conc.id, ref: `manual:${conc.id}`, descripcion, fecha, valor: totalSigned, numero_contrato: contratoRef,
+  });
+  if (e3) return { ok: false, error: e3.message };
+
+  const lineasUsuario = input.lineas.map((l) => ({
+    cuentaCodigo: l.cuentaCodigo, tercero: l.tercero?.trim() || null, descripcion: l.descripcion?.trim() || descripcion,
+    debe: esIngreso ? 0 : Number(l.valor) || 0, haber: esIngreso ? Number(l.valor) || 0 : 0,
+  }));
+  const lineaBancos = {
+    cuentaCodigo: CUENTA.BANCOS_COP, tercero: contratoRef, descripcion,
+    debe: esIngreso ? Math.abs(totalSigned) : 0, haber: esIngreso ? 0 : Math.abs(totalSigned),
+  };
+
+  let aviso: string | undefined;
+  const asiento = await postearAsiento({
+    fecha, descripcion: `${descripcion}: ${input.nota.trim()}`,
+    origen: "conciliacion", referencia: `conciliacion:${conc.id}`,
+    lineas: esIngreso ? [lineaBancos, ...lineasUsuario] : [...lineasUsuario, lineaBancos],
+  });
+  if (!asiento.ok) aviso = `El cruce quedó registrado, pero no se pudo generar el asiento contable automático: ${asiento.error}`;
+
+  revalidatePath("/dashboard/contabilidad/conciliaciones");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
+  revalidatePath("/dashboard/contabilidad/libro-auxiliar");
+  return { ok: true, aviso };
+}
+
 export async function deshacerCruce(conciliacionId: number): Promise<Result> {
   const sb = await createClient();
   await sb.from("conciliacion_extracto").update({ conciliacion_id: null }).eq("conciliacion_id", conciliacionId);
