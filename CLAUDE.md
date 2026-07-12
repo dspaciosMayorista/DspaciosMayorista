@@ -305,11 +305,54 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 126** — todas
-> confirmadas corridas por el dueño, incluida la **126** (`plan_cuentas_puc` — ver
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 127** — todas
+> confirmadas corridas por el dueño, incluida la **127** (`cuenta_irt` — ver
 > "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Contabilidad — Asientos automáticos en cartera, facturación, CxP, pagos y
+>   retenciones (jul-2026):** cablea partida doble automática en los puntos
+>   donde nace y se paga el dinero real de la agencia (antes solo el Libro
+>   diario/auxiliar existían como herramientas manuales + el caso puntual de
+>   "diferencia en caja" en Conciliaciones). Modelo afinado en conjunto con el
+>   dueño: **1) Abono** (registrar/editar/eliminar) → PRE-asiento inmediato
+>   Debe Caja o Bancos (según forma de pago) / Haber **Anticipos de clientes**
+>   (280505) si el contrato aún NO está facturado, o **Clientes** (130505) si
+>   ya lo está — la distinción importa: antes de facturar, la plata recibida
+>   es un pasivo (anticipo), no una cuenta por cobrar todavía. **2) Facturación**
+>   (guardar/quitar en `/dashboard/contabilidad/facturacion`) → asiento
+>   compuesto: Debe Clientes por el PVP completo, Haber **IRT** (281510,
+>   pasivo — plata de terceros/hoteles/aerolíneas, NO es ingreso propio) +
+>   Haber Ingresos propios, y Debe Anticipos/Haber Clientes por el anticipo
+>   NETO ya acumulado del contrato (si estaba 100% pagado por adelantado,
+>   Clientes y Anticipos quedan ambos en $0 para ese contrato — el anticipo se
+>   "aplicó" contra la cartera recién reconocida). Usa **reversión** (no
+>   reemplazo): una factura puede haberse presentado a la DIAN, así que
+>   corregirla dos veces deja rastro en el libro en vez de reescribir historia.
+>   **3) Cuentas por pagar** (al crearse, en los 4 puntos donde nace una CxP en
+>   tiempo real — reservar, contrato manual, editar proveedores del contrato,
+>   convertir cotización dinámica; el importador histórico masivo queda fuera
+>   a propósito, es backfill no forward) → Debe Costo de ventas (según tipo:
+>   hotel/aéreo/receptivo/asistencia/otros) / Haber Proveedores (misma
+>   subcuenta por tipo, sembradas en la 126). **4) Pago a proveedor y
+>   retención practicada** → mismo criterio de pre-asiento: Debe Proveedores /
+>   Haber Caja-Bancos o Retención en la fuente por pagar. **5) Conciliaciones
+>   bancarias** — el mecanismo de "diferencia en caja" (ver entrada anterior)
+>   cambió de fondo: YA NO vuelve a tocar Clientes/Proveedores (eso ya quedó
+>   bien resuelto por el pre-asiento del abono/pago) — ahora **reclasifica
+>   entre Caja y Bancos**, corrigiendo cuál de las dos cuentas realmente tenía
+>   el dinero (el pre-asiento asume Bancos por defecto salvo forma de pago
+>   "efectivo"); aplica igual a cartera y a proveedores. Infraestructura común
+>   nueva: `lib/contabilidad/asientos.ts` (`postearAsiento`, `reemplazarAsiento`
+>   para lo no ligado a una presentación externa, `reversarYRegistrar` para lo
+>   que sí) — usa el cliente **service-role** para leer/escribir, porque estos
+>   posteos los dispara gente sin rol contable (ej. un asesor reservando o
+>   registrando un abono) y no pueden depender de que su rol pase la RLS de
+>   `puc_cuentas`/`asientos_contables`. Migración **127** agrega la subcuenta
+>   `281510` (IRT) que faltaba en la semilla de la 126. **Limitación
+>   conocida:** los posteos automáticos no convierten USD→COP (asumen el
+>   valor tal cual); contratos/CxP en USD quedan pendientes de esa conversión
+>   explícita más adelante.
 > - **Contabilidad — Plan de cuentas (PUC), Libro diario y Libro auxiliar (jul-2026):**
 >   base de contabilidad de partida doble, pedida por el dueño para que el libro
 >   diario/auxiliar alimenten los estados financieros de verdad (hoy calculados
@@ -896,14 +939,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **126** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **127** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 126** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 127** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -987,7 +1030,10 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > **126 plan_cuentas_puc** (ya corrida) — `puc_cuentas` (plan de cuentas
 > jerárquico), `asientos_contables` (libro diario) y `asiento_lineas`
 > (detalle debe/haber, fuente del libro auxiliar), con seed de ~60 cuentas
-> típicas de agencia de viajes para mayorista/minorista —
+> típicas de agencia de viajes para mayorista/minorista · **127 cuenta_irt**
+> (ya corrida) — agrega la subcuenta `281510` "Ingreso recibido para
+> terceros (IRT)" que faltaba en la semilla de la 126 (la usa el asiento
+> automático de facturación) —
 > ver "Novedades recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
