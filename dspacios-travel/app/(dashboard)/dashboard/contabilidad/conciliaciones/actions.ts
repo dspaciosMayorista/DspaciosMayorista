@@ -118,6 +118,12 @@ export async function cruzar(input: {
   // explicando cuánto y por qué — el ítem del sistema se marca como conciliado
   // por su valor COMPLETO (no vuelve a aparecer pendiente).
   diferenciaCaja?: boolean;
+  // Alternativa a diferenciaCaja: la diferencia NO es efectivo guardado en
+  // caja, es un gasto real que se comió parte del dinero antes de llegar al
+  // banco (ej. comisión del datáfono). El usuario reparte el valor entre una
+  // o más cuentas de gasto (con tercero opcional); deben sumar exactamente
+  // la diferencia. Solo aplica al lado Cartera (dinero que debía entrar).
+  gastoLineas?: { cuentaCodigo: string; tercero?: string; descripcion?: string; valor: number }[];
 }): Promise<Result> {
   const sb = await createClient();
   if (!input.extractoIds.length || !input.sistema.length) return { ok: false, error: "Selecciona al menos una línea de cada lado." };
@@ -126,14 +132,28 @@ export async function cruzar(input: {
   if (!lineas || lineas.length !== input.extractoIds.length) return { ok: false, error: "Alguna línea del extracto ya no existe." };
   if (lineas.some((l) => l.conciliacion_id != null)) return { ok: false, error: "Alguna línea ya está conciliada." };
 
+  const hayGasto = (input.gastoLineas?.length ?? 0) > 0;
   const totalExtracto = lineas.reduce((a, l) => a + Math.abs(Number(l.valor) || 0), 0);
   const totalSistema = input.sistema.reduce((a, s) => a + Math.abs(Number(s.valor) || 0), 0);
   if (Math.abs(totalExtracto - totalSistema) > 1) {
-    if (!input.diferenciaCaja) {
+    if (!input.diferenciaCaja && !hayGasto) {
       return { ok: false, error: `Las sumas no coinciden: extracto ${totalExtracto.toLocaleString("es-CO")} vs sistema ${totalSistema.toLocaleString("es-CO")}.` };
     }
     if (!input.nota?.trim()) {
-      return { ok: false, error: "Si la diferencia queda en efectivo (caja), escribe una nota explicando cuánto y por qué." };
+      return { ok: false, error: "Si la diferencia queda en efectivo (caja) o es un gasto/comisión, escribe una nota explicando cuánto y por qué." };
+    }
+    if (hayGasto) {
+      if (!input.sistema.every((s) => s.valor >= 0)) {
+        return { ok: false, error: "Registrar la diferencia como gasto solo aplica al lado Cartera (dinero que debía entrar al banco)." };
+      }
+      if (input.gastoLineas!.some((l) => !l.cuentaCodigo)) {
+        return { ok: false, error: "Cada línea del gasto necesita una cuenta contable." };
+      }
+      const totalGasto = input.gastoLineas!.reduce((a, l) => a + (Number(l.valor) || 0), 0);
+      const dif = Math.abs(totalExtracto - totalSistema);
+      if (Math.abs(totalGasto - dif) > 1) {
+        return { ok: false, error: `Las líneas del gasto (${totalGasto.toLocaleString("es-CO")}) deben sumar exactamente la diferencia (${dif.toLocaleString("es-CO")}).` };
+      }
     }
   }
 
@@ -194,31 +214,49 @@ export async function cruzar(input: {
   );
   if (e3) return { ok: false, error: e3.message };
 
-  // Diferencia justificada en efectivo/caja: el abono/pago YA se pre-asentó
+  // Diferencia justificada (caja o gasto): el abono/pago YA se pre-asentó
   // (Debe/Haber Caja o Bancos según su forma de pago) al registrarse — así que
-  // conciliar NO vuelve a tocar Clientes/Anticipos/Proveedores. Solo
-  // RECLASIFICA entre Caja y Bancos, corrigiendo cuál de las dos cuentas
-  // realmente tenía el dinero: el pre-asiento asumió Bancos por defecto (salvo
-  // forma de pago "efectivo"); si el banco confirma menos de lo esperado, esa
-  // diferencia en realidad estaba (o se pagó) en Caja.
-  if (input.diferenciaCaja && Math.abs(totalExtracto - totalSistema) > 1) {
+  // conciliar NO vuelve a tocar Clientes/Anticipos/Proveedores. Solo corrige
+  // el lado Caja/Bancos del pre-asiento, que asumió que TODO el valor llegaba
+  // a Bancos (salvo forma de pago "efectivo"):
+  //  - "caja": el sobrante/faltante en realidad quedó (o salió) en efectivo →
+  //    reclasifica entre Caja y Bancos.
+  //  - "gasto": el sobrante nunca llegó a existir como plata de la agencia —
+  //    se lo comió un tercero (ej. comisión del datáfono) antes de consignar
+  //    → se reconoce como gasto real, repartido en las cuentas que indique el
+  //    usuario (con tercero opcional por línea).
+  if ((input.diferenciaCaja || hayGasto) && Math.abs(totalExtracto - totalSistema) > 1) {
     const esCartera = sistemaFinal.every((s) => s.valor >= 0);
     const dif = totalSistema - totalExtracto; // > 0 = el sistema registra más de lo que confirma el banco
     const avisarPosting = (msg: string) => { aviso = aviso ? `${aviso} También: ${msg}` : msg; };
     if (dif > 0) {
       const referencia = [...new Set(sistemaFinal.map((s) => s.numeroContrato).filter(Boolean))].join(", ") || undefined;
-      const lineas = esCartera
-        ? [ // cartera: se asumió que llegaba al banco, pero quedó (parte) en caja
-            { cuentaCodigo: CUENTA.CAJA, tercero: referencia, descripcion: "Efectivo en caja (no consignado)", debe: dif, haber: 0 },
-            { cuentaCodigo: CUENTA.BANCOS_COP, tercero: referencia, descripcion: "Reclasificación — no se consignó", debe: 0, haber: dif },
-          ]
-        : [ // proveedores: se pagó (parte) en efectivo en vez de salir del banco
-            { cuentaCodigo: CUENTA.BANCOS_COP, tercero: referencia, descripcion: "Reclasificación — pagado en efectivo", debe: dif, haber: 0 },
-            { cuentaCodigo: CUENTA.CAJA, tercero: referencia, descripcion: "Efectivo pagado (no salió del banco)", debe: 0, haber: dif },
-          ];
+      let lineas: { cuentaCodigo: string; tercero?: string | null; descripcion?: string | null; debe: number; haber: number }[];
+      if (hayGasto) {
+        // cartera: se asumió que TODO llegaba al banco, pero un tercero (ej.
+        // datáfono) se quedó con una parte antes de consignar — se reconoce
+        // como gasto real, no como efectivo que sigue existiendo en algún lado.
+        lineas = [
+          ...input.gastoLineas!.map((l) => ({
+            cuentaCodigo: l.cuentaCodigo, tercero: l.tercero?.trim() || referencia || null,
+            descripcion: l.descripcion?.trim() || "Diferencia de conciliación (gasto)", debe: Number(l.valor) || 0, haber: 0,
+          })),
+          { cuentaCodigo: CUENTA.BANCOS_COP, tercero: referencia, descripcion: "Reclasificación — gasto/comisión descontado antes de consignar", debe: 0, haber: dif },
+        ];
+      } else {
+        lineas = esCartera
+          ? [ // cartera: se asumió que llegaba al banco, pero quedó (parte) en caja
+              { cuentaCodigo: CUENTA.CAJA, tercero: referencia, descripcion: "Efectivo en caja (no consignado)", debe: dif, haber: 0 },
+              { cuentaCodigo: CUENTA.BANCOS_COP, tercero: referencia, descripcion: "Reclasificación — no se consignó", debe: 0, haber: dif },
+            ]
+          : [ // proveedores: se pagó (parte) en efectivo en vez de salir del banco
+              { cuentaCodigo: CUENTA.BANCOS_COP, tercero: referencia, descripcion: "Reclasificación — pagado en efectivo", debe: dif, haber: 0 },
+              { cuentaCodigo: CUENTA.CAJA, tercero: referencia, descripcion: "Efectivo pagado (no salió del banco)", debe: 0, haber: dif },
+            ];
+      }
       const asiento = await postearAsiento({
         fecha: fechaPago,
-        descripcion: `Reclasificación Caja/Bancos — conciliación bancaria${input.nota ? `: ${input.nota.trim()}` : ""}`,
+        descripcion: `${hayGasto ? "Gasto/comisión" : "Reclasificación Caja/Bancos"} — conciliación bancaria${input.nota ? `: ${input.nota.trim()}` : ""}`,
         origen: "conciliacion",
         referencia: `conciliacion:${conc.id}`,
         lineas,
