@@ -14,15 +14,33 @@ export async function importarExtracto(texto: string, anio?: number, cuenta?: st
   const { lineas } = parseExtracto(texto, anio);
   if (!lineas.length) return { ok: false, error: "No se detectaron movimientos. Pega las filas del extracto (fecha, descripción, valor)." };
   const tenant = await getTenant();
-  const { error } = await sb.from("conciliacion_extracto").insert(
-    lineas.map((l) => ({
-      fecha: l.fecha, descripcion: l.descripcion || null, valor: l.valor, saldo: l.saldo,
-      periodo: l.periodo, cuenta: cuenta?.trim() || null, tenant,
-    }))
-  );
-  if (error) return { ok: false, error: error.message };
+  const filas = lineas.map((l) => ({
+    fecha: l.fecha, descripcion: l.descripcion || null, valor: l.valor, saldo: l.saldo,
+    periodo: l.periodo, cuenta: cuenta?.trim() || null, tenant,
+  }));
+
+  // Inserta en lotes y CUENTA lo que realmente quedó guardado (con
+  // `.select("id")`) en vez de confiar en que "sin error" significa "se
+  // guardaron todas" — antes el mensaje de éxito solo repetía cuántas líneas
+  // se habían parseado, sin confirmar cuántas realmente llegaron a la base.
+  const LOTE = 100;
+  let insertadas = 0;
+  let primerError: string | null = null;
+  for (let i = 0; i < filas.length; i += LOTE) {
+    const lote = filas.slice(i, i + LOTE);
+    const { data, error } = await sb.from("conciliacion_extracto").insert(lote).select("id");
+    if (error) { primerError = primerError ?? error.message; continue; }
+    insertadas += data?.length ?? 0;
+  }
   revalidatePath("/dashboard/contabilidad/conciliaciones");
-  return { ok: true, n: lineas.length };
+  if (insertadas === 0) return { ok: false, error: primerError ?? "No se pudo importar ninguna línea." };
+  if (insertadas < filas.length) {
+    return {
+      ok: true, n: insertadas,
+      aviso: `Se detectaron ${filas.length} líneas válidas pero solo se guardaron ${insertadas}${primerError ? ` (error: ${primerError})` : ""}. Vuelve a pegar el resto o intenta de nuevo.`,
+    };
+  }
+  return { ok: true, n: insertadas };
 }
 
 export async function eliminarLineaExtracto(id: number): Promise<Result> {
