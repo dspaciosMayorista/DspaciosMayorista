@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
 import { parseExtracto } from "@/lib/contabilidad/extracto";
+import { registrarAsientoAutomatico } from "../libro-diario/actions";
 
 type Result = { ok: true; n?: number; aviso?: string } | { ok: false; error: string };
 
@@ -116,7 +117,8 @@ export async function cruzar(input: {
     sistemaFinal.push({ ...s, ref: `pago:${cuentaId}:${n}`, fecha: fechaPago });
   }
 
-  const { data: conc, error: e1 } = await sb.from("conciliacion").insert({ nota: input.nota?.trim() || null, total: totalExtracto, tenant: await getTenant() }).select("id").single();
+  const tenant = await getTenant();
+  const { data: conc, error: e1 } = await sb.from("conciliacion").insert({ nota: input.nota?.trim() || null, total: totalExtracto, tenant }).select("id").single();
   if (e1 || !conc) return { ok: false, error: e1?.message ?? "No se pudo crear el cruce." };
 
   const { error: e2 } = await sb.from("conciliacion_extracto").update({ conciliacion_id: conc.id }).in("id", input.extractoIds);
@@ -130,7 +132,45 @@ export async function cruzar(input: {
   );
   if (e3) return { ok: false, error: e3.message };
 
+  // Diferencia justificada en efectivo/caja: lleva ese acumulado a un asiento
+  // contable real (Caja general vs. Clientes) — solo del lado Cartera, que es
+  // el caso "cobré en efectivo, parte no se consignó". Del lado Proveedores
+  // (pagar de más en efectivo) queda para registrar manual en el Libro diario
+  // por ahora — la mecánica contraria (extinguir el pasivo) necesita más
+  // contexto real para no adivinar mal la cuenta.
+  if (input.diferenciaCaja && Math.abs(totalExtracto - totalSistema) > 1) {
+    const esCartera = sistemaFinal.every((s) => s.valor >= 0);
+    const dif = totalSistema - totalExtracto; // > 0 = quedó dinero sin consignar (en caja)
+    const avisarPosting = (msg: string) => { aviso = aviso ? `${aviso} También: ${msg}` : msg; };
+    if (esCartera && dif > 0) {
+      const [{ data: caja }, { data: clientes }] = await Promise.all([
+        sb.from("puc_cuentas").select("id").eq("tenant", tenant).eq("codigo", "110505").maybeSingle(),
+        sb.from("puc_cuentas").select("id").eq("tenant", tenant).eq("codigo", "130505").maybeSingle(),
+      ]);
+      if (caja && clientes) {
+        const referencia = [...new Set(sistemaFinal.map((s) => s.numeroContrato).filter(Boolean))].join(", ") || undefined;
+        const asiento = await registrarAsientoAutomatico({
+          fecha: fechaPago,
+          descripcion: `Efectivo en caja no consignado — conciliación bancaria${input.nota ? `: ${input.nota.trim()}` : ""}`,
+          origen: "conciliacion",
+          referencia: `conciliacion:${conc.id}`,
+          lineas: [
+            { cuentaId: caja.id, tercero: referencia, descripcion: "Efectivo en caja (no consignado)", debe: dif, haber: 0 },
+            { cuentaId: clientes.id, tercero: referencia, descripcion: "Aplicación de abono en efectivo", debe: 0, haber: dif },
+          ],
+        });
+        if (!asiento.ok) avisarPosting(`el cruce quedó registrado, pero no se pudo generar el asiento contable automático: ${asiento.error}`);
+      } else {
+        avisarPosting("el cruce quedó registrado, pero faltan las cuentas 110505 (Caja general) / 130505 (Clientes) en el Plan de cuentas para el asiento automático — créalas o registra el asiento manual en el Libro diario.");
+      }
+    } else if (!esCartera) {
+      avisarPosting("el cruce quedó registrado; registra manualmente el asiento contable de esta diferencia en el Libro diario (Proveedores aún no genera el asiento automático).");
+    }
+  }
+
   revalidatePath("/dashboard/contabilidad/conciliaciones");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
+  revalidatePath("/dashboard/contabilidad/libro-auxiliar");
   revalidatePath("/dashboard/pagos");
   return { ok: true, aviso };
 }
@@ -138,8 +178,13 @@ export async function cruzar(input: {
 export async function deshacerCruce(conciliacionId: number): Promise<Result> {
   const sb = await createClient();
   await sb.from("conciliacion_extracto").update({ conciliacion_id: null }).eq("conciliacion_id", conciliacionId);
+  // Si el cruce generó un asiento automático (diferencia en caja), lo borra
+  // también — si no, quedaría un asiento contable huérfano de un cruce deshecho.
+  await sb.from("asientos_contables").delete().eq("origen", "conciliacion").eq("referencia", `conciliacion:${conciliacionId}`);
   const { error } = await sb.from("conciliacion").delete().eq("id", conciliacionId); // cascade borra conciliacion_sistema
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/contabilidad/conciliaciones");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
+  revalidatePath("/dashboard/contabilidad/libro-auxiliar");
   return { ok: true };
 }

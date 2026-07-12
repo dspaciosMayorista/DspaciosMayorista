@@ -688,6 +688,84 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["retenciones_cxp"]["Insert"]>;
         Relationships: [];
       };
+      puc_cuentas: {
+        Row: {
+          id: number;
+          tenant: string;
+          codigo: string;
+          nombre: string;
+          nivel: number;
+          padre_id: number | null;
+          naturaleza: string;
+          permite_movimiento: boolean;
+          activa: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          tenant?: string;
+          codigo: string;
+          nombre: string;
+          nivel: number;
+          padre_id?: number | null;
+          naturaleza: string;
+          permite_movimiento?: boolean;
+          activa?: boolean;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["puc_cuentas"]["Insert"]>;
+        Relationships: [];
+      };
+      asientos_contables: {
+        Row: {
+          id: number;
+          tenant: string;
+          numero: number;
+          fecha: string;
+          descripcion: string;
+          origen: string;
+          referencia: string | null;
+          usuario_email: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          tenant?: string;
+          numero: number;
+          fecha?: string;
+          descripcion: string;
+          origen?: string;
+          referencia?: string | null;
+          usuario_email?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["asientos_contables"]["Insert"]>;
+        Relationships: [];
+      };
+      asiento_lineas: {
+        Row: {
+          id: number;
+          tenant: string;
+          asiento_id: number;
+          cuenta_id: number;
+          tercero: string | null;
+          descripcion: string | null;
+          debe: number;
+          haber: number;
+        };
+        Insert: {
+          id?: number;
+          tenant?: string;
+          asiento_id: number;
+          cuenta_id: number;
+          tercero?: string | null;
+          descripcion?: string | null;
+          debe?: number;
+          haber?: number;
+        };
+        Update: Partial<Database["public"]["Tables"]["asiento_lineas"]["Insert"]>;
+        Relationships: [];
+      };
       aliados_b2b: {
         Row: {
           id: number;
