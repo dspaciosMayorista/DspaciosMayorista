@@ -24,6 +24,7 @@ export type CarteraRow = {
     forma_pago: string | null;
     referencia: string | null;
     trm: number | null;
+    monto_cop: number | null;
   }[];
 };
 
@@ -271,14 +272,16 @@ function FilaAbonoCartera({
   a: CarteraRow["abonos"][number]; numeroContrato: string; moneda: string; formasPago: string[];
 }) {
   const [editar, setEditar] = useState(false);
-  const [valor, setValor] = useState(String(a.valor_abono));
+  const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
+  // El campo "Valor" edita lo PAGADO EN COP (mismo criterio de registrarAbono/
+  // actualizarAbono); en USD eso es monto_cop, NO valor_abono (que está en USD).
+  const [valor, setValor] = useState(String(esUSD ? (a.monto_cop ?? a.valor_abono) : a.valor_abono));
   const [fecha, setFecha] = useState(a.fecha_abono);
   const [forma, setForma] = useState(a.forma_pago ?? "");
   const [ref, setRef] = useState(a.referencia ?? "");
   const [trm, setTrm] = useState(a.trm ? String(a.trm) : "");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
-  const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
 
   function guardar() {
     setErr("");

@@ -238,7 +238,9 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
 // tener que registrar un segundo abono para "cuadrar" el saldo) y eliminar.
 function FilaAbono({ a, numero, esUSD, moneda, formasPago }: { a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[] }) {
   const [editar, setEditar] = useState(false);
-  const [valor, setValor] = useState(String(a.valor_abono));
+  // El campo "Valor" edita lo PAGADO EN COP (mismo criterio de registrarAbono/
+  // actualizarAbono); en USD eso es monto_cop, NO valor_abono (que está en USD).
+  const [valor, setValor] = useState(String(esUSD ? (a.monto_cop ?? a.valor_abono) : a.valor_abono));
   const [fecha, setFecha] = useState(a.fecha_abono);
   const [forma, setForma] = useState(a.forma_pago ?? "");
   const [ref, setRef] = useState(a.referencia ?? "");
