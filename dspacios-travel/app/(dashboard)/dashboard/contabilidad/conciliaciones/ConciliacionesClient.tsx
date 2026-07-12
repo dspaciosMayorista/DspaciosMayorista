@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { Trash2, Link2, Undo2, Sparkles, Plus } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
-import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto, eliminarPeriodoExtracto } from "./actions";
+import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto, eliminarPeriodoExtracto, registrarMovimientoDirecto } from "./actions";
 import { listarCuentasMovimiento } from "../libro-diario/actions";
 
 type CuentaMov = { id: number; codigo: string; nombre: string };
@@ -74,6 +74,13 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   const [tipoDif, setTipoDif] = useState<"caja" | "gasto" | null>(null);
   const [gastoLineas, setGastoLineas] = useState<LineaGasto[]>([{ ...LINEA_GASTO_VACIA }]);
   const [cuentasMov, setCuentasMov] = useState<CuentaMov[]>([]);
+  // Movimiento directo: líneas del extracto SIN contrapartida en el sistema
+  // (movimientos contables sueltos, o abonos de contratos que no se van a
+  // relacionar) — se concilian solas, armando el asiento a mano.
+  const [modoManual, setModoManual] = useState(false);
+  const [notaManual, setNotaManual] = useState("");
+  const [contratoRefManual, setContratoRefManual] = useState("");
+  const [manualLineas, setManualLineas] = useState<LineaGasto[]>([{ ...LINEA_GASTO_VACIA }]);
   // Filtros y orden INDEPENDIENTES por columna (día preciso + valor + orden).
   const [extDesde, setExtDesde] = useState("");
   const [extHasta, setExtHasta] = useState("");
@@ -96,16 +103,20 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     setSelSis(new Set());
     setTipoDif(null);
     setGastoLineas([{ ...LINEA_GASTO_VACIA }]);
+    setModoManual(false);
+    setNotaManual("");
+    setContratoRefManual("");
+    setManualLineas([{ ...LINEA_GASTO_VACIA }]);
     setError(null);
     setAviso(null);
   }
 
-  // Cuentas de gasto (PUC) para la opción "es un gasto/comisión" — se traen
-  // solo la primera vez que se necesitan, no en cada carga de la página.
+  // Cuentas de gasto/ingreso (PUC) para "es un gasto/comisión" y para el
+  // movimiento directo — se traen solo la primera vez que se necesitan.
   useEffect(() => {
-    if (tipoDif !== "gasto" || cuentasMov.length) return;
+    if ((tipoDif !== "gasto" && !modoManual) || cuentasMov.length) return;
     listarCuentasMovimiento().then((r) => { if (r.ok) setCuentasMov(r.cuentas); });
-  }, [tipoDif, cuentasMov.length]);
+  }, [tipoDif, modoManual, cuentasMov.length]);
 
   const cuentaMovPorLabel = useMemo(() => {
     const m = new Map<string, CuentaMov>();
@@ -118,6 +129,12 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
   }
   function agregarLineaGasto() { setGastoLineas((ls) => [...ls, { ...LINEA_GASTO_VACIA }]); }
   function quitarLineaGasto(i: number) { setGastoLineas((ls) => (ls.length > 1 ? ls.filter((_, n) => n !== i) : ls)); }
+
+  function setLineaManual(i: number, patch: Partial<LineaGasto>) {
+    setManualLineas((ls) => ls.map((l, n) => (n === i ? { ...l, ...patch } : l)));
+  }
+  function agregarLineaManual() { setManualLineas((ls) => [...ls, { ...LINEA_GASTO_VACIA }]); }
+  function quitarLineaManual(i: number) { setManualLineas((ls) => (ls.length > 1 ? ls.filter((_, n) => n !== i) : ls)); }
 
   const meses = useMemo(() => Array.from(new Set(extracto.map((e) => e.periodo))).sort().reverse(), [extracto]);
 
@@ -266,6 +283,30 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     });
   }
 
+  // Movimiento directo: solo hay selección de extracto, sin contrapartida en
+  // el sistema — las líneas que arme el usuario deben sumar exacto el total.
+  const manualTotal = manualLineas.reduce((a, l) => a + (Number(l.valor) || 0), 0);
+  const manualValido =
+    manualLineas.length > 0 &&
+    manualLineas.every((l) => l.cuentaTexto.trim() && cuentaMovPorLabel.has(l.cuentaTexto.trim()) && Number(l.valor) > 0) &&
+    Math.abs(manualTotal - totExt) <= 1;
+
+  function registrarManual() {
+    setError(null);
+    setAviso(null);
+    start(async () => {
+      const r = await registrarMovimientoDirecto({
+        extractoIds: [...selExt],
+        nota: notaManual,
+        contratoReferencia: contratoRefManual,
+        lineas: manualLineas.map((l) => ({ cuentaCodigo: cuentaMovPorLabel.get(l.cuentaTexto.trim())!.codigo, tercero: l.tercero, valor: Number(l.valor) || 0 })),
+      });
+      if (!r.ok) { setError(r.error); return; }
+      if (r.aviso) setAviso(r.aviso);
+      setSelExt(new Set()); setModoManual(false); setNotaManual(""); setContratoRefManual(""); setManualLineas([{ ...LINEA_GASTO_VACIA }]); router.refresh();
+    });
+  }
+
   return (
     <div className="space-y-5">
       <Importador />
@@ -347,39 +388,60 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
             )}
           </div>
           {tipoDif === "gasto" && (
-            <div className="mt-2 space-y-1.5 rounded-lg border border-amber-200 bg-white p-2">
-              <datalist id="cuentas-gasto-conciliacion">
-                {cuentasMov.map((c) => <option key={c.id} value={`${c.codigo} · ${c.nombre}`} />)}
-              </datalist>
-              {gastoLineas.map((l, i) => (
-                <div key={i} className="flex flex-wrap items-end gap-2">
-                  <div className="w-64">
-                    <label className="block text-[10px] text-gray-500">Cuenta del gasto</label>
-                    <Input list="cuentas-gasto-conciliacion" value={l.cuentaTexto} onChange={(e) => setLineaGasto(i, { cuentaTexto: e.target.value })} placeholder="ej. 530525 · Comisiones bancarias" className="h-7 text-xs" />
-                  </div>
-                  <div className="w-36">
-                    <label className="block text-[10px] text-gray-500">Tercero</label>
-                    <Input value={l.tercero} onChange={(e) => setLineaGasto(i, { tercero: e.target.value })} placeholder="Opcional" className="h-7 text-xs" />
-                  </div>
-                  <div className="w-32">
-                    <label className="block text-[10px] text-gray-500">Valor</label>
-                    <Input value={l.valor} onChange={(e) => setLineaGasto(i, { valor: e.target.value })} inputMode="numeric" placeholder="0" className="h-7 text-xs" />
-                  </div>
-                  {gastoLineas.length > 1 && (
-                    <button type="button" onClick={() => quitarLineaGasto(i)} className="mb-1 text-gray-300 hover:text-red-500" title="Quitar línea"><Trash2 size={13} /></button>
-                  )}
-                </div>
-              ))}
-              <button type="button" onClick={agregarLineaGasto} className="inline-flex items-center gap-1 text-[11px] font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
-                <Plus size={11} /> Dividir en otra cuenta
-              </button>
-              <p className={gastoValido ? "text-[#3d7a63]" : "text-amber-700"}>
+            <div className="mt-2 rounded-lg border border-amber-200 bg-white p-2">
+              <EditorLineasCuenta
+                lineas={gastoLineas} cuentasMov={cuentasMov} datalistId="cuentas-gasto-conciliacion"
+                cuentaLabel="Cuenta del gasto" cuentaPlaceholder="ej. 530525 · Comisiones bancarias"
+                onSetLinea={setLineaGasto} onAgregar={agregarLineaGasto} onQuitar={quitarLineaGasto}
+                agregarLabel="Dividir en otra cuenta"
+              />
+              <p className={`mt-1.5 ${gastoValido ? "text-[#3d7a63]" : "text-amber-700"}`}>
                 Total: <b className="tabular-nums">{formatCOP(gastoTotal)}</b> de <b className="tabular-nums">{formatCOP(abs(dif))}</b> requeridos
               </p>
             </div>
           )}
           {!tipoDif && (
             <p className="mt-1 text-gray-500">O ajusta la selección: puedes elegir varios ítems de un lado (ej. una línea de 1.000 contra 700 + 300).</p>
+          )}
+        </div>
+      )}
+      {selExt.size > 0 && selSis.size === 0 && (
+        <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+          <button type="button" onClick={() => setModoManual((v) => !v)} className="font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
+            {modoManual ? "Cancelar" : "Registrar como movimiento contable (sin contrapartida en el sistema)"}
+          </button>
+          {!modoManual && (
+            <p className="mt-1 text-gray-500">
+              Para consignaciones/pagos que son movimientos contables sueltos, o abonos de contratos que no vas a relacionar en el sistema.
+            </p>
+          )}
+          {modoManual && (
+            <div className="mt-2 space-y-2 rounded-lg border border-gray-200 bg-white p-2">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[200px]">
+                  <label className="block text-[10px] text-gray-500">Nota (obligatoria)</label>
+                  <Input value={notaManual} onChange={(e) => setNotaManual(e.target.value)} placeholder="Explica qué es este movimiento" className="h-7 text-xs" />
+                </div>
+                <div className="w-48">
+                  <label className="block text-[10px] text-gray-500">Contrato de referencia (opcional)</label>
+                  <Input value={contratoRefManual} onChange={(e) => setContratoRefManual(e.target.value)} placeholder="ej. 00-0451" className="h-7 text-xs" />
+                </div>
+              </div>
+              <EditorLineasCuenta
+                lineas={manualLineas} cuentasMov={cuentasMov} datalistId="cuentas-manual-conciliacion"
+                cuentaLabel="Cuenta" cuentaPlaceholder="Busca por código o nombre…"
+                onSetLinea={setLineaManual} onAgregar={agregarLineaManual} onQuitar={quitarLineaManual}
+                agregarLabel="Agregar línea"
+              />
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className={manualTotal > 0 && Math.abs(manualTotal - totExt) <= 1 ? "text-[#3d7a63]" : "text-amber-700"}>
+                  Total: <b className="tabular-nums">{formatCOP(manualTotal)}</b> de <b className="tabular-nums">{formatCOP(totExt)}</b> requeridos
+                </p>
+                <Button onClick={registrarManual} disabled={!manualValido || !notaManual.trim() || pending} style={{ backgroundColor: manualValido && notaManual.trim() ? "var(--brand-primary)" : "#9ca3af" }}>
+                  <Link2 size={15} className="mr-1 inline" /> {pending ? "Registrando…" : "Registrar y conciliar"}
+                </Button>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -606,4 +668,52 @@ function ItemFila({ sel, sugerido, onClick, fecha, desc, valor, contrato, onDel 
 }
 function Vacio({ children }: { children: React.ReactNode }) {
   return <p className="px-3 py-6 text-center text-sm text-gray-400">{children}</p>;
+}
+
+// Editor de líneas cuenta/tercero/valor — compartido entre "es un
+// gasto/comisión" (diferencia de cruce) y "movimiento contable directo"
+// (extracto sin contrapartida en el sistema). El tercero siempre queda
+// opcional: se guarda en blanco para los que no se van a especificar.
+function EditorLineasCuenta({
+  lineas, cuentasMov, datalistId, cuentaLabel, cuentaPlaceholder, onSetLinea, onAgregar, onQuitar, agregarLabel,
+}: {
+  lineas: LineaGasto[];
+  cuentasMov: CuentaMov[];
+  datalistId: string;
+  cuentaLabel: string;
+  cuentaPlaceholder: string;
+  onSetLinea: (i: number, patch: Partial<LineaGasto>) => void;
+  onAgregar: () => void;
+  onQuitar: (i: number) => void;
+  agregarLabel: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <datalist id={datalistId}>
+        {cuentasMov.map((c) => <option key={c.id} value={`${c.codigo} · ${c.nombre}`} />)}
+      </datalist>
+      {lineas.map((l, i) => (
+        <div key={i} className="flex flex-wrap items-end gap-2">
+          <div className="w-64">
+            <label className="block text-[10px] text-gray-500">{cuentaLabel}</label>
+            <Input list={datalistId} value={l.cuentaTexto} onChange={(e) => onSetLinea(i, { cuentaTexto: e.target.value })} placeholder={cuentaPlaceholder} className="h-7 text-xs" />
+          </div>
+          <div className="w-36">
+            <label className="block text-[10px] text-gray-500">Tercero</label>
+            <Input value={l.tercero} onChange={(e) => onSetLinea(i, { tercero: e.target.value })} placeholder="Opcional" className="h-7 text-xs" />
+          </div>
+          <div className="w-32">
+            <label className="block text-[10px] text-gray-500">Valor</label>
+            <Input value={l.valor} onChange={(e) => onSetLinea(i, { valor: e.target.value })} inputMode="numeric" placeholder="0" className="h-7 text-xs" />
+          </div>
+          {lineas.length > 1 && (
+            <button type="button" onClick={() => onQuitar(i)} className="mb-1 text-gray-300 hover:text-red-500" title="Quitar línea"><Trash2 size={13} /></button>
+          )}
+        </div>
+      ))}
+      <button type="button" onClick={onAgregar} className="inline-flex items-center gap-1 text-[11px] font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
+        <Plus size={11} /> {agregarLabel}
+      </button>
+    </div>
+  );
 }
