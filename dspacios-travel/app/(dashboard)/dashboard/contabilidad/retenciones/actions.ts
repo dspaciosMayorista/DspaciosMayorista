@@ -24,9 +24,23 @@ export type CuentaContrato = {
 export type RetencionRow = {
   id: number;
   valor: number;
+  base_gravable: number | null;
   fecha_practica: string;
   mes_declaracion: string;
   observaciones: string | null;
+};
+
+// Una fila del informe mensual (para declarar a la DIAN): la retención +
+// el contrato/proveedor de donde vino, vía su cuenta por pagar.
+export type InformeRetencionRow = {
+  id: number;
+  numero_contrato: string | null;
+  proveedor: string | null;
+  tipo_proveedor: string | null;
+  moneda: string;
+  fecha_practica: string;
+  base_gravable: number | null;
+  valor: number;
 };
 
 // Busca las cuentas por pagar de un contrato — para elegir por TIPO de
@@ -79,7 +93,7 @@ export async function listarRetenciones(
   const sb = await createClient();
   const { data, error } = await sb
     .from("retenciones_cxp")
-    .select("id, valor, fecha_practica, mes_declaracion, observaciones")
+    .select("id, valor, base_gravable, fecha_practica, mes_declaracion, observaciones")
     .eq("cuenta_por_pagar_id", cuentaId)
     .order("fecha_practica", { ascending: false });
   if (error) return { ok: false, error: error.message };
@@ -92,6 +106,7 @@ export async function listarRetenciones(
 export async function registrarRetencion(input: {
   cuentaId: number;
   valor: number;
+  baseGravable?: number;
   fechaPractica: string;
   mesDeclaracion: string;
   observaciones?: string;
@@ -120,6 +135,7 @@ export async function registrarRetencion(input: {
   const { data: nueva, error } = await sb.from("retenciones_cxp").insert({
     cuenta_por_pagar_id: input.cuentaId,
     valor: input.valor,
+    base_gravable: input.baseGravable != null ? input.baseGravable : null,
     fecha_practica: input.fechaPractica,
     mes_declaracion: input.mesDeclaracion,
     observaciones: input.observaciones?.trim() || null,
@@ -150,4 +166,50 @@ export async function eliminarRetencion(id: number): Promise<Result> {
   revalidatePath("/dashboard/pagos");
   revalidatePath("/dashboard/contabilidad/libro-diario");
   return { ok: true };
+}
+
+// Meses de declaración con retenciones registradas — para el selector del
+// informe (más reciente primero).
+export async function listarMesesDeclaracion(): Promise<{ ok: true; meses: string[] } | { ok: false; error: string }> {
+  const sb = await createClient();
+  const tenant = await getTenant();
+  const { data, error } = await sb.from("retenciones_cxp").select("mes_declaracion").eq("tenant", tenant);
+  if (error) return { ok: false, error: error.message };
+  const meses = Array.from(new Set((data ?? []).map((r) => r.mes_declaracion as string))).sort().reverse();
+  return { ok: true, meses };
+}
+
+// Informe mensual (para presentar a la DIAN): todas las retenciones
+// practicadas cuyo mes de declaración es el indicado, con el contrato y
+// proveedor de origen (vía su cuenta por pagar) — reúne base gravable y
+// valor retenido, que es lo que se llena en el formulario 350.
+export async function informeMensualRetenciones(
+  mes: string
+): Promise<{ ok: true; filas: InformeRetencionRow[] } | { ok: false; error: string }> {
+  if (!/^\d{4}-\d{2}$/.test(mes || "")) return { ok: false, error: "Indica un mes válido (YYYY-MM)." };
+  const sb = await createClient();
+  const tenant = await getTenant();
+  const { data, error } = await sb
+    .from("retenciones_cxp")
+    .select("id, valor, base_gravable, fecha_practica, cuentas_por_pagar(numero_contrato, proveedor, tipo_proveedor, moneda)")
+    .eq("tenant", tenant)
+    .eq("mes_declaracion", mes)
+    .order("fecha_practica");
+  if (error) return { ok: false, error: error.message };
+
+  type Fila = {
+    id: number; valor: number; base_gravable: number | null; fecha_practica: string;
+    cuentas_por_pagar: { numero_contrato: string | null; proveedor: string | null; tipo_proveedor: string | null; moneda: string } | null;
+  };
+  const filas: InformeRetencionRow[] = ((data ?? []) as unknown as Fila[]).map((r) => ({
+    id: r.id,
+    numero_contrato: r.cuentas_por_pagar?.numero_contrato ?? null,
+    proveedor: r.cuentas_por_pagar?.proveedor ?? null,
+    tipo_proveedor: r.cuentas_por_pagar?.tipo_proveedor ?? null,
+    moneda: r.cuentas_por_pagar?.moneda ?? "COP",
+    fecha_practica: r.fecha_practica,
+    base_gravable: r.base_gravable != null ? Number(r.base_gravable) : null,
+    valor: Number(r.valor) || 0,
+  }));
+  return { ok: true, filas };
 }

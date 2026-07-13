@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { Search, Trash2, Landmark } from "lucide-react";
+import { Search, Trash2, Landmark, FileBarChart } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
@@ -11,13 +11,44 @@ import {
   listarRetenciones,
   registrarRetencion,
   eliminarRetencion,
+  listarMesesDeclaracion,
+  informeMensualRetenciones,
   type CuentaContrato,
   type RetencionRow,
+  type InformeRetencionRow,
 } from "./actions";
 
 const hoy = () => new Date().toISOString().slice(0, 10);
 
 export function RetencionesClient({ contratos }: { contratos: string[] }) {
+  const [tab, setTab] = useState<"aplicar" | "informe">("aplicar");
+
+  return (
+    <div className="space-y-5">
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => setTab("aplicar")}
+          className="rounded-full px-4 py-1.5 text-sm font-semibold transition-colors"
+          style={tab === "aplicar" ? { backgroundColor: "var(--brand-primary)", color: "white" } : { backgroundColor: "#f3f4f6", color: "#374151" }}
+        >
+          Aplicar retención
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("informe")}
+          className="rounded-full px-4 py-1.5 text-sm font-semibold transition-colors"
+          style={tab === "informe" ? { backgroundColor: "var(--brand-primary)", color: "white" } : { backgroundColor: "#f3f4f6", color: "#374151" }}
+        >
+          Informe mensual (DIAN)
+        </button>
+      </div>
+      {tab === "aplicar" ? <AplicarRetencion contratos={contratos} /> : <InformeMensual />}
+    </div>
+  );
+}
+
+function AplicarRetencion({ contratos }: { contratos: string[] }) {
   const [numero, setNumero] = useState("");
   const [cuentas, setCuentas] = useState<CuentaContrato[] | null>(null);
   const [tipo, setTipo] = useState("");
@@ -211,6 +242,129 @@ function Mini({ label, value, color }: { label: string; value: string; color?: s
   );
 }
 
+// Informe mensual — lo que se llena en el formulario 350 de la DIAN por mes
+// de declaración: base gravable total y valor retenido total, con el detalle
+// fila por fila (contrato/proveedor) que los compone. Solo reúne retenciones
+// registradas DESDE que existe el campo `base_gravable` (migración 128) — las
+// anteriores muestran su valor retenido pero la base sale en blanco.
+function InformeMensual() {
+  const [meses, setMeses] = useState<string[]>([]);
+  const [mes, setMes] = useState("");
+  const [filas, setFilas] = useState<InformeRetencionRow[] | null>(null);
+  const [error, setError] = useState("");
+  const [pending, start] = useTransition();
+
+  useEffect(() => {
+    listarMesesDeclaracion().then((r) => {
+      if (!r.ok) return;
+      setMeses(r.meses);
+      if (r.meses.length) cargar(r.meses[0]);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function cargar(m: string) {
+    setMes(m);
+    setError("");
+    setFilas(null);
+    if (!m) return;
+    start(async () => {
+      const r = await informeMensualRetenciones(m);
+      if (!r.ok) { setError(r.error); return; }
+      setFilas(r.filas);
+    });
+  }
+
+  // Casi siempre todas las filas de un mismo mes son en la misma moneda —
+  // pero si llegara a mezclar, se totaliza por separado para no sumar
+  // pesos con dólares.
+  const porMoneda = new Map<string, InformeRetencionRow[]>();
+  for (const f of filas ?? []) {
+    const arr = porMoneda.get(f.moneda) ?? [];
+    arr.push(f);
+    porMoneda.set(f.moneda, arr);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-gray-200 bg-white p-4">
+        <label className="mb-1 block text-xs font-medium text-gray-600">Mes de declaración (DIAN)</label>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={mes}
+            onChange={(e) => cargar(e.target.value)}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm"
+          >
+            <option value="">Elige un mes</option>
+            {meses.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+          {meses.length === 0 && <p className="text-sm text-gray-400">Aún no hay retenciones registradas.</p>}
+        </div>
+      </div>
+
+      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+      {pending && <p className="text-sm text-gray-400">Cargando…</p>}
+
+      {filas && filas.length === 0 && !pending && (
+        <p className="rounded-xl border border-gray-200 bg-white px-3 py-8 text-center text-sm text-gray-400">
+          No hay retenciones declaradas en {mes}.
+        </p>
+      )}
+
+      {filas && filas.length > 0 && [...porMoneda.entries()].map(([moneda, filasMoneda]) => {
+        const totalBase = filasMoneda.reduce((a, f) => a + (f.base_gravable ?? 0), 0);
+        const totalValor = filasMoneda.reduce((a, f) => a + f.valor, 0);
+        const sinBase = filasMoneda.some((f) => f.base_gravable == null);
+        return (
+          <div key={moneda} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <div className="flex items-center gap-1.5 border-b border-gray-100 bg-gray-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <FileBarChart size={13} /> {moneda} — {filasMoneda.length} retención(es)
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-gray-400">
+                  <th className="px-3 py-2">Fecha</th>
+                  <th className="px-3 py-2">Contrato</th>
+                  <th className="px-3 py-2">Proveedor</th>
+                  <th className="px-3 py-2 text-right">Base gravable</th>
+                  <th className="px-3 py-2 text-right">Valor retención</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filasMoneda.map((f) => (
+                  <tr key={f.id} className="border-t border-gray-100">
+                    <td className="px-3 py-2 text-gray-600">{formatFechaLarga(f.fecha_practica)}</td>
+                    <td className="px-3 py-2">
+                      {f.numero_contrato ? (
+                        <Link href={`/dashboard/contratos/${encodeURIComponent(f.numero_contrato)}`} className="font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
+                          {f.numero_contrato}
+                        </Link>
+                      ) : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-gray-600">{f.proveedor ?? "Sin proveedor"} {f.tipo_proveedor ? `· ${f.tipo_proveedor}` : ""}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-gray-700">{f.base_gravable != null ? formatMoneda(f.base_gravable, moneda) : "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-gray-700">{formatMoneda(f.valor, moneda)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-gray-200 bg-gray-50 font-semibold text-gray-800">
+                  <td className="px-3 py-2" colSpan={3}>Total</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{formatMoneda(totalBase, moneda)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums" style={{ color: "#b45309" }}>{formatMoneda(totalValor, moneda)}</td>
+                </tr>
+              </tbody>
+            </table>
+            {sinBase && (
+              <p className="border-t border-gray-100 px-3 py-2 text-xs text-amber-600">
+                Alguna retención de este mes es anterior a que se guardara la base gravable — su base sale en blanco y no suma al total.
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Calculadora de retención: Valor retención = % retención × Base gravable,
 // donde Base gravable = Base (lo que se le va a pagar al proveedor) menos sus
 // propios impuestos (IVA, IPC/otro). IVA e IPC se ingresan como VALOR ya
@@ -252,6 +406,7 @@ function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () 
       const r = await registrarRetencion({
         cuentaId: cuenta.id,
         valor: valorRetencion,
+        baseGravable,
         fechaPractica,
         mesDeclaracion,
         observaciones: obs,
