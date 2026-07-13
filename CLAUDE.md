@@ -305,8 +305,8 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 128** — todas
-> confirmadas corridas por el dueño, incluida la **128** (`retencion_base_gravable`
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 129** — todas
+> confirmadas corridas por el dueño, incluida la **129** (`anticipos_sin_identificar`
 > — ver "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
@@ -343,6 +343,29 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   elegido. Ambos casos reutilizan el mismo mecanismo de deshacer (asientos con
 >   origen `conciliacion`). Se factorizó `EditorLineasCuenta`, compartido entre
 >   los dos flujos.
+> - **Conciliaciones — subcuenta dedicada para depósitos sin identificar
+>   (jul-2026):** migración **129** agrega `puc_cuentas.280510` "Anticipos de
+>   clientes sin identificar", subcuenta de `2805` (misma familia que `280505`
+>   "Anticipos de clientes") — un depósito de cliente sin contrato relacionado
+>   en el sistema sigue siendo el mismo tipo de pasivo (anticipo) que uno con
+>   contrato conocido pero aún sin facturar, solo que no se sabe a cuál
+>   pertenece; separarlo en su propia subcuenta evita mezclarlo con los
+>   anticipos ya identificados. De paso se corrigió el texto de "Registrar como
+>   movimiento contable (sin contrapartida en el sistema)" → "Registrar con un
+>   asiento manual": SIEMPRE hay contrapartida (partida doble), solo que la
+>   elige el usuario en vez de un abono/pago ya registrado — la primera línea
+>   ya sugiere la cuenta 280510 cuando el lado es Cartera (editable si en
+>   realidad es otro tipo de movimiento).
+> - **Retenciones — recalcular bases faltantes (jul-2026):** las retenciones
+>   registradas antes de la migración 128 quedaron con `base_gravable` en
+>   blanco, pero el dato no estaba perdido: la calculadora siempre escribió la
+>   base gravable exacta (y el % de retención) dentro del texto de
+>   `observaciones`. Nuevo botón "Recalcular bases faltantes" en el Informe
+>   mensual: la recupera parseando ese texto (dato exacto del momento en que
+>   se practicó) y, si no la encuentra ahí, la deriva dividiendo el valor
+>   retenido entre el % de retención configurado HOY en la cuenta
+>   (aproximación, ese % pudo cambiar desde entonces). Deja en blanco solo lo
+>   que de verdad no se pueda calcular por ningún lado.
 > - **Retenciones — pestañas + informe mensual DIAN (jul-2026):** migración **128**
 >   agrega `retenciones_cxp.base_gravable` — hasta ahora solo se guardaba el
 >   VALOR retenido, la base quedaba enterrada como texto libre en observaciones,
@@ -996,14 +1019,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **128** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **129** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 128** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 129** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -1092,7 +1115,10 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > terceros (IRT)" que faltaba en la semilla de la 126 (la usa el asiento
 > automático de facturación) · **128 retencion_base_gravable** (ya corrida) —
 > agrega `retenciones_cxp.base_gravable` (numeric), usada por el informe
-> mensual de retenciones para la DIAN —
+> mensual de retenciones para la DIAN · **129 anticipos_sin_identificar** (ya
+> corrida) — agrega `puc_cuentas.280510` "Anticipos de clientes sin
+> identificar", subcuenta de `2805`, para depósitos de clientes en
+> Conciliaciones que no se van a relacionar con un contrato del sistema —
 > ver "Novedades recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
