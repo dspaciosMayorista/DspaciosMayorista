@@ -124,6 +124,18 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     return m;
   }, [cuentasMov]);
 
+  // Un depósito de cliente sin contrato identificado sigue siendo un pasivo
+  // (anticipo) como cualquier otro, solo que no se sabe a qué contrato
+  // pertenece — se sugiere de una vez la subcuenta dedicada (280510) en la
+  // primera línea, editable si en realidad es otra cosa (ej. un movimiento
+  // puramente contable, no un depósito de cliente).
+  useEffect(() => {
+    if (!modoManual || modo !== "cartera" || manualLineas.length !== 1 || manualLineas[0].cuentaTexto) return;
+    const sugerida = cuentasMov.find((c) => c.codigo === "280510");
+    if (sugerida) setLineaManual(0, { cuentaTexto: `${sugerida.codigo} · ${sugerida.nombre}` });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modoManual, modo, cuentasMov]);
+
   function setLineaGasto(i: number, patch: Partial<LineaGasto>) {
     setGastoLineas((ls) => ls.map((l, n) => (n === i ? { ...l, ...patch } : l)));
   }
@@ -408,11 +420,13 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
       {selExt.size > 0 && selSis.size === 0 && (
         <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-2 text-xs text-gray-600">
           <button type="button" onClick={() => setModoManual((v) => !v)} className="font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
-            {modoManual ? "Cancelar" : "Registrar como movimiento contable (sin contrapartida en el sistema)"}
+            {modoManual ? "Cancelar" : "Registrar con un asiento manual"}
           </button>
           {!modoManual && (
             <p className="mt-1 text-gray-500">
-              Para consignaciones/pagos que son movimientos contables sueltos, o abonos de contratos que no vas a relacionar en el sistema.
+              Para consignaciones/pagos que son movimientos contables sueltos, o depósitos de clientes que no vas a relacionar con un
+              contrato del sistema — siempre queda con su contrapartida contable (partida doble), solo que tú eliges la cuenta en vez de
+              que la ponga un abono/pago ya registrado.{modo === "cartera" ? " Para depósitos sin contrato identificado, sugerimos la cuenta 280510 (Anticipos de clientes sin identificar)." : ""}
             </p>
           )}
           {modoManual && (
