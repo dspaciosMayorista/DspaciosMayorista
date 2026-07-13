@@ -305,11 +305,68 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 127** — todas
-> confirmadas corridas por el dueño, incluida la **127** (`cuenta_irt` — ver
-> "Novedades recientes").
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 128** — todas
+> confirmadas corridas por el dueño, incluida la **128** (`retencion_base_gravable`
+> — ver "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Fix — límite de filas de Supabase truncaba listados en silencio (jul-2026):**
+>   varias pantallas leían tablas completas con un `.select()`/`.in()` simple, sin
+>   paginar — si el límite de filas por respuesta del proyecto (Settings → API →
+>   "Max rows") es menor al total de filas reales, PostgREST corta la respuesta
+>   **sin error**, y como el dueño reimportaba/borraba creyendo que faltaban datos,
+>   el conteo parecía cambiar cada vez. Corregido con `.range()` paginado,
+>   avanzando siempre por la cantidad REAL de filas recibidas (nunca por el tamaño
+>   de página pedido) y deteniéndose solo con una página vacía — así siempre trae
+>   todo sin importar el límite del proyecto. Aplicado en: **Conciliaciones**
+>   (`conciliacion_extracto`, causa real de "importa 205 líneas pero solo se ven
+>   algunas, y al borrar las visibles aparecen más" — no era duplicación de
+>   datos), **Libro diario** y **Libro auxiliar** (`asiento_lineas`). De paso,
+>   `importarExtracto` ahora también deduplica (huella fecha+valor+saldo) y
+>   verifica el conteo real insertado en vez de confiar en el conteo parseado —
+>   nuevo botón "Vaciar pendientes de {mes}" en Conciliaciones para limpiar de una
+>   sola vez lo acumulado por reimportar durante pruebas.
+> - **Conciliaciones — diferencia como gasto/comisión o movimiento sin
+>   contrapartida (jul-2026):** dos casos que la reconciliación no cubría. (1)
+>   Cuando la diferencia entre extracto y sistema no es efectivo en caja sino un
+>   gasto real (ej. la empresa del datáfono descuenta su comisión antes de
+>   consignar): nueva opción "Es un gasto/comisión" (solo lado Cartera) que abre
+>   un mini editor de líneas (cuenta PUC + tercero opcional + valor, divisible en
+>   varias cuentas, deben sumar exacto la diferencia) — postea `Debe cuentas de
+>   gasto / Haber Bancos`, reutilizando `530525 Comisiones bancarias` del PUC. (2)
+>   Líneas del extracto SIN contrapartida real en el sistema (movimientos
+>   puramente contables, o abonos de contratos que no se van a relacionar): nuevo
+>   botón "Registrar como movimiento contable" — arma el asiento a mano (cuenta +
+>   tercero opcional, puede quedar en blanco + valor, divisible) con un "Contrato
+>   de referencia" en texto libre para trazabilidad sin exigir que el contrato
+>   exista en el sistema; Bancos se autocompleta con el total del extracto
+>   elegido. Ambos casos reutilizan el mismo mecanismo de deshacer (asientos con
+>   origen `conciliacion`). Se factorizó `EditorLineasCuenta`, compartido entre
+>   los dos flujos.
+> - **Retenciones — pestañas + informe mensual DIAN (jul-2026):** migración **128**
+>   agrega `retenciones_cxp.base_gravable` — hasta ahora solo se guardaba el
+>   VALOR retenido, la base quedaba enterrada como texto libre en observaciones,
+>   sin poder sumarse. Nueva pestaña **"Informe mensual (DIAN)"** junto a la
+>   calculadora (ahora pestaña "Aplicar retención"): elige un mes de declaración
+>   y ve, agrupado por moneda, el detalle (contrato/proveedor/fecha) + el total de
+>   base gravable y valor retenido de ese mes — los dos números que se llenan en
+>   el formulario 350. Retenciones registradas antes de esta migración quedan con
+>   `base_gravable` en blanco (no se reconstruye desde el texto libre). De paso,
+>   los campos "% IVA proveedor"/"% IPC" de la calculadora pasaron a ser el
+>   **valor en pesos directo** (como trae la factura del proveedor) en vez de un
+>   porcentaje multiplicado contra la base — evita el error de escribir el valor
+>   donde se esperaba un %, que disparaba la base gravable a $0 sin ninguna
+>   pista de que el dato de entrada era el problema.
+> - **⚠️ Asientos automáticos de CxP/abonos/facturación/pagos/retenciones son
+>   SOLO hacia adelante, no retroactivos:** si el libro diario muestra pocos
+>   asientos y solo de contratos puntuales, no es un bug — el cableado de
+>   partida doble automática (ver más abajo) solo generó asiento para
+>   CxP/abonos/pagos/retenciones creados o editados DESPUÉS de que se cableó
+>   esta sesión; ni el importador histórico masivo ni la CxP/cartera previa a
+>   ese cableado tienen asiento retroactivo (decisión de diseño explícita, igual
+>   que el importador histórico). Backfill de lo histórico sería una herramienta
+>   aparte, no construida todavía — pendiente confirmar con el dueño si se
+>   quiere.
 > - **Contabilidad — Asientos automáticos en cartera, facturación, CxP, pagos y
 >   retenciones (jul-2026):** cablea partida doble automática en los puntos
 >   donde nace y se paga el dinero real de la agencia (antes solo el Libro
@@ -939,14 +996,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **127** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **128** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 127** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 128** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -1033,7 +1090,9 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > típicas de agencia de viajes para mayorista/minorista · **127 cuenta_irt**
 > (ya corrida) — agrega la subcuenta `281510` "Ingreso recibido para
 > terceros (IRT)" que faltaba en la semilla de la 126 (la usa el asiento
-> automático de facturación) —
+> automático de facturación) · **128 retencion_base_gravable** (ya corrida) —
+> agrega `retenciones_cxp.base_gravable` (numeric), usada por el informe
+> mensual de retenciones para la DIAN —
 > ver "Novedades recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
