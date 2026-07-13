@@ -213,12 +213,14 @@ function Mini({ label, value, color }: { label: string; value: string; color?: s
 
 // Calculadora de retención: Valor retención = % retención × Base gravable,
 // donde Base gravable = Base (lo que se le va a pagar al proveedor) menos sus
-// propios impuestos (IVA, IPC/otro). Todos los % y la base mínima son
-// gestionables por fila — varían según el proveedor.
+// propios impuestos (IVA, IPC/otro). IVA e IPC se ingresan como VALOR ya
+// calculado en pesos (no como %) — el proveedor casi siempre lo trae así en
+// su factura, y evita el error de escribir el valor donde se espera un %.
+// Retención sigue siendo un %, y la base mínima un valor en pesos.
 function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () => void }) {
   const [base, setBase] = useState(String(Math.round(cuenta.saldo)));
-  const [ivaPct, setIvaPct] = useState("0");
-  const [ipcPct, setIpcPct] = useState("0");
+  const [ivaValor, setIvaValor] = useState("0");
+  const [ipcValor, setIpcValor] = useState("0");
   const [pctRetencion, setPctRetencion] = useState(cuenta.pctRetencionSugerido ? String(cuenta.pctRetencionSugerido * 100) : "0");
   const [baseMinima, setBaseMinima] = useState("0");
   const [fechaPractica, setFechaPractica] = useState(hoy());
@@ -228,22 +230,24 @@ function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () 
   const [pending, start] = useTransition();
 
   const baseNum = Number(base) || 0;
-  const ivaNum = Number(ivaPct) || 0;
-  const ipcNum = Number(ipcPct) || 0;
+  const valorIva = Number(ivaValor) || 0;
+  const valorIpc = Number(ipcValor) || 0;
   const pctNum = Number(pctRetencion) || 0;
   const minimaNum = Number(baseMinima) || 0;
 
-  const valorIva = baseNum * (ivaNum / 100);
-  const valorIpc = baseNum * (ipcNum / 100);
   const baseGravable = Math.max(0, baseNum - valorIva - valorIpc);
   const aplica = baseGravable >= minimaNum && baseGravable > 0;
+  // El IVA + IPC no debería superar la base (son impuestos SOBRE ese valor,
+  // no pueden ser más grandes que él) — si pasa, casi siempre es porque se
+  // escribió un dato equivocado en alguno de los dos campos.
+  const excedeBase = baseNum > 0 && valorIva + valorIpc > baseNum;
   const valorRetencion = aplica ? Math.round(baseGravable * (pctNum / 100)) : 0;
   const valorAPagar = baseNum - valorRetencion;
 
   function guardar() {
     setError("");
     start(async () => {
-      const detalle = `Base ${formatMoneda(baseNum, cuenta.moneda)} · IVA ${ivaNum}%: ${formatMoneda(valorIva, cuenta.moneda)} · IPC ${ipcNum}%: ${formatMoneda(valorIpc, cuenta.moneda)} · Base gravable ${formatMoneda(baseGravable, cuenta.moneda)} · Retención ${pctNum}%`;
+      const detalle = `Base ${formatMoneda(baseNum, cuenta.moneda)} · IVA: ${formatMoneda(valorIva, cuenta.moneda)} · IPC/otro: ${formatMoneda(valorIpc, cuenta.moneda)} · Base gravable ${formatMoneda(baseGravable, cuenta.moneda)} · Retención ${pctNum}%`;
       const obs = [observaciones.trim(), detalle].filter(Boolean).join(" — ");
       const r = await registrarRetencion({
         cuentaId: cuenta.id,
@@ -268,11 +272,11 @@ function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () 
         <Campo label={`Base (${cuenta.moneda})`}>
           <Input value={base} onChange={(e) => setBase(e.target.value)} inputMode="numeric" />
         </Campo>
-        <Campo label="% IVA proveedor">
-          <Input value={ivaPct} onChange={(e) => setIvaPct(e.target.value)} inputMode="decimal" />
+        <Campo label={`Valor IVA proveedor (${cuenta.moneda})`}>
+          <Input value={ivaValor} onChange={(e) => setIvaValor(e.target.value)} inputMode="numeric" />
         </Campo>
-        <Campo label="% IPC / otro imp.">
-          <Input value={ipcPct} onChange={(e) => setIpcPct(e.target.value)} inputMode="decimal" />
+        <Campo label={`Valor IPC / otro imp. (${cuenta.moneda})`}>
+          <Input value={ipcValor} onChange={(e) => setIpcValor(e.target.value)} inputMode="numeric" />
         </Campo>
         <Campo label="% Retención">
           <Input value={pctRetencion} onChange={(e) => setPctRetencion(e.target.value)} inputMode="decimal" />
@@ -284,13 +288,18 @@ function FormRetencion({ cuenta, onDone }: { cuenta: CuentaContrato; onDone: () 
 
       <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white text-sm">
         <FilaCalc label="Valor base" value={formatMoneda(baseNum, cuenta.moneda)} />
-        <FilaCalc label={`Valor IVA (${ivaNum}%)`} value={formatMoneda(valorIva, cuenta.moneda)} />
-        <FilaCalc label={`Valor IPC / otro (${ipcNum}%)`} value={formatMoneda(valorIpc, cuenta.moneda)} />
+        <FilaCalc label="Valor IVA proveedor" value={formatMoneda(valorIva, cuenta.moneda)} />
+        <FilaCalc label="Valor IPC / otro" value={formatMoneda(valorIpc, cuenta.moneda)} />
         <FilaCalc label="Base gravable retención" value={formatMoneda(baseGravable, cuenta.moneda)} bold />
         <FilaCalc label={`Valor retención (${pctNum}%)`} value={formatMoneda(valorRetencion, cuenta.moneda)} bold color="#b45309" />
         <FilaCalc label="Valor a pagar al proveedor" value={formatMoneda(valorAPagar, cuenta.moneda)} bold color="var(--brand-success)" />
       </div>
-      {!aplica && baseNum > 0 && (
+      {excedeBase && (
+        <p className="mt-1 text-xs font-medium text-red-600">
+          El IVA + IPC ({formatMoneda(valorIva + valorIpc, cuenta.moneda)}) supera la base ({formatMoneda(baseNum, cuenta.moneda)}) — revisa esos valores.
+        </p>
+      )}
+      {!excedeBase && !aplica && baseNum > 0 && (
         <p className="mt-1 text-xs text-amber-600">La base gravable no alcanza la base mínima — no aplica retención (valor $0).</p>
       )}
 
