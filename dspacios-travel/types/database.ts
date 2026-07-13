@@ -669,6 +669,7 @@ export type Database = {
           id: number;
           cuenta_por_pagar_id: number;
           valor: number;
+          base_gravable: number | null;
           fecha_practica: string;
           mes_declaracion: string;
           observaciones: string | null;
@@ -679,6 +680,7 @@ export type Database = {
           id?: number;
           cuenta_por_pagar_id: number;
           valor: number;
+          base_gravable?: number | null;
           fecha_practica: string;
           mes_declaracion: string;
           observaciones?: string | null;

@@ -41,14 +41,29 @@ export async function listarAsientos(filtro?: { desde?: string; hasta?: string }
   const ids = (asientos ?? []).map((a) => a.id);
   if (!ids.length) return { ok: true, asientos: [] };
 
-  const { data: lineas } = await sb
-    .from("asiento_lineas")
-    .select("id, asiento_id, cuenta_id, tercero, descripcion, debe, haber, puc_cuentas(codigo, nombre)")
-    .in("asiento_id", ids);
+  // El proyecto de Supabase puede tener un límite de filas por respuesta
+  // (Settings → API → "Max rows") menor a la cantidad real de líneas — un
+  // `.in()` simple se trunca en silencio si hay muchas. Se pagina con
+  // `.range()` avanzando por lo que realmente llega, no por lo pedido (ver
+  // el mismo fix en conciliaciones/page.tsx).
+  const lineas: { id: number; asiento_id: number; cuenta_id: number; tercero: string | null; descripcion: string | null; debe: number; haber: number; puc_cuentas: { codigo: string; nombre: string } | null }[] = [];
+  {
+    const PAGINA = 500;
+    let desde = 0;
+    for (;;) {
+      const { data } = await sb
+        .from("asiento_lineas")
+        .select("id, asiento_id, cuenta_id, tercero, descripcion, debe, haber, puc_cuentas(codigo, nombre)")
+        .in("asiento_id", ids)
+        .range(desde, desde + PAGINA - 1);
+      if (!data || data.length === 0) break;
+      lineas.push(...(data as unknown as typeof lineas));
+      desde += data.length;
+    }
+  }
 
-  type LineaRaw = { id: number; asiento_id: number; cuenta_id: number; tercero: string | null; descripcion: string | null; debe: number; haber: number; puc_cuentas: { codigo: string; nombre: string } | null };
   const porAsiento = new Map<number, LineaAsiento[]>();
-  for (const l of (lineas ?? []) as unknown as LineaRaw[]) {
+  for (const l of lineas) {
     const arr = porAsiento.get(l.asiento_id) ?? [];
     arr.push({
       id: l.id, cuenta_id: l.cuenta_id, cuenta_codigo: l.puc_cuentas?.codigo ?? "—", cuenta_nombre: l.puc_cuentas?.nombre ?? "—",

@@ -42,15 +42,31 @@ export async function obtenerAuxiliar(cuentaId: number, desde?: string, hasta?: 
   const { data: cuenta } = await sb.from("puc_cuentas").select("id, codigo, nombre, naturaleza").eq("id", cuentaId).eq("tenant", tenant).maybeSingle();
   if (!cuenta) return { ok: false, error: "Cuenta no encontrada." };
 
+  // Paginado con .range() avanzando por lo que realmente llega (no por lo
+  // pedido) — el límite de filas por respuesta del proyecto de Supabase
+  // puede ser menor al total de movimientos de una cuenta con mucho
+  // movimiento, y un .select() simple se trunca en silencio (mismo fix que
+  // en conciliaciones/page.tsx).
   type Raw = { id: number; tercero: string | null; descripcion: string | null; debe: number; haber: number; asientos_contables: { numero: number; fecha: string; descripcion: string } | null };
-  const { data, error } = await sb
-    .from("asiento_lineas")
-    .select("id, tercero, descripcion, debe, haber, asientos_contables(numero, fecha, descripcion)")
-    .eq("cuenta_id", cuentaId)
-    .eq("tenant", tenant);
-  if (error) return { ok: false, error: error.message };
+  const data: Raw[] = [];
+  {
+    const PAGINA = 500;
+    let desdeIdx = 0;
+    for (;;) {
+      const { data: pagina, error } = await sb
+        .from("asiento_lineas")
+        .select("id, tercero, descripcion, debe, haber, asientos_contables(numero, fecha, descripcion)")
+        .eq("cuenta_id", cuentaId)
+        .eq("tenant", tenant)
+        .range(desdeIdx, desdeIdx + PAGINA - 1);
+      if (error) return { ok: false, error: error.message };
+      if (!pagina || pagina.length === 0) break;
+      data.push(...(pagina as unknown as Raw[]));
+      desdeIdx += pagina.length;
+    }
+  }
 
-  const todas = ((data ?? []) as unknown as Raw[])
+  const todas = data
     .filter((r) => r.asientos_contables)
     .map((r) => ({
       id: r.id, fecha: r.asientos_contables!.fecha, numeroAsiento: r.asientos_contables!.numero, descripcionAsiento: r.asientos_contables!.descripcion,
