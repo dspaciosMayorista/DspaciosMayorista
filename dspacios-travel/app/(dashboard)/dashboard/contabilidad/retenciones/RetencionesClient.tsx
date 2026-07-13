@@ -13,6 +13,7 @@ import {
   eliminarRetencion,
   listarMesesDeclaracion,
   informeMensualRetenciones,
+  recalcularBasesFaltantes,
   type CuentaContrato,
   type RetencionRow,
   type InformeRetencionRow,
@@ -252,7 +253,9 @@ function InformeMensual() {
   const [mes, setMes] = useState("");
   const [filas, setFilas] = useState<InformeRetencionRow[] | null>(null);
   const [error, setError] = useState("");
+  const [aviso, setAviso] = useState("");
   const [pending, start] = useTransition();
+  const [recalculando, startRecalcular] = useTransition();
 
   useEffect(() => {
     listarMesesDeclaracion().then((r) => {
@@ -272,6 +275,22 @@ function InformeMensual() {
       const r = await informeMensualRetenciones(m);
       if (!r.ok) { setError(r.error); return; }
       setFilas(r.filas);
+    });
+  }
+
+  // Recupera la base gravable de retenciones registradas antes de la
+  // migración 128 (nunca la tuvieron guardada como número) — no pide nada
+  // nuevo, la deriva de lo que ya está guardado (ver derivarBaseGravable en
+  // el servidor: primero del detalle en observaciones, si no del % de
+  // retención configurado en la cuenta).
+  function recalcular() {
+    setAviso("");
+    setError("");
+    startRecalcular(async () => {
+      const r = await recalcularBasesFaltantes();
+      if (!r.ok) { setError(r.error); return; }
+      setAviso(`Se recalcularon ${r.actualizadas} base(s)${r.sinDato ? ` — ${r.sinDato} no se pudieron derivar (sin % de retención en ningún lado)` : ""}.`);
+      if (mes) cargar(mes);
     });
   }
 
@@ -299,10 +318,20 @@ function InformeMensual() {
             {meses.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
           {meses.length === 0 && <p className="text-sm text-gray-400">Aún no hay retenciones registradas.</p>}
+          <button
+            type="button"
+            onClick={recalcular}
+            disabled={recalculando}
+            className="ml-auto text-xs font-medium hover:underline disabled:opacity-50"
+            style={{ color: "var(--brand-accent)" }}
+          >
+            {recalculando ? "Recalculando…" : "Recalcular bases faltantes"}
+          </button>
         </div>
       </div>
 
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+      {aviso && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{aviso}</p>}
       {pending && <p className="text-sm text-gray-400">Cargando…</p>}
 
       {filas && filas.length === 0 && !pending && (

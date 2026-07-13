@@ -168,6 +168,60 @@ export async function eliminarRetencion(id: number): Promise<Result> {
   return { ok: true };
 }
 
+// Deriva la base gravable de una retención registrada ANTES de que existiera
+// esa columna (migración 128), sin pedirle nada nuevo al usuario: la
+// calculadora siempre dejó la base gravable EXACTA (y el % de retención)
+// como texto dentro de `observaciones` (ej. "... Base gravable $182.595 ·
+// Retención 3.5%") — se parsea de ahí primero (dato exacto del momento en
+// que se practicó). Si el texto no trae esa base (ej. se guardó con una nota
+// manual sin el detalle, o el % ahí no sirve), se cae a derivarla dividiendo
+// el valor retenido entre el % de retención configurado HOY en la cuenta —
+// una aproximación, ya que ese % pudo cambiar desde entonces.
+function derivarBaseGravable(observaciones: string | null, valor: number, pctRetencionCuenta: number): number | null {
+  const obs = observaciones ?? "";
+  const mBase = /Base gravable\s+([^·]+?)(?:\s*·|$)/i.exec(obs);
+  if (mBase) {
+    const soloDigitos = mBase[1].replace(/[^\d]/g, "");
+    if (soloDigitos) return Number(soloDigitos);
+  }
+  const mPct = /Retenci[oó]n\s+(\d+(?:\.\d+)?)\s*%/i.exec(obs);
+  const pct = mPct ? Number(mPct[1]) : pctRetencionCuenta;
+  if (pct > 0) return Math.round((valor / (pct / 100)) * 100) / 100;
+  return null;
+}
+
+// Recalcula la base gravable de las retenciones ya registradas que quedaron
+// en blanco (de antes de la migración 128) — no pide nada nuevo, usa lo que
+// ya está guardado (ver `derivarBaseGravable`). Deja en blanco las que de
+// verdad no se puedan derivar (sin % de retención en ningún lado).
+export async function recalcularBasesFaltantes(): Promise<
+  { ok: true; actualizadas: number; sinDato: number } | { ok: false; error: string }
+> {
+  const sb = await createClient();
+  const tenant = await getTenant();
+  const { data: pendientes, error: e1 } = await sb
+    .from("retenciones_cxp")
+    .select("id, valor, observaciones, cuenta_por_pagar_id")
+    .eq("tenant", tenant)
+    .is("base_gravable", null);
+  if (e1) return { ok: false, error: e1.message };
+  if (!pendientes || !pendientes.length) return { ok: true, actualizadas: 0, sinDato: 0 };
+
+  const cuentaIds = Array.from(new Set(pendientes.map((r) => r.cuenta_por_pagar_id)));
+  const { data: cuentas } = await sb.from("cuentas_por_pagar").select("id, pct_retencion").in("id", cuentaIds);
+  const pctPorCuenta = new Map((cuentas ?? []).map((c) => [c.id, Number(c.pct_retencion) || 0]));
+
+  let actualizadas = 0, sinDato = 0;
+  for (const r of pendientes) {
+    const base = derivarBaseGravable(r.observaciones, Number(r.valor) || 0, pctPorCuenta.get(r.cuenta_por_pagar_id) ?? 0);
+    if (base == null) { sinDato++; continue; }
+    const { error } = await sb.from("retenciones_cxp").update({ base_gravable: base }).eq("id", r.id);
+    if (!error) actualizadas++; else sinDato++;
+  }
+  revalidatePath("/dashboard/contabilidad/retenciones");
+  return { ok: true, actualizadas, sinDato };
+}
+
 // Meses de declaración con retenciones registradas — para el selector del
 // informe (más reciente primero).
 export async function listarMesesDeclaracion(): Promise<{ ok: true; meses: string[] } | { ok: false; error: string }> {
