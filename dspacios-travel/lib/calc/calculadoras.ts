@@ -24,6 +24,7 @@ export type TarifaGenerada = {
   neto_nino2: number | null;
   neto_infante: number | null;
   nota_infante: string | null;
+  notas?: string | null;     // nota general de la fila (ej. "Tarifa no incluye impuestos")
 };
 
 // ── Calculadora "DUBAI" ────────────────────────────────────────────────────
@@ -213,8 +214,84 @@ export function generarTarifasMixta(p: MixtaParams): TarifaGenerada[] {
   return out;
 }
 
+// ── Calculadora "CORPORATIVA" ──────────────────────────────────────────────
+// Tarifa NEGOCIADA por HABITACIÓN (no por persona): un mismo precio para
+// sencilla y doble ("SGL/DBL"), como traen las tarifas corporativas de cadena
+// (ej. anexos de Faranda/Marriott). El régimen base va incluido en esa
+// tarifa; subir a otro régimen suma un suplemento POR PERSONA/NOCHE (adulto
+// y niño, aparte de la habitación). Un 3er/4to pax no cambia el precio de la
+// habitación — se le suma un cargo FIJO de "persona/niño adicional" (igual
+// para todas las categorías) y, para guardarlo por persona (como el resto
+// del sistema), se reparte entre los pax de la habitación (mismo patrón que
+// Mixta con modo "hab"). Infante siempre cortesía ($0), como en la tarifa de
+// origen. El % de impuesto (opcional) infla TODA la tarifa de habitación +
+// persona/niño adicional — los suplementos de régimen quedan tal cual se
+// cargan (no se gravan de nuevo). El % de descuento (tarifa "Dinámica")
+// SOLO se aplica sobre la tarifa de habitación (rack): nunca sobre
+// suplementos de régimen ni persona/niño adicional. Si no se configura
+// impuesto, la fila queda marcada con una nota ("no incluye impuestos").
+export type CorporativaSuplementoRegimen = { regimen: string; adulto: number; nino: number };
+
+export type CorporativaParams = {
+  regimen_base: string;
+  persona_adicional: number;             // valor fijo/noche, igual para todas las categorías
+  nino_adicional: number;                // valor fijo/noche, igual para todas las categorías
+  impuesto_pct?: number;                 // opcional — sin configurar, la tarifa queda neta (nota "no incluye impuestos")
+  descuento_pct?: number;                // opcional (tarifa "Dinámica") — descuenta SOLO la tarifa de habitación (rack)
+  suplementos_regimen: CorporativaSuplementoRegimen[];   // por persona/noche, aparte del régimen base
+  bases: { categoria: string; temporada: string; precio: number }[];   // tarifa SGL/DBL (por habitación)
+  infante_nota?: string;
+};
+
+export function generarTarifasCorporativa(p: CorporativaParams): TarifaGenerada[] {
+  const impuestoPct = Number(p.impuesto_pct) || 0;
+  const descuentoPct = Number(p.descuento_pct) || 0;
+  const personaAdicional = Number(p.persona_adicional) || 0;
+  const ninoAdicional = Number(p.nino_adicional) || 0;
+  const notaInfante = p.infante_nota?.trim() || null;
+  const notaImpuesto = impuestoPct > 0 ? null : "Tarifa no incluye impuestos.";
+
+  const regimenBase = (p.regimen_base || "").trim();
+  const regimenes = [
+    { regimen: regimenBase, adulto: 0, nino: 0 },
+    ...(p.suplementos_regimen ?? []).filter((s) => s.regimen?.trim()),
+  ];
+
+  const out: TarifaGenerada[] = [];
+  for (const b of p.bases ?? []) {
+    const rack = Number(b.precio) || 0;
+    if (rack <= 0 || !b.categoria?.trim() || !b.temporada?.trim()) continue;
+
+    // Descuento (Dinámica) SOLO sobre el rack; el impuesto (si aplica) se
+    // suma después, ya sobre la tarifa descontada.
+    const habConImpuesto = rack * (1 - descuentoPct / 100) * (1 + impuestoPct / 100);
+    const personaConImpuesto = personaAdicional * (1 + impuestoPct / 100);
+    const ninoConImpuesto = ninoAdicional * (1 + impuestoPct / 100);
+
+    for (const r of regimenes) {
+      const supAdulto = Number(r.adulto) || 0;
+      const supNino = Number(r.nino) || 0;
+      out.push({
+        tipo_habitacion: b.categoria.trim(),
+        alimentacion: (r.regimen || regimenBase).trim(),
+        temporada: b.temporada.trim(),
+        neto_sencilla: Math.round(habConImpuesto + supAdulto),
+        neto_doble: Math.round(habConImpuesto / 2 + supAdulto),
+        neto_triple: Math.round((habConImpuesto + personaConImpuesto) / 3 + supAdulto),
+        neto_multiple: Math.round((habConImpuesto + personaConImpuesto * 2) / 4 + supAdulto),
+        neto_nino: Math.round(ninoConImpuesto + supNino),
+        neto_nino2: null,
+        neto_infante: 0,
+        nota_infante: notaInfante,
+        notas: notaImpuesto,
+      });
+    }
+  }
+  return out;
+}
+
 // ── Registro de calculadoras ───────────────────────────────────────────────
-export type CalcTipo = "dubai" | "mixta";
+export type CalcTipo = "dubai" | "mixta" | "corporativa";
 
 export function generarTarifas(tipo: string, params: unknown): TarifaGenerada[] {
   switch (tipo) {
@@ -222,6 +299,8 @@ export function generarTarifas(tipo: string, params: unknown): TarifaGenerada[] 
       return generarTarifasDubai(params as DubaiParams);
     case "mixta":
       return generarTarifasMixta(params as MixtaParams);
+    case "corporativa":
+      return generarTarifasCorporativa(params as CorporativaParams);
     default:
       return [];
   }

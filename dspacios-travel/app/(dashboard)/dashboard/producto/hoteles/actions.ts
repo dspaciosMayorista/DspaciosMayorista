@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
-import { generarTarifas, type DubaiParams, type MixtaParams } from "@/lib/calc/calculadoras";
+import { generarTarifas, type DubaiParams, type MixtaParams, type CorporativaParams } from "@/lib/calc/calculadoras";
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
 import type { Json } from "@/types/database";
 
@@ -647,7 +647,7 @@ export async function cargarAcomodacionesMasivo(rows: Record<string, string>[]):
 export async function guardarCalculadora(
   hotelId: number,
   tipo: string,
-  params: DubaiParams | MixtaParams
+  params: DubaiParams | MixtaParams | CorporativaParams
 ): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb
