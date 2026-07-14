@@ -8,6 +8,7 @@ import { formatCOP } from "@/lib/utils";
 import {
   generarTarifasDubai, type DubaiParams, type DubaiPromo,
   generarTarifasMixta, type MixtaParams, type MixtaAcom, MIXTA_ACOMS, type CalcTipo,
+  generarTarifasCorporativa, type CorporativaParams,
 } from "@/lib/calc/calculadoras";
 import { PAX_TARIFA_DEFAULT } from "@/lib/acomodaciones";
 import { guardarCalculadora, generarTarifasCalculadora } from "../actions";
@@ -15,7 +16,7 @@ import { guardarCalculadora, generarTarifasCalculadora } from "../actions";
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
 export function CalculadoraEditor({
-  hotelId, categorias, temporadas, regimenes, tipoInicial, dubaiInicial, mixtaInicial,
+  hotelId, categorias, temporadas, regimenes, tipoInicial, dubaiInicial, mixtaInicial, corporativaInicial,
 }: {
   hotelId: number;
   categorias: string[];
@@ -24,6 +25,7 @@ export function CalculadoraEditor({
   tipoInicial: CalcTipo | null;
   dubaiInicial: DubaiParams | null;
   mixtaInicial: MixtaParams | null;
+  corporativaInicial: CorporativaParams | null;
 }) {
   const [open, setOpen] = useState(false);
   const [tipoCalc, setTipoCalc] = useState<CalcTipo>(tipoInicial ?? "dubai");
@@ -45,11 +47,12 @@ export function CalculadoraEditor({
             <select value={tipoCalc} onChange={(e) => setTipoCalc(e.target.value as CalcTipo)} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
               <option value="dubai">Dubai (base + modificadores)</option>
               <option value="mixta">Mixta (por hab/pax + IVA)</option>
+              <option value="corporativa">Corporativa (tarifa por habitación + suplementos)</option>
             </select>
           </div>
-          {tipoCalc === "dubai"
-            ? <DubaiForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={dubaiInicial} />
-            : <MixtaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={mixtaInicial} />}
+          {tipoCalc === "dubai" && <DubaiForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={dubaiInicial} />}
+          {tipoCalc === "mixta" && <MixtaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={mixtaInicial} />}
+          {tipoCalc === "corporativa" && <CorporativaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={corporativaInicial} />}
         </div>
       )}
     </section>
@@ -382,6 +385,134 @@ function MixtaForm({
       </div>
 
       {preview.length > 0 && <PreviewTabla titulo="Vista previa — tarifa por persona resultante" filas={preview} />}
+      <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
+    </div>
+  );
+}
+
+// ── Formulario CORPORATIVA (tarifa por habitación + suplementos) ──────────
+function CorporativaForm({
+  hotelId, categorias, temporadas, regimenes, inicial,
+}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: CorporativaParams | null }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState("");
+
+  const [regimenBase, setRegimenBase] = useState(inicial?.regimen_base ?? regimenes[0] ?? "");
+  const [personaAdicional, setPersonaAdicional] = useState(String(inicial?.persona_adicional ?? 0));
+  const [ninoAdicional, setNinoAdicional] = useState(String(inicial?.nino_adicional ?? 0));
+  const [impuestoPct, setImpuestoPct] = useState(String(inicial?.impuesto_pct ?? 0));
+  const [descuentoPct, setDescuentoPct] = useState(String(inicial?.descuento_pct ?? 0));
+  const [infanteNota, setInfanteNota] = useState(inicial?.infante_nota ?? "");
+
+  const supInicial: Record<string, { adulto: string; nino: string }> = {};
+  for (const s of inicial?.suplementos_regimen ?? []) supInicial[s.regimen] = { adulto: String(s.adulto), nino: String(s.nino) };
+  const [suplementos, setSuplementos] = useState<Record<string, { adulto: string; nino: string }>>(supInicial);
+  const setSup = (r: string, patch: Partial<{ adulto: string; nino: string }>) =>
+    setSuplementos((s) => ({ ...s, [r]: { adulto: s[r]?.adulto ?? "0", nino: s[r]?.nino ?? "0", ...patch } }));
+
+  const baseInicial: Record<string, string> = {};
+  for (const b of inicial?.bases ?? []) baseInicial[`${b.categoria}|${b.temporada}`] = String(b.precio);
+  const [bases, setBases] = useState<Record<string, string>>(baseInicial);
+  const setBase = (c: string, t: string, v: string) => setBases((s) => ({ ...s, [`${c}|${t}`]: v }));
+
+  const params = useMemo<CorporativaParams>(() => ({
+    regimen_base: regimenBase,
+    persona_adicional: Number(personaAdicional) || 0,
+    nino_adicional: Number(ninoAdicional) || 0,
+    impuesto_pct: Number(impuestoPct) || 0,
+    descuento_pct: Number(descuentoPct) || 0,
+    suplementos_regimen: regimenes.filter((r) => r !== regimenBase).map((r) => ({
+      regimen: r, adulto: Number(suplementos[r]?.adulto) || 0, nino: Number(suplementos[r]?.nino) || 0,
+    })),
+    bases: categorias.flatMap((c) => temporadas.map((t) => ({ categoria: c, temporada: t, precio: Number(bases[`${c}|${t}`]) || 0 }))).filter((b) => b.precio > 0),
+    infante_nota: infanteNota,
+  }), [regimenBase, personaAdicional, ninoAdicional, impuestoPct, descuentoPct, suplementos, bases, infanteNota, regimenes, categorias, temporadas]);
+
+  const preview = useMemo(() => generarTarifasCorporativa(params).filter((f) => f.alimentacion === regimenBase), [params, regimenBase]);
+
+  function guardar(modo: "solo" | "agregar" | "reemplazar") {
+    if (modo === "reemplazar" && !confirm("¿Borrar TODAS las tarifas de este hotel y dejar solo las generadas ahora?")) return;
+    setMsg("");
+    start(async () => {
+      const r = await guardarCalculadora(hotelId, "corporativa", params);
+      if (!r.ok) { setMsg(r.error); return; }
+      if (modo === "solo") { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
+      const g = await generarTarifasCalculadora(hotelId, modo);
+      setMsg(g.ok ? `✓ Generadas ${g.generadas} tarifas (${modo === "reemplazar" ? "reemplazaron todas" : "agregadas/actualizadas"}).` : g.error);
+      router.refresh();
+    });
+  }
+
+  if (categorias.length === 0 || temporadas.length === 0) {
+    return <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-700">Primero define las <b>categorías</b> del hotel y sus <b>temporadas</b> (con fechas) más abajo. Luego vuelve aquí.</div>;
+  }
+
+  return (
+    <div className="space-y-5">
+      <p className="text-xs text-gray-500">
+        Carga una tarifa <b>por habitación</b> (SGL/DBL — igual para 1 o 2 adultos) por categoría y temporada, típica de tarifarios
+        corporativos de cadena. El sistema la reparte por persona: sencilla paga toda la habitación, doble la divide entre 2.
+        Un 3er/4to pax o un niño no cambian el precio de la habitación — suman el cargo fijo de <b>persona/niño adicional</b>.
+      </p>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div><label className="text-[11px] text-gray-500">Persona adicional (fijo, todas las categorías)</label><Input type="number" value={personaAdicional} onChange={(e) => setPersonaAdicional(e.target.value)} /></div>
+        <div><label className="text-[11px] text-gray-500">Niño adicional (fijo, todas las categorías)</label><Input type="number" value={ninoAdicional} onChange={(e) => setNinoAdicional(e.target.value)} /></div>
+        <div>
+          <label className="text-[11px] text-gray-500">% Impuesto (opcional)</label>
+          <Input type="number" value={impuestoPct} onChange={(e) => setImpuestoPct(e.target.value)} placeholder="0" />
+          <p className="mt-0.5 text-[10px] text-gray-400">{Number(impuestoPct) > 0 ? "Se suma sobre la tarifa." : "Sin configurar: la tarifa queda neta y se marca con la nota \"no incluye impuestos\"."}</p>
+        </div>
+        <div>
+          <label className="text-[11px] text-gray-500">% Descuento — tarifa Dinámica (opcional)</label>
+          <Input type="number" value={descuentoPct} onChange={(e) => setDescuentoPct(e.target.value)} placeholder="0" />
+          <p className="mt-0.5 text-[10px] text-gray-400">Solo descuenta la tarifa de habitación (rack) — nunca suplementos ni persona/niño adicional. Sin configurar, queda el rack.</p>
+        </div>
+      </div>
+      <div>
+        <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Infantes 0-4 años cortesía, máx. 2 niños por habitación&quot;)</label>
+        <Input value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} placeholder="Nota especial para la tarifa de infante (siempre cortesía / $0)" />
+      </div>
+      <div>
+        <p className={lbl}>Régimen</p>
+        <div className="mb-2 flex items-center gap-2 text-xs text-gray-600">
+          <span>Régimen base (incluido en la tarifa de habitación):</span>
+          <select value={regimenBase} onChange={(e) => setRegimenBase(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
+            {regimenes.length === 0 && <option value="">—</option>}
+            {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {regimenes.filter((r) => r !== regimenBase).map((r) => (
+            <div key={r} className="rounded-lg border border-gray-100 p-2">
+              <p className="mb-1 text-xs font-medium text-gray-700">Suplemento {r} (por persona/noche)</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div><label className="text-[10px] text-gray-400">Adulto</label><Input type="number" className="h-7 text-xs" value={suplementos[r]?.adulto ?? ""} onChange={(e) => setSup(r, { adulto: e.target.value })} placeholder="0" /></div>
+                <div><label className="text-[10px] text-gray-400">Niño</label><Input type="number" className="h-7 text-xs" value={suplementos[r]?.nino ?? ""} onChange={(e) => setSup(r, { nino: e.target.value })} placeholder="0" /></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div>
+        <p className={lbl}>Tarifa de habitación SGL/DBL ({regimenBase || "régimen base"}) — por categoría y temporada</p>
+        <div className="overflow-x-auto">
+          <table className="min-w-[420px] border-collapse text-sm">
+            <thead><tr className="text-left text-xs text-gray-400"><th className="px-2 py-1">Categoría \ Temporada</th>{temporadas.map((t) => <th key={t} className="px-2 py-1">{t}</th>)}</tr></thead>
+            <tbody>
+              {categorias.map((c) => (
+                <tr key={c} className="border-t border-gray-100">
+                  <td className="px-2 py-1 font-medium text-gray-700">{c}</td>
+                  {temporadas.map((t) => (
+                    <td key={t} className="px-1 py-1"><Input type="number" className="w-28" value={bases[`${c}|${t}`] ?? ""} onChange={(e) => setBase(c, t, e.target.value)} placeholder="0" /></td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {preview.length > 0 && <PreviewTabla titulo={`Vista previa (${regimenBase})`} filas={preview} />}
       <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
     </div>
   );

@@ -310,6 +310,15 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > — ver "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Calculadora Corporativa (jul-2026):** tercer tipo de calculadora de
+>   tarifas de hotel (junto a Dubai/Mixta, `lib/calc/calculadoras.ts` +
+>   `CalculadoraEditor.tsx` → `CorporativaForm`) para tarifarios negociados de
+>   cadena con tarifa **por habitación** (SGL/DBL, no por persona) — ej.
+>   anexos corporativos Faranda/Marriott. Detalle completo del modelo (base
+>   por habitación, reparto por persona, persona/niño adicional fijo,
+>   impuesto % opcional con nota si no aplica, descuento % tipo "Dinámica"
+>   solo sobre el rack) en "Motor de cálculo" más abajo. Sin migración — usa
+>   la columna `tarifa_hotel.notas` que ya existía sin uso.
 > - **Fix — límite de filas de Supabase truncaba listados en silencio (jul-2026):**
 >   varias pantallas leían tablas completas con un `.select()`/`.in()` simple, sin
 >   paginar — si el límite de filas por respuesta del proyecto (Settings → API →
@@ -998,6 +1007,44 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   vigencia/prioridad/compra la maneja el mecanismo genérico de siempre. UI en
   `CalculadoraEditor.tsx` (`DubaiForm`): sección "Promociones" (lista
   repetible) + vista previa aparte (puede ser de otro régimen que el base).
+- **Calculadora Corporativa** (`lib/calc/calculadoras.ts`,
+  `generarTarifasCorporativa`/`CorporativaParams`, tercer tipo junto a
+  Dubai/Mixta — `CalcTipo = "dubai" | "mixta" | "corporativa"`, formulario
+  `CorporativaForm` en `CalculadoraEditor.tsx`): para tarifarios NEGOCIADOS
+  de cadena que traen la tarifa **por HABITACIÓN, no por persona** (ej.
+  anexos corporativos Faranda/Marriott — un mismo precio "SGL/DBL" para 1 o
+  2 adultos). Modelo:
+  - **Base = tarifa de habitación** por categoría × temporada (`bases[]`,
+    igual estructura que Dubai). El régimen base va incluido; subir a otro
+    régimen suma un **suplemento por persona/noche** (adulto y niño,
+    `suplementos_regimen[]`), igual patrón que el suplemento de régimen de
+    Dubai (se suma DESPUÉS del descuento, nunca se descuenta).
+  - **Reparto por persona** (para encajar con el resto del sistema, que
+    trabaja per-cápita): sencilla paga toda la habitación; doble la divide
+    entre 2; un 3er/4to pax NO cambia el precio de la habitación — se le
+    suma un cargo **fijo** de "persona adicional"/"niño adicional"
+    (`persona_adicional`/`nino_adicional`, un solo valor para TODAS las
+    categorías) y se reparte entre los pax (mismo criterio que Mixta modo
+    "hab"). Infante siempre cortesía (`neto_infante = 0`), fijo en el motor
+    (no configurable) porque así traen estas tarifas de cadena.
+  - **`impuesto_pct` opcional:** si no se configura, la tarifa queda neta y
+    cada fila generada se marca con `notas = "Tarifa no incluye
+    impuestos."` — reutiliza `tarifa_hotel.notas` (existe desde la migración
+    016 pero ningún flujo la usaba todavía); sigue sin mostrarse en
+    tarifario público/contrato, por ahora es solo visibilidad interna en la
+    fila generada (editable/visible en la tabla de tarifas del hotel). Si se
+    configura el %, no lleva nota (se
+    asume ya incluido) y el impuesto infla la tarifa de habitación +
+    persona/niño adicional (NO los suplementos de régimen, que se cargan
+    tal cual).
+  - **`descuento_pct` opcional** (tarifa "Dinámica" tipo Faranda: X% sobre
+    el Rack): descuenta **SOLO** la tarifa de habitación (rack) — nunca
+    suplementos de régimen ni persona/niño adicional. Sin configurar (0),
+    la tarifa queda en el rack normal. Se aplica ANTES del impuesto
+    (rack → descuento → impuesto → + suplementos).
+  - `TarifaGenerada` (contrato compartido de las 3 calculadoras) ganó un
+    campo opcional `notas?: string | null` para esto — Dubai/Mixta no lo
+    usan, queda `undefined`/no se inserta.
 
 ### Editar reserva pendiente
 - **HECHO (servicios):** en un contrato `pendiente`, `ServiciosContratoEditor` +
