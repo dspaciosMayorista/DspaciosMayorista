@@ -1,0 +1,249 @@
+# Programas y Cotización manual/dinámica — hoja técnica
+
+> Índice: [`README.md`](./README.md) · Relacionado: [`tarifario-y-paquetes.md`](./tarifario-y-paquetes.md) ·
+> [`finanzas-comisiones.md`](./finanzas-comisiones.md)
+
+Dos motores de precio **independientes** entre sí y respecto al de Paquetes: **Programas**
+(circuitos multi-ciudad de un proveedor, PVP en `lib/programas.ts`) y **Cotización
+manual/dinámica** (armado a mano de servicios sueltos, `app/(dashboard)/dashboard/cotizaciones/`).
+
+---
+
+## 1. Programas — `lib/programas.ts`
+
+### 1.1 Fórmula exacta de PVP — `pvpPrograma`
+
+```ts
+function pvpPrograma(neto: number, opt: {pctMk, asistenciaDia?, dias?, pctFee?}): number {
+  if (!(neto > 0)) return 0;                          // sin neto → PVP 0 (evita "columna fantasma")
+  let sub = (0<mk<1) ? neto/(1-mk) : neto;             // 1) markup (mk = MARGEN: 0.25 ⇒ /0.75)
+  sub += asistenciaDia * dias;                          // 2) + asistencia médica (NUNCA se marca up)
+  if (0<fee<1) sub = sub/(1-fee);                       // 3) / (1-fee) sobre el TOTAL (mk+asistencia)
+  return Math.round(sub);
+}
+```
+Orden: neto → +MK → +asistencia → +fee. Campos en `programas`: `pct_mk`, `pct_fee_tarjeta`,
+`asistencia_medica_dia` (por pax y por día), `dias` (o el `noches` propio de la salida si
+`modo_precio='salida'`).
+
+Existe además `pvpDesdeNeto(neto, pctMk)` — solo markup, sin asistencia/fee, mantenido por
+compatibilidad; el que realmente se usa en todo el sistema es `pvpPrograma`.
+
+### 1.2 Derivar el neto desde reglas de comisión del proveedor — `lib/calc/programaPrecio.ts`
+
+Paso previo/aparte para cuando el proveedor solo da una Tarifa + regla de base comisionable
+(la comisión de D'spacios es la utilidad):
+```ts
+calcularNetoPrograma({tarifa, modo:'pct'|'impuesto'|'ninguno', valor, pctComision}):
+  base = modo==='pct' ? tarifa*(1-valor/100) : modo==='impuesto' ? tarifa-valor : tarifa
+  comision = base * (pctComision/100)
+  neto = tarifa - comision           // esto es lo que se monta y entra a pvpPrograma
+```
+Solo lo usa la UI "calculadora" (`producto/programas/calculadora/`) para ayudar a calcular qué
+`neto` tipear en la matriz — no calcula PVP por sí misma.
+
+### 1.3 Modelo de datos
+
+`programas` (cabecera): `id, proveedor_id (FK), nombre, subtitulo, dias, noches, moneda (default
+USD), salidas` (texto libre), `vigencia_desde/hasta, min_pax/max_pax, pct_mk,
+pct_fee_tarjeta, asistencia_medica_dia, modo_precio ('categoria'|'salida'), desde_precio`
+(override manual del "Desde"), `nino_edad_max/nino_valor_servicios` (legacy) +
+`edad_nino_min/max, edad_infante_max` (migración 081, defaults 2/11/1), `texto_condiciones/
+cancelacion/pagos, notas` (interno, nunca en el PDF), `highlights text[]` (migración 111),
+`portada_url, flyer_url, historia_url` (migración 113, bucket público `programas`), `video_url`
+(migración 069), `incluye_aereo`, `activo, publicado`.
+
+Tablas hijas (FK `programa_id` cascade; RLS lectura pública, escritura interna):
+`programa_ciudades` (ruta), `programa_dias` (itinerario día a día), `programa_categorias`
+(tiers de hotel), `programa_categoria_hoteles` (hotel por ciudad×tier, ciudad referenciada por
+NOMBRE de texto, no FK), `programa_precios` (matriz categoría×acomodación: sencilla/doble/
+triple/cuadruple/nino), `programa_salidas` (migración 068 — modo alternativo: rango de fechas ×
+precio, con **noches variables por salida**, útil para circuitos nacionales tipo Amazonas/Caño
+Cristales que alternan 3N/4N; `columna` permite varias columnas de hotel bajo un mismo
+programa), `programa_inclusiones`, `programa_tours` (add-ons opcionales, min_pax default 2),
+`programa_blackouts`.
+
+Ambos modos de precio (categoría / salida) **comparten la misma `pvpPrograma`** (confirmado en
+el comentario de la migración 068).
+
+### 1.4 Lectura/agregación
+
+- `getProgramasResumen(sb, soloPublicados=true)` — vitrina: mínimo neto entre `programa_precios`
+  o `programa_salidas` (ignorando `bajo_solicitud`), convertido a PVP. `desde_precio` manual
+  ANULA el mínimo calculado si está seteado y `>0`.
+- `getProgramaDetalle(sb, id)` — detalle completo (vitrina + reservar). Descarta netos
+  `<=0` como "no es una acomodación real" (mismo criterio anti-"columna fantasma"). En modo
+  salida, `dias` para `pvpPrograma` = el `noches` propio de la salida si está seteado, si no
+  cae al `dias` de cabecera.
+
+### 1.5 `reservarPrograma()` — `app/(dashboard)/dashboard/reservar/actions.ts`
+
+Server-autoritativo (re-lee `programas`/`programa_precios`/`programa_salidas`, no confía en
+precios enviados por el cliente):
+1. Carga programa + proveedor; valida vigencia y blackouts contra `fechaIda`.
+2. Resuelve neto por acomodación (categoría o salida); rechaza filas `bajo_solicitud`.
+3. PVP por pax vía `pvpPrograma` (días = noches de la salida o de cabecera).
+4. **Liquidación por HABITACIONES** (no por pax): `paxPorAcom` = cantidad de habitaciones;
+   `paxDeAcomodacion(acom)` (de `lib/acomodaciones.ts`) multiplica habitaciones→pax. Niños se
+   cobran por cabeza aparte contra `netoDe['nino']`. Infantes son pax adicionales sin costo/silla
+   directo (solo suman a `totalPax`).
+5. Validación de edad cruzando `fecha_nacimiento` contra `edad_infante_max`/`edad_nino_max`
+   propios del programa (solo si todos los pasajeros tienen fecha de nacimiento).
+6. `numero := siguiente_numero_contrato()`.
+7. Inserta `ventas` (`tipo_paquete:'programa'`, **moneda del programa** — USD-aware de verdad,
+   no forzado a COP), `contrato_pasajeros`, `contrato_items` (1 línea por acomodación + niños),
+   `contrato_hoteles` (informativo, desde `programa_categoria_hoteles`).
+8. **CxP al proveedor** (service-role, `postearAsientoCxP`): `tipo_proveedor:'programa'`,
+   `valor_total=costoNeto`, `moneda` del programa, retención del catálogo `proveedores`. Patch
+   `ventas.costo_receptivo=costoNeto`. Todo en try/catch — no bloquea la reserva si falla el
+   paso contable (best-effort, igual patrón que cotización manual).
+
+### 1.6 Importador "pegar del proveedor" — `lib/programasImport.ts` (parser puro)
+
+`parsearPrograma(textoRaw)` → `{nombre, dias, noches, ruta, ciudades[], itinerario[], incluye[],
+noIncluye[]}` — sin acceso a BD, testeable. Heurísticas: nombre=primera línea no vacía; días/
+noches por regex en las primeras 6 líneas; ruta = línea con ≥2 tokens tipo-ciudad separados por
+`–—-/·•|`; encabezados de día `^d[íi]a\s*0*(\d{1,2})`; detección de comidas
+(desayuno/almuerzo/cena/etc.) por regex sobre título+descripción; bloques incluye/no incluye
+cerrados por encabezados de precios/hoteles/notas para no tragar tablas.
+`importarDesdeTexto(programaId, texto, opciones)` es el wrapper impuro: reemplaza SOLO las
+secciones marcadas (destructivo por sección, nunca todo el programa de una vez).
+
+### 1.7 Regla confirmada: Programas ≠ Paquetes — verificado por código, no solo por CLAUDE.md
+
+`componerTarifa` (motor de paquetes) solo se usa desde `lib/reservar/cotizar.ts` y
+`paquetes/actions.ts` — **nunca** desde ningún archivo de programas. `pvpPrograma`/
+`calcularNetoPrograma` solo se usan desde `lib/programas.ts`, `lib/calc/programaPrecio.ts`,
+`reservarPrograma` y la UI de programas — **nunca** desde `paquetes.ts`/`paquetes/actions.ts`/
+`cotizar.ts`. Los dos motores tienen campos con nombres parecidos (`pct_mk` en ambas tablas)
+pero viven en tablas distintas y nunca se cruzan en una función compartida. `paquetes.ts` es
+estructuralmente distinto (liquidación noche a noche por temporada, impuesto BNC, vuelo
+mk-vs-TA) — nada de eso existe en `pvpPrograma`, que es una fórmula plana de 3 pasos por
+persona.
+
+---
+
+## 2. Cotización manual/dinámica — `app/(dashboard)/dashboard/cotizaciones/`
+
+### 2.1 Modelo de datos — corrección: no hay tabla `cotizacion_manual`
+
+La migración `084_cotizacion_manual.sql` (nombrada por la funcionalidad, no por una tabla
+nueva) en realidad: agrega `tipo` (`'tarifario'|'manual'`) a la tabla YA EXISTENTE
+`cotizaciones` (migración 054), relaja `payload` a nullable, y crea la tabla nueva
+**`cotizacion_servicios`**.
+
+- **`cotizaciones`** (tabla compartida, `tipo='manual'` para este flujo): `id, codigo`
+  (auto `C-0001`), `estado ('abierta'|'convertida'|'descartada')`, `tipo, payload` (jsonb — el
+  `CotizacionManualInput` completo), `detalle` (jsonb — snapshot listo para el documento del
+  cliente), `cliente, cliente_documento, destino, hotel, pax, precio_venta, moneda, fecha_salida/
+  regreso, vigencia_hasta, asesor, creado_por, numero_contrato` (FK `ventas`, se llena al
+  convertir). RLS: roles internos superadmin/gerencia/administracion/operaciones/venta, sin
+  columna tenant.
+- **`cotizacion_servicios`** (una fila por servicio suelto): `id, cotizacion_id (FK), orden,
+  tipo_servicio ('aereo'|'hotel'|'traslado'|'asistencia'|'otro'), plataforma, nombre_servicio,
+  proveedor, costo_neto, modo ('mk'|'ta'), pct_markup, ta, valor`.
+- `ventas.recobro_total/recobro_empresa/recobro_aliado` (migración 086) —
+  compartido con Programas/Reservar, ver [`finanzas-comisiones.md`](./finanzas-comisiones.md)
+  §5.
+
+### 2.2 `manual-actions.ts` — valoración por servicio
+
+```ts
+function valorServicio(costo, modo, pctMarkup, ta): number {
+  if (modo==='ta') return round(max(0,costo) + ta);
+  if (costo<=0 || mk>=1) return 0;
+  return round(marcar(costo, pctMarkup/100));   // reusa marcar() de lib/calc/paquetes.ts
+}
+```
+Solo `tipo==='aereo'` puede usar `modo:'ta'`; cualquier otro tipo se fuerza a `'mk'` aunque el
+formulario mande `ta`. `marcar()` importado de `lib/calc/paquetes.ts` es el ÚNICO punto de
+contacto entre este motor y el de Paquetes — y es solo el helper genérico `costo/(1-mk)`, no
+`componerTarifa` ni nada específico de paquetes/programas.
+
+**Ítem único de cara al cliente** — `nombrePaqueteItem()`:
+```
+"PAQUETE TURÍSTICO A {DESTINO} DEL {ida} AL {regreso}"
+```
+No revela hoteles ni proveedores (eso va a los vouchers internos); el detalle por servicio
+queda solo en `cotizacion_servicios`/`detalle`.
+
+**Recobro + niños** (`calcularRecobroNinos`):
+```
+totalNinos      = nNinos × valorNino
+recobroN        = max(recobro, 0)
+esB2B           = tipoAsesor !== 'interno'
+recobroAliadoN  = esB2B ? clamp(recobroAliado, 0, recobroN) : 0
+recobroEmpresaN = recobroN − recobroAliadoN
+
+adultSubtotal    = totalServicios + recobroN        (recobro ESCONDIDO en la tarifa de adulto)
+tarifaAdultoUnit = round(adultSubtotal / adultos)
+precioVenta      = adultSubtotal + totalNinos
+```
+Cliente final → 100% empresa (nunca ve el recobro como línea aparte). Agencia/freelance →
+split configurable.
+
+`lib/cotizacion/incluye.ts`: `sugerirIncluye(servicios)` (autogenera línea por servicio, texto
+libre editable) + `NO_INCLUYE_DEFAULT` (4 líneas boilerplate).
+
+### 2.3 Editable post-creación — CORRECCIÓN a una nota vieja de CLAUDE.md
+
+CLAUDE.md decía "recobro/niños hoy se editan solo al crear (no hay editor posterior aún)" —
+**esto está desactualizado**. Existen y están cableados a la UI (mientras `estado==='abierta'`,
+es decir antes de convertir a contrato):
+1. `actualizarTitularCotizacionManual` (`TitularEditor.tsx`).
+2. `actualizarIncluyeCotizacionManual` (`IncluyeEditor.tsx`).
+3. `actualizarRecobroNinosCotizacionManual` (`RecobroNinosEditor.tsx`) — re-corre
+   `calcularRecobroNinos` sobre el subtotal YA liquidado de `cotizacion_servicios` (no
+   re-liquida los servicios), recalcula `tarifaAdultoUnit`/`precioVenta`.
+
+Lo único genuinamente no editable post-creación es la **lista de servicios sueltos** en sí
+(costos/markup de `cotizacion_servicios`) — no hay `actualizar*` para esa tabla; cambiar un
+servicio exige descartar y recrear la cotización.
+
+### 2.4 `convertirCotizacionManualAContrato()` — flujo exacto
+
+1. Carga cotización `tipo='manual' AND estado='abierta'` + sus `cotizacion_servicios`.
+2. **Candado duro**: exige titular con nombre, tipo/número doc Y **fecha de nacimiento** — si
+   falta algo, error listando exactamente qué.
+3. Suma `costo_neto` por `tipo_servicio` en 5 buckets: `costoAereo, costoHotel,
+   costoReceptivo(traslado), costoAsistencia, costoOtros` — cada uno en su lugar de
+   rentabilidad/flujo de caja.
+4. `numero := siguiente_numero_contrato()`.
+5. Re-calcula recobro/niños con la misma `calcularRecobroNinos`.
+6. Inserta `ventas` (**`tipo_paquete:'dinamico'`**, canal B2C/B2B, los 5 buckets de costo,
+   `recobro_total/empresa/aliado`, `comision_b2b`/`comision_estado:'pendiente'` si aplica).
+7. Inserta 1 fila en `contrato_items` (la línea agrupada "PAQUETE TURÍSTICO A...").
+8. Si B2B y `recobroAliadoN>0`: inserta `aliados_b2b` (`base_comision=recobroAliadoN,
+   pct_recobro_aliado=recobroAliadoN/recobroN, estado:'pendiente'`).
+9. Inserta `contrato_pasajeros`: **el titular es el único pasajero** (orden 0).
+10. **CxP** (service-role, best-effort): una fila por servicio con `costo_neto>0`;
+    **`proveedor` = la `plataforma` del servicio** (cae a `proveedor` si el asesor lo tipeó);
+    `tipo_proveedor` mapeado (`aereo→aereo, hotel→hotel, traslado→receptivo, asistencia→
+    asistencia, otro→otro`); retención buscada por nombre en el catálogo `proveedores`. Cada
+    CxP también postea vía `postearAsientoCxP`.
+11. Marca la cotización `estado:'convertida'`, guarda `numero_contrato`.
+
+### 2.5 Moneda
+Un solo `moneda` (COP/USD) fijado al crear, propagado a `ventas.moneda` y a cada CxP — sin
+conversión FX automática (a diferencia de Programas, que sí es multi-moneda real por programa).
+
+## 3. Mayorista vs. Minorista — ambos módulos son solo gating de UI, no de datos
+
+Tanto Programas como Cotización manual se ocultan de minorista vía `minoristaOculto` en el nav
+(`app/(dashboard)/layout.tsx`) — Cotizaciones directamente flagueada; Programas hereda el hide
+de su padre `/dashboard/producto` ("Netas").
+
+**Ni `programas`/`programa_*` ni `cotizaciones`/`cotizacion_servicios` tienen columna `tenant`,
+ni sus políticas RLS filtran por tenant** — solo por `mi_rol()`. La migración 116
+(`rls_tenant_isolation`) NO tocó estas tablas. Es decir: un usuario interno con rol adecuado que
+navegue directo a `/dashboard/producto/programas` o `/dashboard/cotizaciones` con el tenant
+"minorista" activo en la UI **no sería bloqueado** por ningún chequeo de página ni de RLS — la
+exclusión de minorista de estos módulos es una convención de producto/menú, no un límite de
+datos forzado (mismo patrón, y misma limitación, que Tarifario/Reservar).
+
+## Enlaces cruzados
+
+- **Tarifario y paquetes** — el motor `componerTarifa`/`lib/calc/paquetes.ts`, deliberadamente
+  NUNCA compartido con Programas — ver [`tarifario-y-paquetes.md`](./tarifario-y-paquetes.md).
+- **Comisiones/Rentabilidad** — cómo entra `recobro`/`aliados_b2b` al P&L — ver
+  [`finanzas-comisiones.md`](./finanzas-comisiones.md).
