@@ -7,7 +7,7 @@ import { generarTarifas, type DubaiParams, type MixtaParams, type CorporativaPar
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
 import type { Json } from "@/types/database";
 
-type Result = { ok: true; id?: number } | { ok: false; error: string };
+type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
 export async function crearHotel(input: {
@@ -339,17 +339,84 @@ export async function copiarTemporadasDesdeHotel(
   return { ok: true, copiadas: filas.length };
 }
 
+// Al renombrar una temporada, `tarifa_hotel.temporada` y `hotel_calculadora.params`
+// (bases/promos) la referencian por STRING — no hay FK. Sin este cascade, cambiar
+// el nombre "huerfanea" TODA la tarifa ya cargada bajo el nombre viejo (deja de
+// matchear en tarifario/reservar, obligando a recargarla) y, si el hotel tiene
+// calculadora configurada, la próxima vez que se generen tarifas se vuelve a
+// escribir el nombre viejo (el bug reaparece).
+async function renombrarTemporadaEnDatos(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  hotelId: number,
+  nombreViejo: string,
+  nombreNuevo: string,
+): Promise<{ tarifasRenombradas: number; calculadoraActualizada: boolean }> {
+  const { data: tarifasAfectadas } = await sb
+    .from("tarifa_hotel")
+    .update({ temporada: nombreNuevo })
+    .eq("hotel_id", hotelId)
+    .eq("temporada", nombreViejo)
+    .select("id");
+  const tarifasRenombradas = tarifasAfectadas?.length ?? 0;
+
+  let calculadoraActualizada = false;
+  const { data: calc } = await sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle();
+  if (calc?.params) {
+    const params = calc.params as Record<string, unknown>;
+    let cambio = false;
+    if (Array.isArray(params.bases)) {
+      for (const b of params.bases as unknown[]) {
+        if (b && typeof b === "object" && (b as Record<string, unknown>).temporada === nombreViejo) {
+          (b as Record<string, unknown>).temporada = nombreNuevo;
+          cambio = true;
+        }
+      }
+    }
+    if (calc.tipo === "dubai" && Array.isArray(params.promos)) {
+      for (const p of params.promos as unknown[]) {
+        if (!p || typeof p !== "object") continue;
+        const pr = p as Record<string, unknown>;
+        if (pr.temporadaBase === nombreViejo) { pr.temporadaBase = nombreNuevo; cambio = true; }
+        if (pr.temporadaPromo === nombreViejo) { pr.temporadaPromo = nombreNuevo; cambio = true; }
+      }
+    }
+    if (cambio) {
+      const { error } = await sb.from("hotel_calculadora")
+        .update({ params: params as unknown as Json, updated_at: new Date().toISOString() })
+        .eq("hotel_id", hotelId);
+      calculadoraActualizada = !error;
+    }
+  }
+  return { tarifasRenombradas, calculadoraActualizada };
+}
+
 export async function actualizarTemporada(id: number, input: TemporadaInput): Promise<Result> {
   const v = validarTemporada(input);
   if (!v.ok) return v;
   const sb = await createClient();
+  const { data: actual } = await sb.from("hotel_temporadas").select("nombre").eq("id", id).maybeSingle();
+  const nombreViejo = actual?.nombre?.trim() ?? "";
   const { error } = await sb.from("hotel_temporadas")
     .update(payloadTemporada(input, v.rangos, v.blackouts))
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
+
+  let aviso: string | undefined;
+  const nombreNuevo = input.nombre.trim();
+  if (nombreViejo && nombreNuevo && nombreViejo !== nombreNuevo) {
+    const r = await renombrarTemporadaEnDatos(sb, input.hotelId, nombreViejo, nombreNuevo);
+    if (r.tarifasRenombradas > 0 || r.calculadoraActualizada) {
+      const partes = [
+        r.tarifasRenombradas > 0 ? `${r.tarifasRenombradas} tarifa(s) ya cargadas` : null,
+        r.calculadoraActualizada ? "la calculadora del hotel" : null,
+      ].filter(Boolean);
+      aviso = `Se actualizó de "${nombreViejo}" a "${nombreNuevo}" en: ${partes.join(" y ")}.`;
+    }
+  }
+
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
   await regenerarTarifariosDeHotel(input.hotelId);
-  return { ok: true };
+  return { ok: true, aviso };
 }
 
 // ── Tarifa neta del hotel ─────────────────────────────────────────────────
