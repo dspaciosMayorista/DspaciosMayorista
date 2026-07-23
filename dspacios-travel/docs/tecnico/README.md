@@ -31,14 +31,13 @@
 | **CRM Difusión** | [`crm-difusion.md`](./crm-difusion.md) | El motor de rotación de material promocional (`lib/crm/difusion.ts::rotacionDe`, reglas de 21/30 días — no round-robin), el calendario programado y sus 5 pestañas. |
 | **Sitio web / CMS** | [`sitio-web-cms.md`](./sitio-web-cms.md) | El sitio de marketing (`app/sitio_web/`) y su CMS de edición in-situ (`app/cms/`, arquitectura `EdicionContext`/`LienzoVivo`/`Editable*`), el árbol de páginas/secciones, y el toggle escritorio/móvil. |
 | **Multitenant / Auth / Roles / Auditoría** | [`multitenant-auth-auditoria.md`](./multitenant-auth-auditoria.md) | Cómo conviven mayorista/minorista (`lib/tenant.server.ts`, `proxy.ts`), el enum de 9 roles, el patrón de RLS con `puede_ver_tenant()`, y el trigger genérico de auditoría (`fn_auditoria()`). |
+| **Portal B2B** | [`portal-b2b.md`](./portal-b2b.md) | Registro/aprobación de aliados (`b2b_solicitudes`), dashboard `/portal/b2b`, `usuarios.agencia_id`/`pct_comision`, `ventas_b2b` (`modo_compra`/`comision_estado`), el link de pago manual (`/pagar`) — y el ⚠️ gotcha del rol `cliente_final`, que existe en el enum pero no tiene ninguna UI construida para él. |
 
 ## Pendiente de documentar (según se vaya tocando cada módulo)
 
-Todos los módulos identificados en el barrido inicial ya tienen su hoja técnica (tabla de
-arriba). Lo que queda pendiente es lo que se vaya descubriendo/tocando de aquí en adelante:
+Todos los módulos identificados hasta ahora ya tienen su hoja técnica (tabla de arriba). Lo que
+queda pendiente es lo que se vaya descubriendo/tocando de aquí en adelante:
 
-- **Portal B2B / agencias** (`app/portal/`) — mencionado desde varios módulos (comisiones,
-  reservar) pero sin hoja propia todavía.
 - Cualquier módulo nuevo que se agregue al sistema.
 
 Si vas a investigar algo a fondo que no esté cubierto arriba, considera dejar la hoja técnica
