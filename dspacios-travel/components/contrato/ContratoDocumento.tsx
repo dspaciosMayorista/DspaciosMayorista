@@ -107,7 +107,10 @@ export function ContratoDocumento({
       {/* ── Estado del contrato (pendiente / confirmado) ─────────── */}
       {(() => {
         const est = (venta.estado ?? "").toLowerCase();
-        if (est === "confirmado" || est === "confirmada") {
+        // "activo" = contrato creado por el generador manual (dashboard/contratos),
+        // que nace ya confirmado (nunca pasa por "pendiente" — ver EstadoVenta.tsx).
+        // Se trata igual que "confirmado" aquí y en la liquidación de comisiones.
+        if (est === "confirmado" || est === "confirmada" || est === "activo") {
           return (
             <div className="border-b border-green-200 bg-green-50 px-5 py-2 text-center text-xs font-semibold text-green-700 md:px-8">
               ✓ CONTRATO CONFIRMADO — reserva aprobada y en firme.

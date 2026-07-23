@@ -23,7 +23,7 @@ export function EstadoVenta({
   return (
     <div className="flex items-center gap-3">
       <span className="rounded-full px-3 py-1 text-xs font-medium text-white" style={{ backgroundColor: COLOR[estado] ?? "#6b7280" }}>
-        {estado === "pendiente" ? "Pendiente" : estado === "confirmado" ? "Confirmado" : estado === "cancelado" ? "Cancelado" : estado}
+        {estado === "pendiente" ? "Pendiente" : estado === "confirmado" ? "Confirmado" : estado === "cancelado" ? "Cancelado" : estado === "activo" ? "Activo (confirmado)" : estado}
       </span>
       {estado === "pendiente" && plazo && (
         <span className="text-xs text-gray-500">Plazo: {plazo}</span>
