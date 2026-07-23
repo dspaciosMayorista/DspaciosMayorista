@@ -145,8 +145,14 @@ export async function crearComisionB2B(input: {
   pctRetencion: number;
 }): Promise<Result> {
   const sb = await createClient();
+  // El tenant se toma del contrato mismo (no de la cookie de sesión activa) para
+  // que quede correcto incluso si un superadmin agrega la comisión mientras tiene
+  // otra agencia activa -- si queda mal (default 'mayorista'), la comisión existe
+  // en la BD pero desaparece de /dashboard/comisiones en la agencia real.
+  const { data: venta } = await sb.from("ventas").select("tenant").eq("numero_contrato", input.numeroContrato).maybeSingle();
   const { error } = await sb.from("aliados_b2b").insert({
     numero_contrato: input.numeroContrato,
+    tenant: venta?.tenant ?? "mayorista",
     aliado: input.aliado || null,
     nit: input.nit || null,
     precio_venta: input.precioVenta,
