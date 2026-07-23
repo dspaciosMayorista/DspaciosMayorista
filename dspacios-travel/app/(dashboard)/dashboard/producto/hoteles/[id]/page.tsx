@@ -157,6 +157,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           temporadas={temporadas ?? []}
           tarifas={(tarifas ?? []) as never}
           otrosHoteles={otrosHoteles ?? []}
+          adultsOnly={h.adults_only ?? false}
         />
       </div>
     </div>
