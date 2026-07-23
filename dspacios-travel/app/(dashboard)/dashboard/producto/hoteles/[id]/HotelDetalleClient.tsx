@@ -53,14 +53,14 @@ const hoyLocal = () => new Date().toLocaleDateString("en-CA");
 const esVencida = (t: Temporada, hoy: string): boolean => !!t.compra_fin && t.compra_fin < hoy;
 
 export function HotelDetalleClient({
-  hotelId, categorias, regimenes, temporadas, tarifas, otrosHoteles,
-}: { hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; otrosHoteles: { id: number; nombre: string }[] }) {
+  hotelId, categorias, regimenes, temporadas, tarifas, otrosHoteles, adultsOnly = false,
+}: { hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; otrosHoteles: { id: number; nombre: string }[]; adultsOnly?: boolean }) {
   const hoy = hoyLocal();
   const vencidasNombres = new Set(temporadas.filter((t) => esVencida(t, hoy)).map((t) => t.nombre));
   return (
     <div className="space-y-8">
       <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} />
-      <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} vencidasNombres={vencidasNombres} />
+      <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} vencidasNombres={vencidasNombres} adultsOnly={adultsOnly} />
     </div>
   );
 }
@@ -315,8 +315,8 @@ function ListaRangos({ titulo, items, onChange }: { titulo: string; items: Rango
   );
 }
 
-function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, vencidasNombres }: {
-  hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; vencidasNombres: Set<string>;
+function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, vencidasNombres, adultsOnly }: {
+  hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; vencidasNombres: Set<string>; adultsOnly: boolean;
 }) {
   const [tipo, setTipo] = useState("");
   const [alim, setAlim] = useState("");
@@ -357,8 +357,13 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
     const input = {
       tipoHabitacion: tipo, alimentacion: alim, temporada: temp,
       netoSencilla: num(p.sencilla), netoDoble: num(p.doble), netoTriple: num(p.triple),
-      netoMultiple: num(p.multiple), netoNino: num(p.nino), netoNino2: num(p.nino2),
-      netoInfante: num(p.infante), notaInfante: notaInfante.trim() || null,
+      netoMultiple: num(p.multiple),
+      // Hotel Adults Only: nunca guarda tarifa de niño/niño2/infante, sin importar
+      // el estado residual del formulario (los campos ni siquiera se muestran).
+      netoNino: adultsOnly ? null : num(p.nino),
+      netoNino2: adultsOnly ? null : num(p.nino2),
+      netoInfante: adultsOnly ? null : num(p.infante),
+      notaInfante: adultsOnly ? null : (notaInfante.trim() || null),
     };
     start(async () => {
       const r = editId
@@ -384,12 +389,16 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
       <td className="px-3 py-2 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
       <td className="px-3 py-2 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
       <td className="px-3 py-2 text-right tabular-nums">{t.neto_multiple ? formatCOP(t.neto_multiple) : "—"}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino != null ? formatCOP(t.neto_nino) : "—"}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino2 != null ? formatCOP(t.neto_nino2) : "—"}</td>
-      <td className="px-3 py-2 text-right tabular-nums" title={t.nota_infante ?? undefined}>
-        {t.neto_infante != null ? formatCOP(t.neto_infante) : "—"}
-        {t.nota_infante && <span className="ml-1 text-amber-500" title={t.nota_infante}>*</span>}
-      </td>
+      {!adultsOnly && (
+        <>
+          <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino != null ? formatCOP(t.neto_nino) : "—"}</td>
+          <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino2 != null ? formatCOP(t.neto_nino2) : "—"}</td>
+          <td className="px-3 py-2 text-right tabular-nums" title={t.nota_infante ?? undefined}>
+            {t.neto_infante != null ? formatCOP(t.neto_infante) : "—"}
+            {t.nota_infante && <span className="ml-1 text-amber-500" title={t.nota_infante}>*</span>}
+          </td>
+        </>
+      )}
       <td className="px-3 py-2 text-right">
         <div className="flex items-center justify-end gap-3">
           <button type="button" onClick={() => startEdit(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
@@ -406,8 +415,13 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
           <th className="px-3 py-2">Categoría</th><th className="px-3 py-2">Régimen</th><th className="px-3 py-2">Temporada</th>
           <th className="px-3 py-2 text-right">Sencilla</th><th className="px-3 py-2 text-right">Doble</th>
           <th className="px-3 py-2 text-right">Triple</th><th className="px-3 py-2 text-right">Múltiple</th>
-          <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th>
-          <th className="px-3 py-2 text-right">Infante</th><th className="px-3 py-2"></th>
+          {!adultsOnly && (
+            <>
+              <th className="px-3 py-2 text-right">Niño 1</th><th className="px-3 py-2 text-right">Niño 2</th>
+              <th className="px-3 py-2 text-right">Infante</th>
+            </>
+          )}
+          <th className="px-3 py-2"></th>
         </tr></thead>
         <tbody>{rows.map((t) => filaTarifa(t))}</tbody>
       </table>
@@ -446,18 +460,24 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
             </select>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-7">
-          {([["sencilla","Sencilla"],["doble","Doble"],["triple","Triple"],["multiple","Múltiple"],["nino","Niño 1"],["nino2","Niño 2"],["infante","Infante"]] as [keyof typeof p, string][]).map(([k, label]) => (
+        <div className={`mt-3 grid grid-cols-2 gap-3 ${adultsOnly ? "sm:grid-cols-4" : "sm:grid-cols-7"}`}>
+          {(
+            [["sencilla","Sencilla"],["doble","Doble"],["triple","Triple"],["multiple","Múltiple"],
+              ...(adultsOnly ? [] : [["nino","Niño 1"],["nino2","Niño 2"],["infante","Infante"]]),
+            ] as [keyof typeof p, string][]
+          ).map(([k, label]) => (
             <div key={k}>
               <label className={lbl}>{label}</label>
               <Input type="number" min={0} value={p[k]} onChange={(e) => setP({ ...p, [k]: e.target.value })} placeholder="—" />
             </div>
           ))}
         </div>
-        <div className="mt-3">
-          <label className={lbl}>Nota de infante <span className="font-normal text-gray-400">(ej. &quot;Comparte cama con los padres&quot;, &quot;Solo paga seguro hotelero&quot;)</span></label>
-          <Input value={notaInfante} onChange={(e) => setNotaInfante(e.target.value)} placeholder="Nota especial para esta tarifa de infante (opcional)" />
-        </div>
+        {!adultsOnly && (
+          <div className="mt-3">
+            <label className={lbl}>Nota de infante <span className="font-normal text-gray-400">(ej. &quot;Comparte cama con los padres&quot;, &quot;Solo paga seguro hotelero&quot;)</span></label>
+            <Input value={notaInfante} onChange={(e) => setNotaInfante(e.target.value)} placeholder="Nota especial para esta tarifa de infante (opcional)" />
+          </div>
+        )}
         <div className="mt-3 flex items-center gap-3">
           <Button onClick={add} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "…" : editId ? "Guardar cambios" : "Agregar tarifa"}
@@ -466,7 +486,13 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
             <Button variant="outline" onClick={resetForm} disabled={pending}>Cancelar</Button>
           )}
           {err && <span className="text-sm text-red-600">{err}</span>}
-          {!editId && <span className="text-xs text-gray-400">Niño 1/Niño 2/Infante pueden ir en $0 (gratis) o con su valor por noche. Déjalos vacíos si no aplican a este hotel.</span>}
+          {!editId && (
+            <span className="text-xs text-gray-400">
+              {adultsOnly
+                ? "Este hotel es Adults Only: no se piden tarifas de niño/infante."
+                : "Niño 1/Niño 2/Infante pueden ir en $0 (gratis) o con su valor por noche. Déjalos vacíos si no aplican a este hotel."}
+            </span>
+          )}
         </div>
       </div>
 
