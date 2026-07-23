@@ -4,6 +4,14 @@
 > Claude Code. Léelo completo antes de escribir o modificar código. Si algo cambia,
 > actualiza este archivo: es la fuente de verdad.
 
+> **📎 Hoja técnica (referencia de código, no de negocio):** `dspacios-travel/docs/tecnico/`
+> — mapa módulo por módulo de qué archivo hace qué, qué función calcula qué, qué tabla toca y
+> con qué está enlazado (ej. `contabilidad.md`, `tarifas-hotel.md`, `calculadoras-hotel.md`).
+> Este `CLAUDE.md` es la visión/reglas de negocio/historial; la hoja técnica es el "cómo está
+> armado en el código" — consúltala ANTES de investigar un módulo de código desde cero, y
+> agrega/actualiza su archivo correspondiente cuando investigues uno nuevo a fondo. Índice:
+> `docs/tecnico/README.md`.
+
 ---
 
 ## 0. Resumen en una frase
@@ -310,6 +318,27 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > — ver "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Hoja técnica (jul-2026):** nueva carpeta `docs/tecnico/` — referencia de código
+>   (no de negocio) módulo por módulo: qué archivo hace qué, qué función calcula qué,
+>   qué tabla toca, con qué está enlazado. Arranca con **Contabilidad** (PUC, Libro
+>   diario/auxiliar, posteo automático, Conciliaciones, Retenciones — todo lo
+>   documentado arriba en esta sección), **Tarifas de hotel** (modelo de datos +
+>   el gotcha de "todo por texto, sin FK" en categoría/régimen/temporada, y qué
+>   tanto de ese riesgo ya se arregló vs. sigue pendiente) y **Calculadoras de
+>   hotel** (Dubai/Mixta/Corporativa en detalle). El resto de módulos queda
+>   listado como pendiente en el índice (`docs/tecnico/README.md`) — se va
+>   llenando sesión a sesión según se investiguen a fondo, para no repetir
+>   investigación ya hecha.
+> - **Fix: renombrar una temporada huerfaneaba las tarifas ya cargadas (jul-2026):**
+>   `tarifa_hotel.temporada` y `hotel_calculadora.params` (bases/promos) referencian
+>   `hotel_temporadas.nombre` por STRING, sin FK — renombrar una temporada solo
+>   actualizaba `hotel_temporadas`, dejando huérfanas las tarifas ya cargadas bajo
+>   el nombre viejo (y si el hotel tenía calculadora, el bug reaparecía al volver a
+>   generar). `actualizarTemporada()` ahora cascada el rename a `tarifa_hotel` y a
+>   `hotel_calculadora.params`, con aviso en la UI de cuántas tarifas se
+>   actualizaron. El mismo riesgo sigue latente (sin arreglar) para categoría y
+>   régimen — ver `docs/tecnico/tarifas-hotel.md` §2 para el detalle completo y
+>   qué falta.
 > - **Calculadora Corporativa (jul-2026):** tercer tipo de calculadora de
 >   tarifas de hotel (junto a Dubai/Mixta, `lib/calc/calculadoras.ts` +
 >   `CalculadoraEditor.tsx` → `CorporativaForm`) para tarifarios negociados de
