@@ -81,6 +81,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
   const [blackouts, setBlackouts] = useState<RangoFechas[]>([]);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  const [aviso, setAviso] = useState("");
 
   const esPromo = tipo !== "tarifa";
   const esDescuento = tipo === "descuento_pct" || tipo === "descuento_monto";
@@ -115,7 +116,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
 
   function guardar() {
     if (!nombre.trim()) { setErr("Ponle un nombre."); return; }
-    setErr("");
+    setErr(""); setAviso("");
     const payload = {
       hotelId, nombre, inicio: ini, fin,
       prioridad: Number(prioridad) || 1,
@@ -127,7 +128,9 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
     };
     start(async () => {
       const r = editId == null ? await crearTemporada(payload) : await actualizarTemporada(editId, payload);
-      if (r.ok) reset(); else setErr(r.error);
+      if (!r.ok) { setErr(r.error); return; }
+      if (r.aviso) setAviso(r.aviso);
+      reset();
     });
   }
 
@@ -234,6 +237,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
           {editando && <Button variant="outline" onClick={reset} disabled={pending}>Cancelar</Button>}
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
+        {aviso && <p className="mt-2 rounded-lg bg-[var(--brand-accent)]/10 px-3 py-2 text-xs text-[var(--brand-primary)]">{aviso}</p>}
 
         <ul className="mt-3 divide-y divide-gray-100">
           {activas.map((t) => filaTemp(t))}
