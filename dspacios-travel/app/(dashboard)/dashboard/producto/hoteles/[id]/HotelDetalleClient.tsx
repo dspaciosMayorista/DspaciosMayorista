@@ -326,6 +326,10 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   const [editId, setEditId] = useState<number | null>(null);
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  // Niño 1/Niño 2/Infante quedan colapsados por defecto (no es Adults Only, pero
+  // la mayoría de tarifas no llevan niño) -- se expanden al pedirlo, o solos si la
+  // tarifa que se está editando ya trae algo cargado.
+  const [mostrarNinos, setMostrarNinos] = useState(false);
   const nombresTemporada = Array.from(new Set(temporadas.map((t) => t.nombre)));
   const num = (s: string) => (s === "" ? null : Number(s));
   const str = (n: number | null) => (n == null ? "" : String(n));
@@ -335,6 +339,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
     setP({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "", infante: "" });
     setNotaInfante("");
     setEditId(null);
+    setMostrarNinos(false);
   }
 
   function startEdit(t: Tarifa) {
@@ -349,6 +354,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
       infante: str(t.neto_infante),
     });
     setNotaInfante(t.nota_infante ?? "");
+    setMostrarNinos(t.neto_nino != null || t.neto_nino2 != null || t.neto_infante != null || !!t.nota_infante);
   }
 
   function add() {
@@ -460,10 +466,10 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
             </select>
           </div>
         </div>
-        <div className={`mt-3 grid grid-cols-2 gap-3 ${adultsOnly ? "sm:grid-cols-4" : "sm:grid-cols-7"}`}>
+        <div className={`mt-3 grid grid-cols-2 gap-3 ${adultsOnly ? "sm:grid-cols-4" : mostrarNinos ? "sm:grid-cols-7" : "sm:grid-cols-4"}`}>
           {(
             [["sencilla","Sencilla"],["doble","Doble"],["triple","Triple"],["multiple","Múltiple"],
-              ...(adultsOnly ? [] : [["nino","Niño 1"],["nino2","Niño 2"],["infante","Infante"]]),
+              ...(adultsOnly || !mostrarNinos ? [] : [["nino","Niño 1"],["nino2","Niño 2"],["infante","Infante"]]),
             ] as [keyof typeof p, string][]
           ).map(([k, label]) => (
             <div key={k}>
@@ -472,9 +478,23 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
             </div>
           ))}
         </div>
-        {!adultsOnly && (
+        {!adultsOnly && !mostrarNinos && (
+          <button type="button" onClick={() => setMostrarNinos(true)} className="mt-3 text-xs font-medium text-[var(--brand-accent)]">
+            + Agregar tarifa de niño/infante (opcional)
+          </button>
+        )}
+        {!adultsOnly && mostrarNinos && (
           <div className="mt-3">
-            <label className={lbl}>Nota de infante <span className="font-normal text-gray-400">(ej. &quot;Comparte cama con los padres&quot;, &quot;Solo paga seguro hotelero&quot;)</span></label>
+            <div className="mb-1 flex items-center justify-between">
+              <label className={lbl}>Nota de infante <span className="font-normal text-gray-400">(ej. &quot;Comparte cama con los padres&quot;, &quot;Solo paga seguro hotelero&quot;)</span></label>
+              <button
+                type="button"
+                onClick={() => { setP({ ...p, nino: "", nino2: "", infante: "" }); setNotaInfante(""); setMostrarNinos(false); }}
+                className="text-xs text-gray-400 hover:text-red-500"
+              >
+                Quitar tarifa de niño/infante
+              </button>
+            </div>
             <Input value={notaInfante} onChange={(e) => setNotaInfante(e.target.value)} placeholder="Nota especial para esta tarifa de infante (opcional)" />
           </div>
         )}
@@ -486,12 +506,11 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
             <Button variant="outline" onClick={resetForm} disabled={pending}>Cancelar</Button>
           )}
           {err && <span className="text-sm text-red-600">{err}</span>}
-          {!editId && (
-            <span className="text-xs text-gray-400">
-              {adultsOnly
-                ? "Este hotel es Adults Only: no se piden tarifas de niño/infante."
-                : "Niño 1/Niño 2/Infante pueden ir en $0 (gratis) o con su valor por noche. Déjalos vacíos si no aplican a este hotel."}
-            </span>
+          {!editId && adultsOnly && (
+            <span className="text-xs text-gray-400">Este hotel es Adults Only: no se piden tarifas de niño/infante.</span>
+          )}
+          {!editId && !adultsOnly && mostrarNinos && (
+            <span className="text-xs text-gray-400">Niño 1/Niño 2/Infante pueden ir en $0 (gratis) o con su valor por noche. Déjalos vacíos si no aplican a esta tarifa.</span>
           )}
         </div>
       </div>

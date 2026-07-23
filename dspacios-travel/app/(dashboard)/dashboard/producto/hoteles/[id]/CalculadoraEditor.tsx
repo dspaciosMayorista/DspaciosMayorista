@@ -16,7 +16,7 @@ import { guardarCalculadora, generarTarifasCalculadora } from "../actions";
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
 export function CalculadoraEditor({
-  hotelId, categorias, temporadas, regimenes, tipoInicial, dubaiInicial, mixtaInicial, corporativaInicial,
+  hotelId, categorias, temporadas, regimenes, tipoInicial, dubaiInicial, mixtaInicial, corporativaInicial, adultsOnly = false,
 }: {
   hotelId: number;
   categorias: string[];
@@ -26,6 +26,7 @@ export function CalculadoraEditor({
   dubaiInicial: DubaiParams | null;
   mixtaInicial: MixtaParams | null;
   corporativaInicial: CorporativaParams | null;
+  adultsOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [tipoCalc, setTipoCalc] = useState<CalcTipo>(tipoInicial ?? "dubai");
@@ -50,9 +51,9 @@ export function CalculadoraEditor({
               <option value="corporativa">Corporativa (tarifa por habitación + suplementos)</option>
             </select>
           </div>
-          {tipoCalc === "dubai" && <DubaiForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={dubaiInicial} />}
-          {tipoCalc === "mixta" && <MixtaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={mixtaInicial} />}
-          {tipoCalc === "corporativa" && <CorporativaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={corporativaInicial} />}
+          {tipoCalc === "dubai" && <DubaiForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={dubaiInicial} adultsOnly={adultsOnly} />}
+          {tipoCalc === "mixta" && <MixtaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={mixtaInicial} adultsOnly={adultsOnly} />}
+          {tipoCalc === "corporativa" && <CorporativaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={corporativaInicial} adultsOnly={adultsOnly} />}
         </div>
       )}
     </section>
@@ -61,8 +62,8 @@ export function CalculadoraEditor({
 
 // ── Formulario DUBAI (sin cambios de lógica) ───────────────────────────────
 function DubaiForm({
-  hotelId, categorias, temporadas, regimenes, inicial,
-}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: DubaiParams | null }) {
+  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly,
+}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: DubaiParams | null; adultsOnly: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -141,17 +142,24 @@ function DubaiForm({
       <p className="text-xs text-gray-500">Carga una <b>base por persona/noche</b> (en doble, con el régimen base) por categoría y temporada; el sistema deriva sencilla/triple/múltiple/niño con los modificadores y suma los suplementos de régimen.</p>
       <div>
         <p className={lbl}>Modificadores (% sobre la base)</p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        <div className={`grid grid-cols-2 gap-3 ${adultsOnly ? "sm:grid-cols-3" : "sm:grid-cols-5"}`}>
           <div><label className="text-[11px] text-gray-500">Sencilla</label><Input type="number" value={sencillaPct} onChange={(e) => setSencillaPct(e.target.value)} /></div>
           <div><label className="text-[11px] text-gray-500">3er pax</label><Input type="number" value={pax3Pct} onChange={(e) => setPax3Pct(e.target.value)} /></div>
           <div><label className="text-[11px] text-gray-500">4to pax</label><Input type="number" value={pax4Pct} onChange={(e) => setPax4Pct(e.target.value)} /></div>
-          <div><label className="text-[11px] text-gray-500">Niño</label><Input type="number" value={ninoPct} onChange={(e) => setNinoPct(e.target.value)} /></div>
-          <div><label className="text-[11px] text-gray-500">Infante</label><Input type="number" value={infantePct} onChange={(e) => setInfantePct(e.target.value)} /></div>
+          {!adultsOnly && (
+            <>
+              <div><label className="text-[11px] text-gray-500">Niño</label><Input type="number" value={ninoPct} onChange={(e) => setNinoPct(e.target.value)} /></div>
+              <div><label className="text-[11px] text-gray-500">Infante</label><Input type="number" value={infantePct} onChange={(e) => setInfantePct(e.target.value)} /></div>
+            </>
+          )}
         </div>
-        <div className="mt-2">
-          <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Comparte cama con los padres&quot;)</label>
-          <Input value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} placeholder="Nota especial para la tarifa de infante" />
-        </div>
+        {!adultsOnly && (
+          <div className="mt-2">
+            <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Comparte cama con los padres&quot;)</label>
+            <Input value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} placeholder="Nota especial para la tarifa de infante" />
+          </div>
+        )}
+        {adultsOnly && <p className="mt-2 text-[11px] text-gray-400">Este hotel es Adults Only: no se piden modificadores de niño/infante.</p>}
       </div>
       <div>
         <p className={lbl}>Régimen</p>
@@ -216,8 +224,8 @@ function DubaiForm({
         </div>
         <button type="button" onClick={agregarPromo} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>+ Agregar promoción</button>
       </div>
-      {preview.length > 0 && <PreviewTabla titulo={`Vista previa (${regimenBase})`} filas={preview} />}
-      {previewPromos.length > 0 && <PreviewTabla titulo="Vista previa — promociones" filas={previewPromos} />}
+      {preview.length > 0 && <PreviewTabla titulo={`Vista previa (${regimenBase})`} filas={preview} ocultarNinos={adultsOnly} />}
+      {previewPromos.length > 0 && <PreviewTabla titulo="Vista previa — promociones" filas={previewPromos} ocultarNinos={adultsOnly} />}
       <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
     </div>
   );
@@ -230,8 +238,8 @@ const CAMPOS = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "inf
 type Campo = (typeof CAMPOS)[number];
 
 function MixtaForm({
-  hotelId, categorias, temporadas, regimenes, inicial,
-}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: MixtaParams | null }) {
+  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly,
+}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: MixtaParams | null; adultsOnly: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -349,13 +357,18 @@ function MixtaForm({
             </div>
           ))}
         </div>
-        <label className="mt-2 flex items-center gap-1 text-xs text-gray-600">
-          <input type="checkbox" checked={ninoIva} onChange={(e) => setNinoIva(e.target.checked)} /> Niño/Infante + IVA 19% (siempre son por persona)
-        </label>
-        <div className="mt-2">
-          <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Comparte cama con los padres&quot;)</label>
-          <Input value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} placeholder="Nota especial para la tarifa de infante" />
-        </div>
+        {!adultsOnly && (
+          <>
+            <label className="mt-2 flex items-center gap-1 text-xs text-gray-600">
+              <input type="checkbox" checked={ninoIva} onChange={(e) => setNinoIva(e.target.checked)} /> Niño/Infante + IVA 19% (siempre son por persona)
+            </label>
+            <div className="mt-2">
+              <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Comparte cama con los padres&quot;)</label>
+              <Input value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} placeholder="Nota especial para la tarifa de infante" />
+            </div>
+          </>
+        )}
+        {adultsOnly && <p className="mt-2 text-[11px] text-gray-400">Este hotel es Adults Only: no se piden valores de niño/infante.</p>}
       </div>
 
       {/* Valores por categoría × temporada */}
@@ -367,14 +380,14 @@ function MixtaForm({
               <tr className="bg-gray-50 text-left text-xs text-gray-400">
                 <th className="px-2 py-1">Categoría · Temporada</th>
                 <th className="px-2 py-1">Sencilla</th><th className="px-2 py-1">Doble</th><th className="px-2 py-1">Triple</th><th className="px-2 py-1">Múltiple</th>
-                <th className="px-2 py-1">Niño 1</th><th className="px-2 py-1">Niño 2</th><th className="px-2 py-1">Infante</th>
+                {!adultsOnly && (<><th className="px-2 py-1">Niño 1</th><th className="px-2 py-1">Niño 2</th><th className="px-2 py-1">Infante</th></>)}
               </tr>
             </thead>
             <tbody>
               {categorias.flatMap((c) => temporadas.map((t) => (
                 <tr key={`${c}|${t}`} className="border-t border-gray-100">
                   <td className="px-2 py-1 text-xs font-medium text-gray-700">{c} · {t}</td>
-                  {CAMPOS.map((campo) => (
+                  {(adultsOnly ? CAMPOS.filter((campo) => !["nino", "nino2", "infante"].includes(campo)) : CAMPOS).map((campo) => (
                     <td key={campo} className="px-1 py-1"><Input type="number" className="w-24" value={vals[`${c}|${t}|${campo}`] ?? ""} onChange={(e) => setVal(c, t, campo, e.target.value)} placeholder="0" /></td>
                   ))}
                 </tr>
@@ -384,7 +397,7 @@ function MixtaForm({
         </div>
       </div>
 
-      {preview.length > 0 && <PreviewTabla titulo="Vista previa — tarifa por persona resultante" filas={preview} />}
+      {preview.length > 0 && <PreviewTabla titulo="Vista previa — tarifa por persona resultante" filas={preview} ocultarNinos={adultsOnly} />}
       <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
     </div>
   );
@@ -392,8 +405,8 @@ function MixtaForm({
 
 // ── Formulario CORPORATIVA (tarifa por habitación + suplementos) ──────────
 function CorporativaForm({
-  hotelId, categorias, temporadas, regimenes, inicial,
-}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: CorporativaParams | null }) {
+  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly,
+}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: CorporativaParams | null; adultsOnly: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -455,9 +468,11 @@ function CorporativaForm({
         corporativos de cadena. El sistema la reparte por persona: sencilla paga toda la habitación, doble la divide entre 2.
         Un 3er/4to pax o un niño no cambian el precio de la habitación — suman el cargo fijo de <b>persona/niño adicional</b>.
       </p>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className={`grid grid-cols-2 gap-3 ${adultsOnly ? "sm:grid-cols-3" : "sm:grid-cols-4"}`}>
         <div><label className="text-[11px] text-gray-500">Persona adicional (fijo, todas las categorías)</label><Input type="number" value={personaAdicional} onChange={(e) => setPersonaAdicional(e.target.value)} /></div>
-        <div><label className="text-[11px] text-gray-500">Niño adicional (fijo, todas las categorías)</label><Input type="number" value={ninoAdicional} onChange={(e) => setNinoAdicional(e.target.value)} /></div>
+        {!adultsOnly && (
+          <div><label className="text-[11px] text-gray-500">Niño adicional (fijo, todas las categorías)</label><Input type="number" value={ninoAdicional} onChange={(e) => setNinoAdicional(e.target.value)} /></div>
+        )}
         <div>
           <label className="text-[11px] text-gray-500">% Impuesto (opcional)</label>
           <Input type="number" value={impuestoPct} onChange={(e) => setImpuestoPct(e.target.value)} placeholder="0" />
@@ -469,10 +484,13 @@ function CorporativaForm({
           <p className="mt-0.5 text-[10px] text-gray-400">Solo descuenta la tarifa de habitación (rack) — nunca suplementos ni persona/niño adicional. Sin configurar, queda el rack.</p>
         </div>
       </div>
-      <div>
-        <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Infantes 0-4 años cortesía, máx. 2 niños por habitación&quot;)</label>
-        <Input value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} placeholder="Nota especial para la tarifa de infante (siempre cortesía / $0)" />
-      </div>
+      {!adultsOnly && (
+        <div>
+          <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Infantes 0-4 años cortesía, máx. 2 niños por habitación&quot;)</label>
+          <Input value={infanteNota} onChange={(e) => setInfanteNota(e.target.value)} placeholder="Nota especial para la tarifa de infante (siempre cortesía / $0)" />
+        </div>
+      )}
+      {adultsOnly && <p className="text-[11px] text-gray-400">Este hotel es Adults Only: no se piden cargos de niño/infante.</p>}
       <div>
         <p className={lbl}>Régimen</p>
         <div className="mb-2 flex items-center gap-2 text-xs text-gray-600">
@@ -486,9 +504,11 @@ function CorporativaForm({
           {regimenes.filter((r) => r !== regimenBase).map((r) => (
             <div key={r} className="rounded-lg border border-gray-100 p-2">
               <p className="mb-1 text-xs font-medium text-gray-700">Suplemento {r} (por persona/noche)</p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className={`grid gap-2 ${adultsOnly ? "grid-cols-1" : "grid-cols-2"}`}>
                 <div><label className="text-[10px] text-gray-400">Adulto</label><Input type="number" className="h-7 text-xs" value={suplementos[r]?.adulto ?? ""} onChange={(e) => setSup(r, { adulto: e.target.value })} placeholder="0" /></div>
-                <div><label className="text-[10px] text-gray-400">Niño</label><Input type="number" className="h-7 text-xs" value={suplementos[r]?.nino ?? ""} onChange={(e) => setSup(r, { nino: e.target.value })} placeholder="0" /></div>
+                {!adultsOnly && (
+                  <div><label className="text-[10px] text-gray-400">Niño</label><Input type="number" className="h-7 text-xs" value={suplementos[r]?.nino ?? ""} onChange={(e) => setSup(r, { nino: e.target.value })} placeholder="0" /></div>
+                )}
               </div>
             </div>
           ))}
@@ -512,7 +532,7 @@ function CorporativaForm({
           </table>
         </div>
       </div>
-      {preview.length > 0 && <PreviewTabla titulo={`Vista previa (${regimenBase})`} filas={preview} />}
+      {preview.length > 0 && <PreviewTabla titulo={`Vista previa (${regimenBase})`} filas={preview} ocultarNinos={adultsOnly} />}
       <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
     </div>
   );
@@ -524,7 +544,7 @@ type FilaPrev = {
   neto_sencilla: number; neto_doble: number; neto_triple: number; neto_multiple: number;
   neto_nino: number; neto_infante?: number | null;
 };
-function PreviewTabla({ titulo, filas }: { titulo: string; filas: FilaPrev[] }) {
+function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string; filas: FilaPrev[]; ocultarNinos?: boolean }) {
   return (
     <div>
       <p className={lbl}>{titulo}</p>
@@ -534,7 +554,7 @@ function PreviewTabla({ titulo, filas }: { titulo: string; filas: FilaPrev[] }) 
             <th className="px-2 py-1">Categoría</th><th className="px-2 py-1">Temporada</th>
             <th className="px-2 py-1 text-right">Sencilla</th><th className="px-2 py-1 text-right">Doble</th>
             <th className="px-2 py-1 text-right">Triple</th><th className="px-2 py-1 text-right">Múltiple</th>
-            <th className="px-2 py-1 text-right">Niño</th><th className="px-2 py-1 text-right">Infante</th>
+            {!ocultarNinos && (<><th className="px-2 py-1 text-right">Niño</th><th className="px-2 py-1 text-right">Infante</th></>)}
           </tr></thead>
           <tbody>
             {filas.map((f, i) => (
@@ -545,8 +565,12 @@ function PreviewTabla({ titulo, filas }: { titulo: string; filas: FilaPrev[] }) 
                 <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_doble)}</td>
                 <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_triple)}</td>
                 <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_multiple)}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_nino)}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{f.neto_infante != null ? formatCOP(f.neto_infante) : "—"}</td>
+                {!ocultarNinos && (
+                  <>
+                    <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_nino)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{f.neto_infante != null ? formatCOP(f.neto_infante) : "—"}</td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>

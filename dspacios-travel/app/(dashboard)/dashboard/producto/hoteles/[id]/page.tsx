@@ -149,6 +149,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           dubaiInicial={dubaiInicial}
           mixtaInicial={mixtaInicial}
           corporativaInicial={corporativaInicial}
+          adultsOnly={h.adults_only ?? false}
         />
         <HotelDetalleClient
           hotelId={hotelId}
