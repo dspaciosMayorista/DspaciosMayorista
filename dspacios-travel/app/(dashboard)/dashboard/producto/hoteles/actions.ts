@@ -737,15 +737,21 @@ export async function generarTarifasCalculadora(
   modo: "agregar" | "reemplazar" = "agregar",
 ): Promise<{ ok: true; generadas: number } | { ok: false; error: string }> {
   const sb = await createClient();
-  const { data: calc } = await sb
-    .from("hotel_calculadora")
-    .select("tipo, params")
-    .eq("hotel_id", hotelId)
-    .maybeSingle();
+  const [{ data: calc }, { data: hotel }] = await Promise.all([
+    sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle(),
+    sb.from("hoteles").select("adults_only").eq("id", hotelId).maybeSingle(),
+  ]);
   if (!calc) return { ok: false, error: "Este hotel no tiene calculadora configurada. Guárdala primero." };
 
-  const filas = generarTarifas(calc.tipo, calc.params);
-  if (!filas.length) return { ok: false, error: "No hay bases con precio para generar tarifas." };
+  const filasBase = generarTarifas(calc.tipo, calc.params);
+  if (!filasBase.length) return { ok: false, error: "No hay bases con precio para generar tarifas." };
+
+  // Adults Only: la calculadora igual deriva un valor de niño/infante (son %
+  // sobre la base, nunca "vacíos"), pero este hotel no acepta niños -- se
+  // descarta antes de guardar, sin importar los parámetros configurados.
+  const filas: (Omit<(typeof filasBase)[number], "neto_nino"> & { neto_nino: number | null })[] = hotel?.adults_only
+    ? filasBase.map((f) => ({ ...f, neto_nino: null, neto_nino2: null, neto_infante: null, nota_infante: null }))
+    : filasBase;
 
   if (modo === "reemplazar") {
     await sb.from("tarifa_hotel").delete().eq("hotel_id", hotelId);
