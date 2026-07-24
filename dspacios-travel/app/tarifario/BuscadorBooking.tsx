@@ -162,7 +162,7 @@ export function BuscadorBooking({
   );
 }
 
-function Resultado({ r, foto, info, infantes = 0 }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null; adultsOnly?: boolean; petFriendly?: boolean }; infantes?: number }) {
+function Resultado({ r, foto, info, infantes = 0 }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null; descripcion?: string | null; adultsOnly?: boolean; petFriendly?: boolean }; infantes?: number }) {
   const { items, add, remove } = useCart();
 
   // Combos disponibles → selectores de categoría y alimentación (el más barato
@@ -212,6 +212,9 @@ function Resultado({ r, foto, info, infantes = 0 }: { r: BusquedaResultado; foto
           )}
         </div>
         <div className="text-xs text-gray-500">{r.destino ?? ""} · {r.noches}N</div>
+        {info?.descripcion?.trim() && (
+          <p className="mt-1 line-clamp-2 text-xs text-gray-400">{info.descripcion}</p>
+        )}
 
         {/* Selectores de categoría y alimentación */}
         <div className="mt-3 grid grid-cols-1 gap-2">
