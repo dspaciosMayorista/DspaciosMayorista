@@ -78,9 +78,15 @@ export async function importarHistorico(textoRelacion: string, textoResumen: str
   const sb = createAdminClient();
 
   // (a) Venta = merge de ambas hojas (costos de Relación + titular/asesor/doc de Resumen).
+  // El "vendedor" de Resumen de pagos es un freelance externo que se gana una
+  // comisión B2B (confirmado con el dueño) -- no solo un dato informativo. Se
+  // marca la venta como B2B/freelance para que aparezca en la lista "Por
+  // definir" de /dashboard/comisiones; el % de comisión NO viene en la hoja,
+  // así que no se inventa aquí -- se define a mano una vez, por vendedor.
   const ventasPayload = enAmbos.map((num) => {
     const r = relPorNum.get(num)!;
     const p = pagPorNum.get(num)!;
+    const tieneVendedor = !!p.asesor?.trim();
     return {
       numero_contrato: numeroConTenant(num, tenant),
       tenant,
@@ -101,6 +107,9 @@ export async function importarHistorico(textoRelacion: string, textoResumen: str
       otros_costos: r.otros_costos,
       estado: "confirmado",
       pax: 1,
+      tipo_asesor: tieneVendedor ? "freelance" : null,
+      canal: tieneVendedor ? "B2B" : null,
+      freelance_nombre: tieneVendedor ? p.asesor : null,
     };
   });
   let nVentas = 0;
