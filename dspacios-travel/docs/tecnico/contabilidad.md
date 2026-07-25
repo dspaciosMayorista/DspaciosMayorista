@@ -54,7 +54,7 @@ bancarias y Retenciones a proveedores como front-ends que usan ese motor.
   para las reversiones (ver §3).
 - **`referencia`** es la clave estable que identifica de dónde viene el asiento — permite
   encontrarlo/reemplazarlo/reversarlo después: `abono:{id}`, `cxp:{cuentaId}`,
-  `pago:{cuentaId}:{slot}`, `retencion:{id}`, `facturacion:{numeroContrato}`,
+  `pago:{cuentaId}:{pagoId}`, `retencion:{id}`, `facturacion:{numeroContrato}`,
   `conciliacion:{concId}`, `manual:{concId}` (movimiento directo de conciliaciones).
 - **Archivos:**
   - `app/(dashboard)/dashboard/contabilidad/libro-diario/actions.ts` — `listarAsientos`
@@ -88,8 +88,8 @@ contables`.
 | `reversarYRegistrar` | `(origen, referencia, nuevo \| null) => PResult` | Para asientos que **sí** pudieron presentarse externamente (ej. una factura ante la DIAN): **no borra** — busca el asiento activo más reciente con ese origen+referencia, crea un espejo con débito/crédito invertidos (`origen_reversion`), y postea el `nuevo` encima. El rastro de la corrección queda en el libro. |
 | `postearAsientoCxP` | `(input: {cuentaId, numeroContrato, tipoProveedor, proveedor, servicio, valorTotal, fecha}) => PResult` | `Debe Costo de ventas (por tipo) / Haber Proveedores (por tipo)`. Usa `reemplazarAsiento` (idempotente — se puede llamar de nuevo si se edita la CxP). `referencia = cxp:{cuentaId}`. |
 | `eliminarAsientoCxP` | `(cuentaId) => PResult` | `reemplazarAsiento("cxp", ..., null)`. |
-| `postearAsientoPago` | `(input: {cuentaId, slot, numeroContrato, tipoProveedor, proveedor, valor, formaPago, moneda, fecha}) => PResult` | `Debe Proveedores / Haber Caja-Bancos` (según `cuentaDisponible`). `slot` es 1/2/3 (hasta 3 pagos por CxP). `referencia = pago:{cuentaId}:{slot}`. |
-| `eliminarAsientoPago` | `(cuentaId, slot) => PResult` | ídem, borra. |
+| `postearAsientoPago` | `(input: {cuentaId, pagoId, numeroContrato, tipoProveedor, proveedor, valor, formaPago, moneda, fecha}) => PResult` | `Debe Proveedores / Haber Caja-Bancos` (según `cuentaDisponible`). `pagoId` es el id de la fila en `cxp_pagos` (migración 130 — pagos **ilimitados** por CxP, reemplaza el viejo modelo fijo de 3 slots `abono1/2/3`). `referencia = pago:{cuentaId}:{pagoId}`. |
+| `eliminarAsientoPago` | `(cuentaId, pagoId) => PResult` | ídem, borra. |
 | `postearAsientoRetencion` | `(input: {retencionId, tipoProveedor, proveedor, valor, fecha}) => PResult` | `Debe Proveedores / Haber Retención en la fuente por pagar` (`236570` si el tipo de proveedor contiene "honorari", si no `236540`). Usa `postearAsiento` directo (no reemplaza — cada retención es un registro nuevo). |
 | `anticipoNetoDeContrato` | `(numeroContrato) => Promise<number>` | Suma `haber − debe` de todas las líneas de `280505 Anticipos de clientes` con `tercero = numeroContrato` — el anticipo neto acumulado, usado por el asiento de facturación. |
 | `cuentaDisponible` | `(formaPago, moneda) => codigo` | `efectivo` → Caja (`110505`); si no, Bancos según moneda (`111005` COP / `111010` USD). |

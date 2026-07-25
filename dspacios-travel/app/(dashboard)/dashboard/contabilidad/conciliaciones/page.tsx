@@ -49,21 +49,30 @@ export default async function ConciliacionesPage() {
     sb.from("conciliacion").select("*").eq("tenant", tenant).order("created_at", { ascending: false }),
     sb.from("conciliacion_sistema").select("*"),
     sb.from("abonos").select("id, numero_contrato, fecha_abono, valor_abono, monto_cop").eq("tenant", tenant),
-    sb.from("cuentas_por_pagar").select("id, proveedor, tipo_proveedor, servicio, numero_contrato, valor_total, moneda, fecha_obligacion, fecha_vencimiento, abono1, fecha_abono1, trm1, abono2, fecha_abono2, trm2, abono3, fecha_abono3, trm3").eq("tenant", tenant),
+    sb.from("cuentas_por_pagar").select("id, proveedor, tipo_proveedor, servicio, numero_contrato, valor_total, moneda, fecha_obligacion, fecha_vencimiento").eq("tenant", tenant),
     sb.from("contabilidad_movimientos").select("id, fecha, tipo, concepto, valor").eq("tenant", tenant),
   ]);
 
   const usados = new Set((concSis ?? []).map((s) => s.ref as string));
 
-  // Retenciones ya practicadas por cuenta (se descuentan del saldo pendiente
-  // del proveedor, igual que en dashboard/pagos).
+  // Retenciones y pagos ya practicados por cuenta (se descuentan del saldo
+  // pendiente del proveedor, igual que en dashboard/pagos).
   const cxpIds = (cxp ?? []).map((c) => c.id);
-  const { data: retenciones } = cxpIds.length
-    ? await sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", cxpIds)
-    : { data: [] };
+  const [{ data: retenciones }, { data: pagosCxp }] = cxpIds.length
+    ? await Promise.all([
+        sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", cxpIds),
+        sb.from("cxp_pagos").select("id, cuenta_por_pagar_id, fecha, valor, trm").in("cuenta_por_pagar_id", cxpIds),
+      ])
+    : [{ data: [] }, { data: [] }];
   const retenidoPorCuenta = sumarRetencionesPorCuenta(
     (retenciones ?? []).map((r) => ({ cuenta_por_pagar_id: r.cuenta_por_pagar_id as number, valor: Number(r.valor) || 0 }))
   );
+  const pagosPorCuenta = new Map<number, { id: number; fecha: string; valor: number; trm: number | null }[]>();
+  for (const p of pagosCxp ?? []) {
+    const arr = pagosPorCuenta.get(p.cuenta_por_pagar_id) ?? [];
+    arr.push({ id: p.id, fecha: p.fecha, valor: Number(p.valor) || 0, trm: p.trm });
+    pagosPorCuenta.set(p.cuenta_por_pagar_id, arr);
+  }
 
   // Ítems del sistema (no conciliados): abonos de cartera (+), pagos a
   // proveedores y movimientos de egreso (−), y saldos pendientes de
@@ -78,14 +87,12 @@ export default async function ConciliacionesPage() {
     sistema.push({ ref, tipo: "Abono cartera", descripcion: `Abono ${a.numero_contrato}`, fecha: (a.fecha_abono as string) ?? null, valor: cop, numeroContrato: (a.numero_contrato as string) ?? null, categoria: "cartera" });
   }
   for (const c of cxp ?? []) {
-    for (const n of [1, 2, 3] as const) {
-      const val = Number((c as Record<string, unknown>)[`abono${n}`]) || 0;
-      if (val <= 0) continue;
-      const ref = `pago:${c.id}:${n}`;
+    for (const p of pagosPorCuenta.get(c.id) ?? []) {
+      if (p.valor <= 0) continue;
+      const ref = `pago:${c.id}:${p.id}`;
       if (usados.has(ref)) continue;
-      const trm = Number((c as Record<string, unknown>)[`trm${n}`]) || 1;
-      const fecha = ((c as Record<string, unknown>)[`fecha_abono${n}`] as string) ?? null;
-      sistema.push({ ref, tipo: "Pago proveedor", descripcion: `Pago ${c.proveedor ?? c.numero_contrato}`, fecha, valor: -(val * trm), numeroContrato: (c.numero_contrato as string) ?? null, categoria: "proveedor" });
+      const trm = Number(p.trm) || 1;
+      sistema.push({ ref, tipo: "Pago proveedor", descripcion: `Pago ${c.proveedor ?? c.numero_contrato}`, fecha: p.fecha, valor: -(p.valor * trm), numeroContrato: (c.numero_contrato as string) ?? null, categoria: "proveedor" });
     }
   }
   for (const m of movs ?? []) {
@@ -99,7 +106,7 @@ export default async function ConciliacionesPage() {
   // registrado) — no se filtran por `usados`: su presencia depende del saldo
   // actual (>0), que ya baja solo al registrarse un pago real.
   for (const c of cxp ?? []) {
-    const pagado = (Number(c.abono1) || 0) + (Number(c.abono2) || 0) + (Number(c.abono3) || 0);
+    const pagado = (pagosPorCuenta.get(c.id) ?? []).reduce((s, p) => s + p.valor, 0);
     const retenido = retenidoPorCuenta[c.id] ?? 0;
     const valorTotal = Number(c.valor_total) || 0;
     const saldo = Math.max(valorTotal - pagado - retenido, 0);

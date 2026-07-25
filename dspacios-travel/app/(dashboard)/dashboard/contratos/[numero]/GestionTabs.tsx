@@ -27,13 +27,12 @@ import { registrarPagoProveedor, deshacerUltimoPago } from "../../pagos/actions"
 import { actualizarAbono, eliminarAbono } from "../actions";
 
 type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string; trm: number | null; monto_cop: number | null };
+type PagoCxP = { id: number; fecha: string; valor: number; trm: number | null };
 type CxP = {
   id: number; proveedor: string | null; servicio: string | null; valor_total: number;
   base_gravable: number | null; iva_proveedor: number | null; fecha_vencimiento: string | null;
   aplica_retencion: boolean; pct_retencion: number; moneda?: string | null;
-  abono1: number | null; fecha_abono1: string | null; trm1: number | null;
-  abono2: number | null; fecha_abono2: string | null; trm2: number | null;
-  abono3: number | null; fecha_abono3: string | null; trm3: number | null;
+  pagos: PagoCxP[];
   retenido: number;
 };
 type B2B = { id: number; aliado: string | null; precio_venta: number; base_comision: number; pct_comision: number; recobro_total: number; pct_recobro_aliado: number; aplica_retencion: boolean; pct_retencion: number };
@@ -441,7 +440,7 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
   const [verPago, setVerPago] = useState(false);
   const ivaF = f.iva_proveedor ?? 0;
   const costoF = f.base_gravable ?? (f.valor_total - ivaF);
-  const pagado = (f.abono1 ?? 0) + (f.abono2 ?? 0) + (f.abono3 ?? 0);
+  const pagado = f.pagos.reduce((s, p) => s + (p.valor ?? 0), 0);
   const saldo = Math.max(0, f.valor_total - pagado - (f.retenido ?? 0));
   const estaPagada = saldo <= 0 && f.valor_total > 0;
 
@@ -522,16 +521,12 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
   );
 }
 
-// Registro de pago a proveedor (hasta 3 abonos) + deshacer, reutilizando la
-// misma regla de negocio del módulo Pagos (dashboard/pagos/actions.ts).
+// Registro de pago a proveedor (ilimitados, log en cxp_pagos) + deshacer,
+// reutilizando la misma regla de negocio del módulo Pagos (dashboard/pagos/actions.ts).
 function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; saldo: number }) {
   const moneda = f.moneda ?? "COP";
   const esUSD = moneda.toUpperCase() === "USD";
-  const pagos = [
-    f.abono1 != null && f.abono1 !== 0 ? { n: 1, valor: f.abono1, fecha: f.fecha_abono1, trm: f.trm1 } : null,
-    f.abono2 != null && f.abono2 !== 0 ? { n: 2, valor: f.abono2, fecha: f.fecha_abono2, trm: f.trm2 } : null,
-    f.abono3 != null && f.abono3 !== 0 ? { n: 3, valor: f.abono3, fecha: f.fecha_abono3, trm: f.trm3 } : null,
-  ].filter((p): p is { n: number; valor: number; fecha: string | null; trm: number | null } => p != null);
+  const pagos = f.pagos;
 
   const [valor, setValor] = useState("");
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
@@ -561,10 +556,10 @@ function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; sald
         ) : (
           <table className="w-full text-sm">
             <tbody>
-              {pagos.map((p) => (
-                <tr key={p.n} className="border-b border-gray-100">
+              {pagos.map((p, i) => (
+                <tr key={p.id} className="border-b border-gray-100">
                   <td className="py-1 text-gray-500">
-                    Pago {p.n} · {p.fecha ?? "—"}
+                    Pago {i + 1} · {p.fecha ?? "—"}
                     {esUSD && p.trm ? <span className="ml-2 text-xs text-gray-400">TRM {formatCOP(p.trm)}</span> : null}
                   </td>
                   <td className="py-1 text-right tabular-nums text-gray-700">{formatMoneda(p.valor, moneda)}</td>
@@ -592,8 +587,6 @@ function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; sald
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Registrar pago</p>
         {saldo <= 0 ? (
           <p className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">Esta cuenta está totalmente pagada.</p>
-        ) : pagos.length >= 3 ? (
-          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">Ya hay 3 pagos registrados (máximo del modelo). Deshaz uno para corregir.</p>
         ) : (
           <div className="flex flex-wrap items-end gap-2">
             <div>

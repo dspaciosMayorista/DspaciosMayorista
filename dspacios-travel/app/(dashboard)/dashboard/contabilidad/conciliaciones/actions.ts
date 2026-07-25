@@ -172,31 +172,20 @@ export async function cruzar(input: {
     const m = /^saldo-cxp:(\d+)$/.exec(s.ref);
     if (!m) { sistemaFinal.push(s); continue; }
     const cuentaId = Number(m[1]);
-    const { data: c } = await sb.from("cuentas_por_pagar").select("moneda, abono1, abono2, abono3").eq("id", cuentaId).maybeSingle();
+    const { data: c } = await sb.from("cuentas_por_pagar").select("moneda").eq("id", cuentaId).maybeSingle();
     if (!c) { sistemaFinal.push(s); continue; }
     if ((c.moneda ?? "COP") === "USD") {
       aviso = "Alguna cuenta en USD no se pudo auto-registrar como pago (falta la TRM) — regístrala manual en Pagos a proveedores.";
       sistemaFinal.push(s);
       continue;
     }
-    const libre = (v: number | null) => v == null || v === 0;
-    let n: 1 | 2 | 3 | null = null;
-    let upd: {
-      abono1?: number; fecha_abono1?: string; trm1?: number;
-      abono2?: number; fecha_abono2?: string; trm2?: number;
-      abono3?: number; fecha_abono3?: string; trm3?: number;
-    } = {};
-    if (libre(c.abono1)) { n = 1; upd = { abono1: Math.abs(s.valor), fecha_abono1: fechaPago, trm1: 1 }; }
-    else if (libre(c.abono2)) { n = 2; upd = { abono2: Math.abs(s.valor), fecha_abono2: fechaPago, trm2: 1 }; }
-    else if (libre(c.abono3)) { n = 3; upd = { abono3: Math.abs(s.valor), fecha_abono3: fechaPago, trm3: 1 }; }
-    if (!n) {
-      aviso = "Alguna cuenta ya tenía 3 pagos registrados — no se pudo auto-registrar, hazlo manual en Pagos a proveedores.";
-      sistemaFinal.push(s);
-      continue;
-    }
-    const { error: eUpd } = await sb.from("cuentas_por_pagar").update(upd).eq("id", cuentaId);
-    if (eUpd) { aviso = `No se pudo registrar el pago automático: ${eUpd.message}`; sistemaFinal.push(s); continue; }
-    sistemaFinal.push({ ...s, ref: `pago:${cuentaId}:${n}`, fecha: fechaPago });
+    const { data: pago, error: eIns } = await sb
+      .from("cxp_pagos")
+      .insert({ cuenta_por_pagar_id: cuentaId, fecha: fechaPago, valor: Math.abs(s.valor), trm: 1 })
+      .select("id")
+      .single();
+    if (eIns || !pago) { aviso = `No se pudo registrar el pago automático: ${eIns?.message ?? "error desconocido"}`; sistemaFinal.push(s); continue; }
+    sistemaFinal.push({ ...s, ref: `pago:${cuentaId}:${pago.id}`, fecha: fechaPago });
   }
 
   const tenant = await getTenant();

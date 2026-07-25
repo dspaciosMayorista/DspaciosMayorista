@@ -167,11 +167,13 @@ export async function eliminarAsientoCxP(cuentaId: number): Promise<PResult> {
 }
 
 // Pago a un proveedor (reduce el pasivo): Debe Proveedores / Haber Caja/Bancos.
+// `pagoId` = id de la fila en `cxp_pagos` (único por pago, nunca se reutiliza
+// — a diferencia del viejo `slot` 1|2|3, que sí podía repetirse tras deshacer).
 export async function postearAsientoPago(input: {
-  cuentaId: number; slot: 1 | 2 | 3; numeroContrato: string | null; tipoProveedor: string | null; proveedor: string | null;
+  cuentaId: number; pagoId: number; numeroContrato: string | null; tipoProveedor: string | null; proveedor: string | null;
   valor: number; formaPago: string | null; moneda: string; fecha: string;
 }): Promise<PResult> {
-  const referencia = `pago:${input.cuentaId}:${input.slot}`;
+  const referencia = `pago:${input.cuentaId}:${input.pagoId}`;
   if (input.valor <= 0) return reemplazarAsiento("pago_proveedor", referencia, null);
   const cuentas = cuentasProveedor(input.tipoProveedor);
   return reemplazarAsiento("pago_proveedor", referencia, {
@@ -184,8 +186,8 @@ export async function postearAsientoPago(input: {
   });
 }
 
-export async function eliminarAsientoPago(cuentaId: number, slot: 1 | 2 | 3): Promise<PResult> {
-  return reemplazarAsiento("pago_proveedor", `pago:${cuentaId}:${slot}`, null);
+export async function eliminarAsientoPago(cuentaId: number, pagoId: number): Promise<PResult> {
+  return reemplazarAsiento("pago_proveedor", `pago:${cuentaId}:${pagoId}`, null);
 }
 
 // Retención practicada a un proveedor (reduce el pasivo vía retefuente, no

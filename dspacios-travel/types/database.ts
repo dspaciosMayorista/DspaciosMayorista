@@ -690,6 +690,28 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["retenciones_cxp"]["Insert"]>;
         Relationships: [];
       };
+      cxp_pagos: {
+        Row: {
+          id: number;
+          cuenta_por_pagar_id: number;
+          fecha: string;
+          valor: number;
+          trm: number;
+          tenant: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          cuenta_por_pagar_id: number;
+          fecha?: string;
+          valor: number;
+          trm?: number;
+          tenant?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["cxp_pagos"]["Insert"]>;
+        Relationships: [];
+      };
       puc_cuentas: {
         Row: {
           id: number;
