@@ -820,8 +820,8 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   Precio = neto + %markup. Publica al tarifario (tab Programas + vitrina pública
 >   `/tarifario/programa/[id]`) y se reserva (`/dashboard/reservar/programa/[id]`) →
 >   contrato (con `moneda`) + CxP al proveedor. Migración **031**. *Pendiente:* el
->   detalle tributario del contrato (rentabilidad/IVA/provisiones) sigue en COP;
->   las CxP guardan máx. 3 pagos.
+>   detalle tributario del contrato (rentabilidad/IVA/provisiones) sigue en COP.
+>   (Las CxP ya no tienen límite de pagos — ver migración 130 más abajo.)
 > - Marca: logo oficial del manual aplicado; carpeta `docs/marca/` y `docs/programas/`.
 
 ### Marca / identidad (aplicada)

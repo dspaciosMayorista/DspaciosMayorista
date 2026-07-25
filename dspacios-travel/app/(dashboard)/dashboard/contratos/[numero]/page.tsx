@@ -84,13 +84,26 @@ export default async function ContratoDetallePage({
 
   // Retenciones practicadas por CxP (se descuentan del saldo, igual que un abono).
   const cxpIds = (cxp ?? []).map((c) => c.id);
-  const { data: retenciones } = cxpIds.length
-    ? await sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", cxpIds)
-    : { data: [] };
+  const [{ data: retenciones }, { data: pagosCxp }] = cxpIds.length
+    ? await Promise.all([
+        sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", cxpIds),
+        sb.from("cxp_pagos").select("id, cuenta_por_pagar_id, fecha, valor, trm").in("cuenta_por_pagar_id", cxpIds).order("fecha").order("id"),
+      ])
+    : [{ data: [] }, { data: [] }];
   const retenidoPorCuenta = sumarRetencionesPorCuenta(
     (retenciones ?? []).map((r) => ({ cuenta_por_pagar_id: r.cuenta_por_pagar_id as number, valor: Number(r.valor) || 0 }))
   );
-  const cxpConRetencion = (cxp ?? []).map((c) => ({ ...c, retenido: retenidoPorCuenta[c.id] ?? 0 }));
+  const pagosPorCuenta = new Map<number, { id: number; fecha: string; valor: number; trm: number | null }[]>();
+  for (const p of pagosCxp ?? []) {
+    const arr = pagosPorCuenta.get(p.cuenta_por_pagar_id) ?? [];
+    arr.push({ id: p.id, fecha: p.fecha, valor: Number(p.valor) || 0, trm: p.trm });
+    pagosPorCuenta.set(p.cuenta_por_pagar_id, arr);
+  }
+  const cxpConRetencion = (cxp ?? []).map((c) => ({
+    ...c,
+    retenido: retenidoPorCuenta[c.id] ?? 0,
+    pagos: pagosPorCuenta.get(c.id) ?? [],
+  }));
 
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
   const fiscal = fiscalFromParams(paramsRows ?? []);

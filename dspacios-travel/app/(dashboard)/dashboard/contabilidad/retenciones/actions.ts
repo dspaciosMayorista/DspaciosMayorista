@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { getTenant } from "@/lib/tenant.server";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
+import { sumarPagosPorCuenta } from "@/lib/finanzas/pagosCxp";
 import { postearAsientoRetencion, reemplazarAsiento } from "@/lib/contabilidad/asientos";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -54,7 +55,7 @@ export async function buscarCuentasPorContrato(
   const tenant = await getTenant();
   const { data: cxp, error } = await sb
     .from("cuentas_por_pagar")
-    .select("id, proveedor, tipo_proveedor, servicio, valor_total, moneda, abono1, abono2, abono3, aplica_retencion, pct_retencion")
+    .select("id, proveedor, tipo_proveedor, servicio, valor_total, moneda, aplica_retencion, pct_retencion")
     .eq("numero_contrato", numero)
     .eq("tenant", tenant)
     .order("id");
@@ -62,13 +63,19 @@ export async function buscarCuentasPorContrato(
   if (!cxp || !cxp.length) return { ok: false, error: "Ese contrato no tiene cuentas por pagar registradas." };
 
   const ids = cxp.map((c) => c.id);
-  const { data: ret } = await sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", ids);
+  const [{ data: ret }, { data: pagos }] = await Promise.all([
+    sb.from("retenciones_cxp").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", ids),
+    sb.from("cxp_pagos").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", ids),
+  ]);
   const retenidoPorCuenta = sumarRetencionesPorCuenta(
     (ret ?? []).map((r) => ({ cuenta_por_pagar_id: r.cuenta_por_pagar_id as number, valor: Number(r.valor) || 0 }))
   );
+  const pagadoPorCuenta = sumarPagosPorCuenta(
+    (pagos ?? []).map((p) => ({ cuenta_por_pagar_id: p.cuenta_por_pagar_id as number, valor: Number(p.valor) || 0 }))
+  );
 
   const cuentas: CuentaContrato[] = cxp.map((c) => {
-    const pagado = (Number(c.abono1) || 0) + (Number(c.abono2) || 0) + (Number(c.abono3) || 0);
+    const pagado = pagadoPorCuenta[c.id] ?? 0;
     const retenido = retenidoPorCuenta[c.id] ?? 0;
     const valorTotal = Number(c.valor_total) || 0;
     return {
@@ -118,7 +125,7 @@ export async function registrarRetencion(input: {
   const sb = await createClient();
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
-    .select("id, numero_contrato, valor_total, abono1, abono2, abono3, tipo_proveedor, proveedor")
+    .select("id, numero_contrato, valor_total, tipo_proveedor, proveedor")
     .eq("id", input.cuentaId)
     .maybeSingle();
   if (e1) return { ok: false, error: e1.message };
@@ -126,7 +133,8 @@ export async function registrarRetencion(input: {
 
   const { data: ret } = await sb.from("retenciones_cxp").select("valor").eq("cuenta_por_pagar_id", input.cuentaId);
   const yaRetenido = (ret ?? []).reduce((s, r) => s + (Number(r.valor) || 0), 0);
-  const pagado = (Number(cxp.abono1) || 0) + (Number(cxp.abono2) || 0) + (Number(cxp.abono3) || 0);
+  const { data: pagos } = await sb.from("cxp_pagos").select("valor").eq("cuenta_por_pagar_id", input.cuentaId);
+  const pagado = (pagos ?? []).reduce((s, p) => s + (Number(p.valor) || 0), 0);
   const saldoActual = Math.max((Number(cxp.valor_total) || 0) - pagado - yaRetenido, 0);
   if (input.valor > saldoActual + 1) {
     return { ok: false, error: `El valor supera el saldo pendiente (${saldoActual.toLocaleString("es-CO")}).` };

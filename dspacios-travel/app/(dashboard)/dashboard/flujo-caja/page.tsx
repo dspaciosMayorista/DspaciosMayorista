@@ -40,11 +40,16 @@ export default async function FlujoCajaPage() {
     .from("abonos")
     .select("numero_contrato, valor_abono, monto_cop").eq("tenant", tenant);
 
-  // Salidas reales: pagos a proveedores. En USD se pagan en pesos a la TRM del
-  // día (abonoN × trmN); en COP, trmN = 1.
+  // Salidas reales: pagos a proveedores (log ilimitado en cxp_pagos). En USD se
+  // pagan en pesos a la TRM del día (valor × trm); en COP, trm = 1.
   const { data: cxp } = await sb
     .from("cuentas_por_pagar")
-    .select("numero_contrato, abono1, trm1, abono2, trm2, abono3, trm3").eq("tenant", tenant);
+    .select("id, numero_contrato").eq("tenant", tenant);
+  const numeroPorCuenta = new Map((cxp ?? []).map((c) => [c.id, c.numero_contrato as string]));
+  const cxpIds = (cxp ?? []).map((c) => c.id);
+  const { data: pagosCxp } = cxpIds.length
+    ? await sb.from("cxp_pagos").select("cuenta_por_pagar_id, valor, trm").in("cuenta_por_pagar_id", cxpIds)
+    : { data: [] };
 
   // TRM de referencia (fallback para esperado de contratos USD sin abonos).
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
@@ -84,15 +89,12 @@ export default async function FlujoCajaPage() {
     const cop = Number(a.monto_cop) || Number(a.valor_abono) || 0;
     cobradoPorContrato.set(k, (cobradoPorContrato.get(k) ?? 0) + cop);
   }
-  // Pagado real en pesos (abonoN × trmN; trmN 1 si null = COP).
+  // Pagado real en pesos (valor × trm; trm 1 si null = COP).
   const pagadoPorContrato = new Map<string, number>();
-  for (const c of cxp ?? []) {
-    const k = c.numero_contrato as string;
+  for (const p of pagosCxp ?? []) {
+    const k = numeroPorCuenta.get(p.cuenta_por_pagar_id);
     if (!k) continue;
-    const pag =
-      (Number(c.abono1) || 0) * (Number(c.trm1) || 1) +
-      (Number(c.abono2) || 0) * (Number(c.trm2) || 1) +
-      (Number(c.abono3) || 0) * (Number(c.trm3) || 1);
+    const pag = (Number(p.valor) || 0) * (Number(p.trm) || 1);
     pagadoPorContrato.set(k, (pagadoPorContrato.get(k) ?? 0) + pag);
   }
 

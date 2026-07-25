@@ -58,13 +58,23 @@ export async function calcularEstadosFinancieros(mesPedido?: string): Promise<Es
   const [{ data: ventas }, { data: cfgs }, { data: cxp }, { data: abonos }, { data: emps }, { data: costos }, { data: movs }, { data: paramsRows }] = await Promise.all([
     sb.from("ventas").select("numero_contrato, cliente, fecha_venta, precio_venta, moneda, trm_contrato").eq("tenant", tenant),
     sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento"),
-    sb.from("cuentas_por_pagar").select("numero_contrato, valor_total, iva_proveedor, clasificacion, base_gravable, abono1, abono2, abono3").eq("tenant", tenant),
+    sb.from("cuentas_por_pagar").select("id, numero_contrato, valor_total, iva_proveedor, clasificacion, base_gravable").eq("tenant", tenant),
     sb.from("abonos").select("numero_contrato, valor_abono"),
     sb.from("pe_empleados").select("*").eq("activo", true).eq("tenant", tenant),
     sb.from("pe_costos").select("*").eq("activo", true).eq("tenant", tenant),
     sb.from("contabilidad_movimientos").select("fecha, tipo, valor").eq("tenant", tenant),
     sb.from("parametros_tributarios").select("parametro, valor"),
   ]);
+
+  // Pagos a proveedor (log ilimitado en cxp_pagos, migración 130).
+  const cxpIds = (cxp ?? []).map((c) => c.id);
+  const { data: pagosCxp } = cxpIds.length
+    ? await sb.from("cxp_pagos").select("cuenta_por_pagar_id, valor").in("cuenta_por_pagar_id", cxpIds)
+    : { data: [] };
+  const pagadoPorCuenta = new Map<number, number>();
+  for (const p of pagosCxp ?? []) {
+    pagadoPorCuenta.set(p.cuenta_por_pagar_id, (pagadoPorCuenta.get(p.cuenta_por_pagar_id) ?? 0) + (Number(p.valor) || 0));
+  }
 
   const fiscal = fiscalFromParams(paramsRows ?? []);
   const trmRef = Number((paramsRows ?? []).find((p) => p.parametro === "trm_referencia")?.valor) || 0;
@@ -140,7 +150,7 @@ export async function calcularEstadosFinancieros(mesPedido?: string): Promise<Es
   }
   let cuentasPorPagar = 0, irtPorPagar = 0, ivaPorPagar = 0;
   for (const c of cxp ?? []) {
-    const pagado = (Number(c.abono1) || 0) + (Number(c.abono2) || 0) + (Number(c.abono3) || 0);
+    const pagado = pagadoPorCuenta.get(c.id) ?? 0;
     const saldo = Math.max(0, (Number(c.valor_total) || 0) - pagado);
     if (((c.clasificacion as string) ?? "costo") === "irt") {
       irtPorPagar += saldo; // se debe al tercero (hotel/aerolínea), no es costo propio
