@@ -313,11 +313,56 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 129** — todas
-> confirmadas corridas por el dueño, incluida la **129** (`anticipos_sin_identificar`
-> — ver "Novedades recientes").
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 130** — todas
+> confirmadas corridas por el dueño, incluida la **130** (`cxp_pagos` — pagos a
+> proveedor ilimitados, ver "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Fix — pagos a proveedor ilimitados (jul-2026):** `cuentas_por_pagar` modelaba los
+>   pagos con 3 columnas fijas (`abono1/2/3` + fecha + TRM) — una cuenta con más de 3
+>   pagos parciales no dejaba registrar el siguiente ("máximo del modelo"). Reportado
+>   como bug real en minorista. **Migración 130** (`cxp_pagos`, ya corrida): log
+>   ilimitado (mismo patrón que `retenciones_cxp`) + backfill de los pagos ya cargados
+>   en `abono1/2/3` (columnas viejas sin borrar, la app ya no las lee/escribe).
+>   Actualizados: registrar/deshacer pago, el panel de pago del contrato, "Pagos a
+>   proveedores", retenciones (saldo pendiente), conciliaciones (auto-registro +
+>   listado), flujo de caja y estados financieros. `postearAsientoPago` ahora
+>   identifica el asiento por el id del pago (único para siempre) en vez de un slot
+>   1/2/3 (que podía repetirse tras deshacer un pago).
+> - **Fix — importador de histórico minorista no marcaba al vendedor como B2B
+>   (jul-2026):** "Resumen de pagos" trae un VENDEDOR (freelance externo que gana
+>   comisión, confirmado con el dueño) que el importador solo guardaba como texto
+>   libre en `ventas.asesor`, sin marcar la venta como B2B — por eso nunca aparecía
+>   en "Por definir" de `/dashboard/comisiones`. Ahora marca `tipo_asesor='freelance'`,
+>   `canal='B2B'`, `freelance_nombre=<vendedor>` cuando la fila trae vendedor (la hoja
+>   no trae % de comisión, así que no se inventa uno — se completa a mano). Como el
+>   importador hace `upsert`, re-importar las mismas hojas sirve de backfill.
+> - **Fix — comisión B2B agregada a mano no estampaba tenant (jul-2026):**
+>   `crearComisionB2B` (botón "Agregar comisión B2B" en la pestaña Comisiones de un
+>   contrato) insertaba en `aliados_b2b` sin `tenant` — quedaba en el default
+>   `'mayorista'` sin importar la agencia real, así que la comisión desaparecía de
+>   `/dashboard/comisiones` para minorista aunque el contrato la mostrara bien. Ahora
+>   toma el tenant del contrato mismo. Script `backfill_aliados_b2b_tenant.sql` para
+>   corregir las filas ya mal estampadas.
+> - **Fix — contratos manuales "activo" se mostraban como cotización pendiente
+>   (jul-2026):** los contratos del generador manual (`dashboard/contratos`, único
+>   camino para minorista) nacen con `estado='activo'` y nunca pasan por
+>   `'pendiente'`, pero el documento imprimible solo reconocía `'confirmado'` como
+>   confirmado — mostraba "⏳ COTIZACIÓN PENDIENTE" en contratos ya activos. Ahora
+>   `'activo'` se trata como confirmado en el documento y en el badge de estado.
+> - **Fix — hoteles Adults Only seguían pidiendo tarifa de niño/infante (jul-2026):**
+>   la carga manual de "Tarifa neta" y las 3 calculadoras (Dubai/Mixta/Corporativa)
+>   mostraban los campos de Niño 1/Niño 2/Infante para TODOS los hoteles, incluidos
+>   los Adults Only. Ahora esos campos no aparecen (formulario, tabla, vista previa)
+>   para hoteles Adults Only, y `generarTarifasCalculadora` fuerza esos valores a
+>   `null` antes de guardar como respaldo. De paso, para hoteles que sí aceptan
+>   niños: la carga manual ya no muestra Niño/Infante abiertos por defecto — quedan
+>   colapsados detrás de "+ Agregar tarifa de niño/infante".
+> - **Fix — buscador general de hoteles no mostraba la descripción (jul-2026):**
+>   `BuscadorBooking.tsx` (Vista Booking, buscador por fechas/composición) ya recibía
+>   `infoPorHotel.descripcion` desde el servidor, pero el componente `Resultado` de
+>   cada tarjeta nunca la renderizaba. Ahora la muestra junto a los selectores de
+>   categoría/alimentación.
 > - **Hoja técnica (jul-2026):** nueva carpeta `docs/tecnico/` — referencia de código
 >   (no de negocio) módulo por módulo: qué archivo hace qué, qué función calcula qué,
 >   qué tabla toca, con qué está enlazado. Arranca con **Contabilidad** (PUC, Libro
@@ -1102,7 +1147,7 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 129** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 130** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -1194,8 +1239,10 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > mensual de retenciones para la DIAN · **129 anticipos_sin_identificar** (ya
 > corrida) — agrega `puc_cuentas.280510` "Anticipos de clientes sin
 > identificar", subcuenta de `2805`, para depósitos de clientes en
-> Conciliaciones que no se van a relacionar con un contrato del sistema —
-> ver "Novedades recientes".
+> Conciliaciones que no se van a relacionar con un contrato del sistema ·
+> **130 cxp_pagos** (ya corrida) — tabla `cxp_pagos` (log ilimitado de pagos
+> a proveedor, mismo patrón que `retenciones_cxp`) + backfill desde las
+> viejas columnas fijas `abono1/2/3` — ver "Novedades recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
