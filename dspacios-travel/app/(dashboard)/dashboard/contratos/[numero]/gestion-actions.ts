@@ -60,8 +60,16 @@ export async function crearCuentaPorPagar(input: {
   const iva = Math.max(0, Number(input.ivaDescontable) || 0);
   // Costo (base) = valor total de la factura − IVA descontable.
   const base = Math.max(0, input.valorTotal - iva);
+  // El tenant se toma del contrato mismo (no de la cookie de sesión activa) --
+  // mismo criterio que crearComisionB2B, para que quede correcto incluso si un
+  // superadmin agrega el proveedor mientras tiene otra agencia activa. Si queda
+  // mal (default 'mayorista'), la CxP existe pero desaparece de
+  // /dashboard/pagos en la agencia real (aunque el contrato la muestre bien,
+  // esa consulta no filtra por tenant).
+  const { data: venta } = await sb.from("ventas").select("tenant").eq("numero_contrato", input.numeroContrato).maybeSingle();
   const { data: nueva, error } = await sb.from("cuentas_por_pagar").insert({
     numero_contrato: input.numeroContrato,
+    tenant: venta?.tenant ?? "mayorista",
     proveedor: input.proveedor || null,
     tipo_proveedor: input.tipoProveedor || null,
     servicio: input.servicio || null,

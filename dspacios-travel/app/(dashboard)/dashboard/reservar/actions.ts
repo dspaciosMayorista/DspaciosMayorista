@@ -809,12 +809,13 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
 
   const [{ data: existentes }, { data: v }, { data: ch }, { data: cv }, { data: provs }] = await Promise.all([
     admin.from("cuentas_por_pagar").select("tipo_proveedor").eq("numero_contrato", numeroContrato),
-    admin.from("ventas").select("costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida").eq("numero_contrato", numeroContrato).maybeSingle(),
+    admin.from("ventas").select("tenant, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida").eq("numero_contrato", numeroContrato).maybeSingle(),
     admin.from("contrato_hoteles").select("nombre, proveedor").eq("numero_contrato", numeroContrato).order("orden").limit(1),
     admin.from("contrato_vuelos").select("aerolinea").eq("numero_contrato", numeroContrato).order("orden").limit(1),
     admin.from("proveedores").select("nombre, aplica_retencion, pct_retencion"),
   ]);
   if (!v) return { ok: false, creadas: 0 };
+  const tenant = (v.tenant as string | null) ?? "mayorista";
 
   const yaTiene = new Set(((existentes ?? []).map((r) => r.tipo_proveedor).filter(Boolean)) as string[]);
   const hoy = new Date().toISOString().slice(0, 10);
@@ -830,7 +831,7 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
   };
 
   type Row = {
-    numero_contrato: string; proveedor: string | null; tipo_proveedor: string; servicio: string;
+    numero_contrato: string; tenant: string; proveedor: string | null; tipo_proveedor: string; servicio: string;
     valor_total: number; moneda: string; fecha_obligacion: string; fecha_vencimiento: string | null;
     aplica_retencion: boolean; pct_retencion: number; observaciones: string;
   };
@@ -841,7 +842,7 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
     const nombre = proveedor?.trim() || SIN_ESPECIFICAR;
     const r = retDe(proveedor);
     rows.push({
-      numero_contrato: numeroContrato, proveedor: nombre, tipo_proveedor: tipo, servicio,
+      numero_contrato: numeroContrato, tenant, proveedor: nombre, tipo_proveedor: tipo, servicio,
       valor_total: Math.max(0, valor), moneda, fecha_obligacion: hoy, fecha_vencimiento: vence,
       aplica_retencion: r.aplica_retencion, pct_retencion: r.pct_retencion, observaciones: OBS,
     });
