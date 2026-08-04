@@ -313,11 +313,37 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 130** — todas
-> confirmadas corridas por el dueño, incluida la **130** (`cxp_pagos` — pagos a
-> proveedor ilimitados, ver "Novedades recientes").
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 131** — todas
+> confirmadas corridas por el dueño, incluida la **131** (`comision_b2b_pagos` — abonos
+> parciales a comisiones B2B, ver "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Formato de contrato con marca por tenant + firma de vendedor B2B + abonos a
+>   comisiones + cuenta de cobro en minorista (jul-2026):**
+>   - **Documento de contrato con marca por tenant**: minorista tiene su propia paleta
+>     (pedido del dueño) — fondo azul `#120573` en el encabezado, títulos de sección en
+>     el mismo azul (se probó primero amarillo `#ffe008`, pero se leía muy claro sobre
+>     el blanco de la página) y logo propio (subido por el dueño, con el fondo removido
+>     a mano — el archivo traía fondo blanco/gris sólido en vez de transparente). La
+>     identidad fiscal del membrete/pie (razón social, NIT, RNT, banco) ahora viene de
+>     `agencias` del tenant real del contrato en vez de una constante fija de mayorista.
+>     Se agregó una segunda firma al final (vendedor/aliado B2B, además de quien
+>     elaboró el contrato — pueden coincidir).
+>   - **Abonos a comisiones B2B**: `aliados_b2b.estado` solo permitía "marcar pagada"
+>     todo-o-nada — comisiones grandes se pagan en varios abonos. **Migración 131**
+>     (`comision_b2b_pagos`, ya corrida): log ilimitado de pagos (mismo patrón que
+>     `cxp_pagos`/`retenciones_cxp`), con backfill de comisiones ya marcadas pagadas a
+>     un pago único por el total. Estado (pendiente/parcial/pagada) se deriva ahora de
+>     la suma de abonos, no de la columna vieja.
+>   - **Cuenta de cobro en minorista**: `/portal/comision/[numero]` dependía de
+>     columnas de `ventas` que solo llena el flujo tarifario/reservar B2B (exclusivo de
+>     mayorista) — minorista no tiene tarifario/reservar, así que sus comisiones
+>     (todas en `aliados_b2b`) nunca podían generar cuenta de cobro. Ahora también
+>     resuelve desde `aliados_b2b` cuando el flujo de `ventas` no aplica — un rol
+>     interno puede generarla/imprimirla en nombre del aliado. `crearComisionB2B`
+>     ahora captura `tipo_aliado` (freelance/agencia, antes siempre quedaba vacío),
+>     necesario para el gate correcto (solo freelance genera cuenta de cobro; agencia
+>     factura electrónicamente).
 > - **Fix — pagos a proveedor ilimitados (jul-2026):** `cuentas_por_pagar` modelaba los
 >   pagos con 3 columnas fijas (`abono1/2/3` + fecha + TRM) — una cuenta con más de 3
 >   pagos parciales no dejaba registrar el siguiente ("máximo del modelo"). Reportado
@@ -1140,14 +1166,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **129** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **131** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 130** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 131** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -1242,7 +1268,11 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > Conciliaciones que no se van a relacionar con un contrato del sistema ·
 > **130 cxp_pagos** (ya corrida) — tabla `cxp_pagos` (log ilimitado de pagos
 > a proveedor, mismo patrón que `retenciones_cxp`) + backfill desde las
-> viejas columnas fijas `abono1/2/3` — ver "Novedades recientes".
+> viejas columnas fijas `abono1/2/3` · **131 comision_b2b_pagos** (ya
+> corrida) — tabla `comision_b2b_pagos` (log ilimitado de abonos a
+> comisiones B2B, mismo patrón que `cxp_pagos`) + backfill desde
+> `aliados_b2b.estado='pagada'` a un pago único por el total — ver
+> "Novedades recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
