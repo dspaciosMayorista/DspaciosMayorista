@@ -4,6 +4,8 @@ import Link from "next/link";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { adjuntarNotaRegimen } from "@/lib/contrato/regimenNotas";
+import { agenciaDe } from "@/lib/tenant.server";
+import type { Tenant } from "@/lib/tenant";
 
 export async function generateMetadata({
   params,
@@ -43,6 +45,8 @@ export default async function ContratoImprimiblePage({
 
   if (!venta) notFound();
 
+  const agencia = await agenciaDe((venta.tenant as Tenant | null) ?? undefined);
+
   const totalPagado = (abonos ?? []).reduce(
     (s, a) => s + (a.valor_abono ?? 0),
     0
@@ -71,6 +75,7 @@ export default async function ContratoImprimiblePage({
             vuelos={vuelos ?? []}
             items={items ?? []}
             totalPagado={totalPagado}
+            agencia={agencia}
           />
         </div>
       </div>

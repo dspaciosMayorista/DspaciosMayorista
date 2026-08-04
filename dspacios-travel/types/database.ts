@@ -2565,6 +2565,7 @@ export type Enums<T extends keyof Database["public"]["Enums"]> =
 // Tipos de uso frecuente
 export type Usuario = Tables<"usuarios">;
 export type Venta = Tables<"ventas">;
+export type Agencia = Tables<"agencias">;
 export type Abono = Tables<"abonos">;
 export type BloqueoVuelo = Tables<"bloqueos_vuelo">;
 export type Silla = Tables<"sillas">;

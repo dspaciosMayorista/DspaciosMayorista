@@ -15,6 +15,7 @@ import type {
   ContratoHotel,
   ContratoVuelo,
   ContratoItem,
+  Agencia,
 } from "@/types/database";
 
 type HotelConNota = ContratoHotel & { nota_regimen?: string | null; foto_url?: string | null };
@@ -31,9 +32,20 @@ type Props = {
   esCotizacion?: boolean;
   codigo?: string;
   vigenciaHasta?: string | null;
+  // Identidad fiscal de la agencia dueña del contrato (tabla `agencias`,
+  // una fila por tenant). Si no se pasa (páginas viejas sin actualizar),
+  // cae a la EMPRESA fija (mayorista) — ver abajo.
+  agencia?: Agencia | null;
 };
 
-const PRIMARY = "#1D7C9A";
+// Marca por tenant: mayorista mantiene los colores/logo de siempre;
+// minorista tiene su propia paleta (pedido del dueño, jul-2026) — azul oscuro
+// de fondo, amarillo para los títulos de sección, blanco/negro para el resto
+// del texto según el fondo sobre el que caiga.
+const MARCA_POR_TENANT = {
+  mayorista: { primary: "#1D7C9A", titulo: "#1D7C9A", logo: "/marca/logo-white.png" },
+  minorista: { primary: "#120573", titulo: "#ffe008", logo: "/marca/logo-minorista-white.png" },
+} as const;
 
 function Pill({ label, value }: { label: string; value: string }) {
   return (
@@ -56,6 +68,7 @@ export function ContratoDocumento({
   esCotizacion = false,
   codigo,
   vigenciaHasta,
+  agencia,
 }: Props) {
   const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
   const total = items.reduce(
@@ -68,6 +81,26 @@ export function ContratoDocumento({
   const alojItems = items.filter((it) => !it.descripcion?.startsWith("Servicio · "));
   const anio = new Date().getFullYear();
 
+  const tenant = ((venta as { tenant?: string | null }).tenant ?? "mayorista") === "minorista" ? "minorista" : "mayorista";
+  const MARCA = MARCA_POR_TENANT[tenant];
+  const PRIMARY = MARCA.primary;
+  const TITULO = MARCA.titulo;
+  // Identidad fiscal: la de `agencias` (tenant real) si llegó por prop; si no,
+  // la constante fija de siempre (documentos viejos sin actualizar a esta prop).
+  const empresa = {
+    razonSocial: agencia?.razon_social ?? EMPRESA.razonSocial,
+    nit: agencia?.nit ?? EMPRESA.nit,
+    rnt: agencia?.rnt ?? EMPRESA.rnt,
+    sitio: EMPRESA.sitio,
+    correo: agencia?.correo ?? EMPRESA.correo,
+    cuentaBancaria: {
+      banco: agencia?.banco ?? EMPRESA.cuentaBancaria.banco,
+      tipo: agencia?.tipo_cuenta ?? EMPRESA.cuentaBancaria.tipo,
+      numero: agencia?.numero_cuenta ?? EMPRESA.cuentaBancaria.numero,
+      titular: agencia?.razon_social ?? EMPRESA.cuentaBancaria.titular,
+    },
+  };
+
   return (
     <div className="contrato-doc mx-auto max-w-3xl bg-white text-gray-800">
       {/* ── Encabezado ─────────────────────────────────────────── */}
@@ -76,9 +109,10 @@ export function ContratoDocumento({
         style={{ backgroundColor: PRIMARY }}
       >
         <div>
-          {/* Logo de marca (blanco, va sobre el fondo turquesa) */}
+          {/* Logo de marca (blanco/claro, va sobre el fondo de color) — logo y
+              color de fondo cambian según la agencia (mayorista/minorista). */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/marca/logo-white.png" alt="D'spacios Travel — Mayorista de Turismo" className="h-12 w-auto" />
+          <img src={MARCA.logo} alt={empresa.razonSocial} className="h-12 w-auto" />
         </div>
         <div className="text-center">
           <div className="text-base font-semibold">{esCotizacion ? "COTIZACIÓN" : CONTRATO_TITULO}</div>
@@ -98,9 +132,9 @@ export function ContratoDocumento({
           )}
         </div>
         <div className="text-right text-xs opacity-90">
-          <div>{EMPRESA.sitio}</div>
-          <div>{EMPRESA.correo}</div>
-          <div className="mt-1">RNT {EMPRESA.rnt}</div>
+          <div>{empresa.sitio}</div>
+          <div>{empresa.correo}</div>
+          <div className="mt-1">RNT {empresa.rnt}</div>
         </div>
       </header>
 
@@ -134,7 +168,7 @@ export function ContratoDocumento({
       <div className="space-y-7 px-5 py-6 text-sm md:px-8 md:py-7">
         {/* ── Cliente ──────────────────────────────────────────── */}
         <section>
-          <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>
+          <h2 className="mb-2 text-sm font-semibold" style={{ color: TITULO }}>
             Cliente
           </h2>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -150,7 +184,7 @@ export function ContratoDocumento({
           <section>
             <h2
               className="mb-2 text-sm font-semibold"
-              style={{ color: PRIMARY }}
+              style={{ color: TITULO }}
             >
               Vuelos
             </h2>
@@ -202,7 +236,7 @@ export function ContratoDocumento({
 
         {/* ── Hoteles y Servicios ──────────────────────────────── */}
         <section>
-          <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>
+          <h2 className="mb-2 text-sm font-semibold" style={{ color: TITULO }}>
             Hoteles y Servicios
           </h2>
           <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-3">
@@ -271,7 +305,7 @@ export function ContratoDocumento({
           <section>
             <h2
               className="mb-2 text-sm font-semibold"
-              style={{ color: PRIMARY }}
+              style={{ color: TITULO }}
             >
               Pasajeros
             </h2>
@@ -333,7 +367,7 @@ export function ContratoDocumento({
 
         {/* ── Valores y Pagos ──────────────────────────────────── */}
         <section>
-          <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>
+          <h2 className="mb-2 text-sm font-semibold" style={{ color: TITULO }}>
             Valores y Pagos
           </h2>
           <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -480,12 +514,12 @@ export function ContratoDocumento({
           <div className="mt-6 rounded-lg bg-gray-50 p-3 text-[11px]">
             <div className="font-semibold text-gray-700">Datos de pago</div>
             <div>
-              {EMPRESA.cuentaBancaria.banco} — {EMPRESA.cuentaBancaria.tipo}{" "}
-              {EMPRESA.cuentaBancaria.numero}
+              {empresa.cuentaBancaria.banco} — {empresa.cuentaBancaria.tipo}{" "}
+              {empresa.cuentaBancaria.numero}
             </div>
-            <div>A nombre de {EMPRESA.cuentaBancaria.titular}</div>
+            <div>A nombre de {empresa.cuentaBancaria.titular}</div>
             <div className="mt-1">
-              {EMPRESA.razonSocial} · NIT {EMPRESA.nit} · RNT {EMPRESA.rnt}
+              {empresa.razonSocial} · NIT {empresa.nit} · RNT {empresa.rnt}
             </div>
           </div>
 

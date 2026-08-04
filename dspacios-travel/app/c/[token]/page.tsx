@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { adjuntarNotaRegimen } from "@/lib/contrato/regimenNotas";
+import { agenciaDe } from "@/lib/tenant.server";
+import type { Tenant } from "@/lib/tenant";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +42,8 @@ export default async function ContratoPublicoPage({
     .single();
 
   if (!venta) notFound();
+
+  const agencia = await agenciaDe((venta.tenant as Tenant | null) ?? undefined);
 
   const numero = venta.numero_contrato;
   const [
@@ -79,6 +83,7 @@ export default async function ContratoPublicoPage({
             vuelos={vuelos ?? []}
             items={items ?? []}
             totalPagado={totalPagado}
+            agencia={agencia}
           />
         </div>
       </div>
