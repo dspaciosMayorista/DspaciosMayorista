@@ -200,6 +200,11 @@ export type Database = {
           created_at: string;
           tipo: string;
           pct_comision: number | null;
+          tipo_documento: string;
+          direccion: string | null;
+          banco: string | null;
+          tipo_cuenta: string | null;
+          numero_cuenta: string | null;
         };
         Insert: {
           id?: number;
@@ -213,6 +218,11 @@ export type Database = {
           created_at?: string;
           tipo?: string;
           pct_comision?: number | null;
+          tipo_documento?: string;
+          direccion?: string | null;
+          banco?: string | null;
+          tipo_cuenta?: string | null;
+          numero_cuenta?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["aliados"]["Insert"]>;
         Relationships: [];
@@ -809,6 +819,7 @@ export type Database = {
           fecha_pago: string | null;
           created_at: string;
           tenant: string;
+          aliado_id: number | null;
         };
         Insert: {
           id?: number;
@@ -828,6 +839,7 @@ export type Database = {
           fecha_pago?: string | null;
           created_at?: string;
           tenant?: string;
+          aliado_id?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["aliados_b2b"]["Insert"]>;
         Relationships: [];

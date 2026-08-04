@@ -18,7 +18,7 @@ export default async function AliadosPage() {
   }
 
   const [{ data: aliados }, { data: params }] = await Promise.all([
-    sb.from("aliados").select("id, nombre, tipo, nit, contacto, email, telefono, pct_comision, aplica_retencion, pct_retencion").order("tipo").order("nombre"),
+    sb.from("aliados").select("id, nombre, tipo, nit, tipo_documento, direccion, contacto, email, telefono, pct_comision, aplica_retencion, pct_retencion, banco, tipo_cuenta, numero_cuenta").order("tipo").order("nombre"),
     sb.from("parametros_tributarios").select("parametro, valor").in("parametro", ["COMISION_AGENCIA", "COMISION_FREELANCE"]),
   ]);
   const pmap = new Map((params ?? []).map((p) => [p.parametro, Number(p.valor)]));

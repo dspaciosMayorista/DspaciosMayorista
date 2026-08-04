@@ -10,12 +10,17 @@ export type AliadoInput = {
   nombre: string;
   tipo: "agencia" | "freelance";
   nit: string;
+  tipoDocumento: string;   // "NIT" | "CC"
+  direccion: string;
   contacto: string;
   email: string;
   telefono: string;
   pctComision: number | null;   // override (fracción); null = usa el default general
   aplicaRetencion: boolean;
   pctRetencion: number;         // fracción
+  banco: string;
+  tipoCuenta: string;
+  numeroCuenta: string;
 };
 
 export async function crearAliado(input: AliadoInput): Promise<Result> {
@@ -25,12 +30,17 @@ export async function crearAliado(input: AliadoInput): Promise<Result> {
     nombre: input.nombre.trim(),
     tipo: input.tipo,
     nit: oNull(input.nit),
+    tipo_documento: input.tipoDocumento || "NIT",
+    direccion: oNull(input.direccion),
     contacto: oNull(input.contacto),
     email: oNull(input.email),
     telefono: oNull(input.telefono),
     pct_comision: input.pctComision,
     aplica_retencion: input.aplicaRetencion,
     pct_retencion: input.pctRetencion,
+    banco: oNull(input.banco),
+    tipo_cuenta: oNull(input.tipoCuenta),
+    numero_cuenta: oNull(input.numeroCuenta),
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/aliados");
@@ -39,13 +49,24 @@ export async function crearAliado(input: AliadoInput): Promise<Result> {
 
 export async function actualizarAliado(
   id: number,
-  patch: { pctComision?: number | null; aplicaRetencion?: boolean; pctRetencion?: number }
+  patch: {
+    pctComision?: number | null; aplicaRetencion?: boolean; pctRetencion?: number;
+    tipoDocumento?: string; direccion?: string; banco?: string; tipoCuenta?: string; numeroCuenta?: string;
+  }
 ): Promise<Result> {
   const sb = await createClient();
-  const upd: { pct_comision?: number | null; aplica_retencion?: boolean; pct_retencion?: number } = {};
+  const upd: {
+    pct_comision?: number | null; aplica_retencion?: boolean; pct_retencion?: number;
+    tipo_documento?: string; direccion?: string | null; banco?: string | null; tipo_cuenta?: string | null; numero_cuenta?: string | null;
+  } = {};
   if (patch.pctComision !== undefined) upd.pct_comision = patch.pctComision;
   if (patch.aplicaRetencion !== undefined) upd.aplica_retencion = patch.aplicaRetencion;
   if (patch.pctRetencion !== undefined) upd.pct_retencion = patch.pctRetencion;
+  if (patch.tipoDocumento !== undefined) upd.tipo_documento = patch.tipoDocumento || "NIT";
+  if (patch.direccion !== undefined) upd.direccion = oNull(patch.direccion);
+  if (patch.banco !== undefined) upd.banco = oNull(patch.banco);
+  if (patch.tipoCuenta !== undefined) upd.tipo_cuenta = oNull(patch.tipoCuenta);
+  if (patch.numeroCuenta !== undefined) upd.numero_cuenta = oNull(patch.numeroCuenta);
   const { error } = await sb.from("aliados").update(upd).eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/aliados");

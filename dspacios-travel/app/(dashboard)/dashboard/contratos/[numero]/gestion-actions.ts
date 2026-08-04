@@ -146,6 +146,7 @@ export async function crearComisionB2B(input: {
   aliado: string;
   nit: string;
   tipoAliado?: string; // "freelance" | "agencia" — decide si genera cuenta de cobro (solo freelance)
+  aliadoId?: number | null; // FK al catálogo (elegido del desplegable) — trae datos de pago a la cuenta de cobro
   precioVenta: number;
   pctComision: number;
   recobroTotal: number;
@@ -165,6 +166,7 @@ export async function crearComisionB2B(input: {
     aliado: input.aliado || null,
     nit: input.nit || null,
     tipo_aliado: input.tipoAliado || null,
+    aliado_id: input.aliadoId ?? null,
     precio_venta: input.precioVenta,
     base_comision: input.precioVenta,
     pct_comision: input.pctComision,

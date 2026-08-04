@@ -656,6 +656,7 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalog
     start(async () => {
       const r = await crearComisionB2B({
         numeroContrato: numero, aliado, nit, tipoAliado,
+        aliadoId: aliadoId ? Number(aliadoId) : null,
         precioVenta,
         pctComision: Number(pct) / 100, recobroTotal: Number(recobro) || 0,
         pctRecobroAliado: Number(pctRec) / 100 || 0.5,
