@@ -12,10 +12,16 @@ type Result = { ok: true } | { ok: false; error: string };
 export async function registrarPagoComisionB2B(aliadoB2bId: number, valor: number, fecha: string): Promise<Result> {
   if (!(valor > 0)) return { ok: false, error: "El valor del abono debe ser mayor a 0." };
   const sb = await createClient();
+  // El tenant se toma de la comisión misma (no de la cookie de sesión activa),
+  // mismo criterio que crearComisionB2B/crearCuentaPorPagar: si queda mal
+  // (default 'mayorista'), el abono se guarda pero desaparece de
+  // /dashboard/comisiones en la agencia real (esa consulta filtra por tenant).
+  const { data: aliado } = await sb.from("aliados_b2b").select("tenant").eq("id", aliadoB2bId).maybeSingle();
   const { error } = await sb.from("comision_b2b_pagos").insert({
     aliado_b2b_id: aliadoB2bId,
     valor,
     fecha: fecha || new Date().toISOString().slice(0, 10),
+    tenant: aliado?.tenant ?? "mayorista",
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/comisiones");
