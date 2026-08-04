@@ -313,13 +313,25 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 132** — todas
-> confirmadas corridas por el dueño, incluida la **132** (`liquidacion_descuentos` —
-> descuentos a la liquidación de comisión de un asesor interno, ver "Novedades recientes").
-> ⚠️ Además existe ya en el repo (rama de trabajo) la migración **133**
-> (`aliados_datos_pago`) **pendiente de confirmación del dueño** — no asumir que ya corrió.
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 133** — todas
+> confirmadas corridas por el dueño, incluida la **133** (`aliados_datos_pago` — datos de
+> pago del catálogo de aliados B2B para la cuenta de cobro, ver "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Rediseño de la cuenta de cobro + datos de pago del aliado (jul-2026):** pedido del
+>   dueño con 2 formatos de referencia (plantilla CXC real + hoja de liquidación interna).
+>   **Migración 133** (`aliados_datos_pago`, ya corrida): agrega a `aliados` (catálogo)
+>   `tipo_documento`/`direccion`/`banco`/`tipo_cuenta`/`numero_cuenta` (editables en
+>   `/dashboard/aliados`, panel "Datos de pago" por fila) y `aliados_b2b.aliado_id` (FK
+>   opcional al catálogo, se llena al elegir un aliado del desplegable "Elegir aliado
+>   existente" en "Agregar comisión B2B"). `/portal/comision/[numero]` ahora muestra:
+>   encabezado con documento/dirección/contacto del aliado (si está enlazado al catálogo,
+>   o por coincidencia de nombre como respaldo), "DEBE LA SUMA DE" en números **y letras**
+>   (nuevo `lib/utils/numeroALetras.ts`, sin dependencias), desglose PVP/base
+>   comisionable/**% de comisión**/comisión/recobro/retención, cláusula de no-retención
+>   (Art. 383 E.T.) cuando el aliado no tiene retención configurada, y datos bancarios del
+>   aliado para consignar. Deliberadamente NO se agregó numeración tipo "CXC MDE-008" de
+>   la plantilla de referencia — no hay un esquema de numeración en el sistema.
 > - **Descuentos a liquidación de comisión + fix tenant en abonos B2B (jul-2026):**
 >   **Migración 132** (`liquidacion_descuentos`, ya corrida): nueva tabla para registrar
 >   descuentos puntuales a la comisión mensual de un asesor interno (ej. un descuento que
@@ -1181,14 +1193,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **132** (todas corridas por el dueño; la 133 está en el repo pero pendiente de confirmación)
+### Migraciones Supabase — total en repo: **133** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 132** (todas aplicadas); la 133 está en el repo, pendiente de confirmación.
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 133** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -1289,11 +1301,11 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > `aliados_b2b.estado='pagada'` a un pago único por el total · **132
 > liquidacion_descuentos** (ya corrida) — tabla `liquidacion_descuentos`
 > (descuentos puntuales a la comisión mensual de un asesor interno, log
-> por asesor+mes) — ver "Novedades recientes". ⚠️ **133
-> aliados_datos_pago** existe en el repo (datos de pago del catálogo
-> `aliados` + `aliados_b2b.aliado_id`) **PENDIENTE de confirmación** —
-> no está en el conteo de arriba hasta que el dueño confirme haberla
-> corrido.
+> por asesor+mes) — ver "Novedades recientes" · **133 aliados_datos_pago**
+> (ya corrida) — datos de pago del catálogo `aliados`
+> (`tipo_documento`/`direccion`/`banco`/`tipo_cuenta`/`numero_cuenta`) +
+> `aliados_b2b.aliado_id` (FK opcional al catálogo) — ver "Novedades
+> recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
