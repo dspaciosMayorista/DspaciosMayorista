@@ -6,6 +6,7 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { agenciaDe } from "@/lib/tenant.server";
 import { esTenant } from "@/lib/tenant";
+import { calcComisionB2B } from "@/lib/calc/finanzas";
 
 export const dynamic = "force-dynamic";
 
@@ -24,14 +25,49 @@ export default async function CuentaCobroPage({ params }: { params: Promise<{ nu
     .maybeSingle();
   if (!v) notFound();
 
+  // Vía 1: flujo tarifario/reservar B2B (solo mayorista) — la comisión ya
+  // queda en `ventas.comision_b2b`. Vía 2: comisión agregada a mano desde el
+  // contrato (`aliados_b2b`) — único camino en minorista (sin tarifario/
+  // reservar), también usado en mayorista para comisiones manuales. Se
+  // intenta la vía 1 primero y se cae a la 2 si no aplica.
+  const esVentasB2B = v.modo_compra === "comisionable" && !!v.comision_b2b;
+  let aliadoB2B: { aliado: string | null; tipoAliado: string | null; totalPagar: number } | null = null;
+  if (!esVentasB2B) {
+    const { data: b } = await admin
+      .from("aliados_b2b")
+      .select("aliado, tipo_aliado, base_comision, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion")
+      .eq("numero_contrato", numero)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (b) {
+      const c = calcComisionB2B({
+        precioVenta: v.precio_venta ?? 0,
+        baseComisionable: b.base_comision,
+        pctComision: b.pct_comision,
+        recobroTotal: b.recobro_total,
+        pctRecobroAliado: b.pct_recobro_aliado,
+        aplicaRetencion: b.aplica_retencion,
+        pctRetencion: b.pct_retencion,
+      });
+      aliadoB2B = { aliado: b.aliado, tipoAliado: b.tipo_aliado, totalPagar: c.totalPagar };
+    }
+  }
+  if (!esVentasB2B && !aliadoB2B) notFound();
+
+  const tipoAsesorEfectivo = esVentasB2B ? v.tipo_asesor : aliadoB2B!.tipoAliado;
+  const aliadoNombre = esVentasB2B ? (v.freelance_nombre || v.agencia_nombre) : aliadoB2B!.aliado;
+  const montoComision = esVentasB2B ? Number(v.comision_b2b) : aliadoB2B!.totalPagar;
+
   // Seguridad: solo el aliado dueño del contrato (o un interno) puede verla.
   const esInterno = ["superadmin", "administracion", "gerencia", "operaciones"].includes(perfil?.rol ?? "");
-  const esDueno = v.b2b_usuario_id === user.id || [v.agencia_nombre, v.freelance_nombre].includes(perfil?.nombre ?? "");
+  const esDueno = esVentasB2B
+    ? v.b2b_usuario_id === user.id || [v.agencia_nombre, v.freelance_nombre].includes(perfil?.nombre ?? "")
+    : !!aliadoNombre && aliadoNombre === (perfil?.nombre ?? "");
   if (!esInterno && !esDueno) notFound();
-  if (v.modo_compra !== "comisionable" || !v.comision_b2b) notFound();
   // Cuenta de cobro = documento de PERSONA NATURAL (freelance). Las agencias
   // (persona jurídica) deben facturar electrónicamente, no generan este documento.
-  if (v.tipo_asesor === "agencia" && !esInterno) {
+  if (tipoAsesorEfectivo === "agencia" && !esInterno) {
     return (
       <div className="mx-auto max-w-xl px-4 py-16 text-center">
         <p className="text-sm text-gray-600">
@@ -43,7 +79,7 @@ export default async function CuentaCobroPage({ params }: { params: Promise<{ nu
   }
 
   const moneda = v.moneda ?? "COP";
-  const aliado = v.freelance_nombre || v.agencia_nombre || perfil?.nombre || "";
+  const aliado = aliadoNombre || perfil?.nombre || "";
   const hoy = new Date().toISOString().slice(0, 10);
   // Membrete: razón/nombre comercial de la agencia dueña del contrato (mayorista
   // o minorista) — antes estaba fijo en "Mayorista", incorrecto para minorista.
@@ -84,7 +120,7 @@ export default async function CuentaCobroPage({ params }: { params: Promise<{ nu
 
           <div className="mt-6 flex items-center justify-between rounded-lg bg-[rgba(29,124,154,0.06)] px-4 py-3">
             <span className="text-sm font-semibold text-gray-700">Total a cobrar (comisión)</span>
-            <span className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(Number(v.comision_b2b), moneda)}</span>
+            <span className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(montoComision, moneda)}</span>
           </div>
 
           <div className="mt-10 text-sm text-gray-600">

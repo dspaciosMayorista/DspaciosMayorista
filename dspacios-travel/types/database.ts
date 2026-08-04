@@ -832,6 +832,26 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["aliados_b2b"]["Insert"]>;
         Relationships: [];
       };
+      comision_b2b_pagos: {
+        Row: {
+          id: number;
+          aliado_b2b_id: number;
+          fecha: string;
+          valor: number;
+          tenant: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          aliado_b2b_id: number;
+          fecha?: string;
+          valor: number;
+          tenant?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["comision_b2b_pagos"]["Insert"]>;
+        Relationships: [];
+      };
       liquidacion_comisiones: {
         Row: {
           id: number;

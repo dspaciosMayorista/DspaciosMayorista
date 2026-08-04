@@ -145,6 +145,7 @@ export async function crearComisionB2B(input: {
   numeroContrato: string;
   aliado: string;
   nit: string;
+  tipoAliado?: string; // "freelance" | "agencia" — decide si genera cuenta de cobro (solo freelance)
   precioVenta: number;
   pctComision: number;
   recobroTotal: number;
@@ -163,6 +164,7 @@ export async function crearComisionB2B(input: {
     tenant: venta?.tenant ?? "mayorista",
     aliado: input.aliado || null,
     nit: input.nit || null,
+    tipo_aliado: input.tipoAliado || null,
     precio_venta: input.precioVenta,
     base_comision: input.precioVenta,
     pct_comision: input.pctComision,

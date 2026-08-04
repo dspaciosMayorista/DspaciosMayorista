@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
+import { sumarPagosPorAliado, estadoComisionB2B } from "@/lib/finanzas/pagosComisionB2B";
 import { ComisionesList, type ComB2BRow } from "./ComisionesList";
 
 export const dynamic = "force-dynamic";
@@ -25,12 +26,21 @@ export default async function ComisionesPage() {
     );
   }
 
-  const [{ data: b2b }, { data: ventas }] = await Promise.all([
+  const [{ data: b2b }, { data: ventas }, { data: pagosB2B }] = await Promise.all([
     sb.from("aliados_b2b").select("*").eq("tenant", tenant).order("id", { ascending: false }),
     sb.from("ventas").select("numero_contrato, cliente, canal, tipo_asesor, agencia_nombre, freelance_nombre").eq("tenant", tenant),
+    sb.from("comision_b2b_pagos").select("id, aliado_b2b_id, fecha, valor").eq("tenant", tenant).order("fecha", { ascending: true }).order("id", { ascending: true }),
   ]);
   const clientePorContrato = new Map<string, string>();
   for (const v of ventas ?? []) clientePorContrato.set(v.numero_contrato, v.cliente ?? "");
+
+  const pagosPorAliado = new Map<number, { id: number; fecha: string; valor: number }[]>();
+  for (const p of pagosB2B ?? []) {
+    const arr = pagosPorAliado.get(p.aliado_b2b_id) ?? [];
+    arr.push({ id: p.id, fecha: p.fecha, valor: p.valor });
+    pagosPorAliado.set(p.aliado_b2b_id, arr);
+  }
+  const totalPagadoPorAliado = sumarPagosPorAliado(pagosB2B ?? []);
 
   const rowsRegistradas: ComB2BRow[] = (b2b ?? []).map((b) => {
     const c = calcComisionB2B({
@@ -38,12 +48,15 @@ export default async function ComisionesPage() {
       recobroTotal: b.recobro_total, pctRecobroAliado: b.pct_recobro_aliado,
       aplicaRetencion: b.aplica_retencion, pctRetencion: b.pct_retencion,
     });
+    const pagos = pagosPorAliado.get(b.id) ?? [];
+    const pagado = totalPagadoPorAliado[b.id] ?? 0;
     return {
       id: b.id,
       numero_contrato: b.numero_contrato,
       cliente: clientePorContrato.get(b.numero_contrato) ?? null,
       aliado: b.aliado,
       nit: b.nit,
+      tipoAliado: b.tipo_aliado,
       precioVenta: b.precio_venta,
       baseComision: b.base_comision,
       pct_comision: b.pct_comision,
@@ -56,8 +69,9 @@ export default async function ComisionesPage() {
       totalComision: c.totalComision,
       retencion: c.retencion,
       totalPagar: c.totalPagar,
-      estado: b.estado,
-      fecha_pago: b.fecha_pago,
+      estado: estadoComisionB2B(c.totalPagar, pagado),
+      fecha_pago: pagos.length ? pagos[pagos.length - 1].fecha : null,
+      pagos,
     };
   });
 
@@ -80,6 +94,8 @@ export default async function ComisionesPage() {
       totalPagar: null,
       estado: "sin_definir",
       fecha_pago: null,
+      pagos: [],
+      tipoAliado: null,
       sinComision: true,
     }));
 
