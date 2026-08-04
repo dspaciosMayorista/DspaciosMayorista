@@ -43,8 +43,13 @@ type Props = {
 // de fondo, amarillo para los títulos de sección, blanco/negro para el resto
 // del texto según el fondo sobre el que caiga.
 const MARCA_POR_TENANT = {
-  mayorista: { primary: "#1D7C9A", titulo: "#1D7C9A", logo: "/marca/logo-white.png" },
-  minorista: { primary: "#120573", titulo: "#ffe008", logo: "/marca/logo-minorista-white.jpg" },
+  mayorista: { primary: "#1D7C9A", titulo: "#1D7C9A", logo: "/marca/logo-white.png", logoEnTarjeta: false },
+  // El logo de minorista es la versión full-color sobre fondo claro (no una
+  // versión recortada para fondo oscuro), así que va dentro de una tarjeta
+  // blanca en vez de directo sobre el azul — evita que se vea como un
+  // rectángulo pegado encima. Cambiar a `false` si se sube una versión ya
+  // preparada para fondo oscuro.
+  minorista: { primary: "#120573", titulo: "#ffe008", logo: "/marca/logo-minorista-white.jpg", logoEnTarjeta: true },
 } as const;
 
 function Pill({ label, value }: { label: string; value: string }) {
@@ -109,10 +114,19 @@ export function ContratoDocumento({
         style={{ backgroundColor: PRIMARY }}
       >
         <div>
-          {/* Logo de marca (blanco/claro, va sobre el fondo de color) — logo y
-              color de fondo cambian según la agencia (mayorista/minorista). */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={MARCA.logo} alt={empresa.razonSocial} className="h-12 w-auto" />
+          {/* Logo de marca — logo y color de fondo cambian según la agencia
+              (mayorista/minorista). Si el logo no viene preparado para fondo
+              oscuro (`logoEnTarjeta`), se muestra dentro de una tarjeta
+              blanca en vez de directo sobre el color. */}
+          {MARCA.logoEnTarjeta ? (
+            <div className="rounded-md bg-white px-2 py-1">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={MARCA.logo} alt={empresa.razonSocial} className="h-10 w-auto" />
+            </div>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={MARCA.logo} alt={empresa.razonSocial} className="h-12 w-auto" />
+          )}
         </div>
         <div className="text-center">
           <div className="text-base font-semibold">{esCotizacion ? "COTIZACIÓN" : CONTRATO_TITULO}</div>
