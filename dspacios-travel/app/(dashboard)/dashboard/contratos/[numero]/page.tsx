@@ -49,6 +49,7 @@ export default async function ContratoDetallePage({
     { data: asesoresVenta },
     { data: destinos },
     { data: proveedoresCatalogo },
+    { data: aliadosCatalogo },
   ] = await Promise.all([
     sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
@@ -64,6 +65,7 @@ export default async function ContratoDetallePage({
     sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("nombre").order("nombre"),
+    sb.from("aliados").select("id, nombre, nit, pct_comision, aplica_retencion, pct_retencion").order("nombre"),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
@@ -247,6 +249,7 @@ export default async function ContratoDetallePage({
         formasPago={formasPago}
         moneda={(venta.moneda as string) ?? "COP"}
         proveedoresCatalogo={(proveedoresCatalogo ?? []).map((p) => p.nombre)}
+        aliadosCatalogo={aliadosCatalogo ?? []}
       />
 
       <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} />

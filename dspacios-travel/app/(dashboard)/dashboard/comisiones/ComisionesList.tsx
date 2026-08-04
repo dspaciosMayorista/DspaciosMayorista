@@ -226,32 +226,59 @@ function FilaDetalle({ row }: { row: ComB2BRow }) {
   const baseInicial = row.baseComision ?? row.precioVenta ?? 0;
   const recobroInicial = row.recobroTotal ?? 0;
   const pctRecobroInicial = row.pctRecobroAliado ?? 0.5;
+  const pctInicial = row.pct_comision ?? 0;
 
   const [base, setBase] = useState(String(baseInicial));
   const [recobro, setRecobro] = useState(String(recobroInicial));
   const [pctRecobro, setPctRecobro] = useState(String(Math.round(pctRecobroInicial * 100)));
+  // Cómo se ingresa la comisión: por % (default, como siempre) o por valor en
+  // pesos -- mismos campos (Base comisionable, % comisión, Comisión), solo
+  // cambia cuál de los dos últimos se edita y cuál queda calculado.
+  const [modo, setModo] = useState<"pct" | "valor">("pct");
+  const [pct, setPct] = useState(String(Math.round(pctInicial * 10000) / 100));
+  const [valorComision, setValorComision] = useState(String(Math.round(baseInicial * pctInicial)));
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
 
+  const baseNum = Number(base) || 0;
+  // % efectivo según el modo: en "pct" es lo tipeado en el campo %; en "valor"
+  // se deriva del valor de comisión tipeado, dividido entre la base.
+  const pctEfectivo = modo === "pct"
+    ? (Number(pct) || 0) / 100
+    : baseNum > 0 ? (Number(valorComision) || 0) / baseNum : 0;
+
   const preview = calcComisionB2B({
     precioVenta: row.precioVenta ?? 0,
-    baseComisionable: Number(base) || 0,
-    pctComision: row.pct_comision ?? 0,
+    baseComisionable: baseNum,
+    pctComision: pctEfectivo,
     recobroTotal: Number(recobro) || 0,
     pctRecobroAliado: (Number(pctRecobro) || 0) / 100,
     aplicaRetencion: row.aplicaRetencion ?? false,
     pctRetencion: row.pctRetencion ?? 0,
   });
   const cambio =
-    Number(base) !== baseInicial ||
+    baseNum !== baseInicial ||
+    Math.abs(pctEfectivo - pctInicial) > 0.00005 ||
     Number(recobro) !== recobroInicial ||
     (Number(pctRecobro) || 0) / 100 !== pctRecobroInicial;
+
+  // Cambiar de modo lleva el valor EFECTIVO actual al campo que se va a editar
+  // (en vez de reaparecer con el dato viejo con el que arrancó el panel).
+  function irAModoPct() {
+    setPct(String(Math.round(pctEfectivo * 10000) / 100));
+    setModo("pct");
+  }
+  function irAModoValor() {
+    setValorComision(String(Math.round(baseNum * pctEfectivo)));
+    setModo("valor");
+  }
 
   function guardar() {
     setMsg("");
     start(async () => {
       const r = await actualizarComisionB2B(row.id, {
-        baseComision: Number(base) || 0,
+        baseComision: baseNum,
+        pctComision: pctEfectivo,
         recobroTotal: Number(recobro) || 0,
         pctRecobroAliado: (Number(pctRecobro) || 0) / 100,
       });
@@ -262,17 +289,48 @@ function FilaDetalle({ row }: { row: ComB2BRow }) {
   return (
     <tr className="border-b border-gray-100 bg-gray-50/60">
       <td colSpan={7} className="px-4 py-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">De dónde sale la comisión</p>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">De dónde sale la comisión</p>
+          <div className="flex overflow-hidden rounded-lg border border-gray-300 text-[10px]">
+            <button
+              type="button"
+              onClick={irAModoPct}
+              className="px-2 py-1 font-medium"
+              style={modo === "pct" ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#6b7280" }}
+            >
+              Ingresar por %
+            </button>
+            <button
+              type="button"
+              onClick={irAModoValor}
+              className="px-2 py-1 font-medium"
+              style={modo === "valor" ? { backgroundColor: "var(--brand-primary)", color: "white" } : { color: "#6b7280" }}
+            >
+              Ingresar por valor
+            </button>
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs sm:grid-cols-4 lg:grid-cols-8">
           <DatoComision label="Precio de venta (PVP)" valor={formatCOP(row.precioVenta ?? 0)} />
           <CampoComision label="Base comisionable" value={base} onChange={setBase} />
-          <DatoComision label="% comisión" valor={`${((row.pct_comision ?? 0) * 100).toFixed(1)}%`} />
-          <DatoComision label="Comisión (base × %)" valor={formatCOP(preview.comisionBase)} />
+          {modo === "pct" ? (
+            <CampoComision label="% comisión" value={pct} onChange={setPct} width="w-16" />
+          ) : (
+            <DatoComision label="% comisión" valor={`${(pctEfectivo * 100).toFixed(2)}%`} />
+          )}
+          {modo === "valor" ? (
+            <CampoComision label="Comisión (valor)" value={valorComision} onChange={setValorComision} />
+          ) : (
+            <DatoComision label="Comisión (base × %)" valor={formatCOP(preview.comisionBase)} />
+          )}
           <CampoComision label="Recobro total" value={recobro} onChange={setRecobro} />
           <CampoComision label="% recobro al aliado" value={pctRecobro} onChange={setPctRecobro} width="w-16" />
           <DatoComision label="+ Recobro aliado" valor={formatCOP(preview.recobroAliado)} />
           <DatoComision label="Retención" valor={row.aplicaRetencion ? `− ${formatCOP(preview.retencion)}` : "No aplica"} />
         </div>
+        {modo === "valor" && baseNum <= 0 && (
+          <p className="mt-1 text-[11px] text-amber-600">Define primero la base comisionable para poder calcular el %.</p>
+        )}
         <div className="mt-3 flex items-center justify-between border-t border-gray-200 pt-2">
           <span className="text-xs text-gray-500">
             Comisión ({formatCOP(preview.comisionBase)}) + recobro aliado ({formatCOP(preview.recobroAliado)})
