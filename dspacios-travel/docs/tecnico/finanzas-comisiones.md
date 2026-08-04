@@ -332,6 +332,48 @@ captura `tipoAliado` (`"freelance"|"agencia"`, default freelance — antes siemp
 (`GestionTabs.tsx::ComisionesTab`) trae `aliados.tipo` del catálogo y lo autocompleta; también
 hay un `<select>` manual Freelance/Agencia en el formulario.
 
+### Cuenta de cobro — rediseño con datos de pago + desglose (migración 133, jul-2026)
+
+Pedido del dueño con 2 formatos de referencia: una plantilla real de cuenta de cobro (CXC, con
+NIT/dirección del aliado, "DEBE LA SUMA DE" en números y letras, cláusula del Art. 383 E.T. y
+datos bancarios) y una hoja de liquidación interna (PVP / valor tiquetes / base comisionable /
+% / recobro por fila). El documento (`app/portal/comision/[numero]/page.tsx`) se amplió así:
+
+- **`aliados` (catálogo) gana datos de pago**: `tipo_documento` ('NIT'/'CC'), `direccion`,
+  `banco`, `tipo_cuenta`, `numero_cuenta` — editables en `/dashboard/aliados`
+  (`AliadosClient.tsx::DatosPago`, panel expandible por fila; también en el formulario de
+  creación). Antes el catálogo no tenía forma de saber A QUIÉN/DÓNDE consignar la comisión.
+- **`aliados_b2b.aliado_id`** (FK opcional a `aliados`): cuando la comisión se creó eligiendo un
+  aliado del desplegable "Elegir aliado existente" (`elegirAliado()` en
+  `GestionTabs.tsx::ComisionesTab`), queda enlazada al catálogo — antes solo copiaba
+  nombre/nit/% como texto suelto, sin ningún vínculo real. La cuenta de cobro usa este enlace
+  para traer documento/dirección/cuenta bancaria automáticamente. Si la comisión se tipeó a
+  mano (no elegida del catálogo), `aliado_id` queda `null` y la página cae a un **match suave
+  por nombre** (`ilike` contra `aliados.nombre`) como mejor esfuerzo — si tampoco hay match, esa
+  sección del documento simplemente no aparece (no bloquea la generación).
+- **Desglose del valor** (`type Detalle` en la página): vía 2 (`aliados_b2b`) muestra el
+  desglose COMPLETO que ya calcula `calcComisionB2B()` — PVP, base comisionable, % comisión,
+  comisión, recobro (si > 0), retención (si aplica). Vía 1 (`ventas.comision_b2b`, flujo
+  tarifario B2B de mayorista) NO tiene ese desglose guardado — solo el total ya calculado — así
+  que se muestra un **"% efectivo"** (`comision_b2b / precio_venta`, rotulado explícitamente
+  como efectivo, no el % contratado real) y se omiten base/recobro/retención (no se inventan).
+- **Monto en letras**: `lib/utils/numeroALetras.ts::pesosEnLetras()` (sin dependencias) — "Un
+  millón doscientos sesenta mil pesos", con la regla gramatical de agregar "de" cuando el monto
+  es múltiplo exacto de un millón ("Un millón DE pesos").
+- **Cláusula de retención**: si `aliados_b2b.aplica_retencion === false` (vía 2 únicamente —
+  vía 1 no trackea retención en comisión) se imprime el boilerplate del Art. 383 E.T. + "NO
+  HACER RETENCIÓN EN LA FUENTE" (mismo texto de la plantilla de referencia); si aplica
+  retención, la tabla de desglose ya resta el valor retenido con su %.
+- **Concepto**: texto compuesto `"Comisión por venta — Contrato {numero} — Cliente {cliente} —
+  Destino {destino}"` en vez del párrafo libre de la plantilla de referencia (esa es para
+  servicios profesionales genéricos; esto es siempre "comisión de venta", así que se generó el
+  texto en vez de pedirlo a mano cada vez).
+- **No implementado a propósito**: numeración tipo "CXC MDE-008" de la plantilla de
+  referencia — no hay un esquema de numeración correlativo existente en el sistema para
+  cuentas de cobro y no se quiso inventar uno desconectado de cómo el dueño numera sus
+  documentos reales; el contrato ya identifica el documento de forma única. Se puede agregar
+  si se define el esquema.
+
 ## 10. Mayorista vs. Minorista
 
 - **Rentabilidad y Punto de equilibrio SÍ son tenant-scoped**: `ventas` filtrado por tenant en

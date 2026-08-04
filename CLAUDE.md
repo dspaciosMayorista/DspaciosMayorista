@@ -313,11 +313,26 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 131** — todas
-> confirmadas corridas por el dueño, incluida la **131** (`comision_b2b_pagos` — abonos
-> parciales a comisiones B2B, ver "Novedades recientes").
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 132** — todas
+> confirmadas corridas por el dueño, incluida la **132** (`liquidacion_descuentos` —
+> descuentos a la liquidación de comisión de un asesor interno, ver "Novedades recientes").
+> ⚠️ Además existe ya en el repo (rama de trabajo) la migración **133**
+> (`aliados_datos_pago`) **pendiente de confirmación del dueño** — no asumir que ya corrió.
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Descuentos a liquidación de comisión + fix tenant en abonos B2B (jul-2026):**
+>   **Migración 132** (`liquidacion_descuentos`, ya corrida): nueva tabla para registrar
+>   descuentos puntuales a la comisión mensual de un asesor interno (ej. un descuento que
+>   el asesor le dio al cliente y que sale de su propio bolsillo) — valor + descripción +
+>   N° contrato opcional, log ilimitado por asesor+mes. `/dashboard/liquidacion` ahora
+>   tiene filas expandibles por asesor (`LiquidacionTable.tsx`) con lista de descuentos +
+>   formulario para agregar/quitar; nueva columna "Descuentos" y "Neta a pagar" = neta
+>   calculada − descuentos del mes. De paso, **fix**: `registrarPagoComisionB2B` (el abono
+>   a comisiones B2B agregado en la novedad de abajo) no estampaba `tenant` — el abono se
+>   guardaba pero desaparecía de `/dashboard/comisiones` al filtrar por tenant, pareciendo
+>   que "no se guardaba nada" (mismo bug ya visto en `crearComisionB2B`/
+>   `crearCuentaPorPagar`). Script de reparación:
+>   `supabase/scripts/backfill_comision_b2b_pagos_tenant.sql`.
 > - **Formato de contrato con marca por tenant + firma de vendedor B2B + abonos a
 >   comisiones + cuenta de cobro en minorista (jul-2026):**
 >   - **Documento de contrato con marca por tenant**: minorista tiene su propia paleta
@@ -1166,14 +1181,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **131** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **132** (todas corridas por el dueño; la 133 está en el repo pero pendiente de confirmación)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 131** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 132** (todas aplicadas); la 133 está en el repo, pendiente de confirmación.
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -1271,8 +1286,14 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > viejas columnas fijas `abono1/2/3` · **131 comision_b2b_pagos** (ya
 > corrida) — tabla `comision_b2b_pagos` (log ilimitado de abonos a
 > comisiones B2B, mismo patrón que `cxp_pagos`) + backfill desde
-> `aliados_b2b.estado='pagada'` a un pago único por el total — ver
-> "Novedades recientes".
+> `aliados_b2b.estado='pagada'` a un pago único por el total · **132
+> liquidacion_descuentos** (ya corrida) — tabla `liquidacion_descuentos`
+> (descuentos puntuales a la comisión mensual de un asesor interno, log
+> por asesor+mes) — ver "Novedades recientes". ⚠️ **133
+> aliados_datos_pago** existe en el repo (datos de pago del catálogo
+> `aliados` + `aliados_b2b.aliado_id`) **PENDIENTE de confirmación** —
+> no está en el conteo de arriba hasta que el dueño confirme haberla
+> corrido.
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
