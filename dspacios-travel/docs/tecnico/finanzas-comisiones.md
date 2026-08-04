@@ -141,11 +141,41 @@ tributarios (`actualizarParametro`, solo toca `valor`/`updated_at`).
   `aliados_b2b` todavía.
 - **`aliados_b2b`**: `id, numero_contrato (FK ventas), aliado, nit, tipo_aliado, contacto,
   precio_venta, base_comision, pct_comision, recobro_total, pct_recobro_aliado,
-  aplica_retencion, pct_retencion, estado ('pendiente'|'pagada'), fecha_pago, tenant`.
-- Acciones: `marcarComisionB2BPagada`/`marcarComisionB2BPendiente`,
-  `actualizarComisionB2B(id, {baseComision, recobroTotal, pctRecobroAliado})` — revalida tanto
-  `/dashboard/comisiones` como `/dashboard/rentabilidad` (editar aquí cambia directamente los
-  números de Rentabilidad, porque ésta lee `aliados_b2b` en vivo).
+  aplica_retencion, pct_retencion, estado, fecha_pago, tenant`. `estado`/`fecha_pago` son
+  **vestigiales desde la migración 131** (no se borran, convención del proyecto, pero la app
+  ya no los lee/escribe) — ver "Abonos" abajo.
+- Acciones: `actualizarComisionB2B(id, {baseComision, pctComision, recobroTotal,
+  pctRecobroAliado})` — revalida tanto `/dashboard/comisiones` como `/dashboard/rentabilidad`
+  (editar aquí cambia directamente los números de Rentabilidad, porque ésta lee `aliados_b2b`
+  en vivo). `pctComision` se puede ingresar en la UI por % directo o calculado hacia atrás desde
+  un valor en pesos (`ComisionesList.tsx::FilaDetalle`, toggle "Ingresar por %"/"por valor").
+
+### Abonos a comisión B2B (migración 131, `comision_b2b_pagos`)
+
+Reemplaza el viejo "marcar pagada" todo-o-nada (`aliados_b2b.estado`/`fecha_pago`) por un log
+ilimitado de pagos parciales, mismo patrón que `cxp_pagos` (130) / `retenciones_cxp` (125):
+`comision_b2b_pagos(id, aliado_b2b_id FK, fecha, valor, tenant)`. Motivo: comisiones grandes que
+se pagan en varios abonos, no de una sola vez.
+
+- `lib/finanzas/pagosComisionB2B.ts`: `sumarPagosPorAliado()` (suma por `aliado_b2b_id`) +
+  `estadoComisionB2B(totalPagar, pagado)` → `'pendiente'|'parcial'|'pagada'` (tolerancia de $1
+  por redondeo de %). El estado ya NO se lee de `aliados_b2b.estado` — se deriva en
+  `/dashboard/comisiones/page.tsx` en cada request, sumando `comision_b2b_pagos` por aliado.
+- Acciones (`comisiones/actions.ts`): `registrarPagoComisionB2B(aliadoB2bId, valor, fecha)`
+  (valida valor > 0) y `deshacerUltimoPagoComisionB2B(aliadoB2bId)` (borra el pago más reciente
+  por fecha+id). Sin actualización de `aliados_b2b.estado` — el estado siempre se recalcula.
+- UI: `ComisionesList.tsx::PagoComisionPanel` dentro de la fila expandida — tabla de abonos +
+  botón deshacer último + formulario (valor/fecha/"Registrar abono", con atajo "Saldo total").
+  Badge de la fila: Pagada (verde) / Parcial · saldo $X (ámbar) / Pendiente (ámbar). El
+  resumen de tarjetas (Total/Pagado/Pendiente) suma `min(pagado, totalPagar)` por fila, no el
+  booleano de antes.
+- Backfill (migración 131): toda comisión que ya estaba `estado in ('pagada','pagado')` se migró
+  a un pago único por el total calculado (misma fórmula de `calcComisionB2B`), en la fecha que
+  tenía en `fecha_pago`.
+
+Ver §9 más abajo — la cuenta de cobro (`/portal/comision/[numero]`) ahora resuelve por dos vías
+(flujo tarifario B2B en `ventas`, o `aliados_b2b` cuando ese flujo no aplica — único camino en
+minorista) y `crearComisionB2B` captura `tipoAliado`.
 
 ### Recobro (migración 086)
 > RECOBRO = mayor valor cobrado que entra al total de la venta pero NO corresponde a ningún
@@ -184,7 +214,7 @@ Existe (`numero_contrato, asesor, mes_liquidacion, precio_venta, costo_total, co
 fecha_liquidacion, fecha_pago, estado`, + `tenant`) pero **no hay ningún INSERT/UPDATE/SELECT**
 contra ella en toda la app fuera de los cascades de borrado de contrato
 (`eliminar_contrato()`/migración 117) y un label de auditoría. Scaffolding legacy, superado en
-la práctica por `/dashboard/liquidacion` (asesores) y `aliados_b2b.estado`/`fecha_pago` (B2B).
+la práctica por `/dashboard/liquidacion` (asesores) y `comision_b2b_pagos` (B2B, migración 131).
 
 ## 8. `/dashboard/punto-equilibrio`
 
@@ -245,6 +275,35 @@ Doble candado sobre `ventas.tipo_asesor` (`"interno"|"agencia"|"freelance"`):
 `tipo_asesor` se fija en `crearContrato()` según `input.tipoVenta`; el bloque `if (aliado)` al
 final de esa función es el gate exacto de si el contrato crea o no una fila `aliados_b2b` — una
 venta `interno` (B2C) NUNCA crea `aliados_b2b`, sin importar el tenant.
+
+### Cuenta de cobro — dos vías (jul-2026)
+
+El punto 2 de arriba dependía de `ventas.modo_compra==='comisionable' && ventas.comision_b2b`
+(columnas que solo se llenan en `dashboard/reservar/actions.ts`, flujo tarifario/reservar B2B).
+Ese flujo **solo existe en mayorista** — minorista no tiene tarifario/reservar
+(`minoristaOculto: true`). Toda comisión de minorista (y las agregadas a mano en mayorista desde
+`crearComisionB2B`) vive en `aliados_b2b`, sin tocar esas columnas de `ventas` — la página
+quedaba con `notFound()` siempre para esos casos, aunque la comisión existiera y se viera bien
+en `/dashboard/comisiones` o en la pestaña Comisiones del contrato.
+
+`app/portal/comision/[numero]/page.tsx` ahora intenta **vía 1** (la de siempre,
+`modo_compra==='comisionable' && comision_b2b`, datos de `ventas`) y si no aplica cae a
+**vía 2**: busca la fila más reciente de `aliados_b2b` para el contrato, recalcula el monto con
+`calcComisionB2B()` (misma función que Rentabilidad/`/dashboard/comisiones`) y usa
+`tipo_aliado`/`aliado` de ahí en vez de `tipo_asesor`/`freelance_nombre`/`agencia_nombre` de
+`ventas`. El gate agencia-vs-freelance de arriba pasa a evaluar `tipoAsesorEfectivo` (el de la
+vía que haya aplicado), no `v.tipo_asesor` directo. Dueño del documento (`esDueno`) en la vía 2
+= `perfil.nombre === aliado_b2b.aliado` (no hay `b2b_usuario_id` en `aliados_b2b`, a diferencia
+de `ventas`) — un rol interno siempre puede verla y usarla para imprimir la cuenta de cobro "en
+nombre del aliado" cuando este no tiene cuenta en el portal B2B (caso típico en minorista). Link
+directo desde `/dashboard/comisiones` (`ComisionesList.tsx`, columna de acciones, oculto si
+`tipoAliado==='agencia'`).
+
+`crearComisionB2B` (agregar comisión a mano desde el contrato, `gestion-actions.ts`) ahora
+captura `tipoAliado` (`"freelance"|"agencia"`, default freelance — antes siempre quedaba
+`null`, así que la vía 2 trataba TODO como freelance). El selector "Elegir aliado existente"
+(`GestionTabs.tsx::ComisionesTab`) trae `aliados.tipo` del catálogo y lo autocompleta; también
+hay un `<select>` manual Freelance/Agencia en el formulario.
 
 ## 10. Mayorista vs. Minorista
 

@@ -65,7 +65,7 @@ export default async function ContratoDetallePage({
     sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("nombre").order("nombre"),
-    sb.from("aliados").select("id, nombre, nit, pct_comision, aplica_retencion, pct_retencion").order("nombre"),
+    sb.from("aliados").select("id, nombre, nit, tipo, pct_comision, aplica_retencion, pct_retencion").order("nombre"),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 

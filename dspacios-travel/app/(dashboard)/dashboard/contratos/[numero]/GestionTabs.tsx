@@ -61,7 +61,7 @@ export type GestionProps = {
   proveedoresCatalogo?: string[]; // nombres del catálogo, para sugerir/autocompletar
   aliadosCatalogo?: AliadoCat[]; // catálogo de aliados B2B, para elegir en vez de retipear
 };
-type AliadoCat = { id: number; nombre: string; nit: string | null; pct_comision: number | null; aplica_retencion: boolean | null; pct_retencion: number | null };
+type AliadoCat = { id: number; nombre: string; nit: string | null; tipo: string | null; pct_comision: number | null; aplica_retencion: boolean | null; pct_retencion: number | null };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-300 bg-white p-4 shadow-sm sm:p-5";
@@ -626,6 +626,7 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalog
   const [aliadoId, setAliadoId] = useState("");
   const [aliado, setAliado] = useState("");
   const [nit, setNit] = useState("");
+  const [tipoAliado, setTipoAliado] = useState<"freelance" | "agencia">("freelance");
   const [pct, setPct] = useState("");
   const [recobro, setRecobro] = useState("");
   const [pctRec, setPctRec] = useState("50");
@@ -643,6 +644,7 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalog
     if (!a) return;
     setAliado(a.nombre);
     setNit(a.nit ?? "");
+    setTipoAliado(a.tipo === "agencia" ? "agencia" : "freelance");
     setPct(a.pct_comision != null ? String(Math.round(a.pct_comision * 10000) / 100) : "");
     setRet(!!a.aplica_retencion);
     setPctRet(a.pct_retencion != null ? String(Math.round(a.pct_retencion * 10000) / 100) : "");
@@ -653,12 +655,13 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalog
     setErr("");
     start(async () => {
       const r = await crearComisionB2B({
-        numeroContrato: numero, aliado, nit, precioVenta,
+        numeroContrato: numero, aliado, nit, tipoAliado,
+        precioVenta,
         pctComision: Number(pct) / 100, recobroTotal: Number(recobro) || 0,
         pctRecobroAliado: Number(pctRec) / 100 || 0.5,
         aplicaRetencion: ret, pctRetencion: Number(pctRet) / 100 || 0,
       });
-      if (r.ok) { setAliadoId(""); setAliado(""); setNit(""); setPct(""); setRecobro(""); setPctRec("50"); setRet(false); setPctRet(""); }
+      if (r.ok) { setAliadoId(""); setAliado(""); setNit(""); setTipoAliado("freelance"); setPct(""); setRecobro(""); setPctRec("50"); setRet(false); setPctRet(""); }
       else setErr(r.error);
     });
   }
@@ -686,6 +689,16 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalog
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
           <Input placeholder="Aliado" value={aliado} onChange={(e) => { setAliado(e.target.value); setAliadoId(""); }} />
           <Input placeholder="NIT" value={nit} onChange={(e) => setNit(e.target.value)} />
+          {/* Freelance (persona natural) genera cuenta de cobro; agencia (persona
+              jurídica) factura electrónicamente en su lugar — ver /portal/comision. */}
+          <select
+            value={tipoAliado}
+            onChange={(e) => setTipoAliado(e.target.value === "agencia" ? "agencia" : "freelance")}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+          >
+            <option value="freelance">Freelance (persona natural)</option>
+            <option value="agencia">Agencia (persona jurídica)</option>
+          </select>
           <Input type="number" placeholder="% comisión" value={pct} onChange={(e) => setPct(e.target.value)} />
           <Input type="number" placeholder="Recobro total" value={recobro} onChange={(e) => setRecobro(e.target.value)} />
           <Input type="number" placeholder="% recobro aliado" value={pctRec} onChange={(e) => setPctRec(e.target.value)} />

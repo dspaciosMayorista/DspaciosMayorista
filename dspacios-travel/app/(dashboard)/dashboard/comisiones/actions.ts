@@ -5,25 +5,37 @@ import { revalidatePath } from "next/cache";
 
 type Result = { ok: true } | { ok: false; error: string };
 
-// Marca una comisión B2B como PAGADA (con su fecha).
-export async function marcarComisionB2BPagada(id: number, fecha: string): Promise<Result> {
+// Registra un abono/pago parcial a una comisión B2B (log ilimitado en
+// `comision_b2b_pagos`, migración 131 — reemplaza el viejo "marcar pagada"
+// todo-o-nada). El estado (pendiente/parcial/pagada) ya no se guarda en
+// `aliados_b2b.estado`: se deriva en la página de la suma de estos pagos.
+export async function registrarPagoComisionB2B(aliadoB2bId: number, valor: number, fecha: string): Promise<Result> {
+  if (!(valor > 0)) return { ok: false, error: "El valor del abono debe ser mayor a 0." };
   const sb = await createClient();
-  const { error } = await sb
-    .from("aliados_b2b")
-    .update({ estado: "pagada", fecha_pago: fecha || new Date().toISOString().slice(0, 10) })
-    .eq("id", id);
+  const { error } = await sb.from("comision_b2b_pagos").insert({
+    aliado_b2b_id: aliadoB2bId,
+    valor,
+    fecha: fecha || new Date().toISOString().slice(0, 10),
+  });
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/comisiones");
   return { ok: true };
 }
 
-// Revierte una comisión B2B a PENDIENTE (limpia la fecha de pago).
-export async function marcarComisionB2BPendiente(id: number): Promise<Result> {
+// Deshace el último abono registrado a una comisión B2B.
+export async function deshacerUltimoPagoComisionB2B(aliadoB2bId: number): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb
-    .from("aliados_b2b")
-    .update({ estado: "pendiente", fecha_pago: null })
-    .eq("id", id);
+  const { data: ultimo, error: eSel } = await sb
+    .from("comision_b2b_pagos")
+    .select("id")
+    .eq("aliado_b2b_id", aliadoB2bId)
+    .order("fecha", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (eSel) return { ok: false, error: eSel.message };
+  if (!ultimo) return { ok: false, error: "No hay abonos para deshacer." };
+  const { error } = await sb.from("comision_b2b_pagos").delete().eq("id", ultimo.id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/comisiones");
   return { ok: true };

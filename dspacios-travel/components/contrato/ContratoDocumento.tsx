@@ -40,11 +40,11 @@ type Props = {
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
 // minorista tiene su propia paleta (pedido del dueño, jul-2026) — azul oscuro
-// de fondo, amarillo para los títulos de sección, blanco/negro para el resto
-// del texto según el fondo sobre el que caiga.
+// de fondo, mismo azul para los títulos de sección (el amarillo de la marca
+// se probó primero pero se leía muy claro sobre el blanco de la página).
 const MARCA_POR_TENANT = {
   mayorista: { primary: "#1D7C9A", titulo: "#1D7C9A", logo: "/marca/logo-white.png", logoEnTarjeta: false },
-  minorista: { primary: "#120573", titulo: "#ffe008", logo: "/marca/logo-minorista-white.png", logoEnTarjeta: false },
+  minorista: { primary: "#120573", titulo: "#120573", logo: "/marca/logo-minorista-white.png", logoEnTarjeta: false },
 } as const;
 
 function Pill({ label, value }: { label: string; value: string }) {
@@ -100,6 +100,21 @@ export function ContratoDocumento({
       titular: agencia?.razon_social ?? EMPRESA.cuentaBancaria.titular,
     },
   };
+
+  // Segunda firma: vendedor / aliado B2B (agencia o freelance) que hizo la
+  // venta — puede ser la misma persona que elaboró el contrato (asesor
+  // interno), en cuyo caso las dos firmas coinciden y eso está bien.
+  const tipoAsesorVenta = (venta as { tipo_asesor?: string | null }).tipo_asesor ?? null;
+  const agenciaNombreVenta = (venta as { agencia_nombre?: string | null }).agencia_nombre ?? null;
+  const freelanceNombreVenta = (venta as { freelance_nombre?: string | null }).freelance_nombre ?? null;
+  const vendedorNombre =
+    tipoAsesorVenta === "agencia"
+      ? agenciaNombreVenta
+      : tipoAsesorVenta === "freelance"
+        ? freelanceNombreVenta
+        : venta.asesor;
+  const vendedorCargo =
+    tipoAsesorVenta === "agencia" ? "Agencia aliada" : tipoAsesorVenta === "freelance" ? "Freelance / Aliado B2B" : "Vendedor/a";
 
   return (
     <div className="contrato-doc mx-auto max-w-3xl bg-white text-gray-800">
@@ -499,13 +514,13 @@ export function ContratoDocumento({
           <p>
             {CONSTANCIA_PREFIJO} {formatFechaLarga(venta.fecha_emision)}.
           </p>
-          <div className="mt-8">
+          <div className="mt-8 flex flex-wrap gap-8">
             <div className="w-64 border-t border-gray-400 pt-1">
               <div className="font-semibold text-gray-800">
                 {venta.asesor_firma_nombre ?? "—"}
               </div>
               <div>
-                {FIRMA_ETIQUETAS.cargo} {venta.asesor_firma_cargo ?? "Asesor/a"}
+                {FIRMA_ETIQUETAS.cargo} {venta.asesor_firma_cargo ?? "Elaboró el contrato"}
               </div>
               {venta.asesor_firma_cc && (
                 <div>
@@ -517,6 +532,16 @@ export function ContratoDocumento({
                   {FIRMA_ETIQUETAS.tel} {venta.asesor_firma_tel}
                 </div>
               )}
+            </div>
+            {/* Vendedor / aliado B2B — puede coincidir con quien elaboró el
+                contrato (misma persona, ambas firmas iguales). */}
+            <div className="w-64 border-t border-gray-400 pt-1">
+              <div className="font-semibold text-gray-800">
+                {vendedorNombre ?? "—"}
+              </div>
+              <div>
+                {FIRMA_ETIQUETAS.cargo} {vendedorCargo}
+              </div>
             </div>
           </div>
 
