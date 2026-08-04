@@ -1694,6 +1694,28 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["escala_rangos"]["Insert"]>;
         Relationships: [];
       };
+      liquidacion_descuentos: {
+        Row: {
+          id: number;
+          usuario_id: string;
+          mes: string;
+          valor: number;
+          descripcion: string | null;
+          numero_contrato: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          usuario_id: string;
+          mes: string;
+          valor: number;
+          descripcion?: string | null;
+          numero_contrato?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["liquidacion_descuentos"]["Insert"]>;
+        Relationships: [];
+      };
       crm_contactos: {
         Row: {
           id: number; categoria: string; nombre: string; tipo_doc: string | null; documento: string | null;

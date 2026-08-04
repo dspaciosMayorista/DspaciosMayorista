@@ -164,6 +164,12 @@ se pagan en varios abonos, no de una sola vez.
 - Acciones (`comisiones/actions.ts`): `registrarPagoComisionB2B(aliadoB2bId, valor, fecha)`
   (valida valor > 0) y `deshacerUltimoPagoComisionB2B(aliadoB2bId)` (borra el pago más reciente
   por fecha+id). Sin actualización de `aliados_b2b.estado` — el estado siempre se recalcula.
+  **Fix (jul-2026):** el insert no estampaba `tenant` (mismo bug que ya se había corregido en
+  `crearComisionB2B`/`crearCuentaPorPagar`) — quedaba en el default `'mayorista'`, así que un
+  abono registrado viendo minorista pasaba la RLS (superadmin/gerencia ven ambos tenants) pero
+  desaparecía de la consulta filtrada por tenant de `/dashboard/comisiones` (parecía que "no se
+  guardaba nada"). Ahora toma el tenant de `aliados_b2b` del abono. Script de reparación:
+  `supabase/scripts/backfill_comision_b2b_pagos_tenant.sql`.
 - UI: `ComisionesList.tsx::PagoComisionPanel` dentro de la fila expandida — tabla de abonos +
   botón deshacer último + formulario (valor/fecha/"Registrar abono", con atajo "Saldo total").
   Badge de la fila: Pagada (verde) / Parcial · saldo $X (ámbar) / Pendiente (ámbar). El
@@ -207,6 +213,27 @@ eso también entra como gasto en Rentabilidad.
     activo/confirmado/confirmada); base comisionable = PVP−impuesto(BNC), sumada por mes.
   - **Totalmente separado de/no alimenta `calcularRentabilidad()`** — coherente con que
     `comAsesor` esté hardcodeado a 0 ahí.
+
+### Descuentos a la liquidación (migración 132, `liquidacion_descuentos`)
+
+Caso real: un asesor le da un descuento al cliente que sale de su propia comisión (o cualquier
+otro descuento puntual, con su motivo) — antes no había forma de reflejarlo, la neta del mes
+salía siempre completa. `liquidacion_descuentos(id, usuario_id FK usuarios, mes 'YYYY-MM', valor,
+descripcion, numero_contrato opcional, created_at)` — log ilimitado por asesor+mes, **no** por
+contrato (puede no venir de ningún contrato puntual). Sin columna `tenant`: sigue el mismo
+criterio ya existente de esta página, que agrupa `usuarios.rol='venta'` y `ventas` sin filtrar
+por tenant (gap preexistente, no introducido por esta migración).
+
+- `lib/finanzas/descuentosLiquidacion.ts::sumarDescuentosPorAsesor()`.
+- Acciones (`liquidacion/actions.ts`): `agregarDescuentoLiquidacion({usuarioId, mes, valor,
+  descripcion, numeroContrato?})` / `eliminarDescuentoLiquidacion(id)` — candado de rol adentro
+  de la Server Action (`puedeEditar()`, mismo set superadmin/gerencia/administracion que gatea
+  la página), no solo en el componente.
+- UI: `page.tsx` pasó de tabla estática a `LiquidacionTable.tsx` (client component) — fila
+  expandible por asesor con tabla de descuentos + formulario para agregar (valor + descripción +
+  N° contrato opcional). Columna nueva "Descuentos" (rojo, − $X) y "Neta a pagar" =
+  `max(0, neta − Σdescuentos)` reemplaza la vieja columna "Neta" (que ahora es un valor
+  intermedio, antes de descuentos). Totales del footer también recalculados neto de descuentos.
 
 ## 7. `liquidacion_comisiones` — tabla en el schema, SIN uso real
 
