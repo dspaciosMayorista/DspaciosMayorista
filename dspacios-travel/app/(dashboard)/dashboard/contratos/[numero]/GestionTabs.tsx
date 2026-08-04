@@ -59,7 +59,9 @@ export type GestionProps = {
   formasPago: string[];
   moneda?: string;       // moneda del contrato (USD muestra el estado de cuenta en dólares)
   proveedoresCatalogo?: string[]; // nombres del catálogo, para sugerir/autocompletar
+  aliadosCatalogo?: AliadoCat[]; // catálogo de aliados B2B, para elegir en vez de retipear
 };
+type AliadoCat = { id: number; nombre: string; nit: string | null; pct_comision: number | null; aplica_retencion: boolean | null; pct_retencion: number | null };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-300 bg-white p-4 shadow-sm sm:p-5";
@@ -128,7 +130,7 @@ export function GestionTabs(p: GestionProps) {
         {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
         {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} catalogo={p.proveedoresCatalogo ?? []} />}
         {p.verFinanzas && tab === "comisiones" && (
-          <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} filas={p.comisionesB2B} comB2BTotal={comB2BTotal} />
+          <ComisionesTab numero={p.numero} precioVenta={p.precioVenta} filas={p.comisionesB2B} comB2BTotal={comB2BTotal} aliadosCatalogo={p.aliadosCatalogo ?? []} />
         )}
         {p.verFinanzas && tab === "facturacion" && (
           <FacturacionTab numero={p.numero} filas={p.facturas} ivaGenerado={ivaGenerado} ivaPct={fiscal.IVA}
@@ -618,9 +620,10 @@ function PagoProveedorPanel({ f, pagado, saldo }: { f: CxP; pagado: number; sald
 // ── COMISIONES (solo B2B) ──────────────────────────────────────────────
 // La comisión del asesor interno NO va aquí: se liquida en el global (módulo
 // Liquidación) si el asesor cumple su meta.
-function ComisionesTab({ numero, precioVenta, filas, comB2BTotal }: {
-  numero: string; precioVenta: number; filas: B2B[]; comB2BTotal: number;
+function ComisionesTab({ numero, precioVenta, filas, comB2BTotal, aliadosCatalogo }: {
+  numero: string; precioVenta: number; filas: B2B[]; comB2BTotal: number; aliadosCatalogo: AliadoCat[];
 }) {
+  const [aliadoId, setAliadoId] = useState("");
   const [aliado, setAliado] = useState("");
   const [nit, setNit] = useState("");
   const [pct, setPct] = useState("");
@@ -630,6 +633,20 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal }: {
   const [pctRet, setPctRet] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+
+  // Elegir un aliado ya conocido rellena el resto del formulario -- sigue
+  // siendo editable por si esta comisión puntual necesita un ajuste, pero ya
+  // no toca retipear nombre/NIT/% cada vez que se factura al mismo aliado.
+  function elegirAliado(id: string) {
+    setAliadoId(id);
+    const a = aliadosCatalogo.find((x) => String(x.id) === id);
+    if (!a) return;
+    setAliado(a.nombre);
+    setNit(a.nit ?? "");
+    setPct(a.pct_comision != null ? String(Math.round(a.pct_comision * 10000) / 100) : "");
+    setRet(!!a.aplica_retencion);
+    setPctRet(a.pct_retencion != null ? String(Math.round(a.pct_retencion * 10000) / 100) : "");
+  }
 
   function agregar() {
     if (!aliado.trim() || !Number(pct)) return;
@@ -641,7 +658,7 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal }: {
         pctRecobroAliado: Number(pctRec) / 100 || 0.5,
         aplicaRetencion: ret, pctRetencion: Number(pctRet) / 100 || 0,
       });
-      if (r.ok) { setAliado(""); setNit(""); setPct(""); setRecobro(""); setPctRec("50"); setRet(false); setPctRet(""); }
+      if (r.ok) { setAliadoId(""); setAliado(""); setNit(""); setPct(""); setRecobro(""); setPctRec("50"); setRet(false); setPctRet(""); }
       else setErr(r.error);
     });
   }
@@ -651,8 +668,23 @@ function ComisionesTab({ numero, precioVenta, filas, comB2BTotal }: {
       {/* Comisiones B2B */}
       <div className={card}>
         <p className={lbl}>Agregar comisión B2B (aliado)</p>
+        {aliadosCatalogo.length > 0 && (
+          <div className="mb-3">
+            <label className="mb-1 block text-xs font-medium text-gray-600">Elegir aliado existente (opcional)</label>
+            <select
+              value={aliadoId}
+              onChange={(e) => elegirAliado(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm md:w-auto"
+            >
+              <option value="">— Nuevo aliado (escribir abajo) —</option>
+              {aliadosCatalogo.map((a) => (
+                <option key={a.id} value={a.id}>{a.nombre}{a.nit ? ` · ${a.nit}` : ""}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-          <Input placeholder="Aliado" value={aliado} onChange={(e) => setAliado(e.target.value)} />
+          <Input placeholder="Aliado" value={aliado} onChange={(e) => { setAliado(e.target.value); setAliadoId(""); }} />
           <Input placeholder="NIT" value={nit} onChange={(e) => setNit(e.target.value)} />
           <Input type="number" placeholder="% comisión" value={pct} onChange={(e) => setPct(e.target.value)} />
           <Input type="number" placeholder="Recobro total" value={recobro} onChange={(e) => setRecobro(e.target.value)} />
