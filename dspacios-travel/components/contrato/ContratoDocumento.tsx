@@ -44,7 +44,7 @@ type Props = {
 // del texto según el fondo sobre el que caiga.
 const MARCA_POR_TENANT = {
   mayorista: { primary: "#1D7C9A", titulo: "#1D7C9A", logo: "/marca/logo-white.png" },
-  minorista: { primary: "#120573", titulo: "#ffe008", logo: "/marca/logo-minorista-white.png" },
+  minorista: { primary: "#120573", titulo: "#ffe008", logo: "/marca/logo-minorista-white.jpg" },
 } as const;
 
 function Pill({ label, value }: { label: string; value: string }) {
