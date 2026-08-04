@@ -44,12 +44,7 @@ type Props = {
 // del texto según el fondo sobre el que caiga.
 const MARCA_POR_TENANT = {
   mayorista: { primary: "#1D7C9A", titulo: "#1D7C9A", logo: "/marca/logo-white.png", logoEnTarjeta: false },
-  // El logo de minorista es la versión full-color sobre fondo claro (no una
-  // versión recortada para fondo oscuro), así que va dentro de una tarjeta
-  // blanca en vez de directo sobre el azul — evita que se vea como un
-  // rectángulo pegado encima. Cambiar a `false` si se sube una versión ya
-  // preparada para fondo oscuro.
-  minorista: { primary: "#120573", titulo: "#ffe008", logo: "/marca/logo-minorista-white.jpg", logoEnTarjeta: true },
+  minorista: { primary: "#120573", titulo: "#ffe008", logo: "/marca/logo-minorista-white.png", logoEnTarjeta: false },
 } as const;
 
 function Pill({ label, value }: { label: string; value: string }) {
