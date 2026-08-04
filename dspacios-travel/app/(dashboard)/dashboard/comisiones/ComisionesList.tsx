@@ -187,6 +187,38 @@ function Fila({ row }: { row: ComB2BRow }) {
   );
 }
 
+function DatoComision({ label, valor }: { label: string; valor: string }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="tabular-nums text-gray-700">{valor}</div>
+    </div>
+  );
+}
+
+// Texto + inputMode (no type="number"): así se puede escribir/pegar el valor
+// de una vez y seleccionar todo con un click, en vez de los spinners +/− del
+// input numérico nativo (incómodos para montos grandes en pesos).
+// ⚠️ Definido FUERA de FilaDetalle a propósito: un componente declarado
+// dentro del cuerpo de otro se recrea (nueva identidad de función) en cada
+// render del padre, y React lo trata como un tipo distinto — desmonta y
+// vuelve a montar el <input>, perdiendo el foco en cada tecla.
+function CampoComision({ label, value, onChange, width = "w-24" }: { label: string; value: string; onChange: (v: string) => void; width?: string }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
+      <Input
+        type="text"
+        inputMode="numeric"
+        value={value}
+        onChange={(e) => onChange(e.target.value.replace(/[^\d]/g, ""))}
+        onFocus={(e) => e.target.select()}
+        className={`mt-0.5 h-7 ${width} text-xs`}
+      />
+    </div>
+  );
+}
+
 // Discriminación: de dónde sale la comisión (PVP → base comisionable → % →
 // comisión base + recobro − retención = a pagar), con la base comisionable
 // editable (por defecto es PVP − impuesto/BNC, a veces hay que ajustarla).
@@ -227,42 +259,19 @@ function FilaDetalle({ row }: { row: ComB2BRow }) {
     });
   }
 
-  const Dato = ({ label, valor }: { label: string; valor: string }) => (
-    <div>
-      <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
-      <div className="tabular-nums text-gray-700">{valor}</div>
-    </div>
-  );
-  // Texto + inputMode (no type="number"): así se puede escribir/pegar el valor
-  // de una vez y seleccionar todo con un click, en vez de los spinners +/− del
-  // input numérico nativo (incómodos para montos grandes en pesos).
-  const Campo = ({ label, value, onChange, width = "w-24" }: { label: string; value: string; onChange: (v: string) => void; width?: string }) => (
-    <div>
-      <div className="text-[10px] uppercase tracking-wide text-gray-400">{label}</div>
-      <Input
-        type="text"
-        inputMode="numeric"
-        value={value}
-        onChange={(e) => onChange(e.target.value.replace(/[^\d]/g, ""))}
-        onFocus={(e) => e.target.select()}
-        className={`mt-0.5 h-7 ${width} text-xs`}
-      />
-    </div>
-  );
-
   return (
     <tr className="border-b border-gray-100 bg-gray-50/60">
       <td colSpan={7} className="px-4 py-3">
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-400">De dónde sale la comisión</p>
         <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs sm:grid-cols-4 lg:grid-cols-8">
-          <Dato label="Precio de venta (PVP)" valor={formatCOP(row.precioVenta ?? 0)} />
-          <Campo label="Base comisionable" value={base} onChange={setBase} />
-          <Dato label="% comisión" valor={`${((row.pct_comision ?? 0) * 100).toFixed(1)}%`} />
-          <Dato label="Comisión (base × %)" valor={formatCOP(preview.comisionBase)} />
-          <Campo label="Recobro total" value={recobro} onChange={setRecobro} />
-          <Campo label="% recobro al aliado" value={pctRecobro} onChange={setPctRecobro} width="w-16" />
-          <Dato label="+ Recobro aliado" valor={formatCOP(preview.recobroAliado)} />
-          <Dato label="Retención" valor={row.aplicaRetencion ? `− ${formatCOP(preview.retencion)}` : "No aplica"} />
+          <DatoComision label="Precio de venta (PVP)" valor={formatCOP(row.precioVenta ?? 0)} />
+          <CampoComision label="Base comisionable" value={base} onChange={setBase} />
+          <DatoComision label="% comisión" valor={`${((row.pct_comision ?? 0) * 100).toFixed(1)}%`} />
+          <DatoComision label="Comisión (base × %)" valor={formatCOP(preview.comisionBase)} />
+          <CampoComision label="Recobro total" value={recobro} onChange={setRecobro} />
+          <CampoComision label="% recobro al aliado" value={pctRecobro} onChange={setPctRecobro} width="w-16" />
+          <DatoComision label="+ Recobro aliado" valor={formatCOP(preview.recobroAliado)} />
+          <DatoComision label="Retención" valor={row.aplicaRetencion ? `− ${formatCOP(preview.retencion)}` : "No aplica"} />
         </div>
         <div className="mt-3 flex items-center justify-between border-t border-gray-200 pt-2">
           <span className="text-xs text-gray-500">
