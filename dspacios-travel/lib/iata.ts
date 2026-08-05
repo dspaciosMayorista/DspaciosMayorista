@@ -26,13 +26,27 @@ export const IATA_CIUDAD: Record<string, string> = {
   AXM: "Armenia",
   NVA: "Neiva",
   EOH: "Medellín (Olaya Herrera)",
+  PVA: "Providencia",
   // Internacionales frecuentes
   PTY: "Ciudad de Panamá",
   MIA: "Miami",
+  MCO: "Orlando",
+  FLL: "Fort Lauderdale",
+  JFK: "Nueva York",
   CUN: "Cancún",
   PUJ: "Punta Cana",
+  SDQ: "Santo Domingo",
   MAD: "Madrid",
   LIM: "Lima",
+  // Caribe
+  CUR: "Curazao",
+  AUA: "Aruba",
+  BON: "Bonaire",
+  SXM: "San Martín",
+  NAS: "Nassau",
+  MBJ: "Montego Bay",
+  KIN: "Kingston",
+  GCM: "Gran Caimán",
 };
 
 /** Nombre de la ciudad para un código IATA (o null si no está en el catálogo). */
