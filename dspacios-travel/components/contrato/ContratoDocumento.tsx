@@ -236,7 +236,7 @@ export function ContratoDocumento({
                   </div>
                   {v.servicios && (
                     <div className="mt-1 text-xs text-gray-500">
-                      Ruta: {v.servicios}
+                      Equipaje/Servicios: {v.servicios}
                     </div>
                   )}
                   <div className="mt-1 text-xs text-gray-500">
