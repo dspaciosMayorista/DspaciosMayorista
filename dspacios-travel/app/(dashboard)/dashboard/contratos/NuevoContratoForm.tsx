@@ -62,6 +62,7 @@ export function NuevoContratoForm({
   destinos = [],
   hotelesCatalogo = [],
   proveedoresCatalogo = [],
+  aerolineasCatalogo = [],
   puedeForzarMargen = false,
 }: {
   asesorDefault: string;
@@ -76,6 +77,10 @@ export function NuevoContratoForm({
   // opción de escribirlo libre si no está (mismo criterio que `destinos`).
   hotelesCatalogo?: { nombre: string; proveedor: string | null }[];
   proveedoresCatalogo?: string[];
+  // Catálogo de aerolíneas (configurado en mayorista, `/dashboard/producto/
+  // aerolineas`) con sus tipos de tarifa/equipaje — cada una trae su propia
+  // lista, así que se resuelve por nombre de aerolínea al elegirla.
+  aerolineasCatalogo?: { nombre: string; tarifas: { nombre: string; descripcion: string }[] }[];
   puedeForzarMargen?: boolean;
 }) {
   const router = useRouter();
@@ -187,6 +192,13 @@ export function NuevoContratoForm({
       if (patch.destinoCodigo !== undefined) next.destinoCiudad = ciudadIata(patch.destinoCodigo) ?? next.destinoCiudad;
       return next;
     }));
+  }
+
+  // Tipos de tarifa/equipaje de la aerolínea escrita en esa fila (catálogo de
+  // mayorista) — cada aerolínea trae su propia lista, o ninguna si no está
+  // configurada o el nombre no coincide con el catálogo.
+  function tarifasDe(aerolinea: string) {
+    return aerolineasCatalogo.find((a) => a.nombre.toLowerCase() === aerolinea.trim().toLowerCase())?.tarifas ?? [];
   }
 
   function aplicarPaquete(idStr: string) {
@@ -480,10 +492,15 @@ export function NuevoContratoForm({
         {vuelos.length === 0 && (
           <p className="text-xs text-gray-400">Sin vuelos (porción terrestre).</p>
         )}
+        {aerolineasCatalogo.length > 0 && (
+          <datalist id="aerolineas-catalogo">
+            {aerolineasCatalogo.map((a) => <option key={a.nombre} value={a.nombre} />)}
+          </datalist>
+        )}
         {vuelos.map((v, i) => (
           <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4">
             <Input placeholder="Record (PNR)" value={v.record} onChange={(e) => setVuelo(i, { record: e.target.value })} />
-            <Input placeholder="Aerolínea" value={v.aerolinea} onChange={(e) => setVuelo(i, { aerolinea: e.target.value })} />
+            <Input placeholder="Aerolínea" list="aerolineas-catalogo" value={v.aerolinea} onChange={(e) => setVuelo(i, { aerolinea: e.target.value })} />
             <ComboCiudad destinos={destinos} value={v.origenCodigo} onChange={(val) => setVuelo(i, { origenCodigo: val })} modo="iata" permitirLibre placeholder="Origen (cód)" />
             <ComboCiudad destinos={destinos} value={v.destinoCodigo} onChange={(val) => setVuelo(i, { destinoCodigo: val })} modo="iata" permitirLibre placeholder="Destino (cód)" />
             <ComboCiudad destinos={destinos} value={v.origenCiudad} onChange={(val) => setVuelo(i, { origenCiudad: val })} modo="nombre" permitirLibre placeholder="Origen (ciudad)" />
@@ -497,6 +514,22 @@ export function NuevoContratoForm({
             <Input placeholder="Hora salida regreso" value={v.horaSalidaReg} onChange={(e) => setVuelo(i, { horaSalidaReg: e.target.value })} />
             <Input placeholder="Hora llegada regreso" value={v.horaLlegadaReg} onChange={(e) => setVuelo(i, { horaLlegadaReg: e.target.value })} />
             <Input className="md:col-span-2" placeholder="Servicios (equipaje…)" value={v.servicios} onChange={(e) => setVuelo(i, { servicios: e.target.value })} />
+            {tarifasDe(v.aerolinea).length > 0 && (
+              <select
+                defaultValue=""
+                className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm md:col-span-2"
+                onChange={(e) => {
+                  if (e.target.value) setVuelo(i, { servicios: e.target.value });
+                  e.target.value = "";
+                }}
+                title="Rellena el campo Servicios con el texto del tipo de tarifa/equipaje elegido"
+              >
+                <option value="">+ Elegir tipo de tarifa/equipaje de {v.aerolinea.trim().toUpperCase()}…</option>
+                {tarifasDe(v.aerolinea).map((t) => (
+                  <option key={t.descripcion} value={t.descripcion}>{t.nombre} — {t.descripcion}</option>
+                ))}
+              </select>
+            )}
             {!esNegociado && (
               <Input type="number" min={0} placeholder={`Costo neto (${monedaEfectiva})`} value={v.costo ?? ""} onChange={(e) => setVuelo(i, { costo: Number(e.target.value) || 0 })} title="Costo neto del vuelo (interno)" />
             )}
