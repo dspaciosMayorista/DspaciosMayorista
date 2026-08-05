@@ -201,9 +201,13 @@ export async function crearContrato(
     (s, it) => s + it.adultos * it.tarifaAdulto + it.ninos * it.tarifaNino,
     0
   );
+  // pax = cantidad total de pasajeros (todos: adultos + niños/infantes) — si no
+  // se cargaron pasajeros nombrados al crear el contrato, cae al detalle de
+  // valores. Ahí "niños" también recibe filas de infante (ej. "Asistencia
+  // Médica Infante"), así que suma adultos+niños, no solo adultos.
   const pax =
-    input.pasajeros.filter((p) => !p.esInfante).length ||
-    items.reduce((s, it) => s + it.adultos, 0) ||
+    input.pasajeros.length ||
+    items.reduce((s, it) => s + it.adultos + it.ninos, 0) ||
     1;
 
   // BNC (Base No Comisionable): tiquetes o valor fijo (≥ tiquetes y ≤ PVP).
