@@ -313,11 +313,44 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 133** — todas
-> confirmadas corridas por el dueño, incluida la **133** (`aliados_datos_pago` — datos de
-> pago del catálogo de aliados B2B para la cuenta de cobro, ver "Novedades recientes").
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 134** — todas
+> confirmadas corridas por el dueño, incluida la **134** (`aerolineas` — catálogo de
+> aerolíneas y tipos de tarifa/equipaje, ver "Novedades recientes").
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Catálogo de aerolíneas con tipos de tarifa/equipaje + estado de cuenta de
+>   abonos a comisión (jul-2026):** **Migración 134** (`aerolineas` +
+>   `aerolinea_tarifas`, ya corrida): mismo patrón de `destinos` (sin tenant, lectura
+>   pública, escritura solo superadmin/operaciones). Cada aerolínea trae su propia lista
+>   de tipos de tarifa/equipaje (nombre corto + descripción completa, ej. "Artículo
+>   personal" → "ARTICULO PERSONAL MOCHILA O BOLSO (45 x 35 x 20 cm) POR PERSONA
+>   AVIANCA"). Nuevo módulo `/dashboard/producto/aerolineas` (solo mayorista) para
+>   cargarlas. En el contrato manual/dinámico (mayorista y minorista comparten el
+>   formulario) el campo Aerolínea sugiere del catálogo sin perder texto libre, y al
+>   coincidir con una aerolínea del catálogo aparece un desplegable con sus tipos de
+>   tarifa/equipaje que rellena el campo Servicios con el texto completo en vez de
+>   redigitarlo a mano. De paso, la sección Hoteles del mismo formulario ahora también
+>   sugiere hoteles y proveedores ya cargados en el catálogo de mayorista (mismo
+>   criterio, sin perder texto libre); elegir un hotel conocido autocompleta su
+>   proveedor si el campo está vacío. Además, nueva página `/portal/comision/[numero]/
+>   estado-cuenta`: historial de abonos a una comisión B2B con saldo corrido tras cada
+>   uno (separado de la cuenta de cobro, que solo muestra el total) — solo aplica a
+>   comisiones agregadas a mano (`aliados_b2b`), no al flujo tarifario B2B de mayorista
+>   (que no tiene log de abonos). Se extrajo la lógica de resolución de comisión a
+>   `lib/finanzas/comisionResolver.ts`, compartida entre ambos documentos. También se
+>   corrigió el catálogo IATA (`lib/iata.ts`): CUR (Curazao) y otros códigos
+>   internacionales (Aruba, Bonaire, Nassau, etc.) no autocompletaban origen/destino
+>   porque faltaban en el diccionario.
+> - **Logo por tenant en documentos + ajustes varios (jul-2026, sin migración):**
+>   `components/Logo.tsx` ahora recibe un `tenant` opcional y usa el logo propio de
+>   minorista (sin fondo, transparente) en vez del de mayorista cuando corresponde —
+>   aplicado en sidebar/topbar del dashboard, header del CRM, `DocHeader` (recibo y
+>   estado de cuenta) y el voucher de servicios. Tabla de Proveedores (CxP) en la ficha
+>   del contrato ya no obliga a scroll horizontal (anchos de columna fijos + padding
+>   compacto). Cuenta de cobro reorganizada para caber en una sola hoja tamaño carta al
+>   imprimir (antes salían 2 páginas A4). Plan de cobro (`/dashboard/contratos/[numero]`,
+>   pestaña Cartera): se puede elegir frecuencia mensual o quincenal antes de generar, y
+>   nueva página imprimible `/plan-cobro/[numero]` para descargarlo.
 > - **Rediseño de la cuenta de cobro + datos de pago del aliado (jul-2026):** pedido del
 >   dueño con 2 formatos de referencia (plantilla CXC real + hoja de liquidación interna).
 >   **Migración 133** (`aliados_datos_pago`, ya corrida): agrega a `aliados` (catálogo)
@@ -1193,14 +1226,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **133** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **134** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 133** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 134** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -1304,8 +1337,10 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > por asesor+mes) — ver "Novedades recientes" · **133 aliados_datos_pago**
 > (ya corrida) — datos de pago del catálogo `aliados`
 > (`tipo_documento`/`direccion`/`banco`/`tipo_cuenta`/`numero_cuenta`) +
-> `aliados_b2b.aliado_id` (FK opcional al catálogo) — ver "Novedades
-> recientes".
+> `aliados_b2b.aliado_id` (FK opcional al catálogo) · **134 aerolineas**
+> (ya corrida) — tablas `aerolineas` + `aerolinea_tarifas` (catálogo de
+> aerolíneas y sus tipos de tarifa/equipaje, mismo patrón que `destinos`)
+> — ver "Novedades recientes".
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
