@@ -60,6 +60,8 @@ export function NuevoContratoForm({
   agencias = [],
   freelances = [],
   destinos = [],
+  hotelesCatalogo = [],
+  proveedoresCatalogo = [],
   puedeForzarMargen = false,
 }: {
   asesorDefault: string;
@@ -69,6 +71,11 @@ export function NuevoContratoForm({
   agencias?: Opt[];
   freelances?: Opt[];
   destinos?: DestinoOpt[];
+  // Catálogo de hoteles ya negociados (mayorista) + su proveedor, para
+  // autocompletar en el hotel del contrato manual/dinámico sin perder la
+  // opción de escribirlo libre si no está (mismo criterio que `destinos`).
+  hotelesCatalogo?: { nombre: string; proveedor: string | null }[];
+  proveedoresCatalogo?: string[];
   puedeForzarMargen?: boolean;
 }) {
   const router = useRouter();
@@ -154,6 +161,17 @@ export function NuevoContratoForm({
   }
   function setHotel(i: number, patch: Partial<HotelInput>) {
     setHoteles((arr) => arr.map((h, j) => (j === i ? { ...h, ...patch } : h)));
+  }
+  // Si el nombre tipeado coincide con un hotel del catálogo (mayorista) y el
+  // proveedor todavía está vacío, lo autocompleta -- sin pisar un proveedor
+  // que el asesor ya haya escrito a mano.
+  function elegirHotelNombre(i: number, nombre: string) {
+    const match = hotelesCatalogo.find((h) => h.nombre.toLowerCase() === nombre.trim().toLowerCase());
+    setHoteles((arr) => arr.map((h, j) => {
+      if (j !== i) return h;
+      const proveedor = !h.proveedor.trim() && match?.proveedor ? match.proveedor : h.proveedor;
+      return { ...h, nombre, proveedor };
+    }));
   }
   function setServicio(i: number, patch: Partial<ServicioInput>) {
     setServicios((arr) => arr.map((s, j) => (j === i ? { ...s, ...patch } : s)));
@@ -505,12 +523,22 @@ export function NuevoContratoForm({
             + Agregar hotel
           </button>
         </div>
+        {hotelesCatalogo.length > 0 && (
+          <datalist id="hoteles-catalogo">
+            {hotelesCatalogo.map((h) => <option key={h.nombre} value={h.nombre} />)}
+          </datalist>
+        )}
+        {proveedoresCatalogo.length > 0 && (
+          <datalist id="proveedores-catalogo">
+            {proveedoresCatalogo.map((p) => <option key={p} value={p} />)}
+          </datalist>
+        )}
         {hoteles.length === 0 && <p className="text-xs text-gray-400">Sin hoteles cargados.</p>}
         {hoteles.map((h, i) => (
           <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4">
-            <Input placeholder="Hotel" value={h.nombre} onChange={(e) => setHotel(i, { nombre: e.target.value })} />
+            <Input placeholder="Hotel" list="hoteles-catalogo" value={h.nombre} onChange={(e) => elegirHotelNombre(i, e.target.value)} />
             <Input placeholder="Categoría habitación" value={h.categoria} onChange={(e) => setHotel(i, { categoria: e.target.value })} />
-            <Input placeholder="Proveedor del hotel" value={h.proveedor} onChange={(e) => setHotel(i, { proveedor: e.target.value })} />
+            <Input placeholder="Proveedor del hotel" list="proveedores-catalogo" value={h.proveedor} onChange={(e) => setHotel(i, { proveedor: e.target.value })} />
             <ComboCiudad destinos={destinos} value={h.ciudad} onChange={(val) => setHotel(i, { ciudad: val })} modo="nombre" permitirLibre placeholder="Ciudad" />
             <Input placeholder="Alimentación (P.A, PAM…)" value={h.alimentacion} onChange={(e) => setHotel(i, { alimentacion: e.target.value })} />
             <Input placeholder="Acomodación (Doble…)" value={h.acomodacion} onChange={(e) => setHotel(i, { acomodacion: e.target.value })} />
