@@ -182,6 +182,14 @@ function Fila({ row }: { row: ComB2BRow }) {
                 Cuenta de cobro
               </Link>
             )}
+            <Link
+              href={`/portal/comision/${encodeURIComponent(row.numero_contrato)}/estado-cuenta`}
+              target="_blank"
+              className="text-xs font-medium hover:underline"
+              style={{ color: "var(--brand-accent)" }}
+            >
+              Estado de cuenta
+            </Link>
             <button type="button" onClick={() => setAbierto((o) => !o)} className="text-xs font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>
               {row.pagos.length > 0 ? `${row.pagos.length} abono(s)` : "Registrar abono"} →
             </button>

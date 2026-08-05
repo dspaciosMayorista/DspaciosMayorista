@@ -183,6 +183,21 @@ Ver §9 más abajo — la cuenta de cobro (`/portal/comision/[numero]`) ahora re
 (flujo tarifario B2B en `ventas`, o `aliados_b2b` cuando ese flujo no aplica — único camino en
 minorista) y `crearComisionB2B` captura `tipoAliado`.
 
+### Estado de cuenta de abonos (`/portal/comision/[numero]/estado-cuenta`, jul-2026)
+
+Documento separado de la cuenta de cobro (que muestra el TOTAL a cobrar, no cómo se ha ido
+pagando) — pedido del dueño para poder llevar el historial de abonos de una comisión grande que
+se paga en varias cuotas. Reutiliza `lib/finanzas/comisionResolver.ts::resolverComisionB2B()`
+(extraído de la lógica que antes vivía solo en la página de cuenta de cobro — mismas dos vías,
+mismo control de acceso) y, si `aliadoB2bId` no es `null` (solo vía 2 — la vía 1 del flujo
+tarifario de mayorista no tiene log de abonos, `notFound()` en ese caso), trae
+`comision_b2b_pagos` de esa comisión ordenados por fecha y calcula el saldo corrido tras cada
+abono (mismo patrón que `lib/cuenta/estado.ts::cargarEstadoCuenta`, pero sobre comisiones en vez
+de sobre el contrato del cliente). Usa `DocHeader`/`PRINT_DOC_STYLE` (branding por tenant, A4) en
+vez del layout de la cuenta de cobro. Link cruzado en ambos sentidos: la cuenta de cobro linkea a
+"Estado de cuenta →" (solo si `aliadoB2bId` existe) y `/dashboard/comisiones` (`ComisionesList.tsx`)
+tiene el link directo junto a "Cuenta de cobro".
+
 ### Recobro (migración 086)
 > RECOBRO = mayor valor cobrado que entra al total de la venta pero NO corresponde a ningún
 > servicio y NO se le muestra al cliente.
