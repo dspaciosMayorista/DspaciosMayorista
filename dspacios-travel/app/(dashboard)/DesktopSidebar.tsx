@@ -10,7 +10,7 @@ const KEY = "dsp-sidebar";
 
 // Sidebar de escritorio: recogible (solo iconos) o expandido. El estado se
 // recuerda en localStorage. Más ancho (w-64) para evitar el scroll horizontal.
-export function DesktopSidebar({ nav, switcher }: { nav: NavItem[]; switcher?: React.ReactNode }) {
+export function DesktopSidebar({ nav, switcher, tenant }: { nav: NavItem[]; switcher?: React.ReactNode; tenant?: "mayorista" | "minorista" }) {
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
@@ -34,7 +34,7 @@ export function DesktopSidebar({ nav, switcher }: { nav: NavItem[]; switcher?: R
       <div className={`flex items-center border-b border-gray-100 py-4 ${collapsed ? "justify-center px-2" : "justify-between px-4"}`}>
         {!collapsed && (
           <a href="/dashboard" aria-label="D'spacios Travel — inicio">
-            <Logo variant="full" height={34} className="h-8 w-auto" priority />
+            <Logo variant="full" height={34} className="h-8 w-auto" priority tenant={tenant} />
           </a>
         )}
         <button

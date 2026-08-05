@@ -1,4 +1,5 @@
 import { formatFechaLarga } from "@/lib/utils";
+import { Logo } from "@/components/Logo";
 import type { VoucherContenido } from "@/app/(dashboard)/dashboard/contratos/[numero]/voucher-actions";
 
 const PRIMARY = "#1D7C9A";
@@ -31,13 +32,12 @@ function Celda({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function VoucherDocumento({ c }: { c: VoucherContenido }) {
+export function VoucherDocumento({ c, tenant }: { c: VoucherContenido; tenant?: "mayorista" | "minorista" }) {
   return (
     <div className="voucher-doc mx-auto max-w-3xl bg-white text-gray-800">
       {/* Encabezado: logo + fecha de emisión */}
       <header className="flex items-center justify-between gap-4 px-5 py-4">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/marca/logo-full.png" alt="D'spacios Travel" className="h-14 w-auto" />
+        <Logo variant="full" height={56} className="h-14 w-auto" tenant={tenant} />
         <div className="text-right">
           <div className="inline-block px-3 py-0.5 text-[10px] font-bold uppercase text-white" style={{ backgroundColor: LIMA, color: "#1f3d10" }}>Fecha de emisión</div>
           <div className="mt-1 text-sm font-semibold" style={{ color: PRIMARY }}>{formatFechaLarga(c.emision)}</div>

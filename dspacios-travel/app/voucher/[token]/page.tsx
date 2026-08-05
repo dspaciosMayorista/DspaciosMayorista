@@ -17,9 +17,11 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
 export default async function VoucherPublicoPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const sb = createAdminClient();
-  const { data: v } = await sb.from("vouchers").select("contenido").eq("share_token", token).maybeSingle();
+  const { data: v } = await sb.from("vouchers").select("contenido, numero_contrato").eq("share_token", token).maybeSingle();
   if (!v || !v.contenido) notFound();
   const c = v.contenido as unknown as VoucherContenido;
+  const { data: venta } = await sb.from("ventas").select("tenant").eq("numero_contrato", v.numero_contrato).maybeSingle();
+  const tenant = venta?.tenant === "minorista" ? "minorista" : "mayorista";
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">
@@ -28,7 +30,7 @@ export default async function VoucherPublicoPage({ params }: { params: Promise<{
       </div>
       <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">
         <div className="overflow-hidden rounded-xl bg-white shadow-sm print:rounded-none print:shadow-none">
-          <VoucherDocumento c={c} />
+          <VoucherDocumento c={c} tenant={tenant} />
         </div>
       </div>
       <style

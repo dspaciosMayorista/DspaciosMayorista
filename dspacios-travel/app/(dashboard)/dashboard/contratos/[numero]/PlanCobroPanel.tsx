@@ -2,9 +2,11 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatCOP, formatFechaLarga } from "@/lib/utils";
 import { generarPlanCobro } from "./cobros-actions";
+import type { FrecuenciaCuota } from "@/lib/calc/cuotas";
 
 export type CuotaRow = { id: number; orden: number; tipo: string; fecha_limite: string; monto: number };
 
@@ -12,13 +14,14 @@ const TIPO_LABEL: Record<string, string> = { abono: "Abono inicial", cuota: "Cuo
 
 export function PlanCobroPanel({ numero, cuotas, pagado }: { numero: string; cuotas: CuotaRow[]; pagado: number }) {
   const router = useRouter();
+  const [frecuencia, setFrecuencia] = useState<FrecuenciaCuota>("mensual");
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
 
   function generar() {
     setMsg("");
     start(async () => {
-      const r = await generarPlanCobro(numero);
+      const r = await generarPlanCobro(numero, frecuencia);
       if (r.ok) { setMsg(`✓ Plan de ${r.n} pago(s)`); router.refresh(); }
       else setMsg(r.error);
     });
@@ -34,9 +37,29 @@ export function PlanCobroPanel({ numero, cuotas, pagado }: { numero: string; cuo
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-semibold text-gray-700">Plan de cobro</p>
-        <Button onClick={generar} disabled={pending} variant="outline">
-          {pending ? "Generando…" : cuotas.length ? "Regenerar plan" : "Generar plan de cobro"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={frecuencia}
+            onChange={(e) => setFrecuencia(e.target.value === "quincenal" ? "quincenal" : "mensual")}
+            className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-600"
+            title="Frecuencia de las cuotas (no aplica al abono inicial)"
+          >
+            <option value="mensual">Cuotas mensuales</option>
+            <option value="quincenal">Cuotas quincenales</option>
+          </select>
+          {cuotas.length > 0 && (
+            <Link
+              href={`/plan-cobro/${encodeURIComponent(numero)}`}
+              target="_blank"
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+            >
+              Descargar
+            </Link>
+          )}
+          <Button onClick={generar} disabled={pending} variant="outline">
+            {pending ? "Generando…" : cuotas.length ? "Regenerar plan" : "Generar plan de cobro"}
+          </Button>
+        </div>
       </div>
       {msg && <p className={`mt-1 text-xs ${msg.startsWith("✓") ? "text-green-600" : "text-red-600"}`}>{msg}</p>}
       {cuotas.length > 0 ? (

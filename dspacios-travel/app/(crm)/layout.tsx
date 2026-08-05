@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "../(dashboard)/LogoutButton";
+import { getTenant } from "@/lib/tenant.server";
 import { Contact, Send, Upload, Settings, Megaphone } from "lucide-react";
 
 const NAV = [
@@ -20,6 +21,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
+  const tenant = await getTenant();
 
   return (
     <div
@@ -30,7 +32,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       <header className="bg-brand-gradient text-white">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3 md:px-8">
           <Link href="/crm" className="flex items-center gap-2">
-            <Logo variant="white" height={26} className="h-6 w-auto" />
+            <Logo variant="white" height={26} className="h-6 w-auto" tenant={tenant} />
             <span className="rounded-md bg-white/15 px-2 py-0.5 text-sm font-semibold tracking-wide">CRM</span>
           </Link>
           <nav className="ml-2 flex flex-wrap items-center gap-1 text-sm">

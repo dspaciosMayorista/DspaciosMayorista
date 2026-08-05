@@ -414,19 +414,25 @@ function ProveedoresTab({ numero, filas, catalogo }: { numero: string; filas: Cx
       </div>
       {filas.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-gray-300 bg-white shadow-sm">
-          <table className="w-full min-w-[640px] text-sm">
-            <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-              <th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Servicio</th>
-              <th className="px-4 py-2 text-right">Costo</th><th className="px-4 py-2 text-right">IVA desc.</th>
-              <th className="px-4 py-2 text-right">Valor</th><th className="px-4 py-2">Vence</th>
-              <th className="px-4 py-2">Estado</th><th className="px-4 py-2"></th>
+          <table className="w-full table-fixed text-xs sm:text-sm">
+            <colgroup>
+              <col className="w-[16%]" /><col className="w-[26%]" />
+              <col className="w-[11%]" /><col className="w-[11%]" />
+              <col className="w-[12%]" /><col className="w-[10%]" />
+              <col className="w-[14%]" /><col className="w-[10%]" />
+            </colgroup>
+            <thead><tr className="bg-gray-50 text-left text-[10px] uppercase text-gray-400 sm:text-xs">
+              <th className="px-2 py-2 sm:px-4">Proveedor</th><th className="px-2 py-2 sm:px-4">Servicio</th>
+              <th className="px-2 py-2 text-right sm:px-4">Costo</th><th className="px-2 py-2 text-right sm:px-4">IVA desc.</th>
+              <th className="px-2 py-2 text-right sm:px-4">Valor</th><th className="px-2 py-2 sm:px-4">Vence</th>
+              <th className="px-2 py-2 sm:px-4">Estado</th><th className="px-2 py-2 sm:px-4"></th>
             </tr></thead>
             <tbody>{filas.map((f) => <FilaCxP key={f.id} f={f} numero={numero} />)}</tbody>
             {/* Nota: la fila editable reutiliza el mismo datalist "proveedores-{numero}" declarado arriba. */}
             <tfoot><tr className="border-t border-gray-200 font-medium">
-              <td className="px-4 py-2" colSpan={3}>Total por pagar</td>
-              <td className="px-4 py-2 text-right tabular-nums text-gray-500">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
-              <td className="px-4 py-2 text-right tabular-nums">{formatCOP(totalCxP)}</td><td colSpan={3} />
+              <td className="px-2 py-2 sm:px-4" colSpan={3}>Total por pagar</td>
+              <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
+              <td className="px-2 py-2 text-right tabular-nums sm:px-4">{formatCOP(totalCxP)}</td><td colSpan={3} />
             </tr></tfoot>
           </table>
         </div>
@@ -489,17 +495,17 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
   return (
     <>
       <tr className="border-t border-gray-50">
-        <td className="px-4 py-2 text-gray-700">{f.proveedor ?? "—"}</td>
-        <td className="px-4 py-2 text-gray-500">{f.servicio ?? "—"}</td>
-        <td className="px-4 py-2 text-right tabular-nums text-gray-600">{formatCOP(costoF)}</td>
-        <td className="px-4 py-2 text-right tabular-nums text-gray-500">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
-        <td className="px-4 py-2 text-right tabular-nums">{formatCOP(f.valor_total)}</td>
-        <td className="px-4 py-2 text-gray-500">{f.fecha_vencimiento ?? "—"}</td>
-        <td className="px-4 py-2">
+        <td className="break-words px-2 py-2 text-gray-700 sm:px-4">{f.proveedor ?? "—"}</td>
+        <td className="break-words px-2 py-2 text-gray-500 sm:px-4">{f.servicio ?? "—"}</td>
+        <td className="px-2 py-2 text-right tabular-nums text-gray-600 sm:px-4">{formatCOP(costoF)}</td>
+        <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
+        <td className="px-2 py-2 text-right tabular-nums sm:px-4">{formatCOP(f.valor_total)}</td>
+        <td className="px-2 py-2 text-gray-500 sm:px-4">{f.fecha_vencimiento ?? "—"}</td>
+        <td className="px-2 py-2 sm:px-4">
           <button
             type="button"
             onClick={() => setVerPago((v) => !v)}
-            className="rounded-full px-2 py-0.5 text-[11px] font-semibold"
+            className="rounded-full px-2 py-0.5 text-[10px] font-semibold sm:text-[11px]"
             style={estaPagada
               ? { backgroundColor: "rgba(102,181,150,0.18)", color: "#3d7a63" }
               : { backgroundColor: "rgba(29,124,154,0.10)", color: "var(--brand-primary)" }}
@@ -507,14 +513,14 @@ function FilaCxP({ f, numero }: { f: CxP; numero: string }) {
             {estaPagada ? "Pagado" : `Pendiente · ${formatMoneda(saldo, f.moneda ?? "COP")}`}
           </button>
         </td>
-        <td className="px-4 py-2 text-right whitespace-nowrap">
-          <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
+        <td className="px-2 py-2 text-right sm:px-4">
+          <button type="button" onClick={() => setEditar(true)} className="mr-1 text-[10px] font-medium hover:underline sm:mr-3 sm:text-xs" style={{ color: "var(--brand-accent)" }}>Editar</button>
           <DeleteBtn onClick={() => eliminarCuentaPorPagar(f.id, numero)} />
         </td>
       </tr>
       {verPago && (
         <tr className="border-t border-gray-100 bg-gray-50/60">
-          <td className="px-4 py-3" colSpan={8}>
+          <td className="px-2 py-3 sm:px-4" colSpan={8}>
             <PagoProveedorPanel f={f} pagado={pagado} saldo={saldo} />
           </td>
         </tr>

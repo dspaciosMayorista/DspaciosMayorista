@@ -98,6 +98,58 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
   };
 }
 
+export type CuotaPlan = { id: number; orden: number; tipo: string; fecha_limite: string; monto: number; cubierta: boolean };
+
+export type PlanCobro = {
+  numero_contrato: string;
+  cliente: string | null;
+  destino: string | null;
+  fecha_salida: string | null;
+  moneda: string;
+  tenant: string;
+  precio_venta: number;
+  pagado: number;
+  cuotas: CuotaPlan[];
+};
+
+/** Carga el plan de cobro (cuotas) de un contrato, mismo control de acceso que el estado de cuenta. */
+export async function cargarPlanCobro(numero: string): Promise<PlanCobro | null> {
+  const ec = await cargarEstadoCuenta(numero);
+  if (!ec) return null;
+
+  const admin = createAdminClient();
+  const { data: cs } = await admin
+    .from("cuotas")
+    .select("id, orden, tipo, fecha_limite, monto")
+    .eq("numero_contrato", numero)
+    .order("orden", { ascending: true });
+
+  let acum = 0;
+  const cuotas: CuotaPlan[] = (cs ?? []).map((c) => {
+    acum += Number(c.monto ?? 0);
+    return {
+      id: c.id as number,
+      orden: c.orden as number,
+      tipo: c.tipo as string,
+      fecha_limite: c.fecha_limite as string,
+      monto: Number(c.monto ?? 0),
+      cubierta: ec.pagado >= acum,
+    };
+  });
+
+  return {
+    numero_contrato: ec.numero_contrato,
+    cliente: ec.cliente,
+    destino: ec.destino,
+    fecha_salida: ec.fecha_salida,
+    moneda: ec.moneda,
+    tenant: ec.tenant,
+    precio_venta: ec.precio_venta,
+    pagado: ec.pagado,
+    cuotas,
+  };
+}
+
 /** Carga un recibo de caja (un abono) con el mismo control de acceso. */
 export async function cargarRecibo(idAbono: number): Promise<{
   estado: EstadoCuenta;

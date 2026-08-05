@@ -181,112 +181,111 @@ export default async function CuentaCobroPage({ params }: { params: Promise<{ nu
         <PrintButton />
       </div>
       <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">
-        <div className="cuenta-doc rounded-xl bg-white p-8 shadow-sm print:rounded-none print:shadow-none">
-          {/* ── Encabezado: quien cobra ────────────────────────────── */}
-          <div className="text-sm text-gray-700">
-            <p className="text-base font-semibold text-gray-900">{aliado}</p>
-            {aliadoInfo?.nit && <p>{aliadoInfo.tipo_documento ?? "NIT"}: {aliadoInfo.nit}</p>}
-            {aliadoInfo?.direccion && <p>Dirección: {aliadoInfo.direccion}</p>}
-            {aliadoInfo?.telefono && <p>Teléfono: {aliadoInfo.telefono}</p>}
-            {aliadoInfo?.email && <p>Email: {aliadoInfo.email}</p>}
+        <div className="cuenta-doc rounded-xl bg-white p-6 shadow-sm print:rounded-none print:p-0 print:shadow-none">
+          <h1 className="text-center text-xl font-bold" style={{ color: "var(--brand-primary)" }}>CUENTA DE COBRO</h1>
+          <p className="mt-0.5 text-center text-xs text-gray-500">Fecha de elaboración: {formatFechaLarga(hoy)}</p>
+
+          {/* ── Encabezado: quien cobra / a quién ─────────────────────── */}
+          <div className="mt-3 grid grid-cols-2 gap-4 border-y border-gray-100 py-3 text-xs text-gray-700">
+            <div>
+              <p className="text-gray-400">DE (quien cobra)</p>
+              <p className="text-sm font-semibold text-gray-900">{aliado}</p>
+              {aliadoInfo?.nit && <p>{aliadoInfo.tipo_documento ?? "NIT"}: {aliadoInfo.nit}</p>}
+              {aliadoInfo?.direccion && <p>{aliadoInfo.direccion}</p>}
+              {aliadoInfo?.telefono && <p>Tel: {aliadoInfo.telefono}</p>}
+              {aliadoInfo?.email && <p>{aliadoInfo.email}</p>}
+            </div>
+            <div>
+              <p className="text-gray-400">COMPAÑÍA</p>
+              <p className="text-sm font-semibold text-gray-900">{nombreAgencia}</p>
+              {nitAgencia && <p>NIT: {nitAgencia}</p>}
+              {direccionAgencia && <p>{direccionAgencia}</p>}
+            </div>
           </div>
 
-          <hr className="my-4 border-gray-200" />
-
-          <h1 className="text-center text-2xl font-bold" style={{ color: "var(--brand-primary)" }}>CUENTA DE COBRO</h1>
-          <p className="mt-1 text-center text-sm text-gray-500">Fecha de elaboración: {formatFechaLarga(hoy)}</p>
-
-          <div className="mt-6 text-sm text-gray-700">
-            <p className="text-gray-500">COMPAÑÍA</p>
-            <p className="font-semibold">{nombreAgencia}</p>
-            {nitAgencia && <p>NIT: {nitAgencia}</p>}
-            {direccionAgencia && <p>{direccionAgencia}</p>}
+          <div className="mt-3 text-center">
+            <p className="text-xs text-gray-500">DEBE LA SUMA DE</p>
+            <p className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(montoComision, moneda)}</p>
+            <p className="text-xs text-gray-500">({pesosEnLetras(montoComision, moneda === "USD" ? "USD" : "COP")})</p>
           </div>
 
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-500">DEBE LA SUMA DE</p>
-            <p className="mt-1 text-2xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(montoComision, moneda)}</p>
-            <p className="mt-1 text-sm text-gray-500">({pesosEnLetras(montoComision, moneda === "USD" ? "USD" : "COP")})</p>
-          </div>
-
-          <div className="mt-6 text-sm text-gray-700">
-            <p className="text-gray-500">POR CONCEPTO DE</p>
+          <div className="mt-3 text-xs text-gray-700">
+            <p className="text-gray-400">POR CONCEPTO DE</p>
             <p className="font-medium">{concepto}</p>
           </div>
 
           {/* ── Desglose: de dónde sale el valor ─────────────────────── */}
-          <table className="mt-5 w-full border-collapse text-sm">
+          <table className="mt-3 w-full border-collapse text-xs">
             <tbody>
-              <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Fecha de viaje</td><td className="py-2 text-right">{formatFechaLarga(v.fecha_salida)}</td></tr>
-              <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Total PVP</td><td className="py-2 text-right tabular-nums">{formatMoneda(detalle.pvp, moneda)}</td></tr>
+              <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Fecha de viaje</td><td className="py-1 text-right">{formatFechaLarga(v.fecha_salida)}</td></tr>
+              <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Total PVP</td><td className="py-1 text-right tabular-nums">{formatMoneda(detalle.pvp, moneda)}</td></tr>
               {detalle.baseComisionable != null && (
-                <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Base comisionable</td><td className="py-2 text-right tabular-nums">{formatMoneda(detalle.baseComisionable, moneda)}</td></tr>
+                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Base comisionable</td><td className="py-1 text-right tabular-nums">{formatMoneda(detalle.baseComisionable, moneda)}</td></tr>
               )}
               <tr className="border-b border-gray-100">
-                <td className="py-2 text-gray-500">{detalle.esPctEfectivo ? "% comisión (efectivo)" : "% comisión"}</td>
-                <td className="py-2 text-right tabular-nums">{(detalle.pctComision * 100).toFixed(2)}%</td>
+                <td className="py-1 text-gray-500">{detalle.esPctEfectivo ? "% comisión (efectivo)" : "% comisión"}</td>
+                <td className="py-1 text-right tabular-nums">{(detalle.pctComision * 100).toFixed(2)}%</td>
               </tr>
               {detalle.comisionBase != null && (
-                <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Comisión</td><td className="py-2 text-right tabular-nums">{formatMoneda(detalle.comisionBase, moneda)}</td></tr>
+                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Comisión</td><td className="py-1 text-right tabular-nums">{formatMoneda(detalle.comisionBase, moneda)}</td></tr>
               )}
               {detalle.recobroAliado != null && detalle.recobroAliado > 0 && (
-                <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Recobro</td><td className="py-2 text-right tabular-nums">{formatMoneda(detalle.recobroAliado, moneda)}</td></tr>
+                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Recobro</td><td className="py-1 text-right tabular-nums">{formatMoneda(detalle.recobroAliado, moneda)}</td></tr>
               )}
               {detalle.aplicaRetencion && detalle.retencion != null && detalle.retencion > 0 && (
                 <tr className="border-b border-gray-100">
-                  <td className="py-2 text-gray-500">Retención en la fuente ({((detalle.pctRetencion ?? 0) * 100).toFixed(1)}%)</td>
-                  <td className="py-2 text-right tabular-nums text-red-600">− {formatMoneda(detalle.retencion, moneda)}</td>
+                  <td className="py-1 text-gray-500">Retención en la fuente ({((detalle.pctRetencion ?? 0) * 100).toFixed(1)}%)</td>
+                  <td className="py-1 text-right tabular-nums text-red-600">− {formatMoneda(detalle.retencion, moneda)}</td>
                 </tr>
               )}
             </tbody>
           </table>
 
-          <div className="mt-4 flex items-center justify-between rounded-lg bg-[rgba(29,124,154,0.06)] px-4 py-3">
-            <span className="text-sm font-semibold text-gray-700">Total a cobrar</span>
-            <span className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(montoComision, moneda)}</span>
+          <div className="mt-2 flex items-center justify-between rounded-lg bg-[rgba(29,124,154,0.06)] px-3 py-2">
+            <span className="text-xs font-semibold text-gray-700">Total a cobrar</span>
+            <span className="text-base font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(montoComision, moneda)}</span>
           </div>
 
           {/* ── Declaración de retención (Art. 383 E.T.) ─────────────── */}
           {detalle.aplicaRetencion === false && (
-            <div className="mt-6 text-xs text-gray-500">
+            <div className="mt-3 text-[10px] leading-snug text-gray-500">
               <p>
                 Para efectos de lo establecido en el parágrafo 2 del Artículo 383 del E.T., modificado por el
                 Artículo 17 de la Ley 1819 de 2016, manifiesto que:
               </p>
-              <ol className="ml-4 mt-1 list-decimal space-y-0.5">
+              <ol className="ml-4 list-decimal">
                 <li>No he contratado o vinculado dos (2) personas o más trabajadores asociados a la actividad que desarrollo.</li>
                 <li>En el año gravable anterior mis ingresos o ventas no superaron las 3.300 UVT.</li>
                 <li>No soy declarante de renta.</li>
               </ol>
-              <p className="mt-2 text-center font-semibold text-gray-600">NO HACER RETENCIÓN EN LA FUENTE</p>
+              <p className="mt-1 text-center font-semibold text-gray-600">NO HACER RETENCIÓN EN LA FUENTE</p>
             </div>
           )}
 
           {/* ── Datos de pago del aliado ──────────────────────────────── */}
           {aliadoInfo?.numero_cuenta && (
-            <div className="mt-6 rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
+            <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-[10px] leading-snug text-gray-600">
               <p className="font-semibold text-gray-700">Forma de pago: Transferencia bancaria</p>
-              <p>Banco: {aliadoInfo.banco ?? "—"}</p>
-              <p>Tipo de cuenta: {aliadoInfo.tipo_cuenta ?? "—"}</p>
-              <p>A nombre de: {aliadoInfo.nombre}</p>
-              <p>Número de cuenta: {aliadoInfo.numero_cuenta}</p>
+              <p>
+                {aliadoInfo.banco ?? "—"} — {aliadoInfo.tipo_cuenta ?? "—"} · A nombre de {aliadoInfo.nombre} · N.° {aliadoInfo.numero_cuenta}
+              </p>
             </div>
           )}
 
-          <div className="mt-10 text-sm text-gray-600">
-            <div className="border-t border-gray-300 pt-2" style={{ width: 260 }}>Firma</div>
-            <p className="mt-1">{aliado}</p>
-            {aliadoInfo?.nit && <p className="text-xs text-gray-400">{aliadoInfo.tipo_documento ?? "NIT"} {aliadoInfo.nit}</p>}
+          <div className="mt-6 text-xs text-gray-600">
+            <div className="border-t border-gray-300 pt-1" style={{ width: 220 }}>Firma</div>
+            <p className="mt-0.5">{aliado}</p>
+            {aliadoInfo?.nit && <p className="text-[10px] text-gray-400">{aliadoInfo.tipo_documento ?? "NIT"} {aliadoInfo.nit}</p>}
           </div>
 
-          <footer className="mt-8 border-t border-gray-200 pt-3 text-center text-[10px] text-gray-400">
+          <footer className="mt-4 border-t border-gray-200 pt-2 text-center text-[9px] text-gray-400">
             Documento generado por el Portal B2B de D&apos;spacios Travel.
           </footer>
         </div>
       </div>
       <style dangerouslySetInnerHTML={{ __html: `
         .cuenta-doc, .cuenta-doc * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-        @page { size: A4; margin: 14mm; }
+        @page { size: letter; margin: 12mm; }
         @media print { html, body { background: #fff !important; } }
       ` }} />
     </div>
