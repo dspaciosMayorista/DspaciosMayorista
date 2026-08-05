@@ -18,7 +18,7 @@ export default async function NuevoContratoPage() {
     puedeForzarMargen = ["superadmin", "administracion"].includes(perfil?.rol ?? "");
   }
 
-  const [{ data: paquetesRaw }, { data: bloqueosRaw }, { data: vendedores }, { data: aliados }, { data: destinos }, { data: hotelesRaw }, { data: proveedoresRaw }] = await Promise.all([
+  const [{ data: paquetesRaw }, { data: bloqueosRaw }, { data: vendedores }, { data: aliados }, { data: destinos }, { data: hotelesRaw }, { data: proveedoresRaw }, { data: aerolineasRaw }, { data: tarifasRaw }] = await Promise.all([
     sb.from("paquetes")
       .select("id, categoria, nombre, plan_alimentacion, impuesto_no_comisionable, paquete_hoteles(nombre, ciudad, alimentacion, acomodacion_detalle), paquete_precios(acomodacion, precio)")
       .eq("activo", true)
@@ -31,6 +31,8 @@ export default async function NuevoContratoPage() {
     // que destinos, para autocompletar sin perder la opción de texto libre.
     sb.from("hoteles").select("nombre, proveedor_id").eq("activo", true).order("nombre"),
     sb.from("proveedores").select("id, nombre").order("nombre"),
+    sb.from("aerolineas").select("id, nombre").eq("activo", true).order("nombre"),
+    sb.from("aerolinea_tarifas").select("id, aerolinea_id, nombre, descripcion").order("orden"),
   ]);
 
   const paquetes = (paquetesRaw ?? []) as unknown as PaqueteOpt[];
@@ -43,6 +45,13 @@ export default async function NuevoContratoPage() {
     proveedor: h.proveedor_id != null ? (proveedorNombrePorId.get(h.proveedor_id) ?? null) : null,
   }));
   const proveedoresNombres = (proveedoresRaw ?? []).map((p) => p.nombre);
+  const tarifasPorAerolinea = new Map<number, { nombre: string; descripcion: string }[]>();
+  for (const t of tarifasRaw ?? []) {
+    const arr = tarifasPorAerolinea.get(t.aerolinea_id) ?? [];
+    arr.push({ nombre: t.nombre, descripcion: t.descripcion });
+    tarifasPorAerolinea.set(t.aerolinea_id, arr);
+  }
+  const aerolineas = (aerolineasRaw ?? []).map((a) => ({ nombre: a.nombre, tarifas: tarifasPorAerolinea.get(a.id) ?? [] }));
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
@@ -61,6 +70,7 @@ export default async function NuevoContratoPage() {
       <NuevoContratoForm asesorDefault={asesorDefault} paquetes={paquetes} bloqueos={bloqueos}
         vendedores={vendedores ?? []} agencias={agencias} freelances={freelances} destinos={destinos ?? []}
         hotelesCatalogo={hoteles} proveedoresCatalogo={proveedoresNombres}
+        aerolineasCatalogo={aerolineas}
         puedeForzarMargen={puedeForzarMargen} />
     </div>
   );

@@ -1201,6 +1201,42 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["destinos"]["Insert"]>;
         Relationships: [];
       };
+      aerolineas: {
+        Row: {
+          id: number;
+          nombre: string;
+          activo: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          nombre: string;
+          activo?: boolean;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["aerolineas"]["Insert"]>;
+        Relationships: [];
+      };
+      aerolinea_tarifas: {
+        Row: {
+          id: number;
+          aerolinea_id: number;
+          nombre: string;
+          descripcion: string;
+          orden: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          aerolinea_id: number;
+          nombre: string;
+          descripcion: string;
+          orden?: number;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["aerolinea_tarifas"]["Insert"]>;
+        Relationships: [];
+      };
       hoteles: {
         Row: {
           id: number;
