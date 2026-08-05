@@ -155,7 +155,7 @@ export default async function DashboardLayout({
       >
         <div className="flex items-center justify-between">
           <a href="/dashboard" aria-label="D'spacios Travel — inicio">
-            <Logo variant="full" height={32} className="h-7 w-auto" priority />
+            <Logo variant="full" height={32} className="h-7 w-auto" priority tenant={tenant} />
           </a>
           <div className="flex items-center gap-2">
             <TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} />
@@ -176,7 +176,7 @@ export default async function DashboardLayout({
       </header>
 
       {/* Sidebar (escritorio) — recogible */}
-      <DesktopSidebar nav={nav} switcher={<TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} />} />
+      <DesktopSidebar nav={nav} tenant={tenant} switcher={<TenantSwitcher tenant={tenant} permitidos={tenantsPermitidos} puedeCambiar={puedeCambiar} />} />
 
       {/* Contenido: la página entera hace scroll (un solo scrollbar); el menú
           queda fijo (sticky). Sin scroll interno propio. */}

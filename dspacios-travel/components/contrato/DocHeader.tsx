@@ -17,7 +17,7 @@ export async function DocHeader({ tenant }: { tenant?: string }) {
   return (
     <div className="flex items-start justify-between border-b border-gray-200 pb-4">
       <div>
-        <Logo variant="full" height={40} className="h-9 w-auto" />
+        <Logo variant="full" height={40} className="h-9 w-auto" tenant={(tenant as Tenant) === "minorista" ? "minorista" : "mayorista"} />
         <p className="mt-2 text-[11px] leading-tight text-gray-500">
           {razonSocial}
           <br />
