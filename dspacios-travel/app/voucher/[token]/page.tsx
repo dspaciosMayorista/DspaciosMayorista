@@ -7,12 +7,19 @@ import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
 
+const ETIQUETA_TIPO_VOUCHER: Record<string, string> = {
+  hotel: "Voucher Hotel",
+  traslado: "Voucher Traslados",
+  asistencia: "Voucher Asistencia",
+};
+
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const sb = createAdminClient();
-  const { data } = await sb.from("vouchers").select("contenido, numero_contrato").eq("share_token", token).maybeSingle();
+  const { data } = await sb.from("vouchers").select("contenido, numero_contrato, tipo").eq("share_token", token).maybeSingle();
   const c = data?.contenido as unknown as VoucherContenido | undefined;
-  return { title: { absolute: data ? tituloDocumento("Voucher", data.numero_contrato, c?.titular) : "Voucher" } };
+  const etiqueta = ETIQUETA_TIPO_VOUCHER[data?.tipo ?? ""] ?? "Voucher Servicios";
+  return { title: { absolute: data ? tituloDocumento(etiqueta, data.numero_contrato, c?.titular) : "Voucher" } };
 }
 
 // Vista pública del voucher por token (sin login) para imprimir/guardar.
