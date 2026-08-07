@@ -76,9 +76,8 @@ b2b_solicitudes(id, tipo default 'agencia', nombre, nit, contacto, email, telefo
 RLS: `insert` público (`with check(true)`); gestión (`for all`) solo
 `superadmin/administracion/gerencia`.
 
-Aprobación/rechazo — `dashboard/usuarios/b2b/actions.ts` (candado: permiso de módulo `"b2b"`,
-default `ADMIN_ROLES = superadmin/administracion/gerencia`, vía `lib/permisos.ts`, no un rol
-hardcodeado):
+Aprobación/rechazo — `dashboard/usuarios/b2b/actions.ts` (candado: `puedeEscribir("b2b", rol)`,
+`ESCRITURA.b2b = ADMIN_ROLES = superadmin/administracion/gerencia`, vía `lib/roles.ts`):
 - `aprobarSolicitudB2B(id)` — busca el usuario por email (**siempre existe**, el registro ya lo
   creó), `update({rol:tipo, activo:true})`, marca la solicitud `aprobada` + auditoría de
   quién/cuándo.
@@ -220,7 +219,7 @@ usuarios de otros ids (agentes de la misma agencia).
 | Alta | registro público o interna | igual | **solo asignable manualmente** por un admin en `/dashboard/usuarios` — sin flujo de registro público |
 
 ### ⚠️ Gotcha mayor: `cliente_final` es un rol "fantasma"
-Existe en el enum, en `EXTERNOS` (`proxy.ts`/`lib/permisos.ts`/`lib/constants.ts`), y el login
+Existe en el enum, en `ROLES_EXTERNOS` (`proxy.ts`/`lib/constants.ts`), y el login
 lo redirige a `/portal/b2b` igual que agencia/freelance — **pero no existe ninguna pantalla,
 tabla de vínculo, ni feature construida para que vea/descargue su propio contrato.** Está en
 toda la infraestructura de enrutamiento/permisos pero sin una sola línea de UI que lo reconozca

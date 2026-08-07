@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
-import { permisosDelUsuario } from "@/lib/permisos";
+import { miRol } from "@/lib/roles";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
@@ -57,7 +57,7 @@ export default async function AuditoriaPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const { rol } = await permisosDelUsuario();
+  const rol = await miRol();
   if (!ROLES_OK.includes(rol ?? "")) redirect("/dashboard");
 
   const sp = await searchParams;

@@ -1,16 +1,15 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { permisosDelUsuario } from "@/lib/permisos";
+import { miRol, LECTURA_MODULO } from "@/lib/roles";
 import { SolicitudesClient, type Solicitud } from "./SolicitudesClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function AprobacionesB2BPage() {
   const sb = await createClient();
-  const { permisos } = await permisosDelUsuario();
-  // Solo quien tenga permiso de "modificar" en el módulo B2B (admin por defecto).
-  if (!permisos["b2b"]?.consultar && !permisos["b2b"]?.modificar) redirect("/dashboard");
+  const rol = await miRol();
+  if (!rol || !LECTURA_MODULO.b2b.includes(rol)) redirect("/dashboard");
 
   const { data } = await sb
     .from("b2b_solicitudes")

@@ -117,9 +117,11 @@ solo cambia por acción explícita del usuario):
 
 ## 6. Acceso
 
-Gate **hardcodeado por página** (no pasa por la matriz genérica de `lib/permisos.ts`):
+Gate **hardcodeado por página** (no pasa por `lib/roles.ts`, que no tiene entrada propia para
+CRM):
 `ROLES = ["superadmin","gerencia","administracion","operaciones","venta"]` en
 `crm/difusion/page.tsx` (y en Contactos) — si el rol no está en la lista, muestra un mensaje
 en vez de la UI. Campañas/B2B/Email usan un set más angosto (sin `operaciones`/`venta`). El
-ítem de nav del dashboard (`modulo: "crm"` en `lib/permisos.ts`) es un gate MÁS GRUESO aparte
-(si el área CRM se ve en el sidebar) — no distingue Difusión de los demás submódulos.
+ítem de nav del dashboard (`modulo: "crm"` en `LECTURA_MODULO` de `lib/roles.ts`, hoy
+`ROLES_INTERNOS` — todos) es un gate MÁS GRUESO aparte (si el área CRM se ve en el sidebar) —
+no distingue Difusión de los demás submódulos.
