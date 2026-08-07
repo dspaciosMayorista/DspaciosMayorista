@@ -3,14 +3,23 @@ import { notFound } from "next/navigation";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { VoucherDocumento } from "@/components/voucher/VoucherDocumento";
 import type { VoucherContenido } from "@/app/(dashboard)/dashboard/contratos/[numero]/voucher-actions";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
+
+const ETIQUETA_TIPO_VOUCHER: Record<string, string> = {
+  hotel: "Voucher Hotel",
+  traslado: "Voucher Traslados",
+  asistencia: "Voucher Asistencia",
+};
 
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const sb = createAdminClient();
-  const { data } = await sb.from("vouchers").select("proveedor").eq("share_token", token).maybeSingle();
-  return { title: data ? `Voucher ${data.proveedor ?? ""} — D'spacios Travel` : "Voucher — D'spacios Travel" };
+  const { data } = await sb.from("vouchers").select("contenido, numero_contrato, tipo").eq("share_token", token).maybeSingle();
+  const c = data?.contenido as unknown as VoucherContenido | undefined;
+  const etiqueta = ETIQUETA_TIPO_VOUCHER[data?.tipo ?? ""] ?? "Voucher Servicios";
+  return { title: { absolute: data ? tituloDocumento(etiqueta, data.numero_contrato, c?.titular) : "Voucher" } };
 }
 
 // Vista pública del voucher por token (sin login) para imprimir/guardar.

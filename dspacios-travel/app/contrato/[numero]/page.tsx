@@ -6,14 +6,19 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { adjuntarNotaRegimen } from "@/lib/contrato/regimenNotas";
 import { agenciaDe } from "@/lib/tenant.server";
 import type { Tenant } from "@/lib/tenant";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ numero: string }>;
 }) {
-  const { numero } = await params;
-  return { title: `Contrato ${decodeURIComponent(numero)} — D'spacios Travel` };
+  const { numero: raw } = await params;
+  const numero = decodeURIComponent(raw);
+  const sb = createAdminClient();
+  const { data } = await sb.from("ventas").select("cliente").eq("numero_contrato", numero).maybeSingle();
+  return { title: { absolute: tituloDocumento("Contrato", numero, data?.cliente) } };
 }
 
 export default async function ContratoImprimiblePage({

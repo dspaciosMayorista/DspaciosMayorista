@@ -47,6 +47,22 @@ const noches = (a: string | null, b: string | null): number => {
   return Math.max(0, Math.round((new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime()) / 86_400_000));
 };
 
+// Categoría de servicio (de servicios_adicionales.categoria o
+// cotizacion_servicios.tipo_servicio) → tipo del voucher, para poder rotularlo
+// "Voucher Traslados"/"Voucher Asistencia" en vez de un genérico "Voucher
+// Servicios". Si un mismo proveedor agrupa servicios de categorías distintas,
+// cae al genérico "servicios" (no se puede rotular con una sola etiqueta).
+const CATEGORIA_A_TIPO: Record<string, string> = {
+  tour_traslado: "traslado",
+  traslado: "traslado",
+  tour: "traslado",
+  asistencia: "asistencia",
+};
+function tipoVoucherDeCategorias(categorias: Set<string>): string {
+  const tipos = new Set([...categorias].map((c) => CATEGORIA_A_TIPO[c] ?? "servicios"));
+  return tipos.size === 1 ? [...tipos][0] : "servicios";
+}
+
 // Genera (o regenera) los vouchers de servicios de un contrato: agrupa los
 // servicios por proveedor y crea un voucher por cada uno, auto-armado y editable.
 export async function generarVouchersServicios(numero: string): Promise<Result> {
@@ -82,16 +98,16 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
       .map((d) => d.replace(/^Servicio · /, "").trim())
   );
 
-  const porProveedor = new Map<string, { contacto: string | null; servicios: string[] }>();
+  const porProveedor = new Map<string, { contacto: string | null; servicios: string[]; categorias: Set<string> }>();
 
   if (venta.paquete_armado_id) {
     // ── TARIFARIO: servicios del paquete agrupados por proveedor ─────────────
     const { data: arm } = await sb
       .from("armado_servicios")
-      .select("incluido, servicios_adicionales(nombre, proveedores(nombre, voucher_contacto, contacto))")
+      .select("incluido, servicios_adicionales(nombre, categoria, proveedores(nombre, voucher_contacto, contacto))")
       .eq("paquete_id", venta.paquete_armado_id);
     for (const a of arm ?? []) {
-      const s = a.servicios_adicionales as unknown as { nombre: string | null; proveedores: { nombre: string; voucher_contacto: string | null; contacto: string | null } | null } | null;
+      const s = a.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; proveedores: { nombre: string; voucher_contacto: string | null; contacto: string | null } | null } | null;
       if (!s?.nombre) continue;
       const nombre = s.nombre.trim();
       const incluido = (a as { incluido?: boolean | null }).incluido === true;
@@ -99,9 +115,10 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
       const prov = s.proveedores;
       const key = prov?.nombre ?? "Sin proveedor";
       const contacto = prov?.voucher_contacto ?? prov?.contacto ?? null;
-      const g = porProveedor.get(key) ?? { contacto, servicios: [] };
+      const g = porProveedor.get(key) ?? { contacto, servicios: [], categorias: new Set<string>() };
       if (!g.contacto && contacto) g.contacto = contacto;
       if (!g.servicios.includes(nombre)) g.servicios.push(nombre);
+      if (s.categoria) g.categorias.add(s.categoria);
       porProveedor.set(key, g);
     }
   } else {
@@ -121,16 +138,17 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
         .order("orden");
       for (const s of svcs ?? []) {
         const key = (s.proveedor || s.nombre_servicio || "(sin proveedor)").trim();
-        const g = porProveedor.get(key) ?? { contacto: null, servicios: [] };
+        const g = porProveedor.get(key) ?? { contacto: null, servicios: [], categorias: new Set<string>() };
         const nombre = s.nombre_servicio?.trim() || s.tipo_servicio;
         if (!g.servicios.includes(nombre)) g.servicios.push(nombre);
+        if (s.tipo_servicio) g.categorias.add(s.tipo_servicio);
         porProveedor.set(key, g);
       }
     }
   }
 
   // Si no se detectan servicios, crea UN voucher en blanco para completar.
-  if (!porProveedor.size) porProveedor.set("(por definir)", { contacto: null, servicios: [] });
+  if (!porProveedor.size) porProveedor.set("(por definir)", { contacto: null, servicios: [], categorias: new Set() });
 
   const h0 = (hoteles ?? [])[0];
   const ingreso = h0?.fecha_ingreso ?? venta.fecha_salida;
@@ -143,8 +161,10 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
     : venta.tipo_asesor === "freelance" ? (venta.freelance_nombre ?? "")
     : (venta.asesor_firma_nombre ?? venta.asesor ?? "");
 
-  // Regenera: borra los vouchers de servicios previos de este contrato.
-  await sb.from("vouchers").delete().eq("numero_contrato", numero).eq("tipo", "servicios");
+  // Regenera: borra los vouchers de servicios previos de este contrato (todo lo
+  // que no sea el voucher de hotel — el tipo puede ser "servicios", "traslado"
+  // o "asistencia" según la categoría del proveedor, ver tipoVoucherDeCategorias).
+  await sb.from("vouchers").delete().eq("numero_contrato", numero).neq("tipo", "hotel");
 
   const filas: { numero_contrato: string; tipo: string; proveedor: string; contenido: Json }[] = [];
   for (const [proveedor, g] of porProveedor) {
@@ -177,7 +197,7 @@ export async function generarVouchersServicios(numero: string): Promise<Result> 
       fechaSalidaViaje: venta.fecha_salida ?? undefined,
       fechaRegresoViaje: venta.fecha_regreso ?? undefined,
     };
-    filas.push({ numero_contrato: numero, tipo: "servicios", proveedor, contenido: contenido as unknown as Json });
+    filas.push({ numero_contrato: numero, tipo: tipoVoucherDeCategorias(g.categorias), proveedor, contenido: contenido as unknown as Json });
   }
 
   const { error } = await sb.from("vouchers").insert(filas);

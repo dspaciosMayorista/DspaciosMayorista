@@ -219,6 +219,10 @@ export function ContratoDocumento({
                 const r = parseRuta(v.servicios);
                 const origen = etiquetaIata(v.origen_codigo) || etiquetaIata(r.origen) || "—";
                 const destino = etiquetaIata(v.destino_codigo) || etiquetaIata(r.destino) || "—";
+                const direccionLabel = v.direccion === "ida" ? "Ida" : v.direccion === "regreso" ? "Regreso" : null;
+                // Compat: contratos creados antes de que cada fila fuera UN tramo
+                // guardaban ida+regreso mezclados en la misma fila.
+                const esLegacyDoble = !v.numero_vuelo && !v.hora_salida && !!(v.vuelo_ida || v.vuelo_regreso || v.hora_salida_ida || v.hora_salida_reg);
                 return (
                 <div
                   key={v.id}
@@ -239,16 +243,26 @@ export function ContratoDocumento({
                       Equipaje/Servicios: {v.servicios}
                     </div>
                   )}
-                  <div className="mt-1 text-xs text-gray-500">
-                    Ida: {formatFechaLarga(v.fecha_salida)}
-                    {v.vuelo_ida ? ` · vuelo ${v.vuelo_ida}` : ""}
-                    {v.hora_salida_ida ? ` · ${v.hora_salida_ida}${v.hora_llegada_ida ? `–${v.hora_llegada_ida}` : ""}` : ""}
-                  </div>
-                  {(v.fecha_regreso || v.vuelo_regreso || v.hora_salida_reg) && (
-                    <div className="text-xs text-gray-500">
-                      Regreso: {formatFechaLarga(v.fecha_regreso)}
-                      {v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
-                      {v.hora_salida_reg ? ` · ${v.hora_salida_reg}${v.hora_llegada_reg ? `–${v.hora_llegada_reg}` : ""}` : ""}
+                  {esLegacyDoble ? (
+                    <>
+                      <div className="mt-1 text-xs text-gray-500">
+                        Ida: {formatFechaLarga(v.fecha_salida)}
+                        {v.vuelo_ida ? ` · vuelo ${v.vuelo_ida}` : ""}
+                        {v.hora_salida_ida ? ` · ${v.hora_salida_ida}${v.hora_llegada_ida ? `–${v.hora_llegada_ida}` : ""}` : ""}
+                      </div>
+                      {(v.fecha_regreso || v.vuelo_regreso || v.hora_salida_reg) && (
+                        <div className="text-xs text-gray-500">
+                          Regreso: {formatFechaLarga(v.fecha_regreso)}
+                          {v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
+                          {v.hora_salida_reg ? ` · ${v.hora_salida_reg}${v.hora_llegada_reg ? `–${v.hora_llegada_reg}` : ""}` : ""}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="mt-1 text-xs text-gray-500">
+                      {direccionLabel ? `${direccionLabel}: ` : ""}{formatFechaLarga(v.fecha_salida)}
+                      {v.numero_vuelo ? ` · vuelo ${v.numero_vuelo}` : ""}
+                      {v.hora_salida ? ` · ${v.hora_salida}${v.hora_llegada ? `–${v.hora_llegada}` : ""}` : ""}
                     </div>
                   )}
                 </div>

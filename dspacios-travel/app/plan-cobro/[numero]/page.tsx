@@ -4,10 +4,17 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { DocHeader, PRINT_DOC_STYLE } from "@/components/contrato/DocHeader";
 import { cargarPlanCobro } from "@/lib/cuenta/estado";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
 
 const TIPO_LABEL: Record<string, string> = { abono: "Abono inicial", cuota: "Cuota", total: "Pago total" };
+
+export async function generateMetadata({ params }: { params: Promise<{ numero: string }> }) {
+  const { numero } = await params;
+  const plan = await cargarPlanCobro(decodeURIComponent(numero));
+  return { title: { absolute: tituloDocumento("Plan de pagos", plan?.numero_contrato ?? decodeURIComponent(numero), plan?.cliente) } };
+}
 
 export default async function PlanCobroPage({ params }: { params: Promise<{ numero: string }> }) {
   const { numero } = await params;

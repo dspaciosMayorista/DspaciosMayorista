@@ -5,8 +5,22 @@ import { DocHeader, PRINT_DOC_STYLE } from "@/components/contrato/DocHeader";
 import { cargarRecibo, numeroRecibo } from "@/lib/cuenta/estado";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { enLetras } from "@/lib/numeroLetras";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const idAbono = Number(id);
+  const data = Number.isFinite(idAbono) ? await cargarRecibo(idAbono) : null;
+  return {
+    title: {
+      absolute: data
+        ? tituloDocumento(`Recibo ${numeroRecibo(data.abono.id)}`, data.estado.numero_contrato, data.estado.cliente)
+        : "Recibo",
+    },
+  };
+}
 
 export default async function ReciboCajaPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

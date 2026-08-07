@@ -9,14 +9,18 @@ import type {
   ContratoVuelo,
   ContratoItem,
 } from "@/types/database";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const sb = createAdminClient();
-  const { data } = await sb.from("cotizaciones").select("codigo").eq("share_token", token).maybeSingle();
-  return { title: data ? `Cotización ${data.codigo} — D'spacios Travel` : "Cotización — D'spacios Travel" };
+  const { data } = await sb.from("cotizaciones").select("codigo, detalle").eq("share_token", token).maybeSingle();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = data?.detalle as any;
+  const cliente = d?.venta?.cliente ?? d?.venta?.titular ?? null;
+  return { title: { absolute: data ? tituloDocumento("Cotización", data.codigo, cliente) : "Cotización" } };
 }
 
 type Detalle = {
