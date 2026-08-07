@@ -5,8 +5,15 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { DocHeader, PRINT_DOC_STYLE } from "@/components/contrato/DocHeader";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { resolverComisionB2B } from "@/lib/finanzas/comisionResolver";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({ params }: { params: Promise<{ numero: string }> }) {
+  const { numero } = await params;
+  const r = await resolverComisionB2B(numero);
+  return { title: { absolute: tituloDocumento("Estado de cuenta", r?.numeroContrato ?? numero, r?.aliado) } };
+}
 
 export default async function EstadoCuentaComisionPage({ params }: { params: Promise<{ numero: string }> }) {
   const { numero } = await params;

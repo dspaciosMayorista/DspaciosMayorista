@@ -5,6 +5,7 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { adjuntarNotaRegimen } from "@/lib/contrato/regimenNotas";
 import { agenciaDe } from "@/lib/tenant.server";
 import type { Tenant } from "@/lib/tenant";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
 
@@ -17,13 +18,15 @@ export async function generateMetadata({
   const sb = createAdminClient();
   const { data } = await sb
     .from("ventas")
-    .select("numero_contrato")
+    .select("numero_contrato, cliente")
     .eq("share_token", token)
     .single();
   return {
-    title: data
-      ? `Contrato ${data.numero_contrato} — D'spacios Travel`
-      : "Contrato — D'spacios Travel",
+    title: {
+      absolute: data
+        ? tituloDocumento("Contrato", data.numero_contrato, data.cliente)
+        : "Contrato",
+    },
   };
 }
 

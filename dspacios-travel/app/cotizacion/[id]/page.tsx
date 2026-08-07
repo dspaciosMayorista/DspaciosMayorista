@@ -11,6 +11,7 @@ import type {
   ContratoVuelo,
   ContratoItem,
 } from "@/types/database";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export async function generateMetadata({
   params,
@@ -18,7 +19,14 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return { title: `Cotización ${id} — D'spacios Travel` };
+  const sb = await createClient();
+  const { data: cot } = await sb.from("cotizaciones").select("codigo, detalle, payload").eq("id", Number(id)).maybeSingle();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const d = cot?.detalle as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const payload = cot?.payload as any;
+  const cliente = d?.venta?.cliente ?? d?.venta?.titular ?? payload?.cliente?.nombre ?? null;
+  return { title: { absolute: tituloDocumento("Cotización", cot?.codigo ?? id, cliente) } };
 }
 
 type Detalle = {

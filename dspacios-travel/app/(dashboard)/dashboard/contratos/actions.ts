@@ -59,23 +59,23 @@ export type HotelInput = {
   costo?: number;   // costo neto del hotel (alimenta costo_hotel + CxP al proveedor)
 };
 
+// Un tramo/trayecto = una sola dirección de vuelo (aerolínea, origen→destino,
+// fecha, número de vuelo, horas). Un viaje redondo son 2 filas (ida y
+// regreso); un multi-ciudad, tantas filas como tramos.
 export type VueloInput = {
   aerolinea: string;
   record: string;
+  direccion: string; // "ida" | "regreso" | "" (tramo suelto/multi-ciudad)
   origenCodigo: string;
   origenCiudad: string;
   destinoCodigo: string;
   destinoCiudad: string;
-  vueloIda: string;
-  vueloRegreso: string;
-  horaSalidaIda: string;
-  horaLlegadaIda: string;
-  horaSalidaReg: string;
-  horaLlegadaReg: string;
+  numeroVuelo: string;
+  fecha: string;
+  horaSalida: string;
+  horaLlegada: string;
   servicios: string;
-  fechaSalida: string;
-  fechaRegreso: string;
-  costo?: number;   // costo neto del vuelo (alimenta costo_aereo + CxP a la aerolínea)
+  costo?: number;   // costo neto de ESTE tramo (alimenta costo_aereo + CxP a la aerolínea)
 };
 
 export type ItemInput = {
@@ -360,19 +360,16 @@ export async function crearContrato(
         numero_contrato: numero,
         aerolinea: oNull(v.aerolinea),
         record: oNull(v.record),
+        direccion: oNull(v.direccion),
         origen_codigo: oNull(v.origenCodigo),
         origen_ciudad: oNull(v.origenCiudad),
         destino_codigo: oNull(v.destinoCodigo),
         destino_ciudad: oNull(v.destinoCiudad),
-        vuelo_ida: oNull(v.vueloIda),
-        vuelo_regreso: oNull(v.vueloRegreso),
-        hora_salida_ida: oNull(v.horaSalidaIda),
-        hora_llegada_ida: oNull(v.horaLlegadaIda),
-        hora_salida_reg: oNull(v.horaSalidaReg),
-        hora_llegada_reg: oNull(v.horaLlegadaReg),
+        numero_vuelo: oNull(v.numeroVuelo),
+        hora_salida: oNull(v.horaSalida),
+        hora_llegada: oNull(v.horaLlegada),
         servicios: oNull(v.servicios),
-        fecha_salida: oNull(v.fechaSalida),
-        fecha_regreso: oNull(v.fechaRegreso),
+        fecha_salida: oNull(v.fecha),
         orden: i,
       }))
     );

@@ -227,7 +227,8 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     });
   }
 
-  // 7) Vuelo del contrato (si es bloqueo)
+  // 7) Vuelo del contrato (si es bloqueo) — 1 fila por tramo (ida y regreso),
+  // no 1 fila mezclando ambos sentidos.
   if (input.modulo === "bloqueo" && input.bloqueoId) {
     const { data: bq } = await sb
       .from("bloqueos_vuelo")
@@ -237,25 +238,28 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     if (bq) {
       // Origen/Destino desde la ruta ("MDE - CTG - MDE" → origen MDE, destino CTG).
       const r = parseRuta(bq.ruta);
-      await sb.from("contrato_vuelos").insert({
-        numero_contrato: numero,
-        aerolinea: bq.aerolinea,
-        record: bq.record,
-        origen_codigo: r.origen,
-        origen_ciudad: ciudadIata(r.origen),
-        destino_codigo: r.destino,
-        destino_ciudad: ciudadIata(r.destino),
-        vuelo_ida: bq.vuelo_ida,
-        vuelo_regreso: bq.vuelo_regreso,
-        hora_salida_ida: bq.hora_salida_ida,
-        hora_llegada_ida: bq.hora_llegada_ida,
-        hora_salida_reg: bq.hora_salida_reg,
-        hora_llegada_reg: bq.hora_llegada_reg,
-        servicios: bq.ruta,
-        fecha_salida: bq.fecha_ida,
-        fecha_regreso: bq.fecha_regreso,
-        orden: 0,
-      });
+      const tramos: {
+        numero_contrato: string; aerolinea: string | null; record: string | null; direccion: string;
+        origen_codigo: string | null; origen_ciudad: string | null; destino_codigo: string | null; destino_ciudad: string | null;
+        numero_vuelo: string | null; hora_salida: string | null; hora_llegada: string | null;
+        fecha_salida: string | null; orden: number;
+      }[] = [
+        {
+          numero_contrato: numero, aerolinea: bq.aerolinea, record: bq.record, direccion: "ida",
+          origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen), destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+          numero_vuelo: bq.vuelo_ida, hora_salida: bq.hora_salida_ida, hora_llegada: bq.hora_llegada_ida,
+          fecha_salida: bq.fecha_ida, orden: 0,
+        },
+      ];
+      if (bq.fecha_regreso || bq.vuelo_regreso) {
+        tramos.push({
+          numero_contrato: numero, aerolinea: bq.aerolinea, record: bq.record, direccion: "regreso",
+          origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino), destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+          numero_vuelo: bq.vuelo_regreso, hora_salida: bq.hora_salida_reg, hora_llegada: bq.hora_llegada_reg,
+          fecha_salida: bq.fecha_regreso, orden: 1,
+        });
+      }
+      await sb.from("contrato_vuelos").insert(tramos);
     }
   }
 
@@ -634,14 +638,21 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     if (bq) {
       const r = parseRuta(bq.ruta);
       vuelosSnap.push({
-        id: 1, aerolinea: bq.aerolinea, record: bq.record,
+        id: 1, aerolinea: bq.aerolinea, record: bq.record, direccion: "ida",
         origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
         destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
-        vuelo_ida: bq.vuelo_ida, vuelo_regreso: bq.vuelo_regreso,
-        hora_salida_ida: bq.hora_salida_ida, hora_llegada_ida: bq.hora_llegada_ida,
-        hora_salida_reg: bq.hora_salida_reg, hora_llegada_reg: bq.hora_llegada_reg,
-        servicios: bq.ruta, fecha_salida: bq.fecha_ida, fecha_regreso: bq.fecha_regreso,
+        numero_vuelo: bq.vuelo_ida, hora_salida: bq.hora_salida_ida, hora_llegada: bq.hora_llegada_ida,
+        fecha_salida: bq.fecha_ida,
       });
+      if (bq.fecha_regreso || bq.vuelo_regreso) {
+        vuelosSnap.push({
+          id: 2, aerolinea: bq.aerolinea, record: bq.record, direccion: "regreso",
+          origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino),
+          destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+          numero_vuelo: bq.vuelo_regreso, hora_salida: bq.hora_salida_reg, hora_llegada: bq.hora_llegada_reg,
+          fecha_salida: bq.fecha_regreso,
+        });
+      }
     }
   } else if (input.modulo === "dinamico" && input.salidaId) {
     const { data: sal } = await sb
@@ -651,14 +662,21 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     if (sal) {
       const r = parseRuta(sal.ruta);
       vuelosSnap.push({
-        id: 1, aerolinea: sal.aerolinea, record: null,
+        id: 1, aerolinea: sal.aerolinea, record: null, direccion: "ida",
         origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
         destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
-        vuelo_ida: null, vuelo_regreso: null,
-        hora_salida_ida: sal.hora_salida_ida, hora_llegada_ida: sal.hora_llegada_ida,
-        hora_salida_reg: sal.hora_salida_reg, hora_llegada_reg: sal.hora_llegada_reg,
-        servicios: sal.ruta, fecha_salida: sal.fecha_ida, fecha_regreso: sal.fecha_regreso,
+        numero_vuelo: null, hora_salida: sal.hora_salida_ida, hora_llegada: sal.hora_llegada_ida,
+        fecha_salida: sal.fecha_ida,
       });
+      if (sal.fecha_regreso) {
+        vuelosSnap.push({
+          id: 2, aerolinea: sal.aerolinea, record: null, direccion: "regreso",
+          origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino),
+          destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+          numero_vuelo: null, hora_salida: sal.hora_salida_reg, hora_llegada: sal.hora_llegada_reg,
+          fecha_salida: sal.fecha_regreso,
+        });
+      }
     }
   }
 

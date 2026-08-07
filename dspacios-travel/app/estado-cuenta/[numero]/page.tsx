@@ -4,8 +4,15 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { DocHeader, PRINT_DOC_STYLE } from "@/components/contrato/DocHeader";
 import { cargarEstadoCuenta, numeroRecibo } from "@/lib/cuenta/estado";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({ params }: { params: Promise<{ numero: string }> }) {
+  const { numero } = await params;
+  const ec = await cargarEstadoCuenta(decodeURIComponent(numero));
+  return { title: { absolute: tituloDocumento("Estado de cuenta", ec?.numero_contrato ?? decodeURIComponent(numero), ec?.cliente) } };
+}
 
 export default async function EstadoCuentaPage({ params }: { params: Promise<{ numero: string }> }) {
   const { numero } = await params;

@@ -1543,6 +1543,10 @@ export type Database = {
           hora_salida_reg: string | null;
           hora_llegada_reg: string | null;
           fecha_regreso: string | null;
+          numero_vuelo: string | null;
+          hora_salida: string | null;
+          hora_llegada: string | null;
+          direccion: string | null;
           orden: number;
         };
         Insert: {
@@ -1563,6 +1567,10 @@ export type Database = {
           hora_salida_reg?: string | null;
           hora_llegada_reg?: string | null;
           fecha_regreso?: string | null;
+          numero_vuelo?: string | null;
+          hora_salida?: string | null;
+          hora_llegada?: string | null;
+          direccion?: string | null;
           orden?: number;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_vuelos"]["Insert"]>;

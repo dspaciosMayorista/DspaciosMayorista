@@ -473,20 +473,21 @@ export function NuevoContratoForm({
         </div>
       </section>
 
-      {/* Vuelos */}
+      {/* Vuelos: cada tarjeta es UN SOLO tramo (una dirección) — para un viaje
+          redondo se agregan 2 (ida y regreso); para multi-ciudad, uno por tramo. */}
       <section className={sectionCls}>
         <div className="flex items-center justify-between">
           <p className={titleCls} style={{ color: "var(--brand-primary)" }}>
-            Vuelos (trayectos)
+            Vuelos (tramos)
           </p>
           <button
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() =>
-              setVuelos((a) => [...a, { aerolinea: "", record: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", vueloIda: "", vueloRegreso: "", horaSalidaIda: "", horaLlegadaIda: "", horaSalidaReg: "", horaLlegadaReg: "", servicios: "", fechaSalida: "", fechaRegreso: "", costo: 0 }])
+              setVuelos((a) => [...a, { aerolinea: "", record: "", direccion: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "", costo: 0 }])
             }
           >
-            + Agregar trayecto
+            + Agregar tramo
           </button>
         </div>
         {vuelos.length === 0 && (
@@ -501,18 +502,24 @@ export function NuevoContratoForm({
           <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4">
             <Input placeholder="Record (PNR)" value={v.record} onChange={(e) => setVuelo(i, { record: e.target.value })} />
             <Input placeholder="Aerolínea" list="aerolineas-catalogo" value={v.aerolinea} onChange={(e) => setVuelo(i, { aerolinea: e.target.value })} />
+            <select
+              className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
+              value={v.direccion}
+              onChange={(e) => setVuelo(i, { direccion: e.target.value })}
+              title="Dirección de este tramo (solo informativo, para rotularlo en el contrato)"
+            >
+              <option value="">Tramo suelto (multi-ciudad)</option>
+              <option value="ida">Ida</option>
+              <option value="regreso">Regreso</option>
+            </select>
+            <Input placeholder="N.° de vuelo" value={v.numeroVuelo} onChange={(e) => setVuelo(i, { numeroVuelo: e.target.value })} />
             <ComboCiudad destinos={destinos} value={v.origenCodigo} onChange={(val) => setVuelo(i, { origenCodigo: val })} modo="iata" permitirLibre placeholder="Origen (cód)" />
             <ComboCiudad destinos={destinos} value={v.destinoCodigo} onChange={(val) => setVuelo(i, { destinoCodigo: val })} modo="iata" permitirLibre placeholder="Destino (cód)" />
             <ComboCiudad destinos={destinos} value={v.origenCiudad} onChange={(val) => setVuelo(i, { origenCiudad: val })} modo="nombre" permitirLibre placeholder="Origen (ciudad)" />
             <ComboCiudad destinos={destinos} value={v.destinoCiudad} onChange={(val) => setVuelo(i, { destinoCiudad: val })} modo="nombre" permitirLibre placeholder="Destino (ciudad)" />
-            <Input placeholder="Vuelo ida (N°)" value={v.vueloIda} onChange={(e) => setVuelo(i, { vueloIda: e.target.value })} />
-            <Input placeholder="Vuelo regreso (N°)" value={v.vueloRegreso} onChange={(e) => setVuelo(i, { vueloRegreso: e.target.value })} />
-            <Input type="date" value={v.fechaSalida} onChange={(e) => setVuelo(i, { fechaSalida: e.target.value })} title="Fecha ida" />
-            <Input type="date" value={v.fechaRegreso} onChange={(e) => setVuelo(i, { fechaRegreso: e.target.value })} title="Fecha regreso" />
-            <Input placeholder="Hora salida ida" value={v.horaSalidaIda} onChange={(e) => setVuelo(i, { horaSalidaIda: e.target.value })} />
-            <Input placeholder="Hora llegada ida" value={v.horaLlegadaIda} onChange={(e) => setVuelo(i, { horaLlegadaIda: e.target.value })} />
-            <Input placeholder="Hora salida regreso" value={v.horaSalidaReg} onChange={(e) => setVuelo(i, { horaSalidaReg: e.target.value })} />
-            <Input placeholder="Hora llegada regreso" value={v.horaLlegadaReg} onChange={(e) => setVuelo(i, { horaLlegadaReg: e.target.value })} />
+            <Input type="date" value={v.fecha} onChange={(e) => setVuelo(i, { fecha: e.target.value })} title="Fecha de este tramo" />
+            <Input placeholder="Hora salida" value={v.horaSalida} onChange={(e) => setVuelo(i, { horaSalida: e.target.value })} />
+            <Input placeholder="Hora llegada" value={v.horaLlegada} onChange={(e) => setVuelo(i, { horaLlegada: e.target.value })} />
             <Input className="md:col-span-2" placeholder="Servicios (equipaje…)" value={v.servicios} onChange={(e) => setVuelo(i, { servicios: e.target.value })} />
             {tarifasDe(v.aerolinea).length > 0 && (
               <select
@@ -531,11 +538,25 @@ export function NuevoContratoForm({
               </select>
             )}
             {!esNegociado && (
-              <Input type="number" min={0} placeholder={`Costo neto (${monedaEfectiva})`} value={v.costo ?? ""} onChange={(e) => setVuelo(i, { costo: Number(e.target.value) || 0 })} title="Costo neto del vuelo (interno)" />
+              <Input type="number" min={0} placeholder={`Costo neto de este tramo (${monedaEfectiva})`} value={v.costo ?? ""} onChange={(e) => setVuelo(i, { costo: Number(e.target.value) || 0 })} title="Costo neto de este tramo (interno). Si el costo total ya se cargó en otro tramo del mismo viaje, deja $0 aquí para no duplicar la cuenta por pagar." />
             )}
-            <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setVuelos((a) => a.filter((_, j) => j !== i))}>
-              Quitar
-            </button>
+            <div className="flex items-center gap-3 md:col-span-4">
+              <button
+                type="button"
+                className="text-xs font-medium text-[#1D7C9A] hover:underline"
+                onClick={() =>
+                  setVuelos((a) => [
+                    ...a,
+                    { aerolinea: v.aerolinea, record: v.record, direccion: "regreso", origenCodigo: v.destinoCodigo, origenCiudad: v.destinoCiudad, destinoCodigo: v.origenCodigo, destinoCiudad: v.origenCiudad, numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "", costo: 0 },
+                  ])
+                }
+              >
+                + Agregar regreso (invierte origen/destino)
+              </button>
+              <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setVuelos((a) => a.filter((_, j) => j !== i))}>
+                Quitar
+              </button>
+            </div>
           </div>
         ))}
       </section>

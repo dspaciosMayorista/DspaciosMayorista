@@ -3,14 +3,16 @@ import { notFound } from "next/navigation";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { VoucherDocumento } from "@/components/voucher/VoucherDocumento";
 import type { VoucherContenido } from "@/app/(dashboard)/dashboard/contratos/[numero]/voucher-actions";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const sb = createAdminClient();
-  const { data } = await sb.from("vouchers").select("proveedor").eq("share_token", token).maybeSingle();
-  return { title: data ? `Voucher ${data.proveedor ?? ""} — D'spacios Travel` : "Voucher — D'spacios Travel" };
+  const { data } = await sb.from("vouchers").select("contenido, numero_contrato").eq("share_token", token).maybeSingle();
+  const c = data?.contenido as unknown as VoucherContenido | undefined;
+  return { title: { absolute: data ? tituloDocumento("Voucher", data.numero_contrato, c?.titular) : "Voucher" } };
 }
 
 // Vista pública del voucher por token (sin login) para imprimir/guardar.

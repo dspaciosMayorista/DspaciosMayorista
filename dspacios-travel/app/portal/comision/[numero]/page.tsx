@@ -6,8 +6,15 @@ import { pesosEnLetras } from "@/lib/utils/numeroALetras";
 import { agenciaDe } from "@/lib/tenant.server";
 import { esTenant } from "@/lib/tenant";
 import { resolverComisionB2B } from "@/lib/finanzas/comisionResolver";
+import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({ params }: { params: Promise<{ numero: string }> }) {
+  const { numero } = await params;
+  const r = await resolverComisionB2B(numero);
+  return { title: { absolute: tituloDocumento("Cuenta de cobro", r?.numeroContrato ?? numero, r?.aliado) } };
+}
 
 export default async function CuentaCobroPage({ params }: { params: Promise<{ numero: string }> }) {
   const { numero } = await params;
