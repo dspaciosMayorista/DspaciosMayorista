@@ -97,17 +97,6 @@ function calcNoches(ida: string, regreso: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
-function sumarDias(fecha: string, n: number): string {
-  if (!fecha) return "";
-  const d = new Date(`${fecha}T00:00:00`);
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
-// Ciclo base del tarifario: 3 noches. La fecha de regreso por defecto es la de
-// ida + 3 noches (no el rango completo del paquete).
-const CICLO_NOCHES = 3;
-
 function minRoomPvp(filas: FilaTarifario[]): number | null {
   // Solo acomodaciones de adulto (sencilla/doble/triple/multiple) — nino/nino2/
   // infante quedan afuera del "desde" (si no, la tarifa de infante, casi
@@ -820,7 +809,7 @@ function SelectorPorFechas({
   const base = opcion.fechaIda ?? ventana.min ?? hoy;
   const idaInicial = base < minIda ? minIda : base;
   const [fIda, setFIda] = useState(idaInicial);
-  const [fReg, setFReg] = useState(idaInicial ? sumarDias(idaInicial, CICLO_NOCHES) : "");
+  const [fReg, setFReg] = useState("");
   const [combos, setCombos] = useState<ComboCotizado[] | null>(null);
   const [nochesCot, setNochesCot] = useState<number | null>(null);
   const [err, setErr] = useState("");
@@ -869,9 +858,9 @@ function SelectorPorFechas({
               onChange={(e) => {
                 const nueva = e.target.value;
                 setFIda(nueva);
-                // Mantén el ciclo de 3 noches por defecto si el regreso quedó vacío
-                // o ya no es posterior a la nueva ida.
-                if (nueva && (!fReg || fReg <= nueva)) setFReg(sumarDias(nueva, CICLO_NOCHES));
+                // Sin auto-relleno de regreso: si deja de ser posterior a la
+                // nueva ida, se limpia (el usuario elige la fecha real).
+                if (nueva && fReg && fReg <= nueva) setFReg("");
                 setCombos(null);
               }}
               className={dateCls} />
