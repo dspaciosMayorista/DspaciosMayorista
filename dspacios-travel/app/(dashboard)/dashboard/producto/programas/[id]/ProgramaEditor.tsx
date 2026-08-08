@@ -199,6 +199,7 @@ export function ProgramaEditor(props: {
               asistenciaDia: programa.asistencia_medica_dia,
               dias: programa.dias,
               pctFee: programa.pct_fee_tarjeta,
+              moneda: programa.moneda,
             }}
           />
         ) : (
@@ -214,6 +215,7 @@ export function ProgramaEditor(props: {
               asistenciaDia: programa.asistencia_medica_dia,
               dias: programa.dias,
               pctFee: programa.pct_fee_tarjeta,
+              moneda: programa.moneda,
             }}
           />
         ))}

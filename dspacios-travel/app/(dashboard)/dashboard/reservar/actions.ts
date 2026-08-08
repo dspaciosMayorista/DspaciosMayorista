@@ -1021,6 +1021,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
       asistenciaDia: prog.asistencia_medica_dia,
       dias: diasPvp,
       pctFee: prog.pct_fee_tarjeta,
+      moneda: prog.moneda,
     });
 
   // 3) Liquidación por HABITACIONES (igual que hoteles): pax = hab × pax_tarifa

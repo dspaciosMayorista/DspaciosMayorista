@@ -16,7 +16,13 @@ export type PvpOpciones = {
   asistenciaDia?: number;   // asistencia médica por pax y por día
   dias?: number | null;     // días del programa
   pctFee?: number;          // fee bancario / TDC (ej. 0.03)
+  moneda?: string | null;   // COP (default) redondea al mil por encima; USD, al dólar por encima
 };
+
+/** Redondeo del PVP hacia arriba: en COP al millar, en USD al entero. */
+function redondearPvp(valor: number, moneda: string | null | undefined): number {
+  return moneda === "USD" ? Math.ceil(valor) : Math.ceil(valor / 1000) * 1000;
+}
 
 /**
  * PVP de venta de un programa por persona, a partir del neto del proveedor:
@@ -37,7 +43,7 @@ export function pvpPrograma(neto: number, opt: PvpOpciones): number {
   let sub = mk > 0 && mk < 1 ? neto / (1 - mk) : neto;
   sub += asis * dias;
   if (fee > 0 && fee < 1) sub = sub / (1 - fee);
-  return Math.round(sub);
+  return redondearPvp(sub, opt.moneda);
 }
 
 /** Resumen de programas para el tarifario (con precio "desde" en PVP). */
@@ -120,6 +126,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
               asistenciaDia: p.asistencia_medica_dia,
               dias: p.dias,
               pctFee: p.pct_fee_tarjeta,
+              moneda: p.moneda,
             })
           : null),
       incluye_aereo: !!p.incluye_aereo,
@@ -170,6 +177,7 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
     asistenciaDia: prow.asistencia_medica_dia,
     dias: prow.dias,
     pctFee: prow.pct_fee_tarjeta,
+    moneda: prow.moneda,
   };
 
   const [{ data: ciudades }, { data: dias }, { data: categorias }, { data: hoteles }, { data: precios }, { data: salidasRaw }, { data: inclusiones }, { data: tours }, { data: blackouts }] =
