@@ -38,6 +38,7 @@ export function CalculadoraProgramas() {
           pctFee: (Number(pctFee) || 0) / 100,
           asistenciaDia: Number(asistencia) || 0,
           dias: dias === "" ? null : Number(dias),
+          moneda,
         })
       : null;
     return { ...res, pvp };
