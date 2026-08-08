@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
-import { permisosDelUsuario } from "@/lib/permisos";
+import { miRol, puedeEscribir } from "@/lib/roles";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -11,9 +11,9 @@ async function puedeAprobar(): Promise<{ ok: boolean; quien: string | null }> {
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, quien: null };
-  const { permisos } = await permisosDelUsuario();
+  const rol = await miRol();
   const { data: perfil } = await sb.from("usuarios").select("nombre").eq("id", user.id).maybeSingle();
-  return { ok: !!permisos["b2b"]?.modificar, quien: perfil?.nombre ?? user.email ?? null };
+  return { ok: puedeEscribir("b2b", rol), quien: perfil?.nombre ?? user.email ?? null };
 }
 
 export async function aprobarSolicitudB2B(id: number): Promise<Result> {

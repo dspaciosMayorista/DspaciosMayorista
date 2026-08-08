@@ -127,10 +127,26 @@ mi_rol() returns rol_usuario  -- select rol from usuarios where id=auth.uid(), s
 ```
 Es el único helper de rol a nivel Postgres usado en RLS/funciones SECURITY DEFINER.
 
-`lib/permisos.ts` es una capa APARTE, más fina: tablas `permisos_rol`/`permisos_usuario`
-(`consultar/modificar/eliminar` booleanos) — solo para **visibilidad de UI** (ocultar
-nav/botones). El propio comentario del código lo aclara: "La seguridad de datos la garantiza
-RLS; esto es solo visibilidad."
+**(jul-2026, superado) `lib/permisos.ts` + `permisos_rol`/`permisos_usuario`:** existió una capa
+aparte y más fina (matriz `consultar/modificar/eliminar` configurable por rol/usuario desde
+`/dashboard/usuarios/permisos`), pero una auditoría encontró que solo gobernaba la
+**visibilidad del menú** — de los ~13 módulos que administraba, sus casillas de
+`modificar`/`eliminar` solo se consultaban de verdad en 1 flujo (aprobaciones B2B) de toda la
+app. El resto de páginas o no tenía ningún check de rol (confiaba 100% en RLS) o tenía su
+propio array hardcodeado por archivo, sin relación con la matriz — y ninguna de las dos capas
+se sincronizaba con los roles que realmente autorizaba la RLS de cada tabla, causando bugs
+recurrentes (ej. un rol veía el botón "editar" pero el guardado fallaba con un error crudo de
+RLS). Se retiró (migración 137 + `lib/roles.ts`, ver ese archivo abajo); las tablas
+`permisos_rol`/`permisos_usuario` quedan en la BD sin usarse (no se borran por convención).
+
+**Reemplazo: `lib/roles.ts`.** Una sola constante `ESCRITURA` (recurso → roles autorizados a
+escribir) que debe reflejar EXACTAMENTE las políticas RLS de escritura de la tabla
+correspondiente — no hay forma de que Postgres "importe" la constante, así que ambas capas se
+mantienen sincronizadas a mano (el comentario de cada policy en las migraciones lo indica).
+`ESCRITURA` se usa donde una Server Action no puede confiar solo en RLS (usa el cliente
+service-role, que la bypassa — ej. aprobaciones B2B) y `LECTURA_MODULO` (más amplio,
+`ROLES_INTERNOS` para casi todos los módulos) gatea la visibilidad del menú lateral
+(`app/(dashboard)/layout.tsx`). `miRol()` reemplaza la vieja `permisosDelUsuario()`.
 
 ### Patrón repetido: revalidar el rol dentro de cada Server Action
 Aunque una Server Action llame a un RPC SECURITY DEFINER o al cliente admin de service-role,

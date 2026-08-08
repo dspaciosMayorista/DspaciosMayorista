@@ -4,7 +4,7 @@ import { LogoutButton } from "./LogoutButton";
 import { type NavItem } from "./SidebarNav";
 import { DesktopSidebar } from "./DesktopSidebar";
 import { Logo } from "@/components/Logo";
-import { modulosConsultables, permisosDelUsuario } from "@/lib/permisos";
+import { modulosConsultables, miRol } from "@/lib/roles";
 import { tenantContext } from "@/lib/tenant.server";
 import { TenantSwitcher } from "./TenantSwitcher";
 
@@ -107,7 +107,6 @@ const NAV: NavItem[] = [
     label: "Usuarios",
     iconKey: "usuarios",
     modulo: "usuarios",
-    children: [{ href: "/dashboard/usuarios/permisos", label: "Permisos" }],
   },
   { href: "/dashboard/usuarios/b2b", label: "Aprobaciones B2B", iconKey: "b2b", modulo: "b2b" },
   { href: "/dashboard/auditoria", label: "Auditoría", iconKey: "auditoria", rolesPermitidos: ["superadmin", "gerencia"] },
@@ -134,10 +133,10 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
-  // Oculta del menú los módulos que el rol/usuario no puede consultar.
-  // (La seguridad de datos la garantiza RLS; esto es solo visibilidad.)
-  const permitidos = await modulosConsultables();
-  const { rol } = await permisosDelUsuario();
+  // Oculta del menú los módulos que el rol no puede consultar. (La seguridad
+  // de datos la garantiza RLS — ver lib/roles.ts, que ambas capas comparten.)
+  const rol = await miRol();
+  const permitidos = modulosConsultables(rol);
   const { tenant, puedeCambiar, permitidos: tenantsPermitidos } = await tenantContext();
   const nav = NAV.filter((n) => {
     if (tenant === "minorista" && n.minoristaOculto) return false; // sin tarifario/montaje en minorista
