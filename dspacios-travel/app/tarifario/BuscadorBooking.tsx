@@ -9,11 +9,6 @@ import { type BusquedaResultado } from "@/lib/reservar/cotizar";
 
 type Hab = { acom: AcomRoom; ninos: number };
 
-function sumarDias(fecha: string, n: number): string {
-  const d = new Date(`${fecha}T00:00:00`); d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-
 export function BuscadorBooking({
   fotosPorHotel = {}, infoPorHotel = {}, destinos = [],
 }: {
@@ -23,7 +18,7 @@ export function BuscadorBooking({
 }) {
   const hoy = new Date().toISOString().slice(0, 10);
   const [fIda, setFIda] = useState(hoy);
-  const [fReg, setFReg] = useState(sumarDias(hoy, 3));
+  const [fReg, setFReg] = useState("");
   const [adultos, setAdultos] = useState("2");
   const [ninos, setNinos] = useState("0");
   const [infantes, setInfantes] = useState("0");
@@ -57,6 +52,7 @@ export function BuscadorBooking({
 
   function buscar() {
     setErr(""); setResultados(null);
+    if (!fIda || !fReg) { setErr("Indica fecha de ida y de regreso."); return; }
     if (ninosAsignados !== ninosTotal) { setErr(`Asigna los ${ninosTotal} niño(s) a las habitaciones (asignados: ${ninosAsignados}).`); return; }
     start(async () => {
       const r = await buscarHoteles({ fechaIda: fIda, fechaRegreso: fReg, habitaciones: habs.map((h) => ({ acom: h.acom, ninos: Number(h.ninos) || 0 })), infantes: Number(infantes) || 0, destino });
@@ -90,7 +86,7 @@ export function BuscadorBooking({
               </select>
             </div>
           )}
-          <div><label className="mb-1 block text-xs text-gray-500">Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { setFIda(e.target.value); if (fReg <= e.target.value) setFReg(sumarDias(e.target.value, 3)); }} className={sel} /></div>
+          <div><label className="mb-1 block text-xs text-gray-500">Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} /></div>
           <div><label className="mb-1 block text-xs text-gray-500">Regreso</label><input type="date" min={fIda} value={fReg} onChange={(e) => setFReg(e.target.value)} className={sel} /></div>
           <div><label className="mb-1 block text-xs text-gray-500">Adultos (12+)</label><input type="number" min={1} value={adultos} onChange={(e) => setAdultos(e.target.value)} className={`${sel} w-20`} /></div>
           <div><label className="mb-1 block text-xs text-gray-500">Niños (2-11)</label><input type="number" min={0} value={ninos} onChange={(e) => setNinos(e.target.value)} className={`${sel} w-20`} /></div>
