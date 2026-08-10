@@ -11,6 +11,7 @@ import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type ComboCotizado } from "@/lib/reservar/cotizar";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking } from "./BuscadorBooking";
+import { BuscadorReceptivos } from "./BuscadorReceptivos";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 
@@ -43,6 +44,19 @@ type Receptivo = {
   foto: string | null;
   desde: number;
   moneda?: string | null;
+};
+
+// Info que necesita el modal de detalle de un receptivo, sea de la vitrina
+// estática ("desde", por persona) o de un resultado ya liquidado por fechas/
+// pax (total real de esa búsqueda).
+type ReceptivoModalInfo = {
+  nombre: string;
+  destino: string | null;
+  descripcion: string | null;
+  foto: string | null;
+  precio: number;
+  moneda?: string | null;
+  notaPrecio: string;
 };
 
 // Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
@@ -226,7 +240,7 @@ export function VistaBooking({
   }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
-  const [receptivoAbierto, setReceptivoAbierto] = useState<Receptivo | null>(null);
+  const [receptivoAbierto, setReceptivoAbierto] = useState<ReceptivoModalInfo | null>(null);
 
   // Receptivos (servicios) para su submódulo: agrupados por nombre con su
   // "desde", y luego por destino (una sección por destino) para no mezclarlos.
@@ -265,6 +279,11 @@ export function VistaBooking({
   // Destinos disponibles (porción) para el filtro del mini-motor.
   const destinos = useMemo(
     () => [...new Set(filas.filter((f) => f.modulo === "porcion_terrestre" && f.destino_nombre).map((f) => f.destino_nombre as string))].sort((a, b) => a.localeCompare(b)),
+    [filas]
+  );
+  // Destinos disponibles de RECEPTIVOS para el filtro de su mini-motor.
+  const destinosServicios = useMemo(
+    () => [...new Set(filas.filter((f) => f.modulo === "servicios" && f.destino_nombre).map((f) => f.destino_nombre as string))].sort((a, b) => a.localeCompare(b)),
     [filas]
   );
 
@@ -323,10 +342,21 @@ export function VistaBooking({
       )}
 
       {sub === "receptivos" ? (
-        receptivosPorDestino.length === 0 ? (
+        <>
+        <BuscadorReceptivos
+          destinos={destinosServicios}
+          fotosPorServicio={fotosPorServicio}
+          onVerDetalle={(r) => setReceptivoAbierto({
+            nombre: r.nombre, destino: r.destino, descripcion: r.descripcion,
+            foto: fotosPorServicio[r.servicioId] ?? null, precio: r.total, moneda: r.moneda,
+            notaPrecio: `total · ${r.pax} pax · ${r.noches} noche${r.noches === 1 ? "" : "s"}`,
+          })}
+        />
+        {receptivosPorDestino.length === 0 ? (
           <p className="py-12 text-center text-sm text-gray-400">No hay receptivos publicados.</p>
         ) : (
           <div className="space-y-8">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">O explora todos los receptivos</p>
             {receptivosPorDestino.map(([destino, items]) => (
               <div key={destino}>
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
@@ -337,7 +367,7 @@ export function VistaBooking({
                     <button
                       key={i}
                       type="button"
-                      onClick={() => setReceptivoAbierto(r)}
+                      onClick={() => setReceptivoAbierto({ nombre: r.nombre, destino: r.destino, descripcion: r.descripcion, foto: r.foto, precio: r.desde, moneda: r.moneda, notaPrecio: "desde · por persona" })}
                       className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
                     >
                       <div className="relative aspect-[16/10] w-full bg-gray-100">
@@ -369,7 +399,8 @@ export function VistaBooking({
               </div>
             ))}
           </div>
-        )
+        )}
+        </>
       ) : (
       <>
       {/* Mini-motor por fechas: solo en Porción terrestre (en bloqueo manda el vuelo) */}
@@ -462,7 +493,7 @@ export function VistaBooking({
 
 // ── Modal de detalle de un receptivo (tour): solo foto + descripción + precio,
 //    sin flujo de reserva (los servicios se agregan al armar el paquete) ─────
-function ReceptivoModal({ receptivo, onClose }: { receptivo: Receptivo; onClose: () => void }) {
+function ReceptivoModal({ receptivo, onClose }: { receptivo: ReceptivoModalInfo; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
@@ -483,9 +514,8 @@ function ReceptivoModal({ receptivo, onClose }: { receptivo: Receptivo; onClose:
             <p className="mt-3 whitespace-pre-line text-sm text-gray-600">{receptivo.descripcion}</p>
           )}
           <div className="mt-4">
-            <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
-            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(receptivo.desde, receptivo.moneda)}</div>
-            <div className="text-[10px] text-gray-400">por persona</div>
+            <div className="text-[10px] uppercase tracking-wide text-gray-400">{receptivo.notaPrecio}</div>
+            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(receptivo.precio, receptivo.moneda)}</div>
           </div>
         </div>
       </div>

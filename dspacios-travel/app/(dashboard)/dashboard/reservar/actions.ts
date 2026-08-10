@@ -13,9 +13,12 @@ import type { Json } from "@/types/database";
 import {
   cotizarPorFechas as cotizarPorFechasImpl,
   buscarHoteles as buscarHotelesImpl,
+  buscarReceptivos as buscarReceptivosImpl,
   type CotizarResult,
   type BusquedaInput,
   type BusquedaResultado,
+  type BusquedaServiciosInput,
+  type ResultadoServicio,
 } from "@/lib/reservar/cotizar";
 import {
   computarReserva,
@@ -34,6 +37,10 @@ export async function cotizarPorFechas(input: {
 
 export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; resultados: BusquedaResultado[] } | { ok: false; error: string }> {
   return buscarHotelesImpl(input);
+}
+
+export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
+  return buscarReceptivosImpl(input);
 }
 
 export type ReservaResult = { ok: true; numero: string } | { ok: false; error: string };
