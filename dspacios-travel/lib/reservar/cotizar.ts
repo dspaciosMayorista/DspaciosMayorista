@@ -13,9 +13,12 @@ import {
   marcar,
   componerTarifa,
   temporadaParaFecha,
+  temporadaVigenteParaFecha,
   toTemporadaRango,
   minNochesAplicable,
   factorLiquidacion,
+  precioServicio,
+  redondearVenta,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
@@ -271,6 +274,108 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
         combos: combosValidos,
       });
     }
+  }
+  resultados.sort((a, b) => a.total - b.total);
+  return { ok: true, resultados };
+}
+
+// ── Mini-motor de búsqueda de RECEPTIVOS (servicios): liquida EN VIVO cada
+// tour/servicio publicado para el destino, fechas y pax elegidos — misma idea
+// que buscarHoteles, pero resolviendo temporada (si el servicio tiene tarifa
+// por fecha) y el rango de grupo/persona según el pax buscado. ──────────────
+export type BusquedaServiciosInput = {
+  fechaIda: string;
+  fechaRegreso: string;
+  pax: number;
+  destino?: string; // vacío = todos
+};
+export type ResultadoServicio = {
+  servicioId: number; nombre: string; destino: string | null; descripcion: string | null;
+  paqueteId: number; total: number; pax: number; noches: number; moneda: string;
+};
+
+export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
+  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y regreso." };
+  const numNoches = Math.max(1, noches(input.fechaIda, input.fechaRegreso));
+  const pax = Math.max(1, Math.trunc(input.pax) || 1);
+
+  const admin = createAdminClient();
+  let q = admin
+    .from("tarifario_resultado")
+    .select("paquete_id, servicio_id, servicio_nombre, destino_nombre, descripcion")
+    .eq("modulo", "servicios")
+    .eq("paquete_activo", true)
+    .not("servicio_id", "is", null);
+  if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
+  const { data: filas } = await q;
+  const pares = new Map<string, { paqueteId: number; servicioId: number; nombre: string; destino: string | null; descripcion: string | null }>();
+  for (const f of filas ?? []) {
+    if (f.paquete_id == null || f.servicio_id == null) continue;
+    pares.set(`${f.paquete_id}-${f.servicio_id}`, {
+      paqueteId: f.paquete_id, servicioId: f.servicio_id,
+      nombre: f.servicio_nombre ?? "Servicio", destino: f.destino_nombre, descripcion: f.descripcion,
+    });
+  }
+  if (!pares.size) return { ok: true, resultados: [] };
+
+  const paqueteIds = [...new Set([...pares.values()].map((p) => p.paqueteId))];
+  const servicioIds = [...new Set([...pares.values()].map((p) => p.servicioId))];
+
+  const [{ data: paquetes }, { data: armado }, { data: servicios }, { data: grupos }, { data: temporadas }] = await Promise.all([
+    admin.from("armado_paquetes").select("id, pct_mk").in("id", paqueteIds),
+    admin.from("armado_servicios").select("paquete_id, servicio_id, modo").in("paquete_id", paqueteIds).in("servicio_id", servicioIds),
+    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda").in("id", servicioIds),
+    admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", servicioIds),
+    admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", servicioIds),
+  ]);
+
+  const pctMkPorPaquete = new Map((paquetes ?? []).map((p) => [p.id, Number(p.pct_mk) || 0]));
+  const modoPorPar = new Map((armado ?? []).map((a) => [`${a.paquete_id}-${a.servicio_id}`, a.modo === "grupo" ? "grupo" as const : "persona" as const]));
+  const svcPorId = new Map((servicios ?? []).map((s) => [s.id, s]));
+
+  const gruposPorServ = new Map<string, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+  for (const g of grupos ?? []) {
+    const k = `${g.servicio_id}|${g.temporada ?? "GENERAL"}`;
+    (gruposPorServ.get(k) ?? gruposPorServ.set(k, []).get(k)!).push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
+  }
+  const tempsPorServ = new Map<number, TemporadaRango[]>();
+  const netoTempServ = new Map<string, number>();
+  const recTempServ = new Map<string, number>();
+  for (const t of temporadas ?? []) {
+    (tempsPorServ.get(t.servicio_id) ?? tempsPorServ.set(t.servicio_id, []).get(t.servicio_id)!).push(toTemporadaRango(t));
+    if (t.precio_persona != null) netoTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+    if (t.recargo_individual != null) recTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
+  }
+
+  const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
+  const resultados: ResultadoServicio[] = [];
+  for (const par of pares.values()) {
+    const srv = svcPorId.get(par.servicioId);
+    if (!srv) continue;
+    const modo = modoPorPar.get(`${par.paqueteId}-${par.servicioId}`) ?? "persona";
+    const tt = tempsPorServ.get(par.servicioId);
+    const nombreTemp = tt?.length ? temporadaVigenteParaFecha(fechaIdaDate, tt) : null;
+    const netoPersona = (nombreTemp ? netoTempServ.get(`${par.servicioId}|${nombreTemp}`) : undefined) ?? srv.precio_persona ?? null;
+    const gruposTemp = nombreTemp ? gruposPorServ.get(`${par.servicioId}|${nombreTemp}`) : undefined;
+    const gruposServ = gruposTemp?.length ? gruposTemp : (gruposPorServ.get(`${par.servicioId}|GENERAL`) ?? []);
+    if (modo === "persona" && netoPersona == null) continue; // sin tarifa para esa fecha
+    if (modo === "grupo" && !gruposServ.length) continue;
+
+    let costoNeto = precioServicio(modo, netoPersona, gruposServ, pax) * factorLiquidacion(srv.liquidacion, numNoches);
+    if (modo === "persona" && pax === 1) {
+      const recTemp = nombreTemp ? recTempServ.get(`${par.servicioId}|${nombreTemp}`) : undefined;
+      costoNeto += Math.max(recTemp ?? (Number(srv.recargo_individual) || 0), 0);
+    }
+    const pctMk = pctMkPorPaquete.get(par.paqueteId) ?? 0;
+    const moneda = srv.moneda ?? "COP";
+    const total = redondearVenta(marcar(costoNeto, pctMk), moneda);
+    if (total <= 0) continue;
+
+    resultados.push({
+      servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion,
+      paqueteId: par.paqueteId, total, pax, noches: numNoches, moneda,
+    });
   }
   resultados.sort((a, b) => a.total - b.total);
   return { ok: true, resultados };
