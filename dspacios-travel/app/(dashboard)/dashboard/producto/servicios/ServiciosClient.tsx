@@ -13,6 +13,7 @@ import {
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { Paginador } from "@/components/Paginador";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
+import { ServicioFotoCell } from "./ServicioFotoCell";
 
 type Opt = { id: number; nombre: string };
 type Tier = { pax_desde: number; pax_hasta: number; precio: number; temporada?: string | null };
@@ -32,6 +33,7 @@ type Servicio = {
   liquidacion?: string | null;
   descripcion?: string | null;
   recargo_individual?: number | null;
+  foto_url?: string | null;
   proveedores: { nombre: string } | null; destinos: { nombre: string } | null;
   servicio_tarifa_pax: Tier[];
 };
@@ -277,7 +279,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
             <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
               <table className="w-full text-sm">
                 <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-                  <th className="px-4 py-2">Servicio</th><th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Destino</th>
+                  <th className="px-4 py-2">Foto</th><th className="px-4 py-2">Servicio</th><th className="px-4 py-2">Proveedor</th><th className="px-4 py-2">Destino</th>
                   <th className="px-4 py-2 text-right">Por persona</th><th className="px-4 py-2">Por grupo (rangos)</th><th className="px-4 py-2"></th>
                 </tr></thead>
                 <tbody>{visibles.map((s) => <Row key={s.id} s={s} onEdit={startEdit} />)}</tbody>
@@ -454,6 +456,9 @@ function Row({ s, onEdit }: { s: Servicio; onEdit: (s: Servicio) => void }) {
     : "—";
   return (
     <tr className="border-t border-gray-50">
+      <td className="px-4 py-2">
+        <ServicioFotoCell servicioId={s.id} fotoUrl={s.foto_url ?? null} />
+      </td>
       <td className="px-4 py-2 text-gray-700">
         {s.nombre}
         {moneda === "USD" && <span className="ml-1 rounded bg-[#1D7C9A]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#1D7C9A]">USD</span>}

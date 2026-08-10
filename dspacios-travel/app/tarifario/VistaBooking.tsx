@@ -35,6 +35,16 @@ type HotelCard = {
   moneda?: string | null;
 };
 
+type Receptivo = {
+  servicioId: number | null;
+  nombre: string;
+  destino: string | null;
+  descripcion: string | null;
+  foto: string | null;
+  desde: number;
+  moneda?: string | null;
+};
+
 // Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
 function Categoria({ estrellas, clasificacion, className = "" }: { estrellas: number | null; clasificacion: string | null; className?: string }) {
   if (estrellas && estrellas > 0) {
@@ -110,6 +120,7 @@ function minRoomPvp(filas: FilaTarifario[]): number | null {
 export function VistaBooking({
   filas,
   fotosPorHotel = {},
+  fotosPorServicio = {},
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
   puedeReservar = false,
@@ -121,6 +132,7 @@ export function VistaBooking({
 }: {
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
+  fotosPorServicio?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
   puedeReservar?: boolean;
@@ -214,19 +226,35 @@ export function VistaBooking({
   }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
+  const [receptivoAbierto, setReceptivoAbierto] = useState<Receptivo | null>(null);
 
-  // Receptivos (servicios) para su submódulo: agrupados por nombre con su "desde".
-  const receptivos = useMemo(() => {
-    const map = new Map<string, { nombre: string; destino: string | null; desde: number; moneda?: string | null }>();
+  // Receptivos (servicios) para su submódulo: agrupados por nombre con su
+  // "desde", y luego por destino (una sección por destino) para no mezclarlos.
+  const SIN_DESTINO = "Otros / todo destino";
+  const receptivosPorDestino = useMemo(() => {
+    const map = new Map<string, Receptivo>();
     for (const f of filas.filter((f) => f.modulo === "servicios" && f.servicio_nombre)) {
       const k = `${f.servicio_nombre}|${f.destino_nombre ?? ""}`;
       const prev = map.get(k);
       const p = f.precio_pvp ?? 0;
-      if (!prev) map.set(k, { nombre: f.servicio_nombre as string, destino: f.destino_nombre, desde: p, moneda: f.moneda });
-      else if (p > 0 && p < prev.desde) prev.desde = p;
+      if (!prev) {
+        map.set(k, {
+          servicioId: f.servicio_id ?? null, nombre: f.servicio_nombre as string, destino: f.destino_nombre,
+          descripcion: f.descripcion ?? null, foto: f.servicio_id != null ? (fotosPorServicio[f.servicio_id] ?? null) : null,
+          desde: p, moneda: f.moneda,
+        });
+      } else if (p > 0 && p < prev.desde) prev.desde = p;
     }
-    return [...map.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [filas]);
+    const porDestino = new Map<string, Receptivo[]>();
+    for (const r of map.values()) {
+      const key = r.destino ?? SIN_DESTINO;
+      const arr = porDestino.get(key) ?? [];
+      arr.push(r);
+      porDestino.set(key, arr);
+    }
+    for (const arr of porDestino.values()) arr.sort((a, b) => a.nombre.localeCompare(b.nombre));
+    return [...porDestino.entries()].sort(([a], [b]) => (a === SIN_DESTINO ? 1 : b === SIN_DESTINO ? -1 : a.localeCompare(b)));
+  }, [filas, fotosPorServicio]);
 
   const SUBTABS = [
     { key: "bloqueo", label: "Paquetes" },
@@ -295,17 +323,49 @@ export function VistaBooking({
       )}
 
       {sub === "receptivos" ? (
-        receptivos.length === 0 ? (
+        receptivosPorDestino.length === 0 ? (
           <p className="py-12 text-center text-sm text-gray-400">No hay receptivos publicados.</p>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {receptivos.map((r, i) => (
-              <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4">
-                <div className="font-semibold text-gray-800">{r.nombre}</div>
-                {r.destino && <div className="text-xs text-gray-500">{r.destino}</div>}
-                <div className="mt-3 text-[10px] uppercase tracking-wide text-gray-400">desde</div>
-                <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(r.desde, r.moneda)}</div>
-                <div className="text-[10px] text-gray-400">por persona</div>
+          <div className="space-y-8">
+            {receptivosPorDestino.map(([destino, items]) => (
+              <div key={destino}>
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  {destino} <span className="ml-1 font-normal normal-case text-gray-400">({items.length})</span>
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {items.map((r, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setReceptivoAbierto(r)}
+                      className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
+                    >
+                      <div className="relative aspect-[16/10] w-full bg-gray-100">
+                        {r.foto ? (
+                          <Image src={r.foto} alt={r.nombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
+                        )}
+                      </div>
+                      <div className="flex flex-1 flex-col p-4">
+                        <div className="font-semibold text-gray-800">{r.nombre}</div>
+                        {r.descripcion?.trim() && (
+                          <p className="mt-1 line-clamp-2 text-xs text-gray-400">{r.descripcion}</p>
+                        )}
+                        <div className="mt-3 flex items-end justify-between">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
+                            <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(r.desde, r.moneda)}</div>
+                            <div className="text-[10px] text-gray-400">por persona</div>
+                          </div>
+                          <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "var(--brand-accent)" }}>
+                            Ver más →
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
@@ -392,6 +452,43 @@ export function VistaBooking({
       {abierto && (
         <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onClose={() => setAbierto(null)} />
       )}
+
+      {receptivoAbierto && (
+        <ReceptivoModal receptivo={receptivoAbierto} onClose={() => setReceptivoAbierto(null)} />
+      )}
+    </div>
+  );
+}
+
+// ── Modal de detalle de un receptivo (tour): solo foto + descripción + precio,
+//    sin flujo de reserva (los servicios se agregan al armar el paquete) ─────
+function ReceptivoModal({ receptivo, onClose }: { receptivo: Receptivo; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="relative aspect-[16/9] w-full bg-gray-100">
+          {receptivo.foto ? (
+            <Image src={receptivo.foto} alt={receptivo.nombre} fill sizes="500px" className="object-cover" unoptimized />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
+          )}
+          <button type="button" onClick={onClose} className="absolute right-3 top-3 rounded-full bg-white/90 px-3 py-1 text-sm font-medium text-gray-700 shadow">
+            Cerrar ✕
+          </button>
+        </div>
+        <div className="p-5">
+          <div className="text-lg font-semibold text-gray-800">{receptivo.nombre}</div>
+          {receptivo.destino && <div className="text-sm text-gray-500">{receptivo.destino}</div>}
+          {receptivo.descripcion?.trim() && (
+            <p className="mt-3 whitespace-pre-line text-sm text-gray-600">{receptivo.descripcion}</p>
+          )}
+          <div className="mt-4">
+            <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
+            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(receptivo.desde, receptivo.moneda)}</div>
+            <div className="text-[10px] text-gray-400">por persona</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

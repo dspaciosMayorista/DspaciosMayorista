@@ -143,6 +143,17 @@ async function guardarGrupoTiers(
   }
 }
 
+// Foto de portada del servicio (tour/receptivo): se lee en vivo desde el
+// tarifario público (no se denormaliza en tarifario_resultado), así que no
+// hace falta regenerar nada al cambiarla.
+export async function actualizarFotoServicio(id: number, fotoUrl: string | null): Promise<Result> {
+  const sb = await createClient();
+  const { error } = await sb.from("servicios_adicionales").update({ foto_url: fotoUrl }).eq("id", id);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/dashboard/producto/servicios");
+  return { ok: true };
+}
+
 export async function crearServicio(input: ServicioInput): Promise<Result> {
   const sb = await createClient();
   const { data, error } = await sb.from("servicios_adicionales").insert({ ...servicioToRow(input), activo: true }).select("id").single();

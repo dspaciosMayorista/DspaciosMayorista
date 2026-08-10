@@ -37,6 +37,7 @@ export type FilaTarifario = {
   destino_nombre: string | null;
   paquete_nombre: string | null;
   hotel_nombre: string | null;
+  servicio_id?: number | null;
   servicio_nombre?: string | null;
   tipo_tarifa?: string | null;
   pax_desde?: number | null;
@@ -189,6 +190,7 @@ export function TarifarioPublic({
   cuposPorBloqueo = {},
   origenPorBloqueo = {},
   fotosPorHotel = {},
+  fotosPorServicio = {},
   ventanaPorPaquete = {},
   infoPorHotel = {},
   planesInfo = {},
@@ -200,6 +202,7 @@ export function TarifarioPublic({
   cuposPorBloqueo?: Record<number, number>;
   origenPorBloqueo?: Record<number, string>;
   fotosPorHotel?: Record<number, string>;
+  fotosPorServicio?: Record<number, string>;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
   infoPorHotel?: InfoHotel;
   planesInfo?: PlanesInfo;
@@ -296,7 +299,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} />
       ) : (
         <>
           {/* Tabs de módulos */}
