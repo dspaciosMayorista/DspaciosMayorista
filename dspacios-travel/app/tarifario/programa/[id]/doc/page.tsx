@@ -85,12 +85,12 @@ export default async function ProgramaDocPage({
   const desde = p.desde_precio && p.desde_precio > 0 ? Number(p.desde_precio) : (pvps.length ? Math.min(...pvps) : null);
 
   const sellos = [
-    p.incluye_aereo ? "Con aéreo" : "Porción terrestre",
+    p.tipo_transporte === "aereo" ? "Con aéreo" : p.tipo_transporte === "terrestre" ? "Salida terrestre" : "Porción terrestre",
     "Servicios compartidos",
     "Tarifa por persona",
     "Sujeto a disponibilidad",
   ];
-  const SELLO_ICON = [p.incluye_aereo ? Plane : Bus, Users, BadgeCheck, CalendarRange];
+  const SELLO_ICON = [p.tipo_transporte === "aereo" ? Plane : p.tipo_transporte === "terrestre" ? Bus : MapPin, Users, BadgeCheck, CalendarRange];
 
   const wa = ag?.telefono ? `https://wa.me/57${ag.telefono.replace(/\D/g, "")}` : null;
 

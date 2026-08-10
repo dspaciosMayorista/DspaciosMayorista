@@ -51,7 +51,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
   let q = sb
     .from("programas")
     .select(
-      "id, nombre, subtitulo, dias, noches, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, publicado, desde_precio, incluye_aereo, portada_url"
+      "id, nombre, subtitulo, dias, noches, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, publicado, desde_precio, incluye_aereo, tipo_transporte, portada_url"
     )
     .eq("activo", true);
   if (soloPublicados) q = q.eq("publicado", true);
@@ -129,7 +129,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
               moneda: p.moneda,
             })
           : null),
-      incluye_aereo: !!p.incluye_aereo,
+      tipo_transporte: (p.tipo_transporte as "ninguno" | "aereo" | "terrestre" | undefined) ?? (p.incluye_aereo ? "aereo" : "ninguno"),
       portada_url: p.portada_url ?? null,
       ciudades: ciudadesPorProg.get(p.id) ?? [],
     };

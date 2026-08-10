@@ -50,7 +50,7 @@ export function CabeceraForm({
     notas: initial?.notas ?? "",
     highlights: initial?.highlights ?? "",
     desdePrecio: initial?.desdePrecio ?? null,
-    incluyeAereo: initial?.incluyeAereo ?? false,
+    tipoTransporte: initial?.tipoTransporte ?? "ninguno",
     portadaUrl: initial?.portadaUrl ?? "",
     asistenciaMedicaDia: initial?.asistenciaMedicaDia ?? null,
     modoPrecio: initial?.modoPrecio ?? "categoria",
@@ -186,14 +186,15 @@ export function CabeceraForm({
             />
           </div>
           <div>
-            <label className={lbl}>Aéreo</label>
+            <label className={lbl}>Traslado origen → destino</label>
             <select
-              value={f.incluyeAereo ? "1" : "0"}
-              onChange={(e) => set("incluyeAereo", e.target.value === "1")}
+              value={f.tipoTransporte}
+              onChange={(e) => set("tipoTransporte", e.target.value as CabeceraInput["tipoTransporte"])}
               className={sel}
             >
-              <option value="0">Porción terrestre</option>
-              <option value="1">Con aéreo</option>
+              <option value="ninguno">Porción terrestre (sin traslado, solo servicios en destino)</option>
+              <option value="aereo">Con aéreo</option>
+              <option value="terrestre">Salida terrestre (bus)</option>
             </select>
           </div>
           <div>

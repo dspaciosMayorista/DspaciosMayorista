@@ -48,7 +48,7 @@ export type CabeceraInput = {
   notas: string;            // observaciones internas (NO salen en el PDF público)
   highlights: string;       // atractivos del programa, uno por línea
   desdePrecio: number | null;
-  incluyeAereo: boolean;
+  tipoTransporte: "ninguno" | "aereo" | "terrestre";
   portadaUrl: string;
   asistenciaMedicaDia: number | null;
   modoPrecio: string;
@@ -89,7 +89,8 @@ function cabeceraRow(input: CabeceraInput) {
     notas: oNull(input.notas),
     highlights: parseHighlights(input.highlights),
     desde_precio: input.desdePrecio,
-    incluye_aereo: !!input.incluyeAereo,
+    tipo_transporte: input.tipoTransporte || "ninguno",
+    incluye_aereo: input.tipoTransporte === "aereo", // compat, ya no es la fuente de verdad
     portada_url: oNull(input.portadaUrl),
     asistencia_medica_dia: input.asistenciaMedicaDia ?? 0,
     modo_precio: input.modoPrecio === "salida" ? "salida" : "categoria",
