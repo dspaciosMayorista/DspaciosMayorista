@@ -103,6 +103,28 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
 
       <main className="mx-auto max-w-5xl space-y-8 px-4 py-8 md:px-6">
         <div className="flex flex-wrap justify-end gap-3">
+          {p.flyer_url && (
+            <a
+              href={p.flyer_url.includes("?") ? p.flyer_url : `${p.flyer_url}?download`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg border px-5 py-2.5 text-sm font-semibold text-gray-600"
+              style={{ borderColor: "#d1d5db" }}
+            >
+              Flyer
+            </a>
+          )}
+          {p.historia_url && (
+            <a
+              href={p.historia_url.includes("?") ? p.historia_url : `${p.historia_url}?download`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg border px-5 py-2.5 text-sm font-semibold text-gray-600"
+              style={{ borderColor: "#d1d5db" }}
+            >
+              Historia
+            </a>
+          )}
           <Link
             href={`/tarifario/programa/${p.id}/doc`}
             target="_blank"
