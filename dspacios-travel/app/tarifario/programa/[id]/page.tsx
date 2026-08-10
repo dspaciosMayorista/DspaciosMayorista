@@ -142,7 +142,14 @@ export default async function ProgramaVitrinaPage({ params }: { params: Promise<
                   {det.salidas.map((s) => (
                     <tr key={s.id} className="border-b border-gray-50">
                       <td className="px-4 py-3 font-medium text-gray-700">
-                        {s.etiqueta ?? (s.fecha_desde ? `${formatFechaLarga(s.fecha_desde)} — ${formatFechaLarga(s.fecha_hasta)}` : "—")}
+                        {s.etiqueta && <div>{s.etiqueta}</div>}
+                        {s.fecha_desde ? (
+                          <div className={s.etiqueta ? "text-xs font-normal text-gray-500" : ""}>
+                            {formatFechaLarga(s.fecha_desde)} — {formatFechaLarga(s.fecha_hasta)}
+                          </div>
+                        ) : (
+                          !s.etiqueta && "—"
+                        )}
                       </td>
                       <td className="px-4 py-3 text-gray-600">{s.noches ?? "—"}</td>
                       {det.salidas.some((x) => x.columna) && <td className="px-4 py-3 text-gray-600">{s.columna ?? "—"}</td>}

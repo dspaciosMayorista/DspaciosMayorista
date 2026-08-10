@@ -254,7 +254,12 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
     categorias: cats,
     salidas,
     inclusiones: inclusiones ?? [],
-    tours: tours ?? [],
+    // El tour se monta en NETO; se publica con el mismo markup/fee del programa
+    // (sin asistencia médica, que es propia del paquete base, no del tour suelto).
+    tours: (tours ?? []).map((t) => ({
+      ...t,
+      precio: t.precio != null && t.precio > 0 ? pvpPrograma(t.precio, { ...pvpOpt, asistenciaDia: 0, dias: 0 }) : t.precio,
+    })),
     blackouts: blackouts ?? [],
   };
 }
