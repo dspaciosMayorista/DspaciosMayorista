@@ -172,7 +172,7 @@ export default async function ProgramaDocPage({
 
               {/* Precios por categoría */}
               {det.categorias.length > 0 && (
-                <section className="mb-5 break-inside-avoid">
+                <section className="mb-5">
                   <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-gray-700">Precios por persona ({moneda})</h2>
                   <table className="w-full border-collapse text-xs">
                     <thead>
@@ -200,7 +200,7 @@ export default async function ProgramaDocPage({
 
               {/* Precios por salida */}
               {det.salidas.length > 0 && (
-                <section className="mb-5 break-inside-avoid">
+                <section className="mb-5">
                   <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-gray-700">Salidas y precios por persona ({moneda})</h2>
                   <table className="w-full border-collapse text-xs">
                     <thead>
@@ -355,6 +355,14 @@ export default async function ProgramaDocPage({
               .cover { min-height: 200px; }
               .watermark { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-size: 60%; }
               .programa-doc > .relative > .p-7 { padding: 12mm; }
+              /* Las tablas de precios pueden ser largas (varias salidas): que
+                 fluyan de una página a otra en vez de saltar entera a la
+                 siguiente (eso dejaba una página casi en blanco). Solo se evita
+                 cortar una fila a la mitad, y el encabezado se repite arriba. */
+              .programa-doc table thead { display: table-header-group; }
+              .programa-doc table tr { break-inside: avoid; page-break-inside: avoid; }
+              /* Que un título de sección no quede solo al final de una página. */
+              .programa-doc h2 { break-after: avoid-page; }
             }
           `,
         }}
