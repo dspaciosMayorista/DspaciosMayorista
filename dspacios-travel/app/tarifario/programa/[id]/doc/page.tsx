@@ -214,7 +214,16 @@ export default async function ProgramaDocPage({
                     <tbody>
                       {det.salidas.map((s) => (
                         <tr key={s.id} className="border-b border-gray-100">
-                          <td className="py-1 pr-2 font-medium text-gray-700">{s.etiqueta ?? (s.fecha_desde ? `${formatFechaLarga(s.fecha_desde)} — ${formatFechaLarga(s.fecha_hasta)}` : "—")}</td>
+                          <td className="py-1 pr-2 font-medium text-gray-700">
+                            {s.etiqueta && <div>{s.etiqueta}</div>}
+                            {s.fecha_desde ? (
+                              <div className={s.etiqueta ? "font-normal text-gray-500" : ""}>
+                                {formatFechaLarga(s.fecha_desde)} — {formatFechaLarga(s.fecha_hasta)}
+                              </div>
+                            ) : (
+                              !s.etiqueta && "—"
+                            )}
+                          </td>
                           <td className="py-1 pr-2 text-gray-600">{s.noches ?? "—"}</td>
                           {haySalidaConHotel && <td className="py-1 pr-2 text-gray-600">{s.columna ?? "—"}</td>}
                           {acomsSal.map((a) => {
