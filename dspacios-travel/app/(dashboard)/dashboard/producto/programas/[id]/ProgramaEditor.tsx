@@ -109,7 +109,7 @@ export function ProgramaEditor(props: {
     notas: programa.notas ?? "",
     highlights: (programa.highlights ?? []).join("\n"),
     desdePrecio: programa.desde_precio,
-    incluyeAereo: programa.incluye_aereo,
+    tipoTransporte: (programa.tipo_transporte as "ninguno" | "aereo" | "terrestre" | undefined) ?? (programa.incluye_aereo ? "aereo" : "ninguno"),
     portadaUrl: programa.portada_url ?? "",
     asistenciaMedicaDia: programa.asistencia_medica_dia,
     modoPrecio: programa.modo_precio,

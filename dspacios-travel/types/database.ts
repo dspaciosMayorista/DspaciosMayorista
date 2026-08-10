@@ -2066,6 +2066,7 @@ export type Database = {
           highlights: string[];
           desde_precio: number | null;
           incluye_aereo: boolean;
+          tipo_transporte: string;
           portada_url: string | null;
           flyer_url: string | null;
           historia_url: string | null;
@@ -2103,6 +2104,7 @@ export type Database = {
           highlights?: string[];
           desde_precio?: number | null;
           incluye_aereo?: boolean;
+          tipo_transporte?: string;
           portada_url?: string | null;
           flyer_url?: string | null;
           historia_url?: string | null;

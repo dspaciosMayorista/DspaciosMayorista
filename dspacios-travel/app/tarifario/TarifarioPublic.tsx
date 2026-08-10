@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
-import { Star, Plane } from "lucide-react";
+import { Star, Plane, Bus } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -19,7 +19,7 @@ export type ProgramaResumen = {
   noches: number | null;
   moneda: string;
   desde_pvp: number | null;
-  incluye_aereo: boolean;
+  tipo_transporte: "ninguno" | "aereo" | "terrestre";
   portada_url: string | null;
   ciudades: string[];
 };
@@ -672,7 +672,7 @@ function TablaHorizontal({ rows, puedeReservar = false, soloAcom = null, infoPor
 // ── Programas (circuitos) — vista de cards flotantes con filtro de destino ────
 function PorProgramas({ programas, puedeReservar = false }: { programas: ProgramaResumen[]; puedeReservar?: boolean }) {
   const [destino, setDestino] = useState("");
-  const [aereo, setAereo] = useState<"" | "si" | "no">("");
+  const [transporte, setTransporte] = useState<"" | "aereo" | "terrestre" | "ninguno">("");
 
   // Destinos únicos (ciudades de todos los programas) para el filtro.
   const destinos = useMemo(() => {
@@ -685,11 +685,10 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
     () =>
       programas.filter((p) => {
         if (destino && !p.ciudades.some((c) => c.toLowerCase() === destino.toLowerCase())) return false;
-        if (aereo === "si" && !p.incluye_aereo) return false;
-        if (aereo === "no" && p.incluye_aereo) return false;
+        if (transporte && p.tipo_transporte !== transporte) return false;
         return true;
       }),
-    [programas, destino, aereo]
+    [programas, destino, transporte]
   );
 
   if (!programas.length) {
@@ -714,21 +713,21 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-500">Aéreo</label>
-          <div className="flex gap-1">
-            {([["", "Todos"], ["si", "Con aéreo"], ["no", "Porción terrestre"]] as const).map(([v, l]) => (
+          <label className="mb-1 block text-xs font-medium text-gray-500">Traslado</label>
+          <div className="flex flex-wrap gap-1">
+            {([["", "Todos", null], ["aereo", "Con aéreo", Plane], ["terrestre", "Salida terrestre", Bus], ["ninguno", "Porción terrestre", null]] as const).map(([v, l, Icon]) => (
               <button
                 key={v}
                 type="button"
-                onClick={() => setAereo(v)}
+                onClick={() => setTransporte(v)}
                 className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium transition-all"
                 style={
-                  aereo === v
+                  transporte === v
                     ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
                     : { borderColor: "#e5e7eb", color: "#6b7280" }
                 }
               >
-                {v === "si" && <Plane size={12} />}{l}
+                {Icon && <Icon size={12} />}{l}
               </button>
             ))}
           </div>
@@ -761,12 +760,20 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
                 <span
                   className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
                   style={
-                    p.incluye_aereo
+                    p.tipo_transporte === "aereo"
                       ? { backgroundColor: "rgba(29,124,154,0.12)", color: "var(--brand-primary)" }
-                      : { backgroundColor: "#f3f4f6", color: "#6b7280" }
+                      : p.tipo_transporte === "terrestre"
+                        ? { backgroundColor: "rgba(102,181,150,0.15)", color: "var(--brand-success)" }
+                        : { backgroundColor: "#f3f4f6", color: "#6b7280" }
                   }
                 >
-                  {p.incluye_aereo ? <><Plane size={11} /> Con aéreo</> : "Porción terrestre"}
+                  {p.tipo_transporte === "aereo" ? (
+                    <><Plane size={11} /> Con aéreo</>
+                  ) : p.tipo_transporte === "terrestre" ? (
+                    <><Bus size={11} /> Salida terrestre</>
+                  ) : (
+                    "Porción terrestre"
+                  )}
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-gray-500">
