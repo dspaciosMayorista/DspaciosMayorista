@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProgramaDetalle } from "@/lib/programas";
+import { formatFecha } from "@/lib/utils";
 import { ProgramaReservaForm, type CategoriaReserva } from "./ProgramaReservaForm";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,13 @@ export default async function ReservarProgramaPage({ params }: { params: Promise
   const categorias: CategoriaReserva[] = modoSalida
     ? det.salidas.map((s) => ({
         id: s.id,
-        nombre: [s.etiqueta ?? s.fecha_desde ?? "Salida", s.columna, s.noches != null ? `${s.noches}N` : null]
+        // Nombre + fecha SIEMPRE concatenados (antes la etiqueta tapaba la
+        // fecha real) — así el desplegable reemplaza al calendario aparte.
+        nombre: [
+          [s.etiqueta, s.fecha_desde ? formatFecha(s.fecha_desde) : null].filter(Boolean).join(" — ") || "Salida",
+          s.columna,
+          s.noches != null ? `${s.noches}N` : null,
+        ]
           .filter(Boolean)
           .join(" · "),
         precios: s.precios.map((p) => ({ acomodacion: p.acomodacion, pvp: p.pvp, bajoSolicitud: s.bajo_solicitud })),
