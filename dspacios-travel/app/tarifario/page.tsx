@@ -31,7 +31,7 @@ export default async function TarifarioPublicoPage() {
     const { data: page } = await sb
       .from("tarifario_resultado")
       .select(
-        "modulo, bloqueo_label, bloqueo_id, salida_id, paquete_id, hotel_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda"
+        "modulo, bloqueo_label, bloqueo_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda"
       )
       .eq("paquete_activo", true)
       .order("destino_nombre")
@@ -145,6 +145,14 @@ export default async function TarifarioPublicoPage() {
     }
   }
 
+  // Foto de portada por servicio adicional (tour/receptivo) — bucket público.
+  const fotosPorServicio: Record<number, string> = {};
+  const servicioIds = [...new Set(filasVisibles.filter((f) => f.servicio_id != null).map((f) => f.servicio_id as number))];
+  if (servicioIds.length) {
+    const { data: svcs } = await sb.from("servicios_adicionales").select("id, foto_url").in("id", servicioIds);
+    for (const s of svcs ?? []) if (s.foto_url) fotosPorServicio[s.id] = s.foto_url;
+  }
+
   // Régimen de alimentación: qué incluye cada plan (catálogo, lectura pública).
   const planesInfo: Record<string, { nombre: string | null; descripcion: string | null; nota_especial: string | null }> = {};
   {
@@ -215,7 +223,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} />
         )}
       </main>
     </div>
