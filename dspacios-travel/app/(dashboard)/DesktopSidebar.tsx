@@ -5,6 +5,7 @@ import { PanelLeft, PanelLeftClose } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "./LogoutButton";
 import { SidebarNav, type NavItem } from "./SidebarNav";
+import { POWERED_BY } from "@/lib/contrato/plantilla";
 
 const KEY = "dsp-sidebar";
 
@@ -55,6 +56,10 @@ export function DesktopSidebar({ nav, switcher, tenant }: { nav: NavItem[]; swit
       <div className={`border-t border-gray-100 py-3 ${collapsed ? "flex justify-center px-2" : "px-4"}`}>
         <LogoutButton collapsed={collapsed} />
       </div>
+
+      {!collapsed && (
+        <div className="px-4 pb-3 text-center text-[9px] text-gray-300">{POWERED_BY}</div>
+      )}
     </aside>
   );
 }
