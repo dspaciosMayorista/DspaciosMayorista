@@ -7,6 +7,7 @@ import { Logo } from "@/components/Logo";
 import { modulosConsultables, miRol } from "@/lib/roles";
 import { tenantContext } from "@/lib/tenant.server";
 import { TenantSwitcher } from "./TenantSwitcher";
+import { POWERED_BY } from "@/lib/contrato/plantilla";
 
 const NAV: NavItem[] = [
   // Comercial / venta
@@ -173,6 +174,7 @@ export default async function DashboardLayout({
             </a>
           ))}
         </nav>
+        <div className="text-center text-[9px] text-gray-300">{POWERED_BY}</div>
       </header>
 
       {/* Sidebar (escritorio) — recogible */}
