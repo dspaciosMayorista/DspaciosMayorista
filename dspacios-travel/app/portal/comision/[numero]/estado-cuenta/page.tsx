@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { DocHeader, PRINT_DOC_STYLE } from "@/components/contrato/DocHeader";
+import { POWERED_BY } from "@/lib/contrato/plantilla";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { resolverComisionB2B } from "@/lib/finanzas/comisionResolver";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
@@ -121,6 +122,7 @@ export default async function EstadoCuentaComisionPage({ params }: { params: Pro
 
           <footer className="mt-8 border-t border-gray-200 pt-3 text-center text-[10px] text-gray-400">
             Documento informativo generado por D&apos;spacios Travel. El saldo se actualiza con cada abono registrado.
+            <span className="mt-0.5 block text-[9px] text-gray-300">{POWERED_BY}</span>
           </footer>
         </div>
       </div>

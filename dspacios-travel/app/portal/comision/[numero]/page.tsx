@@ -3,6 +3,7 @@ import Link from "next/link";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { pesosEnLetras } from "@/lib/utils/numeroALetras";
+import { POWERED_BY } from "@/lib/contrato/plantilla";
 import { agenciaDe } from "@/lib/tenant.server";
 import { esTenant } from "@/lib/tenant";
 import { resolverComisionB2B } from "@/lib/finanzas/comisionResolver";
@@ -160,6 +161,7 @@ export default async function CuentaCobroPage({ params }: { params: Promise<{ nu
 
           <footer className="mt-4 border-t border-gray-200 pt-2 text-center text-[9px] text-gray-400">
             Documento generado por el Portal B2B de D&apos;spacios Travel.
+            <span className="mt-0.5 block text-[8px] text-gray-300">{POWERED_BY}</span>
           </footer>
         </div>
       </div>

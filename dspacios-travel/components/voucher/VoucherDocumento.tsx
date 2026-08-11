@@ -1,5 +1,6 @@
 import { formatFechaLarga } from "@/lib/utils";
 import { Logo } from "@/components/Logo";
+import { POWERED_BY } from "@/lib/contrato/plantilla";
 import type { VoucherContenido } from "@/app/(dashboard)/dashboard/contratos/[numero]/voucher-actions";
 
 const PRIMARY = "#1D7C9A";
@@ -121,6 +122,7 @@ export function VoucherDocumento({ c, tenant }: { c: VoucherContenido; tenant?: 
         <p className="mt-2 text-center text-[11px] font-semibold" style={{ color: PRIMARY }}>
           En caso de necesitar asistencia médica, comuníquese en el momento de la calamidad al número registrado en su voucher.
         </p>
+        <p className="mt-4 text-center text-[9px] text-gray-300">{POWERED_BY}</p>
       </div>
     </div>
   );
