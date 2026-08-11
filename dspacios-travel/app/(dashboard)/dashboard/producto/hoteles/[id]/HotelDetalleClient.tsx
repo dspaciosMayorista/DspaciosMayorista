@@ -334,6 +334,19 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   const num = (s: string) => (s === "" ? null : Number(s));
   const str = (n: number | null) => (n == null ? "" : String(n));
 
+  // Temporadas de tipo "promo" (descuento_pct/descuento_monto): el valor cargado
+  // en la fila es la tarifa de referencia; el descuento de esa temporada se le
+  // aplica encima para mostrar el valor final (mismo % que ya aplica el motor
+  // en vivo al liquidar, ver lib/calc/paquetes.ts `netoNoche`).
+  const cfgTemporada = (nombre: string | null) => temporadas.find((tm) => tm.nombre === nombre);
+  const conDescuento = (base: number | null, cfg?: Temporada): number | null => {
+    if (base == null || !cfg?.tipo || cfg.tipo === "tarifa") return null;
+    const val = Number(cfg.descuento_valor) || 0;
+    if (cfg.tipo === "descuento_pct") return Math.round(base * (1 - val / 100));
+    if (cfg.tipo === "descuento_monto") return Math.max(0, Math.round(base - val));
+    return null; // promo_noche_gratis no es un % por acomodación
+  };
+
   function resetForm() {
     setTipo(""); setAlim(""); setTemp("");
     setP({ sencilla: "", doble: "", triple: "", multiple: "", nino: "", nino2: "", infante: "" });
@@ -386,21 +399,35 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
   const activas = tarifas.filter((t) => !esHistorica(t));
   const historicas = tarifas.filter((t) => esHistorica(t));
 
-  const filaTarifa = (t: Tarifa) => (
+  const celda = (base: number | null, cfg?: Temporada) => {
+    const desc = conDescuento(base, cfg);
+    return (
+      <>
+        {base ? formatCOP(base) : "—"}
+        {desc != null && <div className="text-[10px] font-normal text-[var(--brand-accent)]">({formatCOP(desc)})</div>}
+      </>
+    );
+  };
+
+  const filaTarifa = (t: Tarifa) => {
+    const cfg = cfgTemporada(t.temporada);
+    const descInfante = conDescuento(t.neto_infante, cfg);
+    return (
     <tr key={t.id} className="border-t border-gray-50">
       <td className="px-3 py-2 text-gray-700">{t.tipo_habitacion ?? "—"}</td>
       <td className="px-3 py-2 text-gray-500">{t.alimentacion ?? "—"}</td>
       <td className="px-3 py-2 text-gray-500">{t.temporada ?? "—"}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{t.neto_sencilla ? formatCOP(t.neto_sencilla) : "—"}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{t.neto_multiple ? formatCOP(t.neto_multiple) : "—"}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_sencilla, cfg)}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_doble, cfg)}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_triple, cfg)}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_multiple, cfg)}</td>
       {!adultsOnly && (
         <>
-          <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino != null ? formatCOP(t.neto_nino) : "—"}</td>
-          <td className="px-3 py-2 text-right tabular-nums">{t.neto_nino2 != null ? formatCOP(t.neto_nino2) : "—"}</td>
+          <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_nino, cfg)}</td>
+          <td className="px-3 py-2 text-right tabular-nums">{celda(t.neto_nino2, cfg)}</td>
           <td className="px-3 py-2 text-right tabular-nums" title={t.nota_infante ?? undefined}>
             {t.neto_infante != null ? formatCOP(t.neto_infante) : "—"}
+            {descInfante != null && <div className="text-[10px] font-normal text-[var(--brand-accent)]">({formatCOP(descInfante)})</div>}
             {t.nota_infante && <span className="ml-1 text-amber-500" title={t.nota_infante}>*</span>}
           </td>
         </>
@@ -412,7 +439,8 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
         </div>
       </td>
     </tr>
-  );
+    );
+  };
 
   const tablaTarifas = (rows: Tarifa[]) => (
     <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
