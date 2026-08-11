@@ -485,6 +485,9 @@ function MatrizEditor({
 type SalidaState = {
   etiqueta: string; fechaDesde: string; fechaHasta: string; noches: string; columna: string;
   netoSencilla: string; netoDoble: string; netoTriple: string; netoMultiple: string; netoNino: string; bs: boolean;
+  // Tarifa del proveedor por acomodación (solo para la calculadora de "tarifa
+  // comisionable" — nunca se guarda, solo produce el neto de arriba).
+  tarifaSencilla: string; tarifaDoble: string; tarifaTriple: string; tarifaMultiple: string;
 };
 
 function SalidasEditor({
@@ -510,23 +513,29 @@ function SalidasEditor({
     netoMultiple: s.neto_multiple != null ? String(s.neto_multiple) : "",
     netoNino: s.neto_nino != null ? String(s.neto_nino) : "",
     bs: s.bajo_solicitud,
+    tarifaSencilla: "", tarifaDoble: "", tarifaTriple: "", tarifaMultiple: "",
   });
   const [rows, setRows] = useState<SalidaState[]>(salidas.map(toState));
   const upd = (i: number, k: keyof SalidaState, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   const dup = (i: number) => setRows((p) => [...p.slice(0, i + 1), { ...p[i] }, ...p.slice(i + 1)]);
   const nOrNull = (v: string) => (v === "" ? null : Number(v));
 
-  // Regla comisionable: convierte una TARIFA del proveedor en el NETO a montar.
+  // Regla comisionable: convierte, POR ACOMODACIÓN, la TARIFA del proveedor en
+  // el NETO a montar. `reglaOn` es un toggle independiente de las filas —
+  // nunca se apaga solo por escribir una tarifa o agregar una salida.
   const [reglaOn, setReglaOn] = useState(false);
   const [cModo, setCModo] = useState<ModoBaseComisionable>("pct");
   const [cValor, setCValor] = useState("3");
   const [cComision, setCComision] = useState("10");
-  // Escribe el neto (doble = múltiple, base Cibeles) desde una tarifa comisionable.
-  const aplicarTarifa = (i: number, tarifaStr: string) => {
+  const desgloseTarifa = (tarifaStr: string) => {
     const tarifa = Number(tarifaStr);
-    if (!Number.isFinite(tarifa) || tarifa <= 0) return;
-    const { neto } = calcularNetoPrograma({ tarifa, modo: cModo, valor: Number(cValor) || 0, pctComision: Number(cComision) || 0 });
-    setRows((p) => p.map((r, j) => (j === i ? { ...r, netoDoble: String(neto), netoMultiple: String(neto) } : r)));
+    if (tarifaStr === "" || !Number.isFinite(tarifa) || tarifa <= 0) return null;
+    return calcularNetoPrograma({ tarifa, modo: cModo, valor: Number(cValor) || 0, pctComision: Number(cComision) || 0 });
+  };
+  // Escribe SOLO el neto de esa acomodación puntual (nunca cruza sencilla/doble/triple/múltiple).
+  const aplicarTarifaAcom = (i: number, tarifaKey: keyof SalidaState, netoKey: keyof SalidaState, tarifaStr: string) => {
+    const d = desgloseTarifa(tarifaStr);
+    setRows((p) => p.map((r, j) => (j === i ? { ...r, [tarifaKey]: tarifaStr, [netoKey]: d ? String(d.neto) : "" } : r)));
   };
 
   // PVP en vivo: usa las noches de la salida para la asistencia médica.
@@ -550,12 +559,13 @@ function SalidasEditor({
     bajoSolicitud: r.bs,
   }));
 
-  const COLS: [keyof SalidaState, string][] = [
-    ["netoSencilla", "Sencilla"],
-    ["netoDoble", "Doble"],
-    ["netoTriple", "Triple"],
-    ["netoMultiple", "Múltiple"],
-    ["netoNino", "Niño"],
+  // Tercer elemento = campo de tarifa comisionable de esa acomodación (null = no aplica, ej. Niño).
+  const COLS: [keyof SalidaState, string, (keyof SalidaState) | null][] = [
+    ["netoSencilla", "Sencilla", "tarifaSencilla"],
+    ["netoDoble", "Doble", "tarifaDoble"],
+    ["netoTriple", "Triple", "tarifaTriple"],
+    ["netoMultiple", "Múltiple", "tarifaMultiple"],
+    ["netoNino", "Niño", null],
   ];
 
   return (
@@ -593,7 +603,7 @@ function SalidasEditor({
               <div className={lbl}>% comisión</div>
               <Input type="number" value={cComision} onChange={(e) => setCComision(e.target.value)} className="w-24" />
             </div>
-            <p className="text-xs text-gray-400">En cada fila escribe la <b>tarifa</b> y se llena el neto (Doble = Múltiple). Ajusta sencilla/niño aparte.</p>
+            <p className="text-xs text-gray-400">Abajo aparece un campo de <b>tarifa del proveedor</b> junto a Sencilla/Doble/Triple/Múltiple — cada una calcula su propio neto por separado. Niño se ajusta directo.</p>
           </div>
         )}
       </div>
@@ -614,25 +624,37 @@ function SalidasEditor({
               <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
             </div>
             <div className="flex flex-wrap gap-3">
-              {reglaOn && (
-                <div className="w-32">
-                  <div className="mb-1 text-xs font-medium text-[#1D7C9A]">Tarifa proveedor</div>
-                  <Input type="number" placeholder="tarifa" disabled={r.bs}
-                    onChange={(e) => aplicarTarifa(i, e.target.value)} />
-                  <div className="mt-1 text-[10px] text-gray-400">→ llena el neto</div>
-                </div>
-              )}
-              {COLS.map(([k, label]) => (
-                <div key={k} className="w-32">
-                  <div className="mb-1 text-xs text-gray-500">{label}</div>
-                  <Input type="number" value={r[k] as string} onChange={(e) => upd(i, k, e.target.value)} placeholder="neto" disabled={r.bs} />
-                  {pvpDe(r, r[k] as string) != null && (
-                    <div className="mt-1 text-xs font-medium" style={{ color: "var(--brand-primary)" }}>
-                      PVP {formatMoneda(pvpDe(r, r[k] as string)!, moneda)}
-                    </div>
-                  )}
-                </div>
-              ))}
+              {COLS.map(([k, label, tarifaKey]) => {
+                const d = reglaOn && tarifaKey ? desgloseTarifa(r[tarifaKey] as string) : null;
+                return (
+                  <div key={k} className="w-32">
+                    <div className="mb-1 text-xs text-gray-500">{label}</div>
+                    {reglaOn && tarifaKey && (
+                      <>
+                        <Input
+                          type="number"
+                          value={r[tarifaKey] as string}
+                          onChange={(e) => aplicarTarifaAcom(i, tarifaKey, k, e.target.value)}
+                          placeholder="tarifa prov."
+                          disabled={r.bs}
+                          className="mb-1 border-[#1D7C9A]/40"
+                        />
+                        {d && (
+                          <div className="mb-1 text-[10px] leading-tight text-gray-400">
+                            Base {formatMoneda(d.baseComisionable, moneda)} · Com {formatMoneda(d.comision, moneda)}
+                          </div>
+                        )}
+                      </>
+                    )}
+                    <Input type="number" value={r[k] as string} onChange={(e) => upd(i, k, e.target.value)} placeholder="neto" disabled={r.bs} />
+                    {pvpDe(r, r[k] as string) != null && (
+                      <div className="mt-1 text-xs font-medium" style={{ color: "var(--brand-primary)" }}>
+                        PVP {formatMoneda(pvpDe(r, r[k] as string)!, moneda)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               <label className="mt-5 flex items-center gap-1 text-xs text-gray-500">
                 <input type="checkbox" checked={r.bs} onChange={(e) => upd(i, "bs", e.target.checked)} /> a solicitud
               </label>
@@ -645,7 +667,11 @@ function SalidasEditor({
           onClick={() =>
             setRows((p) => [
               ...p,
-              { etiqueta: "", fechaDesde: "", fechaHasta: "", noches: "", columna: "", netoSencilla: "", netoDoble: "", netoTriple: "", netoMultiple: "", netoNino: "", bs: false },
+              {
+                etiqueta: "", fechaDesde: "", fechaHasta: "", noches: "", columna: "",
+                netoSencilla: "", netoDoble: "", netoTriple: "", netoMultiple: "", netoNino: "", bs: false,
+                tarifaSencilla: "", tarifaDoble: "", tarifaTriple: "", tarifaMultiple: "",
+              },
             ])
           }
         >
