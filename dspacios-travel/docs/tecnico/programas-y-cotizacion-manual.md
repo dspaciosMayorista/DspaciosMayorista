@@ -14,17 +14,30 @@ manual/dinámica** (armado a mano de servicios sueltos, `app/(dashboard)/dashboa
 ### 1.1 Fórmula exacta de PVP — `pvpPrograma`
 
 ```ts
-function pvpPrograma(neto: number, opt: {pctMk, asistenciaDia?, dias?, pctFee?}): number {
+function pvpPrograma(neto: number, opt: {pctMk, asistenciaDia?, dias?, pctFee?, moneda?}): number {
   if (!(neto > 0)) return 0;                          // sin neto → PVP 0 (evita "columna fantasma")
   let sub = (0<mk<1) ? neto/(1-mk) : neto;             // 1) markup (mk = MARGEN: 0.25 ⇒ /0.75)
   sub += asistenciaDia * dias;                          // 2) + asistencia médica (NUNCA se marca up)
   if (0<fee<1) sub = sub/(1-fee);                       // 3) / (1-fee) sobre el TOTAL (mk+asistencia)
-  return Math.round(sub);
+  return redondearPvp(sub, opt.moneda);                 // 4) redondeo hacia arriba (ver abajo)
 }
 ```
-Orden: neto → +MK → +asistencia → +fee. Campos en `programas`: `pct_mk`, `pct_fee_tarjeta`,
-`asistencia_medica_dia` (por pax y por día), `dias` (o el `noches` propio de la salida si
-`modo_precio='salida'`).
+Orden: neto → +MK → +asistencia → +fee → redondeo. Campos en `programas`: `pct_mk`,
+`pct_fee_tarjeta`, `asistencia_medica_dia` (por pax y por día), `dias` (o el `noches` propio de
+la salida si `modo_precio='salida'`).
+
+**Redondeo (jul-2026) — `redondearPvp(valor, moneda)`:** reemplazó el `Math.round(sub)` plano
+original (redondeaba al peso/centavo exacto, montos poco vendibles tipo "$847.332"). Regla
+pedida por el dueño, mismo criterio que `redondearVenta`/`redondearMilArriba` de paquetes:
+COP → `Math.ceil(valor/1000)*1000` (al mil de pesos **por encima**); USD → `Math.ceil(valor)`
+(al dólar entero **por encima**). Siempre redondea hacia arriba, nunca hacia abajo (el margen no
+se erosiona). `opt.moneda` viene de `programas.moneda`; los call sites (`ProgramaEditor.tsx` ×2,
+`CalculadoraProgramas.tsx`, `reservarPrograma` en `reservar/actions.ts`) ya pasan la moneda del
+programa. **Tours opcionales** (`programa_tours`) antes se mostraban con su **neto** crudo en el
+tarifario público (bug: no llevaban markup del programa) — `getProgramaDetalle()` ahora los pasa
+también por `pvpPrograma(t.precio, {...pvpOpt, asistenciaDia: 0, dias: 0})` (sin asistencia
+médica ni prorrateo por día, que no aplican a un tour puntual), así quedan con el mismo `pct_mk`/
+`pct_fee_tarjeta` que el resto del programa.
 
 Existe además `pvpDesdeNeto(neto, pctMk)` — solo markup, sin asistencia/fee, mantenido por
 compatibilidad; el que realmente se usa en todo el sistema es `pvpPrograma`.
@@ -51,7 +64,23 @@ pct_fee_tarjeta, asistencia_medica_dia, modo_precio ('categoria'|'salida'), desd
 `edad_nino_min/max, edad_infante_max` (migración 081, defaults 2/11/1), `texto_condiciones/
 cancelacion/pagos, notas` (interno, nunca en el PDF), `highlights text[]` (migración 111),
 `portada_url, flyer_url, historia_url` (migración 113, bucket público `programas`), `video_url`
-(migración 069), `incluye_aereo`, `activo, publicado`.
+(migración 069), `incluye_aereo` (legacy, ver `tipo_transporte` abajo), `activo, publicado`.
+
+**`tipo_transporte`** (migración 139, jul-2026, reemplaza `incluye_aereo` como fuente de
+verdad): `'ninguno' | 'aereo' | 'terrestre'`. Antes solo existía `incluye_aereo: boolean`
+("Solo terrestre" vs "Con aéreo"), pero el dueño distingue un tercer caso real: **Porción
+terrestre** = programa con hospedaje/asistencia/tours pero SIN traslado punto-origen→punto-
+destino (el cliente llega por su cuenta); **Con aéreo** = el traslado origen→destino es un
+vuelo; **Salida terrestre** = el traslado origen→destino es un BUS (puede ser un destino a
+pocas horas). `incluye_aereo` se conserva (no se borran columnas) y se sigue derivando en
+código (`incluye_aereo: tipoTransporte === "aereo"`) por compatibilidad, pero ya no se lee como
+fuente — todo el código nuevo lee `tipo_transporte`. Backfill: `'aereo'` donde
+`incluye_aereo=true`, si no `'ninguno'`. UI: `CabeceraForm.tsx` (select de 3 opciones),
+`ProgramaEditor.tsx` (carga inicial con fallback a `incluye_aereo` para programas viejos sin el
+campo aún poblado). Se refleja como badge (ícono `Plane`/`Bus`/texto plano, 3 colores
+distintos) en `TarifarioPublic.tsx` (+ filtro de 4 opciones: Todos/Con aéreo/Salida terrestre/
+Porción terrestre), `app/tarifario/programa/[id]/page.tsx` y el documento imprimible
+(`doc/page.tsx`, arreglo `sellos`/`SELLO_ICON`).
 
 Tablas hijas (FK `programa_id` cascade; RLS lectura pública, escritura interna):
 `programa_ciudades` (ruta), `programa_dias` (itinerario día a día), `programa_categorias`
@@ -75,6 +104,36 @@ el comentario de la migración 068).
   `<=0` como "no es una acomodación real" (mismo criterio anti-"columna fantasma"). En modo
   salida, `dias` para `pvpPrograma` = el `noches` propio de la salida si está seteado, si no
   cae al `dias` de cabecera.
+
+### 1.4bis UI de salidas, PDF y reservar (jul-2026)
+
+- **Fix — la fecha real de la salida no se mostraba**: en modo `modo_precio='salida'`, la
+  etiqueta de cada salida (`programa_salidas.etiqueta`, ej. "Octubre") se renderizaba SOLA,
+  ocultando `fecha_desde` — el cliente veía "Octubre" sin saber el día exacto. Corregido en 3
+  lugares independientes que duplicaban la misma lógica de armado del label (no hay un único
+  helper compartido, cada uno concatena etiqueta + `formatFecha(fecha_desde)` por su cuenta):
+  `app/tarifario/programa/[id]/page.tsx`, `app/tarifario/programa/[id]/doc/page.tsx` (documento
+  imprimible) y `app/(dashboard)/dashboard/reservar/programa/[id]/page.tsx` (arma el `nombre`
+  de cada opción de salida para el formulario de reservar).
+- **`ProgramaReservaForm.tsx` — campo de salida simplificado**: en modo salida existían DOS
+  controles redundantes ("Salida (fecha)" un `<select>` de opciones + "Fecha de salida" un
+  calendario aparte, que el asesor debía sincronizar a mano). Ahora es **un solo `<select>`**
+  (label "Salida") que al elegir una opción setea `categoriaId` Y `fechaIda` juntos desde la
+  misma fila de `programa_salidas` — imposible que queden desincronizados. El estado inicial de
+  `fechaIda` se deriva de `categorias[0]?.fechaSugerida`. El modo por categoría (no-salida) no
+  cambió: sigue con selector de categoría + calendario aparte (ahí sí tiene sentido, la fecha es
+  libre dentro de la vigencia).
+- **Flyer/Historia — reubicados fuera del documento imprimible**: `flyer_url`/`historia_url`
+  (piezas subidas, no generadas — ver §1.3) vivían como botones dentro de `DocToolbar.tsx` (la
+  barra del documento imprimible `/tarifario/programa/[id]/doc`). El dueño pidió sacarlos de ahí
+  y ponerlos junto al botón "Generar documento PDF" en la página del programa
+  (`app/tarifario/programa/[id]/page.tsx`, enlaces directos a `p.flyer_url`/`p.historia_url`).
+  `DocToolbar.tsx` quedó solo con el toggle de marca blanca y el botón imprimir.
+- **Portada por Google Drive no renderiza**: `portada_url` es un campo de URL libre en
+  `CabeceraForm.tsx` — si se pega un link de "compartir" de Google Drive (página visor HTML, no
+  la imagen directa), el `<img>` no puede cargarlo y queda roto. No es un bug de la app (mismo
+  patrón ya documentado para el CMS del sitio web); la vía correcta es subir el archivo con el
+  widget `ProgramaImagenes.tsx` (bucket `programas`), no pegar una URL externa de Drive.
 
 ### 1.5 `reservarPrograma()` — `app/(dashboard)/dashboard/reservar/actions.ts`
 

@@ -313,11 +313,96 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 134** — todas
-> confirmadas corridas por el dueño, incluida la **134** (`aerolineas` — catálogo de
-> aerolíneas y tipos de tarifa/equipaje, ver "Novedades recientes").
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 139** — todas
+> confirmadas corridas por el dueño. **135** `contrato_vuelo_tramo` (1 fila = 1 tramo de
+> vuelo) · **136** `proveedores_escritura_operaciones` (rol operaciones puede crear
+> proveedores) · **137** `alinear_roles_escritura` (reorganización general de roles/RLS,
+> ver "Novedades recientes") · **138** `servicio_foto` (foto de receptivos + bucket
+> `servicio-fotos`) · **139** `programa_tipo_transporte` (`programas.tipo_transporte`
+> ninguno/aereo/terrestre).
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
+> - **Programas — tercer tipo de traslado "Salida terrestre" (jul-2026):** el dueño distingue
+>   3 casos, no 2: **Porción terrestre** (hospedaje/tours, sin traslado origen→destino) ·
+>   **Con aéreo** (el traslado es un vuelo) · **Salida terrestre** (el traslado es un BUS,
+>   ej. un destino a pocas horas). **Migración 139** (`programas.tipo_transporte`
+>   `'ninguno'|'aereo'|'terrestre'`, ya corrida) reemplaza `incluye_aereo: boolean` como
+>   fuente de verdad (columna vieja conservada, derivada por compatibilidad). Badge con
+>   ícono `Plane`/`Bus`/texto plano + filtro de 4 opciones en el tarifario público
+>   (`TarifarioPublic.tsx`), badge en la página del programa y en el documento imprimible.
+>   Detalle en `docs/tecnico/programas-y-cotizacion-manual.md` §1.3.
+> - **Programas — redondeo de PVP, tours con markup y fixes de UI (jul-2026):** `pvpPrograma`
+>   ahora redondea hacia arriba (`redondearPvp`: al mil de pesos si es COP, al dólar entero si
+>   es USD — mismo criterio que `redondearVenta` de paquetes) en vez de `Math.round` plano.
+>   **Fix:** los tours opcionales (`programa_tours`) se mostraban con su neto crudo en el
+>   tarifario público, sin el markup del programa — ahora pasan por `pvpPrograma` igual que el
+>   resto. **Fix:** en modo salida, la vitrina/documento/reservar mostraban solo la etiqueta
+>   de la salida (ej. "Octubre") ocultando la fecha real — corregido en los 3 lugares que
+>   arman ese label. `ProgramaReservaForm.tsx`: el selector de salida + el calendario de
+>   fecha (antes 2 controles que había que sincronizar a mano) se unificaron en un solo
+>   `<select>`. Flyer/Historia (piezas subidas) se sacaron de la barra del documento
+>   imprimible y ahora están junto a "Generar documento PDF" en la página del programa.
+>   Portada por link de Google Drive no renderiza (no es bug — Drive comparte una página
+>   visor HTML, no la imagen directa; usar el widget de subida en su lugar).
+> - **Vista Booking — Receptivos rediseñado + buscador en vivo (jul-2026):** antes era una
+>   sola grilla plana de "desde por persona" sin foto ni descripción. Ahora: agrupado por
+>   **destino** (vitrina estática, "explorar todos") + nuevo **`BuscadorReceptivos.tsx`**
+>   (destino/fechas/pax, mismo patrón que el buscador de porción terrestre) que llama
+>   `buscarReceptivos()` — motor de liquidación EN VIVO (temporada vigente, modo persona/
+>   grupo, recargo individual, markup del paquete, `redondearVenta`), nunca expone costo
+>   neto. Clic en un receptivo abre un modal con **foto + descripción** (mismo patrón que
+>   hoteles). **Migración 138** (`servicios_adicionales.foto_url` + bucket público
+>   `servicio-fotos`, ya corrida): nueva columna Foto en `/dashboard/producto/servicios`
+>   (`ServicioFotoCell.tsx`, thumbnail 40×40 subible). También se quitó el auto-llenado del
+>   campo Regreso (Ida+3 noches) del motor general de búsqueda (`BuscadorBooking.tsx`) y del
+>   selector por fechas de porción terrestre (`SelectorPorFechas`) — pedido explícito del
+>   dueño de que las fechas se llenen siempre a mano, no con un default silencioso que podía
+>   pasar desapercibido. Detalle en `docs/tecnico/tarifario-y-paquetes.md` y
+>   `docs/tecnico/reservar.md` (`buscarReceptivos`).
+> - **Reorganización general de roles y permisos de escritura (jul-2026):** el dueño reportó
+>   errores puntuales de RLS (ej. "la nueva fila infringe la política de seguridad... para la
+>   tabla 'proveedores'" al crear un proveedor como mayorista) y pidió una solución
+>   sistémica, no parches tabla por tabla ("en el tema de los permisos y roles no se puede
+>   corregir, toca organizar para que no crucen"). **Migración 137** (`alinear_roles_
+>   escritura`, ya corrida) alinea el set de roles con permiso de escritura en TODAS las
+>   tablas de catálogo/operación (destinos, hoteles, tarifas, aerolíneas, proveedores,
+>   aliados, asesores, paquetes, bloqueos/sillas, ventas — antes cada una tenía un subconjunto
+>   distinto e inconsistente de roles con acceso, causa raíz de estos errores) — completa lo
+>   ya empezado en la **136** (`proveedores_escritura_operaciones`, rol `operaciones` agregado
+>   a proveedores). De paso corrige un bug real donde `gerencia` podía VER pero no ESCRIBIR
+>   `contrato_pasajeros/hoteles/vuelos/items/servicios` (política `with check` no coincidía
+>   con `using`). **Nuevo `lib/roles.ts`** (reemplaza `lib/permisos.ts`, eliminado): fuente
+>   única en código de qué rol puede escribir qué recurso (`ESCRITURA`) y qué módulo puede
+>   consultar cada rol (`LECTURA_MODULO`) — antes esto vivía disperso y parcialmente
+>   duplicado. Se eliminó el módulo de permisos configurables por UI
+>   (`/dashboard/usuarios/permisos`, tabla dinámica editable) que existía antes de esta
+>   reorganización — los permisos ahora son fijos en código + RLS, no editables en caliente
+>   por superadmin (el dueño pidió esto último como posible mejora futura, quedó sin
+>   construir, ver `docs/tecnico/multitenant-auth-auditoria.md` si se retoma). Mapa visual
+>   rol×permiso entregado como artefacto HTML aparte (no versionado en el repo).
+> - **Vuelos: un tramo = una fila (jul-2026):** `contrato_vuelos` modelaba ida+regreso
+>   combinados en una sola fila — no soportaba casos multi-ciudad con varios tramos.
+>   **Migración 135** (`contrato_vuelo_tramo`, ya corrida) agrega `numero_vuelo/hora_salida/
+>   hora_llegada/direccion` ('ida'|'regreso'|'suelto'); ahora **cada fila = un tramo**. Un
+>   bloqueo con ida+regreso inserta 2 filas (regreso con origen/destino invertidos). El
+>   contrato manual (`NuevoContratoForm.tsx`) arma tarjetas por tramo ("+ Agregar tramo",
+>   "+ Agregar regreso" invierte origen/destino solo). `ContratoDocumento.tsx` renderiza
+>   ambas formas (nueva de un tramo, y la legacy de ida+regreso combinado en los contratos ya
+>   generados antes de la migración) — columnas viejas conservadas, no se borran. De paso se
+>   corrigió la etiqueta "Ruta:" del documento, que en realidad mostraba equipaje/servicios
+>   del vuelo, no la ruta → renombrada a "Equipaje/Servicios:". Detalle en
+>   `docs/tecnico/reservar.md` §1 punto 10.
+> - **Nombres de archivo automáticos para todos los documentos descargables (jul-2026):**
+>   contrato, plan de cobro, estado de cuenta, recibo y voucher ahora se descargan con
+>   nombre `{tipo de documento} {N° contrato} {nombre}` en vez del genérico de la ruta.
+>   Regla del nombre: documentos de cara al **cliente** (contrato, plan de cobro, recibo,
+>   voucher) usan el nombre del **cliente/titular**; documentos de cara al **asesor/aliado**
+>   (estado de cuenta de comisión) usan el nombre del **asesor/aliado**. Nuevo helper
+>   `lib/utils/tituloDocumento.ts` (`tituloDocumento(tipo, numero, nombre)`), usado vía
+>   `generateMetadata({title: {absolute: ...}})` (bypasea el template del layout) en cada
+>   página imprimible. De paso, el voucher ahora distingue **tipo** (Hotel/Traslados/
+>   Asistencia/Servicios) en vez de agrupar todo bajo "servicios" — el título y el
+>   agrupamiento por proveedor reflejan la categoría real de cada CxP.
 > - **Catálogo de aerolíneas con tipos de tarifa/equipaje + estado de cuenta de
 >   abonos a comisión (jul-2026):** **Migración 134** (`aerolineas` +
 >   `aerolinea_tarifas`, ya corrida): mismo patrón de `destinos` (sin tenant, lectura
@@ -1060,6 +1145,10 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 - **Tarifario público** (`/tarifario`): tabla **horizontal** (Hotel·Categoría·R.A.·Sencilla·
   Doble·Triple·Múltiple·**Chd1·Chd2**), "ver más opciones" por hotel; módulos
   **Bloqueos/Porción/Servicios**. Botón **Ingresar** + login con **Google (OAuth)**.
+  Vista Booking (buscador general) sin auto-llenado de fechas (el asesor/cliente siempre las
+  escribe a mano). **Receptivos** (jul-2026, rediseñado): agrupado por destino + buscador en
+  vivo `BuscadorReceptivos` (`buscarReceptivos()`, mismo patrón que porción terrestre) + modal
+  con foto/descripción por servicio (migr. 138, `servicios_adicionales.foto_url`).
 - **Reservar** (`/dashboard/reservar`): en **porción/dinámico** el asesor elige **fecha de ida/
   regreso** y se **re-liquida en vivo** (`cotizarPorFechas`, service-role); bloqueo usa fechas del
   record. Luego formulario **por habitaciones**
@@ -1081,6 +1170,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   todo el CRUD vía trigger de BD (migración 087). Tabla con filtros (tabla, acción,
   N° contrato/record/id, usuario, rango de fechas), paginada, con diff antes→después
   expandible por fila. Ítem de menú gateado con `rolesPermitidos` en el nav del dashboard.
+- **Roles y permisos** (jul-2026, `lib/roles.ts`): fuente única en código de qué rol escribe
+  qué recurso (`ESCRITURA`) y qué módulo consulta cada rol (`LECTURA_MODULO`), respaldada por
+  la migración **137** que alineó las policies RLS a ese mismo criterio (antes cada tabla tenía
+  su propio subconjunto de roles, inconsistente entre sí — causa de varios errores de RLS
+  puntuales). Reemplaza el viejo `lib/permisos.ts`. **No hay pantalla de permisos configurables
+  por superadmin** (se eliminó el módulo `/dashboard/usuarios/permisos` que existía antes de
+  esta reorganización) — los permisos son fijos en código, no editables en caliente. Mapa
+  visual rol×permiso entregado como artefacto aparte (no versionado en el repo).
 
 ### Motor de cálculo (`lib/calc/paquetes.ts`)
 - Hotel: liquida **noche por noche** (mezcla temporadas), `costo/(1−%mk)`.
@@ -1226,14 +1323,14 @@ interno y público) → **RESERVAR** (genera contrato/venta).
 3. Validar que solo `pendiente` se pueda editar; el server re-valida y re-liquida (autoritativo).
 Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) antes de mergear.
 
-### Migraciones Supabase — total en repo: **134** (todas corridas por el dueño)
+### Migraciones Supabase — total en repo: **139** (todas corridas por el dueño)
 > Las migraciones usan prefijo de timestamp `20260601000NNN_…`; el orden lo da el número NNN.
 > Cada archivo se corre **una sola vez**; son idempotentes (`add column if not exists`,
 > `on conflict do nothing`), así que re-correr una ya aplicada es seguro. **No editar una
 > migración ya creada para "meter" cambios nuevos**: siempre crear el siguiente número.
 > ⚠️ La numeración la da el repo, NO el handoff: antes de crear una nueva, hacer
 > `ls supabase/migrations/ | sort | tail` y tomar el **siguiente número libre** (evitar
-> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 134** (todas aplicadas).
+> colisiones: ya pasó un 079 duplicado, corregido). El dueño reporta haber corrido **hasta la 139** (todas aplicadas).
 >
 > Rango **016→031**: producto, config_hoteles, armado_paquetes, rangos_edad, reserva_tarifario,
 > paquete_tipo, servicio_tarifas_pax, hotel_acomodaciones (reservar por habitaciones), formas_pago,
@@ -1340,7 +1437,23 @@ Riesgo: toca el core de reservar — probar create Y edit (bloqueo y porción) a
 > `aliados_b2b.aliado_id` (FK opcional al catálogo) · **134 aerolineas**
 > (ya corrida) — tablas `aerolineas` + `aerolinea_tarifas` (catálogo de
 > aerolíneas y sus tipos de tarifa/equipaje, mismo patrón que `destinos`)
-> — ver "Novedades recientes".
+> · **135 contrato_vuelo_tramo** (ya corrida) — `contrato_vuelos` gana
+> `numero_vuelo/hora_salida/hora_llegada/direccion` para modelar **1 fila
+> = 1 tramo** (antes ida+regreso combinados en una sola fila), soporta
+> multi-ciudad · **136 proveedores_escritura_operaciones** (ya corrida) —
+> agrega rol `operaciones` a la policy de escritura de `proveedores`
+> (fix del error RLS al crear proveedor) · **137 alinear_roles_escritura**
+> (ya corrida) — reorganización general: alinea el set de roles con
+> permiso de escritura en destinos/hoteles/tarifas/aerolíneas/
+> proveedores/aliados/asesores/paquetes/bloqueos-sillas/ventas y corrige
+> políticas `contrato_*` donde `with check` no coincidía con `using`
+> · **138 servicio_foto** (ya corrida) — `servicios_adicionales.foto_url`
+> + bucket público `servicio-fotos` (foto de receptivos en Vista
+> Booking) · **139 programa_tipo_transporte** (ya corrida) —
+> `programas.tipo_transporte` (`'ninguno'|'aereo'|'terrestre'`),
+> reemplaza `incluye_aereo` como fuente de verdad para distinguir
+> Porción terrestre / Con aéreo / Salida terrestre (bus) — ver
+> "Novedades recientes" para el detalle de las migraciones 135-139.
 > *(Nombres exactos siempre en `supabase/migrations/`.)*
 Scripts sueltos: `supabase/scripts/fusion_cartagena.sql` ·
 `supabase/scripts/backfill_sillas_pasajeros.sql` (rellena datos de pasajero en sillas viejas) ·
