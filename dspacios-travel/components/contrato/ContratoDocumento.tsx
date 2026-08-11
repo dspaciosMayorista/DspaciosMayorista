@@ -6,6 +6,7 @@ import {
   CONSTANCIA_PREFIJO,
   FIRMA_ETIQUETAS,
   COPYRIGHT_PREFIJO,
+  POWERED_BY,
 } from "@/lib/contrato/plantilla";
 import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
@@ -574,6 +575,9 @@ export function ContratoDocumento({
           <p className="mt-6 text-center text-[10px] text-gray-400">
             {COPYRIGHT_PREFIJO} {anio} · Documento digital — se solicita no
             imprimir.
+          </p>
+          <p className="mt-0.5 text-center text-[9px] text-gray-300">
+            {POWERED_BY}
           </p>
         </section>
       </div>

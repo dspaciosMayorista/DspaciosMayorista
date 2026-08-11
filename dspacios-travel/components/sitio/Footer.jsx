@@ -117,6 +117,7 @@ const Footer = ({ config }) => {
           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
             <p className="text-white/60 text-sm">
               © 2025 D&apos;Spacios Travel. Todos los derechos reservados.
+              <span className="block text-xs text-white/40">Powered by Odair Guzmán</span>
             </p>
             <div className="flex gap-6 text-sm">
               <span className="text-white/60">Política de Privacidad</span>

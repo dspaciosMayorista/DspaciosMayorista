@@ -228,3 +228,6 @@ export const COPYRIGHT_PREFIJO =
 /** Aviso fijo de no impresión / contrato digital (marca de agua / pie). */
 export const AVISO_NO_IMPRIMIR =
   "Documento digital — se solicita no imprimir.";
+
+/** Crédito de desarrollo, en el pie de páginas/documentos junto al copyright. */
+export const POWERED_BY = "Powered by Odair Guzmán";
