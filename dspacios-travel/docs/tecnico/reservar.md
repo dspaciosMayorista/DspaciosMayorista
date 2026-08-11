@@ -31,7 +31,17 @@ de acciones que las orquesta:
 9. **Insert `contrato_hoteles`** (si no es módulo `servicios`): arma `detalle_acomodacion`
    legible, resuelve el proveedor real del hotel (service-role).
 10. **Insert `contrato_vuelos`** (solo `bloqueo` con `bloqueoId`): lee `bloqueos_vuelo`, parsea
-    origen/destino vía IATA.
+    origen/destino vía IATA. **Migración 135** (jul-2026) cambió el modelo: cada fila ahora
+    representa **UN solo tramo/dirección** (`direccion: "ida"|"regreso"|"suelto"`, más
+    `numero_vuelo`/`fecha`/`hora_salida`/`hora_llegada`) en vez de una fila combinada ida+regreso
+    — pensado para casos multi-ciudad con varios vuelos. Un bloqueo con ida y regreso inserta
+    **2 filas** (una por dirección, la de regreso con origen/destino invertidos), no 1. Las
+    columnas viejas (`vuelo_ida`/`vuelo_regreso`/etc.) se conservan sin usar (no se borran
+    columnas en este proyecto). `NuevoContratoForm.tsx` (contrato manual) arma las tarjetas de
+    vuelo con este mismo modelo (1 tarjeta = 1 tramo, botón "+ Agregar regreso" invierte origen/
+    destino automáticamente). `ContratoDocumento.tsx` sabe renderizar ambas formas (nueva de un
+    tramo por fila, y la vieja legacy de ida+regreso combinado en una sola fila) para no romper
+    contratos ya generados antes de la migración.
 11. **Insert `contrato_items`**: una línea por tipo de habitación, Niño 1/2 (si aplica), Infante
     (solo si el hotel configuró PVP de infante), servicios adicionales, cargo de mascota.
 12. **CxP + contabilidad (best-effort, nunca bloquea la reserva, solo si hay
@@ -108,6 +118,16 @@ serviciosItems, impuestoTotal, cargoMascota, etc.) — **sin ninguna escritura**
   hotel_id)` de `tarifario_resultado` con `modulo='porcion_terrestre'` y `paquete_activo=true`,
   re-liquida cada uno, valida capacidad contra `hotel_acomodaciones`, ordena por precio total
   más barato.
+- **`buscarReceptivos(input)`** (jul-2026, mismo patrón que `buscarHoteles`): motor de búsqueda
+  en vivo para el buscador de Receptivos del tarifario público (`BuscadorReceptivos.tsx`, ver
+  [`tarifario-y-paquetes.md`](./tarifario-y-paquetes.md) §"Receptivos"). Por destino/fechas/pax:
+  lee `armado_servicios` (modo persona/grupo + `pct_mk` del paquete) + `servicios_adicionales` +
+  `servicio_tarifa_pax` + `servicio_temporadas`, resuelve la temporada vigente para `fecha_ida`
+  con `temporadaVigenteParaFecha`, calcula `precioServicio(modo, netoPersona, gruposServ, pax) ×
+  factorLiquidacion(...)`, suma `recargo_individual` si `pax === 1`, aplica el markup del
+  paquete y redondea con `redondearVenta`. Devuelve `ResultadoServicio[]` (nombre, destino,
+  descripción, foto, total, pax) — sin costo neto expuesto, mismo criterio que `cotizarPorFechas`.
+  Exportado como wrapper fino en `reservar/actions.ts`.
 
 ## 5. `lib/acomodaciones.ts` — validación de capacidad
 

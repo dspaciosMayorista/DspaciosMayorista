@@ -171,7 +171,26 @@ fija, esa vigencia (cualquier `tipo`) solo participa para ese régimen — filtr
   precio "desde"; abre `HotelModal` → `Selector` (bloqueo/dinámico, fechas fijas) o
   `SelectorPorFechas` (porción, fechas reales del usuario, llama `cotizarPorFechas` server
   action que re-liquida con service-role — el costo neto nunca sale del servidor) →
-  `EditorPax` (habitaciones + niños + infantes, validado contra `hotel_acomodaciones`).
+  `EditorPax` (habitaciones + niños + infantes, validado contra `hotel_acomodaciones`). Los
+  campos de fecha de `SelectorPorFechas` y de `BuscadorBooking.tsx` (motor general "Buscar
+  alojamiento") arrancan **vacíos** — antes autocompletaban Regreso = Ida + 3 noches, quitado
+  por pedido del dueño (jul-2026): las fechas se llenan a mano.
+- **Receptivos** (jul-2026, rediseñado): dejó de ser una vitrina estática de "desde" por
+  servicio. Ahora tiene su propio buscador `BuscadorReceptivos.tsx` (destino, ida, regreso,
+  pax) sobre `buscarReceptivos()` (`lib/reservar/cotizar.ts`, service-role) que **liquida cada
+  tour EN VIVO** para esas fechas/pax — resuelve la temporada vigente del servicio si tiene
+  tarifa por fecha (`servicio_temporadas`), la tarifa por persona o el rango de grupo según el
+  pax buscado (`precioServicio`), el recargo individual si va 1 pax, y el markup del paquete
+  dueño del servicio (`armado_paquetes.pct_mk` del par `paquete_id+servicio_id`) — mismo motor
+  que ya usa Reservar al agregar servicios a un paquete existente. Debajo del buscador queda una
+  vitrina estática de "explorar todos", ahora **agrupada por destino** (antes todos mezclados en
+  una sola grilla) usando el `desde` precomputado de `tarifario_resultado`. Cada tarjeta (de la
+  búsqueda o de la vitrina estática) es clicable y abre `ReceptivoModal` con foto + descripción +
+  precio — antes solo mostraba nombre y precio sin poder ver detalle. La foto
+  (`servicios_adicionales.foto_url`, migración 138, bucket público `servicio-fotos`) se lee en
+  vivo por `servicio_id` (igual patrón que `fotosPorHotel`), no se denormaliza en
+  `tarifario_resultado`; se sube desde `/dashboard/producto/servicios` (miniatura clicable por
+  fila, `ServicioFotoCell.tsx`).
 - **`CartDrawer.tsx`** → `/tarifario/checkout` (gateado tras `checkoutHabilitado`).
 
 ### Columnas de la tabla horizontal
