@@ -90,6 +90,14 @@ export default async function TarifarioPublicoPage() {
     filasVisibles = filas.filter((f) => f.modulo !== "servicios" || (f.paquete_id != null && idsServicios.has(f.paquete_id)));
   }
 
+  // Add-ons de CADA paquete de hotel (bloqueo/porción), SIN el recorte de
+  // arriba: ese recorte existe para que no se publiquen como producto suelto
+  // en la vitrina plana de Servicios/Receptivos, pero Vista Booking sí
+  // necesita poder ofrecerlos dentro del modal de SU propio hotel (ver
+  // VistaBooking → addonsPorPaquete). Ya trae el PVP correcto calculado por
+  // el mismo motor que generó el tarifario — no se recalcula nada aquí.
+  const filasAddon = filas.filter((f) => f.modulo === "servicios");
+
   // Foto de portada por hotel (bucket público; lectura anónima permitida).
   const fotosPorHotel: Record<number, string> = {};
   const hotelIds = [...new Set(filasVisibles.filter((f) => f.hotel_id != null).map((f) => f.hotel_id as number))];
@@ -246,7 +254,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} incluidosPorPaquete={incluidosPorPaquete} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} incluidosPorPaquete={incluidosPorPaquete} filasAddon={filasAddon} />
         )}
       </main>
     </div>

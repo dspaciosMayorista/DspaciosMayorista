@@ -196,6 +196,7 @@ export function TarifarioPublic({
   planesInfo = {},
   capPorHotel = {},
   incluidosPorPaquete = {},
+  filasAddon = [],
 }: {
   filas: FilaTarifario[];
   programas?: ProgramaResumen[];
@@ -209,6 +210,10 @@ export function TarifarioPublic({
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
   incluidosPorPaquete?: Record<number, string[]>;
+  // Add-ons de paquetes de hotel (bloqueo/porción), SIN el recorte que oculta
+  // esas filas de la vitrina plana de Servicios — solo para ofrecerlos scoped
+  // dentro del modal de su propio hotel en Vista Booking (ver VistaBooking.tsx).
+  filasAddon?: FilaTarifario[];
 }) {
   const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
   const [q, setQ] = useState("");
@@ -301,7 +306,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} incluidosPorPaquete={incluidosPorPaquete} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} incluidosPorPaquete={incluidosPorPaquete} filasAddon={filasAddon} />
       ) : (
         <>
           {/* Tabs de módulos */}
