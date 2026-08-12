@@ -287,9 +287,16 @@ export default async function ProgramaDocPage({
               {det.tours.length > 0 && (
                 <section className="mb-5 break-inside-avoid text-xs">
                   <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-gray-700">Tours opcionales</h2>
-                  <ul className="space-y-0.5 text-gray-600">
+                  <ul className="space-y-1.5 text-gray-600">
                     {det.tours.map((t, i) => (
-                      <li key={i}><b>{t.nombre}</b>{t.ciudad ? ` · ${t.ciudad}` : ""}{t.precio != null ? ` — ${formatMoneda(t.precio, moneda)}` : ""}</li>
+                      <li key={i}>
+                        <span>
+                          <b>{t.nombre}</b>{t.ciudad ? ` · ${t.ciudad}` : ""}{t.precio != null ? ` — ${formatMoneda(t.precio, moneda)}` : ""}
+                          {t.min_pax > 1 ? ` (mín. ${t.min_pax} pax)` : ""}
+                        </span>
+                        {t.dias_operacion && <span className="block text-gray-500">Días de operación: {t.dias_operacion}</span>}
+                        {t.descripcion && <span className="block whitespace-pre-line text-gray-500">{t.descripcion}</span>}
+                      </li>
                     ))}
                   </ul>
                 </section>
