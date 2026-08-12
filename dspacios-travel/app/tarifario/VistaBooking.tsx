@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import Link from "next/link";
 import Image from "next/image";
 import { Star } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -38,6 +39,7 @@ type HotelCard = {
 
 type Receptivo = {
   servicioId: number | null;
+  paqueteId: number | null;
   nombre: string;
   destino: string | null;
   descripcion: string | null;
@@ -48,7 +50,8 @@ type Receptivo = {
 
 // Info que necesita el modal de detalle de un receptivo, sea de la vitrina
 // estática ("desde", por persona) o de un resultado ya liquidado por fechas/
-// pax (total real de esa búsqueda).
+// pax (total real de esa búsqueda). `paqueteId` habilita el botón Reservar →
+// (deep-link al flujo de reservar servicios, que pregunta pax/fechas él solo).
 type ReceptivoModalInfo = {
   nombre: string;
   destino: string | null;
@@ -57,6 +60,7 @@ type ReceptivoModalInfo = {
   precio: number;
   moneda?: string | null;
   notaPrecio: string;
+  paqueteId: number | null;
 };
 
 // Estrellas (★) o, si no maneja, la clasificación (Boutique/Luxury…) como chip.
@@ -253,7 +257,7 @@ export function VistaBooking({
       const p = f.precio_pvp ?? 0;
       if (!prev) {
         map.set(k, {
-          servicioId: f.servicio_id ?? null, nombre: f.servicio_nombre as string, destino: f.destino_nombre,
+          servicioId: f.servicio_id ?? null, paqueteId: f.paquete_id ?? null, nombre: f.servicio_nombre as string, destino: f.destino_nombre,
           descripcion: f.descripcion ?? null, foto: f.servicio_id != null ? (fotosPorServicio[f.servicio_id] ?? null) : null,
           desde: p, moneda: f.moneda,
         });
@@ -350,6 +354,7 @@ export function VistaBooking({
             nombre: r.nombre, destino: r.destino, descripcion: r.descripcion,
             foto: fotosPorServicio[r.servicioId] ?? null, precio: r.total, moneda: r.moneda,
             notaPrecio: `total · ${r.pax} pax · ${r.noches} noche${r.noches === 1 ? "" : "s"}`,
+            paqueteId: r.paqueteId ?? null,
           })}
         />
         {receptivosPorDestino.length === 0 ? (
@@ -367,7 +372,7 @@ export function VistaBooking({
                     <button
                       key={i}
                       type="button"
-                      onClick={() => setReceptivoAbierto({ nombre: r.nombre, destino: r.destino, descripcion: r.descripcion, foto: r.foto, precio: r.desde, moneda: r.moneda, notaPrecio: "desde · por persona" })}
+                      onClick={() => setReceptivoAbierto({ nombre: r.nombre, destino: r.destino, descripcion: r.descripcion, foto: r.foto, precio: r.desde, moneda: r.moneda, notaPrecio: "desde · por persona", paqueteId: r.paqueteId })}
                       className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
                     >
                       <div className="relative aspect-[16/10] w-full bg-gray-100">
@@ -485,15 +490,16 @@ export function VistaBooking({
       )}
 
       {receptivoAbierto && (
-        <ReceptivoModal receptivo={receptivoAbierto} onClose={() => setReceptivoAbierto(null)} />
+        <ReceptivoModal receptivo={receptivoAbierto} puedeReservar={puedeReservar} onClose={() => setReceptivoAbierto(null)} />
       )}
     </div>
   );
 }
 
-// ── Modal de detalle de un receptivo (tour): solo foto + descripción + precio,
-//    sin flujo de reserva (los servicios se agregan al armar el paquete) ─────
-function ReceptivoModal({ receptivo, onClose }: { receptivo: ReceptivoModalInfo; onClose: () => void }) {
+// ── Modal de detalle de un receptivo (tour): foto + descripción + precio, con
+//    botón Reservar → que deep-linkea al flujo de reservar servicios (pregunta
+//    pax/fechas internamente, mismo motor que el módulo Servicios clásico) ────
+function ReceptivoModal({ receptivo, puedeReservar, onClose }: { receptivo: ReceptivoModalInfo; puedeReservar: boolean; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
@@ -513,9 +519,20 @@ function ReceptivoModal({ receptivo, onClose }: { receptivo: ReceptivoModalInfo;
           {receptivo.descripcion?.trim() && (
             <p className="mt-3 whitespace-pre-line text-sm text-gray-600">{receptivo.descripcion}</p>
           )}
-          <div className="mt-4">
-            <div className="text-[10px] uppercase tracking-wide text-gray-400">{receptivo.notaPrecio}</div>
-            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(receptivo.precio, receptivo.moneda)}</div>
+          <div className="mt-4 flex items-end justify-between gap-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-gray-400">{receptivo.notaPrecio}</div>
+              <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(receptivo.precio, receptivo.moneda)}</div>
+            </div>
+            {puedeReservar && receptivo.paqueteId != null && (
+              <Link
+                href={`/dashboard/reservar/nuevo?paquete=${receptivo.paqueteId}&modulo=servicios`}
+                className="shrink-0 rounded-lg px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                style={{ backgroundColor: "var(--brand-accent)" }}
+              >
+                Reservar →
+              </Link>
+            )}
           </div>
         </div>
       </div>
