@@ -84,6 +84,16 @@ export function ProgramaEditor(props: {
   );
   const [pubPending, startPub] = useTransition();
 
+  // Regla comisionable de "Salidas y precios" (§ tarifa comisionable del proveedor):
+  // vive aquí, no dentro de SalidasEditor, porque ese componente se desmonta al
+  // cambiar de pestaña (o al guardar en otra pestaña) — si el toggle viviera ahí,
+  // se perdía el check y había que volver a marcarlo cada vez que se volvía a
+  // "Salidas y precios".
+  const [reglaOn, setReglaOn] = useState(false);
+  const [cModo, setCModo] = useState<ModoBaseComisionable>("pct");
+  const [cValor, setCValor] = useState("3");
+  const [cComision, setCComision] = useState("10");
+
   const initialCab: Partial<CabeceraInput> = {
     nombre: programa.nombre,
     proveedorId: programa.proveedor_id,
@@ -194,6 +204,10 @@ export function ProgramaEditor(props: {
             programaId={programa.id}
             salidas={props.salidas}
             moneda={programa.moneda}
+            reglaOn={reglaOn} setReglaOn={setReglaOn}
+            cModo={cModo} setCModo={setCModo}
+            cValor={cValor} setCValor={setCValor}
+            cComision={cComision} setCComision={setCComision}
             pvpOpt={{
               pctMk: programa.pct_mk,
               asistenciaDia: programa.asistencia_medica_dia,
@@ -495,11 +509,21 @@ function SalidasEditor({
   salidas,
   moneda,
   pvpOpt,
+  reglaOn, setReglaOn,
+  cModo, setCModo,
+  cValor, setCValor,
+  cComision, setCComision,
 }: {
   programaId: number;
   salidas: SalidaRow[];
   moneda: string;
   pvpOpt: PvpOpciones;
+  // Regla comisionable: se recibe desde ProgramaEditor (ver comentario ahí) para
+  // que el check sobreviva a cambios de pestaña/guardados en otras secciones.
+  reglaOn: boolean; setReglaOn: (v: boolean) => void;
+  cModo: ModoBaseComisionable; setCModo: (v: ModoBaseComisionable) => void;
+  cValor: string; setCValor: (v: string) => void;
+  cComision: string; setCComision: (v: string) => void;
 }) {
   const toState = (s: SalidaRow): SalidaState => ({
     etiqueta: s.etiqueta ?? "",
@@ -521,12 +545,8 @@ function SalidasEditor({
   const nOrNull = (v: string) => (v === "" ? null : Number(v));
 
   // Regla comisionable: convierte, POR ACOMODACIÓN, la TARIFA del proveedor en
-  // el NETO a montar. `reglaOn` es un toggle independiente de las filas —
-  // nunca se apaga solo por escribir una tarifa o agregar una salida.
-  const [reglaOn, setReglaOn] = useState(false);
-  const [cModo, setCModo] = useState<ModoBaseComisionable>("pct");
-  const [cValor, setCValor] = useState("3");
-  const [cComision, setCComision] = useState("10");
+  // el NETO a montar. `reglaOn`/`cModo`/`cValor`/`cComision` llegan por props
+  // (ver ProgramaEditor) para que el check no se pierda al cambiar de pestaña.
   const desgloseTarifa = (tarifaStr: string) => {
     const tarifa = Number(tarifaStr);
     if (tarifaStr === "" || !Number.isFinite(tarifa) || tarifa <= 0) return null;
