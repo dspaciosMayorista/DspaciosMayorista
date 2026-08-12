@@ -311,7 +311,6 @@ export function ContratoDocumento({
                   </div>
                   <div className="mt-1 text-xs text-gray-600">
                     Ciudad: {h.ciudad ?? "—"}
-                    {h.proveedor ? ` · Proveedor: ${h.proveedor}` : ""}
                   </div>
                   <div className="text-xs text-gray-600">
                     Alimentación: {h.alimentacion ?? "—"} · Acomodación:{" "}
