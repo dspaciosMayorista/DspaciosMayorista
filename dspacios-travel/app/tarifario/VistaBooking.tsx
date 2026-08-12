@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Star } from "lucide-react";
+import { Star, Check } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart } from "@/lib/cart/CartContext";
@@ -147,6 +147,7 @@ export function VistaBooking({
   planesInfo = {},
   capPorHotel = {},
   soloAcom = null,
+  incluidosPorPaquete = {},
 }: {
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
@@ -159,6 +160,10 @@ export function VistaBooking({
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
   soloAcom?: string | null;
+  // Servicios marcados "incluido" al armar el paquete (armado_servicios) — se
+  // hornean en el PVP del hotel y nunca se publican como fila propia en
+  // tarifario_resultado, así que llegan aparte para mostrarlos en "Incluye".
+  incluidosPorPaquete?: Record<number, string[]>;
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
@@ -273,6 +278,31 @@ export function VistaBooking({
     }
     for (const arr of porDestino.values()) arr.sort((a, b) => a.nombre.localeCompare(b.nombre));
     return [...porDestino.entries()].sort(([a], [b]) => (a === SIN_DESTINO ? 1 : b === SIN_DESTINO ? -1 : a.localeCompare(b)));
+  }, [filas, fotosPorServicio]);
+
+  // Servicios opcionales (add-on) de CADA paquete puntual — mismas filas
+  // "modulo=servicios" de arriba, pero agrupadas por paquete_id en vez de por
+  // destino, para ofrecer en el modal del hotel SOLO los add-on de su propio
+  // paquete (nunca los de otros destinos, a diferencia de la pestaña Receptivos).
+  const addonsPorPaquete = useMemo(() => {
+    const map = new Map<number, Map<string, Receptivo>>();
+    for (const f of filas) {
+      if (f.modulo !== "servicios" || !f.servicio_nombre || f.paquete_id == null) continue;
+      let porNombre = map.get(f.paquete_id);
+      if (!porNombre) { porNombre = new Map(); map.set(f.paquete_id, porNombre); }
+      const prev = porNombre.get(f.servicio_nombre);
+      const p = f.precio_pvp ?? 0;
+      if (!prev) {
+        porNombre.set(f.servicio_nombre, {
+          servicioId: f.servicio_id ?? null, paqueteId: f.paquete_id, nombre: f.servicio_nombre, destino: f.destino_nombre,
+          descripcion: f.descripcion ?? null, foto: f.servicio_id != null ? (fotosPorServicio[f.servicio_id] ?? null) : null,
+          desde: p, moneda: f.moneda,
+        });
+      } else if (p > 0 && p < prev.desde) prev.desde = p;
+    }
+    const out = new Map<number, Receptivo[]>();
+    for (const [pid, porNombre] of map) out.set(pid, [...porNombre.values()].sort((a, b) => a.nombre.localeCompare(b.nombre)));
+    return out;
   }, [filas, fotosPorServicio]);
 
   const SUBTABS = [
@@ -487,7 +517,7 @@ export function VistaBooking({
       )}
 
       {abierto && (
-        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} onClose={() => setAbierto(null)} />
+        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} incluidosPorPaquete={incluidosPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={() => setAbierto(null)} />
       )}
 
       {receptivoAbierto && (
@@ -544,16 +574,19 @@ function ReceptivoModal({ receptivo, puedeReservar, onClose }: { receptivo: Rece
 // ── Modal de detalle: elige opción (salida/paquete), categoría/régimen y
 //    habitaciones; calcula el precio y agrega al carrito ─────────────────────
 function HotelModal({
-  hotel, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, onClose,
+  hotel, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, incluidosPorPaquete, addonsPorPaquete, onClose,
 }: {
   hotel: HotelCard; cuposPorBloqueo: Record<number, number>; origenPorBloqueo: Record<number, string>; puedeReservar: boolean;
   ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>; planesInfo: PlanesInfo;
-  cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }; onClose: () => void;
+  cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
+  incluidosPorPaquete: Record<number, string[]>; addonsPorPaquete: Map<number, Receptivo[]>;
+  onClose: () => void;
 }) {
   const { add } = useCart();
   const pathname = usePathname();
   const router = useRouter();
   const esDashboard = pathname?.startsWith("/dashboard") ?? false;
+  const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
 
   const opciones = useMemo<Opcion[]>(() => {
     const map = new Map<string, Opcion>();
@@ -591,7 +624,22 @@ function HotelModal({
   const [opKey, setOpKey] = useState(opciones[0]?.key ?? "");
   const opcion = opciones.find((o) => o.key === opKey) ?? opciones[0];
 
+  // "Incluye": nada de esto se escribe a mano — se arma solo de lo que ya
+  // está configurado en el paquete (aéreo solo si la opción es de bloqueo;
+  // hospedaje siempre; servicios marcados "incluido" al armar el paquete).
+  const incluye: string[] = opcion
+    ? [
+        ...(opcion.modulo === "bloqueo" ? ["Tiquete aéreo"] : []),
+        `Hospedaje en ${hotel.hotelNombre}`,
+        ...(incluidosPorPaquete[opcion.paqueteId] ?? []),
+      ]
+    : [];
+  // Servicios opcionales (add-on) de ESTE paquete puntual — nunca los de otro
+  // destino (a diferencia de irse a la pestaña Receptivos general).
+  const addons: Receptivo[] = opcion ? (addonsPorPaquete.get(opcion.paqueteId) ?? []) : [];
+
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div
         className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl"
@@ -683,6 +731,40 @@ function HotelModal({
                 </p>
               )}
 
+              {/* Incluye: informativo, se arma solo de lo configurado en el paquete */}
+              {incluye.length > 0 && (
+                <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">Incluye</p>
+                  <ul className="space-y-1">
+                    {incluye.map((it, i) => (
+                      <li key={i} className="flex items-center gap-1.5 text-sm text-gray-700">
+                        <Check size={14} style={{ color: "var(--brand-success)" }} /> {it}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Servicios opcionales (add-on) del MISMO paquete — nunca de otro destino */}
+              {addons.length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Servicios opcionales (add-on)</p>
+                  <div className="flex flex-wrap gap-2">
+                    {addons.map((a, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setAddonAbierto({ nombre: a.nombre, destino: a.destino, descripcion: a.descripcion, foto: a.foto, precio: a.desde, moneda: a.moneda, notaPrecio: "desde · por persona", paqueteId: a.paqueteId })}
+                        className="rounded-lg border border-gray-200 px-3 py-2 text-left text-sm transition-colors hover:border-[var(--brand-accent)]"
+                      >
+                        <span className="block font-medium text-gray-800">{a.nombre}</span>
+                        <span className="block text-xs" style={{ color: "var(--brand-primary)" }}>desde {formatMoneda(a.desde, a.moneda)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {opcion.modulo === "porcion_terrestre" ? (
                 <SelectorPorFechas
                   key={opcion.key}
@@ -728,6 +810,10 @@ function HotelModal({
         </div>
       </div>
     </div>
+    {addonAbierto && (
+      <ReceptivoModal receptivo={addonAbierto} puedeReservar={puedeReservar} onClose={() => setAddonAbierto(null)} />
+    )}
+    </>
   );
 }
 

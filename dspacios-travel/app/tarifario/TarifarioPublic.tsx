@@ -195,6 +195,7 @@ export function TarifarioPublic({
   infoPorHotel = {},
   planesInfo = {},
   capPorHotel = {},
+  incluidosPorPaquete = {},
 }: {
   filas: FilaTarifario[];
   programas?: ProgramaResumen[];
@@ -207,6 +208,7 @@ export function TarifarioPublic({
   infoPorHotel?: InfoHotel;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
+  incluidosPorPaquete?: Record<number, string[]>;
 }) {
   const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
   const [q, setQ] = useState("");
@@ -299,7 +301,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} incluidosPorPaquete={incluidosPorPaquete} />
       ) : (
         <>
           {/* Tabs de módulos */}
