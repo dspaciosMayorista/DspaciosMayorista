@@ -172,6 +172,29 @@ export default async function TarifarioPublicoPage() {
     for (const p of pqs ?? []) ventanaPorPaquete[p.id as number] = { min: p.fecha_viaje_inicio as string | null, max: p.fecha_viaje_fin as string | null };
   }
 
+  // Servicios marcados "incluido" al armar cada paquete (aéreo/hotel siempre
+  // van; esto es lo adicional que ya viene horneado en el PVP y por eso NUNCA
+  // aparece como fila propia en tarifario_resultado — a diferencia de los
+  // add-on opcionales, que sí se leen de `filas` con modulo="servicios").
+  // armado_servicios es interno → se lee con service-role.
+  const incluidosPorPaquete: Record<number, string[]> = {};
+  const paqIdsConHotel = [...new Set(
+    filasVisibles.filter((f) => (f.modulo === "bloqueo" || f.modulo === "porcion_terrestre") && f.paquete_id != null).map((f) => f.paquete_id as number)
+  )];
+  if (paqIdsConHotel.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const admin = createAdminClient();
+    const { data: incs } = await admin
+      .from("armado_servicios")
+      .select("paquete_id, incluido, servicios_adicionales(nombre)")
+      .eq("incluido", true)
+      .in("paquete_id", paqIdsConHotel);
+    for (const r of incs ?? []) {
+      const nombre = (r as unknown as { servicios_adicionales: { nombre: string } | null }).servicios_adicionales?.nombre;
+      if (!nombre) continue;
+      (incluidosPorPaquete[r.paquete_id as number] ??= []).push(nombre);
+    }
+  }
+
   // Programas publicados (fuente propia, en su moneda).
   const programas = await getProgramasResumen(sb, true);
 
@@ -223,7 +246,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} incluidosPorPaquete={incluidosPorPaquete} />
         )}
       </main>
     </div>
