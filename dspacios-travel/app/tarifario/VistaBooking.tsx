@@ -148,6 +148,7 @@ export function VistaBooking({
   capPorHotel = {},
   soloAcom = null,
   incluidosPorPaquete = {},
+  filasAddon = [],
 }: {
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
@@ -164,6 +165,10 @@ export function VistaBooking({
   // hornean en el PVP del hotel y nunca se publican como fila propia en
   // tarifario_resultado, así que llegan aparte para mostrarlos en "Incluye".
   incluidosPorPaquete?: Record<number, string[]>;
+  // Add-ons (modulo="servicios") de TODOS los paquetes de hotel, sin el
+  // recorte que aplica `filas` para la vitrina plana de Servicios — de acá
+  // sale `addonsPorPaquete`, scoped al hotel que se está viendo.
+  filasAddon?: FilaTarifario[];
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
@@ -280,13 +285,14 @@ export function VistaBooking({
     return [...porDestino.entries()].sort(([a], [b]) => (a === SIN_DESTINO ? 1 : b === SIN_DESTINO ? -1 : a.localeCompare(b)));
   }, [filas, fotosPorServicio]);
 
-  // Servicios opcionales (add-on) de CADA paquete puntual — mismas filas
-  // "modulo=servicios" de arriba, pero agrupadas por paquete_id en vez de por
-  // destino, para ofrecer en el modal del hotel SOLO los add-on de su propio
-  // paquete (nunca los de otros destinos, a diferencia de la pestaña Receptivos).
+  // Servicios opcionales (add-on) de CADA paquete puntual — de `filasAddon`
+  // (sin el recorte que aplica `filas`/`filasVisibles` para la vitrina plana
+  // de Servicios), agrupados por paquete_id en vez de por destino, para
+  // ofrecer en el modal del hotel SOLO los add-on de su propio paquete (nunca
+  // los de otros destinos, a diferencia de la pestaña Receptivos).
   const addonsPorPaquete = useMemo(() => {
     const map = new Map<number, Map<string, Receptivo>>();
-    for (const f of filas) {
+    for (const f of filasAddon) {
       if (f.modulo !== "servicios" || !f.servicio_nombre || f.paquete_id == null) continue;
       let porNombre = map.get(f.paquete_id);
       if (!porNombre) { porNombre = new Map(); map.set(f.paquete_id, porNombre); }
@@ -303,7 +309,7 @@ export function VistaBooking({
     const out = new Map<number, Receptivo[]>();
     for (const [pid, porNombre] of map) out.set(pid, [...porNombre.values()].sort((a, b) => a.nombre.localeCompare(b.nombre)));
     return out;
-  }, [filas, fotosPorServicio]);
+  }, [filasAddon, fotosPorServicio]);
 
   const SUBTABS = [
     { key: "bloqueo", label: "Paquetes" },
