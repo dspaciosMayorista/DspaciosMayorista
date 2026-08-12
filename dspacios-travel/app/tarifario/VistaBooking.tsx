@@ -187,7 +187,8 @@ export function VistaBooking({
         cupos: cupos ?? 0,
       });
     }
-    return [...map.values()];
+    // De la salida más cercana a la más lejana; sin fecha, al final.
+    return [...map.values()].sort((a, b) => (a.fechaIda ?? "9999-99-99").localeCompare(b.fechaIda ?? "9999-99-99"));
   }, [filas, cuposPorBloqueo, origenPorBloqueo]);
 
   const origenes = useMemo(() => [...new Set(salidasBloqueo.map((s) => s.origen).filter(Boolean))].sort(), [salidasBloqueo]);
@@ -583,7 +584,8 @@ function HotelModal({
       }
       o.filas.push(f);
     }
-    return [...map.values()];
+    // De la salida más cercana a la más lejana; sin fecha, al final.
+    return [...map.values()].sort((a, b) => (a.fechaIda ?? "9999-99-99").localeCompare(b.fechaIda ?? "9999-99-99"));
   }, [hotel, cuposPorBloqueo, origenPorBloqueo]);
 
   const [opKey, setOpKey] = useState(opciones[0]?.key ?? "");
