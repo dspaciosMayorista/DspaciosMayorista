@@ -7,22 +7,32 @@
 -- verifica un invariante que debe cumplirse para todos, sin importar el rol:
 --
 --     filas visibles de una tabla hija
---       ==
+--       <=
 --     filas visibles de esa tabla hija QUE ADEMÁS tienen su contrato visible
 --
 -- Si un usuario ve MÁS filas hijas que contratos padres visibles, está viendo
 -- pasajeros, precios o vouchers de contratos que no le corresponden: FUGA.
+-- Ver MENOS no es fuga: es una restricción deliberada encima de la herencia.
 --
 -- La gracia es que el invariante no depende del rol, así que la misma prueba
 -- sirve para superadmin, gerencia, administración, operaciones, venta, los
 -- roles B2B y los usuarios desactivados — sin escribir un caso por cada uno.
 --
 -- CÓMO SE LEE EL RESULTADO
---   OK        → sin fuga (lo esperado en todas las filas)
---   FUGA (n)  → ve n filas hijas de contratos que no puede ver ← hay que mirar
+--   OK           → ve exactamente lo que le corresponde
+--   FUGA (n)     → ve n filas hijas de contratos que no puede ver ← REVISAR
+--   RESTRINGIDO  → ve MENOS de lo que su contrato le permitiría. Es lo
+--                  esperado SOLO en `contrato_pasajeros` y `contrato_adjuntos`
+--                  con rol `venta`: desde la migración 142 un asesor consulta
+--                  cualquier contrato de su agencia, pero no los datos
+--                  personales ni los adjuntos de los contratos ajenos.
+--                  En cualquier otra combinación, mirarlo.
 --
--- Antes de la migración 141, todo usuario con rol interno (incluido `venta`)
--- daba FUGA en todas las tablas. Después debe dar OK en todas.
+-- HISTORIA
+--   · Antes de la 141: todo rol interno (incluido `venta`) daba FUGA en todas.
+--   · Con la 141: OK en todas, pero `venta` solo veía sus propios contratos.
+--   · Con la 142: `venta` ve todos los de su agencia (OK), salvo pasajeros y
+--     adjuntos ajenos (RESTRINGIDO).
 --
 -- CÓMO SE CORRE
 -- Copiar y pegar TODO este archivo en el editor SQL de Supabase y ejecutar.
@@ -85,7 +95,8 @@ begin
       insert into _rls_out values (
         u.email, u.rol, u.activo, t, n_visibles, n_con_padre,
         case when n_visibles = n_con_padre then 'OK'
-             else 'FUGA (' || (n_visibles - n_con_padre) || ')' end
+             when n_visibles > n_con_padre then 'FUGA (' || (n_visibles - n_con_padre) || ')'
+             else 'RESTRINGIDO' end
       );
 
     end loop;
@@ -97,7 +108,10 @@ end $$;
 -- confirmar que cada quien sí ve lo que le toca:
 --   · superadmin / gerencia      → todos los contratos
 --   · administracion/operaciones → todos los de SU agencia (tenant)
---   · venta                      → solo aquellos donde figura como asesor
+--   · venta                      → todos los de SU agencia (migración 142).
+--                                  La columna `contratos_donde_es_asesor` es
+--                                  informativa: sirve para detectar nombres
+--                                  que no cruzan (ej. importados en MAYÚSCULAS)
 --   · agencia / freelance / cliente_final → 0 (su acceso va por el portal B2B,
 --                                            que resuelve por pertenencia, no
 --                                            por esta RLS)
@@ -123,9 +137,11 @@ begin
 
   for u in select id, email, nombre, rol::text as rol, activo from public.usuarios order by rol, email loop
     -- Contratos donde figura como asesor (contado como superusuario, sin RLS).
+    -- Normalizado igual que `soy_ese_asesor()` (migración 142): minúsculas y
+    -- sin espacios sobrantes, para que crucen los contratos importados.
     select count(*) into n_suyos
       from public.ventas v
-     where v.asesor = u.nombre or v.asesor = u.email;
+     where lower(btrim(v.asesor)) in (lower(btrim(u.nombre)), lower(btrim(u.email)));
 
     execute 'set local role authenticated';
     perform set_config('request.jwt.claims',
@@ -138,11 +154,11 @@ begin
   end loop;
 end $$;
 
--- Resultado 1 — fugas en tablas hijas (lo que arregla la migración 141).
+-- Resultado 1 — fugas en tablas hijas. Las FUGA salen de primeras.
 select
   usuario, rol, activo, tabla, visibles, con_padre, veredicto
 from _rls_out
-order by (veredicto <> 'OK') desc, rol, usuario, tabla;
+order by (veredicto like 'FUGA%') desc, (veredicto <> 'OK') desc, rol, usuario, tabla;
 
 -- Resultado 2 — alcance de cada usuario sobre `ventas`.
 select

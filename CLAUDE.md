@@ -313,8 +313,8 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 141.**
-> Corridas por el dueño **hasta la 139**; ⚠️ **140 y 141 están PENDIENTES de correr**.
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 142.**
+> Corridas por el dueño **hasta la 141**; ⚠️ **142 está PENDIENTE de correr**.
 > **135** `contrato_vuelo_tramo` (1 fila = 1 tramo de
 > vuelo) · **136** `proveedores_escritura_operaciones` (rol operaciones puede crear
 > proveedores) · **137** `alinear_roles_escritura` (reorganización general de roles/RLS,
@@ -347,10 +347,21 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   siempre true.
 > - **Bug de paso: el rol `venta` no veía NINGÚN contrato.** La policy comparaba
 >   `ventas.asesor` contra el **email**, pero la app siempre guarda ahí el **nombre**
->   (`perfil.nombre`). Pasaba desapercibido porque las hijas sí le mostraban todo. Ahora
->   `soy_ese_asesor()` compara contra nombre Y correo. **Deuda pendiente:** identificar al
->   asesor por nombre es débil (dos homónimos se verían los contratos); lo correcto sería
->   `ventas.asesor_id uuid` con FK a `usuarios` + backfill.
+>   (`perfil.nombre`). Pasaba desapercibido porque las hijas sí le mostraban todo.
+> - **Alcance final del rol `venta` (migración 142).** La 141 lo dejó viendo solo los
+>   contratos donde figuraba como asesor, y no alcanzaba: los asesores se cubren entre
+>   ellos. Además fallaba con los contratos del **importador de minorista**, que guardan
+>   en `ventas.asesor` el texto libre de la hoja (`"JUAN PEREZ"` ≠ `"Juan Pérez"`). Ahora
+>   `venta` ve **todos los contratos de SU agencia** (`puede_ver_tenant`, mayorista y
+>   minorista siguen separados), con dos excepciones: `contrato_pasajeros` y
+>   `contrato_adjuntos` siguen limitados a los contratos propios, así que un asesor
+>   consulta el contrato de un colega pero no el documento/nacimiento de sus pasajeros ni
+>   sus archivos. La restricción de columnas ("información básica", sin costos ni
+>   márgenes) **no es RLS**: ya la hacía la app con `verFinanzas`, que excluye a `venta`.
+>   `soy_ese_asesor()` quedó normalizado (minúsculas + trim) para que crucen los
+>   importados. **Deuda pendiente:** emparejar asesor por texto es débil (homónimos, y las
+>   tildes siguen sin cruzar); lo correcto sería `ventas.asesor_id uuid` con FK a
+>   `usuarios` + backfill.
 > - **Prueba de aislamiento:** `supabase/scripts/test_rls_por_rol.sql` se pega en el editor
 >   SQL de Supabase y se hace pasar por cada usuario real verificando que
 >   `filas hijas visibles == filas hijas con contrato padre visible`. Es de solo lectura
