@@ -19,16 +19,41 @@
 --                             los muestre.
 --
 -- QUÉ SE ESPERA DESPUÉS DE LA MIGRACIÓN 144
---   · superadmin, gerencia, administracion, operaciones → EXPUESTO (correcto:
---     son los roles con acceso financiero legítimo).
---   · venta                        → 0  ← si da > 0, la 144 no quedó aplicada
+--   · superadmin, gerencia, administracion, operaciones → leen costos
+--     (correcto: son los roles con acceso financiero legítimo).
+--   · venta → filas_financieras = 0  Y  filas_vista_basica > 0
+--     Las DOS cosas importan. Solo con el 0 no se prueba nada: un `venta` sin
+--     contratos en su agencia también da 0. Que la vista le devuelva filas es
+--     lo que demuestra que SÍ alcanza los contratos y aun así no ve los costos.
 --   · agencia/freelance/cliente_final → 0
---   · cualquier usuario inactivo   → 0
+--   · cualquier usuario inactivo      → 0
 --
--- Antes de la 144, `venta` daba > 0: esa era la vulnerabilidad.
+-- Antes de la 144, `venta` leía costos de toda su agencia: esa era la falla.
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
+
+-- ── Preparación: poner a todos en la agencia que SÍ tiene contratos ───────
+-- Sin esto la prueba no prueba nada. Si los contratos son de minorista y los
+-- usuarios internos son de mayorista, `venta` da 0 filas por FALTA DE
+-- CONTRATOS DE SU AGENCIA, no porque la seguridad lo bloquee: los dos caminos
+-- dan el mismo 0 y no se distinguen.
+--
+-- Se les cambia el tenant al de la agencia con más contratos SOLO dentro de
+-- esta transacción, que termina en ROLLBACK. La base queda como estaba: es un
+-- escenario de prueba, no un cambio de configuración.
+do $$
+declare t_obj text;
+begin
+  select tenant into t_obj from public.ventas group by tenant order by count(*) desc limit 1;
+  if t_obj is null then
+    raise exception 'No hay contratos en `ventas`: la prueba no puede concluir nada.';
+  end if;
+  update public.usuarios
+     set tenant = t_obj
+   where rol in ('venta','operaciones','administracion','gerencia');
+  raise notice 'Escenario de prueba: usuarios internos puestos en tenant "%s" (se revierte al final).', t_obj;
+end $$;
 
 create temp table _fin_out (
   usuario   text,
@@ -95,15 +120,26 @@ order by (veredicto like 'EXPUESTO%') desc, rol, usuario;
 -- Comprobación dura: si algún rol que NO debe ver finanzas puede leerlas, esto
 -- corta con un error en vez de dejarlo pasar como una fila más del listado.
 do $$
-declare n int;
+declare n_fuga int; n_util int;
 begin
-  select count(*) into n from _fin_out
+  -- 1. Nadie sin acceso financiero puede leer costos.
+  select count(*) into n_fuga from _fin_out
    where filas_financieras > 0
      and rol not in ('superadmin','gerencia','administracion','operaciones');
-  if n > 0 then
-    raise exception 'FALLA DE SEGURIDAD: % usuario(s) sin acceso financiero pueden leer columnas de costo de `ventas`.', n;
+  if n_fuga > 0 then
+    raise exception 'FALLA DE SEGURIDAD: % usuario(s) sin acceso financiero pueden leer columnas de costo de `ventas`.', n_fuga;
   end if;
-  raise notice 'OK: ningún rol sin acceso financiero puede leer columnas de costo.';
+
+  -- 2. Y la prueba fue CONCLUYENTE: al menos un `venta` alcanzó contratos por
+  --    la vista. Sin esto, el punto 1 lo cumple trivialmente quien no ve nada,
+  --    y estaríamos dando por buena una protección que no se ejercitó.
+  select count(*) into n_util from _fin_out
+   where rol = 'venta' and filas_vista_basica > 0;
+  if n_util = 0 then
+    raise exception 'PRUEBA NO CONCLUYENTE: ningún usuario `venta` alcanzó contratos por `ventas_basica`. El 0 en costos puede deberse a que no ve NADA, no a la protección. Revisa que exista al menos un usuario con rol `venta`.';
+  end if;
+
+  raise notice 'OK: ningún rol sin acceso financiero lee costos, y `venta` sí alcanza los contratos por la vista segura.';
 end $$;
 
 rollback;
