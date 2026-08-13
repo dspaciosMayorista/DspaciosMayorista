@@ -61,22 +61,35 @@ export async function liquidarHotelPaquete(
     admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
-    admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones").eq("hotel_id", hotelId),
+    admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
   ]);
 
-  // Black out general del hotel: cierra noches (total o por acomodación) por encima
-  // de cualquier vigencia. Si alguna noche de la estadía cae en un blackout total,
-  // el hotel no se vende; si es por acomodación, esas acomodaciones quedan fuera.
+  // Black out general del hotel: cierra noches por encima de cualquier vigencia.
+  // Si alguna noche de la estadía cae en un cierre total, el hotel no se vende.
+  // Los cierres parciales se acumulan como reglas y se evalúan por combo más
+  // abajo (migración 145: además de acomodaciones, ahora también por categoría).
   const nochesStay: string[] = [];
   { const base = new Date(`${fechaIda}T00:00:00`).getTime(); for (let n = 0; n < numNoches; n++) nochesStay.push(new Date(base + n * 86_400_000).toISOString().slice(0, 10)); }
-  const acomCerradas = new Set<string>();
+  // Cada regla dice qué cierra: categorías vacías = todas; acomodaciones vacías
+  // = todas. Si vienen las dos, cierra la INTERSECCIÓN (esas acomodaciones solo
+  // dentro de esas categorías).
+  const reglasCierre: { categorias: string[]; acomodaciones: string[] }[] = [];
   let cierreTotal = false;
   for (const b of blackouts ?? []) {
     const cubre = nochesStay.some((d) => (b.fecha_inicio as string) <= d && d <= (b.fecha_fin as string));
     if (!cubre) continue;
-    if (b.total) cierreTotal = true;
-    else for (const a of ((b.acomodaciones as string[] | null) ?? [])) acomCerradas.add(a);
+    if (b.total) { cierreTotal = true; continue; }
+    reglasCierre.push({
+      categorias: ((b.categorias as string[] | null) ?? []),
+      acomodaciones: ((b.acomodaciones as string[] | null) ?? []),
+    });
   }
+  // ¿Está cerrada esta acomodación dentro de esta categoría?
+  const estaCerrada = (categoria: string, acom: string) =>
+    reglasCierre.some((r) =>
+      (r.categorias.length === 0 || r.categorias.includes(categoria)) &&
+      (r.acomodaciones.length === 0 || r.acomodaciones.includes(acom))
+    );
   const hotelMeta = hsel?.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
   const monedaHotel = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
   if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: hotelMeta?.nombre ?? null, minNoches: 1, moneda: monedaHotel };
@@ -127,9 +140,15 @@ export async function liquidarHotelPaquete(
     }
     if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos });
   }
-  // Quita las acomodaciones cerradas por blackout; descarta combos sin habitación.
-  if (acomCerradas.size) {
-    for (const c of combos) for (const a of acomCerradas) { delete c.precios[a]; delete c.netos?.[a]; }
+  // Quita lo cerrado por blackout. Se evalúa por (categoría, acomodación), así
+  // que un cierre puede llevarse una categoría entera, una acomodación en todas
+  // las categorías, o solo una acomodación dentro de una categoría.
+  if (reglasCierre.length) {
+    for (const c of combos) {
+      for (const a of Object.keys(c.precios)) {
+        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; }
+      }
+    }
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2" && a !== "infante"));
   return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel };

@@ -2545,8 +2545,8 @@ export type Database = {
         Relationships: [];
       };
       hotel_blackouts: {
-        Row: { id: number; hotel_id: number; fecha_inicio: string; fecha_fin: string; total: boolean; acomodaciones: string[] | null; motivo: string | null; created_at: string };
-        Insert: { id?: number; hotel_id: number; fecha_inicio: string; fecha_fin: string; total?: boolean; acomodaciones?: string[] | null; motivo?: string | null; created_at?: string };
+        Row: { id: number; hotel_id: number; fecha_inicio: string; fecha_fin: string; total: boolean; acomodaciones: string[] | null; categorias: string[] | null; motivo: string | null; created_at: string };
+        Insert: { id?: number; hotel_id: number; fecha_inicio: string; fecha_fin: string; total?: boolean; acomodaciones?: string[] | null; categorias?: string[] | null; motivo?: string | null; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["hotel_blackouts"]["Insert"]>;
         Relationships: [];
       };
