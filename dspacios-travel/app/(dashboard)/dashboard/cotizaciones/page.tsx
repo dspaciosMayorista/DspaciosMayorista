@@ -66,6 +66,9 @@ export default async function CotizacionesPage() {
                     {c.tipo === "manual" && (
                       <span className="ml-1.5 rounded bg-[color:var(--brand-accent)]/15 px-1.5 py-0.5 align-middle font-sans text-[9px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>Dinámica</span>
                     )}
+                    {c.tipo === "carrito" && (
+                      <span className="ml-1.5 rounded bg-[color:var(--brand-success)]/15 px-1.5 py-0.5 align-middle font-sans text-[9px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-success)" }}>Carrito</span>
+                    )}
                     {c.numero_contrato && (
                       <span className="ml-1 text-[10px] font-normal text-gray-400">→ {c.numero_contrato}</span>
                     )}
