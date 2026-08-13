@@ -1,5 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
-import { ROLES_INTERNOS, type Rol } from "@/lib/constants";
+import { LECTURA_MODULO, type Rol } from "@/lib/constants";
+
+// Se re-exporta para no romper los imports existentes: la definición se movió a
+// `lib/constants.ts` porque `proxy.ts` también la necesita, y el middleware no
+// puede importar nada que use `next/headers` (como este archivo).
+export { LECTURA_MODULO };
 
 // Roles internos que SIEMPRE tienen acceso total de escritura (nunca se
 // bloquean). Ver migración 137 — la misma regla ya está aplicada en RLS.
@@ -26,23 +31,6 @@ export const ESCRITURA = {
   // el cliente service-role, que bypassa RLS).
   usuarios: ["superadmin", "administracion"] as Rol[],
 } satisfies Record<string, Rol[]>;
-
-/** Roles que pueden VER cada módulo del menú (más amplio que ESCRITURA). */
-export const LECTURA_MODULO: Record<string, readonly Rol[]> = {
-  tarifario: ROLES_INTERNOS,
-  reservar: ROLES_INTERNOS,
-  cotizaciones: ROLES_INTERNOS,
-  ventas: ROLES_INTERNOS,
-  contratos: ROLES_INTERNOS,
-  vuelos: ROLES_INTERNOS,
-  paquetes: ROLES_INTERNOS,
-  producto: ROLES_INTERNOS,
-  finanzas: ROLES_INTERNOS,
-  configuracion: ROLES_INTERNOS,
-  crm: ROLES_INTERNOS,
-  usuarios: ESCRITURA.usuarios,
-  b2b: ESCRITURA.b2b,
-};
 
 export function puedeEscribir(recurso: keyof typeof ESCRITURA, rol: string | null): boolean {
   return !!rol && (ESCRITURA[recurso] as readonly string[]).includes(rol);
