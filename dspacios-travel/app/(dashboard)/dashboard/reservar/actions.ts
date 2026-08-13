@@ -24,6 +24,7 @@ import {
   computarReserva,
   type ReservaInput,
   type PasajeroReserva,
+  type ComputoReserva,
 } from "@/lib/reservar/computo";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -784,6 +785,306 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
   revalidatePath(`/dashboard/cotizaciones/${id}`);
   revalidatePath("/dashboard/contratos");
   return { ok: true, numero: res.numero };
+}
+
+// ── Fase 3: convertir una cotización COMBINADA del carrito en contrato(s) ──
+// A diferencia de convertirCotizacion (un solo hotel → reservarDesdeTarifario
+// tal cual), aquí el payload trae VARIOS hoteles/tours (checkout del carrito,
+// ver crearCotizacionCarrito en app/tarifario/checkout/actions.ts). Se agrupa
+// por destino (o todo en un solo grupo) y cada grupo genera SU PROPIO
+// numero_contrato con TODOS sus hoteles en contrato_hoteles (esa tabla ya
+// soporta varias filas por contrato — igual que el generador manual
+// multi-ciudad). Valida TODO (precio + cupos) antes de insertar cualquier
+// cosa, para no dejar contratos a medias si un ítem falla a mitad de camino.
+//
+// Limitaciones conocidas de esta primera versión (documentadas, no bloquean):
+//  · El contrato siempre nace B2C/interno — el modo B2B (neta/comisionable)
+//    elegido en el checkout es solo informativo en el mensaje de WhatsApp/
+//    correo, igual que ya pasaba desde la Fase 2; agregar la comisión B2B a
+//    mano en el contrato ya generado sigue disponible como siempre.
+//  · Los tours no generan CxP automática (no hay forma de re-liquidar su
+//    costo neto desde el snapshot del carrito) — sí quedan como ítem visible
+//    del contrato; el proveedor se registra a mano en la pestaña Proveedores.
+export type ItemCarritoPayload = {
+  modulo: "bloqueo" | "porcion_terrestre";
+  paqueteId: number; hotelId: number; bloqueoId: number | null;
+  hotelNombre: string; destino: string | null; categoria: string; regimen: string;
+  fechaIda: string | null; fechaRegreso: string | null; noches: number | null;
+  habitaciones: Record<string, number>; ninos: number; ninos2: number; infantes: number; pax: number; precio: number;
+};
+export type TourCarritoPayload = {
+  nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null;
+  pax: number; precio: number; moneda: string;
+};
+
+export async function convertirCotizacionCarrito(
+  id: number,
+  opts: { agrupar: "todo" | "por_destino"; pasajeros: PasajeroReserva[]; asesorInterno?: string }
+): Promise<{ ok: true; numeros: string[] } | { ok: false; error: string }> {
+  const sb = await createClient();
+  const { data: cot } = await sb
+    .from("cotizaciones")
+    .select("id, estado, tipo, payload")
+    .eq("id", id).eq("tipo", "carrito").maybeSingle();
+  if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
+
+  const payload = (cot.payload ?? {}) as {
+    items?: ItemCarritoPayload[]; tours?: TourCarritoPayload[];
+    cliente?: { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
+  };
+  const items = payload.items ?? [];
+  const tours = payload.tours ?? [];
+  const cliente = payload.cliente ?? { nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" };
+  if (!items.length && !tours.length) return { ok: false, error: "La cotización no tiene ítems." };
+  if (!opts.pasajeros.length) return { ok: false, error: "Captura los pasajeros antes de generar el contrato." };
+
+  type Grupo = { destino: string | null; items: ItemCarritoPayload[]; tours: TourCarritoPayload[] };
+  let grupos: Grupo[];
+  if (opts.agrupar === "todo" || items.length <= 1) {
+    grupos = [{ destino: null, items, tours }];
+  } else {
+    const porDestino = new Map<string, ItemCarritoPayload[]>();
+    for (const it of items) {
+      const k = it.destino ?? "—";
+      porDestino.set(k, [...(porDestino.get(k) ?? []), it]);
+    }
+    grupos = [...porDestino.entries()].map(([destino, its]) => ({ destino: destino === "—" ? null : destino, items: its, tours: [] as TourCarritoPayload[] }));
+    for (const t of tours) {
+      const g = grupos.find((g) => g.destino && t.destino && g.destino === t.destino) ?? grupos[0];
+      g.tours.push(t);
+    }
+  }
+
+  const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+
+  // ── Paso 1: validar TODO (precio autoritativo + cupos) antes de insertar ──
+  const gruposValidados: { grupo: Grupo; validados: { item: ItemCarritoPayload; comp: ComputoReserva }[] }[] = [];
+  for (const grupo of grupos) {
+    const validados: { item: ItemCarritoPayload; comp: ComputoReserva }[] = [];
+    for (const it of grupo.items) {
+      const reserva: ReservaInput = {
+        paqueteId: it.paqueteId, bloqueoId: it.bloqueoId, modulo: it.modulo, hotelId: it.hotelId,
+        fechaIda: it.modulo !== "bloqueo" ? (it.fechaIda ?? undefined) : undefined,
+        fechaRegreso: it.modulo !== "bloqueo" ? (it.fechaRegreso ?? undefined) : undefined,
+        categoria: it.categoria, regimen: it.regimen, habitaciones: it.habitaciones,
+        ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes || 0,
+        cliente: { nombres: cliente.nombres, apellidos: cliente.apellidos, tipoDoc: "CC", numeroDoc: cliente.numeroDoc, telefono: cliente.telefono, email: cliente.email },
+        tipoAsesor: "interno", asesorInterno: opts.asesorInterno || "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
+        // Cada ítem valida SOLO con "sus" pasajeros (los primeros `it.pax` de la
+        // lista total) — pasar la lista completa del carrito rompería la
+        // validación de edades/acomodación de un ítem con menos pax que el
+        // máximo del carrito (ej. un hotel de 2 pax junto a otro de 4).
+        aliadoId: null, plazo: "", pasajeros: opts.pasajeros.slice(0, it.pax || opts.pasajeros.length), servicios: [],
+      };
+      const comp = await computarReserva(sb, reserva);
+      if (!comp.ok) return { ok: false, error: `${it.hotelNombre}: ${comp.error}` };
+      if (it.modulo === "bloqueo" && it.bloqueoId) {
+        const { count } = await admin.from("sillas").select("id", { count: "exact", head: true })
+          .eq("bloqueo_id", it.bloqueoId).in("estado", ["disponible", "cambio_entrante"]);
+        const disponibles = count ?? 0;
+        if (disponibles < comp.data.paxConSilla) {
+          return { ok: false, error: `${it.hotelNombre}: no hay cupos suficientes (disponibles: ${disponibles}, requeridos: ${comp.data.paxConSilla}).` };
+        }
+      }
+      validados.push({ item: it, comp: comp.data });
+    }
+    gruposValidados.push({ grupo, validados });
+  }
+
+  // ── Paso 2: crear un contrato por grupo, con TODOS sus hoteles/tours ──────
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const OBS_AUTO = "Generado automáticamente desde el carrito (tarifario)";
+  const numeros: string[] = [];
+
+  for (const { grupo, validados } of gruposValidados) {
+    const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
+    if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+
+    const clienteNombre = `${cliente.nombres} ${cliente.apellidos}`.trim();
+    const destinos = [...new Set(validados.map((v) => v.comp.meta.destino_nombre ?? v.item.destino).filter((d): d is string => !!d))];
+    const fechasIda = validados.map((v) => v.comp.meta.fecha_ida).filter((f): f is string => !!f).sort();
+    const fechasReg = validados.map((v) => v.comp.meta.fecha_regreso).filter((f): f is string => !!f).sort();
+    const precioTotal = validados.reduce((s, v) => s + v.comp.precioVenta, 0) + grupo.tours.reduce((s, t) => s + t.precio, 0);
+    const paxTotal = validados.reduce((s, v) => s + (v.comp.totalPax || v.comp.paxConSilla), 0) || (grupo.tours[0]?.pax ?? 1);
+    const monedaGrupo = validados[0]?.comp.monedaReserva ?? "COP";
+
+    const { error: ve } = await sb.from("ventas").insert({
+      numero_contrato: numero,
+      cliente: clienteNombre,
+      cliente_documento: oNull(cliente.numeroDoc),
+      cliente_telefono: oNull(cliente.telefono),
+      cliente_email: oNull(cliente.email),
+      destino: destinos.join(" · ") || grupo.destino,
+      tipo_paquete: "carrito",
+      moneda: monedaGrupo,
+      fecha_salida: fechasIda[0] ?? null,
+      fecha_regreso: fechasReg.length ? fechasReg[fechasReg.length - 1] : null,
+      pax: paxTotal,
+      hotel: validados.length === 1 ? (validados[0].comp.meta.hotel_nombre ?? validados[0].item.hotelNombre) : `${validados.length} hoteles`,
+      precio_venta: precioTotal,
+      estado: "pendiente",
+      canal: "B2C",
+      tipo_asesor: "interno",
+      plazo: null,
+      asesor_firma_nombre: oNull(opts.asesorInterno ?? null),
+      asesor: oNull(opts.asesorInterno ?? null),
+      plan_nombre: validados.length === 1 ? `${validados[0].item.categoria} · ${validados[0].item.regimen}` : `${validados.length} hoteles`,
+      tours_traslados: grupo.tours.length ? grupo.tours.map((t) => t.nombre).join(", ") : null,
+    });
+    if (ve) return { ok: false, error: ve.message };
+
+    if (opts.pasajeros.length) {
+      const { error: pe } = await sb.from("contrato_pasajeros").insert(
+        opts.pasajeros.map((p, i) => ({
+          numero_contrato: numero,
+          nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
+          tipo_id: oNull(p.tipoDoc) ?? "CC",
+          identificacion: oNull(p.numeroDoc),
+          fecha_nacimiento: oNull(p.fechaNacimiento),
+          nacionalidad: oNull(p.nacionalidad),
+          es_infante: p.esInfante,
+          orden: i,
+        }))
+      );
+      if (pe) return { ok: false, error: pe.message };
+    }
+
+    type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
+    const cxp: { numero_contrato: string; proveedor: string | null; tipo_proveedor: string; servicio: string; valor_total: number; fecha_obligacion: string; aplica_retencion: boolean; pct_retencion: number; observaciones: string }[] = [];
+    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null) => {
+      if (!(valor > 0)) return;
+      cxp.push({
+        numero_contrato: numero, proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
+        valor_total: Math.max(0, valor), fecha_obligacion: hoyISO,
+        aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0, observaciones: OBS_AUTO,
+      });
+    };
+
+    let costoAereoTotal = 0, costoHotelTotal = 0;
+
+    for (let hIdx = 0; hIdx < validados.length; hIdx++) {
+      const { item: it, comp } = validados[hIdx];
+      const { meta, lineasHab, numNinos, numNinos2, pvpPorAcom, netoPorAcom, paxConSilla } = comp;
+
+      const partes = lineasHab.map((l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`);
+      if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
+      if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
+      if ((it.infantes || 0) > 0) partes.push(`${it.infantes} Infante(s)`);
+
+      let proveedorHotel: string | null = null;
+      const { data: hp } = await admin.from("hoteles").select("proveedores(nombre, aplica_retencion, pct_retencion)").eq("id", it.hotelId).maybeSingle();
+      const prH = hp?.proveedores as unknown as ProvFact;
+      proveedorHotel = prH?.nombre ?? null;
+
+      await sb.from("contrato_hoteles").insert({
+        numero_contrato: numero, nombre: meta.hotel_nombre ?? it.hotelNombre, categoria: it.categoria,
+        proveedor: proveedorHotel, ciudad: meta.destino_nombre ?? it.destino, alimentacion: it.regimen,
+        acomodacion: it.categoria, detalle_acomodacion: partes.join(", "),
+        fecha_ingreso: meta.fecha_ida, fecha_salida: meta.fecha_regreso, orden: hIdx,
+      });
+
+      if (it.modulo === "bloqueo" && it.bloqueoId) {
+        const { data: bq } = await admin
+          .from("bloqueos_vuelo")
+          .select("aerolinea, record, ruta, tarifa_para_empaquetar, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, proveedores(nombre, aplica_retencion, pct_retencion)")
+          .eq("id", it.bloqueoId).maybeSingle();
+        if (bq) {
+          const r = parseRuta(bq.ruta);
+          const tramos = [{
+            numero_contrato: numero, aerolinea: bq.aerolinea, record: bq.record, direccion: "ida",
+            origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen), destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+            numero_vuelo: bq.vuelo_ida, hora_salida: bq.hora_salida_ida, hora_llegada: bq.hora_llegada_ida,
+            fecha_salida: bq.fecha_ida, orden: hIdx * 10,
+          }];
+          if (bq.fecha_regreso || bq.vuelo_regreso) {
+            tramos.push({
+              numero_contrato: numero, aerolinea: bq.aerolinea, record: bq.record, direccion: "regreso",
+              origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino), destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+              numero_vuelo: bq.vuelo_regreso, hora_salida: bq.hora_salida_reg, hora_llegada: bq.hora_llegada_reg,
+              fecha_salida: bq.fecha_regreso, orden: hIdx * 10 + 1,
+            });
+          }
+          await sb.from("contrato_vuelos").insert(tramos);
+
+          const costoAereo = (Number(bq.tarifa_para_empaquetar) || 0) * paxConSilla;
+          costoAereoTotal += costoAereo;
+          pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea);
+
+          const { data: libres } = await admin.from("sillas").select("id")
+            .eq("bloqueo_id", it.bloqueoId).in("estado", ["disponible", "cambio_entrante"])
+            .order("numero_silla").limit(paxConSilla);
+          if (libres && libres.length) {
+            const holders = opts.pasajeros.slice(0, it.pax || opts.pasajeros.length).filter((p) => !p.esInfante);
+            await Promise.all(libres.map((s, i) => {
+              const p = holders[i];
+              return admin.from("sillas").update({
+                estado: "en_plazo", numero_contrato: numero, asesor: oNull(opts.asesorInterno ?? null),
+                hotel: meta.hotel_nombre, acomodacion: it.categoria, plazo: null,
+                pasajero_nombres: oNull(p?.nombres), pasajero_apellidos: oNull(p?.apellidos),
+                tipo_doc: oNull(p?.tipoDoc), numero_doc: oNull(p?.numeroDoc), nacimiento: oNull(p?.fechaNacimiento),
+              }).eq("id", s.id);
+            }));
+          }
+        }
+      }
+
+      const itemsHotel: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number }[] = [];
+      lineasHab.forEach((l, i) => itemsHotel.push({
+        numero_contrato: numero, descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${it.categoria} / ${it.regimen}`,
+        adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0, orden: hIdx * 300 + i,
+      }));
+      if (numNinos > 0 && pvpPorAcom["nino"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Niño 1 · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"], orden: hIdx * 300 + 50 });
+      if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Niño 2 · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"], orden: hIdx * 300 + 51 });
+      const numInf = it.infantes || 0;
+      if (numInf > 0 && pvpPorAcom["infante"] != null) itemsHotel.push({ numero_contrato: numero, descripcion: `Infante · ${it.categoria} / ${it.regimen}`, adultos: 0, ninos: numInf, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"], orden: hIdx * 300 + 52 });
+      if (itemsHotel.length) await sb.from("contrato_items").insert(itemsHotel);
+
+      let costoHotel = 0;
+      for (const l of lineasHab) { const per = netoPorAcom[l.acom]; if (per != null) costoHotel += per * l.pax; }
+      if (numNinos > 0 && netoPorAcom["nino"] != null) costoHotel += netoPorAcom["nino"] * numNinos;
+      if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotel += netoPorAcom["nino2"] * numNinos2;
+      costoHotelTotal += costoHotel;
+      pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? it.hotelNombre}`.trim(), costoHotel, prH);
+    }
+
+    // Tours: quedan como ítem visible del contrato (sin CxP automática — ver nota arriba).
+    if (grupo.tours.length) {
+      const itemsTours = grupo.tours.map((t, i) => ({
+        numero_contrato: numero, descripcion: `Servicio · ${t.nombre}${t.destino ? ` — ${t.destino}` : ""}`,
+        adultos: 1, ninos: 0, tarifa_adulto: t.precio, tarifa_nino: 0, orden: 9000 + i,
+      }));
+      await sb.from("contrato_items").insert(itemsTours);
+    }
+
+    if (costoAereoTotal > 0 || costoHotelTotal > 0) {
+      await admin.from("ventas").update({ costo_aereo: costoAereoTotal, costo_hotel: costoHotelTotal }).eq("numero_contrato", numero);
+    }
+    if (cxp.length) {
+      const { data: creadas } = await admin.from("cuentas_por_pagar").insert(cxp).select("id, tipo_proveedor, proveedor, servicio, valor_total");
+      for (const c of creadas ?? []) {
+        await postearAsientoCxP({
+          cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
+          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO,
+        });
+      }
+    }
+
+    numeros.push(numero);
+  }
+
+  const { data: cotActual } = await sb.from("cotizaciones").select("detalle").eq("id", id).maybeSingle();
+  const detalleActual = (cotActual?.detalle ?? {}) as Record<string, unknown>;
+  await sb.from("cotizaciones").update({
+    estado: "convertida",
+    numero_contrato: numeros[0],
+    detalle: { ...detalleActual, contratos: numeros },
+  }).eq("id", id);
+
+  revalidatePath("/dashboard/cotizaciones");
+  revalidatePath(`/dashboard/cotizaciones/${id}`);
+  revalidatePath("/dashboard/contratos");
+  return { ok: true, numeros };
 }
 
 export async function actualizarVigenciaCotizacion(id: number, vigenciaHasta: string): Promise<{ ok: boolean; error?: string }> {
