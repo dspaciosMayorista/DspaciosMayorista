@@ -6,9 +6,13 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { adjuntarNotaRegimen } from "@/lib/contrato/regimenNotas";
 import { agenciaDe } from "@/lib/tenant.server";
 import type { Tenant } from "@/lib/tenant";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
+// El título usa el cliente SIEMPRE por el cliente con sesión (RLS), nunca por
+// service-role: el número de contrato es secuencial y adivinable (00-0481), así
+// que con service-role cualquiera podía sacar el nombre del cliente de un
+// contrato ajeno leyendo el <title>, aunque el cuerpo de la página sí quedara
+// bloqueado. Sin permiso de lectura, el título cae al genérico.
 export async function generateMetadata({
   params,
 }: {
@@ -16,7 +20,7 @@ export async function generateMetadata({
 }) {
   const { numero: raw } = await params;
   const numero = decodeURIComponent(raw);
-  const sb = createAdminClient();
+  const sb = await createClient();
   const { data } = await sb.from("ventas").select("cliente").eq("numero_contrato", numero).maybeSingle();
   return { title: { absolute: tituloDocumento("Contrato", numero, data?.cliente) } };
 }
