@@ -75,7 +75,22 @@ export type VueloInput = {
   horaSalida: string;
   horaLlegada: string;
   servicios: string;
-  costo?: number;   // costo neto de ESTE tramo (alimenta costo_aereo + CxP a la aerolínea)
+  // Índice de la COMPRA (en `compras`) a la que pertenece este tramo, o null si
+  // el tramo no tiene costo propio (ej. una escala informativa). El costo ya NO
+  // vive en el tramo: ver ComprasAereo abajo.
+  compraIdx?: number | null;
+};
+
+// Una COMPRA aérea = un pago real a un proveedor/consolidador, que puede cubrir
+// VARIOS tramos (ej. ida con Copa + regreso con Wingo compradas juntas en una
+// sola transacción) o solo uno. El costo y la cuenta por pagar cuelgan de la
+// compra, no del tramo — antes el costo era por tramo, lo que obligaba a
+// inventar a qué tramo "cargarle" el total de una compra combinada (y dejaba
+// los demás en $0 para no duplicar la CxP).
+export type CompraAereaInput = {
+  proveedor: string;  // aerolínea, consolidador, OTA… (proveedor real de la CxP)
+  referencia: string; // n.º de factura/orden/localizador de la compra (opcional)
+  costo: number;      // costo neto TOTAL de la compra (todos sus tramos juntos)
 };
 
 export type ItemInput = {
@@ -118,6 +133,8 @@ export type ContratoInput = {
   pasajeros: PasajeroInput[];
   hoteles: HotelInput[];
   vuelos: VueloInput[];
+  // Compras aéreas (1 pago = 1+ tramos). Los tramos apuntan aquí por índice.
+  comprasAereas?: CompraAereaInput[];
   servicios?: ServicioInput[];
   items: ItemInput[];
   // BNC (Base No Comisionable) — se elige al crear el contrato (dinámico/empaquetado
@@ -225,7 +242,12 @@ export async function crearContrato(
   // proveedor y la rentabilidad. (En negociado los costos vienen del producto.)
   const monedaContrato = !negociado && (input.moneda ?? "COP") === "USD" ? "USD" : "COP";
   const costoHotelManual = !negociado ? input.hoteles.reduce((s, h) => s + Math.max(0, Number(h.costo) || 0), 0) : 0;
-  const costoAereoManual = !negociado ? input.vuelos.reduce((s, v) => s + Math.max(0, Number(v.costo) || 0), 0) : 0;
+  // El costo aéreo sale de las COMPRAS (1 pago = 1+ tramos), no de los tramos:
+  // una compra combinada (ida con una aerolínea + regreso con otra, pagadas
+  // juntas) se registra una sola vez con su proveedor real. NO se filtra la
+  // lista: `vuelos[].compraIdx` apunta por índice a esta misma posición.
+  const comprasAereas = input.comprasAereas ?? [];
+  const costoAereoManual = !negociado ? comprasAereas.reduce((s, c) => s + Math.max(0, Number(c.costo) || 0), 0) : 0;
   const servicios = input.servicios ?? [];
   // Costo de servicios con proveedor propio, repartido por tipo (columnas ya
   // existentes en ventas): asistencia → costo_asistencia; traslado/tour →
@@ -414,10 +436,22 @@ export async function crearContrato(
       const costo = Math.max(0, Number(h.costo) || 0);
       if (costo > 0 && h.proveedor?.trim()) cxpRows.push({ proveedor: h.proveedor.trim(), tipo: "hotel", servicio: `Hotel ${h.nombre}`.trim(), valor: costo });
     }
-    for (const v of input.vuelos) {
-      const costo = Math.max(0, Number(v.costo) || 0);
-      if (costo > 0 && v.aerolinea?.trim()) cxpRows.push({ proveedor: v.aerolinea.trim(), tipo: "aereo", servicio: `Vuelo ${v.aerolinea}`.trim(), valor: costo });
-    }
+    // Una CxP por COMPRA aérea (no por tramo): el proveedor es quien cobró
+    // (aerolínea, consolidador, OTA) y el servicio nombra los tramos que cubre.
+    comprasAereas.forEach((c, ci) => {
+      const costo = Math.max(0, Number(c.costo) || 0);
+      if (costo <= 0 || !c.proveedor?.trim()) return;
+      const rutas = input.vuelos
+        .filter((v) => v.compraIdx === ci)
+        .map((v) => `${v.origenCodigo || "?"}-${v.destinoCodigo || "?"}`)
+        .join(" / ");
+      const ref = c.referencia?.trim() ? ` · ${c.referencia.trim()}` : "";
+      cxpRows.push({
+        proveedor: c.proveedor.trim(), tipo: "aereo",
+        servicio: `Aéreo ${c.proveedor.trim()}${rutas ? ` (${rutas})` : ""}${ref}`.trim(),
+        valor: costo,
+      });
+    });
     for (const s of servicios) {
       const costo = Math.max(0, Number(s.costo) || 0);
       if (costo > 0 && s.proveedor?.trim()) cxpRows.push({ proveedor: s.proveedor.trim(), tipo: "servicio", servicio: s.descripcion.trim() || s.tipo, valor: costo });

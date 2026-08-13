@@ -13,6 +13,7 @@ import {
   type PasajeroInput,
   type HotelInput,
   type VueloInput,
+  type CompraAereaInput,
   type ItemInput,
   type ServicioInput,
   type TipoServicio,
@@ -129,6 +130,10 @@ export function NuevoContratoForm({
   ]);
   const [hoteles, setHoteles] = useState<HotelInput[]>([]);
   const [vuelos, setVuelos] = useState<VueloInput[]>([]);
+  // Compras aéreas: 1 pago real a un proveedor puede cubrir VARIOS tramos (ej.
+  // ida con Copa + regreso con Wingo compradas juntas). El costo cuelga de la
+  // compra, no del tramo; un tramo sin compra (escala informativa) no cuesta.
+  const [comprasAereas, setComprasAereas] = useState<CompraAereaInput[]>([]);
   const [servicios, setServicios] = useState<ServicioInput[]>([]);
   const [items, setItems] = useState<ItemInput[]>([
     { descripcion: "Plan turístico", adultos: 1, ninos: 0, tarifaAdulto: 0, tarifaNino: 0 },
@@ -147,7 +152,7 @@ export function NuevoContratoForm({
   const MARKUP_MIN = 0.20;
   const totalCostos = esNegociado ? 0
     : hoteles.reduce((s, h) => s + Math.max(0, Number(h.costo) || 0), 0)
-    + vuelos.reduce((s, v) => s + Math.max(0, Number(v.costo) || 0), 0)
+    + comprasAereas.reduce((s, c) => s + Math.max(0, Number(c.costo) || 0), 0)
     + servicios.reduce((s, x) => s + Math.max(0, Number(x.costo) || 0), 0);
   const pvpMinimo = totalCostos > 0 ? totalCostos / (1 - MARKUP_MIN) : 0;
 
@@ -191,6 +196,20 @@ export function NuevoContratoForm({
       if (patch.origenCodigo !== undefined) next.origenCiudad = ciudadIata(patch.origenCodigo) ?? next.origenCiudad;
       if (patch.destinoCodigo !== undefined) next.destinoCiudad = ciudadIata(patch.destinoCodigo) ?? next.destinoCiudad;
       return next;
+    }));
+  }
+
+  function setCompra(i: number, patch: Partial<CompraAereaInput>) {
+    setComprasAereas((arr) => arr.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  }
+  // Al quitar una compra, los tramos que apuntaban a ella quedan sin costo y los
+  // que apuntaban a compras posteriores se re-indexan (los índices se corren).
+  function quitarCompra(i: number) {
+    setComprasAereas((arr) => arr.filter((_, j) => j !== i));
+    setVuelos((arr) => arr.map((v) => {
+      if (v.compraIdx == null) return v;
+      if (v.compraIdx === i) return { ...v, compraIdx: null };
+      return v.compraIdx > i ? { ...v, compraIdx: v.compraIdx - 1 } : v;
     }));
   }
 
@@ -250,6 +269,7 @@ export function NuevoContratoForm({
           pasajeros: pasajerosOk,
           hoteles: hotelesOk,
           vuelos: vuelosOk,
+          comprasAereas: esNegociado ? [] : comprasAereas,
           servicios: serviciosOk,
           items: itemsOk,
           bncModo,
@@ -484,7 +504,7 @@ export function NuevoContratoForm({
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() =>
-              setVuelos((a) => [...a, { aerolinea: "", record: "", direccion: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "", costo: 0 }])
+              setVuelos((a) => [...a, { aerolinea: "", record: "", direccion: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "", compraIdx: comprasAereas.length ? 0 : null }])
             }
           >
             + Agregar tramo
@@ -538,7 +558,19 @@ export function NuevoContratoForm({
               </select>
             )}
             {!esNegociado && (
-              <Input type="number" min={0} placeholder={`Costo neto de este tramo (${monedaEfectiva})`} value={v.costo ?? ""} onChange={(e) => setVuelo(i, { costo: Number(e.target.value) || 0 })} title="Costo neto de este tramo (interno). Si el costo total ya se cargó en otro tramo del mismo viaje, deja $0 aquí para no duplicar la cuenta por pagar." />
+              <select
+                className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm md:col-span-2"
+                value={v.compraIdx ?? ""}
+                onChange={(e) => setVuelo(i, { compraIdx: e.target.value === "" ? null : Number(e.target.value) })}
+                title="A qué compra pertenece este tramo. El costo se carga una sola vez en la compra, aunque cubra varios tramos."
+              >
+                <option value="">Sin costo propio (escala / informativo)</option>
+                {comprasAereas.map((c, ci) => (
+                  <option key={ci} value={ci}>
+                    Compra {ci + 1}{c.proveedor.trim() ? ` · ${c.proveedor.trim()}` : ""}{c.costo > 0 ? ` · ${fmt(c.costo)}` : ""}
+                  </option>
+                ))}
+              </select>
             )}
             <div className="flex items-center gap-3 md:col-span-4">
               <button
@@ -547,7 +579,7 @@ export function NuevoContratoForm({
                 onClick={() =>
                   setVuelos((a) => [
                     ...a,
-                    { aerolinea: v.aerolinea, record: v.record, direccion: "regreso", origenCodigo: v.destinoCodigo, origenCiudad: v.destinoCiudad, destinoCodigo: v.origenCodigo, destinoCiudad: v.origenCiudad, numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "", costo: 0 },
+                    { aerolinea: v.aerolinea, record: v.record, direccion: "regreso", origenCodigo: v.destinoCodigo, origenCiudad: v.destinoCiudad, destinoCodigo: v.origenCodigo, destinoCiudad: v.origenCiudad, numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "", compraIdx: v.compraIdx ?? null },
                   ])
                 }
               >
@@ -560,6 +592,59 @@ export function NuevoContratoForm({
           </div>
         ))}
       </section>
+
+      {/* Compras aéreas: 1 pago real (a una aerolínea, consolidador u OTA) que
+          puede cubrir VARIOS tramos. El costo y la cuenta por pagar cuelgan de
+          la compra, no del tramo. */}
+      {!esNegociado && (
+        <section className={sectionCls}>
+          <div className="flex items-center justify-between">
+            <p className={titleCls} style={{ color: "var(--brand-primary)" }}>
+              Compras aéreas (costo)
+            </p>
+            <button
+              type="button"
+              className="text-xs font-medium text-[#1D7C9A] hover:underline"
+              onClick={() => setComprasAereas((a) => [...a, { proveedor: "", referencia: "", costo: 0 }])}
+            >
+              + Agregar compra
+            </button>
+          </div>
+          <p className="text-xs text-gray-400">
+            Una compra = un pago a un proveedor. Puede cubrir varios tramos (ej. ida con una aerolínea y regreso con otra,
+            compradas juntas): registra el costo UNA sola vez aquí y en cada tramo elige a qué compra pertenece.
+            Genera una cuenta por pagar por compra.
+          </p>
+          {comprasAereas.length === 0 && <p className="text-xs text-gray-400">Sin compras aéreas cargadas.</p>}
+          {comprasAereas.map((c, i) => {
+            const tramosDeCompra = vuelos.filter((v) => v.compraIdx === i);
+            return (
+              <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4">
+                <div className="flex items-center text-xs font-semibold text-gray-500">Compra {i + 1}</div>
+                <Input placeholder="Proveedor (aerolínea / consolidador)" list="proveedores-catalogo" value={c.proveedor} onChange={(e) => setCompra(i, { proveedor: e.target.value })} title="Quién cobró esta compra: puede ser un consolidador, no la aerolínea que vuela." />
+                <Input placeholder="Referencia (factura / orden)" value={c.referencia} onChange={(e) => setCompra(i, { referencia: e.target.value })} />
+                <Input type="number" min={0} placeholder={`Costo neto total (${monedaEfectiva})`} value={c.costo || ""} onChange={(e) => setCompra(i, { costo: Number(e.target.value) || 0 })} title="Costo neto TOTAL de la compra (todos sus tramos juntos)." />
+                <div className="text-xs text-gray-400 md:col-span-3">
+                  {tramosDeCompra.length === 0
+                    ? "Ningún tramo asignado todavía — asígnalos desde la sección Vuelos."
+                    : `Cubre ${tramosDeCompra.length} tramo(s): ${tramosDeCompra.map((v) => `${v.origenCodigo || "?"}-${v.destinoCodigo || "?"}`).join(" / ")}`}
+                </div>
+                <button type="button" className="text-xs text-gray-400 hover:text-red-500 md:text-right" onClick={() => quitarCompra(i)}>
+                  Quitar
+                </button>
+              </div>
+            );
+          })}
+          {comprasAereas.length > 0 && (
+            <div className="flex items-center justify-between border-t border-gray-100 pt-3 text-sm">
+              <span className="text-gray-500">Total compras aéreas</span>
+              <span className="font-semibold" style={{ color: "var(--brand-primary)" }}>
+                {fmt(comprasAereas.reduce((s, c) => s + Math.max(0, Number(c.costo) || 0), 0))}
+              </span>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Hoteles */}
       <section className={sectionCls}>
