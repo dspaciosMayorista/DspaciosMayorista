@@ -93,13 +93,28 @@ export default async function PortalB2BPage() {
   //     esconderle de golpe su histórico a un aliado ya operando.
   const sel = "numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor";
   const aliadoId = perfil?.aliado_id ?? null;
-  const [{ data: porId }, { data: porAliado }, { data: porNombre }] = await Promise.all([
+
+  // ⚠️ El respaldo por nombre NO usa `.or()` con el nombre interpolado. Esa
+  // consulta corre con service-role (se salta toda la RLS) y `.or()` recibe
+  // sintaxis de PostgREST en crudo: un nombre con una coma o un paréntesis
+  // —"Viajes Sol, S.A.S."— rompía el filtro, y uno armado a propósito podía
+  // reescribirlo para traer contratos ajenos. Con `.eq()` el valor viaja como
+  // parámetro y no se interpreta como sintaxis.
+  //
+  // Además el respaldo por nombre SOLO se usa si el aliado todavía no está
+  // enlazado al catálogo (migración 143). Con `aliado_id` la pertenencia se
+  // resuelve por ID, que es exacto; seguir cruzando por texto ahí solo
+  // agregaría contratos de un homónimo.
+  const consultas = [
     admin.from("ventas").select(sel).eq("b2b_usuario_id", user.id),
-    aliadoId ? admin.from("ventas").select(sel).eq("aliado_id", aliadoId) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    nombre ? admin.from("ventas").select(sel).or(`agencia_nombre.eq.${nombre},freelance_nombre.eq.${nombre}`) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-  ]);
+    aliadoId ? admin.from("ventas").select(sel).eq("aliado_id", aliadoId) : null,
+    !aliadoId && nombre ? admin.from("ventas").select(sel).eq("agencia_nombre", nombre) : null,
+    !aliadoId && nombre ? admin.from("ventas").select(sel).eq("freelance_nombre", nombre) : null,
+  ].filter((q): q is NonNullable<typeof q> => q !== null);
+
+  const resultados = await Promise.all(consultas);
   const mapa = new Map<string, Record<string, unknown>>();
-  for (const v of [...(porId ?? []), ...(porAliado ?? []), ...(porNombre ?? [])]) mapa.set(v.numero_contrato as string, v);
+  for (const r of resultados) for (const v of r.data ?? []) mapa.set(v.numero_contrato as string, v);
   const contratos = [...mapa.values()].sort((a, b) => String(b.fecha_salida ?? "").localeCompare(String(a.fecha_salida ?? "")));
 
   // Abonos para el saldo

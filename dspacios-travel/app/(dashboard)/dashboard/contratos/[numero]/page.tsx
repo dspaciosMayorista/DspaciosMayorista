@@ -206,31 +206,38 @@ export default async function ContratoDetallePage({
         </div>
       </div>
 
-      {/* Editar datos del contrato */}
-      <EditarVentaForm
-        numero={venta.numero_contrato}
-        inicial={{
-          cliente: venta.cliente ?? "",
-          clienteDocumento: venta.cliente_documento ?? "",
-          clienteTelefono: venta.cliente_telefono ?? "",
-          clienteEmail: venta.cliente_email ?? "",
-          clienteDireccion: venta.cliente_direccion ?? "",
-          destino: venta.destino ?? "",
-          fechaSalida: venta.fecha_salida ?? "",
-          fechaRegreso: venta.fecha_regreso ?? "",
-          plazo: venta.plazo ?? "",
-          tipoAsesor: venta.tipo_asesor ?? "interno",
-          agenciaNombre: venta.agencia_nombre ?? "",
-          agenciaAsesor: venta.agencia_asesor ?? "",
-          freelanceNombre: venta.freelance_nombre ?? "",
-          asesorNombre: venta.asesor_firma_nombre ?? "",
-          planNombre: venta.plan_nombre ?? "",
-          observaciones: venta.observaciones ?? "",
-          precioVenta: String(venta.precio_venta ?? 0),
-          pax: String(venta.pax ?? 1),
-        }}
-        destinos={destinos ?? []}
-      />
+      {/* Editar datos del contrato. Solo para quien de verdad puede: la policy
+          de UPDATE sobre `ventas` excluye al rol `venta`, así que mostrarle el
+          formulario solo servía para que guardar le fallara con un error de
+          RLS. Además `cliente_direccion` y `observaciones` salieron de la vista
+          `ventas_basica` en la migración 147 (datos sensibles), así que ni
+          siquiera podría precargarlos. */}
+      {fin && (
+        <EditarVentaForm
+          numero={venta.numero_contrato}
+          inicial={{
+            cliente: venta.cliente ?? "",
+            clienteDocumento: venta.cliente_documento ?? "",
+            clienteTelefono: venta.cliente_telefono ?? "",
+            clienteEmail: venta.cliente_email ?? "",
+            clienteDireccion: fin.cliente_direccion ?? "",
+            destino: venta.destino ?? "",
+            fechaSalida: venta.fecha_salida ?? "",
+            fechaRegreso: venta.fecha_regreso ?? "",
+            plazo: venta.plazo ?? "",
+            tipoAsesor: venta.tipo_asesor ?? "interno",
+            agenciaNombre: venta.agencia_nombre ?? "",
+            agenciaAsesor: venta.agencia_asesor ?? "",
+            freelanceNombre: venta.freelance_nombre ?? "",
+            asesorNombre: venta.asesor_firma_nombre ?? "",
+            planNombre: venta.plan_nombre ?? "",
+            observaciones: fin.observaciones ?? "",
+            precioVenta: String(venta.precio_venta ?? 0),
+            pax: String(venta.pax ?? 1),
+          }}
+          destinos={destinos ?? []}
+        />
+      )}
 
       {/* Servicios adicionales (solo contrato pendiente) */}
       {venta.estado === "pendiente" && (
@@ -245,7 +252,15 @@ export default async function ContratoDetallePage({
       {/* Compartir */}
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
         <p className="mb-2 text-sm font-semibold text-gray-700">Compartir con el cliente</p>
-        <ShareButtons token={venta.share_token} numero={venta.numero_contrato} cliente={venta.cliente} />
+        {venta.share_token ? (
+          <ShareButtons token={venta.share_token} numero={venta.numero_contrato} cliente={venta.cliente} />
+        ) : (
+          // Migración 147: el enlace público solo se entrega para el contrato
+          // PROPIO. Con el token de un contrato ajeno se podía abrir
+          // /c/[token], que es pública y muestra los pasajeros con su
+          // documento y fecha de nacimiento.
+          <p className="text-xs text-gray-400">El enlace para el cliente solo lo genera el asesor del contrato.</p>
+        )}
       </div>
 
       {/* Flujo de la venta */}

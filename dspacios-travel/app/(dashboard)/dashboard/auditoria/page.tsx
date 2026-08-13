@@ -80,7 +80,12 @@ export default async function AuditoriaPage({
   if (fTabla) query = query.eq("tabla", fTabla);
   if (fAccion) query = query.eq("accion", fAccion);
   if (fReg) query = query.ilike("registro_id", `%${fReg}%`);
-  if (fActor) query = query.or(`actor_email.ilike.%${fActor}%,actor_nombre.ilike.%${fActor}%`);
+  // `.or()` recibe sintaxis de PostgREST en crudo, y `fActor` viene de la URL:
+  // una coma o un paréntesis en el término reescribiría el filtro. Se quitan
+  // los metacaracteres antes de interpolar — buscar un nombre o un correo no
+  // los necesita, así que no se pierde funcionalidad.
+  const actorSeguro = fActor.replace(/[,()"\\*]/g, "");
+  if (actorSeguro) query = query.or(`actor_email.ilike.%${actorSeguro}%,actor_nombre.ilike.%${actorSeguro}%`);
   if (fDesde) query = query.gte("creado_en", `${fDesde}T00:00:00`);
   if (fHasta) query = query.lte("creado_en", `${fHasta}T23:59:59`);
 

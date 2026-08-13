@@ -2603,7 +2603,11 @@ export type Database = {
           "costo_hotel" | "costo_aereo" | "costo_receptivo" | "costo_asistencia" | "otros_costos"
           | "impuesto" | "comision_b2b" | "comision_estado" | "modo_compra"
           | "recobro_total" | "recobro_empresa" | "recobro_aliado" | "trm_contrato" | "b2b_usuario_id"
-        >;
+          // Migración 147: fuera por sensibles. `share_token` sigue en la vista
+          // pero llega en null si el contrato no es del asesor, de ahí el
+          // `| null` de abajo.
+          | "cliente_direccion" | "observaciones" | "asesor_firma_cc" | "share_token"
+        > & { share_token: string | null };
         Relationships: [];
       };
       cupos_por_bloqueo: {
