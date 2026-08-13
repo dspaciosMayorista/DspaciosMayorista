@@ -435,11 +435,9 @@ function MatrizEditor({
         Cada categoría define qué hotel se usa en cada ciudad y su precio <b>neto</b> por acomodación (en {moneda}).
       </p>
       <p className="mb-3 text-xs text-gray-400">
-        Precio de venta (PVP) = (neto
+        Precio de venta (PVP) = neto + markup {Math.round((pvpOpt.pctMk ?? 0) * 100)}%
         {pvpOpt.asistenciaDia ? ` + asistencia ${formatMoneda(pvpOpt.asistenciaDia, moneda)}/día × ${pvpOpt.dias ?? 0} días` : ""}
-        ) + markup {Math.round((pvpOpt.pctMk ?? 0) * 100)}%
-        {pvpOpt.pctFee ? ` + fee bancario ${Math.round((pvpOpt.pctFee ?? 0) * 100)}%` : ""}. La asistencia es un costo más: entra
-        antes del markup, así que también deja margen. Ajusta esos valores en la pestaña General.
+        {pvpOpt.pctFee ? ` + fee bancario ${Math.round((pvpOpt.pctFee ?? 0) * 100)}%` : ""}. Ajusta esos valores en la pestaña General.
       </p>
       <div className="space-y-6">
         {cats.map((c, i) => (
