@@ -65,20 +65,23 @@ create index if not exists idx_aliados_documento on public.aliados(nit);
 
 -- ── Backfill: llenar `ventas.aliado_id` desde el nombre ya guardado ───────
 -- Se cruza normalizado (minúsculas + sin espacios sobrantes) y SOLO cuando hay
--- exactamente UNA ficha del catálogo que coincida dentro del mismo tenant. Si
--- hay varias, se deja en null a propósito: es preferible que el respaldo por
--- nombre siga operando a enlazar el contrato al aliado equivocado.
+-- exactamente UNA ficha del catálogo con ese nombre. Si hay varias, se deja en
+-- null a propósito: es preferible que el respaldo por nombre siga operando a
+-- enlazar el contrato al aliado equivocado.
+--
+-- NOTA: el catálogo `aliados` NO tiene columna `tenant` — es compartido entre
+-- mayorista y minorista (a diferencia de `ventas`, `abonos`, `usuarios`, etc.,
+-- que sí la tienen desde la migración 107). Por eso el cruce no filtra por
+-- agencia: un aliado es una sola ficha para todo el sistema.
 update public.ventas v
    set aliado_id = a.id
   from public.aliados a
  where v.aliado_id is null
-   and coalesce(a.tenant, 'mayorista') = coalesce(v.tenant, 'mayorista')
-   and lower(btrim(a.nombre)) = lower(btrim(coalesce(v.freelance_nombre, v.agencia_nombre)))
    and coalesce(v.freelance_nombre, v.agencia_nombre) is not null
+   and lower(btrim(a.nombre)) = lower(btrim(coalesce(v.freelance_nombre, v.agencia_nombre)))
    and (
      select count(*) from public.aliados a2
-      where coalesce(a2.tenant, 'mayorista') = coalesce(v.tenant, 'mayorista')
-        and lower(btrim(a2.nombre)) = lower(btrim(coalesce(v.freelance_nombre, v.agencia_nombre)))
+      where lower(btrim(a2.nombre)) = lower(btrim(coalesce(v.freelance_nombre, v.agencia_nombre)))
    ) = 1;
 
 notify pgrst, 'reload schema';
