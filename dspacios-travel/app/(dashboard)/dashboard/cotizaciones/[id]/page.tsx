@@ -10,6 +10,7 @@ import { ConvertirManualBtn } from "./ConvertirManualBtn";
 import { TitularEditor } from "./TitularEditor";
 import { IncluyeEditor } from "./IncluyeEditor";
 import { RecobroNinosEditor } from "./RecobroNinosEditor";
+import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -44,9 +45,10 @@ export default async function CotizacionDetallePage({
   const esManual = c.tipo === "manual";
   // Cotización combinada generada desde el carrito del tarifario público
   // (Fase 2 — checkout): puede traer varios hoteles/tours en un solo
-  // documento. La conversión directa a contrato (CotizacionAcciones) asume
-  // un payload de un solo hotel (ReservaInput) y aún no soporta esto — ver
-  // Fase 3 en el handoff. Por ahora solo se puede ver/descargar o descartar.
+  // documento. La conversión (Fase 3, ConvertirCarritoBtn) usa su propio
+  // motor (convertirCotizacionCarrito) porque puede generar más de un
+  // contrato (uno por destino) — no reutiliza CotizacionAcciones, que asume
+  // un solo hotel.
   const esCarrito = c.tipo === "carrito";
   const moneda = c.moneda ?? "COP";
   const { data: serviciosManual } = esManual
@@ -75,6 +77,25 @@ export default async function CotizacionDetallePage({
     tipoDoc: payload.cliente?.tipoDoc ?? "CC",
     numeroDoc: payload.cliente?.numeroDoc ?? "",
   };
+
+  // Datos propios del carrito: pax máximo (para dimensionar la captura de
+  // pasajeros) y destinos distintos (para ofrecer "1 contrato por destino").
+  const payloadCarrito = (c.payload ?? {}) as {
+    items?: { destino: string | null; pax: number }[];
+    tours?: { destino: string | null; pax: number }[];
+    cliente?: { nombres?: string; apellidos?: string; numeroDoc?: string };
+  };
+  const itemsCarrito = payloadCarrito.items ?? [];
+  const toursCarrito = payloadCarrito.tours ?? [];
+  const destinosCarrito = [...new Set(itemsCarrito.map((i) => i.destino).filter((d): d is string => !!d))];
+  const paxCarrito = Math.max(1, ...itemsCarrito.map((i) => i.pax || 0), ...toursCarrito.map((t) => t.pax || 0));
+  const clienteCarritoPre = {
+    nombres: payloadCarrito.cliente?.nombres ?? "",
+    apellidos: payloadCarrito.cliente?.apellidos ?? "",
+    numeroDoc: payloadCarrito.cliente?.numeroDoc ?? "",
+  };
+  const detalleCarrito = (c.detalle ?? {}) as { contratos?: string[] };
+  const contratosCarrito = detalleCarrito.contratos ?? (c.numero_contrato ? [c.numero_contrato] : []);
 
   // Desglose interno: servicios + niños + recobro (oculto al cliente) = total.
   const detalleM = (c.detalle ?? {}) as { recobro?: { total?: number; empresa?: number; aliado?: number }; venta?: { ninos?: number } };
@@ -230,21 +251,40 @@ export default async function CotizacionDetallePage({
           )
         ) : esCarrito ? (
           c.estado === "abierta" ? (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-gray-500">
-                Cotización combinada del carrito (tarifario público). La conversión directa a contrato para
-                carritos con varios ítems llega en una próxima fase — gestiónala manual si el cliente confirma.
-              </p>
-              <DescartarBtn id={c.id} />
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-gray-500">Cotización combinada del carrito (tarifario público).</p>
+                <DescartarBtn id={c.id} />
+              </div>
+              <ConvertirCarritoBtn
+                id={c.id}
+                pax={paxCarrito}
+                destinos={destinosCarrito}
+                cliente={clienteCarritoPre}
+                esSuperadmin={esSuperadmin}
+                asesores={asesores ?? []}
+                miNombre={perfil?.nombre ?? ""}
+                miRolVenta={perfil?.rol === "venta"}
+              />
             </div>
-          ) : c.estado === "convertida" && c.numero_contrato ? (
+          ) : c.estado === "convertida" && contratosCarrito.length ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-gray-600">
-                Convertida en contrato <span className="font-mono font-medium text-gray-800">{c.numero_contrato}</span>.
+                Convertida en {contratosCarrito.length > 1 ? `${contratosCarrito.length} contratos` : "contrato"}:{" "}
+                {contratosCarrito.map((n, i) => (
+                  <span key={n}>
+                    <span className="font-mono font-medium text-gray-800">{n}</span>
+                    {i < contratosCarrito.length - 1 ? ", " : ""}
+                  </span>
+                ))}
               </p>
-              <Link href={`/dashboard/contratos/${encodeURIComponent(c.numero_contrato)}`}>
-                <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver contrato →</Button>
-              </Link>
+              <div className="flex flex-wrap gap-2">
+                {contratosCarrito.map((n) => (
+                  <Link key={n} href={`/dashboard/contratos/${encodeURIComponent(n)}`}>
+                    <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver {n} →</Button>
+                  </Link>
+                ))}
+              </div>
             </div>
           ) : (
             <p className="text-sm text-gray-500">Cotización descartada.</p>
