@@ -252,9 +252,9 @@ export function TarifarioPublic({
       <div className="-mt-10 mb-6 relative z-10 px-0">
         <div className="rounded-2xl border border-gray-100 bg-white p-3 shadow-[0_6px_32px_rgba(0,0,0,0.12)]">
           <div className="flex flex-wrap items-center gap-2">
-            {/* Toggle de vista: tabla (estático) · Booking (dinámico) · Programas (circuitos) */}
+            {/* Toggle de vista: tabla (estático, solo usuarios registrados) · Booking (dinámico) · Programas (circuitos) */}
             <div className="inline-flex rounded-full border border-gray-200 bg-gray-50 p-1">
-              {([["tabla", "Vista tabla"], ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
+              {([...(puedeReservar ? [["tabla", "Vista tabla"] as const] : []), ["booking", "Vista Booking"], ...(programas.length ? [["programas", "Programas"] as const] : [])] as const).map(([v, label]) => (
                 <button
                   key={v}
                   type="button"
