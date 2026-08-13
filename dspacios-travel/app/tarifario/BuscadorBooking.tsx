@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type CartItem } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
 import { buscarHoteles } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type BusquedaResultado } from "@/lib/reservar/cotizar";
 
@@ -174,7 +174,8 @@ function Resultado({ r, foto, info, infantes = 0 }: { r: BusquedaResultado; foto
   const regEff = regimenes.includes(reg) ? reg : (regimenes[0] ?? reg);
   const combo = r.combos.find((c) => c.categoria === cat && c.regimen === regEff) ?? r.combos[0];
 
-  const item: Omit<CartItem, "id"> = {
+  const item: Omit<HotelCartItem, "id"> = {
+    tipo: "hotel",
     modulo: "porcion_terrestre", paqueteId: r.paqueteId, hotelId: r.hotelId, bloqueoId: null,
     hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: foto,
     categoria: combo.categoria, regimen: combo.regimen, fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso, noches: r.noches,
@@ -183,7 +184,7 @@ function Resultado({ r, foto, info, infantes = 0 }: { r: BusquedaResultado; foto
   // El estado del botón se deriva del carrito real: si se quita del carrito,
   // vuelve a estar disponible para agregar.
   const enCarrito = items.find((i) =>
-    i.hotelId === item.hotelId && i.paqueteId === item.paqueteId &&
+    i.tipo === "hotel" && i.hotelId === item.hotelId && i.paqueteId === item.paqueteId &&
     i.fechaIda === item.fechaIda && i.fechaRegreso === item.fechaRegreso &&
     i.categoria === item.categoria && i.regimen === item.regimen);
   const estrellas = info?.estrellas && info.estrellas > 0 ? "★".repeat(info.estrellas) : "";

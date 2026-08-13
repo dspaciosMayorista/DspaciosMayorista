@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { crearCotizacion } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type ReservaInput } from "@/lib/reservar/computo";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { formatCOP } from "@/lib/utils";
+import { formatCOP, formatMoneda } from "@/lib/utils";
 import { comisionDefault, categoriaAliado } from "@/lib/b2b";
 
 export type SolicitudItem = {
@@ -27,6 +27,13 @@ export type SolicitudItem = {
   infantes: number;
   pax: number;
   precio: number;
+};
+
+// Tour/servicio agregado al carrito — informativo por ahora (todavía no genera
+// su propia cotización, ver docs/tecnico: "Fase 2 — cotización combinada").
+export type SolicitudTour = {
+  nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null;
+  pax: number; precio: number; moneda: string;
 };
 
 export type SolicitudCliente = { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
@@ -113,6 +120,7 @@ function resumenHab(it: SolicitudItem): string {
 function construirMensaje(
   cliente: SolicitudCliente,
   cotis: { codigo: string; hotel: string; precio: number; item: SolicitudItem; url: string }[],
+  tours: SolicitudTour[],
   extra: string | null,
   b2b?: { modo: "comisionable" | "neta"; facturacion: Facturacion; pctComision: number },
 ): string {
@@ -143,6 +151,19 @@ function construirMensaje(
     if (c.url) L.push(`   Documento: ${c.url}`);
     L.push("");
   });
+  if (tours.length) {
+    L.push("Servicios / tours adicionales:");
+    let totalToursCop = 0;
+    for (const t of tours) {
+      L.push(`- ${t.nombre}${t.destino ? ` — ${t.destino}` : ""}`);
+      if (t.fechaIda) L.push(`   ${t.fechaIda} → ${t.fechaRegreso ?? ""}`);
+      L.push(`   ${t.pax} pax · Valor estimado: ${formatMoneda(t.precio, t.moneda)}`);
+      // Solo se suma al total (PVP) si viene en la misma moneda que los hoteles (COP).
+      if (t.moneda === "COP") totalToursCop += t.precio;
+    }
+    L.push("");
+    total += totalToursCop;
+  }
   L.push(`Total (PVP): ${formatCOP(total)}`);
   if (b2b?.modo === "neta") {
     const comision = Math.round(total * (b2b.pctComision || 0));
@@ -160,12 +181,14 @@ function construirMensaje(
 // enlaces wa.me + mailto hacia los destinatarios configurados. Público (sin login).
 export async function crearSolicitudReserva(input: {
   items: SolicitudItem[];
+  tours?: SolicitudTour[];
   cliente: SolicitudCliente;
   modo?: "comisionable" | "neta";
   facturacion?: Facturacion;
   pctComision?: number;
 }): Promise<SolicitudResult> {
-  if (!input.items.length) return { ok: false, error: "El carrito está vacío." };
+  const tours = input.tours ?? [];
+  if (!input.items.length && !tours.length) return { ok: false, error: "El carrito está vacío." };
   if (!`${input.cliente.nombres}${input.cliente.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
   if (!input.cliente.numeroDoc.trim()) return { ok: false, error: "El documento es obligatorio." };
   if (!input.cliente.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
@@ -242,7 +265,7 @@ export async function crearSolicitudReserva(input: {
   const b2b = input.modo && input.facturacion
     ? { modo: input.modo, facturacion: input.facturacion, pctComision: input.pctComision ?? 0 }
     : undefined;
-  const mensaje = construirMensaje(input.cliente, cotis, mensajeExtra, b2b);
+  const mensaje = construirMensaje(input.cliente, cotis, tours, mensajeExtra, b2b);
   const wa = (whatsapp ?? "").replace(/\D/g, "");
   const waUrl = wa ? `https://wa.me/${wa}?text=${encodeURIComponent(mensaje)}` : null;
   const correos = (emails ?? "").split(",").map((e) => e.trim()).filter(Boolean).join(",");

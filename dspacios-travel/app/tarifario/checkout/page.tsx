@@ -4,10 +4,10 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type CartItem } from "@/lib/cart/CartContext";
+import { useCart, type CartItem, type HotelCartItem } from "@/lib/cart/CartContext";
 import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B } from "./actions";
 
-function resumenHab(it: CartItem): string {
+function resumenHab(it: HotelCartItem): string {
   const partes = Object.entries(it.habitaciones).filter(([, n]) => n > 0).map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
   if (it.ninos > 0) partes.push(`${it.ninos} Niño 1`);
   if (it.ninos2 > 0) partes.push(`${it.ninos2} Niño 2`);
@@ -16,6 +16,8 @@ function resumenHab(it: CartItem): string {
 
 export default function CheckoutPage() {
   const { items, total, remove, clear } = useCart();
+  const hotelItems = items.filter((i): i is HotelCartItem => i.tipo === "hotel");
+  const tourItems = items.filter((i): i is Extract<CartItem, { tipo: "tour" }> => i.tipo === "tour");
   const [c, setC] = useState({ nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" });
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -39,11 +41,12 @@ export default function CheckoutPage() {
 
   // Resuelve la portada actual por hotel (ítems del carrito sin fotoUrl).
   useEffect(() => {
-    const ids = [...new Set(items.map((i) => i.hotelId))];
+    const ids = [...new Set(hotelItems.map((i) => i.hotelId))];
     if (!ids.length) return;
     fotosPortada(ids).then(setFotos).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
-  const fotoDe = (it: CartItem) => fotos[it.hotelId] || it.fotoUrl;
+  const fotoDe = (it: HotelCartItem) => fotos[it.hotelId] || it.fotoUrl;
 
   const inp = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm";
   const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -55,11 +58,17 @@ export default function CheckoutPage() {
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
     start(async () => {
       const r = await crearSolicitudReserva({
-        items: items.map((it) => ({
+        items: hotelItems.map((it) => ({
           modulo: it.modulo, paqueteId: it.paqueteId, hotelId: it.hotelId, bloqueoId: it.bloqueoId,
           hotelNombre: it.hotelNombre, destino: it.destino, categoria: it.categoria, regimen: it.regimen,
           fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, noches: it.noches,
           habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes, pax: it.pax, precio: it.precio,
+        })),
+        // Los tours aún no generan su propia cotización (próxima fase) — se
+        // incluyen tal cual en el mensaje/total de la solicitud.
+        tours: tourItems.map((it) => ({
+          nombre: it.nombre, destino: it.destino, fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso,
+          pax: it.pax, precio: it.precio, moneda: it.moneda ?? "COP",
         })),
         cliente: c,
         ...(esB2B ? { modo, facturacion: fact, pctComision: pct } : {}),
@@ -95,17 +104,32 @@ export default function CheckoutPage() {
                 {items.map((it) => (
                   <li key={it.id} className="flex gap-3 border-b border-gray-50 pb-3 last:border-0 last:pb-0">
                     <div className="relative flex h-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gray-100 text-lg text-gray-300" style={{ width: 72 }}>
-                      {fotoDe(it)
+                      {(it.tipo === "hotel" ? fotoDe(it) : it.fotoUrl)
                         // eslint-disable-next-line @next/next/no-img-element
-                        ? <img src={fotoDe(it) as string} alt={it.hotelNombre} className="absolute inset-0 h-full w-full object-cover" />
-                        : <span aria-hidden>🏨</span>}
+                        ? <img src={(it.tipo === "hotel" ? fotoDe(it) : it.fotoUrl) as string} alt={it.tipo === "hotel" ? it.hotelNombre : it.nombre} className="absolute inset-0 h-full w-full object-cover" />
+                        : <span aria-hidden>{it.tipo === "hotel" ? "🏨" : "🗺️"}</span>}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="font-medium text-gray-800">{it.hotelNombre}</div>
-                      <div className="text-xs text-gray-500">
-                        {it.destino ?? ""}{it.fechaIda ? ` · ${it.fechaIda} → ${it.fechaRegreso ?? ""}` : ""}
-                      </div>
-                      <div className="text-xs text-gray-400">{it.categoria} / {it.regimen} · {resumenHab(it)}</div>
+                      {it.tipo === "hotel" ? (
+                        <>
+                          <div className="font-medium text-gray-800">{it.hotelNombre}</div>
+                          <div className="text-xs text-gray-500">
+                            {it.destino ?? ""}{it.fechaIda ? ` · ${it.fechaIda} → ${it.fechaRegreso ?? ""}` : ""}
+                          </div>
+                          <div className="text-xs text-gray-400">{it.categoria} / {it.regimen} · {resumenHab(it)}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="font-medium text-gray-800">
+                            <span className="mr-1 rounded bg-[rgba(38,187,217,0.12)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--brand-accent)" }}>Tour</span>
+                            {it.nombre}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {it.destino ?? ""}{it.fechaIda ? ` · ${it.fechaIda} → ${it.fechaRegreso ?? ""}` : ""}
+                          </div>
+                          <div className="text-xs text-gray-400">{it.pax} pax</div>
+                        </>
+                      )}
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>{formatCOP(it.precio)}</div>
