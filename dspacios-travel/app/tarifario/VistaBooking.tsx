@@ -1,13 +1,12 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Star, Check } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
-import { useCart } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type ComboCotizado } from "@/lib/reservar/cotizar";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -179,6 +178,13 @@ export function VistaBooking({
   // Filtros de la grilla de hoteles: pet friendly / adults only.
   const [soloPetFriendly, setSoloPetFriendly] = useState(false);
   const [soloAdultsOnly, setSoloAdultsOnly] = useState(false);
+
+  const { add, openDrawer, addonsIntent, setAddonsIntent } = useCart();
+  // Señal del carrito ("+ Agregar servicios/tours" con un hotel ya elegido):
+  // salta directo a Receptivos con destino/fechas/pax ya puestos.
+  useEffect(() => {
+    if (addonsIntent) setSub("receptivos");
+  }, [addonsIntent]);
 
   // Salidas (bloqueos) con cupos > 0, con su origen/destino/fechas/cupos.
   const salidasBloqueo = useMemo(() => {
@@ -387,6 +393,9 @@ export function VistaBooking({
         <BuscadorReceptivos
           destinos={destinosServicios}
           fotosPorServicio={fotosPorServicio}
+          initial={addonsIntent}
+          onConsumedInitial={() => setAddonsIntent(null)}
+          onAgregar={(item) => { add(item); openDrawer(); }}
           onVerDetalle={(r) => setReceptivoAbierto({
             nombre: r.nombre, destino: r.destino, descripcion: r.descripcion,
             foto: fotosPorServicio[r.servicioId] ?? null, precio: r.total, moneda: r.moneda,
@@ -588,10 +597,7 @@ function HotelModal({
   incluidosPorPaquete: Record<number, string[]>; addonsPorPaquete: Map<number, Receptivo[]>;
   onClose: () => void;
 }) {
-  const { add } = useCart();
-  const pathname = usePathname();
-  const router = useRouter();
-  const esDashboard = pathname?.startsWith("/dashboard") ?? false;
+  const { add, openDrawer } = useCart();
   const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
 
   const opciones = useMemo<Opcion[]>(() => {
@@ -779,14 +785,9 @@ function HotelModal({
                   ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
                   planesInfo={planesInfo}
                   cap={cap}
-                  btnLabel={esDashboard ? "Reservar →" : undefined}
                   onAgregar={(item) => {
-                    if (esDashboard) {
-                      const q = new URLSearchParams({ paquete: String(opcion.paqueteId), hotel: String(hotel.hotelId), modulo: opcion.modulo });
-                      router.push(`/dashboard/reservar/nuevo?${q}`);
-                    } else {
-                      add(item);
-                    }
+                    add(item);
+                    openDrawer();
                     onClose();
                   }}
                 />
@@ -798,15 +799,9 @@ function HotelModal({
                   puedeReservar={puedeReservar}
                   planesInfo={planesInfo}
                   cap={cap}
-                  btnLabel={esDashboard ? "Reservar →" : undefined}
                   onAgregar={(item) => {
-                    if (esDashboard) {
-                      const q = new URLSearchParams({ paquete: String(opcion.paqueteId), hotel: String(hotel.hotelId), modulo: opcion.modulo });
-                      if (opcion.bloqueoId != null) q.set("bloqueo", String(opcion.bloqueoId));
-                      router.push(`/dashboard/reservar/nuevo?${q}`);
-                    } else {
-                      add(item);
-                    }
+                    add(item);
+                    openDrawer();
                     onClose();
                   }}
                 />
@@ -824,12 +819,11 @@ function HotelModal({
 }
 
 function Selector({
-  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar, btnLabel,
+  opcion, hotel, puedeReservar, planesInfo, cap, onAgregar,
 }: {
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
-  btnLabel?: string;
+  onAgregar: (item: Omit<HotelCartItem, "id">) => void;
 }) {
   const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
   const [cat, setCat] = useState(cats[0] ?? "");
@@ -855,6 +849,7 @@ function Selector({
 
   const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) =>
     onAgregar({
+      tipo: "hotel",
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: opcion.bloqueoId,
       hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
       categoria: catEff, regimen: regEff,
@@ -884,7 +879,7 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} btnLabel={btnLabel} onAgregar={agregarItem} />
+      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
     </div>
   );
 }
@@ -1033,12 +1028,11 @@ function EditorPax({
 // Motor por fechas (porción/dinámico): el usuario elige las fechas reales y se
 // liquida la tarifa noche por noche (cotizarPorFechas, service-role, solo PVP).
 function SelectorPorFechas({
-  opcion, hotel, ventana, planesInfo, cap, onAgregar, btnLabel,
+  opcion, hotel, ventana, planesInfo, cap, onAgregar,
 }: {
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Parameters<ReturnType<typeof useCart>["add"]>[0]) => void;
-  btnLabel?: string;
+  onAgregar: (item: Omit<HotelCartItem, "id">) => void;
 }) {
   // No se permite check-in en el pasado: el mínimo es HOY (o el inicio del rango
   // del paquete si es posterior). Si el paquete empieza antes de hoy, arranca hoy.
@@ -1078,6 +1072,7 @@ function SelectorPorFechas({
 
   const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) =>
     onAgregar({
+      tipo: "hotel",
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: null,
       hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
       categoria: catEff, regimen: regEff,
@@ -1140,7 +1135,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} btnLabel={btnLabel} onAgregar={agregarItem} />
+          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} onAgregar={agregarItem} />
         </>
       )}
     </div>
