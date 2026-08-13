@@ -8,16 +8,19 @@ export type SolicitudB2BInput = {
   tipo: string; nombre: string; nit: string; contacto: string; email: string;
   telefono: string; ciudad: string; notas: string; aceptaNotificaciones: boolean;
   password: string; passwordConfirm: string;
+  tipoDocumento?: string;   // NIT / CC / CE / PAS — `nit` es el NÚMERO
 };
 
 export async function enviarSolicitudB2B(input: SolicitudB2BInput): Promise<Result> {
   if (!input.nombre.trim()) return { ok: false, error: "El nombre / razón social es obligatorio." };
   const email = input.email.trim().toLowerCase();
   if (!email) return { ok: false, error: "El correo es obligatorio." };
+  if (!input.nit.trim()) return { ok: false, error: "El número de documento (NIT o cédula) es obligatorio." };
   if (input.password.length < 6) return { ok: false, error: "La contraseña debe tener al menos 6 caracteres." };
   if (input.password !== input.passwordConfirm) return { ok: false, error: "Las contraseñas no coinciden." };
 
   const tipo = input.tipo === "freelance" ? "freelance" : "agencia";
+  const tipoDocumento = (input.tipoDocumento ?? "").trim() || (tipo === "agencia" ? "NIT" : "CC");
   const admin = createAdminClient();
 
   // Candado anti-suplantación: los contratos de un aliado B2B se vinculan (para
@@ -60,10 +63,29 @@ export async function enviarSolicitudB2B(input: SolicitudB2BInput): Promise<Resu
     pct_comision: tipo === "agencia" ? 0.12 : 0.11,
   }).eq("id", uid);
 
+  // Búsqueda de la ficha del catálogo por DOCUMENTO (migración 143). Es solo
+  // una SUGERENCIA para quien aprueba: NO se enlaza aquí. Si se enlazara solo,
+  // cualquiera que conozca o adivine un NIT vería los contratos y comisiones de
+  // ese aliado. El enlace real (`usuarios.aliado_id`) lo escribe la aprobación.
+  const docLimpio = input.nit.trim();
+  let aliadoSugeridoId: number | null = null;
+  if (docLimpio) {
+    const { data: candidatos } = await admin
+      .from("aliados")
+      .select("id")
+      .eq("nit", docLimpio)
+      .limit(2);
+    // Solo se sugiere si la coincidencia es inequívoca: con dos o más fichas
+    // con el mismo documento, que elija la persona que aprueba.
+    if (candidatos?.length === 1) aliadoSugeridoId = candidatos[0].id;
+  }
+
   const { error } = await admin.from("b2b_solicitudes").insert({
     tipo,
     nombre: input.nombre.trim(),
-    nit: input.nit.trim() || null,
+    nit: docLimpio || null,
+    tipo_documento: tipoDocumento,
+    aliado_sugerido_id: aliadoSugeridoId,
     contacto: input.contacto.trim() || null,
     email,
     telefono: input.telefono.trim() || null,

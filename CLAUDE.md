@@ -313,8 +313,11 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 142.**
-> Corridas por el dueño **hasta la 141**; ⚠️ **142 está PENDIENTE de correr**.
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 146.**
+> Corridas por el dueño **hasta la 146** (todas al día).
+> ⚠️ **La 143 y todo el frente de "vínculo B2B por documento" viven en la rama
+> `claude/peaceful-noether-713c7c` y NO están en `main` todavía** (decisión del
+> dueño: acumular y mergear cuando esté validado).
 > **135** `contrato_vuelo_tramo` (1 fila = 1 tramo de
 > vuelo) · **136** `proveedores_escritura_operaciones` (rol operaciones puede crear
 > proveedores) · **137** `alinear_roles_escritura` (reorganización general de roles/RLS,
@@ -362,6 +365,54 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   importados. **Deuda pendiente:** emparejar asesor por texto es débil (homónimos, y las
 >   tildes siguen sin cruzar); lo correcto sería `ventas.asesor_id uuid` con FK a
 >   `usuarios` + backfill.
+> - **Vínculo B2B por documento, no por nombre (migración 143, EN RAMA).** Un contrato
+>   "asistido" (el asesor interno lo monta a nombre de un freelance/agencia) guardaba el
+>   aliado como TEXTO (`ventas.agencia_nombre`/`freelance_nombre`), y el portal B2B
+>   resolvía la pertenencia comparando ese texto. Dos fallas: si el aliado se registraba
+>   después con el nombre escrito distinto no veía sus contratos, y emparejar por nombre
+>   permite suplantación (hoy contenida bloqueando nombres duplicados, que es un parche).
+>   Ahora `ventas.aliado_id` y `usuarios.aliado_id` apuntan al catálogo `aliados` (que ya
+>   tenía `nit` + `tipo_documento` desde la 133). El portal resuelve por ID y deja el
+>   nombre solo como respaldo de contratos viejos. **El formulario de contrato YA elegía
+>   del catálogo y tenía el id en la mano — solo lo botaba**; ahora lo guarda.
+>   ⚠️ **Aprobación MANUAL** (decisión del dueño): el registro pide tipo + número de
+>   documento y solo deja una SUGERENCIA (`b2b_solicitudes.aliado_sugerido_id`) cuando
+>   hay UNA ficha con ese documento; quien aprueba la confirma, elige otra, crea una
+>   nueva, o aprueba sin enlazar. Enlazar solo permitiría ver contratos ajenos con solo
+>   conocer un NIT. El automático se evaluará más adelante.
+>   **Pendiente:** `reservarPrograma` no lleva `aliadoId` (su formulario no elige del
+>   catálogo), así que esos contratos siguen dependiendo del respaldo por nombre.
+> - **⚠️ `venta` podía leer TODOS los costos por la API (migraciones 144/146).** La 142 le
+>   dio a `venta` una policy de SELECT sobre `ventas` para toda su agencia, justificada en
+>   que la app ya le oculta costos con `verFinanzas`. **Eso es falso como control de
+>   seguridad:** RLS filtra FILAS, no COLUMNAS, y `verFinanzas` es código de interfaz — con
+>   su token podía pedir `GET /rest/v1/ventas?select=*`. En Supabase NO sirven los permisos
+>   por columna: todos los usuarios comparten el rol de BD `authenticated`, así que un
+>   `revoke` se lo quitaría también a superadmin. **Solución:** `venta` pierde toda policy
+>   de SELECT sobre `ventas` (sin fila que leer no hay columna que filtrar) y accede por la
+>   vista **`ventas_basica`**, sin columnas financieras, que hace el control de rol/agencia
+>   en su propio `where` (es SECURITY DEFINER, así que ese `where` ES la frontera). Por eso
+>   `puede_ver_contrato()` tuvo que pasar a SECURITY DEFINER con la regla explícita: al no
+>   tener RLS sobre `ventas`, como INVOKER dejaría a `venta` sin las tablas hijas. ⚠️ Ahora
+>   el criterio de "quién ve qué contrato" vive en DOS lugares. La **146** cierra el último
+>   resto: `contrato_servicios.costo` (el neto del proveedor) también era legible — conserva
+>   la escritura y pierde la lectura. `cuentas_por_pagar` ya excluía a `venta` desde la 116.
+>   El tipo de la vista está en `types/database.ts` como `Omit<>`, así que **TypeScript
+>   impide leer una columna financiera sin gate: el build falla**.
+> - **Menú por rol de verdad (`LECTURA_MODULO`).** `venta` tenía TODOS los módulos; desde
+>   que dejó de leer `ventas` y las tablas de costos, Finanzas/Cartera/Producto/Vuelos le
+>   salían vacías. Ahora solo ve tarifario, reservar, cotizaciones, contratos y CRM. La
+>   definición se movió a `lib/constants.ts` (con `MODULO_POR_RUTA`/`moduloDeRuta`) porque
+>   **`proxy.ts` también la usa**: ocultar el ítem no impedía entrar por URL, y el
+>   middleware es el único punto que cubre todas las sub-rutas de un módulo sin poner un
+>   guardia por página. `lib/roles.ts` la re-exporta para no romper imports.
+> - **Prueba de columnas financieras:** `supabase/scripts/test_columnas_financieras.sql`.
+>   ⚠️ Exige DOS condiciones, no una: que ningún rol sin acceso financiero lea costos, Y que
+>   un `venta` alcance contratos por `ventas_basica`. Sin la segunda, la primera la cumple
+>   trivialmente quien no ve nada — pasó de verdad: los 121 contratos son de minorista y los
+>   usuarios internos de mayorista, así que `venta` daba 0 por no tener contratos de su
+>   agencia, no por la protección. El script pone a todos en el tenant con contratos dentro
+>   de la transacción (termina en ROLLBACK) para que la prueba sea concluyente.
 > - **Prueba de aislamiento:** `supabase/scripts/test_rls_por_rol.sql` se pega en el editor
 >   SQL de Supabase y se hace pasar por cada usuario real verificando que
 >   `filas hijas visibles == filas hijas con contrato padre visible`. Es de solo lectura

@@ -34,7 +34,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     sb.from("hotel_documentos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("hotel_id", hotelId).order("created_at", { ascending: false }),
     sb.from("hoteles").select("id, nombre").neq("id", hotelId).order("nombre"),
     sb.from("hotel_fotos").select("id, path, url, orden, es_portada").eq("hotel_id", hotelId).order("orden"),
-    sb.from("hotel_blackouts").select("id, fecha_inicio, fecha_fin, total, acomodaciones, motivo").eq("hotel_id", hotelId).order("fecha_inicio"),
+    sb.from("hotel_blackouts").select("id, fecha_inicio, fecha_fin, total, acomodaciones, categorias, motivo").eq("hotel_id", hotelId).order("fecha_inicio"),
     sb.from("destinos").select("id, nombre").order("nombre"),
   ]);
 
@@ -132,7 +132,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           regimenIds={regimenIds}
         />
         <HotelFotos hotelId={hotelId} fotos={fotos ?? []} />
-        <HotelBlackouts hotelId={hotelId} blackouts={blackouts ?? []} />
+        <HotelBlackouts hotelId={hotelId} blackouts={blackouts ?? []} categorias={categorias} />
         <HotelDocumentos hotelId={hotelId} documentos={documentos ?? []} />
         <HotelAcomodacionesEditor
           hotelId={hotelId}

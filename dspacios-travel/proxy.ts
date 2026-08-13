@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { COOKIE_TENANT } from "@/lib/tenant";
+import { LECTURA_MODULO, moduloDeRuta } from "@/lib/constants";
 
 // Módulos NO habilitados en la agencia Minorista (deben coincidir con los ítems
 // `minoristaOculto` del nav en app/(dashboard)/layout.tsx). Si la agencia activa
@@ -103,6 +104,23 @@ export async function proxy(request: NextRequest) {
     EXTERNOS.includes(perfil.rol ?? "")
   ) {
     return NextResponse.redirect(new URL("/portal/b2b", request.url));
+  }
+
+  // ── Módulos no permitidos para el rol → al dashboard ────────────────────
+  // Ocultar el ítem del menú no impide escribir la dirección a mano, y este es
+  // el único punto que cubre TODAS las sub-rutas de un módulo de una vez (ej.
+  // /dashboard/producto/hoteles/12/tarifas) sin tener que poner un guardia en
+  // cada página.
+  //
+  // No es la única defensa ni la principal: las tablas de costos, nómina y
+  // contabilidad ya excluyen a `venta` por RLS, así que aunque entrara vería
+  // pantallas vacías. Esto evita esa confusión y cierra el paso antes.
+  if (perfil && pathname.startsWith("/dashboard")) {
+    const modulo = moduloDeRuta(pathname);
+    const permitidos = modulo ? LECTURA_MODULO[modulo] : null;
+    if (permitidos && !permitidos.includes((perfil.rol ?? "") as never)) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
   }
 
   // ── Minorista: módulos ocultos → al dashboard ───────────────────────────

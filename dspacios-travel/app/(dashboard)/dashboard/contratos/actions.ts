@@ -328,6 +328,10 @@ export async function crearContrato(
     tipo_asesor: tipoVenta,
     agencia_nombre: agenciaNombre,
     freelance_nombre: freelanceNombre,
+    // Vínculo FUERTE con el catálogo de aliados (migración 143). El nombre se
+    // sigue guardando para el documento y como respaldo de los contratos
+    // viejos, pero la pertenencia en el portal B2B se resuelve por este id.
+    aliado_id: tipoVenta !== "interno" ? input.aliadoId ?? null : null,
     cliente_documento: oNull(input.clienteDocumento),
     cliente_telefono: oNull(input.clienteTelefono),
     cliente_direccion: oNull(input.clienteDireccion),

@@ -17,7 +17,7 @@ export default async function PortalB2BPage() {
   const { data: { user } } = await sb.auth.getUser();
 
   const { data: perfil } = user
-    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id, pct_comision").eq("id", user.id).maybeSingle()
+    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id, pct_comision, aliado_id").eq("id", user.id).maybeSingle()
     : { data: null };
   const rol = perfil?.rol ?? null;
   const esB2B = rol === "agencia" || rol === "freelance";
@@ -83,13 +83,23 @@ export default async function PortalB2BPage() {
   const pctEfectivo = pctAgencia ?? defCom;
   const cat = categoriaAliado(rol ?? "agencia", pctEfectivo, defCom);
 
+  // Pertenencia de un contrato, por orden de confianza:
+  //  1. `b2b_usuario_id`  → lo compró él mismo desde el portal.
+  //  2. `aliado_id`       → ficha del catálogo enlazada a su usuario al
+  //     aprobarlo (migración 143). Cubre los CONTRATOS ASISTIDOS: los que un
+  //     asesor interno montó a su nombre, incluso antes de que se registrara.
+  //  3. Nombre en texto    → respaldo para contratos viejos sin `aliado_id`.
+  //     Es el vínculo débil que la 143 vino a reemplazar; se conserva para no
+  //     esconderle de golpe su histórico a un aliado ya operando.
   const sel = "numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, estado, modo_compra, comision_b2b, comision_estado, tipo_asesor";
-  const [{ data: porId }, { data: porNombre }] = await Promise.all([
+  const aliadoId = perfil?.aliado_id ?? null;
+  const [{ data: porId }, { data: porAliado }, { data: porNombre }] = await Promise.all([
     admin.from("ventas").select(sel).eq("b2b_usuario_id", user.id),
+    aliadoId ? admin.from("ventas").select(sel).eq("aliado_id", aliadoId) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     nombre ? admin.from("ventas").select(sel).or(`agencia_nombre.eq.${nombre},freelance_nombre.eq.${nombre}`) : Promise.resolve({ data: [] as Record<string, unknown>[] }),
   ]);
   const mapa = new Map<string, Record<string, unknown>>();
-  for (const v of [...(porId ?? []), ...(porNombre ?? [])]) mapa.set(v.numero_contrato as string, v);
+  for (const v of [...(porId ?? []), ...(porAliado ?? []), ...(porNombre ?? [])]) mapa.set(v.numero_contrato as string, v);
   const contratos = [...mapa.values()].sort((a, b) => String(b.fecha_salida ?? "").localeCompare(String(a.fecha_salida ?? "")));
 
   // Abonos para el saldo

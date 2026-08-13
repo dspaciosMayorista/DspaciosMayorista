@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/types/database";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { VouchersPanel, type VoucherRow } from "./VouchersPanel";
 import { type CuotaRow } from "./PlanCobroPanel";
 import { EditarAsesorPasajeros, type PasajeroRow } from "./EditarAsesorPasajeros";
 import { EliminarContrato } from "./EliminarContrato";
+import { ContenidoContratoEditor } from "./ContenidoContratoEditor";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 
@@ -51,7 +53,12 @@ export default async function ContratoDetallePage({
     { data: proveedoresCatalogo },
     { data: aliadosCatalogo },
   ] = await Promise.all([
-    sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
+    // Migración 144: quien NO tiene acceso financiero lee la vista sin
+    // columnas de costo. El rol `venta` ya no puede leer la tabla base — ese
+    // es el candado real; esto solo es la consulta que sí le funciona.
+    (verFinanzas
+      ? sb.from("ventas").select("*").eq("numero_contrato", numero).single()
+      : sb.from("ventas_basica").select("*").eq("numero_contrato", numero).single()),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
     sb.from("cuentas_por_pagar").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("aliados_b2b").select("*").eq("numero_contrato", numero).order("id"),
@@ -66,6 +73,16 @@ export default async function ContratoDetallePage({
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("nombre").order("nombre"),
     sb.from("aliados").select("id, nombre, nit, tipo, pct_comision, aplica_retencion, pct_retencion").order("nombre"),
+  ]);
+
+  // Contenido del contrato (hoteles/vuelos/ítems/servicios) para el editor de
+  // superadmin. Los contratos migrados llegan sin nada de esto, así que casi
+  // siempre vienen vacíos: el editor es justo para poder completarlos.
+  const [{ data: itemsC }, { data: hotelesC }, { data: vuelosC }, { data: serviciosC }] = await Promise.all([
+    sb.from("contrato_items").select("descripcion, adultos, ninos, tarifa_adulto, tarifa_nino").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_hoteles").select("nombre, categoria, proveedor, ciudad, alimentacion, acomodacion, detalle_acomodacion, fecha_ingreso, fecha_salida").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_vuelos").select("aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, fecha_salida, hora_salida, hora_llegada, servicios").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).order("orden"),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
@@ -111,6 +128,15 @@ export default async function ContratoDetallePage({
   const fiscal = fiscalFromParams(paramsRows ?? []);
 
   if (!venta) notFound();
+
+  // Datos financieros del contrato (costos, impuesto). Solo existen si quien
+  // mira tiene acceso financiero: la consulta de arriba trae la vista
+  // `ventas_basica` para los demás, que NO incluye estas columnas. Se separa en
+  // su propia variable para que TypeScript impida leerlas por descuido — si un
+  // día alguien las pinta sin gate, el build falla en vez de filtrarlas.
+  const fin = verFinanzas
+    ? (venta as Database["public"]["Tables"]["ventas"]["Row"])
+    : null;
 
   // Servicios del paquete (para editar los add-ons de un contrato PENDIENTE).
   let serviciosDisp: ServicioDispContrato[] = [];
@@ -226,7 +252,7 @@ export default async function ContratoDetallePage({
       <GestionTabs
         numero={numero}
         precioVenta={venta.precio_venta}
-        impuesto={venta.impuesto ?? 0}
+        impuesto={fin?.impuesto ?? 0}
         clienteNombre={venta.cliente ?? ""}
         clienteDocumento={venta.cliente_documento ?? ""}
         asesorNombre={asesorNombre}
@@ -234,11 +260,11 @@ export default async function ContratoDetallePage({
         fiscal={fiscal}
         verFinanzas={verFinanzas}
         costos={{
-          costo_hotel: venta.costo_hotel,
-          costo_aereo: venta.costo_aereo,
-          costo_receptivo: venta.costo_receptivo,
-          costo_asistencia: venta.costo_asistencia,
-          otros_costos: venta.otros_costos,
+          costo_hotel: fin?.costo_hotel ?? 0,
+          costo_aereo: fin?.costo_aereo ?? 0,
+          costo_receptivo: fin?.costo_receptivo ?? 0,
+          costo_asistencia: fin?.costo_asistencia ?? 0,
+          otros_costos: fin?.otros_costos ?? 0,
         }}
         abonos={abonos ?? []}
         cuotas={(cuotas ?? []) as unknown as CuotaRow[]}
@@ -271,6 +297,34 @@ export default async function ContratoDetallePage({
         puedeGenerar={esSuperadmin || saldo <= 0}
         destinos={destinos ?? []}
       />
+
+      {esSuperadmin && (
+        <ContenidoContratoEditor
+          numero={numero}
+          moneda={venta.moneda ?? "COP"}
+          precioVenta={venta.precio_venta ?? 0}
+          items={(itemsC ?? []).map((i) => ({
+            descripcion: i.descripcion ?? "", adultos: i.adultos ?? 0, ninos: i.ninos ?? 0,
+            tarifaAdulto: i.tarifa_adulto ?? 0, tarifaNino: i.tarifa_nino ?? 0,
+          }))}
+          hoteles={(hotelesC ?? []).map((h) => ({
+            nombre: h.nombre ?? "", categoria: h.categoria ?? "", proveedor: h.proveedor ?? "",
+            ciudad: h.ciudad ?? "", alimentacion: h.alimentacion ?? "", acomodacion: h.acomodacion ?? "",
+            detalleAcomodacion: h.detalle_acomodacion ?? "",
+            fechaIngreso: h.fecha_ingreso ?? "", fechaSalida: h.fecha_salida ?? "",
+          }))}
+          vuelos={(vuelosC ?? []).map((v) => ({
+            aerolinea: v.aerolinea ?? "", record: v.record ?? "", direccion: v.direccion ?? "",
+            origenCodigo: v.origen_codigo ?? "", destinoCodigo: v.destino_codigo ?? "",
+            numeroVuelo: v.numero_vuelo ?? "", fecha: v.fecha_salida ?? "",
+            horaSalida: v.hora_salida ?? "", horaLlegada: v.hora_llegada ?? "", servicios: v.servicios ?? "",
+          }))}
+          servicios={(serviciosC ?? []).map((s) => ({
+            tipo: s.tipo ?? "otro", descripcion: s.descripcion ?? "",
+            proveedor: s.proveedor ?? "", costo: s.costo ?? 0,
+          }))}
+        />
+      )}
 
       {esSuperadmin && <EliminarContrato numero={numero} />}
     </div>
