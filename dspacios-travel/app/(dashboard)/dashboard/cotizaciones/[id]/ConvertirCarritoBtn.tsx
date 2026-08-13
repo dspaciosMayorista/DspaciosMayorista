@@ -132,7 +132,7 @@ export function ConvertirCarritoBtn({
 
       {err && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
       <p className="text-xs text-gray-400">
-        Al confirmar se genera el número de contrato (uno por grupo si elegiste "por destino"), se descuentan las sillas de los vuelos incluidos y se crean las cuentas por pagar.
+        Al confirmar se genera el número de contrato (uno por grupo si elegiste &quot;por destino&quot;), se descuentan las sillas de los vuelos incluidos y se crean las cuentas por pagar.
       </p>
     </div>
   );
