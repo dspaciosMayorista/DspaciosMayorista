@@ -13,6 +13,7 @@ import { VouchersPanel, type VoucherRow } from "./VouchersPanel";
 import { type CuotaRow } from "./PlanCobroPanel";
 import { EditarAsesorPasajeros, type PasajeroRow } from "./EditarAsesorPasajeros";
 import { EliminarContrato } from "./EliminarContrato";
+import { ContenidoContratoEditor } from "./ContenidoContratoEditor";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 
@@ -66,6 +67,16 @@ export default async function ContratoDetallePage({
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("nombre").order("nombre"),
     sb.from("aliados").select("id, nombre, nit, tipo, pct_comision, aplica_retencion, pct_retencion").order("nombre"),
+  ]);
+
+  // Contenido del contrato (hoteles/vuelos/ítems/servicios) para el editor de
+  // superadmin. Los contratos migrados llegan sin nada de esto, así que casi
+  // siempre vienen vacíos: el editor es justo para poder completarlos.
+  const [{ data: itemsC }, { data: hotelesC }, { data: vuelosC }, { data: serviciosC }] = await Promise.all([
+    sb.from("contrato_items").select("descripcion, adultos, ninos, tarifa_adulto, tarifa_nino").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_hoteles").select("nombre, categoria, proveedor, ciudad, alimentacion, acomodacion, detalle_acomodacion, fecha_ingreso, fecha_salida").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_vuelos").select("aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, fecha_salida, hora_salida, hora_llegada, servicios").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).order("orden"),
   ]);
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
@@ -271,6 +282,34 @@ export default async function ContratoDetallePage({
         puedeGenerar={esSuperadmin || saldo <= 0}
         destinos={destinos ?? []}
       />
+
+      {esSuperadmin && (
+        <ContenidoContratoEditor
+          numero={numero}
+          moneda={venta.moneda ?? "COP"}
+          precioVenta={venta.precio_venta ?? 0}
+          items={(itemsC ?? []).map((i) => ({
+            descripcion: i.descripcion ?? "", adultos: i.adultos ?? 0, ninos: i.ninos ?? 0,
+            tarifaAdulto: i.tarifa_adulto ?? 0, tarifaNino: i.tarifa_nino ?? 0,
+          }))}
+          hoteles={(hotelesC ?? []).map((h) => ({
+            nombre: h.nombre ?? "", categoria: h.categoria ?? "", proveedor: h.proveedor ?? "",
+            ciudad: h.ciudad ?? "", alimentacion: h.alimentacion ?? "", acomodacion: h.acomodacion ?? "",
+            detalleAcomodacion: h.detalle_acomodacion ?? "",
+            fechaIngreso: h.fecha_ingreso ?? "", fechaSalida: h.fecha_salida ?? "",
+          }))}
+          vuelos={(vuelosC ?? []).map((v) => ({
+            aerolinea: v.aerolinea ?? "", record: v.record ?? "", direccion: v.direccion ?? "",
+            origenCodigo: v.origen_codigo ?? "", destinoCodigo: v.destino_codigo ?? "",
+            numeroVuelo: v.numero_vuelo ?? "", fecha: v.fecha_salida ?? "",
+            horaSalida: v.hora_salida ?? "", horaLlegada: v.hora_llegada ?? "", servicios: v.servicios ?? "",
+          }))}
+          servicios={(serviciosC ?? []).map((s) => ({
+            tipo: s.tipo ?? "otro", descripcion: s.descripcion ?? "",
+            proveedor: s.proveedor ?? "", costo: s.costo ?? 0,
+          }))}
+        />
+      )}
 
       {esSuperadmin && <EliminarContrato numero={numero} />}
     </div>
