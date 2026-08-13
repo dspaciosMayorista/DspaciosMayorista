@@ -28,6 +28,9 @@
 --   · agencia/freelance/cliente_final → 0
 --   · cualquier usuario inactivo      → 0
 --
+-- También mide los costos escondidos en TABLAS HIJAS: `contrato_servicios.costo`
+-- (el neto del proveedor) y `cuentas_por_pagar.valor_total`. Ver migración 146.
+--
 -- Antes de la 144, `venta` leía costos de toda su agencia: esa era la falla.
 -- ─────────────────────────────────────────────────────────────────────────
 
@@ -61,6 +64,7 @@ create temp table _fin_out (
   activo    boolean,
   filas_financieras bigint,
   filas_vista_basica bigint,
+  costos_en_hijas bigint,
   veredicto text
 ) on commit drop;
 
@@ -69,6 +73,7 @@ declare
   u        record;
   n_fin    bigint;
   n_vista  bigint;
+  n_hijas  bigint;
 begin
   for u in select id, email, rol::text as rol, activo from public.usuarios order by rol, email loop
 
@@ -97,23 +102,38 @@ begin
       n_vista := -1;  -- la vista no existe todavía (migración 144 sin correr)
     end;
 
+    -- Costos escondidos en tablas hijas (migración 146): `contrato_servicios`
+    -- guarda el neto que se le paga al proveedor. `cuentas_por_pagar` ya
+    -- excluía a `venta` desde la 116, pero se mide igual por si eso cambia.
+    begin
+      select count(*) into n_hijas from public.contrato_servicios where costo is not null;
+    exception when others then
+      n_hijas := 0;
+    end;
+    begin
+      select n_hijas + count(*) into n_hijas from public.cuentas_por_pagar where valor_total is not null;
+    exception when others then
+      null;  -- sin permiso: se queda con lo que ya traía
+    end;
+
     reset role;
     perform set_config('request.jwt.claims', null, true);
 
     insert into _fin_out values (
-      u.email, u.rol, u.activo, n_fin, n_vista,
+      u.email, u.rol, u.activo, n_fin, n_vista, n_hijas,
       case
         when u.rol in ('superadmin','gerencia','administracion','operaciones')
           then 'OK (acceso financiero legítimo)'
-        when n_fin = 0 then 'OK'
-        else 'EXPUESTO (' || n_fin || ' contratos con costos legibles)'
+        when n_fin = 0 and n_hijas = 0 then 'OK'
+        when n_fin > 0 then 'EXPUESTO (' || n_fin || ' contratos con costos legibles)'
+        else 'EXPUESTO (' || n_hijas || ' costos legibles en tablas hijas)'
       end
     );
   end loop;
 end $$;
 
 -- Los EXPUESTO salen de primeras.
-select usuario, rol, activo, filas_financieras, filas_vista_basica, veredicto
+select usuario, rol, activo, filas_financieras, filas_vista_basica, costos_en_hijas, veredicto
 from _fin_out
 order by (veredicto like 'EXPUESTO%') desc, rol, usuario;
 
@@ -124,10 +144,10 @@ declare n_fuga int; n_util int;
 begin
   -- 1. Nadie sin acceso financiero puede leer costos.
   select count(*) into n_fuga from _fin_out
-   where filas_financieras > 0
+   where (filas_financieras > 0 or costos_en_hijas > 0)
      and rol not in ('superadmin','gerencia','administracion','operaciones');
   if n_fuga > 0 then
-    raise exception 'FALLA DE SEGURIDAD: % usuario(s) sin acceso financiero pueden leer columnas de costo de `ventas`.', n_fuga;
+    raise exception 'FALLA DE SEGURIDAD: % usuario(s) sin acceso financiero pueden leer costos (en `ventas` o en sus tablas hijas).', n_fuga;
   end if;
 
   -- 2. Y la prueba fue CONCLUYENTE: al menos un `venta` alcanzó contratos por
