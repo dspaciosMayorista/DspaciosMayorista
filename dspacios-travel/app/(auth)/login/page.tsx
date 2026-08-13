@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { Logo } from "@/components/Logo";
@@ -13,6 +13,15 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [codigo, setCodigo] = useState("");
+  // `?inactivo=1` lo pone proxy.ts cuando el usuario tiene sesión válida pero
+  // su cuenta está desactivada: sin este aviso, el rebote al login se ve como
+  // si la sesión se hubiera caído sola. Se lee del `window` (y no con
+  // useSearchParams) para no obligar a envolver la página en <Suspense>.
+  const [inactivo, setInactivo] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setInactivo(new URLSearchParams(window.location.search).get("inactivo") === "1");
+  }, []);
 
   async function handleCodigo(e: React.FormEvent) {
     e.preventDefault();
@@ -46,7 +55,17 @@ export default function LoginPage() {
     // Rutea según el rol: agencias/freelance van al portal B2B.
     let destino = "/dashboard";
     if (data.user) {
-      const { data: perfil } = await supabase.from("usuarios").select("rol").eq("id", data.user.id).maybeSingle();
+      const { data: perfil } = await supabase.from("usuarios").select("rol, activo").eq("id", data.user.id).maybeSingle();
+      // Supabase Auth no sabe de `usuarios.activo`: la credencial de una cuenta
+      // desactivada sigue siendo válida y crea sesión. Se cierra aquí mismo para
+      // no dejar una sesión viva (aunque inservible) dando vueltas — el
+      // middleware igual la rebotaría, pero después de haberla creado.
+      if (perfil && perfil.activo === false) {
+        await supabase.auth.signOut();
+        setError("Tu cuenta está desactivada. Comunícate con el administrador para reactivarla.");
+        setLoading(false);
+        return;
+      }
       if (perfil?.rol === "agencia" || perfil?.rol === "freelance" || perfil?.rol === "cliente_final") destino = "/portal/b2b";
     }
     router.push(destino);
@@ -76,6 +95,12 @@ export default function LoginPage() {
           </a>
           <p className="mt-3 text-sm text-gray-500">Iniciar sesión</p>
         </div>
+
+        {inactivo && (
+          <p className="mb-5 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+            Tu cuenta está desactivada. Comunícate con el administrador para reactivarla.
+          </p>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

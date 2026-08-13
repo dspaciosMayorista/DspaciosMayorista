@@ -66,22 +66,43 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
+  // Perfil del usuario con sesión: se lee UNA sola vez y sirve para los dos
+  // controles de abajo (activo y rol externo). Se salta en /login y /auth para
+  // no consultar de más ni hacer bucle con el redirect de usuario inactivo.
+  let perfil: { rol: string | null; activo: boolean } | null = null;
+  if (user && !pathname.startsWith("/login") && !pathname.startsWith("/auth")) {
+    const { data } = await supabase
+      .from("usuarios")
+      .select("rol, activo")
+      .eq("id", user.id)
+      .maybeSingle();
+    perfil = data;
+  }
+
+  // ── Usuario desactivado: fuera de toda la app ───────────────────────────
+  // `usuarios.activo` era decorativo: el JWT sigue vivo hasta que expira, así
+  // que desmarcar "activo" no echaba a nadie. El candado de verdad está en la
+  // RLS (migración 140: `mi_rol()` no devuelve rol si el usuario no está
+  // activo); esto es la parte de cara al usuario, para que caiga en el login
+  // con un aviso en vez de quedar viendo pantallas vacías. Cubre TODAS las
+  // rutas, incluido /portal, que es pública para poder mostrar el ingreso.
+  // Solo bloquea cuando se leyó el perfil y dice `activo = false`: si la fila
+  // no existe o no se pudo leer, no se cambia el comportamiento de antes (no
+  // dejar por fuera a alguien por un problema de datos).
+  if (perfil && perfil.activo === false) {
+    return NextResponse.redirect(new URL("/login?inactivo=1", request.url));
+  }
+
   // ── Bloqueo de roles externos en el dashboard interno ───────────────────
   // Los aliados B2B no deben ver módulos internos (vuelos, finanzas, etc.).
   // Solo /dashboard/reservar les sirve (generar contrato). El resto → portal.
   if (
-    user &&
+    perfil &&
     pathname.startsWith("/dashboard") &&
-    !pathname.startsWith("/dashboard/reservar")
+    !pathname.startsWith("/dashboard/reservar") &&
+    EXTERNOS.includes(perfil.rol ?? "")
   ) {
-    const { data: perfil } = await supabase
-      .from("usuarios")
-      .select("rol")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (perfil && EXTERNOS.includes(perfil.rol ?? "")) {
-      return NextResponse.redirect(new URL("/portal/b2b", request.url));
-    }
+    return NextResponse.redirect(new URL("/portal/b2b", request.url));
   }
 
   // ── Minorista: módulos ocultos → al dashboard ───────────────────────────
