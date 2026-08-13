@@ -11,7 +11,7 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 
 export function RegistroForm() {
   const [f, setF] = useState({
-    tipo: "agencia", nombre: "", nit: "", contacto: "", email: "", telefono: "", ciudad: "", notas: "", aceptaNotificaciones: true,
+    tipo: "agencia", tipoDocumento: "NIT", nombre: "", nit: "", contacto: "", email: "", telefono: "", ciudad: "", notas: "", aceptaNotificaciones: true,
     password: "", passwordConfirm: "",
   });
   const set = (k: keyof typeof f, v: string | boolean) => setF((p) => ({ ...p, [k]: v }));
@@ -46,13 +46,40 @@ export function RegistroForm() {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className={lbl}>Tipo de aliado</label>
-          <select value={f.tipo} onChange={(e) => set("tipo", e.target.value)} className={sel}>
+          <select
+            value={f.tipo}
+            onChange={(e) => {
+              // El tipo de documento por defecto sigue al tipo de aliado:
+              // una agencia se identifica con NIT, un freelance con cédula.
+              set("tipo", e.target.value);
+              set("tipoDocumento", e.target.value === "freelance" ? "CC" : "NIT");
+            }}
+            className={sel}
+          >
             <option value="agencia">Agencia de viajes</option>
             <option value="freelance">Freelance</option>
           </select>
         </div>
         <div><label className={lbl}>Nombre / Razón social *</label><Input value={f.nombre} onChange={(e) => set("nombre", e.target.value)} /></div>
-        <div><label className={lbl}>NIT / Documento</label><Input value={f.nit} onChange={(e) => set("nit", e.target.value)} /></div>
+        <div>
+          <label className={lbl}>Tipo de documento *</label>
+          <select value={f.tipoDocumento} onChange={(e) => set("tipoDocumento", e.target.value)} className={sel}>
+            <option value="NIT">NIT</option>
+            <option value="CC">Cédula de ciudadanía</option>
+            <option value="CE">Cédula de extranjería</option>
+            <option value="PAS">Pasaporte</option>
+          </select>
+        </div>
+        {/* El documento es la LLAVE para reconocer al aliado: si ya tiene
+            contratos que le montó un asesor interno, con este número se
+            enlazan a su cuenta al aprobarlo. */}
+        <div>
+          <label className={lbl}>Número de documento *</label>
+          <Input value={f.nit} onChange={(e) => set("nit", e.target.value)} />
+          <p className="mt-1 text-[11px] text-gray-400">
+            Con este número reconocemos las reservas que ya tengas con nosotros.
+          </p>
+        </div>
         <div><label className={lbl}>Persona de contacto</label><Input value={f.contacto} onChange={(e) => set("contacto", e.target.value)} /></div>
         <div><label className={lbl}>Correo *</label><Input type="email" value={f.email} onChange={(e) => set("email", e.target.value)} /></div>
         <div><label className={lbl}>Teléfono</label><Input value={f.telefono} onChange={(e) => set("telefono", e.target.value)} /></div>

@@ -313,8 +313,11 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 142.**
-> Corridas por el dueño **hasta la 141**; ⚠️ **142 está PENDIENTE de correr**.
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 143.**
+> Corridas por el dueño **hasta la 142**; ⚠️ **143 está PENDIENTE de correr**.
+> ⚠️ **La 143 y todo el frente de "vínculo B2B por documento" viven en la rama
+> `claude/peaceful-noether-713c7c` y NO están en `main` todavía** (decisión del
+> dueño: acumular y mergear cuando esté validado).
 > **135** `contrato_vuelo_tramo` (1 fila = 1 tramo de
 > vuelo) · **136** `proveedores_escritura_operaciones` (rol operaciones puede crear
 > proveedores) · **137** `alinear_roles_escritura` (reorganización general de roles/RLS,
@@ -362,6 +365,23 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   importados. **Deuda pendiente:** emparejar asesor por texto es débil (homónimos, y las
 >   tildes siguen sin cruzar); lo correcto sería `ventas.asesor_id uuid` con FK a
 >   `usuarios` + backfill.
+> - **Vínculo B2B por documento, no por nombre (migración 143, EN RAMA).** Un contrato
+>   "asistido" (el asesor interno lo monta a nombre de un freelance/agencia) guardaba el
+>   aliado como TEXTO (`ventas.agencia_nombre`/`freelance_nombre`), y el portal B2B
+>   resolvía la pertenencia comparando ese texto. Dos fallas: si el aliado se registraba
+>   después con el nombre escrito distinto no veía sus contratos, y emparejar por nombre
+>   permite suplantación (hoy contenida bloqueando nombres duplicados, que es un parche).
+>   Ahora `ventas.aliado_id` y `usuarios.aliado_id` apuntan al catálogo `aliados` (que ya
+>   tenía `nit` + `tipo_documento` desde la 133). El portal resuelve por ID y deja el
+>   nombre solo como respaldo de contratos viejos. **El formulario de contrato YA elegía
+>   del catálogo y tenía el id en la mano — solo lo botaba**; ahora lo guarda.
+>   ⚠️ **Aprobación MANUAL** (decisión del dueño): el registro pide tipo + número de
+>   documento y solo deja una SUGERENCIA (`b2b_solicitudes.aliado_sugerido_id`) cuando
+>   hay UNA ficha con ese documento; quien aprueba la confirma, elige otra, crea una
+>   nueva, o aprueba sin enlazar. Enlazar solo permitiría ver contratos ajenos con solo
+>   conocer un NIT. El automático se evaluará más adelante.
+>   **Pendiente:** `reservarPrograma` no lleva `aliadoId` (su formulario no elige del
+>   catálogo), así que esos contratos siguen dependiendo del respaldo por nombre.
 > - **Prueba de aislamiento:** `supabase/scripts/test_rls_por_rol.sql` se pega en el editor
 >   SQL de Supabase y se hace pasar por cada usuario real verificando que
 >   `filas hijas visibles == filas hijas con contrato padre visible`. Es de solo lectura

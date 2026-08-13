@@ -147,6 +147,11 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
     agencia_nombre: oNull(input.agenciaNombre),
     agencia_asesor: oNull(input.agenciaAsesor),
     freelance_nombre: oNull(input.freelanceNombre),
+    // Vínculo FUERTE con el catálogo de aliados (migración 143): el portal B2B
+    // resuelve la pertenencia por este id, no por el nombre en texto libre.
+    // (`reservarPrograma` no lo lleva: su formulario no elige del catálogo,
+    // así que esos contratos siguen dependiendo del respaldo por nombre.)
+    aliado_id: input.tipoAsesor !== "interno" ? input.aliadoId ?? null : null,
     plazo: oNull(input.plazo),
     paquete_armado_id: input.paqueteId,
     bloqueo_ref_id: input.bloqueoId,

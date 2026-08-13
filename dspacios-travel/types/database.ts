@@ -89,6 +89,9 @@ export type Database = {
           agencia_id: string | null;
           pct_comision: number | null;
           tenant: string;
+          // Migración 143: ficha del catálogo `aliados` a la que corresponde
+          // este login B2B. Se escribe al APROBAR el registro, nunca solo.
+          aliado_id: number | null;
         };
         Insert: {
           id?: string;
@@ -102,6 +105,7 @@ export type Database = {
           agencia_id?: string | null;
           pct_comision?: number | null;
           tenant?: string;
+          aliado_id?: number | null;
         };
         Update: {
           id?: string;
@@ -112,6 +116,8 @@ export type Database = {
           fecha_registro?: string;
           agencia_id?: string | null;
           pct_comision?: number | null;
+          tenant?: string;
+          aliado_id?: number | null;
         };
         Relationships: [];
       };
@@ -300,6 +306,8 @@ export type Database = {
           bloqueo_ref_id: number | null;
           share_token: string;
           b2b_usuario_id: string | null;
+          // Migración 143: vínculo fuerte con el catálogo `aliados`.
+          aliado_id: number | null;
           modo_compra: string | null;
           comision_b2b: number | null;
           comision_estado: string | null;
@@ -361,6 +369,7 @@ export type Database = {
           bloqueo_ref_id?: number | null;
           share_token?: string;
           b2b_usuario_id?: string | null;
+          aliado_id?: number | null;
           modo_compra?: string | null;
           comision_b2b?: number | null;
           comision_estado?: string | null;
@@ -2469,12 +2478,16 @@ export type Database = {
           email: string; telefono: string | null; ciudad: string | null; notas: string | null;
           acepta_notificaciones: boolean; estado: string; usuario_id: string | null;
           revisado_por: string | null; revisado_at: string | null; created_at: string;
+          // Migración 143: documento del aliado + ficha del catálogo sugerida
+          // por coincidencia de ese documento (la confirma quien aprueba).
+          tipo_documento: string | null; aliado_sugerido_id: number | null;
         };
         Insert: {
           id?: number; tipo?: string; nombre: string; nit?: string | null; contacto?: string | null;
           email: string; telefono?: string | null; ciudad?: string | null; notas?: string | null;
           acepta_notificaciones?: boolean; estado?: string; usuario_id?: string | null;
           revisado_por?: string | null; revisado_at?: string | null; created_at?: string;
+          tipo_documento?: string | null; aliado_sugerido_id?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["b2b_solicitudes"]["Insert"]>;
         Relationships: [];
