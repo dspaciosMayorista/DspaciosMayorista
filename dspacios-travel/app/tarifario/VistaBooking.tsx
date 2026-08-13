@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import Link from "next/link";
 import Image from "next/image";
 import { Star, Check } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -536,16 +535,17 @@ export function VistaBooking({
       )}
 
       {receptivoAbierto && (
-        <ReceptivoModal receptivo={receptivoAbierto} puedeReservar={puedeReservar} onClose={() => setReceptivoAbierto(null)} />
+        <ReceptivoModal receptivo={receptivoAbierto} onClose={() => setReceptivoAbierto(null)} />
       )}
     </div>
   );
 }
 
-// ── Modal de detalle de un receptivo (tour): foto + descripción + precio, con
-//    botón Reservar → que deep-linkea al flujo de reservar servicios (pregunta
-//    pax/fechas internamente, mismo motor que el módulo Servicios clásico) ────
-function ReceptivoModal({ receptivo, puedeReservar, onClose }: { receptivo: ReceptivoModalInfo; puedeReservar: boolean; onClose: () => void }) {
+// ── Modal de detalle de un receptivo (tour): solo foto + descripción + precio.
+//    Sin botón de reservar directo — agregar al carrito se hace desde la
+//    tarjeta del resultado (o desde el listado de add-ons del hotel), nunca
+//    saltando el flujo de carrito → cotización. ────────────────────────────
+function ReceptivoModal({ receptivo, onClose }: { receptivo: ReceptivoModalInfo; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
@@ -565,20 +565,9 @@ function ReceptivoModal({ receptivo, puedeReservar, onClose }: { receptivo: Rece
           {receptivo.descripcion?.trim() && (
             <p className="mt-3 whitespace-pre-line text-sm text-gray-600">{receptivo.descripcion}</p>
           )}
-          <div className="mt-4 flex items-end justify-between gap-3">
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-gray-400">{receptivo.notaPrecio}</div>
-              <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(receptivo.precio, receptivo.moneda)}</div>
-            </div>
-            {puedeReservar && receptivo.paqueteId != null && (
-              <Link
-                href={`/dashboard/reservar/nuevo?paquete=${receptivo.paqueteId}&modulo=servicios`}
-                className="shrink-0 rounded-lg px-4 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-                style={{ backgroundColor: "var(--brand-accent)" }}
-              >
-                Reservar →
-              </Link>
-            )}
+          <div className="mt-4">
+            <div className="text-[10px] uppercase tracking-wide text-gray-400">{receptivo.notaPrecio}</div>
+            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(receptivo.precio, receptivo.moneda)}</div>
           </div>
         </div>
       </div>
@@ -812,7 +801,7 @@ function HotelModal({
       </div>
     </div>
     {addonAbierto && (
-      <ReceptivoModal receptivo={addonAbierto} puedeReservar={puedeReservar} onClose={() => setAddonAbierto(null)} />
+      <ReceptivoModal receptivo={addonAbierto} onClose={() => setAddonAbierto(null)} />
     )}
     </>
   );
