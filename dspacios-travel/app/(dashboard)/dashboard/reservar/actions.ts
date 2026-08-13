@@ -1325,7 +1325,8 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
     for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
   }
 
-  // PVP de venta: neto → +markup → +asistencia médica/día → +fee bancario.
+  // PVP de venta: (neto + asistencia médica/día × días) → +markup → +fee bancario.
+  // La asistencia es un costo neto más, así que entra ANTES del markup.
   // En modo salida la asistencia médica usa las noches de la salida.
   const diasPvp = modoSalida && nochesViaje != null ? nochesViaje : prog.dias;
   const pvp = (neto: number) =>

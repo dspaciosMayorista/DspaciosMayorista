@@ -1174,7 +1174,12 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 - **Precio de venta (PVP)** — el montaje ahora calcula el PVP, no solo republica el neto
   (migración **067** + `pvpPrograma` en `lib/programas.ts`, fuente única usada por vitrina,
   resumen y `reservarPrograma`):
-  `PVP = neto/(1−markup) + asistencia_medica_dia×días, todo /(1−fee_bancario)`.
+  `PVP = (neto + asistencia_medica_dia×días) / (1−markup) / (1−fee_bancario)`.
+  ⚠️ **Cambió en ago-2026 (pedido del dueño):** antes la asistencia se sumaba DESPUÉS
+  del markup (`neto/(1−mk) + asis×días`), o sea se le trasladaba al cliente a precio de
+  costo y no dejaba margen. Ahora es un costo neto más y entra ANTES, así que se marca
+  igual que el resto. El PVP de los programas con asistencia SUBE: la diferencia es
+  exactamente el margen que antes no se cobraba sobre ella.
   Campos en la cabecera: **Markup proveedor %** (`pct_mk`, convención margen del app),
   **Fee bancario %** (`pct_fee_tarjeta`) y **Asistencia médica/día** (`asistencia_medica_dia`,
   por pax y por día). La pestaña *Hoteles y precios* muestra el **PVP en vivo** bajo cada neto.

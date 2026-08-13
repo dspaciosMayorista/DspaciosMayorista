@@ -26,10 +26,19 @@ function redondearPvp(valor: number, moneda: string | null | undefined): number 
 
 /**
  * PVP de venta de un programa por persona, a partir del neto del proveedor:
- *   1) markup:        sub = neto / (1 - mk)
- *   2) asistencia:    sub += asistencia_dia × días   (no se le aplica markup)
- *   3) fee bancario:  pvp  = sub / (1 - fee)          (sobre el total)
- * El orden replica el montaje de D'spacios (neto → +MK → +asistencia → +fee).
+ *   1) costo total:   base = neto + asistencia_dia × días
+ *   2) markup:        sub  = base / (1 - mk)
+ *   3) fee bancario:  pvp  = sub  / (1 - fee)
+ *
+ * La asistencia médica es un COSTO NETO más (lo que se le paga al proveedor de
+ * la asistencia), así que entra ANTES del markup y se marca igual que el resto.
+ *
+ * ⚠️ Cambio de criterio (ago-2026, pedido del dueño). Antes la asistencia se
+ * sumaba DESPUÉS del markup:
+ *     sub = neto/(1-mk);  sub += asis × días;  pvp = sub/(1-fee)
+ * es decir, se le trasladaba al cliente a precio de costo y no dejaba margen.
+ * El PVP de los programas con asistencia SUBE con este cambio: la diferencia es
+ * exactamente el margen que antes no se cobraba sobre ella.
  */
 export function pvpPrograma(neto: number, opt: PvpOpciones): number {
   // Sin neto de hotel (0 o negativo) NO hay precio: devolver 0 evita fabricar un
@@ -40,8 +49,9 @@ export function pvpPrograma(neto: number, opt: PvpOpciones): number {
   const asis = Number(opt.asistenciaDia) || 0;
   const dias = Math.max(0, Number(opt.dias) || 0);
 
-  let sub = mk > 0 && mk < 1 ? neto / (1 - mk) : neto;
-  sub += asis * dias;
+  // La asistencia se suma al neto ANTES de marcar: es un costo, no un recargo.
+  let sub = neto + asis * dias;
+  if (mk > 0 && mk < 1) sub = sub / (1 - mk);
   if (fee > 0 && fee < 1) sub = sub / (1 - fee);
   return redondearPvp(sub, opt.moneda);
 }
