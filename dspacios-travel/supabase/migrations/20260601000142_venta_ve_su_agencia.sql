@@ -64,7 +64,12 @@ returns boolean language sql stable security definer set search_path = public as
 $$;
 
 -- ── `ventas`: el asesor ve toda su agencia ────────────────────────────────
+-- Se dropean los DOS nombres: el viejo (que traía la 141) porque queda
+-- reemplazado, y el nuevo porque esta migración debe poder re-correrse sin
+-- fallar. Sin el segundo drop, un segundo intento revienta con
+-- «policy "ventas: venta ve su agencia" for table "ventas" already exists».
 drop policy if exists "ventas: asesor ve sus contratos" on public.ventas;
+drop policy if exists "ventas: venta ve su agencia" on public.ventas;
 create policy "ventas: venta ve su agencia"
   on public.ventas for select
   using (
