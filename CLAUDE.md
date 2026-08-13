@@ -313,13 +313,53 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 139** — todas
-> confirmadas corridas por el dueño. **135** `contrato_vuelo_tramo` (1 fila = 1 tramo de
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 141.**
+> Corridas por el dueño **hasta la 139**; ⚠️ **140 y 141 están PENDIENTES de correr**.
+> **135** `contrato_vuelo_tramo` (1 fila = 1 tramo de
 > vuelo) · **136** `proveedores_escritura_operaciones` (rol operaciones puede crear
 > proveedores) · **137** `alinear_roles_escritura` (reorganización general de roles/RLS,
 > ver "Novedades recientes") · **138** `servicio_foto` (foto de receptivos + bucket
 > `servicio-fotos`) · **139** `programa_tipo_transporte` (`programas.tipo_transporte`
-> ninguno/aereo/terrestre).
+> ninguno/aereo/terrestre) · **140** `usuario_inactivo_sin_rol` (`mi_rol()` no devuelve
+> rol si `activo = false`) · **141** `rls_hijas_por_dueno` (las tablas hijas del contrato
+> heredan el permiso de `ventas` vía `puede_ver_contrato()`).
+
+> **⚠️ Endurecimiento de seguridad (ago-2026) — leer antes de tocar RLS o el login:**
+> - **Backdoor del login por código (crítico, corregido).** `loginConCodigo` resolvía el
+>   código B2B como `QUICK_LOGIN_B2B_CODE || "2"` con correo y contraseña **quemados en
+>   el código**, y auto-creaba el usuario con rol `agencia` y `activo: true`. Cualquiera
+>   que escribiera **`2`** en el login de producción entraba como aliado B2B. Ahora el
+>   atajo nace apagado: exige `QUICK_LOGIN_ENABLED=1` + códigos y credenciales explícitos
+>   en el entorno. La contraseña que estuvo en el repo debe considerarse comprometida.
+> - **Usuario desactivado (migración 140).** `usuarios.activo` era decorativo: nada lo
+>   verificaba y el JWT sigue vivo hasta expirar. El candado va en `mi_rol()` — sin rol,
+>   falla toda policy que dependa de él, incluso llamando la API de Supabase directo.
+>   Se complementa con el rebote a `/login?inactivo=1` en `proxy.ts` y el cierre de sesión
+>   al autenticar una cuenta desactivada.
+> - **Tablas hijas del contrato sin dueño ni tenant (migración 141).** `ventas` filtraba
+>   bien (rol + dueño + tenant) pero `contrato_pasajeros/hoteles/vuelos/items/servicios/
+>   adjuntos`, `vouchers` y `cuotas` eran **solo por rol**: un `venta` podía sacar el
+>   documento y la fecha de nacimiento de TODOS los pasajeros de las DOS agencias. Se
+>   corrige por **herencia**, no por copia: cada hija pregunta
+>   `puede_ver_contrato(numero_contrato)` (EXISTS contra `ventas`), así hereda lo que
+>   `ventas` ya decide y lo seguirá heredando si esa regla cambia. ⚠️ `puede_ver_contrato()`
+>   **no puede ser SECURITY DEFINER** o se saltaría la RLS de `ventas` y devolvería
+>   siempre true.
+> - **Bug de paso: el rol `venta` no veía NINGÚN contrato.** La policy comparaba
+>   `ventas.asesor` contra el **email**, pero la app siempre guarda ahí el **nombre**
+>   (`perfil.nombre`). Pasaba desapercibido porque las hijas sí le mostraban todo. Ahora
+>   `soy_ese_asesor()` compara contra nombre Y correo. **Deuda pendiente:** identificar al
+>   asesor por nombre es débil (dos homónimos se verían los contratos); lo correcto sería
+>   `ventas.asesor_id uuid` con FK a `usuarios` + backfill.
+> - **Prueba de aislamiento:** `supabase/scripts/test_rls_por_rol.sql` se pega en el editor
+>   SQL de Supabase y se hace pasar por cada usuario real verificando que
+>   `filas hijas visibles == filas hijas con contrato padre visible`. Es de solo lectura
+>   (termina en ROLLBACK). Correr después de cualquier cambio de RLS.
+> - **Pendiente de este frente:** bucket `crm` es público (`public: true`) — revisar si
+>   guarda datos de clientes; dependencias vulnerables (`shadcn` fuera de dependencies
+>   —es CLI puro, nunca se importa— y Next a ≥16.2.11); `sitio-web/node_modules`
+>   (14.926 archivos, 165 MB) commiteado en git; sin rate limit ni captcha en formularios
+>   públicos; sin monitoreo de errores (Sentry).
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Programas — tercer tipo de traslado "Salida terrestre" (jul-2026):** el dueño distingue
