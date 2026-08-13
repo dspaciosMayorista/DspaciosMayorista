@@ -231,30 +231,22 @@ function Exito({ res }: { res: Extract<SolicitudResult, { ok: true }> }) {
       <div className="rounded-2xl border border-green-200 bg-green-50 p-5 text-center">
         <div className="text-2xl">✓</div>
         <h2 className="mt-1 text-lg font-semibold text-green-800">¡Cotización generada!</h2>
-        <p className="mt-1 text-sm text-green-700">
-          {res.cotizaciones.length === 1 ? "Tu cotización" : "Tus cotizaciones"}:{" "}
-          {res.cotizaciones.map((c) => c.codigo).join(", ")}
-        </p>
+        <p className="mt-1 text-sm text-green-700">Tu cotización: {res.cotizacion.codigo}</p>
       </div>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-5">
         <h3 className="mb-2 text-sm font-semibold text-gray-700">Tu documento</h3>
         <p className="mb-3 text-xs text-gray-500">Guárdalo o imprímelo (PDF) para mostrarlo en la oficina.</p>
-        <div className="flex flex-col gap-2">
-          {res.cotizaciones.map((c) => (
-            <a
-              key={c.id}
-              href={c.url || "#"}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3 text-sm font-medium hover:bg-gray-50"
-              style={{ color: "var(--brand-primary)" }}
-            >
-              <span>Ver / descargar cotización {c.codigo}{res.cotizaciones.length > 1 ? ` · ${c.hotel}` : ""}</span>
-              <span aria-hidden>↗</span>
-            </a>
-          ))}
-        </div>
+        <a
+          href={res.cotizacion.url || "#"}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3 text-sm font-medium hover:bg-gray-50"
+          style={{ color: "var(--brand-primary)" }}
+        >
+          <span>Ver / descargar cotización {res.cotizacion.codigo}</span>
+          <span aria-hidden>↗</span>
+        </a>
       </div>
 
       <div className="rounded-2xl border border-gray-200 bg-white p-5">

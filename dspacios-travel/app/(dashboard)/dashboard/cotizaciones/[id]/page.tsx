@@ -42,6 +42,12 @@ export default async function CotizacionDetallePage({
   if (!c) notFound();
 
   const esManual = c.tipo === "manual";
+  // Cotización combinada generada desde el carrito del tarifario público
+  // (Fase 2 — checkout): puede traer varios hoteles/tours en un solo
+  // documento. La conversión directa a contrato (CotizacionAcciones) asume
+  // un payload de un solo hotel (ReservaInput) y aún no soporta esto — ver
+  // Fase 3 en el handoff. Por ahora solo se puede ver/descargar o descartar.
+  const esCarrito = c.tipo === "carrito";
   const moneda = c.moneda ?? "COP";
   const { data: serviciosManual } = esManual
     ? await sb.from("cotizacion_servicios").select("*").eq("cotizacion_id", c.id).order("orden")
@@ -209,6 +215,27 @@ export default async function CotizacionDetallePage({
                 <DescartarBtn id={c.id} />
                 <ConvertirManualBtn id={c.id} />
               </div>
+            </div>
+          ) : c.estado === "convertida" && c.numero_contrato ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-gray-600">
+                Convertida en contrato <span className="font-mono font-medium text-gray-800">{c.numero_contrato}</span>.
+              </p>
+              <Link href={`/dashboard/contratos/${encodeURIComponent(c.numero_contrato)}`}>
+                <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver contrato →</Button>
+              </Link>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">Cotización descartada.</p>
+          )
+        ) : esCarrito ? (
+          c.estado === "abierta" ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-gray-500">
+                Cotización combinada del carrito (tarifario público). La conversión directa a contrato para
+                carritos con varios ítems llega en una próxima fase — gestiónala manual si el cliente confirma.
+              </p>
+              <DescartarBtn id={c.id} />
             </div>
           ) : c.estado === "convertida" && c.numero_contrato ? (
             <div className="flex flex-wrap items-center justify-between gap-3">

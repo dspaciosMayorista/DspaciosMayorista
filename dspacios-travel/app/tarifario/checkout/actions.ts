@@ -3,11 +3,12 @@
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { crearCotizacion } from "@/app/(dashboard)/dashboard/reservar/actions";
-import { type ReservaInput } from "@/lib/reservar/computo";
+import { computarReserva, type ReservaInput } from "@/lib/reservar/computo";
+import { parseRuta, ciudadIata } from "@/lib/iata";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { formatCOP, formatMoneda } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { comisionDefault, categoriaAliado } from "@/lib/b2b";
+import type { Json } from "@/types/database";
 
 export type SolicitudItem = {
   modulo: "bloqueo" | "porcion_terrestre";
@@ -29,8 +30,9 @@ export type SolicitudItem = {
   precio: number;
 };
 
-// Tour/servicio agregado al carrito — informativo por ahora (todavía no genera
-// su propia cotización, ver docs/tecnico: "Fase 2 — cotización combinada").
+// Tour/servicio agregado al carrito — entra a la MISMA cotización combinada
+// que los hoteles del carrito (ver crearCotizacionCarrito), como una línea
+// más de "Servicios adicionales".
 export type SolicitudTour = {
   nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null;
   pax: number; precio: number; moneda: string;
@@ -104,7 +106,7 @@ export async function fotosPortada(hotelIds: number[]): Promise<Record<number, s
 }
 
 export type SolicitudResult =
-  | { ok: true; cotizaciones: { id: number; codigo: string; hotel: string; url: string }[]; waUrl: string | null; mailtoUrl: string | null; mensaje: string }
+  | { ok: true; cotizacion: { id: number; codigo: string; url: string }; waUrl: string | null; mailtoUrl: string | null; mensaje: string }
   | { ok: false; error: string };
 
 function resumenHab(it: SolicitudItem): string {
@@ -119,8 +121,10 @@ function resumenHab(it: SolicitudItem): string {
 
 function construirMensaje(
   cliente: SolicitudCliente,
-  cotis: { codigo: string; hotel: string; precio: number; item: SolicitudItem; url: string }[],
+  cot: { codigo: string; url: string },
+  items: SolicitudItem[],
   tours: SolicitudTour[],
+  moneda: string,
   extra: string | null,
   b2b?: { modo: "comisionable" | "neta"; facturacion: Facturacion; pctComision: number },
 ): string {
@@ -140,68 +144,70 @@ function construirMensaje(
   }
   L.push("");
   let total = 0;
-  cotis.forEach((c, i) => {
-    const it = c.item;
-    total += c.precio;
-    L.push(`${i + 1}) ${c.hotel}${it.destino ? ` — ${it.destino}` : ""}`);
+  items.forEach((it, i) => {
+    total += it.precio;
+    L.push(`${i + 1}) ${it.hotelNombre}${it.destino ? ` — ${it.destino}` : ""}`);
     if (it.fechaIda) L.push(`   ${it.fechaIda} → ${it.fechaRegreso ?? ""}${it.noches ? ` (${it.noches} noches)` : ""}`);
     L.push(`   ${it.categoria} / ${it.regimen} · ${resumenHab(it)}`);
-    L.push(`   ${it.pax} pax · Valor estimado: ${formatCOP(c.precio)}`);
-    L.push(`   Cotización: ${c.codigo}`);
-    if (c.url) L.push(`   Documento: ${c.url}`);
+    L.push(`   ${it.pax} pax · Valor estimado: ${formatMoneda(it.precio, moneda)}`);
     L.push("");
   });
   if (tours.length) {
     L.push("Servicios / tours adicionales:");
-    let totalToursCop = 0;
     for (const t of tours) {
       L.push(`- ${t.nombre}${t.destino ? ` — ${t.destino}` : ""}`);
       if (t.fechaIda) L.push(`   ${t.fechaIda} → ${t.fechaRegreso ?? ""}`);
-      L.push(`   ${t.pax} pax · Valor estimado: ${formatMoneda(t.precio, t.moneda)}`);
-      // Solo se suma al total (PVP) si viene en la misma moneda que los hoteles (COP).
-      if (t.moneda === "COP") totalToursCop += t.precio;
+      L.push(`   ${t.pax} pax · Valor estimado: ${formatMoneda(t.precio, moneda)}`);
+      total += t.precio;
     }
     L.push("");
-    total += totalToursCop;
   }
-  L.push(`Total (PVP): ${formatCOP(total)}`);
+  L.push(`Total (PVP): ${formatMoneda(total, moneda)}`);
   if (b2b?.modo === "neta") {
     const comision = Math.round(total * (b2b.pctComision || 0));
-    L.push(`Comisión (${Math.round((b2b.pctComision || 0) * 100)}%): −${formatCOP(comision)}`);
-    L.push(`TOTAL NETO a pagar: ${formatCOP(total - comision)}`);
+    L.push(`Comisión (${Math.round((b2b.pctComision || 0) * 100)}%): −${formatMoneda(comision, moneda)}`);
+    L.push(`TOTAL NETO a pagar: ${formatMoneda(total - comision, moneda)}`);
   } else if (b2b?.modo === "comisionable") {
     const comision = Math.round(total * (b2b.pctComision || 0));
-    L.push(`Comisión a liquidar (${Math.round((b2b.pctComision || 0) * 100)}%): ${formatCOP(comision)}`);
+    L.push(`Comisión a liquidar (${Math.round((b2b.pctComision || 0) * 100)}%): ${formatMoneda(comision, moneda)}`);
   }
+  L.push("");
+  L.push(`Cotización: ${cot.codigo}`);
+  if (cot.url) L.push(`Documento: ${cot.url}`);
   if (extra?.trim()) { L.push(""); L.push(extra.trim()); }
   return L.join("\n");
 }
 
-// Genera una cotización por ítem del carrito (un hotel por cotización) y arma los
-// enlaces wa.me + mailto hacia los destinatarios configurados. Público (sin login).
-export async function crearSolicitudReserva(input: {
+// Genera UNA sola cotización combinada para todo el carrito (hoteles + tours):
+// re-liquida cada hotel con el motor autoritativo (computarReserva, mismo
+// precio que usaría un contrato) y arma un solo snapshot {venta, hoteles,
+// vuelos, items} — el mismo formato que ya renderiza ContratoDocumento, así
+// que /cot/[token] y /cotizacion/[id] la muestran sin cambios. Si el carrito
+// mezcla monedas (raro: un hotel/tour en USD junto a otros en COP), los ítems
+// de la moneda minoritaria quedan FUERA de esta cotización (se listan en
+// `excluidos` para avisar) — evita totales mezclando pesos y dólares.
+async function crearCotizacionCarrito(input: {
   items: SolicitudItem[];
-  tours?: SolicitudTour[];
+  tours: SolicitudTour[];
   cliente: SolicitudCliente;
-  modo?: "comisionable" | "neta";
-  facturacion?: Facturacion;
-  pctComision?: number;
-}): Promise<SolicitudResult> {
-  const tours = input.tours ?? [];
-  if (!input.items.length && !tours.length) return { ok: false, error: "El carrito está vacío." };
-  if (!`${input.cliente.nombres}${input.cliente.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
-  if (!input.cliente.numeroDoc.trim()) return { ok: false, error: "El documento es obligatorio." };
-  if (!input.cliente.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
-
+}): Promise<
+  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItem[]; toursOk: SolicitudTour[]; excluidos: string[] }
+  | { ok: false; error: string }
+> {
   const sb = await createClient();
+  const clienteNombre = `${input.cliente.nombres} ${input.cliente.apellidos}`.trim();
+  if (!clienteNombre) return { ok: false, error: "El nombre del cliente es obligatorio." };
 
-  // Origen absoluto para armar el enlace público del documento (/cot/<token>).
-  const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host");
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  const origin = host ? `${proto}://${host}` : "";
-
-  const cotis: { id: number; codigo: string; hotel: string; precio: number; item: SolicitudItem; url: string }[] = [];
+  const hoy = new Date().toISOString().slice(0, 10);
+  const hotelesSnap: Record<string, unknown>[] = [];
+  const vuelosSnap: Record<string, unknown>[] = [];
+  const itemsSnap: Record<string, unknown>[] = [];
+  const itemsOk: SolicitudItem[] = [];
+  const toursOk: SolicitudTour[] = [];
+  const excluidos: string[] = [];
+  let monedaPrincipal: string | null = null;
+  let total = 0;
+  let hIdx = 0, vIdx = 0, iIdx = 0;
 
   for (const it of input.items) {
     const reserva: ReservaInput = {
@@ -224,15 +230,164 @@ export async function crearSolicitudReserva(input: {
       tipoAsesor: "interno", asesorInterno: "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
       aliadoId: null, plazo: "", pasajeros: [], servicios: [],
     };
-    const r = await crearCotizacion(reserva);
-    if (!r.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${r.error}` };
-    // Lectura por service-role: la RLS de `cotizaciones` es solo interna, y el
-    // checkout corre para B2B/público. Sin esto, el B2B no obtiene el enlace.
-    const lector = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
-    const { data: row } = await lector.from("cotizaciones").select("codigo, precio_venta, share_token").eq("id", r.id).maybeSingle();
-    const url = origin && row?.share_token ? `${origin}/cot/${row.share_token}` : "";
-    cotis.push({ id: r.id, codigo: row?.codigo ?? `#${r.id}`, hotel: it.hotelNombre, precio: row?.precio_venta ?? it.precio, item: it, url });
+    const comp = await computarReserva(sb, reserva);
+    if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
+    const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2 } = comp.data;
+
+    if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
+      excluidos.push(`${it.hotelNombre} (moneda ${monedaReserva})`);
+      continue;
+    }
+    monedaPrincipal = monedaPrincipal ?? monedaReserva;
+
+    let fotoUrl: string | null = null;
+    const { data: fotos } = await sb.from("hotel_fotos").select("url, es_portada, orden").eq("hotel_id", it.hotelId).order("orden");
+    for (const f of fotos ?? []) { if (fotoUrl == null) fotoUrl = f.url; if (f.es_portada) fotoUrl = f.url; }
+
+    const partes = lineasHab.map((l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`);
+    if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
+    if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
+    if ((it.infantes || 0) > 0) partes.push(`${it.infantes} Infante(s)`);
+
+    hIdx++;
+    hotelesSnap.push({
+      id: hIdx, nombre: meta.hotel_nombre ?? it.hotelNombre, categoria: it.categoria, ciudad: meta.destino_nombre ?? it.destino,
+      proveedor: null, alimentacion: it.regimen, acomodacion: it.categoria, detalle_acomodacion: partes.join(", "),
+      fecha_ingreso: meta.fecha_ida, fecha_salida: meta.fecha_regreso, nota_regimen: null, foto_url: fotoUrl,
+    });
+
+    if (it.modulo === "bloqueo" && it.bloqueoId) {
+      const { data: bq } = await sb
+        .from("bloqueos_vuelo")
+        .select("aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg")
+        .eq("id", it.bloqueoId).maybeSingle();
+      if (bq) {
+        const r = parseRuta(bq.ruta);
+        vIdx++;
+        vuelosSnap.push({
+          id: vIdx, aerolinea: bq.aerolinea, record: bq.record, direccion: "ida",
+          origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
+          destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+          numero_vuelo: bq.vuelo_ida, hora_salida: bq.hora_salida_ida, hora_llegada: bq.hora_llegada_ida,
+          fecha_salida: bq.fecha_ida,
+        });
+        if (bq.fecha_regreso || bq.vuelo_regreso) {
+          vIdx++;
+          vuelosSnap.push({
+            id: vIdx, aerolinea: bq.aerolinea, record: bq.record, direccion: "regreso",
+            origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino),
+            destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+            numero_vuelo: bq.vuelo_regreso, hora_salida: bq.hora_salida_reg, hora_llegada: bq.hora_llegada_reg,
+            fecha_salida: bq.fecha_regreso,
+          });
+        }
+      }
+    }
+
+    iIdx++;
+    itemsSnap.push({
+      id: iIdx,
+      descripcion: `${meta.hotel_nombre ?? it.hotelNombre}${meta.destino_nombre ?? it.destino ? ` — ${meta.destino_nombre ?? it.destino}` : ""} · ${it.categoria} / ${it.regimen} · ${partes.join(", ")}`,
+      adultos: 1, ninos: 0, tarifa_adulto: precioVenta, tarifa_nino: 0,
+    });
+    total += precioVenta;
+    itemsOk.push(it);
   }
+
+  for (const t of input.tours) {
+    const tMoneda = t.moneda || "COP";
+    if (monedaPrincipal && tMoneda !== monedaPrincipal) { excluidos.push(`${t.nombre} (moneda ${tMoneda})`); continue; }
+    monedaPrincipal = monedaPrincipal ?? tMoneda;
+    iIdx++;
+    itemsSnap.push({
+      id: iIdx,
+      descripcion: `Servicio · ${t.nombre}${t.destino ? ` — ${t.destino}` : ""}`,
+      adultos: 1, ninos: 0, tarifa_adulto: t.precio, tarifa_nino: 0,
+    });
+    total += t.precio;
+    toursOk.push(t);
+  }
+
+  if (!itemsOk.length && !toursOk.length) return { ok: false, error: "No se pudo generar la cotización (revisa disponibilidad)." };
+
+  const moneda = monedaPrincipal ?? "COP";
+  const destinos = [...new Set(itemsOk.map((i) => i.destino).filter((d): d is string => !!d))];
+  const destinoTxt = destinos.length ? destinos.join(" · ") : null;
+  const fechasIda = itemsOk.map((i) => i.fechaIda).filter((f): f is string => !!f).sort();
+  const fechasRegreso = itemsOk.map((i) => i.fechaRegreso).filter((f): f is string => !!f).sort();
+  const fechaIda = fechasIda[0] ?? null;
+  const fechaRegreso = fechasRegreso.length ? fechasRegreso[fechasRegreso.length - 1] : null;
+  const paxTotal = itemsOk.reduce((s, i) => s + (i.pax || 0), 0) || (toursOk[0]?.pax ?? 0);
+  const planNombre: string | null = itemsOk.length > 1 ? `${itemsOk.length} hoteles` : (itemsOk[0] ? `${itemsOk[0].categoria} · ${itemsOk[0].regimen}` : null);
+
+  const ventaSnap: Record<string, unknown> = {
+    numero_contrato: "", cliente: clienteNombre, cliente_documento: input.cliente.numeroDoc.trim() || null,
+    cliente_telefono: input.cliente.telefono.trim() || null, cliente_direccion: null,
+    destino: destinoTxt, fecha_emision: hoy, fecha_salida: fechaIda, fecha_regreso: fechaRegreso,
+    pax: paxTotal, estado: "pendiente",
+    plan_nombre: planNombre,
+    asistencia_medica: false,
+    tours_traslados: toursOk.length ? toursOk.map((t) => t.nombre).join(", ") : null,
+    moneda,
+  };
+
+  const detalle = { venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
+
+  const vig = new Date();
+  vig.setDate(vig.getDate() + 1);
+  const vigencia = vig.toISOString().slice(0, 10);
+
+  const { data: { user } } = await sb.auth.getUser();
+  const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+
+  const { data: row, error } = await admin.from("cotizaciones").insert({
+    tipo: "carrito",
+    payload: { items: itemsOk, tours: toursOk, cliente: input.cliente } as unknown as Json,
+    detalle: detalle as unknown as Json,
+    cliente: clienteNombre,
+    cliente_documento: input.cliente.numeroDoc.trim() || null,
+    destino: destinoTxt,
+    hotel: itemsOk.length === 1 ? itemsOk[0].hotelNombre : (itemsOk.length ? `${itemsOk.length} hoteles` : null),
+    modulo: "carrito",
+    plan_nombre: planNombre,
+    pax: paxTotal,
+    precio_venta: total,
+    moneda,
+    fecha_salida: fechaIda,
+    fecha_regreso: fechaRegreso,
+    vigencia_hasta: vigencia,
+    asesor: null,
+    creado_por: user?.email ?? null,
+  }).select("id, codigo, share_token").single();
+  if (error || !row) return { ok: false, error: error?.message ?? "No se pudo crear la cotización." };
+
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  const origin = host ? `${proto}://${host}` : "";
+  const url = origin && row.share_token ? `${origin}/cot/${row.share_token}` : "";
+
+  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, toursOk, excluidos };
+}
+
+// Genera UNA sola cotización combinada para todo el carrito y arma los
+// enlaces wa.me + mailto hacia los destinatarios configurados. Público (sin login).
+export async function crearSolicitudReserva(input: {
+  items: SolicitudItem[];
+  tours?: SolicitudTour[];
+  cliente: SolicitudCliente;
+  modo?: "comisionable" | "neta";
+  facturacion?: Facturacion;
+  pctComision?: number;
+}): Promise<SolicitudResult> {
+  const tours = input.tours ?? [];
+  if (!input.items.length && !tours.length) return { ok: false, error: "El carrito está vacío." };
+  if (!`${input.cliente.nombres}${input.cliente.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
+  if (!input.cliente.numeroDoc.trim()) return { ok: false, error: "El documento es obligatorio." };
+  if (!input.cliente.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };
+
+  const cot = await crearCotizacionCarrito({ items: input.items, tours, cliente: input.cliente });
+  if (!cot.ok) return cot;
 
   // Agrega el cliente a la base de contactos del CRM como B2C (cliente_final),
   // editable luego a B2B (agencia/freelance). Service-role: el checkout es público.
@@ -265,7 +420,13 @@ export async function crearSolicitudReserva(input: {
   const b2b = input.modo && input.facturacion
     ? { modo: input.modo, facturacion: input.facturacion, pctComision: input.pctComision ?? 0 }
     : undefined;
-  const mensaje = construirMensaje(input.cliente, cotis, tours, mensajeExtra, b2b);
+  // Si algo del carrito quedó fuera de la cotización (moneda distinta a la del
+  // resto), se avisa igual en el mensaje para no perderlo silenciosamente.
+  const notaExcluidos = cot.excluidos.length
+    ? `Nota: quedaron fuera de esta cotización por estar en otra moneda — coordinar aparte: ${cot.excluidos.join(", ")}.`
+    : null;
+  const extra = [mensajeExtra?.trim() || null, notaExcluidos].filter(Boolean).join("\n\n") || null;
+  const mensaje = construirMensaje(input.cliente, { codigo: cot.codigo, url: cot.url }, cot.itemsOk, cot.toursOk, cot.moneda, extra, b2b);
   const wa = (whatsapp ?? "").replace(/\D/g, "");
   const waUrl = wa ? `https://wa.me/${wa}?text=${encodeURIComponent(mensaje)}` : null;
   const correos = (emails ?? "").split(",").map((e) => e.trim()).filter(Boolean).join(",");
@@ -273,5 +434,5 @@ export async function crearSolicitudReserva(input: {
     ? `mailto:${correos}?subject=${encodeURIComponent("Solicitud de reserva — D'spacios Travel")}&body=${encodeURIComponent(mensaje)}`
     : null;
 
-  return { ok: true, cotizaciones: cotis.map((c) => ({ id: c.id, codigo: c.codigo, hotel: c.hotel, url: c.url })), waUrl, mailtoUrl, mensaje };
+  return { ok: true, cotizacion: { id: cot.id, codigo: cot.codigo, url: cot.url }, waUrl, mailtoUrl, mensaje };
 }
