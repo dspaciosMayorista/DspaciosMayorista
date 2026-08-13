@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/types/database";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -52,7 +53,12 @@ export default async function ContratoDetallePage({
     { data: proveedoresCatalogo },
     { data: aliadosCatalogo },
   ] = await Promise.all([
-    sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
+    // Migración 144: quien NO tiene acceso financiero lee la vista sin
+    // columnas de costo. El rol `venta` ya no puede leer la tabla base — ese
+    // es el candado real; esto solo es la consulta que sí le funciona.
+    (verFinanzas
+      ? sb.from("ventas").select("*").eq("numero_contrato", numero).single()
+      : sb.from("ventas_basica").select("*").eq("numero_contrato", numero).single()),
     sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
     sb.from("cuentas_por_pagar").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("aliados_b2b").select("*").eq("numero_contrato", numero).order("id"),
@@ -122,6 +128,15 @@ export default async function ContratoDetallePage({
   const fiscal = fiscalFromParams(paramsRows ?? []);
 
   if (!venta) notFound();
+
+  // Datos financieros del contrato (costos, impuesto). Solo existen si quien
+  // mira tiene acceso financiero: la consulta de arriba trae la vista
+  // `ventas_basica` para los demás, que NO incluye estas columnas. Se separa en
+  // su propia variable para que TypeScript impida leerlas por descuido — si un
+  // día alguien las pinta sin gate, el build falla en vez de filtrarlas.
+  const fin = verFinanzas
+    ? (venta as Database["public"]["Tables"]["ventas"]["Row"])
+    : null;
 
   // Servicios del paquete (para editar los add-ons de un contrato PENDIENTE).
   let serviciosDisp: ServicioDispContrato[] = [];
@@ -237,7 +252,7 @@ export default async function ContratoDetallePage({
       <GestionTabs
         numero={numero}
         precioVenta={venta.precio_venta}
-        impuesto={venta.impuesto ?? 0}
+        impuesto={fin?.impuesto ?? 0}
         clienteNombre={venta.cliente ?? ""}
         clienteDocumento={venta.cliente_documento ?? ""}
         asesorNombre={asesorNombre}
@@ -245,11 +260,11 @@ export default async function ContratoDetallePage({
         fiscal={fiscal}
         verFinanzas={verFinanzas}
         costos={{
-          costo_hotel: venta.costo_hotel,
-          costo_aereo: venta.costo_aereo,
-          costo_receptivo: venta.costo_receptivo,
-          costo_asistencia: venta.costo_asistencia,
-          otros_costos: venta.otros_costos,
+          costo_hotel: fin?.costo_hotel ?? 0,
+          costo_aereo: fin?.costo_aereo ?? 0,
+          costo_receptivo: fin?.costo_receptivo ?? 0,
+          costo_asistencia: fin?.costo_asistencia ?? 0,
+          otros_costos: fin?.otros_costos ?? 0,
         }}
         abonos={abonos ?? []}
         cuotas={(cuotas ?? []) as unknown as CuotaRow[]}

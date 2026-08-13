@@ -2594,6 +2594,18 @@ export type Database = {
       };
     };
     Views: {
+      // Migración 144: `ventas` SIN columnas financieras. Es la única puerta
+      // que tiene el rol `venta` a los contratos — a la tabla base ya no
+      // entra, justamente para que no pueda pedir los costos por la API.
+      ventas_basica: {
+        Row: Omit<
+          Database["public"]["Tables"]["ventas"]["Row"],
+          "costo_hotel" | "costo_aereo" | "costo_receptivo" | "costo_asistencia" | "otros_costos"
+          | "impuesto" | "comision_b2b" | "comision_estado" | "modo_compra"
+          | "recobro_total" | "recobro_empresa" | "recobro_aliado" | "trm_contrato" | "b2b_usuario_id"
+        >;
+        Relationships: [];
+      };
       cupos_por_bloqueo: {
         Row: {
           id: number | null;

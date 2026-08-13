@@ -9,8 +9,12 @@ export const dynamic = "force-dynamic";
 export default async function ContratosPage() {
   const sb = await createClient();
   const tenant = await getTenant();
+  // Se lee de `ventas_basica` (migración 144), no de la tabla base: el rol
+  // `venta` ya no tiene acceso de fila a `ventas` — así no puede pedir las
+  // columnas de costo por la API. La vista sirve igual a los demás roles y
+  // aplica el mismo filtro por agencia, así que basta una sola consulta.
   const { data: ventas } = await sb
-    .from("ventas")
+    .from("ventas_basica")
     .select(
       "numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, estado, created_at"
     )
