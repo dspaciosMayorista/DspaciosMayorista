@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { Lock } from "lucide-react";
 import { registrarAdjunto, urlFirmadaAdjunto, eliminarAdjunto } from "./adjuntos-actions";
 
 export type Adjunto = {
@@ -60,7 +61,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
     <section className="mt-8 rounded-xl border border-gray-300 bg-white p-4 shadow-sm sm:p-5">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-semibold text-gray-700">Adjuntos del contrato</p>
-        <span className="text-xs text-gray-400">{adjuntos.length} archivo(s) · {fmtBytes(total)}</span>
+        {puedeEditar && <span className="text-xs text-gray-400">{adjuntos.length} archivo(s) · {fmtBytes(total)}</span>}
       </div>
 
       {puedeEditar && (
@@ -91,8 +92,24 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
             <tbody>{adjuntos.map((a) => <Fila key={a.id} a={a} numeroContrato={numeroContrato} puedeEditar={puedeEditar} />)}</tbody>
           </table>
         </div>
-      ) : (
+      ) : puedeEditar ? (
         <p className="rounded-lg border-2 border-dashed border-gray-200 py-6 text-center text-sm text-gray-400">Aún no hay adjuntos.</p>
+      ) : (
+        // En solo lectura la lista SIEMPRE llega vacía: `contrato_adjuntos`
+        // está limitada a contratos propios desde la migración 142. Decir "aún
+        // no hay adjuntos" sería afirmar algo que no se sabe — el contrato
+        // puede tener la cédula y los soportes de pago cargados. Se dice lo que
+        // de verdad pasa.
+        <div className="flex items-start gap-3 rounded-lg border-2 border-dashed border-gray-200 px-4 py-5">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
+          <div className="text-sm text-gray-500">
+            <p className="font-medium text-gray-600">Adjuntos protegidos</p>
+            <p className="mt-0.5 text-gray-400">
+              Cédulas y soportes de pago solo los consulta el asesor responsable del contrato.
+              Desde aquí no se puede saber si tiene archivos cargados.
+            </p>
+          </div>
+        </div>
       )}
     </section>
   );

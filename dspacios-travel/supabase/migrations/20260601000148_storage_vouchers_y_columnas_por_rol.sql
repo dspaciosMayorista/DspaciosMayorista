@@ -252,19 +252,50 @@ grant select on public.contrato_vuelos_basica to authenticated;
 -- "Registrar abono" fallaba en silencio. No es algo que rompiera esta tanda de
 -- migraciones: viene de antes.
 --
--- Se agrega SOLO LECTURA, y solo sobre contratos que ya puede ver: cuánto ha
--- pagado el cliente es información comercial que el asesor necesita para
--- atender. Es aditivo — nadie pierde nada — por eso puede ir en esta
--- migración preparatoria.
+-- Se agrega SOLO LECTURA, con MÍNIMO PRIVILEGIO en dos niveles distintos —
+-- porque "cuánto debe el cliente" y "con qué tarjeta pagó" no son el mismo
+-- dato:
+--
+--   · Contrato PROPIO  → la fila completa. El asesor que gestiona necesita
+--     forma de pago, referencia y comprobante para conciliar con el cliente.
+--   · Contrato de un COLEGA → solo el TOTAL, por la vista `abonos_resumen`.
+--     Para atender una llamada ("¿cuánto llevo pagado?") alcanza el total y el
+--     saldo; la forma de pago, la referencia bancaria y el comprobante son
+--     datos financieros del cliente de otro asesor y no hacen falta.
 --
 -- NO se agrega escritura a propósito. Registrar, corregir o eliminar un pago es
 -- función contable; `venta` nunca la tuvo (los botones existían pero fallaban).
 -- Dársela ahora sería ampliar permisos dentro de un PR de endurecimiento. Los
 -- controles de escritura se ocultan en la interfaz para que deje de haber
 -- botones que no hacen nada.
+--
+-- Se exige `puede_ver_contrato` ADEMÁS de `soy_asesor_del_contrato`:
+-- `soy_asesor_del_contrato` empareja por NOMBRE (la deuda ya anotada en la
+-- 141/142), así que por sí sola cruzaría un contrato de la otra agencia cuyo
+-- asesor se llame igual. `puede_ver_contrato` pone el filtro de tenant.
 drop policy if exists "abonos: venta consulta" on public.abonos;
 create policy "abonos: venta consulta" on public.abonos for select
-  using (public.mi_rol() = 'venta' and public.puede_ver_contrato(numero_contrato));
+  using (public.mi_rol() = 'venta'
+         and public.puede_ver_contrato(numero_contrato)
+         and public.soy_asesor_del_contrato(numero_contrato));
+
+-- Resumen por contrato: SOLO número de contrato y total pagado. Es una vista
+-- agregada, así que ni siquiera existe una columna `referencia` que pedir —
+-- la restricción es estructural, no una lista de columnas que haya que
+-- mantener al día. El `where` es la frontera (la vista es SECURITY DEFINER,
+-- mismo patrón que `ventas_basica`).
+drop view if exists public.abonos_resumen;
+create view public.abonos_resumen as
+  select
+    a.numero_contrato,
+    sum(a.valor_abono)::numeric(15,2) as total_pagado,
+    count(*)::bigint                  as cantidad
+  from public.abonos a
+  where public.mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta')
+    and public.puede_ver_contrato(a.numero_contrato)
+  group by a.numero_contrato;
+
+grant select on public.abonos_resumen to authenticated;
 
 -- ── 4. `ventas_basica`: documento del titular enmascarado si no es propio ──
 -- Se re-declara la vista COMPLETA (no se puede alterar una columna suelta), con

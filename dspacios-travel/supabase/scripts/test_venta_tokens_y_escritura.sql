@@ -19,7 +19,9 @@
 --     cliente_direccion y asesor_firma_cc.
 --   · `soy_asesor_del_contrato`, que es la ENTRADA de la decisión de solo
 --     lectura de la ficha del contrato: true en el propio, false en el ajeno.
---   · Que el asesor consulta los abonos (para el saldo) pero no los registra.
+--   · Abonos con mínimo privilegio: fila completa solo en el contrato propio,
+--     únicamente el TOTAL (vista `abonos_resumen`) en el de un colega, nada de
+--     otra agencia, y ninguna escritura.
 --   · Aislamiento por agencia (tenant) y bloqueo del usuario desactivado.
 --   · Que un rol administrativo sigue teniendo acceso completo — incluida la
 --     ESCRITURA en contratos que no gestiona (si no, la prueba pasaría igual
@@ -49,8 +51,8 @@
 --
 -- DÓNDE SE EJECUTÓ
 --   Sobre un PostgreSQL 16 local con las migraciones aplicadas en orden, en las
---   DOS fases: con la 148 corrida (110/110) y después de correr la 149
---   (110/110). Falta correrla en Supabase, que es el único lugar donde
+--   DOS fases: con la 148 corrida (117/117) y después de correr la 149
+--   (117/117). Falta correrla en Supabase, que es el único lugar donde
 --   `storage.objects` es el real y donde hay datos de producción.
 -- ─────────────────────────────────────────────────────────────────────────
 
@@ -180,9 +182,10 @@ begin
   end loop;
 
   -- Un abono en cada contrato: el asesor tiene que poder consultar el saldo.
-  insert into public.abonos (numero_contrato, cliente, fecha_abono, valor_abono, tenant) values
-    (c_propio, 'CLIENTE PRUEBA PROPIO', current_date, 400000, v_tenant),
-    (c_ajeno,  'CLIENTE PRUEBA AJENO',  current_date, 900000, v_tenant);
+  insert into public.abonos (numero_contrato, cliente, fecha_abono, valor_abono, forma_pago, referencia, tenant) values
+    (c_propio,  'CLIENTE PRUEBA PROPIO', current_date, 400000, 'Transferencia', 'REF-PROPIA', v_tenant),
+    (c_ajeno,   'CLIENTE PRUEBA AJENO',  current_date, 900000, 'Tarjeta',       'REF-AJENA',  v_tenant),
+    (c_otroten, 'CLIENTE OTRO TENANT',   current_date, 700000, 'Efectivo',      'REF-OTRA',   otro_ten);
 
   -- Archivos en Storage: uno de cada contrato.
   insert into storage.objects (bucket_id, name) values
@@ -312,11 +315,55 @@ begin
   -- ══ BLOQUE 2.ter · Saldo: el asesor consulta los abonos, no los registra ══
   -- Información comercial que necesita para atender ("¿cuánto debo?"), en su
   -- contrato y en el del colega que está cubriendo.
+  -- PROPIO: la fila completa (necesita forma de pago y referencia para
+  -- conciliar con su cliente).
   execute 'set local role authenticated';
   perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
-  select count(*) into n from public.abonos where numero_contrato in (c_propio, c_ajeno);
+  select count(*) into n from public.abonos
+   where numero_contrato = c_propio and forma_pago = 'Transferencia' and referencia = 'REF-PROPIA';
   reset role; perform set_config('request.jwt.claims', '{}', true);
-  k := k + 1; insert into _res values (k, 'venta CONSULTA los abonos (saldo) de su agencia', '2', n::text, n = 2);
+  k := k + 1; insert into _res values (k, 'ABONOS propios: fila COMPLETA (forma de pago y referencia)', '1', n::text, n = 1);
+
+  -- AJENO: ni una fila de la tabla. La referencia bancaria y la forma de pago
+  -- del cliente de un colega no hacen falta para atender una llamada.
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  select count(*) into n from public.abonos where numero_contrato = c_ajeno;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'ABONOS ajenos: NINGUNA fila de la tabla (sin forma de pago ni referencia)', '0', n::text, n = 0);
+
+  -- …pero el TOTAL sí, por la vista agregada: es lo que necesita el saldo.
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  select coalesce(sum(total_pagado), -1) into n from public.abonos_resumen where numero_contrato = c_ajeno;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'ABONOS ajenos: solo el TOTAL por `abonos_resumen` (para el saldo)', '900000', n::text, n = 900000);
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  select coalesce(sum(total_pagado), 0) into n from public.abonos_resumen where numero_contrato = c_propio;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'ABONOS propios: el resumen también cuadra', '400000', n::text, n = 400000);
+
+  -- La vista NO puede convertirse en una puerta al otro tenant.
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  select count(*) into n from public.abonos_resumen where numero_contrato = c_otroten;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'ABONOS de OTRA agencia: ni el total (`abonos_resumen` filtra tenant)', '0', n::text, n = 0);
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  select count(*) into n from public.abonos where numero_contrato = c_otroten;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'ABONOS de OTRA agencia: ni una fila de la tabla', '0', n::text, n = 0);
+
+  -- El resumen del rol administrativo tiene que seguir viéndolo todo.
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', adm_uid, 'role','authenticated')::text, true);
+  select count(*) into n from public.abonos where numero_contrato in (c_propio, c_ajeno) and referencia is not null;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'rol administrativo lee los abonos COMPLETOS de cualquier contrato', '2', n::text, n = 2);
 
   execute 'set local role authenticated';
   perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
@@ -331,7 +378,16 @@ begin
   execute 'set local role authenticated';
   perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
   begin
-    delete from public.abonos where numero_contrato = c_ajeno;
+    update public.abonos set valor_abono = 1 where numero_contrato in (c_propio, c_ajeno);
+    get diagnostics n = row_count;
+  exception when others then n := 0; end;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'venta NO corrige abonos (tampoco los propios)', '0 filas', n::text, n = 0);
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  begin
+    delete from public.abonos where numero_contrato in (c_propio, c_ajeno);
     get diagnostics n = row_count;
   exception when others then n := 0; end;
   reset role; perform set_config('request.jwt.claims', '{}', true);

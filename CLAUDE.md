@@ -348,7 +348,11 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > `contrato_vuelos_basica` sin el record/PNR ajeno, `cliente_documento` enmascarado,
 > regreso condicional de `cliente_direccion`/`asesor_firma_cc`, y `venta` gana LECTURA de
 > `abonos` — no la tenía por ninguna policy, así que la pestaña Cartera le mostraba
-> "Pagado $0 / Saldo = precio completo" incluso en sus propios contratos) ·
+> "Pagado $0 / Saldo = precio completo" incluso en sus propios contratos. Los abonos van
+> con **mínimo privilegio en dos niveles**: la fila completa (forma de pago, referencia,
+> comprobante) solo en el contrato PROPIO, y en el de un colega únicamente el total por la
+> vista agregada **`abonos_resumen`** — al ser agregada no existe columna sensible que
+> pedir, la restricción es estructural) ·
 > **149** `cierre_contrato_vuelos_record` (**⚠️ SIN CORRER, va DESPUÉS del despliegue**:
 > le quita a `venta` el SELECT sobre la tabla base `contrato_vuelos`).
 >
@@ -357,7 +361,12 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > (cliente con documento enmascarado, contacto, destino, fechas, PVP, estado, hotel,
 > itinerario, saldo y plan de cobro) pero no los controles de gestión —
 > `ServiciosContratoEditor`, registrar/editar abonos, generar plan de cobro, subir o
-> eliminar adjuntos, editar pasajeros/asesor y vouchers. La propiedad se resuelve
+> eliminar adjuntos, editar pasajeros/asesor y vouchers. En adjuntos NO se dice "aún no
+> hay adjuntos" (sería afirmar algo que no se sabe: la lista llega vacía por RLS) sino
+> que están protegidos. El botón del documento imprimible pasa a **"Vista comercial"**,
+> con aviso de versión limitada y **sin botón de imprimir**: por RLS ese documento sale
+> sin pasajeros, sin dirección del cliente y sin datos de firma, así que un PDF suelto
+> parecería un contrato válido sin serlo. La propiedad se resuelve
 > llamando por RPC la MISMA función que usan las policies (`soy_asesor_del_contrato`),
 > nunca deduciéndola de `share_token` ni comparando nombres. Los roles administrativos
 > no cambian. **El candado real es la RLS**: esto solo evita botones que fallan.

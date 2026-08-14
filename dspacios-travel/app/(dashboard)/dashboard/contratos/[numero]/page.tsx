@@ -77,7 +77,13 @@ export default async function ContratoDetallePage({
     (verFinanzas
       ? sb.from("ventas").select("*").eq("numero_contrato", numero).single()
       : sb.from("ventas_basica").select("*").eq("numero_contrato", numero).single()),
-    sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
+    // Detalle de pagos SOLO de contratos propios (o de un rol contable): la
+    // policy de la migración 148 exige `soy_asesor_del_contrato`. En un
+    // contrato ajeno esta consulta devuelve vacío por RLS; el total sale del
+    // resumen de abajo.
+    (puedeEditar
+      ? sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false })
+      : Promise.resolve({ data: [] as Pick<Database["public"]["Tables"]["abonos"]["Row"], "id" | "valor_abono" | "forma_pago" | "referencia" | "fecha_abono" | "trm" | "monto_cop">[] })),
     sb.from("cuentas_por_pagar").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("aliados_b2b").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("facturacion").select("*").eq("numero_contrato", numero).order("id"),
@@ -185,7 +191,17 @@ export default async function ContratoDetallePage({
     seleccionServicios = serviciosDisp.filter((s) => nombresSel.has(s.nombre)).map((s) => s.servicioId);
   }
 
-  const totalPagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
+  // Saldo en modo solo lectura: el asesor que cubre a un colega necesita saber
+  // cuánto ha pagado el cliente, no CÓMO lo pagó. `abonos_resumen` es una vista
+  // agregada — solo número de contrato y total —, así que no hay forma de pago,
+  // referencia bancaria ni comprobante que pudieran llegar de más.
+  const { data: resumenAbonos } = puedeEditar
+    ? { data: null }
+    : await sb.from("abonos_resumen").select("total_pagado").eq("numero_contrato", numero).maybeSingle();
+
+  const totalPagado = puedeEditar
+    ? (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0)
+    : Number(resumenAbonos?.total_pagado ?? 0);
   const saldo = Math.max(venta.precio_venta - totalPagado, 0);
 
   // Buscar el % de comisión del asesor (por email o por nombre de firma)
@@ -211,8 +227,13 @@ export default async function ContratoDetallePage({
             <EstadoVenta numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
           </div>
         </div>
+        {/* En solo lectura el documento sale incompleto por RLS (sin pasajeros,
+            sin dirección del cliente, sin datos de firma), así que no se ofrece
+            como "el contrato": se rotula por lo que de verdad es. */}
         <Link href={`/contrato/${encodeURIComponent(numero)}`} target="_blank">
-          <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver / Imprimir contrato →</Button>
+          <Button style={{ backgroundColor: soloLectura ? "#6b7280" : "var(--brand-primary)" }}>
+            {soloLectura ? "Vista comercial →" : "Ver / Imprimir contrato →"}
+          </Button>
         </Link>
       </div>
 

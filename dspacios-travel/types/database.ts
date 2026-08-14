@@ -2619,6 +2619,15 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Migración 148: total pagado por contrato, sin una sola columna del
+      // abono en sí. Es lo que la ficha del contrato usa para el saldo cuando
+      // el asesor está consultando el contrato de un colega: al ser una vista
+      // agregada, no existe columna `forma_pago`/`referencia`/`comprobante`
+      // que pedir — la restricción es estructural, no una lista que mantener.
+      abonos_resumen: {
+        Row: { numero_contrato: string; total_pagado: number; cantidad: number };
+        Relationships: [];
+      };
       // Migración 148: `contrato_vuelos` SIN el record/PNR ajeno. El rol
       // `venta` ya no lee la tabla base — con el record se puede modificar o
       // anular la reserva en el sitio de la aerolínea.
