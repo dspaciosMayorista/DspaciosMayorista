@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
+import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
 
 // Detalle de cómo se llegó al valor a cobrar. La vía 2 (aliados_b2b) trae el
 // desglose completo (calcComisionB2B); la vía 1 (ventas.comision_b2b, flujo
@@ -51,7 +52,7 @@ export type ComisionResuelta = {
   aliadoB2bId: number | null;
 };
 
-const ROLES_INTERNOS = ["superadmin", "administracion", "gerencia", "operaciones"];
+
 
 /**
  * Resuelve una comisión B2B por número de contrato, con control de acceso:
@@ -62,12 +63,16 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
-  const { data: perfil } = await sb.from("usuarios").select("nombre, rol").eq("id", user.id).maybeSingle();
+  const { data: perfil } = await sb
+    .from("usuarios")
+    .select("nombre, rol, tenant, aliado_id")
+    .eq("id", user.id)
+    .maybeSingle();
 
   const admin = createAdminClient();
   const { data: v } = await admin
     .from("ventas")
-    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, b2b_usuario_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant")
+    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant")
     .eq("numero_contrato", numero)
     .maybeSingle();
   if (!v) return null;
@@ -136,11 +141,43 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
       }
     : aliadoB2B!.detalle;
 
-  const esInterno = ROLES_INTERNOS.includes(perfil?.rol ?? "");
-  const esDueno = esVentasB2B
-    ? v.b2b_usuario_id === user.id || [v.agencia_nombre, v.freelance_nombre].includes(perfil?.nombre ?? "")
-    : !!aliadoNombre && aliadoNombre === (perfil?.nombre ?? "");
-  if (!esInterno && !esDueno) return null;
+  // La autorización de esta página NO la hace la RLS: se lee con service-role.
+  // La decide `accesoDocumentoContrato`, compartida con el estado de cuenta.
+  //
+  // El id del aliado sale de donde esté: `ventas.aliado_id` en el flujo
+  // tarifario B2B, o `aliados_b2b.aliado_id` en las comisiones cargadas a mano
+  // (migración 133) — que es el único camino en minorista. Si ninguno de los
+  // dos está puesto, queda null y solo entonces se mira el nombre.
+  const aliadoIdContrato = esVentasB2B
+    ? ((v.aliado_id as number | null) ?? null)
+    : (aliadoB2B?.aliadoId ?? (v.aliado_id as number | null) ?? null);
+
+  const acceso = accesoDocumentoContrato(
+    perfil
+      ? {
+          id: user.id,
+          rol: perfil.rol as string | null,
+          tenant: perfil.tenant as string | null,
+          nombre: perfil.nombre as string | null,
+          aliadoId: (perfil.aliado_id as number | null) ?? null,
+        }
+      : null,
+    {
+      tenant: (v.tenant as string | null) ?? null,
+      b2bUsuarioId: (v.b2b_usuario_id as string | null) ?? null,
+      aliadoId: aliadoIdContrato,
+      // En la vía 2 el nombre del aliado vive en `aliados_b2b.aliado`, no en
+      // `ventas`; se pasan los tres para que el respaldo legacy cubra ambas.
+      nombreAliado: [
+        v.agencia_nombre as string | null,
+        v.freelance_nombre as string | null,
+        aliadoNombre ?? null,
+      ],
+    }
+  );
+  if (!acceso.permitido) return null;
+  const esInterno = acceso.esInterno;
+  const esDueno = acceso.esDueno;
 
   const aliado = aliadoNombre || perfil?.nombre || "";
 

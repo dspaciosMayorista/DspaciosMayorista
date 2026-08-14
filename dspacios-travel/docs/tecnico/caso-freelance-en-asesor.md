@@ -262,12 +262,13 @@ práctica: resolver `tipoB2B = aliados.tipo` una vez y pasar **eso** —no el ro
 portal sin tocar esas dos deja el vínculo débil justo en los documentos de
 dinero.
 
-**3. Y hay un agujero previo, que no lo crea esta decisión.** Esas dos funciones
-leen con **service-role** y deciden solo por rol, **sin comparar el tenant**
-—aunque lo tienen en la fila que acaban de leer—. `operaciones` está en
-`ROLES_INTERNOS`, así que **hoy, sin cambiar nada, ella ya puede abrir por URL
-la cuenta de cobro y el estado de cuenta de cualquier contrato de la otra
-agencia.** Es el mismo patrón del bucket (§8). Detalle en
+**3. Y había un agujero previo, que no lo creaba esta decisión — YA CERRADO.**
+Esas dos funciones leían con **service-role** y decidían solo por rol, **sin
+comparar el tenant**, aunque lo tenían en la fila recién leída. `operaciones`
+está en la lista de roles internos, así que ella podía abrir por URL la cuenta
+de cobro y el estado de cuenta de cualquier contrato de la otra agencia — y con
+ellos el plan de cobro y el recibo, que heredan el mismo control. Cerrado con
+`lib/auth/accesoDocumentoContrato.ts`, compartido por las dos. Detalle en
 `adjuntos-y-storage.md` §5.
 
 #### Entonces
@@ -277,12 +278,16 @@ es una condición en un `if`:
 
 1. Enlazar su `usuarios.aliado_id` a su ficha del catálogo.
 2. Que el portal derive el **tipo B2B de `aliados.tipo`**, no del rol.
-3. Que `comisionResolver` y `cargarEstadoCuenta` resuelvan la pertenencia por
-   `aliado_id` y comparen el tenant.
-4. Solo entonces, abrir el gate de `portal/b2b`.
+3. ~~Que `comisionResolver` y `cargarEstadoCuenta` resuelvan la pertenencia por
+   `aliado_id` y comparen el tenant.~~ **HECHO** — había que hacerlo igual, se
+   habilitara o no la doble capacidad, porque era un agujero abierto. Con eso ya
+   funciona el caso "entra como aliada de la otra agencia, no como interna":
+   está probado en `pruebas/accesoDocumentoContrato.test.ts`.
+4. Falta decidir 1 y 2, y solo entonces abrir el gate de `portal/b2b`.
 
-El punto 3 hay que hacerlo **igual**, se habilite o no la doble capacidad: es un
-agujero abierto hoy.
+**El portal B2B sigue cerrado para roles internos.** Esto no lo habilita: lo
+único que cambió es que, si algún día se habilita, la pieza de autorización ya
+está puesta y probada.
 
 > Detalle a decidir si se toma este camino: qué ve al entrar al portal alguien
 > que además es interno. Lo razonable es que vea **solo** su panel de aliado —
@@ -319,7 +324,7 @@ Ejecutando el script aparecieron además dos cosas que el vistazo no daba:
 
 ---
 
-## 8. Storage entre agencias: HALLAZGO CONFIRMADO, no hipótesis
+## 8. Storage entre agencias: confirmado y CERRADO (migración 150)
 
 En la versión anterior de este documento esto estaba escrito como "la primera
 cosa que probaría". Estaba mal medido: **no hace falta probarlo para saberlo, se
@@ -356,12 +361,21 @@ etiqueta aparte). Ese es exactamente el escenario que crea el importador.
 tenant, así que la ficha, la cartera y los pasajeros siguen protegidos. Lo que
 queda al alcance son los **archivos** — donde están las cédulas.
 
-El detalle completo, el alcance y qué falta para cerrarlo están en
-`adjuntos-y-storage.md` §4. Ahí también quedó anotado el **mismo patrón fuera de
-Storage** (§5): `resolverComisionB2B` y `cargarEstadoCuenta` leen con
-service-role y deciden por rol sin comparar el tenant.
+### Cerrado
 
-**No se ha escrito ninguna migración.**
+**Migración 150** (`storage_contratos_por_tenant`, escrita y probada en local,
+**sin correr todavía**): las cuatro policies pasan por un helper
+`acceso_archivo_contratos(ruta)` que exige sesión, usuario activo, rol, agencia
+y —para `venta`— propiedad. Para esta persona el efecto es directo: con
+`operaciones` de mayorista deja de alcanzar cualquier archivo de minorista, y el
+segundo camino (coincidencia de nombre) queda cerrado por la comparación de
+tenant.
+
+El **mismo patrón fuera de Storage** también se cerró: `resolverComisionB2B` y
+`cargarEstadoCuenta` —y con ellas el plan de cobro y el recibo— ahora deciden
+con una función compartida que sí compara el tenant y resuelve la pertenencia
+por id. Detalle completo, matriz de expectativa y resultados en
+`adjuntos-y-storage.md` §4 y §5.
 
 ## 9. Resumen de lo que está hecho y lo que falta
 
@@ -373,5 +387,6 @@ service-role y deciden por rol sin comparar el tenant.
 | Pertenencia B2B por `aliado_id` | el resolvedor sí; **los datos importados no** (aliado_id NULL) |
 | `contratos_donde_es_asesor` | corregido y **separado por agencia**; script ejecutado |
 | Portal B2B con cuenta interna | **necesita tu decisión**; el diseño anterior era insuficiente, ver §6 |
-| Storage entre agencias | **hallazgo confirmado**, no hipótesis (§8). Falta medir el alcance real y decidir el arreglo |
-| Mismo patrón en cuenta de cobro y estado de cuenta | **hallazgo confirmado**, abierto hoy sin depender de ninguna decisión |
+| Storage entre agencias | **cerrado** por la migración 150 (escrita y probada en local, **sin correr**). Falta medir el alcance real en producción con `test_storage_cruce_tenant.sql` antes de aplicarla |
+| Mismo patrón en cuenta de cobro, estado de cuenta, plan de cobro y recibo | **cerrado** con `lib/auth/accesoDocumentoContrato.ts` |
+| Asimetría de `gerencia` (ve la ficha de la otra agencia pero no sus adjuntos) | **necesita tu decisión**, avisada en la cabecera de la 150 |

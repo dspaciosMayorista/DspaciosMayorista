@@ -230,12 +230,9 @@ permite DML sobre esa tabla.
 
 ---
 
-## 4. HALLAZGO ABIERTO — las policies del bucket no separan las dos agencias
+## 4. El bucket no separaba las dos agencias — CERRADO por la migración 150
 
-**Esto no es una hipótesis. Se deduce del texto de la policy y está comprobado.**
-
-Las cuatro policies del bucket `contratos` (migración 148) tienen la misma
-condición:
+Las cuatro policies de la 148 tenían esta forma:
 
 ```sql
 bucket_id = 'contratos'
@@ -243,95 +240,182 @@ and mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta')
 and (mi_rol() <> 'venta' or soy_asesor_del_contrato(split_part(name,'/',1)))
 ```
 
-Dos agujeros, los dos de lógica:
+Dos agujeros, los dos de lógica pura:
 
-1. **Para cualquier rol que no sea `venta`, la condición de propiedad ni
-   siquiera se evalúa.** `mi_rol() <> 'venta'` ya es `true`, así que el `or` se
-   resuelve ahí y `soy_asesor_del_contrato` nunca corre.
-2. **Ninguna policy compara el tenant.** `soy_asesor_del_contrato` tampoco: es
+1. **Para cualquier rol que no fuera `venta`, la condición de propiedad ni se
+   evaluaba.** `mi_rol() <> 'venta'` ya es `true`, así que el `or` se resolvía
+   ahí y `soy_asesor_del_contrato` nunca corría.
+2. **Ninguna comparaba el tenant.** `soy_asesor_del_contrato` tampoco: es
    `SECURITY DEFINER` y empareja solo por nombre contra `ventas.asesor`.
 
-De donde salen dos caminos reales:
+De donde salían dos caminos reales:
 
-| Camino | Quién | Qué alcanza |
+| Camino | Quién | Qué alcanzaba |
 |---|---|---|
-| A | `gerencia`, `administracion`, `operaciones` de **cualquiera** de las dos agencias | **Todos** los archivos del bucket, incluidos los de la otra agencia |
-| B | `venta` cuyo nombre coincida con `ventas.asesor` de un contrato de la otra agencia | Los archivos de **ese** contrato |
+| A | `gerencia`/`administracion`/`operaciones` de **cualquiera** de las dos agencias | **Todos** los archivos del bucket |
+| B | `venta` cuyo nombre coincidiera con `ventas.asesor` de un contrato de la otra agencia | Los archivos de **ese** contrato |
 
-El camino B no es teórico: el importador de minorista escribe en `ventas.asesor`
-el nombre del **freelance** que venía en la hoja (ver
-`caso-freelance-en-asesor.md`). Si una persona interna de mayorista se llama
-igual, cae justo aquí.
+El camino B no era teórico: el importador de minorista escribe en
+`ventas.asesor` el nombre del **freelance** de la hoja (ver
+`caso-freelance-en-asesor.md`), así que una persona interna de mayorista que se
+llame igual caía justo ahí.
 
-**El contrato en sí NO se ve** —`puede_ver_contrato` sí filtra por tenant— así
-que la ficha, la cartera y los pasajeros siguen protegidos. Lo que queda al
-alcance son los **archivos**, que es precisamente donde están las cédulas y los
-pasaportes escaneados.
+El contrato en sí nunca se filtró —`puede_ver_contrato` sí compara el tenant—.
+Lo expuesto eran los **archivos**: cédulas, pasaportes y soportes.
 
-### Cómo se comprobó
+### Cómo quedó
 
-`supabase/scripts/test_storage_cruce_tenant.sql` — solo lectura, termina en
-`rollback`. Evalúa el predicado de la policy haciéndose pasar por cada usuario
-real contra cada contrato, y lista las fugas primero. Ejecutado contra una base
-local con el esquema completo: un `operaciones` de mayorista da `permite = true`
-sobre contratos `MIN-`, con `¿se evaluó soy_asesor_del_contrato? = f`.
+`supabase/migrations/20260601000150_storage_contratos_por_tenant.sql` reemplaza
+las cuatro policies por una llamada al helper
+**`acceso_archivo_contratos(ruta)`**:
 
-### Qué falta
+| Rol | Alcance |
+|---|---|
+| `superadmin` | todo el bucket |
+| `gerencia` / `administracion` / `operaciones` | solo contratos de SU agencia |
+| `venta` | solo contratos de SU agencia **y** donde sea el asesor |
+| cualquier otro, inactivo, o sin sesión | nada |
 
-- Correr ese script **en producción**, para saber a cuántos archivos reales
-  aplica y con qué usuarios.
-- Correr `supabase/scripts/pruebas/storage-adjuntos.mjs --confirmar`. Su bloque
-  «CRUCE ENTRE AGENCIAS» está escrito con la expectativa **correcta** (debe
-  rechazar) y por tanto **hoy termina en rojo a propósito**: sirve de medida del
-  agujero ahora y de prueba de regresión cuando se cierre.
-- Decidir el arreglo. Lo natural es que la policy exija el tenant del contrato,
-  no que se le añada la propiedad a los roles administrativos (que sí deben ver
-  todo lo de SU agencia). **No se ha escrito ninguna migración** — hacerlo sin
-  medir antes el alcance real puede dejar sin adjuntos a quien los necesita.
+El helper es `SECURITY DEFINER` con `search_path = public, pg_temp`, y exige
+sesión, usuario existente y `activo`. **No usa `puede_ver_contrato()`** a
+propósito: esa función responde "quién ve la FILA del contrato", que es otra
+pregunta con otra respuesta (deja a `gerencia` cross-agencia y a `venta` toda su
+agencia). Tampoco puede ser INVOKER: desde la 144 `venta` no tiene ninguna
+policy de SELECT sobre `ventas`, así que como INVOKER le cerraría hasta sus
+propios adjuntos.
+
+### ⚠️ Asimetría deliberada con `gerencia` — pendiente de decidir
+
+`puede_ver_tenant()` (migración 107) deja a `gerencia` ver las FILAS de las dos
+agencias. La 150 **no** reproduce esa excepción: aquí `gerencia` queda acotada a
+la suya, por instrucción explícita. Consecuencia: un `gerencia` verá la ficha de
+un contrato de la otra agencia pero **no sus adjuntos**. Es una inconsistencia
+real entre dos reglas, escrita a propósito en la cabecera de la migración para
+que se resuelva a conciencia en un sentido o en el otro.
+
+### El bucket no guarda solo adjuntos de contrato
+
+Auditadas todas las rutas que la aplicación escribe. Son **dos, y solo dos**
+(búsqueda de `storage.from("contratos")` en todo el código):
+
+| Ruta | Origen | Aislamiento |
+|---|---|---|
+| `<numero_contrato>/<tipo>-<epoch>.<ext>` | `AdjuntosContrato.tsx` | por `ventas.tenant` del contrato |
+| `pe-empleados/<pe_empleados.id>-<epoch>.<ext>` | `PuntoEquilibrioClient.tsx` (contratos laborales) | por `pe_empleados.tenant` del empleado |
+
+La carpeta de nómina **sí** tiene con qué aislarse: el id del empleado va en el
+nombre y esa tabla tiene `tenant`. Se refleja su propia RLS
+(`superadmin`/`gerencia`/`administracion`), lo que además cierra algo que antes
+estaba abierto: `operaciones` y `venta` podían abrir contratos laborales con el
+salario de cada empleado sin poder leer la tabla.
+
+**Prefijo desconocido → solo `superadmin`** (falla cerrado). Puede dejar sin
+acceso a objetos históricos con otra forma de ruta, así que la migración trae la
+consulta para listarlos **antes** de aplicarla.
+
+### Cómo se prueba
+
+| Script | Qué responde |
+|---|---|
+| `supabase/scripts/test_storage_por_tenant.sql` | ¿La regla es correcta? Monta sus propios datos y ejecuta SELECT/INSERT/UPDATE/DELETE reales por cada rol y ruta contra una matriz de expectativa. **168 comprobaciones.** |
+| `supabase/scripts/test_storage_cruce_tenant.sql` | ¿A quién afecta de verdad? Evalúa el predicado contra los usuarios y contratos REALES. Detecta si está aplicada la 148 o la 150 y lo dice. |
+| `supabase/scripts/pruebas/storage-adjuntos.mjs` | Lo mismo por la API de Storage (listar, firmar, subir, reemplazar, eliminar). |
+
+Contra una base local construida desde cero con todas las migraciones
+(`supabase/scripts/pruebas/local-desde-cero.sh`):
+
+```
+antes de la 150 →  168 comprobaciones · 104 correctas · 64 FUGAS
+después         →  168 comprobaciones · 168 correctas ·  0 fugas
+```
+
+Las 64 incluyen el caso concreto: la `venta` de mayorista alcanzando el contrato
+de su homónima de minorista, y al revés.
+
+**Rollback verificado**: aplicar
+`supabase/scripts/rollback_150_storage_contratos.sql` devuelve exactamente
+104/64 —el estado previo— y volver a aplicar la 150 devuelve 168/0.
 
 ---
 
-## 5. El mismo patrón fuera de Storage
+## 5. El mismo patrón fuera de Storage — CERRADO
 
 Buscando lo anterior aparecieron dos funciones con la **misma forma de fallo**:
-leen con service-role (se saltan la RLS a propósito) y deciden el acceso por
-rol, **sin comparar el tenant** — aunque lo tienen a mano en la fila que acaban
-de leer.
+leían con service-role (se saltan la RLS a propósito) y decidían el acceso por
+rol, **sin comparar el tenant**, aunque lo tenían en la fila recién leída.
 
-| Archivo | Función | Qué expone |
+| Archivo | Función | Qué exponía |
 |---|---|---|
-| `lib/finanzas/comisionResolver.ts` | `resolverComisionB2B` | La cuenta de cobro y el estado de cuenta de comisión de **cualquier** contrato, por URL |
-| `lib/cuenta/estado.ts` | `cargarEstadoCuenta` | El estado de cuenta (PVP, abonos, saldo) de **cualquier** contrato, por URL |
+| `lib/finanzas/comisionResolver.ts` | `resolverComisionB2B` | Cuenta de cobro y estado de cuenta de comisión de **cualquier** contrato, por URL |
+| `lib/cuenta/estado.ts` | `cargarEstadoCuenta` | Estado de cuenta (PVP, abonos, saldo) de **cualquier** contrato, por URL |
 
-Las dos hacen:
+Las dos hacían:
 
 ```ts
 const esInterno = ROLES_INTERNOS.includes(perfil?.rol ?? "");  // incluye `operaciones`
 if (!esInterno && !esDueno) return null;                        // ← y nada más
 ```
 
-Seleccionan `tenant` en la consulta y no lo usan para decidir. Un
-`operaciones`/`administracion`/`gerencia` de una agencia abre por URL los
-documentos de la otra. (`venta` no entra por aquí: no está en `ROLES_INTERNOS`.)
+Y `esDueno` emparejaba **por nombre**, no por `aliado_id`.
 
-De paso: `esDueno` empareja **por nombre**
-(`[v.agencia_nombre, v.freelance_nombre].includes(perfil.nombre)`), no por
-`aliado_id`. Es el vínculo débil que la migración 143 vino a reemplazar, y aquí
-sigue vivo — a diferencia de `portal/b2b/page.tsx`, que sí resuelve por id.
+`cargarPlanCobro` y `cargarRecibo` delegan en `cargarEstadoCuenta`, así que
+heredaban lo mismo: cuatro documentos por URL con el mismo agujero.
 
-Y `ROLES_INTERNOS` está **duplicado**: `lib/constants.ts` lo exporta y
-`lib/cuenta/estado.ts` declara el suyo a mano. Dos listas que hay que acordarse
-de cambiar a la vez.
+### Cómo quedó
 
-**Nada de esto se ha corregido todavía** — está anotado para decidir el arreglo
-junto con el de Storage, que es el mismo problema.
+Una sola función pura y compartida:
+**`lib/auth/accesoDocumentoContrato.ts`**. El orden es deliberado — primero los
+vínculos por id, después el rol, y el nombre solo como último recurso:
+
+1. `superadmin` → global.
+2. `b2b_usuario_id` → lo compró él mismo desde el portal.
+3. `aliado_id` → su ficha del catálogo es la del contrato. **Cruza agencias a
+   propósito**: un interno de mayorista enlazado como aliado a un contrato B2B
+   de minorista entra como **dueño** (`esDueno`), no como personal interno
+   (`esInterno` en false) — su rol no le da nada ahí. El id sale de
+   `ventas.aliado_id` o de `aliados_b2b.aliado_id` (comisiones cargadas a mano,
+   único camino en minorista).
+4. Rol interno **y el mismo tenant**. La comparación que faltaba.
+5. Nombre — **solo si `b2b_usuario_id` y `aliado_id` son los dos null**, es
+   decir en contratos anteriores a la 143 que nadie ha enlazado. En cuanto
+   existe un id, manda el id y un homónimo sin enlace queda fuera.
+
+La causa raíz no fue un descuido puntual: fue que **la regla estaba escrita dos
+veces**, con dos listas de roles distintas, y las dos copias se olvidaron de lo
+mismo. Por eso hay una guarda dedicada:
+`pruebas/documentosContrato.wiring.test.ts` mira el código fuente y falla si
+alguno de los dos archivos vuelve a declarar su propia lista de roles o a
+emparejar por nombre.
+
+Comportamiento cubierto por `pruebas/accesoDocumentoContrato.test.ts`
+(**66 pruebas** en total con las de adjuntos), incluidos dos controles negativos
+que reimplementan la regla vieja y comprueban que dejaba pasar.
+
+Una prueba encontró además un fallo que no estaba buscando: dos nombres en
+blanco empataban entre sí (`"   ".trim() === "   ".trim()`), así que un contrato
+con el nombre del aliado vacío se habría abierto para cualquiera con el suyo
+también vacío — el mismo error que emparejar dos NULL. Corregido.
+
+### Lo que NO cambió
+
+`venta` sigue sin abrir estos cuatro documentos por URL, igual que antes: no
+está en `ROLES_CARTERA`. Ampliarlo sería otra decisión, no un efecto secundario
+de esta.
 
 ---
 
 ## 6. Ninguna policy se relajó
 
+Las secciones 1 y 2 (la prueba SQL inválida y los archivos huérfanos) no tocaron
+la base de datos: eran problemas de la prueba y del código.
 
-Este trabajo no toca la base de datos. No hay migración nueva y no se cambió
-ninguna policy: el problema estaba en la prueba y en el código de la aplicación.
-Si algún día hiciera falta tocar RLS de Storage, el punto de partida es la
-migración 148.
+La sección 4 sí añade una migración, la **150**, y va en la dirección contraria
+a relajar: quita alcance a `gerencia`, `administracion`, `operaciones` y `venta`,
+y no se lo da a nadie. `superadmin` queda igual. El único cambio que podría
+notarse como pérdida es el de `gerencia` entre agencias, avisado arriba y en la
+cabecera de la migración.
+
+**Sin correr todavía.** Antes de aplicarla conviene ejecutar la consulta de
+prefijos desconocidos que trae la propia migración: si devuelve filas, hay
+objetos históricos con otra forma de ruta que quedarían solo al alcance de
+superadmin.

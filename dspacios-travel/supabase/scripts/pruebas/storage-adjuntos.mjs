@@ -25,26 +25,22 @@
  *     UNA agencia no debe alcanzar los archivos de un contrato de la OTRA.
  *     Y un `superadmin` sí, porque su alcance es global por diseño.
  *
- * ⚠️ EL BLOQUE DE CRUCE ENTRE AGENCIAS VA A FALLAR HOY. NO ES UN FALLO DE LA
- *   PRUEBA — ES EL HALLAZGO.
- *   Las cuatro policies del bucket `contratos` (migración 148) tienen esta
- *   forma:
+ * ⚠️ EL BLOQUE DE CRUCE ENTRE AGENCIAS EXIGE LA MIGRACIÓN 150.
+ *   Contra un proyecto que todavía no la tenga, ese bloque FALLA — y el fallo
+ *   es correcto: mide el agujero que la 150 cierra. Las policies anteriores
+ *   (migración 148) decían:
  *
  *     bucket_id = 'contratos'
  *     and mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta')
  *     and (mi_rol() <> 'venta' or soy_asesor_del_contrato(split_part(name,'/',1)))
  *
  *   Con `operaciones` o `administracion`, `mi_rol() <> 'venta'` ya es TRUE, así
- *   que la disyunción se resuelve sin llegar a `soy_asesor_del_contrato`. Y
- *   NINGUNA de las policies compara el tenant. Es decir: cualquier
- *   gerencia/administracion/operaciones de cualquiera de las dos agencias
- *   alcanza TODOS los archivos del bucket. No es una hipótesis: se deduce del
- *   texto de la policy y está comprobado evaluando su predicado en
- *   `test_storage_cruce_tenant.sql`.
+ *   que la disyunción se resolvía sin llegar a `soy_asesor_del_contrato`; y
+ *   ninguna de las cuatro comparaba el tenant. Cualquier interno de una agencia
+ *   alcanzaba todos los archivos de la otra.
  *
- *   Este bloque está escrito con la expectativa CORRECTA (debe rechazar) para
- *   que el hallazgo quede medido y para que sirva de prueba de regresión el día
- *   que se cierre. Mientras tanto, la prueba termina en rojo a propósito.
+ *   Con la 150 aplicada debe pasar entero. Correrlo ANTES y DESPUÉS es lo que
+ *   demuestra que la migración hizo algo.
  *
  * ⚠️ SERVICE-ROLE SOLO PARA FIXTURES, VERIFICACIÓN Y LIMPIEZA.
  *   Las comprobaciones de permisos se hacen SIEMPRE con la clave anon y una
@@ -336,11 +332,8 @@ try {
   await gestor.auth.signOut();
 
   // ── CRUCE ENTRE AGENCIAS ─────────────────────────────────────────────────
-  // ⚠️ ESTE BLOQUE ESTÁ ESCRITO CON LA EXPECTATIVA CORRECTA Y HOY FALLA.
-  //    Ver la explicación completa en la cabecera del archivo: las policies del
-  //    bucket no comparan el tenant, y para cualquier rol distinto de `venta`
-  //    la condición de propiedad ni siquiera se evalúa. Las FALLAS de aquí
-  //    abajo son el hallazgo, no un error de la prueba.
+  // Requiere la migración 150. Sin ella estas comprobaciones fallan, y ese
+  // fallo es la medida del agujero (ver la cabecera del archivo).
   console.log("\n== CRUCE ENTRE AGENCIAS — un interno de una agencia NO debe alcanzar la otra");
   console.log(`   usuarios en '${tenant}' contra el contrato ${cOtraAgencia} de '${otroTenant}'`);
 

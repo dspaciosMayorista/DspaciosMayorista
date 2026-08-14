@@ -4,9 +4,20 @@
 -- ─────────────────────────────────────────────────────────────────────────
 --
 -- QUÉ HACE
---   Evalúa el PREDICADO de las policies del bucket `contratos` (migración 148)
---   haciéndose pasar por cada usuario real, contra cada contrato. No escribe
---   nada y no toca `storage.objects`: es una consulta booleana.
+--   Evalúa el PREDICADO de las policies del bucket `contratos` haciéndose pasar
+--   por cada usuario REAL contra cada contrato REAL. No escribe nada y no toca
+--   `storage.objects`: es una consulta booleana.
+--
+--   Sirve para MEDIR EL ALCANCE en producción: cuántos archivos de la otra
+--   agencia alcanza cada persona concreta. Es la pregunta que
+--   `test_storage_por_tenant.sql` no responde — ese monta sus propios datos de
+--   prueba y comprueba que la regla sea correcta; este dice a quién afecta de
+--   verdad.
+--
+--   ⚠️ DETECTA SOLO LA VERSIÓN QUE ESTÉ APLICADA. Si existe la función
+--   `acceso_archivo_contratos` (migración 150) evalúa ESA; si no, evalúa el
+--   predicado de la 148. La columna «regla evaluada» dice cuál se usó, para que
+--   un resultado limpio no se confunda con haber medido la regla equivocada.
 --
 -- POR QUÉ EXISTE
 --   Las cuatro policies (lectura / subir / reemplazar / eliminar) tienen la
@@ -52,17 +63,27 @@ create temp table _cruce(
   contrato       text,
   tenant_contrato text,
   evaluo_propiedad boolean,
-  permite        boolean
+  permite        boolean,
+  regla          text
 ) on commit drop;
 
 do $$
 declare
   u record;
   c record;
-  en_lista  boolean;
   no_venta  boolean;
   decide    boolean;
+  hay_150   boolean;
+  regla     text;
 begin
+  -- ¿Qué versión de la regla está aplicada?
+  select exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'acceso_archivo_contratos'
+  ) into hay_150;
+  regla := case when hay_150 then '150 (acceso_archivo_contratos)' else '148 (rol + propiedad, sin tenant)' end;
+  raise notice 'Regla evaluada: %', regla;
+
   for u in select id, email, rol::text as rol, tenant from public.usuarios where activo order by rol, email loop
     for c in select numero_contrato, tenant from public.ventas order by numero_contrato loop
 
@@ -70,10 +91,16 @@ begin
       perform set_config('request.jwt.claims',
         json_build_object('sub', u.id, 'role', 'authenticated')::text, true);
 
-      -- Mismo orden y mismo cortocircuito que la policy.
-      en_lista := public.mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta');
       no_venta := public.mi_rol() is distinct from 'venta';
-      decide   := en_lista and (no_venta or public.soy_asesor_del_contrato(c.numero_contrato));
+
+      if hay_150 then
+        -- La función real de la 150, sobre la ruta que tendría un adjunto.
+        decide := public.acceso_archivo_contratos(c.numero_contrato || '/adjunto');
+      else
+        -- Mismo orden y mismo cortocircuito que la policy de la 148.
+        decide := public.mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta')
+                  and (no_venta or public.soy_asesor_del_contrato(c.numero_contrato));
+      end if;
 
       reset role;
       perform set_config('request.jwt.claims', '{}', true);
@@ -82,9 +109,10 @@ begin
       -- la sesión, y `authenticated` no tiene permiso sobre ella.
       insert into _cruce values (
         u.email, u.rol, u.tenant, c.numero_contrato, c.tenant,
-        -- La propiedad solo se evalúa si el rol es `venta`.
-        not no_venta,
-        decide
+        -- Con la 148 la propiedad solo se evaluaba si el rol era `venta`.
+        case when hay_150 then null else not no_venta end,
+        decide,
+        regla
       );
     end loop;
   end loop;
@@ -98,10 +126,11 @@ select
   tenant_usuario   as "agencia del usuario",
   contrato,
   tenant_contrato  as "agencia del contrato",
-  evaluo_propiedad as "¿se evaluó soy_asesor_del_contrato?",
+  evaluo_propiedad as "¿se evaluó soy_asesor_del_contrato? (solo con la 148)",
+  regla            as "regla evaluada",
   case
     when rol = 'superadmin' then 'esperado — alcance global por diseño'
-    when not evaluo_propiedad then 'FUGA — el rol entra sin que se mire la propiedad ni el tenant'
+    when evaluo_propiedad is false then 'FUGA — el rol entra sin que se mire la propiedad ni el tenant'
     else 'FUGA — coincidencia de nombre en `ventas.asesor` de la otra agencia'
   end as veredicto
 from _cruce
@@ -115,7 +144,8 @@ select
   count(*) filter (where permite)                                             as "archivos que alcanza",
   count(*) filter (where permite and tenant_usuario is distinct from tenant_contrato)
                                                                               as "…de la OTRA agencia",
-  count(*)                                                                    as "contratos en la base"
+  count(*)                                                                    as "contratos en la base",
+  min(regla)                                                                  as "regla evaluada"
 from _cruce
 group by usuario, rol, tenant_usuario
 order by rol, usuario;

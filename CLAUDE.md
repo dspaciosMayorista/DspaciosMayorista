@@ -356,7 +356,52 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > **149** `cierre_contrato_vuelos_record` (**⚠️ SIN CORRER, va DESPUÉS del despliegue**:
 > le quita a `venta` el SELECT sobre la tabla base `contrato_vuelos`).
 >
-> **Modo solo lectura en la ficha del contrato** (`/dashboard/contratos/[numero]`): un
+> ⚠️ **La 150 está escrita y probada en local, pero NO se ha corrido.**
+> `storage_contratos_por_tenant`: el bucket `contratos` no separaba las dos
+> agencias. Las cuatro policies de la 148 no comparaban el tenant, y para
+> cualquier rol distinto de `venta` la condición de propiedad ni se evaluaba
+> (`mi_rol() <> 'venta'` ya resolvía la disyunción) — así que un
+> `gerencia`/`administracion`/`operaciones` de cualquiera de las dos agencias
+> alcanzaba TODOS los archivos del bucket, y un `venta` alcanzaba los de un
+> contrato de la otra agencia si su nombre coincidía con `ventas.asesor` (lo que
+> produce el importador de minorista al escribir ahí el nombre del freelance).
+> El contrato en sí nunca se filtró (`puede_ver_contrato` sí compara tenant); lo
+> expuesto eran los ARCHIVOS. La 150 sustituye las cuatro por un helper
+> `acceso_archivo_contratos(ruta)` (SECURITY DEFINER, `search_path` con
+> `pg_temp` al final, exige sesión + usuario activo + rol + tenant + propiedad).
+> **NO usa `puede_ver_contrato()`**: esa responde "quién ve la FILA", que es otra
+> pregunta (deja a gerencia cross-agencia y a venta toda su agencia); y no puede
+> ser INVOKER porque desde la 144 `venta` no lee `ventas`.
+> **Antes de correrla**: ejecutar la consulta de prefijos desconocidos que trae
+> la propia migración (un objeto cuyo prefijo no sea un contrato ni
+> `pe-empleados/` queda solo al alcance de superadmin — falla cerrado).
+> **Decisión pendiente**: la 150 acota a `gerencia` a SU agencia, mientras
+> `puede_ver_tenant()` la deja ver las filas de las dos — verá la ficha de un
+> contrato ajeno pero no sus adjuntos. Avisado en la cabecera de la migración.
+> Rollback: `supabase/scripts/rollback_150_storage_contratos.sql` (verificado).
+> Pruebas: `test_storage_por_tenant.sql` (168 comprobaciones; antes de la 150
+> da 64 fugas, después 0) y `test_storage_cruce_tenant.sql` (mide el alcance
+> real; detecta si está aplicada la 148 o la 150 y lo dice).
+>
+> **Cuatro documentos por URL se servían sin comparar el tenant (sin migración).**
+> `resolverComisionB2B` y `cargarEstadoCuenta` —y con ellas `cargarPlanCobro` y
+> `cargarRecibo`, que delegan— leen con service-role, así que la RLS no
+> participa: la autorización es código. Las dos decidían con
+> `ROLES_INTERNOS.includes(rol)` sin mirar el tenant (declarando cada una su
+> propia lista, que fue la causa raíz: la misma regla escrita dos veces se
+> olvidó de lo mismo dos veces) y resolvían la pertenencia B2B **por nombre**.
+> Ahora hay una sola función pura, `lib/auth/accesoDocumentoContrato.ts`:
+> superadmin global · interno solo si `ventas.tenant = usuarios.tenant` ·
+> pertenencia por `b2b_usuario_id` y `aliado_id` (incluido
+> `aliados_b2b.aliado_id`) · el nombre **solo** cuando los dos ids son null
+> (compatibilidad con contratos previos a la 143). Un interno con `aliado_id`
+> enlazado entra a un contrato de la otra agencia **como aliado**
+> (`esInterno = false`), nunca como personal interno. `venta` sigue sin abrir
+> estos documentos, igual que antes. Guarda contra la divergencia:
+> `pruebas/documentosContrato.wiring.test.ts` falla si alguno de los dos
+> archivos vuelve a declarar su lista de roles o a emparejar por nombre.
+>
+> > **Modo solo lectura en la ficha del contrato** (`/dashboard/contratos/[numero]`): un
 > `venta` que abre el contrato de OTRO asesor de su agencia ve la información comercial
 > (cliente con documento enmascarado, contacto, destino, fechas, PVP, estado, hotel,
 > itinerario, saldo y plan de cobro) pero no los controles de gestión —

@@ -150,12 +150,26 @@ order by a.registro_id, a.creado_en;
 -- ══ 4.b Corroborar por la FORMA de la fila, no por el actor ════════════════
 -- Esto sí es específico del importador, y no depende de la auditoría: es la
 -- fila de `ventas` tal como está hoy. El importador es el único camino que
---   · nunca escribe `destino`, `tipo_paquete` ni `fecha_regreso`
---   · deja `pax` en 1 fijo
---   · nace en estado 'confirmado' (manual nace 'activo', reservar 'pendiente')
---   · pone EL MISMO texto en `asesor` y en `freelance_nombre`
---   · nunca escribe `aliado_id` ni `paquete_armado_id`
--- Ninguna señal por separado prueba nada; las seis juntas sí distinguen.
+-- cumple LAS SEIS a la vez:
+--   1. nunca escribe `destino`
+--   2. nunca escribe `tipo_paquete`
+--   3. nunca escribe `fecha_regreso`
+--   4. deja `pax` en 1 fijo
+--   5. nace en estado 'confirmado' (el manual nace 'activo', reservar 'pendiente')
+--   6. pone EL MISMO texto en `asesor` y en `freelance_nombre`
+-- Y además nunca escribe `aliado_id` ni `paquete_armado_id`.
+--
+-- ⚠️ EL VEREDICTO EXIGE LAS SEIS, NO UN SUBCONJUNTO.
+--   Una versión anterior de este bloque solo comprobaba cuatro (le faltaban
+--   `fecha_regreso` y `asesor == freelance_nombre`) mientras el texto afirmaba
+--   que las miraba todas: un contrato manual sin destino ni tipo de paquete,
+--   con 1 pax y ya confirmado, salía marcado como importado sin serlo. La
+--   columna «señales que cumple» dice cuántas de las 8 se cumplen, para que un
+--   caso a medias se vea como lo que es en vez de caer a un lado u otro.
+--
+--   `paquete_armado_id` NO entra en el veredicto a propósito: los contratos del
+--   formulario manual tampoco lo llevan, así que no distingue nada. Se muestra
+--   solo como dato.
 select
   v.numero_contrato,
   (v.destino          is null) as "sin destino",
@@ -163,14 +177,36 @@ select
   (v.fecha_regreso    is null) as "sin fecha_regreso",
   (v.pax = 1)                  as "pax = 1",
   v.estado,
-  (v.asesor is not null and lower(btrim(v.asesor)) = lower(btrim(v.freelance_nombre)))
+  (v.estado = 'confirmado')    as "nace confirmado",
+  (v.asesor is not null and v.freelance_nombre is not null
+     and lower(btrim(v.asesor)) = lower(btrim(v.freelance_nombre)))
                                as "asesor == freelance_nombre",
   (v.aliado_id        is null) as "sin aliado_id",
-  (v.paquete_armado_id is null) as "sin paquete_armado_id",
+  (v.paquete_armado_id is null) as "sin paquete_armado_id (informativo)",
+  -- Cuántas de las 8 señales cumple. 8 = encaja del todo; 0 = no se parece.
+  ( (v.destino is null)::int
+  + (v.tipo_paquete is null)::int
+  + (v.fecha_regreso is null)::int
+  + (v.pax = 1)::int
+  + (v.estado = 'confirmado')::int
+  + (v.asesor is not null and v.freelance_nombre is not null
+       and lower(btrim(v.asesor)) = lower(btrim(v.freelance_nombre)))::int
+  + (v.aliado_id is null)::int
+  + (v.b2b_usuario_id is null)::int
+  ) as "señales que cumple (de 8)",
   case
+    when v.destino is null
+     and v.tipo_paquete is null
+     and v.fecha_regreso is null
+     and v.pax = 1
+     and v.estado = 'confirmado'
+     and v.asesor is not null and v.freelance_nombre is not null
+     and lower(btrim(v.asesor)) = lower(btrim(v.freelance_nombre))
+     and v.aliado_id is null
+     and v.b2b_usuario_id is null
+      then 'COMPATIBLE con el importador de minorista — cumple las 8'
     when v.destino is null and v.tipo_paquete is null and v.pax = 1
-     and v.estado = 'confirmado' and v.aliado_id is null
-      then 'COMPATIBLE con el importador de minorista'
+      then 'PARCIAL — se parece pero NO cumple todas; revisar a mano'
     else 'NO encaja con el importador — revisar cómo se creó'
   end as "forma de la fila"
 from (values ('MIN-00-0460'), ('MIN-00-0461')) as objetivo(numero)
