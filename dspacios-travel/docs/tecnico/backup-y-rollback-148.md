@@ -37,11 +37,16 @@ supabase login             # abre el navegador
 
    Ese texto **no es un secreto**: no lleva la contraseña. Es el que se pega.
 
-2. Correr:
+2. Correr, **desde donde sea** — Descargas sirve, no hace falta el repositorio:
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\backup-antes-148.ps1
    ```
+
+   Funciona con **Windows PowerShell 5.1** (el `powershell` de siempre) y con
+   PowerShell 7 (`pwsh`). El script comprueba la versión al arrancar y, si es
+   anterior a la 5.1, para con instrucciones en vez de reventar con un error de
+   sintaxis.
 
 El script pide la URI, después la contraseña **oculta** (`Read-Host -AsSecureString`),
 y escribe en una carpeta **con fecha y hora**, dentro de
@@ -65,6 +70,35 @@ El destino no puede caer dentro de un repositorio git. No se comprueba por el
 git por la raíz (`git rev-parse --show-toplevel` desde la ubicación del script)
 y además subiendo por los directorios padres del destino a buscar un `.git`,
 que cubre el caso de que el destino pertenezca a **otro** repositorio.
+
+### Por qué el diff de auth/storage se hace desde un proyecto temporal vacío
+
+Es el detalle menos evidente de todo el script, y el que más caro sale si se
+hace mal.
+
+`supabase db diff --linked` no compara contra la nada: levanta una **shadow
+database** aplicando **las migraciones locales de la carpeta desde la que se
+invoca**, y reporta la diferencia entre eso y la base remota.
+
+Eso deja dos formas de equivocarse, las dos silenciosas:
+
+| Desde dónde se corre | Qué pasa |
+|---|---|
+| **Descargas** (sin `supabase/config.toml`) | `link` y `diff` fallan: no hay proyecto. |
+| **El repositorio** | La shadow se levanta con las **149 migraciones**, incluidas la 148 y la 149 **que todavía no están en producción**. Las policies de Storage que crea la 148 estarían en los dos lados de la comparación, así que el diff diría "no hay diferencias" y el archivo saldría **vacío**. |
+
+El segundo es el peligroso: el backup perdería exactamente el estado que se
+quiere guardar —el **anterior** a la 148— y el archivo vacío parecería correcto.
+
+Por eso el script crea un **proyecto Supabase temporal en `%TEMP%`**, corre
+`supabase init` ahí, **verifica que no haya ninguna migración local**, y hace
+`link` y `diff` desde esa carpeta. Sin migraciones, la shadow queda como una
+base Supabase recién creada y el diff devuelve justo lo que se busca: los
+cambios **propios** respecto de lo que trae Supabase de fábrica.
+
+El repositorio real no se toca ni se vincula. La carpeta temporal se borra en el
+`finally` —termine bien o mal—, porque `link` deja ahí el project-ref y
+credenciales de sesión de la CLI.
 
 ### La contraseña
 
@@ -248,16 +282,56 @@ prueba. Resultado, **7 de 7**:
 | Escenario | Esperado | Resultado |
 |---|---|---|
 | Camino feliz | código 0 y "BACKUP VERIFICADO" | OK |
+| **Ejecutado desde "Descargas"** (sin repo ni `config.toml`) | funciona igual | OK |
+| · el diff se hizo con 0 migraciones locales | | OK |
+| · el diff **no** se hizo desde la carpeta de ejecución | | OK |
+| · el diff se hizo desde un proyecto temporal | | OK |
+| · el proyecto temporal se eliminó al terminar | | OK |
+| **Ejecutado desde el repositorio** | el diff **no** usa sus migraciones | OK |
 | Docker apagado | código ≠ 0, sin crear archivos | OK |
+| `supabase init` falla | código ≠ 0, sin "VERIFICADO" | OK |
 | `supabase link` falla | código ≠ 0, sin "VERIFICADO" | OK |
 | `supabase db diff` falla | código ≠ 0, sin "VERIFICADO" | OK |
 | Volcado de datos vacío (0 contratos) | código ≠ 0, sin "VERIFICADO" | OK |
 | Destino dentro de un repo **renombrado** | código ≠ 0, sin "VERIFICADO" | OK |
 | Ya existe un backup en esa carpeta | código ≠ 0, no lo sobrescribe | OK |
+| Sintaxis compatible con PowerShell 5.1 (4 comprobaciones) | | OK |
 
 El caso del repositorio renombrado es el que justifica no comprobar por nombre
 de carpeta: el fixture es un repo llamado `RepoConOtroNombre`, y el script lo
 detecta igual porque busca el `.git`, no la palabra.
+
+**El `supabase` simulado es exigente a propósito.** `link` y `db diff` fallan si
+no encuentran `supabase/config.toml` en el directorio actual, y `db diff` falla
+si `supabase/migrations` tiene archivos — igual que la CLI real. Un mock
+permisivo daba OK a un script que en la máquina del dueño no habría funcionado.
+
+**Control negativo:** el banco de pruebas nuevo se corrió contra la versión
+**anterior** del script (commit `ab1c9d78`) y falla los siete casos relacionados
+con el diff, empezando por el camino feliz. Eso confirma que estas
+comprobaciones detectan el defecto en vez de pasar por vacío.
+
+### Compatibilidad con Windows PowerShell 5.1
+
+El comando documentado es `powershell`, que en Windows es la **5.1**, no `pwsh`.
+El script está escrito para 5.1 a propósito: `::new()`, `Get-FileHash`,
+`Select-String -Quiet`, `[StringComparison]` y `$PSScriptRoot` existen todos ahí.
+
+Dos cosas que sí hubo que cuidar:
+
+- **No se usa ningún operador exclusivo de PowerShell 7** (`??`, `&&`/`||` de
+  pipeline, ternario `? :`, `-Parallel`, `$PSStyle`). El banco de pruebas lo
+  comprueba mecánicamente.
+- **No se usa `Set-Content -Encoding UTF8`**: en 5.1 escribe **con BOM** (en 7 no),
+  y un BOM al principio de un `.sql` hace que psql se atragante con la primera
+  línea al restaurar. Los archivos se escriben con un helper que fuerza UTF-8
+  sin BOM.
+
+No pude correr **PSScriptAnalyzer** con las reglas `PSUseCompatibleSyntax` para
+5.1: PowerShell Gallery está bloqueada desde este entorno. Lo que hay es el lint
+mecánico de arriba más la ejecución completa bajo PowerShell 7.4.6, así que la
+compatibilidad con 5.1 está razonada y comprobada por construcción, **no
+ejecutada en un 5.1 real**. Conviene correrlo una primera vez con calma.
 
 ### El rollback, verificado, no supuesto
 

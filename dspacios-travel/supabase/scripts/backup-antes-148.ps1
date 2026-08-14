@@ -26,6 +26,14 @@
          **Session pooler**. Se pega TAL CUAL viene, con el marcador
          [YOUR-PASSWORD] adentro — ese texto no es un secreto.
 
+    FUNCIONA DESDE CUALQUIER CARPETA, incluida Descargas. No necesita el
+    repositorio: para el diff de auth/storage se crea un proyecto Supabase
+    temporal y VACÍO en %TEMP%, y se borra al terminar. Ver la nota larga junto
+    a ese bloque — hacerlo desde el repositorio daría un resultado INCORRECTO.
+
+    COMPATIBILIDAD: Windows PowerShell 5.1 (el `powershell` de toda la vida) o
+    PowerShell 7 (`pwsh`). El script comprueba la versión al arrancar.
+
     USO
       powershell -ExecutionPolicy Bypass -File .\backup-antes-148.ps1
 
@@ -43,7 +51,19 @@ param(
     [string]$Destino = "C:\Users\Asus\Documents\Backups\Dspacios"
 )
 
+#Requires -Version 5.1
+
 $ErrorActionPreference = "Stop"
+
+# El comando documentado es `powershell` (Windows PowerShell 5.1), no `pwsh`.
+# El script está escrito para 5.1 a propósito; si algún día alguien lo corre en
+# una máquina con 3.0/4.0, mejor un mensaje claro que un error de sintaxis.
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Write-Host "Este script necesita Windows PowerShell 5.1 o superior." -ForegroundColor Red
+    Write-Host "Tienes la version $($PSVersionTable.PSVersion). Actualiza Windows PowerShell," -ForegroundColor Red
+    Write-Host "o instala PowerShell 7 (winget install Microsoft.PowerShell) y usa 'pwsh'." -ForegroundColor Red
+    exit 1
+}
 
 function Titulo($t) { Write-Host ""; Write-Host "== $t" -ForegroundColor Cyan }
 function Ok($t)     { Write-Host "   [OK]    $t" -ForegroundColor Green }
@@ -82,6 +102,15 @@ function Buscar-RepoArriba([string]$desde) {
     return $null
 }
 
+# Escribe UTF-8 SIN BOM. `Set-Content -Encoding UTF8` en Windows PowerShell 5.1
+# escribe CON BOM (en PowerShell 7 no), y un BOM al principio de un .sql hace
+# que psql se atragante con la primera linea al restaurar.
+function Escribir-Texto([string]$ruta, $contenido) {
+    $texto = if ($contenido -is [array]) { ($contenido -join "`r`n") + "`r`n" } else { [string]$contenido }
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($ruta, $texto, $enc)
+}
+
 # Lee el archivo POR STREAMING. `data.sql` puede pesar cientos de MB: cargarlo
 # entero en memoria —y peor, dos veces— revienta la máquina justo cuando más
 # importa que el backup termine.
@@ -110,10 +139,11 @@ function Contar-FilasCopy([string]$ruta, [string]$tabla) {
     } finally { $sr.Dispose() }
 }
 
-$plano   = $null
-$urlCon  = $null
-$hubo    = $false
-$salida  = 1
+$plano    = $null
+$urlCon   = $null
+$tempProy = $null
+$hubo     = $false
+$salida   = 1
 
 try {
     # ═════════════════════════════════════════════════════════════════════════
@@ -252,39 +282,106 @@ try {
     Ok "data.sql"
 
     # ── Cambios propios en auth y storage ────────────────────────────────────
-    # Si esto falla, el backup queda INCOMPLETO. No se degrada a aviso: se marca
-    # como falla y el script termina distinto de cero. Un backup al que le falta
-    # una pieza y dice "VERIFICADO" es peor que uno que falla ruidosamente.
+    #
+    # ⚠️ ESTO **NO** SE PUEDE CORRER DESDE LA CARPETA DEL REPOSITORIO.
+    #
+    # `supabase db diff --linked` no compara contra la nada: levanta una "shadow
+    # database" aplicando LAS MIGRACIONES LOCALES de la carpeta desde la que se
+    # invoca, y reporta la diferencia entre ESO y la base remota.
+    #
+    # Corriéndolo dentro del repositorio, la shadow saldría con las 149
+    # migraciones aplicadas — incluidas la 148 y la 149, que TODAVÍA NO están en
+    # producción. Las policies de Storage que la 148 crea estarían en los dos
+    # lados de la comparación, así que el diff diría "no hay diferencias" y el
+    # archivo saldría vacío. El backup perdería justo lo que se quiere guardar:
+    # el estado ANTERIOR a la 148. Un archivo vacío que parece correcto.
+    #
+    # Y desde Descargas —que es de donde se va a ejecutar este script— no hay
+    # `supabase/config.toml`, así que `link` y `diff` fallarían sin más.
+    #
+    # Solución: un proyecto Supabase temporal, VACÍO y fuera del repositorio.
+    # Sin migraciones locales, la shadow queda como una base Supabase recién
+    # creada, y el diff devuelve exactamente lo que se busca: los cambios
+    # PROPIOS sobre auth/storage respecto de lo que trae Supabase de fábrica.
+    # Se borra en el `finally`, termine bien o mal.
     Titulo "Cambios propios en auth y storage"
     $authOk = $false
-    if ($projectRef) {
-        # La contraseña va por variable de entorno del PROCESO, no como
-        # argumento: así no aparece en la tabla de procesos.
-        $env:SUPABASE_DB_PASSWORD = $plano
-        supabase link --project-ref $projectRef *> $null
-        $codigoLink = $LASTEXITCODE
-        if ($codigoLink -ne 0) {
-            Falla "'supabase link' falló (codigo $codigoLink). ¿Corriste 'supabase login'? El backup queda INCOMPLETO."
-            "-- NO GENERADO: 'supabase link' fallo con codigo $codigoLink." | Set-Content -Path $authst -Encoding UTF8
-            $hubo = $true
-        } else {
-            $diff = supabase db diff --linked --schema auth,storage
-            $codigoDiff = $LASTEXITCODE
-            if ($codigoDiff -ne 0) {
-                Falla "'supabase db diff' falló (codigo $codigoDiff). El backup queda INCOMPLETO."
-                "-- NO GENERADO: 'supabase db diff' fallo con codigo $codigoDiff." | Set-Content -Path $authst -Encoding UTF8
+    if (-not $projectRef) {
+        Falla "Sin project-ref no se puede generar auth_storage_changes.sql. El backup queda INCOMPLETO."
+        Escribir-Texto $authst "-- NO GENERADO: no se pudo deducir el project-ref de la URI."
+        $hubo = $true
+    } else {
+        $tempProy = Join-Path ([IO.Path]::GetTempPath()) ("dspacios-diff-" + [Guid]::NewGuid().ToString("N").Substring(0, 12))
+        New-Item -ItemType Directory -Force -Path $tempProy | Out-Null
+        Write-Host "   Proyecto temporal: $tempProy" -ForegroundColor Gray
+
+        Push-Location $tempProy
+        $volver = $true
+        try {
+            # La cadena vacía responde con el valor por defecto a cualquier
+            # pregunta que `init` haga (settings de VS Code / IntelliJ) sin
+            # dejar el script colgado esperando.
+            "" | supabase init --force *> $null
+            $codigoInit = $LASTEXITCODE
+
+            $cfg     = Join-Path $tempProy "supabase\config.toml"
+            $migDir  = Join-Path $tempProy "supabase\migrations"
+            $migs    = @()
+            if (Test-Path $migDir) { $migs = @(Get-ChildItem -Path $migDir -Filter *.sql -File -ErrorAction SilentlyContinue) }
+
+            if ($codigoInit -ne 0 -or -not (Test-Path $cfg)) {
+                Falla "'supabase init' no creó el proyecto temporal (codigo $codigoInit). El backup queda INCOMPLETO."
+                Escribir-Texto $authst "-- NO GENERADO: 'supabase init' fallo con codigo $codigoInit."
                 $hubo = $true
-            } else {
-                ($diff -join [Environment]::NewLine) | Set-Content -Path $authst -Encoding UTF8
-                $authOk = $true
-                Ok "auth_storage_changes.sql"
+            }
+            elseif ($migs.Count -gt 0) {
+                # No debería pasar nunca: el proyecto se acaba de crear en una
+                # carpeta vacía. Si pasa, algo está mal y es preferible fallar a
+                # generar un diff contra un estado equivocado.
+                Falla "El proyecto temporal tiene $($migs.Count) migracion(es) locales. Se aborta: el diff saldria contra un estado que no es el de produccion."
+                Escribir-Texto $authst "-- NO GENERADO: el proyecto temporal no estaba vacio."
+                $hubo = $true
+            }
+            else {
+                Ok "Proyecto temporal vacio (0 migraciones locales)"
+
+                # La contraseña va por variable de entorno del PROCESO, no como
+                # argumento: así no aparece en la tabla de procesos.
+                $env:SUPABASE_DB_PASSWORD = $plano
+                supabase link --project-ref $projectRef *> $null
+                $codigoLink = $LASTEXITCODE
+
+                if ($codigoLink -ne 0) {
+                    Falla "'supabase link' falló (codigo $codigoLink). ¿Corriste 'supabase login'? El backup queda INCOMPLETO."
+                    Escribir-Texto $authst "-- NO GENERADO: 'supabase link' fallo con codigo $codigoLink."
+                    $hubo = $true
+                } else {
+                    $diff = supabase db diff --linked --schema auth,storage
+                    $codigoDiff = $LASTEXITCODE
+                    if ($codigoDiff -ne 0) {
+                        Falla "'supabase db diff' falló (codigo $codigoDiff). El backup queda INCOMPLETO."
+                        Escribir-Texto $authst "-- NO GENERADO: 'supabase db diff' fallo con codigo $codigoDiff."
+                        $hubo = $true
+                    } else {
+                        $cab = @(
+                            "-- Cambios propios sobre los esquemas auth y storage.",
+                            "-- Generado con 'supabase db diff --linked --schema auth,storage' desde un",
+                            "-- proyecto Supabase temporal y VACIO (sin migraciones locales), para que la",
+                            "-- comparacion sea contra una base Supabase de fabrica y no contra el estado",
+                            "-- del repositorio, que ya incluye las migraciones 148 y 149 sin desplegar.",
+                            ""
+                        )
+                        Escribir-Texto $authst ($cab + @($diff))
+                        $authOk = $true
+                        Ok "auth_storage_changes.sql (diff hecho desde proyecto temporal vacio)"
+                    }
+                }
             }
         }
-        Remove-Item Env:\SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
-    } else {
-        Falla "Sin project-ref no se puede generar auth_storage_changes.sql. El backup queda INCOMPLETO."
-        "-- NO GENERADO: no se pudo deducir el project-ref de la URI." | Set-Content -Path $authst -Encoding UTF8
-        $hubo = $true
+        finally {
+            Remove-Item Env:\SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
+            if ($volver) { Pop-Location }
+        }
     }
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -377,7 +474,7 @@ try {
             $m += ("{0,-28} {1,14}  {2}" -f $it.Name, $it.Length, $h)
         }
     }
-    $m | Set-Content -Path $manif -Encoding UTF8
+    Escribir-Texto $manif $m
     Ok "MANIFEST.txt con fecha, tamaño y SHA256 de cada archivo"
 
     Titulo "LEEME.txt"
@@ -465,7 +562,7 @@ try {
     $l += "  Al reves, la app queda pidiendo vistas que el rollback elimina."
     $l += "  El rollback NO toca datos: la 148 es puro DDL."
     $l += ""
-    $l | Set-Content -Path $leeme -Encoding UTF8
+    Escribir-Texto $leeme $l
     Ok "LEEME.txt"
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -495,6 +592,18 @@ finally {
     $plano  = $null
     $urlCon = $null
     Remove-Item Env:\SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
+
+    # El proyecto Supabase temporal no puede quedar tirado en %TEMP%: `link`
+    # deja ahí el project-ref y credenciales de sesión de la CLI.
+    if ($tempProy -and (Test-Path $tempProy)) {
+        try {
+            Remove-Item -LiteralPath $tempProy -Recurse -Force -ErrorAction Stop
+            Write-Host "   Proyecto temporal eliminado." -ForegroundColor Gray
+        } catch {
+            Write-Host "   [AVISO] No se pudo borrar el proyecto temporal: $tempProy" -ForegroundColor Yellow
+            Write-Host "           Borralo a mano." -ForegroundColor Yellow
+        }
+    }
     [GC]::Collect()
 }
 
