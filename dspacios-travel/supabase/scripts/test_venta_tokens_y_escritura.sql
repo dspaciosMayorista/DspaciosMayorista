@@ -17,9 +17,13 @@
 --     y ajenos.
 --   · Columnas enmascaradas de `ventas_basica`: share_token, cliente_documento,
 --     cliente_direccion y asesor_firma_cc.
+--   · `soy_asesor_del_contrato`, que es la ENTRADA de la decisión de solo
+--     lectura de la ficha del contrato: true en el propio, false en el ajeno.
+--   · Que el asesor consulta los abonos (para el saldo) pero no los registra.
 --   · Aislamiento por agencia (tenant) y bloqueo del usuario desactivado.
---   · Que un rol administrativo sigue teniendo acceso completo (si no, la
---     prueba pasaría cerrándole el paso a todo el mundo).
+--   · Que un rol administrativo sigue teniendo acceso completo — incluida la
+--     ESCRITURA en contratos que no gestiona (si no, la prueba pasaría igual
+--     con el modo solo lectura aplicado a todo el mundo).
 --
 -- POR QUÉ CREA SUS PROPIOS DATOS
 --   Una prueba que depende de que existan ciertos contratos puede pasar "por
@@ -31,11 +35,23 @@
 -- SI FALTA UN FIXTURE QUE NO SE PUEDE FABRICAR (un usuario `venta` activo, un
 -- usuario administrativo), la prueba CORTA con excepción en vez de reportar OK.
 --
+-- FUNCIONA EN LAS DOS FASES DEL DESPLIEGUE
+--   El cierre de `contrato_vuelos` se parte en dos migraciones (148 aditiva,
+--   149 de cierre) para no dejar ventana de caída. La prueba DETECTA en cuál de
+--   las dos fases está —mirando si la policy de lectura todavía incluye a
+--   `venta`— y ajusta lo que exige:
+--     · fase 148 (código nuevo desplegado, 149 sin correr): la app tiene que
+--       funcionar con las vistas, y el PNR ajeno ya no se ve por la vista
+--       aunque la tabla base siga abierta;
+--     · fase 149 (cierre corrido): además, el PNR ajeno tampoco se alcanza
+--       leyendo la tabla base directamente.
+--   Se imprime la fase detectada como primera fila del resultado.
+--
 -- DÓNDE SE EJECUTÓ
---   Se corrió sobre un PostgreSQL 16 local con las 148 migraciones aplicadas en
---   orden: las 92 comprobaciones pasaron. Falta correrla en Supabase, que es el
---   único lugar donde `storage.objects` es el real y donde hay datos de
---   producción; ahí debe dar el mismo resultado.
+--   Sobre un PostgreSQL 16 local con las migraciones aplicadas en orden, en las
+--   DOS fases: con la 148 corrida (110/110) y después de correr la 149
+--   (110/110). Falta correrla en Supabase, que es el único lugar donde
+--   `storage.objects` es el real y donde hay datos de producción.
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -104,7 +120,23 @@ declare
   r          record;
   c          text;
   esperado_n bigint;
+  qual_vuelos text;
+  fase       text;
 begin
+  -- ── ¿En qué fase del despliegue estamos? ─────────────────────────────────
+  select qual into qual_vuelos from pg_policies
+   where schemaname = 'public' and tablename = 'contrato_vuelos'
+     and policyname = 'contrato_vuelos: lectura';
+  fase := case when qual_vuelos like '%venta%' then '148' else '149' end;
+
+  -- Antes de la 149, `venta` todavía lee la tabla base `contrato_vuelos` (a
+  -- propósito: el código viejo la necesita mientras termina el despliegue).
+  -- Después de la 149 ya no. La prueba exige lo que corresponda a cada fase en
+  -- vez de dar por hecho un estado.
+  if fase = '148' then
+    update _tablas set ve_propio = 1, ve_ajeno = 1, afirma_escritura_propia = true
+     where tabla = 'contrato_vuelos';
+  end if;
   -- ── Fixtures que NO se pueden fabricar: si faltan, la prueba no concluye ──
   select id, nombre into v_uid, v_nombre
     from public.usuarios where rol = 'venta' and activo order by id limit 1;
@@ -147,10 +179,22 @@ begin
     end loop;
   end loop;
 
+  -- Un abono en cada contrato: el asesor tiene que poder consultar el saldo.
+  insert into public.abonos (numero_contrato, cliente, fecha_abono, valor_abono, tenant) values
+    (c_propio, 'CLIENTE PRUEBA PROPIO', current_date, 400000, v_tenant),
+    (c_ajeno,  'CLIENTE PRUEBA AJENO',  current_date, 900000, v_tenant);
+
   -- Archivos en Storage: uno de cada contrato.
   insert into storage.objects (bucket_id, name) values
     ('contratos', c_ajeno  || '/cedula-1.pdf'),
     ('contratos', c_propio || '/cedula-1.pdf');
+
+  k := k + 1;
+  insert into _res values (k,
+    case when fase = '148'
+      then 'FASE 148 (aditiva): `venta` todavía lee la tabla base contrato_vuelos'
+      else 'FASE 149 (cierre): `venta` ya NO lee la tabla base contrato_vuelos' end,
+    '148 o 149', fase, true);
 
   ---------------------------------------------------------------------------
   -- A partir de aquí se consulta HACIÉNDOSE PASAR por cada usuario.
@@ -243,6 +287,55 @@ begin
   select count(*) into n from public.contrato_vuelos_basica where numero_contrato = c_propio and record is not null;
   reset role; perform set_config('request.jwt.claims', '{}', true);
   k := k + 1; insert into _res values (k, 'venta SÍ obtiene el record/PNR de su vuelo PROPIO', '1', n::text, n = 1);
+
+  -- ══ BLOQUE 2.bis · La entrada del modo SOLO LECTURA de la pantalla ══════
+  -- `soy_asesor_del_contrato` es lo ÚNICO que mira la ficha del contrato para
+  -- decidir si muestra los controles de gestión o el aviso de solo lectura.
+  -- Probarla aquí es probar la entrada de esa decisión: si devolviera true en
+  -- un contrato ajeno, la pantalla mostraría los botones (aunque la RLS
+  -- siguiera rechazando la escritura).
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  select public.soy_asesor_del_contrato(c_propio)::text into s;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'soy_asesor_del_contrato(PROPIO) = true → la pantalla habilita gestión', 'true', coalesce(s,'null'), s = 'true');
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  select public.soy_asesor_del_contrato(c_ajeno)::text into s;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'soy_asesor_del_contrato(AJENO) = false → la pantalla va en SOLO LECTURA', 'false', coalesce(s,'null'), s = 'false');
+
+  -- Y para un rol administrativo la pantalla nunca va en solo lectura: su gate
+  -- es el rol, no la propiedad. Se comprueba que sí puede escribir (bloque 6).
+
+  -- ══ BLOQUE 2.ter · Saldo: el asesor consulta los abonos, no los registra ══
+  -- Información comercial que necesita para atender ("¿cuánto debo?"), en su
+  -- contrato y en el del colega que está cubriendo.
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  select count(*) into n from public.abonos where numero_contrato in (c_propio, c_ajeno);
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'venta CONSULTA los abonos (saldo) de su agencia', '2', n::text, n = 2);
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  begin
+    insert into public.abonos (numero_contrato, cliente, fecha_abono, valor_abono, tenant)
+      values (c_propio, 'X', current_date, 1, v_tenant);
+    n := 1;
+  exception when others then n := 0; end;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'venta NO registra abonos (ni en su propio contrato: es función contable)', '0', n::text, n = 0);
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  begin
+    delete from public.abonos where numero_contrato = c_ajeno;
+    get diagnostics n = row_count;
+  exception when others then n := 0; end;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'venta NO elimina abonos', '0 filas', n::text, n = 0);
 
   -- ══ BLOQUE 3 · Las 4 operaciones × 8 tablas hijas × propio/ajeno ═════════
   for r in select * from _tablas order by orden loop
@@ -428,6 +521,74 @@ begin
   select count(*) into n from storage.objects where bucket_id = 'contratos' and name like c_ajeno || '/%';
   reset role; perform set_config('request.jwt.claims', '{}', true);
   k := k + 1; insert into _res values (k, 'rol administrativo lee archivos de cualquier contrato', '1', n::text, n = 1);
+
+  -- El administrativo ESCRIBE en cualquier contrato de su agencia, incluido uno
+  -- del que no es asesor: su acceso no depende de la propiedad. Sin esto, la
+  -- prueba pasaría igual si el modo solo lectura se hubiera aplicado a todos.
+  for r in select * from _tablas order by orden loop
+    execute 'set local role authenticated';
+    perform set_config('request.jwt.claims', json_build_object('sub', adm_uid, 'role','authenticated')::text, true);
+    begin
+      execute format('insert into public.%I %s values %s',
+                     r.tabla, r.cols, replace(r.vals, '@C@', quote_literal(c_ajeno)));
+      n := 1;
+    exception when others then n := 0; end;
+    reset role; perform set_config('request.jwt.claims', '{}', true);
+    k := k + 1;
+    insert into _res values (k, format('rol administrativo SÍ escribe %s de un contrato que no gestiona', r.tabla), '1', n::text, n = 1);
+  end loop;
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', adm_uid, 'role','authenticated')::text, true);
+  begin
+    insert into public.abonos (numero_contrato, cliente, fecha_abono, valor_abono, tenant)
+      values (c_ajeno, 'X', current_date, 1, v_tenant);
+    n := 1;
+  exception when others then n := 0; end;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'rol administrativo SÍ registra abonos', '1', n::text, n = 1);
+
+  -- ══ BLOQUE 7 · Fase del despliegue: la app nueva y el cierre del PNR ═════
+  -- Se vuelven a sembrar las filas hijas: el bloque 3 las fue borrando al
+  -- comprobar el DELETE propio, y aquí hay que contar filas existentes.
+  for r in select * from _tablas order by orden loop
+    foreach c in array array[c_propio, c_ajeno] loop
+      execute format('insert into public.%I %s values %s',
+                     r.tabla, r.cols, replace(r.vals, '@C@', quote_literal(c)));
+    end loop;
+  end loop;
+
+  -- Antes de la 149 la app nueva ya tiene que funcionar leyendo las vistas —
+  -- eso es lo que permite desplegar sin apagar nada. Después de la 149, además,
+  -- el PNR ajeno tampoco se alcanza por la tabla base.
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  select count(*) into n from public.ventas_basica where numero_contrato in (c_propio, c_ajeno);
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'La app nueva funciona con `ventas_basica` (ambos contratos)', '2', n::text, n = 2);
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  -- Se cuentan CONTRATOS alcanzados, no filas: a esta altura cada contrato
+  -- puede tener varios tramos (los que sembró el bloque 6 y el resiembre).
+  select count(distinct numero_contrato) into n from public.contrato_vuelos_basica
+   where numero_contrato in (c_propio, c_ajeno);
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1; insert into _res values (k, 'La app nueva funciona con `contrato_vuelos_basica` (ambos contratos)', '2', n::text, n = 2);
+
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+  begin select count(*) into n from public.contrato_vuelos where record is not null;
+  exception when others then n := -1; end;
+  reset role; perform set_config('request.jwt.claims', '{}', true);
+  k := k + 1;
+  if fase = '149' then
+    insert into _res values (k, 'FASE 149: el PNR NO se alcanza por la tabla base `contrato_vuelos`', '0', n::text, n = 0);
+  else
+    insert into _res values (k,
+      'FASE 148: la tabla base sigue abierta A PROPÓSITO (la cierra la 149) — el PNR ajeno ya no se ve por la vista',
+      '> 0', n::text, n > 0);
+  end if;
 end $$;
 
 select n as "#", caso, esperado, obtenido, case when ok then 'OK' else 'FALLA' end as resultado

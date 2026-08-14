@@ -12,7 +12,11 @@ export type CuotaRow = { id: number; orden: number; tipo: string; fecha_limite: 
 
 const TIPO_LABEL: Record<string, string> = { abono: "Abono inicial", cuota: "Cuota", total: "Pago total" };
 
-export function PlanCobroPanel({ numero, cuotas, pagado }: { numero: string; cuotas: CuotaRow[]; pagado: number }) {
+// `puedeEditar` false = asesor consultando un contrato ajeno de su agencia:
+// consulta el plan de pagos (es lo que le pregunta el cliente) pero no lo
+// genera ni lo regenera. La escritura sobre `cuotas` ya está limitada a
+// contratos propios por RLS desde la migración 147.
+export function PlanCobroPanel({ numero, cuotas, pagado, puedeEditar = true }: { numero: string; cuotas: CuotaRow[]; pagado: number; puedeEditar?: boolean }) {
   const router = useRouter();
   const [frecuencia, setFrecuencia] = useState<FrecuenciaCuota>("mensual");
   const [pending, start] = useTransition();
@@ -38,6 +42,7 @@ export function PlanCobroPanel({ numero, cuotas, pagado }: { numero: string; cuo
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-semibold text-gray-700">Plan de cobro</p>
         <div className="flex flex-wrap items-center gap-2">
+          {puedeEditar && (
           <select
             value={frecuencia}
             onChange={(e) => setFrecuencia(e.target.value === "quincenal" ? "quincenal" : "mensual")}
@@ -47,6 +52,7 @@ export function PlanCobroPanel({ numero, cuotas, pagado }: { numero: string; cuo
             <option value="mensual">Cuotas mensuales</option>
             <option value="quincenal">Cuotas quincenales</option>
           </select>
+          )}
           {cuotas.length > 0 && (
             <Link
               href={`/plan-cobro/${encodeURIComponent(numero)}`}
@@ -56,9 +62,11 @@ export function PlanCobroPanel({ numero, cuotas, pagado }: { numero: string; cuo
               Descargar
             </Link>
           )}
-          <Button onClick={generar} disabled={pending} variant="outline">
-            {pending ? "Generando…" : cuotas.length ? "Regenerar plan" : "Generar plan de cobro"}
-          </Button>
+          {puedeEditar && (
+            <Button onClick={generar} disabled={pending} variant="outline">
+              {pending ? "Generando…" : cuotas.length ? "Regenerar plan" : "Generar plan de cobro"}
+            </Button>
+          )}
         </div>
       </div>
       {msg && <p className={`mt-1 text-xs ${msg.startsWith("✓") ? "text-green-600" : "text-red-600"}`}>{msg}</p>}
@@ -86,7 +94,11 @@ export function PlanCobroPanel({ numero, cuotas, pagado }: { numero: string; cuo
           </tbody>
         </table>
       ) : (
-        <p className="mt-2 text-xs text-gray-400">Sin plan. Genera las cuotas: abono inicial + saldo mensual hasta 1 mes antes del viaje.</p>
+        <p className="mt-2 text-xs text-gray-400">
+          {puedeEditar
+            ? "Sin plan. Genera las cuotas: abono inicial + saldo mensual hasta 1 mes antes del viaje."
+            : "Este contrato aún no tiene plan de cobro."}
+        </p>
       )}
     </div>
   );

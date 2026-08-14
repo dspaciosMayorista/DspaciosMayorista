@@ -15,6 +15,7 @@ import { type CuotaRow } from "./PlanCobroPanel";
 import { EditarAsesorPasajeros, type PasajeroRow } from "./EditarAsesorPasajeros";
 import { EliminarContrato } from "./EliminarContrato";
 import { ContenidoContratoEditor } from "./ContenidoContratoEditor";
+import { Eye } from "lucide-react";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 
@@ -35,6 +36,23 @@ export default async function ContratoDetallePage({
     : { data: null };
   const verFinanzas = ["superadmin", "gerencia", "administracion", "operaciones"].includes(perfil?.rol ?? "");
   const esSuperadmin = perfil?.rol === "superadmin";
+
+  // ¿Este contrato es MÍO? Se le pregunta a la base con la MISMA función que
+  // usan las policies (`soy_asesor_del_contrato`), no se reimplementa aquí: si
+  // algún día cambia la regla de propiedad, cambia en un solo lugar y la
+  // pantalla la sigue. Deliberadamente NO se deduce de `share_token` (que la
+  // vista entrega solo al dueño) ni comparando `venta.asesor` con el nombre del
+  // perfil: lo primero convierte un dato de presentación en control de acceso,
+  // y lo segundo es comparación de texto libre — homónimos, tildes y los
+  // nombres en mayúsculas del importador de minorista la hacen poco fiable.
+  // Es SECURITY DEFINER y devuelve solo un booleano sobre uno mismo.
+  const { data: esAsesorDelContrato } = await sb.rpc("soy_asesor_del_contrato", { num: numero });
+
+  // Un asesor consulta los contratos de toda su agencia (regla de negocio de la
+  // migración 147) pero solo GESTIONA los suyos. Los roles administrativos
+  // conservan su operación completa.
+  const puedeEditar = verFinanzas || esAsesorDelContrato === true;
+  const soloLectura = !puedeEditar;
 
   const [
     { data: venta },
@@ -198,6 +216,22 @@ export default async function ContratoDetallePage({
         </Link>
       </div>
 
+      {/* Aviso de solo lectura. Va arriba del todo para que el asesor entienda
+          por qué no ve los controles de siempre, en vez de creer que la
+          pantalla se dañó. */}
+      {soloLectura && (
+        <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <Eye className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div className="text-sm text-amber-900">
+            <p className="font-semibold">Solo lectura — contrato de otro asesor</p>
+            <p className="mt-0.5 text-amber-800">
+              Puedes consultar la información comercial para atender al cliente. La gestión
+              (abonos, adjuntos, pasajeros y vouchers) la hace {venta.asesor ?? "el asesor del contrato"}.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Totales */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl p-4 text-white" style={{ backgroundColor: "var(--brand-primary)" }}>
@@ -247,8 +281,8 @@ export default async function ContratoDetallePage({
         />
       )}
 
-      {/* Servicios adicionales (solo contrato pendiente) */}
-      {venta.estado === "pendiente" && (
+      {/* Servicios adicionales (solo contrato pendiente, y solo quien gestiona) */}
+      {venta.estado === "pendiente" && puedeEditar && (
         <ServiciosContratoEditor
           numero={venta.numero_contrato}
           pax={venta.pax ?? 0}
@@ -299,9 +333,10 @@ export default async function ContratoDetallePage({
         moneda={(venta.moneda as string) ?? "COP"}
         proveedoresCatalogo={(proveedoresCatalogo ?? []).map((p) => p.nombre)}
         aliadosCatalogo={aliadosCatalogo ?? []}
+        puedeEditar={puedeEditar}
       />
 
-      <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} />
+      <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} puedeEditar={puedeEditar} />
 
       <EditarAsesorPasajeros
         numero={numero}
@@ -312,13 +347,15 @@ export default async function ContratoDetallePage({
         fechaSalida={venta.fecha_salida}
         pax={venta.pax ?? 0}
         titularNombre={venta.cliente ?? ""}
+        puedeEditar={puedeEditar}
       />
 
       <VouchersPanel
         numero={numero}
         vouchers={(vouchers ?? []) as unknown as VoucherRow[]}
-        puedeGenerar={esSuperadmin || saldo <= 0}
+        puedeGenerar={(esSuperadmin || saldo <= 0) && puedeEditar}
         destinos={destinos ?? []}
+        puedeEditar={puedeEditar}
       />
 
       {esSuperadmin && (

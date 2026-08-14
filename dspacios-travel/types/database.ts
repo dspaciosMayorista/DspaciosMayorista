@@ -2641,6 +2641,15 @@ export type Database = {
       };
     };
     Functions: {
+      // Migración 142. La misma función que usan las policies para decidir si
+      // un contrato es del asesor que pregunta. Es SECURITY DEFINER y devuelve
+      // solo un booleano sobre uno mismo, así que se puede llamar por RPC sin
+      // exponer nada: la pantalla del contrato la usa para decidir si va en
+      // modo solo lectura, en vez de reimplementar la regla en TypeScript.
+      soy_asesor_del_contrato: {
+        Args: { num: string };
+        Returns: boolean;
+      };
       mi_rol: {
         Args: Record<PropertyKey, never>;
         Returns: Database["public"]["Enums"]["rol_usuario"];

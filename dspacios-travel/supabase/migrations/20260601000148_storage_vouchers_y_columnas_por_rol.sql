@@ -3,6 +3,31 @@
 -- Segunda ronda de la auditoría del PR #259/#260. Parte del estado REAL
 -- posterior a la 147 (ya aplicada en producción) y es idempotente.
 --
+-- ═════════════════════════════════════════════════════════════════════════
+-- ⚠️ ESTA MIGRACIÓN ES **PREPARATORIA**: NO QUITA NINGÚN ACCESO QUE EL CÓDIGO
+--    EN PRODUCCIÓN ESTÉ USANDO HOY. Se puede correr con el código VIEJO
+--    todavía desplegado, sin ventana de caída.
+--
+--    Lo único que sí quita acceso —el SELECT de `venta` sobre la TABLA BASE
+--    `contrato_vuelos`— se movió a la **migración 149**, que se corre DESPUÉS
+--    de desplegar el código nuevo. Si se quitara aquí, entre correr la
+--    migración y terminar el despliegue habría un rato en que el código viejo
+--    pide `contrato_vuelos` (ya sin permiso) y el nuevo pide
+--    `contrato_vuelos_basica` (que aún no existiría si el orden fuera al
+--    revés): en ambos sentidos los vuelos desaparecen de la pantalla.
+--
+--    ORDEN EXACTO — ver el bloque "ORDEN DE DESPLIEGUE" al final del archivo.
+-- ═════════════════════════════════════════════════════════════════════════
+--
+-- Por qué el endurecimiento de Storage y de `vouchers` SÍ puede ir aquí: ambos
+-- restringen a `venta` a sus contratos propios, y en las dos el código viejo ya
+-- se queda sin datos por otra vía. Los adjuntos ajenos ya estaban cerrados en
+-- la tabla `contrato_adjuntos` desde la 142, así que la pantalla ya no lista
+-- ningún archivo ajeno que pudiera intentar abrir; y los vouchers ajenos, al
+-- dejar de devolverse, hacen que el panel salga vacío — no que falle. Ninguno
+-- de los dos deja al código pidiendo un objeto que no existe, que es lo que
+-- sí pasaría con la vista de vuelos.
+--
 -- Hilo conductor de los tres hallazgos: en la 147 protegimos las TABLAS pero
 -- dejamos abiertas las puertas laterales — los archivos en Storage, el token
 -- público del voucher y el localizador del vuelo. Es el mismo patrón que ya
@@ -47,7 +72,8 @@
 --                        no costo; el asesor las necesita para atender.
 --   cuotas             → TODA. Plan de pagos: fechas y montos que el asesor
 --                        tiene que poder consultarle al cliente.
---   contrato_vuelos    → TODA MENOS `record`.  ← se restringe aquí
+--   contrato_vuelos    → TODA MENOS `record`.  ← la VISTA se crea aquí; el
+--                        cierre de la tabla base va en la 149.
 --                        El record/PNR permite gestionar o ANULAR la reserva
 --                        en el sitio de la aerolínea. No es información
 --                        comercial: es una credencial operativa.
@@ -181,15 +207,16 @@ create policy "vouchers: eliminar" on public.vouchers for delete
          and public.puede_ver_contrato(numero_contrato)
          and (public.mi_rol() <> 'venta' or public.soy_asesor_del_contrato(numero_contrato)));
 
--- ── 3. `contrato_vuelos`: `venta` no lee el record/PNR ────────────────────
--- Se le quita la LECTURA de la tabla base (RLS no filtra columnas) y se le da
--- una vista sin `record`. Las escrituras siguen como las dejó la 147: solo
--- sobre contratos propios.
-drop policy if exists "contrato_vuelos: lectura" on public.contrato_vuelos;
-create policy "contrato_vuelos: lectura" on public.contrato_vuelos for select
-  using (public.mi_rol() in ('superadmin','gerencia','administracion','operaciones')
-         and public.puede_ver_contrato(numero_contrato));
-
+-- ── 3. `contrato_vuelos_basica`: la vista, SIN cerrar todavía la tabla ────
+-- Aquí solo se CREA la vista sin `record`. La policy de la tabla base sigue
+-- como la dejó la 147 (con `venta` incluido), a propósito: mientras el código
+-- viejo esté desplegado tiene que poder seguir leyendo `contrato_vuelos`.
+-- El cierre —quitar `venta` de esa policy— es la migración 149, después del
+-- despliegue.
+--
+-- La vista ya enmascara el record desde este momento, así que en cuanto el
+-- código nuevo esté arriba el PNR ajeno deja de mostrarse. La 149 cierra el
+-- acceso por la API REST directa, que es lo que la pantalla no controla.
 drop view if exists public.contrato_vuelos_basica;
 create view public.contrato_vuelos_basica as
   select
@@ -215,6 +242,29 @@ create view public.contrato_vuelos_basica as
     and public.puede_ver_contrato(v.numero_contrato);
 
 grant select on public.contrato_vuelos_basica to authenticated;
+
+-- ── 3.bis `abonos`: el asesor consulta los pagos, no los registra ─────────
+-- Hallazgo al revisar el modo de solo lectura: `abonos` tiene UNA sola policy
+-- (la "acceso contable", 005/116) y NO incluye a `venta`. O sea que un asesor
+-- no ve NINGÚN abono — tampoco los de SU PROPIO contrato. La pestaña Cartera,
+-- que es la única que le queda, le mostraba desde siempre "Pagado $0" y
+-- "Saldo = precio completo" en todos los contratos, y el formulario
+-- "Registrar abono" fallaba en silencio. No es algo que rompiera esta tanda de
+-- migraciones: viene de antes.
+--
+-- Se agrega SOLO LECTURA, y solo sobre contratos que ya puede ver: cuánto ha
+-- pagado el cliente es información comercial que el asesor necesita para
+-- atender. Es aditivo — nadie pierde nada — por eso puede ir en esta
+-- migración preparatoria.
+--
+-- NO se agrega escritura a propósito. Registrar, corregir o eliminar un pago es
+-- función contable; `venta` nunca la tuvo (los botones existían pero fallaban).
+-- Dársela ahora sería ampliar permisos dentro de un PR de endurecimiento. Los
+-- controles de escritura se ocultan en la interfaz para que deje de haber
+-- botones que no hacen nada.
+drop policy if exists "abonos: venta consulta" on public.abonos;
+create policy "abonos: venta consulta" on public.abonos for select
+  using (public.mi_rol() = 'venta' and public.puede_ver_contrato(numero_contrato));
 
 -- ── 4. `ventas_basica`: documento del titular enmascarado si no es propio ──
 -- Se re-declara la vista COMPLETA (no se puede alterar una columna suelta), con
@@ -272,3 +322,36 @@ create view public.ventas_basica as
 grant select on public.ventas_basica to authenticated;
 
 notify pgrst, 'reload schema';
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- ORDEN DE DESPLIEGUE — sin ventana de caída
+-- ═════════════════════════════════════════════════════════════════════════
+--
+--   1. Correr ESTA migración (148) en Supabase, con el código VIEJO todavía
+--      desplegado. Es aditiva: crea `contrato_vuelos_basica`, agrega columnas
+--      a `ventas_basica` y endurece Storage/vouchers. Nada de lo que el código
+--      viejo usa deja de funcionar.
+--
+--   2. Fusionar el PR y esperar a que Vercel termine de desplegar `main`.
+--      Desde ese momento la app lee `contrato_vuelos_basica` (sin el PNR
+--      ajeno) y `ventas_basica` (con el documento enmascarado).
+--
+--   3. VALIDAR en producción, con un usuario de rol `venta` real:
+--        · abrir `/dashboard/contratos/<contrato propio>`   → edita normal;
+--        · abrir `/dashboard/contratos/<contrato de un colega>` → solo lectura;
+--        · abrir `/contrato/<numero>` de ambos → el documento imprimible sale,
+--          con los vuelos, y el PNR solo en el propio;
+--        · un rol administrativo sigue operando igual que siempre.
+--
+--   4. Correr la migración **149**, que le quita a `venta` el SELECT sobre la
+--      tabla base `contrato_vuelos`. A partir de ahí el PNR ajeno tampoco se
+--      alcanza llamando la API REST directamente.
+--
+--   5. Correr `supabase/scripts/test_venta_tokens_y_escritura.sql` (espera el
+--      estado posterior a la 149) y `test_rls_por_rol.sql`.
+--
+-- Si hubiera que devolverse entre el paso 2 y el 4, basta con revertir el
+-- despliegue: la 148 por sí sola no le quita a nadie nada que estuviera
+-- usando. Después del paso 4 el retroceso ya exige volver a agregar `venta` a
+-- la policy de `contrato_vuelos`.
+-- ═════════════════════════════════════════════════════════════════════════

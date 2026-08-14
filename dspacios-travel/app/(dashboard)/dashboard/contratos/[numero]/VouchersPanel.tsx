@@ -13,7 +13,7 @@ export type VoucherRow = { id: number; tipo?: string; proveedor: string | null; 
 const lbl = "mb-1 block text-[11px] font-medium text-gray-500";
 const inp = "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
 
-export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, destinos = [] }: { numero: string; vouchers: VoucherRow[]; puedeGenerar: boolean; motivoBloqueo?: string; destinos?: DestinoOpt[] }) {
+export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, destinos = [], puedeEditar = true }: { numero: string; vouchers: VoucherRow[]; puedeGenerar: boolean; motivoBloqueo?: string; destinos?: DestinoOpt[]; puedeEditar?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -33,6 +33,21 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, d
       if (r.ok) { setMsg("✓ Voucher de hotel generado"); router.refresh(); }
       else setMsg(r.error);
     });
+  }
+
+  // Solo lectura: el asesor que cubre a un colega no genera ni edita vouchers.
+  // Del lado del servidor la migración 148 limita `vouchers` a contratos
+  // propios —la tabla guarda `share_token`, que abre la página pública
+  // /voucher/[token]—, así que aquí la lista llegaría vacía de todos modos.
+  if (!puedeEditar) {
+    return (
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-sm font-semibold text-gray-700">Vouchers</h2>
+        <p className="mt-2 text-xs text-gray-400">
+          Los vouchers los genera y comparte el asesor que gestiona el contrato.
+        </p>
+      </section>
+    );
   }
 
   return (

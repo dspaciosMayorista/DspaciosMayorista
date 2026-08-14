@@ -25,7 +25,12 @@ function fmtBytes(n: number | null): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function AdjuntosContrato({ numeroContrato, adjuntos }: { numeroContrato: string; adjuntos: Adjunto[] }) {
+// `puedeEditar` false = un asesor consultando el contrato de un colega. Ve la
+// lista (saber qué soportes existen es información de gestión) pero no sube
+// ni elimina. La RLS de `contrato_adjuntos` y las policies de Storage de la
+// migración 148 imponen lo mismo del lado del servidor: esto es para que no
+// haya botones que solo sirven para recibir un error.
+export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true }: { numeroContrato: string; adjuntos: Adjunto[]; puedeEditar?: boolean }) {
   const router = useRouter();
   const [tipo, setTipo] = useState("cedula");
   const [subiendo, setSubiendo] = useState(false);
@@ -58,6 +63,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos }: { numeroContrato:
         <span className="text-xs text-gray-400">{adjuntos.length} archivo(s) · {fmtBytes(total)}</span>
       </div>
 
+      {puedeEditar && (
       <div className="mb-4 flex flex-wrap items-end gap-2">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-600">Tipo</label>
@@ -72,6 +78,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos }: { numeroContrato:
         </label>
         <span className="text-xs text-gray-400">Cédula, soporte de pago/abono. PDF o imagen, máx {MAX_MB} MB.</span>
       </div>
+      )}
       {err && <p className="mb-3 text-sm text-red-600">{err}</p>}
 
       {adjuntos.length > 0 ? (
@@ -81,7 +88,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos }: { numeroContrato:
               <th className="px-3 py-2">Tipo</th><th className="px-3 py-2">Archivo</th>
               <th className="px-3 py-2">Tamaño</th><th className="px-3 py-2">Subido por</th><th className="px-3 py-2">Fecha</th><th className="px-3 py-2"></th>
             </tr></thead>
-            <tbody>{adjuntos.map((a) => <Fila key={a.id} a={a} numeroContrato={numeroContrato} />)}</tbody>
+            <tbody>{adjuntos.map((a) => <Fila key={a.id} a={a} numeroContrato={numeroContrato} puedeEditar={puedeEditar} />)}</tbody>
           </table>
         </div>
       ) : (
@@ -91,7 +98,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos }: { numeroContrato:
   );
 }
 
-function Fila({ a, numeroContrato }: { a: Adjunto; numeroContrato: string }) {
+function Fila({ a, numeroContrato, puedeEditar }: { a: Adjunto; numeroContrato: string; puedeEditar: boolean }) {
   const [pending, start] = useTransition();
   const [busy, setBusy] = useState(false);
 
@@ -113,9 +120,11 @@ function Fila({ a, numeroContrato }: { a: Adjunto; numeroContrato: string }) {
         <button type="button" onClick={descargar} disabled={busy} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>
           {busy ? "…" : "Descargar"}
         </button>
-        <button type="button" disabled={pending}
-          onClick={() => { if (confirm("¿Eliminar este adjunto?")) start(() => { void eliminarAdjunto(a.id, a.path, numeroContrato); }); }}
-          className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+        {puedeEditar && (
+          <button type="button" disabled={pending}
+            onClick={() => { if (confirm("¿Eliminar este adjunto?")) start(() => { void eliminarAdjunto(a.id, a.path, numeroContrato); }); }}
+            className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+        )}
       </td>
     </tr>
   );

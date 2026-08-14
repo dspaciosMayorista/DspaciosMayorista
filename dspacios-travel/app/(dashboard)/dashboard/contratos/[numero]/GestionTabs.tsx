@@ -60,6 +60,12 @@ export type GestionProps = {
   moneda?: string;       // moneda del contrato (USD muestra el estado de cuenta en dólares)
   proveedoresCatalogo?: string[]; // nombres del catálogo, para sugerir/autocompletar
   aliadosCatalogo?: AliadoCat[]; // catálogo de aliados B2B, para elegir en vez de retipear
+  // false = un asesor consultando el contrato de OTRO asesor de su agencia.
+  // Puede ver (regla de negocio de la migración 147: los asesores se cubren
+  // entre ellos) pero no modificar nada. Ojo: `verFinanzas` y `puedeEditar` son
+  // cosas distintas — el primero decide qué DATOS se muestran (costos,
+  // márgenes), el segundo si se puede ESCRIBIR.
+  puedeEditar?: boolean;
 };
 type AliadoCat = { id: number; nombre: string; nit: string | null; tipo: string | null; pct_comision: number | null; aplica_retencion: boolean | null; pct_retencion: number | null };
 
@@ -125,7 +131,13 @@ export function GestionTabs(p: GestionProps) {
       {/* Contenido */}
       <div className="min-w-0 flex-1">
         {tab === "cartera" && (
-          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.moneda ?? "COP"} />
+          // Registrar/corregir/eliminar un abono es función contable: `abonos`
+          // solo la escriben los roles con acceso financiero (policy "acceso
+          // contable"). Por eso el gate de escritura de la cartera es
+          // `verFinanzas`, no `puedeEditar` — un asesor no registra pagos ni
+          // siquiera en su propio contrato, y los botones que sí lo intentaban
+          // fallaban en silencio.
+          <CarteraTab numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.moneda ?? "COP"} puedeEditar={p.verFinanzas} puedeEditarPlan={p.puedeEditar !== false} />
         )}
         {p.verFinanzas && tab === "costos" && <CostosTab numero={p.numero} costos={p.costos} />}
         {p.verFinanzas && tab === "proveedores" && <ProveedoresTab numero={p.numero} filas={p.cuentasPorPagar} catalogo={p.proveedoresCatalogo ?? []} />}
@@ -193,7 +205,7 @@ function CostosTab({ numero, costos }: { numero: string; costos: GestionProps["c
 }
 
 // ── CARTERA (abonos) ───────────────────────────────────────────────────
-function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP" }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string }) {
+function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, moneda = "COP", puedeEditar = true, puedeEditarPlan = true }: { numero: string; abonos: Abono[]; totalPagado: number; total: number; formasPago: string[]; cuotas: CuotaRow[]; moneda?: string; puedeEditar?: boolean; puedeEditarPlan?: boolean }) {
   const saldo = Math.max(total - totalPagado, 0);
   const fmt = (n: number) => formatMoneda(n, moneda);
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
@@ -204,11 +216,13 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
         <Mini label="Pagado" value={fmt(totalPagado)} color="var(--brand-success)" />
         <Mini label="Saldo" value={fmt(saldo)} />
       </div>
-      <PlanCobroPanel numero={numero} cuotas={cuotas} pagado={totalPagado} />
-      <div className={card}>
-        <p className={lbl}>Registrar abono</p>
-        <AbonoForm numeroContrato={numero} formasPago={formasPago} moneda={moneda} />
-      </div>
+      <PlanCobroPanel numero={numero} cuotas={cuotas} pagado={totalPagado} puedeEditar={puedeEditarPlan} />
+      {puedeEditar && (
+        <div className={card}>
+          <p className={lbl}>Registrar abono</p>
+          <AbonoForm numeroContrato={numero} formasPago={formasPago} moneda={moneda} />
+        </div>
+      )}
       {abonos.length > 0 && (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2">
@@ -226,7 +240,7 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
               <th className="px-4 py-2 text-right">Recibo</th><th className="px-4 py-2"></th>
             </tr></thead>
             <tbody>{abonos.map((a) => (
-              <FilaAbono key={a.id} a={a} numero={numero} esUSD={esUSD} moneda={moneda} formasPago={formasPago} />
+              <FilaAbono key={a.id} a={a} numero={numero} esUSD={esUSD} moneda={moneda} formasPago={formasPago} puedeEditar={puedeEditar} />
             ))}</tbody>
           </table>
         </div>
@@ -237,7 +251,7 @@ function CarteraTab({ numero, abonos, totalPagado, total, formasPago, cuotas, mo
 
 // Fila de abono con edición inline (corregir valor/fecha/forma/referencia sin
 // tener que registrar un segundo abono para "cuadrar" el saldo) y eliminar.
-function FilaAbono({ a, numero, esUSD, moneda, formasPago }: { a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[] }) {
+function FilaAbono({ a, numero, esUSD, moneda, formasPago, puedeEditar = true }: { a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[]; puedeEditar?: boolean }) {
   const [editar, setEditar] = useState(false);
   // El campo "Valor" edita lo PAGADO EN COP (mismo criterio de registrarAbono/
   // actualizarAbono); en USD eso es monto_cop, NO valor_abono (que está en USD).
@@ -298,8 +312,12 @@ function FilaAbono({ a, numero, esUSD, moneda, formasPago }: { a: Abono; numero:
         <Link href={`/recibo/${a.id}`} target="_blank" className="text-xs font-medium text-[#1D7C9A] hover:underline">Recibo ↗</Link>
       </td>
       <td className="px-4 py-2 text-right whitespace-nowrap">
-        <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
-        <DeleteBtn onClick={() => eliminarAbono(a.id, numero)} />
+        {puedeEditar ? (
+          <>
+            <button type="button" onClick={() => setEditar(true)} className="mr-3 text-xs font-medium hover:underline" style={{ color: "var(--brand-accent)" }}>Editar</button>
+            <DeleteBtn onClick={() => eliminarAbono(a.id, numero)} />
+          </>
+        ) : null}
       </td>
     </tr>
   );
