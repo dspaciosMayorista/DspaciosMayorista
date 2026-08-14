@@ -78,12 +78,20 @@ export default async function ContratoDetallePage({
   // Contenido del contrato (hoteles/vuelos/ítems/servicios) para el editor de
   // superadmin. Los contratos migrados llegan sin nada de esto, así que casi
   // siempre vienen vacíos: el editor es justo para poder completarlos.
-  const [{ data: itemsC }, { data: hotelesC }, { data: vuelosC }, { data: serviciosC }] = await Promise.all([
-    sb.from("contrato_items").select("descripcion, adultos, ninos, tarifa_adulto, tarifa_nino").eq("numero_contrato", numero).order("orden"),
-    sb.from("contrato_hoteles").select("nombre, categoria, proveedor, ciudad, alimentacion, acomodacion, detalle_acomodacion, fecha_ingreso, fecha_salida").eq("numero_contrato", numero).order("orden"),
-    sb.from("contrato_vuelos").select("aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, fecha_salida, hora_salida, hora_llegada, servicios").eq("numero_contrato", numero).order("orden"),
-    sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).order("orden"),
-  ]);
+  //
+  // Solo se consulta si quien mira es superadmin, que es el único que ve el
+  // editor (más abajo, `{esSuperadmin && <ContenidoContratoEditor .../>}`).
+  // Antes se pedía siempre: para un asesor `contrato_servicios` ya devolvía
+  // vacío por RLS (tiene el costo neto) y desde la 148 `contrato_vuelos`
+  // también — cuatro consultas cuyo resultado nadie llegaba a mostrar.
+  const [{ data: itemsC }, { data: hotelesC }, { data: vuelosC }, { data: serviciosC }] = esSuperadmin
+    ? await Promise.all([
+        sb.from("contrato_items").select("descripcion, adultos, ninos, tarifa_adulto, tarifa_nino").eq("numero_contrato", numero).order("orden"),
+        sb.from("contrato_hoteles").select("nombre, categoria, proveedor, ciudad, alimentacion, acomodacion, detalle_acomodacion, fecha_ingreso, fecha_salida").eq("numero_contrato", numero).order("orden"),
+        sb.from("contrato_vuelos").select("aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, fecha_salida, hora_salida, hora_llegada, servicios").eq("numero_contrato", numero).order("orden"),
+        sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).order("orden"),
+      ])
+    : [{ data: null }, { data: null }, { data: null }, { data: null }];
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
   // Ítems de las facturas del contrato, agrupados por factura.

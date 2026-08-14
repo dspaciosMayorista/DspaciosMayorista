@@ -11,7 +11,7 @@ import {
 import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import type {
-  Venta,
+  VentaDocumento,
   ContratoPasajero,
   ContratoHotel,
   ContratoVuelo,
@@ -22,7 +22,9 @@ import type {
 type HotelConNota = ContratoHotel & { nota_regimen?: string | null; foto_url?: string | null };
 
 type Props = {
-  venta: Venta;
+  // Subconjunto sin columnas financieras: lo alimenta tanto `ventas` como
+  // `ventas_basica` (ver VentaDocumento en types/database.ts).
+  venta: VentaDocumento;
   pasajeros: ContratoPasajero[];
   hoteles: HotelConNota[];
   vuelos: ContratoVuelo[];

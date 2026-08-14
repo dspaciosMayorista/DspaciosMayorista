@@ -313,8 +313,15 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 146.**
-> Corridas por el dueño **hasta la 146** (todas al día).
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 148.**
+> Corridas por el dueño **hasta la 147**.
+> ⚠️ **La 148 está escrita pero NO se ha corrido** (decisión del dueño: primero
+> auditar el PR). Todo lo que dependa de ella —la vista `contrato_vuelos_basica`,
+> las policies de `storage.objects` del bucket `contratos`, el enmascarado de
+> `cliente_documento` y el regreso de `cliente_direccion`/`asesor_firma_cc` a
+> `ventas_basica`— **no funciona hasta que se ejecute**. Concretamente, la página
+> imprimible `/contrato/[numero]` ya apunta a las vistas: si el código se
+> despliega antes que la migración, esa página falla.
 > ⚠️ **La 143 y todo el frente de "vínculo B2B por documento" viven en la rama
 > `claude/peaceful-noether-713c7c` y NO están en `main` todavía** (decisión del
 > dueño: acumular y mergear cuando esté validado).
@@ -325,7 +332,15 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > `servicio-fotos`) · **139** `programa_tipo_transporte` (`programas.tipo_transporte`
 > ninguno/aereo/terrestre) · **140** `usuario_inactivo_sin_rol` (`mi_rol()` no devuelve
 > rol si `activo = false`) · **141** `rls_hijas_por_dueno` (las tablas hijas del contrato
-> heredan el permiso de `ventas` vía `puede_ver_contrato()`).
+> heredan el permiso de `ventas` vía `puede_ver_contrato()`) · **142** `venta_ve_su_agencia`
+> · **143** `aliado_id_en_ventas_y_usuarios` · **144** `ventas_basica` (vista sin columnas
+> financieras; `venta` pierde el SELECT de `ventas`) · **146** `contrato_servicios_sin_costo`
+> · **147** `venta_lectura_amplia_escritura_propia` (separa VER de EDITAR en las hijas y
+> saca `share_token`/`asesor_firma_cc`/`cliente_direccion`/`observaciones` de la vista) ·
+> **148** `storage_vouchers_y_columnas_por_rol` (**⚠️ SIN CORRER**: policies del bucket
+> `contratos` en `storage.objects`, `vouchers` solo del contrato propio, vista
+> `contrato_vuelos_basica` sin el record/PNR ajeno, `cliente_documento` enmascarado y
+> regreso condicional de `cliente_direccion`/`asesor_firma_cc`).
 
 > **⚠️ Endurecimiento de seguridad (ago-2026) — leer antes de tocar RLS o el login:**
 > - **Backdoor del login por código (crítico, corregido).** `loginConCodigo` resolvía el

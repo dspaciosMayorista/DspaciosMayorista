@@ -21,7 +21,7 @@ export async function generateMetadata({
   const { numero: raw } = await params;
   const numero = decodeURIComponent(raw);
   const sb = await createClient();
-  const { data } = await sb.from("ventas").select("cliente").eq("numero_contrato", numero).maybeSingle();
+  const { data } = await sb.from("ventas_basica").select("cliente").eq("numero_contrato", numero).maybeSingle();
   return { title: { absolute: tituloDocumento("Contrato", numero, data?.cliente) } };
 }
 
@@ -43,10 +43,17 @@ export default async function ContratoImprimiblePage({
     { data: abonos },
     { data: planes },
   ] = await Promise.all([
-    sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
+    // Las dos vistas, no las tablas base: desde la migración 144 el rol
+    // `venta` no lee `ventas`, y desde la 148 tampoco `contrato_vuelos`.
+    // Consultarlas directamente dejaba esta página en 404 para cualquier
+    // asesor, incluso en su propio contrato. Los roles administrativos ven
+    // exactamente lo mismo por la vista (el documento no usa ni una columna
+    // financiera); a un asesor le llega el record del vuelo solo si el
+    // contrato es suyo.
+    sb.from("ventas_basica").select("*").eq("numero_contrato", numero).single(),
     sb.from("contrato_pasajeros").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("contrato_hoteles").select("*").eq("numero_contrato", numero).order("orden"),
-    sb.from("contrato_vuelos").select("*").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_vuelos_basica").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("contrato_items").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("abonos").select("valor_abono").eq("numero_contrato", numero),
     sb.from("planes_alimentacion").select("codigo, nombre, nota_especial"),

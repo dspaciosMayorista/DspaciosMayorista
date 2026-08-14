@@ -59,6 +59,40 @@
 --   contrato_adjuntos  → solo contratos PROPIOS (+ Storage, punto 1).
 --
 -- Los roles administrativos conservan acceso completo en todas.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- 4. `ventas_basica.cliente_documento` — enmascarado para contratos ajenos
+-- ─────────────────────────────────────────────────────────────────────────
+-- La 147 lo dejó DENTRO de la vista y lo anotó como decisión revisable. Es
+-- incoherente con el resto del criterio: `contrato_pasajeros` está limitado a
+-- contratos propios precisamente porque guarda documento y fecha de
+-- nacimiento — pero el titular de la venta es también un pasajero, y su
+-- documento salía completo en la vista para toda la agencia. La protección de
+-- la 142 se caía por el titular.
+--
+-- Un asesor que cubre a un colega necesita IDENTIFICAR al cliente (confirmar
+-- por teléfono que habla con el titular), no la cédula completa. Se deja el
+-- documento íntegro para el contrato propio y los últimos cuatro dígitos para
+-- los ajenos, que es lo que se usa al verificar identidad. Mismo mecanismo
+-- que ya se usó con `share_token`: la columna sigue existiendo, cambia su
+-- contenido según quién pregunta.
+--
+-- ─────────────────────────────────────────────────────────────────────────
+-- 5. REGRESIÓN de la 144: `venta` no podía imprimir NI SU PROPIO contrato
+-- ─────────────────────────────────────────────────────────────────────────
+-- La 144 le quitó a `venta` toda policy de SELECT sobre `ventas`. La página
+-- imprimible `/contrato/[numero]` leía la tabla base, así que devolvía null y
+-- caía en `notFound()`: el botón "Ver / Imprimir contrato" quedó roto para
+-- TODOS los asesores, incluso en sus propios contratos. No es un problema de
+-- permisos mal puestos sino de una pantalla que quedó consultando la puerta
+-- que se cerró; se corrige apuntándola a la vista (ver el cambio de la app).
+--
+-- El documento imprimible no usa ninguna columna financiera, pero sí dos que
+-- la 147 sacó de la vista: `cliente_direccion` (va impresa en el contrato del
+-- cliente) y `asesor_firma_cc` (va en el bloque de firma). Vuelven a la
+-- vista, pero SOLO para el contrato propio — mismo criterio que
+-- `share_token`: para el contrato de un colega llegan en null y el documento
+-- se imprime con esos campos vacíos.
 
 -- ── 1. Storage: bucket `contratos` ────────────────────────────────────────
 drop policy if exists "contratos files: acceso" on storage.objects;
@@ -163,6 +197,12 @@ create view public.contrato_vuelos_basica as
     v.origen_codigo, v.origen_ciudad, v.destino_codigo, v.destino_ciudad,
     v.numero_vuelo, v.fecha_salida, v.hora_salida, v.hora_llegada,
     v.servicios, v.orden,
+    -- Columnas viejas (ida+regreso en una sola fila, anteriores a la 135): el
+    -- documento imprimible todavía las renderiza para los contratos que ya
+    -- estaban generados, así que la vista tiene que traerlas o esos vuelos
+    -- saldrían en blanco. No son sensibles: números y horas de vuelo.
+    v.vuelo_ida, v.vuelo_regreso, v.hora_salida_ida, v.hora_llegada_ida,
+    v.hora_salida_reg, v.hora_llegada_reg, v.fecha_regreso,
     -- El record solo para quien gestiona el contrato: con él se puede entrar al
     -- sitio de la aerolínea y modificar o anular la reserva.
     case
@@ -175,5 +215,60 @@ create view public.contrato_vuelos_basica as
     and public.puede_ver_contrato(v.numero_contrato);
 
 grant select on public.contrato_vuelos_basica to authenticated;
+
+-- ── 4. `ventas_basica`: documento del titular enmascarado si no es propio ──
+-- Se re-declara la vista COMPLETA (no se puede alterar una columna suelta), con
+-- exactamente las mismas columnas que dejó la 147 y un solo cambio:
+-- `cliente_documento`.
+drop view if exists public.ventas_basica;
+create view public.ventas_basica as
+  select
+    v.numero_contrato, v.fecha_venta, v.asesor, v.canal, v.tipo_cliente,
+    v.cliente,
+    -- Documento completo solo para quien gestiona el contrato. Para un colega
+    -- de la misma agencia, los últimos cuatro dígitos: alcanza para verificar
+    -- identidad al teléfono y no reconstruye la cédula.
+    case
+      when public.mi_rol() <> 'venta' or public.soy_asesor_del_contrato(v.numero_contrato)
+        then v.cliente_documento
+      when v.cliente_documento is null then null
+      -- Un documento de 4 caracteres o menos no se puede enmascarar
+      -- parcialmente sin entregarlo entero: se oculta completo.
+      when length(v.cliente_documento) <= 4 then '••••'
+      else '••••' || right(v.cliente_documento, 4)
+    end as cliente_documento,
+    v.cliente_telefono, v.cliente_email,
+    v.destino, v.tipo_paquete, v.fecha_salida, v.fecha_regreso, v.fecha_emision,
+    v.pax, v.hotel, v.aerolinea, v.receptivo, v.asistencia, v.otros_proveedores,
+    v.precio_venta, v.moneda, v.estado, v.facturado, v.numero_documento,
+    v.plan_nombre, v.tours_traslados, v.asistencia_medica, v.plazo,
+    v.tipo_asesor, v.agencia_nombre, v.agencia_asesor, v.freelance_nombre, v.aliado_id,
+    v.asesor_firma_nombre, v.asesor_firma_cargo, v.asesor_firma_tel,
+    v.paquete_armado_id, v.bloqueo_ref_id, v.tenant,
+    -- Punto 5: vuelven a la vista para que el asesor pueda imprimir SU
+    -- contrato completo; en null para el de un colega.
+    case
+      when public.mi_rol() <> 'venta' or public.soy_asesor_del_contrato(v.numero_contrato)
+        then v.cliente_direccion
+      else null
+    end as cliente_direccion,
+    case
+      when public.mi_rol() <> 'venta' or public.soy_asesor_del_contrato(v.numero_contrato)
+        then v.asesor_firma_cc
+      else null
+    end as asesor_firma_cc,
+    case
+      when public.mi_rol() <> 'venta' or public.soy_asesor_del_contrato(v.numero_contrato)
+        then v.share_token
+      else null
+    end as share_token,
+    v.created_at, v.updated_at
+  from public.ventas v
+  where
+    public.mi_rol() in ('superadmin','gerencia')
+    or (public.mi_rol() in ('administracion','operaciones','venta')
+        and public.puede_ver_tenant(v.tenant));
+
+grant select on public.ventas_basica to authenticated;
 
 notify pgrst, 'reload schema';
