@@ -1,5 +1,19 @@
 # Membresías por agencia: un usuario, varios roles
 
+> ## ⏸ EN PAUSA — el caso que lo motivó era otro
+>
+> Este diseño nació de entender que una persona era `operaciones` en mayorista y
+> **`venta` interna** en minorista. **No es así.** Es `operaciones` interna en
+> mayorista y **freelance/aliado B2B** relacionado con ventas de minorista, que
+> gestiona otro usuario interno.
+>
+> Ese caso **no necesita rol interno por tenant**: necesita que los datos de
+> pertenencia B2B estén bien. Ver **`caso-freelance-en-asesor.md`**.
+>
+> El documento se conserva porque el análisis sigue siendo válido —el inventario
+> de impacto está medido y no caduca— si algún día aparece una persona con dos
+> roles **internos** de verdad. Hasta entonces: no implementar.
+
 **Diseño e inventario de impacto. Nada implementado, ninguna migración escrita.**
 
 ---

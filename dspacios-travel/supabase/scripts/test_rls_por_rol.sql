@@ -108,10 +108,7 @@ end $$;
 -- confirmar que cada quien sí ve lo que le toca:
 --   · superadmin / gerencia      → todos los contratos
 --   · administracion/operaciones → todos los de SU agencia (tenant)
---   · venta                      → todos los de SU agencia (migración 142).
---                                  La columna `contratos_donde_es_asesor` es
---                                  informativa: sirve para detectar nombres
---                                  que no cruzan (ej. importados en MAYÚSCULAS)
+--   · venta                      → todos los de SU agencia (migración 142)
 --   · agencia / freelance / cliente_final → 0 (su acceso va por el portal B2B,
 --                                            que resuelve por pertenencia, no
 --                                            por esta RLS)
@@ -161,10 +158,39 @@ from _rls_out
 order by (veredicto like 'FUGA%') desc, (veredicto <> 'OK') desc, rol, usuario, tabla;
 
 -- Resultado 2 — alcance de cada usuario sobre `ventas`.
+--
+-- ⚠️ CÓMO LEER LA COLUMNA DE COINCIDENCIAS POR NOMBRE
+--
+-- Cuenta las filas donde `ventas.asesor` coincide con el nombre del usuario.
+-- Eso es una COINCIDENCIA DE TEXTO, no un permiso, y solo significa algo para
+-- el rol `venta` DENTRO DE SU PROPIA AGENCIA — que es el único caso donde la
+-- app usa esa coincidencia para decidir qué puede gestionar
+-- (`soy_asesor_del_contrato`, migración 142).
+--
+-- Para cualquier otro rol —o para contratos de otra agencia— la columna es
+-- MERAMENTE INFORMATIVA. Un número ahí NO significa "debería poder ver estos
+-- contratos". Interpretarlo así lleva a diagnósticos equivocados, y ya pasó:
+--
+--   · `ventas.asesor` de los contratos IMPORTADOS de minorista trae el texto
+--     de la hoja. Cuando la hoja traía un VENDEDOR —un freelance externo— ese
+--     nombre quedó en `asesor` además de en `freelance_nombre`. Si una persona
+--     interna se llama igual que ese freelance, aparece aquí con contratos que
+--     no gestiona y que no debe ver.
+--   · Un usuario de mayorista puede coincidir por nombre con contratos de
+--     minorista. Eso NO es una fuga: `puede_ver_contrato` filtra por tenant y
+--     la columna `contratos_visibles` lo refleja correctamente.
+--
+-- Regla: si `coincidencias_por_nombre > 0` pero `contratos_visibles` no los
+-- incluye, lo que hay que revisar es el DATO (quién debería estar en
+-- `ventas.asesor`), no la RLS.
 select
   usuario, rol, activo,
   visibles as contratos_visibles,
-  suyos    as contratos_donde_es_asesor,
+  suyos    as coincidencias_por_nombre,
+  case
+    when rol = 'venta' then 'expectativa operativa (dentro de su agencia)'
+    else 'informativo — coincidencia textual, no es un permiso'
+  end      as "cómo leer las coincidencias",
   total_bd as total_en_la_base
 from _rls_ventas
 order by rol, usuario;
