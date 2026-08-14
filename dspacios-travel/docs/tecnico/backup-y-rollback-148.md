@@ -8,6 +8,7 @@ Archivos relacionados:
 | Archivo | Para qué |
 |---|---|
 | `supabase/scripts/backup-antes-148.ps1` | Genera la copia. Se corre en Windows. |
+| `supabase/scripts/pruebas/probar-backup.sh` | Banco de pruebas del script anterior (casos negativos). |
 | `supabase/scripts/rollback_148.sql` | Revierte la 148. **No ejecutar** salvo que haga falta. |
 | `supabase/scripts/verificar_rollback_148.sql` | Comprueba que el rollback dejó la base como estaba. |
 
@@ -18,6 +19,9 @@ Archivos relacionados:
 **Requisitos, una sola vez:**
 
 ```powershell
+# Docker Desktop instalado Y CORRIENDO. La Supabase CLI ejecuta pg_dump dentro
+# de un contenedor: sin Docker, `db dump` falla a mitad y deja archivos
+# truncados que parecen válidos. El script lo comprueba ANTES de tocar el disco.
 scoop install supabase     # o: https://supabase.com/docs/guides/local-development/cli/getting-started
 supabase login             # abre el navegador
 ```
@@ -40,15 +44,27 @@ supabase login             # abre el navegador
    ```
 
 El script pide la URI, después la contraseña **oculta** (`Read-Host -AsSecureString`),
-y escribe en `C:\Users\Asus\Documents\Backups\Dspacios\antes-migracion-148`:
+y escribe en una carpeta **con fecha y hora**, dentro de
+`C:\Users\Asus\Documents\Backups\Dspacios`:
 
 ```
-roles.sql
-schema.sql
-data.sql
-auth_storage_changes.sql
-MANIFEST.txt
+antes-migracion-148-20260814-045750\
+    roles.sql
+    schema.sql
+    data.sql
+    auth_storage_changes.sql
+    MANIFEST.txt
+    LEEME.txt
 ```
+
+**Nunca sobrescribe un backup anterior**: cada ejecución crea su propia carpeta,
+y si por lo que sea alguno de los archivos ya existiera, se detiene.
+
+El destino no puede caer dentro de un repositorio git. No se comprueba por el
+**nombre** de la carpeta —renombrar el repo burlaría eso— sino preguntándole a
+git por la raíz (`git rev-parse --show-toplevel` desde la ubicación del script)
+y además subiendo por los directorios padres del destino a buscar un `.git`,
+que cubre el caso de que el destino pertenezca a **otro** repositorio.
 
 ### La contraseña
 
@@ -81,10 +97,16 @@ No basta con que los archivos existan. Comprueba:
 
 Si algo falla, termina con código 1 y el mensaje **"no corras la migración 148"**.
 
-`auth_storage_changes.sql` puede salir **vacío legítimamente**, si no hay
-cambios propios sobre los esquemas `auth`/`storage`. Por eso no se marca como
-falla sino como aviso: hay que abrirlo y confirmarlo, no darlo por bueno solo
-porque el script terminó bien.
+**Si `supabase link` o `supabase db diff` fallan, el backup queda marcado como
+INCOMPLETO** y el script sale con código 1. No se degrada a aviso: un backup al
+que le falta una pieza y aun así dice "VERIFICADO" es peor que uno que falla
+ruidosamente, porque se corre la migración confiando en él. Se comprueba el
+`$LASTEXITCODE` de las dos órdenes, no solo el de `link`.
+
+Cosa distinta: `auth_storage_changes.sql` puede salir **vacío legítimamente** si
+`db diff` corrió bien y no hay cambios propios sobre `auth`/`storage`. Eso sí es
+aviso: hay que abrirlo y confirmarlo, no darlo por bueno porque el script
+terminó bien.
 
 ---
 
@@ -94,12 +116,19 @@ Es la parte que más cuesta cara si se pasa por alto.
 
 ### Los archivos físicos de Storage — lo más importante
 
-`supabase db dump` vuelca **la base de datos**. Los archivos subidos viven en el
-almacenamiento de objetos, **no** en Postgres. Lo que sí queda en el volcado es
-la tabla `storage.objects` — es decir, la **lista** de archivos: nombres, rutas,
-tamaños. Restaurando el volcado en un proyecto nuevo quedaría un catálogo que
-apunta a archivos que no están: la app mostraría los adjuntos en la lista y al
-descargarlos daría error.
+`supabase db dump` vuelca **la base de datos**, y por defecto **excluye los
+esquemas administrados `auth` y `storage`**. Los archivos subidos viven además
+en el almacenamiento de objetos, que no es Postgres.
+
+Es decir que de Storage **no queda nada** en esta copia: ni los archivos ni la
+tabla `storage.objects` con la lista de nombres y rutas.
+
+> Una versión anterior de este documento decía que la lista **sí** venía en el
+> volcado. Era falso. El script ahora lo **comprueba** en cada ejecución —busca
+> `COPY storage.objects` dentro de `data.sql`— y escribe el resultado en
+> `MANIFEST.txt` y en `LEEME.txt`, en vez de que haya que fiarse de lo que diga
+> una documentación. De eso depende cuánto trabajo manual costaría una
+> restauración.
 
 Buckets afectados:
 
@@ -118,8 +147,9 @@ porque un backup del que se cree que "lo tiene todo" es peor que no tenerlo.
 
 ### Lo demás que queda fuera
 
-- **Usuarios de Auth** (`auth.users`) — `supabase db dump` no los incluye por
-  defecto. Las contraseñas no son recuperables desde este volcado.
+- **Usuarios de Auth** (`auth.users`) — por la misma razón: `auth` es un esquema
+  administrado y queda fuera. El script también lo comprueba y lo anota. Las
+  contraseñas no son recuperables desde este volcado.
 - **Secretos y variables de entorno** de Vercel y de Supabase.
 - **Cron jobs**, webhooks y configuración del proyecto.
 - **Extensiones** y ajustes de la instancia.
@@ -131,22 +161,30 @@ porque un backup del que se cree que "lo tiene todo" es peor que no tenerlo.
 Solo si hay que reconstruir desde cero. El orden importa: los datos no entran si
 el esquema no está, y el esquema no entra si los roles no existen.
 
+Método oficial de Supabase. Los tres archivos van en **una sola invocación**,
+en **una sola transacción** y **parando al primer error**:
+
 ```powershell
-# 1. Crear el proyecto nuevo en Supabase y tomar su cadena de conexión.
 $URL = "postgresql://postgres.NUEVOREF:LA-PASSWORD@...pooler.supabase.com:5432/postgres"
 
-# 2. Roles primero
-psql $URL -f roles.sql
+psql --single-transaction --variable ON_ERROR_STOP=1 `
+  --file roles.sql --file schema.sql `
+  --command "SET session_replication_role = replica;" `
+  --file data.sql --dbname $URL
 
-# 3. Esquema: tablas, vistas, policies, funciones, triggers
-psql $URL -f schema.sql
-
-# 4. Datos
-psql $URL -f data.sql
-
-# 5. Cambios propios de auth/storage, si el archivo no está vacío
-psql $URL -f auth_storage_changes.sql
+# Aparte, solo si `auth_storage_changes.sql` no está vacío:
+psql --single-transaction --variable ON_ERROR_STOP=1 -f auth_storage_changes.sql -d $URL
 ```
+
+Por qué así y no cuatro `psql` sueltos, que es como estaba documentado antes:
+
+- `--single-transaction` + `ON_ERROR_STOP=1` hacen que **o entra todo o no entra
+  nada**. Con órdenes separadas, si el esquema entra y los datos fallan a mitad,
+  queda una base a medio restaurar que a simple vista parece haber terminado
+  bien — y ese es justo el momento en que uno cree que ya está a salvo.
+- `session_replication_role = replica` desactiva triggers y validación de llaves
+  foráneas mientras entran los datos. Sin eso, el orden en que salen las tablas
+  del volcado hace fallar la carga por FK.
 
 Después, y esto no lo hace el volcado:
 
@@ -195,7 +233,33 @@ quita).
 borra una sola fila. Es puro DDL. Si lo que se perdió son datos, este archivo no
 sirve — eso es restaurar del backup.
 
-### Verificado, no supuesto
+### El script de backup, probado con casos negativos
+
+Lo que importa de un script de backup no es que funcione cuando todo va bien:
+es que **falle cuando algo va mal**. Un backup que dice "VERIFICADO" con una
+pieza faltante es peor que uno que revienta, porque se corre la migración
+confiando en él.
+
+`supabase/scripts/pruebas/probar-backup.sh` pone en el PATH un `docker` y un
+`supabase` falsos que se comportan según el escenario, y sustituye `Read-Host`
+desde un envoltorio — el script real no se modifica ni se parametriza para la
+prueba. Resultado, **7 de 7**:
+
+| Escenario | Esperado | Resultado |
+|---|---|---|
+| Camino feliz | código 0 y "BACKUP VERIFICADO" | OK |
+| Docker apagado | código ≠ 0, sin crear archivos | OK |
+| `supabase link` falla | código ≠ 0, sin "VERIFICADO" | OK |
+| `supabase db diff` falla | código ≠ 0, sin "VERIFICADO" | OK |
+| Volcado de datos vacío (0 contratos) | código ≠ 0, sin "VERIFICADO" | OK |
+| Destino dentro de un repo **renombrado** | código ≠ 0, sin "VERIFICADO" | OK |
+| Ya existe un backup en esa carpeta | código ≠ 0, no lo sobrescribe | OK |
+
+El caso del repositorio renombrado es el que justifica no comprobar por nombre
+de carpeta: el fixture es un repo llamado `RepoConOtroNombre`, y el script lo
+detecta igual porque busca el `.git`, no la palabra.
+
+### El rollback, verificado, no supuesto
 
 El rollback se probó sobre un PostgreSQL 16 local: se aplicaron las migraciones
 hasta la 147 y se tomó una **huella** del estado (53 objetos: cada policy con su

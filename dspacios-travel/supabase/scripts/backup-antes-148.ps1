@@ -18,21 +18,29 @@
     quien tenga permisos de administrador LOCAL. No sale a la red ni a disco.
 
     REQUISITOS
-      1. Supabase CLI instalada:   scoop install supabase
-         (o ver https://supabase.com/docs/guides/local-development/cli/getting-started)
-      2. Sesión iniciada:          supabase login
-      3. La cadena de conexión del botón "Connect" de Supabase, modo
+      1. Docker Desktop instalado Y CORRIENDO. La Supabase CLI ejecuta pg_dump
+         dentro de un contenedor: sin Docker, `db dump` no funciona.
+      2. Supabase CLI:   scoop install supabase
+      3. Sesión iniciada: supabase login
+      4. La cadena de conexión del botón "Connect" de Supabase, modo
          **Session pooler**. Se pega TAL CUAL viene, con el marcador
          [YOUR-PASSWORD] adentro — ese texto no es un secreto.
 
     USO
-      cd <carpeta donde esté este archivo>
       powershell -ExecutionPolicy Bypass -File .\backup-antes-148.ps1
+
+    Cada ejecución crea su propia carpeta con fecha y hora. Nunca sobrescribe
+    un backup anterior.
+
+    CÓDIGO DE SALIDA
+      0 = backup generado Y verificado.  Cualquier otro = no sirve, no correr
+      la migración 148.
 #>
 
 [CmdletBinding()]
 param(
-    [string]$Destino = "C:\Users\Asus\Documents\Backups\Dspacios\antes-migracion-148"
+    # Carpeta CONTENEDORA. Adentro se crea `antes-migracion-148-<fecha>-<hora>`.
+    [string]$Destino = "C:\Users\Asus\Documents\Backups\Dspacios"
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,32 +50,158 @@ function Ok($t)     { Write-Host "   [OK]    $t" -ForegroundColor Green }
 function Aviso($t)  { Write-Host "   [AVISO] $t" -ForegroundColor Yellow }
 function Falla($t)  { Write-Host "   [FALLA] $t" -ForegroundColor Red }
 
+# ── Utilidades ───────────────────────────────────────────────────────────────
+
+# Ruta absoluta sin exigir que exista (Resolve-Path falla si no existe).
+function Ruta-Absoluta([string]$p) {
+    if ([IO.Path]::IsPathRooted($p)) { return [IO.Path]::GetFullPath($p) }
+    return [IO.Path]::GetFullPath((Join-Path (Get-Location).Path $p))
+}
+
+# ¿$hijo está dentro de $padre? Compara rutas normalizadas, sin distinguir
+# mayúsculas (Windows) y exigiendo separador para que `...\Datos2` no cuente
+# como dentro de `...\Datos`.
+function Dentro-De([string]$hijo, [string]$padre) {
+    $sep = [IO.Path]::DirectorySeparatorChar
+    $h = (Ruta-Absoluta $hijo).TrimEnd($sep)
+    $p = (Ruta-Absoluta $padre).TrimEnd($sep)
+    if ($h.Equals($p, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    return $h.StartsWith($p + $sep, [StringComparison]::OrdinalIgnoreCase)
+}
+
+# Sube por los directorios padres buscando `.git`. Es el respaldo por si `git`
+# no está en el PATH o el destino pertenece a OTRO repositorio.
+function Buscar-RepoArriba([string]$desde) {
+    $d = Ruta-Absoluta $desde
+    while ($d) {
+        if (Test-Path (Join-Path $d ".git")) { return $d }
+        $padre = [IO.Path]::GetDirectoryName($d)
+        if (-not $padre -or $padre -eq $d) { break }
+        $d = $padre
+    }
+    return $null
+}
+
+# Lee el archivo POR STREAMING. `data.sql` puede pesar cientos de MB: cargarlo
+# entero en memoria —y peor, dos veces— revienta la máquina justo cuando más
+# importa que el backup termine.
+function Contiene-Texto([string]$ruta, [string]$patron) {
+    if (-not (Test-Path $ruta)) { return $false }
+    return [bool](Select-String -Path $ruta -Pattern $patron -SimpleMatch -Quiet)
+}
+
+# Cuenta las filas de un bloque COPY sin cargar el archivo. Devuelve -1 si la
+# tabla no aparece: no es lo mismo "no está la tabla" que "está con 0 filas".
+function Contar-FilasCopy([string]$ruta, [string]$tabla) {
+    if (-not (Test-Path $ruta)) { return -1 }
+    $sr = [IO.StreamReader]::new($ruta)
+    try {
+        $dentro = $false
+        $n = 0
+        while ($null -ne ($l = $sr.ReadLine())) {
+            if (-not $dentro) {
+                if ($l.StartsWith("COPY $tabla ", [StringComparison]::Ordinal)) { $dentro = $true }
+            }
+            elseif ($l -eq '\.') { return $n }
+            else { $n++ }
+        }
+        if ($dentro) { return $n }
+        return -1
+    } finally { $sr.Dispose() }
+}
+
 $plano   = $null
 $urlCon  = $null
 $hubo    = $false
+$salida  = 1
 
 try {
-    # ── 0. Comprobaciones previas ────────────────────────────────────────────
-    Titulo "Comprobaciones previas"
+    # ═════════════════════════════════════════════════════════════════════════
+    # 1. Docker — antes de crear NADA
+    # ═════════════════════════════════════════════════════════════════════════
+    # La Supabase CLI corre pg_dump dentro de un contenedor. Si Docker no está,
+    # `db dump` falla a mitad y deja archivos truncados que parecen válidos. Por
+    # eso se comprueba antes de tocar el disco.
+    Titulo "Docker"
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        throw "Docker no está instalado (o no está en el PATH). La Supabase CLI lo necesita para 'db dump'. Instala Docker Desktop y vuelve a intentar. NO se creó ningún archivo."
+    }
+    docker info *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker está instalado pero no está corriendo. Abre Docker Desktop, espera a que diga 'Engine running' y vuelve a ejecutar. NO se creó ningún archivo."
+    }
+    Ok "Docker instalado y corriendo"
 
+    # ═════════════════════════════════════════════════════════════════════════
+    # 2. Supabase CLI
+    # ═════════════════════════════════════════════════════════════════════════
+    Titulo "Supabase CLI"
     if (-not (Get-Command supabase -ErrorAction SilentlyContinue)) {
-        throw "No encuentro la Supabase CLI en el PATH. Instálala con 'scoop install supabase' y vuelve a intentar."
+        throw "No encuentro la Supabase CLI en el PATH. Instálala con 'scoop install supabase'. NO se creó ningún archivo."
     }
-    Ok ("Supabase CLI: " + (supabase --version))
+    $cliVer = (supabase --version) -join " "
+    Ok "Supabase CLI: $cliVer"
 
-    New-Item -ItemType Directory -Force -Path $Destino | Out-Null
-    Ok "Carpeta de destino: $Destino"
+    # ═════════════════════════════════════════════════════════════════════════
+    # 3. Destino — que NO caiga dentro de un repositorio git
+    # ═════════════════════════════════════════════════════════════════════════
+    # El volcado lleva datos reales de clientes (documentos, teléfonos, pagos).
+    # No se comprueba por el NOMBRE de la carpeta —renombrar el repo burlaría
+    # esa comprobación— sino preguntándole a git dónde está la raíz, y además
+    # subiendo por los padres del destino a buscar un `.git`.
+    Titulo "Carpeta de destino"
+    $base = Ruta-Absoluta $Destino
 
-    # La carpeta va FUERA del repositorio a propósito. Si alguien cambiara el
-    # parámetro y la apuntara dentro, el script se planta: un volcado con datos
-    # de clientes no puede terminar en git por descuido.
-    $rutaAbs = (Resolve-Path $Destino).Path
-    if ($rutaAbs -match '\\DspaciosMayorista\\' -or (Test-Path (Join-Path $rutaAbs ".git"))) {
-        throw "La carpeta de destino parece estar dentro del repositorio. El volcado lleva datos de clientes: elige una ruta fuera de git."
+    $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+    $repoRaiz = $null
+    Push-Location $scriptDir
+    try {
+        $r = & git rev-parse --show-toplevel 2>$null
+        if ($LASTEXITCODE -eq 0 -and $r) { $repoRaiz = Ruta-Absoluta ($r -join "") }
+    } catch { }
+    finally { Pop-Location }
+
+    if ($repoRaiz) {
+        Ok "Repositorio detectado en: $repoRaiz"
+        if (Dentro-De $base $repoRaiz) {
+            throw "El destino '$base' está DENTRO del repositorio '$repoRaiz'. El volcado lleva datos de clientes: elige una ruta fuera de git. NO se creó ningún archivo."
+        }
+    } else {
+        Aviso "No pude preguntarle a git por la raíz del repositorio; se usa solo la búsqueda por directorios padres."
     }
-    Ok "La carpeta está fuera del repositorio"
 
-    # ── 1. Cadena de conexión (sin contraseña) ───────────────────────────────
+    # Respaldo: el destino puede pertenecer a OTRO repositorio, que `git
+    # rev-parse` desde el script nunca vería.
+    $repoDestino = Buscar-RepoArriba $base
+    if ($repoDestino) {
+        throw "El destino '$base' está dentro de un repositorio git ('$repoDestino'). Elige una ruta fuera de git. NO se creó ningún archivo."
+    }
+    Ok "El destino está fuera de cualquier repositorio git"
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # 4. Carpeta con fecha y hora — nunca se sobrescribe un backup anterior
+    # ═════════════════════════════════════════════════════════════════════════
+    $sello   = Get-Date -Format "yyyyMMdd-HHmmss"
+    $carpeta = Join-Path $base "antes-migracion-148-$sello"
+
+    $roles  = Join-Path $carpeta "roles.sql"
+    $schema = Join-Path $carpeta "schema.sql"
+    $data   = Join-Path $carpeta "data.sql"
+    $authst = Join-Path $carpeta "auth_storage_changes.sql"
+    $manif  = Join-Path $carpeta "MANIFEST.txt"
+    $leeme  = Join-Path $carpeta "LEEME.txt"
+
+    foreach ($f in @($roles, $schema, $data, $authst, $manif, $leeme)) {
+        if (Test-Path $f) {
+            throw "Ya existe '$f'. Este script NUNCA sobrescribe un backup. Mueve o borra esa carpeta y vuelve a intentar."
+        }
+    }
+    New-Item -ItemType Directory -Force -Path $carpeta | Out-Null
+    Ok "Carpeta de este backup: $carpeta"
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # 5. Cadena de conexión (sin contraseña) y contraseña oculta
+    # ═════════════════════════════════════════════════════════════════════════
     Titulo "Cadena de conexión"
     Write-Host "   En Supabase: boton 'Connect' -> pestana 'Session pooler' -> copiar la URI." -ForegroundColor Gray
     Write-Host "   Pegala TAL CUAL, con el texto [YOUR-PASSWORD] adentro (eso no es un secreto)." -ForegroundColor Gray
@@ -78,88 +212,103 @@ try {
         throw "La URI no trae el marcador [YOUR-PASSWORD]. Pega la plantilla sin reemplazar la contraseña: el script la inserta solo."
     }
 
-    # El project-ref sale del usuario de la URI: postgres.<ref>
     $projectRef = $null
     if ($plantilla -match '://postgres\.([a-z0-9]+):') { $projectRef = $Matches[1] }
     if ($projectRef) { Ok "Proyecto detectado: $projectRef" }
-    else { Aviso "No pude deducir el project-ref de la URI; el paso de auth/storage se saltará." }
+    else { Aviso "No pude deducir el project-ref de la URI." }
 
-    # ── 2. Contraseña, oculta ────────────────────────────────────────────────
     Titulo "Contraseña de la base de datos"
     Write-Host "   No se muestra en pantalla, no se guarda y no queda en el historial." -ForegroundColor Gray
     $segura = Read-Host "   Contrasena" -AsSecureString
-    if ($segura.Length -eq 0) { throw "No escribiste ninguna contraseña." }
+    if (-not $segura -or $segura.Length -eq 0) { throw "No escribiste ninguna contraseña." }
 
-    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($segura)
-    try   { $plano = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+    # NetworkCredential funciona igual en Windows PowerShell 5.1 y PowerShell 7.
+    $plano = [System.Net.NetworkCredential]::new("", $segura).Password
+    if ([string]::IsNullOrEmpty($plano)) { throw "No escribiste ninguna contraseña." }
 
-    # Se codifica para la URL: una contraseña con @ # / : ? & rompería la URI
-    # en silencio y el error que sale ("host desconocido") no apunta a esto.
+    # Se codifica para la URL: una contraseña con @ # / : ? & rompería la URI en
+    # silencio, y el error que sale ("host desconocido") no apunta a esto.
     $urlCon = $plantilla -replace '\[YOUR-PASSWORD\]', [uri]::EscapeDataString($plano)
-    Ok "Contraseña recibida (longitud: $($plano.Length) caracteres)"
+    Ok "Contraseña recibida ($($plano.Length) caracteres)"
 
-    # ── 3. Volcados ──────────────────────────────────────────────────────────
-    $roles  = Join-Path $Destino "roles.sql"
-    $schema = Join-Path $Destino "schema.sql"
-    $data   = Join-Path $Destino "data.sql"
-    $authst = Join-Path $Destino "auth_storage_changes.sql"
-
+    # ═════════════════════════════════════════════════════════════════════════
+    # 6. Volcados
+    # ═════════════════════════════════════════════════════════════════════════
     Titulo "Volcado de roles"
     supabase db dump --db-url $urlCon -f $roles --role-only
-    if ($LASTEXITCODE -ne 0) { throw "Falló el volcado de roles." }
+    if ($LASTEXITCODE -ne 0) { throw "Falló el volcado de roles (codigo $LASTEXITCODE)." }
     Ok "roles.sql"
 
     Titulo "Volcado del esquema (tablas, vistas, policies, funciones)"
     supabase db dump --db-url $urlCon -f $schema
-    if ($LASTEXITCODE -ne 0) { throw "Falló el volcado del esquema." }
+    if ($LASTEXITCODE -ne 0) { throw "Falló el volcado del esquema (codigo $LASTEXITCODE)." }
     Ok "schema.sql"
 
     Titulo "Volcado de datos"
     Write-Host "   Este es el que demora. No cierres la ventana." -ForegroundColor Gray
     supabase db dump --db-url $urlCon -f $data --use-copy --data-only `
         -x "storage.buckets_vectors" -x "storage.vector_indexes"
-    if ($LASTEXITCODE -ne 0) { throw "Falló el volcado de datos." }
+    if ($LASTEXITCODE -ne 0) { throw "Falló el volcado de datos (codigo $LASTEXITCODE)." }
     Ok "data.sql"
 
+    # ── Cambios propios en auth y storage ────────────────────────────────────
+    # Si esto falla, el backup queda INCOMPLETO. No se degrada a aviso: se marca
+    # como falla y el script termina distinto de cero. Un backup al que le falta
+    # una pieza y dice "VERIFICADO" es peor que uno que falla ruidosamente.
     Titulo "Cambios propios en auth y storage"
+    $authOk = $false
     if ($projectRef) {
-        # `supabase link` pide la contraseña. Se le pasa por variable de entorno
-        # del proceso —no como argumento— para que no aparezca en la tabla de
-        # procesos. Se borra unas líneas más abajo.
+        # La contraseña va por variable de entorno del PROCESO, no como
+        # argumento: así no aparece en la tabla de procesos.
         $env:SUPABASE_DB_PASSWORD = $plano
-        supabase link --project-ref $projectRef | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Aviso "No se pudo enlazar el proyecto. ¿Corriste 'supabase login'? Se salta este archivo."
-            "-- No generado: falló 'supabase link'. Ver README del backup." | Set-Content -Path $authst -Encoding UTF8
+        supabase link --project-ref $projectRef *> $null
+        $codigoLink = $LASTEXITCODE
+        if ($codigoLink -ne 0) {
+            Falla "'supabase link' falló (codigo $codigoLink). ¿Corriste 'supabase login'? El backup queda INCOMPLETO."
+            "-- NO GENERADO: 'supabase link' fallo con codigo $codigoLink." | Set-Content -Path $authst -Encoding UTF8
+            $hubo = $true
         } else {
-            supabase db diff --linked --schema auth,storage | Set-Content -Path $authst -Encoding UTF8
-            Ok "auth_storage_changes.sql"
+            $diff = supabase db diff --linked --schema auth,storage
+            $codigoDiff = $LASTEXITCODE
+            if ($codigoDiff -ne 0) {
+                Falla "'supabase db diff' falló (codigo $codigoDiff). El backup queda INCOMPLETO."
+                "-- NO GENERADO: 'supabase db diff' fallo con codigo $codigoDiff." | Set-Content -Path $authst -Encoding UTF8
+                $hubo = $true
+            } else {
+                ($diff -join [Environment]::NewLine) | Set-Content -Path $authst -Encoding UTF8
+                $authOk = $true
+                Ok "auth_storage_changes.sql"
+            }
         }
         Remove-Item Env:\SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
     } else {
-        "-- No generado: no se pudo deducir el project-ref." | Set-Content -Path $authst -Encoding UTF8
-        Aviso "Saltado."
+        Falla "Sin project-ref no se puede generar auth_storage_changes.sql. El backup queda INCOMPLETO."
+        "-- NO GENERADO: no se pudo deducir el project-ref de la URI." | Set-Content -Path $authst -Encoding UTF8
+        $hubo = $true
     }
 
-    # ── 4. Verificación: que los archivos SIRVAN, no solo que existan ────────
+    # ═════════════════════════════════════════════════════════════════════════
+    # 7. Verificación: que los archivos SIRVAN, no solo que existan
+    # ═════════════════════════════════════════════════════════════════════════
     Titulo "Verificación del contenido"
 
     $checks = @(
-        @{ f = $roles;  min = 200;    debe = @("ROLE");                                     nombre = "roles.sql"  },
-        @{ f = $schema; min = 50000;  debe = @("CREATE TABLE", "public.ventas", "public.abonos", "ventas_basica"); nombre = "schema.sql" },
-        @{ f = $data;   min = 1000;   debe = @("COPY public.ventas");                       nombre = "data.sql"   }
+        @{ f = $roles;  min = 200;   nombre = "roles.sql";
+           debe = @("ROLE") },
+        @{ f = $schema; min = 50000; nombre = "schema.sql";
+           debe = @("CREATE TABLE", "public.ventas", "public.abonos", "ventas_basica") },
+        @{ f = $data;   min = 1000;  nombre = "data.sql";
+           debe = @("COPY public.ventas") }
     )
 
     foreach ($c in $checks) {
         if (-not (Test-Path $c.f)) { Falla "$($c.nombre): no existe"; $hubo = $true; continue }
         $len = (Get-Item $c.f).Length
         if ($len -lt $c.min) {
-            Falla "$($c.nombre): solo $len bytes, se esperaban al menos $($c.min). El volcado quedó incompleto."
+            Falla "$($c.nombre): solo $len bytes, se esperaban al menos $($c.min). El volcado quedo incompleto."
             $hubo = $true; continue
         }
-        $texto = Get-Content $c.f -Raw
-        $faltan = @($c.debe | Where-Object { $texto -notmatch [regex]::Escape($_) })
+        $faltan = @($c.debe | Where-Object { -not (Contiene-Texto $c.f $_) })
         if ($faltan.Count -gt 0) {
             Falla "$($c.nombre): no contiene $($faltan -join ', ')"
             $hubo = $true
@@ -168,71 +317,185 @@ try {
         }
     }
 
-    # Número real de contratos volcados: es el dato que el dueño puede comparar
-    # contra lo que ve en la app. Un backup "que existe" pero con 0 contratos no
-    # sirve, y sin este conteo no se notaría.
-    if (Test-Path $data) {
-        $lineas = Get-Content $data
-        $i = 0; $n = 0; $dentro = $false
-        foreach ($l in $lineas) {
-            if ($l -match '^COPY public\.ventas ') { $dentro = $true; continue }
-            if ($dentro) { if ($l -eq '\.') { break } else { $n++ } }
-            $i++
-        }
-        if ($n -gt 0) { Ok "Contratos en el volcado (tabla ventas): $n" }
-        else { Falla "El volcado no trae ninguna fila de 'ventas'."; $hubo = $true }
+    # Número real de contratos volcados: es el dato que se compara contra lo que
+    # muestra la app. Un backup que "existe" pero con 0 contratos no sirve, y sin
+    # este conteo no se notaría.
+    $nContratos = Contar-FilasCopy $data "public.ventas"
+    if ($nContratos -gt 0) { Ok "Contratos en el volcado (tabla ventas): $nContratos" }
+    elseif ($nContratos -eq 0) { Falla "El bloque COPY de 'ventas' esta VACIO: el volcado no trae contratos."; $hubo = $true }
+    else { Falla "El volcado no trae la tabla 'ventas'."; $hubo = $true }
+
+    # ── ¿Vino la metadata de Storage? ───────────────────────────────────────
+    # `supabase db dump` EXCLUYE los esquemas administrados (auth, storage), así
+    # que lo normal es que NO venga. Se comprueba explícitamente en vez de
+    # suponerlo en un sentido o en el otro, y el resultado queda escrito en
+    # MANIFEST y en LEEME: de eso depende qué hay que rehacer a mano si algún día
+    # toca restaurar.
+    $tieneStorageObjects = Contiene-Texto $data "COPY storage.objects"
+    $tieneAuthUsers      = Contiene-Texto $data "COPY auth.users"
+    if ($tieneStorageObjects) {
+        Ok "data.sql SI incluye 'COPY storage.objects' (la lista de archivos; los archivos fisicos nunca)"
+    } else {
+        Aviso "data.sql NO incluye 'COPY storage.objects'. Es lo esperado: 'db dump' excluye los esquemas administrados auth y storage. Ni la lista ni los archivos de Storage estan en esta copia."
+    }
+    if (-not $tieneAuthUsers) {
+        Aviso "data.sql NO incluye 'COPY auth.users'. Los usuarios de Auth hay que recrearlos a mano al restaurar."
     }
 
-    # auth/storage puede salir vacío LEGÍTIMAMENTE (si no hay cambios propios
-    # sobre esos esquemas). No se marca como falla: se marca como "revísalo".
-    if (Test-Path $authst) {
+    if ($authOk) {
         $lenA = (Get-Item $authst).Length
         if ($lenA -lt 20) {
-            Aviso "auth_storage_changes.sql está prácticamente vacío. Puede ser correcto (sin cambios propios en auth/storage) - ábrelo y confírmalo antes de darlo por bueno."
+            Aviso "auth_storage_changes.sql esta practicamente vacio. Puede ser correcto (sin cambios propios) - abrelo y confirmalo antes de darlo por bueno."
         } else {
             Ok "auth_storage_changes.sql - $lenA bytes"
         }
     }
 
-    # ── 5. MANIFEST ──────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════════════════
+    # 8. MANIFEST.txt y LEEME.txt
+    # ═════════════════════════════════════════════════════════════════════════
     Titulo "MANIFEST.txt"
-    $manifest = Join-Path $Destino "MANIFEST.txt"
-    $lineasM = @()
-    $lineasM += "Backup de la base de D'spacios - ANTES de la migracion 148"
-    $lineasM += "Generado: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')"
-    $lineasM += "Maquina:  $env:COMPUTERNAME"
-    $lineasM += "Proyecto: $projectRef"
-    $lineasM += "CLI:      $(supabase --version)"
-    $lineasM += ""
-    $lineasM += "NO INCLUYE los archivos fisicos de Supabase Storage (buckets"
-    $lineasM += "contratos, programas, crm, web-cms, hotel-fotos, servicio-fotos)."
-    $lineasM += "Ver LEEME.txt."
-    $lineasM += ""
-    $lineasM += ("{0,-28} {1,14}  {2}" -f "ARCHIVO", "BYTES", "SHA256")
+    $m = @()
+    $m += "Backup de la base de D'spacios - ANTES de la migracion 148"
+    $m += "Generado: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')"
+    $m += "Maquina:  $env:COMPUTERNAME"
+    $m += "Proyecto: $projectRef"
+    $m += "CLI:      $cliVer"
+    $m += "Estado:   " + $(if ($hubo) { "INCOMPLETO - NO USAR" } else { "VERIFICADO" })
+    $m += ""
+    $m += "Contratos volcados (public.ventas): $nContratos"
+    $m += "COPY storage.objects presente:      " + $(if ($tieneStorageObjects) { "SI" } else { "NO" })
+    $m += "COPY auth.users presente:           " + $(if ($tieneAuthUsers) { "SI" } else { "NO" })
+    $m += ""
+    $m += "NO INCLUYE los archivos FISICOS de Supabase Storage. Ver LEEME.txt."
+    $m += ""
+    $m += ("{0,-28} {1,14}  {2}" -f "ARCHIVO", "BYTES", "SHA256")
     foreach ($f in @($roles, $schema, $data, $authst)) {
         if (Test-Path $f) {
             $it = Get-Item $f
             $h  = (Get-FileHash $f -Algorithm SHA256).Hash
-            $lineasM += ("{0,-28} {1,14}  {2}" -f $it.Name, $it.Length, $h)
+            $m += ("{0,-28} {1,14}  {2}" -f $it.Name, $it.Length, $h)
         }
     }
-    $lineasM | Set-Content -Path $manifest -Encoding UTF8
+    $m | Set-Content -Path $manif -Encoding UTF8
     Ok "MANIFEST.txt con fecha, tamaño y SHA256 de cada archivo"
 
-    # ── 6. Resultado ─────────────────────────────────────────────────────────
+    Titulo "LEEME.txt"
+    $storageLinea = if ($tieneStorageObjects) {
+        "SI trae 'COPY storage.objects', es decir la LISTA de archivos (nombres, rutas, tamanos). Los archivos FISICOS nunca estan."
+    } else {
+        "NO trae 'COPY storage.objects'. 'supabase db dump' excluye los esquemas administrados auth y storage, asi que en esta copia no esta ni la lista de archivos ni los archivos."
+    }
+    $l = @()
+    $l += "==========================================================="
+    $l += " BACKUP DE LA BASE DE D'SPACIOS - ANTES DE LA MIGRACION 148"
+    $l += "==========================================================="
+    $l += ""
+    $l += "Fecha:     $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')"
+    $l += "Proyecto:  $projectRef"
+    $l += "Estado:    " + $(if ($hubo) { "INCOMPLETO - NO USAR ESTE BACKUP" } else { "VERIFICADO" })
+    $l += "Contratos: $nContratos (tabla public.ventas)"
+    $l += ""
+    $l += "-- QUE INCLUYE ------------------------------------------"
+    $l += "  roles.sql                 Roles de base de datos."
+    $l += "  schema.sql                Tablas, vistas, policies (RLS), funciones,"
+    $l += "                            triggers e indices del esquema public."
+    $l += "  data.sql                  Los DATOS: contratos, abonos, pasajeros,"
+    $l += "                            hoteles, tarifas, cuentas por pagar, etc."
+    $l += "  auth_storage_changes.sql  Cambios propios sobre auth y storage."
+    $l += "  MANIFEST.txt              Tamano y SHA256 de cada archivo."
+    $l += ""
+    $l += "-- QUE **NO** INCLUYE -----------------------------------"
+    $l += ""
+    $l += "1) LOS ARCHIVOS FISICOS DE SUPABASE STORAGE. Es lo mas importante."
+    $l += "   $storageLinea"
+    $l += "   Buckets afectados:"
+    $l += "     contratos       Cedulas y soportes de pago de clientes, y los"
+    $l += "                     contratos laborales de empleados (pe-empleados/)."
+    $l += "     programas       Flyers, historias, portadas."
+    $l += "     crm             Material de difusion."
+    $l += "     web-cms         Imagenes del sitio publico."
+    $l += "     hotel-fotos     Fotos de hoteles."
+    $l += "     servicio-fotos  Fotos de receptivos."
+    $l += "   Para copiarlos hay que descargarlos aparte, desde el panel de"
+    $l += "   Storage o con la API."
+    $l += "   Para la migracion 148 esto NO bloquea nada: la 148 solo cambia"
+    $l += "   policies y crea vistas, no toca ni mueve ni borra un solo archivo."
+    $l += "   Se anota porque un backup del que se cree que lo tiene todo es"
+    $l += "   peor que no tenerlo."
+    $l += ""
+    $l += "2) LOS USUARIOS DE AUTH (auth.users). Las contrasenas no se recuperan"
+    $l += "   desde esta copia; hay que recrear los usuarios."
+    $l += ""
+    $l += "3) Secretos y variables de entorno (Vercel y Supabase), cron jobs,"
+    $l += "   webhooks y configuracion del proyecto."
+    $l += ""
+    $l += "-- COMO SE RESTAURA EN UN PROYECTO NUEVO ----------------"
+    $l += ""
+    $l += "Metodo oficial de Supabase. Los tres archivos van en UNA sola"
+    $l += "invocacion, en una sola transaccion y parando al primer error: si se"
+    $l += "corren por separado y el segundo falla, queda una base a medio"
+    $l += "restaurar que parece haber terminado bien."
+    $l += ""
+    $l += '  psql --single-transaction --variable ON_ERROR_STOP=1 `'
+    $l += '    --file roles.sql --file schema.sql `'
+    $l += '    --command "SET session_replication_role = replica;" `'
+    $l += '    --file data.sql --dbname "$URL_DEL_PROYECTO_NUEVO"'
+    $l += ""
+    $l += "  session_replication_role = replica desactiva triggers y validacion"
+    $l += "  de llaves foraneas mientras entran los datos: sin eso, el orden de"
+    $l += "  las tablas hace fallar la carga."
+    $l += ""
+    $l += "Despues, y esto no lo hace el volcado:"
+    $l += "  1. Volver a subir los archivos de Storage a sus buckets con la ruta"
+    $l += "     EXACTA. 'contratos' usa {numero_contrato}/{tipo}-{ts}.{ext}, y"
+    $l += "     las policies de la 148 dependen de que el primer segmento sea el"
+    $l += "     numero de contrato."
+    $l += "  2. Recrear los usuarios de Auth. usuarios.id apunta a auth.users(id):"
+    $l += "     si los UUID no coinciden, nadie entra."
+    $l += "  3. Apuntar las variables de entorno de Vercel al proyecto nuevo."
+    $l += "  4. Correr supabase/scripts/test_rls_por_rol.sql para comprobar la RLS."
+    $l += ""
+    $l += "-- COMO REVERTIR SOLO LA MIGRACION 148 ------------------"
+    $l += ""
+    $l += "  1. Primero revertir el DESPLIEGUE en Vercel (deploy anterior)."
+    $l += "  2. Despues: psql <URL> -f supabase/scripts/rollback_148.sql"
+    $l += "  3. Comprobar: psql <URL> -f supabase/scripts/verificar_rollback_148.sql"
+    $l += ""
+    $l += "  Al reves, la app queda pidiendo vistas que el rollback elimina."
+    $l += "  El rollback NO toca datos: la 148 es puro DDL."
+    $l += ""
+    $l | Set-Content -Path $leeme -Encoding UTF8
+    Ok "LEEME.txt"
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # 9. Resultado
+    # ═════════════════════════════════════════════════════════════════════════
     Write-Host ""
     if ($hubo) {
-        Write-Host "  EL BACKUP NO PASO LA VERIFICACION. No corras la migracion 148." -ForegroundColor Red
-        Write-Host "  Revisa los [FALLA] de arriba y vuelve a ejecutar este script." -ForegroundColor Red
-        exit 1
+        Write-Host "  BACKUP INCOMPLETO. No corras la migracion 148." -ForegroundColor Red
+        Write-Host "  Revisa los [FALLA] de arriba y vuelve a ejecutar." -ForegroundColor Red
+        Write-Host "  Carpeta: $carpeta" -ForegroundColor Red
+        $salida = 1
+    } else {
+        Write-Host "  BACKUP VERIFICADO. Archivos en: $carpeta" -ForegroundColor Green
+        Write-Host "  Lee LEEME.txt antes de continuar: hay cosas que esta copia NO cubre." -ForegroundColor Green
+        $salida = 0
     }
-    Write-Host "  BACKUP VERIFICADO. Archivos en: $Destino" -ForegroundColor Green
-    Write-Host "  Lee LEEME.txt antes de continuar: hay cosas que esta copia NO cubre." -ForegroundColor Green
+}
+catch {
+    Write-Host ""
+    Falla $_.Exception.Message
+    Write-Host ""
+    Write-Host "  BACKUP NO COMPLETADO. No corras la migracion 148." -ForegroundColor Red
+    $salida = 1
 }
 finally {
     # Se limpia pase lo que pase, incluso si el script murió a mitad.
-    if ($plano)  { $plano  = $null }
-    if ($urlCon) { $urlCon = $null }
+    $plano  = $null
+    $urlCon = $null
     Remove-Item Env:\SUPABASE_DB_PASSWORD -ErrorAction SilentlyContinue
     [GC]::Collect()
 }
+
+exit $salida
