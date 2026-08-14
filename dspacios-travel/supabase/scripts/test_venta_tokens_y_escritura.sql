@@ -13,8 +13,11 @@
 --   · Las CUATRO operaciones — SELECT, INSERT, UPDATE, DELETE — sobre las OCHO
 --     tablas hijas del contrato, en un contrato propio y en uno ajeno de la
 --     misma agencia.
---   · Las CUATRO operaciones sobre los archivos en `storage.objects`, propios
---     y ajenos.
+--   · Los archivos en `storage.objects`: la LECTURA (real), que las cuatro
+--     policies existan, y qué DECIDEN evaluando su predicado. NO se hace
+--     insert/update/delete sobre esa tabla — ver la nota del BLOQUE 4. El
+--     comportamiento real de subir/leer/reemplazar/eliminar se prueba con la
+--     API de Storage en `supabase/scripts/pruebas/storage-adjuntos.mjs`.
 --   · Columnas enmascaradas de `ventas_basica`: share_token, cliente_documento,
 --     cliente_direccion y asesor_firma_cc.
 --   · `soy_asesor_del_contrato`, que es la ENTRADA de la decisión de solo
@@ -50,16 +53,19 @@
 --       leyendo la tabla base directamente.
 --   Se imprime la fase detectada como primera fila del resultado.
 --
--- DÓNDE SE EJECUTÓ
---   Sobre un PostgreSQL 16 local con las migraciones aplicadas en orden, en las
---   DOS fases: con la 148 corrida (118/118) y después de correr la 149
---   (118/118). Falta correrla en Supabase, que es el único lugar donde
---   `storage.objects` es el real y donde hay datos de producción.
+-- SI ALGO FALLA, LA COLUMNA «error de PostgreSQL» TRAE EL MOTIVO
+--   La versión anterior hacía `exception when others then n := 0` y se tragaba
+--   el mensaje: una comprobación en rojo sin ninguna pista. Ahora el SQLERRM
+--   sale en el resultado.
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
 
-create temp table _res (n int, caso text, esperado text, obtenido text, ok boolean) on commit drop;
+-- `detalle` guarda el SQLERRM cuando una operación falla. La versión anterior
+-- hacía `exception when others then n := 0` y se TRAGABA el mensaje: una
+-- comprobación en rojo sin ninguna pista de por qué. Así fue como el fallo de
+-- STORAGE DELETE llegó a producción sin explicación.
+create temp table _res (n int, caso text, esperado text, obtenido text, ok boolean, detalle text default null) on commit drop;
 
 -- Catálogo de las ocho tablas hijas: cómo se inserta una fila de prueba en
 -- cada una, qué columna se puede modificar, y qué debe ver `venta`.
@@ -125,6 +131,7 @@ declare
   esperado_n bigint;
   qual_vuelos text;
   fase       text;
+  errsql     text;
 begin
   -- ── ¿En qué fase del despliegue estamos? ─────────────────────────────────
   select qual into qual_vuelos from pg_policies
@@ -425,32 +432,34 @@ begin
       -- INSERT: en el ajeno debe fallar; en el propio debe pasar.
       execute 'set local role authenticated';
       perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+      errsql := null;
       begin
         execute format('insert into public.%I %s values %s',
                        r.tabla, r.cols, replace(r.vals, '@C@', quote_literal(c)));
         n := 1;
-      exception when others then n := 0; end;
+      exception when others then n := 0; errsql := SQLERRM; end;
       reset role; perform set_config('request.jwt.claims', '{}', true);
       k := k + 1;
       if c = c_ajeno then
-        insert into _res values (k, format('INSERT %s (ajeno) — debe ser RECHAZADO', r.tabla), '0', n::text, n = 0);
+        insert into _res values (k, format('INSERT %s (ajeno) — debe ser RECHAZADO', r.tabla), '0', n::text, n = 0, errsql);
       else
-        insert into _res values (k, format('INSERT %s (propio) — debe PERMITIRSE', r.tabla), '1', n::text, n = 1);
+        insert into _res values (k, format('INSERT %s (propio) — debe PERMITIRSE', r.tabla), '1', n::text, n = 1, errsql);
       end if;
 
       -- UPDATE
       execute 'set local role authenticated';
       perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+      errsql := null;
       begin
         execute format('update public.%I set %I = ''MODIFICADO'' where numero_contrato = %L', r.tabla, r.col_update, c);
         get diagnostics n = row_count;
-      exception when others then n := 0; end;
+      exception when others then n := 0; errsql := SQLERRM; end;
       reset role; perform set_config('request.jwt.claims', '{}', true);
       k := k + 1;
       if c = c_ajeno then
-        insert into _res values (k, format('UPDATE %s (ajeno) — debe afectar 0 filas', r.tabla), '0 filas', n::text, n = 0);
+        insert into _res values (k, format('UPDATE %s (ajeno) — debe afectar 0 filas', r.tabla), '0 filas', n::text, n = 0, errsql);
       elsif r.afirma_escritura_propia then
-        insert into _res values (k, format('UPDATE %s (propio) — debe afectar filas', r.tabla), '> 0 filas', n::text, n > 0);
+        insert into _res values (k, format('UPDATE %s (propio) — debe afectar filas', r.tabla), '> 0 filas', n::text, n > 0, errsql);
       else
         -- Se EJECUTA y se reporta, pero no se afirma: sin policy de SELECT el
         -- `where` no puede ubicar la fila, y ninguna pantalla de `venta` hace
@@ -462,16 +471,17 @@ begin
       -- DELETE
       execute 'set local role authenticated';
       perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
+      errsql := null;
       begin
         execute format('delete from public.%I where numero_contrato = %L', r.tabla, c);
         get diagnostics n = row_count;
-      exception when others then n := 0; end;
+      exception when others then n := 0; errsql := SQLERRM; end;
       reset role; perform set_config('request.jwt.claims', '{}', true);
       k := k + 1;
       if c = c_ajeno then
-        insert into _res values (k, format('DELETE %s (ajeno) — debe afectar 0 filas', r.tabla), '0 filas', n::text, n = 0);
+        insert into _res values (k, format('DELETE %s (ajeno) — debe afectar 0 filas', r.tabla), '0 filas', n::text, n = 0, errsql);
       elsif r.afirma_escritura_propia then
-        insert into _res values (k, format('DELETE %s (propio) — debe afectar filas', r.tabla), '> 0 filas', n::text, n > 0);
+        insert into _res values (k, format('DELETE %s (propio) — debe afectar filas', r.tabla), '> 0 filas', n::text, n > 0, errsql);
       else
         insert into _res values (k, format('DELETE %s (propio) — INFORMATIVO, sin policy de SELECT', r.tabla),
                                  'no se afirma', n::text, true);
@@ -479,11 +489,34 @@ begin
     end loop;
   end loop;
 
-  -- ══ BLOQUE 4 · Las 4 operaciones sobre los ARCHIVOS (storage.objects) ════
-  -- Es la puerta lateral de `contrato_adjuntos`: la tabla es el índice, el
-  -- archivo (cédulas, soportes de pago) vive aquí con su propia RLS.
+  -- ══ BLOQUE 4 · Archivos del contrato en Storage ═════════════════════════
+  --
+  -- ⚠️ AQUÍ NO SE HACE DML SOBRE `storage.objects`, Y ES A PROPÓSITO.
+  --
+  -- Supabase documenta que `storage.objects` se trata como SOLO LECTURA desde
+  -- SQL: los archivos se borran con la API de Storage (`.remove()`), que borra
+  -- el objeto físico y después su fila. Un `delete from storage.objects` es
+  -- inválido en Supabase alojado aunque funcione en un PostgreSQL local, y aun
+  -- si funcionara dejaría el archivo huérfano en el almacenamiento — que es
+  -- justo lo que este frente de trabajo intenta evitar.
+  --
+  -- La versión anterior de esta prueba SÍ hacía `insert`/`update`/`delete`
+  -- directos. En producción, con la 149 aplicada, el DELETE devolvió 0 filas y
+  -- la prueba lo reportó como fallo. No era un fallo de las policies: era una
+  -- prueba que comprobaba algo que la aplicación nunca hace. La app borra
+  -- SIEMPRE con `.remove()` (ver `lib/adjuntos/operaciones.ts`).
+  --
+  -- Lo que sí se comprueba aquí:
+  --   · el SELECT, que es lectura legítima y es lo que decide si un asesor
+  --     puede pedir la URL firmada de un archivo;
+  --   · que las cuatro policies EXISTAN;
+  --   · qué DECIDEN esas policies, evaluando su predicado como el usuario.
+  -- El comportamiento real de subir/leer/reemplazar/eliminar se prueba de
+  -- extremo a extremo con la API de Storage:
+  --     supabase/scripts/pruebas/storage-adjuntos.mjs
+
+  -- SELECT: lectura real, no destructiva.
   foreach c in array array[c_ajeno, c_propio] loop
-    -- SELECT
     execute 'set local role authenticated';
     perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
     select count(*) into n from storage.objects where bucket_id = 'contratos' and name like c || '/%';
@@ -494,57 +527,40 @@ begin
     else
       insert into _res values (k, 'STORAGE SELECT (propio) — sí debe verlo', '1', n::text, n = 1);
     end if;
+  end loop;
 
-    -- INSERT
+  -- Que las cuatro policies existan. Si alguien las borra o las renombra, la
+  -- protección desaparece sin que ninguna consulta falle.
+  select count(*) into n from pg_policies
+   where schemaname = 'storage' and tablename = 'objects'
+     and policyname in ('contratos files: lectura','contratos files: subir',
+                        'contratos files: reemplazar','contratos files: eliminar');
+  k := k + 1; insert into _res values (k, 'Las 4 policies del bucket `contratos` existen', '4', n::text, n = 4);
+
+  -- Qué DECIDEN esas policies. Se evalúa el mismo predicado que usan, haciéndose
+  -- pasar por el asesor, para las dos rutas. Es una consulta booleana: no
+  -- escribe nada y no depende de si Supabase permite DML sobre la tabla.
+  foreach c in array array[c_ajeno, c_propio] loop
     execute 'set local role authenticated';
     perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
     begin
-      insert into storage.objects (bucket_id, name) values ('contratos', c || '/subido-por-prueba.pdf');
-      n := 1;
-    exception when others then n := 0; end;
+      select (public.mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta')
+              and (public.mi_rol() <> 'venta'
+                   or public.soy_asesor_del_contrato(split_part(c || '/cedula-1.pdf', '/', 1))))::text
+        into s;
+    exception when others then s := 'ERROR: ' || SQLERRM; end;
     reset role; perform set_config('request.jwt.claims', '{}', true);
     k := k + 1;
     if c = c_ajeno then
-      insert into _res values (k, 'STORAGE INSERT (ajeno) — debe ser RECHAZADO', '0', n::text, n = 0);
+      insert into _res values (k, 'Las policies del bucket NIEGAN el archivo ajeno (predicado)', 'false', coalesce(s,'null'), s = 'false');
     else
-      insert into _res values (k, 'STORAGE INSERT (propio) — debe PERMITIRSE', '1', n::text, n = 1);
-    end if;
-
-    -- UPDATE (reemplazar el archivo)
-    execute 'set local role authenticated';
-    perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
-    begin
-      update storage.objects set updated_at = now()
-        where bucket_id = 'contratos' and name like c || '/%';
-      get diagnostics n = row_count;
-    exception when others then n := 0; end;
-    reset role; perform set_config('request.jwt.claims', '{}', true);
-    k := k + 1;
-    if c = c_ajeno then
-      insert into _res values (k, 'STORAGE UPDATE (ajeno) — debe afectar 0 filas', '0 filas', n::text, n = 0);
-    else
-      insert into _res values (k, 'STORAGE UPDATE (propio) — debe afectar filas', '> 0 filas', n::text, n > 0);
-    end if;
-
-    -- DELETE
-    execute 'set local role authenticated';
-    perform set_config('request.jwt.claims', json_build_object('sub', v_uid, 'role','authenticated')::text, true);
-    begin
-      delete from storage.objects where bucket_id = 'contratos' and name like c || '/%';
-      get diagnostics n = row_count;
-    exception when others then n := 0; end;
-    reset role; perform set_config('request.jwt.claims', '{}', true);
-    k := k + 1;
-    if c = c_ajeno then
-      insert into _res values (k, 'STORAGE DELETE (ajeno) — debe afectar 0 filas', '0 filas', n::text, n = 0);
-    else
-      insert into _res values (k, 'STORAGE DELETE (propio) — debe afectar filas', '> 0 filas', n::text, n > 0);
+      insert into _res values (k, 'Las policies del bucket PERMITEN el archivo propio (predicado)', 'true', coalesce(s,'null'), s = 'true');
     end if;
   end loop;
 
-  -- El archivo ajeno tiene que seguir ahí después de los cuatro intentos.
+  -- El archivo ajeno tiene que seguir ahí (nada de esto lo tocó).
   select count(*) into n from storage.objects where bucket_id = 'contratos' and name = c_ajeno || '/cedula-1.pdf';
-  k := k + 1; insert into _res values (k, 'El archivo del contrato AJENO sobrevivió a los 4 intentos', '1', n::text, n = 1);
+  k := k + 1; insert into _res values (k, 'El archivo del contrato AJENO sigue intacto', '1', n::text, n = 1);
 
   -- ══ BLOQUE 5 · Usuario desactivado ══════════════════════════════════════
   update public.usuarios set activo = false, tenant = v_tenant where id = inact_uid;
@@ -659,7 +675,9 @@ begin
   end if;
 end $$;
 
-select n as "#", caso, esperado, obtenido, case when ok then 'OK' else 'FALLA' end as resultado
+select n as "#", caso, esperado, obtenido,
+       case when ok then 'OK' else 'FALLA' end as resultado,
+       detalle as "error de PostgreSQL"
 from _res order by ok, n;
 
 do $$

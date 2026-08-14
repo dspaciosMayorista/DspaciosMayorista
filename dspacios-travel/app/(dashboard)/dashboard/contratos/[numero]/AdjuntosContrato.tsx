@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Lock } from "lucide-react";
 import { registrarAdjunto, urlFirmadaAdjunto, eliminarAdjunto } from "./adjuntos-actions";
+import { subirYRegistrar } from "@/lib/adjuntos/operaciones";
 
 export type Adjunto = {
   id: number; tipo: string; nombre: string | null; path: string;
@@ -47,9 +48,17 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
       const sb = createClient();
       const ext = file.name.split(".").pop() || "bin";
       const path = `${numeroContrato}/${tipo}-${Date.now()}.${ext}`;
-      const { error } = await sb.storage.from("contratos").upload(path, file, { upsert: false });
-      if (error) throw error;
-      const r = await registrarAdjunto({ numeroContrato, tipo, nombre: file.name, path, sizeBytes: file.size });
+      // Si el archivo sube pero el registro falla, hay que DESHACER la subida:
+      // si no, queda un huerfano en el bucket que nadie ve y nadie puede borrar
+      // desde la interfaz. Ver `lib/adjuntos/operaciones.ts`.
+      const r = await subirYRegistrar(
+        {
+          subirArchivo: (p, a) => sb.storage.from("contratos").upload(p, a as File, { upsert: false }),
+          registrarFila: (p) => registrarAdjunto({ numeroContrato, tipo, nombre: file.name, path: p, sizeBytes: file.size }),
+          eliminarArchivo: (paths) => sb.storage.from("contratos").remove(paths),
+        },
+        { path, archivo: file }
+      );
       if (!r.ok) throw new Error(r.error);
       router.refresh();
     } catch (e) {

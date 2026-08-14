@@ -2,8 +2,9 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { eliminarArchivoYFila, type ResultadoOp } from "@/lib/adjuntos/operaciones";
 
-type Result = { ok: true } | { ok: false; error: string };
+type Result = ResultadoOp;
 const BUCKET = "contratos";
 
 // El cliente sube el archivo al bucket privado y aquí se registra la fila.
@@ -35,11 +36,22 @@ export async function urlFirmadaAdjunto(path: string): Promise<{ ok: true; url: 
   return { ok: true, url: data.signedUrl };
 }
 
+// Antes esto llamaba `remove()` y TIRABA el resultado, y borraba la fila igual.
+// Si Storage rechazaba el borrado, la fila desaparecia de la pantalla y el
+// archivo —una cedula, un soporte de pago— se quedaba en el bucket sin nada que
+// lo referenciara: invisible e imborrable desde la interfaz. La orquestacion
+// (y el porque del orden) esta en `lib/adjuntos/operaciones.ts`, que es puro y
+// tiene pruebas.
 export async function eliminarAdjunto(id: number, path: string, numeroContrato: string): Promise<Result> {
   const sb = await createClient();
-  await sb.storage.from(BUCKET).remove([path]);
-  const { error } = await sb.from("contrato_adjuntos").delete().eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  const r = await eliminarArchivoYFila(
+    {
+      eliminarArchivo: (paths) => sb.storage.from(BUCKET).remove(paths),
+      eliminarFila: async (idFila) => await sb.from("contrato_adjuntos").delete().eq("id", idFila),
+    },
+    { id, path }
+  );
+  if (!r.ok) return r;
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   return { ok: true };
 }
