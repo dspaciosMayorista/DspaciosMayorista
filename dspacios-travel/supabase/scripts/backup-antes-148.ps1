@@ -1,4 +1,4 @@
-<#
+﻿<#
     Backup lógico de la base de D'spacios ANTES de correr la migración 148.
 
     Se corre en la máquina del dueño (Windows + PowerShell). No ejecuta ninguna
@@ -111,31 +111,79 @@ function Escribir-Texto([string]$ruta, $contenido) {
     [IO.File]::WriteAllText($ruta, $texto, $enc)
 }
 
-# Lee el archivo POR STREAMING. `data.sql` puede pesar cientos de MB: cargarlo
-# entero en memoria —y peor, dos veces— revienta la máquina justo cuando más
-# importa que el backup termine.
+# Lee el archivo POR STREAMING. `data.sql` puede pesar decenas o cientos de MB
+# (en la ejecucion real fueron 21 MB): cargarlo entero en memoria —y peor, dos
+# veces— revienta la maquina justo cuando mas importa que el backup termine.
 function Contiene-Texto([string]$ruta, [string]$patron) {
     if (-not (Test-Path $ruta)) { return $false }
     return [bool](Select-String -Path $ruta -Pattern $patron -SimpleMatch -Quiet)
 }
 
-# Cuenta las filas de un bloque COPY sin cargar el archivo. Devuelve -1 si la
-# tabla no aparece: no es lo mismo "no está la tabla" que "está con 0 filas".
-function Contar-FilasCopy([string]$ruta, [string]$tabla) {
-    if (-not (Test-Path $ruta)) { return -1 }
+# Busca una tabla calificada (esquema.tabla) TOLERANDO COMILLAS, porque pg_dump
+# escribe los identificadores entrecomillados: `"public"."ventas"`.
+function Contiene-Tabla([string]$ruta, [string]$calificado) {
+    if (-not (Test-Path $ruta)) { return $false }
+    $partes = $calificado.Split('.')
+    $pat = '"?' + [regex]::Escape($partes[0]) + '"?\."?' + [regex]::Escape($partes[1]) + '"?'
+    return [bool](Select-String -Path $ruta -Pattern $pat -Quiet)
+}
+
+# ¿Es esta linea el encabezado del bloque COPY de $tabla (formato esquema.tabla)?
+#
+# ⚠️ pg_dump ENTRECOMILLA los identificadores. La Supabase CLI 2.114.0 escribe:
+#       COPY "public"."ventas" ("numero_contrato", ...) FROM stdin;
+# y no:
+#       COPY public.ventas (numero_contrato, ...) FROM stdin;
+# Buscar el texto plano `COPY public.ventas` daba CERO coincidencias contra un
+# volcado perfectamente bueno: el verificador reportaba -1 contratos y marcaba
+# el backup como INCOMPLETO. Pasó de verdad, con un data.sql de 21 MB y 121
+# contratos dentro.
+#
+# Se acepta cualquier combinación de comillas quitandolas del nombre, pero SOLO
+# de la parte del nombre —hasta el `(` de las columnas o el ` FROM `—, para no
+# tocar los datos. La comparacion es por igualdad EXACTA del nombre completo,
+# asi que `public.ventas_historico` y `otro.ventas` no se confunden con
+# `public.ventas`.
+function Es-EncabezadoCopy([string]$linea, [string]$tabla) {
+    if (-not $linea.StartsWith("COPY ", [StringComparison]::Ordinal)) { return $false }
+    $resto = $linea.Substring(5)
+    $fin  = -1
+    $iPar = $resto.IndexOf("(", [StringComparison]::Ordinal)
+    $iFrm = $resto.IndexOf(" FROM ", [StringComparison]::Ordinal)
+    if ($iPar -ge 0) { $fin = $iPar }
+    if ($iFrm -ge 0 -and ($fin -lt 0 -or $iFrm -lt $fin)) { $fin = $iFrm }
+    if ($fin -ge 0) { $resto = $resto.Substring(0, $fin) }
+    $nombre = ($resto -replace '"', '').Trim()
+    return $nombre -eq $tabla
+}
+
+# Cuenta las filas de VARIAS tablas en UNA sola pasada. Devuelve una tabla hash
+# nombre -> filas, con -1 si esa tabla no aparece en el volcado: no es lo mismo
+# "no esta la tabla" que "esta con 0 filas", y esa diferencia decide si el
+# backup sirve.
+function Contar-FilasCopy([string]$ruta, [string[]]$tablas) {
+    $res = @{}
+    foreach ($t in $tablas) { $res[$t] = -1 }
+    if (-not (Test-Path $ruta)) { return $res }
+
     $sr = [IO.StreamReader]::new($ruta)
     try {
-        $dentro = $false
+        $actual = $null
         $n = 0
         while ($null -ne ($l = $sr.ReadLine())) {
-            if (-not $dentro) {
-                if ($l.StartsWith("COPY $tabla ", [StringComparison]::Ordinal)) { $dentro = $true }
+            if ($null -eq $actual) {
+                if ($l.StartsWith("COPY ", [StringComparison]::Ordinal)) {
+                    foreach ($t in $tablas) {
+                        if (Es-EncabezadoCopy $l $t) { $actual = $t; $n = 0; break }
+                    }
+                }
             }
-            elseif ($l -eq '\.') { return $n }
+            elseif ($l -eq '\.') { $res[$actual] = $n; $actual = $null }
             else { $n++ }
         }
-        if ($dentro) { return $n }
-        return -1
+        # Bloque sin cerrar: el volcado quedo cortado a mitad.
+        if ($null -ne $actual) { $res[$actual] = $n }
+        return $res
     } finally { $sr.Dispose() }
 }
 
@@ -389,13 +437,15 @@ try {
     # ═════════════════════════════════════════════════════════════════════════
     Titulo "Verificación del contenido"
 
+    # Las comprobaciones de contenido toleran comillas: pg_dump escribe
+    # `"public"."ventas"`, no `public.ventas`.
     $checks = @(
         @{ f = $roles;  min = 200;   nombre = "roles.sql";
-           debe = @("ROLE") },
+           texto = @("ROLE"); tablas = @() },
         @{ f = $schema; min = 50000; nombre = "schema.sql";
-           debe = @("CREATE TABLE", "public.ventas", "public.abonos", "ventas_basica") },
+           texto = @("CREATE TABLE"); tablas = @("public.ventas", "public.abonos", "public.ventas_basica") },
         @{ f = $data;   min = 1000;  nombre = "data.sql";
-           debe = @("COPY public.ventas") }
+           texto = @(); tablas = @() }
     )
 
     foreach ($c in $checks) {
@@ -405,7 +455,9 @@ try {
             Falla "$($c.nombre): solo $len bytes, se esperaban al menos $($c.min). El volcado quedo incompleto."
             $hubo = $true; continue
         }
-        $faltan = @($c.debe | Where-Object { -not (Contiene-Texto $c.f $_) })
+        $faltan = @()
+        foreach ($t in $c.texto)  { if (-not (Contiene-Texto $c.f $t))  { $faltan += $t } }
+        foreach ($t in $c.tablas) { if (-not (Contiene-Tabla $c.f $t)) { $faltan += $t } }
         if ($faltan.Count -gt 0) {
             Falla "$($c.nombre): no contiene $($faltan -join ', ')"
             $hubo = $true
@@ -414,29 +466,38 @@ try {
         }
     }
 
-    # Número real de contratos volcados: es el dato que se compara contra lo que
-    # muestra la app. Un backup que "existe" pero con 0 contratos no sirve, y sin
-    # este conteo no se notaría.
-    $nContratos = Contar-FilasCopy $data "public.ventas"
-    if ($nContratos -gt 0) { Ok "Contratos en el volcado (tabla ventas): $nContratos" }
+    # ── Que trae REALMENTE el volcado de datos ──────────────────────────────
+    # Se cuentan las tres tablas que importan en UNA sola pasada. Nada de esto
+    # se da por supuesto: se mide y se escribe tal cual en MANIFEST y LEEME.
+    #
+    # Sobre auth y storage: una version anterior de este script AFIRMABA que
+    # `db dump` siempre los excluye por ser esquemas administrados. La ejecucion
+    # real con la CLI 2.114.0 los trajo (9 usuarios de Auth y 1761 filas de
+    # storage.objects), asi que la afirmacion era falsa. Depende de la version
+    # de la CLI y de las banderas. Por eso ahora no se afirma: se comprueba.
+    $conteos = Contar-FilasCopy $data @("public.ventas", "auth.users", "storage.objects")
+    $nContratos = $conteos["public.ventas"]
+    $nAuth      = $conteos["auth.users"]
+    $nStorage   = $conteos["storage.objects"]
+
+    # El numero de contratos es el dato que se compara contra lo que muestra la
+    # app. Un backup que "existe" pero con 0 contratos no sirve, y sin este
+    # conteo no se notaria.
+    if ($nContratos -gt 0) { Ok "Contratos en el volcado (public.ventas): $nContratos" }
     elseif ($nContratos -eq 0) { Falla "El bloque COPY de 'ventas' esta VACIO: el volcado no trae contratos."; $hubo = $true }
     else { Falla "El volcado no trae la tabla 'ventas'."; $hubo = $true }
 
-    # ── ¿Vino la metadata de Storage? ───────────────────────────────────────
-    # `supabase db dump` EXCLUYE los esquemas administrados (auth, storage), así
-    # que lo normal es que NO venga. Se comprueba explícitamente en vez de
-    # suponerlo en un sentido o en el otro, y el resultado queda escrito en
-    # MANIFEST y en LEEME: de eso depende qué hay que rehacer a mano si algún día
-    # toca restaurar.
-    $tieneStorageObjects = Contiene-Texto $data "COPY storage.objects"
-    $tieneAuthUsers      = Contiene-Texto $data "COPY auth.users"
-    if ($tieneStorageObjects) {
-        Ok "data.sql SI incluye 'COPY storage.objects' (la lista de archivos; los archivos fisicos nunca)"
+    if ($nAuth -ge 0) {
+        Ok "Usuarios de Auth en el volcado (auth.users): $nAuth"
     } else {
-        Aviso "data.sql NO incluye 'COPY storage.objects'. Es lo esperado: 'db dump' excluye los esquemas administrados auth y storage. Ni la lista ni los archivos de Storage estan en esta copia."
+        Aviso "El volcado NO trae 'auth.users'. Al restaurar en un proyecto nuevo habria que recrear los usuarios a mano."
     }
-    if (-not $tieneAuthUsers) {
-        Aviso "data.sql NO incluye 'COPY auth.users'. Los usuarios de Auth hay que recrearlos a mano al restaurar."
+
+    if ($nStorage -ge 0) {
+        Ok "Metadata de Storage en el volcado (storage.objects): $nStorage archivo(s) catalogado(s)"
+        Aviso "Ojo: eso es la LISTA de archivos, no los archivos. Los ficheros fisicos de Storage NUNCA estan en un volcado de base de datos."
+    } else {
+        Aviso "El volcado NO trae 'storage.objects': ni la lista de archivos ni los archivos."
     }
 
     if ($authOk) {
@@ -460,11 +521,13 @@ try {
     $m += "CLI:      $cliVer"
     $m += "Estado:   " + $(if ($hubo) { "INCOMPLETO - NO USAR" } else { "VERIFICADO" })
     $m += ""
-    $m += "Contratos volcados (public.ventas): $nContratos"
-    $m += "COPY storage.objects presente:      " + $(if ($tieneStorageObjects) { "SI" } else { "NO" })
-    $m += "COPY auth.users presente:           " + $(if ($tieneAuthUsers) { "SI" } else { "NO" })
+    $m += "CONTENIDO MEDIDO DE data.sql (no supuesto):"
+    $m += ("  public.ventas    : " + $(if ($nContratos -ge 0) { "$nContratos fila(s)" } else { "AUSENTE" }))
+    $m += ("  auth.users       : " + $(if ($nAuth      -ge 0) { "$nAuth fila(s)" }      else { "AUSENTE" }))
+    $m += ("  storage.objects  : " + $(if ($nStorage   -ge 0) { "$nStorage fila(s) (LISTA de archivos, no los archivos)" } else { "AUSENTE" }))
     $m += ""
-    $m += "NO INCLUYE los archivos FISICOS de Supabase Storage. Ver LEEME.txt."
+    $m += "*** data.sql CONTIENE DATOS PERSONALES. NO COMPARTIR, NO SUBIR A GITHUB. ***"
+    $m += "Ver LEEME.txt. Los archivos FISICOS de Storage no estan aqui."
     $m += ""
     $m += ("{0,-28} {1,14}  {2}" -f "ARCHIVO", "BYTES", "SHA256")
     foreach ($f in @($roles, $schema, $data, $authst)) {
@@ -478,11 +541,13 @@ try {
     Ok "MANIFEST.txt con fecha, tamaño y SHA256 de cada archivo"
 
     Titulo "LEEME.txt"
-    $storageLinea = if ($tieneStorageObjects) {
-        "SI trae 'COPY storage.objects', es decir la LISTA de archivos (nombres, rutas, tamanos). Los archivos FISICOS nunca estan."
-    } else {
-        "NO trae 'COPY storage.objects'. 'supabase db dump' excluye los esquemas administrados auth y storage, asi que en esta copia no esta ni la lista de archivos ni los archivos."
-    }
+    # Todo lo de abajo se arma con lo que el volcado trae DE VERDAD, medido
+    # arriba. Nada de frases fijas del tipo "Supabase siempre excluye auth":
+    # eso ya resulto ser falso una vez.
+    $lineaVentas  = if ($nContratos -ge 0) { "$nContratos fila(s)" } else { "AUSENTE" }
+    $lineaAuth    = if ($nAuth      -ge 0) { "$nAuth fila(s)" }      else { "AUSENTE" }
+    $lineaStorage = if ($nStorage   -ge 0) { "$nStorage fila(s)" }   else { "AUSENTE" }
+
     $l = @()
     $l += "==========================================================="
     $l += " BACKUP DE LA BASE DE D'SPACIOS - ANTES DE LA MIGRACION 148"
@@ -491,21 +556,53 @@ try {
     $l += "Fecha:     $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss K')"
     $l += "Proyecto:  $projectRef"
     $l += "Estado:    " + $(if ($hubo) { "INCOMPLETO - NO USAR ESTE BACKUP" } else { "VERIFICADO" })
-    $l += "Contratos: $nContratos (tabla public.ventas)"
+    $l += ""
+    $l += "###########################################################"
+    $l += "#  ESTA CARPETA CONTIENE DATOS PERSONALES.                #"
+    $l += "#  NO SUBIR A GITHUB. NO ENVIAR POR CORREO NI WHATSAPP.   #"
+    $l += "#  NO GUARDAR EN CARPETAS COMPARTIDAS NI SINCRONIZADAS.   #"
+    $l += "###########################################################"
+    $l += ""
+    $l += "data.sql es el archivo delicado. Segun lo MEDIDO en este volcado"
+    $l += "concreto, trae:"
+    $l += "  public.ventas    : $lineaVentas"
+    $l += "                     nombre del cliente, documento, telefono, correo,"
+    $l += "                     direccion y precio de cada contrato."
+    $l += "  auth.users       : $lineaAuth"
+    $l += "                     usuarios del sistema con su correo y el hash de"
+    $l += "                     su contrasena."
+    $l += "  storage.objects  : $lineaStorage"
+    $l += "                     la LISTA de archivos subidos: rutas con el numero"
+    $l += "                     de contrato, nombres de las cedulas y soportes."
+    $l += "Ademas: contrato_pasajeros (documento y fecha de nacimiento de cada"
+    $l += "pasajero), abonos, cuentas por pagar y comisiones."
+    $l += ""
+    $l += "Si esta carpeta se filtra, se filtra la base de clientes entera."
+    $l += "Guardala en el disco de la maquina, no en OneDrive/Drive/Dropbox, y"
+    $l += "borrala cuando ya no haga falta."
     $l += ""
     $l += "-- QUE INCLUYE ------------------------------------------"
     $l += "  roles.sql                 Roles de base de datos."
     $l += "  schema.sql                Tablas, vistas, policies (RLS), funciones,"
-    $l += "                            triggers e indices del esquema public."
-    $l += "  data.sql                  Los DATOS: contratos, abonos, pasajeros,"
-    $l += "                            hoteles, tarifas, cuentas por pagar, etc."
+    $l += "                            triggers e indices."
+    $l += "  data.sql                  Los DATOS (ver arriba)."
     $l += "  auth_storage_changes.sql  Cambios propios sobre auth y storage."
     $l += "  MANIFEST.txt              Tamano y SHA256 de cada archivo."
     $l += ""
     $l += "-- QUE **NO** INCLUYE -----------------------------------"
     $l += ""
     $l += "1) LOS ARCHIVOS FISICOS DE SUPABASE STORAGE. Es lo mas importante."
-    $l += "   $storageLinea"
+    if ($nStorage -ge 0) {
+        $l += "   Este volcado SI trae 'storage.objects' ($nStorage filas): es el"
+        $l += "   CATALOGO de archivos (rutas, nombres, tamanos), no los archivos."
+        $l += "   Restaurado en un proyecto nuevo quedaria un catalogo apuntando a"
+        $l += "   cedulas y soportes de pago que no estan."
+    } else {
+        $l += "   Este volcado NO trae 'storage.objects': no esta ni el catalogo de"
+        $l += "   archivos ni los archivos."
+    }
+    $l += "   Los ficheros viven en el almacenamiento de objetos, que no es"
+    $l += "   Postgres, y NUNCA salen en un volcado de base de datos."
     $l += "   Buckets afectados:"
     $l += "     contratos       Cedulas y soportes de pago de clientes, y los"
     $l += "                     contratos laborales de empleados (pe-empleados/)."
@@ -518,11 +615,15 @@ try {
     $l += "   Storage o con la API."
     $l += "   Para la migracion 148 esto NO bloquea nada: la 148 solo cambia"
     $l += "   policies y crea vistas, no toca ni mueve ni borra un solo archivo."
-    $l += "   Se anota porque un backup del que se cree que lo tiene todo es"
-    $l += "   peor que no tenerlo."
     $l += ""
-    $l += "2) LOS USUARIOS DE AUTH (auth.users). Las contrasenas no se recuperan"
-    $l += "   desde esta copia; hay que recrear los usuarios."
+    if ($nAuth -ge 0) {
+        $l += "2) Los usuarios de Auth SI estan ($nAuth), pero restaurarlos en otro"
+        $l += "   proyecto no es copiar y pegar: hay que comprobar que los UUID"
+        $l += "   coincidan con usuarios.id, o nadie podra entrar."
+    } else {
+        $l += "2) LOS USUARIOS DE AUTH (auth.users) NO estan en este volcado. Hay"
+        $l += "   que recrearlos; las contrasenas no se recuperan desde aqui."
+    }
     $l += ""
     $l += "3) Secretos y variables de entorno (Vercel y Supabase), cron jobs,"
     $l += "   webhooks y configuracion del proyecto."

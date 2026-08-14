@@ -9,6 +9,7 @@ Archivos relacionados:
 |---|---|
 | `supabase/scripts/backup-antes-148.ps1` | Genera la copia. Se corre en Windows. |
 | `supabase/scripts/pruebas/probar-backup.sh` | Banco de pruebas del script anterior (casos negativos). |
+| `supabase/scripts/pruebas/fixtures/` | Volcados de ejemplo con los encabezados reales de pg_dump. |
 | `supabase/scripts/rollback_148.sql` | Revierte la 148. **No ejecutar** salvo que haga falta. |
 | `supabase/scripts/verificar_rollback_148.sql` | Comprueba que el rollback dejó la base como estaba. |
 
@@ -128,6 +129,37 @@ No basta con que los archivos existan. Comprueba:
 - **Número real de contratos** volcados en la tabla `ventas`. Es el dato que se
   compara contra lo que muestra la app. Un backup con 0 contratos existiría
   igual y no serviría de nada.
+- Cuántas filas trae de `auth.users` y de `storage.objects` — **medido, no
+  supuesto** (ver más abajo).
+
+### El detalle que rompió la primera ejecución real: las comillas
+
+pg_dump **entrecomilla los identificadores**. La Supabase CLI 2.114.0 escribe:
+
+```sql
+COPY "public"."ventas" ("numero_contrato", "cliente", ...) FROM stdin;
+```
+
+El verificador buscaba el texto plano `COPY public.ventas`, que no aparece ni una
+vez. Contra un `data.sql` **correcto** de 21,5 MB con 140 bloques COPY y 121
+contratos dentro, el resultado fue:
+
+```
+Contratos volcados (public.ventas): -1
+COPY storage.objects presente:      NO
+COPY auth.users presente:           NO
+Estado:   INCOMPLETO - NO USAR
+```
+
+Todo falso. El backup estaba bien; lo que estaba mal era el que lo revisaba —
+que es la peor forma de fallar, porque manda a repetir un trabajo que ya estaba
+hecho y siembra dudas sobre datos que sí están.
+
+Ahora el reconocimiento de encabezados quita las comillas **solo de la parte del
+nombre** (hasta el `(` de las columnas o el ` FROM `) y compara el nombre
+completo por igualdad exacta, así que acepta los dos formatos y no confunde
+`public.ventas` con `public.ventas_historico` ni con `otro.ventas`. Lo mismo en
+`schema.sql`, donde `CREATE TABLE "public"."ventas"` tampoco casaba.
 
 Si algo falla, termina con código 1 y el mensaje **"no corras la migración 148"**.
 
@@ -150,19 +182,26 @@ Es la parte que más cuesta cara si se pasa por alto.
 
 ### Los archivos físicos de Storage — lo más importante
 
-`supabase db dump` vuelca **la base de datos**, y por defecto **excluye los
-esquemas administrados `auth` y `storage`**. Los archivos subidos viven además
-en el almacenamiento de objetos, que no es Postgres.
+Los archivos subidos viven en el almacenamiento de objetos, que **no es
+Postgres**. Un volcado de base de datos **nunca** los trae. Eso no depende de la
+versión ni de las banderas: es lo único que se puede afirmar sin medir.
 
-Es decir que de Storage **no queda nada** en esta copia: ni los archivos ni la
-tabla `storage.objects` con la lista de nombres y rutas.
+Lo que sí varía es si viene el **catálogo** (`storage.objects`, la lista de
+rutas y nombres) y los **usuarios de Auth** (`auth.users`).
 
-> Una versión anterior de este documento decía que la lista **sí** venía en el
-> volcado. Era falso. El script ahora lo **comprueba** en cada ejecución —busca
-> `COPY storage.objects` dentro de `data.sql`— y escribe el resultado en
-> `MANIFEST.txt` y en `LEEME.txt`, en vez de que haya que fiarse de lo que diga
-> una documentación. De eso depende cuánto trabajo manual costaría una
-> restauración.
+> **Este documento ya se equivocó dos veces con eso**, en las dos direcciones:
+> primero afirmó que el catálogo sí venía, después que Supabase "siempre excluye
+> los esquemas administrados auth y storage". La ejecución real con la CLI
+> 2.114.0 trajo **9 usuarios de Auth y 1761 filas de `storage.objects`**.
+>
+> Por eso ya no se afirma nada: el script lo **mide** en cada ejecución y lo
+> escribe en `MANIFEST.txt` y en `LEEME.txt`. De ese dato depende cuánto trabajo
+> manual costaría una restauración, así que es mejor medirlo que heredarlo de
+> una documentación.
+
+Si el catálogo viene y los archivos no, restaurar en un proyecto nuevo dejaría un
+índice apuntando a cédulas y soportes de pago que no están: la app los listaría
+y al descargarlos daría error.
 
 Buckets afectados:
 
@@ -181,12 +220,34 @@ porque un backup del que se cree que "lo tiene todo" es peor que no tenerlo.
 
 ### Lo demás que queda fuera
 
-- **Usuarios de Auth** (`auth.users`) — por la misma razón: `auth` es un esquema
-  administrado y queda fuera. El script también lo comprueba y lo anota. Las
-  contraseñas no son recuperables desde este volcado.
 - **Secretos y variables de entorno** de Vercel y de Supabase.
 - **Cron jobs**, webhooks y configuración del proyecto.
 - **Extensiones** y ajustes de la instancia.
+
+### ⚠️ `data.sql` es información personal: no se comparte
+
+No es un archivo técnico inofensivo. Según lo medido en la ejecución real,
+dentro van:
+
+| Tabla | Qué lleva |
+|---|---|
+| `public.ventas` (121) | Nombre, **documento**, teléfono, correo y dirección del cliente de cada contrato, y el precio |
+| `auth.users` (9) | Usuarios del sistema con su correo y el **hash de su contraseña** |
+| `storage.objects` (1761) | Rutas y nombres de **cédulas y soportes de pago** |
+| `contrato_pasajeros` | **Documento y fecha de nacimiento** de cada pasajero |
+| `abonos`, `cuentas_por_pagar`, `aliados_b2b` | Movimientos de dinero y comisiones |
+
+Si esa carpeta se filtra, se filtra la base de clientes completa. Reglas:
+
+- **Nunca** subirla a GitHub — la carpeta va fuera del repositorio y el
+  `.gitignore` de la raíz ignora los nombres que genera el script, pero la
+  primera barrera es no ponerla ahí.
+- **Nunca** enviarla por correo ni WhatsApp, ni pegar su contenido en un chat.
+- Guardarla en el disco de la máquina, **no** en OneDrive, Drive ni Dropbox.
+- Borrarla cuando ya no haga falta.
+
+El script escribe ese aviso dentro de `MANIFEST.txt` y de `LEEME.txt`, para que
+viaje con los archivos y no solo en esta página.
 
 ---
 
@@ -282,6 +343,9 @@ prueba. Resultado, **7 de 7**:
 | Escenario | Esperado | Resultado |
 |---|---|---|
 | Camino feliz | código 0 y "BACKUP VERIFICADO" | OK |
+| **Volcado con comillas** `COPY "public"."ventas"` (formato real de la CLI 2.114.0) | cuenta 121 / 9 / 17 exactos | OK |
+| **El mismo volcado sin comillas** | los mismos números | OK |
+| MANIFEST y LEEME reflejan lo medido, con el aviso de datos personales (6 comprobaciones) | | OK |
 | **Ejecutado desde "Descargas"** (sin repo ni `config.toml`) | funciona igual | OK |
 | · el diff se hizo con 0 migraciones locales | | OK |
 | · el diff **no** se hizo desde la carpeta de ejecución | | OK |
@@ -306,10 +370,19 @@ no encuentran `supabase/config.toml` en el directorio actual, y `db diff` falla
 si `supabase/migrations` tiene archivos — igual que la CLI real. Un mock
 permisivo daba OK a un script que en la máquina del dueño no habría funcionado.
 
+**Los fixtures llevan los encabezados reales de pg_dump**, con y sin comillas
+(`supabase/scripts/pruebas/fixtures/`). El mock anterior emitía `COPY
+public.ventas` sin comillas, y por eso el banco de pruebas daba 21/21 mientras
+la ejecución real fallaba. Los fixtures incluyen dos señuelos —
+`public.ventas_historico` y `otro.ventas`— para que un contador que confundiera
+nombres parecidos no pudiera dar los números correctos. No contienen ningún dato
+personal: los clientes son "CLIENTE DE PRUEBA n" y los correos, `@ejemplo.invalid`.
+
 **Control negativo:** el banco de pruebas nuevo se corrió contra la versión
-**anterior** del script (commit `ab1c9d78`) y falla los siete casos relacionados
-con el diff, empezando por el camino feliz. Eso confirma que estas
-comprobaciones detectan el defecto en vez de pasar por vacío.
+**anterior** del script (`f9c5406e`) y da **18 fallos**, reproduciendo
+exactamente los síntomas de la ejecución real —`-1` contratos, `auth.users: NO`,
+`storage.objects: NO`, estado INCOMPLETO— sobre un volcado que está bien. Eso
+confirma que estas comprobaciones detectan el defecto en vez de pasar por vacío.
 
 ### Compatibilidad con Windows PowerShell 5.1
 
@@ -326,6 +399,11 @@ Dos cosas que sí hubo que cuidar:
   y un BOM al principio de un `.sql` hace que psql se atragante con la primera
   línea al restaurar. Los archivos se escriben con un helper que fuerza UTF-8
   sin BOM.
+- **El `.ps1` sí lleva BOM**, y es lo contrario de lo anterior a propósito.
+  Windows PowerShell 5.1 lee un `.ps1` sin BOM como ANSI, así que los acentos
+  salían corruptos en pantalla: *"VerificaciÃ³n"*, *"FallÃ³"*, *"tamaÃ±o"*. Con
+  BOM lo decodifica como UTF-8. Las dos cosas conviven: BOM en el script, sin BOM
+  en lo que el script genera. El banco de pruebas comprueba las dos.
 
 No pude correr **PSScriptAnalyzer** con las reglas `PSUseCompatibleSyntax` para
 5.1: PowerShell Gallery está bloqueada desde este entorno. Lo que hay es el lint
