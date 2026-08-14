@@ -1,0 +1,34 @@
+# Volcados de base de datos y copias de seguridad
+#
+# ⚠️ NO se ignora `*.sql`: este repositorio RASTREA 165 archivos .sql — todas las
+# migraciones de `supabase/migrations/` y los scripts de prueba. Ignorarlos
+# rompería el proyecto entero, y lo peor es que no se notaría hasta que alguien
+# clonara el repo y le faltaran las migraciones.
+#
+# Se ignora, en cambio, lo que de verdad puede filtrarse: los volcados. Traen
+# datos reales de clientes (documentos, teléfonos, pagos), así que la carpeta
+# del backup vive FUERA del repositorio. Estos patrones son la segunda barrera,
+# por si alguien copia un volcado adentro sin pensarlo.
+/backups/
+/Backups/
+**/backups/
+*.dump
+*.backup
+*.sql.gz
+*.sql.zip
+
+# Los cuatro nombres que genera `supabase/scripts/backup-antes-148.ps1`,
+# en cualquier carpeta del repo.
+**/roles.sql
+**/schema.sql
+**/data.sql
+**/auth_storage_changes.sql
+**/MANIFEST.txt
+
+# Credenciales y entorno
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service_role*
