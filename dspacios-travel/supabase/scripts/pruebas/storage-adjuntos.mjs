@@ -156,10 +156,21 @@ async function limpiar() {
   linea(!eP && (perfiles ?? []).length === 0, "Sin perfiles con la marca de prueba",
     eP?.message ?? ((perfiles ?? []).length ? (perfiles ?? []).map((p) => p.nombre).join(", ") : null));
 
-  const { data: lista, error: eU } = await admin.auth.admin.listUsers({ perPage: 200 });
-  const sobran = (lista?.users ?? []).filter((u) => (u.email ?? "").includes("@ejemplo.invalid"));
-  linea(!eU && sobran.length === 0, "Sin usuarios de Auth con correo @ejemplo.invalid",
-    eU?.message ?? (sobran.length ? sobran.map((u) => u.email).join(", ") : null));
+  // Se comprueban EXACTAMENTE los tres ids creados, uno por uno.
+  //
+  // Antes esto era `listUsers({ perPage: 200 })` y filtraba por correo: si el
+  // proyecto tiene más usuarios que esa página, los temporales podían quedar
+  // fuera del listado y la comprobación pasaba en verde con los usuarios
+  // todavía en la base. Preguntar por id no depende de cuántos usuarios haya.
+  for (const [ref, u] of Object.entries(usuarios)) {
+    if (!u.id) { linea(false, `No se llegó a crear el usuario ${ref} (nada que verificar)`, "revisa los errores de arriba"); continue; }
+    const { data, error } = await admin.auth.admin.getUserById(u.id);
+    // Cuando el usuario ya no existe la API responde con error (404) o sin
+    // usuario. Las dos formas significan lo mismo: se fue.
+    const sigue = !error && !!data?.user?.id;
+    linea(!sigue, `El usuario ${ref} ya no existe en Auth`,
+      sigue ? `sigue ahí: ${data.user.email} (${u.id})` : null);
+  }
 }
 
 try {

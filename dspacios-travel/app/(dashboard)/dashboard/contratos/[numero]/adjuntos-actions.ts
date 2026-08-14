@@ -53,6 +53,18 @@ export async function eliminarAdjunto(id: number): Promise<Result> {
       buscarFila: async (idFila) =>
         await sb.from("contrato_adjuntos").select("path, numero_contrato").eq("id", idFila).maybeSingle(),
       eliminarArchivo: (paths) => sb.storage.from(BUCKET).remove(paths),
+      // Distingue "la policy filtró el objeto" de "el archivo ya no estaba".
+      // Sin esto, una fila colgada (archivo borrado, DELETE fallido) no se
+      // podría quitar nunca desde la interfaz: cada reintento chocaría con
+      // "el almacenamiento no eliminó el archivo".
+      existeArchivo: async (path) => {
+        const corte = path.lastIndexOf("/");
+        const carpeta = corte > 0 ? path.slice(0, corte) : "";
+        const nombre = path.slice(corte + 1);
+        const { data, error } = await sb.storage.from(BUCKET).list(carpeta, { search: nombre, limit: 100 });
+        if (error) return { existe: null, error };
+        return { existe: (data ?? []).some((o) => o.name === nombre), error: null };
+      },
       // `.select("id")` NO es decorativo: PostgREST responde `error: null`
       // aunque la RLS filtre la fila y no borre nada. Sin el select no habría
       // forma de distinguir "borrado" de "no tocado".

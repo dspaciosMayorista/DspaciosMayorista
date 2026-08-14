@@ -58,6 +58,16 @@ function listaIncluye(data: { name: string }[] | null, path: string): boolean {
 
 const texto = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/**
+ * ¿Existe todavía el archivo? `null` = no se pudo averiguar.
+ *
+ * Se usa para distinguir los dos motivos por los que `remove()` puede no haber
+ * borrado nada: que la policy lo filtrara (el archivo SIGUE ahí) o que el
+ * archivo YA no estuviera. Son situaciones opuestas y piden respuestas
+ * opuestas.
+ */
+export type Existencia = { existe: boolean | null; error: ErrorSb };
+
 export type DepsEliminar = {
   /**
    * Lee la fila con el cliente AUTENTICADO, para que la RLS decida si existe.
@@ -66,6 +76,8 @@ export type DepsEliminar = {
   buscarFila(id: number): Promise<{ data: FilaAdjunto | null; error: ErrorSb }>;
   /** `sb.storage.from(BUCKET).remove([path])` */
   eliminarArchivo(paths: string[]): Promise<RespuestaRemove>;
+  /** Comprueba si el objeto sigue en el bucket (`list` con `search`). */
+  existeArchivo(path: string): Promise<Existencia>;
   /**
    * `delete().eq("id", id).select("id")` — con `select`, no a ciegas.
    * PostgREST responde `error: null` aunque la RLS filtre la fila y no borre
@@ -124,12 +136,39 @@ export async function eliminarArchivoYFila(
   // una policy no deja tocar el objeto, la API devuelve la lista de lo que sí
   // borró, y ese path simplemente no aparece. Mirar solo `error` daba por
   // buena una eliminación que no ocurrió.
+  //
+  // Pero "no borró nada" tiene DOS causas opuestas, y confundirlas deja el
+  // sistema atascado:
+  //   · el archivo SIGUE ahí y la policy lo filtró → no se puede tocar la fila;
+  //   · el archivo YA NO estaba → es una fila colgada, y borrarla es justo lo
+  //     que hay que hacer. Este es el caso del reintento después de que el
+  //     archivo se borrara y el DELETE de la fila fallara: sin esta rama, cada
+  //     reintento volvería a chocar contra "no eliminó el archivo" y la fila
+  //     colgada no se podría quitar NUNCA desde la interfaz.
+  //
+  // Borrar solo la fila aquí NO debilita nada: para llegar hasta este punto la
+  // fila tuvo que ser visible bajo RLS (`buscarFila`), y `contrato_adjuntos`
+  // está limitada a los contratos propios. El DELETE va igualmente por RLS.
   if (!listaIncluye(respuesta.data, fila.path)) {
-    return {
-      ok: false,
-      error: `El almacenamiento no eliminó el archivo (no está en la lista de eliminados). `
-        + `Suele ser falta de permisos sobre ese contrato. El registro NO se eliminó.`,
-    };
+    let existencia: Existencia;
+    try {
+      existencia = await deps.existeArchivo(fila.path);
+    } catch (e) {
+      existencia = { existe: null, error: { message: texto(e) } };
+    }
+
+    if (existencia.existe !== false) {
+      const porque = existencia.existe === true
+        ? "el archivo sigue en el almacenamiento"
+        : `no se pudo comprobar si el archivo sigue ahí${existencia.error ? ` (${existencia.error.message})` : ""}`;
+      return {
+        ok: false,
+        error: `El almacenamiento no eliminó el archivo y ${porque}. `
+          + `Suele ser falta de permisos sobre ese contrato. El registro NO se eliminó, `
+          + `para no dejar el archivo huérfano.`,
+      };
+    }
+    // existe === false: el archivo ya no está. Se sigue y se borra la fila.
   }
 
   // ── 3. La fila ───────────────────────────────────────────────────────────
@@ -140,7 +179,8 @@ export async function eliminarArchivoYFila(
       return {
         ok: false,
         error: `El archivo se eliminó, pero no se pudo borrar su registro: ${r.error.message}. `
-          + `Vuelve a intentarlo: el adjunto seguirá listado hasta que se elimine el registro.`,
+          + `Vuelve a intentar "Eliminar" sobre este mismo adjunto: al comprobar que el archivo `
+          + `ya no está, quitará solo el registro.`,
       };
     }
     borradas = r.data;
@@ -148,7 +188,8 @@ export async function eliminarArchivoYFila(
     return {
       ok: false,
       error: `El archivo se eliminó, pero no se pudo borrar su registro (${texto(e)}). `
-        + `Vuelve a intentarlo: el adjunto seguirá listado hasta que se elimine el registro.`,
+        + `Vuelve a intentar "Eliminar" sobre este mismo adjunto: al comprobar que el archivo `
+        + `ya no está, quitará solo el registro.`,
     };
   }
 
@@ -158,7 +199,7 @@ export async function eliminarArchivoYFila(
     return {
       ok: false,
       error: `El archivo se eliminó, pero el registro no se borró (la base no reportó ninguna fila afectada). `
-        + `El adjunto seguirá listado apuntando a un archivo que ya no existe; avísale a un administrador.`,
+        + `Vuelve a intentar "Eliminar" sobre este mismo adjunto; si sigue igual, avísale a un administrador.`,
     };
   }
 
@@ -195,7 +236,12 @@ export async function subirYRegistrar(
   try {
     subida = await deps.subirArchivo(args.path, args.archivo);
   } catch (e) {
-    return { ok: false, error: `No se pudo subir el archivo: ${texto(e)}` };
+    // RESULTADO INDETERMINADO. Que la llamada lance no significa que el
+    // servidor no haya guardado el objeto: la petición pudo completarse y
+    // perderse la respuesta (corte de red, timeout del navegador). Dar el
+    // error por bueno y no limpiar deja exactamente el mismo huérfano que
+    // todo esto intenta evitar. Se limpia como MEJOR ESFUERZO.
+    return { ok: false, error: await deshacer(deps, args.path, `No se pudo subir el archivo: ${texto(e)}`) };
   }
   if (subida.error) return { ok: false, error: subida.error.message };
 
@@ -209,17 +255,26 @@ export async function subirYRegistrar(
   }
 
   // El archivo ya está arriba y su fila no existe: hay que deshacer.
+  return { ok: false, error: await deshacer(deps, args.path, motivo) };
+}
+
+/**
+ * Intenta borrar el archivo recién subido y devuelve el mensaje que toca.
+ *
+ * Si se confirma la eliminación, el mensaje es el motivo original y nada más:
+ * no hay huérfano del que avisar. Si no se puede confirmar, se añade el aviso
+ * con la ruta concreta — callarlo convierte un problema visible en uno que solo
+ * aparece auditando el bucket a mano.
+ */
+async function deshacer(deps: Pick<DepsSubir, "eliminarArchivo">, path: string, motivo: string): Promise<string> {
   let limpieza: RespuestaRemove;
   try {
-    limpieza = await deps.eliminarArchivo([args.path]);
+    limpieza = await deps.eliminarArchivo([path]);
   } catch (e) {
-    return { ok: false, error: avisoHuerfano(motivo, args.path, texto(e)) };
+    return avisoHuerfano(motivo, path, texto(e));
   }
-
-  if (!limpieza.error && listaIncluye(limpieza.data, args.path)) {
-    return { ok: false, error: motivo };
-  }
-  return { ok: false, error: avisoHuerfano(motivo, args.path, limpieza.error?.message) };
+  if (!limpieza.error && listaIncluye(limpieza.data, path)) return motivo;
+  return avisoHuerfano(motivo, path, limpieza.error?.message);
 }
 
 function avisoHuerfano(motivo: string, path: string, causa?: string): string {

@@ -103,6 +103,29 @@ de un borrado correcto. Ahora es `delete().eq("id", id).select("id")` y se exige
 **exactamente una** coincidencia. Es el mismo patrón dos veces: una respuesta
 sin error no es una operación realizada.
 
+#### El reintento tiene que poder resolver
+
+Cuando el archivo se borra y el `DELETE` de la fila falla, queda una **fila
+colgada**. El mensaje decía "vuelve a intentarlo" — y el reintento **no podía
+funcionar**: el segundo `remove()` no borra nada (el archivo ya no está), así
+que chocaba otra vez contra "el almacenamiento no eliminó el archivo" y la fila
+no se podía quitar nunca desde la interfaz. Una instrucción que no resuelve hace
+perder el tiempo y termina en algo que nadie limpia.
+
+Ahora se distingue **por qué** `remove()` no borró nada:
+
+| Causa | Respuesta |
+|---|---|
+| El archivo **sigue** ahí (la policy lo filtró) | No se toca la fila |
+| El archivo **ya no está** | Se borra solo la fila: era la colgada |
+| **No se pudo averiguar** | No se toca la fila (conservador) |
+
+Borrar solo la fila en el segundo caso **no debilita nada**: para llegar ahí la
+fila tuvo que ser visible bajo RLS (`buscarFila`), y `contrato_adjuntos` está
+limitada a los contratos propios. El `DELETE` va igualmente por RLS. Ante la
+duda no se borra: una fila colgada es molesta, un archivo huérfano con datos
+personales no se ve nunca.
+
 **Orden deliberado: primero el archivo, después la fila.** De los dos estados
 intermedios posibles, se elige el que se nota: una fila que apunta a un archivo
 que ya no está se ve en la pantalla y se puede reintentar; un archivo sin fila no
@@ -120,8 +143,15 @@ borre** — un huérfano callado es peor que un error.
 También se capturan las **excepciones**, no solo los `{ok:false}`: una Server
 Action puede lanzar (red caída, error de Next). Si el registro lanza tras una
 subida buena, se deshace igual; si el `DELETE` de la fila lanza tras borrar el
-archivo, se devuelve un resultado controlado que dice que quedó una fila sin
-archivo.
+archivo, se devuelve un resultado controlado.
+
+**Y si es `upload()` el que lanza, el resultado es INDETERMINADO.** Que la
+llamada falle no significa que el servidor no haya guardado el objeto: la
+petición pudo completarse y perderse la respuesta (corte de red, timeout). Dar
+el error por bueno y no limpiar deja exactamente el mismo huérfano. Se intenta
+borrar la ruta como **mejor esfuerzo**: si se confirma la eliminación, el
+mensaje es el error original y nada más; si no se puede confirmar, se añade el
+aviso de posible huérfano con la ruta concreta.
 
 No hay transacción posible entre Storage y Postgres. La regla es dejar el
 sistema en un estado del que se pueda salir, y decir lo que pasó.
@@ -143,11 +173,12 @@ real.
 
 ### `npm run test:unit` — regresión de la orquestación
 
-**24 pruebas** sobre `lib/adjuntos/operaciones.ts`, sin red ni base de datos.
+**31 pruebas** sobre `lib/adjuntos/operaciones.ts`, sin red ni base de datos.
 Cubren los estados intermedios: la fila no es visible por RLS, Storage devuelve
 error, Storage responde sin error pero no borró, borró otro archivo, lanza
 excepción, el `DELETE` responde `error: null` sin afectar filas, el registro
-falla o **lanza**, el deshacer falla.
+falla o **lanza**, el deshacer falla, `upload()` lanza con resultado
+indeterminado, y el reintento sobre una fila colgada.
 
 Incluye **dos controles negativos** que reimplementan el comportamiento viejo y
 comprueban que producía el huérfano. Si alguien "simplifica" las operaciones y
@@ -181,7 +212,10 @@ su contrato y sobre el de un colega, con la API de Storage.
 - Limpia todo en el `finally`, aunque falle a mitad. **Cada fallo de limpieza
   cuenta como comprobación fallida** y al final se verifica explícitamente que
   no quedaron objetos, contratos, perfiles ni usuarios con la marca
-  `__TEST_STORAGE__`: que una orden de borrado no dé error no significa que haya
+  `__TEST_STORAGE__`. Los usuarios de Auth se comprueban **uno por uno con
+  `getUserById`**, no listando: un `listUsers({perPage:200})` puede dejar los
+  temporales fuera de la página en un proyecto con muchos usuarios y dar verde
+  con ellos todavía en la base: que una orden de borrado no dé error no significa que haya
   borrado — es el mismo patrón que este trabajo persigue en todo lo demás.
 
 ⚠️ Escribe en la base real, por eso exige `--confirmar`.

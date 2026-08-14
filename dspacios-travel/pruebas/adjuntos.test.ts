@@ -44,6 +44,9 @@ function removeQue(resultado: RespuestaRemove | Error) {
 const borroTodo = (paths: string[]): RespuestaRemove => ({ data: paths.map((name) => ({ name })), error: null });
 const filaVisible = async () => ({ data: FILA, error: null });
 const borroUnaFila = async () => ({ data: [{ id: 7 }], error: null });
+/** Por defecto el archivo SIGUE ahí: es el caso conservador. */
+const archivoPresente = async () => ({ existe: true, error: null });
+const archivoAusente = async () => ({ existe: false, error: null });
 const err = (r: { ok: boolean } & Record<string, unknown>) => (r.ok === false ? String(r.error) : "");
 
 // ── Origen de los datos: nada del cliente ────────────────────────────────────
@@ -51,7 +54,7 @@ const err = (r: { ok: boolean } & Record<string, unknown>) => (r.ok === false ? 
 test("usa la ruta que dice la BASE, no la que pudiera mandar el cliente", async () => {
   const rm = removeQue(borroTodo([PATH]));
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: borroUnaFila },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: borroUnaFila },
     { id: 7 }
   );
   assert.deepEqual(r, { ok: true, numeroContrato: CONTRATO });
@@ -65,6 +68,7 @@ test("si la fila no es visible (RLS), se para ANTES de tocar Storage", async () 
     {
       buscarFila: async () => ({ data: null, error: null }),
       eliminarArchivo: rm.fn,
+      existeArchivo: archivoPresente,
       eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; },
     },
     { id: 7 }
@@ -81,6 +85,7 @@ test("si la consulta de la fila da error, no toca nada", async () => {
     {
       buscarFila: async () => ({ data: null, error: { message: "JWT expired" } }),
       eliminarArchivo: rm.fn,
+      existeArchivo: archivoPresente,
       eliminarFila: borroUnaFila,
     },
     { id: 7 }
@@ -96,6 +101,7 @@ test("si la consulta de la fila LANZA, no toca nada", async () => {
     {
       buscarFila: async () => { throw new Error("fetch failed"); },
       eliminarArchivo: rm.fn,
+      existeArchivo: archivoPresente,
       eliminarFila: borroUnaFila,
     },
     { id: 7 }
@@ -111,7 +117,7 @@ test("si Storage devuelve error, NO borra la fila (el archivo quedaría huérfan
   const rm = removeQue({ data: null, error: { message: "new row violates row-level security policy" } });
   let intentoFila = false;
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; } },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; } },
     { id: 7 }
   );
   assert.equal(r.ok, false);
@@ -124,7 +130,7 @@ test("si Storage NO devuelve error pero tampoco borró el archivo, NO borra la f
   const rm = removeQue({ data: [], error: null });
   let intentoFila = false;
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; } },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; } },
     { id: 7 }
   );
   assert.equal(r.ok, false);
@@ -138,7 +144,7 @@ test("acepta que Storage devuelva solo el NOMBRE del objeto, no la ruta completa
   // que sería peor que el problema original.
   const rm = removeQue({ data: [{ name: "cedula-1700000000000.pdf" }], error: null });
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: borroUnaFila },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: borroUnaFila },
     { id: 7 }
   );
   assert.equal(r.ok, true);
@@ -148,7 +154,7 @@ test("si Storage borró OTRO archivo pero no el pedido, tampoco borra la fila", 
   const rm = removeQue({ data: [{ name: "00-9999/otro.pdf" }], error: null });
   let intentoFila = false;
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; } },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; } },
     { id: 7 }
   );
   assert.equal(r.ok, false);
@@ -159,7 +165,7 @@ test("si `remove` lanza una excepción, no borra la fila y explica el motivo", a
   const rm = removeQue(new Error("fetch failed"));
   let intentoFila = false;
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; } },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; } },
     { id: 7 }
   );
   assert.equal(r.ok, false);
@@ -172,12 +178,14 @@ test("si `remove` lanza una excepción, no borra la fila y explica el motivo", a
 test("si el DELETE devuelve error, lo dice: queda un registro colgado", async () => {
   const rm = removeQue(borroTodo([PATH]));
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: async () => ({ data: null, error: { message: "permission denied" } }) },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => ({ data: null, error: { message: "permission denied" } }) },
     { id: 7 }
   );
   assert.equal(r.ok, false);
   assert.match(err(r), /permission denied/);
-  assert.match(err(r), /seguir. listado|Vuelve a intentarlo/);
+  // El mensaje invita a reintentar, y ese reintento SÍ resuelve — lo comprueba
+  // la prueba "el mensaje del DELETE fallido invita a reintentar…".
+  assert.match(err(r), /Vuelve a intentar/);
 });
 
 test("si el DELETE responde error:null pero NO borró ninguna fila, no se reporta éxito", async () => {
@@ -187,7 +195,7 @@ test("si el DELETE responde error:null pero NO borró ninguna fila, no se report
   // apuntando a un archivo que ya no existe.
   const rm = removeQue(borroTodo([PATH]));
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: async () => ({ data: [], error: null }) },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => ({ data: [], error: null }) },
     { id: 7 }
   );
   assert.equal(r.ok, false);
@@ -197,7 +205,7 @@ test("si el DELETE responde error:null pero NO borró ninguna fila, no se report
 test("si el DELETE reporta más de una fila, tampoco se da por bueno", async () => {
   const rm = removeQue(borroTodo([PATH]));
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: async () => ({ data: [{ id: 7 }, { id: 8 }], error: null }) },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => ({ data: [{ id: 7 }, { id: 8 }], error: null }) },
     { id: 7 }
   );
   assert.equal(r.ok, false);
@@ -206,12 +214,110 @@ test("si el DELETE reporta más de una fila, tampoco se da por bueno", async () 
 test("si el DELETE LANZA después de borrar el archivo, devuelve un resultado controlado", async () => {
   const rm = removeQue(borroTodo([PATH]));
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: async () => { throw new Error("connection reset"); } },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => { throw new Error("connection reset"); } },
     { id: 7 }
   );
   assert.equal(r.ok, false);
   assert.match(err(r), /connection reset/);
   assert.match(err(r), /El archivo se elimin/, "debe decir que el archivo ya no está");
+});
+
+// ── Recuperación de la fila colgada ──────────────────────────────────────────
+// Después de que el archivo se borre y el DELETE de la fila falle, el usuario
+// vuelve a darle a "Eliminar". El segundo `remove()` no borra nada —el archivo
+// ya no está—, así que sin distinguir POR QUÉ no borró, el reintento chocaría
+// para siempre contra "el almacenamiento no eliminó el archivo" y la fila
+// colgada no se podría quitar nunca desde la interfaz.
+
+test("REINTENTO: si el archivo ya no existe, borra solo la fila colgada", async () => {
+  const rm = removeQue({ data: [], error: null });   // no borra: ya no estaba
+  let filaBorrada = false;
+  const r = await eliminarArchivoYFila(
+    {
+      buscarFila: filaVisible,
+      eliminarArchivo: rm.fn,
+      existeArchivo: archivoAusente,
+      eliminarFila: async () => { filaBorrada = true; return { data: [{ id: 7 }], error: null }; },
+    },
+    { id: 7 }
+  );
+  assert.deepEqual(r, { ok: true, numeroContrato: CONTRATO });
+  assert.equal(filaBorrada, true, "la fila colgada se puede quitar");
+});
+
+test("pero si el archivo SIGUE ahí, no se toca la fila", async () => {
+  const rm = removeQue({ data: [], error: null });
+  let intentoFila = false;
+  const r = await eliminarArchivoYFila(
+    {
+      buscarFila: filaVisible,
+      eliminarArchivo: rm.fn,
+      existeArchivo: archivoPresente,
+      eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; },
+    },
+    { id: 7 }
+  );
+  assert.equal(r.ok, false);
+  assert.equal(intentoFila, false);
+  assert.match(err(r), /sigue en el almacenamiento/);
+});
+
+test("si NO se puede comprobar si el archivo sigue ahí, se actúa en conservador", async () => {
+  // Ante la duda no se borra la fila: dejar una fila colgada es molesto, dejar
+  // un archivo huérfano con datos personales no se ve nunca.
+  const rm = removeQue({ data: [], error: null });
+  let intentoFila = false;
+  const r = await eliminarArchivoYFila(
+    {
+      buscarFila: filaVisible,
+      eliminarArchivo: rm.fn,
+      existeArchivo: async () => ({ existe: null, error: { message: "Bucket not found" } }),
+      eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; },
+    },
+    { id: 7 }
+  );
+  assert.equal(r.ok, false);
+  assert.equal(intentoFila, false);
+  assert.match(err(r), /no se pudo comprobar/);
+  assert.match(err(r), /Bucket not found/);
+});
+
+test("si la comprobación de existencia LANZA, también se actúa en conservador", async () => {
+  const rm = removeQue({ data: [], error: null });
+  let intentoFila = false;
+  const r = await eliminarArchivoYFila(
+    {
+      buscarFila: filaVisible,
+      eliminarArchivo: rm.fn,
+      existeArchivo: async () => { throw new Error("timeout"); },
+      eliminarFila: async () => { intentoFila = true; return { data: [], error: null }; },
+    },
+    { id: 7 }
+  );
+  assert.equal(r.ok, false);
+  assert.equal(intentoFila, false);
+  assert.match(err(r), /timeout/);
+});
+
+test("el mensaje del DELETE fallido invita a reintentar, y ese reintento AHORA funciona", async () => {
+  // Antes decía "vuelve a intentarlo" y el reintento no podía funcionar: es la
+  // clase de instrucción que hace perder el tiempo y termina en un huérfano
+  // que nadie limpia.
+  const rm = removeQue(borroTodo([PATH]));
+  const primero = await eliminarArchivoYFila(
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => ({ data: null, error: { message: "permission denied" } }) },
+    { id: 7 }
+  );
+  assert.equal(primero.ok, false);
+  assert.match(err(primero), /Vuelve a intentar/);
+
+  // Segundo intento: el archivo ya no está.
+  const rm2 = removeQue({ data: [], error: null });
+  const segundo = await eliminarArchivoYFila(
+    { buscarFila: filaVisible, eliminarArchivo: rm2.fn, existeArchivo: archivoAusente, eliminarFila: borroUnaFila },
+    { id: 7 }
+  );
+  assert.deepEqual(segundo, { ok: true, numeroContrato: CONTRATO }, "el reintento tiene que resolver");
 });
 
 // ── subirYRegistrar ──────────────────────────────────────────────────────────
@@ -241,19 +347,58 @@ test("si falla la subida, no intenta registrar", async () => {
   assert.match(err(r), /Payload too large/);
 });
 
-test("si la subida LANZA, no intenta registrar", async () => {
+test("si la subida LANZA, no intenta registrar pero SÍ intenta limpiar", async () => {
+  // Que `upload()` lance no significa que el servidor no haya guardado el
+  // objeto: la petición pudo completarse y perderse la respuesta. Es un
+  // resultado INDETERMINADO, y no limpiar deja el mismo huérfano que todo
+  // esto intenta evitar.
+  const rm = removeQue(borroTodo([PATH]));
   let intentoRegistro = false;
   const r = await subirYRegistrar(
     {
       subirArchivo: async () => { throw new Error("network down"); },
       registrarFila: async () => { intentoRegistro = true; return { ok: true }; },
-      eliminarArchivo: async () => ({ data: [], error: null }),
+      eliminarArchivo: rm.fn,
     },
     { path: PATH, archivo: "x" }
   );
   assert.equal(r.ok, false);
-  assert.equal(intentoRegistro, false);
+  assert.equal(intentoRegistro, false, "no hay nada que registrar");
+  assert.deepEqual(rm.llamadas, [[PATH]], "mejor esfuerzo: intenta borrar por si quedó subido");
   assert.match(err(r), /network down/);
+  assert.doesNotMatch(err(r), /AVISO/, "la limpieza confirmó: no hay huérfano del que avisar");
+});
+
+test("si la subida LANZA y la limpieza devuelve lista vacía, AVISA del posible huérfano", async () => {
+  const rm = removeQue({ data: [], error: null });
+  const r = await subirYRegistrar(
+    {
+      subirArchivo: async () => { throw new Error("network down"); },
+      registrarFila: async () => ({ ok: true }),
+      eliminarArchivo: rm.fn,
+    },
+    { path: PATH, archivo: "x" }
+  );
+  assert.equal(r.ok, false);
+  assert.match(err(r), /network down/);
+  assert.match(err(r), /AVISO/);
+  assert.match(err(r), new RegExp(PATH.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("si la subida LANZA y la limpieza también falla, AVISA del posible huérfano", async () => {
+  const rm = removeQue(new Error("no route to host"));
+  const r = await subirYRegistrar(
+    {
+      subirArchivo: async () => { throw new Error("network down"); },
+      registrarFila: async () => ({ ok: true }),
+      eliminarArchivo: rm.fn,
+    },
+    { path: PATH, archivo: "x" }
+  );
+  assert.equal(r.ok, false);
+  assert.match(err(r), /network down/);
+  assert.match(err(r), /AVISO/);
+  assert.match(err(r), /no route to host/);
 });
 
 test("si falla el registro, DESHACE la subida y no menciona ningún huérfano", async () => {
@@ -379,7 +524,7 @@ test("CONTROL NEGATIVO: el código viejo borraba la fila aunque el archivo sigui
   const rm2 = removeQue({ data: null, error: { message: "row-level security" } });
   let filaBorrada2 = false;
   const nuevo = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm2.fn, eliminarFila: async () => { filaBorrada2 = true; return { data: [], error: null }; } },
+    { buscarFila: filaVisible, eliminarArchivo: rm2.fn, existeArchivo: archivoPresente, eliminarFila: async () => { filaBorrada2 = true; return { data: [], error: null }; } },
     { id: 7 }
   );
   assert.equal(nuevo.ok, false);
@@ -394,7 +539,7 @@ test("CONTROL NEGATIVO: un DELETE a ciegas no distingue borrado de filtrado por 
   // Con select, la lista vacía delata que no se tocó nada.
   const rm = removeQue(borroTodo([PATH]));
   const r = await eliminarArchivoYFila(
-    { buscarFila: filaVisible, eliminarArchivo: rm.fn, eliminarFila: async () => ({ data: [], error: null }) },
+    { buscarFila: filaVisible, eliminarArchivo: rm.fn, existeArchivo: archivoPresente, eliminarFila: async () => ({ data: [], error: null }) },
     { id: 7 }
   );
   assert.equal(r.ok, false);
