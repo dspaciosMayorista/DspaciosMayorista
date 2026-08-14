@@ -57,11 +57,27 @@ comportó distinto.
 
 ---
 
-## 2. Dos agujeros reales que aparecieron al revisar esto
+## 2. Los agujeros reales que aparecieron al revisar esto
 
-Ninguno lo detectaba la prueba SQL. Los dos dejan **archivos huérfanos**: un
+Ninguno lo detectaba la prueba SQL. Varios dejan **archivos huérfanos**: un
 fichero con la cédula de un cliente que se queda en el bucket sin nada que lo
 referencie, invisible en la pantalla e imposible de borrar desde la interfaz.
+
+El hilo común de casi todos es el mismo: **una respuesta sin error no es una
+operación realizada**. Aparece tres veces —en `remove()` de Storage, en el
+`DELETE` de PostgREST, y en las órdenes de limpieza de la propia prueba de
+integración— y las tres veces había que mirar algo más que `error`.
+
+### 2.0 `eliminarAdjunto` confiaba en lo que mandaba el navegador
+
+Recibía `id`, `path` y `numeroContrato` **del cliente** y borraba el `path`
+recibido. Las policies de Storage lo filtran, así que no era explotable — pero
+apoyar el borrado en un dato que viene del navegador convierte cualquier futuro
+descuido en una policy en un problema grave.
+
+Ahora recibe **solo el `id`**, lee la fila con el cliente autenticado (pasando
+por RLS) y usa **exclusivamente** el `path` y el `numero_contrato` que dice la
+base. Si la fila no es visible, se para **antes de tocar Storage**.
 
 ### 2.1 `eliminarAdjunto` tiraba el resultado de `remove()`
 
@@ -81,6 +97,12 @@ borró de verdad**.
 > sí borró — donde ese path simplemente no aparece. Hay que comprobar que el
 > path esté en `data`, no solo que `error` sea null.
 
+**Y lo mismo pasa del lado de Postgres.** `delete().eq("id", id)` devolvía
+`error: null` aunque la RLS filtrara la fila y no borrara nada: indistinguible
+de un borrado correcto. Ahora es `delete().eq("id", id).select("id")` y se exige
+**exactamente una** coincidencia. Es el mismo patrón dos veces: una respuesta
+sin error no es una operación realizada.
+
 **Orden deliberado: primero el archivo, después la fila.** De los dos estados
 intermedios posibles, se elige el que se nota: una fila que apunta a un archivo
 que ya no está se ve en la pantalla y se puede reintentar; un archivo sin fila no
@@ -95,8 +117,25 @@ Corregido: si el registro falla, se deshace la subida. Y si el deshacer también
 falla, el mensaje **dice qué archivo quedó colgado y a quién pedirle que lo
 borre** — un huérfano callado es peor que un error.
 
+También se capturan las **excepciones**, no solo los `{ok:false}`: una Server
+Action puede lanzar (red caída, error de Next). Si el registro lanza tras una
+subida buena, se deshace igual; si el `DELETE` de la fila lanza tras borrar el
+archivo, se devuelve un resultado controlado que dice que quedó una fila sin
+archivo.
+
 No hay transacción posible entre Storage y Postgres. La regla es dejar el
 sistema en un estado del que se pueda salir, y decir lo que pasó.
+
+### 2.3 La pantalla descartaba el resultado
+
+`AdjuntosContrato` hacía `start(() => { void eliminarAdjunto(...) })`: tiraba la
+respuesta, así que un fallo —incluido "el archivo no se pudo borrar"— pasaba en
+silencio y la fila parecía haberse ido. Además el estado `pending` se apagaba al
+lanzar la promesa, no al terminar la operación.
+
+Ahora espera el resultado, **muestra el error en la fila**, refresca solo si fue
+bien, y el botón queda deshabilitado con "Eliminando…" durante la operación
+real.
 
 ---
 
@@ -104,14 +143,19 @@ sistema en un estado del que se pueda salir, y decir lo que pasó.
 
 ### `npm run test:unit` — regresión de la orquestación
 
-14 pruebas sobre `lib/adjuntos/operaciones.ts`, sin red ni base de datos. Cubren
-los estados intermedios: Storage devuelve error, Storage responde sin error pero
-no borró, borró otro archivo, lanza excepción, el registro falla, el deshacer
-falla.
+**24 pruebas** sobre `lib/adjuntos/operaciones.ts`, sin red ni base de datos.
+Cubren los estados intermedios: la fila no es visible por RLS, Storage devuelve
+error, Storage responde sin error pero no borró, borró otro archivo, lanza
+excepción, el `DELETE` responde `error: null` sin afectar filas, el registro
+falla o **lanza**, el deshacer falla.
 
 Incluye **dos controles negativos** que reimplementan el comportamiento viejo y
 comprueban que producía el huérfano. Si alguien "simplifica" las operaciones y
 vuelve a ese comportamiento, esas dos pruebas lo delatan.
+
+> El número de pruebas se queda desactualizado con facilidad. Si esta cifra no
+> coincide con lo que imprime `npm run test:unit`, la que manda es la del
+> comando.
 
 ### `storage-adjuntos.mjs` — integración real
 
@@ -119,18 +163,26 @@ vuelve a ese comportamiento, esas dos pruebas lo delatan.
 node supabase/scripts/pruebas/storage-adjuntos.mjs --confirmar
 ```
 
-Crea dos usuarios `venta` y dos contratos temporales (prefijo `__TEST_STORAGE__`),
-inicia sesión como un asesor real y ejecuta **subir, leer, reemplazar y eliminar**
-sobre su contrato y sobre el de un colega, con la API de Storage — que es lo que
-la aplicación usa.
+Crea **tres** usuarios (dos `venta` y uno `administracion`) y dos contratos
+temporales con la marca `__TEST_STORAGE__`, inicia sesión **con la clave anon**
+—como entra la aplicación— y ejecuta **subir, leer, reemplazar y eliminar** sobre
+su contrato y sobre el de un colega, con la API de Storage.
 
 - Informa el **error exacto** de cada operación. Un "denegado" sin motivo no
   distingue una policy que funciona de una llamada mal hecha.
 - Comprueba con service-role que el archivo ajeno **sigue intacto** después de
   los cuatro intentos, y que no quedó ningún archivo colado.
 - Comprueba que un rol administrativo **sí** puede: si no, la prueba pasaría
-  igual cerrándole el paso a todo el mundo.
-- Limpia todo en el `finally`, aunque falle a mitad.
+  igual cerrándole el paso a todo el mundo. Y lo hace con un **usuario
+  administrativo real** y sesión con la clave anon — la versión anterior usaba
+  service-role para ese caso, que **se salta la RLS por definición** y por tanto
+  no probaba nada. Service-role queda solo para fixtures, verificación
+  independiente y limpieza.
+- Limpia todo en el `finally`, aunque falle a mitad. **Cada fallo de limpieza
+  cuenta como comprobación fallida** y al final se verifica explícitamente que
+  no quedaron objetos, contratos, perfiles ni usuarios con la marca
+  `__TEST_STORAGE__`: que una orden de borrado no dé error no significa que haya
+  borrado — es el mismo patrón que este trabajo persigue en todo lo demás.
 
 ⚠️ Escribe en la base real, por eso exige `--confirmar`.
 

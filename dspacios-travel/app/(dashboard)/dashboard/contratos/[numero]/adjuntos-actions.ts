@@ -36,22 +36,32 @@ export async function urlFirmadaAdjunto(path: string): Promise<{ ok: true; url: 
   return { ok: true, url: data.signedUrl };
 }
 
+// Recibe SOLO el id. La ruta y el número de contrato se leen de la base con el
+// cliente autenticado —o sea, pasando por RLS— y se usan esos, no los que
+// mandó el navegador. Si la fila no es visible, se para antes de tocar Storage.
+//
 // Antes esto llamaba `remove()` y TIRABA el resultado, y borraba la fila igual.
-// Si Storage rechazaba el borrado, la fila desaparecia de la pantalla y el
-// archivo —una cedula, un soporte de pago— se quedaba en el bucket sin nada que
-// lo referenciara: invisible e imborrable desde la interfaz. La orquestacion
-// (y el porque del orden) esta en `lib/adjuntos/operaciones.ts`, que es puro y
+// Si Storage rechazaba el borrado, la fila desaparecía de la pantalla y el
+// archivo —una cédula, un soporte de pago— se quedaba en el bucket sin nada que
+// lo referenciara: invisible e imborrable desde la interfaz. La orquestación (y
+// el porqué del orden) está en `lib/adjuntos/operaciones.ts`, que es puro y
 // tiene pruebas.
-export async function eliminarAdjunto(id: number, path: string, numeroContrato: string): Promise<Result> {
+export async function eliminarAdjunto(id: number): Promise<Result> {
   const sb = await createClient();
   const r = await eliminarArchivoYFila(
     {
+      buscarFila: async (idFila) =>
+        await sb.from("contrato_adjuntos").select("path, numero_contrato").eq("id", idFila).maybeSingle(),
       eliminarArchivo: (paths) => sb.storage.from(BUCKET).remove(paths),
-      eliminarFila: async (idFila) => await sb.from("contrato_adjuntos").delete().eq("id", idFila),
+      // `.select("id")` NO es decorativo: PostgREST responde `error: null`
+      // aunque la RLS filtre la fila y no borre nada. Sin el select no habría
+      // forma de distinguir "borrado" de "no tocado".
+      eliminarFila: async (idFila) =>
+        await sb.from("contrato_adjuntos").delete().eq("id", idFila).select("id"),
     },
-    { id, path }
+    { id }
   );
   if (!r.ok) return r;
-  revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+  revalidatePath(`/dashboard/contratos/${r.numeroContrato}`);
   return { ok: true };
 }

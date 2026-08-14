@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Lock } from "lucide-react";
@@ -98,7 +98,7 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
               <th className="px-3 py-2">Tipo</th><th className="px-3 py-2">Archivo</th>
               <th className="px-3 py-2">Tamaño</th><th className="px-3 py-2">Subido por</th><th className="px-3 py-2">Fecha</th><th className="px-3 py-2"></th>
             </tr></thead>
-            <tbody>{adjuntos.map((a) => <Fila key={a.id} a={a} numeroContrato={numeroContrato} puedeEditar={puedeEditar} />)}</tbody>
+            <tbody>{adjuntos.map((a) => <Fila key={a.id} a={a} puedeEditar={puedeEditar} />)}</tbody>
           </table>
         </div>
       ) : puedeEditar ? (
@@ -124,9 +124,30 @@ export function AdjuntosContrato({ numeroContrato, adjuntos, puedeEditar = true 
   );
 }
 
-function Fila({ a, numeroContrato, puedeEditar }: { a: Adjunto; numeroContrato: string; puedeEditar: boolean }) {
-  const [pending, start] = useTransition();
+function Fila({ a, puedeEditar }: { a: Adjunto; puedeEditar: boolean }) {
+  const router = useRouter();
+  const [borrando, setBorrando] = useState(false);
+  const [errFila, setErrFila] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // Antes esto era `start(() => { void eliminarAdjunto(...) })`: se descartaba
+  // el resultado, así que un fallo —incluido "el archivo no se pudo borrar"—
+  // pasaba en silencio y la fila parecía haberse ido. Y `pending` se apagaba
+  // apenas se lanzaba la promesa, no cuando la operación terminaba.
+  async function eliminar() {
+    if (!confirm("¿Eliminar este adjunto?")) return;
+    setErrFila("");
+    setBorrando(true);
+    try {
+      const r = await eliminarAdjunto(a.id);
+      if (!r.ok) { setErrFila(r.error); return; }
+      router.refresh();
+    } catch (e) {
+      setErrFila(e instanceof Error ? e.message : "No se pudo eliminar el adjunto.");
+    } finally {
+      setBorrando(false);
+    }
+  }
 
   async function descargar() {
     setBusy(true);
@@ -147,10 +168,12 @@ function Fila({ a, numeroContrato, puedeEditar }: { a: Adjunto; numeroContrato: 
           {busy ? "…" : "Descargar"}
         </button>
         {puedeEditar && (
-          <button type="button" disabled={pending}
-            onClick={() => { if (confirm("¿Eliminar este adjunto?")) start(() => { void eliminarAdjunto(a.id, a.path, numeroContrato); }); }}
-            className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+          <button type="button" disabled={borrando} onClick={() => { void eliminar(); }}
+            className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-50">
+            {borrando ? "Eliminando…" : "Eliminar"}
+          </button>
         )}
+        {errFila && <p className="mt-1 max-w-xs text-right text-xs text-red-600">{errFila}</p>}
       </td>
     </tr>
   );

@@ -8,7 +8,7 @@
 // dependencias entran por parámetro y las pruebas de `pruebas/adjuntos.test.ts`
 // las sustituyen.
 //
-// LOS DOS AGUJEROS QUE ESTO CIERRA
+// LOS AGUJEROS QUE ESTO CIERRA
 //
 //   1. `eliminarAdjunto` llamaba `remove()` y TIRABA EL RESULTADO, y después
 //      borraba la fila igual. Si Storage rechazaba el borrado (RLS) la fila
@@ -20,11 +20,26 @@
 //      el registro fallaba, el archivo ya estaba arriba y nadie lo limpiaba:
 //      el mismo huérfano, por el otro extremo.
 //
+//   3. La ruta a borrar venía DEL CLIENTE. Aunque las policies de Storage la
+//      filtren, aceptar del navegador el `path` que se va a borrar es pedir
+//      que el día que una policy cambie el error sea de los graves. Ahora la
+//      ruta se LEE de la base con el cliente autenticado (o sea, pasando por
+//      RLS) y se usa exclusivamente esa.
+//
 // No hay transacción posible entre Storage y Postgres, así que la regla es:
 // dejar el sistema en un estado del que se pueda salir, y DECIR lo que pasó.
 // Un huérfano callado es peor que un error.
 
 export type ResultadoOp = { ok: true } | { ok: false; error: string };
+export type ResultadoEliminar = { ok: true; numeroContrato: string } | { ok: false; error: string };
+
+type ErrorSb = { message: string } | null;
+
+/** Lo que devuelve `supabase.storage.from(b).remove(paths)`. */
+export type RespuestaRemove = { data: { name: string }[] | null; error: ErrorSb };
+
+/** La fila de `contrato_adjuntos` tal como la ve el usuario que pregunta. */
+export type FilaAdjunto = { path: string; numero_contrato: string };
 
 /**
  * ¿La lista que devolvió `remove()` incluye este path?
@@ -41,20 +56,30 @@ function listaIncluye(data: { name: string }[] | null, path: string): boolean {
   return (data ?? []).some((o) => o.name === path || o.name === base || path.endsWith(`/${o.name}`));
 }
 
-type ErrorSb = { message: string } | null;
-
-/** Lo que devuelve `supabase.storage.from(b).remove(paths)`. */
-export type RespuestaRemove = { data: { name: string }[] | null; error: ErrorSb };
+const texto = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export type DepsEliminar = {
+  /**
+   * Lee la fila con el cliente AUTENTICADO, para que la RLS decida si existe.
+   * Devuelve null si no es visible.
+   */
+  buscarFila(id: number): Promise<{ data: FilaAdjunto | null; error: ErrorSb }>;
   /** `sb.storage.from(BUCKET).remove([path])` */
   eliminarArchivo(paths: string[]): Promise<RespuestaRemove>;
-  /** Borra la fila de `contrato_adjuntos`. */
-  eliminarFila(id: number): Promise<{ error: ErrorSb }>;
+  /**
+   * `delete().eq("id", id).select("id")` — con `select`, no a ciegas.
+   * PostgREST responde `error: null` aunque la RLS filtre la fila y no borre
+   * NADA; sin `select` no hay forma de distinguir "borrado" de "no tocado".
+   */
+  eliminarFila(id: number): Promise<{ data: { id: number }[] | null; error: ErrorSb }>;
 };
 
 /**
  * Borra el archivo y, SOLO si eso funcionó, la fila que lo indexa.
+ *
+ * Recibe únicamente el `id`. La ruta y el número de contrato se leen de la
+ * base con el cliente autenticado: son los valores reales, no los que mandó el
+ * navegador. Si la fila no es visible, se para ANTES de tocar Storage.
  *
  * El orden importa y es deliberado. Si se borrara primero la fila y fallara el
  * archivo, quedaría un huérfano invisible con datos personales dentro. Al
@@ -64,14 +89,27 @@ export type DepsEliminar = {
  */
 export async function eliminarArchivoYFila(
   deps: DepsEliminar,
-  args: { id: number; path: string }
-): Promise<ResultadoOp> {
+  args: { id: number }
+): Promise<ResultadoEliminar> {
+  // ── 1. Qué archivo es, según la base y según la RLS ──────────────────────
+  let fila: FilaAdjunto | null;
+  try {
+    const r = await deps.buscarFila(args.id);
+    if (r.error) return { ok: false, error: `No se pudo leer el adjunto: ${r.error.message}` };
+    fila = r.data;
+  } catch (e) {
+    return { ok: false, error: `No se pudo leer el adjunto: ${texto(e)}` };
+  }
+  if (!fila) {
+    return { ok: false, error: "El adjunto no existe o no tienes permiso para verlo. No se tocó ningún archivo." };
+  }
+
+  // ── 2. El archivo ────────────────────────────────────────────────────────
   let respuesta: RespuestaRemove;
   try {
-    respuesta = await deps.eliminarArchivo([args.path]);
+    respuesta = await deps.eliminarArchivo([fila.path]);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return { ok: false, error: `No se pudo eliminar el archivo (${msg}). El registro no se eliminó.` };
+    return { ok: false, error: `No se pudo eliminar el archivo (${texto(e)}). El registro no se eliminó.` };
   }
 
   if (respuesta.error) {
@@ -86,7 +124,7 @@ export async function eliminarArchivoYFila(
   // una policy no deja tocar el objeto, la API devuelve la lista de lo que sí
   // borró, y ese path simplemente no aparece. Mirar solo `error` daba por
   // buena una eliminación que no ocurrió.
-  if (!listaIncluye(respuesta.data, args.path)) {
+  if (!listaIncluye(respuesta.data, fila.path)) {
     return {
       ok: false,
       error: `El almacenamiento no eliminó el archivo (no está en la lista de eliminados). `
@@ -94,15 +132,37 @@ export async function eliminarArchivoYFila(
     };
   }
 
-  const { error } = await deps.eliminarFila(args.id);
-  if (error) {
+  // ── 3. La fila ───────────────────────────────────────────────────────────
+  let borradas: { id: number }[] | null;
+  try {
+    const r = await deps.eliminarFila(args.id);
+    if (r.error) {
+      return {
+        ok: false,
+        error: `El archivo se eliminó, pero no se pudo borrar su registro: ${r.error.message}. `
+          + `Vuelve a intentarlo: el adjunto seguirá listado hasta que se elimine el registro.`,
+      };
+    }
+    borradas = r.data;
+  } catch (e) {
     return {
       ok: false,
-      error: `El archivo se eliminó, pero no se pudo borrar su registro: ${error.message}. `
+      error: `El archivo se eliminó, pero no se pudo borrar su registro (${texto(e)}). `
         + `Vuelve a intentarlo: el adjunto seguirá listado hasta que se elimine el registro.`,
     };
   }
-  return { ok: true };
+
+  // Mismo patrón que en Storage: sin error pero sin filas afectadas. Con
+  // PostgREST eso significa que la RLS filtró el DELETE.
+  if ((borradas ?? []).length !== 1) {
+    return {
+      ok: false,
+      error: `El archivo se eliminó, pero el registro no se borró (la base no reportó ninguna fila afectada). `
+        + `El adjunto seguirá listado apuntando a un archivo que ya no existe; avísale a un administrador.`,
+    };
+  }
+
+  return { ok: true, numeroContrato: fila.numero_contrato };
 }
 
 export type DepsSubir = {
@@ -115,43 +175,54 @@ export type DepsSubir = {
 };
 
 /**
- * Sube el archivo y registra su fila. Si el registro falla, DESHACE la subida.
+ * Sube el archivo y registra su fila. Si el registro falla —devolviendo error o
+ * LANZANDO—, deshace la subida.
+ *
+ * Una Server Action puede lanzar (red caída, error de Next) además de devolver
+ * `{ok:false}`. Si solo se contemplara el retorno, una excepción se llevaría
+ * por delante el deshacer y dejaría el huérfano: justo el caso que esto
+ * pretende evitar.
  *
  * Si además falla el deshacer, no se disimula: el mensaje dice qué archivo
- * quedó colgado y a quién pedirle que lo borre. Es información que alguien
- * necesita para limpiar; callarla convierte un problema visible en uno que solo
- * aparece auditando el bucket a mano.
+ * quedó colgado y a quién pedirle que lo borre. Callarlo convierte un problema
+ * visible en uno que solo aparece auditando el bucket a mano.
  */
 export async function subirYRegistrar(
   deps: DepsSubir,
   args: { path: string; archivo: unknown }
 ): Promise<ResultadoOp> {
-  const subida = await deps.subirArchivo(args.path, args.archivo);
+  let subida: { error: ErrorSb };
+  try {
+    subida = await deps.subirArchivo(args.path, args.archivo);
+  } catch (e) {
+    return { ok: false, error: `No se pudo subir el archivo: ${texto(e)}` };
+  }
   if (subida.error) return { ok: false, error: subida.error.message };
 
-  const registro = await deps.registrarFila(args.path);
-  if (registro.ok) return { ok: true };
+  let motivo: string;
+  try {
+    const registro = await deps.registrarFila(args.path);
+    if (registro.ok) return { ok: true };
+    motivo = registro.error;
+  } catch (e) {
+    motivo = `No se pudo registrar el adjunto: ${texto(e)}`;
+  }
 
   // El archivo ya está arriba y su fila no existe: hay que deshacer.
   let limpieza: RespuestaRemove;
   try {
     limpieza = await deps.eliminarArchivo([args.path]);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return {
-      ok: false,
-      error: `${registro.error} · AVISO: el archivo quedó subido en «${args.path}» y no se pudo `
-        + `deshacer (${msg}). Pídele a un administrador que lo elimine.`,
-    };
+    return { ok: false, error: avisoHuerfano(motivo, args.path, texto(e)) };
   }
 
-  const seBorro = !limpieza.error && listaIncluye(limpieza.data, args.path);
-  if (seBorro) return { ok: false, error: registro.error };
+  if (!limpieza.error && listaIncluye(limpieza.data, args.path)) {
+    return { ok: false, error: motivo };
+  }
+  return { ok: false, error: avisoHuerfano(motivo, args.path, limpieza.error?.message) };
+}
 
-  return {
-    ok: false,
-    error: `${registro.error} · AVISO: el archivo quedó subido en «${args.path}» y no se pudo `
-      + `deshacer${limpieza.error ? ` (${limpieza.error.message})` : ""}. `
-      + `Pídele a un administrador que lo elimine.`,
-  };
+function avisoHuerfano(motivo: string, path: string, causa?: string): string {
+  return `${motivo} · AVISO: el archivo quedó subido en «${path}» y no se pudo deshacer`
+    + `${causa ? ` (${causa})` : ""}. Pídele a un administrador que lo elimine.`;
 }
