@@ -230,7 +230,106 @@ permite DML sobre esa tabla.
 
 ---
 
-## 4. Ninguna policy se relajó
+## 4. HALLAZGO ABIERTO — las policies del bucket no separan las dos agencias
+
+**Esto no es una hipótesis. Se deduce del texto de la policy y está comprobado.**
+
+Las cuatro policies del bucket `contratos` (migración 148) tienen la misma
+condición:
+
+```sql
+bucket_id = 'contratos'
+and mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta')
+and (mi_rol() <> 'venta' or soy_asesor_del_contrato(split_part(name,'/',1)))
+```
+
+Dos agujeros, los dos de lógica:
+
+1. **Para cualquier rol que no sea `venta`, la condición de propiedad ni
+   siquiera se evalúa.** `mi_rol() <> 'venta'` ya es `true`, así que el `or` se
+   resuelve ahí y `soy_asesor_del_contrato` nunca corre.
+2. **Ninguna policy compara el tenant.** `soy_asesor_del_contrato` tampoco: es
+   `SECURITY DEFINER` y empareja solo por nombre contra `ventas.asesor`.
+
+De donde salen dos caminos reales:
+
+| Camino | Quién | Qué alcanza |
+|---|---|---|
+| A | `gerencia`, `administracion`, `operaciones` de **cualquiera** de las dos agencias | **Todos** los archivos del bucket, incluidos los de la otra agencia |
+| B | `venta` cuyo nombre coincida con `ventas.asesor` de un contrato de la otra agencia | Los archivos de **ese** contrato |
+
+El camino B no es teórico: el importador de minorista escribe en `ventas.asesor`
+el nombre del **freelance** que venía en la hoja (ver
+`caso-freelance-en-asesor.md`). Si una persona interna de mayorista se llama
+igual, cae justo aquí.
+
+**El contrato en sí NO se ve** —`puede_ver_contrato` sí filtra por tenant— así
+que la ficha, la cartera y los pasajeros siguen protegidos. Lo que queda al
+alcance son los **archivos**, que es precisamente donde están las cédulas y los
+pasaportes escaneados.
+
+### Cómo se comprobó
+
+`supabase/scripts/test_storage_cruce_tenant.sql` — solo lectura, termina en
+`rollback`. Evalúa el predicado de la policy haciéndose pasar por cada usuario
+real contra cada contrato, y lista las fugas primero. Ejecutado contra una base
+local con el esquema completo: un `operaciones` de mayorista da `permite = true`
+sobre contratos `MIN-`, con `¿se evaluó soy_asesor_del_contrato? = f`.
+
+### Qué falta
+
+- Correr ese script **en producción**, para saber a cuántos archivos reales
+  aplica y con qué usuarios.
+- Correr `supabase/scripts/pruebas/storage-adjuntos.mjs --confirmar`. Su bloque
+  «CRUCE ENTRE AGENCIAS» está escrito con la expectativa **correcta** (debe
+  rechazar) y por tanto **hoy termina en rojo a propósito**: sirve de medida del
+  agujero ahora y de prueba de regresión cuando se cierre.
+- Decidir el arreglo. Lo natural es que la policy exija el tenant del contrato,
+  no que se le añada la propiedad a los roles administrativos (que sí deben ver
+  todo lo de SU agencia). **No se ha escrito ninguna migración** — hacerlo sin
+  medir antes el alcance real puede dejar sin adjuntos a quien los necesita.
+
+---
+
+## 5. El mismo patrón fuera de Storage
+
+Buscando lo anterior aparecieron dos funciones con la **misma forma de fallo**:
+leen con service-role (se saltan la RLS a propósito) y deciden el acceso por
+rol, **sin comparar el tenant** — aunque lo tienen a mano en la fila que acaban
+de leer.
+
+| Archivo | Función | Qué expone |
+|---|---|---|
+| `lib/finanzas/comisionResolver.ts` | `resolverComisionB2B` | La cuenta de cobro y el estado de cuenta de comisión de **cualquier** contrato, por URL |
+| `lib/cuenta/estado.ts` | `cargarEstadoCuenta` | El estado de cuenta (PVP, abonos, saldo) de **cualquier** contrato, por URL |
+
+Las dos hacen:
+
+```ts
+const esInterno = ROLES_INTERNOS.includes(perfil?.rol ?? "");  // incluye `operaciones`
+if (!esInterno && !esDueno) return null;                        // ← y nada más
+```
+
+Seleccionan `tenant` en la consulta y no lo usan para decidir. Un
+`operaciones`/`administracion`/`gerencia` de una agencia abre por URL los
+documentos de la otra. (`venta` no entra por aquí: no está en `ROLES_INTERNOS`.)
+
+De paso: `esDueno` empareja **por nombre**
+(`[v.agencia_nombre, v.freelance_nombre].includes(perfil.nombre)`), no por
+`aliado_id`. Es el vínculo débil que la migración 143 vino a reemplazar, y aquí
+sigue vivo — a diferencia de `portal/b2b/page.tsx`, que sí resuelve por id.
+
+Y `ROLES_INTERNOS` está **duplicado**: `lib/constants.ts` lo exporta y
+`lib/cuenta/estado.ts` declara el suyo a mano. Dos listas que hay que acordarse
+de cambiar a la vez.
+
+**Nada de esto se ha corregido todavía** — está anotado para decidir el arreglo
+junto con el de Storage, que es el mismo problema.
+
+---
+
+## 6. Ninguna policy se relajó
+
 
 Este trabajo no toca la base de datos. No hay migración nueva y no se cambió
 ninguna policy: el problema estaba en la prueba y en el código de la aplicación.

@@ -16,11 +16,35 @@
  *   aquí, contra el Storage real y con usuarios reales.
  *
  * QUÉ COMPRUEBA
- *   · Un asesor (`venta`) puede subir, leer, reemplazar y eliminar archivos de
- *     SU contrato.
- *   · NO puede hacer ninguna de las cuatro en el contrato de un colega, y el
+ *   · Un asesor (`venta`) puede listar, subir, leer, reemplazar y eliminar
+ *     archivos de SU contrato.
+ *   · NO puede hacer ninguna de las cinco en el contrato de un colega, y el
  *     archivo ajeno sigue intacto después de intentarlo.
  *   · Un usuario con rol ADMINISTRATIVO REAL sí puede en ambos.
+ *   · CRUCE ENTRE AGENCIAS: un interno (`operaciones` y `administracion`) de
+ *     UNA agencia no debe alcanzar los archivos de un contrato de la OTRA.
+ *     Y un `superadmin` sí, porque su alcance es global por diseño.
+ *
+ * ⚠️ EL BLOQUE DE CRUCE ENTRE AGENCIAS VA A FALLAR HOY. NO ES UN FALLO DE LA
+ *   PRUEBA — ES EL HALLAZGO.
+ *   Las cuatro policies del bucket `contratos` (migración 148) tienen esta
+ *   forma:
+ *
+ *     bucket_id = 'contratos'
+ *     and mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta')
+ *     and (mi_rol() <> 'venta' or soy_asesor_del_contrato(split_part(name,'/',1)))
+ *
+ *   Con `operaciones` o `administracion`, `mi_rol() <> 'venta'` ya es TRUE, así
+ *   que la disyunción se resuelve sin llegar a `soy_asesor_del_contrato`. Y
+ *   NINGUNA de las policies compara el tenant. Es decir: cualquier
+ *   gerencia/administracion/operaciones de cualquiera de las dos agencias
+ *   alcanza TODOS los archivos del bucket. No es una hipótesis: se deduce del
+ *   texto de la policy y está comprobado evaluando su predicado en
+ *   `test_storage_cruce_tenant.sql`.
+ *
+ *   Este bloque está escrito con la expectativa CORRECTA (debe rechazar) para
+ *   que el hallazgo quede medido y para que sirva de prueba de regresión el día
+ *   que se cierre. Mientras tanto, la prueba termina en rojo a propósito.
  *
  * ⚠️ SERVICE-ROLE SOLO PARA FIXTURES, VERIFICACIÓN Y LIMPIEZA.
  *   Las comprobaciones de permisos se hacen SIEMPRE con la clave anon y una
@@ -93,10 +117,21 @@ const cAjeno = `${MARCA}A-${sello}`;
 const clave = `Pr#${sello}-x9`;
 const archivo = new Blob(["contenido de prueba, sin datos personales"], { type: "text/plain" });
 
+const cOtraAgencia = `${MARCA}X-${sello}`;
+
+// `tenant` se resuelve más abajo (la agencia que tenga contratos); estos tres
+// usuarios se quedan en ella y el contrato `cOtraAgencia` va en la contraria.
 const usuarios = {
   asesor: { correo: `test-asesor-${sello}@ejemplo.invalid`, nombre: `${MARCA} Asesor ${sello}`, rol: "venta", id: null },
   colega: { correo: `test-colega-${sello}@ejemplo.invalid`, nombre: `${MARCA} Colega ${sello}`, rol: "venta", id: null },
   admin: { correo: `test-admin-${sello}@ejemplo.invalid`, nombre: `${MARCA} Admin ${sello}`, rol: "administracion", id: null },
+  opera: { correo: `test-opera-${sello}@ejemplo.invalid`, nombre: `${MARCA} Operaciones ${sello}`, rol: "operaciones", id: null },
+  // ⚠️ superadmin temporal: es el rol más potente del sistema. Existe solo
+  // para comprobar que el candado del cruce no se cierra a costa de dejar sin
+  // acceso a quien debe tenerlo. Se borra en la limpieza, que además VERIFICA
+  // que se fue. Si la limpieza falla, este usuario es lo primero que hay que
+  // borrar a mano.
+  jefe: { correo: `test-super-${sello}@ejemplo.invalid`, nombre: `${MARCA} Superadmin ${sello}`, rol: "superadmin", id: null },
 };
 
 /** Inicia sesión con la clave ANON, como entra la aplicación. */
@@ -115,7 +150,7 @@ async function sesion(u) {
 async function limpiar() {
   console.log("\n== Limpieza");
 
-  for (const c of [cPropio, cAjeno]) {
+  for (const c of [cPropio, cAjeno, cOtraAgencia]) {
     const { data, error } = await admin.storage.from(BUCKET).list(c);
     if (error) { linea(false, `Listar archivos de ${c}`, error.message); continue; }
     if (data?.length) {
@@ -125,7 +160,7 @@ async function limpiar() {
     }
   }
 
-  for (const c of [cPropio, cAjeno]) {
+  for (const c of [cPropio, cAjeno, cOtraAgencia]) {
     const { error } = await admin.from("ventas").delete().eq("numero_contrato", c);
     linea(!error, `Eliminar el contrato ${c}`, error?.message);
   }
@@ -141,7 +176,7 @@ async function limpiar() {
   // borrado: es el mismo patrón que este trabajo persigue en toda la sesión.
   console.log("\n== Verificación de que no quedó rastro");
 
-  for (const c of [cPropio, cAjeno]) {
+  for (const c of [cPropio, cAjeno, cOtraAgencia]) {
     const { data, error } = await admin.storage.from(BUCKET).list(c);
     const quedan = (data ?? []).map((o) => o.name);
     linea(!error && quedan.length === 0, `Sin objetos en ${c}`,
@@ -180,6 +215,8 @@ try {
   // Tenant con contratos, para que `puede_ver_tenant` no deje la prueba vacía.
   const { data: unaVenta } = await admin.from("ventas").select("tenant").limit(1).maybeSingle();
   const tenant = unaVenta?.tenant ?? "mayorista";
+  // La OTRA agencia. Solo hay dos, así que es la contraria de la elegida.
+  const otroTenant = tenant === "mayorista" ? "minorista" : "mayorista";
 
   for (const [ref, u] of Object.entries(usuarios)) {
     const { data, error } = await admin.auth.admin.createUser({ email: u.correo, password: clave, email_confirm: true });
@@ -188,29 +225,44 @@ try {
     const { error: e2 } = await admin.from("usuarios").update({ nombre: u.nombre, rol: u.rol, activo: true, tenant }).eq("id", u.id);
     if (e2) throw new Error(`No se pudo configurar el perfil de ${ref}: ${e2.message}`);
   }
-  console.log(`   asesor y colega ('venta') y admin ('administracion') en el tenant '${tenant}'`);
+  console.log(`   asesor/colega ('venta'), admin ('administracion'), opera ('operaciones') y jefe ('superadmin') en el tenant '${tenant}'`);
 
   const { error: eV } = await admin.from("ventas").insert([
     { numero_contrato: cPropio, cliente: "CLIENTE PRUEBA", tenant, asesor: usuarios.asesor.nombre, precio_venta: 1000 },
     { numero_contrato: cAjeno, cliente: "CLIENTE PRUEBA", tenant, asesor: usuarios.colega.nombre, precio_venta: 2000 },
+    // Contrato de la OTRA agencia. El asesor es un nombre que NO coincide con
+    // ningún usuario de la prueba: así el rechazo no puede deberse a una
+    // coincidencia de nombre, solo a la separación por agencia.
+    { numero_contrato: cOtraAgencia, cliente: "CLIENTE PRUEBA", tenant: otroTenant, asesor: `${MARCA} Nadie ${sello}`, precio_venta: 3000 },
   ]);
   if (eV) throw new Error(`No se pudieron crear los contratos: ${eV.message}`);
-  console.log(`   contrato propio ${cPropio} y ajeno ${cAjeno}`);
+  console.log(`   contrato propio ${cPropio}, ajeno ${cAjeno} y de la otra agencia ${cOtraAgencia} (tenant '${otroTenant}')`);
 
   const rutaAjena = `${cAjeno}/cedula-ajena.txt`;
   const { error: eSub } = await admin.storage.from(BUCKET).upload(rutaAjena, archivo, { upsert: true });
   if (eSub) throw new Error(`No se pudo sembrar el archivo ajeno: ${eSub.message}`);
   console.log(`   archivo ajeno sembrado en ${rutaAjena}`);
 
+  const rutaOtraAgencia = `${cOtraAgencia}/cedula-otra-agencia.txt`;
+  const TEXTO_OTRA = `contenido original de la otra agencia ${sello}`;
+  const { error: eSub2 } = await admin.storage.from(BUCKET)
+    .upload(rutaOtraAgencia, new Blob([TEXTO_OTRA], { type: "text/plain" }), { upsert: true });
+  if (eSub2) throw new Error(`No se pudo sembrar el archivo de la otra agencia: ${eSub2.message}`);
+  console.log(`   archivo de la otra agencia sembrado en ${rutaOtraAgencia}`);
+
   // ── Asesor: sesión real con la clave anon ─────────────────────────────────
   const asesor = await sesion(usuarios.asesor);
   const st = asesor.storage.from(BUCKET);
   const rutaPropia = `${cPropio}/cedula-propia.txt`;
 
-  console.log("\n== Contrato PROPIO — el asesor debe poder con las cuatro");
+  console.log("\n== Contrato PROPIO — el asesor debe poder con las cinco");
 
   let r = await intentar(() => st.upload(rutaPropia, archivo, { upsert: false }));
   linea(r.ok, "SUBIR su propio adjunto", r.detalle);
+
+  r = await intentar(() => st.list(cPropio));
+  linea(r.ok && listaIncluye(r.data, rutaPropia), "LISTAR su propia carpeta",
+    r.detalle ?? (r.ok ? "respondió sin error pero no listó el archivo" : null));
 
   r = await intentar(() => st.createSignedUrl(rutaPropia, 60));
   linea(r.ok, "LEER (URL firmada) su propio adjunto", r.detalle);
@@ -228,7 +280,14 @@ try {
   linea((quedaPropio ?? []).length === 0, "…y el archivo propio ya no está en el bucket",
     (quedaPropio ?? []).length ? `siguen: ${(quedaPropio ?? []).map((o) => o.name).join(", ")}` : null);
 
-  console.log("\n== Contrato AJENO — las cuatro deben ser RECHAZADAS");
+  console.log("\n== Contrato AJENO — las cinco deben ser RECHAZADAS");
+
+  // `list()` no da error cuando la RLS filtra: devuelve una lista vacía. Igual
+  // que `remove()`, hay que mirar el CONTENIDO, no solo `error`.
+  r = await intentar(() => st.list(cAjeno));
+  const vioAjena = r.ok && listaIncluye(r.data, rutaAjena);
+  linea(!vioAjena, "LISTAR la carpeta de un contrato ajeno debe fallar o venir vacía",
+    r.detalle ?? (vioAjena ? "no falló: listó el archivo ajeno" : null));
 
   r = await intentar(() => st.upload(`${cAjeno}/intruso.txt`, archivo, { upsert: false }));
   linea(!r.ok, "SUBIR a un contrato ajeno debe fallar", r.detalle ?? "no falló: la subida fue aceptada");
@@ -275,6 +334,97 @@ try {
     r.detalle ?? (r.ok ? "la API no lo listó como eliminado" : null));
 
   await gestor.auth.signOut();
+
+  // ── CRUCE ENTRE AGENCIAS ─────────────────────────────────────────────────
+  // ⚠️ ESTE BLOQUE ESTÁ ESCRITO CON LA EXPECTATIVA CORRECTA Y HOY FALLA.
+  //    Ver la explicación completa en la cabecera del archivo: las policies del
+  //    bucket no comparan el tenant, y para cualquier rol distinto de `venta`
+  //    la condición de propiedad ni siquiera se evalúa. Las FALLAS de aquí
+  //    abajo son el hallazgo, no un error de la prueba.
+  console.log("\n== CRUCE ENTRE AGENCIAS — un interno de una agencia NO debe alcanzar la otra");
+  console.log(`   usuarios en '${tenant}' contra el contrato ${cOtraAgencia} de '${otroTenant}'`);
+
+  for (const ref of ["opera", "admin"]) {
+    const u = usuarios[ref];
+    const cli = await sesion(u);
+    const stX = cli.storage.from(BUCKET);
+    const etiqueta = `${u.rol} de '${tenant}'`;
+    const rutaIntrusa = `${cOtraAgencia}/intruso-${ref}.txt`;
+
+    let x = await intentar(() => stX.list(cOtraAgencia));
+    const vio = x.ok && listaIncluye(x.data, rutaOtraAgencia);
+    linea(!vio, `${etiqueta}: LISTAR la carpeta de la otra agencia debe fallar o venir vacía`,
+      x.detalle ?? (vio ? "no falló: listó el archivo de la otra agencia" : null));
+
+    x = await intentar(() => stX.createSignedUrl(rutaOtraAgencia, 60));
+    linea(!x.ok, `${etiqueta}: FIRMAR URL de un adjunto de la otra agencia debe fallar`,
+      x.detalle ?? "no falló: entregó una URL firmada");
+
+    x = await intentar(() => stX.upload(rutaIntrusa, archivo, { upsert: false }));
+    linea(!x.ok, `${etiqueta}: SUBIR a un contrato de la otra agencia debe fallar`,
+      x.detalle ?? "no falló: la subida fue aceptada");
+
+    x = await intentar(() => stX.upload(rutaOtraAgencia, new Blob(["pisado por otra agencia"]), { upsert: true }));
+    linea(!x.ok, `${etiqueta}: REEMPLAZAR un adjunto de la otra agencia debe fallar`,
+      x.detalle ?? "no falló: lo sobrescribió");
+
+    x = await intentar(() => stX.remove([rutaOtraAgencia]));
+    const borro = x.ok && listaIncluye(x.data, rutaOtraAgencia);
+    linea(!borro, `${etiqueta}: ELIMINAR un adjunto de la otra agencia debe fallar`,
+      x.detalle ?? (borro ? "no falló: lo eliminó" : "la API respondió sin error pero no eliminó nada"));
+
+    await cli.auth.signOut();
+  }
+
+  // Verificación independiente con service-role: no basta con que el archivo
+  // SIGA ahí — hay que comprobar que su CONTENIDO no cambió, porque un
+  // reemplazo con upsert deja el mismo nombre con otros bytes dentro.
+  {
+    const { data: lista } = await admin.storage.from(BUCKET).list(cOtraAgencia);
+    const nombres = (lista ?? []).map((o) => o.name);
+
+    linea(nombres.includes("cedula-otra-agencia.txt"),
+      "El adjunto de la otra agencia sigue existiendo",
+      nombres.includes("cedula-otra-agencia.txt") ? null : "DESAPARECIÓ: el borrado cruzado surtió efecto");
+
+    const colados = nombres.filter((n) => n.startsWith("intruso-"));
+    linea(colados.length === 0, "No quedó ningún archivo colado en el contrato de la otra agencia",
+      colados.length ? `quedaron: ${colados.join(", ")}` : null);
+
+    const { data: blob, error: eDl } = await admin.storage.from(BUCKET).download(rutaOtraAgencia);
+    if (eDl) {
+      linea(false, "El CONTENIDO del adjunto de la otra agencia no cambió", `no se pudo descargar: ${eDl.message}`);
+    } else {
+      const texto = await blob.text();
+      linea(texto === TEXTO_OTRA, "El CONTENIDO del adjunto de la otra agencia no cambió",
+        texto === TEXTO_OTRA ? null : `fue sobrescrito: "${texto.slice(0, 60)}"`);
+    }
+  }
+
+  // ── superadmin: el alcance global SÍ debe seguir funcionando ──────────────
+  // Sin esto, el candado del cruce se podría "aprobar" cerrándole el paso a
+  // todo el mundo, que es la misma trampa que ya cubre el bloque administrativo.
+  console.log("\n== superadmin — su alcance es global por diseño y debe seguir funcionando");
+  const jefe = await sesion(usuarios.jefe);
+  const stJefe = jefe.storage.from(BUCKET);
+
+  r = await intentar(() => stJefe.list(cOtraAgencia));
+  linea(r.ok && listaIncluye(r.data, rutaOtraAgencia), "superadmin LISTA la carpeta de la otra agencia",
+    r.detalle ?? (r.ok ? "respondió sin error pero no listó el archivo" : null));
+
+  r = await intentar(() => stJefe.createSignedUrl(rutaOtraAgencia, 60));
+  linea(r.ok, "superadmin FIRMA URL de un adjunto de la otra agencia", r.detalle);
+
+  const rutaJefe = `${cOtraAgencia}/subido-por-superadmin.txt`;
+  r = await intentar(() => stJefe.upload(rutaJefe, archivo, { upsert: false }));
+  linea(r.ok, "superadmin SUBE a un contrato de la otra agencia", r.detalle);
+
+  r = await intentar(() => stJefe.remove([rutaJefe]));
+  const borroJefe = r.ok && listaIncluye(r.data, rutaJefe);
+  linea(borroJefe, "superadmin ELIMINA lo que subió",
+    r.detalle ?? (r.ok ? "la API no lo listó como eliminado" : null));
+
+  await jefe.auth.signOut();
 } catch (e) {
   console.error(`\n[ERROR] ${e instanceof Error ? e.message : String(e)}`);
   mal++;

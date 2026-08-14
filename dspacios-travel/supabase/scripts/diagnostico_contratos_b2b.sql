@@ -17,12 +17,18 @@
 --   de contratos que no gestiona.
 --
 -- CÓMO SE LEE EL RESULTADO
---   Cada bloque dice qué esperar. Al final hay un veredicto por contrato.
-
--- Los contratos a revisar. Cambia esta lista si hace falta.
-with objetivo as (
-  select unnest(array['MIN-00-0460', 'MIN-00-0461']) as numero
-)
+--   Cada bloque dice qué esperar. El bloque 6 resume el veredicto.
+--
+-- ⚠️ LOS CONTRATOS A REVISAR VAN INLINE EN CADA BLOQUE
+--   Un `with` (CTE) solo vive durante el statement que lo declara: si se
+--   escribiera una sola vez arriba, los bloques 2 en adelante fallarían con
+--   «relation "objetivo" does not exist». Por eso la lista se repite en cada
+--   consulta. **Si cambias los números, cámbialos en LOS SEIS bloques**
+--   (busca y reemplaza 'MIN-00-0460' y 'MIN-00-0461').
+--
+-- ⚠️ Y EL CORREO DE LA PERSONA
+--   El bloque 5 lleva 'CAMBIAR@ejemplo.com'. Sin ese cambio devuelve 0 filas
+--   (no es un error: es que no hay usuario con ese correo).
 
 -- ══ 1. La cabecera de la venta, campo por campo ═════════════════════════════
 select
@@ -41,8 +47,8 @@ select
   v.fecha_venta,
   v.created_at,
   v.updated_at
-from objetivo o
-join public.ventas v on v.numero_contrato = o.numero
+from (values ('MIN-00-0460'), ('MIN-00-0461')) as objetivo(numero)
+join public.ventas v on v.numero_contrato = objetivo.numero
 left join public.aliados  al on al.id = v.aliado_id
 left join public.usuarios ub on ub.id = v.b2b_usuario_id
 order by v.numero_contrato;
@@ -73,8 +79,8 @@ select
       then 'PROBLEMA — `asesor` trae el nombre de un ALIADO, no de un interno'
     else 'REVISAR — no cruza con ningún interno ni con el catálogo de aliados'
   end as veredicto
-from objetivo o
-join public.ventas v on v.numero_contrato = o.numero
+from (values ('MIN-00-0460'), ('MIN-00-0461')) as objetivo(numero)
+join public.ventas v on v.numero_contrato = objetivo.numero
 left join public.usuarios ui
        on lower(btrim(ui.nombre)) = lower(btrim(v.asesor))
       and ui.rol in ('superadmin','gerencia','administracion','operaciones','venta')
@@ -104,29 +110,75 @@ select
   (select string_agg(a.id::text || ':' || a.nombre, ' | ') from public.aliados a
     where lower(btrim(a.nombre)) = lower(btrim(coalesce(v.freelance_nombre, v.agencia_nombre))))
     as "cuáles"
-from objetivo o
-join public.ventas v on v.numero_contrato = o.numero
+from (values ('MIN-00-0460'), ('MIN-00-0461')) as objetivo(numero)
+join public.ventas v on v.numero_contrato = objetivo.numero
 order by v.numero_contrato;
 
 -- ══ 4. ¿Quién creó y quién gestiona estos contratos? ════════════════════════
--- La auditoría (migración 087) guarda el actor de cada escritura. Las hechas
--- con service-role salen como "Sistema" — el importador de minorista es una de
--- ellas, así que ver "Sistema" en el INSERT es la firma de un contrato
--- IMPORTADO, no creado a mano.
+--
+-- ⚠️ LÍMITE DE ESTE BLOQUE — LEER ANTES DE CONCLUIR
+--   `auditoria` (migración 087) NO guarda de dónde vino una escritura. Sus
+--   columnas son: actor (id/email/nombre/rol), `accion` —que es literalmente
+--   `TG_OP`, o sea solo INSERT/UPDATE/DELETE—, `tabla`, `registro_id` y los
+--   snapshots antes/después. **No hay columna de origen, módulo ni
+--   descripción**, así que NADA en la auditoría identifica al importador de
+--   forma inequívoca.
+--
+--   Actor vacío ("Sistema") solo significa que `auth.uid()` era null, y eso
+--   pasa con CUALQUIER escritura hecha con la llave service_role o desde el
+--   editor SQL de Supabase. En este código hay varias: los costos y sillas de
+--   `reservar`, los asientos contables automáticos, los backfills. Es un
+--   INDICIO, no una firma.
+--
+--   Lo que sí acota bastante: de los tres caminos que CREAN una venta, dos
+--   (formulario manual y reservar) insertan con el cliente de sesión y por
+--   tanto dejan actor; solo el importador inserta con service_role. Así que un
+--   INSERT sobre `ventas` con actor vacío apunta al importador — pero seguiría
+--   viéndose igual si alguien insertara a mano desde el editor SQL.
 select
   a.registro_id  as numero_contrato,
   a.accion,
-  a.fecha,
-  coalesce(a.usuario_nombre, '(Sistema / service-role)') as actor,
-  a.usuario_rol,
+  a.creado_en,
+  coalesce(a.actor_nombre, a.actor_email, '(Sistema / service-role o editor SQL)') as actor,
+  a.actor_rol,
   a.tabla
-from objetivo o
-join public.auditoria a on a.registro_id = o.numero
+from (values ('MIN-00-0460'), ('MIN-00-0461')) as objetivo(numero)
+join public.auditoria a on a.registro_id = objetivo.numero
 where a.tabla in ('ventas','contrato_adjuntos','abonos','cuentas_por_pagar')
-order by a.registro_id, a.fecha;
+order by a.registro_id, a.creado_en;
+
+-- ══ 4.b Corroborar por la FORMA de la fila, no por el actor ════════════════
+-- Esto sí es específico del importador, y no depende de la auditoría: es la
+-- fila de `ventas` tal como está hoy. El importador es el único camino que
+--   · nunca escribe `destino`, `tipo_paquete` ni `fecha_regreso`
+--   · deja `pax` en 1 fijo
+--   · nace en estado 'confirmado' (manual nace 'activo', reservar 'pendiente')
+--   · pone EL MISMO texto en `asesor` y en `freelance_nombre`
+--   · nunca escribe `aliado_id` ni `paquete_armado_id`
+-- Ninguna señal por separado prueba nada; las seis juntas sí distinguen.
+select
+  v.numero_contrato,
+  (v.destino          is null) as "sin destino",
+  (v.tipo_paquete     is null) as "sin tipo_paquete",
+  (v.fecha_regreso    is null) as "sin fecha_regreso",
+  (v.pax = 1)                  as "pax = 1",
+  v.estado,
+  (v.asesor is not null and lower(btrim(v.asesor)) = lower(btrim(v.freelance_nombre)))
+                               as "asesor == freelance_nombre",
+  (v.aliado_id        is null) as "sin aliado_id",
+  (v.paquete_armado_id is null) as "sin paquete_armado_id",
+  case
+    when v.destino is null and v.tipo_paquete is null and v.pax = 1
+     and v.estado = 'confirmado' and v.aliado_id is null
+      then 'COMPATIBLE con el importador de minorista'
+    else 'NO encaja con el importador — revisar cómo se creó'
+  end as "forma de la fila"
+from (values ('MIN-00-0460'), ('MIN-00-0461')) as objetivo(numero)
+join public.ventas v on v.numero_contrato = objetivo.numero
+order by v.numero_contrato;
 
 -- ══ 5. Y la persona concreta: ¿qué ve y por qué? ════════════════════════════
--- Cambia el correo por el de la persona del caso.
+-- ⚠️ Cambia el correo por el de la persona del caso, o devuelve 0 filas.
 -- `soy_asesor_del_contrato` empareja por NOMBRE; `puede_ver_contrato` exige
 -- además que el tenant coincida. Aparecer en la primera y no en la segunda es
 -- exactamente el síntoma "figura como asesora pero no los ve".
@@ -135,12 +187,35 @@ select
   u.rol,
   u.tenant,
   u.aliado_id                       as "enlazada al catálogo de aliados",
-  o.numero,
+  objetivo.numero,
   v.tenant                          as "tenant del contrato",
   lower(btrim(v.asesor)) = lower(btrim(u.nombre)) as "su nombre está en ventas.asesor",
   (u.tenant = v.tenant)                           as "mismo tenant"
 from public.usuarios u
-cross join objetivo o
-join public.ventas v on v.numero_contrato = o.numero
+cross join (values ('MIN-00-0460'), ('MIN-00-0461')) as objetivo(numero)
+join public.ventas v on v.numero_contrato = objetivo.numero
 where u.email = 'CAMBIAR@ejemplo.com'     -- ← el correo de la persona
-order by o.numero;
+order by objetivo.numero;
+
+-- ══ 6. Veredicto por contrato, en una sola línea ═══════════════════════════
+select
+  v.numero_contrato,
+  case
+    when v.aliado_id is not null then 'OK — pertenencia B2B por aliado_id'
+    when v.b2b_usuario_id is not null then 'OK — comprado desde el portal'
+    when coalesce(v.freelance_nombre, v.agencia_nombre) is null
+      then 'sin vínculo B2B — no aplica'
+    else 'ARREGLAR — pertenencia por texto; falta enlazar aliado_id'
+  end as "vínculo B2B",
+  case
+    when exists (
+      select 1 from public.usuarios ui
+      where lower(btrim(ui.nombre)) = lower(btrim(v.asesor))
+        and ui.tenant = v.tenant
+        and ui.rol in ('superadmin','gerencia','administracion','operaciones','venta')
+    ) then 'OK — `asesor` apunta a un interno de la agencia'
+    else 'ARREGLAR — `asesor` no apunta a ningún interno de esta agencia'
+  end as "campo asesor"
+from (values ('MIN-00-0460'), ('MIN-00-0461')) as objetivo(numero)
+join public.ventas v on v.numero_contrato = objetivo.numero
+order by v.numero_contrato;
