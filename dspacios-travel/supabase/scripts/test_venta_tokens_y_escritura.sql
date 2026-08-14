@@ -21,7 +21,8 @@
 --     lectura de la ficha del contrato: true en el propio, false en el ajeno.
 --   · Abonos con mínimo privilegio: fila completa solo en el contrato propio,
 --     únicamente el TOTAL (vista `abonos_resumen`) en el de un colega, nada de
---     otra agencia, y ninguna escritura.
+--     otra agencia, y ninguna escritura. Se comprueba además el JUEGO DE
+--     COLUMNAS de la vista, no solo su contenido: que no pueda exponer más.
 --   · Aislamiento por agencia (tenant) y bloqueo del usuario desactivado.
 --   · Que un rol administrativo sigue teniendo acceso completo — incluida la
 --     ESCRITURA en contratos que no gestiona (si no, la prueba pasaría igual
@@ -51,8 +52,8 @@
 --
 -- DÓNDE SE EJECUTÓ
 --   Sobre un PostgreSQL 16 local con las migraciones aplicadas en orden, en las
---   DOS fases: con la 148 corrida (117/117) y después de correr la 149
---   (117/117). Falta correrla en Supabase, que es el único lugar donde
+--   DOS fases: con la 148 corrida (118/118) y después de correr la 149
+--   (118/118). Falta correrla en Supabase, que es el único lugar donde
 --   `storage.objects` es el real y donde hay datos de producción.
 -- ─────────────────────────────────────────────────────────────────────────
 
@@ -344,6 +345,17 @@ begin
   select coalesce(sum(total_pagado), 0) into n from public.abonos_resumen where numero_contrato = c_propio;
   reset role; perform set_config('request.jwt.claims', '{}', true);
   k := k + 1; insert into _res values (k, 'ABONOS propios: el resumen también cuadra', '400000', n::text, n = 400000);
+
+  -- El JUEGO DE COLUMNAS de la vista, no solo su contenido. Si alguien agrega
+  -- una columna a `abonos_resumen` —o si mañana se le suma una a `abonos` y
+  -- alguien la arrastra al resumen sin pensarlo— esta comprobación falla. Es la
+  -- diferencia entre "hoy no expone la referencia" y "no puede exponerla".
+  select string_agg(column_name, ',' order by ordinal_position) into s
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'abonos_resumen';
+  k := k + 1; insert into _res values (k, '`abonos_resumen` expone EXACTAMENTE dos columnas',
+                                       'numero_contrato,total_pagado', coalesce(s,'(no existe la vista)'),
+                                       s = 'numero_contrato,total_pagado');
 
   -- La vista NO puede convertirse en una puerta al otro tenant.
   execute 'set local role authenticated';

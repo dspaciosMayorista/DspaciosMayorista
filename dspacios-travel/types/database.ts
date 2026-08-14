@@ -2624,8 +2624,10 @@ export type Database = {
       // el asesor está consultando el contrato de un colega: al ser una vista
       // agregada, no existe columna `forma_pago`/`referencia`/`comprobante`
       // que pedir — la restricción es estructural, no una lista que mantener.
+      // Exactamente dos columnas: si alguien agrega una tercera a la vista, el
+      // tipo deja de cuadrar y hay que venir a tocar esto a propósito.
       abonos_resumen: {
-        Row: { numero_contrato: string; total_pagado: number; cantidad: number };
+        Row: { numero_contrato: string; total_pagado: number };
         Relationships: [];
       };
       // Migración 148: `contrato_vuelos` SIN el record/PNR ajeno. El rol

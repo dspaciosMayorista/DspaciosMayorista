@@ -279,17 +279,22 @@ create policy "abonos: venta consulta" on public.abonos for select
          and public.puede_ver_contrato(numero_contrato)
          and public.soy_asesor_del_contrato(numero_contrato));
 
--- Resumen por contrato: SOLO número de contrato y total pagado. Es una vista
--- agregada, así que ni siquiera existe una columna `referencia` que pedir —
--- la restricción es estructural, no una lista de columnas que haya que
--- mantener al día. El `where` es la frontera (la vista es SECURITY DEFINER,
--- mismo patrón que `ventas_basica`).
+-- Resumen por contrato: EXACTAMENTE dos columnas, número de contrato y total
+-- pagado. Es una vista agregada, así que ni siquiera existe una columna
+-- `referencia` que pedir — la restricción es estructural, no una lista de
+-- columnas que haya que mantener al día. El `where` es la frontera (la vista es
+-- SECURITY DEFINER, mismo patrón que `ventas_basica`).
+--
+-- No lleva `count(*)`: la app no lo usa, y cuántos abonos hizo el cliente de
+-- otro asesor —si pagó de una o en ocho cuotas— es información de su
+-- comportamiento de pago que nadie pidió. Una columna que no hace falta es
+-- superficie de más. La prueba comprueba el juego de columnas, no solo su
+-- contenido, para que no vuelva a colarse una.
 drop view if exists public.abonos_resumen;
 create view public.abonos_resumen as
   select
     a.numero_contrato,
-    sum(a.valor_abono)::numeric(15,2) as total_pagado,
-    count(*)::bigint                  as cantidad
+    sum(a.valor_abono)::numeric(15,2) as total_pagado
   from public.abonos a
   where public.mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta')
     and public.puede_ver_contrato(a.numero_contrato)
