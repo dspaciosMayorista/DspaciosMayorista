@@ -13,6 +13,7 @@ const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 export function EditarAsesorPasajeros({
   numero, asesores, asesorActual, puedeAsesor, pasajeros, fechaSalida, pax, titularNombre,
+  puedeEditar = true,
 }: {
   numero: string;
   asesores: { nombre: string; email: string | null }[];
@@ -22,6 +23,7 @@ export function EditarAsesorPasajeros({
   fechaSalida: string | null;
   pax?: number;
   titularNombre?: string;
+  puedeEditar?: boolean;
 }) {
   const maxPax = pax ?? 0;
   const router = useRouter();
@@ -68,6 +70,27 @@ export function EditarAsesorPasajeros({
       if (edad != null && edad < 18 && p.tipoId === "CC") { setMsgP(`Pasajero ${i + 1}: un menor no puede tener CC (usa RC o TI).`); return; }
     }
     start(async () => { const r = await actualizarPasajerosContrato(numero, filas); if (r.ok) { setMsgP("✓ Pasajeros guardados"); router.refresh(); } else setMsgP(r.error); });
+  }
+
+  // Solo lectura (asesor consultando el contrato de un colega). No se muestra
+  // el formulario en gris: los datos de pasajero —documento y fecha de
+  // nacimiento— no llegan siquiera del servidor, porque `contrato_pasajeros`
+  // está limitada a contratos propios desde la migración 142. Un formulario
+  // vacío y bloqueado se leería como "este contrato no tiene pasajeros", que
+  // es falso.
+  if (!puedeEditar) {
+    return (
+      <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
+        <h2 className="text-sm font-semibold text-gray-700">Asesor y pasajeros</h2>
+        <p className="mt-2 text-sm text-gray-600">
+          Asesor del contrato: <span className="font-medium text-gray-800">{asesorActual || "—"}</span>
+        </p>
+        <p className="mt-2 text-xs text-gray-400">
+          Los datos de los pasajeros (documento y fecha de nacimiento) solo los consulta el asesor
+          que gestiona el contrato.
+        </p>
+      </section>
+    );
   }
 
   return (

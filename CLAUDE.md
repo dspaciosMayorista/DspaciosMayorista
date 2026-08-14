@@ -313,8 +313,21 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > rama es otra línea de producto con su propia base de datos Supabase separada — ver el
 > aviso de "NUNCA mezclar migraciones" en la sección 12.bis antes de tocar migraciones.
 > App en `dspacios-travel/` (Next.js App Router + Supabase SSR).
-> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 146.**
-> Corridas por el dueño **hasta la 146** (todas al día).
+> **Migraciones a la fecha en repo (línea D'spacios/`main`): hasta la 149.**
+> Corridas por el dueño **hasta la 147**.
+> ⚠️ **La 148 y la 149 están escritas pero NO se han corrido.** Van en ese orden
+> y con el despliegue EN MEDIO, para no dejar ventana de caída:
+> **1)** correr la **148** (aditiva: crea `contrato_vuelos_basica`, agrega
+> columnas a `ventas_basica`, endurece Storage/vouchers y le da a `venta`
+> lectura de `abonos`; no le quita acceso a nadie, así que se corre con el
+> código viejo todavía arriba) · **2)** fusionar y desplegar · **3)** validar en
+> producción con un usuario `venta` real · **4)** correr la **149** (cierre: le
+> quita a `venta` el SELECT sobre la tabla base `contrato_vuelos`, para que el
+> PNR ajeno tampoco se alcance por la API REST) · **5)** correr
+> `supabase/scripts/test_venta_tokens_y_escritura.sql`. El orden completo está
+> documentado al final del archivo de la 148. **Invertirlo (149 antes del
+> despliegue, o despliegue antes de la 148) deja a los asesores sin ver los
+> vuelos del contrato mientras dure el desfase.**
 > ⚠️ **La 143 y todo el frente de "vínculo B2B por documento" viven en la rama
 > `claude/peaceful-noether-713c7c` y NO están en `main` todavía** (decisión del
 > dueño: acumular y mergear cuando esté validado).
@@ -325,7 +338,38 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > `servicio-fotos`) · **139** `programa_tipo_transporte` (`programas.tipo_transporte`
 > ninguno/aereo/terrestre) · **140** `usuario_inactivo_sin_rol` (`mi_rol()` no devuelve
 > rol si `activo = false`) · **141** `rls_hijas_por_dueno` (las tablas hijas del contrato
-> heredan el permiso de `ventas` vía `puede_ver_contrato()`).
+> heredan el permiso de `ventas` vía `puede_ver_contrato()`) · **142** `venta_ve_su_agencia`
+> · **143** `aliado_id_en_ventas_y_usuarios` · **144** `ventas_basica` (vista sin columnas
+> financieras; `venta` pierde el SELECT de `ventas`) · **146** `contrato_servicios_sin_costo`
+> · **147** `venta_lectura_amplia_escritura_propia` (separa VER de EDITAR en las hijas y
+> saca `share_token`/`asesor_firma_cc`/`cliente_direccion`/`observaciones` de la vista) ·
+> **148** `storage_vouchers_y_columnas_por_rol` (**⚠️ SIN CORRER**, aditiva: policies del
+> bucket `contratos` en `storage.objects`, `vouchers` solo del contrato propio, vista
+> `contrato_vuelos_basica` sin el record/PNR ajeno, `cliente_documento` enmascarado,
+> regreso condicional de `cliente_direccion`/`asesor_firma_cc`, y `venta` gana LECTURA de
+> `abonos` — no la tenía por ninguna policy, así que la pestaña Cartera le mostraba
+> "Pagado $0 / Saldo = precio completo" incluso en sus propios contratos. Los abonos van
+> con **mínimo privilegio en dos niveles**: la fila completa (forma de pago, referencia,
+> comprobante) solo en el contrato PROPIO, y en el de un colega únicamente el total por la
+> vista agregada **`abonos_resumen`** — al ser agregada no existe columna sensible que
+> pedir, la restricción es estructural) ·
+> **149** `cierre_contrato_vuelos_record` (**⚠️ SIN CORRER, va DESPUÉS del despliegue**:
+> le quita a `venta` el SELECT sobre la tabla base `contrato_vuelos`).
+>
+> **Modo solo lectura en la ficha del contrato** (`/dashboard/contratos/[numero]`): un
+> `venta` que abre el contrato de OTRO asesor de su agencia ve la información comercial
+> (cliente con documento enmascarado, contacto, destino, fechas, PVP, estado, hotel,
+> itinerario, saldo y plan de cobro) pero no los controles de gestión —
+> `ServiciosContratoEditor`, registrar/editar abonos, generar plan de cobro, subir o
+> eliminar adjuntos, editar pasajeros/asesor y vouchers. En adjuntos NO se dice "aún no
+> hay adjuntos" (sería afirmar algo que no se sabe: la lista llega vacía por RLS) sino
+> que están protegidos. El botón del documento imprimible pasa a **"Vista comercial"**,
+> con aviso de versión limitada y **sin botón de imprimir**: por RLS ese documento sale
+> sin pasajeros, sin dirección del cliente y sin datos de firma, así que un PDF suelto
+> parecería un contrato válido sin serlo. La propiedad se resuelve
+> llamando por RPC la MISMA función que usan las policies (`soy_asesor_del_contrato`),
+> nunca deduciéndola de `share_token` ni comparando nombres. Los roles administrativos
+> no cambian. **El candado real es la RLS**: esto solo evita botones que fallan.
 
 > **⚠️ Endurecimiento de seguridad (ago-2026) — leer antes de tocar RLS o el login:**
 > - **Backdoor del login por código (crítico, corregido).** `loginConCodigo` resolvía el

@@ -15,6 +15,7 @@ import { type CuotaRow } from "./PlanCobroPanel";
 import { EditarAsesorPasajeros, type PasajeroRow } from "./EditarAsesorPasajeros";
 import { EliminarContrato } from "./EliminarContrato";
 import { ContenidoContratoEditor } from "./ContenidoContratoEditor";
+import { Eye } from "lucide-react";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 
@@ -35,6 +36,23 @@ export default async function ContratoDetallePage({
     : { data: null };
   const verFinanzas = ["superadmin", "gerencia", "administracion", "operaciones"].includes(perfil?.rol ?? "");
   const esSuperadmin = perfil?.rol === "superadmin";
+
+  // ¿Este contrato es MÍO? Se le pregunta a la base con la MISMA función que
+  // usan las policies (`soy_asesor_del_contrato`), no se reimplementa aquí: si
+  // algún día cambia la regla de propiedad, cambia en un solo lugar y la
+  // pantalla la sigue. Deliberadamente NO se deduce de `share_token` (que la
+  // vista entrega solo al dueño) ni comparando `venta.asesor` con el nombre del
+  // perfil: lo primero convierte un dato de presentación en control de acceso,
+  // y lo segundo es comparación de texto libre — homónimos, tildes y los
+  // nombres en mayúsculas del importador de minorista la hacen poco fiable.
+  // Es SECURITY DEFINER y devuelve solo un booleano sobre uno mismo.
+  const { data: esAsesorDelContrato } = await sb.rpc("soy_asesor_del_contrato", { num: numero });
+
+  // Un asesor consulta los contratos de toda su agencia (regla de negocio de la
+  // migración 147) pero solo GESTIONA los suyos. Los roles administrativos
+  // conservan su operación completa.
+  const puedeEditar = verFinanzas || esAsesorDelContrato === true;
+  const soloLectura = !puedeEditar;
 
   const [
     { data: venta },
@@ -59,7 +77,13 @@ export default async function ContratoDetallePage({
     (verFinanzas
       ? sb.from("ventas").select("*").eq("numero_contrato", numero).single()
       : sb.from("ventas_basica").select("*").eq("numero_contrato", numero).single()),
-    sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false }),
+    // Detalle de pagos SOLO de contratos propios (o de un rol contable): la
+    // policy de la migración 148 exige `soy_asesor_del_contrato`. En un
+    // contrato ajeno esta consulta devuelve vacío por RLS; el total sale del
+    // resumen de abajo.
+    (puedeEditar
+      ? sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false })
+      : Promise.resolve({ data: [] as Pick<Database["public"]["Tables"]["abonos"]["Row"], "id" | "valor_abono" | "forma_pago" | "referencia" | "fecha_abono" | "trm" | "monto_cop">[] })),
     sb.from("cuentas_por_pagar").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("aliados_b2b").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("facturacion").select("*").eq("numero_contrato", numero).order("id"),
@@ -78,12 +102,20 @@ export default async function ContratoDetallePage({
   // Contenido del contrato (hoteles/vuelos/ítems/servicios) para el editor de
   // superadmin. Los contratos migrados llegan sin nada de esto, así que casi
   // siempre vienen vacíos: el editor es justo para poder completarlos.
-  const [{ data: itemsC }, { data: hotelesC }, { data: vuelosC }, { data: serviciosC }] = await Promise.all([
-    sb.from("contrato_items").select("descripcion, adultos, ninos, tarifa_adulto, tarifa_nino").eq("numero_contrato", numero).order("orden"),
-    sb.from("contrato_hoteles").select("nombre, categoria, proveedor, ciudad, alimentacion, acomodacion, detalle_acomodacion, fecha_ingreso, fecha_salida").eq("numero_contrato", numero).order("orden"),
-    sb.from("contrato_vuelos").select("aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, fecha_salida, hora_salida, hora_llegada, servicios").eq("numero_contrato", numero).order("orden"),
-    sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).order("orden"),
-  ]);
+  //
+  // Solo se consulta si quien mira es superadmin, que es el único que ve el
+  // editor (más abajo, `{esSuperadmin && <ContenidoContratoEditor .../>}`).
+  // Antes se pedía siempre: para un asesor `contrato_servicios` ya devolvía
+  // vacío por RLS (tiene el costo neto) y desde la 148 `contrato_vuelos`
+  // también — cuatro consultas cuyo resultado nadie llegaba a mostrar.
+  const [{ data: itemsC }, { data: hotelesC }, { data: vuelosC }, { data: serviciosC }] = esSuperadmin
+    ? await Promise.all([
+        sb.from("contrato_items").select("descripcion, adultos, ninos, tarifa_adulto, tarifa_nino").eq("numero_contrato", numero).order("orden"),
+        sb.from("contrato_hoteles").select("nombre, categoria, proveedor, ciudad, alimentacion, acomodacion, detalle_acomodacion, fecha_ingreso, fecha_salida").eq("numero_contrato", numero).order("orden"),
+        sb.from("contrato_vuelos").select("aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, fecha_salida, hora_salida, hora_llegada, servicios").eq("numero_contrato", numero).order("orden"),
+        sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).order("orden"),
+      ])
+    : [{ data: null }, { data: null }, { data: null }, { data: null }];
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
 
   // Ítems de las facturas del contrato, agrupados por factura.
@@ -159,7 +191,17 @@ export default async function ContratoDetallePage({
     seleccionServicios = serviciosDisp.filter((s) => nombresSel.has(s.nombre)).map((s) => s.servicioId);
   }
 
-  const totalPagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
+  // Saldo en modo solo lectura: el asesor que cubre a un colega necesita saber
+  // cuánto ha pagado el cliente, no CÓMO lo pagó. `abonos_resumen` es una vista
+  // agregada — solo número de contrato y total —, así que no hay forma de pago,
+  // referencia bancaria ni comprobante que pudieran llegar de más.
+  const { data: resumenAbonos } = puedeEditar
+    ? { data: null }
+    : await sb.from("abonos_resumen").select("total_pagado").eq("numero_contrato", numero).maybeSingle();
+
+  const totalPagado = puedeEditar
+    ? (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0)
+    : Number(resumenAbonos?.total_pagado ?? 0);
   const saldo = Math.max(venta.precio_venta - totalPagado, 0);
 
   // Buscar el % de comisión del asesor (por email o por nombre de firma)
@@ -185,10 +227,31 @@ export default async function ContratoDetallePage({
             <EstadoVenta numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
           </div>
         </div>
+        {/* En solo lectura el documento sale incompleto por RLS (sin pasajeros,
+            sin dirección del cliente, sin datos de firma), así que no se ofrece
+            como "el contrato": se rotula por lo que de verdad es. */}
         <Link href={`/contrato/${encodeURIComponent(numero)}`} target="_blank">
-          <Button style={{ backgroundColor: "var(--brand-primary)" }}>Ver / Imprimir contrato →</Button>
+          <Button style={{ backgroundColor: soloLectura ? "#6b7280" : "var(--brand-primary)" }}>
+            {soloLectura ? "Vista comercial →" : "Ver / Imprimir contrato →"}
+          </Button>
         </Link>
       </div>
+
+      {/* Aviso de solo lectura. Va arriba del todo para que el asesor entienda
+          por qué no ve los controles de siempre, en vez de creer que la
+          pantalla se dañó. */}
+      {soloLectura && (
+        <div className="mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <Eye className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div className="text-sm text-amber-900">
+            <p className="font-semibold">Solo lectura — contrato de otro asesor</p>
+            <p className="mt-0.5 text-amber-800">
+              Puedes consultar la información comercial para atender al cliente. La gestión
+              (abonos, adjuntos, pasajeros y vouchers) la hace {venta.asesor ?? "el asesor del contrato"}.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Totales */}
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -206,34 +269,41 @@ export default async function ContratoDetallePage({
         </div>
       </div>
 
-      {/* Editar datos del contrato */}
-      <EditarVentaForm
-        numero={venta.numero_contrato}
-        inicial={{
-          cliente: venta.cliente ?? "",
-          clienteDocumento: venta.cliente_documento ?? "",
-          clienteTelefono: venta.cliente_telefono ?? "",
-          clienteEmail: venta.cliente_email ?? "",
-          clienteDireccion: venta.cliente_direccion ?? "",
-          destino: venta.destino ?? "",
-          fechaSalida: venta.fecha_salida ?? "",
-          fechaRegreso: venta.fecha_regreso ?? "",
-          plazo: venta.plazo ?? "",
-          tipoAsesor: venta.tipo_asesor ?? "interno",
-          agenciaNombre: venta.agencia_nombre ?? "",
-          agenciaAsesor: venta.agencia_asesor ?? "",
-          freelanceNombre: venta.freelance_nombre ?? "",
-          asesorNombre: venta.asesor_firma_nombre ?? "",
-          planNombre: venta.plan_nombre ?? "",
-          observaciones: venta.observaciones ?? "",
-          precioVenta: String(venta.precio_venta ?? 0),
-          pax: String(venta.pax ?? 1),
-        }}
-        destinos={destinos ?? []}
-      />
+      {/* Editar datos del contrato. Solo para quien de verdad puede: la policy
+          de UPDATE sobre `ventas` excluye al rol `venta`, así que mostrarle el
+          formulario solo servía para que guardar le fallara con un error de
+          RLS. Además `cliente_direccion` y `observaciones` salieron de la vista
+          `ventas_basica` en la migración 147 (datos sensibles), así que ni
+          siquiera podría precargarlos. */}
+      {fin && (
+        <EditarVentaForm
+          numero={venta.numero_contrato}
+          inicial={{
+            cliente: venta.cliente ?? "",
+            clienteDocumento: venta.cliente_documento ?? "",
+            clienteTelefono: venta.cliente_telefono ?? "",
+            clienteEmail: venta.cliente_email ?? "",
+            clienteDireccion: fin.cliente_direccion ?? "",
+            destino: venta.destino ?? "",
+            fechaSalida: venta.fecha_salida ?? "",
+            fechaRegreso: venta.fecha_regreso ?? "",
+            plazo: venta.plazo ?? "",
+            tipoAsesor: venta.tipo_asesor ?? "interno",
+            agenciaNombre: venta.agencia_nombre ?? "",
+            agenciaAsesor: venta.agencia_asesor ?? "",
+            freelanceNombre: venta.freelance_nombre ?? "",
+            asesorNombre: venta.asesor_firma_nombre ?? "",
+            planNombre: venta.plan_nombre ?? "",
+            observaciones: fin.observaciones ?? "",
+            precioVenta: String(venta.precio_venta ?? 0),
+            pax: String(venta.pax ?? 1),
+          }}
+          destinos={destinos ?? []}
+        />
+      )}
 
-      {/* Servicios adicionales (solo contrato pendiente) */}
-      {venta.estado === "pendiente" && (
+      {/* Servicios adicionales (solo contrato pendiente, y solo quien gestiona) */}
+      {venta.estado === "pendiente" && puedeEditar && (
         <ServiciosContratoEditor
           numero={venta.numero_contrato}
           pax={venta.pax ?? 0}
@@ -245,7 +315,15 @@ export default async function ContratoDetallePage({
       {/* Compartir */}
       <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
         <p className="mb-2 text-sm font-semibold text-gray-700">Compartir con el cliente</p>
-        <ShareButtons token={venta.share_token} numero={venta.numero_contrato} cliente={venta.cliente} />
+        {venta.share_token ? (
+          <ShareButtons token={venta.share_token} numero={venta.numero_contrato} cliente={venta.cliente} />
+        ) : (
+          // Migración 147: el enlace público solo se entrega para el contrato
+          // PROPIO. Con el token de un contrato ajeno se podía abrir
+          // /c/[token], que es pública y muestra los pasajeros con su
+          // documento y fecha de nacimiento.
+          <p className="text-xs text-gray-400">El enlace para el cliente solo lo genera el asesor del contrato.</p>
+        )}
       </div>
 
       {/* Flujo de la venta */}
@@ -276,9 +354,10 @@ export default async function ContratoDetallePage({
         moneda={(venta.moneda as string) ?? "COP"}
         proveedoresCatalogo={(proveedoresCatalogo ?? []).map((p) => p.nombre)}
         aliadosCatalogo={aliadosCatalogo ?? []}
+        puedeEditar={puedeEditar}
       />
 
-      <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} />
+      <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} puedeEditar={puedeEditar} />
 
       <EditarAsesorPasajeros
         numero={numero}
@@ -289,13 +368,15 @@ export default async function ContratoDetallePage({
         fechaSalida={venta.fecha_salida}
         pax={venta.pax ?? 0}
         titularNombre={venta.cliente ?? ""}
+        puedeEditar={puedeEditar}
       />
 
       <VouchersPanel
         numero={numero}
         vouchers={(vouchers ?? []) as unknown as VoucherRow[]}
-        puedeGenerar={esSuperadmin || saldo <= 0}
+        puedeGenerar={(esSuperadmin || saldo <= 0) && puedeEditar}
         destinos={destinos ?? []}
+        puedeEditar={puedeEditar}
       />
 
       {esSuperadmin && (

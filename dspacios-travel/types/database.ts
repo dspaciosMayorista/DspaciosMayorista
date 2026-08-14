@@ -2603,7 +2603,38 @@ export type Database = {
           "costo_hotel" | "costo_aereo" | "costo_receptivo" | "costo_asistencia" | "otros_costos"
           | "impuesto" | "comision_b2b" | "comision_estado" | "modo_compra"
           | "recobro_total" | "recobro_empresa" | "recobro_aliado" | "trm_contrato" | "b2b_usuario_id"
-        >;
+          // Migración 147: fuera por sensibles. `observaciones` no vuelve.
+          | "observaciones"
+          // Enmascaradas por contrato propio/ajeno (147 y 148): siguen en la
+          // vista pero llegan en null — o con el documento recortado — cuando
+          // el contrato no es del asesor. De ahí el `| null` de abajo.
+          | "share_token" | "cliente_documento" | "cliente_direccion" | "asesor_firma_cc"
+        > & {
+          share_token: string | null;
+          // Migración 148: documento completo solo para el contrato propio;
+          // para el de un colega llegan los últimos 4 dígitos ("••••1234").
+          cliente_documento: string | null;
+          cliente_direccion: string | null;
+          asesor_firma_cc: string | null;
+        };
+        Relationships: [];
+      };
+      // Migración 148: total pagado por contrato, sin una sola columna del
+      // abono en sí. Es lo que la ficha del contrato usa para el saldo cuando
+      // el asesor está consultando el contrato de un colega: al ser una vista
+      // agregada, no existe columna `forma_pago`/`referencia`/`comprobante`
+      // que pedir — la restricción es estructural, no una lista que mantener.
+      // Exactamente dos columnas: si alguien agrega una tercera a la vista, el
+      // tipo deja de cuadrar y hay que venir a tocar esto a propósito.
+      abonos_resumen: {
+        Row: { numero_contrato: string; total_pagado: number };
+        Relationships: [];
+      };
+      // Migración 148: `contrato_vuelos` SIN el record/PNR ajeno. El rol
+      // `venta` ya no lee la tabla base — con el record se puede modificar o
+      // anular la reserva en el sitio de la aerolínea.
+      contrato_vuelos_basica: {
+        Row: Database["public"]["Tables"]["contrato_vuelos"]["Row"];
         Relationships: [];
       };
       cupos_por_bloqueo: {
@@ -2621,6 +2652,15 @@ export type Database = {
       };
     };
     Functions: {
+      // Migración 142. La misma función que usan las policies para decidir si
+      // un contrato es del asesor que pregunta. Es SECURITY DEFINER y devuelve
+      // solo un booleano sobre uno mismo, así que se puede llamar por RPC sin
+      // exponer nada: la pantalla del contrato la usa para decidir si va en
+      // modo solo lectura, en vez de reimplementar la regla en TypeScript.
+      soy_asesor_del_contrato: {
+        Args: { num: string };
+        Returns: boolean;
+      };
       mi_rol: {
         Args: Record<PropertyKey, never>;
         Returns: Database["public"]["Enums"]["rol_usuario"];
@@ -2690,6 +2730,19 @@ export type Enums<T extends keyof Database["public"]["Enums"]> =
 // Tipos de uso frecuente
 export type Usuario = Tables<"usuarios">;
 export type Venta = Tables<"ventas">;
+export type VentaBasica = Database["public"]["Views"]["ventas_basica"]["Row"];
+// Lo que el DOCUMENTO del contrato necesita de la venta: ninguna columna
+// financiera. Se declara como subconjunto para que la página imprimible pueda
+// alimentarlo tanto desde `ventas` (roles administrativos, service-role del
+// enlace público) como desde `ventas_basica` (rol `venta`, que no lee la
+// tabla base desde la migración 144).
+export type VentaDocumento = Pick<
+  Venta,
+  | "numero_contrato" | "cliente" | "cliente_documento" | "cliente_direccion" | "cliente_telefono"
+  | "asesor" | "asesor_firma_nombre" | "asesor_firma_cargo" | "asesor_firma_cc" | "asesor_firma_tel"
+  | "estado" | "fecha_emision" | "fecha_salida" | "pax"
+  | "plan_nombre" | "tours_traslados" | "asistencia_medica"
+>;
 export type Agencia = Tables<"agencias">;
 export type Abono = Tables<"abonos">;
 export type BloqueoVuelo = Tables<"bloqueos_vuelo">;
