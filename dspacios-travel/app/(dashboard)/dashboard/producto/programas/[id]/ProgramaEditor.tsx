@@ -22,10 +22,11 @@ import {
   type CabeceraInput,
   type CategoriaInput,
   type SalidaInput,
+  type ReglaComisionableInput,
 } from "../actions";
 import { parsearPrograma } from "@/lib/programasImport";
 import { pvpPrograma, type PvpOpciones } from "@/lib/programas";
-import { calcularNetoPrograma, type ModoBaseComisionable } from "@/lib/calc/programaPrecio";
+import { calcularNetoPrograma, recalcularNetosPorTarifa, type ModoBaseComisionable } from "@/lib/calc/programaPrecio";
 import { formatMoneda } from "@/lib/utils";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
@@ -39,6 +40,9 @@ type PrecioRow = { categoria_id: number; acomodacion: string; neto: number | nul
 type SalidaRow = {
   etiqueta: string | null; fecha_desde: string | null; fecha_hasta: string | null; noches: number | null; columna: string | null;
   neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; bajo_solicitud: boolean;
+  // Tarifa ORIGINAL del proveedor por acomodación (migración 151) — dato de
+  // origen del neto de arriba, se persiste aparte y nunca se reconstruye.
+  tarifa_sencilla: number | null; tarifa_doble: number | null; tarifa_triple: number | null; tarifa_multiple: number | null;
 };
 type Inclusion = { ciudad: string | null; tipo: string; texto: string };
 type Tour = { ciudad: string | null; nombre: string; precio: number | null; min_pax: number; dias_operacion: string | null; descripcion: string | null };
@@ -88,11 +92,19 @@ export function ProgramaEditor(props: {
   // vive aquí, no dentro de SalidasEditor, porque ese componente se desmonta al
   // cambiar de pestaña (o al guardar en otra pestaña) — si el toggle viviera ahí,
   // se perdía el check y había que volver a marcarlo cada vez que se volvía a
-  // "Salidas y precios".
-  const [reglaOn, setReglaOn] = useState(false);
-  const [cModo, setCModo] = useState<ModoBaseComisionable>("pct");
-  const [cValor, setCValor] = useState("3");
-  const [cComision, setCComision] = useState("10");
+  // "Salidas y precios". Se inicializa desde `programas.regla_comisionable_*`
+  // (migración 151): antes de esta migración nunca se guardaba, así que un
+  // programa sin configurar cae en los mismos defaults de siempre.
+  const [reglaOn, setReglaOn] = useState(programa.regla_comisionable);
+  const [cModo, setCModo] = useState<ModoBaseComisionable>(
+    (programa.regla_comisionable_modo as ModoBaseComisionable) || "pct"
+  );
+  const [cValor, setCValor] = useState(
+    programa.regla_comisionable_valor != null ? String(programa.regla_comisionable_valor) : "3"
+  );
+  const [cComision, setCComision] = useState(
+    programa.regla_comisionable_pct_comision != null ? String(programa.regla_comisionable_pct_comision) : "10"
+  );
 
   const initialCab: Partial<CabeceraInput> = {
     nombre: programa.nombre,
@@ -539,7 +551,12 @@ function SalidasEditor({
     netoMultiple: s.neto_multiple != null ? String(s.neto_multiple) : "",
     netoNino: s.neto_nino != null ? String(s.neto_nino) : "",
     bs: s.bajo_solicitud,
-    tarifaSencilla: "", tarifaDoble: "", tarifaTriple: "", tarifaMultiple: "",
+    // Tarifa original del proveedor (migración 151) — se restaura tal cual
+    // quedó guardada, sin importar si la regla está prendida o apagada.
+    tarifaSencilla: s.tarifa_sencilla != null ? String(s.tarifa_sencilla) : "",
+    tarifaDoble: s.tarifa_doble != null ? String(s.tarifa_doble) : "",
+    tarifaTriple: s.tarifa_triple != null ? String(s.tarifa_triple) : "",
+    tarifaMultiple: s.tarifa_multiple != null ? String(s.tarifa_multiple) : "",
   });
   const [rows, setRows] = useState<SalidaState[]>(salidas.map(toState));
   const upd = (i: number, k: keyof SalidaState, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
@@ -558,6 +575,49 @@ function SalidasEditor({
   const aplicarTarifaAcom = (i: number, tarifaKey: keyof SalidaState, netoKey: keyof SalidaState, tarifaStr: string) => {
     const d = desgloseTarifa(tarifaStr);
     setRows((p) => p.map((r, j) => (j === i ? { ...r, [tarifaKey]: tarifaStr, [netoKey]: d ? String(d.neto) : "" } : r)));
+  };
+
+  // Si cambia la REGLA (modo/valor/% comisión) en vez de una tarifa puntual,
+  // recalcula el neto de TODAS las acomodaciones que ya tengan una tarifa del
+  // proveedor cargada — si no, quedarían mostrando/guardando un neto sacado
+  // con la regla vieja. Por acomodación, nunca cruza sencilla/doble/triple/
+  // múltiple entre sí (`recalcularNetosPorTarifa`, lib/calc/programaPrecio.ts).
+  // Se dispara desde los propios `onChange` de modo/valor/% comisión (más
+  // abajo), no desde un efecto: los tres controles solo se muestran con la
+  // regla prendida, así que no hace falta guardar aparte "por qué cambié".
+  const aplicarReglaATodasLasFilas = (regla: { modo: ModoBaseComisionable; valor: number; pctComision: number }) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        const netos = recalcularNetosPorTarifa(
+          {
+            sencilla: r.tarifaSencilla === "" ? null : Number(r.tarifaSencilla),
+            doble: r.tarifaDoble === "" ? null : Number(r.tarifaDoble),
+            triple: r.tarifaTriple === "" ? null : Number(r.tarifaTriple),
+            multiple: r.tarifaMultiple === "" ? null : Number(r.tarifaMultiple),
+          },
+          regla
+        );
+        return {
+          ...r,
+          netoSencilla: netos.sencilla != null ? String(netos.sencilla) : r.netoSencilla,
+          netoDoble: netos.doble != null ? String(netos.doble) : r.netoDoble,
+          netoTriple: netos.triple != null ? String(netos.triple) : r.netoTriple,
+          netoMultiple: netos.multiple != null ? String(netos.multiple) : r.netoMultiple,
+        };
+      })
+    );
+  };
+  const onCModoChange = (v: ModoBaseComisionable) => {
+    setCModo(v);
+    aplicarReglaATodasLasFilas({ modo: v, valor: Number(cValor) || 0, pctComision: Number(cComision) || 0 });
+  };
+  const onCValorChange = (v: string) => {
+    setCValor(v);
+    aplicarReglaATodasLasFilas({ modo: cModo, valor: Number(v) || 0, pctComision: Number(cComision) || 0 });
+  };
+  const onCComisionChange = (v: string) => {
+    setCComision(v);
+    aplicarReglaATodasLasFilas({ modo: cModo, valor: Number(cValor) || 0, pctComision: Number(v) || 0 });
   };
 
   // PVP en vivo: usa las noches de la salida para la asistencia médica.
@@ -579,7 +639,21 @@ function SalidasEditor({
     netoMultiple: nOrNull(r.netoMultiple),
     netoNino: nOrNull(r.netoNino),
     bajoSolicitud: r.bs,
+    tarifaSencilla: nOrNull(r.tarifaSencilla),
+    tarifaDoble: nOrNull(r.tarifaDoble),
+    tarifaTriple: nOrNull(r.tarifaTriple),
+    tarifaMultiple: nOrNull(r.tarifaMultiple),
   }));
+
+  // Se guarda SIEMPRE con la configuración actual, esté prendida o no: apagar
+  // el check no debe borrar modo/valor/% comisión — al volver a marcarlo debe
+  // verse exactamente lo que había (§ punto 6/7 del pedido original).
+  const reglaPayload: ReglaComisionableInput = {
+    activa: reglaOn,
+    modo: cModo,
+    valor: cValor === "" ? null : Number(cValor),
+    pctComision: cComision === "" ? null : Number(cComision),
+  };
 
   // Tercer elemento = campo de tarifa comisionable de esa acomodación (null = no aplica, ej. Niño).
   const COLS: [keyof SalidaState, string, (keyof SalidaState) | null][] = [
@@ -609,7 +683,7 @@ function SalidasEditor({
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <div>
               <div className={lbl}>Base comisionable</div>
-              <select value={cModo} onChange={(e) => setCModo(e.target.value as ModoBaseComisionable)} className={sel + " w-48"}>
+              <select value={cModo} onChange={(e) => onCModoChange(e.target.value as ModoBaseComisionable)} className={sel + " w-48"}>
                 <option value="pct">Tarifa − %</option>
                 <option value="impuesto">Tarifa − impuesto</option>
                 <option value="ninguno">Tarifa (nada)</option>
@@ -618,12 +692,12 @@ function SalidasEditor({
             {cModo !== "ninguno" && (
               <div>
                 <div className={lbl}>{cModo === "pct" ? "% a restar" : `Impuesto (${moneda})`}</div>
-                <Input type="number" value={cValor} onChange={(e) => setCValor(e.target.value)} className="w-28" />
+                <Input type="number" value={cValor} onChange={(e) => onCValorChange(e.target.value)} className="w-28" />
               </div>
             )}
             <div>
               <div className={lbl}>% comisión</div>
-              <Input type="number" value={cComision} onChange={(e) => setCComision(e.target.value)} className="w-24" />
+              <Input type="number" value={cComision} onChange={(e) => onCComisionChange(e.target.value)} className="w-24" />
             </div>
             <p className="text-xs text-gray-400">Abajo aparece un campo de <b>tarifa del proveedor</b> junto a Sencilla/Doble/Triple/Múltiple — cada una calcula su propio neto por separado. Niño se ajusta directo.</p>
           </div>
@@ -700,7 +774,7 @@ function SalidasEditor({
           + Agregar salida
         </AddBtn>
       </div>
-      <SaveBar onSave={() => guardarSalidas(programaId, payload)} />
+      <SaveBar onSave={() => guardarSalidas(programaId, payload, reglaPayload)} />
     </div>
   );
 }

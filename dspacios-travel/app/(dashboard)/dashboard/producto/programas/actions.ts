@@ -274,15 +274,40 @@ export type SalidaInput = {
   netoMultiple: number | null;
   netoNino: number | null;
   bajoSolicitud: boolean;
+  // Tarifa ORIGINAL del proveedor por acomodación (§ "tarifa comisionable",
+  // migración 151) — dato de origen del neto de arriba, se guarda aparte y
+  // nunca se reconstruye desde el neto. Niño no tiene tarifa de proveedor.
+  tarifaSencilla: number | null;
+  tarifaDoble: number | null;
+  tarifaTriple: number | null;
+  tarifaMultiple: number | null;
 };
 
-export async function guardarSalidas(programaId: number, salidas: SalidaInput[]): Promise<Result> {
+// Configuración de la regla "el proveedor da tarifa comisionable" — vive a
+// nivel de PROGRAMA (una sola regla para todas sus salidas), se guarda junto
+// con las salidas porque comparten el mismo botón "Guardar" en la UI.
+export type ReglaComisionableInput = {
+  activa: boolean;
+  modo: "pct" | "impuesto" | "ninguno";
+  valor: number | null;
+  pctComision: number | null;
+};
+
+// Guarda la regla comisionable del programa y reemplaza sus salidas en una
+// sola transacción de Postgres (`guardar_programa_salidas`, migración 151):
+// un DELETE + INSERT hecho con dos llamadas sueltas de supabase-js no es
+// atómico — si el INSERT falla después de un DELETE exitoso, el programa
+// queda sin salidas aunque esta acción reporte el error. La función de BD
+// revierte las dos operaciones juntas si cualquier fila falla.
+export async function guardarSalidas(
+  programaId: number,
+  salidas: SalidaInput[],
+  regla: ReglaComisionableInput
+): Promise<Result> {
   const sb = await createClient();
-  await sb.from("programa_salidas").delete().eq("programa_id", programaId);
   const filas = salidas
     .filter((s) => s.etiqueta.trim() || s.fechaDesde || s.netoDoble != null)
     .map((s, i) => ({
-      programa_id: programaId,
       orden: i,
       etiqueta: oNull(s.etiqueta),
       fecha_desde: oNull(s.fechaDesde),
@@ -295,11 +320,22 @@ export async function guardarSalidas(programaId: number, salidas: SalidaInput[])
       neto_multiple: num(s.netoMultiple),
       neto_nino: num(s.netoNino),
       bajo_solicitud: !!s.bajoSolicitud,
+      tarifa_sencilla: num(s.tarifaSencilla),
+      tarifa_doble: num(s.tarifaDoble),
+      tarifa_triple: num(s.tarifaTriple),
+      tarifa_multiple: num(s.tarifaMultiple),
     }));
-  if (filas.length) {
-    const { error } = await sb.from("programa_salidas").insert(filas);
-    if (error) return { ok: false, error: error.message };
-  }
+  const { error } = await sb.rpc("guardar_programa_salidas", {
+    p_programa_id: programaId,
+    p_regla: {
+      activa: !!regla.activa,
+      modo: regla.modo,
+      valor: num(regla.valor),
+      pctComision: num(regla.pctComision),
+    },
+    p_salidas: filas,
+  });
+  if (error) return { ok: false, error: error.message };
   rev(programaId);
   return { ok: true };
 }

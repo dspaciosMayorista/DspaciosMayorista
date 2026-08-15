@@ -44,3 +44,41 @@ export function calcularNetoPrograma(input: CalcProgramaInput): CalcProgramaResu
   const neto = tarifa - comision;
   return { baseComisionable: r2(base), comision: r2(comision), neto: r2(neto) };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Recalcular los netos de UNA salida cuando cambia la regla (modo/valor/%
+// comisión), no la tarifa. Usa `calcularNetoPrograma` (sin tocarla) por cada
+// acomodación por separado — nunca cruza el valor de una acomodación con
+// otra. Una acomodación sin tarifa del proveedor (null/vacía/<=0) no se
+// toca: su neto puede venir de una carga manual y no hay nada que recalcular.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type TarifasProveedorSalida = {
+  sencilla: number | null;
+  doble: number | null;
+  triple: number | null;
+  multiple: number | null;
+};
+
+export type NetosRecalculados = {
+  sencilla: number | null;
+  doble: number | null;
+  triple: number | null;
+  multiple: number | null;
+};
+
+export function recalcularNetosPorTarifa(
+  tarifas: TarifasProveedorSalida,
+  regla: { modo: ModoBaseComisionable; valor: number; pctComision: number }
+): NetosRecalculados {
+  const calc = (tarifa: number | null): number | null => {
+    if (tarifa == null || !Number.isFinite(tarifa) || tarifa <= 0) return null;
+    return calcularNetoPrograma({ tarifa, modo: regla.modo, valor: regla.valor, pctComision: regla.pctComision }).neto;
+  };
+  return {
+    sencilla: calc(tarifas.sencilla),
+    doble: calc(tarifas.doble),
+    triple: calc(tarifas.triple),
+    multiple: calc(tarifas.multiple),
+  };
+}
