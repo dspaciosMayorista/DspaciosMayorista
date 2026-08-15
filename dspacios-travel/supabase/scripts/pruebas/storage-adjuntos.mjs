@@ -24,11 +24,19 @@
  *   · CRUCE ENTRE AGENCIAS: un interno (`operaciones` y `administracion`) de
  *     UNA agencia no debe alcanzar los archivos de un contrato de la OTRA.
  *     Y un `superadmin` sí, porque su alcance es global por diseño.
+ *   · CARPETA `pe-empleados/` (contratos laborales de nómina, migración 150):
+ *     mismo criterio que la RLS de `pe_empleados` — `gerencia`/`administracion`
+ *     de la agencia del empleado sí; de la OTRA agencia no; `operaciones` y
+ *     `venta` no, aunque sí puedan tocar el bucket `contratos` para adjuntos de
+ *     contrato (son carpetas del mismo bucket con reglas distintas); y
+ *     `superadmin` sí, siempre.
  *
- * ⚠️ EL BLOQUE DE CRUCE ENTRE AGENCIAS EXIGE LA MIGRACIÓN 150.
- *   Contra un proyecto que todavía no la tenga, ese bloque FALLA — y el fallo
- *   es correcto: mide el agujero que la 150 cierra. Las policies anteriores
- *   (migración 148) decían:
+ * ⚠️ EL BLOQUE DE CRUCE ENTRE AGENCIAS Y EL DE NÓMINA EXIGEN LA MIGRACIÓN 150.
+ *   Contra un proyecto que todavía no la tenga, esos bloques FALLAN — y el
+ *   fallo es correcto: miden el agujero que la 150 cierra (Storage no tenía
+ *   ningún candado propio de nómina antes de la 150; el aislamiento de
+ *   `pe-empleados/` nace CON esa migración, no lo tenía la 148). Las policies
+ *   anteriores (migración 148) decían:
  *
  *     bucket_id = 'contratos'
  *     and mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta')
@@ -36,11 +44,12 @@
  *
  *   Con `operaciones` o `administracion`, `mi_rol() <> 'venta'` ya es TRUE, así
  *   que la disyunción se resolvía sin llegar a `soy_asesor_del_contrato`; y
- *   ninguna de las cuatro comparaba el tenant. Cualquier interno de una agencia
- *   alcanzaba todos los archivos de la otra.
+ *   ninguna de las cuatro comparaba el tenant NI distinguía la carpeta
+ *   `pe-empleados/` de un adjunto de contrato — `operaciones` y `venta` podían
+ *   abrir el contrato laboral (con el salario) de cualquier empleado.
  *
- *   Con la 150 aplicada debe pasar entero. Correrlo ANTES y DESPUÉS es lo que
- *   demuestra que la migración hizo algo.
+ *   Con la 150 aplicada, los dos bloques deben pasar enteros. Correrlos ANTES
+ *   y DESPUÉS es lo que demuestra que la migración hizo algo.
  *
  * ⚠️ SERVICE-ROLE SOLO PARA FIXTURES, VERIFICACIÓN Y LIMPIEZA.
  *   Las comprobaciones de permisos se hacen SIEMPRE con la clave anon y una
@@ -49,10 +58,14 @@
  *   definición. La versión anterior de este archivo usaba service-role para el
  *   caso «rol administrativo» y por eso ese caso no probaba nada.
  *
- * ⚠️ ESCRIBE EN LA BASE REAL. Crea tres usuarios y dos contratos temporales,
- *   todos con la marca `__TEST_STORAGE__`, y los borra al terminar — también si
- *   algo falla a mitad. Si la limpieza falla, la prueba TERMINA EN ERROR: dejar
- *   usuarios y contratos de prueba en producción no es un detalle menor.
+ * ⚠️ ESCRIBE EN LA BASE REAL. Crea siete usuarios (venta ×2, administracion ×2
+ *   —uno de cada agencia—, operaciones, gerencia y superadmin), tres contratos
+ *   (uno de cada agencia) y dos empleados de nómina (uno de cada agencia),
+ *   todos con la marca `__TEST_STORAGE__` (los empleados de nómina se marcan
+ *   por su ID, ver la limpieza), y los borra al terminar — también si algo
+ *   falla a mitad. Si la limpieza falla, la prueba TERMINA EN ERROR: dejar
+ *   usuarios, contratos y empleados de prueba en producción no es un detalle
+ *   menor.
  *
  * VARIABLES DE ENTORNO (las mismas del proyecto):
  *   NEXT_PUBLIC_SUPABASE_URL
@@ -115,6 +128,16 @@ const archivo = new Blob(["contenido de prueba, sin datos personales"], { type: 
 
 const cOtraAgencia = `${MARCA}X-${sello}`;
 
+// Declaradas en el ámbito del módulo (no dentro del `try`) A PROPÓSITO:
+// `limpiar()` está definida ANTES del `try` y necesita verlas. Si quedaran
+// como `const` dentro del `try`, `limpiar()` no las vería —no por hoisting,
+// sino porque el `try {}` es un bloque léxico aparte— y la limpieza de nómina
+// no se ejecutaría nunca, en silencio (peor: `typeof` sobre un identificador
+// así de inalcanzable no lanza, así que el fallo no habría dado ni un error).
+let idsEmpleados = [];
+let rutaContratoPropio = null;
+let TEXTO_CONTRATO = null;
+
 // `tenant` se resuelve más abajo (la agencia que tenga contratos); estos tres
 // usuarios se quedan en ella y el contrato `cOtraAgencia` va en la contraria.
 const usuarios = {
@@ -122,6 +145,11 @@ const usuarios = {
   colega: { correo: `test-colega-${sello}@ejemplo.invalid`, nombre: `${MARCA} Colega ${sello}`, rol: "venta", id: null },
   admin: { correo: `test-admin-${sello}@ejemplo.invalid`, nombre: `${MARCA} Admin ${sello}`, rol: "administracion", id: null },
   opera: { correo: `test-opera-${sello}@ejemplo.invalid`, nombre: `${MARCA} Operaciones ${sello}`, rol: "operaciones", id: null },
+  gerente: { correo: `test-gerencia-${sello}@ejemplo.invalid`, nombre: `${MARCA} Gerencia ${sello}`, rol: "gerencia", id: null },
+  // Mismo rol que `admin`, pero en la OTRA agencia — para el caso "administracion
+  // de otro tenant: rechazado" de la carpeta de nómina, sin confundirlo con
+  // "operaciones/venta rechazados" que ya cubre el bloque de cruce de arriba.
+  adminOtro: { correo: `test-admin-otro-${sello}@ejemplo.invalid`, nombre: `${MARCA} Admin Otro ${sello}`, rol: "administracion", id: null },
   // ⚠️ superadmin temporal: es el rol más potente del sistema. Existe solo
   // para comprobar que el candado del cruce no se cierra a costa de dejar sin
   // acceso a quien debe tenerlo. Se borra en la limpieza, que además VERIFICA
@@ -156,6 +184,25 @@ async function limpiar() {
     }
   }
 
+  // Carpeta de nómina: solo los objetos de ESTA corrida (por el id de los
+  // empleados de prueba, que están fuera de la marca de texto).
+  if (idsEmpleados.length) {
+    const { data, error } = await admin.storage.from(BUCKET).list("pe-empleados");
+    if (error) {
+      linea(false, "Listar archivos de pe-empleados/", error.message);
+    } else {
+      const propios = (data ?? [])
+        .filter((o) => idsEmpleados.some((id) => o.name.startsWith(`${id}-`)))
+        .map((o) => `pe-empleados/${o.name}`);
+      if (propios.length) {
+        const { error: eRm } = await admin.storage.from(BUCKET).remove(propios);
+        linea(!eRm, `Eliminar ${propios.length} archivo(s) de pe-empleados/`, eRm?.message);
+      }
+    }
+    const { error: eEmp } = await admin.from("pe_empleados").delete().in("id", idsEmpleados);
+    linea(!eEmp, "Eliminar los empleados de prueba", eEmp?.message);
+  }
+
   for (const c of [cPropio, cAjeno, cOtraAgencia]) {
     const { error } = await admin.from("ventas").delete().eq("numero_contrato", c);
     linea(!error, `Eliminar el contrato ${c}`, error?.message);
@@ -177,6 +224,19 @@ async function limpiar() {
     const quedan = (data ?? []).map((o) => o.name);
     linea(!error && quedan.length === 0, `Sin objetos en ${c}`,
       error?.message ?? (quedan.length ? `quedan: ${quedan.join(", ")}` : null));
+  }
+
+  if (idsEmpleados.length) {
+    const { data, error } = await admin.storage.from(BUCKET).list("pe-empleados");
+    const quedan = (data ?? [])
+      .filter((o) => idsEmpleados.some((id) => o.name.startsWith(`${id}-`)))
+      .map((o) => o.name);
+    linea(!error && quedan.length === 0, "Sin objetos propios en pe-empleados/",
+      error?.message ?? (quedan.length ? `quedan: ${quedan.join(", ")}` : null));
+
+    const { data: emp, error: eEmp } = await admin.from("pe_empleados").select("id").in("id", idsEmpleados);
+    linea(!eEmp && (emp ?? []).length === 0, "Sin filas de pe_empleados de prueba",
+      eEmp?.message ?? ((emp ?? []).length ? `quedan: ${(emp ?? []).map((e) => e.id).join(", ")}` : null));
   }
 
   const { data: ventas, error: eV } = await admin.from("ventas").select("numero_contrato").like("numero_contrato", `${MARCA}%`);
@@ -218,10 +278,14 @@ try {
     const { data, error } = await admin.auth.admin.createUser({ email: u.correo, password: clave, email_confirm: true });
     if (error) throw new Error(`No se pudo crear el usuario ${ref}: ${error.message}`);
     u.id = data.user.id;
-    const { error: e2 } = await admin.from("usuarios").update({ nombre: u.nombre, rol: u.rol, activo: true, tenant }).eq("id", u.id);
+    // `adminOtro` es administracion de la OTRA agencia; el resto va en `tenant`.
+    const tenantDelUsuario = ref === "adminOtro" ? otroTenant : tenant;
+    const { error: e2 } = await admin.from("usuarios")
+      .update({ nombre: u.nombre, rol: u.rol, activo: true, tenant: tenantDelUsuario })
+      .eq("id", u.id);
     if (e2) throw new Error(`No se pudo configurar el perfil de ${ref}: ${e2.message}`);
   }
-  console.log(`   asesor/colega ('venta'), admin ('administracion'), opera ('operaciones') y jefe ('superadmin') en el tenant '${tenant}'`);
+  console.log(`   asesor/colega/gerente/admin/opera/jefe en '${tenant}', adminOtro en '${otroTenant}'`);
 
   const { error: eV } = await admin.from("ventas").insert([
     { numero_contrato: cPropio, cliente: "CLIENTE PRUEBA", tenant, asesor: usuarios.asesor.nombre, precio_venta: 1000 },
@@ -245,6 +309,35 @@ try {
     .upload(rutaOtraAgencia, new Blob([TEXTO_OTRA], { type: "text/plain" }), { upsert: true });
   if (eSub2) throw new Error(`No se pudo sembrar el archivo de la otra agencia: ${eSub2.message}`);
   console.log(`   archivo de la otra agencia sembrado en ${rutaOtraAgencia}`);
+
+  // ── Empleados de nómina (carpeta `pe-empleados/`), uno por agencia ────────
+  // `pe_empleados` no tiene el candado de "prueba" por nombre en storage —el
+  // aislamiento sale del `id` del empleado, no de la marca— así que se anotan
+  // los dos ids para poder limpiarlos explícitamente.
+  const nombreEmpleadoPropio = `${MARCA} Empleado ${sello}`;
+  const nombreEmpleadoOtro = `${MARCA} Empleado Otro ${sello}`;
+  const { data: empPropio, error: eEmp1 } = await admin
+    .from("pe_empleados")
+    .insert({ nombre: nombreEmpleadoPropio, tenant, salario: 1 })
+    .select("id")
+    .single();
+  if (eEmp1) throw new Error(`No se pudo crear el empleado propio: ${eEmp1.message}`);
+  const { data: empOtro, error: eEmp2 } = await admin
+    .from("pe_empleados")
+    .insert({ nombre: nombreEmpleadoOtro, tenant: otroTenant, salario: 1 })
+    .select("id")
+    .single();
+  if (eEmp2) throw new Error(`No se pudo crear el empleado de la otra agencia: ${eEmp2.message}`);
+  idsEmpleados = [empPropio.id, empOtro.id];
+  console.log(`   empleado propio #${empPropio.id} (${tenant}) y de la otra agencia #${empOtro.id} (${otroTenant})`);
+
+  rutaContratoPropio = `pe-empleados/${empPropio.id}-contrato.txt`;
+  TEXTO_CONTRATO = `contrato laboral original, empleado ${empPropio.id}, ${sello}`;
+  const { error: eSubEmp } = await admin.storage.from(BUCKET)
+    .upload(rutaContratoPropio, new Blob([TEXTO_CONTRATO], { type: "text/plain" }), { upsert: true });
+  if (eSubEmp) throw new Error(`No se pudo sembrar el contrato laboral: ${eSubEmp.message}`);
+  await admin.from("pe_empleados").update({ contrato_path: rutaContratoPropio }).eq("id", empPropio.id);
+  console.log(`   contrato laboral sembrado en ${rutaContratoPropio}`);
 
   // ── Asesor: sesión real con la clave anon ─────────────────────────────────
   const asesor = await sesion(usuarios.asesor);
@@ -418,6 +511,123 @@ try {
     r.detalle ?? (r.ok ? "la API no lo listó como eliminado" : null));
 
   await jefe.auth.signOut();
+
+  // ── CARPETA DE NÓMINA (`pe-empleados/`) ───────────────────────────────────
+  // Mismo criterio que la RLS de `pe_empleados`: solo `gerencia`/`administracion`
+  // DE LA AGENCIA DEL EMPLEADO, y `superadmin` siempre. `operaciones` y `venta`
+  // pueden tocar adjuntos de CONTRATO en este mismo bucket (comprobado arriba)
+  // pero NO nómina — son carpetas distintas con reglas distintas, y por eso se
+  // prueban aparte en vez de asumir que "ya se probó el bucket".
+  console.log("\n== NÓMINA — pe-empleados/ del empleado propio (tenant '" + tenant + "')");
+
+  const permitidosNomina = [
+    ["gerente", "gerencia (misma agencia)"],
+    ["admin", "administracion (misma agencia)"],
+  ];
+  const rechazadosNomina = [
+    ["adminOtro", "administracion (OTRA agencia)"],
+    ["opera", "operaciones (misma agencia)"],
+    ["asesor", "venta (misma agencia)"],
+  ];
+
+  for (const [ref, etiqueta] of permitidosNomina) {
+    const cli = await sesion(usuarios[ref]);
+    const stN = cli.storage.from(BUCKET);
+    const rutaPropiaDelRol = `pe-empleados/${empPropio.id}-por-${ref}.txt`;
+
+    let x = await intentar(() => stN.list("pe-empleados"));
+    linea(x.ok && listaIncluye(x.data, rutaContratoPropio), `${etiqueta}: LISTA la carpeta pe-empleados/`,
+      x.detalle ?? (x.ok ? "respondió sin error pero no listó el contrato" : null));
+
+    x = await intentar(() => stN.createSignedUrl(rutaContratoPropio, 60));
+    linea(x.ok, `${etiqueta}: FIRMA URL del contrato laboral`, x.detalle);
+
+    x = await intentar(() => stN.upload(rutaPropiaDelRol, archivo, { upsert: false }));
+    linea(x.ok, `${etiqueta}: SUBE un contrato laboral`, x.detalle);
+
+    x = await intentar(() => stN.upload(rutaPropiaDelRol, new Blob(["reemplazado"]), { upsert: true }));
+    linea(x.ok, `${etiqueta}: REEMPLAZA lo que subió`, x.detalle);
+
+    x = await intentar(() => stN.remove([rutaPropiaDelRol]));
+    const borro = x.ok && listaIncluye(x.data, rutaPropiaDelRol);
+    linea(borro, `${etiqueta}: ELIMINA lo que subió`, x.detalle ?? (x.ok ? "la API no lo listó como eliminado" : null));
+
+    await cli.auth.signOut();
+  }
+
+  console.log("\n== NÓMINA — las mismas cinco deben ser RECHAZADAS para estos roles");
+
+  for (const [ref, etiqueta] of rechazadosNomina) {
+    const cli = await sesion(usuarios[ref]);
+    const stN = cli.storage.from(BUCKET);
+    const rutaIntrusaNomina = `pe-empleados/${empPropio.id}-intruso-${ref}.txt`;
+
+    let x = await intentar(() => stN.list("pe-empleados"));
+    const vio = x.ok && listaIncluye(x.data, rutaContratoPropio);
+    linea(!vio, `${etiqueta}: LISTAR pe-empleados/ debe fallar o venir vacía`,
+      x.detalle ?? (vio ? "no falló: listó el contrato laboral" : null));
+
+    x = await intentar(() => stN.createSignedUrl(rutaContratoPropio, 60));
+    linea(!x.ok, `${etiqueta}: FIRMAR URL del contrato laboral debe fallar`,
+      x.detalle ?? "no falló: entregó una URL firmada");
+
+    x = await intentar(() => stN.upload(rutaIntrusaNomina, archivo, { upsert: false }));
+    linea(!x.ok, `${etiqueta}: SUBIR un contrato laboral debe fallar`,
+      x.detalle ?? "no falló: la subida fue aceptada");
+
+    x = await intentar(() => stN.upload(rutaContratoPropio, new Blob(["pisado"]), { upsert: true }));
+    linea(!x.ok, `${etiqueta}: REEMPLAZAR el contrato laboral debe fallar`,
+      x.detalle ?? "no falló: lo sobrescribió");
+
+    x = await intentar(() => stN.remove([rutaContratoPropio]));
+    const borro = x.ok && listaIncluye(x.data, rutaContratoPropio);
+    linea(!borro, `${etiqueta}: ELIMINAR el contrato laboral debe fallar`,
+      x.detalle ?? (borro ? "no falló: lo eliminó" : "la API respondió sin error pero no eliminó nada"));
+
+    await cli.auth.signOut();
+  }
+
+  // Verificación independiente con service-role: el archivo sigue existiendo
+  // Y su CONTENIDO no cambió (un reemplazo con upsert no deja error visible).
+  {
+    const { data: lista } = await admin.storage.from(BUCKET).list("pe-empleados");
+    const nombres = (lista ?? []).map((o) => o.name);
+    const nombreEsperado = rutaContratoPropio.split("/")[1];
+
+    linea(nombres.includes(nombreEsperado), "El contrato laboral sigue existiendo",
+      nombres.includes(nombreEsperado) ? null : "DESAPARECIÓ: algún intento de borrado cruzado surtió efecto");
+
+    const colados = nombres.filter((n) => n.includes("intruso"));
+    linea(colados.length === 0, "No quedó ningún archivo colado en pe-empleados/",
+      colados.length ? `quedaron: ${colados.join(", ")}` : null);
+
+    const { data: blob, error: eDl } = await admin.storage.from(BUCKET).download(rutaContratoPropio);
+    if (eDl) {
+      linea(false, "El CONTENIDO del contrato laboral no cambió", `no se pudo descargar: ${eDl.message}`);
+    } else {
+      const texto = await blob.text();
+      linea(texto === TEXTO_CONTRATO, "El CONTENIDO del contrato laboral no cambió",
+        texto === TEXTO_CONTRATO ? null : `fue sobrescrito: "${texto.slice(0, 60)}"`);
+    }
+  }
+
+  // ── superadmin también en nómina ──────────────────────────────────────────
+  console.log("\n== NÓMINA — superadmin sí puede, siempre");
+  const jefeNomina = await sesion(usuarios.jefe);
+  const stJefeNomina = jefeNomina.storage.from(BUCKET);
+  const rutaJefeNomina = `pe-empleados/${empOtro.id}-por-jefe.txt`;
+
+  r = await intentar(() => stJefeNomina.createSignedUrl(rutaContratoPropio, 60));
+  linea(r.ok, "superadmin FIRMA URL de un contrato laboral", r.detalle);
+
+  r = await intentar(() => stJefeNomina.upload(rutaJefeNomina, archivo, { upsert: false }));
+  linea(r.ok, "superadmin SUBE un contrato laboral (en la carpeta del empleado de la otra agencia)", r.detalle);
+
+  r = await intentar(() => stJefeNomina.remove([rutaJefeNomina]));
+  const borroJefeNomina = r.ok && listaIncluye(r.data, rutaJefeNomina);
+  linea(borroJefeNomina, "superadmin ELIMINA lo que subió", r.detalle ?? (r.ok ? "la API no lo listó como eliminado" : null));
+
+  await jefeNomina.auth.signOut();
 } catch (e) {
   console.error(`\n[ERROR] ${e instanceof Error ? e.message : String(e)}`);
   mal++;

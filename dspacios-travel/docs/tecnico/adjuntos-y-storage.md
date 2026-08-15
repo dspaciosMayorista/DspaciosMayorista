@@ -293,6 +293,13 @@ un contrato de la otra agencia pero **no sus adjuntos**. Es una inconsistencia
 real entre dos reglas, escrita a propósito en la cabecera de la migración para
 que se resuelva a conciencia en un sentido o en el otro.
 
+**Trabajo separado, con su propio alcance**: `docs/futuro/puede-ver-tenant-gerencia.md`
+desarrolla las dos salidas y el checklist de qué auditar antes de tocar
+`puede_ver_tenant()` — la usan más tablas que `ventas` (abonos, CxP,
+facturación, comisiones, `pe_empleados`, movimientos, conciliación,
+auditoría…), así que cambiar su comportamiento para `gerencia` es un cambio de
+alcance global de ese rol, no algo que se decida de pasada dentro de la 150.
+
 ### El bucket no guarda solo adjuntos de contrato
 
 Auditadas todas las rutas que la aplicación escribe. Son **dos, y solo dos**

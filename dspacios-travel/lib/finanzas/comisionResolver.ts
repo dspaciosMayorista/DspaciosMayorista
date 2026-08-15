@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
+import { elegirFichaAliado, explicarFicha, resolverAliadoIdContrato, type FichaAliado } from "@/lib/finanzas/fichaAliado";
 
 // Detalle de cómo se llegó al valor a cobrar. La vía 2 (aliados_b2b) trae el
 // desglose completo (calcComisionB2B); la vía 1 (ventas.comision_b2b, flujo
@@ -65,7 +66,7 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   if (!user) return null;
   const { data: perfil } = await sb
     .from("usuarios")
-    .select("nombre, rol, tenant, aliado_id")
+    .select("nombre, rol, tenant, activo, aliado_id")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -148,9 +149,11 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   // tarifario B2B, o `aliados_b2b.aliado_id` en las comisiones cargadas a mano
   // (migración 133) — que es el único camino en minorista. Si ninguno de los
   // dos está puesto, queda null y solo entonces se mira el nombre.
-  const aliadoIdContrato = esVentasB2B
-    ? ((v.aliado_id as number | null) ?? null)
-    : (aliadoB2B?.aliadoId ?? (v.aliado_id as number | null) ?? null);
+  const aliadoIdContrato = resolverAliadoIdContrato({
+    esVentasB2B,
+    aliadoIdVentas: (v.aliado_id as number | null) ?? null,
+    aliadoIdComisionManual: aliadoB2B?.aliadoId ?? null,
+  });
 
   const acceso = accesoDocumentoContrato(
     perfil
@@ -159,6 +162,7 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
           rol: perfil.rol as string | null,
           tenant: perfil.tenant as string | null,
           nombre: perfil.nombre as string | null,
+          activo: (perfil.activo as boolean | null) ?? null,
           aliadoId: (perfil.aliado_id as number | null) ?? null,
         }
       : null,
@@ -181,27 +185,49 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
 
   const aliado = aliadoNombre || perfil?.nombre || "";
 
-  // Datos del aliado (documento/dirección/cuenta bancaria) — desde el
-  // catálogo `aliados` si la comisión quedó enlazada (aliado_id) o, si no,
-  // por coincidencia de nombre (comisiones tipeadas a mano antes de que
-  // existiera el enlace).
-  let aliadoInfo: AliadoCatalogo | null = null;
-  if (!esVentasB2B && aliadoB2B?.aliadoId) {
-    const { data } = await admin
-      .from("aliados")
-      .select("nombre, tipo_documento, nit, direccion, telefono, email, banco, tipo_cuenta, numero_cuenta")
-      .eq("id", aliadoB2B.aliadoId)
-      .maybeSingle();
-    aliadoInfo = data;
-  } else if (aliado) {
-    const { data } = await admin
-      .from("aliados")
-      .select("nombre, tipo_documento, nit, direccion, telefono, email, banco, tipo_cuenta, numero_cuenta")
-      .ilike("nombre", aliado)
-      .limit(1)
-      .maybeSingle();
-    aliadoInfo = data;
+  // ── Datos del aliado (documento, dirección, CUENTA BANCARIA) ────────────
+  // Con `aliado_id` se lee por id, en los DOS flujos: el tarifario
+  // (`ventas.aliado_id`) también lo tiene y antes no se usaba, solo el de
+  // comisión manual. Sin id se cae al camino legacy, que exige coincidencia
+  // exacta y una sola ficha — nunca `ilike` ni `limit(1)`, porque `%` y `_` son
+  // comodines y un `limit(1)` sin orden elige un homónimo cualquiera. Esto sale
+  // impreso en una cuenta de cobro: equivocarse es pagarle a otra persona.
+  const COLS_ALIADO =
+    "id, nombre, tipo_documento, nit, direccion, telefono, email, banco, tipo_cuenta, numero_cuenta";
+
+  let fichaPorId: FichaAliado | null = null;
+  if (aliadoIdContrato != null) {
+    const { data } = await admin.from("aliados").select(COLS_ALIADO).eq("id", aliadoIdContrato).maybeSingle();
+    fichaPorId = (data as FichaAliado | null) ?? null;
   }
+
+  // Solo se consulta por nombre si NO hay id, y se traen TODAS las coincidencias:
+  // contarlas es lo que detecta la ambigüedad. `eq` es comparación literal, así
+  // que un nombre con `%` o `_` no actúa como patrón.
+  let fichasPorNombre: FichaAliado[] = [];
+  if (aliadoIdContrato == null && aliadoNombre) {
+    const { data } = await admin.from("aliados").select(COLS_ALIADO).eq("nombre", aliadoNombre);
+    fichasPorNombre = (data as FichaAliado[] | null) ?? [];
+    // Y si el nombre guardado difiere en mayúsculas o espacios, se reintenta con
+    // la normalización de la regla. `ilike` aquí sería un patrón; se evita
+    // trayendo el catálogo y comparando en memoria, que además es lo que permite
+    // ver si hay más de una.
+    if (fichasPorNombre.length === 0) {
+      const { data: todas } = await admin.from("aliados").select(COLS_ALIADO);
+      const objetivo = aliadoNombre.trim().toLowerCase();
+      fichasPorNombre = ((todas as FichaAliado[] | null) ?? []).filter(
+        (f) => (f.nombre ?? "").trim().toLowerCase() === objetivo
+      );
+    }
+  }
+
+  const eleccion = elegirFichaAliado(fichaPorId, aliadoIdContrato != null, aliadoNombre, fichasPorNombre);
+  const aliadoInfo: AliadoCatalogo | null = eleccion.ficha;
+
+  // Evidencia para el servidor cuando NO se pudo resolver. No se expone al
+  // cliente ni se sustituye por una ficha "parecida".
+  const aviso = explicarFicha(eleccion, aliadoNombre);
+  if (aviso) console.warn(`[cuenta de cobro ${v.numero_contrato}] ${aviso}`);
 
   return {
     numeroContrato: v.numero_contrato,

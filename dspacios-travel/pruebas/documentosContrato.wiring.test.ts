@@ -61,11 +61,14 @@ for (const archivo of RESOLVERS) {
     );
   });
 
-  test(`${archivo} lee el tenant y el aliado_id del perfil`, () => {
+  test(`${archivo} lee el tenant, el activo y el aliado_id del perfil`, () => {
     const src = leer(archivo);
-    // Sin estos dos campos la función compartida no puede comparar la agencia
-    // ni resolver el vínculo fuerte: recibiría null y denegaría de más.
-    assert.match(src, /select\(\s*"nombre, rol, tenant, aliado_id"\s*\)/, "el perfil no trae tenant/aliado_id");
+    // Sin estos tres campos la función compartida no puede comparar la
+    // agencia, resolver el vínculo fuerte, ni negar a un usuario dado de
+    // baja: recibiría null/undefined y denegaría de más, o —peor, con
+    // `activo`— dejaría pasar a alguien que no debería.
+    assert.match(src, /select\(\s*"nombre, rol, tenant, activo, aliado_id"\s*\)/, "el perfil no trae tenant/activo/aliado_id");
+    assert.match(src, /activo:/, "no pasa `activo` al autorizador");
     assert.match(src, /aliadoId:/, "no pasa el aliado_id al autorizador");
   });
 }
@@ -82,6 +85,31 @@ test("el plan de cobro y el recibo heredan el control del estado de cuenta", () 
   const recibo = src.slice(src.indexOf("export async function cargarRecibo"));
   assert.match(recibo, /await cargarEstadoCuenta\(/, "cargarRecibo ya no delega");
   assert.match(recibo, /if\s*\(!estado\)\s*return null;/, "cargarRecibo no corta si deniega");
+});
+
+test("comisionResolver.ts resuelve los datos bancarios por id, no por ilike/limit(1)", () => {
+  const src = leer("lib/finanzas/comisionResolver.ts");
+  assert.match(
+    src,
+    /import\s*\{[^}]*elegirFichaAliado[^}]*\}\s*from\s*"@\/lib\/finanzas\/fichaAliado"/,
+    "no importa el resolvedor compartido de fichas"
+  );
+  assert.match(src, /resolverAliadoIdContrato\(/, "no calcula el aliado_id con la función compartida");
+  assert.doesNotMatch(
+    src,
+    /\.ilike\(\s*"nombre"/,
+    "volvió el ilike(nombre): %/_ son comodines, y puede traer una ficha que no es la del contrato"
+  );
+  // No es un `doesNotMatch` genérico de `.limit(1)`: el archivo tiene uno
+  // legítimo (la fila más reciente de `aliados_b2b` para el contrato, con
+  // `order by id desc` — no tiene nada que ver con elegir entre homónimos).
+  // Lo que no debe volver es la búsqueda de aliado ENCADENANDO
+  // `.from("aliados")...limit(1)` sin pasar por `elegirFichaAliado`.
+  assert.doesNotMatch(
+    src,
+    /from\("aliados"\)[\s\S]{0,200}\.limit\(1\)/,
+    "volvió una consulta a `aliados` con limit(1): con homónimos elige una ficha arbitraria"
+  );
 });
 
 test("las cuatro páginas por URL siguen colgando de esos dos resolvers", () => {

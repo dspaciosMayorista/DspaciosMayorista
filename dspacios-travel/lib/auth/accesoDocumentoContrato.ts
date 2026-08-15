@@ -43,6 +43,15 @@ export type PerfilAcceso = {
   rol: string | null;
   tenant: string | null;
   nombre: string | null;
+  /**
+   * `usuarios.activo`. **Se comprueba aquí, no fuera.** Estas páginas se leen
+   * con service-role, así que ni la RLS ni `mi_rol()` —que desde la migración
+   * 140 no devuelve rol si el usuario está desactivado— participan. Y `proxy.ts`
+   * tampoco basta: rebota al login, pero es una capa de navegación, no de
+   * autorización, y el JWT de una cuenta desactivada sigue vivo hasta que
+   * expira. Si no se mira aquí, no se mira en ninguna parte.
+   */
+  activo: boolean | null;
   /** Ficha del catálogo `aliados` enlazada al usuario (migración 143). */
   aliadoId: number | null;
 };
@@ -97,6 +106,8 @@ const igualNombre = (a: string | null | undefined, b: string | null | undefined)
  * Orden deliberado — primero los vínculos FUERTES (por id), después el rol, y
  * el nombre solo como último recurso:
  *
+ *   0. El usuario tiene que estar **activo**. Se comprueba antes que todo lo
+ *      demás, superadmin incluido.
  *   1. `superadmin` → alcance global, por diseño.
  *   2. `b2bUsuarioId` → lo compró él mismo desde el portal. Es el vínculo más
  *      fuerte que existe: es su propio id de usuario.
@@ -126,6 +137,13 @@ export function accesoDocumentoContrato(
   contrato: ContratoAcceso
 ): Acceso {
   if (!perfil?.rol) return DENEGADO;
+
+  // Desactivado = fuera, por CUALQUIER vía. Antes que nada, para que ni
+  // superadmin ni el dueño de la comisión se salten la comprobación: dar de
+  // baja a alguien tiene que cerrarle también los documentos por URL, que es
+  // justo por donde se seguiría entrando sin pasar por la aplicación.
+  // `=== false` no basta: un `null` (columna sin valor) tampoco es un sí.
+  if (perfil.activo !== true) return DENEGADO;
 
   if (perfil.rol === "superadmin") {
     return { permitido: true, esInterno: true, esDueno: false, via: "superadmin" };

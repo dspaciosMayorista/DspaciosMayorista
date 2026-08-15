@@ -21,6 +21,7 @@ const perfil = (p: Partial<PerfilAcceso>): PerfilAcceso => ({
   rol: "operaciones",
   tenant: "mayorista",
   nombre: "Persona",
+  activo: true,
   aliadoId: null,
   ...p,
 });
@@ -99,6 +100,83 @@ test("un interno sin tenant no entra por rol (no se asume 'mayorista')", () => {
     contrato({ tenant: "mayorista" })
   );
   assert.equal(r.permitido, false);
+});
+
+// ── Usuario DESACTIVADO: fuera por todas las vías ─────────────────────────
+//
+// `usuarios.activo` no lo comprueba nadie más en este camino. La RLS no
+// participa (se lee con service-role), `mi_rol()` tampoco (no se llama), y
+// `proxy.ts` solo rebota la navegación — el JWT de una cuenta desactivada sigue
+// siendo válido hasta que expira, así que estas URLs seguirían respondiendo.
+// Por eso hay una prueba por CADA vía de entrada, no una sola.
+
+test("INACTIVO: un superadmin desactivado no entra", () => {
+  const r = accesoDocumentoContrato(
+    perfil({ rol: "superadmin", activo: false }),
+    contrato({ tenant: "mayorista" })
+  );
+  assert.equal(r.permitido, false);
+  assert.equal(r.via, "denegado");
+});
+
+test("INACTIVO: un interno desactivado no entra a su propia agencia", () => {
+  for (const rol of ["gerencia", "administracion", "operaciones"]) {
+    const r = accesoDocumentoContrato(
+      perfil({ rol, tenant: "mayorista", activo: false }),
+      contrato({ tenant: "mayorista" })
+    );
+    assert.equal(r.permitido, false, rol);
+  }
+});
+
+test("INACTIVO: el que compró desde el portal no entra si lo desactivan", () => {
+  const r = accesoDocumentoContrato(
+    perfil({ id: "u-9", rol: "freelance", activo: false }),
+    contrato({ b2bUsuarioId: "u-9" })
+  );
+  assert.equal(r.permitido, false);
+});
+
+test("INACTIVO: el aliado enlazado por aliado_id no entra si lo desactivan", () => {
+  const r = accesoDocumentoContrato(
+    perfil({ rol: "operaciones", tenant: "mayorista", aliadoId: 7, activo: false }),
+    contrato({ tenant: "minorista", aliadoId: 7 })
+  );
+  assert.equal(r.permitido, false);
+});
+
+test("INACTIVO: el respaldo legacy por nombre tampoco lo deja entrar", () => {
+  const r = accesoDocumentoContrato(
+    perfil({ rol: "freelance", nombre: "Ana Gómez", activo: false }),
+    contrato({ nombreAliado: ["Ana Gómez"] })
+  );
+  assert.equal(r.permitido, false);
+});
+
+test("INACTIVO: `activo` en null tampoco es un sí", () => {
+  // Un perfil sin valor en la columna no puede tratarse como habilitado: sería
+  // exactamente el fallo que esto viene a cerrar, con otro disfraz.
+  for (const rol of ["superadmin", "administracion", "freelance"]) {
+    const r = accesoDocumentoContrato(
+      perfil({ rol, activo: null }),
+      contrato({ tenant: "mayorista" })
+    );
+    assert.equal(r.permitido, false, rol);
+  }
+});
+
+test("CONTROL NEGATIVO: la regla anterior no miraba `activo` en absoluto", () => {
+  const ROLES_VIEJOS = ["superadmin", "administracion", "gerencia", "operaciones"];
+  const viejo = (rol: string) => ROLES_VIEJOS.includes(rol);
+
+  assert.equal(viejo("administracion"), true, "la regla vieja dejaba entrar a un desactivado");
+  assert.equal(
+    accesoDocumentoContrato(
+      perfil({ rol: "administracion", tenant: "mayorista", activo: false }),
+      contrato({ tenant: "mayorista" })
+    ).permitido,
+    false
+  );
 });
 
 // ── Dueño B2B por id ──────────────────────────────────────────────────────

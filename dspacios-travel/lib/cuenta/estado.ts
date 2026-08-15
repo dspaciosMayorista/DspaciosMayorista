@@ -44,7 +44,7 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
   if (!user) return null;
   const { data: perfil } = await sb
     .from("usuarios")
-    .select("nombre, rol, tenant, aliado_id")
+    .select("nombre, rol, tenant, activo, aliado_id")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -66,6 +66,7 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
           rol: perfil.rol as string | null,
           tenant: perfil.tenant as string | null,
           nombre: perfil.nombre as string | null,
+          activo: (perfil.activo as boolean | null) ?? null,
           aliadoId: (perfil.aliado_id as number | null) ?? null,
         }
       : null,

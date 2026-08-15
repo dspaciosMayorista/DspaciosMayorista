@@ -48,6 +48,10 @@
 --       comparación de tenant a `es_gerencia` en el helper de abajo;
 --     · si lo correcto es que NO lo sea, hay que corregir `puede_ver_tenant`,
 --       que es un cambio mucho más amplio y no se hace aquí.
+--   Desarrollo completo de las dos salidas, con el checklist de qué auditar
+--   antes de tocar `puede_ver_tenant()` (la usan más tablas que `ventas`):
+--   `docs/futuro/puede-ver-tenant-gerencia.md`. Trabajo SEPARADO — no mezclar
+--   con esta migración.
 --
 -- ⚠️ ESTE BUCKET NO GUARDA SOLO ADJUNTOS DE CONTRATO
 --   Auditadas TODAS las rutas que la aplicación escribe en él. Son dos, y solo
