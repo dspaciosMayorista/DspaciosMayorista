@@ -101,7 +101,7 @@ export function ProgramaEditor(props: {
   // "Salidas y precios". Se inicializa desde `programas.regla_comisionable_*`
   // (migración 151): antes de esta migración nunca se guardaba, así que un
   // programa sin configurar cae en los mismos defaults de siempre.
-  const [reglaOn, setReglaOn] = useState(programa.regla_comisionable);
+  const [reglaOn, setReglaOnRaw] = useState(programa.regla_comisionable);
   const [cModo, setCModo] = useState<ModoBaseComisionable>(
     (programa.regla_comisionable_modo as ModoBaseComisionable) || "pct"
   );
@@ -111,6 +111,24 @@ export function ProgramaEditor(props: {
   const [cComision, setCComision] = useState(
     programa.regla_comisionable_pct_comision != null ? String(programa.regla_comisionable_pct_comision) : "10"
   );
+
+  // Al DESACTIVAR el check, se descarta cualquier borrador (válido o no) y se
+  // vuelve a la última configuración YA GUARDADA en BD (`programa.regla_
+  // comisionable_*`, mismos defaults que los `useState` de arriba). Sin esto,
+  // un borrador inválido dejado a medio escribir (ej. comisión "150" con el
+  // check todavía prendido) sobrevivía al desactivar — la Server Action no lo
+  // rechaza por estar inactiva, pero el CHECK incondicional de `pct_comision`/
+  // `valor` en BD sí, y como los controles quedan ocultos con el check apagado,
+  // el usuario no tenía forma de corregirlo. Activar de nuevo el check sigue
+  // funcionando igual: reabre con la última config guardada, no con "3"/"10".
+  const setReglaOn = (v: boolean) => {
+    if (!v) {
+      setCModo((programa.regla_comisionable_modo as ModoBaseComisionable) || "pct");
+      setCValor(programa.regla_comisionable_valor != null ? String(programa.regla_comisionable_valor) : "3");
+      setCComision(programa.regla_comisionable_pct_comision != null ? String(programa.regla_comisionable_pct_comision) : "10");
+    }
+    setReglaOnRaw(v);
+  };
 
   const initialCab: Partial<CabeceraInput> = {
     nombre: programa.nombre,

@@ -364,3 +364,53 @@ test("cModo/cValor/cComision/reglaOn se inicializan desde el programa cargado, n
     "cComision no restaura el % de comisión guardado al recargar"
   );
 });
+
+// ── Desactivar con un borrador inválido a medio escribir ───────────────────
+// Caso reportado: configuración guardada válida (3% / comisión 10%), el
+// usuario escribe temporalmente comisión "150", desactiva el check e intenta
+// guardar. La Server Action deja pasar la regla por estar inactiva, pero el
+// CHECK incondicional de `pct_comision`/`valor` en BD sigue vigente sin
+// importar `activa` — y con el check apagado los controles quedan ocultos,
+// así que el usuario no podía corregirlo. La corrección: `setReglaOn` (el
+// wrapper alrededor del `useState` crudo) descarta el borrador y vuelve a la
+// última configuración YA GUARDADA antes de apagar el check.
+
+const setReglaOnSrc = editorSrc.slice(
+  editorSrc.indexOf("const setReglaOn = (v: boolean) => {"),
+  editorSrc.indexOf("};", editorSrc.indexOf("const setReglaOn = (v: boolean) => {"))
+);
+
+test("al desactivar, setReglaOn restaura cModo/cValor/cComision desde el programa guardado (no los deja tal cual)", () => {
+  assert.match(setReglaOnSrc, /if\s*\(\s*!v\s*\)\s*\{/, "no distingue el caso de apagar el check (v === false)");
+  assert.match(setReglaOnSrc, /setCModo\(\s*\(programa\.regla_comisionable_modo/, "no restaura cModo desde el programa guardado al desactivar");
+  assert.match(setReglaOnSrc, /setCValor\(\s*programa\.regla_comisionable_valor/, "no restaura cValor desde el programa guardado al desactivar");
+  assert.match(setReglaOnSrc, /setCComision\(\s*programa\.regla_comisionable_pct_comision/, "no restaura cComision desde el programa guardado al desactivar");
+});
+
+test("el borrador se pierde SIEMPRE al desactivar, sea inválido o válido (mismo criterio, sin ramas extra)", () => {
+  // Solo debe haber una condición (`if (!v)`) antes de las tres restauraciones
+  // — si alguien agrega un chequeo de "solo si es inválido", el round-trip
+  // normal (desactivar sin haber tocado nada) dejaría de ser un no-op idéntico.
+  const condiciones = setReglaOnSrc.match(/\bif\s*\(/g) ?? [];
+  assert.equal(condiciones.length, 1, "setReglaOn no debe tener más de una condición: el reset es incondicional al desactivar");
+});
+
+test("round-trip normal: los fallback de setReglaOn al desactivar son los MISMOS que los del useState inicial (\"pct\"/\"3\"/\"10\")", () => {
+  // Si desactivar/reactivar sin editar nada debe verse idéntico a nunca haber
+  // tocado el formulario, los defaults usados al restaurar tienen que
+  // coincidir carácter por carácter con los defaults del montaje inicial —
+  // de lo contrario, un programa con `regla_comisionable_valor` en null que
+  // se desactiva y reactiva sin editar terminaría con un valor distinto al
+  // que tenía antes de tocar el check.
+  const initCModo = editorSrc.match(/useState<ModoBaseComisionable>\(\s*\(programa\.regla_comisionable_modo as ModoBaseComisionable\)\s*\|\|\s*"pct"\s*\);/);
+  const resetCModo = setReglaOnSrc.match(/setCModo\(\s*\(programa\.regla_comisionable_modo as ModoBaseComisionable\)\s*\|\|\s*"pct"\s*\);/);
+  assert.ok(initCModo, "no se encontró el useState inicial de cModo con fallback \"pct\"");
+  assert.ok(resetCModo, "el reset de cModo al desactivar no usa el mismo fallback \"pct\" que el useState inicial");
+
+  const initCValor = editorSrc.match(/programa\.regla_comisionable_valor\s*!=\s*null\s*\?\s*String\(programa\.regla_comisionable_valor\)\s*:\s*"3"/g) ?? [];
+  const initCComision = editorSrc.match(/programa\.regla_comisionable_pct_comision\s*!=\s*null\s*\?\s*String\(programa\.regla_comisionable_pct_comision\)\s*:\s*"10"/g) ?? [];
+  // Cada expresión debe aparecer DOS veces: una en el useState inicial, otra
+  // en el reset de setReglaOn — byte a byte, no solo "algo parecido".
+  assert.equal(initCValor.length, 2, "el fallback \"3\" de cValor no se repite igual en el useState inicial y en el reset de setReglaOn");
+  assert.equal(initCComision.length, 2, "el fallback \"10\" de cComision no se repite igual en el useState inicial y en el reset de setReglaOn");
+});

@@ -87,6 +87,25 @@
 --   número que haya quedado de un modo anterior ('pct' 0-100 o 'impuesto' sin
 --   tope) — por eso esa rama no impone límite, a propósito.
 --   `programa_salidas.tarifa_*` (las cuatro) no admiten negativos.
+--
+--   ⚠️ Ronda 3 — lo anterior deja un hueco: los CHECK de rango arriba
+--   permiten `null` SIEMPRE, sin importar si `regla_comisionable = true`.
+--   Llamando `guardar_programa_salidas` directo (saltándose navegador y
+--   Server Action) se podía volver a crear exactamente la inconsistencia que
+--   se quería eliminar: `activa=true` con `pctComision=null`, o con
+--   `modo='pct'`/`valor=null`, o `modo='impuesto'`/`valor=null` — el CHECK de
+--   rango no lo rechaza porque `null` no entra en ninguna comparación. Cierre
+--   en DOS capas, ambas dentro de Postgres (no solo en la app):
+--     1. `programas_regla_comisionable_activa_completa_check` (nuevo, abajo):
+--        si `regla_comisionable = true`, exige `regla_comisionable_pct_comision
+--        is not null` y, salvo modo 'ninguno', `regla_comisionable_valor is not
+--        null` — la completitud. Los rangos numéricos siguen a cargo de los
+--        CHECK de arriba (no se duplican). `modo='ninguno'` no exige valor.
+--     2. `guardar_programa_salidas()` valida `activa`+`modo`+`valor`+
+--        `pctComision` ANTES del UPDATE y aborta con `raise exception` si no
+--        cumple — así el error se ve inmediato y con mensaje claro (el CHECK
+--        de todas formas queda como respaldo si algún día se llama la tabla
+--        directo sin pasar por la función).
 -- ───────────────────────────────────────────────────────────────────────────
 
 -- ── 1. Programa: si la regla está activa + su configuración ────────────────
@@ -132,6 +151,25 @@ begin
         or regla_comisionable_modo = 'ninguno'
         or (regla_comisionable_modo = 'pct' and regla_comisionable_valor >= 0 and regla_comisionable_valor <= 100)
         or (regla_comisionable_modo = 'impuesto' and regla_comisionable_valor >= 0)
+      );
+  end if;
+
+  -- Completitud: si la regla está ACTIVA, no puede faltar ningún dato que el
+  -- cálculo necesite (ver "CONSTRAINTS" ronda 3 en la cabecera). Con
+  -- `regla_comisionable = false` no se exige nada — los valores se conservan
+  -- tal cual para poder reactivar sin perder el último borrador válido.
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'programas_regla_comisionable_activa_completa_check'
+  ) then
+    alter table public.programas
+      add constraint programas_regla_comisionable_activa_completa_check
+      check (
+        not regla_comisionable
+        or (
+          regla_comisionable_pct_comision is not null
+          and (regla_comisionable_modo = 'ninguno' or regla_comisionable_valor is not null)
+        )
       );
   end if;
 end $$;
@@ -187,16 +225,48 @@ create or replace function public.guardar_programa_salidas(
 returns void
 language plpgsql
 as $$
+declare
+  v_activa        boolean;
+  v_modo          text;
+  v_valor         numeric;
+  v_pct_comision  numeric;
 begin
   if not exists (select 1 from public.programas where id = p_programa_id) then
     raise exception 'El programa % no existe.', p_programa_id;
   end if;
 
+  v_activa       := coalesce((p_regla->>'activa')::boolean, false);
+  v_modo         := coalesce(p_regla->>'modo', 'pct');
+  v_valor        := nullif(p_regla->>'valor', '')::numeric;
+  v_pct_comision := nullif(p_regla->>'pctComision', '')::numeric;
+
+  -- Misma regla que `validarReglaComisionable` (lib/calc/programaPrecio.ts),
+  -- repetida acá para que quien llame la función DIRECTO (sin pasar por
+  -- navegador ni Server Action) no pueda dejar la regla activa a medias — ver
+  -- "CONSTRAINTS" ronda 3 en la cabecera. Con `v_activa = false` no se valida
+  -- nada: los valores previos se conservan tal cual.
+  if v_activa then
+    if v_pct_comision is null or v_pct_comision < 0 or v_pct_comision > 100 then
+      raise exception 'El porcentaje de comision debe ser un numero entre 0 y 100.';
+    end if;
+
+    if v_modo = 'pct' then
+      if v_valor is null or v_valor < 0 or v_valor > 100 then
+        raise exception 'El porcentaje a restar debe ser un numero entre 0 y 100.';
+      end if;
+    elsif v_modo = 'impuesto' then
+      if v_valor is null or v_valor < 0 then
+        raise exception 'El impuesto debe ser un numero mayor o igual a 0.';
+      end if;
+    end if;
+    -- modo 'ninguno': el valor no participa del cálculo, no se exige.
+  end if;
+
   update public.programas
-     set regla_comisionable = coalesce((p_regla->>'activa')::boolean, false),
-         regla_comisionable_modo = coalesce(p_regla->>'modo', 'pct'),
-         regla_comisionable_valor = nullif(p_regla->>'valor', '')::numeric,
-         regla_comisionable_pct_comision = nullif(p_regla->>'pctComision', '')::numeric,
+     set regla_comisionable = v_activa,
+         regla_comisionable_modo = v_modo,
+         regla_comisionable_valor = v_valor,
+         regla_comisionable_pct_comision = v_pct_comision,
          updated_at = now()
    where id = p_programa_id;
 
