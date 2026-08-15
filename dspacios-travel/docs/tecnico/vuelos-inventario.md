@@ -95,6 +95,63 @@ es solo un catálogo guardado/mostrado — no es un insumo activo de precio/clas
 pena tenerlo presente antes de invertir tiempo intentando "usar" ese campo en el motor de
 reservar: no está conectado a nada todavía.
 
+## 7. Control general por record (migración 151)
+
+Tres campos MANUALES en `bloqueos_vuelo`, independientes del estado de las sillas —
+`lib/vuelos/control.ts` centraliza tipos, type guards (`esModalidadEmision`/
+`esEstadoEmision`/`esEstadoPago`) y las etiquetas de UI:
+
+- **`modalidad_emision`** (`individual` | `grupo`) — obligatoria al crear un bloqueo
+  (`crearBloqueo` rechaza si falta o no es un valor válido).
+- **`estado_emision`** (`pendiente` | `emitido`) — si el vuelo YA se emitió. **No** se
+  deduce de `fecha_emision` (que sigue siendo solo la fecha límite/programada, renombrada
+  en la UI a "Fecha límite de emisión" para dejar la distinción clara).
+- **`estado_pago`** (`pendiente` | `pagado`) — si YA se le pagó al proveedor/aerolínea.
+  **No** es el pago del cliente (eso vive en `abonos`/`cuentas_por_pagar` por contrato);
+  deliberadamente no se cruza con eso.
+
+**`null` ≠ `'pendiente'`.** Un registro de antes de la migración 151 no tiene forma de
+saber si ya se emitió o se pagó, así que las tres columnas nacen SIN default — un bloqueo
+viejo queda con las tres en `null`, y la UI lo muestra como "Sin definir" (modalidad) /
+"Por confirmar" (estados), nunca como "Pendiente" (que afirmaría algo que no se sabe). Un
+bloqueo NUEVO sí nace en `estado_emision`/`estado_pago = 'pendiente'`, pero eso lo decide
+la aplicación en el `insert` (`crearBloqueo`/`cargarBloqueosMasivo`), no un default de
+columna.
+
+**Edición y auditoría — `actualizarControlBloqueo`** (mismo patrón que
+`registrarCambioOperacional` para horario/vuelo): diffea los tres campos contra el valor
+actual, actualiza `bloqueos_vuelo` y registra el cambio en `bloqueo_cambios` (antes→después
+con las etiquetas que ve el usuario, quién y cuándo). **No** llama a
+`regenerarTarifariosDeBloqueo`: estos tres campos son control operativo, no afectan tarifa
+ni fechas de los paquetes armados. El formulario general "Editar bloqueo"
+(`actualizarBloqueo`/`EditarBloqueoForm`) NO toca estos campos — `BloqueoEditInput` los
+excluye explícitamente (`Omit<BloqueoInput, "cuposTotal" | "modalidadEmision">`) para que
+solo tengan un único camino de escritura con historial.
+
+**RLS:** sin cambios — las tres columnas viven en `bloqueos_vuelo`, que ya tiene su policy
+de escritura (`superadmin/administracion/gerencia/operaciones/control_vuelo`, migración
+137); una columna nueva hereda esa policy, Postgres no tiene RLS por columna. Se edita con
+el cliente autenticado normal (`createClient()`), nunca `service_role`.
+
+**UI:** badges compactos (`components/vuelos/ControlBadges.tsx`, reutiliza el componente
+genérico `EstadoBadge` — infiere el tono del TEXTO: "Emitido"/"Pagado" → verde,
+"Pendiente" → ámbar, "Sin definir"/"Por confirmar" → gris neutro) en el encabezado del
+detalle del bloqueo y como columna "Control" en `BloqueosTabla` (compartida por
+`/dashboard/vuelos` y `/dashboard/vuelos/historico`). Pestaña "Control" en el detalle
+(`BloqueoTabs` + `ControlBloqueoForm`), junto a Pasajeros y Cambios. `BloqueosTabla` suma
+filtros por modalidad/emisión/pago (con una opción "sin definir" que filtra por `null`
+explícitamente, distinta de "todas").
+
+**CSV:** `cargarBloqueosMasivo` exige `modalidad_emision` por fila (rechaza la fila si
+falta o no es `individual`/`grupo`); `estado_emision`/`estado_pago` son opcionales — vacío
+= `'pendiente'` (una fila nueva del CSV es un bloqueo nuevo, genuinamente empieza así),
+cualquier otro texto tiene que ser exactamente un valor válido o la fila se rechaza
+(validación estricta, no se adivina ni se ignora un typo).
+
+**Notificaciones:** `lib/notificaciones.ts` deja de incluir la alerta de "fecha límite de
+emisión" cuando `estado_emision = 'emitido'`. La alerta de devolución (`fecha_devolucion`)
+no depende de esto — se conserva igual que antes.
+
 ## Enlaces cruzados
 
 - **Reservar** — descuenta cupos (`disponible→en_plazo`), confirma (`en_plazo→confirmada`),

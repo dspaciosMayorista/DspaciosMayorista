@@ -1057,6 +1057,9 @@ export type Database = {
           proveedor_id: number | null;
           destino_id: number | null;
           rangos_edad: number[] | null;
+          modalidad_emision: string | null;
+          estado_emision: string | null;
+          estado_pago: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -1083,6 +1086,9 @@ export type Database = {
           fecha_devolucion?: string | null;
           fecha_emision?: string | null;
           notas?: string | null;
+          modalidad_emision?: string | null;
+          estado_emision?: string | null;
+          estado_pago?: string | null;
           created_at?: string;
           updated_at?: string;
         };

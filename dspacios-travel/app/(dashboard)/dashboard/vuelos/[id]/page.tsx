@@ -9,6 +9,8 @@ import { EditarBloqueoForm } from "./EditarBloqueoForm";
 import { CambioOperacionalForm } from "./CambioOperacionalForm";
 import { SillaContrato } from "./SillaContrato";
 import { BloqueoTabs } from "./BloqueoTabs";
+import { ControlBloqueoForm } from "./ControlBloqueoForm";
+import { ControlBadges } from "@/components/vuelos/ControlBadges";
 
 export const dynamic = "force-dynamic";
 
@@ -74,6 +76,9 @@ export default async function BloqueoDetallePage({
         <h1 className="font-mono text-2xl font-semibold text-gray-900">{b.record}</h1>
         <span className="rounded bg-gray-100 px-2 py-0.5 text-sm text-gray-600">{b.aerolinea ?? "—"}</span>
       </div>
+      <div className="mt-2">
+        <ControlBadges modalidad={b.modalidad_emision} estadoEmision={b.estado_emision} estadoPago={b.estado_pago} />
+      </div>
       <p className="mt-1 text-sm text-gray-500">{b.ruta ?? "—"}</p>
       <p className="text-xs text-gray-400">
         Ida {formatFechaLarga(b.fecha_ida)} ({b.vuelo_ida ?? "—"} · {b.hora_salida_ida ?? "—"}) ·
@@ -108,9 +113,15 @@ export default async function BloqueoDetallePage({
         }}
       />
 
-      {/* Pestañas: Pasajeros (sillas activas) · Cambios (movimientos/cupos) */}
+      {/* Pestañas: Pasajeros (sillas activas) · Cambios (movimientos/cupos) · Control (modalidad/emisión/pago) */}
       <BloqueoTabs
         nCambios={(movimientos?.length ?? 0) + (cambios?.length ?? 0)}
+        control={
+          <ControlBloqueoForm
+            bloqueoId={bloqueoId}
+            inicial={{ modalidadEmision: b.modalidad_emision, estadoEmision: b.estado_emision, estadoPago: b.estado_pago }}
+          />
+        }
         pasajeros={
           <>
             <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">

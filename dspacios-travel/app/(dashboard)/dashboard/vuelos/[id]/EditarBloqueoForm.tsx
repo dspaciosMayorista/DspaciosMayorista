@@ -107,7 +107,7 @@ export function EditarBloqueoForm({
             <div><label className={lbl}>Hora salida reg.</label><Input type="time" value={f.horaSalidaReg} onChange={set("horaSalidaReg")} /></div>
             <div><label className={lbl}>Hora llegada reg.</label><Input type="time" value={f.horaLlegadaReg} onChange={set("horaLlegadaReg")} /></div>
             <div><label className={lbl}>Fecha devolución</label><Input type="date" value={f.fechaDevolucion} onChange={set("fechaDevolucion")} /></div>
-            <div><label className={lbl}>Fecha emisión</label><Input type="date" value={f.fechaEmision} onChange={set("fechaEmision")} /></div>
+            <div><label className={lbl}>Fecha límite de emisión</label><Input type="date" value={f.fechaEmision} onChange={set("fechaEmision")} /></div>
             <div className="col-span-2 md:col-span-3"><label className={lbl}>Notas</label><Input value={f.notas} onChange={set("notas")} /></div>
           </div>
           <RangosEdadPicker rangos={rangos} seleccionados={rangosSel} onChange={setRangosSel} label="Rangos de edad del vuelo" />

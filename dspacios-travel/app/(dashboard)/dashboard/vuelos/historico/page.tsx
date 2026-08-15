@@ -73,6 +73,7 @@ export default async function HistoricoVuelosPage() {
                 fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
                 fecha_devolucion: b.fecha_devolucion, cupos_total: b.cupos_total ?? 0,
                 disp: c.disp, plazo: c.plazo, conf: c.conf, dev: c.dev, nven: c.nven,
+                modalidad_emision: b.modalidad_emision, estado_emision: b.estado_emision, estado_pago: b.estado_pago,
               };
             })}
           />

@@ -29,8 +29,11 @@ const COLS_BLOQUEOS = [
   { key: "tarifa_neta", label: "Tarifa neta (pago aerolínea)", ejemplo: "200000" },
   { key: "tarifa_para_empaquetar", label: "Tarifa empaquetar (reventa)", ejemplo: "242022" },
   { key: "fecha_devolucion", label: "Fecha devolución", ejemplo: "2026-06-01" },
-  { key: "fecha_emision", label: "Fecha emisión", ejemplo: "2026-05-20" },
+  { key: "fecha_emision", label: "Fecha límite de emisión", ejemplo: "2026-05-20" },
   { key: "rangos_edad", label: "Rangos de edad (nombres separados por |)", ejemplo: "" },
+  { key: "modalidad_emision", label: "Modalidad de emisión (individual/grupo)", ejemplo: "individual" },
+  { key: "estado_emision", label: "Estado de emisión (pendiente/emitido, opcional)", ejemplo: "pendiente" },
+  { key: "estado_pago", label: "Estado de pago (pendiente/pagado, opcional)", ejemplo: "pendiente" },
   { key: "notas", label: "Notas", ejemplo: "" },
 ];
 
@@ -123,6 +126,7 @@ export default async function VuelosPage() {
                 fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
                 fecha_devolucion: b.fecha_devolucion, cupos_total: b.cupos_total ?? 0,
                 disp: c.disp, plazo: c.plazo, conf: c.conf, dev: c.dev, nven: c.nven,
+                modalidad_emision: b.modalidad_emision, estado_emision: b.estado_emision, estado_pago: b.estado_pago,
               };
             })}
           />

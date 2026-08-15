@@ -3,6 +3,18 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { regenerarTarifariosDeBloqueo, generarTarifario } from "../paquetes/actions";
+import {
+  esModalidadEmision,
+  esEstadoEmision,
+  esEstadoPago,
+  MODALIDAD_LABEL,
+  ESTADO_EMISION_LABEL,
+  ESTADO_PAGO_LABEL,
+  SIN_DEFINIR,
+  type ModalidadEmision,
+  type EstadoEmision,
+  type EstadoPago,
+} from "@/lib/vuelos/control";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -30,9 +42,16 @@ export type BloqueoInput = {
   fechaEmision: string;
   notas: string;
   rangosEdad?: number[];
+  // Modalidad de emisión del record — OBLIGATORIA al crear (migración 151).
+  // Los estados de emisión/pago NO se piden aquí: un bloqueo nuevo nace
+  // 'pendiente' en los dos, lo decide esta función, no el formulario.
+  modalidadEmision: ModalidadEmision;
 };
 
 export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
+  if (!esModalidadEmision(input.modalidadEmision)) {
+    return { ok: false, error: "Selecciona la modalidad de emisión (individual o grupo)." };
+  }
   const sb = await createClient();
 
   const { data: bloqueo, error } = await sb
@@ -59,6 +78,9 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
       fecha_emision: oNull(input.fechaEmision),
       notas: oNull(input.notas),
       rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
+      modalidad_emision: input.modalidadEmision,
+      estado_emision: "pendiente",
+      estado_pago: "pendiente",
     })
     .select("id")
     .single();
@@ -81,7 +103,10 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
 }
 
 // Editar un bloqueo existente (no modifica cupos/sillas ya generadas).
-export type BloqueoEditInput = Omit<BloqueoInput, "cuposTotal">;
+// "Editar bloqueo" (general) NO toca modalidad/estados — esos tres campos
+// tienen su propio editor con historial (`actualizarControlBloqueo`, pestaña
+// "Control"), igual que horario/vuelo tiene el suyo (`registrarCambioOperacional`).
+export type BloqueoEditInput = Omit<BloqueoInput, "cuposTotal" | "modalidadEmision">;
 export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb
@@ -192,6 +217,78 @@ export async function registrarCambioOperacional(
   return { ok: true, id: bloqueoId };
 }
 
+// ── Control general del record: modalidad, emisión y pago (migración 151) ──
+// Los tres campos son manuales y ajenos a la tarifa/fecha del vuelo, así que
+// —a diferencia de `actualizarBloqueo`/`registrarCambioOperacional`— esta
+// función NO llama `regenerarTarifariosDeBloqueo`: no hay nada que recalcular
+// en los paquetes armados por cambiar solo modalidad/emisión/pago.
+export type ControlBloqueoInput = {
+  modalidadEmision: ModalidadEmision;
+  estadoEmision: EstadoEmision;
+  estadoPago: EstadoPago;
+  nota: string;
+};
+
+export async function actualizarControlBloqueo(bloqueoId: number, input: ControlBloqueoInput): Promise<Result> {
+  if (!esModalidadEmision(input.modalidadEmision)) return { ok: false, error: "Modalidad de emisión inválida." };
+  if (!esEstadoEmision(input.estadoEmision)) return { ok: false, error: "Estado de emisión inválido." };
+  if (!esEstadoPago(input.estadoPago)) return { ok: false, error: "Estado de pago inválido." };
+
+  const sb = await createClient();
+  const { data: actual } = await sb
+    .from("bloqueos_vuelo")
+    .select("modalidad_emision, estado_emision, estado_pago")
+    .eq("id", bloqueoId)
+    .maybeSingle();
+  if (!actual) return { ok: false, error: "Bloqueo no encontrado." };
+
+  // Antes→después con las mismas etiquetas que ve el usuario (no los valores
+  // crudos de la BD) — "null" se registra como "Sin definir", nunca en blanco.
+  const campos: [string, string | null, string, Record<string, string>][] = [
+    ["Modalidad de emisión", actual.modalidad_emision, input.modalidadEmision, MODALIDAD_LABEL],
+    ["Estado de emisión", actual.estado_emision, input.estadoEmision, ESTADO_EMISION_LABEL],
+    ["Estado de pago", actual.estado_pago, input.estadoPago, ESTADO_PAGO_LABEL],
+  ];
+  const cambios = campos.filter(([, antes, despues]) => (antes ?? "") !== despues);
+  if (!cambios.length && !input.nota.trim()) return { ok: false, error: "No hay cambios para registrar." };
+
+  if (cambios.length) {
+    const { error } = await sb
+      .from("bloqueos_vuelo")
+      .update({
+        modalidad_emision: input.modalidadEmision,
+        estado_emision: input.estadoEmision,
+        estado_pago: input.estadoPago,
+      })
+      .eq("id", bloqueoId);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  const detalle = cambios
+    .map(([lbl, antes, despues, labels]) => `${lbl}: ${antes ? (labels[antes] ?? antes) : SIN_DEFINIR} → ${labels[despues]}`)
+    .join(" · ");
+
+  const { data: { user } } = await sb.auth.getUser();
+  let quien = user?.email ?? null;
+  if (user) {
+    const { data: perfil } = await sb.from("usuarios").select("nombre").eq("id", user.id).maybeSingle();
+    if (perfil?.nombre) quien = perfil.nombre;
+  }
+
+  const { error: le } = await sb.from("bloqueo_cambios").insert({
+    bloqueo_id: bloqueoId,
+    detalle: detalle || null,
+    nota: oNull(input.nota),
+    registrado_por: quien,
+  });
+  if (le) return { ok: false, error: le.message };
+
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos");
+  revalidatePath("/dashboard/vuelos/historico");
+  return { ok: true, id: bloqueoId };
+}
+
 // ── Carga masiva de bloqueos (CSV) ─────────────────────────────────────────
 const numCsv = (s?: string) => (s ? parseInt(String(s).replace(/[^\d-]/g, ""), 10) || 0 : 0);
 
@@ -213,6 +310,28 @@ function parseFechaCSV(s?: string): string | null {
 
 // Hora CSV: ya se asume HH:MM (24h). Solo normaliza vacíos.
 const dCsv = (s?: string) => (s && s.trim() !== "" ? s.trim() : null);
+
+// Modalidad/estados del control (migración 151) — validación ESTRICTA: un
+// valor que no sea exactamente uno de los esperados (vacío incluido, para
+// modalidad) rechaza la fila entera, no se adivina ni se deja pasar en null.
+function parseModalidadCSV(s?: string): ModalidadEmision | null {
+  const t = (s || "").trim().toLowerCase();
+  return esModalidadEmision(t) ? t : null;
+}
+// Estados de emisión/pago: vacío = 'pendiente' (un bloqueo nuevo genuinamente
+// empieza así). Cualquier otro texto tiene que ser exactamente uno de los
+// valores válidos — si no, la fila se rechaza en vez de asumir 'pendiente'
+// por defecto (eso ocultaría un typo del CSV como si no hubiera problema).
+function parseEstadoEmisionCSV(s?: string): EstadoEmision | null {
+  const t = (s || "").trim().toLowerCase();
+  if (t === "") return "pendiente";
+  return esEstadoEmision(t) ? t : null;
+}
+function parseEstadoPagoCSV(s?: string): EstadoPago | null {
+  const t = (s || "").trim().toLowerCase();
+  if (t === "") return "pendiente";
+  return esEstadoPago(t) ? t : null;
+}
 
 export async function cargarBloqueosMasivo(
   rows: Record<string, string>[]
@@ -243,6 +362,14 @@ export async function cargarBloqueosMasivo(
     const rangosEdad = (r.rangos_edad || "")
       .split(/[|;]/).map((x) => rmap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
     const cupos = numCsv(r.cupos_total);
+
+    const modalidad = parseModalidadCSV(r.modalidad_emision);
+    if (!modalidad) { errores.push(`Fila ${linea} (${record}): modalidad_emision debe ser "individual" o "grupo".`); continue; }
+    const estadoEmision = parseEstadoEmisionCSV(r.estado_emision);
+    if (!estadoEmision) { errores.push(`Fila ${linea} (${record}): estado_emision debe ser "pendiente" o "emitido" (o dejarse vacío).`); continue; }
+    const estadoPago = parseEstadoPagoCSV(r.estado_pago);
+    if (!estadoPago) { errores.push(`Fila ${linea} (${record}): estado_pago debe ser "pendiente" o "pagado" (o dejarse vacío).`); continue; }
+
     const { data: bq, error } = await sb
       .from("bloqueos_vuelo")
       .insert({
@@ -252,6 +379,7 @@ export async function cargarBloqueosMasivo(
         cupos_total: cupos, tarifa_neta: numCsv(r.tarifa_neta) || null, tarifa_para_empaquetar: numCsv(r.tarifa_para_empaquetar),
         fecha_devolucion: parseFechaCSV(r.fecha_devolucion), fecha_emision: parseFechaCSV(r.fecha_emision), notas: oNull(r.notas || ""),
         rangos_edad: rangosEdad.length ? rangosEdad : null,
+        modalidad_emision: modalidad, estado_emision: estadoEmision, estado_pago: estadoPago,
       })
       .select("id")
       .single();

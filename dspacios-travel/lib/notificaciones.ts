@@ -43,15 +43,25 @@ async function recopilar(dias: number, flags: { cxp: boolean; cuotas: boolean; b
 
   if (flags.bloqueos) {
     const { data } = await admin.from("bloqueos_vuelo")
-      .select("record, aerolinea, ruta, fecha_devolucion, fecha_emision")
+      .select("record, aerolinea, ruta, fecha_devolucion, fecha_emision, estado_emision")
       .or(`fecha_devolucion.lte.${limISO},fecha_emision.lte.${limISO}`);
+    // La alerta de emisión deja de aparecer cuando el record YA se marcó
+    // 'emitido' (control manual, migración 151) — `fecha_emision` es solo el
+    // límite programado, no prueba de que se haya emitido. La de devolución
+    // no depende de eso: se conserva igual, tenga o no estado de emisión.
     const filas = (data ?? [])
-      .filter((b) => (b.fecha_devolucion && b.fecha_devolucion <= limISO) || (b.fecha_emision && b.fecha_emision <= limISO))
-      .map((b) => ({
-        c1: `${b.record ?? "—"} · ${b.aerolinea ?? ""}`,
-        c2: b.ruta ?? "",
-        c3: [b.fecha_devolucion ? `Devolución ${b.fecha_devolucion}` : "", b.fecha_emision ? `Emisión ${b.fecha_emision}` : ""].filter(Boolean).join(" · "),
-      }));
+      .map((b) => {
+        const emitido = b.estado_emision === "emitido";
+        const alertaDevolucion = b.fecha_devolucion && b.fecha_devolucion <= limISO;
+        const alertaEmision = !emitido && b.fecha_emision && b.fecha_emision <= limISO;
+        if (!alertaDevolucion && !alertaEmision) return null;
+        return {
+          c1: `${b.record ?? "—"} · ${b.aerolinea ?? ""}`,
+          c2: b.ruta ?? "",
+          c3: [alertaDevolucion ? `Devolución ${b.fecha_devolucion}` : "", alertaEmision ? `Emisión ${b.fecha_emision}` : ""].filter(Boolean).join(" · "),
+        };
+      })
+      .filter((f): f is Fila => f !== null);
     if (filas.length) secciones.push({ titulo: "Bloqueos: devolución / emisión", cols: ["Record", "Ruta", "Fechas"], filas });
   }
 
