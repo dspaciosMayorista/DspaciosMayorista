@@ -209,118 +209,177 @@ test("un nombre con guion bajo tampoco actúa como comodín de un carácter", as
   assert.equal(r.ficha, conGuion, "el guion bajo debe emparejar solo con el literal, no con 'AGENCIAXVIAJES'");
 });
 
-// ── listarTodosLosCandidatos: paginación explícita del catálogo ──────────
+// ── listarTodosLosCandidatos: paginación por CURSOR (id ascendente) ──────
 //
-// PostgREST puede limitar la cantidad máxima de filas por respuesta
-// (Settings → API → Max rows) y aplicarlo en SILENCIO — un `select()` sin
-// `.range()` no avisa que cortó el resultado. Para la resolución de fichas
-// eso es grave: un catálogo truncado puede esconder justo la segunda ficha
-// que hace ambigua una coincidencia.
+// PostgREST puede limitar la cantidad máxima de filas por respuesta (Settings
+// → API → Max rows), y ese límite puede quedar POR DEBAJO del tamaño de
+// página que se pida. Una paginación por offset/`.range()` que se diera por
+// terminada en la primera página "incompleta" (menos filas de las pedidas) se
+// equivocaría justo ahí: pedir 1000 con el servidor topado en, digamos, 2, ya
+// da una primera página "incompleta" (2 < 1000) aunque queden miles de filas
+// más. Por eso la única señal de fin válida es una página VACÍA — nunca el
+// tamaño de la página recibida.
 
-function paginador(paginas: CandidatoAliado[][]) {
-  let llamada = 0;
-  const desdeVistos: number[] = [];
-  const fn = async (desde: number): Promise<PaginaCandidatos> => {
-    desdeVistos.push(desde);
-    const pagina = paginas[llamada++];
-    return { datos: pagina ?? [], error: null };
+/** Simula un servidor que SIEMPRE topa cada respuesta a `tope` filas, sin
+ *  importar cuántas se pidan (`tamanoPaginaPedido` puede ser mucho mayor).
+ *  Ordena por id y respeta `id > cursor`, igual que exige el contrato. */
+function servidorConTope(catalogo: CandidatoAliado[], tope: number) {
+  const ordenado = [...catalogo].sort((a, b) => a.id - b.id);
+  const cursoresVistos: (number | null)[] = [];
+  const tamanosPedidos: number[] = [];
+  const fn = async (cursor: number | null, tamanoPaginaPedido: number): Promise<PaginaCandidatos> => {
+    cursoresVistos.push(cursor);
+    tamanosPedidos.push(tamanoPaginaPedido);
+    const resto = cursor === null ? ordenado : ordenado.filter((c) => c.id > cursor);
+    return { datos: resto.slice(0, tope), error: null }; // el servidor manda, no lo pedido
   };
-  return { leerPagina: fn, desdeVistos, llamadas: () => llamada };
+  return { leerPagina: fn, cursoresVistos, tamanosPedidos, llamadas: () => cursoresVistos.length };
 }
 
-test("PAGINACIÓN: una sola página incompleta basta y se detiene ahí", async () => {
-  const p = paginador([[{ id: 1, nombre: "Ana" }]]);
-  const r = await listarTodosLosCandidatos(p, 10);
-  assert.deepEqual(r, [{ id: 1, nombre: "Ana" }]);
-  assert.equal(p.llamadas(), 1);
+test("PAGINACIÓN: una sola página vacía basta y se detiene ahí", async () => {
+  const s = servidorConTope([], 10);
+  const r = await listarTodosLosCandidatos(s, 10);
+  assert.deepEqual(r, []);
+  assert.equal(s.llamadas(), 1);
 });
 
-test("PAGINACIÓN: sigue pidiendo páginas mientras vengan completas, se detiene con la primera incompleta", async () => {
-  const p = paginador([
-    [{ id: 1, nombre: "A" }, { id: 2, nombre: "B" }], // completa (2 de 2) → sigue
-    [{ id: 3, nombre: "C" }, { id: 4, nombre: "D" }], // completa (2 de 2) → sigue
-    [{ id: 5, nombre: "E" }],                          // incompleta (1 de 2) → para
-  ]);
-  const r = await listarTodosLosCandidatos(p, 2);
-  assert.deepEqual(r.map((c) => c.id).sort(), [1, 2, 3, 4, 5]);
-  assert.equal(p.llamadas(), 3);
-  assert.deepEqual(p.desdeVistos, [0, 2, 4]);
+test("PAGINACIÓN: el SERVIDOR limita cada respuesta muy por debajo de lo pedido, y aun así trae TODO", async () => {
+  // Se piden páginas de 1000; el servidor simulado jamás entrega más de 2 por
+  // vuelta, sea cual sea el tamaño pedido. Con la paginación vieja (offset,
+  // "para en la primera incompleta") esto se habría detenido después de la
+  // PRIMERA llamada, con solo 2 de 5 candidatos.
+  const catalogo = [
+    { id: 1, nombre: "A" }, { id: 2, nombre: "B" }, { id: 3, nombre: "C" },
+    { id: 4, nombre: "D" }, { id: 5, nombre: "E" },
+  ];
+  const s = servidorConTope(catalogo, 2);
+  const r = await listarTodosLosCandidatos(s, 1000);
+  assert.deepEqual(r.map((c) => c.id).sort((a, b) => a - b), [1, 2, 3, 4, 5]);
+  // [1,2] → cursor 2 · [3,4] → cursor 4 · [5] (parcial: 1 < 2, pero SIGUE) →
+  // cursor 5 · [] → para. Cuatro llamadas, no una sola por "primera incompleta".
+  assert.equal(s.llamadas(), 4);
+  assert.deepEqual(s.cursoresVistos, [null, 2, 4, 5]);
+  assert.deepEqual(s.tamanosPedidos, [1000, 1000, 1000, 1000], "siempre se pide el tamaño configurado, 1000");
+});
+
+test("PAGINACIÓN: el CURSOR avanza correctamente, id > último visto en cada vuelta — incluida una página PARCIAL que no debe darse por terminada", async () => {
+  const catalogo = [{ id: 5, nombre: "E" }, { id: 1, nombre: "A" }, { id: 3, nombre: "C" }, { id: 2, nombre: "B" }, { id: 4, nombre: "D" }];
+  const s = servidorConTope(catalogo, 2); // desordenado a propósito; servidorConTope ordena por id
+  const r = await listarTodosLosCandidatos(s, 2);
+  assert.deepEqual(r.map((c) => c.id).sort((a, b) => a - b), [1, 2, 3, 4, 5]);
+  // [1,2] → cursor 2 · [3,4] → cursor 4 · [5] (PARCIAL: 1 fila de 2 pedidas,
+  // pero no es la señal de fin — SIGUE) → cursor 5 · [] → recién ahí para.
+  assert.deepEqual(s.cursoresVistos, [null, 2, 4, 5]);
 });
 
 test("PAGINACIÓN: catálogo vacío devuelve [] sin insistir", async () => {
-  const p = paginador([[]]);
-  const r = await listarTodosLosCandidatos(p, 10);
+  const s = servidorConTope([], 10);
+  const r = await listarTodosLosCandidatos(s, 10);
   assert.deepEqual(r, []);
-  assert.equal(p.llamadas(), 1);
+  assert.equal(s.llamadas(), 1);
 });
 
-test("PAGINACIÓN: deduplica por id si dos páginas se solapan", async () => {
-  const p = paginador([
+test("PAGINACIÓN: deduplica por id de todas formas, aunque con cursor no debería hacer falta", async () => {
+  // Ver la nota en el docstring de listarTodosLosCandidatos: con cursor
+  // estrictamente creciente un id no puede repetirse entre páginas. Esta
+  // prueba comprueba la red de seguridad igual, simulando un `leerPagina` que
+  // NO respeta el contrato (repite el id 2).
+  const paginas: CandidatoAliado[][] = [
     [{ id: 1, nombre: "A" }, { id: 2, nombre: "B" }],
-    [{ id: 2, nombre: "B" }, { id: 3, nombre: "C" }], // el id 2 se repite
-    [], // incompleta → para
-  ]);
-  const r = await listarTodosLosCandidatos(p, 2);
+    [{ id: 2, nombre: "B" }, { id: 3, nombre: "C" }], // repite el 2, y aun así avanza (3 > 2)
+    [],
+  ];
+  let i = 0;
+  const r = await listarTodosLosCandidatos({ leerPagina: async () => ({ datos: paginas[i++] ?? [], error: null }) }, 2);
   assert.equal(r.length, 3, "el id 2 solo debe contarse una vez");
   assert.deepEqual(r.map((c) => c.id).sort(), [1, 2, 3]);
 });
 
-test("PAGINACIÓN: un error en una página intermedia FALLA CERRADO, no se trata como fin del catálogo", async () => {
-  // La segunda llamada (página 2, desde=2) devuelve error.
+test("PAGINACIÓN: un error en una página POSTERIOR (no la primera) FALLA CERRADO, no se trata como fin del catálogo", async () => {
+  let llamada = 0;
   const conError = {
-    leerPagina: async (desde: number) => {
-      if (desde === 0) return { datos: [{ id: 1, nombre: "A" }, { id: 2, nombre: "B" }], error: null };
+    leerPagina: async (cursor: number | null) => {
+      llamada++;
+      if (cursor === null) return { datos: [{ id: 1, nombre: "A" }, { id: 2, nombre: "B" }], error: null };
       return { datos: [], error: { message: "timeout de red" } };
     },
   };
   await assert.rejects(
     () => listarTodosLosCandidatos(conError, 2),
-    /No se pudo leer el catálogo de aliados.*página 2-3.*timeout de red/
+    /No se pudo leer el catálogo de aliados.*después del id 2.*timeout de red/
+  );
+  assert.equal(llamada, 2, "debió intentar la segunda página (con cursor 2) antes de fallar");
+});
+
+test("PAGINACIÓN: si el cursor NO AVANZA, falla cerrado en vez de repetir la misma página para siempre", async () => {
+  // `leerPagina` roto: siempre devuelve la MISMA fila sin importar el cursor
+  // (no respeta `id > cursor`). Sin el chequeo de avance, esto sería un bucle
+  // infinito silencioso.
+  const roto = {
+    leerPagina: async () => ({ datos: [{ id: 1, nombre: "A" }], error: null }),
+  };
+  await assert.rejects(
+    () => listarTodosLosCandidatos(roto, 10),
+    /no avanzó \(cursor 1 → 1\)/
+  );
+});
+
+test("PAGINACIÓN: si el cursor RETROCEDE, también falla cerrado", async () => {
+  const paginas: CandidatoAliado[][] = [
+    [{ id: 5, nombre: "E" }],
+    [{ id: 3, nombre: "C" }], // 3 < 5: retrocede
+  ];
+  let i = 0;
+  await assert.rejects(
+    () => listarTodosLosCandidatos({ leerPagina: async () => ({ datos: paginas[i++] ?? [], error: null }) }, 10),
+    /no avanzó \(cursor 5 → 3\)/
   );
 });
 
 // ── EL FLUJO COMPLETO con paginación real, a través de resolverFichaAliado ─
 
-test("PAGINACIÓN + FLUJO: un homónimo normalizado en la SEGUNDA página → ambiguo, sin consultar ninguna ficha bancaria", async () => {
-  // Página 1 (tamaño 2, completa): "Ana Gómez" + un tercero.
-  // Página 2 (incompleta): " ANA GÓMEZ " — el homónimo normalizado, que un
-  // catálogo truncado a una sola página jamás habría visto.
-  const paginas: CandidatoAliado[][] = [
-    [{ id: 1, nombre: "Ana Gómez" }, { id: 2, nombre: "Otro Aliado" }],
-    [{ id: 3, nombre: " ANA GÓMEZ " }],
+test("PAGINACIÓN + FLUJO: 1000 pedidas, el SERVIDOR limita a 2 por respuesta, homónimo normalizado en página posterior → ambiguo, CERO llamadas a buscarFichaPorId", async () => {
+  // Exactamente el escenario que motivó la corrección: se piden 1000 filas
+  // por página (el default de producción), pero el servidor simulado nunca
+  // entrega más de 2 —como pasaría con Max Rows configurado bajo—. El
+  // homónimo normalizado (" ANA GÓMEZ ") queda en la tercera página, mucho
+  // después de donde una paginación por offset ya se habría dado por
+  // terminada.
+  const catalogo: CandidatoAliado[] = [
+    { id: 1, nombre: "Ana Gómez" },
+    { id: 2, nombre: "Otro Aliado" },
+    { id: 3, nombre: "Tercero" },
+    { id: 4, nombre: "Cuarto" },
+    { id: 5, nombre: " ANA GÓMEZ " }, // el homónimo, en la página 3
   ];
-  let llamadaPagina = 0;
+  const s = servidorConTope(catalogo, 2);
   const llamadasFicha: number[] = [];
   const deps: DepsResolverFicha = {
-    listarIdsYNombres: () =>
-      listarTodosLosCandidatos(
-        {
-          leerPagina: async () => ({ datos: paginas[llamadaPagina++] ?? [], error: null }),
-        },
-        2
-      ),
+    listarIdsYNombres: () => listarTodosLosCandidatos(s, 1000), // se PIDEN 1000
     buscarFichaPorId: async (id) => {
-      llamadasFicha.push(id); // no debería llamarse nunca en este caso
+      llamadasFicha.push(id);
       return null;
     },
   };
 
   const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "Ana Gómez" });
-  assert.equal(r.ficha, null, "con la ambigüedad en la segunda página, tampoco se debe imprimir ninguna cuenta");
+  assert.equal(r.ficha, null, "con la ambigüedad en una página posterior, tampoco se debe imprimir ninguna cuenta");
   assert.equal(r.motivo, "legacy_ambigua");
-  assert.deepEqual(r.candidatas?.sort(), [1, 3]);
+  assert.deepEqual(r.candidatas?.sort((a, b) => a - b), [1, 5]);
   assert.deepEqual(llamadasFicha, [], "ambiguo: CERO llamadas a buscarFichaPorId");
+  assert.ok(s.llamadas() >= 3, "tuvo que pasar de la primera página para encontrar el homónimo");
+  assert.deepEqual(s.tamanosPedidos, s.tamanosPedidos.map(() => 1000), "siempre pidió 1000, sin importar lo que el servidor devolviera");
 });
 
-test("PAGINACIÓN + FLUJO: un error de red en una página intermedia hace fallar TODA la resolución, no 'sin coincidencia'", async () => {
-  let llamadaPagina = 0;
+test("PAGINACIÓN + FLUJO: un error de red en una página POSTERIOR hace fallar TODA la resolución, no 'sin coincidencia'", async () => {
+  let llamada = 0;
   const deps: DepsResolverFicha = {
     listarIdsYNombres: () =>
       listarTodosLosCandidatos(
         {
-          leerPagina: async (desde: number) => {
-            llamadaPagina++;
-            if (desde === 0) return { datos: [{ id: 1, nombre: "Ana Gómez" }, { id: 2, nombre: "Otro" }], error: null };
+          leerPagina: async (cursor: number | null) => {
+            llamada++;
+            if (cursor === null) return { datos: [{ id: 1, nombre: "Ana Gómez" }, { id: 2, nombre: "Otro" }], error: null };
             return { datos: [], error: { message: "la conexión se cayó" } };
           },
         },
@@ -339,7 +398,7 @@ test("PAGINACIÓN + FLUJO: un error de red en una página intermedia hace fallar
     () => resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "Ana Gómez" }),
     /No se pudo leer el catálogo de aliados.*la conexión se cayó/
   );
-  assert.equal(llamadaPagina, 2, "debió intentar la segunda página, y detenerse ahí — no fingir que ya terminó");
+  assert.equal(llamada, 2, "debió intentar la segunda página, y detenerse ahí — no fingir que ya terminó");
 });
 
 // ── explicarFicha: no debe hablar cuando todo salió bien ──────────────────

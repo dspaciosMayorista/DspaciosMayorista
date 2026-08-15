@@ -109,8 +109,8 @@ export type DepsResolverFicha = {
    *
    * ⚠️ Quien implemente esto tiene que traer TODO el catálogo, paginando si
    * hace falta — ver `listarTodosLosCandidatos` más abajo. Un `select()` sin
-   * `.range()` puede volver silenciosamente truncado por el límite de filas
-   * del proyecto (Settings → API → Max rows), y un catálogo truncado no es lo
+   * paginar puede volver silenciosamente truncado por el límite de filas del
+   * proyecto (Settings → API → Max rows), y un catálogo truncado no es lo
    * mismo que "no hay más candidatos": puede esconder justo la ambigüedad que
    * esta función existe para detectar.
    */
@@ -122,51 +122,84 @@ export type DepsResolverFicha = {
 export type PaginaCandidatos = { datos: CandidatoAliado[]; error: { message: string } | null };
 
 export type DepsListarPaginado = {
-  /** Lee una página, 0-indexed e INCLUSIVA en los dos extremos — igual que `.range(desde, hasta)` de PostgREST. */
-  leerPagina(desde: number, hasta: number): Promise<PaginaCandidatos>;
+  /**
+   * Lee una página ORDENADA POR ID ASCENDENTE, con `id > cursor` (o desde el
+   * principio si `cursor` es `null`), pidiendo como máximo `tamanoPagina`
+   * filas — igual que `.order("id", {ascending: true}).gt("id", cursor)
+   * .limit(tamanoPagina)`.
+   *
+   * ⚠️ Puede devolver MENOS de `tamanoPagina` sin que eso signifique "ya no
+   * hay más": el servidor puede tener su propio tope (PostgREST `db-max-rows`)
+   * por debajo del que se pidió. La única señal de fin es una página VACÍA.
+   */
+  leerPagina(cursor: number | null, tamanoPagina: number): Promise<PaginaCandidatos>;
 };
 
 /**
- * Trae TODO el catálogo de candidatos, paginando explícitamente.
+ * Trae TODO el catálogo de candidatos, paginando por CURSOR (id ascendente),
+ * nunca por offset.
  *
- * POR QUÉ EXISTE: PostgREST tiene un límite de filas por respuesta
- * configurable por proyecto (`db-max-rows`, típicamente 1000) que se aplica
- * en SILENCIO — un `select("id, nombre")` sin `.range()` no avisa que cortó
- * el resultado, simplemente devuelve menos filas de las que hay. Para esta
- * función eso es particularmente grave: un catálogo truncado puede esconder
- * justo la segunda ficha que hace ambigua una coincidencia, y el flujo
- * seguiría de largo creyendo que hay una sola.
+ * POR QUÉ CURSOR Y NO OFFSET/RANGE: la primera versión de esta función pedía
+ * páginas de tamaño fijo con `.range(desde, hasta)` y se detenía en cuanto una
+ * página volvía con MENOS filas de las pedidas, asumiendo que eso significaba
+ * "no hay más". Es la misma señal que usa un `.range()` normal — PERO
+ * PostgREST puede tener su propio límite de filas por respuesta (`db-max-rows`,
+ * Settings → API → Max rows) POR DEBAJO del tamaño de página solicitado. Si se
+ * piden 1000 y el servidor limita a 500, la primera "página" ya vuelve
+ * incompleta (500 < 1000) aunque queden miles de filas más — el defecto que
+ * esto debía corregir seguía pasando exactamente bajo esa configuración,
+ * válida y nada exótica.
  *
- * FALLA CERRADO: si una página intermedia devuelve error, se LANZA — nunca se
- * trata como "no hay más candidatos" ni se devuelve lo acumulado hasta ahí
- * como si fuera el catálogo completo. Un catálogo parcial que se declara
- * completo es peor que ningún catálogo: puede convertir una ambigüedad real
- * en un falso "sin coincidencia" o, peor, en un falso "única".
+ * Paginar por cursor no tiene ese problema: cada vuelta pide "lo que sigue
+ * después del último id visto", así que no importa cuántas filas decida
+ * devolver el servidor de verdad — la única forma de que el catálogo se dé
+ * por terminado es recibir una página VACÍA, sea cual sea el límite real.
  *
- * Se detiene en la primera página INCOMPLETA (menos de `tamanoPagina` filas):
- * esa es la señal —la misma que usa PostgREST— de que ya no hay más.
+ * FALLA CERRADO, en dos frentes:
+ *   1. Si una página intermedia devuelve error, se LANZA — nunca se trata
+ *      como "no hay más candidatos" ni se devuelve lo acumulado hasta ahí
+ *      como si fuera el catálogo completo. Un catálogo parcial que se declara
+ *      completo es peor que ningún catálogo: puede convertir una ambigüedad
+ *      real en un falso "sin coincidencia" o, peor, en un falso "única".
+ *   2. Si el cursor NO AVANZA entre una vuelta y la siguiente —la página no
+ *      viene vacía pero tampoco trae ningún id mayor que el anterior—, se
+ *      LANZA en vez de seguir pidiendo la misma página para siempre. Eso
+ *      señala que `leerPagina` no está ordenando por id ascendente como debe,
+ *      y seguir de largo sería un bucle infinito silencioso.
  *
- * Deduplica por id, defensivamente: si el catálogo cambia entre una página y
- * la siguiente (alguien inserta o borra mientras se pagina), un id repetido
- * en dos páginas no debe contarse dos veces.
+ * Deduplica por id de todas formas, aunque con cursor estrictamente creciente
+ * ya no debería hacer falta: pedir siempre `id > cursor` hace estructuralmente
+ * imposible que un mismo id vuelva a aparecer en una página posterior, y
+ * dentro de una sola página tampoco puede repetirse (`id` es la clave primaria
+ * de `aliados`). Queda como red de seguridad barata ante una implementación de
+ * `leerPagina` que no respete el contrato (por ejemplo, en una prueba mal
+ * escrita) — no cuesta nada y evita que ese error se propague en silencio.
  */
 export async function listarTodosLosCandidatos(
   deps: DepsListarPaginado,
   tamanoPagina = 1000
 ): Promise<CandidatoAliado[]> {
   const vistos = new Map<number, CandidatoAliado>();
-  let desde = 0;
+  let cursor: number | null = null;
   for (;;) {
-    const hasta = desde + tamanoPagina - 1;
-    const { datos, error } = await deps.leerPagina(desde, hasta);
+    const { datos, error } = await deps.leerPagina(cursor, tamanoPagina);
     if (error) {
       throw new Error(
-        `No se pudo leer el catálogo de aliados (página ${desde}-${hasta}): ${error.message}`
+        `No se pudo leer el catálogo de aliados (después del id ${cursor ?? "—"}): ${error.message}`
       );
     }
+    if (datos.length === 0) break; // única señal válida de fin: página vacía
+
     for (const c of datos) vistos.set(c.id, c);
-    if (datos.length < tamanoPagina) break; // página incompleta: no hay más
-    desde += tamanoPagina;
+
+    const ultimoId = datos[datos.length - 1].id;
+    if (cursor !== null && ultimoId <= cursor) {
+      throw new Error(
+        `El catálogo de aliados no avanzó (cursor ${cursor} → ${ultimoId}); ` +
+          `leerPagina no está ordenando por id ascendente. Se detiene para evitar un bucle infinito.`
+      );
+    }
+    cursor = ultimoId;
   }
   return [...vistos.values()];
 }

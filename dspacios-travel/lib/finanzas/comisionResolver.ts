@@ -209,16 +209,20 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   // espacios — por eso `listarIdsYNombres` siempre trae el catálogo entero,
   // nunca un resultado parcial que "ya encontró una" sin comprobar si hay más.
   const deps = {
-    // Paginado explícito con `.range()`: PostgREST puede limitar la cantidad
-    // máxima de filas por respuesta (Settings → API → Max rows) y truncar un
-    // `select()` sin avisar. Un catálogo truncado podría esconder justo la
-    // segunda ficha que hace ambigua una coincidencia — se pagina hasta
-    // recibir una página incompleta, y un error en cualquier página hace
-    // fallar toda la resolución (no se confunde con "catálogo vacío").
+    // Paginado por CURSOR (id ascendente), no por offset: PostgREST puede
+    // limitar la cantidad máxima de filas por respuesta (Settings → API →
+    // Max rows) por DEBAJO del tamaño de página pedido, y un `.range()`
+    // fijo se daría por terminado en la primera página "incompleta" aunque
+    // queden miles de filas más. Pidiendo siempre `id > cursor` no importa
+    // cuánto decida devolver el servidor: solo una página VACÍA significa
+    // que ya no hay más. Un error en cualquier página hace fallar toda la
+    // resolución (no se confunde con "catálogo vacío").
     listarIdsYNombres: (): Promise<CandidatoAliado[]> =>
       listarTodosLosCandidatos({
-        leerPagina: async (desde, hasta) => {
-          const { data, error } = await admin.from("aliados").select("id, nombre").range(desde, hasta);
+        leerPagina: async (cursor, tamanoPagina) => {
+          let q = admin.from("aliados").select("id, nombre").order("id", { ascending: true }).limit(tamanoPagina);
+          if (cursor != null) q = q.gt("id", cursor);
+          const { data, error } = await q;
           return { datos: (data as CandidatoAliado[] | null) ?? [], error };
         },
       }),

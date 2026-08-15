@@ -124,13 +124,27 @@ test("comisionResolver.ts resuelve los datos bancarios en dos fases, sin atajos"
     "volvió una consulta a `aliados` con limit(1): con homónimos elige una ficha arbitraria"
   );
   // El listado por id+nombre tiene que paginar: PostgREST puede truncar un
-  // select() sin `.range()` en silencio (límite de filas del proyecto), y un
-  // catálogo truncado puede esconder justo la ambigüedad que se busca.
+  // select() en silencio (límite de filas del proyecto), y un catálogo
+  // truncado puede esconder justo la ambigüedad que se busca.
   assert.match(src, /listarTodosLosCandidatos\(/, "el listado de candidatos ya no pagina");
   assert.match(
     src,
-    /\.select\(\s*"id, nombre"\s*\)\s*\.range\(/,
-    "la consulta de id+nombre debe encadenar .range(): sin eso puede volver truncada en silencio"
+    /\.select\(\s*"id, nombre"\s*\)\s*\.order\(\s*"id"/,
+    "la consulta de id+nombre debe encadenar .order(\"id\", …): sin orden determinista el cursor no sirve"
+  );
+  assert.match(src, /\.gt\(\s*"id"\s*,\s*cursor\s*\)/, "no aplica el cursor (id > cursor) en la paginación");
+  // ESTE es el bug real que motivó la reescritura de la paginación: `.range()`
+  // pide un tamaño de página FIJO y se da por terminado en cuanto una página
+  // vuelve con menos filas de las pedidas. Pero PostgREST puede tener su
+  // propio límite de filas por respuesta (Settings → API → Max rows) por
+  // DEBAJO de lo que se pidió — pedir 1000 con el servidor topado en 500 hace
+  // que la primera página YA vuelva "incompleta" (500 < 1000) aunque queden
+  // miles de filas más. Paginar por cursor (id > último visto) no tiene ese
+  // problema: la única señal válida de fin es una página vacía.
+  assert.doesNotMatch(
+    src,
+    /from\("aliados"\)[\s\S]{0,80}\.range\(/,
+    "volvió la paginación por offset/.range(): se da por terminada antes de tiempo si el servidor limita las filas por debajo del tamaño de página pedido"
   );
 });
 
