@@ -106,11 +106,70 @@ export type DepsResolverFicha = {
    * SOLO id + nombre, de TODO el catálogo. Nunca trae banco/cuenta/documento:
    * en esta fase todavía no se sabe si hay ambigüedad, así que no hay ninguna
    * ficha bancaria que valga la pena cargar todavía.
+   *
+   * ⚠️ Quien implemente esto tiene que traer TODO el catálogo, paginando si
+   * hace falta — ver `listarTodosLosCandidatos` más abajo. Un `select()` sin
+   * `.range()` puede volver silenciosamente truncado por el límite de filas
+   * del proyecto (Settings → API → Max rows), y un catálogo truncado no es lo
+   * mismo que "no hay más candidatos": puede esconder justo la ambigüedad que
+   * esta función existe para detectar.
    */
   listarIdsYNombres(): Promise<CandidatoAliado[]>;
   /** La ficha completa (con los datos bancarios) de un id concreto. */
   buscarFichaPorId(id: number): Promise<FichaAliado | null>;
 };
+
+export type PaginaCandidatos = { datos: CandidatoAliado[]; error: { message: string } | null };
+
+export type DepsListarPaginado = {
+  /** Lee una página, 0-indexed e INCLUSIVA en los dos extremos — igual que `.range(desde, hasta)` de PostgREST. */
+  leerPagina(desde: number, hasta: number): Promise<PaginaCandidatos>;
+};
+
+/**
+ * Trae TODO el catálogo de candidatos, paginando explícitamente.
+ *
+ * POR QUÉ EXISTE: PostgREST tiene un límite de filas por respuesta
+ * configurable por proyecto (`db-max-rows`, típicamente 1000) que se aplica
+ * en SILENCIO — un `select("id, nombre")` sin `.range()` no avisa que cortó
+ * el resultado, simplemente devuelve menos filas de las que hay. Para esta
+ * función eso es particularmente grave: un catálogo truncado puede esconder
+ * justo la segunda ficha que hace ambigua una coincidencia, y el flujo
+ * seguiría de largo creyendo que hay una sola.
+ *
+ * FALLA CERRADO: si una página intermedia devuelve error, se LANZA — nunca se
+ * trata como "no hay más candidatos" ni se devuelve lo acumulado hasta ahí
+ * como si fuera el catálogo completo. Un catálogo parcial que se declara
+ * completo es peor que ningún catálogo: puede convertir una ambigüedad real
+ * en un falso "sin coincidencia" o, peor, en un falso "única".
+ *
+ * Se detiene en la primera página INCOMPLETA (menos de `tamanoPagina` filas):
+ * esa es la señal —la misma que usa PostgREST— de que ya no hay más.
+ *
+ * Deduplica por id, defensivamente: si el catálogo cambia entre una página y
+ * la siguiente (alguien inserta o borra mientras se pagina), un id repetido
+ * en dos páginas no debe contarse dos veces.
+ */
+export async function listarTodosLosCandidatos(
+  deps: DepsListarPaginado,
+  tamanoPagina = 1000
+): Promise<CandidatoAliado[]> {
+  const vistos = new Map<number, CandidatoAliado>();
+  let desde = 0;
+  for (;;) {
+    const hasta = desde + tamanoPagina - 1;
+    const { datos, error } = await deps.leerPagina(desde, hasta);
+    if (error) {
+      throw new Error(
+        `No se pudo leer el catálogo de aliados (página ${desde}-${hasta}): ${error.message}`
+      );
+    }
+    for (const c of datos) vistos.set(c.id, c);
+    if (datos.length < tamanoPagina) break; // página incompleta: no hay más
+    desde += tamanoPagina;
+  }
+  return [...vistos.values()];
+}
 
 /**
  * Resuelve la ficha del aliado en las dos fases descritas arriba. Las

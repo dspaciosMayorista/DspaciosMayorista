@@ -2,7 +2,14 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
-import { resolverFichaAliado, explicarFicha, resolverAliadoIdContrato, type CandidatoAliado, type FichaAliado } from "@/lib/finanzas/fichaAliado";
+import {
+  resolverFichaAliado,
+  explicarFicha,
+  resolverAliadoIdContrato,
+  listarTodosLosCandidatos,
+  type CandidatoAliado,
+  type FichaAliado,
+} from "@/lib/finanzas/fichaAliado";
 
 // Detalle de cómo se llegó al valor a cobrar. La vía 2 (aliados_b2b) trae el
 // desglose completo (calcComisionB2B); la vía 1 (ventas.comision_b2b, flujo
@@ -202,10 +209,19 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   // espacios — por eso `listarIdsYNombres` siempre trae el catálogo entero,
   // nunca un resultado parcial que "ya encontró una" sin comprobar si hay más.
   const deps = {
-    listarIdsYNombres: async (): Promise<CandidatoAliado[]> => {
-      const { data } = await admin.from("aliados").select("id, nombre");
-      return (data as CandidatoAliado[] | null) ?? [];
-    },
+    // Paginado explícito con `.range()`: PostgREST puede limitar la cantidad
+    // máxima de filas por respuesta (Settings → API → Max rows) y truncar un
+    // `select()` sin avisar. Un catálogo truncado podría esconder justo la
+    // segunda ficha que hace ambigua una coincidencia — se pagina hasta
+    // recibir una página incompleta, y un error en cualquier página hace
+    // fallar toda la resolución (no se confunde con "catálogo vacío").
+    listarIdsYNombres: (): Promise<CandidatoAliado[]> =>
+      listarTodosLosCandidatos({
+        leerPagina: async (desde, hasta) => {
+          const { data, error } = await admin.from("aliados").select("id, nombre").range(desde, hasta);
+          return { datos: (data as CandidatoAliado[] | null) ?? [], error };
+        },
+      }),
     buscarFichaPorId: async (id: number): Promise<FichaAliado | null> => {
       const { data } = await admin.from("aliados").select(COLS_ALIADO).eq("id", id).maybeSingle();
       return (data as FichaAliado | null) ?? null;

@@ -5,6 +5,8 @@ import {
   registrarRuta,
   eliminarRutasConocidas,
   verificarRutasEliminadas,
+  eliminarEmpleadosConocidos,
+  verificarEmpleadosEliminados,
 } from "../supabase/scripts/pruebas/nominaFixtures.mjs";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -192,4 +194,129 @@ test("eliminarRutasConocidas reporta el error tal cual, sin tragárselo", async 
   const r = await eliminarRutasConocidas(deps, ["a/1.txt"]);
   assert.equal(r.ok, false);
   assert.equal(r.error.message, "denegado");
+});
+
+// ── eliminarEmpleadosConocidos / verificarEmpleadosEliminados: por ID ─────
+// EXACTO, INDEPENDIENTE de las rutas ───────────────────────────────────────
+
+test("eliminarEmpleadosConocidos pasa los ids EXACTOS a eliminarEmpleados, un solo lote", async () => {
+  const recibidos: number[][] = [];
+  const deps = { eliminarEmpleados: async (ids: number[]) => { recibidos.push(ids); return { error: null }; } };
+  const r = await eliminarEmpleadosConocidos(deps, [10, 20]);
+  assert.equal(r.ok, true);
+  assert.equal(r.borrados, 2);
+  assert.equal(recibidos.length, 1);
+  assert.deepEqual(recibidos[0].sort(), [10, 20]);
+});
+
+test("eliminarEmpleadosConocidos con lista vacía no llama a la API", async () => {
+  let llamado = false;
+  const deps = { eliminarEmpleados: async () => { llamado = true; return { error: null }; } };
+  const r = await eliminarEmpleadosConocidos(deps, []);
+  assert.equal(r.ok, true);
+  assert.equal(r.borrados, 0);
+  assert.equal(llamado, false);
+});
+
+test("eliminarEmpleadosConocidos reporta el error tal cual", async () => {
+  const deps = { eliminarEmpleados: async () => ({ error: { message: "denegado" } }) };
+  const r = await eliminarEmpleadosConocidos(deps, [10]);
+  assert.equal(r.ok, false);
+  assert.equal(r.error.message, "denegado");
+});
+
+test("verificarEmpleadosEliminados detecta cuáles ids SIGUEN existiendo", async () => {
+  const deps = { buscarEmpleadosPorIds: async () => ({ restantes: [20], error: null }) };
+  const r = await verificarEmpleadosEliminados(deps, [10, 20]);
+  assert.deepEqual(r, [
+    { id: 10, eliminado: true },
+    { id: 20, eliminado: false },
+  ]);
+});
+
+test("verificarEmpleadosEliminados con lista vacía no consulta nada", async () => {
+  let llamado = false;
+  const deps = { buscarEmpleadosPorIds: async () => { llamado = true; return { restantes: [], error: null }; } };
+  const r = await verificarEmpleadosEliminados(deps, []);
+  assert.deepEqual(r, []);
+  assert.equal(llamado, false);
+});
+
+test("verificarEmpleadosEliminados falla cerrado si la consulta da error, no lo confunde con 'todos eliminados'", async () => {
+  const deps = { buscarEmpleadosPorIds: async () => ({ restantes: [], error: { message: "timeout" } }) };
+  await assert.rejects(() => verificarEmpleadosEliminados(deps, [10]), /No se pudo verificar pe_empleados.*timeout/);
+});
+
+// ── LA SECUENCIA COMPLETA: primer empleado creado, el segundo falla ANTES ─
+// de registrar ninguna ruta — la limpieza debe borrar Y verificar el primero
+// de todas formas. Este es el escenario exacto que motivó separar la
+// verificación de `idsEmpleados` de la de `rutasConocidas`: antes, sin
+// ninguna ruta registrada, la verificación de la fila del empleado ni
+// siquiera se ejecutaba.
+
+test("SECUENCIA COMPLETA: primer empleado creado + segundo falla sin ruta ⇒ limpieza borra Y verifica el primero", async () => {
+  const ctx = ctxVacio();
+  const filasReales = new Map<number, boolean>(); // simula la tabla pe_empleados
+
+  const depsCrear = {
+    crearEmpleado: async (nombre: string, tenant: string) => {
+      if (tenant === ctx.otroTenant) throw new Error("el insert del segundo falló (simulado)");
+      const id = 900;
+      filasReales.set(id, true);
+      return { id };
+    },
+    subirArchivo: async () => {
+      throw new Error("no debería llegar a subir nada: el segundo empleado falla antes");
+    },
+    actualizarContratoPath: async () => ({ error: null }),
+  };
+
+  // 1) Fixture: falla como se espera, pero el primer empleado quedó registrado.
+  await assert.rejects(() => crearFixturesNomina(depsCrear, ctx), /el insert del segundo falló/);
+  assert.deepEqual(ctx.idsEmpleados, [900]);
+  assert.equal(ctx.rutasConocidas.size, 0, "no se llegó a registrar ninguna ruta");
+
+  // 2) Limpieza de RUTAS: con el Set vacío, no debe intentar nada (ni fallar).
+  let llamoEliminarArchivos = false;
+  const rRutas = await eliminarRutasConocidas(
+    { eliminarArchivos: async () => { llamoEliminarArchivos = true; return { error: null }; } },
+    ctx.rutasConocidas
+  );
+  assert.equal(rRutas.ok, true);
+  assert.equal(rRutas.borrados, 0);
+  assert.equal(llamoEliminarArchivos, false);
+
+  // 3) Limpieza de EMPLEADOS: independiente de las rutas, SÍ debe borrar al #900.
+  const rEmpleados = await eliminarEmpleadosConocidos(
+    { eliminarEmpleados: async (ids: number[]) => { ids.forEach((id) => filasReales.delete(id)); return { error: null }; } },
+    ctx.idsEmpleados
+  );
+  assert.equal(rEmpleados.ok, true);
+  assert.equal(rEmpleados.borrados, 1);
+  assert.equal(filasReales.has(900), false, "la fila #900 debe haberse borrado de verdad");
+
+  // 4) Verificación de RUTAS: vacío, no reporta nada raro.
+  const verifRutas = await verificarRutasEliminadas({ existeRuta: async () => false }, ctx.rutasConocidas);
+  assert.deepEqual(verifRutas, []);
+
+  // 5) Verificación de EMPLEADOS: esta es la comprobación que antes NUNCA se
+  //    ejecutaba (vivía anidada bajo `if (rutasConocidas.size)`). Tiene que
+  //    confirmar que el #900 YA NO ESTÁ, usando el mismo `ctx.idsEmpleados`
+  //    que sigue teniendo el id pese a que la fixture completa haya fallado.
+  const verifEmpleados = await verificarEmpleadosEliminados(
+    { buscarEmpleadosPorIds: async (ids: number[]) => ({ restantes: ids.filter((id) => filasReales.has(id)), error: null }) },
+    ctx.idsEmpleados
+  );
+  assert.deepEqual(verifEmpleados, [{ id: 900, eliminado: true }]);
+});
+
+test("CONTROL NEGATIVO de la secuencia: si la verificación de empleados dependiera de rutasConocidas, este caso NUNCA se comprobaría", () => {
+  // Reproduce la condición vieja para dejar constancia del bug: con el Set de
+  // rutas vacío, `if (rutasConocidas.size)` es falso y el bloque entero —ruta
+  // Y fila del empleado— se saltaba en silencio.
+  const rutasConocidas = new Set<string>();
+  const idsEmpleados = [900];
+  const seEjecutariaLaVerificacionVieja = rutasConocidas.size > 0; // el gate viejo
+  assert.equal(seEjecutariaLaVerificacionVieja, false, "con el gate viejo, la verificación NO corría");
+  assert.ok(idsEmpleados.length > 0, "pero SÍ había un empleado real pendiente de verificar");
 });

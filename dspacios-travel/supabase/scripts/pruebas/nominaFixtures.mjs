@@ -108,3 +108,36 @@ export async function verificarRutasEliminadas(deps, rutas) {
   }
   return resultados;
 }
+
+/**
+ * Borra las filas de `pe_empleados` por ID EXACTO.
+ *
+ * Deliberadamente INDEPENDIENTE de `rutasConocidas`: puede haber un empleado
+ * creado sin que se haya llegado a registrar ninguna ruta —si el SEGUNDO
+ * `insert` falla, o si falla el `update` de `contrato_path` antes de que el
+ * archivo llegue a existir— y ese empleado sigue siendo una fila real en la
+ * base que hay que borrar igual. Por eso esta función (y la de verificación
+ * de abajo) reciben `ids`, nunca `rutas`.
+ */
+export async function eliminarEmpleadosConocidos(deps, ids) {
+  const lista = [...ids];
+  if (!lista.length) return { ok: true, borrados: 0 };
+  const { error } = await deps.eliminarEmpleados(lista);
+  return error ? { ok: false, error } : { ok: true, borrados: lista.length };
+}
+
+/**
+ * Comprueba que ninguno de los ids conocidos siga en `pe_empleados`.
+ * Independiente de `rutasConocidas` por el mismo motivo que la función de
+ * arriba: un empleado sin ruta registrada es igual de real y hay que
+ * verificar que su fila desapareció, no solo que "no había archivos que
+ * verificar".
+ */
+export async function verificarEmpleadosEliminados(deps, ids) {
+  const lista = [...ids];
+  if (!lista.length) return [];
+  const { restantes, error } = await deps.buscarEmpleadosPorIds(lista);
+  if (error) throw new Error(`No se pudo verificar pe_empleados: ${error.message}`);
+  const restantesSet = new Set(restantes);
+  return lista.map((id) => ({ id, eliminado: !restantesSet.has(id) }));
+}

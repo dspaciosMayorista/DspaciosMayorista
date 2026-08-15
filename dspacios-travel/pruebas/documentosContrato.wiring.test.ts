@@ -123,6 +123,15 @@ test("comisionResolver.ts resuelve los datos bancarios en dos fases, sin atajos"
     /from\("aliados"\)[\s\S]{0,200}\.limit\(1\)/,
     "volvió una consulta a `aliados` con limit(1): con homónimos elige una ficha arbitraria"
   );
+  // El listado por id+nombre tiene que paginar: PostgREST puede truncar un
+  // select() sin `.range()` en silencio (límite de filas del proyecto), y un
+  // catálogo truncado puede esconder justo la ambigüedad que se busca.
+  assert.match(src, /listarTodosLosCandidatos\(/, "el listado de candidatos ya no pagina");
+  assert.match(
+    src,
+    /\.select\(\s*"id, nombre"\s*\)\s*\.range\(/,
+    "la consulta de id+nombre debe encadenar .range(): sin eso puede volver truncada en silencio"
+  );
 });
 
 test("las cuatro páginas por URL siguen colgando de esos dos resolvers", () => {

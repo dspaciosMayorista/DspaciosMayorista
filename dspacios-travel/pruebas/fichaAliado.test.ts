@@ -4,9 +4,11 @@ import {
   resolverFichaAliado,
   explicarFicha,
   resolverAliadoIdContrato,
+  listarTodosLosCandidatos,
   type CandidatoAliado,
   type FichaAliado,
   type DepsResolverFicha,
+  type PaginaCandidatos,
 } from "../lib/finanzas/fichaAliado.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -205,6 +207,139 @@ test("un nombre con guion bajo tampoco actúa como comodín de un carácter", as
   });
   const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "AGENCIA_VIAJES" });
   assert.equal(r.ficha, conGuion, "el guion bajo debe emparejar solo con el literal, no con 'AGENCIAXVIAJES'");
+});
+
+// ── listarTodosLosCandidatos: paginación explícita del catálogo ──────────
+//
+// PostgREST puede limitar la cantidad máxima de filas por respuesta
+// (Settings → API → Max rows) y aplicarlo en SILENCIO — un `select()` sin
+// `.range()` no avisa que cortó el resultado. Para la resolución de fichas
+// eso es grave: un catálogo truncado puede esconder justo la segunda ficha
+// que hace ambigua una coincidencia.
+
+function paginador(paginas: CandidatoAliado[][]) {
+  let llamada = 0;
+  const desdeVistos: number[] = [];
+  const fn = async (desde: number): Promise<PaginaCandidatos> => {
+    desdeVistos.push(desde);
+    const pagina = paginas[llamada++];
+    return { datos: pagina ?? [], error: null };
+  };
+  return { leerPagina: fn, desdeVistos, llamadas: () => llamada };
+}
+
+test("PAGINACIÓN: una sola página incompleta basta y se detiene ahí", async () => {
+  const p = paginador([[{ id: 1, nombre: "Ana" }]]);
+  const r = await listarTodosLosCandidatos(p, 10);
+  assert.deepEqual(r, [{ id: 1, nombre: "Ana" }]);
+  assert.equal(p.llamadas(), 1);
+});
+
+test("PAGINACIÓN: sigue pidiendo páginas mientras vengan completas, se detiene con la primera incompleta", async () => {
+  const p = paginador([
+    [{ id: 1, nombre: "A" }, { id: 2, nombre: "B" }], // completa (2 de 2) → sigue
+    [{ id: 3, nombre: "C" }, { id: 4, nombre: "D" }], // completa (2 de 2) → sigue
+    [{ id: 5, nombre: "E" }],                          // incompleta (1 de 2) → para
+  ]);
+  const r = await listarTodosLosCandidatos(p, 2);
+  assert.deepEqual(r.map((c) => c.id).sort(), [1, 2, 3, 4, 5]);
+  assert.equal(p.llamadas(), 3);
+  assert.deepEqual(p.desdeVistos, [0, 2, 4]);
+});
+
+test("PAGINACIÓN: catálogo vacío devuelve [] sin insistir", async () => {
+  const p = paginador([[]]);
+  const r = await listarTodosLosCandidatos(p, 10);
+  assert.deepEqual(r, []);
+  assert.equal(p.llamadas(), 1);
+});
+
+test("PAGINACIÓN: deduplica por id si dos páginas se solapan", async () => {
+  const p = paginador([
+    [{ id: 1, nombre: "A" }, { id: 2, nombre: "B" }],
+    [{ id: 2, nombre: "B" }, { id: 3, nombre: "C" }], // el id 2 se repite
+    [], // incompleta → para
+  ]);
+  const r = await listarTodosLosCandidatos(p, 2);
+  assert.equal(r.length, 3, "el id 2 solo debe contarse una vez");
+  assert.deepEqual(r.map((c) => c.id).sort(), [1, 2, 3]);
+});
+
+test("PAGINACIÓN: un error en una página intermedia FALLA CERRADO, no se trata como fin del catálogo", async () => {
+  // La segunda llamada (página 2, desde=2) devuelve error.
+  const conError = {
+    leerPagina: async (desde: number) => {
+      if (desde === 0) return { datos: [{ id: 1, nombre: "A" }, { id: 2, nombre: "B" }], error: null };
+      return { datos: [], error: { message: "timeout de red" } };
+    },
+  };
+  await assert.rejects(
+    () => listarTodosLosCandidatos(conError, 2),
+    /No se pudo leer el catálogo de aliados.*página 2-3.*timeout de red/
+  );
+});
+
+// ── EL FLUJO COMPLETO con paginación real, a través de resolverFichaAliado ─
+
+test("PAGINACIÓN + FLUJO: un homónimo normalizado en la SEGUNDA página → ambiguo, sin consultar ninguna ficha bancaria", async () => {
+  // Página 1 (tamaño 2, completa): "Ana Gómez" + un tercero.
+  // Página 2 (incompleta): " ANA GÓMEZ " — el homónimo normalizado, que un
+  // catálogo truncado a una sola página jamás habría visto.
+  const paginas: CandidatoAliado[][] = [
+    [{ id: 1, nombre: "Ana Gómez" }, { id: 2, nombre: "Otro Aliado" }],
+    [{ id: 3, nombre: " ANA GÓMEZ " }],
+  ];
+  let llamadaPagina = 0;
+  const llamadasFicha: number[] = [];
+  const deps: DepsResolverFicha = {
+    listarIdsYNombres: () =>
+      listarTodosLosCandidatos(
+        {
+          leerPagina: async () => ({ datos: paginas[llamadaPagina++] ?? [], error: null }),
+        },
+        2
+      ),
+    buscarFichaPorId: async (id) => {
+      llamadasFicha.push(id); // no debería llamarse nunca en este caso
+      return null;
+    },
+  };
+
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "Ana Gómez" });
+  assert.equal(r.ficha, null, "con la ambigüedad en la segunda página, tampoco se debe imprimir ninguna cuenta");
+  assert.equal(r.motivo, "legacy_ambigua");
+  assert.deepEqual(r.candidatas?.sort(), [1, 3]);
+  assert.deepEqual(llamadasFicha, [], "ambiguo: CERO llamadas a buscarFichaPorId");
+});
+
+test("PAGINACIÓN + FLUJO: un error de red en una página intermedia hace fallar TODA la resolución, no 'sin coincidencia'", async () => {
+  let llamadaPagina = 0;
+  const deps: DepsResolverFicha = {
+    listarIdsYNombres: () =>
+      listarTodosLosCandidatos(
+        {
+          leerPagina: async (desde: number) => {
+            llamadaPagina++;
+            if (desde === 0) return { datos: [{ id: 1, nombre: "Ana Gómez" }, { id: 2, nombre: "Otro" }], error: null };
+            return { datos: [], error: { message: "la conexión se cayó" } };
+          },
+        },
+        2
+      ),
+    buscarFichaPorId: async () => {
+      throw new Error("no debía llegar a pedir ninguna ficha: el listado falló antes");
+    },
+  };
+
+  // NO debe resolver a { motivo: "legacy_sin_coincidencia" } ni a ningún
+  // resultado normal: el catálogo quedó truncado por un error, y tratarlo
+  // como "no hay más candidatos" podría convertir una ambigüedad real en un
+  // falso "única" o un falso "sin coincidencia".
+  await assert.rejects(
+    () => resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "Ana Gómez" }),
+    /No se pudo leer el catálogo de aliados.*la conexión se cayó/
+  );
+  assert.equal(llamadaPagina, 2, "debió intentar la segunda página, y detenerse ahí — no fingir que ya terminó");
 });
 
 // ── explicarFicha: no debe hablar cuando todo salió bien ──────────────────

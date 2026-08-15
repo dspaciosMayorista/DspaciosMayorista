@@ -82,6 +82,8 @@ import {
   registrarRuta,
   eliminarRutasConocidas,
   verificarRutasEliminadas,
+  eliminarEmpleadosConocidos,
+  verificarEmpleadosEliminados,
 } from "./nominaFixtures.mjs";
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -213,9 +215,16 @@ async function limpiar() {
     );
     linea(rBorrado.ok, `Eliminar ${nomina.rutasConocidas.size} archivo(s) de pe-empleados/`, rBorrado.error?.message);
   }
+  // Independiente del bloque de arriba A PROPÓSITO: puede haber un empleado
+  // creado sin ninguna ruta registrada todavía —si el SEGUNDO `insert` falla,
+  // o si falla el `update` de `contrato_path` antes de subir el archivo— y
+  // esa fila es real y hay que borrarla igual.
   if (nomina.idsEmpleados.length) {
-    const { error: eEmp } = await admin.from("pe_empleados").delete().in("id", nomina.idsEmpleados);
-    linea(!eEmp, "Eliminar los empleados de prueba", eEmp?.message);
+    const rEmp = await eliminarEmpleadosConocidos(
+      { eliminarEmpleados: (ids) => admin.from("pe_empleados").delete().in("id", ids) },
+      nomina.idsEmpleados
+    );
+    linea(rEmp.ok, "Eliminar los empleados de prueba", rEmp.error?.message);
   }
 
   for (const c of [cPropio, cAjeno, cOtraAgencia]) {
@@ -261,10 +270,28 @@ async function limpiar() {
     const quedan = resultados.filter((r) => !r.eliminada).map((r) => r.ruta);
     linea(quedan.length === 0, "Sin objetos propios en pe-empleados/ (verificado ruta por ruta)",
       quedan.length ? `quedan: ${quedan.join(", ")}` : null);
+  }
 
-    const { data: emp, error: eEmp } = await admin.from("pe_empleados").select("id").in("id", nomina.idsEmpleados);
-    linea(!eEmp && (emp ?? []).length === 0, "Sin filas de pe_empleados de prueba",
-      eEmp?.message ?? ((emp ?? []).length ? `quedan: ${(emp ?? []).map((e) => e.id).join(", ")}` : null));
+  // Independiente del bloque de arriba: un empleado sin ninguna ruta
+  // registrada (el segundo `insert` de la pareja falló antes de llegar a
+  // subir nada, o falló el `update` de `contrato_path`) es igual de real, y
+  // su fila tiene que verificarse borrada aunque `rutasConocidas` esté vacío.
+  // Antes esta comprobación vivía anidada dentro del `if` de arriba: si no
+  // había rutas, la fila del empleado NUNCA se verificaba, aunque sí se
+  // hubiera intentado borrar.
+  if (nomina.idsEmpleados.length) {
+    const resultadosEmp = await verificarEmpleadosEliminados(
+      {
+        buscarEmpleadosPorIds: async (ids) => {
+          const { data, error } = await admin.from("pe_empleados").select("id").in("id", ids);
+          return { restantes: (data ?? []).map((e) => e.id), error };
+        },
+      },
+      nomina.idsEmpleados
+    );
+    const quedanEmp = resultadosEmp.filter((r) => !r.eliminado).map((r) => r.id);
+    linea(quedanEmp.length === 0, "Sin filas de pe_empleados de prueba",
+      quedanEmp.length ? `quedan: ${quedanEmp.join(", ")}` : null);
   }
 
   const { data: ventas, error: eV } = await admin.from("ventas").select("numero_contrato").like("numero_contrato", `${MARCA}%`);
@@ -368,6 +395,11 @@ try {
   );
   rutaContratoPropio = rutaContrato;
   const TEXTO_CONTRATO = nomina.textoContrato;
+  // Nombre EXACTO del archivo (sin la carpeta), para buscarlo por `search` en
+  // vez de listar la carpeta entera: `pe-empleados/` es compartida por TODOS
+  // los empleados del sistema, así que un `list()` plano no garantiza traer
+  // el nuestro en la primera página.
+  const nombreContratoPropio = rutaContratoPropio.split("/")[1];
   console.log(`   empleado propio #${empPropio.id} (${tenant}) y de la otra agencia #${empOtro.id} (${otroTenant})`);
   console.log(`   contrato laboral sembrado en ${rutaContratoPropio}`);
 
@@ -569,9 +601,12 @@ try {
     // limpieza igual sabe que esta ruta pudo haberse tocado.
     const rutaPropiaDelRol = registrarRuta(nomina, `pe-empleados/${empPropio.id}-por-${ref}.txt`);
 
-    let x = await intentar(() => stN.list("pe-empleados"));
-    linea(x.ok && listaIncluye(x.data, rutaContratoPropio), `${etiqueta}: LISTA la carpeta pe-empleados/`,
-      x.detalle ?? (x.ok ? "respondió sin error pero no listó el contrato" : null));
+    // Búsqueda ACOTADA al nombre exacto, no un `list()` de toda la carpeta:
+    // `pe-empleados/` es compartida por todos los empleados del sistema, así
+    // que el nuestro podría no caer en la primera página de un listado plano.
+    let x = await intentar(() => stN.list("pe-empleados", { search: nombreContratoPropio, limit: 100 }));
+    linea(x.ok && listaIncluye(x.data, rutaContratoPropio), `${etiqueta}: LISTA la carpeta pe-empleados/ (búsqueda exacta)`,
+      x.detalle ?? (x.ok ? "respondió sin error pero no encontró el contrato por su nombre exacto" : null));
 
     x = await intentar(() => stN.createSignedUrl(rutaContratoPropio, 60));
     linea(x.ok, `${etiqueta}: FIRMA URL del contrato laboral`, x.detalle);
@@ -599,10 +634,14 @@ try {
     // que alcanzarlo igual — no depender de que "no debería existir".
     const rutaIntrusaNomina = registrarRuta(nomina, `pe-empleados/${empPropio.id}-intruso-${ref}.txt`);
 
-    let x = await intentar(() => stN.list("pe-empleados"));
+    // Misma búsqueda ACOTADA que en el bloque permitido: si la policy dejara
+    // pasar la lectura, tiene que notarse aquí igual que en un listado
+    // plano — la diferencia es que esta SÍ es concluyente sin importar cuántos
+    // objetos más haya en la carpeta.
+    let x = await intentar(() => stN.list("pe-empleados", { search: nombreContratoPropio, limit: 100 }));
     const vio = x.ok && listaIncluye(x.data, rutaContratoPropio);
-    linea(!vio, `${etiqueta}: LISTAR pe-empleados/ debe fallar o venir vacía`,
-      x.detalle ?? (vio ? "no falló: listó el contrato laboral" : null));
+    linea(!vio, `${etiqueta}: LISTAR pe-empleados/ (búsqueda exacta) debe fallar o venir vacía`,
+      x.detalle ?? (vio ? "no falló: encontró el contrato laboral por su nombre exacto" : null));
 
     x = await intentar(() => stN.createSignedUrl(rutaContratoPropio, 60));
     linea(!x.ok, `${etiqueta}: FIRMAR URL del contrato laboral debe fallar`,
@@ -665,9 +704,9 @@ try {
   // Registrada ANTES de subir, igual que las demás.
   const rutaJefeNomina = registrarRuta(nomina, `pe-empleados/${empOtro.id}-por-jefe.txt`);
 
-  r = await intentar(() => stJefeNomina.list("pe-empleados"));
-  linea(r.ok && listaIncluye(r.data, rutaContratoPropio), "superadmin LISTA la carpeta pe-empleados/",
-    r.detalle ?? (r.ok ? "respondió sin error pero no listó el contrato" : null));
+  r = await intentar(() => stJefeNomina.list("pe-empleados", { search: nombreContratoPropio, limit: 100 }));
+  linea(r.ok && listaIncluye(r.data, rutaContratoPropio), "superadmin LISTA la carpeta pe-empleados/ (búsqueda exacta)",
+    r.detalle ?? (r.ok ? "respondió sin error pero no encontró el contrato por su nombre exacto" : null));
 
   r = await intentar(() => stJefeNomina.createSignedUrl(rutaContratoPropio, 60));
   linea(r.ok, "superadmin FIRMA URL de un contrato laboral", r.detalle);
