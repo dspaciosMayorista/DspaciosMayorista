@@ -372,9 +372,23 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > **NO usa `puede_ver_contrato()`**: esa responde "quién ve la FILA", que es otra
 > pregunta (deja a gerencia cross-agencia y a venta toda su agencia); y no puede
 > ser INVOKER porque desde la 144 `venta` no lee `ventas`.
-> **Antes de correrla**: ejecutar la consulta de prefijos desconocidos que trae
-> la propia migración (un objeto cuyo prefijo no sea un contrato ni
-> `pe-empleados/` queda solo al alcance de superadmin — falla cerrado).
+> **Antes de correrla**: ejecutar las DOS consultas de solo lectura que trae la
+> propia migración — una para objetos de contrato cuyo prefijo no corresponde
+> a ningún `numero_contrato`, otra para objetos de `pe-empleados/` cuyo id
+> inicial no se puede extraer o no corresponde a ninguna fila de
+> `pe_empleados` (comparando como texto, sin `::bigint` sobre el segmento
+> crudo). Un objeto así queda solo al alcance de superadmin — falla cerrado —
+> así que cualquier fila que devuelvan hay que revisarla antes de aplicar la
+> migración, no después.
+> **Orden de despliegue** (el código nuevo es compatible con las policies
+> VIEJAS de la 148; el código viejo no maneja bien los fallos de Storage que
+> la 150 puede producir, así que invertir el orden reabre temporalmente el
+> mismo bug de huérfanos que este PR corrige):
+> **a)** correr las dos consultas preventivas (solo lectura) · **b)** si están
+> limpias, fusionar el PR · **c)** esperar el despliegue correcto en
+> producción (Vercel) · **d)** probar un adjunto básico con el código nuevo,
+> todavía sobre las policies viejas · **e)** recién ahí ejecutar la migración
+> **150** · **f)** correr las pruebas posteriores de Storage y por roles.
 > **Decisión pendiente**: la 150 acota a `gerencia` a SU agencia, mientras
 > `puede_ver_tenant()` la deja ver las filas de las dos — verá la ficha de un
 > contrato ajeno pero no sus adjuntos. Avisado en la cabecera de la migración.

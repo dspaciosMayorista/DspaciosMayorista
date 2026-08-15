@@ -317,8 +317,24 @@ estaba abierto: `operaciones` y `venta` podían abrir contratos laborales con el
 salario de cada empleado sin poder leer la tabla.
 
 **Prefijo desconocido → solo `superadmin`** (falla cerrado). Puede dejar sin
-acceso a objetos históricos con otra forma de ruta, así que la migración trae la
-consulta para listarlos **antes** de aplicarla.
+acceso a objetos históricos con otra forma de ruta, así que la migración trae
+DOS consultas de solo lectura para correr **antes** de aplicarla: una para
+objetos de contrato cuyo prefijo no corresponde a ningún `numero_contrato`, y
+otra para objetos de `pe-empleados/` cuyo id inicial no se puede extraer o no
+corresponde a ninguna fila de `pe_empleados` (comparando como texto, sin
+`::bigint` sobre el segmento crudo). Cualquier fila que devuelva cualquiera de
+las dos hay que revisarla antes de aplicar la migración, no después.
+
+**Orden de despliegue.** El código nuevo de esta rama (manejo de adjuntos
+huérfanos) funciona igual contra las policies viejas (148) que contra las
+nuevas de esta migración; el código viejo, en cambio, no maneja de forma
+robusta los fallos de Storage que la 150 puede producir. Por eso el orden es:
+(a) correr las dos consultas preventivas → (b) si están limpias, fusionar el
+PR → (c) esperar el despliegue en producción → (d) probar un adjunto básico
+con el código nuevo, todavía sobre las policies viejas → (e) recién ahí
+ejecutar la 150 → (f) correr las pruebas posteriores de Storage y por roles
+(tabla de abajo). Invertir este orden reabre temporalmente la misma clase de
+problema que este PR cierra.
 
 ### Cómo se prueba
 

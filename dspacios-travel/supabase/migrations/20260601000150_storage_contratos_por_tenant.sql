@@ -83,7 +83,8 @@
 --   corresponde a ninguna fila de `ventas`, nadie salvo superadmin lo alcanza.
 --   Es deliberado: preferir un archivo inaccesible a un archivo filtrado. Pero
 --   PUEDE dejar sin acceso a objetos históricos con otra forma de ruta, así que
---   ANTES de aplicar esta migración conviene listarlos:
+--   ANTES de aplicar esta migración conviene listarlos (CONSULTA 1, solo
+--   lectura):
 --
 --     select split_part(o.name, '/', 1) as prefijo, count(*)
 --       from storage.objects o
@@ -93,8 +94,59 @@
 --                         where v.numero_contrato = split_part(o.name, '/', 1))
 --      group by 1 order by 2 desc;
 --
---   Si eso devuelve filas, hay que decidir qué hacer con ellas antes, no
---   después. Si devuelve vacío, esta migración no deja a nadie sin nada.
+--   El mismo riesgo existe del lado de nómina: el helper extrae el id de
+--   `pe_empleados` de los dígitos iniciales del segundo segmento
+--   (`pe-empleados/<id>-<epoch>.<ext>`) y niega el acceso si no puede
+--   extraerlo o si ese id no corresponde a ninguna fila de `pe_empleados`.
+--   CONSULTA 2, solo lectura, para listar esos objetos ANTES de aplicar la
+--   migración. Evita a propósito un `::bigint` sobre el segmento crudo (podría
+--   no ser numérico y abortaría una consulta que debe ser inofensiva); compara
+--   como texto contra `pe_empleados.id::text` en su lugar:
+--
+--     select o.name,
+--            substring(split_part(o.name, '/', 2) from '^[0-9]+') as id_extraido
+--       from storage.objects o
+--      where o.bucket_id = 'contratos'
+--        and split_part(o.name, '/', 1) = 'pe-empleados'
+--        and not exists (
+--          select 1 from public.pe_empleados e
+--           where e.id::text = substring(split_part(o.name, '/', 2) from '^[0-9]+')
+--        )
+--      order by 1;
+--
+--   Cualquier fila que devuelva CUALQUIERA de las dos consultas hay que
+--   revisarla y decidir qué hacer con ella ANTES de aplicar esta migración,
+--   no después — si se aplica sin revisar, esos objetos quedan fuera del
+--   alcance de todos salvo superadmin. Si las dos devuelven vacío, esta
+--   migración no deja a nadie sin nada.
+--
+-- ⚠️ ORDEN DE DESPLIEGUE — el código nuevo va ANTES que esta migración
+--   El código de esta rama (manejo de adjuntos huérfanos, ver
+--   `lib/adjuntos/operaciones.ts`) funciona igual de bien contra las policies
+--   VIEJAS (148) que contra las nuevas de esta migración: no depende de cuál
+--   de las dos esté activa. Lo que NO es cierto al revés — el código VIEJO no
+--   sabe manejar los fallos de Storage que esta migración puede producir (un
+--   objeto que antes era alcanzable y ahora no) de la forma robusta que esta
+--   rama corrige. Aplicar la 150 antes de desplegar el código dejaría, durante
+--   la ventana entre la migración y el deploy, al código viejo lidiando con
+--   esos fallos con el comportamiento de huérfanos que este PR justamente
+--   arregla. Por eso el orden correcto es:
+--
+--     a) Ejecutar las dos consultas preventivas de arriba (solo lectura).
+--     b) Si ninguna devuelve objetos problemáticos (o ya se revisaron y
+--        resolvieron los que aparecieron), fusionar el PR.
+--     c) Esperar el despliegue correcto en producción (Vercel).
+--     d) Hacer una prueba básica de adjuntos (subir/ver/eliminar uno) con el
+--        código nuevo ya en producción, TODAVÍA sobre las policies viejas.
+--     e) Solo entonces ejecutar esta migración (150).
+--     f) Ejecutar las pruebas posteriores de Storage y por roles:
+--        `supabase/scripts/test_storage_por_tenant.sql`,
+--        `supabase/scripts/test_storage_cruce_tenant.sql` y
+--        `supabase/scripts/pruebas/storage-adjuntos.mjs --confirmar`.
+--
+--   Invertir el orden (correr la 150 antes de desplegar, o desplegar antes de
+--   revisar las consultas preventivas) reabre temporalmente la misma clase de
+--   problema que este PR cierra.
 --
 -- ROLLBACK: `supabase/scripts/rollback_150_storage_contratos.sql`
 --   Restituye exactamente las cuatro policies de la 148 y borra el helper.
