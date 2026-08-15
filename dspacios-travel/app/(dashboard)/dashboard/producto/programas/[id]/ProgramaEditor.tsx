@@ -26,7 +26,13 @@ import {
 } from "../actions";
 import { parsearPrograma } from "@/lib/programasImport";
 import { pvpPrograma, type PvpOpciones } from "@/lib/programas";
-import { calcularNetoPrograma, recalcularNetosPorTarifa, type ModoBaseComisionable } from "@/lib/calc/programaPrecio";
+import {
+  calcularNetoPrograma,
+  recalcularNetosPorTarifa,
+  validarReglaComisionable,
+  parseNumOrNull,
+  type ModoBaseComisionable,
+} from "@/lib/calc/programaPrecio";
 import { formatMoneda } from "@/lib/utils";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
@@ -513,8 +519,8 @@ function MatrizEditor({
 type SalidaState = {
   etiqueta: string; fechaDesde: string; fechaHasta: string; noches: string; columna: string;
   netoSencilla: string; netoDoble: string; netoTriple: string; netoMultiple: string; netoNino: string; bs: boolean;
-  // Tarifa del proveedor por acomodación (solo para la calculadora de "tarifa
-  // comisionable" — nunca se guarda, solo produce el neto de arriba).
+  // Tarifa del proveedor por acomodación (§ "tarifa comisionable", migración
+  // 151) — produce el neto de arriba y se persiste aparte, separada de él.
   tarifaSencilla: string; tarifaDoble: string; tarifaTriple: string; tarifaMultiple: string;
 };
 
@@ -566,12 +572,32 @@ function SalidasEditor({
   // Regla comisionable: convierte, POR ACOMODACIÓN, la TARIFA del proveedor en
   // el NETO a montar. `reglaOn`/`cModo`/`cValor`/`cComision` llegan por props
   // (ver ProgramaEditor) para que el check no se pierda al cambiar de pestaña.
+  //
+  // La regla ACTUAL (closure sobre cModo/cValor/cComision, válida en render —
+  // no sirve dentro de un onChange, donde setCValor/setCComision todavía no
+  // se reflejó: para eso están los parámetros explícitos de `intentarRecalcular`).
+  // Si valor/% comisión están vacíos o fuera de rango, devuelve `null`: antes
+  // `Number(cValor) || 0` convertía un campo vacío en CERO y recalculaba con
+  // eso en silencio — el neto en pantalla quedaba mal aunque nunca se hubiera
+  // guardado nada inválido (el payload sí mandaba `null`, así que lo mostrado
+  // y lo guardado divergían).
+  const reglaActualValida = (): { modo: ModoBaseComisionable; valor: number; pctComision: number } | null => {
+    const valorNum = parseNumOrNull(cValor);
+    const pctNum = parseNumOrNull(cComision);
+    if (!validarReglaComisionable({ activa: true, modo: cModo, valor: valorNum, pctComision: pctNum }).ok) return null;
+    return { modo: cModo, valor: valorNum ?? 0, pctComision: pctNum ?? 0 };
+  };
+
   const desgloseTarifa = (tarifaStr: string) => {
     const tarifa = Number(tarifaStr);
     if (tarifaStr === "" || !Number.isFinite(tarifa) || tarifa <= 0) return null;
-    return calcularNetoPrograma({ tarifa, modo: cModo, valor: Number(cValor) || 0, pctComision: Number(cComision) || 0 });
+    const regla = reglaActualValida();
+    if (!regla) return null;
+    return calcularNetoPrograma({ tarifa, ...regla });
   };
   // Escribe SOLO el neto de esa acomodación puntual (nunca cruza sencilla/doble/triple/múltiple).
+  // Si la regla está incompleta/inválida, `desgloseTarifa` devuelve null y el
+  // neto queda en blanco — nunca en un número calculado con 0.
   const aplicarTarifaAcom = (i: number, tarifaKey: keyof SalidaState, netoKey: keyof SalidaState, tarifaStr: string) => {
     const d = desgloseTarifa(tarifaStr);
     setRows((p) => p.map((r, j) => (j === i ? { ...r, [tarifaKey]: tarifaStr, [netoKey]: d ? String(d.neto) : "" } : r)));
@@ -607,17 +633,28 @@ function SalidasEditor({
       })
     );
   };
+  // Recibe el modo/valor/% comisión EXPLÍCITOS (no de `cModo`/`cValor`/
+  // `cComision` del closure): dentro de un `onChange`, `setCValor`/etc. todavía
+  // no se reflejó en el próximo render, así que leer el estado da el valor
+  // VIEJO. Si la combinación no es válida, no recalcula nada — deja los netos
+  // como estaban en vez de escribir un número sacado con un 0 inventado.
+  const intentarRecalcular = (modo: ModoBaseComisionable, valorStr: string, pctStr: string) => {
+    const valorNum = parseNumOrNull(valorStr);
+    const pctNum = parseNumOrNull(pctStr);
+    if (!validarReglaComisionable({ activa: true, modo, valor: valorNum, pctComision: pctNum }).ok) return;
+    aplicarReglaATodasLasFilas({ modo, valor: valorNum ?? 0, pctComision: pctNum ?? 0 });
+  };
   const onCModoChange = (v: ModoBaseComisionable) => {
     setCModo(v);
-    aplicarReglaATodasLasFilas({ modo: v, valor: Number(cValor) || 0, pctComision: Number(cComision) || 0 });
+    intentarRecalcular(v, cValor, cComision);
   };
   const onCValorChange = (v: string) => {
     setCValor(v);
-    aplicarReglaATodasLasFilas({ modo: cModo, valor: Number(v) || 0, pctComision: Number(cComision) || 0 });
+    intentarRecalcular(cModo, v, cComision);
   };
   const onCComisionChange = (v: string) => {
     setCComision(v);
-    aplicarReglaATodasLasFilas({ modo: cModo, valor: Number(cValor) || 0, pctComision: Number(v) || 0 });
+    intentarRecalcular(cModo, cValor, v);
   };
 
   // PVP en vivo: usa las noches de la salida para la asistencia médica.
@@ -648,12 +685,23 @@ function SalidasEditor({
   // Se guarda SIEMPRE con la configuración actual, esté prendida o no: apagar
   // el check no debe borrar modo/valor/% comisión — al volver a marcarlo debe
   // verse exactamente lo que había (§ punto 6/7 del pedido original).
+  // `parseNumOrNull` (no `Number(x) || 0`): un campo vacío o con texto no
+  // numérico manda `null`, nunca `0` — mismo criterio que usa la validación.
   const reglaPayload: ReglaComisionableInput = {
     activa: reglaOn,
     modo: cModo,
-    valor: cValor === "" ? null : Number(cValor),
-    pctComision: cComision === "" ? null : Number(cComision),
+    valor: parseNumOrNull(cValor),
+    pctComision: parseNumOrNull(cComision),
   };
+  // Con la regla PRENDIDA, no se permite guardar una configuración inválida
+  // (campo vacío, fuera de rango, etc.) — se corta ANTES de llamar al
+  // servidor, que igual repite esta misma validación (no depende del navegador).
+  const reglaInvalidaError = reglaOn
+    ? (() => {
+        const v = validarReglaComisionable({ activa: true, modo: cModo, valor: reglaPayload.valor, pctComision: reglaPayload.pctComision });
+        return v.ok ? null : v.error;
+      })()
+    : null;
 
   // Tercer elemento = campo de tarifa comisionable de esa acomodación (null = no aplica, ej. Niño).
   const COLS: [keyof SalidaState, string, (keyof SalidaState) | null][] = [
@@ -700,6 +748,9 @@ function SalidasEditor({
               <Input type="number" value={cComision} onChange={(e) => onCComisionChange(e.target.value)} className="w-24" />
             </div>
             <p className="text-xs text-gray-400">Abajo aparece un campo de <b>tarifa del proveedor</b> junto a Sencilla/Doble/Triple/Múltiple — cada una calcula su propio neto por separado. Niño se ajusta directo.</p>
+            {reglaInvalidaError && (
+              <p className="w-full text-xs font-medium text-red-600">{reglaInvalidaError} No se recalcula ni se puede guardar hasta corregirlo.</p>
+            )}
           </div>
         )}
       </div>
@@ -774,7 +825,13 @@ function SalidasEditor({
           + Agregar salida
         </AddBtn>
       </div>
-      <SaveBar onSave={() => guardarSalidas(programaId, payload, reglaPayload)} />
+      <SaveBar
+        onSave={() =>
+          reglaInvalidaError
+            ? Promise.resolve({ ok: false, error: reglaInvalidaError })
+            : guardarSalidas(programaId, payload, reglaPayload)
+        }
+      />
     </div>
   );
 }

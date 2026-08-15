@@ -70,6 +70,23 @@
 --   fuera del alcance de esta migración — no se guardan junto con la regla
 --   comisionable desde el mismo botón, así que no hace falta unirlas para
 --   cerrar el caso que motivó este cambio.
+--
+-- CONSTRAINTS — última barrera, no la única
+--   La app valida en dos lugares (navegador y Server Action, ver
+--   `validarReglaComisionable` en lib/calc/programaPrecio.ts) que, con la
+--   regla ACTIVA, `regla_comisionable_pct_comision` esté en [0,100] y
+--   `regla_comisionable_valor` en [0,100] (modo 'pct') o ≥0 (modo
+--   'impuesto'). El CHECK de acá abajo es la última barrera si algo se cuela
+--   sin pasar por esa validación (un cliente distinto, un bug futuro, RPC
+--   llamado directo) — es INCONDICIONAL, no mira si la regla está activa: un
+--   valor no numérico ya se descartó en 0/1, así que solo queda decidir si el
+--   NÚMERO guardado es razonable, y eso no depende de si el toggle está
+--   prendido. `regla_comisionable_valor` compara contra `regla_comisionable_modo`
+--   de la MISMA fila (los CHECK de Postgres pueden referenciar otras columnas):
+--   en modo 'ninguno' el valor no participa del cálculo y puede ser CUALQUIER
+--   número que haya quedado de un modo anterior ('pct' 0-100 o 'impuesto' sin
+--   tope) — por eso esa rama no impone límite, a propósito.
+--   `programa_salidas.tarifa_*` (las cuatro) no admiten negativos.
 -- ───────────────────────────────────────────────────────────────────────────
 
 -- ── 1. Programa: si la regla está activa + su configuración ────────────────
@@ -88,6 +105,34 @@ begin
     alter table public.programas
       add constraint programas_regla_comisionable_modo_check
       check (regla_comisionable_modo in ('pct', 'impuesto', 'ninguno'));
+  end if;
+
+  -- % de comisión: siempre en [0,100] cuando no es null (independiente de
+  -- `regla_comisionable`/activa — ver "CONSTRAINTS" en la cabecera).
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'programas_regla_comisionable_pct_comision_check'
+  ) then
+    alter table public.programas
+      add constraint programas_regla_comisionable_pct_comision_check
+      check (regla_comisionable_pct_comision is null
+             or (regla_comisionable_pct_comision >= 0 and regla_comisionable_pct_comision <= 100));
+  end if;
+
+  -- valor: el rango depende del modo DE LA MISMA FILA. 'ninguno' no impone
+  -- límite (puede conservar un valor de un modo anterior para volver a él).
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'programas_regla_comisionable_valor_check'
+  ) then
+    alter table public.programas
+      add constraint programas_regla_comisionable_valor_check
+      check (
+        regla_comisionable_valor is null
+        or regla_comisionable_modo = 'ninguno'
+        or (regla_comisionable_modo = 'pct' and regla_comisionable_valor >= 0 and regla_comisionable_valor <= 100)
+        or (regla_comisionable_modo = 'impuesto' and regla_comisionable_valor >= 0)
+      );
   end if;
 end $$;
 
@@ -115,6 +160,23 @@ comment on column public.programa_salidas.tarifa_triple is
   'Tarifa del proveedor (antes de comisión) para Triple. Ver tarifa_sencilla.';
 comment on column public.programa_salidas.tarifa_multiple is
   'Tarifa del proveedor (antes de comisión) para Múltiple. Ver tarifa_sencilla.';
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'programa_salidas_tarifas_no_negativas_check'
+  ) then
+    alter table public.programa_salidas
+      add constraint programa_salidas_tarifas_no_negativas_check
+      check (
+        (tarifa_sencilla is null or tarifa_sencilla >= 0) and
+        (tarifa_doble    is null or tarifa_doble    >= 0) and
+        (tarifa_triple   is null or tarifa_triple   >= 0) and
+        (tarifa_multiple is null or tarifa_multiple >= 0)
+      );
+  end if;
+end $$;
 
 -- ── 3. Guardado atómico de la regla + las salidas ───────────────────────────
 create or replace function public.guardar_programa_salidas(

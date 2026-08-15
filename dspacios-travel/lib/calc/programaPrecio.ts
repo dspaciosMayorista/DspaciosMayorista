@@ -82,3 +82,65 @@ export function recalcularNetosPorTarifa(
     multiple: calc(tarifas.multiple),
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Validación de la regla comisionable — MISMA función en el navegador (para
+// no recalcular con 0 mientras el usuario escribe) y en la Server Action
+// (para no depender solo del navegador). Antes, un campo vacío se convertía
+// con `Number(cValor) || 0` — un cero SILENCIOSO que ya recalculaba los
+// netos en pantalla, mientras el payload guardado mandaba `null`. Al volver
+// a entrar, `null` se mostraba como el default "3"/"10", distinto del cero
+// que se había usado para calcular — la regla mostrada y la usada divergían.
+//
+// Reglas (solo cuando `activa` es true — inactiva no tiene restricciones,
+// los valores solo se conservan tal cual para poder reactivar sin perder
+// nada):
+//   · pctComision: siempre obligatorio, número finito en [0, 100].
+//   · valor:
+//       - modo 'pct'      → obligatorio, número finito en [0, 100].
+//       - modo 'impuesto' → obligatorio, número finito ≥ 0 (sin tope: es un
+//         monto en la moneda del programa, no un porcentaje).
+//       - modo 'ninguno'  → no participa en el cálculo, no se valida (puede
+//         traer cualquier valor previo, sirve para volver al modo anterior).
+// ─────────────────────────────────────────────────────────────────────────
+
+export type ReglaComisionableEstado = {
+  activa: boolean;
+  modo: ModoBaseComisionable;
+  valor: number | null;
+  pctComision: number | null;
+};
+
+export type ValidacionRegla = { ok: true } | { ok: false; error: string };
+
+const enRango = (n: number, min: number, max: number) => Number.isFinite(n) && n >= min && n <= max;
+
+export function validarReglaComisionable(regla: ReglaComisionableEstado): ValidacionRegla {
+  if (!regla.activa) return { ok: true };
+
+  if (regla.pctComision == null || !enRango(regla.pctComision, 0, 100)) {
+    return { ok: false, error: "El % de comisión debe ser un número entre 0 y 100." };
+  }
+
+  if (regla.modo === "pct") {
+    if (regla.valor == null || !enRango(regla.valor, 0, 100)) {
+      return { ok: false, error: "El % a restar debe ser un número entre 0 y 100." };
+    }
+  } else if (regla.modo === "impuesto") {
+    if (regla.valor == null || !Number.isFinite(regla.valor) || regla.valor < 0) {
+      return { ok: false, error: "El impuesto debe ser un número mayor o igual a 0." };
+    }
+  }
+  // modo 'ninguno': valor no participa, no se valida.
+
+  return { ok: true };
+}
+
+// "" / espacios / no numérico → null (nunca 0 por defecto). Mismo criterio
+// que `num()` en actions.ts, expuesto aquí para que el navegador y el
+// servidor partan SIEMPRE del mismo número (o de la misma ausencia de él).
+export function parseNumOrNull(s: string): number | null {
+  if (s.trim() === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}

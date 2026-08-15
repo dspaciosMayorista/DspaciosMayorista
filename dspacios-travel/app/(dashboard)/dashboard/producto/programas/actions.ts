@@ -3,6 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
+import { salidaTieneContenido, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
+import { validarReglaComisionable } from "@/lib/calc/programaPrecio";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -304,9 +306,22 @@ export async function guardarSalidas(
   salidas: SalidaInput[],
   regla: ReglaComisionableInput
 ): Promise<Result> {
+  // Repite la validación del navegador: no depender solo de él. `num()` ya
+  // convierte "" / no-numérico a null, igual que `parseNumOrNull` del lado
+  // cliente — los dos deben llegar exactamente a los mismos null/número.
+  const valorNum = num(regla.valor);
+  const pctComisionNum = num(regla.pctComision);
+  const validacion = validarReglaComisionable({
+    activa: !!regla.activa,
+    modo: regla.modo,
+    valor: valorNum,
+    pctComision: pctComisionNum,
+  });
+  if (!validacion.ok) return { ok: false, error: validacion.error };
+
   const sb = await createClient();
   const filas = salidas
-    .filter((s) => s.etiqueta.trim() || s.fechaDesde || s.netoDoble != null)
+    .filter(salidaTieneContenido)
     .map((s, i) => ({
       orden: i,
       etiqueta: oNull(s.etiqueta),
@@ -325,13 +340,21 @@ export async function guardarSalidas(
       tarifa_triple: num(s.tarifaTriple),
       tarifa_multiple: num(s.tarifaMultiple),
     }));
+
+  // Última barrera del lado app antes del CHECK de BD
+  // (`programa_salidas_tarifas_no_negativas_check`) — mensaje legible en vez
+  // de propagar el texto crudo de la violación del constraint.
+  if (tieneTarifaNegativa(filas)) {
+    return { ok: false, error: "Las tarifas del proveedor no pueden ser negativas." };
+  }
+
   const { error } = await sb.rpc("guardar_programa_salidas", {
     p_programa_id: programaId,
     p_regla: {
       activa: !!regla.activa,
       modo: regla.modo,
-      valor: num(regla.valor),
-      pctComision: num(regla.pctComision),
+      valor: valorNum,
+      pctComision: pctComisionNum,
     },
     p_salidas: filas,
   });
