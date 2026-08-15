@@ -1,8 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-
-// Roles internos con acceso total a la cartera (igual que la RLS de abonos).
-const ROLES_INTERNOS = ["superadmin", "administracion", "gerencia", "operaciones"];
+import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
 
 export type AbonoCuenta = {
   id: number;
@@ -44,21 +42,43 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
-  const { data: perfil } = await sb.from("usuarios").select("nombre, rol").eq("id", user.id).maybeSingle();
+  const { data: perfil } = await sb
+    .from("usuarios")
+    .select("nombre, rol, tenant, activo, aliado_id")
+    .eq("id", user.id)
+    .maybeSingle();
 
   const admin = createAdminClient();
   const { data: v } = await admin
     .from("ventas")
-    .select("numero_contrato, cliente, destino, fecha_salida, estado, precio_venta, moneda, tenant, b2b_usuario_id, agencia_nombre, freelance_nombre")
+    .select("numero_contrato, cliente, destino, fecha_salida, estado, precio_venta, moneda, tenant, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre")
     .eq("numero_contrato", numero)
     .maybeSingle();
   if (!v) return null;
 
-  const esInterno = ROLES_INTERNOS.includes(perfil?.rol ?? "");
-  const esDueno =
-    v.b2b_usuario_id === user.id ||
-    [v.agencia_nombre, v.freelance_nombre].includes(perfil?.nombre ?? "");
-  if (!esInterno && !esDueno) return null;
+  // La autorización de estas páginas NO la hace la RLS: se leen con
+  // service-role. La decide `accesoDocumentoContrato`, compartida con la cuenta
+  // de cobro para que las dos no vuelvan a divergir.
+  const acceso = accesoDocumentoContrato(
+    perfil
+      ? {
+          id: user.id,
+          rol: perfil.rol as string | null,
+          tenant: perfil.tenant as string | null,
+          nombre: perfil.nombre as string | null,
+          activo: (perfil.activo as boolean | null) ?? null,
+          aliadoId: (perfil.aliado_id as number | null) ?? null,
+        }
+      : null,
+    {
+      tenant: (v.tenant as string | null) ?? null,
+      b2bUsuarioId: (v.b2b_usuario_id as string | null) ?? null,
+      aliadoId: (v.aliado_id as number | null) ?? null,
+      nombreAliado: [v.agencia_nombre as string | null, v.freelance_nombre as string | null],
+    }
+  );
+  if (!acceso.permitido) return null;
+  const esInterno = acceso.esInterno;
 
   const { data: abs } = await admin
     .from("abonos")

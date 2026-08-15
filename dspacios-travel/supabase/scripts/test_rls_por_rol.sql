@@ -108,10 +108,13 @@ end $$;
 -- confirmar que cada quien sí ve lo que le toca:
 --   · superadmin / gerencia      → todos los contratos
 --   · administracion/operaciones → todos los de SU agencia (tenant)
---   · venta                      → todos los de SU agencia (migración 142).
---                                  La columna `contratos_donde_es_asesor` es
---                                  informativa: sirve para detectar nombres
---                                  que no cruzan (ej. importados en MAYÚSCULAS)
+--   · venta                      → 0 sobre la TABLA `ventas` (la migración 144
+--                                  le quitó esa policy) y todos los de SU
+--                                  agencia sobre la VISTA `ventas_basica`, que
+--                                  es por donde entra la app. Por eso se miden
+--                                  las dos: un 0 en la tabla es lo correcto
+--                                  para este rol, y sería un 0 alarmante para
+--                                  cualquier otro.
 --   · agencia / freelance / cliente_final → 0 (su acceso va por el portal B2B,
 --                                            que resuelve por pertenencia, no
 --                                            por esta RLS)
@@ -122,24 +125,37 @@ create temp table _rls_ventas (
   rol       text,
   activo    boolean,
   visibles  bigint,
-  suyos     bigint,
+  visibles_vista bigint,
+  suyos_mismo bigint,
+  suyos_otro  bigint,
   total_bd  bigint
 ) on commit drop;
 
 do $$
 declare
-  u          record;
-  n_vis      bigint;
-  n_suyos    bigint;
-  n_total    bigint;
+  u             record;
+  n_vis         bigint;
+  n_vis_vista   bigint;
+  n_suyos_mismo bigint;
+  n_suyos_otro  bigint;
+  n_total       bigint;
 begin
   select count(*) into n_total from public.ventas;
 
-  for u in select id, email, nombre, rol::text as rol, activo from public.usuarios order by rol, email loop
+  for u in select id, email, nombre, rol::text as rol, activo, tenant from public.usuarios order by rol, email loop
     -- Contratos donde figura como asesor (contado como superusuario, sin RLS).
     -- Normalizado igual que `soy_ese_asesor()` (migración 142): minúsculas y
     -- sin espacios sobrantes, para que crucen los contratos importados.
-    select count(*) into n_suyos
+    --
+    -- SEPARADO POR AGENCIA a propósito: `soy_asesor_del_contrato` empareja por
+    -- nombre y NO mira el tenant, pero `puede_ver_contrato` sí. Una coincidencia
+    -- en la OTRA agencia por tanto nunca puede ser una expectativa operativa —
+    -- es ruido de datos (u homonimia) y hay que poder verla aparte, o se lee
+    -- como si al usuario le faltara acceso.
+    select
+      count(*) filter (where v.tenant is not distinct from u.tenant),
+      count(*) filter (where v.tenant is distinct from u.tenant)
+      into n_suyos_mismo, n_suyos_otro
       from public.ventas v
      where lower(btrim(v.asesor)) in (lower(btrim(u.nombre)), lower(btrim(u.email)));
 
@@ -147,10 +163,12 @@ begin
     perform set_config('request.jwt.claims',
                        json_build_object('sub', u.id, 'role', 'authenticated')::text, true);
     select count(*) into n_vis from public.ventas;
+    -- Desde la 144 el rol `venta` no lee la tabla: entra por esta vista.
+    select count(*) into n_vis_vista from public.ventas_basica;
     reset role;
     perform set_config('request.jwt.claims', null, true);
 
-    insert into _rls_ventas values (u.email, u.rol, u.activo, n_vis, n_suyos, n_total);
+    insert into _rls_ventas values (u.email, u.rol, u.activo, n_vis, n_vis_vista, n_suyos_mismo, n_suyos_otro, n_total);
   end loop;
 end $$;
 
@@ -161,11 +179,54 @@ from _rls_out
 order by (veredicto like 'FUGA%') desc, (veredicto <> 'OK') desc, rol, usuario, tabla;
 
 -- Resultado 2 — alcance de cada usuario sobre `ventas`.
+--
+-- ⚠️ CÓMO LEER LAS DOS COLUMNAS DE COINCIDENCIAS POR NOMBRE
+--
+-- Ambas cuentan filas donde `ventas.asesor` coincide con el nombre (o el
+-- correo) del usuario. Eso es una COINCIDENCIA DE TEXTO, no un permiso. Van
+-- separadas por agencia porque significan cosas distintas:
+--
+--   · `coincidencias_mismo_tenant` — contratos de SU propia agencia. Solo aquí
+--     puede haber una expectativa operativa, y solo para el rol `venta`: es el
+--     único caso donde la app usa esa coincidencia para decidir qué gestiona
+--     (`soy_asesor_del_contrato`, migración 142).
+--
+--   · `coincidencias_otro_tenant` — contratos de la OTRA agencia. **Nunca es
+--     una expectativa operativa, para ningún rol.** `soy_asesor_del_contrato`
+--     empareja por nombre y no mira el tenant, pero `puede_ver_contrato` sí, y
+--     por eso estos contratos no aparecen en `contratos_visibles`. Eso está
+--     BIEN. Un número aquí no es una fuga ni una falta de acceso: es ruido de
+--     datos, y hay que mirar el dato, no la RLS.
+--
+-- Que estuvieran sumadas en una sola columna es lo que llevó a un diagnóstico
+-- equivocado, y por una causa concreta:
+--
+--   · `ventas.asesor` de los contratos IMPORTADOS de minorista trae el texto
+--     de la hoja. Cuando la hoja traía un VENDEDOR —un freelance externo— ese
+--     nombre quedó en `asesor` además de en `freelance_nombre`. Una persona
+--     interna de mayorista que se llame igual aparece con contratos de
+--     minorista que no gestiona y que no debe ver.
+--
+-- Regla: si `coincidencias_mismo_tenant > 0` pero esos contratos no están en
+-- lo visible (para `venta`, la columna que manda es `ventas_basica`; para el
+-- resto, la tabla), lo que hay que revisar es el DATO (quién debería estar en
+-- `ventas.asesor`), no la RLS. Y si lo que hay es
+-- `coincidencias_otro_tenant > 0`, no hay nada que revisar en la RLS en
+-- absoluto: está haciendo justo lo que debe.
 select
   usuario, rol, activo,
-  visibles as contratos_visibles,
-  suyos    as contratos_donde_es_asesor,
-  total_bd as total_en_la_base
+  visibles       as "visibles en la tabla ventas",
+  visibles_vista as "visibles en ventas_basica",
+  suyos_mismo as coincidencias_mismo_tenant,
+  suyos_otro  as coincidencias_otro_tenant,
+  case
+    when rol = 'venta' and suyos_mismo > 0
+      then 'expectativa operativa (solo la columna de su agencia)'
+    when suyos_otro > 0
+      then 'informativo — coincidencia de nombre con la OTRA agencia; no da acceso'
+    else 'informativo — coincidencia textual, no es un permiso'
+  end         as "cómo leer las coincidencias",
+  total_bd    as total_en_la_base
 from _rls_ventas
 order by rol, usuario;
 

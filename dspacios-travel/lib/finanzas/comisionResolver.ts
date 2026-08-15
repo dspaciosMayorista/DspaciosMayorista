@@ -1,6 +1,15 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
+import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
+import {
+  resolverFichaAliado,
+  explicarFicha,
+  resolverAliadoIdContrato,
+  listarTodosLosCandidatos,
+  type CandidatoAliado,
+  type FichaAliado,
+} from "@/lib/finanzas/fichaAliado";
 
 // Detalle de cómo se llegó al valor a cobrar. La vía 2 (aliados_b2b) trae el
 // desglose completo (calcComisionB2B); la vía 1 (ventas.comision_b2b, flujo
@@ -51,7 +60,7 @@ export type ComisionResuelta = {
   aliadoB2bId: number | null;
 };
 
-const ROLES_INTERNOS = ["superadmin", "administracion", "gerencia", "operaciones"];
+
 
 /**
  * Resuelve una comisión B2B por número de contrato, con control de acceso:
@@ -62,12 +71,16 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   const sb = await createClient();
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
-  const { data: perfil } = await sb.from("usuarios").select("nombre, rol").eq("id", user.id).maybeSingle();
+  const { data: perfil } = await sb
+    .from("usuarios")
+    .select("nombre, rol, tenant, activo, aliado_id")
+    .eq("id", user.id)
+    .maybeSingle();
 
   const admin = createAdminClient();
   const { data: v } = await admin
     .from("ventas")
-    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, b2b_usuario_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant")
+    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant")
     .eq("numero_contrato", numero)
     .maybeSingle();
   if (!v) return null;
@@ -136,35 +149,96 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
       }
     : aliadoB2B!.detalle;
 
-  const esInterno = ROLES_INTERNOS.includes(perfil?.rol ?? "");
-  const esDueno = esVentasB2B
-    ? v.b2b_usuario_id === user.id || [v.agencia_nombre, v.freelance_nombre].includes(perfil?.nombre ?? "")
-    : !!aliadoNombre && aliadoNombre === (perfil?.nombre ?? "");
-  if (!esInterno && !esDueno) return null;
+  // La autorización de esta página NO la hace la RLS: se lee con service-role.
+  // La decide `accesoDocumentoContrato`, compartida con el estado de cuenta.
+  //
+  // El id del aliado sale de donde esté: `ventas.aliado_id` en el flujo
+  // tarifario B2B, o `aliados_b2b.aliado_id` en las comisiones cargadas a mano
+  // (migración 133) — que es el único camino en minorista. Si ninguno de los
+  // dos está puesto, queda null y solo entonces se mira el nombre.
+  const aliadoIdContrato = resolverAliadoIdContrato({
+    esVentasB2B,
+    aliadoIdVentas: (v.aliado_id as number | null) ?? null,
+    aliadoIdComisionManual: aliadoB2B?.aliadoId ?? null,
+  });
+
+  const acceso = accesoDocumentoContrato(
+    perfil
+      ? {
+          id: user.id,
+          rol: perfil.rol as string | null,
+          tenant: perfil.tenant as string | null,
+          nombre: perfil.nombre as string | null,
+          activo: (perfil.activo as boolean | null) ?? null,
+          aliadoId: (perfil.aliado_id as number | null) ?? null,
+        }
+      : null,
+    {
+      tenant: (v.tenant as string | null) ?? null,
+      b2bUsuarioId: (v.b2b_usuario_id as string | null) ?? null,
+      aliadoId: aliadoIdContrato,
+      // En la vía 2 el nombre del aliado vive en `aliados_b2b.aliado`, no en
+      // `ventas`; se pasan los tres para que el respaldo legacy cubra ambas.
+      nombreAliado: [
+        v.agencia_nombre as string | null,
+        v.freelance_nombre as string | null,
+        aliadoNombre ?? null,
+      ],
+    }
+  );
+  if (!acceso.permitido) return null;
+  const esInterno = acceso.esInterno;
+  const esDueno = acceso.esDueno;
 
   const aliado = aliadoNombre || perfil?.nombre || "";
 
-  // Datos del aliado (documento/dirección/cuenta bancaria) — desde el
-  // catálogo `aliados` si la comisión quedó enlazada (aliado_id) o, si no,
-  // por coincidencia de nombre (comisiones tipeadas a mano antes de que
-  // existiera el enlace).
-  let aliadoInfo: AliadoCatalogo | null = null;
-  if (!esVentasB2B && aliadoB2B?.aliadoId) {
-    const { data } = await admin
-      .from("aliados")
-      .select("nombre, tipo_documento, nit, direccion, telefono, email, banco, tipo_cuenta, numero_cuenta")
-      .eq("id", aliadoB2B.aliadoId)
-      .maybeSingle();
-    aliadoInfo = data;
-  } else if (aliado) {
-    const { data } = await admin
-      .from("aliados")
-      .select("nombre, tipo_documento, nit, direccion, telefono, email, banco, tipo_cuenta, numero_cuenta")
-      .ilike("nombre", aliado)
-      .limit(1)
-      .maybeSingle();
-    aliadoInfo = data;
-  }
+  // ── Datos del aliado (documento, dirección, CUENTA BANCARIA) ────────────
+  // Con `aliado_id` se lee por id, en los DOS flujos: el tarifario
+  // (`ventas.aliado_id`) también lo tiene y antes no se usaba, solo el de
+  // comisión manual. Sin id se cae al camino legacy, que exige coincidencia
+  // exacta y una sola ficha — nunca `ilike` ni `limit(1)`, porque `%` y `_` son
+  // comodines y un `limit(1)` sin orden elige un homónimo cualquiera. Esto sale
+  // impreso en una cuenta de cobro: equivocarse es pagarle a otra persona.
+  const COLS_ALIADO =
+    "id, nombre, tipo_documento, nit, direccion, telefono, email, banco, tipo_cuenta, numero_cuenta";
+
+  // Dos fases, SIN atajos: primero se cuenta (solo id+nombre, sin datos
+  // bancarios) y solo si hay EXACTAMENTE una coincidencia normalizada se pide
+  // su ficha completa. Una consulta puntual por nombre exacto puede devolver
+  // una sola fila y aun así existir otra que solo difiera en mayúsculas o
+  // espacios — por eso `listarIdsYNombres` siempre trae el catálogo entero,
+  // nunca un resultado parcial que "ya encontró una" sin comprobar si hay más.
+  const deps = {
+    // Paginado por CURSOR (id ascendente), no por offset: PostgREST puede
+    // limitar la cantidad máxima de filas por respuesta (Settings → API →
+    // Max rows) por DEBAJO del tamaño de página pedido, y un `.range()`
+    // fijo se daría por terminado en la primera página "incompleta" aunque
+    // queden miles de filas más. Pidiendo siempre `id > cursor` no importa
+    // cuánto decida devolver el servidor: solo una página VACÍA significa
+    // que ya no hay más. Un error en cualquier página hace fallar toda la
+    // resolución (no se confunde con "catálogo vacío").
+    listarIdsYNombres: (): Promise<CandidatoAliado[]> =>
+      listarTodosLosCandidatos({
+        leerPagina: async (cursor, tamanoPagina) => {
+          let q = admin.from("aliados").select("id, nombre").order("id", { ascending: true }).limit(tamanoPagina);
+          if (cursor != null) q = q.gt("id", cursor);
+          const { data, error } = await q;
+          return { datos: (data as CandidatoAliado[] | null) ?? [], error };
+        },
+      }),
+    buscarFichaPorId: async (id: number): Promise<FichaAliado | null> => {
+      const { data } = await admin.from("aliados").select(COLS_ALIADO).eq("id", id).maybeSingle();
+      return (data as FichaAliado | null) ?? null;
+    },
+  };
+
+  const eleccion = await resolverFichaAliado(deps, { aliadoIdContrato, nombre: aliadoNombre });
+  const aliadoInfo: AliadoCatalogo | null = eleccion.ficha;
+
+  // Evidencia para el servidor cuando NO se pudo resolver. No se expone al
+  // cliente ni se sustituye por una ficha "parecida".
+  const aviso = explicarFicha(eleccion, aliadoNombre);
+  if (aviso) console.warn(`[cuenta de cobro ${v.numero_contrato}] ${aviso}`);
 
   return {
     numeroContrato: v.numero_contrato,
