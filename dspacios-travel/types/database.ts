@@ -2683,6 +2683,20 @@ export type Database = {
         Args: { p_numero: string; p_reusar: boolean };
         Returns: undefined;
       };
+      // Migración 151. Actualiza modalidad/estado de emisión/estado de pago
+      // de un bloqueo y registra el cambio en bloqueo_cambios en una sola
+      // transacción (SELECT ... FOR UPDATE + UPDATE + INSERT) — evita que un
+      // fallo del INSERT del historial deje el bloqueo modificado sin rastro.
+      actualizar_control_bloqueo: {
+        Args: {
+          p_bloqueo_id: number;
+          p_modalidad_emision: string;
+          p_estado_emision: string;
+          p_estado_pago: string;
+          p_nota: string;
+        };
+        Returns: undefined;
+      };
     };
     Enums: {
       rol_usuario:

@@ -7,10 +7,6 @@ import {
   esModalidadEmision,
   esEstadoEmision,
   esEstadoPago,
-  MODALIDAD_LABEL,
-  ESTADO_EMISION_LABEL,
-  ESTADO_PAGO_LABEL,
-  SIN_DEFINIR,
   type ModalidadEmision,
   type EstadoEmision,
   type EstadoPago,
@@ -229,59 +225,31 @@ export type ControlBloqueoInput = {
   nota: string;
 };
 
+// Delega TODO en el RPC atómico `actualizar_control_bloqueo` (migración
+// 151): SELECT ... FOR UPDATE + UPDATE + INSERT en bloqueo_cambios, las tres
+// en una sola transacción — si el INSERT del historial falla, el UPDATE
+// también se revierte. Antes esta función hacía esas tres operaciones como
+// llamadas sueltas de supabase-js: si la del historial fallaba, el bloqueo
+// ya había quedado modificado sin ningún rastro de que eso pasó.
+//
+// `createClient()` (cliente autenticado normal, NUNCA `service_role`) — el
+// RPC no es `security definer`, corre con el rol de la sesión y queda sujeto
+// a las mismas policies de `bloqueos_vuelo`/`bloqueo_cambios` de siempre.
+// `revalidatePath` solo se llama DESPUÉS de confirmar que no hubo error.
 export async function actualizarControlBloqueo(bloqueoId: number, input: ControlBloqueoInput): Promise<Result> {
   if (!esModalidadEmision(input.modalidadEmision)) return { ok: false, error: "Modalidad de emisión inválida." };
   if (!esEstadoEmision(input.estadoEmision)) return { ok: false, error: "Estado de emisión inválido." };
   if (!esEstadoPago(input.estadoPago)) return { ok: false, error: "Estado de pago inválido." };
 
   const sb = await createClient();
-  const { data: actual } = await sb
-    .from("bloqueos_vuelo")
-    .select("modalidad_emision, estado_emision, estado_pago")
-    .eq("id", bloqueoId)
-    .maybeSingle();
-  if (!actual) return { ok: false, error: "Bloqueo no encontrado." };
-
-  // Antes→después con las mismas etiquetas que ve el usuario (no los valores
-  // crudos de la BD) — "null" se registra como "Sin definir", nunca en blanco.
-  const campos: [string, string | null, string, Record<string, string>][] = [
-    ["Modalidad de emisión", actual.modalidad_emision, input.modalidadEmision, MODALIDAD_LABEL],
-    ["Estado de emisión", actual.estado_emision, input.estadoEmision, ESTADO_EMISION_LABEL],
-    ["Estado de pago", actual.estado_pago, input.estadoPago, ESTADO_PAGO_LABEL],
-  ];
-  const cambios = campos.filter(([, antes, despues]) => (antes ?? "") !== despues);
-  if (!cambios.length && !input.nota.trim()) return { ok: false, error: "No hay cambios para registrar." };
-
-  if (cambios.length) {
-    const { error } = await sb
-      .from("bloqueos_vuelo")
-      .update({
-        modalidad_emision: input.modalidadEmision,
-        estado_emision: input.estadoEmision,
-        estado_pago: input.estadoPago,
-      })
-      .eq("id", bloqueoId);
-    if (error) return { ok: false, error: error.message };
-  }
-
-  const detalle = cambios
-    .map(([lbl, antes, despues, labels]) => `${lbl}: ${antes ? (labels[antes] ?? antes) : SIN_DEFINIR} → ${labels[despues]}`)
-    .join(" · ");
-
-  const { data: { user } } = await sb.auth.getUser();
-  let quien = user?.email ?? null;
-  if (user) {
-    const { data: perfil } = await sb.from("usuarios").select("nombre").eq("id", user.id).maybeSingle();
-    if (perfil?.nombre) quien = perfil.nombre;
-  }
-
-  const { error: le } = await sb.from("bloqueo_cambios").insert({
-    bloqueo_id: bloqueoId,
-    detalle: detalle || null,
-    nota: oNull(input.nota),
-    registrado_por: quien,
+  const { error } = await sb.rpc("actualizar_control_bloqueo", {
+    p_bloqueo_id: bloqueoId,
+    p_modalidad_emision: input.modalidadEmision,
+    p_estado_emision: input.estadoEmision,
+    p_estado_pago: input.estadoPago,
+    p_nota: input.nota,
   });
-  if (le) return { ok: false, error: le.message };
+  if (error) return { ok: false, error: error.message };
 
   revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
   revalidatePath("/dashboard/vuelos");

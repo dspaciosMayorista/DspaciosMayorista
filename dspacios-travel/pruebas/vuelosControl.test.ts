@@ -93,7 +93,7 @@ test("BloqueoEditInput (editar bloqueo general) NO incluye modalidad: ese campo 
   );
 });
 
-test("actualizarControlBloqueo valida los tres campos, registra el cambio y NO recalcula tarifarios", () => {
+test("actualizarControlBloqueo valida los tres campos y delega TODO en el RPC atómico", () => {
   const inicio = actionsSrc.indexOf("export async function actualizarControlBloqueo");
   assert.notEqual(inicio, -1, "actualizarControlBloqueo ya no existe");
   const fin = actionsSrc.indexOf("\n// ── Carga masiva de bloqueos");
@@ -102,12 +102,85 @@ test("actualizarControlBloqueo valida los tres campos, registra el cambio y NO r
   assert.match(fn, /esModalidadEmision\(input\.modalidadEmision\)/, "no valida modalidad");
   assert.match(fn, /esEstadoEmision\(input\.estadoEmision\)/, "no valida estado de emisión");
   assert.match(fn, /esEstadoPago\(input\.estadoPago\)/, "no valida estado de pago");
-  assert.match(fn, /\.from\("bloqueo_cambios"\)\.insert\(/, "no registra el cambio en bloqueo_cambios");
+  assert.match(fn, /\.rpc\(\s*"actualizar_control_bloqueo"/, "no llama al RPC atómico");
   assert.doesNotMatch(
     fn,
     /regenerarTarifariosDeBloqueo/,
     "modalidad/emisión/pago no deben disparar un recálculo de tarifarios — son control operativo, no tarifa ni fechas"
   );
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// GUARDA CONTRA VOLVER AL SELECT + UPDATE + INSERT SUELTOS
+//
+// La primera versión de actualizarControlBloqueo hacía tres llamadas de
+// supabase-js separadas (SELECT del estado anterior, UPDATE de
+// bloqueos_vuelo, INSERT en bloqueo_cambios) — si el INSERT del historial
+// fallaba, el UPDATE ya había corrido: el bloqueo quedaba modificado sin
+// ningún rastro de que eso pasó, aunque la acción devolviera error. Se
+// reemplazó por un único RPC transaccional (`actualizar_control_bloqueo`,
+// migración 151). Esto blinda que no vuelva el patrón viejo.
+// ───────────────────────────────────────────────────────────────────────────
+
+test("actualizarControlBloqueo NO vuelve a hacer un UPDATE + INSERT sueltos de bloqueos_vuelo/bloqueo_cambios", () => {
+  const inicio = actionsSrc.indexOf("export async function actualizarControlBloqueo");
+  const fin = actionsSrc.indexOf("\n// ── Carga masiva de bloqueos");
+  const fn = actionsSrc.slice(inicio, fin > inicio ? fin : undefined);
+
+  assert.doesNotMatch(
+    fn,
+    /\.from\(\s*"bloqueos_vuelo"\s*\)\s*\.update\(/,
+    "volvió a hacer el UPDATE de bloqueos_vuelo por fuera del RPC: reabre la ventana sin atomicidad"
+  );
+  assert.doesNotMatch(
+    fn,
+    /\.from\(\s*"bloqueo_cambios"\s*\)\s*\.insert\(/,
+    "volvió a hacer el INSERT de bloqueo_cambios por fuera del RPC: reabre la ventana sin atomicidad"
+  );
+  assert.doesNotMatch(
+    fn,
+    /\.from\(\s*"bloqueos_vuelo"\s*\)\s*\.select\(/,
+    "volvió a leer el estado anterior por fuera del RPC — el SELECT ... FOR UPDATE debe vivir dentro de la transacción"
+  );
+});
+
+test("actualizarControlBloqueo revalida rutas SOLO después de comprobar que el RPC no devolvió error", () => {
+  const inicio = actionsSrc.indexOf("export async function actualizarControlBloqueo");
+  const fin = actionsSrc.indexOf("\n// ── Carga masiva de bloqueos");
+  const fn = actionsSrc.slice(inicio, fin > inicio ? fin : undefined);
+
+  const idxError = fn.search(/if\s*\(error\)\s*return\s*\{\s*ok:\s*false/);
+  const idxRevalidate = fn.indexOf("revalidatePath(");
+  assert.ok(idxError !== -1, "no corta si el RPC devuelve error");
+  assert.ok(idxRevalidate !== -1, "no revalida ninguna ruta");
+  assert.ok(idxError < idxRevalidate, "revalida rutas ANTES de comprobar el error del RPC");
+});
+
+// ── Migración 151: el RPC en sí (SELECT...FOR UPDATE + UPDATE + INSERT,
+// SIN security definer) — reutiliza `migracionSrc`, declarado más abajo en
+// este mismo módulo junto a las pruebas de notificaciones.
+test("actualizar_control_bloqueo() bloquea la fila, actualiza e inserta el historial en la MISMA función, sin security definer", () => {
+  const inicio = migracionSrc.indexOf("create or replace function public.actualizar_control_bloqueo");
+  assert.notEqual(inicio, -1, "el RPC actualizar_control_bloqueo no está en la migración 151");
+  const fin = migracionSrc.indexOf("comment on function public.actualizar_control_bloqueo");
+  const fn = migracionSrc.slice(inicio, fin > inicio ? fin : undefined);
+
+  assert.match(fn, /for update/i, "no bloquea la fila con SELECT ... FOR UPDATE");
+  assert.match(fn, /update public\.bloqueos_vuelo/i, "no actualiza bloqueos_vuelo dentro de la función");
+  assert.match(fn, /insert into public\.bloqueo_cambios/i, "no inserta el historial dentro de la función");
+  assert.doesNotMatch(fn, /security definer/i, "el RPC no debe ser security definer — debe correr con el rol de quien llama");
+  assert.doesNotMatch(fn, /service_role/i, "el RPC no debe depender de service_role");
+});
+
+test("actualizar_control_bloqueo() permite registrar una nota sin cambios de estado", () => {
+  const inicio = migracionSrc.indexOf("create or replace function public.actualizar_control_bloqueo");
+  const fin = migracionSrc.indexOf("comment on function public.actualizar_control_bloqueo");
+  const fn = migracionSrc.slice(inicio, fin > inicio ? fin : undefined);
+
+  // Si nada cambió (v_detalle = '') pero hay nota, el UPDATE se salta pero
+  // el INSERT en bloqueo_cambios igual corre.
+  assert.match(fn, /if\s+v_detalle\s*<>\s*''\s+then\s*\n\s*update public\.bloqueos_vuelo/i, "el UPDATE no está condicionado a que algo haya cambiado");
+  assert.match(fn, /raise exception 'No hay cambios para registrar\.'/, "no rechaza el caso sin cambios NI nota");
 });
 
 test("cargarBloqueosMasivo exige modalidad_emision por fila y valida estado_emision/estado_pago", () => {
