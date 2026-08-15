@@ -77,6 +77,12 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import {
+  crearFixturesNomina,
+  registrarRuta,
+  eliminarRutasConocidas,
+  verificarRutasEliminadas,
+} from "./nominaFixtures.mjs";
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -128,15 +134,26 @@ const archivo = new Blob(["contenido de prueba, sin datos personales"], { type: 
 
 const cOtraAgencia = `${MARCA}X-${sello}`;
 
-// Declaradas en el ámbito del módulo (no dentro del `try`) A PROPÓSITO:
-// `limpiar()` está definida ANTES del `try` y necesita verlas. Si quedaran
-// como `const` dentro del `try`, `limpiar()` no las vería —no por hoisting,
+// Declarado en el ámbito del módulo (no dentro del `try`) A PROPÓSITO:
+// `limpiar()` está definida ANTES del `try` y necesita verlo. Si quedara
+// como `const` dentro del `try`, `limpiar()` no lo vería —no por hoisting,
 // sino porque el `try {}` es un bloque léxico aparte— y la limpieza de nómina
 // no se ejecutaría nunca, en silencio (peor: `typeof` sobre un identificador
 // así de inalcanzable no lanza, así que el fallo no habría dado ni un error).
-let idsEmpleados = [];
+//
+// `idsEmpleados` y `rutasNomina` se MUTAN (push/add) desde `nominaFixtures.mjs`
+// EN CUANTO cada pieza existe — nunca en una asignación al final — así que si
+// algo revienta a mitad de camino (el segundo empleado, el update de
+// contrato_path, cualquier intento posterior), lo ya creado queda registrado
+// igual y `limpiar()` lo alcanza.
+const nomina = {
+  marca: MARCA,
+  sello,
+  idsEmpleados: [],
+  rutasConocidas: new Set(),
+  textoContrato: null, // se fija tras crear el fixture, lo usa la verificación de contenido
+};
 let rutaContratoPropio = null;
-let TEXTO_CONTRATO = null;
 
 // `tenant` se resuelve más abajo (la agencia que tenga contratos); estos tres
 // usuarios se quedan en ella y el contrato `cOtraAgencia` va en la contraria.
@@ -184,22 +201,20 @@ async function limpiar() {
     }
   }
 
-  // Carpeta de nómina: solo los objetos de ESTA corrida (por el id de los
-  // empleados de prueba, que están fuera de la marca de texto).
-  if (idsEmpleados.length) {
-    const { data, error } = await admin.storage.from(BUCKET).list("pe-empleados");
-    if (error) {
-      linea(false, "Listar archivos de pe-empleados/", error.message);
-    } else {
-      const propios = (data ?? [])
-        .filter((o) => idsEmpleados.some((id) => o.name.startsWith(`${id}-`)))
-        .map((o) => `pe-empleados/${o.name}`);
-      if (propios.length) {
-        const { error: eRm } = await admin.storage.from(BUCKET).remove(propios);
-        linea(!eRm, `Eliminar ${propios.length} archivo(s) de pe-empleados/`, eRm?.message);
-      }
-    }
-    const { error: eEmp } = await admin.from("pe_empleados").delete().in("id", idsEmpleados);
+  // Carpeta de nómina: por RUTA EXACTA, nunca por `list()` primero. Cada ruta
+  // se registró en `nomina.rutasConocidas` en cuanto se intentó tocarla — sea
+  // el fixture, un intento permitido, uno rechazado o el de superadmin— así
+  // que borrar por esa lista alcanza todo lo de esta corrida sin depender de
+  // qué más haya en la carpeta ni de en qué página caería un listado.
+  if (nomina.rutasConocidas.size) {
+    const rBorrado = await eliminarRutasConocidas(
+      { eliminarArchivos: (rutas) => admin.storage.from(BUCKET).remove(rutas) },
+      nomina.rutasConocidas
+    );
+    linea(rBorrado.ok, `Eliminar ${nomina.rutasConocidas.size} archivo(s) de pe-empleados/`, rBorrado.error?.message);
+  }
+  if (nomina.idsEmpleados.length) {
+    const { error: eEmp } = await admin.from("pe_empleados").delete().in("id", nomina.idsEmpleados);
     linea(!eEmp, "Eliminar los empleados de prueba", eEmp?.message);
   }
 
@@ -226,15 +241,28 @@ async function limpiar() {
       error?.message ?? (quedan.length ? `quedan: ${quedan.join(", ")}` : null));
   }
 
-  if (idsEmpleados.length) {
-    const { data, error } = await admin.storage.from(BUCKET).list("pe-empleados");
-    const quedan = (data ?? [])
-      .filter((o) => idsEmpleados.some((id) => o.name.startsWith(`${id}-`)))
-      .map((o) => o.name);
-    linea(!error && quedan.length === 0, "Sin objetos propios en pe-empleados/",
-      error?.message ?? (quedan.length ? `quedan: ${quedan.join(", ")}` : null));
+  if (nomina.rutasConocidas.size) {
+    // Comprobación INDIVIDUAL por ruta —`list(carpeta, {search: nombre})`,
+    // nunca un único `list()` de toda la carpeta— para que una carpeta con
+    // más de 100 objetos no dé un falso "ya no está" solo porque el nuestro no
+    // cayó en la primera página.
+    const resultados = await verificarRutasEliminadas(
+      {
+        existeRuta: async (ruta) => {
+          const corte = ruta.lastIndexOf("/");
+          const carpeta = ruta.slice(0, corte);
+          const nombre = ruta.slice(corte + 1);
+          const { data } = await admin.storage.from(BUCKET).list(carpeta, { search: nombre, limit: 100 });
+          return (data ?? []).some((o) => o.name === nombre);
+        },
+      },
+      nomina.rutasConocidas
+    );
+    const quedan = resultados.filter((r) => !r.eliminada).map((r) => r.ruta);
+    linea(quedan.length === 0, "Sin objetos propios en pe-empleados/ (verificado ruta por ruta)",
+      quedan.length ? `quedan: ${quedan.join(", ")}` : null);
 
-    const { data: emp, error: eEmp } = await admin.from("pe_empleados").select("id").in("id", idsEmpleados);
+    const { data: emp, error: eEmp } = await admin.from("pe_empleados").select("id").in("id", nomina.idsEmpleados);
     linea(!eEmp && (emp ?? []).length === 0, "Sin filas de pe_empleados de prueba",
       eEmp?.message ?? ((emp ?? []).length ? `quedan: ${(emp ?? []).map((e) => e.id).join(", ")}` : null));
   }
@@ -312,31 +340,35 @@ try {
 
   // ── Empleados de nómina (carpeta `pe-empleados/`), uno por agencia ────────
   // `pe_empleados` no tiene el candado de "prueba" por nombre en storage —el
-  // aislamiento sale del `id` del empleado, no de la marca— así que se anotan
-  // los dos ids para poder limpiarlos explícitamente.
-  const nombreEmpleadoPropio = `${MARCA} Empleado ${sello}`;
-  const nombreEmpleadoOtro = `${MARCA} Empleado Otro ${sello}`;
-  const { data: empPropio, error: eEmp1 } = await admin
-    .from("pe_empleados")
-    .insert({ nombre: nombreEmpleadoPropio, tenant, salario: 1 })
-    .select("id")
-    .single();
-  if (eEmp1) throw new Error(`No se pudo crear el empleado propio: ${eEmp1.message}`);
-  const { data: empOtro, error: eEmp2 } = await admin
-    .from("pe_empleados")
-    .insert({ nombre: nombreEmpleadoOtro, tenant: otroTenant, salario: 1 })
-    .select("id")
-    .single();
-  if (eEmp2) throw new Error(`No se pudo crear el empleado de la otra agencia: ${eEmp2.message}`);
-  idsEmpleados = [empPropio.id, empOtro.id];
+  // aislamiento sale del `id` del empleado, no de la marca de texto—, así que
+  // `crearFixturesNomina` anota cada id/ruta en `nomina` EN CUANTO EXISTE
+  // (ver el comentario junto a la declaración de `nomina` más arriba): si el
+  // segundo empleado falla, o falla el `update` de `contrato_path`, lo ya
+  // creado queda registrado igual y `limpiar()` lo alcanza.
+  nomina.textoContrato = `contrato laboral original, empleado de prueba, ${sello}`;
+  const { empPropio, empOtro, rutaContratoPropio: rutaContrato } = await crearFixturesNomina(
+    {
+      crearEmpleado: async (nombre, tenantDelEmpleado) => {
+        const { data, error } = await admin
+          .from("pe_empleados")
+          .insert({ nombre, tenant: tenantDelEmpleado, salario: 1 })
+          .select("id")
+          .single();
+        if (error) throw new Error(`No se pudo crear el empleado (${nombre}): ${error.message}`);
+        return data;
+      },
+      subirArchivo: async (ruta, texto) => {
+        const { error } = await admin.storage.from(BUCKET).upload(ruta, new Blob([texto], { type: "text/plain" }), { upsert: true });
+        if (error) throw new Error(`No se pudo sembrar el contrato laboral: ${error.message}`);
+      },
+      actualizarContratoPath: (id, ruta) =>
+        admin.from("pe_empleados").update({ contrato_path: ruta }).eq("id", id).then(({ error }) => ({ error })),
+    },
+    nomina
+  );
+  rutaContratoPropio = rutaContrato;
+  const TEXTO_CONTRATO = nomina.textoContrato;
   console.log(`   empleado propio #${empPropio.id} (${tenant}) y de la otra agencia #${empOtro.id} (${otroTenant})`);
-
-  rutaContratoPropio = `pe-empleados/${empPropio.id}-contrato.txt`;
-  TEXTO_CONTRATO = `contrato laboral original, empleado ${empPropio.id}, ${sello}`;
-  const { error: eSubEmp } = await admin.storage.from(BUCKET)
-    .upload(rutaContratoPropio, new Blob([TEXTO_CONTRATO], { type: "text/plain" }), { upsert: true });
-  if (eSubEmp) throw new Error(`No se pudo sembrar el contrato laboral: ${eSubEmp.message}`);
-  await admin.from("pe_empleados").update({ contrato_path: rutaContratoPropio }).eq("id", empPropio.id);
   console.log(`   contrato laboral sembrado en ${rutaContratoPropio}`);
 
   // ── Asesor: sesión real con la clave anon ─────────────────────────────────
@@ -533,7 +565,9 @@ try {
   for (const [ref, etiqueta] of permitidosNomina) {
     const cli = await sesion(usuarios[ref]);
     const stN = cli.storage.from(BUCKET);
-    const rutaPropiaDelRol = `pe-empleados/${empPropio.id}-por-${ref}.txt`;
+    // Registrada ANTES de intentar subir: si algo falla a mitad del bucle, la
+    // limpieza igual sabe que esta ruta pudo haberse tocado.
+    const rutaPropiaDelRol = registrarRuta(nomina, `pe-empleados/${empPropio.id}-por-${ref}.txt`);
 
     let x = await intentar(() => stN.list("pe-empleados"));
     linea(x.ok && listaIncluye(x.data, rutaContratoPropio), `${etiqueta}: LISTA la carpeta pe-empleados/`,
@@ -560,7 +594,10 @@ try {
   for (const [ref, etiqueta] of rechazadosNomina) {
     const cli = await sesion(usuarios[ref]);
     const stN = cli.storage.from(BUCKET);
-    const rutaIntrusaNomina = `pe-empleados/${empPropio.id}-intruso-${ref}.txt`;
+    // Registrada ANTES del intento, aunque DEBA fallar: si algún día una
+    // policy tuviera un agujero y el intruso sí se colara, la limpieza tiene
+    // que alcanzarlo igual — no depender de que "no debería existir".
+    const rutaIntrusaNomina = registrarRuta(nomina, `pe-empleados/${empPropio.id}-intruso-${ref}.txt`);
 
     let x = await intentar(() => stN.list("pe-empleados"));
     const vio = x.ok && listaIncluye(x.data, rutaContratoPropio);
@@ -590,15 +627,25 @@ try {
   // Verificación independiente con service-role: el archivo sigue existiendo
   // Y su CONTENIDO no cambió (un reemplazo con upsert no deja error visible).
   {
-    const { data: lista } = await admin.storage.from(BUCKET).list("pe-empleados");
-    const nombres = (lista ?? []).map((o) => o.name);
-    const nombreEsperado = rutaContratoPropio.split("/")[1];
+    const existeContrato = async (ruta) => {
+      const corte = ruta.lastIndexOf("/");
+      const { data } = await admin.storage.from(BUCKET).list(ruta.slice(0, corte), { search: ruta.slice(corte + 1), limit: 100 });
+      return (data ?? []).some((o) => o.name === ruta.slice(corte + 1));
+    };
 
-    linea(nombres.includes(nombreEsperado), "El contrato laboral sigue existiendo",
-      nombres.includes(nombreEsperado) ? null : "DESAPARECIÓ: algún intento de borrado cruzado surtió efecto");
+    const sigueContrato = await existeContrato(rutaContratoPropio);
+    linea(sigueContrato, "El contrato laboral sigue existiendo",
+      sigueContrato ? null : "DESAPARECIÓ: algún intento de borrado cruzado surtió efecto");
 
-    const colados = nombres.filter((n) => n.includes("intruso"));
-    linea(colados.length === 0, "No quedó ningún archivo colado en pe-empleados/",
+    // Comprueba SOLO las rutas de intrusos DE ESTA CORRIDA (las registradas en
+    // el bucle de arriba), nunca un barrido de "cualquier archivo con
+    // 'intruso' en el nombre" sobre toda la carpeta real: eso mezclaría
+    // ejecuciones previas o de otras personas con esta, y en una carpeta
+    // grande tampoco garantiza traerlas todas en una sola página.
+    const rutasIntrusas = [...nomina.rutasConocidas].filter((r) => r.includes("-intruso-"));
+    const resultadosIntrusos = await verificarRutasEliminadas({ existeRuta: existeContrato }, rutasIntrusas);
+    const colados = resultadosIntrusos.filter((r) => !r.eliminada).map((r) => r.ruta);
+    linea(colados.length === 0, "No quedó ningún archivo colado en pe-empleados/ (solo rutas de esta corrida)",
       colados.length ? `quedaron: ${colados.join(", ")}` : null);
 
     const { data: blob, error: eDl } = await admin.storage.from(BUCKET).download(rutaContratoPropio);
@@ -611,17 +658,25 @@ try {
     }
   }
 
-  // ── superadmin también en nómina ──────────────────────────────────────────
-  console.log("\n== NÓMINA — superadmin sí puede, siempre");
+  // ── superadmin también en nómina — las CINCO operaciones ──────────────────
+  console.log("\n== NÓMINA — superadmin sí puede, siempre (las cinco operaciones)");
   const jefeNomina = await sesion(usuarios.jefe);
   const stJefeNomina = jefeNomina.storage.from(BUCKET);
-  const rutaJefeNomina = `pe-empleados/${empOtro.id}-por-jefe.txt`;
+  // Registrada ANTES de subir, igual que las demás.
+  const rutaJefeNomina = registrarRuta(nomina, `pe-empleados/${empOtro.id}-por-jefe.txt`);
+
+  r = await intentar(() => stJefeNomina.list("pe-empleados"));
+  linea(r.ok && listaIncluye(r.data, rutaContratoPropio), "superadmin LISTA la carpeta pe-empleados/",
+    r.detalle ?? (r.ok ? "respondió sin error pero no listó el contrato" : null));
 
   r = await intentar(() => stJefeNomina.createSignedUrl(rutaContratoPropio, 60));
   linea(r.ok, "superadmin FIRMA URL de un contrato laboral", r.detalle);
 
   r = await intentar(() => stJefeNomina.upload(rutaJefeNomina, archivo, { upsert: false }));
   linea(r.ok, "superadmin SUBE un contrato laboral (en la carpeta del empleado de la otra agencia)", r.detalle);
+
+  r = await intentar(() => stJefeNomina.upload(rutaJefeNomina, new Blob(["reemplazado por superadmin"]), { upsert: true }));
+  linea(r.ok, "superadmin REEMPLAZA lo que subió", r.detalle);
 
   r = await intentar(() => stJefeNomina.remove([rutaJefeNomina]));
   const borroJefeNomina = r.ok && listaIncluye(r.data, rutaJefeNomina);

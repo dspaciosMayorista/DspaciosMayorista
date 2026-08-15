@@ -87,24 +87,37 @@ test("el plan de cobro y el recibo heredan el control del estado de cuenta", () 
   assert.match(recibo, /if\s*\(!estado\)\s*return null;/, "cargarRecibo no corta si deniega");
 });
 
-test("comisionResolver.ts resuelve los datos bancarios por id, no por ilike/limit(1)", () => {
+test("comisionResolver.ts resuelve los datos bancarios en dos fases, sin atajos", () => {
   const src = leer("lib/finanzas/comisionResolver.ts");
   assert.match(
     src,
-    /import\s*\{[^}]*elegirFichaAliado[^}]*\}\s*from\s*"@\/lib\/finanzas\/fichaAliado"/,
+    /import\s*\{[^}]*resolverFichaAliado[^}]*\}\s*from\s*"@\/lib\/finanzas\/fichaAliado"/,
     "no importa el resolvedor compartido de fichas"
   );
   assert.match(src, /resolverAliadoIdContrato\(/, "no calcula el aliado_id con la función compartida");
+  assert.match(src, /resolverFichaAliado\(/, "no resuelve la ficha con la función de dos fases");
   assert.doesNotMatch(
     src,
     /\.ilike\(\s*"nombre"/,
     "volvió el ilike(nombre): %/_ son comodines, y puede traer una ficha que no es la del contrato"
   );
+  // ESTE es el bug real que motivó la reescritura: un `.eq("nombre", …)`
+  // puntual puede devolver EXACTAMENTE una fila y aun así existir otra que
+  // solo difiera en mayúsculas o espacios — esa candidata queda oculta y la
+  // consulta "ya encontró una" sin comprobar si hay más. La resolución por
+  // nombre tiene que pasar SIEMPRE por `listarIdsYNombres` (todo el
+  // catálogo, filtrado en memoria por `resolverFichaAliado`), nunca por un
+  // `.eq("nombre", …)` que se conforme con el primer resultado.
+  assert.doesNotMatch(
+    src,
+    /\.eq\(\s*"nombre"/,
+    "volvió un .eq(\"nombre\", …) puntual: puede devolver una fila y ocultar un homónimo normalizado"
+  );
   // No es un `doesNotMatch` genérico de `.limit(1)`: el archivo tiene uno
   // legítimo (la fila más reciente de `aliados_b2b` para el contrato, con
   // `order by id desc` — no tiene nada que ver con elegir entre homónimos).
   // Lo que no debe volver es la búsqueda de aliado ENCADENANDO
-  // `.from("aliados")...limit(1)` sin pasar por `elegirFichaAliado`.
+  // `.from("aliados")...limit(1)` sin pasar por `resolverFichaAliado`.
   assert.doesNotMatch(
     src,
     /from\("aliados"\)[\s\S]{0,200}\.limit\(1\)/,

@@ -14,23 +14,34 @@
  *   1. **`ilike` interpreta comodines.** `%` y `_` son operadores de patrón en
  *      SQL, no texto. Un aliado que se llame «AGENCIA 100% VIAJES» busca en
  *      realidad «AGENCIA 100» + cualquier cosa + « VIAJES»; y un nombre con `_`
- *      —frecuente al pegar de una hoja— hace de comodín de un carácter. Un
- *      nombre puede así emparejar con fichas que no son la suya.
+ *      —frecuente al pegar de una hoja— hace de comodín de un carácter.
  *   2. **`limit(1)` sin `order by` es arbitrario.** Con dos homónimos, Postgres
  *      devuelve el que le resulte más cómodo, y puede cambiar entre ejecuciones.
- *      El documento saldría con una cuenta bancaria u otra sin nada que lo
- *      indique.
  *   3. **No se usaba el `aliado_id` que ya estaba disponible** en el flujo
  *      tarifario (`ventas.aliado_id`), solo en el de comisión manual.
  *
- * La regla ahora: **si hay id, manda el id**. El nombre solo se usa cuando no
- * hay ninguno —contratos anteriores a la migración 143— y entonces exige
- * coincidencia EXACTA normalizada y que haya UNA SOLA ficha. Con cero o con
- * varias se devuelve `null` y un motivo: mejor una cuenta de cobro sin datos
- * bancarios, que se nota y se corrige, que una con los de otro.
+ * El primer arreglo cambió `ilike` por `.eq("nombre", aliadoNombre)` y solo
+ * escaneaba el catálogo completo si esa consulta literal volvía vacía. **Eso
+ * seguía mal**: un `.eq()` puede devolver EXACTAMENTE una fila y aun así existir
+ * otra ficha que solo difiera en mayúsculas o espacios («Ana Gómez» /
+ * « ANA GÓMEZ »). Esa segunda candidata quedaba oculta —la consulta nunca
+ * llegaba a escanear el catálogo completo, porque «ya encontró una»— y se
+ * imprimía la cuenta bancaria de una de las dos sin que nada avisara que había
+ * otra.
  *
- * Este archivo tiene la parte pura (elegir entre candidatas). La consulta vive
- * en `comisionResolver.ts`.
+ * La regla ahora, en dos fases, SIN atajos:
+ *
+ *   1. Si hay `aliado_id`, ese id manda — punto, nunca se mira el nombre.
+ *   2. Si no hay id: se listan SIEMPRE **id + nombre** (nunca los datos
+ *      bancarios) de TODO el catálogo, se cuentan las coincidencias
+ *      normalizadas (minúsculas + sin espacios sobrantes), y **solo si hay
+ *      EXACTAMENTE una** se pide su ficha completa por ese id. Con cero o con
+ *      varias, `aliadoInfo` es `null` — nunca se cargan los datos bancarios de
+ *      un candidato ambiguo.
+ *
+ * `resolverFichaAliado` es la orquestación (async, con las dependencias por
+ * parámetro — mismo patrón que `lib/adjuntos/operaciones.ts`), así que el flujo
+ * COMPLETO de las dos fases se puede probar sin tocar la base de datos.
  */
 
 export type FichaAliado = {
@@ -46,12 +57,17 @@ export type FichaAliado = {
   numero_cuenta: string | null;
 };
 
+/** Solo lo mínimo para contar coincidencias, sin exponer datos bancarios. */
+export type CandidatoAliado = { id: number; nombre: string };
+
 export type MotivoFicha =
   | "por_id"
   | "por_id_inexistente"
   | "legacy_unica"
   | "legacy_sin_coincidencia"
   | "legacy_ambigua"
+  /** La única candidata normalizada desapareció entre las dos consultas (borrada a mitad de camino). Rarísimo, pero posible. */
+  | "legacy_desaparecio"
   | "sin_nombre";
 
 export type ResultadoFicha = {
@@ -85,47 +101,58 @@ export function resolverAliadoIdContrato(args: {
   return args.aliadoIdComisionManual ?? args.aliadoIdVentas;
 }
 
+export type DepsResolverFicha = {
+  /**
+   * SOLO id + nombre, de TODO el catálogo. Nunca trae banco/cuenta/documento:
+   * en esta fase todavía no se sabe si hay ambigüedad, así que no hay ninguna
+   * ficha bancaria que valga la pena cargar todavía.
+   */
+  listarIdsYNombres(): Promise<CandidatoAliado[]>;
+  /** La ficha completa (con los datos bancarios) de un id concreto. */
+  buscarFichaPorId(id: number): Promise<FichaAliado | null>;
+};
+
 /**
- * Elige la ficha a partir de lo que se haya podido leer.
- *
- * @param porId    la ficha leída por `aliado_id`, si había id (null si el id
- *                 apuntaba a una ficha que ya no existe).
- * @param teniaId  si el contrato traía un `aliado_id`. Se distingue de
- *                 `porId === null` para poder decir "había id pero está roto",
- *                 que es un problema de datos distinto a "no había id".
- * @param nombre   el nombre del aliado, solo para el camino legacy.
- * @param porNombre  TODAS las fichas cuyo nombre normalizado coincide. Quien
- *                 llama debe traerlas todas, no la primera: contarlas es lo que
- *                 detecta la ambigüedad.
+ * Resuelve la ficha del aliado en las dos fases descritas arriba. Las
+ * dependencias entran por parámetro para poder probar el flujo COMPLETO —las
+ * dos consultas, en orden, con los datos que cada una vería— sin base de
+ * datos real.
  */
-export function elegirFichaAliado(
-  porId: FichaAliado | null,
-  teniaId: boolean,
-  nombre: string | null,
-  porNombre: FichaAliado[]
-): ResultadoFicha {
-  if (teniaId) {
-    // Con id no se cae al nombre NUNCA. Si el id no resuelve, es un dato roto
-    // que hay que arreglar, no una excusa para adivinar por texto.
-    return porId
-      ? { ficha: porId, motivo: "por_id" }
+export async function resolverFichaAliado(
+  deps: DepsResolverFicha,
+  args: { aliadoIdContrato: number | null; nombre: string | null }
+): Promise<ResultadoFicha> {
+  // ── Con id: manda el id, siempre. Nunca se mira el nombre. ───────────────
+  if (args.aliadoIdContrato != null) {
+    const ficha = await deps.buscarFichaPorId(args.aliadoIdContrato);
+    return ficha
+      ? { ficha, motivo: "por_id" }
       : { ficha: null, motivo: "por_id_inexistente" };
   }
 
-  const objetivo = normalizar(nombre);
+  const objetivo = normalizar(args.nombre);
   if (objetivo === "") return { ficha: null, motivo: "sin_nombre" };
 
-  // Se filtra otra vez aquí, aunque la consulta ya haya filtrado: la
-  // normalización de la comparación es parte de la regla, no del transporte.
-  const exactas = porNombre.filter((f) => normalizar(f.nombre) === objetivo);
+  // ── Fase 1: contar, sin cargar datos bancarios ───────────────────────────
+  // SIEMPRE se escanea el catálogo completo (id + nombre) y se filtra en
+  // memoria con la normalización de la regla. Nada de `.eq()`/`.ilike()`
+  // puntual que pueda "encontrar una" sin comprobar si hay otra que solo
+  // difiera en mayúsculas o espacios — que es exactamente el bug que esto
+  // reemplaza.
+  const candidatos = await deps.listarIdsYNombres();
+  const exactas = candidatos.filter((c) => normalizar(c.nombre) === objetivo);
 
-  if (exactas.length === 1) return { ficha: exactas[0], motivo: "legacy_unica" };
   if (exactas.length === 0) return { ficha: null, motivo: "legacy_sin_coincidencia" };
-  return {
-    ficha: null,
-    motivo: "legacy_ambigua",
-    candidatas: exactas.map((f) => f.id).filter((x): x is number => typeof x === "number"),
-  };
+  if (exactas.length > 1) {
+    return { ficha: null, motivo: "legacy_ambigua", candidatas: exactas.map((c) => c.id) };
+  }
+
+  // ── Fase 2: exactamente una candidata → AHORA sí se piden sus datos
+  // bancarios, y solo los suyos. ────────────────────────────────────────────
+  const ficha = await deps.buscarFichaPorId(exactas[0].id);
+  return ficha
+    ? { ficha, motivo: "legacy_unica" }
+    : { ficha: null, motivo: "legacy_desaparecio" };
 }
 
 /** Frase para el log del servidor. No se muestra al cliente. */
@@ -137,6 +164,8 @@ export function explicarFicha(r: ResultadoFicha, nombre: string | null): string 
       return `Hay ${r.candidatas?.length ?? "varias"} fichas en el catálogo con el nombre "${nombre}" (ids: ${(r.candidatas ?? []).join(", ")}). No se puede saber cuál es: la cuenta de cobro sale sin datos bancarios. Enlaza la comisión con aliado_id.`;
     case "legacy_sin_coincidencia":
       return `No hay ninguna ficha en el catálogo con el nombre "${nombre}"; la cuenta de cobro sale sin datos bancarios.`;
+    case "legacy_desaparecio":
+      return `La única ficha que coincidía con el nombre "${nombre}" desapareció entre las dos consultas; la cuenta de cobro sale sin datos bancarios.`;
     default:
       return null;
   }

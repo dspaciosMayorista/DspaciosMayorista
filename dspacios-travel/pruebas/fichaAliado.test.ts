@@ -1,11 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { elegirFichaAliado, explicarFicha, resolverAliadoIdContrato, type FichaAliado } from "../lib/finanzas/fichaAliado.ts";
+import {
+  resolverFichaAliado,
+  explicarFicha,
+  resolverAliadoIdContrato,
+  type CandidatoAliado,
+  type FichaAliado,
+  type DepsResolverFicha,
+} from "../lib/finanzas/fichaAliado.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // De qué ficha del catálogo salen los datos BANCARIOS de una cuenta de cobro.
 // Elegir mal no es cosmético: es imprimir la cuenta de otra persona en un
 // documento de pago.
+//
+// `resolverFichaAliado` es la orquestación de las DOS consultas (contar sin
+// datos bancarios, y solo con una candidata pedir su ficha completa), así que
+// estas son pruebas de FLUJO —con dependencias falsas que simulan lo que la
+// base de datos devolvería en cada fase—, no solo de una función pura aislada.
 // ───────────────────────────────────────────────────────────────────────────
 
 const ficha = (p: Partial<FichaAliado>): FichaAliado => ({
@@ -22,94 +34,177 @@ const ficha = (p: Partial<FichaAliado>): FichaAliado => ({
   ...p,
 });
 
-// ── Con id: manda el id, siempre ──────────────────────────────────────────
+/**
+ * Deps falsos que simulan el catálogo. `porId` son las fichas completas
+ * (bancarias) indexadas por id — solo se consultan cuando `resolverFichaAliado`
+ * decide pedirlas, así que si el flujo pide un id de más, se nota porque la
+ * prueba puede contar las llamadas.
+ */
+function catalogoFalso(candidatos: CandidatoAliado[], porId: Record<number, FichaAliado>) {
+  let llamadasListar = 0;
+  const llamadasPorId: number[] = [];
+  const deps: DepsResolverFicha = {
+    listarIdsYNombres: async () => {
+      llamadasListar++;
+      return candidatos;
+    },
+    buscarFichaPorId: async (id) => {
+      llamadasPorId.push(id);
+      return porId[id] ?? null;
+    },
+  };
+  return { deps, llamadasListar: () => llamadasListar, llamadasPorId: () => llamadasPorId };
+}
 
-test("con id, devuelve la ficha leída por id", () => {
+// ── Con id: manda el id, siempre, sin tocar el catálogo por nombre ────────
+
+test("con id, resuelve por id sin listar el catálogo por nombre", async () => {
   const f = ficha({ id: 7 });
-  const r = elegirFichaAliado(f, true, "Ana Gómez", []);
+  const { deps, llamadasListar } = catalogoFalso([], { 7: f });
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: 7, nombre: "Ana Gómez" });
   assert.equal(r.ficha, f);
   assert.equal(r.motivo, "por_id");
+  assert.equal(llamadasListar(), 0, "con id no debe consultar el catálogo por nombre en absoluto");
 });
 
-test("con id pero la ficha no existe (borrada/mal enlazada): null, no cae al nombre", () => {
-  // Este es el caso que el código viejo no distinguía: `aliadoB2B?.aliadoId`
-  // truthy pero sin fila. Antes no había este camino explícito; ahora es
-  // intencional que NO se adivine por texto solo porque el id resultó roto.
-  const r = elegirFichaAliado(null, true, "Ana Gómez", [ficha({ id: 9, nombre: "Ana Gómez" })]);
+test("con id pero la ficha no existe (borrada/mal enlazada): null, no cae al nombre", async () => {
+  const { deps, llamadasListar } = catalogoFalso(
+    [{ id: 9, nombre: "Ana Gómez" }],
+    {}
+  );
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: 7, nombre: "Ana Gómez" });
   assert.equal(r.ficha, null);
   assert.equal(r.motivo, "por_id_inexistente");
+  assert.equal(llamadasListar(), 0, "un id roto no es excusa para adivinar por texto");
 });
 
-test("con id, el nombre nunca se consulta ni se usa aunque haya candidatas", () => {
+test("con id, un homónimo exacto en el catálogo nunca se consulta ni se usa", async () => {
   const f = ficha({ id: 7, nombre: "Ana Gómez" });
-  const otra = ficha({ id: 8, nombre: "Ana Gómez" }); // homónimo exacto
-  const r = elegirFichaAliado(f, true, "Ana Gómez", [otra]);
-  assert.equal(r.ficha?.id, 7, "debe ganar la del id, no cualquiera de las del nombre");
+  const { deps } = catalogoFalso([{ id: 8, nombre: "Ana Gómez" }], { 7: f, 8: ficha({ id: 8 }) });
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: 7, nombre: "Ana Gómez" });
+  assert.equal(r.ficha?.id, 7);
 });
 
-// ── Sin id: legacy, exige coincidencia exacta y única ─────────────────────
+// ── EL BUG CENTRAL: un .eq() que "ya encontró una" ocultaba un homónimo ───
+// normalizado. Aquí el catálogo falso tiene dos fichas cuyo nombre solo
+// difiere en mayúsculas/espacios: "Ana Gómez" y " ANA GÓMEZ ". Cualquier
+// resolución que se conforme con la primera coincidencia literal (un
+// `.eq("nombre", "Ana Gómez")` puntual) encontraría solo la primera y la
+// daría por única. `resolverFichaAliado` SIEMPRE lista el catálogo entero y
+// cuenta en memoria, así que las detecta a las dos.
 
-test("sin id, una sola coincidencia exacta: la usa", () => {
+test("EL BUG: dos fichas que solo difieren en mayúsculas/espacios → AMBIGUO, no 'única'", async () => {
+  const a = ficha({ id: 3, nombre: "Ana Gómez", numero_cuenta: "cuenta-A" });
+  const b = ficha({ id: 4, nombre: " ANA GÓMEZ ", numero_cuenta: "cuenta-B" });
+  const { deps, llamadasPorId } = catalogoFalso(
+    [
+      { id: 3, nombre: a.nombre },
+      { id: 4, nombre: b.nombre },
+    ],
+    { 3: a, 4: b }
+  );
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "Ana Gómez" });
+  assert.equal(r.ficha, null, "con dos candidatas normalizadas iguales no se debe imprimir la cuenta de ninguna");
+  assert.equal(r.motivo, "legacy_ambigua");
+  assert.deepEqual(r.candidatas?.sort(), [3, 4]);
+  assert.deepEqual(llamadasPorId(), [], "ambiguo: NUNCA se piden datos bancarios de ninguna candidata");
+});
+
+test("CONTROL NEGATIVO: el atajo viejo (una consulta .eq() que se detiene al encontrar una) sí se equivocaba aquí", () => {
+  // Reproduce el bug tal como estaba: `.eq("nombre", aliadoNombre)` es
+  // comparación LITERAL — "Ana Gómez" no es igual a " ANA GÓMEZ " para SQL— así
+  // que devolvía exactamente una fila y el código viejo la daba por única SIN
+  // escanear el resto del catálogo.
+  const catalogo = [
+    { id: 3, nombre: "Ana Gómez" },
+    { id: 4, nombre: " ANA GÓMEZ " },
+  ];
+  const comparacionLiteralSQL = (nombreBuscado: string) =>
+    catalogo.filter((c) => c.nombre === nombreBuscado); // === , no normalizado: así es `.eq()`
+
+  const resultadoViejo = comparacionLiteralSQL("Ana Gómez");
+  assert.equal(resultadoViejo.length, 1, "el .eq() puntual SÍ encontraba una sola fila");
+  assert.equal(resultadoViejo[0].id, 3, "y la daba por única, sin ver la #4");
+  // resolverFichaAliado, con el mismo catálogo, la detecta como ambigua (ver
+  // la prueba de arriba) — ahí está la diferencia que corrige el bug.
+});
+
+// ── Sin id, una sola coincidencia normalizada: la usa ─────────────────────
+
+test("sin id, una sola coincidencia exacta: pide su ficha y la usa", async () => {
   const f = ficha({ id: 3, nombre: "Ana Gómez" });
-  const r = elegirFichaAliado(null, false, "Ana Gómez", [f]);
+  const { deps, llamadasPorId } = catalogoFalso([{ id: 3, nombre: "Ana Gómez" }], { 3: f });
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "Ana Gómez" });
+  assert.equal(r.ficha, f);
+  assert.equal(r.motivo, "legacy_unica");
+  assert.deepEqual(llamadasPorId(), [3], "solo pide la ficha bancaria de la única candidata, ninguna más");
+});
+
+test("sin id, normaliza mayúsculas y espacios antes de comparar", async () => {
+  const f = ficha({ id: 3, nombre: "ana gómez" });
+  const { deps } = catalogoFalso([{ id: 3, nombre: "ana gómez" }], { 3: f });
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "  Ana Gómez  " });
   assert.equal(r.ficha, f);
   assert.equal(r.motivo, "legacy_unica");
 });
 
-test("sin id, normaliza mayúsculas y espacios antes de comparar", () => {
-  const f = ficha({ id: 3, nombre: "ana gómez" });
-  const r = elegirFichaAliado(null, false, "  Ana Gómez  ", [f]);
-  assert.equal(r.ficha, f);
-});
-
-test("HOMÓNIMOS: sin id y con dos fichas del mismo nombre, no elige ninguna", () => {
-  const a = ficha({ id: 3, nombre: "Ana Gómez", numero_cuenta: "cuenta-A" });
-  const b = ficha({ id: 4, nombre: "Ana Gómez", numero_cuenta: "cuenta-B" });
-  const r = elegirFichaAliado(null, false, "Ana Gómez", [a, b]);
-  assert.equal(r.ficha, null, "con homónimos no se debe imprimir la cuenta bancaria de ninguno de los dos");
-  assert.equal(r.motivo, "legacy_ambigua");
-  assert.deepEqual(r.candidatas?.sort(), [3, 4]);
-});
-
-test("sin id y sin ninguna coincidencia: null con motivo explícito", () => {
-  const r = elegirFichaAliado(null, false, "Nadie Conocido", []);
+test("sin id y sin ninguna coincidencia: null, y no se pide ninguna ficha", async () => {
+  const { deps, llamadasPorId } = catalogoFalso([], {});
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "Nadie Conocido" });
   assert.equal(r.ficha, null);
   assert.equal(r.motivo, "legacy_sin_coincidencia");
+  assert.deepEqual(llamadasPorId(), []);
 });
 
-test("sin id y sin nombre: null, no se intenta nada", () => {
+test("sin id y sin nombre: null, no se consulta el catálogo en absoluto", async () => {
   for (const n of [null, "", "   "]) {
-    const r = elegirFichaAliado(null, false, n, [ficha({})]);
+    const { deps, llamadasListar } = catalogoFalso([{ id: 1, nombre: "Ana" }], {});
+    const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: n });
     assert.equal(r.ficha, null, JSON.stringify(n));
     assert.equal(r.motivo, "sin_nombre");
+    assert.equal(llamadasListar(), 0);
   }
 });
 
-test("EL FILTRO ES EXACTO, NO POR SUBCADENA: una candidata parcial no cuenta", () => {
-  // El resolver de comisionResolver.ts puede traer de más de la consulta (por
-  // ejemplo si en algún momento se decide ampliar la búsqueda); esta función es
-  // la última línea y filtra ella misma por igualdad exacta normalizada.
-  const parcial = ficha({ id: 5, nombre: "Ana Gómez Torres" });
-  const r = elegirFichaAliado(null, false, "Ana Gómez", [parcial]);
+test("EL FILTRO ES EXACTO, NO POR SUBCADENA: una candidata parcial no cuenta", async () => {
+  const { deps } = catalogoFalso([{ id: 5, nombre: "Ana Gómez Torres" }], {});
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "Ana Gómez" });
   assert.equal(r.ficha, null);
   assert.equal(r.motivo, "legacy_sin_coincidencia");
 });
 
-// ── El caso de los comodines: no son responsabilidad de esta función, pero si
-//    alguna vez volviera un `ilike` en el llamador, esto documenta por qué
-//    nunca debe pasar candidatas obtenidas así. ──────────────────────────────
+test("la única candidata desaparece entre las dos consultas: motivo específico, no se inventa nada", async () => {
+  // Caso límite: pasó el conteo (1 candidata) pero para cuando se pide su
+  // ficha completa, ya no está (borrada a mitad de camino). No debe
+  // confundirse con "por_id_inexistente" (ese es del camino con id).
+  const { deps } = catalogoFalso([{ id: 3, nombre: "Ana Gómez" }], {});
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "Ana Gómez" });
+  assert.equal(r.ficha, null);
+  assert.equal(r.motivo, "legacy_desaparecio");
+});
 
-test("un nombre con % o _ se compara LITERAL, no como patrón", () => {
+// ── Comodines: % y _ se comparan literal, nunca como patrón SQL ───────────
+
+test("un nombre con % o _ se compara LITERAL, no como patrón", async () => {
   const conPorcentaje = ficha({ id: 6, nombre: "AGENCIA 100% VIAJES" });
-  // Si alguien buscara con ilike("nombre", "AGENCIA 100% VIAJES"), "100%"
-  // actuaría como comodín y podría traer fichas que no son esta. Aquí, con la
-  // candidata ya en la lista, la comparación es cadena contra cadena.
-  const r = elegirFichaAliado(null, false, "AGENCIA 100% VIAJES", [conPorcentaje]);
+  const { deps } = catalogoFalso([{ id: 6, nombre: conPorcentaje.nombre }], { 6: conPorcentaje });
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "AGENCIA 100% VIAJES" });
   assert.equal(r.ficha, conPorcentaje);
 
-  const otraCosaQueEmpatariaConIlike = ficha({ id: 99, nombre: "AGENCIA 100X VIAJES" });
-  const r2 = elegirFichaAliado(null, false, "AGENCIA 100% VIAJES", [otraCosaQueEmpatariaConIlike]);
+  const { deps: deps2 } = catalogoFalso([{ id: 99, nombre: "AGENCIA 100X VIAJES" }], {});
+  const r2 = await resolverFichaAliado(deps2, { aliadoIdContrato: null, nombre: "AGENCIA 100% VIAJES" });
   assert.equal(r2.ficha, null, "no debe emparejar por patrón, solo por igualdad");
+  assert.equal(r2.motivo, "legacy_sin_coincidencia");
+});
+
+test("un nombre con guion bajo tampoco actúa como comodín de un carácter", async () => {
+  const conGuion = ficha({ id: 10, nombre: "AGENCIA_VIAJES" });
+  const { deps } = catalogoFalso([{ id: 10, nombre: conGuion.nombre }, { id: 11, nombre: "AGENCIAXVIAJES" }], {
+    10: conGuion,
+    11: ficha({ id: 11, nombre: "AGENCIAXVIAJES" }),
+  });
+  const r = await resolverFichaAliado(deps, { aliadoIdContrato: null, nombre: "AGENCIA_VIAJES" });
+  assert.equal(r.ficha, conGuion, "el guion bajo debe emparejar solo con el literal, no con 'AGENCIAXVIAJES'");
 });
 
 // ── explicarFicha: no debe hablar cuando todo salió bien ──────────────────
@@ -119,11 +214,12 @@ test("explicarFicha no dice nada cuando la elección fue por id o única", () =>
   assert.equal(explicarFicha({ ficha: ficha({}), motivo: "legacy_unica" }, "Ana"), null);
 });
 
-test("explicarFicha da un motivo legible en los tres casos de falla", () => {
+test("explicarFicha da un motivo legible en los cuatro casos de falla", () => {
   const casos: Array<Parameters<typeof explicarFicha>[0]> = [
     { ficha: null, motivo: "por_id_inexistente" },
     { ficha: null, motivo: "legacy_ambigua", candidatas: [3, 4] },
     { ficha: null, motivo: "legacy_sin_coincidencia" },
+    { ficha: null, motivo: "legacy_desaparecio" },
   ];
   for (const c of casos) {
     const msg = explicarFicha(c, "Ana Gómez");

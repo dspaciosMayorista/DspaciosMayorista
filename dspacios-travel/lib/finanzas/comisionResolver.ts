@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { calcComisionB2B } from "@/lib/calc/finanzas";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
-import { elegirFichaAliado, explicarFicha, resolverAliadoIdContrato, type FichaAliado } from "@/lib/finanzas/fichaAliado";
+import { resolverFichaAliado, explicarFicha, resolverAliadoIdContrato, type CandidatoAliado, type FichaAliado } from "@/lib/finanzas/fichaAliado";
 
 // Detalle de cómo se llegó al valor a cobrar. La vía 2 (aliados_b2b) trae el
 // desglose completo (calcComisionB2B); la vía 1 (ventas.comision_b2b, flujo
@@ -195,33 +195,24 @@ export async function resolverComisionB2B(numero: string): Promise<ComisionResue
   const COLS_ALIADO =
     "id, nombre, tipo_documento, nit, direccion, telefono, email, banco, tipo_cuenta, numero_cuenta";
 
-  let fichaPorId: FichaAliado | null = null;
-  if (aliadoIdContrato != null) {
-    const { data } = await admin.from("aliados").select(COLS_ALIADO).eq("id", aliadoIdContrato).maybeSingle();
-    fichaPorId = (data as FichaAliado | null) ?? null;
-  }
+  // Dos fases, SIN atajos: primero se cuenta (solo id+nombre, sin datos
+  // bancarios) y solo si hay EXACTAMENTE una coincidencia normalizada se pide
+  // su ficha completa. Una consulta puntual por nombre exacto puede devolver
+  // una sola fila y aun así existir otra que solo difiera en mayúsculas o
+  // espacios — por eso `listarIdsYNombres` siempre trae el catálogo entero,
+  // nunca un resultado parcial que "ya encontró una" sin comprobar si hay más.
+  const deps = {
+    listarIdsYNombres: async (): Promise<CandidatoAliado[]> => {
+      const { data } = await admin.from("aliados").select("id, nombre");
+      return (data as CandidatoAliado[] | null) ?? [];
+    },
+    buscarFichaPorId: async (id: number): Promise<FichaAliado | null> => {
+      const { data } = await admin.from("aliados").select(COLS_ALIADO).eq("id", id).maybeSingle();
+      return (data as FichaAliado | null) ?? null;
+    },
+  };
 
-  // Solo se consulta por nombre si NO hay id, y se traen TODAS las coincidencias:
-  // contarlas es lo que detecta la ambigüedad. `eq` es comparación literal, así
-  // que un nombre con `%` o `_` no actúa como patrón.
-  let fichasPorNombre: FichaAliado[] = [];
-  if (aliadoIdContrato == null && aliadoNombre) {
-    const { data } = await admin.from("aliados").select(COLS_ALIADO).eq("nombre", aliadoNombre);
-    fichasPorNombre = (data as FichaAliado[] | null) ?? [];
-    // Y si el nombre guardado difiere en mayúsculas o espacios, se reintenta con
-    // la normalización de la regla. `ilike` aquí sería un patrón; se evita
-    // trayendo el catálogo y comparando en memoria, que además es lo que permite
-    // ver si hay más de una.
-    if (fichasPorNombre.length === 0) {
-      const { data: todas } = await admin.from("aliados").select(COLS_ALIADO);
-      const objetivo = aliadoNombre.trim().toLowerCase();
-      fichasPorNombre = ((todas as FichaAliado[] | null) ?? []).filter(
-        (f) => (f.nombre ?? "").trim().toLowerCase() === objetivo
-      );
-    }
-  }
-
-  const eleccion = elegirFichaAliado(fichaPorId, aliadoIdContrato != null, aliadoNombre, fichasPorNombre);
+  const eleccion = await resolverFichaAliado(deps, { aliadoIdContrato, nombre: aliadoNombre });
   const aliadoInfo: AliadoCatalogo | null = eleccion.ficha;
 
   // Evidencia para el servidor cuando NO se pudo resolver. No se expone al
