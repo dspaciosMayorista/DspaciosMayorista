@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { crearBloqueo } from "./actions";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
+import { MODALIDADES_EMISION, MODALIDAD_LABEL, type ModalidadEmision } from "@/lib/vuelos/control";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
@@ -21,6 +22,9 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
   const [destinoId, setDestinoId] = useState<number | "">("");
   const [origenId, setOrigenId] = useState<number | "">("");
   const [rangosSel, setRangosSel] = useState<number[]>([]);
+  // Obligatoria (migración 152): no hay valor neutral razonable para
+  // "modalidad no elegida" — el bloqueo nuevo tiene que nacer con una.
+  const [modalidadEmision, setModalidadEmision] = useState<ModalidadEmision | "">("");
 
   const [f, setF] = useState({
     record: "", aerolinea: "",
@@ -43,6 +47,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
   function guardar(e: React.FormEvent) {
     e.preventDefault();
     if (!f.record.trim()) { setErr("El record (PNR) es obligatorio."); return; }
+    if (!modalidadEmision) { setErr("Selecciona la modalidad de emisión (individual o grupo)."); return; }
     setErr("");
     start(async () => {
       const r = await crearBloqueo({
@@ -52,6 +57,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         cuposTotal: Number(f.cuposTotal) || 0, tarifaNeta: Number(f.tarifaNeta) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
         fechaDevolucion: f.fechaDevolucion, fechaEmision: f.fechaEmision, notas: f.notas, rangosEdad: rangosSel,
+        modalidadEmision,
       });
       if (r.ok) router.push("/dashboard/vuelos");
       else setErr(r.error);
@@ -85,6 +91,17 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
             <label className={lbl}>Ruta (automática)</label>
             <Input value={rutaAuto} readOnly disabled placeholder="Se arma con Origen y Destino" className="bg-gray-50 text-gray-600" />
           </div>
+          <div>
+            <label className={lbl}>Modalidad de emisión *</label>
+            <select
+              value={modalidadEmision}
+              onChange={(e) => setModalidadEmision(e.target.value as ModalidadEmision)}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+            >
+              <option value="">— Elegir —</option>
+              {MODALIDADES_EMISION.map((m) => <option key={m} value={m}>{MODALIDAD_LABEL[m]}</option>)}
+            </select>
+          </div>
           <div><label className={lbl}>Cupos totales</label><Input type="number" min={0} value={f.cuposTotal} onChange={set("cuposTotal")} /></div>
           <div><label className={lbl}>Tarifa neta (pago aerolínea)</label><Input type="number" min={0} value={f.tarifaNeta} onChange={set("tarifaNeta")} placeholder="200000" /></div>
           <div><label className={lbl}>Tarifa empaquetar (reventa)</label><Input type="number" min={0} value={f.tarifaParaEmpaquetar} onChange={set("tarifaParaEmpaquetar")} placeholder="242022" /></div>
@@ -112,7 +129,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
           <div><label className={lbl}>Hora llegada</label><Input type="time" value={f.horaLlegadaReg} onChange={set("horaLlegadaReg")} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><label className={lbl}>Fecha emisión</label><Input type="date" value={f.fechaEmision} onChange={set("fechaEmision")} /></div>
+          <div><label className={lbl}>Fecha límite de emisión</label><Input type="date" value={f.fechaEmision} onChange={set("fechaEmision")} /></div>
           <div><label className={lbl}>Notas</label><Input value={f.notas} onChange={set("notas")} /></div>
         </div>
       </section>

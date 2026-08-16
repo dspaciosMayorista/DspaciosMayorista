@@ -1057,6 +1057,9 @@ export type Database = {
           proveedor_id: number | null;
           destino_id: number | null;
           rangos_edad: number[] | null;
+          modalidad_emision: string | null;
+          estado_emision: string | null;
+          estado_pago: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -1083,6 +1086,9 @@ export type Database = {
           fecha_devolucion?: string | null;
           fecha_emision?: string | null;
           notas?: string | null;
+          modalidad_emision?: string | null;
+          estado_emision?: string | null;
+          estado_pago?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -2700,6 +2706,20 @@ export type Database = {
       // lo define SalidaInput/ReglaComisionableInput en actions.ts.
       guardar_programa_salidas: {
         Args: { p_programa_id: number; p_regla: Json; p_salidas: Json };
+        Returns: undefined;
+      };
+      // Migración 152. Actualiza modalidad/estado de emisión/estado de pago
+      // de un bloqueo y registra el cambio en bloqueo_cambios en una sola
+      // transacción (SELECT ... FOR UPDATE + UPDATE + INSERT) — evita que un
+      // fallo del INSERT del historial deje el bloqueo modificado sin rastro.
+      actualizar_control_bloqueo: {
+        Args: {
+          p_bloqueo_id: number;
+          p_modalidad_emision: string;
+          p_estado_emision: string;
+          p_estado_pago: string;
+          p_nota: string;
+        };
         Returns: undefined;
       };
     };

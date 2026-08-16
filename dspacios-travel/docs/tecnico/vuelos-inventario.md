@@ -95,6 +95,85 @@ es solo un catálogo guardado/mostrado — no es un insumo activo de precio/clas
 pena tenerlo presente antes de invertir tiempo intentando "usar" ese campo en el motor de
 reservar: no está conectado a nada todavía.
 
+## 7. Control general por record (migración 152)
+
+Tres campos MANUALES en `bloqueos_vuelo`, independientes del estado de las sillas —
+`lib/vuelos/control.ts` centraliza tipos, type guards (`esModalidadEmision`/
+`esEstadoEmision`/`esEstadoPago`) y las etiquetas de UI:
+
+- **`modalidad_emision`** (`individual` | `grupo`) — obligatoria al crear un bloqueo
+  (`crearBloqueo` rechaza si falta o no es un valor válido).
+- **`estado_emision`** (`pendiente` | `emitido`) — si el vuelo YA se emitió. **No** se
+  deduce de `fecha_emision` (que sigue siendo solo la fecha límite/programada, renombrada
+  en la UI a "Fecha límite de emisión" para dejar la distinción clara).
+- **`estado_pago`** (`pendiente` | `pagado`) — si YA se le pagó al proveedor/aerolínea.
+  **No** es el pago del cliente (eso vive en `abonos`/`cuentas_por_pagar` por contrato);
+  deliberadamente no se cruza con eso.
+
+**`null` ≠ `'pendiente'`.** Un registro de antes de la migración 152 no tiene forma de
+saber si ya se emitió o se pagó, así que las tres columnas nacen SIN default — un bloqueo
+viejo queda con las tres en `null`, y la UI lo muestra como "Sin definir" (modalidad) /
+"Por confirmar" (estados), nunca como "Pendiente" (que afirmaría algo que no se sabe). Un
+bloqueo NUEVO sí nace en `estado_emision`/`estado_pago = 'pendiente'`, pero eso lo decide
+la aplicación en el `insert` (`crearBloqueo`/`cargarBloqueosMasivo`), no un default de
+columna.
+
+**Edición y auditoría — RPC atómico `actualizar_control_bloqueo()`.** La primera versión
+de `actualizarControlBloqueo` hacía `SELECT` (estado anterior) + `UPDATE` + `INSERT` en
+`bloqueo_cambios` como tres llamadas sueltas de supabase-js — si el `INSERT` del historial
+fallaba, el `UPDATE` ya había corrido sin dejar rastro (mismo patrón sin atomicidad que
+`registrarCambioOperacional`, ver más abajo). Se reemplazó por una función de Postgres
+(`language plpgsql`, **sin** `security definer`) que hace `SELECT ... FOR UPDATE` (bloquea
+la fila) + `UPDATE` + `INSERT` en `bloqueo_cambios`, las tres dentro de la misma
+transacción — si el `INSERT` final falla, todo se revierte, incluido el `UPDATE`. El actor
+("quién") se resuelve DENTRO de la función por `auth.uid()` contra `public.usuarios`, no se
+recibe como parámetro del cliente. La Server Action `actualizarControlBloqueo` solo valida
+el shape de los tres campos y delega en el RPC; `revalidatePath` corre solo después de
+confirmar que el RPC no devolvió error. **No** llama a `regenerarTarifariosDeBloqueo`: estos
+tres campos son control operativo, no afectan tarifa ni fechas de los paquetes armados. El
+formulario general "Editar bloqueo" (`actualizarBloqueo`/`EditarBloqueoForm`) NO toca estos
+campos — `BloqueoEditInput` los excluye explícitamente (`Omit<BloqueoInput, "cuposTotal" |
+"modalidadEmision">`) para que solo tengan un único camino de escritura con historial.
+
+Probado en Postgres local (`supabase/scripts/test_control_bloqueo_atomico.sql`): cambio
+correcto → un historial exacto con el antes→después esperado; fallo forzado del `INSERT`
+del historial (trigger de prueba) → los tres campos quedan intactos; usuario sin permiso
+de escritura (`venta`, que sí puede leer) → no modifica ni registra nada — Postgres exige
+que `SELECT ... FOR UPDATE` también pase la policy de `UPDATE`, así que el rechazo ocurre
+ya al intentar bloquear la fila; nota sin cambio de estado → registra solo la nota; dos
+cambios consecutivos → cada entrada del historial refleja el antes→después real de ESE
+cambio, no el estado original ni el final.
+
+⚠️ **`registrarCambioOperacional` (horario/vuelo) y `crearBloqueo`/`cargarBloqueosMasivo`
+(bloqueo + sillas) tienen el MISMO patrón sin atomicidad, sin corregir todavía** — quedaron
+fuera del alcance de la migración 152 a propósito. Ver
+[`docs/futuro/atomicidad-vuelos-legacy.md`](../futuro/atomicidad-vuelos-legacy.md).
+
+**RLS:** sin cambios — las tres columnas viven en `bloqueos_vuelo`, que ya tiene su policy
+de escritura (`superadmin/administracion/gerencia/operaciones/control_vuelo`, migración
+137); una columna nueva hereda esa policy, Postgres no tiene RLS por columna. El RPC no usa
+`service_role` ni `security definer` en ningún punto — corre con el rol de quien llama,
+sujeto a esas mismas policies.
+
+**UI:** badges compactos (`components/vuelos/ControlBadges.tsx`, reutiliza el componente
+genérico `EstadoBadge` — infiere el tono del TEXTO: "Emitido"/"Pagado" → verde,
+"Pendiente" → ámbar, "Sin definir"/"Por confirmar" → gris neutro) en el encabezado del
+detalle del bloqueo y como columna "Control" en `BloqueosTabla` (compartida por
+`/dashboard/vuelos` y `/dashboard/vuelos/historico`). Pestaña "Control" en el detalle
+(`BloqueoTabs` + `ControlBloqueoForm`), junto a Pasajeros y Cambios. `BloqueosTabla` suma
+filtros por modalidad/emisión/pago (con una opción "sin definir" que filtra por `null`
+explícitamente, distinta de "todas").
+
+**CSV:** `cargarBloqueosMasivo` exige `modalidad_emision` por fila (rechaza la fila si
+falta o no es `individual`/`grupo`); `estado_emision`/`estado_pago` son opcionales — vacío
+= `'pendiente'` (una fila nueva del CSV es un bloqueo nuevo, genuinamente empieza así),
+cualquier otro texto tiene que ser exactamente un valor válido o la fila se rechaza
+(validación estricta, no se adivina ni se ignora un typo).
+
+**Notificaciones:** `lib/notificaciones.ts` deja de incluir la alerta de "fecha límite de
+emisión" cuando `estado_emision = 'emitido'`. La alerta de devolución (`fecha_devolucion`)
+no depende de esto — se conserva igual que antes.
+
 ## Enlaces cruzados
 
 - **Reservar** — descuenta cupos (`disponible→en_plazo`), confirma (`en_plazo→confirmada`),
