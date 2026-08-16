@@ -1,10 +1,16 @@
 import { EstadoBadge } from "@/components/EstadoBadge";
-import { labelModalidad, labelEstadoEmision, labelEstadoPago } from "@/lib/vuelos/control";
+import {
+  labelModalidad, labelEstadoEmision, labelEstadoPago,
+  tonoModalidad, tonoEstadoEmision, tonoEstadoPago,
+} from "@/lib/vuelos/control";
 
 // Los tres badges de control del record (migración 152): modalidad, estado
-// de emisión y estado de pago. Reutiliza `EstadoBadge` (infiere el tono del
-// TEXTO: "Emitido"/"Pagado" → verde, "Pendiente" → ámbar, "Sin definir"/
-// "Por confirmar" → gris neutro, sin necesidad de mapear colores aparte).
+// de emisión y estado de pago. El tono SIEMPRE viene de los helpers
+// centralizados de lib/vuelos/control.ts (tonoModalidad/tonoEstadoEmision/
+// tonoEstadoPago) — los mismos que usa `ControlVuelosTabla`, para que la
+// lista y este detalle se vean idénticos. Nunca se deja que `EstadoBadge`
+// infiera el tono del texto: "Por confirmar" contiene "confirm" y el
+// inferidor genérico lo leía como verde (`ok`), igual que Emitido/Pagado.
 export function ControlBadges({
   modalidad,
   estadoEmision,
@@ -18,9 +24,9 @@ export function ControlBadges({
 }) {
   return (
     <span className={`inline-flex flex-wrap items-center gap-1.5 ${className}`}>
-      <EstadoBadge estado={labelModalidad(modalidad)} tono="neutral" />
-      <EstadoBadge estado={labelEstadoEmision(estadoEmision)} />
-      <EstadoBadge estado={labelEstadoPago(estadoPago)} />
+      <EstadoBadge estado={labelModalidad(modalidad)} tono={tonoModalidad(modalidad)} />
+      <EstadoBadge estado={labelEstadoEmision(estadoEmision)} tono={tonoEstadoEmision(estadoEmision)} />
+      <EstadoBadge estado={labelEstadoPago(estadoPago)} tono={tonoEstadoPago(estadoPago)} />
     </span>
   );
 }

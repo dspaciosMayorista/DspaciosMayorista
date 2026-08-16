@@ -7,13 +7,16 @@ import { EstadoBadge } from "@/components/EstadoBadge";
 import {
   MODALIDAD_LABEL, ESTADO_EMISION_LABEL, ESTADO_PAGO_LABEL, SIN_DEFINIR, POR_CONFIRMAR,
   labelModalidad, labelEstadoEmision, labelEstadoPago,
+  tonoModalidad, tonoEstadoEmision, tonoEstadoPago,
 } from "@/lib/vuelos/control";
 import { mesKey, mesLabel, matchControl, SIN_DEFINIR_VAL } from "@/lib/vuelos/filtros";
 
 // Tabla de CONTROL: modalidad/emisión/pago por record — independiente del
 // inventario de sillas (esa vista vive en `BloqueosTabla`). Modalidad,
 // Emisión y Pago son columnas separadas (no un solo badge combinado como
-// `ControlBadges`, que sigue usándose sin cambios en el detalle del record).
+// `ControlBadges`, que se usa en el detalle del record con la MISMA
+// semántica de color — ambos toman el tono de tonoModalidad/tonoEstadoEmision/
+// tonoEstadoPago en lib/vuelos/control.ts).
 export type ControlFila = {
   id: number;
   record: string;
@@ -123,9 +126,9 @@ export function ControlVuelosTabla({ filas }: { filas: ControlFila[] }) {
                 <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_ida)}{b.vuelo_ida ? ` · ${b.vuelo_ida}` : ""}</td>
                 <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_regreso)}{b.vuelo_regreso ? ` · ${b.vuelo_regreso}` : ""}</td>
                 <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_emision)}</td>
-                <td className="px-3 py-2"><EstadoBadge estado={labelModalidad(b.modalidad_emision)} tono="neutral" /></td>
-                <td className="px-3 py-2"><EstadoBadge estado={labelEstadoEmision(b.estado_emision)} /></td>
-                <td className="px-3 py-2"><EstadoBadge estado={labelEstadoPago(b.estado_pago)} /></td>
+                <td className="px-3 py-2"><EstadoBadge estado={labelModalidad(b.modalidad_emision)} tono={tonoModalidad(b.modalidad_emision)} /></td>
+                <td className="px-3 py-2"><EstadoBadge estado={labelEstadoEmision(b.estado_emision)} tono={tonoEstadoEmision(b.estado_emision)} /></td>
+                <td className="px-3 py-2"><EstadoBadge estado={labelEstadoPago(b.estado_pago)} tono={tonoEstadoPago(b.estado_pago)} /></td>
               </tr>
             ))}
           </tbody>
