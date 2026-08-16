@@ -16,7 +16,7 @@ export function VistaTabs({ basePath, vista }: { basePath: string; vista: VistaV
   return (
     <div className="mb-5 flex gap-1 border-b border-gray-200">
       <TabLink href={`${basePath}?vista=inventario`} activo={vista === "inventario"}>Inventario</TabLink>
-      <TabLink href={`${basePath}?vista=control-vuelos`} activo={vista === "control-vuelos"}>Control Vuelos</TabLink>
+      <TabLink href={`${basePath}?vista=control-vuelos`} activo={vista === "control-vuelos"}>CONTROL VUELOS</TabLink>
     </div>
   );
 }

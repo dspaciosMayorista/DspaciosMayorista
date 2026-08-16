@@ -62,14 +62,22 @@ en_plazo, confirmada, devuelta, no_vendida, cambio, cambio_entrante`.
 - **`/dashboard/vuelos`** (dashboard de control): dos pestañas — **Inventario**
   (`BloqueosTabla`, tarjetas vía `lib/vuelos/stats.ts`; **`ocupacionPct(c) =
   round((confirmadas+en_plazo)/total*100)`** — cuenta confirmadas Y en plazo como
-  ocupadas) y **Control Vuelos** (`ControlVuelosTabla`, ver §7). La pestaña activa vive
-  en la URL (`?vista=inventario` | `?vista=control-vuelos`, default `inventario`), no en
-  estado de React — sobrevive a un recargado y es enlazable. La página carga
-  `bloqueos_vuelo`/`sillas` UNA sola vez y reparte los datos a la pestaña visible; ninguna
-  pestaña repite la consulta.
-- **`/dashboard/vuelos/historico`**: mismo patrón de dos pestañas, sobre bloqueos pasados
-  (`esPasado()`) únicamente — nunca mezcla activos con históricos.
-  **`ventaPct(c) = round(confirmadas/total*100)`** — excluye las en plazo (pendientes).
+  ocupadas) y **CONTROL VUELOS** (texto de la pestaña en mayúsculas, así lo pidió el
+  dueño — `ControlVuelosTabla`, ver §7). La pestaña activa vive en la URL
+  (`?vista=inventario` | `?vista=control-vuelos`, default `inventario`), no en estado de
+  React — sobrevive a un recargado y es enlazable. El encabezado (H1 + subtítulo) también
+  cambia según la vista: "Inventario de vuelos" / "Control vuelos". La página consulta
+  `bloqueos_vuelo` SIEMPRE (una sola vez) pero `sillas` **solo si `vista ===
+  "inventario"`** — Control Vuelos no usa sillas para nada (ni columnas ni ocupación), así
+  que no tiene sentido descargarlas.
+- **`/dashboard/vuelos/historico`**: mismo patrón de dos pestañas ("Histórico de vuelos" /
+  "Control vuelos histórico"), sobre bloqueos pasados (`esPasado()`) únicamente — nunca
+  mezcla activos con históricos. **`ventaPct(c) = round(confirmadas/total*100)`** — excluye
+  las en plazo (pendientes). El botón "Histórico" de la página activa y el link de regreso
+  de la página histórica **propagan el `?vista=` actual en ambas direcciones**
+  (`/dashboard/vuelos?vista=control-vuelos` → Histórico → `/dashboard/vuelos/historico
+  ?vista=control-vuelos`, y de vuelta) — cambiar de pestaña en una no debe perder la
+  pestaña elegida en la otra.
 - **`/dashboard/vuelos/[id]`**: pestaña Pasajeros (tabla de sillas) + pestaña Cambios
   (`CambiarSillasForm`, `CambioOperacionalForm`, historial de `movimientos_silla`/
   `bloqueo_cambios`).
@@ -197,6 +205,36 @@ Precedente distinto al de `BloqueoTabs.tsx` (pestañas del detalle de un record,
 `useState` local, sin URL) — acá se prefirió la URL a propósito porque el pedido explícito
 era que la pestaña sobreviviera a un recargado y fuera enlazable directamente
 (`/dashboard/vuelos?vista=control-vuelos`).
+
+**Ronda 2 de ajustes (jul-2026):** tres correcciones sobre el rediseño de arriba, pedidas
+tras ver la primera versión en revisión:
+
+1. **Texto exacto de la pestaña y encabezado por vista.** El texto de la pestaña de
+   Control quedó como el dueño lo pidió textualmente: `CONTROL VUELOS` (todo en
+   mayúsculas — la pestaña de Inventario no cambió). Antes el H1/subtítulo de la página
+   decían siempre "Inventario de vuelos" sin importar la pestaña activa, lo cual era
+   contradictorio al estar parado en Control Vuelos. Ahora el H1 y el subtítulo debajo
+   cambian según `vistaInventario` en las cuatro combinaciones (página activa e
+   histórica × Inventario/Control).
+2. **La pestaña sobrevive a navegar a Histórico y de vuelta.** El botón "Histórico" de
+   `/dashboard/vuelos` y el link de regreso "← Inventario de vuelos" de
+   `/dashboard/vuelos/historico` eran links ESTÁTICOS (`href="/dashboard/vuelos/
+   historico"` / `href="/dashboard/vuelos"`) — perdían la pestaña elegida al cruzar entre
+   las dos páginas. Ahora ambos toman `vista` (el que la página ya resolvió desde
+   `searchParams`) y lo propagan: `href={`/dashboard/vuelos/historico?vista=${vista}`}` y
+   `href={`/dashboard/vuelos?vista=${vista}`}` — el link del estado vacío "No hay vuelos
+   activos → revisa el histórico" también se corrigió igual.
+3. **Control Vuelos ya no descarga `sillas`.** Antes ambas páginas hacían
+   `Promise.all([bloqueos_vuelo, sillas])` sin importar la pestaña — la tabla de Control
+   nunca usa sillas (sin columnas de sillas, sin ocupación), así que esa descarga era
+   deuda que crecería con el inventario real sin ningún beneficio en esa vista.
+   `bloqueos_vuelo` se sigue consultando SIEMPRE (una sola vez, ambas pestañas la
+   necesitan); `sillas` solo corre si `vista === "inventario"` — en Control Vuelos el
+   segundo elemento del `Promise.all` es un `Promise.resolve({ data: null })` (no golpea
+   la red) en vez de la consulta real, y `conteo`/`tot`/`ocup` (activa) /
+   `gen`/`totPas` (histórica) tampoco se calculan, quedan en sus valores por defecto sin
+   invocar `conteoPorBloqueo`/`sumarConteos`/`ocupacionPct`. El comportamiento de
+   Inventario no cambió: sigue pidiendo ambas tablas en paralelo exactamente como antes.
 
 **RLS:** sin cambios — las tres columnas viven en `bloqueos_vuelo`, que ya tiene su policy
 de escritura (`superadmin/administracion/gerencia/operaciones/control_vuelo`, migración
