@@ -4,9 +4,10 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { formatFechaLarga } from "@/lib/utils";
 import { EliminarBloqueoBtn } from "./EliminarBloqueoBtn";
-import { ControlBadges } from "@/components/vuelos/ControlBadges";
-import { MODALIDAD_LABEL, ESTADO_EMISION_LABEL, ESTADO_PAGO_LABEL, SIN_DEFINIR, POR_CONFIRMAR } from "@/lib/vuelos/control";
+import { mesKey, mesLabel } from "@/lib/vuelos/filtros";
 
+// Tabla de INVENTARIO: sillas y ocupación por record. El control de
+// modalidad/emisión/pago vive en su propia pestaña — ver `ControlVuelosTabla`.
 export type BloqueoFila = {
   id: number;
   record: string;
@@ -19,49 +20,18 @@ export type BloqueoFila = {
   fecha_devolucion: string | null;
   cupos_total: number;
   disp: number; plazo: number; conf: number; dev: number; nven: number;
-  // Control por record (migración 152): independiente de las sillas.
-  modalidad_emision: string | null;
-  estado_emision: string | null;
-  estado_pago: string | null;
-};
-
-// "" = todos; "sin_definir" = filas con el campo en null (nunca se muestran
-// como si fueran 'pendiente'); cualquier otro valor = el valor exacto.
-const SIN_DEFINIR_VAL = "sin_definir";
-const matchControl = (valor: string | null, filtro: string) => {
-  if (!filtro) return true;
-  if (filtro === SIN_DEFINIR_VAL) return valor == null;
-  return valor === filtro;
-};
-
-const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
-const mesKey = (f: string | null) => (f ? f.slice(0, 7) : ""); // YYYY-MM
-const mesLabel = (k: string) => {
-  const [y, m] = k.split("-");
-  return `${MESES[Number(m) - 1] ?? m} ${y}`;
 };
 
 export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
   const [fRuta, setFRuta] = useState("");
   const [fMes, setFMes] = useState("");
-  const [fEmision, setFEmision] = useState("");
-  const [fPago, setFPago] = useState("");
-  const [fModalidad, setFModalidad] = useState("");
 
   const rutas = useMemo(() => [...new Set(filas.map((b) => b.ruta).filter((x): x is string => !!x))].sort(), [filas]);
   const meses = useMemo(() => [...new Set(filas.map((b) => mesKey(b.fecha_ida)).filter(Boolean))].sort(), [filas]);
 
   const vis = useMemo(
-    () =>
-      filas.filter(
-        (b) =>
-          (!fRuta || b.ruta === fRuta) &&
-          (!fMes || mesKey(b.fecha_ida) === fMes) &&
-          matchControl(b.estado_emision, fEmision) &&
-          matchControl(b.estado_pago, fPago) &&
-          matchControl(b.modalidad_emision, fModalidad)
-      ),
-    [filas, fRuta, fMes, fEmision, fPago, fModalidad]
+    () => filas.filter((b) => (!fRuta || b.ruta === fRuta) && (!fMes || mesKey(b.fecha_ida) === fMes)),
+    [filas, fRuta, fMes]
   );
 
   // TOTAL real = sillas que pertenecen al record AHORA (todas menos las que
@@ -94,28 +64,10 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
           <option value="">Mes: todos</option>
           {meses.map((m) => <option key={m} value={m}>{mesLabel(m)}</option>)}
         </select>
-        <select value={fModalidad} onChange={(e) => setFModalidad(e.target.value)} className={selCls} aria-label="Filtrar por modalidad de emisión">
-          <option value="">Modalidad: todas</option>
-          <option value="individual">{MODALIDAD_LABEL.individual}</option>
-          <option value="grupo">{MODALIDAD_LABEL.grupo}</option>
-          <option value={SIN_DEFINIR_VAL}>{SIN_DEFINIR}</option>
-        </select>
-        <select value={fEmision} onChange={(e) => setFEmision(e.target.value)} className={selCls} aria-label="Filtrar por estado de emisión">
-          <option value="">Emisión: todas</option>
-          <option value="pendiente">{ESTADO_EMISION_LABEL.pendiente}</option>
-          <option value="emitido">{ESTADO_EMISION_LABEL.emitido}</option>
-          <option value={SIN_DEFINIR_VAL}>{POR_CONFIRMAR}</option>
-        </select>
-        <select value={fPago} onChange={(e) => setFPago(e.target.value)} className={selCls} aria-label="Filtrar por estado de pago">
-          <option value="">Pago: todos</option>
-          <option value="pendiente">{ESTADO_PAGO_LABEL.pendiente}</option>
-          <option value="pagado">{ESTADO_PAGO_LABEL.pagado}</option>
-          <option value={SIN_DEFINIR_VAL}>{POR_CONFIRMAR}</option>
-        </select>
-        {(fRuta || fMes || fEmision || fPago || fModalidad) && (
+        {(fRuta || fMes) && (
           <button
             type="button"
-            onClick={() => { setFRuta(""); setFMes(""); setFEmision(""); setFPago(""); setFModalidad(""); }}
+            onClick={() => { setFRuta(""); setFMes(""); }}
             className="text-xs font-medium text-gray-500 hover:text-gray-800"
           >
             Limpiar
@@ -125,7 +77,7 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full min-w-[1120px] text-sm">
+        <table className="w-full min-w-[1020px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-3 py-2">Record</th>
@@ -141,7 +93,6 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
               <th className="px-3 py-2 text-center">Total</th>
               <th className="px-3 py-2 text-center">Ocup.</th>
               <th className="px-3 py-2">F. Dev.</th>
-              <th className="px-3 py-2">Control</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -166,9 +117,6 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
                   <td className="px-3 py-2 text-center font-semibold tabular-nums">{total}</td>
                   <td className="px-3 py-2 text-center tabular-nums text-gray-500">{ocup}%</td>
                   <td className="px-3 py-2 text-xs text-gray-400">{formatFechaLarga(b.fecha_devolucion)}</td>
-                  <td className="px-3 py-2">
-                    <ControlBadges modalidad={b.modalidad_emision} estadoEmision={b.estado_emision} estadoPago={b.estado_pago} />
-                  </td>
                   <td className="px-3 py-2 text-right"><EliminarBloqueoBtn id={b.id} record={b.record} /></td>
                 </tr>
               );
@@ -184,7 +132,7 @@ export function BloqueosTabla({ filas }: { filas: BloqueoFila[] }) {
               <td className="px-3 py-2 text-center tabular-nums text-gray-400">{tot.nven}</td>
               <td className="px-3 py-2 text-center tabular-nums">{tot.total}</td>
               <td className="px-3 py-2 text-center tabular-nums text-gray-500">{ocupProm}%</td>
-              <td className="px-3 py-2" colSpan={3}></td>
+              <td className="px-3 py-2" colSpan={2}></td>
             </tr>
           </tfoot>
         </table>

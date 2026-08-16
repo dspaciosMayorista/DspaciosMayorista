@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
 import { cargarBloqueosMasivo } from "./actions";
 import { BloqueosTabla } from "./BloqueosTabla";
+import { ControlVuelosTabla } from "./ControlVuelosTabla";
+import { VistaTabs, vistaDeParam } from "./VistaTabs";
 import { History } from "lucide-react";
 import { conteoPorBloqueo, sumarConteos, esPasado, ocupacionPct } from "@/lib/vuelos/stats";
 import { hoyISO } from "@/lib/calc/paquetes";
@@ -46,7 +48,10 @@ function ResumenCard({ label, valor, color }: { label: string; valor: number | s
   );
 }
 
-export default async function VuelosPage() {
+export default async function VuelosPage({ searchParams }: { searchParams: Promise<{ vista?: string }> }) {
+  const { vista: vistaParam } = await searchParams;
+  const vista = vistaDeParam(vistaParam);
+
   const sb = await createClient();
   const [{ data: bloqueos }, { data: sillas }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: true }),
@@ -68,7 +73,7 @@ export default async function VuelosPage() {
 
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
-      <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900">Inventario de vuelos</h1>
           <p className="mt-1 text-sm text-gray-500">Bloqueos de sillas negociadas con la aerolínea</p>
@@ -83,16 +88,20 @@ export default async function VuelosPage() {
         </div>
       </div>
 
-      <div className="mb-6">
-        <CargaMasivaCSV
-          titulo="Carga masiva de bloqueos (CSV)"
-          nota="Crea primero los Destinos (Producto → Destinos) y, si lo asignarás, el Proveedor aéreo (Producto → Proveedores). Los Rangos de edad se crean en Configuración (menú lateral)."
-          descripcion="Cada fila = un bloqueo. El destino debe existir; las sillas se generan según 'cupos'. Fechas en formato AAAA-MM-DD."
-          columnas={COLS_BLOQUEOS}
-          onSubmit={cargarBloqueosMasivo}
-          nombreArchivo="plantilla_bloqueos"
-        />
-      </div>
+      <VistaTabs basePath="/dashboard/vuelos" vista={vista} />
+
+      {vista === "inventario" && (
+        <div className="mb-6">
+          <CargaMasivaCSV
+            titulo="Carga masiva de bloqueos (CSV)"
+            nota="Crea primero los Destinos (Producto → Destinos) y, si lo asignarás, el Proveedor aéreo (Producto → Proveedores). Los Rangos de edad se crean en Configuración (menú lateral)."
+            descripcion="Cada fila = un bloqueo. El destino debe existir; las sillas se generan según 'cupos'. Fechas en formato AAAA-MM-DD."
+            columnas={COLS_BLOQUEOS}
+            onSubmit={cargarBloqueosMasivo}
+            nombreArchivo="plantilla_bloqueos"
+          />
+        </div>
+      )}
 
       {!todos.length ? (
         <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">
@@ -104,7 +113,7 @@ export default async function VuelosPage() {
           <p className="text-lg">No hay vuelos activos</p>
           <p className="mt-1 text-sm">Todos los bloqueos ya pasaron su fecha de ida. Revisa el <Link href="/dashboard/vuelos/historico" className="text-[var(--brand-accent)] hover:underline">histórico ({pasados.length})</Link>.</p>
         </div>
-      ) : (
+      ) : vista === "inventario" ? (
         <>
           {/* Mini-dashboard de vuelos ACTIVOS (fecha de ida futura) */}
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Vuelos activos</div>
@@ -126,11 +135,19 @@ export default async function VuelosPage() {
                 fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
                 fecha_devolucion: b.fecha_devolucion, cupos_total: b.cupos_total ?? 0,
                 disp: c.disp, plazo: c.plazo, conf: c.conf, dev: c.dev, nven: c.nven,
-                modalidad_emision: b.modalidad_emision, estado_emision: b.estado_emision, estado_pago: b.estado_pago,
               };
             })}
           />
         </>
+      ) : (
+        <ControlVuelosTabla
+          filas={activos.map((b) => ({
+            id: b.id, record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
+            fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
+            fecha_emision: b.fecha_emision,
+            modalidad_emision: b.modalidad_emision, estado_emision: b.estado_emision, estado_pago: b.estado_pago,
+          }))}
+        />
       )}
     </div>
   );
