@@ -9,9 +9,16 @@ const TONOS = {
   warn: "border-amber-200 bg-amber-50 text-amber-700",
   crit: "border-red-200 bg-red-50 text-red-700",
   neutral: "border-gray-300 bg-gray-100 text-gray-600",
+  // Tono EXPLÍCITO únicamente — `inferir()` nunca lo devuelve, así que solo
+  // aparece cuando un llamador lo pide a propósito (ver lib/vuelos/control.ts,
+  // tonoEstadoEmision/tonoEstadoPago): un estado "sin dato real" (null,
+  // inválido, "Por confirmar") no debe leerse como éxito. `inferir()` clasificaba
+  // "Por confirmar" como verde (`ok`) solo por contener "confirm" — visualmente
+  // indistinguible de Emitido/Pagado.
+  orange: "border-orange-200 bg-orange-50 text-orange-700",
 } as const;
 
-type Tono = keyof typeof TONOS;
+export type Tono = keyof typeof TONOS;
 
 function inferir(estado: string): Tono {
   const e = estado.toLowerCase();
