@@ -22,7 +22,7 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
   const [destinoId, setDestinoId] = useState<number | "">("");
   const [origenId, setOrigenId] = useState<number | "">("");
   const [rangosSel, setRangosSel] = useState<number[]>([]);
-  // Obligatoria (migración 151): no hay valor neutral razonable para
+  // Obligatoria (migración 152): no hay valor neutral razonable para
   // "modalidad no elegida" — el bloqueo nuevo tiene que nacer con una.
   const [modalidadEmision, setModalidadEmision] = useState<ModalidadEmision | "">("");
 

@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 
 // Pestañas del detalle del bloqueo: "Pasajeros" (sillas activas), "Cambios"
 // (cambio de sillas entre records, eliminación de cupos e historial) y
-// "Control" (modalidad/emisión/pago del record, migración 151). El
+// "Control" (modalidad/emisión/pago del record, migración 152). El
 // contenido lo renderiza el servidor y se pasa como nodos.
 export function BloqueoTabs({
   pasajeros,

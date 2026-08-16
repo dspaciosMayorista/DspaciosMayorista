@@ -20,7 +20,7 @@ import {
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-// Editor de los tres campos de control del record (migración 151). Cada
+// Editor de los tres campos de control del record (migración 152). Cada
 // guardado queda en `bloqueo_cambios` (antes→después, quién, cuándo) — la
 // misma Server Action se encarga de eso, aquí solo se arma el formulario.
 //
@@ -29,7 +29,7 @@ const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text
 // elegir antes de poder guardar — igual que exige el formulario de creación.
 // Los estados sí parten de 'pendiente' cuando están sin definir: abrir este
 // editor y guardar sin tocarlos es una decisión explícita del usuario, no un
-// default silencioso de la base de datos (ver cabecera de la migración 151).
+// default silencioso de la base de datos (ver cabecera de la migración 152).
 export function ControlBloqueoForm({
   bloqueoId,
   inicial,

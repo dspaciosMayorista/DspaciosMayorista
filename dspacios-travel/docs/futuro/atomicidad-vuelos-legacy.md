@@ -2,7 +2,7 @@
 
 **No se corrigen en el PR #264** (control general por record: modalidad/
 emisión/pago). Ese PR sí volvió atómico `actualizarControlBloqueo` (nueva
-función `actualizar_control_bloqueo()`, migración 151) porque era exactamente
+función `actualizar_control_bloqueo()`, migración 152) porque era exactamente
 el caso que motivó la auditoría — pero al revisarlo aparecieron dos patrones
 **preexistentes** con el mismo riesgo de fondo, en dos funciones que el PR no
 toca. Se documentan aquí para no arreglarlos "de paso" sin medir su alcance

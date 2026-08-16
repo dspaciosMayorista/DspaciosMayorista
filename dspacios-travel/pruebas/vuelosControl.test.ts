@@ -15,7 +15,7 @@ import {
 } from "../lib/vuelos/control.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
-// Control general por record (migración 151): modalidad de emisión, estado
+// Control general por record (migración 152): modalidad de emisión, estado
 // de emisión y estado de pago al proveedor/aerolínea.
 //
 // `null` NO es "pendiente" — un registro de antes de esta migración no tiene
@@ -32,7 +32,7 @@ test("labelModalidad: null/valor desconocido cae en 'Sin definir', nunca inventa
 });
 
 test("labelEstadoEmision/labelEstadoPago: null cae en 'Por confirmar', no en 'Pendiente'", () => {
-  // Este es el bug que la migración 151 evita explícitamente: un registro
+  // Este es el bug que la migración 152 evita explícitamente: un registro
   // legacy (null) no debe leerse igual que uno que YA se sabe que está
   // pendiente.
   assert.equal(labelEstadoEmision(null), POR_CONFIRMAR);
@@ -66,7 +66,7 @@ test("los type guards solo aceptan los valores exactos del enum", () => {
 // GUARDA DE WIRING — el resto de la lógica vive en Server Actions
 // ("use server") que necesitan una sesión/BD real para probarse de punta a
 // punta; estas comprobaciones miran el CÓDIGO FUENTE para blindar las
-// decisiones de diseño que motivaron la migración 151 y que un cambio futuro
+// decisiones de diseño que motivaron la migración 152 y que un cambio futuro
 // podría deshacer sin darse cuenta.
 // ───────────────────────────────────────────────────────────────────────────
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -119,7 +119,7 @@ test("actualizarControlBloqueo valida los tres campos y delega TODO en el RPC at
 // fallaba, el UPDATE ya había corrido: el bloqueo quedaba modificado sin
 // ningún rastro de que eso pasó, aunque la acción devolviera error. Se
 // reemplazó por un único RPC transaccional (`actualizar_control_bloqueo`,
-// migración 151). Esto blinda que no vuelva el patrón viejo.
+// migración 152). Esto blinda que no vuelva el patrón viejo.
 // ───────────────────────────────────────────────────────────────────────────
 
 test("actualizarControlBloqueo NO vuelve a hacer un UPDATE + INSERT sueltos de bloqueos_vuelo/bloqueo_cambios", () => {
@@ -156,12 +156,12 @@ test("actualizarControlBloqueo revalida rutas SOLO después de comprobar que el 
   assert.ok(idxError < idxRevalidate, "revalida rutas ANTES de comprobar el error del RPC");
 });
 
-// ── Migración 151: el RPC en sí (SELECT...FOR UPDATE + UPDATE + INSERT,
+// ── Migración 152: el RPC en sí (SELECT...FOR UPDATE + UPDATE + INSERT,
 // SIN security definer) — reutiliza `migracionSrc`, declarado más abajo en
 // este mismo módulo junto a las pruebas de notificaciones.
 test("actualizar_control_bloqueo() bloquea la fila, actualiza e inserta el historial en la MISMA función, sin security definer", () => {
   const inicio = migracionSrc.indexOf("create or replace function public.actualizar_control_bloqueo");
-  assert.notEqual(inicio, -1, "el RPC actualizar_control_bloqueo no está en la migración 151");
+  assert.notEqual(inicio, -1, "el RPC actualizar_control_bloqueo no está en la migración 152");
   const fin = migracionSrc.indexOf("comment on function public.actualizar_control_bloqueo");
   const fn = migracionSrc.slice(inicio, fin > inicio ? fin : undefined);
 
@@ -227,9 +227,9 @@ test("la alerta de fecha límite de emisión se apaga si el record ya quedó 'em
   );
 });
 
-const migracionSrc = leer("supabase/migrations/20260601000151_bloqueo_control_emision.sql");
+const migracionSrc = leer("supabase/migrations/20260601000152_bloqueo_control_emision.sql");
 
-test("migración 151: las columnas nuevas no nacen con default — un registro viejo no puede quedar falsamente 'pendiente'", () => {
+test("migración 152: las columnas nuevas no nacen con default — un registro viejo no puede quedar falsamente 'pendiente'", () => {
   const bloque = migracionSrc.slice(
     migracionSrc.indexOf("alter table public.bloqueos_vuelo\n  add column"),
     migracionSrc.indexOf("do $$")

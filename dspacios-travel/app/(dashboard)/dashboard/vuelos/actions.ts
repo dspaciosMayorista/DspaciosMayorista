@@ -38,7 +38,7 @@ export type BloqueoInput = {
   fechaEmision: string;
   notas: string;
   rangosEdad?: number[];
-  // Modalidad de emisión del record — OBLIGATORIA al crear (migración 151).
+  // Modalidad de emisión del record — OBLIGATORIA al crear (migración 152).
   // Los estados de emisión/pago NO se piden aquí: un bloqueo nuevo nace
   // 'pendiente' en los dos, lo decide esta función, no el formulario.
   modalidadEmision: ModalidadEmision;
@@ -213,7 +213,7 @@ export async function registrarCambioOperacional(
   return { ok: true, id: bloqueoId };
 }
 
-// ── Control general del record: modalidad, emisión y pago (migración 151) ──
+// ── Control general del record: modalidad, emisión y pago (migración 152) ──
 // Los tres campos son manuales y ajenos a la tarifa/fecha del vuelo, así que
 // —a diferencia de `actualizarBloqueo`/`registrarCambioOperacional`— esta
 // función NO llama `regenerarTarifariosDeBloqueo`: no hay nada que recalcular
@@ -226,7 +226,7 @@ export type ControlBloqueoInput = {
 };
 
 // Delega TODO en el RPC atómico `actualizar_control_bloqueo` (migración
-// 151): SELECT ... FOR UPDATE + UPDATE + INSERT en bloqueo_cambios, las tres
+// 152): SELECT ... FOR UPDATE + UPDATE + INSERT en bloqueo_cambios, las tres
 // en una sola transacción — si el INSERT del historial falla, el UPDATE
 // también se revierte. Antes esta función hacía esas tres operaciones como
 // llamadas sueltas de supabase-js: si la del historial fallaba, el bloqueo
@@ -279,7 +279,7 @@ function parseFechaCSV(s?: string): string | null {
 // Hora CSV: ya se asume HH:MM (24h). Solo normaliza vacíos.
 const dCsv = (s?: string) => (s && s.trim() !== "" ? s.trim() : null);
 
-// Modalidad/estados del control (migración 151) — validación ESTRICTA: un
+// Modalidad/estados del control (migración 152) — validación ESTRICTA: un
 // valor que no sea exactamente uno de los esperados (vacío incluido, para
 // modalidad) rechaza la fila entera, no se adivina ni se deja pasar en null.
 function parseModalidadCSV(s?: string): ModalidadEmision | null {

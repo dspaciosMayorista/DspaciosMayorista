@@ -1,12 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────
-// Control general por record (migración 151): modalidad de emisión, estado
+// Control general por record (migración 152): modalidad de emisión, estado
 // de emisión y estado de pago al proveedor/aerolínea. Los tres son manuales,
 // a nivel de TODO el bloqueo — independientes del estado de cada silla.
 //
 // `null` no es "pendiente": un registro de antes de esta migración no tiene
 // forma de saber si ya se emitió o se pagó, así que se muestra "Sin definir"
 // (modalidad) o "Por confirmar" (estados) — nunca se asume 'pendiente' para
-// no afirmar algo que no se sabe. Ver la cabecera de la migración 151.
+// no afirmar algo que no se sabe. Ver la cabecera de la migración 152.
 // ─────────────────────────────────────────────────────────────────────────
 
 export type ModalidadEmision = "individual" | "grupo";

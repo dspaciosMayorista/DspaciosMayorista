@@ -1,5 +1,5 @@
 -- ───────────────────────────────────────────────────────────────────────────
--- 151 · VUELOS — control general por record: modalidad, emisión y pago
+-- 152 · VUELOS — control general por record: modalidad, emisión y pago
 --
 -- QUÉ AGREGA
 --   Tres campos MANUALES a nivel de `bloqueos_vuelo` (todo el record, no una
@@ -116,13 +116,13 @@ end $$;
 
 comment on column public.bloqueos_vuelo.modalidad_emision is
   'Individual o grupo. Obligatoria en registros nuevos (validada en crearBloqueo); '
-  'null en registros anteriores a esta migración = "Sin definir" en la UI, nunca se infiere. Migración 151.';
+  'null en registros anteriores a esta migración = "Sin definir" en la UI, nunca se infiere. Migración 152.';
 comment on column public.bloqueos_vuelo.estado_emision is
   'Si el vuelo YA se emitió (independiente de fecha_emision, que es solo el límite). '
-  'null = "Por confirmar" (no se sabe), distinto de ''pendiente'' (se sabe que falta). Migración 151.';
+  'null = "Por confirmar" (no se sabe), distinto de ''pendiente'' (se sabe que falta). Migración 152.';
 comment on column public.bloqueos_vuelo.estado_pago is
   'Si YA se pagó al proveedor/aerolínea. NO es el pago del cliente (abonos/cuentas_por_pagar '
-  'son por contrato, esto es por record). null = "Por confirmar". Migración 151.';
+  'son por contrato, esto es por record). null = "Por confirmar". Migración 152.';
 
 -- ── Guardado atómico del control + su historial ─────────────────────────────
 --
@@ -240,7 +240,7 @@ comment on function public.actualizar_control_bloqueo(bigint, text, text, text, 
   'en bloqueo_cambios en UNA sola transacción (SELECT ... FOR UPDATE + UPDATE + INSERT) — '
   'si el INSERT del historial falla, el UPDATE también se revierte. SIN security definer: '
   'corre con el rol del que llama, sujeta a las mismas policies de bloqueos_vuelo/bloqueo_cambios. '
-  'Migración 151.';
+  'Migración 152.';
 
 revoke all on function public.actualizar_control_bloqueo(bigint, text, text, text, text) from public;
 grant execute on function public.actualizar_control_bloqueo(bigint, text, text, text, text) to authenticated;

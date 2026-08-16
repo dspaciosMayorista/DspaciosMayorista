@@ -1,6 +1,6 @@
 -- ─────────────────────────────────────────────────────────────────────────
 -- PRUEBA AUTO-VERIFICABLE — atomicidad de actualizar_control_bloqueo()
--- (migración 151)
+-- (migración 152)
 --
 -- Corre contra una base local construida con `local-desde-cero.sh` (o en el
 -- editor SQL de Supabase, DE SOLO LECTURA: termina en ROLLBACK). Se ejecuta

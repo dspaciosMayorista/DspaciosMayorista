@@ -19,7 +19,7 @@ export type BloqueoFila = {
   fecha_devolucion: string | null;
   cupos_total: number;
   disp: number; plazo: number; conf: number; dev: number; nven: number;
-  // Control por record (migración 151): independiente de las sillas.
+  // Control por record (migración 152): independiente de las sillas.
   modalidad_emision: string | null;
   estado_emision: string | null;
   estado_pago: string | null;

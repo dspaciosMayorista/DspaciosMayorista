@@ -95,7 +95,7 @@ es solo un catálogo guardado/mostrado — no es un insumo activo de precio/clas
 pena tenerlo presente antes de invertir tiempo intentando "usar" ese campo en el motor de
 reservar: no está conectado a nada todavía.
 
-## 7. Control general por record (migración 151)
+## 7. Control general por record (migración 152)
 
 Tres campos MANUALES en `bloqueos_vuelo`, independientes del estado de las sillas —
 `lib/vuelos/control.ts` centraliza tipos, type guards (`esModalidadEmision`/
@@ -110,7 +110,7 @@ Tres campos MANUALES en `bloqueos_vuelo`, independientes del estado de las silla
   **No** es el pago del cliente (eso vive en `abonos`/`cuentas_por_pagar` por contrato);
   deliberadamente no se cruza con eso.
 
-**`null` ≠ `'pendiente'`.** Un registro de antes de la migración 151 no tiene forma de
+**`null` ≠ `'pendiente'`.** Un registro de antes de la migración 152 no tiene forma de
 saber si ya se emitió o se pagó, así que las tres columnas nacen SIN default — un bloqueo
 viejo queda con las tres en `null`, y la UI lo muestra como "Sin definir" (modalidad) /
 "Por confirmar" (estados), nunca como "Pendiente" (que afirmaría algo que no se sabe). Un
@@ -146,7 +146,7 @@ cambio, no el estado original ni el final.
 
 ⚠️ **`registrarCambioOperacional` (horario/vuelo) y `crearBloqueo`/`cargarBloqueosMasivo`
 (bloqueo + sillas) tienen el MISMO patrón sin atomicidad, sin corregir todavía** — quedaron
-fuera del alcance de la migración 151 a propósito. Ver
+fuera del alcance de la migración 152 a propósito. Ver
 [`docs/futuro/atomicidad-vuelos-legacy.md`](../futuro/atomicidad-vuelos-legacy.md).
 
 **RLS:** sin cambios — las tres columnas viven en `bloqueos_vuelo`, que ya tiene su policy

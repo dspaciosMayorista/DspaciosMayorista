@@ -46,7 +46,7 @@ async function recopilar(dias: number, flags: { cxp: boolean; cuotas: boolean; b
       .select("record, aerolinea, ruta, fecha_devolucion, fecha_emision, estado_emision")
       .or(`fecha_devolucion.lte.${limISO},fecha_emision.lte.${limISO}`);
     // La alerta de emisión deja de aparecer cuando el record YA se marcó
-    // 'emitido' (control manual, migración 151) — `fecha_emision` es solo el
+    // 'emitido' (control manual, migración 152) — `fecha_emision` es solo el
     // límite programado, no prueba de que se haya emitido. La de devolución
     // no depende de eso: se conserva igual, tenga o no estado de emisión.
     const filas = (data ?? [])

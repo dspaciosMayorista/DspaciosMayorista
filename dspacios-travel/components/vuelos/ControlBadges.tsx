@@ -1,7 +1,7 @@
 import { EstadoBadge } from "@/components/EstadoBadge";
 import { labelModalidad, labelEstadoEmision, labelEstadoPago } from "@/lib/vuelos/control";
 
-// Los tres badges de control del record (migración 151): modalidad, estado
+// Los tres badges de control del record (migración 152): modalidad, estado
 // de emisión y estado de pago. Reutiliza `EstadoBadge` (infiere el tono del
 // TEXTO: "Emitido"/"Pagado" → verde, "Pendiente" → ámbar, "Sin definir"/
 // "Por confirmar" → gris neutro, sin necesidad de mapear colores aparte).
