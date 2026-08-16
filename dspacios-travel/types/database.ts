@@ -2083,6 +2083,10 @@ export type Database = {
           modo_precio: string;
           video_url: string | null;
           activo: boolean;          publicado: boolean;
+          regla_comisionable: boolean;
+          regla_comisionable_modo: string;
+          regla_comisionable_valor: number | null;
+          regla_comisionable_pct_comision: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -2122,6 +2126,10 @@ export type Database = {
           video_url?: string | null;
           activo?: boolean;
           publicado?: boolean;
+          regla_comisionable?: boolean;
+          regla_comisionable_modo?: string;
+          regla_comisionable_valor?: number | null;
+          regla_comisionable_pct_comision?: number | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -2144,6 +2152,10 @@ export type Database = {
           neto_multiple: number | null;
           neto_nino: number | null;
           bajo_solicitud: boolean;
+          tarifa_sencilla: number | null;
+          tarifa_doble: number | null;
+          tarifa_triple: number | null;
+          tarifa_multiple: number | null;
         };
         Insert: {
           id?: number;
@@ -2160,6 +2172,10 @@ export type Database = {
           neto_multiple?: number | null;
           neto_nino?: number | null;
           bajo_solicitud?: boolean;
+          tarifa_sencilla?: number | null;
+          tarifa_doble?: number | null;
+          tarifa_triple?: number | null;
+          tarifa_multiple?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["programa_salidas"]["Insert"]>;
         Relationships: [];
@@ -2675,6 +2691,15 @@ export type Database = {
       };
       eliminar_contrato: {
         Args: { p_numero: string; p_reusar: boolean };
+        Returns: undefined;
+      };
+      // Migración 151. Reemplaza la regla comisionable de un programa y sus
+      // salidas en una sola transacción (UPDATE + DELETE + INSERT) — evita
+      // que un DELETE exitoso seguido de un INSERT fallido deje el programa
+      // sin salidas. p_regla y p_salidas se pasan como jsonb; el shape real
+      // lo define SalidaInput/ReglaComisionableInput en actions.ts.
+      guardar_programa_salidas: {
+        Args: { p_programa_id: number; p_regla: Json; p_salidas: Json };
         Returns: undefined;
       };
     };
