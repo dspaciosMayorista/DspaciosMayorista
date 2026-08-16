@@ -59,11 +59,25 @@ en_plazo, confirmada, devuelta, no_vendida, cambio, cambio_entrante`.
 
 ## 3. Pantallas
 
-- **`/dashboard/vuelos`** (dashboard de control): tarjetas vía `lib/vuelos/stats.ts`.
-  **`ocupacionPct(c) = round((confirmadas+en_plazo)/total*100)`** — cuenta confirmadas Y en
-  plazo como ocupadas.
-- **`/dashboard/vuelos/historico`**: solo bloqueos pasados (`esPasado()`).
-  **`ventaPct(c) = round(confirmadas/total*100)`** — excluye las en plazo (pendientes).
+- **`/dashboard/vuelos`** (dashboard de control): dos pestañas — **Inventario**
+  (`BloqueosTabla`, tarjetas vía `lib/vuelos/stats.ts`; **`ocupacionPct(c) =
+  round((confirmadas+en_plazo)/total*100)`** — cuenta confirmadas Y en plazo como
+  ocupadas) y **CONTROL VUELOS** (texto de la pestaña en mayúsculas, así lo pidió el
+  dueño — `ControlVuelosTabla`, ver §7). La pestaña activa vive en la URL
+  (`?vista=inventario` | `?vista=control-vuelos`, default `inventario`), no en estado de
+  React — sobrevive a un recargado y es enlazable. El encabezado (H1 + subtítulo) también
+  cambia según la vista: "Inventario de vuelos" / "Control vuelos". La página consulta
+  `bloqueos_vuelo` SIEMPRE (una sola vez) pero `sillas` **solo si `vista ===
+  "inventario"`** — Control Vuelos no usa sillas para nada (ni columnas ni ocupación), así
+  que no tiene sentido descargarlas.
+- **`/dashboard/vuelos/historico`**: mismo patrón de dos pestañas ("Histórico de vuelos" /
+  "Control vuelos histórico"), sobre bloqueos pasados (`esPasado()`) únicamente — nunca
+  mezcla activos con históricos. **`ventaPct(c) = round(confirmadas/total*100)`** — excluye
+  las en plazo (pendientes). El botón "Histórico" de la página activa y el link de regreso
+  de la página histórica **propagan el `?vista=` actual en ambas direcciones**
+  (`/dashboard/vuelos?vista=control-vuelos` → Histórico → `/dashboard/vuelos/historico
+  ?vista=control-vuelos`, y de vuelta) — cambiar de pestaña en una no debe perder la
+  pestaña elegida en la otra.
 - **`/dashboard/vuelos/[id]`**: pestaña Pasajeros (tabla de sillas) + pestaña Cambios
   (`CambiarSillasForm`, `CambioOperacionalForm`, historial de `movimientos_silla`/
   `bloqueo_cambios`).
@@ -148,6 +162,79 @@ cambio, no el estado original ni el final.
 (bloqueo + sillas) tienen el MISMO patrón sin atomicidad, sin corregir todavía** — quedaron
 fuera del alcance de la migración 152 a propósito. Ver
 [`docs/futuro/atomicidad-vuelos-legacy.md`](../futuro/atomicidad-vuelos-legacy.md).
+
+**Control como pestaña propia, separada del inventario de sillas.** La primera versión
+metía los tres campos como una sola columna "Control" (con `ControlBadges`, tres badges
+juntos) dentro de la misma tabla de inventario (`BloqueosTabla`) — con 15 columnas la tabla
+quedaba pesada, y una sola columna con tres badges era ambigua (no se podía filtrar ni leer
+cada campo por separado). Ahora `/dashboard/vuelos` y `/dashboard/vuelos/historico` tienen
+dos pestañas independientes (ver §3):
+
+- **Inventario** (`BloqueosTabla.tsx`) — la tabla de siempre, orientada a sillas/ocupación
+  (record, aerolínea, ruta, ida, regreso, disponibles/plazo/confirmadas/devueltas/no
+  vendidas, total, ocupación, fecha de devolución). Ya NO tiene la columna Control ni sus
+  filtros — solo conserva los filtros de ruta y mes. Sigue siendo la única pestaña con el
+  botón de eliminar un record (`EliminarBloqueoBtn`).
+- **Control Vuelos** (`ControlVuelosTabla.tsx`, componente nuevo y dedicado) — record
+  (enlazado al detalle), aerolínea, ruta, ida (fecha + N° de vuelo), regreso (fecha + N° de
+  vuelo), **fecha límite de emisión** (`bloqueos_vuelo.fecha_emision` — OJO, no es
+  `fecha_devolucion`), y Modalidad/Emisión/Pago como **tres columnas separadas**, cada una
+  con su propio `EstadoBadge` (mismos colores/badges que antes — `labelModalidad`/
+  `labelEstadoEmision`/`labelEstadoPago` de `lib/vuelos/control.ts`, "Sin definir"/"Por
+  confirmar" completos, nunca truncados). Filtros propios e independientes de ruta, mes,
+  modalidad, emisión y pago, con badge de cantidad de records. Sin columnas de sillas, sin
+  fila de totales, sin acción de eliminar.
+
+`ControlBadges` (el badge combinado de los tres campos) **no se tocó** — sigue usándose tal
+cual en la pestaña "Control" del detalle de UN record (`/dashboard/vuelos/[id]`,
+`BloqueoTabs.tsx`), que es una vista distinta (edita el control de ESE record, con
+historial) y queda fuera del alcance de este cambio.
+
+**Helpers compartidos entre las dos tablas** (`lib/vuelos/filtros.ts`, nuevo): `mesKey`/
+`mesLabel`/`MESES` (agrupar por mes de `fecha_ida`) y `matchControl`/`SIN_DEFINIR_VAL`
+(mismo criterio de "sin_definir ⇒ filtra por `null`, nunca lo confunde con `'pendiente'`"
+que ya usaba el filtro de Control en la tabla vieja). El estado de cada set de filtros vive
+en `useState` LOCAL de cada componente — Inventario y Control Vuelos filtran de forma
+completamente independiente entre sí, aunque compartan la lógica pura de comparación.
+
+**Pestaña en la URL, no en estado de React.** `VistaTabs.tsx` (nuevo, sin `"use client"`:
+son enlaces `<Link href="?vista=...">`, no hace falta ningún hook) lee el `vista` que cada
+página ya resolvió desde `searchParams` (`vistaDeParam`, con fallback a `'inventario'` si
+falta o trae un valor desconocido) y compara contra cada pestaña para el subrayado activo.
+Precedente distinto al de `BloqueoTabs.tsx` (pestañas del detalle de un record, en
+`useState` local, sin URL) — acá se prefirió la URL a propósito porque el pedido explícito
+era que la pestaña sobreviviera a un recargado y fuera enlazable directamente
+(`/dashboard/vuelos?vista=control-vuelos`).
+
+**Ronda 2 de ajustes (jul-2026):** tres correcciones sobre el rediseño de arriba, pedidas
+tras ver la primera versión en revisión:
+
+1. **Texto exacto de la pestaña y encabezado por vista.** El texto de la pestaña de
+   Control quedó como el dueño lo pidió textualmente: `CONTROL VUELOS` (todo en
+   mayúsculas — la pestaña de Inventario no cambió). Antes el H1/subtítulo de la página
+   decían siempre "Inventario de vuelos" sin importar la pestaña activa, lo cual era
+   contradictorio al estar parado en Control Vuelos. Ahora el H1 y el subtítulo debajo
+   cambian según `vistaInventario` en las cuatro combinaciones (página activa e
+   histórica × Inventario/Control).
+2. **La pestaña sobrevive a navegar a Histórico y de vuelta.** El botón "Histórico" de
+   `/dashboard/vuelos` y el link de regreso "← Inventario de vuelos" de
+   `/dashboard/vuelos/historico` eran links ESTÁTICOS (`href="/dashboard/vuelos/
+   historico"` / `href="/dashboard/vuelos"`) — perdían la pestaña elegida al cruzar entre
+   las dos páginas. Ahora ambos toman `vista` (el que la página ya resolvió desde
+   `searchParams`) y lo propagan: `href={`/dashboard/vuelos/historico?vista=${vista}`}` y
+   `href={`/dashboard/vuelos?vista=${vista}`}` — el link del estado vacío "No hay vuelos
+   activos → revisa el histórico" también se corrigió igual.
+3. **Control Vuelos ya no descarga `sillas`.** Antes ambas páginas hacían
+   `Promise.all([bloqueos_vuelo, sillas])` sin importar la pestaña — la tabla de Control
+   nunca usa sillas (sin columnas de sillas, sin ocupación), así que esa descarga era
+   deuda que crecería con el inventario real sin ningún beneficio en esa vista.
+   `bloqueos_vuelo` se sigue consultando SIEMPRE (una sola vez, ambas pestañas la
+   necesitan); `sillas` solo corre si `vista === "inventario"` — en Control Vuelos el
+   segundo elemento del `Promise.all` es un `Promise.resolve({ data: null })` (no golpea
+   la red) en vez de la consulta real, y `conteo`/`tot`/`ocup` (activa) /
+   `gen`/`totPas` (histórica) tampoco se calculan, quedan en sus valores por defecto sin
+   invocar `conteoPorBloqueo`/`sumarConteos`/`ocupacionPct`. El comportamiento de
+   Inventario no cambió: sigue pidiendo ambas tablas en paralelo exactamente como antes.
 
 **RLS:** sin cambios — las tres columnas viven en `bloqueos_vuelo`, que ya tiene su policy
 de escritura (`superadmin/administracion/gerencia/operaciones/control_vuelo`, migración

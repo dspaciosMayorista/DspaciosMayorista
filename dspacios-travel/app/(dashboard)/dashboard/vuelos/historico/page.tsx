@@ -1,7 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { BloqueosTabla } from "../BloqueosTabla";
-import { conteoPorBloqueo, sumarConteos, esPasado, ventaPct, ocupacionPct } from "@/lib/vuelos/stats";
+import { ControlVuelosTabla } from "../ControlVuelosTabla";
+import { VistaTabs, vistaDeParam } from "../VistaTabs";
+import { conteoPorBloqueo, sumarConteos, esPasado, ventaPct, ocupacionPct, conteoCero, type ConteoSillas } from "@/lib/vuelos/stats";
 import { hoyISO } from "@/lib/calc/paquetes";
 
 export const dynamic = "force-dynamic";
@@ -16,51 +18,73 @@ function Card({ label, valor, color, sub }: { label: string; valor: number | str
   );
 }
 
-export default async function HistoricoVuelosPage() {
+export default async function HistoricoVuelosPage({ searchParams }: { searchParams: Promise<{ vista?: string }> }) {
+  const { vista: vistaParam } = await searchParams;
+  const vista = vistaDeParam(vistaParam);
+
+  const vistaInventario = vista === "inventario";
   const sb = await createClient();
+
+  // Control Vuelos no usa sillas — se consulta SOLO en Inventario (ver misma
+  // nota en ../page.tsx). `bloqueos_vuelo` se consulta siempre, una sola vez.
   const [{ data: bloqueos }, { data: sillas }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: false }),
-    sb.from("sillas").select("bloqueo_id, estado"),
+    vistaInventario
+      ? sb.from("sillas").select("bloqueo_id, estado")
+      : Promise.resolve({ data: null as { bloqueo_id: number; estado: string | null }[] | null }),
   ]);
 
   const hoy = hoyISO();
   const todos = bloqueos ?? [];
   const pasados = todos.filter((b) => esPasado(b.fecha_ida, hoy));
-  const conteo = conteoPorBloqueo(sillas);
-  const cZero = { disp: 0, plazo: 0, conf: 0, dev: 0, nven: 0, total: 0 };
+  const conteo: Map<number, ConteoSillas> = vistaInventario ? conteoPorBloqueo(sillas) : new Map();
+  const cZero = conteoCero();
 
   // Conteo HISTÓRICO GENERAL = de TODOS los bloqueos (vida del inventario).
-  const gen = sumarConteos(conteo, todos.map((b) => b.id));
+  // Solo tiene sentido (y solo se calcula) en Inventario.
+  const gen = vistaInventario ? sumarConteos(conteo, todos.map((b) => b.id)) : conteoCero();
   // Conteo de los bloqueos ya pasados (la lista del histórico).
-  const totPas = sumarConteos(conteo, pasados.map((b) => b.id));
+  const totPas = vistaInventario ? sumarConteos(conteo, pasados.map((b) => b.id)) : conteoCero();
 
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link href="/dashboard/vuelos" className="text-sm text-gray-400 hover:text-gray-600">← Inventario de vuelos</Link>
-          <h1 className="mt-1 text-2xl font-semibold text-gray-900">Histórico de vuelos</h1>
-          <p className="mt-1 text-sm text-gray-500">Bloqueos cuya fecha de ida ya pasó (inactivos). Entra a un record para ver sus pasajeros.</p>
+          <Link href={`/dashboard/vuelos?vista=${vista}`} className="text-sm text-gray-400 hover:text-gray-600">← Inventario de vuelos</Link>
+          <h1 className="mt-1 text-2xl font-semibold text-gray-900">
+            {vistaInventario ? "Histórico de vuelos" : "Control vuelos histórico"}
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            {vistaInventario
+              ? "Bloqueos cuya fecha de ida ya pasó (inactivos). Entra a un record para ver sus pasajeros."
+              : "Modalidad, emisión y pago de los records ya pasados."}
+          </p>
         </div>
       </div>
 
-      {/* Conteo histórico GENERAL (todos los bloqueos de la operación) */}
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Conteo histórico general (toda la operación)</div>
-      <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Card label="Bloques totales" valor={todos.length} />
-        <Card label="Sillas totales" valor={gen.total} color="var(--brand-primary)" />
-        <Card label="Vendidas" valor={gen.conf} color="var(--brand-accent)" sub={`${ventaPct(gen)}% del total`} />
-        <Card label="En plazo" valor={gen.plazo} color="#C99A2E" />
-        <Card label="Devueltas" valor={gen.dev} color="#C0392B" />
-        <Card label="No vendidas" valor={gen.nven} color="#6b7280" />
-      </div>
+      <VistaTabs basePath="/dashboard/vuelos/historico" vista={vista} />
+
+      {vistaInventario && (
+        <>
+          {/* Conteo histórico GENERAL (todos los bloqueos de la operación) */}
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Conteo histórico general (toda la operación)</div>
+          <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Card label="Bloques totales" valor={todos.length} />
+            <Card label="Sillas totales" valor={gen.total} color="var(--brand-primary)" />
+            <Card label="Vendidas" valor={gen.conf} color="var(--brand-accent)" sub={`${ventaPct(gen)}% del total`} />
+            <Card label="En plazo" valor={gen.plazo} color="#C99A2E" />
+            <Card label="Devueltas" valor={gen.dev} color="#C0392B" />
+            <Card label="No vendidas" valor={gen.nven} color="#6b7280" />
+          </div>
+        </>
+      )}
 
       {!pasados.length ? (
         <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center text-gray-400">
           <p className="text-lg">Aún no hay vuelos en el histórico</p>
           <p className="mt-1 text-sm">Los bloqueos pasan aquí automáticamente cuando su fecha de ida queda atrás.</p>
         </div>
-      ) : (
+      ) : vistaInventario ? (
         <>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
             Bloqueos pasados ({pasados.length}) · vendidas {totPas.conf}/{totPas.total} · ocupación {ocupacionPct(totPas)}%
@@ -73,11 +97,19 @@ export default async function HistoricoVuelosPage() {
                 fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
                 fecha_devolucion: b.fecha_devolucion, cupos_total: b.cupos_total ?? 0,
                 disp: c.disp, plazo: c.plazo, conf: c.conf, dev: c.dev, nven: c.nven,
-                modalidad_emision: b.modalidad_emision, estado_emision: b.estado_emision, estado_pago: b.estado_pago,
               };
             })}
           />
         </>
+      ) : (
+        <ControlVuelosTabla
+          filas={pasados.map((b) => ({
+            id: b.id, record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
+            fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
+            fecha_emision: b.fecha_emision,
+            modalidad_emision: b.modalidad_emision, estado_emision: b.estado_emision, estado_pago: b.estado_pago,
+          }))}
+        />
       )}
     </div>
   );
