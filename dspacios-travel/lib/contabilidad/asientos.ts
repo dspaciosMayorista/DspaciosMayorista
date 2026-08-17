@@ -21,7 +21,15 @@ import { getTenant } from "@/lib/tenant.server";
 // ─────────────────────────────────────────────────────────────────────────
 
 export type LineaPosteo = { cuentaCodigo: string; tercero?: string | null; descripcion?: string | null; debe: number; haber: number };
-type PosteoInput = { fecha: string; descripcion: string; origen: string; referencia: string; lineas: LineaPosteo[] };
+// `tenant` es OPCIONAL: por defecto se deriva de getTenant() (contexto del
+// actor que dispara el posteo — abonos, pagos, retenciones, todos disparados
+// por un usuario operando en SU propia agencia). Cuando el posteo nace de
+// convertir una COTIZACIÓN (reservarDesdeTarifario, convertirCotizacionManual-
+// AContrato, convertirCotizacionCarrito), el tenant correcto es el de la
+// cotización ya validada — que puede NO coincidir con el de la cookie de
+// "agencia activa" del actor (ej. superadmin convirtiendo una cotización de
+// la otra agencia) — por eso esas rutas deben pasarlo explícito.
+type PosteoInput = { fecha: string; descripcion: string; origen: string; referencia: string; lineas: LineaPosteo[]; tenant?: string };
 type PResult = { ok: true } | { ok: false; error: string };
 const TOL = 1;
 
@@ -102,7 +110,7 @@ export async function postearAsiento(input: PosteoInput): Promise<PResult> {
   if (err) return { ok: false, error: err };
 
   const sb = await db();
-  const tenant = await getTenant();
+  const tenant = input.tenant ?? await getTenant();
 
   const codigos = [...new Set(activas.map((l) => l.cuentaCodigo))];
   const { data: cuentas } = await sb.from("puc_cuentas").select("id, codigo").eq("tenant", tenant).in("codigo", codigos);
@@ -133,7 +141,7 @@ export async function postearAsiento(input: PosteoInput): Promise<PResult> {
 // una presentación externa, ej. DIAN) y postea el nuevo si se da uno.
 export async function reemplazarAsiento(origen: string, referencia: string, nuevo: Omit<PosteoInput, "origen" | "referencia"> | null): Promise<PResult> {
   const sb = await db();
-  const tenant = await getTenant();
+  const tenant = nuevo?.tenant ?? await getTenant();
   await sb.from("asientos_contables").delete().eq("tenant", tenant).eq("origen", origen).eq("referencia", referencia);
   if (!nuevo) return { ok: true };
   return postearAsiento({ ...nuevo, origen, referencia });
@@ -144,7 +152,7 @@ export async function reemplazarAsiento(origen: string, referencia: string, nuev
 // fila en `cuentas_por_pagar`.
 export async function postearAsientoCxP(input: {
   cuentaId: number; numeroContrato: string; tipoProveedor: string | null; proveedor: string | null; servicio: string | null;
-  valorTotal: number; fecha: string;
+  valorTotal: number; fecha: string; tenant?: string;
 }): Promise<PResult> {
   const referencia = `cxp:${input.cuentaId}`;
   if (input.valorTotal <= 0) return reemplazarAsiento("cxp", referencia, null);
@@ -155,6 +163,7 @@ export async function postearAsientoCxP(input: {
   return reemplazarAsiento("cxp", referencia, {
     fecha: input.fecha,
     descripcion: `${input.servicio ?? "Costo"} — ${input.proveedor ?? "Sin especificar"} (${input.numeroContrato})`,
+    tenant: input.tenant,
     lineas: [
       { cuentaCodigo: cuentas.costo, tercero: input.numeroContrato, descripcion: input.servicio, debe: input.valorTotal, haber: 0 },
       { cuentaCodigo: cuentas.proveedor, tercero: input.proveedor, descripcion: input.servicio, debe: 0, haber: input.valorTotal },

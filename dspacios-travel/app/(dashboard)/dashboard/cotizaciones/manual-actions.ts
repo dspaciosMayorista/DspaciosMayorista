@@ -6,7 +6,6 @@ import { revalidatePath } from "next/cache";
 import { marcar } from "@/lib/calc/paquetes";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
-import { getTenant } from "@/lib/tenant.server";
 import type { Tenant } from "@/lib/tenant";
 import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 
@@ -194,9 +193,16 @@ export async function crearCotizacionManual(
     items: itemsDoc,
   };
 
-  // Acción interna (autenticada): tenant desde contexto validado del
-  // servidor, nunca de `input` (el formulario no lo manda).
-  const tenantCotizacion = await getTenant();
+  // Acción INTERNA (clasificación explícita, ver revisión de PR #267): único
+  // caller es `CotizacionManualForm.tsx` bajo `/dashboard/cotizaciones/nueva`
+  // (ruta protegida por `proxy.ts`), pero al ser una Server Action exportada
+  // es igual de alcanzable directo por red — así que exige sesión aquí
+  // también. `getTenant()` a secas cae en silencio a "mayorista" sin sesión
+  // (ver lib/tenant.server.ts); `contextoCotizacion()` falla cerrado si no
+  // hay perfil o `activo !== true`, y solo entonces resuelve el tenant real.
+  const ctx = await contextoCotizacion();
+  if (!ctx.ok) return { ok: false, error: "No autorizado." };
+  const tenantCotizacion = ctx.tenant;
 
   const { data: cot, error } = await sb
     .from("cotizaciones")
@@ -523,6 +529,7 @@ export async function convertirCotizacionManualAContrato(
     const aliado = (payload.tipoAsesor === "agencia" ? payload.agenciaNombre : payload.freelanceNombre) || cot.asesor || "Aliado";
     await sb.from("aliados_b2b").insert({
       numero_contrato: numero,
+      tenant: tenantCotizacion,
       aliado,
       tipo_aliado: payload.tipoAsesor,
       precio_venta: Number(cot.precio_venta) || 0,
@@ -570,6 +577,7 @@ export async function convertirCotizacionManualAContrato(
           const etiqueta = TIPO_LABEL[s.tipo_servicio] ?? "Servicio";
           return {
             numero_contrato: numero,
+            tenant: tenantCotizacion,
             proveedor,
             tipo_proveedor: tipo,
             servicio: `${etiqueta}${s.nombre_servicio ? ` ${s.nombre_servicio}` : ""}`.trim(),
@@ -587,7 +595,7 @@ export async function convertirCotizacionManualAContrato(
         for (const c of creadas ?? []) {
           await postearAsientoCxP({
             cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-            servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO,
+            servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO, tenant: tenantCotizacion,
           });
         }
       }

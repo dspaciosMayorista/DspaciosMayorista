@@ -3,18 +3,22 @@
 --
 -- Deja `cotizaciones`/`cotizacion_servicios` EXACTAMENTE como las dejó la 153:
 -- `tenant` nullable, sin las policies con aislamiento, sin el trigger que
--- bloquea el cambio de tenant, con la policy única "interno" (solo por rol,
--- sin tenant) restaurada tal cual estaba antes de la 154.
+-- bloquea el cambio de tenant, sin `puede_ver_tenant_cotizacion()`, con la
+-- policy única "interno" (solo por rol, sin tenant) restaurada tal cual
+-- estaba antes de la 154.
 --
 -- ⚠️ VOLVER ATRÁS REABRE LA FUGA ENTRE AGENCIAS que la 154 cierra: cualquier
--- interno de una agencia vuelve a leer/escribir cotizaciones de la otra.
--- Úsalo solo si la 154 rompe un flujo real y hace falta tiempo para
--- arreglarla — no como paso normal de operación.
+-- interno de una agencia (incluida gerencia) vuelve a leer/escribir
+-- cotizaciones de la otra. Úsalo solo si la 154 rompe un flujo real y hace
+-- falta tiempo para arreglarla — no como paso normal de operación.
 --
 -- No toca el backfill de la 153 (los 18 IDs con tenant='mayorista' quedan
--- igual; solo se relaja la restricción NOT NULL). Se pega en el editor SQL
--- de Supabase. Es idempotente.
+-- igual; solo se relaja la restricción NOT NULL). Todo el archivo corre en
+-- una transacción explícita: si algo falla a mitad de camino, no queda el
+-- rollback a medias. Se pega en el editor SQL de Supabase. Es idempotente.
 -- ───────────────────────────────────────────────────────────────────────────
+
+begin;
 
 -- `cotizacion_servicios`: restaurar la policy única "interno".
 drop policy if exists "cotizacion_servicios: lectura"    on public.cotizacion_servicios;
@@ -43,5 +47,10 @@ create policy "cotizaciones: interno" on public.cotizaciones for all
   using (public.mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta'))
   with check (public.mi_rol() in ('superadmin','gerencia','administracion','operaciones','venta'));
 
+-- El helper exclusivo de cotizaciones se va con las policies que lo usaban.
+drop function if exists public.puede_ver_tenant_cotizacion(text);
+
 -- Vuelve a nullable (deshace el `set not null` de la 154).
 alter table public.cotizaciones alter column tenant drop not null;
+
+commit;

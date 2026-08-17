@@ -10,7 +10,6 @@ import { calcularEdad } from "@/lib/utils";
 import { pvpPrograma } from "@/lib/programas";
 import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
-import { getTenant } from "@/lib/tenant.server";
 import type { Tenant } from "@/lib/tenant";
 import type { Json } from "@/types/database";
 import {
@@ -49,7 +48,13 @@ export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{
 
 export type ReservaResult = { ok: true; numero: string } | { ok: false; error: string };
 
-export async function reservarDesdeTarifario(input: ReservaInput, opts?: { tenant?: Tenant }): Promise<ReservaResult> {
+// NO EXPORTADA a propósito (defecto reportado en la revisión de PR #267): una
+// Server Action exportada es alcanzable por el navegador con CUALQUIER
+// argumento serializable, así que un `tenant` en la firma pública permitía
+// que el cliente lo eligiera. El único caller válido es `convertirCotizacion`
+// (mismo archivo), que ya validó `cot.tenant` en el servidor antes de llamar
+// — el tenant llega aquí siempre ya autorizado, nunca desde el navegador.
+async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant): Promise<ReservaResult> {
   const sb = await createClient();
 
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
@@ -127,12 +132,9 @@ export async function reservarDesdeTarifario(input: ReservaInput, opts?: { tenan
   // 4) Venta (cabecera) — nace PENDIENTE
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
-    // `tenant` solo se estampa explícito cuando el caller lo pasa (conversión
-    // de una cotización: debe conservar EXACTAMENTE cotizaciones.tenant, ver
-    // convertirCotizacion). Sin `opts.tenant` se deja fuera del insert y cae
-    // al default de columna ('mayorista') — comportamiento sin cambios para
-    // el flujo de reserva directa (sin cotización), que siempre fue mayorista.
-    ...(opts?.tenant ? { tenant: opts.tenant } : {}),
+    // Conserva EXACTAMENTE el tenant de la cotización de origen — ya validado
+    // por el único caller (`convertirCotizacion`) antes de llegar aquí.
+    tenant,
     cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
     cliente_documento: oNull(input.cliente.numeroDoc),
     cliente_telefono: oNull(input.cliente.telefono),
@@ -184,6 +186,7 @@ export async function reservarDesdeTarifario(input: ReservaInput, opts?: { tenan
       const pct = pctComB2B || al.pct_comision || Number(p?.valor) || (input.tipoAsesor === "agencia" ? 0.12 : 0.11);
       await sb.from("aliados_b2b").insert({
         numero_contrato: numero,
+        tenant,
         aliado: al.nombre,
         nit: al.nit,
         precio_venta: precioVenta,
@@ -358,15 +361,16 @@ export async function reservarDesdeTarifario(input: ReservaInput, opts?: { tenan
   const OBS_AUTO = "Generado automáticamente desde el tarifario";
   type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
   type CxPRow = {
-    numero_contrato: string; proveedor: string | null; tipo_proveedor: string;
+    numero_contrato: string; tenant: Tenant; proveedor: string | null; tipo_proveedor: string;
     servicio: string; valor_total: number; fecha_obligacion: string;
     aplica_retencion: boolean; pct_retencion: number; observaciones: string;
   };
   const cxp: CxPRow[] = [];
-  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, opts?: { permitirCero?: boolean }) => {
-    if (!(valor > 0) && !opts?.permitirCero) return;
+  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, cxpOpts?: { permitirCero?: boolean }) => {
+    if (!(valor > 0) && !cxpOpts?.permitirCero) return;
     cxp.push({
       numero_contrato: numero,
+      tenant,
       proveedor: pr?.nombre ?? nombreFallback ?? null,
       tipo_proveedor: tipo,
       servicio,
@@ -557,7 +561,7 @@ export async function reservarDesdeTarifario(input: ReservaInput, opts?: { tenan
       for (const c of creadas ?? []) {
         await postearAsientoCxP({
           cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO,
+          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO, tenant,
         });
       }
     } catch {
@@ -732,18 +736,25 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
   const { data: { user } } = await sb.auth.getUser();
 
+  // Acción INTERNA (clasificación explícita, ver revisión de PR #267): el
+  // único caller es `ReservaForm.tsx`, bajo `/dashboard/reservar` — una ruta
+  // protegida por `proxy.ts` (exige sesión). Pero esta Server Action, al
+  // estar exportada, es igual de alcanzable directo por red sin pasar por esa
+  // página — así que la exige aquí también, no solo en el middleware.
+  // `getTenant()` a secas NO basta: sin sesión cae en silencio al literal
+  // "mayorista" (ver lib/tenant.server.ts) — exactamente el fallo que
+  // `contextoCotizacion()` cierra (falla cerrado si no hay perfil o
+  // `activo !== true`, y solo entonces resuelve tenant/superadmin).
+  const ctx = await contextoCotizacion();
+  if (!ctx.ok) return { ok: false, error: "No autorizado." };
+
   // El precio se calcula en el servidor (autoritativo) y el checkout debe servir
   // tanto a aliados B2B como a usuarios públicos. La RLS de `cotizaciones` es solo
   // para roles internos, así que el insert va por service-role cuando está
   // disponible (si no, cae al cliente con sesión = sólo internos).
   const sbCot = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
 
-  // Acción interna (autenticada): el tenant sale de getTenant() — contexto
-  // validado del servidor, nunca de un valor que mande el cliente. Para un
-  // aliado B2B externo (que también llega a este action desde
-  // /dashboard/reservar) resuelve a su propio `usuarios.tenant`, no a una
-  // cookie de "agencia activa" (esa solo la puede alternar superadmin).
-  const tenantCotizacion = await getTenant();
+  const tenantCotizacion = ctx.tenant;
 
   const { data: row, error } = await sbCot.from("cotizaciones").insert({
     tenant: tenantCotizacion,
@@ -805,8 +816,8 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
   // Si viene del portal B2C, el asesor interno que la gestiona se elige al convertir.
   const asesor = asesorInterno?.trim() || payload.asesorInterno || "";
   // El contrato resultante conserva EXACTAMENTE el tenant de la cotización —
-  // nunca se re-deriva de forma independiente (ver reservarDesdeTarifario).
-  const res = await reservarDesdeTarifario({ ...payload, pasajeros: pax, asesorInterno: asesor }, { tenant: cot.tenant as Tenant });
+  // nunca se re-deriva de forma independiente (ver reservarDesdeTarifarioInterno).
+  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor }, cot.tenant as Tenant);
   if (!res.ok) return res;
 
   await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);
@@ -993,11 +1004,11 @@ export async function convertirCotizacionCarrito(
     }
 
     type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
-    const cxp: { numero_contrato: string; proveedor: string | null; tipo_proveedor: string; servicio: string; valor_total: number; fecha_obligacion: string; aplica_retencion: boolean; pct_retencion: number; observaciones: string }[] = [];
+    const cxp: { numero_contrato: string; tenant: Tenant; proveedor: string | null; tipo_proveedor: string; servicio: string; valor_total: number; fecha_obligacion: string; aplica_retencion: boolean; pct_retencion: number; observaciones: string }[] = [];
     const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null) => {
       if (!(valor > 0)) return;
       cxp.push({
-        numero_contrato: numero, proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
+        numero_contrato: numero, tenant: tenantCotizacion, proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
         valor_total: Math.max(0, valor), fecha_obligacion: hoyISO,
         aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0, observaciones: OBS_AUTO,
       });
@@ -1107,7 +1118,7 @@ export async function convertirCotizacionCarrito(
       for (const c of creadas ?? []) {
         await postearAsientoCxP({
           cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO,
+          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO, tenant: tenantCotizacion,
         });
       }
     }
@@ -1249,7 +1260,7 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
   for (const c of creadas ?? []) {
     await postearAsientoCxP({
       cuentaId: c.id, numeroContrato, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-      servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoy,
+      servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoy, tenant,
     });
   }
   revalidatePath("/dashboard/pagos");

@@ -25,7 +25,16 @@
 -- candidatas, nunca estructurales).
 --
 -- Idempotente: se puede correr más de una vez sin efecto adicional.
+--
+-- Todo el archivo corre dentro de UNA transacción explícita (`begin`/`commit`):
+-- si el `raise exception` de verificación (punto 6) dispara, Postgres
+-- revierte también la columna/constraint/índice/backfill de los puntos
+-- 1-3 — no queda una migración a medias. Antes se dependía de que el editor
+-- SQL de Supabase envolviera el script pegado en una transacción implícita;
+-- ahora es explícito y no depende de cómo se corra (editor, CLI, `psql -f`).
 -- ───────────────────────────────────────────────────────────────────────────
+
+begin;
 
 -- 1) Columna nullable (sin default — no hay valor "correcto" para asumir).
 alter table public.cotizaciones add column if not exists tenant text;
@@ -70,6 +79,8 @@ begin
       v_mal, v_ids;
   end if;
 end $$;
+
+commit;
 
 -- 8) Consulta de verificación (SOLO LECTURA, no se ejecuta como parte de la
 -- migración — se deja aquí, comentada, para correrla manualmente ENTRE el

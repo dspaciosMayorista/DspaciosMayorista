@@ -12,9 +12,14 @@
 -- corriendo mientras se aplica este rollback, esos inserts empezarán a
 -- fallar. Úsalo solo junto con revertir el despliegue del código, no solo.
 --
--- Se pega en el editor SQL de Supabase. Es idempotente.
+-- Se pega en el editor SQL de Supabase. Es idempotente. Corre en una
+-- transacción explícita (`begin`/`commit`) para no dejar el rollback a medias.
 -- ───────────────────────────────────────────────────────────────────────────
+
+begin;
 
 drop index if exists public.idx_cotizaciones_tenant;
 alter table public.cotizaciones drop constraint if exists cotizaciones_tenant_check;
 alter table public.cotizaciones drop column if exists tenant;
+
+commit;

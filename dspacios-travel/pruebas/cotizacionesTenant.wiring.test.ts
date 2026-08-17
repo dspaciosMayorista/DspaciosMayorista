@@ -38,15 +38,21 @@ test("el checkout público estampa tenant='mayorista' fijo, nunca desde el clien
   );
 });
 
-test("reservar/actions.ts: crearCotizacion usa getTenant() (contexto validado), no un valor fijo ni del cliente", () => {
+test("reservar/actions.ts: crearCotizacion usa contextoCotizacion() (falla cerrado sin sesión), nunca getTenant() a secas", () => {
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
-  assert.match(src, /import\s*\{\s*getTenant\s*\}\s*from\s*"@\/lib\/tenant\.server"/, "no importa getTenant()");
+  // Defecto corregido (revisión de PR #267, punto 7): `getTenant()` a secas
+  // cae en silencio a "mayorista" sin sesión — una acción interna/autenticada
+  // NUNCA debe depender solo de eso. El archivo no debe importar `getTenant`
+  // en absoluto: toda resolución de tenant pasa por `contextoCotizacion()`.
+  assert.doesNotMatch(src, /import\s*\{\s*getTenant\s*\}\s*from\s*"@\/lib\/tenant\.server"/, "reservar/actions.ts volvió a importar getTenant() a secas");
   const start = src.indexOf("export async function crearCotizacion(");
   const end = src.indexOf("export async function convertirCotizacion(");
   assert.ok(start !== -1 && end !== -1 && end > start, "no se pudo delimitar el cuerpo de crearCotizacion");
   const fn = src.slice(start, end);
   assert.match(fn, /tenant:\s*tenantCotizacion/, "crearCotizacion no estampa `tenant: tenantCotizacion`");
-  assert.match(fn, /tenantCotizacion\s*=\s*await getTenant\(\)/, "crearCotizacion no resuelve tenantCotizacion con getTenant()");
+  assert.match(fn, /const\s+ctx\s*=\s*await\s+contextoCotizacion\(\)/, "crearCotizacion no llama a contextoCotizacion()");
+  assert.match(fn, /if\s*\(!ctx\.ok\)\s*return\s*\{\s*ok:\s*false/, "crearCotizacion no falla cerrado cuando el contexto no está autorizado");
+  assert.match(fn, /tenantCotizacion\s*=\s*ctx\.tenant/, "crearCotizacion no resuelve tenantCotizacion desde el contexto validado");
 });
 
 test("reservar/actions.ts: convertirCotizacion y convertirCotizacionCarrito exigen tenant y conservan el de la cotización", () => {
@@ -58,23 +64,49 @@ test("reservar/actions.ts: convertirCotizacion y convertirCotizacionCarrito exig
     assert.match(fn, /if\s*\(!cot\.tenant\)/, `${fnName} no rechaza una cotización sin tenant`);
     assert.match(fn, /autorizaTenant\(ctx,\s*cot\.tenant\)/, `${fnName} no valida el acceso al tenant de la cotización`);
   }
-  // convertirCotizacion pasa el tenant a reservarDesdeTarifario en vez de
-  // dejar que el contrato resultante lo re-derive por su cuenta.
+  // convertirCotizacion pasa el tenant a la función INTERNA (no exportada),
+  // nunca por un `opts` serializable — ver el test de la firma más abajo.
   const c1 = src.slice(src.indexOf("export async function convertirCotizacion("), src.indexOf("export async function convertirCotizacionCarrito"));
-  assert.match(c1, /reservarDesdeTarifario\([^)]*\{\s*tenant:\s*cot\.tenant as Tenant\s*\}/, "convertirCotizacion no propaga el tenant a reservarDesdeTarifario");
+  assert.match(c1, /reservarDesdeTarifarioInterno\([^)]*,\s*cot\.tenant as Tenant\s*\)/, "convertirCotizacion no propaga el tenant a reservarDesdeTarifarioInterno");
   // convertirCotizacionCarrito estampa el mismo tenant en su propio insert de `ventas`.
   const c2 = src.slice(src.indexOf("export async function convertirCotizacionCarrito"));
   assert.match(c2, /tenant:\s*tenantCotizacion/, "convertirCotizacionCarrito no estampa tenant en el insert de ventas");
 });
 
-test("reservar/actions.ts: reservarDesdeTarifario nunca sobreescribe el tenant sin que se lo pidan explícitamente", () => {
+test("reservar/actions.ts: reservarDesdeTarifario* NUNCA vuelve a ser una Server Action exportada con tenant elegible por el cliente", () => {
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
-  const start = src.indexOf("export async function reservarDesdeTarifario");
+  // Defecto corregido (revisión de PR #267, punto 3): una Server Action
+  // exportada es alcanzable por red con CUALQUIER argumento serializable —
+  // un `opts?: { tenant?: Tenant }` en la firma pública permitía que el
+  // cliente intentara elegir su propio tenant. Guarda de no-regresión: el
+  // patrón viejo no debe reaparecer en ningún lado del archivo.
+  assert.doesNotMatch(src, /export\s+async\s+function\s+reservarDesdeTarifario\s*\(/, "reservarDesdeTarifario volvió a exportarse — el tenant sería elegible por el cliente");
+  assert.doesNotMatch(src, /opts\?:\s*\{\s*tenant\?:\s*Tenant\s*\}/, "reapareció `opts?: { tenant?: Tenant }` — patrón vulnerable (tenant elegible por el cliente)");
+  assert.doesNotMatch(src, /opts\?\.tenant/, "reapareció una lectura de `opts?.tenant` — patrón vulnerable");
+  // La función real es interna (no exportada) y exige el tenant como
+  // parámetro POSICIONAL obligatorio — nunca opcional ni dentro de un objeto
+  // que un caller pueda omitir u override parcialmente.
+  const start = src.indexOf("async function reservarDesdeTarifarioInterno");
   const end = src.indexOf("export async function crearCotizacion(");
-  assert.ok(start !== -1 && end !== -1 && end > start, "no se pudo delimitar el cuerpo de reservarDesdeTarifario");
+  assert.ok(start !== -1 && end !== -1 && end > start, "no se pudo delimitar el cuerpo de reservarDesdeTarifarioInterno");
+  assert.doesNotMatch(src.slice(0, start), /export\s+async\s+function\s+reservarDesdeTarifarioInterno/, "reservarDesdeTarifarioInterno está exportada — debe ser interna");
+  assert.match(src.slice(start, start + 200), /reservarDesdeTarifarioInterno\(input:\s*ReservaInput,\s*tenant:\s*Tenant\)/, "reservarDesdeTarifarioInterno no exige `tenant: Tenant` como parámetro obligatorio");
   const fn = src.slice(start, end);
-  assert.match(fn, /opts\?:\s*\{\s*tenant\?:\s*Tenant\s*\}/, "reservarDesdeTarifario perdió el parámetro opcional de tenant");
-  assert.match(fn, /\.\.\.\(opts\?\.tenant\s*\?\s*\{\s*tenant:\s*opts\.tenant\s*\}\s*:\s*\{\}\)/, "el insert de ventas ya no condiciona el tenant a opts?.tenant");
+  assert.match(fn, /tenant,\s*\n\s*cliente:/, "el insert de ventas dentro de reservarDesdeTarifarioInterno no estampa el tenant recibido");
+});
+
+test("reservar/actions.ts: las filas derivadas (aliados_b2b, CxP, asientos) heredan el tenant validado, no uno independiente", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const start = src.indexOf("async function reservarDesdeTarifarioInterno");
+  const end = src.indexOf("export async function crearCotizacion(");
+  const fn = src.slice(start, end);
+  assert.match(fn, /aliados_b2b"\)\.insert\(\{\s*\n\s*numero_contrato:\s*numero,\s*\n\s*tenant,/, "el insert de aliados_b2b en reservarDesdeTarifarioInterno no estampa tenant");
+  assert.match(fn, /type CxPRow\s*=\s*\{\s*\n\s*numero_contrato:\s*string;\s*tenant:\s*Tenant;/, "el tipo CxPRow perdió el campo tenant");
+  assert.match(fn, /postearAsientoCxP\(\{[\s\S]{0,300}fecha:\s*hoyISO,\s*tenant,/, "el asiento automático de CxP en reservarDesdeTarifarioInterno no recibe el tenant explícito");
+
+  const carrito = src.slice(src.indexOf("export async function convertirCotizacionCarrito"));
+  assert.match(carrito, /tenant:\s*tenantCotizacion,\s*proveedor:/, "convertirCotizacionCarrito no estampa tenant en las filas de cuentas_por_pagar");
+  assert.match(carrito, /postearAsientoCxP\(\{[\s\S]{0,300}tenant:\s*tenantCotizacion/, "convertirCotizacionCarrito no pasa el tenant explícito al asiento automático");
 });
 
 test("reservar/actions.ts: actualizarVigenciaCotizacion y descartarCotizacion filtran por tenant salvo superadmin", () => {
@@ -87,14 +119,18 @@ test("reservar/actions.ts: actualizarVigenciaCotizacion y descartarCotizacion fi
   }
 });
 
-test("manual-actions.ts: crearCotizacionManual usa getTenant(), y las conversiones/ediciones exigen acceso al tenant", () => {
+test("manual-actions.ts: crearCotizacionManual falla cerrado con contextoCotizacion(), y las conversiones/ediciones exigen acceso al tenant", () => {
   const src = leer("app/(dashboard)/dashboard/cotizaciones/manual-actions.ts");
-  assert.match(src, /import\s*\{\s*getTenant\s*\}\s*from\s*"@\/lib\/tenant\.server"/, "no importa getTenant()");
+  // Defecto corregido (revisión de PR #267, punto 7): mismo criterio que
+  // crearCotizacion — `getTenant()` a secas no debe volver a importarse aquí.
+  assert.doesNotMatch(src, /import\s*\{\s*getTenant\s*\}\s*from\s*"@\/lib\/tenant\.server"/, "manual-actions.ts volvió a importar getTenant() a secas");
   assert.match(src, /import\s*\{\s*contextoCotizacion,\s*autorizaTenant\s*\}\s*from\s*"@\/lib\/cotizacion\/acceso"/, "no importa el helper de acceso");
 
   const crear = src.slice(src.indexOf("export async function crearCotizacionManual"), src.indexOf("export async function actualizarTitularCotizacionManual"));
   assert.match(crear, /tenant:\s*tenantCotizacion/, "crearCotizacionManual no estampa tenant");
-  assert.match(crear, /tenantCotizacion\s*=\s*await getTenant\(\)/, "crearCotizacionManual no resuelve el tenant con getTenant()");
+  assert.match(crear, /const\s+ctx\s*=\s*await\s+contextoCotizacion\(\)/, "crearCotizacionManual no llama a contextoCotizacion()");
+  assert.match(crear, /if\s*\(!ctx\.ok\)\s*return\s*\{\s*ok:\s*false/, "crearCotizacionManual no falla cerrado cuando el contexto no está autorizado");
+  assert.match(crear, /tenantCotizacion\s*=\s*ctx\.tenant/, "crearCotizacionManual no resuelve el tenant desde el contexto validado");
 
   for (const fnName of ["actualizarTitularCotizacionManual", "actualizarIncluyeCotizacionManual", "actualizarRecobroNinosCotizacionManual"]) {
     const start = src.indexOf(`export async function ${fnName}`);
@@ -107,6 +143,14 @@ test("manual-actions.ts: crearCotizacionManual usa getTenant(), y las conversion
   assert.match(convertir, /if\s*\(!cot\.tenant\)/, "convertirCotizacionManualAContrato no rechaza una cotización sin tenant");
   assert.match(convertir, /autorizaTenant\(ctx,\s*cot\.tenant\)/, "convertirCotizacionManualAContrato no valida el acceso al tenant");
   assert.match(convertir, /tenant:\s*tenantCotizacion/, "convertirCotizacionManualAContrato no propaga el tenant al insert de ventas");
+});
+
+test("manual-actions.ts: aliados_b2b y las CxP de convertirCotizacionManualAContrato heredan el tenant validado", () => {
+  const src = leer("app/(dashboard)/dashboard/cotizaciones/manual-actions.ts");
+  const convertir = src.slice(src.indexOf("export async function convertirCotizacionManualAContrato"));
+  assert.match(convertir, /aliados_b2b"\)\.insert\(\{\s*\n\s*numero_contrato:\s*numero,\s*\n\s*tenant:\s*tenantCotizacion,/, "el insert de aliados_b2b no estampa tenant");
+  assert.match(convertir, /numero_contrato:\s*numero,\s*\n\s*tenant:\s*tenantCotizacion,\s*\n\s*proveedor,/, "las filas de cuentas_por_pagar (CxP) no estampan tenant");
+  assert.match(convertir, /postearAsientoCxP\(\{[\s\S]{0,300}tenant:\s*tenantCotizacion/, "el asiento automático de CxP no recibe el tenant explícito");
 });
 
 test("las páginas de cotización por id exigen acceso al tenant (cierre de la vía enumerable V2)", () => {
