@@ -341,6 +341,11 @@ async function crearCotizacionCarrito(input: {
   const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
 
   const { data: row, error } = await admin.from("cotizaciones").insert({
+    // Estampado FIJO en el servidor — nunca desde `input` (el cliente no
+    // manda ni puede mandar un tenant): este checkout es el carrito público
+    // del tarifario, que es un producto exclusivo de mayorista (minorista no
+    // tiene tarifario/catálogo público — MINORISTA_OCULTAS en proxy.ts).
+    tenant: "mayorista",
     tipo: "carrito",
     payload: { items: itemsOk, tours: toursOk, cliente: input.cliente } as unknown as Json,
     detalle: detalle as unknown as Json,

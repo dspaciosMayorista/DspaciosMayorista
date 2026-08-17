@@ -33,6 +33,13 @@ type Detalle = {
 
 // Vista pública (sin login) de una cotización, por token imposible de adivinar.
 // El cliente del tarifario la guarda/imprime y la muestra en la oficina.
+//
+// `createAdminClient()` es correcto aquí: no hay sesión (RLS no tiene con qué
+// evaluar), así que el service-role es indispensable. La validación de acceso
+// explícita que lo justifica es el propio `.eq("share_token", token)` — un
+// UUID impredecible y de un solo uso por cotización (migración 058) — nunca
+// se filtra por `id` ni se expone un listado: cada token solo abre SU
+// cotización exacta.
 export default async function CotizacionPublicaPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const sb = createAdminClient();

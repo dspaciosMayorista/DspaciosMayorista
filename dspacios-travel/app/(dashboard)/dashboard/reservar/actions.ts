@@ -9,6 +9,9 @@ import { parseRuta, ciudadIata } from "@/lib/iata";
 import { calcularEdad } from "@/lib/utils";
 import { pvpPrograma } from "@/lib/programas";
 import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
+import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
+import { getTenant } from "@/lib/tenant.server";
+import type { Tenant } from "@/lib/tenant";
 import type { Json } from "@/types/database";
 import {
   cotizarPorFechas as cotizarPorFechasImpl,
@@ -46,7 +49,7 @@ export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{
 
 export type ReservaResult = { ok: true; numero: string } | { ok: false; error: string };
 
-export async function reservarDesdeTarifario(input: ReservaInput): Promise<ReservaResult> {
+export async function reservarDesdeTarifario(input: ReservaInput, opts?: { tenant?: Tenant }): Promise<ReservaResult> {
   const sb = await createClient();
 
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
@@ -124,6 +127,12 @@ export async function reservarDesdeTarifario(input: ReservaInput): Promise<Reser
   // 4) Venta (cabecera) — nace PENDIENTE
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
+    // `tenant` solo se estampa explícito cuando el caller lo pasa (conversión
+    // de una cotización: debe conservar EXACTAMENTE cotizaciones.tenant, ver
+    // convertirCotizacion). Sin `opts.tenant` se deja fuera del insert y cae
+    // al default de columna ('mayorista') — comportamiento sin cambios para
+    // el flujo de reserva directa (sin cotización), que siempre fue mayorista.
+    ...(opts?.tenant ? { tenant: opts.tenant } : {}),
     cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
     cliente_documento: oNull(input.cliente.numeroDoc),
     cliente_telefono: oNull(input.cliente.telefono),
@@ -729,7 +738,15 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   // disponible (si no, cae al cliente con sesión = sólo internos).
   const sbCot = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
 
+  // Acción interna (autenticada): el tenant sale de getTenant() — contexto
+  // validado del servidor, nunca de un valor que mande el cliente. Para un
+  // aliado B2B externo (que también llega a este action desde
+  // /dashboard/reservar) resuelve a su propio `usuarios.tenant`, no a una
+  // cookie de "agencia activa" (esa solo la puede alternar superadmin).
+  const tenantCotizacion = await getTenant();
+
   const { data: row, error } = await sbCot.from("cotizaciones").insert({
+    tenant: tenantCotizacion,
     payload: input as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: clienteNombre,
@@ -760,12 +777,19 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
   const sb = await createClient();
   const { data: cot, error } = await sb
     .from("cotizaciones")
-    .select("estado, payload, numero_contrato")
+    .select("estado, payload, numero_contrato, tenant")
     .eq("id", id)
     .maybeSingle();
   if (error || !cot) return { ok: false, error: error?.message ?? "Cotización no encontrada." };
   if (cot.estado === "convertida" && cot.numero_contrato) return { ok: true, numero: cot.numero_contrato };
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
+
+  // Sin tenant asignado no se convierte: no hay con qué estampar el contrato
+  // (ver migración 153 — no se asume ningún tenant por defecto).
+  if (!cot.tenant) return { ok: false, error: "Esta cotización no tiene agencia (tenant) asignada; no se puede convertir. Contacta a un administrador." };
+
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
 
   const payload = cot.payload as unknown as ReservaInput;
   // Un contrato necesita pasajeros: usa los capturados ahora o los que ya trae la
@@ -773,16 +797,16 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
   // no pasa a contrato, salvo override de superadmin.
   const pax = pasajeros && pasajeros.length ? pasajeros : (payload.pasajeros ?? []);
   if (!pax.length) {
-    const { data: { user } } = await sb.auth.getUser();
-    const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
-    if (!(override && perfil?.rol === "superadmin")) {
+    if (!(override && ctx.ok && ctx.superadmin)) {
       return { ok: false, error: "Captura los datos de los pasajeros antes de generar el contrato." };
     }
   }
 
   // Si viene del portal B2C, el asesor interno que la gestiona se elige al convertir.
   const asesor = asesorInterno?.trim() || payload.asesorInterno || "";
-  const res = await reservarDesdeTarifario({ ...payload, pasajeros: pax, asesorInterno: asesor });
+  // El contrato resultante conserva EXACTAMENTE el tenant de la cotización —
+  // nunca se re-deriva de forma independiente (ver reservarDesdeTarifario).
+  const res = await reservarDesdeTarifario({ ...payload, pasajeros: pax, asesorInterno: asesor }, { tenant: cot.tenant as Tenant });
   if (!res.ok) return res;
 
   await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);
@@ -829,10 +853,20 @@ export async function convertirCotizacionCarrito(
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("id, estado, tipo, payload")
+    .select("id, estado, tipo, payload, tenant")
     .eq("id", id).eq("tipo", "carrito").maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
+
+  // Sin tenant asignado no se convierte (ver migración 153 — nunca se asume
+  // un tenant por defecto), y el caller debe tener acceso a esa agencia.
+  if (!cot.tenant) return { ok: false, error: "Esta cotización no tiene agencia (tenant) asignada; no se puede convertir. Contacta a un administrador." };
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+  // Capturado en una constante (en vez de reusar `cot.tenant` más abajo,
+  // después de varios `await`): TypeScript no puede seguir garantizando el
+  // `!cot.tenant` de arriba a través de llamadas intermedias.
+  const tenantCotizacion = cot.tenant as Tenant;
 
   const payload = (cot.payload ?? {}) as {
     items?: ItemCarritoPayload[]; tours?: TourCarritoPayload[];
@@ -916,6 +950,9 @@ export async function convertirCotizacionCarrito(
 
     const { error: ve } = await sb.from("ventas").insert({
       numero_contrato: numero,
+      // Conserva EXACTAMENTE el tenant de la cotización de origen (validado
+      // arriba: no nulo, y el caller tiene acceso a él).
+      tenant: tenantCotizacion,
       cliente: clienteNombre,
       cliente_documento: oNull(cliente.numeroDoc),
       cliente_telefono: oNull(cliente.telefono),
@@ -1094,17 +1131,29 @@ export async function convertirCotizacionCarrito(
 
 export async function actualizarVigenciaCotizacion(id: number, vigenciaHasta: string): Promise<{ ok: boolean; error?: string }> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(vigenciaHasta)) return { ok: false, error: "Fecha inválida." };
+  const ctx = await contextoCotizacion();
+  if (!ctx.ok) return { ok: false, error: "No autorizado." };
   const sb = await createClient();
-  const { error } = await sb.from("cotizaciones").update({ vigencia_hasta: vigenciaHasta }).eq("id", id).eq("estado", "abierta");
+  // El tenant NUNCA se toca aquí — solo se usa para filtrar qué fila puede
+  // tocar el caller. Superadmin conserva alcance global.
+  let q = sb.from("cotizaciones").update({ vigencia_hasta: vigenciaHasta }).eq("id", id).eq("estado", "abierta");
+  if (!ctx.superadmin) q = q.eq("tenant", ctx.tenant);
+  const { data, error } = await q.select("id");
   if (error) return { ok: false, error: error.message };
+  if (!data?.length) return { ok: false, error: "Cotización no encontrada o sin acceso." };
   revalidatePath(`/dashboard/cotizaciones/${id}`);
   return { ok: true };
 }
 
 export async function descartarCotizacion(id: number): Promise<{ ok: boolean; error?: string }> {
+  const ctx = await contextoCotizacion();
+  if (!ctx.ok) return { ok: false, error: "No autorizado." };
   const sb = await createClient();
-  const { error } = await sb.from("cotizaciones").update({ estado: "descartada" }).eq("id", id).eq("estado", "abierta");
+  let q = sb.from("cotizaciones").update({ estado: "descartada" }).eq("id", id).eq("estado", "abierta");
+  if (!ctx.superadmin) q = q.eq("tenant", ctx.tenant);
+  const { data, error } = await q.select("id");
   if (error) return { ok: false, error: error.message };
+  if (!data?.length) return { ok: false, error: "Cotización no encontrada o sin acceso." };
   revalidatePath("/dashboard/cotizaciones");
   revalidatePath(`/dashboard/cotizaciones/${id}`);
   return { ok: true };

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
@@ -20,7 +21,17 @@ export async function generateMetadata({
 }) {
   const { id } = await params;
   const sb = await createClient();
-  const { data: cot } = await sb.from("cotizaciones").select("codigo, detalle, payload").eq("id", Number(id)).maybeSingle();
+  const { data: cot } = await sb.from("cotizaciones").select("codigo, detalle, payload, tenant").eq("id", Number(id)).maybeSingle();
+
+  // ⚠️ generateMetadata NUNCA debe filtrar título/código/cliente de una
+  // cotización a la que el visitante no tiene acceso: el <title> se renderiza
+  // aparte del cuerpo de la página, así que un chequeo solo en el componente
+  // no alcanza a protegerlo. Se repite aquí el mismo chequeo de tenant.
+  const ctx = await contextoCotizacion();
+  if (!cot || !autorizaTenant(ctx, cot.tenant)) {
+    return { title: { absolute: "Cotización" } };
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const d = cot?.detalle as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,11 +70,19 @@ export default async function CotizacionImprimiblePage({
 
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("codigo, detalle, vigencia_hasta, tipo, payload, created_at")
+    .select("codigo, detalle, vigencia_hasta, tipo, payload, created_at, tenant")
     .eq("id", Number(id))
     .maybeSingle();
 
   if (!cot || !cot.detalle) notFound();
+
+  // Cierra la vía enumerable entre agencias (V2): ya no basta con conocer el
+  // id — hace falta acceso al tenant de la cotización. Misma respuesta (404)
+  // sin importar si el id no existe o si pertenece a la otra agencia. El
+  // acceso público de verdad sigue siendo /cot/[token] (share_token
+  // impredecible), que no pasa por aquí.
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) notFound();
 
   const volverLink = (
     <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">

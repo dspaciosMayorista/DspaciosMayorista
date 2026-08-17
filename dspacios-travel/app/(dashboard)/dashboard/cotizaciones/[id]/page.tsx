@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,11 @@ export default async function CotizacionDetallePage({
     .maybeSingle();
 
   if (!c) notFound();
+
+  // Detalle interno: exige acceso al tenant de la cotización. Misma respuesta
+  // (404) que "no existe" — no delata si el id pertenece a otra agencia.
+  const ctxAcceso = await contextoCotizacion();
+  if (!autorizaTenant(ctxAcceso, c.tenant)) notFound();
 
   const esManual = c.tipo === "manual";
   // Cotización combinada generada desde el carrito del tarifario público
