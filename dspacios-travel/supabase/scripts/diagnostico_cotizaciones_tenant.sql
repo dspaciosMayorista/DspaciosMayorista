@@ -336,11 +336,21 @@ begin
     -- y forzarlo requeriría un GRANT que este script, al ser de solo
     -- lectura, no debe otorgar. El mismo patrón (capturar en variables,
     -- escribir recién tras `reset role`) ya lo usa `test_rls_por_rol.sql`.
-    select array_agg(c.id), array_agg(c.numero_contrato)
+    --
+    -- ⚠️ Los dos array_agg de cada select DEBEN llevar el MISMO `order by`
+    -- explícito. Sin él, PostgreSQL no garantiza que ambos agregados
+    -- procesen las filas en el mismo orden — son dos acumuladores
+    -- independientes, y aunque en la práctica casi siempre comparten el
+    -- mismo plan de escaneo, eso es un detalle de implementación, no una
+    -- garantía del estándar. Emparejarlos después por POSICIÓN vía
+    -- `unnest` en paralelo sin ese orden explícito sería depender de un
+    -- orden incidental. Ordenar ambos por `id` hace la correspondencia
+    -- correcta por construcción, no por suerte del planificador.
+    select array_agg(c.id order by c.id), array_agg(c.numero_contrato order by c.id)
       into v_cot_ids, v_cot_nums
       from public.cotizaciones c;
 
-    select array_agg(s.id), array_agg(s.cotizacion_id)
+    select array_agg(s.id order by s.id), array_agg(s.cotizacion_id order by s.id)
       into v_serv_ids, v_serv_cids
       from public.cotizacion_servicios s;
 
@@ -357,6 +367,48 @@ begin
     select u.email, u.tenant, x.id, x.cid
     from unnest(coalesce(v_serv_ids, '{}'), coalesce(v_serv_cids, '{}')) as x(id, cid);
   end loop;
+end $$;
+
+-- ── Control de integridad del emparejamiento (real, no sintético) ───────
+-- Verifica, contra los datos REALES de esta corrida (no un caso fabricado
+-- aparte), que cada `cotizacion_id` capturado en `_visibles_cot` conserva
+-- el `numero_contrato` que de verdad tiene esa fila en `cotizaciones` —
+-- es decir, que `array_agg(... order by id)` + `unnest` en paralelo no
+-- desordenó ninguna pareja al capturar y reconstruir. Con varias
+-- cotizaciones de contratos distintos ya sembradas más arriba en el
+-- diagnóstico (o las que existan en producción al correrlo ahí), esto
+-- cubre el caso pedido: múltiples cotizaciones/contratos distintos, no
+-- solo uno. Si alguna vez se quita el `order by` o se cambia el criterio
+-- de orden entre los dos array_agg de un mismo select, este bloque lo
+-- detecta con `raise exception` en vez de dejar pasar un diagnóstico con
+-- parejas cruzadas en silencio.
+do $$
+declare
+  v_desajustes_cot  bigint;
+  v_desajustes_serv bigint;
+begin
+  select count(*) into v_desajustes_cot
+  from _visibles_cot v
+  join public.cotizaciones c on c.id = v.cotizacion_id
+  where v.numero_contrato is distinct from c.numero_contrato;
+
+  if v_desajustes_cot > 0 then
+    raise exception 'CONTROL DE INTEGRIDAD FALLÓ: % filas en _visibles_cot quedaron con un numero_contrato distinto al real de cotizaciones.id — el emparejamiento id↔numero_contrato se corrompió al capturar/reconstruir.', v_desajustes_cot;
+  end if;
+
+  select count(*) into v_desajustes_serv
+  from _visibles_serv v
+  join public.cotizacion_servicios s on s.id = v.servicio_id
+  where v.cotizacion_id is distinct from s.cotizacion_id;
+
+  if v_desajustes_serv > 0 then
+    raise exception 'CONTROL DE INTEGRIDAD FALLÓ: % filas en _visibles_serv quedaron con un cotizacion_id distinto al real de cotizacion_servicios.id.', v_desajustes_serv;
+  end if;
+
+  raise notice 'CONTROL DE INTEGRIDAD OK: las % filas de _visibles_cot y las % de _visibles_serv conservan exactamente su numero_contrato/cotizacion_id real tras array_agg(order by id)/unnest — verificado contra % cotizaciones con numero_contrato distinto entre sí en esta corrida.',
+    (select count(*) from _visibles_cot),
+    (select count(*) from _visibles_serv),
+    (select count(distinct numero_contrato) from public.cotizaciones where numero_contrato is not null);
 end $$;
 
 -- Fase 2 (superusuario, sin RLS): resolver el tenant real de cada
