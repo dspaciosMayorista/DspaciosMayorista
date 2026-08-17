@@ -8,294 +8,311 @@
 -- Las únicas tablas que este script escribe son temporales (`create temp
 -- table ... on commit drop`) y desaparecen solas al terminar la transacción,
 -- incluso si el rollback no se ejecutara por algún corte de conexión.
+--
+-- ⚠️ REPORTE CONSOLIDADO: el editor SQL de Supabase solo muestra el
+-- resultado del ÚLTIMO statement cuando se corre el script completo de una
+-- vez — todos los `select` intermedios que este script ejecutaba antes se
+-- calculaban igual, pero su resultado quedaba invisible. Ahora cada bloque
+-- vuelca su resultado (mismo cálculo, misma lógica, solo cambia cómo se
+-- empaqueta) a una tabla temporal `_reporte(orden, seccion, resultado
+-- jsonb)`, y el ÚNICO `select` final antes del `rollback` devuelve todas las
+-- secciones en un solo resultado, una fila por sección, ordenadas.
 -- ─────────────────────────────────────────────────────────────────────────
 --
--- QUÉ RESPONDE CADA BLOQUE (mismo orden que los 10 puntos pedidos, más un
--- bloque D1 nuevo que audita la confiabilidad de una de las señales)
---   1        → cuántas filas hay hoy en cada tabla
---   2        → columnas actuales (por si el modelo ya cambió desde este diseño)
---   3        → estados / tipos / rango de fechas
---   4        → qué otras tablas permiten inferir el tenant de una cotización
---   D1       → confiabilidad de `usuarios.tenant` (afecta a la señal 4.b)
---   5 y 6    → clasificación por confianza de evidencia (NO por coalesce)
---   7        → filas huérfanas en cotizacion_servicios
---   8        → policies reales (no lo que debería ser, lo que HAY)
---   9        → prueba cruzada autenticada (mayorista vs. minorista),
---              extendida a cotizacion_servicios, + control negativo sintético
---   10       → prueba de acceso anónimo (rol `anon`, sin sesión), distinguiendo
---              "sin privilegio SELECT" de "RLS deja 0 filas" de "filas reales"
+-- SECCIONES DEL REPORTE FINAL (columna `seccion`, en el orden que trae
+-- `select seccion, resultado from _reporte order by orden`)
+--    1  conteos                                    → total de filas de cada tabla
+--    2  estados_y_tipos                             → cotizaciones por estado × tipo
+--    3  D1_3_usuarios_sospechosos                    → SOLO los usuarios marcados
+--       SOSPECHOSO en la auditoría de confiabilidad de `usuarios.tenant`
+--    4  D1_4_conteos                                 → solo_tenant_b /
+--       solo_tenant_b_de_usuario_sospechoso
+--    5  clasificacion_5_6                            → clasificación completa por
+--       confianza de evidencia, con cantidades
+--    6  servicios_huerfanos                          → huérfanas en cotizacion_servicios
+--    7  policies_resumen                             → policies reales de ambas tablas
+--    8  cruce_autenticado_cotizaciones                → prueba cruzada por usuario/tenant
+--    9  cruce_autenticado_servicios                   → misma prueba, extendida a
+--       cotizacion_servicios (fuga vía el padre)
+--   10  resultado_anonimo                             → acceso del rol `anon`
+--   11  controles_de_integridad                       → resultado de los DOS controles
+--       (emparejamiento id↔numero_contrato del bloque 9, y el control negativo
+--       sintético que prueba que el mecanismo de fuga sí detecta una fuga)
+--   12  cotizaciones_ambiguas_o_revision_manual        → id y datos mínimos (SIN
+--       payload/detalle completos ni datos personales del cliente) de las filas
+--       que la clasificación del punto 5 dejó en AMBIGUA o REVISIÓN MANUAL, para
+--       poder decidir su tenant caso por caso
 --
--- Los bloques 9 y 10 son los únicos que impersonan un rol de PostgREST; el
--- resto son selects directos como superusuario (ven todo, sin RLS, porque el
--- editor SQL de Supabase corre como superusuario). Por eso 1-8/D1 muestran el
--- estado REAL de los datos, y 9-10 muestran lo que un usuario real vería a
--- través de la API — que es la pregunta de seguridad de verdad.
+-- Los bloques 8 y 9 (y sus DO blocks de origen) son los únicos que impersonan
+-- un rol de PostgREST; el resto son cálculos directos como superusuario (ven
+-- todo, sin RLS, porque el editor SQL de Supabase corre como superusuario).
 --
--- ⚠️ SOBRE LA CLASIFICACIÓN (bloques 5/6): la versión anterior de este script
--- usaba `coalesce(tenant_a, tenant_b, tenant_c)`, lo que dejaba que una
--- coincidencia de NOMBRE (tenant_c, la señal más débil — el mismo mecanismo
--- que ya demostró fallar en `ventas.asesor`) declarara sola una fila como
--- "inequívoca". Esta versión NUNCA combina señales de distinta confianza con
--- coalesce para decidir un tenant automáticamente: cada señal se muestra por
--- separado y la clasificación es explícita sobre cuál(es) la sustentan.
+-- ⚠️ Si CUALQUIERA de los dos controles de integridad falla, el DO block
+-- correspondiente sigue haciendo `raise exception` — igual que antes — y
+-- TODA la transacción aborta (no llega a producir el reporte final). Eso es
+-- intencional: un control roto no debe disfrazarse de reporte exitoso.
+--
+-- ⚠️ SOBRE LA CLASIFICACIÓN (sección 5): NUNCA combina señales de distinta
+-- confianza con `coalesce` para decidir un tenant automáticamente. `tenant_c`
+-- (coincidencia de NOMBRE — el mismo mecanismo que ya falló en
+-- `ventas.asesor`) nunca convierte sola una fila en inequívoca; `tenant_b`
+-- (creado_por) se marca "CANDIDATA" pendiente de auditar su fiabilidad
+-- (sección 3); las contradicciones entre señales se reportan aparte.
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
 
+create temp table _reporte (
+  orden     integer,
+  seccion   text,
+  resultado jsonb
+) on commit drop;
+
+-- Resultados de los dos controles de integridad (bloque 9 más abajo), para
+-- combinarlos en una sola fila de `_reporte` (sección 11).
+create temp table _controles (
+  subseccion text,
+  resultado  jsonb
+) on commit drop;
+
 -- ══ 1. Cantidad de filas ════════════════════════════════════════════════
-select
-  (select count(*) from public.cotizaciones)        as total_cotizaciones,
-  (select count(*) from public.cotizacion_servicios) as total_cotizacion_servicios;
+insert into _reporte (orden, seccion, resultado)
+select 1, 'conteos', jsonb_build_object(
+  'total_cotizaciones',        (select count(*) from public.cotizaciones),
+  'total_cotizacion_servicios', (select count(*) from public.cotizacion_servicios)
+);
 
--- ══ 2. Columnas actuales de ambas tablas ═══════════════════════════════
-select table_name, ordinal_position, column_name, data_type, is_nullable, column_default
-from information_schema.columns
-where table_schema = 'public' and table_name in ('cotizaciones', 'cotizacion_servicios')
-order by table_name, ordinal_position;
+-- ══ 2. Estados y tipos ══════════════════════════════════════════════════
+insert into _reporte (orden, seccion, resultado)
+select 2, 'estados_y_tipos', coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb)
+from (
+  select
+    estado, tipo,
+    count(*)                         as filas,
+    min(created_at)                  as mas_antigua,
+    max(created_at)                  as mas_reciente,
+    count(*) filter (where numero_contrato is not null) as con_numero_contrato
+  from public.cotizaciones
+  group by estado, tipo
+  order by estado, tipo
+) t;
 
--- ══ 3. Estados, tipos y fechas ══════════════════════════════════════════
-select
-  estado, tipo,
-  count(*)                         as filas,
-  min(created_at)                  as mas_antigua,
-  max(created_at)                  as mas_reciente,
-  count(*) filter (where numero_contrato is not null) as con_numero_contrato
-from public.cotizaciones
-group by estado, tipo
-order by estado, tipo;
+-- ══ 3. D1.3 — SOLO usuarios marcados SOSPECHOSO ═════════════════════════
+-- Misma señal cruzada de siempre (¿`usuarios.tenant` coincide con el tenant
+-- de las `ventas` donde ese usuario aparece como `asesor` por nombre?, mismo
+-- criterio que ya usa `test_rls_por_rol.sql`), pero el reporte solo incluye
+-- las filas donde la evidencia apunta a un `tenant` posiblemente incorrecto
+-- (más ventas por nombre en el tenant CONTRARIO al que declara) — candidato
+-- a haber quedado con el `default 'mayorista'` que la migración 107 le puso
+-- a todo lo preexistente.
+insert into _reporte (orden, seccion, resultado)
+select 3, 'D1_3_usuarios_sospechosos', coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb)
+from (
+  with coincidencias as (
+    select u.id, u.email, u.rol, u.tenant as tenant_declarado,
+      count(*) filter (where v.tenant = u.tenant) as ventas_mismo_tenant,
+      count(*) filter (where v.tenant <> u.tenant) as ventas_otro_tenant
+    from public.usuarios u
+    left join public.ventas v on lower(btrim(v.asesor)) = lower(btrim(u.nombre))
+    group by u.id, u.email, u.rol, u.tenant
+  )
+  select email, rol, tenant_declarado, ventas_mismo_tenant, ventas_otro_tenant,
+    'SOSPECHOSO — más ventas por nombre en el OTRO tenant; no usar su tenant_b para backfill sin revisar' as veredicto
+  from coincidencias
+  where ventas_otro_tenant > ventas_mismo_tenant
+  order by email
+) t;
 
-select date_trunc('month', created_at)::date as mes, estado, count(*) as filas
-from public.cotizaciones
-group by 1, 2
-order by 1 desc, 2;
-
--- ══ 4. Relaciones que permiten inferir el tenant (INFORMATIVAS: ninguna de
--- estas selects decide nada por sí sola, solo muestran qué hay) ═══════════
--- 4.a Vía `numero_contrato` → `ventas.tenant` — la única señal con respaldo
---     de integridad referencial (hay FK real). Solo existe para
---     `estado = 'convertida'`.
-select v.tenant, count(*) as cotizaciones_convertidas
-from public.cotizaciones c
-join public.ventas v on v.numero_contrato = c.numero_contrato
-group by v.tenant
-order by v.tenant;
-
-select count(*) as cotizaciones_numero_sin_venta
-from public.cotizaciones c
-where c.numero_contrato is not null
-  and not exists (select 1 from public.ventas v where v.numero_contrato = c.numero_contrato);
-
--- 4.b Vía `creado_por` (email) → `usuarios.email` → `usuarios.tenant`.
---     ⚠️ Esta señal por sí sola NO se declara segura para backfill — ver el
---     bloque D1 más abajo, que audita si `usuarios.tenant` es confiable.
-select
-  case
-    when c.creado_por is null then '(sin creado_por — público/anónimo)'
-    when u.email is null then '(creado_por no cruza con ningún usuario)'
-    when u.rol = 'superadmin' then 'superadmin (no decide tenant)'
-    else u.tenant
-  end as inferencia_por_creado_por,
-  count(*) as filas
-from public.cotizaciones c
-left join public.usuarios u on u.email = c.creado_por
-group by 1
-order by 2 desc;
-
--- 4.c Vía `asesor` (texto libre) → `usuarios.nombre` (normalizado). Señal
---     DÉBIL — el mismo mecanismo que ya falló en `ventas.asesor`
---     (homónimos entre agencias). NUNCA decide tenant por sí sola (ver 5/6).
-select
-  case
-    when c.asesor is null or btrim(c.asesor) = '' then '(sin asesor)'
-    else coalesce(
-      (select case when count(distinct u.tenant) = 1 then min(u.tenant) else '(nombre ambiguo entre tenants)' end
-         from public.usuarios u
-        where lower(btrim(u.nombre)) = lower(btrim(c.asesor))),
-      '(asesor no cruza con ningún usuario)'
-    )
-  end as inferencia_por_asesor,
-  count(*) as filas
-from public.cotizaciones c
-group by 1
-order by 2 desc;
-
--- 4.d Qué hay dentro de `payload`/`detalle` (jsonb). `modulo` es la pista más
---     fuerte de las cuatro sin ser estructural: 'bloqueo'/'porcion_terrestre'/
---     'servicios' SOLO pueden venir de MAYORISTA (minorista no tiene
---     tarifario/reservar — confirmado en `proxy.ts`, `MINORISTA_OCULTAS`).
---     'manual' es el único tipo alcanzable desde ambos tenants hoy.
-select modulo, tipo, count(*) as filas
-from public.cotizaciones
-group by modulo, tipo
-order by filas desc;
-
-select jsonb_object_keys(payload) as clave_en_payload, count(*) as filas
-from public.cotizaciones
-where payload is not null
-group by 1
-order by 2 desc;
-
-select count(*) filter (where paquete_armado_id is not null) as con_paquete_armado_id,
-       count(*)                                              as total
-from public.cotizaciones;
-
--- ══ D1. Confiabilidad de `usuarios.tenant` (afecta directamente a 4.b/tenant_b) ═
--- La migración 107 agregó `usuarios.tenant` con `default 'mayorista'` sobre
--- TODO lo ya existente. Un usuario de minorista creado por un flujo que no
--- estampara tenant explícitamente pudo quedar marcado 'mayorista' sin serlo
--- — esto es una hipótesis a auditar con datos, no un hecho asumido.
-
--- D1.1 Usuarios por mes de alta × rol × tenant.
-select date_trunc('month', fecha_registro)::date as mes, rol, tenant, count(*) as usuarios
-from public.usuarios
-group by 1, 2, 3
-order by 1, 2, 3;
-
--- D1.2 Rango de fecha_registro por tenant (si minorista "nace" después de
--- cierta fecha, un usuario minorista con fecha_registro muy temprana es
--- sospechoso de default incorrecto; y viceversa).
-select tenant, min(fecha_registro) as mas_antiguo, max(fecha_registro) as mas_reciente, count(*) as usuarios
-from public.usuarios
-group by tenant
-order by tenant;
-
--- D1.3 Señal cruzada: ¿`usuarios.tenant` coincide con el tenant de las
--- `ventas` donde ese usuario aparece como `asesor` (por nombre)? Mismo
--- criterio que ya usa `test_rls_por_rol.sql`. Si un usuario tiene MÁS ventas
--- por nombre en el tenant CONTRARIO al que declara, es evidencia de que su
--- `tenant` pudo quedar en el default de la 107 en vez de la agencia real.
-with coincidencias as (
-  select u.id, u.email, u.rol, u.tenant as tenant_declarado,
-    count(*) filter (where v.tenant = u.tenant) as ventas_mismo_tenant,
-    count(*) filter (where v.tenant <> u.tenant) as ventas_otro_tenant
-  from public.usuarios u
-  left join public.ventas v on lower(btrim(v.asesor)) = lower(btrim(u.nombre))
-  group by u.id, u.email, u.rol, u.tenant
+-- ══ 4. D1.4 — solo_tenant_b / solo_tenant_b_de_usuario_sospechoso ═══════
+insert into _reporte (orden, seccion, resultado)
+select 4, 'D1_4_conteos', jsonb_build_object(
+  'solo_tenant_b',                       t.solo_tenant_b,
+  'solo_tenant_b_de_usuario_sospechoso',  t.solo_tenant_b_de_usuario_sospechoso
 )
-select email, rol, tenant_declarado, ventas_mismo_tenant, ventas_otro_tenant,
-  case
-    when ventas_otro_tenant > ventas_mismo_tenant
-      then 'SOSPECHOSO — más ventas por nombre en el OTRO tenant; no usar su tenant_b para backfill sin revisar'
-    when ventas_mismo_tenant = 0 and ventas_otro_tenant = 0
-      then 'sin ventas atribuibles por nombre — no hay con qué contrastar'
-    else 'consistente con el tenant declarado'
-  end as veredicto
-from coincidencias
-order by (ventas_otro_tenant > ventas_mismo_tenant) desc, email;
-
--- D1.4 Cuántas cotizaciones dependerían ÚNICAMENTE de tenant_b (sin tenant_a
--- ni tenant_c), y cuántas de esas fueron creadas por un usuario marcado
--- SOSPECHOSO en D1.3. Esas nunca deben tratarse como aptas para backfill
--- automático.
-with senal_a as (
-  select c.id from public.cotizaciones c join public.ventas v on v.numero_contrato = c.numero_contrato
-),
-senal_c as (
-  select c.id from public.cotizaciones c
-  where c.asesor is not null and btrim(c.asesor) <> ''
-    and (select count(distinct u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) = 1
-),
-sospechosos as (
-  select u.id
-  from public.usuarios u
-  left join public.ventas v on lower(btrim(v.asesor)) = lower(btrim(u.nombre))
-  group by u.id
-  having count(*) filter (where v.tenant <> u.tenant) > count(*) filter (where v.tenant = u.tenant)
-)
-select
-  count(*) filter (where u.id is not null and c.id not in (select id from senal_a) and c.id not in (select id from senal_c))
-    as solo_tenant_b,
-  count(*) filter (where u.id in (select id from sospechosos) and c.id not in (select id from senal_a) and c.id not in (select id from senal_c))
-    as solo_tenant_b_de_usuario_sospechoso__no_apto_para_backfill_automatico
-from public.cotizaciones c
-left join public.usuarios u on u.email = c.creado_por;
+from (
+  with senal_a as (
+    select c.id from public.cotizaciones c join public.ventas v on v.numero_contrato = c.numero_contrato
+  ),
+  senal_c as (
+    select c.id from public.cotizaciones c
+    where c.asesor is not null and btrim(c.asesor) <> ''
+      and (select count(distinct u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) = 1
+  ),
+  sospechosos as (
+    select u.id
+    from public.usuarios u
+    left join public.ventas v on lower(btrim(v.asesor)) = lower(btrim(u.nombre))
+    group by u.id
+    having count(*) filter (where v.tenant <> u.tenant) > count(*) filter (where v.tenant = u.tenant)
+  )
+  select
+    count(*) filter (where u.id is not null and c.id not in (select id from senal_a) and c.id not in (select id from senal_c))
+      as solo_tenant_b,
+    count(*) filter (where u.id in (select id from sospechosos) and c.id not in (select id from senal_a) and c.id not in (select id from senal_c))
+      as solo_tenant_b_de_usuario_sospechoso
+  from public.cotizaciones c
+  left join public.usuarios u on u.email = c.creado_por
+) t;
 
 -- ══ 5 y 6. Clasificación por confianza de evidencia (NO coalesce) ═══════
 -- tenant_a: numero_contrato → ventas.tenant (FK real, la más fuerte).
 -- tenant_b: creado_por → usuarios.tenant, excluyendo superadmin (candidata,
---           su fiabilidad depende del bloque D1 — nunca se asume sola apta
---           para backfill).
+--           su fiabilidad depende de la sección 3 — nunca se asume sola
+--           apta para backfill).
 -- tenant_c: asesor (texto) → usuarios.nombre, solo si el nombre NO es
 --           ambiguo entre tenants (débil — JAMÁS decide sola).
 --
 -- Prioridad para clasificar (una fila cae en la PRIMERA que aplique):
---   1. Contradicción A vs. B (ambas presentes y distintas)      → AMBIGUA
---   2. Contradicción A vs. C (ambas presentes y distintas)      → AMBIGUA
---   3. Hay A (sola o de acuerdo con B/C)                        → ESTRUCTURAL
+--   1. Contradicción A vs. B (ambas presentes y distintas)        → AMBIGUA
+--   2. Contradicción A vs. C (ambas presentes y distintas)        → AMBIGUA
+--   3. Hay A (sola o de acuerdo con B/C)                          → ESTRUCTURAL
 --   4. Contradicción B vs. C (sin A, ambas presentes y distintas) → AMBIGUA
---   5. Hay B, sin A                                             → CANDIDATA (pendiente D1)
---   6. Hay solo C (sin A, sin B)                                → REVISIÓN MANUAL
---   7. Nada                                                     → SIN NINGUNA SEÑAL
-with senal_a as (
-  select c.id, v.tenant as tenant_a
-  from public.cotizaciones c
-  join public.ventas v on v.numero_contrato = c.numero_contrato
-),
-senal_b as (
-  select c.id, u.tenant as tenant_b
-  from public.cotizaciones c
-  join public.usuarios u on u.email = c.creado_por
-  where u.rol <> 'superadmin'
-),
-senal_c as (
-  select c.id,
-    (select min(u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) as tenant_c
-  from public.cotizaciones c
-  where c.asesor is not null and btrim(c.asesor) <> ''
-    and (select count(distinct u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) = 1
-),
-clasificado as (
+--   5. Hay B, sin A                                               → CANDIDATA (pendiente D1)
+--   6. Hay solo C (sin A, sin B)                                  → REVISIÓN MANUAL
+--   7. Nada                                                       → SIN NINGUNA SEÑAL
+insert into _reporte (orden, seccion, resultado)
+select 5, 'clasificacion_5_6', coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb)
+from (
+  with senal_a as (
+    select c.id, v.tenant as tenant_a
+    from public.cotizaciones c
+    join public.ventas v on v.numero_contrato = c.numero_contrato
+  ),
+  senal_b as (
+    select c.id, u.tenant as tenant_b
+    from public.cotizaciones c
+    join public.usuarios u on u.email = c.creado_por
+    where u.rol <> 'superadmin'
+  ),
+  senal_c as (
+    select c.id,
+      (select min(u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) as tenant_c
+    from public.cotizaciones c
+    where c.asesor is not null and btrim(c.asesor) <> ''
+      and (select count(distinct u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) = 1
+  ),
+  clasificado as (
+    select
+      c.id, c.estado, c.tipo,
+      senal_a.tenant_a, senal_b.tenant_b, senal_c.tenant_c
+    from public.cotizaciones c
+    left join senal_a on senal_a.id = c.id
+    left join senal_b on senal_b.id = c.id
+    left join senal_c on senal_c.id = c.id
+  )
   select
-    c.id, c.estado, c.tipo,
-    senal_a.tenant_a, senal_b.tenant_b, senal_c.tenant_c
-  from public.cotizaciones c
-  left join senal_a on senal_a.id = c.id
-  left join senal_b on senal_b.id = c.id
-  left join senal_c on senal_c.id = c.id
-)
-select
-  case
-    when tenant_a is not null and tenant_b is not null and tenant_a <> tenant_b
-      then 'AMBIGUA — contradicción A (numero_contrato) vs. B (creado_por)'
-    when tenant_a is not null and tenant_c is not null and tenant_a <> tenant_c
-      then 'AMBIGUA — contradicción A (numero_contrato) vs. C (nombre de asesor)'
-    when tenant_a is not null
-      then 'ESTRUCTURAL — numero_contrato → ventas.tenant (' || tenant_a || ')'
-    when tenant_b is not null and tenant_c is not null and tenant_b <> tenant_c
-      then 'AMBIGUA — contradicción B (creado_por) vs. C (nombre de asesor)'
-    when tenant_b is not null
-      then 'CANDIDATA — creado_por → usuarios.tenant (' || tenant_b || '), pendiente auditar D1 antes de backfill'
-    when tenant_c is not null
-      then 'REVISIÓN MANUAL — solo coincidencia por nombre (' || tenant_c || ')'
-    else 'SIN NINGUNA SEÑAL'
-  end as clasificacion,
-  count(*) as filas
-from clasificado
-group by 1
-order by 2 desc;
+    case
+      when tenant_a is not null and tenant_b is not null and tenant_a <> tenant_b
+        then 'AMBIGUA — contradicción A (numero_contrato) vs. B (creado_por)'
+      when tenant_a is not null and tenant_c is not null and tenant_a <> tenant_c
+        then 'AMBIGUA — contradicción A (numero_contrato) vs. C (nombre de asesor)'
+      when tenant_a is not null
+        then 'ESTRUCTURAL — numero_contrato → ventas.tenant (' || tenant_a || ')'
+      when tenant_b is not null and tenant_c is not null and tenant_b <> tenant_c
+        then 'AMBIGUA — contradicción B (creado_por) vs. C (nombre de asesor)'
+      when tenant_b is not null
+        then 'CANDIDATA — creado_por → usuarios.tenant (' || tenant_b || '), pendiente auditar D1 antes de backfill'
+      when tenant_c is not null
+        then 'REVISIÓN MANUAL — solo coincidencia por nombre (' || tenant_c || ')'
+      else 'SIN NINGUNA SEÑAL'
+    end as clasificacion,
+    count(*) as filas
+  from clasificado
+  group by 1
+  order by 2 desc
+) t;
 
--- ══ 7. Huérfanas en cotizacion_servicios ════════════════════════════════
-select count(*) as servicios_huerfanos
-from public.cotizacion_servicios cs
-where not exists (select 1 from public.cotizaciones c where c.id = cs.cotizacion_id);
+-- ══ 12. IDs y datos mínimos de las AMBIGUAS / REVISIÓN MANUAL ═══════════
+-- Misma clasificación exacta de la sección 5 (mismas señales, misma
+-- prioridad), pero a nivel de FILA en vez de conteo, filtrada a solo las
+-- dos categorías que necesitan una decisión caso por caso. Sin
+-- `payload`/`detalle` completos (podrían traer datos del pasajero) y sin
+-- `cliente`/`cliente_documento` (dato personal del cliente, innecesario
+-- para decidir el tenant): solo columnas operativas + las tres señales.
+insert into _reporte (orden, seccion, resultado)
+select 12, 'cotizaciones_ambiguas_o_revision_manual', coalesce(jsonb_agg(to_jsonb(t) order by (t->>'id')::bigint), '[]'::jsonb)
+from (
+  select to_jsonb(f) as t
+  from (
+    with senal_a as (
+      select c.id, v.tenant as tenant_a
+      from public.cotizaciones c
+      join public.ventas v on v.numero_contrato = c.numero_contrato
+    ),
+    senal_b as (
+      select c.id, u.tenant as tenant_b
+      from public.cotizaciones c
+      join public.usuarios u on u.email = c.creado_por
+      where u.rol <> 'superadmin'
+    ),
+    senal_c as (
+      select c.id,
+        (select min(u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) as tenant_c
+      from public.cotizaciones c
+      where c.asesor is not null and btrim(c.asesor) <> ''
+        and (select count(distinct u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) = 1
+    ),
+    clasificado as (
+      select
+        c.id, c.codigo, c.estado, c.tipo, c.created_at, c.destino, c.numero_contrato, c.asesor, c.creado_por,
+        senal_a.tenant_a, senal_b.tenant_b, senal_c.tenant_c
+      from public.cotizaciones c
+      left join senal_a on senal_a.id = c.id
+      left join senal_b on senal_b.id = c.id
+      left join senal_c on senal_c.id = c.id
+    )
+    select
+      id, codigo, estado, tipo, created_at, destino, numero_contrato, asesor, creado_por,
+      tenant_a, tenant_b, tenant_c,
+      case
+        when tenant_a is not null and tenant_b is not null and tenant_a <> tenant_b
+          then 'AMBIGUA — contradicción A (numero_contrato) vs. B (creado_por)'
+        when tenant_a is not null and tenant_c is not null and tenant_a <> tenant_c
+          then 'AMBIGUA — contradicción A (numero_contrato) vs. C (nombre de asesor)'
+        when tenant_a is not null
+          then 'ESTRUCTURAL — numero_contrato → ventas.tenant (' || tenant_a || ')'
+        when tenant_b is not null and tenant_c is not null and tenant_b <> tenant_c
+          then 'AMBIGUA — contradicción B (creado_por) vs. C (nombre de asesor)'
+        when tenant_b is not null
+          then 'CANDIDATA — creado_por → usuarios.tenant (' || tenant_b || '), pendiente auditar D1 antes de backfill'
+        when tenant_c is not null
+          then 'REVISIÓN MANUAL — solo coincidencia por nombre (' || tenant_c || ')'
+        else 'SIN NINGUNA SEÑAL'
+      end as clasificacion
+    from clasificado
+  ) f
+  where f.clasificacion like 'AMBIGUA%' or f.clasificacion like 'REVISIÓN MANUAL%'
+) t;
 
--- ══ 8. Roles con permiso según las policies REALES (no el diseño) ═══════
-select schemaname, tablename, policyname, cmd, roles, qual, with_check
-from pg_policies
-where schemaname = 'public' and tablename in ('cotizaciones', 'cotizacion_servicios')
-order by tablename, cmd;
+-- ══ 6. Huérfanas en cotizacion_servicios ════════════════════════════════
+insert into _reporte (orden, seccion, resultado)
+select 6, 'servicios_huerfanos', jsonb_build_object('servicios_huerfanos', (
+  select count(*)
+  from public.cotizacion_servicios cs
+  where not exists (select 1 from public.cotizaciones c where c.id = cs.cotizacion_id)
+));
 
--- ══ 9. ¿Un usuario autenticado de UNA agencia lee cotizaciones de la OTRA? ═
+-- ══ 7. Roles con permiso según las policies REALES (no el diseño) ═══════
+insert into _reporte (orden, seccion, resultado)
+select 7, 'policies_resumen', coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb)
+from (
+  select schemaname, tablename, policyname, cmd, roles, qual, with_check
+  from pg_policies
+  where schemaname = 'public' and tablename in ('cotizaciones', 'cotizacion_servicios')
+  order by tablename, cmd
+) t;
+
+-- ══ 8/9. ¿Un usuario autenticado de UNA agencia lee cotizaciones/servicios
+-- de la OTRA? ═════════════════════════════════════════════════════════════
 --
--- ⚠️ CORRECCIÓN respecto a la versión anterior: NO se debe evaluar
--- `ventas.tenant` mientras el rol impersonado sigue activo. `ventas` tiene su
--- PROPIA RLS (filtra por tenant); si se hiciera el join contra `ventas`
--- estando impersonado, una fila ajena que esa RLS le oculte al usuario
--- devolvería `tenant = NULL` — pareciendo "no es de otro tenant" cuando en
--- realidad SÍ es una cotización visible que pertenece a un contrato ajeno.
--- Ese falso negativo es justo lo que se corrige aquí.
+-- ⚠️ NO se evalúa `ventas.tenant` mientras el rol impersonado sigue activo.
+-- `ventas` tiene su PROPIA RLS (filtra por tenant); si se hiciera el join
+-- contra `ventas` estando impersonado, una fila ajena que esa RLS le oculte
+-- al usuario devolvería `tenant = NULL` — pareciendo "no es de otro tenant"
+-- cuando en realidad SÍ es una cotización visible que pertenece a un
+-- contrato ajeno.
 --
--- Mecánica correcta, en dos fases:
+-- Mecánica, en dos fases:
 --   Fase 1 (impersonado): leer SOLO columnas nativas de `cotizaciones` (id,
 --     numero_contrato) — no se hace ningún join a `ventas` todavía.
 --   Fase 2 (reset role, como superusuario): recién ahí cruzar esos
@@ -374,18 +391,20 @@ end $$;
 -- aparte), que cada `cotizacion_id` capturado en `_visibles_cot` conserva
 -- el `numero_contrato` que de verdad tiene esa fila en `cotizaciones` —
 -- es decir, que `array_agg(... order by id)` + `unnest` en paralelo no
--- desordenó ninguna pareja al capturar y reconstruir. Con varias
--- cotizaciones de contratos distintos ya sembradas más arriba en el
--- diagnóstico (o las que existan en producción al correrlo ahí), esto
--- cubre el caso pedido: múltiples cotizaciones/contratos distintos, no
--- solo uno. Si alguna vez se quita el `order by` o se cambia el criterio
--- de orden entre los dos array_agg de un mismo select, este bloque lo
--- detecta con `raise exception` en vez de dejar pasar un diagnóstico con
--- parejas cruzadas en silencio.
+-- desordenó ninguna pareja al capturar y reconstruir. Si alguna vez se
+-- quita el `order by` o se cambia el criterio de orden entre los dos
+-- array_agg de un mismo select, este bloque lo detecta con
+-- `raise exception` en vez de dejar pasar un diagnóstico con parejas
+-- cruzadas en silencio — ese `raise exception` (y el de más abajo) siguen
+-- intactos: si cualquiera de los dos controles falla, la transacción entera
+-- aborta y NO se llega a producir el reporte final.
 do $$
 declare
   v_desajustes_cot  bigint;
   v_desajustes_serv bigint;
+  v_n_visibles_cot  bigint;
+  v_n_visibles_serv bigint;
+  v_n_contratos_distintos bigint;
 begin
   select count(*) into v_desajustes_cot
   from _visibles_cot v
@@ -405,57 +424,77 @@ begin
     raise exception 'CONTROL DE INTEGRIDAD FALLÓ: % filas en _visibles_serv quedaron con un cotizacion_id distinto al real de cotizacion_servicios.id.', v_desajustes_serv;
   end if;
 
+  select count(*) into v_n_visibles_cot from _visibles_cot;
+  select count(*) into v_n_visibles_serv from _visibles_serv;
+  select count(distinct numero_contrato) into v_n_contratos_distintos
+    from public.cotizaciones where numero_contrato is not null;
+
   raise notice 'CONTROL DE INTEGRIDAD OK: las % filas de _visibles_cot y las % de _visibles_serv conservan exactamente su numero_contrato/cotizacion_id real tras array_agg(order by id)/unnest — verificado contra % cotizaciones con numero_contrato distinto entre sí en esta corrida.',
-    (select count(*) from _visibles_cot),
-    (select count(*) from _visibles_serv),
-    (select count(distinct numero_contrato) from public.cotizaciones where numero_contrato is not null);
+    v_n_visibles_cot, v_n_visibles_serv, v_n_contratos_distintos;
+
+  insert into _controles (subseccion, resultado) values ('emparejamiento_id_numero_contrato', jsonb_build_object(
+    'estado', 'OK',
+    'desajustes_cotizaciones', v_desajustes_cot,
+    'desajustes_servicios', v_desajustes_serv,
+    'filas_visibles_cot_verificadas', v_n_visibles_cot,
+    'filas_visibles_serv_verificadas', v_n_visibles_serv,
+    'contratos_distintos_en_la_corrida', v_n_contratos_distintos
+  ));
 end $$;
 
--- Fase 2 (superusuario, sin RLS): resolver el tenant real de cada
+-- ── 8. Fase 2 (superusuario, sin RLS): resolver el tenant real de cada
 -- numero_contrato capturado y comparar contra el tenant del usuario.
-select
-  usuario, rol, tenant_usuario as "agencia del usuario",
-  count(*)                                                                                   as "cotizaciones visibles (RLS real)",
-  count(*) filter (where vt.tenant is not distinct from tenant_usuario)                       as "…de SU agencia",
-  count(*) filter (where vt.tenant is distinct from tenant_usuario and vt.tenant is not null) as "…de la OTRA agencia ⚠️",
-  count(*) filter (where vt.tenant is null and v.numero_contrato is not null)                 as "…con numero_contrato pero sin venta (¿huérfana?)",
-  count(*) filter (where v.numero_contrato is null)                                           as "…abiertas sin numero_contrato (sin esta señal)",
-  case
-    when count(*) filter (where vt.tenant is distinct from tenant_usuario and vt.tenant is not null) > 0
-      then 'FUGA — lee cotizaciones convertidas de contratos de la otra agencia'
-    else 'sin fuga detectable por esta señal (no cubre lo que sigue "abierta")'
-  end as veredicto
-from _visibles_cot v
-left join public.ventas vt on vt.numero_contrato = v.numero_contrato
-group by usuario, rol, tenant_usuario
-order by (count(*) filter (where vt.tenant is distinct from tenant_usuario and vt.tenant is not null)) desc, tenant_usuario, usuario;
+insert into _reporte (orden, seccion, resultado)
+select 8, 'cruce_autenticado_cotizaciones', coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb)
+from (
+  select
+    usuario, rol, tenant_usuario as agencia_usuario,
+    count(*)                                                                                   as cotizaciones_visibles,
+    count(*) filter (where vt.tenant is not distinct from tenant_usuario)                       as de_su_agencia,
+    count(*) filter (where vt.tenant is distinct from tenant_usuario and vt.tenant is not null) as de_otra_agencia,
+    count(*) filter (where vt.tenant is null and v.numero_contrato is not null)                 as con_numero_contrato_sin_venta,
+    count(*) filter (where v.numero_contrato is null)                                           as abiertas_sin_numero_contrato,
+    case
+      when count(*) filter (where vt.tenant is distinct from tenant_usuario and vt.tenant is not null) > 0
+        then 'FUGA — lee cotizaciones convertidas de contratos de la otra agencia'
+      else 'sin fuga detectable por esta señal (no cubre lo que sigue "abierta")'
+    end as veredicto
+  from _visibles_cot v
+  left join public.ventas vt on vt.numero_contrato = v.numero_contrato
+  group by usuario, rol, tenant_usuario
+  order by (count(*) filter (where vt.tenant is distinct from tenant_usuario and vt.tenant is not null)) desc, tenant_usuario, usuario
+) t;
 
--- ── Extensión a cotizacion_servicios: ¿puede leer servicios cuyo PADRE
+-- ── 9. Extensión a cotizacion_servicios: ¿puede leer servicios cuyo PADRE
 -- pertenece a la otra agencia? Misma mecánica de dos fases (el padre se
 -- resuelve DESPUÉS de reset role).
-select
-  vs.usuario, vs.tenant_usuario as "agencia del usuario",
-  count(*)                                                                                   as "servicios visibles (RLS real)",
-  count(*) filter (where vt.tenant is not distinct from vs.tenant_usuario)                    as "…con padre de SU agencia",
-  count(*) filter (where vt.tenant is distinct from vs.tenant_usuario and vt.tenant is not null) as "…con padre de la OTRA agencia ⚠️",
-  count(*) filter (where vt.tenant is null)                                                   as "…con padre sin numero_contrato/venta (sin esta señal)",
-  case
-    when count(*) filter (where vt.tenant is distinct from vs.tenant_usuario and vt.tenant is not null) > 0
-      then 'FUGA — lee servicios de una cotización cuyo contrato es de la otra agencia'
-    else 'sin fuga detectable por esta señal'
-  end as veredicto
-from _visibles_serv vs
-join public.cotizaciones c on c.id = vs.cotizacion_id
-left join public.ventas vt on vt.numero_contrato = c.numero_contrato
-group by vs.usuario, vs.tenant_usuario
-order by (count(*) filter (where vt.tenant is distinct from vs.tenant_usuario and vt.tenant is not null)) desc;
+insert into _reporte (orden, seccion, resultado)
+select 9, 'cruce_autenticado_servicios', coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb)
+from (
+  select
+    vs.usuario, vs.tenant_usuario as agencia_usuario,
+    count(*)                                                                                      as servicios_visibles,
+    count(*) filter (where vt.tenant is not distinct from vs.tenant_usuario)                       as con_padre_de_su_agencia,
+    count(*) filter (where vt.tenant is distinct from vs.tenant_usuario and vt.tenant is not null)  as con_padre_de_otra_agencia,
+    count(*) filter (where vt.tenant is null)                                                       as con_padre_sin_numero_contrato_o_venta,
+    case
+      when count(*) filter (where vt.tenant is distinct from vs.tenant_usuario and vt.tenant is not null) > 0
+        then 'FUGA — lee servicios de una cotización cuyo contrato es de la otra agencia'
+      else 'sin fuga detectable por esta señal'
+    end as veredicto
+  from _visibles_serv vs
+  join public.cotizaciones c on c.id = vs.cotizacion_id
+  left join public.ventas vt on vt.numero_contrato = c.numero_contrato
+  group by vs.usuario, vs.tenant_usuario
+  order by (count(*) filter (where vt.tenant is distinct from vs.tenant_usuario and vt.tenant is not null)) desc
+) t;
 
--- ⚠️ Nota de interpretación: igual que antes, esto solo puede confirmarse
--- para lo YA CONVERTIDO (numero_contrato → ventas.tenant). Lo que sigue
--- "abierta" también se cuenta en "cotizaciones visibles", pero no hay con
--- qué confirmar su tenant real desde esta prueba — por eso el bloque 5/6
--- existe aparte y no se debe leer "0 filas de la OTRA agencia" como "no hay
--- fuga posible", sino como "no hay fuga CONFIRMABLE por esta señal".
+-- ⚠️ Nota de interpretación (aplica a las secciones 8 y 9): esto solo puede
+-- confirmarse para lo YA CONVERTIDO (numero_contrato → ventas.tenant). Lo
+-- que sigue "abierta" también se cuenta en "…_visibles", pero no hay con qué
+-- confirmar su tenant real desde esta prueba — por eso la sección 5 existe
+-- aparte y "de_otra_agencia = 0" no se debe leer como "no hay fuga posible",
+-- sino como "no hay fuga CONFIRMABLE por esta señal".
 
 -- ── Control negativo (lógica, no datos reales) ───────────────────────────
 -- Prueba que el MECANISMO de arriba (capturar visibles → reset role →
@@ -502,7 +541,19 @@ begin
   end if;
 
   raise notice 'CONTROL NEGATIVO OK: de 3 filas sintéticas visibles, el mecanismo marca exactamente 1 como FUGA (contrato de la otra agencia), 1 como propia y 1 sin señal — tal como debe.';
+
+  insert into _controles (subseccion, resultado) values ('control_negativo_sintetico', jsonb_build_object(
+    'estado', 'OK',
+    'filas_marcadas_fuga', v_otro_tenant,
+    'filas_propia_agencia', v_su_tenant,
+    'filas_sin_senal', v_sin_venta
+  ));
 end $$;
+
+-- ══ 11. Consolidar los dos controles de integridad en una sola sección ══
+insert into _reporte (orden, seccion, resultado)
+select 11, 'controles_de_integridad', jsonb_object_agg(subseccion, resultado)
+from _controles;
 
 -- ══ 10. ¿Un usuario ANÓNIMO (sin sesión) puede leerlas? ═════════════════
 -- Distingue TRES resultados posibles, no dos:
@@ -577,13 +628,25 @@ begin
   insert into _anon_cot values ('cotizacion_servicios', v_resultado, v_filas);
 end $$;
 
-select tabla, resultado, filas,
-  case
-    when resultado = 'select ejecutado' and filas > 0 then 'ACCESO PÚBLICO ANÓNIMO ⚠️'
-    when resultado = 'select ejecutado' and filas = 0 then 'sin acceso anónimo (RLS en 0 filas)'
-    when resultado like 'sin privilegio%' then 'sin acceso anónimo (bloqueado por GRANT, ni siquiera llega a evaluar RLS)'
-    else 'revisar manualmente: ' || resultado
-  end as veredicto
-from _anon_cot;
+insert into _reporte (orden, seccion, resultado)
+select 10, 'resultado_anonimo', coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb)
+from (
+  select tabla, resultado, filas,
+    case
+      when resultado = 'select ejecutado' and filas > 0 then 'ACCESO PÚBLICO ANÓNIMO ⚠️'
+      when resultado = 'select ejecutado' and filas = 0 then 'sin acceso anónimo (RLS en 0 filas)'
+      when resultado like 'sin privilegio%' then 'sin acceso anónimo (bloqueado por GRANT, ni siquiera llega a evaluar RLS)'
+      else 'revisar manualmente: ' || resultado
+    end as veredicto
+  from _anon_cot
+) t;
+
+-- ══ REPORTE FINAL CONSOLIDADO — el único resultado que hay que mirar ════
+-- Una fila por sección, en el orden de la tabla de arriba. Cada `resultado`
+-- es JSON (objeto o arreglo según la sección) — expandible en el editor de
+-- Supabase con clic en la celda, o copiable entero como JSON.
+select seccion, resultado
+from _reporte
+order by orden;
 
 rollback;
