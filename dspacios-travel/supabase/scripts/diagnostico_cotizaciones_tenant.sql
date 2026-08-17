@@ -35,22 +35,27 @@
 --    9  cruce_autenticado_servicios                   → misma prueba, extendida a
 --       cotizacion_servicios (fuga vía el padre)
 --   10  resultado_anonimo                             → acceso del rol `anon`
---   11  controles_de_integridad                       → resultado de los DOS controles
---       (emparejamiento id↔numero_contrato del bloque 9, y el control negativo
---       sintético que prueba que el mecanismo de fuga sí detecta una fuga)
---   12  cotizaciones_ambiguas_o_revision_manual        → id y datos mínimos (SIN
---       payload/detalle completos ni datos personales del cliente) de las filas
---       que la clasificación del punto 5 dejó en AMBIGUA o REVISIÓN MANUAL, para
---       poder decidir su tenant caso por caso
+--   11  controles_de_integridad                       → resultado de los TRES
+--       controles (emparejamiento id↔numero_contrato del bloque 9, el control
+--       negativo sintético que prueba que el mecanismo de fuga sí detecta una
+--       fuga, y la cobertura de la sección 12 — ver más abajo)
+--   12  cotizaciones_sin_evidencia_estructural         → id y datos operativos
+--       mínimos (SIN payload/detalle completos ni datos personales del
+--       cliente) de TODA cotización cuya clasificación del punto 5 NO sea
+--       ESTRUCTURAL: AMBIGUA, CANDIDATA, REVISIÓN MANUAL y SIN NINGUNA SEÑAL
+--       — las cuatro carecen de evidencia estructural (FK numero_contrato →
+--       ventas) y necesitan revisión caso por caso antes de cualquier
+--       backfill, no solo las dos más obvias
 --
 -- Los bloques 8 y 9 (y sus DO blocks de origen) son los únicos que impersonan
 -- un rol de PostgREST; el resto son cálculos directos como superusuario (ven
 -- todo, sin RLS, porque el editor SQL de Supabase corre como superusuario).
 --
--- ⚠️ Si CUALQUIERA de los dos controles de integridad falla, el DO block
--- correspondiente sigue haciendo `raise exception` — igual que antes — y
--- TODA la transacción aborta (no llega a producir el reporte final). Eso es
--- intencional: un control roto no debe disfrazarse de reporte exitoso.
+-- ⚠️ Si CUALQUIERA de los tres controles de integridad falla (incluida la
+-- cobertura de la sección 12), el DO block correspondiente sigue haciendo
+-- `raise exception` — igual que antes — y TODA la transacción aborta (no
+-- llega a producir el reporte final). Eso es intencional: un control roto no
+-- debe disfrazarse de reporte exitoso.
 --
 -- ⚠️ SOBRE LA CLASIFICACIÓN (sección 5): NUNCA combina señales de distinta
 -- confianza con `coalesce` para decidir un tenant automáticamente. `tenant_c`
@@ -222,15 +227,21 @@ from (
   order by 2 desc
 ) t;
 
--- ══ 12. IDs y datos mínimos de las AMBIGUAS / REVISIÓN MANUAL ═══════════
+-- ══ 12. IDs y datos mínimos de TODO lo que NO sea ESTRUCTURAL ═══════════
 -- Misma clasificación exacta de la sección 5 (mismas señales, misma
--- prioridad), pero a nivel de FILA en vez de conteo, filtrada a solo las
--- dos categorías que necesitan una decisión caso por caso. Sin
--- `payload`/`detalle` completos (podrían traer datos del pasajero) y sin
--- `cliente`/`cliente_documento` (dato personal del cliente, innecesario
--- para decidir el tenant): solo columnas operativas + las tres señales.
+-- prioridad), pero a nivel de FILA en vez de conteo. ⚠️ Incluye las CUATRO
+-- categorías sin evidencia estructural — AMBIGUA, CANDIDATA, REVISIÓN
+-- MANUAL y SIN NINGUNA SEÑAL —, no solo AMBIGUA/REVISIÓN MANUAL: una
+-- CANDIDATA (solo `creado_por`→`usuarios.tenant`, sin respaldo de FK) y una
+-- fila SIN NINGUNA SEÑAL carecen exactamente igual de evidencia
+-- estructural y también necesitan revisión antes del backfill; no basta con
+-- conocer su cantidad (sección 4/5), hace falta el detalle para decidir
+-- caso por caso. Sin `payload`/`detalle` completos (podrían traer datos del
+-- pasajero) y sin `cliente`/`cliente_documento` (dato personal del cliente,
+-- innecesario para decidir el tenant): solo columnas operativas + las tres
+-- señales.
 insert into _reporte (orden, seccion, resultado)
-select 12, 'cotizaciones_ambiguas_o_revision_manual', coalesce(jsonb_agg(to_jsonb(t) order by (t->>'id')::bigint), '[]'::jsonb)
+select 12, 'cotizaciones_sin_evidencia_estructural', coalesce(jsonb_agg(to_jsonb(t) order by (t->>'id')::bigint), '[]'::jsonb)
 from (
   select to_jsonb(f) as t
   from (
@@ -281,8 +292,92 @@ from (
       end as clasificacion
     from clasificado
   ) f
-  where f.clasificacion like 'AMBIGUA%' or f.clasificacion like 'REVISIÓN MANUAL%'
+  where f.clasificacion not like 'ESTRUCTURAL%'
 ) t;
+
+-- ══ Control: cobertura de la sección 12 ═════════════════════════════════
+-- La sección 12 debe traer EXACTAMENTE "total de cotizaciones − clasificadas
+-- como ESTRUCTURAL" filas — ni una menos (alguna categoría no estructural
+-- quedaría fuera del reporte, como ya pasó una vez con CANDIDATA y SIN
+-- NINGUNA SEÑAL) ni una más. Recalcula ESTRUCTURAL con la MISMA
+-- clasificación (copiada verbatim de la sección 5/12, sin modificar ninguna
+-- condición) y compara contra el largo real del arreglo ya insertado en
+-- `_reporte` para la sección 12 — no contra un cálculo aparte que pudiera
+-- divergir de lo que el reporte realmente muestra.
+do $$
+declare
+  v_total       bigint;
+  v_estructural bigint;
+  v_seccion_12  bigint;
+begin
+  select count(*) into v_total from public.cotizaciones;
+
+  select count(*) into v_estructural
+  from (
+    with senal_a as (
+      select c.id, v.tenant as tenant_a
+      from public.cotizaciones c
+      join public.ventas v on v.numero_contrato = c.numero_contrato
+    ),
+    senal_b as (
+      select c.id, u.tenant as tenant_b
+      from public.cotizaciones c
+      join public.usuarios u on u.email = c.creado_por
+      where u.rol <> 'superadmin'
+    ),
+    senal_c as (
+      select c.id,
+        (select min(u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) as tenant_c
+      from public.cotizaciones c
+      where c.asesor is not null and btrim(c.asesor) <> ''
+        and (select count(distinct u.tenant) from public.usuarios u where lower(btrim(u.nombre)) = lower(btrim(c.asesor))) = 1
+    ),
+    clasificado as (
+      select
+        c.id,
+        senal_a.tenant_a, senal_b.tenant_b, senal_c.tenant_c
+      from public.cotizaciones c
+      left join senal_a on senal_a.id = c.id
+      left join senal_b on senal_b.id = c.id
+      left join senal_c on senal_c.id = c.id
+    )
+    select
+      case
+        when tenant_a is not null and tenant_b is not null and tenant_a <> tenant_b
+          then 'AMBIGUA — contradicción A (numero_contrato) vs. B (creado_por)'
+        when tenant_a is not null and tenant_c is not null and tenant_a <> tenant_c
+          then 'AMBIGUA — contradicción A (numero_contrato) vs. C (nombre de asesor)'
+        when tenant_a is not null
+          then 'ESTRUCTURAL — numero_contrato → ventas.tenant (' || tenant_a || ')'
+        when tenant_b is not null and tenant_c is not null and tenant_b <> tenant_c
+          then 'AMBIGUA — contradicción B (creado_por) vs. C (nombre de asesor)'
+        when tenant_b is not null
+          then 'CANDIDATA — creado_por → usuarios.tenant (' || tenant_b || '), pendiente auditar D1 antes de backfill'
+        when tenant_c is not null
+          then 'REVISIÓN MANUAL — solo coincidencia por nombre (' || tenant_c || ')'
+        else 'SIN NINGUNA SEÑAL'
+      end as clasificacion
+    from clasificado
+  ) t
+  where t.clasificacion like 'ESTRUCTURAL%';
+
+  select jsonb_array_length(resultado) into v_seccion_12
+  from _reporte
+  where seccion = 'cotizaciones_sin_evidencia_estructural';
+
+  if v_seccion_12 is distinct from (v_total - v_estructural) then
+    raise exception 'CONTROL DE COBERTURA FALLÓ: cotizaciones_sin_evidencia_estructural trae % filas, pero total(%) − ESTRUCTURAL(%) = % — alguna categoría no estructural quedó fuera del reporte.',
+      v_seccion_12, v_total, v_estructural, (v_total - v_estructural);
+  end if;
+
+  insert into _controles (subseccion, resultado) values ('cobertura_no_estructural', jsonb_build_object(
+    'estado', 'OK',
+    'total_cotizaciones', v_total,
+    'estructural', v_estructural,
+    'filas_seccion_12', v_seccion_12,
+    'esperado_no_estructural', v_total - v_estructural
+  ));
+end $$;
 
 -- ══ 6. Huérfanas en cotizacion_servicios ════════════════════════════════
 insert into _reporte (orden, seccion, resultado)
