@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { contextoCotizacion } from "@/lib/cotizacion/acceso";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
@@ -13,10 +14,15 @@ const ESTADO_BADGE: Record<string, string> = {
 
 export default async function CotizacionesPage() {
   const sb = await createClient();
-  const { data: cots } = await sb
+  const ctx = await contextoCotizacion();
+  // Listado interno: solo la agencia activa (superadmin conserva alcance
+  // global — puede alternar de agencia, pero no ve las dos mezcladas de una).
+  let q = sb
     .from("cotizaciones")
     .select("id, codigo, tipo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at")
     .order("created_at", { ascending: false });
+  if (ctx.ok && !ctx.superadmin) q = q.eq("tenant", ctx.tenant);
+  const { data: cots } = ctx.ok ? await q : { data: [] };
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">

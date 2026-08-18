@@ -2374,6 +2374,9 @@ export type Database = {
           creado_por: string | null;
           numero_contrato: string | null;
           share_token: string;
+          // Nullable durante la fase aditiva (migración 153); la 154 la
+          // cierra a NOT NULL. Todo INSERT nuevo debe estamparla igual.
+          tenant: string | null;
         };
         Insert: {
           id?: number;
@@ -2400,6 +2403,7 @@ export type Database = {
           asesor?: string | null;
           creado_por?: string | null;
           numero_contrato?: string | null;
+          tenant?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["cotizaciones"]["Insert"]>;
         Relationships: [];

@@ -17,7 +17,7 @@ export default async function PortalB2BPage() {
   const { data: { user } } = await sb.auth.getUser();
 
   const { data: perfil } = user
-    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id, pct_comision, aliado_id").eq("id", user.id).maybeSingle()
+    ? await sb.from("usuarios").select("nombre, rol, activo, agencia_id, pct_comision, aliado_id, tenant").eq("id", user.id).maybeSingle()
     : { data: null };
   const rol = perfil?.rol ?? null;
   const esB2B = rol === "agencia" || rol === "freelance";
@@ -128,14 +128,20 @@ export default async function PortalB2BPage() {
   const { data: cfg } = await sb.from("config_sitio").select("link_pago").eq("id", 1).maybeSingle();
   const linkPago = cfg?.link_pago ?? null;
 
-  // Cotizaciones del aliado: el checkout las guarda con creado_por = su email.
-  // Mostramos las vigentes (no convertidas/descartadas); las convertidas ya
-  // figuran como contrato. cotizaciones es interna (RLS) → service-role.
+  // Cotizaciones del aliado: el checkout las guarda con creado_por = su email
+  // (vínculo estable, nunca por nombre). Mostramos las vigentes (no
+  // convertidas/descartadas); las convertidas ya figuran como contrato.
+  // cotizaciones es interna (RLS solo por rol, sin roles B2B) → service-role
+  // — la validación de acceso explícita que sustituye a la RLS es este mismo
+  // `.eq("creado_por", ...)`, exacto por email de sesión; el filtro de
+  // tenant es una segunda capa (nunca debería divergir, porque el checkout
+  // estampa el mismo tenant del usuario que lo crea).
   const { data: cotsRaw } = nombre || user.email
     ? await admin
         .from("cotizaciones")
         .select("id, codigo, cliente, destino, hotel, pax, precio_venta, moneda, fecha_salida, vigencia_hasta, estado, share_token, numero_contrato, created_at")
         .eq("creado_por", user.email ?? "")
+        .eq("tenant", perfil?.tenant ?? "mayorista")
         .order("created_at", { ascending: false })
     : { data: [] as Record<string, unknown>[] };
   const cotizaciones = (cotsRaw ?? []).filter((c) => c.estado !== "descartada");

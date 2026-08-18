@@ -5,6 +5,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { marcar } from "@/lib/calc/paquetes";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
+import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
+import type { Tenant } from "@/lib/tenant";
 import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 
 // Tipo de servicio de la cotización dinámica → tipo de proveedor de la CxP.
@@ -191,9 +193,21 @@ export async function crearCotizacionManual(
     items: itemsDoc,
   };
 
+  // Acción INTERNA (clasificación explícita, ver revisión de PR #267): único
+  // caller es `CotizacionManualForm.tsx` bajo `/dashboard/cotizaciones/nueva`
+  // (ruta protegida por `proxy.ts`), pero al ser una Server Action exportada
+  // es igual de alcanzable directo por red — así que exige sesión aquí
+  // también. `getTenant()` a secas cae en silencio a "mayorista" sin sesión
+  // (ver lib/tenant.server.ts); `contextoCotizacion()` falla cerrado si no
+  // hay perfil o `activo !== true`, y solo entonces resuelve el tenant real.
+  const ctx = await contextoCotizacion();
+  if (!ctx.ok) return { ok: false, error: "No autorizado." };
+  const tenantCotizacion = ctx.tenant;
+
   const { data: cot, error } = await sb
     .from("cotizaciones")
     .insert({
+      tenant: tenantCotizacion,
       tipo: "manual",
       estado: "abierta",
       payload: JSON.parse(JSON.stringify(input)),
@@ -237,10 +251,12 @@ export async function actualizarTitularCotizacionManual(
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("payload, detalle, estado, tipo")
+    .select("payload, detalle, estado, tipo, tenant")
     .eq("id", cotizacionId)
     .maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
   if (cot.tipo !== "manual" || cot.estado !== "abierta")
     return { ok: false, error: "Solo se puede editar el titular de una cotización dinámica abierta." };
   if (!`${titular.nombres ?? ""}${titular.apellidos ?? ""}`.trim())
@@ -286,10 +302,12 @@ export async function actualizarIncluyeCotizacionManual(
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("detalle, payload, estado, tipo")
+    .select("detalle, payload, estado, tipo, tenant")
     .eq("id", cotizacionId)
     .maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
   if (cot.tipo !== "manual" || cot.estado !== "abierta")
     return { ok: false, error: "Solo se puede editar una cotización dinámica abierta." };
 
@@ -320,10 +338,12 @@ export async function actualizarRecobroNinosCotizacionManual(
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("payload, detalle, estado, tipo, pax, destino, fecha_salida, fecha_regreso")
+    .select("payload, detalle, estado, tipo, pax, destino, fecha_salida, fecha_regreso, tenant")
     .eq("id", cotizacionId)
     .maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
   if (cot.tipo !== "manual" || cot.estado !== "abierta")
     return { ok: false, error: "Solo se puede editar una cotización dinámica abierta." };
 
@@ -395,6 +415,13 @@ export async function convertirCotizacionManualAContrato(
     .maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada o ya fue procesada." };
 
+  // Sin tenant asignado no se convierte (ver migración 153 — nunca se asume
+  // un tenant por defecto), y el caller debe tener acceso a esa agencia.
+  if (!cot.tenant) return { ok: false, error: "Esta cotización no tiene agencia (tenant) asignada; no se puede convertir. Contacta a un administrador." };
+  const ctx = await contextoCotizacion();
+  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
+  const tenantCotizacion = cot.tenant as Tenant;
+
   const { data: servicios } = await sb
     .from("cotizacion_servicios")
     .select("*")
@@ -441,6 +468,9 @@ export async function convertirCotizacionManualAContrato(
 
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
+    // Conserva EXACTAMENTE el tenant de la cotización de origen (validado
+    // arriba: no nulo, y el caller tiene acceso a él).
+    tenant: tenantCotizacion,
     cliente: cot.cliente ?? "",
     cliente_documento: cot.cliente_documento ?? undefined,
     cliente_telefono: payload.cliente?.telefono || undefined,
@@ -499,6 +529,7 @@ export async function convertirCotizacionManualAContrato(
     const aliado = (payload.tipoAsesor === "agencia" ? payload.agenciaNombre : payload.freelanceNombre) || cot.asesor || "Aliado";
     await sb.from("aliados_b2b").insert({
       numero_contrato: numero,
+      tenant: tenantCotizacion,
       aliado,
       tipo_aliado: payload.tipoAsesor,
       precio_venta: Number(cot.precio_venta) || 0,
@@ -546,6 +577,7 @@ export async function convertirCotizacionManualAContrato(
           const etiqueta = TIPO_LABEL[s.tipo_servicio] ?? "Servicio";
           return {
             numero_contrato: numero,
+            tenant: tenantCotizacion,
             proveedor,
             tipo_proveedor: tipo,
             servicio: `${etiqueta}${s.nombre_servicio ? ` ${s.nombre_servicio}` : ""}`.trim(),
@@ -563,7 +595,7 @@ export async function convertirCotizacionManualAContrato(
         for (const c of creadas ?? []) {
           await postearAsientoCxP({
             cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-            servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO,
+            servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO, tenant: tenantCotizacion,
           });
         }
       }
