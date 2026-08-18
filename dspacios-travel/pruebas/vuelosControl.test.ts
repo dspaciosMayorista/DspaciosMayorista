@@ -27,8 +27,12 @@ test("labelModalidad: null/valor desconocido cae en 'Sin definir', nunca inventa
   assert.equal(labelModalidad(null), SIN_DEFINIR);
   assert.equal(labelModalidad(""), SIN_DEFINIR);
   assert.equal(labelModalidad("lo-que-sea"), SIN_DEFINIR);
-  assert.equal(labelModalidad("individual"), "Individual");
+  assert.equal(labelModalidad("serie"), "Serie");
   assert.equal(labelModalidad("grupo"), "Grupo");
+  // Migración 155: "individual" ya NO es un valor válido — quedó renombrado
+  // a "serie". Si el rename se deshace por error, este valor volvería a
+  // caer en SIN_DEFINIR en vez de "Individual", lo que rompería este test.
+  assert.equal(labelModalidad("individual"), SIN_DEFINIR);
 });
 
 test("labelEstadoEmision/labelEstadoPago: null cae en 'Por confirmar', no en 'Pendiente'", () => {
@@ -47,9 +51,10 @@ test("labelEstadoEmision/labelEstadoPago: null cae en 'Por confirmar', no en 'Pe
 });
 
 test("los type guards solo aceptan los valores exactos del enum", () => {
-  assert.equal(esModalidadEmision("individual"), true);
+  assert.equal(esModalidadEmision("serie"), true);
   assert.equal(esModalidadEmision("grupo"), true);
-  assert.equal(esModalidadEmision("Individual"), false); // sensible a mayúsculas: la normalización va antes
+  assert.equal(esModalidadEmision("Serie"), false); // sensible a mayúsculas: la normalización va antes
+  assert.equal(esModalidadEmision("individual"), false); // migración 155: ya no es un valor válido
   assert.equal(esModalidadEmision(null), false);
   assert.equal(esModalidadEmision(undefined), false);
 

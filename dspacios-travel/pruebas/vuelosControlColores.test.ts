@@ -20,10 +20,12 @@ import { tonoModalidad, tonoEstadoEmision, tonoEstadoPago, labelEstadoEmision, l
 // que sí requieren ese patrón en este repo, ver vuelosVistaTabs.test.ts).
 // ─────────────────────────────────────────────────────────────────────────
 
-// ── Modalidad: individual/null/inválido → neutral; grupo → warn ────────────
+// ── Modalidad: serie/null/inválido → neutral; grupo → warn (migración 155:
+// "individual" se renombró a "serie" — un valor "individual" que llegara
+// hoy ya no es el caso conocido, cae como cualquier inválido: neutral) ─────
 
-test("tonoModalidad('individual') = neutral", () => {
-  assert.equal(tonoModalidad("individual"), "neutral");
+test("tonoModalidad('serie') = neutral", () => {
+  assert.equal(tonoModalidad("serie"), "neutral");
 });
 test("tonoModalidad('grupo') = warn", () => {
   assert.equal(tonoModalidad("grupo"), "warn");
@@ -31,8 +33,9 @@ test("tonoModalidad('grupo') = warn", () => {
 test("tonoModalidad(null) [Sin definir] = neutral", () => {
   assert.equal(tonoModalidad(null), "neutral");
 });
-test("tonoModalidad(valor inválido) = neutral", () => {
+test("tonoModalidad(valor inválido, incluido el 'individual' pre-155) = neutral", () => {
   assert.equal(tonoModalidad("cualquier-cosa"), "neutral");
+  assert.equal(tonoModalidad("individual"), "neutral");
 });
 
 // ── Estado de emisión: pendiente → warn; emitido → ok; resto → orange ──────
@@ -104,7 +107,11 @@ test("EstadoBadge: inferir() NO cambió — nunca devuelve 'orange' por inferenc
 // ── ControlVuelosTabla y ControlBadges usan los MISMOS helpers ─────────────
 
 test("ControlVuelosTabla pasa el tono EXPLÍCITO desde los helpers centralizados (no un tono fijo, no inferencia)", () => {
-  assert.match(controlTablaSrc, /tono=\{tonoModalidad\(b\.modalidad_emision\)\}/, "Modalidad no usa tonoModalidad");
+  // PR A: la fusión con Empaquetados agrega la modalidad "sistema" — la
+  // celda de Modalidad pasa por tonoModalidadControl (superset de
+  // tonoModalidad que además sabe pintar "sistema"), no por tonoModalidad
+  // a secas (ese ni siquiera acepta "sistema" en su tipo).
+  assert.match(controlTablaSrc, /tono=\{tonoModalidadControl\(b\.modalidad\)\}/, "Modalidad no usa tonoModalidadControl");
   assert.match(controlTablaSrc, /tono=\{tonoEstadoEmision\(b\.estado_emision\)\}/, "Emisión no usa tonoEstadoEmision");
   assert.match(controlTablaSrc, /tono=\{tonoEstadoPago\(b\.estado_pago\)\}/, "Pago no usa tonoEstadoPago");
   assert.doesNotMatch(controlTablaSrc, /tono="neutral"/, "quedó un tono=\"neutral\" fijo en vez del helper");
@@ -134,8 +141,15 @@ test("labelModalidad/labelEstadoEmision/labelEstadoPago (los TEXTOS) no cambiaro
   assert.match(readFileSync(join(raiz, "lib/vuelos/control.ts"), "utf8"), /export function labelModalidad\(v: string \| null\): string \{\s*return esModalidadEmision\(v\) \? MODALIDAD_LABEL\[v\] : SIN_DEFINIR;/);
 });
 
-test("ControlVuelosTabla: los filtros de modalidad/emisión/pago no se tocaron (siguen usando matchControl/SIN_DEFINIR_VAL)", () => {
-  assert.match(controlTablaSrc, /matchControl\(b\.modalidad_emision, fModalidad\)/);
+test("ControlVuelosTabla: los filtros de emisión/pago no se tocaron (siguen usando matchControl/SIN_DEFINIR_VAL); el de modalidad ahora contempla 'sistema'", () => {
+  // PR A: el filtro de Modalidad ya no puede ser un simple matchControl —
+  // "sistema" (empaquetados) nunca es null, así que "Sin definir" solo debe
+  // seguir aplicando a bloqueos sin modalidad_emision cargada.
+  assert.match(
+    controlTablaSrc,
+    /fModalidad === SIN_DEFINIR_VAL \? b\.modalidad == null : b\.modalidad === fModalidad/,
+    "el filtro de modalidad no distingue 'sin definir' (null) del resto"
+  );
   assert.match(controlTablaSrc, /matchControl\(b\.estado_emision, fEmision\)/);
   assert.match(controlTablaSrc, /matchControl\(b\.estado_pago, fPago\)/);
 });

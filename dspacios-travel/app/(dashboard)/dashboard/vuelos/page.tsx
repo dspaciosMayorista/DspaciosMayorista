@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { CargaMasivaCSV } from "@/components/CargaMasivaCSV";
 import { cargarBloqueosMasivo } from "./actions";
 import { BloqueosTabla } from "./BloqueosTabla";
-import { ControlVuelosTabla } from "./ControlVuelosTabla";
+import { ControlVuelosTabla, type ControlFila } from "./ControlVuelosTabla";
+import { EmpaquetadosTabla } from "./EmpaquetadosTabla";
 import { VistaTabs, vistaDeParam } from "./VistaTabs";
 import { History } from "lucide-react";
 import { conteoPorBloqueo, sumarConteos, esPasado, ocupacionPct, conteoCero, type ConteoSillas } from "@/lib/vuelos/stats";
 import { hoyISO } from "@/lib/calc/paquetes";
+import type { ModalidadControl } from "@/lib/vuelos/control";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +35,7 @@ const COLS_BLOQUEOS = [
   { key: "fecha_devolucion", label: "Fecha devolución", ejemplo: "2026-06-01" },
   { key: "fecha_emision", label: "Fecha límite de emisión", ejemplo: "2026-05-20" },
   { key: "rangos_edad", label: "Rangos de edad (nombres separados por |)", ejemplo: "" },
-  { key: "modalidad_emision", label: "Modalidad de emisión (individual/grupo)", ejemplo: "individual" },
+  { key: "modalidad_emision", label: "Modalidad de emisión (serie/grupo)", ejemplo: "serie" },
   { key: "estado_emision", label: "Estado de emisión (pendiente/emitido, opcional)", ejemplo: "pendiente" },
   { key: "estado_pago", label: "Estado de pago (pendiente/pagado, opcional)", ejemplo: "pendiente" },
   { key: "notas", label: "Notas", ejemplo: "" },
@@ -53,52 +55,91 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
   const vista = vistaDeParam(vistaParam);
 
   const vistaInventario = vista === "inventario";
+  const vistaEmpaquetados = vista === "empaquetados";
+  const vistaControl = vista === "control-vuelos";
   const sb = await createClient();
 
   // Control Vuelos no usa sillas (sin columnas de sillas ni ocupación) — se
   // consulta SOLO en Inventario, para no descargar filas que esa vista nunca
-  // usa. `bloqueos_vuelo` sí se consulta siempre (ambas vistas la necesitan),
-  // una sola vez — nunca duplicada entre pestañas.
-  const [{ data: bloqueos }, { data: sillas }] = await Promise.all([
+  // usa (criterio ya existente). `bloqueos_vuelo` y `empaquetados` se
+  // consultan siempre, una sola vez cada una — ambas son tablas pequeñas
+  // (inventario operativo, no transaccional) y las necesitan varias vistas
+  // (Empaquetados y Control comparten `empaquetados`; Inventario y Control
+  // comparten `bloqueos_vuelo`), así que optimizar por vista aquí solo
+  // agregaría complejidad de tipos sin un ahorro real.
+  const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: true }),
     vistaInventario
       ? sb.from("sillas").select("bloqueo_id, estado")
       : Promise.resolve({ data: null as { bloqueo_id: number; estado: string | null }[] | null }),
+    sb.from("empaquetados").select("*").order("fecha_ida", { ascending: true }),
   ]);
 
-  // Activos vs pasados: un bloqueo cuya fecha de ida ya pasó queda INACTIVO y se
-  // mueve al histórico (/dashboard/vuelos/historico). El control solo ve activos.
+  // Activos vs pasados: una fila cuya fecha de ida ya pasó queda INACTIVA y
+  // se mueve al histórico (/dashboard/vuelos/historico). Mismo criterio
+  // (esPasado) para bloqueos Y empaquetados.
   const hoy = hoyISO();
   const todos = bloqueos ?? [];
   const activos = todos.filter((b) => !esPasado(b.fecha_ida, hoy));
   const pasados = todos.filter((b) => esPasado(b.fecha_ida, hoy));
 
+  const todosEmp = empaquetadosData ?? [];
+  const empActivos = todosEmp.filter((e) => !esPasado(e.fecha_ida, hoy));
+  const empPasados = todosEmp.filter((e) => esPasado(e.fecha_ida, hoy));
+
   // Conteo de sillas por estado para cada bloqueo — solo tiene sentido (y solo
-  // se calcula) en Inventario; Control Vuelos no cuenta ni totaliza sillas.
+  // se calcula) en Inventario; Control Vuelos/Empaquetados no cuentan sillas.
   const conteo: Map<number, ConteoSillas> = vistaInventario ? conteoPorBloqueo(sillas) : new Map();
   const cZero = conteoCero();
   const tot = vistaInventario ? sumarConteos(conteo, activos.map((b) => b.id)) : conteoCero();
   const ocup = vistaInventario ? ocupacionPct(tot) : 0;
 
+  // Filas fusionadas de Control Vuelos: bloqueos (Serie/Grupo) + empaquetados
+  // (Sistema, modalidad fija) — clave discriminada, nunca un id crudo compartido.
+  const filasControl: ControlFila[] = vistaControl
+    ? [
+        ...activos.map((b) => ({
+          id: `bloqueo:${b.id}`, origen: "bloqueo" as const, numericId: b.id,
+          record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
+          fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
+          fecha_emision: b.fecha_emision,
+          modalidad: b.modalidad_emision as ModalidadControl | null,
+          estado_emision: b.estado_emision, estado_pago: b.estado_pago,
+        })),
+        ...empActivos.map((e) => ({
+          id: `sistema:${e.id}`, origen: "sistema" as const, numericId: e.id,
+          record: e.record, aerolinea: e.aerolinea, ruta: e.ruta,
+          fecha_ida: e.fecha_ida, vuelo_ida: e.vuelo_ida, fecha_regreso: e.fecha_regreso, vuelo_regreso: e.vuelo_regreso,
+          fecha_emision: null,
+          modalidad: "sistema" as ModalidadControl,
+          estado_emision: e.estado_emision, estado_pago: e.estado_pago,
+        })),
+      ]
+    : [];
+
+  const tituloVista = vistaInventario ? "Inventario de vuelos" : vistaEmpaquetados ? "Empaquetados" : "Control vuelos";
+  const subtituloVista = vistaInventario
+    ? "Bloqueos de sillas negociadas con la aerolínea"
+    : vistaEmpaquetados
+      ? "Tarifas de Sistema para armar promociones — sin cupo negociado, sin sillas"
+      : "Modalidad, emisión y pago por record (bloqueos + empaquetados)";
+  const nuevoHref = vistaEmpaquetados ? "/dashboard/vuelos/empaquetados/nuevo" : "/dashboard/vuelos/nuevo";
+  const nuevoLabel = vistaEmpaquetados ? "+ Nuevo empaquetado" : "+ Nuevo bloqueo";
+  const totalPasados = vistaEmpaquetados ? empPasados.length : pasados.length;
+
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-gray-900">
-            {vistaInventario ? "Inventario de vuelos" : "Control vuelos"}
-          </h1>
-          <p className="mt-1 text-sm text-gray-500">
-            {vistaInventario
-              ? "Bloqueos de sillas negociadas con la aerolínea"
-              : "Modalidad, emisión y pago por record"}
-          </p>
+          <h1 className="text-2xl font-semibold text-gray-900">{tituloVista}</h1>
+          <p className="mt-1 text-sm text-gray-500">{subtituloVista}</p>
         </div>
         <div className="flex items-center gap-2">
           <Link href={`/dashboard/vuelos/historico?vista=${vista}`}>
-            <Button variant="outline" className="gap-2"><History size={16} /> Histórico ({pasados.length})</Button>
+            <Button variant="outline" className="gap-2"><History size={16} /> Histórico ({totalPasados})</Button>
           </Link>
-          <Link href="/dashboard/vuelos/nuevo">
-            <Button style={{ backgroundColor: "var(--brand-primary)" }}>+ Nuevo bloqueo</Button>
+          <Link href={nuevoHref}>
+            <Button style={{ backgroundColor: "var(--brand-primary)" }}>{nuevoLabel}</Button>
           </Link>
         </div>
       </div>
@@ -118,7 +159,32 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
         </div>
       )}
 
-      {!todos.length ? (
+      {vistaEmpaquetados ? (
+        !empActivos.length ? (
+          <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">
+            <p className="text-lg">No hay empaquetados activos</p>
+            <p className="mt-1 text-sm">Crea el primero con el botón “Nuevo empaquetado”.</p>
+          </div>
+        ) : (
+          <EmpaquetadosTabla
+            filas={empActivos.map((e) => ({
+              id: e.id, record: e.record, aerolinea: e.aerolinea, ruta: e.ruta,
+              fecha_ida: e.fecha_ida, vuelo_ida: e.vuelo_ida, fecha_regreso: e.fecha_regreso, vuelo_regreso: e.vuelo_regreso,
+              tarifa_para_empaquetar: e.tarifa_para_empaquetar, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
+              activo: e.activo,
+            }))}
+          />
+        )
+      ) : vistaControl ? (
+        !filasControl.length ? (
+          <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">
+            <p className="text-lg">No hay vuelos activos</p>
+            <p className="mt-1 text-sm">Ni bloqueos ni empaquetados activos por ahora.</p>
+          </div>
+        ) : (
+          <ControlVuelosTabla filas={filasControl} />
+        )
+      ) : !todos.length ? (
         <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">
           <p className="text-lg">No hay bloqueos cargados</p>
           <p className="mt-1 text-sm">Crea el primer record con el botón “Nuevo bloqueo”.</p>
@@ -128,7 +194,7 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
           <p className="text-lg">No hay vuelos activos</p>
           <p className="mt-1 text-sm">Todos los bloqueos ya pasaron su fecha de ida. Revisa el <Link href={`/dashboard/vuelos/historico?vista=${vista}`} className="text-[var(--brand-accent)] hover:underline">histórico ({pasados.length})</Link>.</p>
         </div>
-      ) : vistaInventario ? (
+      ) : (
         <>
           {/* Mini-dashboard de vuelos ACTIVOS (fecha de ida futura) */}
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Vuelos activos</div>
@@ -154,15 +220,6 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
             })}
           />
         </>
-      ) : (
-        <ControlVuelosTabla
-          filas={activos.map((b) => ({
-            id: b.id, record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
-            fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
-            fecha_emision: b.fecha_emision,
-            modalidad_emision: b.modalidad_emision, estado_emision: b.estado_emision, estado_pago: b.estado_pago,
-          }))}
-        />
       )}
     </div>
   );

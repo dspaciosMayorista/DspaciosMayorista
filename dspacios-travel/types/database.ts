@@ -1095,6 +1095,72 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["bloqueos_vuelo"]["Insert"]>;
         Relationships: [];
       };
+      empaquetados: {
+        Row: {
+          id: number;
+          record: string | null;
+          aerolinea: string | null;
+          proveedor_id: number | null;
+          destino_id: number | null;
+          ruta: string | null;
+          origen: string | null;
+          vuelo_ida: string | null;
+          fecha_ida: string;
+          hora_salida_ida: string | null;
+          hora_llegada_ida: string | null;
+          vuelo_regreso: string | null;
+          fecha_regreso: string | null;
+          hora_salida_reg: string | null;
+          hora_llegada_reg: string | null;
+          tarifa_proveedor: number;
+          tarifa_para_empaquetar: number;
+          fee_infante: number;
+          compra_inicio: string | null;
+          compra_fin: string | null;
+          estado_emision: string | null;
+          estado_pago: string | null;
+          notas: string | null;
+          activo: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          record?: string | null;
+          aerolinea?: string | null;
+          proveedor_id?: number | null;
+          destino_id?: number | null;
+          ruta?: string | null;
+          origen?: string | null;
+          vuelo_ida?: string | null;
+          fecha_ida: string;
+          hora_salida_ida?: string | null;
+          hora_llegada_ida?: string | null;
+          vuelo_regreso?: string | null;
+          fecha_regreso?: string | null;
+          hora_salida_reg?: string | null;
+          hora_llegada_reg?: string | null;
+          tarifa_proveedor?: number;
+          tarifa_para_empaquetar?: number;
+          fee_infante?: number;
+          compra_inicio?: string | null;
+          compra_fin?: string | null;
+          estado_emision?: string | null;
+          estado_pago?: string | null;
+          notas?: string | null;
+          activo?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["empaquetados"]["Insert"]>;
+        Relationships: [];
+      };
+      armado_empaquetados: {
+        Row: { paquete_id: number; empaquetado_id: number; aplica_mk: boolean; ta: number };
+        Insert: { paquete_id: number; empaquetado_id: number; aplica_mk?: boolean; ta?: number };
+        Update: Partial<Database["public"]["Tables"]["armado_empaquetados"]["Insert"]>;
+        Relationships: [];
+      };
       sillas: {
         Row: {
           id: number;

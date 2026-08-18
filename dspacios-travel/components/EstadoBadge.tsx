@@ -16,6 +16,11 @@ const TONOS = {
   // "Por confirmar" como verde (`ok`) solo por contener "confirm" — visualmente
   // indistinguible de Emitido/Pagado.
   orange: "border-orange-200 bg-orange-50 text-orange-700",
+  // Tono EXPLÍCITO únicamente (igual criterio que `orange`) — informativo, ni
+  // éxito ni alerta. Usado por `tonoModalidadControl("sistema")` en
+  // lib/vuelos/control.ts: una tarifa de Sistema no es "buena" ni "mala", es
+  // un tipo de modalidad distinto de Serie/Grupo.
+  info: "border-teal-200 bg-teal-50 text-teal-700",
 } as const;
 
 export type Tono = keyof typeof TONOS;
