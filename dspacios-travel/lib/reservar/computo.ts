@@ -42,6 +42,7 @@ export type PasajeroReserva = {
 export type ReservaInput = {
   paqueteId: number;
   bloqueoId: number | null;
+  empaquetadoId?: number | null;  // vuelo de SISTEMA (tabla empaquetados, migración 156) — mutuamente excluyente con bloqueoId
   salidaId?: number | null;   // salida dinámica (modulo 'dinamico')
   modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   hotelId: number;
@@ -197,7 +198,12 @@ export async function computarReserva(
       .eq("hotel_id", input.hotelId)
       .eq("categoria", input.categoria)
       .eq("regimen", input.regimen);
+    // Empaquetado (Sistema) se revisa ANTES que bloqueoId — mismo motivo que
+    // en reservar/nuevo/page.tsx: bloqueo_id siempre es null en una fila de
+    // origen empaquetado, así que revisar el orden contrario atraparía esas
+    // filas con el `q.is("bloqueo_id", null)` pensado para "sin vuelo".
     if (input.modulo === "dinamico" && input.salidaId) q = q.eq("salida_id", input.salidaId);
+    else if (input.modulo === "bloqueo" && input.empaquetadoId) q = q.eq("empaquetado_id", input.empaquetadoId);
     else q = input.bloqueoId ? q.eq("bloqueo_id", input.bloqueoId) : q.is("bloqueo_id", null);
     const { data: filas, error: fe } = await q;
     if (fe) return { ok: false, error: fe.message };

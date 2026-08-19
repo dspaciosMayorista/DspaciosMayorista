@@ -28,6 +28,7 @@ import {
   type PasajeroReserva,
   type ComputoReserva,
 } from "@/lib/reservar/computo";
+import { datosVueloEmpaquetado } from "@/lib/reservar/empaquetadoOrigen";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -286,6 +287,28 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       }
       await sb.from("contrato_vuelos").insert(tramos);
     }
+  } else if (input.modulo === "bloqueo" && input.empaquetadoId) {
+    // Vuelo de SISTEMA (Empaquetados, migración 156) — mismo tramo que un
+    // bloqueo negociado, pero SIN sillas (ver paso 9-bis-empaquetado).
+    const eq = await datosVueloEmpaquetado(sb, input.empaquetadoId);
+    if (eq) {
+      const r = parseRuta(eq.ruta);
+      const tramos = [{
+        numero_contrato: numero, aerolinea: eq.aerolinea, record: eq.record, direccion: "ida",
+        origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen), destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+        numero_vuelo: eq.vuelo_ida, hora_salida: eq.hora_salida_ida, hora_llegada: eq.hora_llegada_ida,
+        fecha_salida: eq.fecha_ida, orden: 0,
+      }];
+      if (eq.fecha_regreso || eq.vuelo_regreso) {
+        tramos.push({
+          numero_contrato: numero, aerolinea: eq.aerolinea, record: eq.record, direccion: "regreso",
+          origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino), destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+          numero_vuelo: eq.vuelo_regreso, hora_salida: eq.hora_salida_reg, hora_llegada: eq.hora_llegada_reg,
+          fecha_salida: eq.fecha_regreso, orden: 1,
+        });
+      }
+      await sb.from("contrato_vuelos").insert(tramos);
+    }
   }
 
   // 8) Ítems de valores: una fila por tipo de habitación (adultos = pax que cubre)
@@ -447,6 +470,23 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
         const costoAereo = (Number(sal.valor_tiquete) || 0) * paxConSilla + (Number(sal.fee_infante) || 0) * infs;
         await admin.from("ventas").update({ costo_aereo: costoAereo, aerolinea: sal.aerolinea }).eq("numero_contrato", numero);
         pushCxP("aereo", `Aéreo ${sal.aerolinea ?? ""}`.trim(), costoAereo, null, sal.aerolinea);
+      }
+    } catch { /* no bloquear */ }
+  }
+
+  // 9-bis-empaquetado) Costo aéreo del EMPAQUETADO (vuelo por sistema, SIN
+  // sillas — mismo criterio que la salida dinámica de arriba, pero con
+  // proveedor real del catálogo, igual que un bloqueo negociado). Nunca toca
+  // `sillas`: un empaquetado no representa cupo negociado ni garantizado.
+  if (input.modulo === "bloqueo" && input.empaquetadoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      const eq = await datosVueloEmpaquetado(admin, input.empaquetadoId);
+      if (eq) {
+        const infs = Math.max(0, Math.trunc(Number(input.infantes) || 0));
+        const costoAereo = eq.tarifa_para_empaquetar * paxConSilla + eq.fee_infante * infs;
+        await admin.from("ventas").update({ costo_aereo: costoAereo, aerolinea: eq.aerolinea }).eq("numero_contrato", numero);
+        pushCxP("aereo", `Aéreo ${eq.aerolinea ?? ""}`.trim(), costoAereo, eq.proveedor, eq.aerolinea);
       }
     } catch { /* no bloquear */ }
   }
@@ -701,6 +741,29 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
           destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
           numero_vuelo: null, hora_salida: sal.hora_salida_reg, hora_llegada: sal.hora_llegada_reg,
           fecha_salida: sal.fecha_regreso,
+        });
+      }
+    }
+  } else if (input.modulo === "bloqueo" && input.empaquetadoId) {
+    // Vuelo de SISTEMA (Empaquetados) en el snapshot de la cotización —
+    // mismo shape que un bloqueo negociado.
+    const eq = await datosVueloEmpaquetado(sb, input.empaquetadoId);
+    if (eq) {
+      const r = parseRuta(eq.ruta);
+      vuelosSnap.push({
+        id: 1, aerolinea: eq.aerolinea, record: eq.record, direccion: "ida",
+        origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
+        destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+        numero_vuelo: eq.vuelo_ida, hora_salida: eq.hora_salida_ida, hora_llegada: eq.hora_llegada_ida,
+        fecha_salida: eq.fecha_ida,
+      });
+      if (eq.fecha_regreso || eq.vuelo_regreso) {
+        vuelosSnap.push({
+          id: 2, aerolinea: eq.aerolinea, record: eq.record, direccion: "regreso",
+          origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino),
+          destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+          numero_vuelo: eq.vuelo_regreso, hora_salida: eq.hora_salida_reg, hora_llegada: eq.hora_llegada_reg,
+          fecha_salida: eq.fecha_regreso,
         });
       }
     }

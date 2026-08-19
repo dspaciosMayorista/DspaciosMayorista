@@ -1,84 +1,101 @@
 -- ───────────────────────────────────────────────────────────────────────────
 -- 155 · VUELOS — modalidad_emision: 'individual' pasa a llamarse 'serie'
+-- FASE TRANSITORIA (aditiva) — NO renombra datos, NO cierra el dominio viejo.
 --
--- Migración 152 dejó `bloqueos_vuelo.modalidad_emision` con dos valores
--- posibles: 'individual' | 'grupo' (null = "Sin definir", nunca se infiere).
--- El dueño pidió renombrar el vocabulario a Serie/Grupo (más claro para el
--- negocio — un bloqueo "individual" en realidad es una emisión en SERIE,
--- silla por silla, contra un bloqueo negociado con la aerolínea) y dejar
--- planteado un tercer concepto, "Sistema", para el inventario nuevo de
--- Empaquetados (migración 156) — pero "Sistema" NUNCA se agrega al CHECK de
--- esta columna: un bloqueo negociado (`bloqueos_vuelo`) nunca es "Sistema"
--- por definición (esa es precisamente la distinción de negocio: bloqueo =
--- cupo negociado con la aerolínea; Sistema = tarifa comprada/cotizada por
--- sistema, sin cupo negociado). "Sistema" queda como la modalidad IMPLÍCITA
--- y fija de toda fila de `empaquetados` cuando se muestra fusionada en
--- Control Vuelos — no una tercera opción de este CHECK.
+-- ⚠️ REESCRITA (revisión de PR #268): la versión original de esta migración
+-- hacía el UPDATE 'individual'→'serie' Y cerraba el CHECK/RPC a solo
+-- ('serie','grupo') en el MISMO paso. Eso deja una ventana de interrupción:
+--   · Si la migración corre ANTES de desplegar el código nuevo: el código
+--     VIEJO (todavía sirviendo tráfico) sigue mandando 'individual' al
+--     formulario/CSV/RPC → el CHECK ya cerrado lo rechaza → el asesor no
+--     puede crear/editar bloqueos hasta que termine el despliegue.
+--   · Si se despliega el código nuevo ANTES de correr la migración: el
+--     código nuevo manda 'serie' → el CHECK viejo (solo individual/grupo)
+--     lo rechaza → mismo problema, en la dirección contraria.
+-- No hay un orden migración/despliegue que evite la ventana con una sola
+-- migración que hace ambas cosas a la vez. Se separa en dos pasos, mismo
+-- patrón ya usado en 153/154 (cotizaciones: aislamiento por tenant):
+--
+--   155 (esta, ADITIVA) → el CHECK y el RPC aceptan LOS TRES valores
+--                          ('individual','serie','grupo'). NO se toca ningún
+--                          dato. Segura de correr ANTES del despliegue: el
+--                          código viejo (que solo conoce 'individual') sigue
+--                          funcionando exactamente igual.
+--   ↓ desplegar el código nuevo (lee 'individual' Y 'serie' como "Serie" en
+--     toda la UI; ESCRIBE únicamente 'serie' — nunca vuelve a producir
+--     'individual') ↓
+--   ↓ smoke test: crear/editar un bloqueo, confirmar que guarda 'serie' ↓
+--   157 (aparte, CIERRE) → convierte cualquier 'individual' remanente a
+--                          'serie' y cierra el CHECK/RPC a solo
+--                          ('serie','grupo'). Se corre DESPUÉS del
+--                          despliegue y el smoke test, nunca antes.
+--
+-- En NINGÚN punto de esta secuencia hay una combinación código+esquema que
+-- rompa: código viejo + esquema 155 (ambos conocen 'individual', CHECK
+-- también acepta 'serie' pero el código viejo nunca lo escribe) · código
+-- nuevo + esquema 155 (el código escribe 'serie', el CHECK ya lo acepta) ·
+-- código nuevo + esquema 157 (mismo caso, dominio ya cerrado). La única
+-- combinación que NO se soporta a propósito es código viejo + esquema 157
+-- (el CHECK ya no acepta 'individual') — por diseño, 157 solo se corre
+-- DESPUÉS de confirmar que el código nuevo ya está sirviendo tráfico.
+--
+-- "Sistema" (la tercera modalidad del negocio, para el inventario de
+-- Empaquetados — migración 156) NUNCA se agrega a este CHECK: un bloqueo
+-- negociado (`bloqueos_vuelo`) nunca es "Sistema" por definición — ver el
+-- comentario de columna más abajo.
 --
 -- QUÉ HACE
---   1. Renombra el valor de datos: UPDATE ... SET modalidad_emision='serie'
---      WHERE modalidad_emision='individual'. NUNCA toca null (sigue siendo
---      "Sin definir", nunca se le asume un valor) ni 'grupo'.
---   2. Reemplaza el CHECK constraint por modalidad_emision in ('serie','grupo').
---   3. Actualiza el comentario de la columna.
---   4. Verifica: cero filas deben quedar en 'individual' después del UPDATE,
---      y cero filas deben violar el nuevo CHECK — si algo no cuadra, aborta
---      (nunca se fuerza un valor ni se deja el rename a medias).
---
---   5. Reemplaza el RPC `actualizar_control_bloqueo()` (migración 152) por
---      una versión que valida/etiqueta 'serie' en vez de 'individual' — el
---      cuerpo original tenía el dominio válido y las etiquetas del historial
---      ("Individual"/"Grupo") escritas a mano dentro de la función; sin este
---      reemplazo, guardar 'serie' desde el formulario de Control fallaría
---      con "Modalidad de emisión inválida." (el RPC seguiría validando
---      contra el dominio viejo). El resto de la función (SELECT...FOR
---      UPDATE + UPDATE + INSERT atómico en `bloqueo_cambios`, resolución del
---      actor por `auth.uid()`, sin `security definer`) queda IDÉNTICO.
+--   1. Reemplaza el CHECK constraint: modalidad_emision in
+--      ('individual','serie','grupo'). Amplía, nunca resta.
+--   2. Actualiza el comentario de la columna (documenta la transición).
+--   3. Reemplaza el RPC `actualizar_control_bloqueo()` (migración 152) para
+--      que el dominio válido incluya 'individual' Y 'serie' (leídos/
+--      etiquetados igual, como "Serie", en el detalle del historial) además
+--      de 'grupo'. El resto de la función (SELECT...FOR UPDATE + UPDATE +
+--      INSERT atómico en `bloqueo_cambios`, resolución del actor por
+--      `auth.uid()`, sin `security definer`) queda IDÉNTICO a la 152.
 --
 -- QUÉ NO CAMBIA
---   `estado_emision`/`estado_pago` (mismos valores, no forman parte de este
---   rename), la tabla `bloqueo_cambios`, y toda la mecánica del RPC salvo el
---   dominio/etiquetas de modalidad (punto 5).
+--   Ningún dato existente. `estado_emision`/`estado_pago`, la tabla
+--   `bloqueo_cambios`, y toda la mecánica del RPC salvo el dominio/etiquetas
+--   de modalidad (punto 3).
 --
 -- ATOMICIDAD: todo el archivo corre en una transacción explícita
--- (`begin`/`commit`). Si la verificación final falla, Postgres revierte
--- también el UPDATE y el cambio de constraint — nunca queda el rename a
--- medias (datos ya en 'serie' pero el constraint todavía aceptando
--- 'individual', o viceversa).
+-- (`begin`/`commit`) por consistencia con el resto de migraciones recientes,
+-- aunque al ser puramente aditiva no tiene un punto de fallo esperado.
 --
 -- ROLLBACK PROBADO: `supabase/scripts/rollback_155_modalidad_emision_serie.sql`
--- — vuelve 'serie'→'individual' sin perder ningún dato (mismo criterio:
--- transaccional, verificado, nunca toca null/'grupo').
+-- — cierra el CHECK/RPC de vuelta a solo ('individual','grupo'). Solo tiene
+-- sentido si el código nuevo (que ya escribe 'serie') también se revierte al
+-- mismo tiempo o antes — ver el aviso dentro del script.
 -- ───────────────────────────────────────────────────────────────────────────
 
 begin;
 
--- 1) Rename de datos — SOLO 'individual'. null y 'grupo' quedan intactos.
-update public.bloqueos_vuelo
-   set modalidad_emision = 'serie'
- where modalidad_emision = 'individual';
-
--- 2) CHECK constraint nuevo (serie/grupo).
+-- 1) CHECK constraint ampliado — acepta individual/serie/grupo (nunca resta).
 alter table public.bloqueos_vuelo
   drop constraint if exists bloqueos_vuelo_modalidad_emision_check;
 alter table public.bloqueos_vuelo
   add constraint bloqueos_vuelo_modalidad_emision_check
-  check (modalidad_emision in ('serie', 'grupo'));
+  check (modalidad_emision in ('individual', 'serie', 'grupo'));
 
--- 3) Comentario actualizado.
+-- 2) Comentario actualizado (documenta la transición en curso).
 comment on column public.bloqueos_vuelo.modalidad_emision is
-  'Serie o grupo (antes de la migración 155: individual/grupo — "individual" se '
-  'renombró a "serie"). Obligatoria en registros nuevos (validada en crearBloqueo); '
-  'null en registros anteriores a la 152 = "Sin definir" en la UI, nunca se infiere. '
-  '"Sistema" (la tercera modalidad del negocio) NUNCA es un valor de esta columna: '
-  'es la modalidad implícita de toda fila de la tabla `empaquetados` (migración 156) '
-  'cuando se muestra fusionada en Control Vuelos. Migración 155.';
+  'Serie o grupo (antes: individual/grupo — "individual" se renombra a "serie"). '
+  'FASE TRANSITORIA (migración 155): el CHECK todavía acepta ''individual'' además de '
+  '''serie''/''grupo'' — el código nuevo LEE ambos como "Serie" pero solo ESCRIBE ''serie''. '
+  'La migración 157 (cierre, posterior al despliegue) convierte cualquier ''individual'' '
+  'remanente y cierra el dominio a solo serie/grupo. Obligatoria en registros nuevos '
+  '(validada en crearBloqueo); null en registros anteriores a la 152 = "Sin definir" en la '
+  'UI, nunca se infiere. "Sistema" (la tercera modalidad del negocio) NUNCA es un valor de '
+  'esta columna: es la modalidad implícita de toda fila de la tabla `empaquetados` '
+  '(migración 156) cuando se muestra fusionada en Control Vuelos.';
 
--- 5) RPC actualizado — mismo cuerpo que la migración 152, solo cambia el
---    dominio válido ('serie' en vez de 'individual') y las etiquetas del
---    historial. `create or replace` conserva la firma exacta (mismos 5
---    parámetros posicionales), así que no hace falta `drop function` ni
---    volver a hacer `grant`/`revoke` (esos privilegios sobreviven un REPLACE).
+-- 3) RPC ampliado — mismo cuerpo que la migración 152, el dominio válido
+--    ahora incluye 'individual' Y 'serie' (ambos se etiquetan "Serie" en el
+--    detalle del historial). `create or replace` conserva la firma exacta
+--    (mismos 5 parámetros posicionales), así que no hace falta `drop
+--    function` ni volver a hacer `grant`/`revoke` (sobreviven un REPLACE).
 create or replace function public.actualizar_control_bloqueo(
   p_bloqueo_id        bigint,
   p_modalidad_emision text,
@@ -96,7 +113,7 @@ declare
   v_detalle         text := '';
   v_registrado_por  text;
 begin
-  if p_modalidad_emision not in ('serie', 'grupo') then
+  if p_modalidad_emision not in ('individual', 'serie', 'grupo') then
     raise exception 'Modalidad de emisión inválida.';
   end if;
   if p_estado_emision not in ('pendiente', 'emitido') then
@@ -119,9 +136,9 @@ begin
   if coalesce(v_modalidad_antes, '') <> p_modalidad_emision then
     v_detalle := v_detalle || (case when v_detalle <> '' then ' · ' else '' end)
       || 'Modalidad de emisión: '
-      || coalesce(case v_modalidad_antes when 'serie' then 'Serie' when 'grupo' then 'Grupo' end, 'Sin definir')
+      || coalesce(case v_modalidad_antes when 'individual' then 'Serie' when 'serie' then 'Serie' when 'grupo' then 'Grupo' end, 'Sin definir')
       || ' → '
-      || (case p_modalidad_emision when 'serie' then 'Serie' when 'grupo' then 'Grupo' end);
+      || (case p_modalidad_emision when 'individual' then 'Serie' when 'serie' then 'Serie' when 'grupo' then 'Grupo' end);
   end if;
 
   if coalesce(v_emision_antes, '') <> p_estado_emision then
@@ -171,29 +188,7 @@ comment on function public.actualizar_control_bloqueo(bigint, text, text, text, 
   'en bloqueo_cambios en UNA sola transacción (SELECT ... FOR UPDATE + UPDATE + INSERT) — '
   'si el INSERT del historial falla, el UPDATE también se revierte. SIN security definer: '
   'corre con el rol del que llama, sujeta a las mismas policies de bloqueos_vuelo/bloqueo_cambios. '
-  'Modalidad válida: serie/grupo (renombrado desde individual/grupo en la migración 155).';
-
--- 4) Verificación: cero 'individual' remanentes, cero violaciones del CHECK.
-do $$
-declare
-  v_remanentes bigint;
-begin
-  select count(*) into v_remanentes
-    from public.bloqueos_vuelo
-   where modalidad_emision = 'individual';
-
-  if v_remanentes > 0 then
-    raise exception '155 FALLÓ: % filas siguen con modalidad_emision=''individual'' después del rename — el UPDATE no se aplicó a todas.', v_remanentes;
-  end if;
-
-  select count(*) into v_remanentes
-    from public.bloqueos_vuelo
-   where modalidad_emision is not null
-     and modalidad_emision not in ('serie', 'grupo');
-
-  if v_remanentes > 0 then
-    raise exception '155 FALLÓ: % filas tienen un modalidad_emision fuera de serie/grupo/null tras el rename — revisar antes de continuar.', v_remanentes;
-  end if;
-end $$;
+  'FASE TRANSITORIA (155): dominio válido individual/serie/grupo (ambos individual y serie se '
+  'etiquetan "Serie"); la migración 157 cierra el dominio a solo serie/grupo.';
 
 commit;

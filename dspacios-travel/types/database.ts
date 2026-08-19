@@ -1161,6 +1161,12 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["armado_empaquetados"]["Insert"]>;
         Relationships: [];
       };
+      empaquetado_cambios: {
+        Row: { id: number; empaquetado_id: number; detalle: string | null; nota: string | null; registrado_por: string | null; created_at: string };
+        Insert: { id?: number; empaquetado_id: number; detalle?: string | null; nota?: string | null; registrado_por?: string | null; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["empaquetado_cambios"]["Insert"]>;
+        Relationships: [];
+      };
       sillas: {
         Row: {
           id: number;
@@ -2060,6 +2066,7 @@ export type Database = {
           modulo: Database["public"]["Enums"]["tarifario_modulo"];
           bloqueo_id: number | null;
           bloqueo_label: string | null;
+          empaquetado_id: number | null;
           hotel_id: number | null;
           hotel_nombre: string | null;
           servicio_id: number | null;
@@ -2097,6 +2104,7 @@ export type Database = {
           modulo: Database["public"]["Enums"]["tarifario_modulo"];
           bloqueo_id?: number | null;
           bloqueo_label?: string | null;
+          empaquetado_id?: number | null;
           hotel_id?: number | null;
           hotel_nombre?: string | null;
           servicio_id?: number | null;
@@ -2789,6 +2797,19 @@ export type Database = {
           p_estado_emision: string;
           p_estado_pago: string;
           p_nota: string;
+        };
+        Returns: undefined;
+      };
+      // Migración 156. Mismo patrón que actualizar_control_bloqueo, para
+      // empaquetados: actualiza record/estado_emision/estado_pago y registra
+      // el cambio en empaquetado_cambios en una sola transacción.
+      actualizar_control_empaquetado: {
+        Args: {
+          p_empaquetado_id: number;
+          p_record: string | null;
+          p_estado_emision: string | null;
+          p_estado_pago: string | null;
+          p_nota: string | null;
         };
         Returns: undefined;
       };

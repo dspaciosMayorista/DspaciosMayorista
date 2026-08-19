@@ -138,7 +138,16 @@ test("ControlVuelosTabla y ControlBadges importan tonoModalidad/tonoEstadoEmisio
 // ── No se tocaron textos, estados almacenados, filtros ni formularios ─────
 
 test("labelModalidad/labelEstadoEmision/labelEstadoPago (los TEXTOS) no cambiaron", () => {
-  assert.match(readFileSync(join(raiz, "lib/vuelos/control.ts"), "utf8"), /export function labelModalidad\(v: string \| null\): string \{\s*return esModalidadEmision\(v\) \? MODALIDAD_LABEL\[v\] : SIN_DEFINIR;/);
+  // Revisión de PR #268 (defecto 1): labelModalidad ya no llama
+  // esModalidadEmision directo — pasa por normalizarModalidadLegible (lee
+  // 'individual' como 'serie' durante la ventana de transición 155→157) —
+  // pero el TEXTO que produce para cada valor conocido (serie→"Serie",
+  // grupo→"Grupo", cualquier otra cosa→SIN_DEFINIR) sigue siendo el mismo.
+  const src = readFileSync(join(raiz, "lib/vuelos/control.ts"), "utf8");
+  assert.match(
+    src,
+    /export function labelModalidad\(v: string \| null\): string \{\s*const m = normalizarModalidadLegible\(v\);\s*return m \? MODALIDAD_LABEL\[m\] : SIN_DEFINIR;/
+  );
 });
 
 test("ControlVuelosTabla: los filtros de emisión/pago no se tocaron (siguen usando matchControl/SIN_DEFINIR_VAL); el de modalidad ahora contempla 'sistema'", () => {

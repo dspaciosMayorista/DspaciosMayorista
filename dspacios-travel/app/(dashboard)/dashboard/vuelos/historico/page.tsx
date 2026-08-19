@@ -6,7 +6,7 @@ import { EmpaquetadosTabla } from "../EmpaquetadosTabla";
 import { VistaTabs, vistaDeParam } from "../VistaTabs";
 import { conteoPorBloqueo, sumarConteos, esPasado, ventaPct, ocupacionPct, conteoCero, type ConteoSillas } from "@/lib/vuelos/stats";
 import { hoyISO } from "@/lib/calc/paquetes";
-import type { ModalidadControl } from "@/lib/vuelos/control";
+import { normalizarModalidadLegible, type ModalidadControl } from "@/lib/vuelos/control";
 
 export const dynamic = "force-dynamic";
 
@@ -46,8 +46,13 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
   const conteo: Map<number, ConteoSillas> = vistaInventario ? conteoPorBloqueo(sillas) : new Map();
   const cZero = conteoCero();
 
+  // Mismo criterio que ../page.tsx (defecto 3, revisión de PR #268): el
+  // histórico agrupa TODO lo que ya no está en la vista "activa" — fecha de
+  // ida pasada O desactivado a mano (activo=false), aunque su fecha de ida
+  // todavía no llegue. Un desactivado-futuro no tiene otro lugar donde
+  // consultarse una vez sale de "Empaquetados activos".
   const todosEmp = empaquetadosData ?? [];
-  const empPasados = todosEmp.filter((e) => esPasado(e.fecha_ida, hoy));
+  const empPasados = todosEmp.filter((e) => !e.activo || esPasado(e.fecha_ida, hoy));
 
   // Conteo HISTÓRICO GENERAL = de TODOS los bloqueos (vida del inventario).
   // Solo tiene sentido (y solo se calcula) en Inventario.
@@ -62,7 +67,7 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
           record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
           fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
           fecha_emision: b.fecha_emision,
-          modalidad: b.modalidad_emision as ModalidadControl | null,
+          modalidad: normalizarModalidadLegible(b.modalidad_emision) as ModalidadControl | null,
           estado_emision: b.estado_emision, estado_pago: b.estado_pago,
         })),
         ...empPasados.map((e) => ({
@@ -80,7 +85,7 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
   const subtituloVista = vistaInventario
     ? "Bloqueos cuya fecha de ida ya pasó (inactivos). Entra a un record para ver sus pasajeros."
     : vistaEmpaquetados
-      ? "Empaquetados cuya fecha de ida ya pasó."
+      ? "Empaquetados cuya fecha de ida ya pasó, o que fueron desactivados a mano."
       : "Modalidad, emisión y pago de los records ya pasados (bloqueos + empaquetados).";
 
   return (

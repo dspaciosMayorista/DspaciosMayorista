@@ -43,7 +43,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
     const { data: page } = await sb
       .from("tarifario_resultado")
       .select(
-        "modulo, bloqueo_label, bloqueo_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda"
+        "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda"
       )
       .eq("paquete_activo", true)
       .order("destino_nombre")
@@ -84,6 +84,23 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
   // Oculta salidas de BLOQUEO cuya fecha de ida ya pasó.
   const hoyTarifa = hoyISO();
   filas = filas.filter((f) => (f.modulo !== "bloqueo" && f.modulo !== "dinamico") || !f.fecha_ida || f.fecha_ida >= hoyTarifa);
+
+  // Oculta filas de EMPAQUETADO cuyo origen fue desactivado a mano después de
+  // generar el tarifario (defecto 3, revisión de PR #268): generarTarifario()
+  // solo excluye empaquetados inactivos al REGENERAR — una fila ya escrita en
+  // tarifario_resultado no desaparece sola si el empaquetado se apaga
+  // después, así que el filtro también se aplica aquí, en LECTURA, para el
+  // caso (más probable) de que nadie vuelva a pulsar "Generar tarifario"
+  // justo después de desactivarlo.
+  const empaquetadoIds = [...new Set(
+    filas.filter((f) => f.empaquetado_id != null).map((f) => f.empaquetado_id as number)
+  )];
+  if (empaquetadoIds.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const admin = createAdminClient();
+    const { data: emps } = await admin.from("empaquetados").select("id, activo").in("id", empaquetadoIds);
+    const activos = new Set((emps ?? []).filter((e) => e.activo).map((e) => e.id));
+    filas = filas.filter((f) => f.empaquetado_id == null || activos.has(f.empaquetado_id));
+  }
 
   // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
   // Los servicios de paquetes porción/bloqueo existen como add-on para Reservar,

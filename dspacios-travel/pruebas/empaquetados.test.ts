@@ -8,21 +8,32 @@ import {
   MODALIDAD_LABEL,
   MODALIDAD_CONTROL_LABEL,
   esModalidadEmision,
+  normalizarModalidadLegible,
   labelModalidad,
   labelModalidadControl,
   tonoModalidad,
   tonoModalidadControl,
 } from "../lib/vuelos/control.ts";
+import { aporteVuelo } from "../lib/calc/paquetes.ts";
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
 const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
 
 // ───────────────────────────────────────────────────────────────────────────
-// PR A — modalidad serie/grupo/sistema + inventario de Empaquetados
-// (migraciones 155/156). Estas pruebas cubren lo que las de
-// pruebas/vuelosControl.test.ts (migración 152) no cubrían: el rename en sí,
-// el pseudo-valor "sistema" SOLO para la vista fusionada de Control Vuelos,
-// y el wiring de la tabla/acciones nuevas.
+// PR A (+ revisión de PR #268) — modalidad serie/grupo/sistema + inventario
+// de Empaquetados (migraciones 155/156/157). Estas pruebas cubren lo que
+// pruebas/vuelosControl.test.ts (migración 152) no cubría: el rename en sí
+// (ahora en dos fases, transitoria + cierre — ver más abajo), el pseudo-valor
+// "sistema" SOLO para la vista fusionada de Control Vuelos, y el wiring de
+// la tabla/acciones nuevas.
+//
+// ⚠️ Las pruebas de string/wiring de este archivo (regex contra el código
+// fuente) NO son prueba suficiente por sí solas — la revisión de PR #268
+// (defecto 9) las señaló explícitamente como insuficientes. Se complementan
+// con `supabase/scripts/test_empaquetados.sql` (SQL real: constraints, RLS,
+// RPC, atomicidad, falso éxito, borrado vinculado, inactivo futuro — corrido
+// contra Postgres de verdad, no inspección de texto) y con las pruebas de
+// matemática pura más abajo (aporteVuelo — no doble margen).
 // ───────────────────────────────────────────────────────────────────────────
 
 test("MODALIDADES_EMISION es exactamente [serie, grupo] — 'sistema' nunca es un valor real de la columna", () => {
@@ -47,46 +58,107 @@ test("esModalidadEmision sigue sin aceptar 'sistema' — esa columna (bloqueos_v
   assert.equal(esModalidadEmision("sistema"), false);
 });
 
+// ── Ventana de transición 155→157 (defecto 1, revisión de PR #268) ─────────
+test("normalizarModalidadLegible: LEE 'individual' como sinónimo de 'serie' (ventana de transición), pero esModalidadEmision (guardián de ESCRITURA) sigue sin aceptarlo", () => {
+  assert.equal(normalizarModalidadLegible("individual"), "serie");
+  assert.equal(normalizarModalidadLegible("serie"), "serie");
+  assert.equal(normalizarModalidadLegible("grupo"), "grupo");
+  assert.equal(normalizarModalidadLegible(null), null);
+  assert.equal(normalizarModalidadLegible("cualquier-cosa"), null);
+  assert.equal(esModalidadEmision("individual"), false, "escribir 'individual' nunca debe ser válido, ni durante la transición");
+});
+
+test("labelModalidad/tonoModalidad leen 'individual' exactamente igual que 'serie' (defecto 1: el código nuevo debe leer ambos como Serie)", () => {
+  assert.equal(labelModalidad("individual"), labelModalidad("serie"));
+  assert.equal(labelModalidad("individual"), "Serie");
+  assert.equal(tonoModalidad("individual"), tonoModalidad("serie"));
+});
+
 // ───────────────────────────────────────────────────────────────────────────
-// Migración 155 (rename individual → serie)
+// Migración 155 — FASE TRANSITORIA (aditiva, revisión de PR #268 defecto 1)
 // ───────────────────────────────────────────────────────────────────────────
 const mig155 = leer("supabase/migrations/20260601000155_modalidad_emision_serie.sql");
 
-test("migración 155: corre en una transacción explícita y renombra SOLO 'individual', nunca null/'grupo'", () => {
+test("migración 155 (transitoria): corre en una transacción explícita, AMPLÍA el CHECK a individual+serie+grupo, y NO TOCA NINGÚN DATO", () => {
   assert.match(mig155, /^begin;/m, "no empieza con begin; explícito");
   assert.match(mig155, /^commit;/m, "no termina con commit; explícito");
   assert.match(
     mig155,
-    /update public\.bloqueos_vuelo\s*\n\s*set modalidad_emision = 'serie'\s*\n\s*where modalidad_emision = 'individual';/,
-    "el UPDATE de rename no tiene exactamente esta forma (solo 'individual' → 'serie')"
+    /check \(modalidad_emision in \('individual', 'serie', 'grupo'\)\)/,
+    "el CHECK transitorio debe aceptar los TRES valores — si solo acepta serie/grupo, el código viejo (que aún escribe 'individual') rompe apenas se corre esta migración antes del despliegue"
   );
-  assert.match(mig155, /check \(modalidad_emision in \('serie', 'grupo'\)\)/, "el CHECK nuevo no es exactamente serie/grupo");
+  assert.doesNotMatch(
+    mig155,
+    /set modalidad_emision = 'serie'\s*\n\s*where modalidad_emision = 'individual';/,
+    "la 155 transitoria NO debe convertir el dato 'individual'→'serie' — eso es responsabilidad exclusiva de la 157 (cierre), después del despliegue (el RPC sí contiene un UPDATE, pero es su comportamiento normal en tiempo de ejecución, no una conversión de datos históricos)"
+  );
 });
 
-test("migración 155: reemplaza el RPC actualizar_control_bloqueo con el dominio serie/grupo (si no, guardar 'serie' desde el formulario fallaría)", () => {
+test("migración 155 (transitoria): el RPC actualizar_control_bloqueo acepta individual/serie/grupo — el código nuevo (que solo ESCRIBE serie) sigue pudiendo guardar, y el código viejo (que solo conoce individual) también", () => {
   const inicio = mig155.indexOf("create or replace function public.actualizar_control_bloqueo");
-  assert.notEqual(inicio, -1, "la 155 no reemplaza el RPC — guardar 'serie' desde Control seguiría rechazado por el dominio viejo");
+  assert.notEqual(inicio, -1, "la 155 no reemplaza el RPC");
   const fin = mig155.indexOf("comment on function public.actualizar_control_bloqueo", inicio);
   const fn = mig155.slice(inicio, fin > inicio ? fin : undefined);
-  assert.match(fn, /p_modalidad_emision not in \('serie', 'grupo'\)/, "el RPC sigue validando contra individual/grupo");
-  assert.doesNotMatch(fn, /'individual'/, "el RPC todavía menciona 'individual' en algún lado (validación o etiqueta del historial)");
+  assert.match(fn, /p_modalidad_emision not in \('individual', 'serie', 'grupo'\)/, "el RPC transitorio debe validar contra los TRES valores");
 });
 
-test("migración 155: verifica al final que no quede ninguna fila en 'individual' ni fuera de serie/grupo/null — aborta si no cuadra", () => {
-  assert.match(mig155, /raise exception '155 FALLÓ/);
-  assert.match(mig155, /modalidad_emision = 'individual'/);
+test("migración 155 (transitoria): NO tiene ningún bloque de verificación 'FALLÓ' — no hay nada que verificar en una migración puramente aditiva que no toca datos", () => {
+  assert.doesNotMatch(mig155, /raise exception '155 FALLÓ/, "la 155 ya no es la migración que cierra el dominio — ese bloque vive en la 157");
 });
 
 const rollback155 = leer("supabase/scripts/rollback_155_modalidad_emision_serie.sql");
-test("rollback 155: transaccional, revierte serie→individual Y restaura el RPC viejo", () => {
+test("rollback 155 (transitoria): transaccional, CIERRA de vuelta a individual/grupo (deshace la ampliación) — no convierte datos porque la 155 tampoco los tocó", () => {
   assert.match(rollback155, /^begin;/m);
   assert.match(rollback155, /^commit;/m);
-  assert.match(rollback155, /set modalidad_emision = 'individual'\s*\n\s*where modalidad_emision = 'serie';/);
-  assert.match(rollback155, /p_modalidad_emision not in \('individual', 'grupo'\)/, "el rollback no restaura el dominio viejo del RPC");
+  assert.match(rollback155, /check \(modalidad_emision in \('individual', 'grupo'\)\)/, "el rollback debe cerrar el CHECK de vuelta a individual/grupo");
+  assert.match(rollback155, /p_modalidad_emision not in \('individual', 'grupo'\)/, "el rollback debe restaurar el dominio viejo del RPC");
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// Migración 156 (tabla empaquetados + armado_empaquetados)
+// Migración 157 — CIERRE (posterior al despliegue, revisión de PR #268 defecto 1)
+// ───────────────────────────────────────────────────────────────────────────
+const mig157 = leer("supabase/migrations/20260601000157_modalidad_emision_serie_cierre.sql");
+
+test("migración 157 (cierre): corre en transacción explícita, renombra el 'individual' remanente a 'serie', y CIERRA el CHECK a solo serie/grupo", () => {
+  assert.match(mig157, /^begin;/m);
+  assert.match(mig157, /^commit;/m);
+  assert.match(
+    mig157,
+    /update public\.bloqueos_vuelo\s*\n\s*set modalidad_emision = 'serie'\s*\n\s*where modalidad_emision = 'individual';/,
+    "el UPDATE de cierre no tiene exactamente esta forma (solo 'individual' → 'serie')"
+  );
+  assert.match(mig157, /check \(modalidad_emision in \('serie', 'grupo'\)\)/, "el CHECK de cierre no es exactamente serie/grupo");
+});
+
+test("migración 157 (cierre): reemplaza el RPC a solo serie/grupo (cierra el dominio también ahí, no solo en la tabla)", () => {
+  const inicio = mig157.indexOf("create or replace function public.actualizar_control_bloqueo");
+  assert.notEqual(inicio, -1, "la 157 no reemplaza el RPC");
+  const fin = mig157.indexOf("comment on function public.actualizar_control_bloqueo", inicio);
+  const fn = mig157.slice(inicio, fin > inicio ? fin : undefined);
+  assert.match(fn, /p_modalidad_emision not in \('serie', 'grupo'\)/, "el RPC de cierre sigue validando contra individual/grupo");
+  assert.doesNotMatch(fn, /'individual'/, "el RPC de cierre todavía menciona 'individual' en algún lado (validación o etiqueta del historial)");
+});
+
+test("migración 157 (cierre): verifica al final que no quede ninguna fila en 'individual' ni fuera de serie/grupo/null — aborta si no cuadra", () => {
+  assert.match(mig157, /raise exception '157 FALLÓ/);
+  assert.match(mig157, /modalidad_emision = 'individual'/);
+});
+
+test("migración 157 (cierre): el comentario de despliegue advierte NO correrla en el mismo despliegue que la 155/156", () => {
+  assert.match(mig157, /NO CORRER en el mismo despliegue/i);
+});
+
+const rollback157 = leer("supabase/scripts/rollback_157_modalidad_emision_serie_cierre.sql");
+test("rollback 157 (cierre): transaccional, REABRE el CHECK/RPC a individual/serie/grupo (misma fase transitoria de la 155)", () => {
+  assert.match(rollback157, /^begin;/m);
+  assert.match(rollback157, /^commit;/m);
+  assert.match(rollback157, /check \(modalidad_emision in \('individual', 'serie', 'grupo'\)\)/);
+  assert.match(rollback157, /p_modalidad_emision not in \('individual', 'serie', 'grupo'\)/);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Migración 156 (tabla empaquetados + armado_empaquetados + CHECKs +
+// borrado seguro + historial — revisión de PR #268 defectos 4/6/8)
 // ───────────────────────────────────────────────────────────────────────────
 const mig156 = leer("supabase/migrations/20260601000156_empaquetados.sql");
 
@@ -99,13 +171,47 @@ test("migración 156: 'empaquetados' NO tiene paquete_id propio — puede existi
   assert.match(bloque, /fecha_ida\s+date not null/, "fecha_ida sí debe ser obligatoria");
 });
 
-test("migración 156: armado_empaquetados es una tabla de enlace N:M con PK compuesta, igual patrón que armado_vuelos", () => {
+test("migración 156 (defecto 6): CHECK de tarifas/fechas — tarifas>=0, fecha_regreso>=fecha_ida, compra_fin>=compra_inicio", () => {
+  assert.match(mig156, /check \(tarifa_proveedor >= 0 and tarifa_para_empaquetar >= 0 and fee_infante >= 0\)/);
+  assert.match(mig156, /check \(fecha_regreso is null or fecha_regreso >= fecha_ida\)/);
+  assert.match(mig156, /check \(compra_inicio is null or compra_fin is null or compra_fin >= compra_inicio\)/);
+});
+
+test("migración 156 (defecto 4): armado_empaquetados.empaquetado_id es ON DELETE RESTRICT (NO cascade) — un empaquetado vinculado no se puede borrar en silencio", () => {
   const inicio = mig156.indexOf("create table if not exists public.armado_empaquetados");
   const fin = mig156.indexOf("create index", inicio);
   const bloque = mig156.slice(inicio, fin);
-  assert.match(bloque, /paquete_id\s+bigint not null references public\.armado_paquetes\(id\) on delete cascade/);
-  assert.match(bloque, /empaquetado_id\s+bigint not null references public\.empaquetados\(id\) on delete cascade/);
-  assert.match(bloque, /primary key \(paquete_id, empaquetado_id\)/);
+  assert.match(bloque, /paquete_id\s+bigint not null references public\.armado_paquetes\(id\) on delete cascade/, "paquete_id sí debe seguir en cascade (el paquete es dueño del enlace)");
+  assert.match(bloque, /empaquetado_id\s+bigint not null references public\.empaquetados\(id\) on delete restrict/, "empaquetado_id debe ser RESTRICT, no cascade");
+  assert.doesNotMatch(bloque, /empaquetado_id\s+bigint not null references public\.empaquetados\(id\) on delete cascade/, "empaquetado_id NO debe ser cascade");
+});
+
+test("migración 156 (defecto 8): tabla empaquetado_cambios + RPC actualizar_control_empaquetado, mismo patrón que bloqueo_cambios/actualizar_control_bloqueo (152) — SIN security definer, actor por auth.uid(), UPDATE+INSERT atómico", () => {
+  assert.match(mig156, /create table if not exists public\.empaquetado_cambios/);
+  const inicio = mig156.indexOf("create or replace function public.actualizar_control_empaquetado");
+  assert.notEqual(inicio, -1, "falta el RPC actualizar_control_empaquetado");
+  const fin = mig156.indexOf("comment on function public.actualizar_control_empaquetado", inicio);
+  const fn = mig156.slice(inicio, fin > inicio ? fin : undefined);
+  assert.doesNotMatch(fn, /security definer/i, "el RPC NO debe ser security definer — debe correr con el rol del que llama, sujeto a RLS real");
+  assert.match(fn, /for update/i, "falta el SELECT ... FOR UPDATE (bloqueo de fila dentro de la transacción)");
+  assert.match(fn, /auth\.uid\(\)/, "el actor debe resolverse con auth.uid(), nunca recibirse como parámetro");
+  assert.match(fn, /insert into public\.empaquetado_cambios/, "falta el INSERT del historial dentro de la misma función");
+});
+
+test("migración 156 (defecto 7): actualizar_control_empaquetado PRESERVA null en estado_emision/estado_pago — nunca fuerza 'pendiente' cuando el caller no cambia esos campos", () => {
+  const inicio = mig156.indexOf("create or replace function public.actualizar_control_empaquetado");
+  const fin = mig156.indexOf("comment on function public.actualizar_control_empaquetado", inicio);
+  const fn = mig156.slice(inicio, fin > inicio ? fin : undefined);
+  // Los parámetros son nullable (a diferencia de actualizar_control_bloqueo,
+  // que exige 'pendiente'/'emitido' — aquí NULL es un valor legítimo).
+  assert.match(fn, /p_estado_emision is not null and p_estado_emision not in \('pendiente', 'emitido'\)/, "debe permitir p_estado_emision NULL sin rechazarlo");
+  assert.match(fn, /p_estado_pago is not null and p_estado_pago not in \('pendiente', 'pagado'\)/, "debe permitir p_estado_pago NULL sin rechazarlo");
+  assert.doesNotMatch(fn, /coalesce\(p_estado_emision,\s*'pendiente'\)/, "NUNCA debe coalescer estado_emision a 'pendiente'");
+  assert.doesNotMatch(fn, /coalesce\(p_estado_pago,\s*'pendiente'\)/, "NUNCA debe coalescer estado_pago a 'pendiente'");
+});
+
+test("migración 156 (defecto 2): tarifario_resultado gana la columna empaquetado_id — provenance del origen 'Sistema', mutuamente excluyente con bloqueo_id", () => {
+  assert.match(mig156, /alter table public\.tarifario_resultado\s*\n\s*add column if not exists empaquetado_id bigint references public\.empaquetados\(id\);/);
 });
 
 test("migración 156: estado_emision/estado_pago sin default (null = 'Por confirmar', mismo criterio que la 152)", () => {
@@ -115,44 +221,214 @@ test("migración 156: estado_emision/estado_pago sin default (null = 'Por confir
   assert.match(mig156, /check \(estado_pago in \('pendiente', 'pagado'\)\)/);
 });
 
-test("migración 156: RLS habilitado en ambas tablas, lectura de empaquetados incluye 'venta' (igual que bloqueos_vuelo)", () => {
+test("migración 156: RLS habilitado en las tres tablas, lectura de empaquetados incluye 'venta' (igual que bloqueos_vuelo)", () => {
   assert.match(mig156, /alter table public\.empaquetados\s+enable row level security;/);
   assert.match(mig156, /alter table public\.armado_empaquetados\s+enable row level security;/);
+  assert.match(mig156, /alter table public\.empaquetado_cambios\s+enable row level security;/);
   const lectura = mig156.slice(mig156.indexOf('"empaquetados: lectura operativa"\n  on public.empaquetados for select'));
   assert.match(lectura.slice(0, 300), /'superadmin','gerencia','administracion','operaciones','venta','control_vuelo'/);
 });
 
-test("migración 156 y su rollback corren en transacción explícita", () => {
+test("migración 156 y su rollback corren en transacción explícita, y el rollback también deshace lo agregado en esta revisión (CHECKs/RESTRICT/empaquetado_cambios/RPC/columna)", () => {
   assert.match(mig156, /^begin;/m);
   assert.match(mig156, /^commit;/m);
   const rollback156 = leer("supabase/scripts/rollback_156_empaquetados.sql");
   assert.match(rollback156, /^begin;/m);
   assert.match(rollback156, /^commit;/m);
+  assert.match(rollback156, /alter table public\.tarifario_resultado drop column if exists empaquetado_id;/);
+  assert.match(rollback156, /drop function if exists public\.actualizar_control_empaquetado/);
+  assert.match(rollback156, /drop table if exists public\.empaquetado_cambios;/);
   assert.match(rollback156, /drop table if exists public\.armado_empaquetados;/);
   assert.match(rollback156, /drop table if exists public\.empaquetados;/);
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// Código de aplicación — empaquetados-actions.ts
+// Motor de cálculo — NO doble margen (defecto 2, revisión de PR #268)
+// aporteVuelo es la ÚNICA función que aplica el margen del vuelo (bloqueo o
+// empaquetado, misma función, mismo contrato): costo/(1-mk) si aplica_mk,
+// si no costo+ta. Se prueba con matemática real, no inspección de texto.
+// ───────────────────────────────────────────────────────────────────────────
+test("aporteVuelo: aplica el margen EXACTAMENTE una vez — mismo resultado para un bloqueo negociado y un empaquetado con el mismo costoTiquete/aplica_mk/pctMk/ta", () => {
+  // Simula bloqueos_vuelo.tarifa_para_empaquetar y empaquetados.tarifa_para_empaquetar
+  // con el MISMO valor — ambos deben producir el MISMO aporte al PVP, porque
+  // generarTarifario() usa la misma función con el mismo único costo de entrada.
+  const costoTiquete = 200_000;
+  const pctMk = 0.20;
+  const conMargen = aporteVuelo(costoTiquete, true, pctMk, 0);
+  assert.equal(conMargen, 250_000, "costo/(1-mk) = 200000/0.8 = 250000");
+  // Probar que NO es doble margen: costo/(1-mk)/(1-mk) daría 312500, distinto.
+  assert.notEqual(conMargen, costoTiquete / (1 - pctMk) / (1 - pctMk));
+
+  const conTA = aporteVuelo(costoTiquete, false, pctMk, 15_000);
+  assert.equal(conTA, 215_000, "costo + TA cuando NO aplica margen");
+
+  // La tarifa_proveedor (neto informativo) NUNCA debe alterar este cálculo —
+  // aporteVuelo ni siquiera la recibe como parámetro, así que estructuralmente
+  // no puede colarse dos veces al PVP.
+  assert.equal(aporteVuelo.length, 4, "aporteVuelo solo recibe 4 parámetros (costoTiquete, aplicaMk, pctMk, ta) — nunca una segunda tarifa");
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// generarTarifario() — integración real con Empaquetados (defecto 2)
+// ───────────────────────────────────────────────────────────────────────────
+const paquetesActionsSrc = leer("app/(dashboard)/dashboard/paquetes/actions.ts");
+
+test("generarTarifario lee armado_empaquetados (join con empaquetados) — antes NO lo consultaba en absoluto", () => {
+  assert.match(paquetesActionsSrc, /\.from\("armado_empaquetados"\)/, "generarTarifario debe consultar armado_empaquetados");
+  assert.match(paquetesActionsSrc, /empaquetados\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo\)/);
+});
+
+test("generarTarifario: la rama 'bloqueo' liquida empaquetados con la MISMA función aporteVuelo/filasHoteles que un bloqueo negociado, usando tarifa_para_empaquetar (nunca tarifa_proveedor) como costoTiquete", () => {
+  const inicio = paquetesActionsSrc.indexOf("// MÓDULO BLOQUEOS (Sistema): una liquidación por empaquetado");
+  assert.notEqual(inicio, -1, "falta el bloque de generación para empaquetados dentro de tipo==='bloqueo'");
+  const fin = paquetesActionsSrc.indexOf("} else if (tipo === \"porcion_terrestre\"", inicio);
+  const bloque = paquetesActionsSrc.slice(inicio, fin);
+  assert.match(bloque, /const costoTiquete = Number\(e\.tarifa_para_empaquetar\) \|\| 0;/, "debe usar tarifa_para_empaquetar como base");
+  assert.doesNotMatch(bloque, /e\.tarifa_proveedor/, "tarifa_proveedor (neto informativo) NUNCA debe entrar al cálculo del PVP — evita doble margen/inconsistencia");
+  assert.match(bloque, /aporteVuelo\(costoTiquete, aplica_mk, pctMk, ta\)/, "debe usar la MISMA función aporteVuelo que un bloqueo negociado");
+  assert.match(bloque, /filasHoteles\(e\.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", null, label, e\.fecha_regreso, false, null, e\.id\)/, "debe pasar bloqueoId=null y empaquetadoId=e.id — provenance inequívoca");
+});
+
+test("generarTarifario: filasHoteles guarda empaquetado_id en cada fila insertada de tarifario_resultado", () => {
+  const inicio = paquetesActionsSrc.indexOf("function filasHoteles(");
+  const finFirma = paquetesActionsSrc.indexOf(") {", inicio);
+  const firma = paquetesActionsSrc.slice(inicio, finFirma);
+  assert.match(firma, /empaquetadoId: number \| null = null/, "filasHoteles debe recibir empaquetadoId como parámetro");
+  const push = paquetesActionsSrc.indexOf("filas.push({", inicio);
+  const finPush = paquetesActionsSrc.indexOf("});", push);
+  const bloquePush = paquetesActionsSrc.slice(push, finPush);
+  assert.match(bloquePush, /empaquetado_id:\s*empaquetadoId,/, "el insert de tarifario_resultado debe llevar empaquetado_id");
+});
+
+test("generarTarifario: la validación de tipo='bloqueo' acepta vuelos O empaquetados — no se limita en silencio a solo bloqueos negociados", () => {
+  assert.match(
+    paquetesActionsSrc,
+    /if \(tipo === "bloqueo" && !vuelos\.length && !empaquetadosVuelos\.length\)/,
+    "la validación debe exigir vuelos.length===0 Y empaquetadosVuelos.length===0 para rechazar — cualquiera de los dos basta"
+  );
+});
+
+test("generarTarifario: empaquetados inactivos (activo=false) se excluyen de la generación — no se liquida con una fuente apagada", () => {
+  const inicio = paquetesActionsSrc.indexOf("const empaquetadosVuelos = (empaquetadosSel ?? [])");
+  const fin = paquetesActionsSrc.indexOf("const tipo = (pq.tipo", inicio);
+  const bloque = paquetesActionsSrc.slice(inicio, fin);
+  assert.match(bloque, /v\.e\.activo/, "el filtro debe excluir empaquetados con activo=false");
+});
+
+// ── computo.ts + reservar/actions.ts — provenance hasta Booking/contrato ───
+const computoSrc = leer("lib/reservar/computo.ts");
+const reservarActionsSrc = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+const empaquetadoOrigenSrc = leer("lib/reservar/empaquetadoOrigen.ts");
+
+test("computo.ts: la búsqueda de tarifario_resultado por empaquetadoId se revisa ANTES que bloqueoId (bloqueo_id siempre es null en una fila de origen empaquetado)", () => {
+  assert.match(computoSrc, /empaquetadoId\??:\s*number \| null/, "ReservaInput debe tener empaquetadoId");
+  assert.match(
+    computoSrc,
+    /else if \(input\.modulo === "bloqueo" && input\.empaquetadoId\) q = q\.eq\("empaquetado_id", input\.empaquetadoId\);/
+  );
+});
+
+test("reservar/actions.ts: reservarDesdeTarifarioInterno arma el tramo del contrato para un empaquetado (record/ruta/vuelo), y su costo aéreo/CxP van SIN tocar sillas", () => {
+  assert.match(reservarActionsSrc, /import \{ datosVueloEmpaquetado \} from "@\/lib\/reservar\/empaquetadoOrigen";/);
+  assert.match(reservarActionsSrc, /else if \(input\.modulo === "bloqueo" && input\.empaquetadoId\) \{/, "falta la rama de contrato_vuelos para empaquetados");
+  const bloqueCosto = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 9-bis-empaquetado)"));
+  assert.match(bloqueCosto.slice(0, 900), /datosVueloEmpaquetado\(admin, input\.empaquetadoId\)/);
+  assert.doesNotMatch(bloqueCosto.slice(0, 900), /\.from\("sillas"\)/, "el costo aéreo de un empaquetado NUNCA debe tocar sillas");
+});
+
+test("lib/reservar/empaquetadoOrigen.ts: helper compartido, un solo SELECT normalizado — evita repetir el mismo shape en 3 call sites distintos", () => {
+  assert.match(empaquetadoOrigenSrc, /export async function datosVueloEmpaquetado/);
+  assert.match(empaquetadoOrigenSrc, /tarifa_para_empaquetar,\s*fee_infante,/, "debe traer tarifa_para_empaquetar y fee_infante (para costo aéreo + fee de infante, igual que salidas_dinamicas)");
+});
+
+test("TarifarioPublic.tsx: FilaTarifario/Pivotada/reservarHref propagan empaquetado_id igual que bloqueo_id/salida_id", () => {
+  const tarifarioPublicSrc = leer("app/tarifario/TarifarioPublic.tsx");
+  assert.match(tarifarioPublicSrc, /empaquetado_id\?:\s*number \| null;/);
+  assert.match(tarifarioPublicSrc, /if \(r\.empaquetado_id != null\) p\.set\("empaquetado", String\(r\.empaquetado_id\)\);/);
+});
+
+test("reservar/nuevo/page.tsx + ReservaForm.tsx: leen/propagan ?empaquetado= igual que ?bloqueo=/?salida=", () => {
+  const nuevoPageSrc = leer("app/(dashboard)/dashboard/reservar/nuevo/page.tsx");
+  const reservaFormSrc = leer("app/(dashboard)/dashboard/reservar/nuevo/ReservaForm.tsx");
+  assert.match(nuevoPageSrc, /empaquetado\?:\s*string/, "searchParams debe aceptar ?empaquetado=");
+  assert.match(nuevoPageSrc, /empaquetadoId\s*\?\s*q\.eq\("empaquetado_id", empaquetadoId\)/);
+  assert.match(reservaFormSrc, /empaquetadoId:\s*meta\.empaquetadoId \?\? null/);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Código de aplicación — empaquetados-actions.ts (defectos 4/5/6/7/8)
 // ───────────────────────────────────────────────────────────────────────────
 const empActionsSrc = leer("app/(dashboard)/dashboard/vuelos/empaquetados-actions.ts");
 
 test("crearEmpaquetado exige fecha_ida pero NO exige record (el PNR se agrega después)", () => {
   const fn = empActionsSrc.slice(
     empActionsSrc.indexOf("export async function crearEmpaquetado"),
-    empActionsSrc.indexOf("export async function actualizarEmpaquetado")
+    empActionsSrc.indexOf("// GENERALES:")
   );
-  assert.match(fn, /if \(!input\.fechaIda\)/, "no exige fecha_ida");
+  assert.match(fn, /validarEmpaquetado\(input\)/, "crearEmpaquetado debe pasar por la validación compartida");
   assert.doesNotMatch(fn, /if \(!input\.record/, "no debe exigir record — es opcional a propósito");
+});
+
+test("defecto 6: validarEmpaquetado rechaza tarifas negativas y fechas invertidas — no confía solo en min=0 del formulario", () => {
+  const fn = empActionsSrc.slice(empActionsSrc.indexOf("function validarEmpaquetado("), empActionsSrc.indexOf("export async function crearEmpaquetado"));
+  assert.match(fn, /tarifaProveedor < 0/);
+  assert.match(fn, /tarifaEmpaquetar < 0/);
+  assert.match(fn, /feeInfante < 0/);
+  assert.match(fn, /input\.fechaRegreso && input\.fechaRegreso < input\.fechaIda/);
+  assert.match(fn, /input\.compraInicio && input\.compraFin && input\.compraFin < input\.compraInicio/);
+});
+
+test("defecto 7: actualizarEmpaquetado (edición GENERAL) ya NO toca record/estado_emision/estado_pago — esos son operativos y van por actualizarControlEmpaquetado", () => {
+  const fn = empActionsSrc.slice(
+    empActionsSrc.indexOf("export async function actualizarEmpaquetado"),
+    empActionsSrc.indexOf("export async function actualizarControlEmpaquetado")
+  );
+  assert.doesNotMatch(fn, /record:/, "actualizarEmpaquetado no debe escribir record");
+  assert.doesNotMatch(fn, /estado_emision:/, "actualizarEmpaquetado no debe escribir estado_emision");
+  assert.doesNotMatch(fn, /estado_pago:/, "actualizarEmpaquetado no debe escribir estado_pago");
+});
+
+test("defecto 5: actualizarEmpaquetado comprueba fila afectada (.select + .maybeSingle) — RLS filtrando a 0 filas o un id inexistente NUNCA debe reportarse como éxito", () => {
+  const fn = empActionsSrc.slice(
+    empActionsSrc.indexOf("export async function actualizarEmpaquetado"),
+    empActionsSrc.indexOf("export async function actualizarControlEmpaquetado")
+  );
+  assert.match(fn, /\.select\("id"\)\s*\n\s*\.maybeSingle\(\);/);
+  assert.match(fn, /if \(!data\) return \{ ok: false, error:/, "debe devolver error si no vino fila (falso éxito)");
+});
+
+test("defecto 8: actualizarControlEmpaquetado llama al RPC actualizar_control_empaquetado (atómico + historial), nunca un UPDATE plano", () => {
+  const fn = empActionsSrc.slice(
+    empActionsSrc.indexOf("export async function actualizarControlEmpaquetado"),
+    empActionsSrc.indexOf("export async function eliminarEmpaquetado")
+  );
+  assert.match(fn, /sb\.rpc\("actualizar_control_empaquetado"/);
+  assert.doesNotMatch(fn, /\.from\("empaquetados"\)\.update\(/, "no debe hacer un UPDATE plano — eso perdería atomicidad+historial");
+});
+
+test("defecto 4: eliminarEmpaquetado revisa armado_empaquetados ANTES de borrar y devuelve un mensaje útil (paquetes que lo usan) en vez del error crudo de Postgres", () => {
+  const fn = empActionsSrc.slice(empActionsSrc.indexOf("export async function eliminarEmpaquetado"));
+  assert.match(fn, /\.from\("armado_empaquetados"\)/, "debe consultar armado_empaquetados antes del DELETE");
+  assert.match(fn, /if \(enUso && enUso\.length\)/, "debe bloquear el borrado si hay vínculos");
+  assert.match(fn, /Desvincúlalo de esos paquetes o desactívalo/, "debe recomendar desactivar en vez de borrar");
+});
+
+test("defecto 5: eliminarEmpaquetado también comprueba fila afectada del DELETE — mismo criterio de falso éxito que actualizarEmpaquetado", () => {
+  const fn = empActionsSrc.slice(empActionsSrc.indexOf("export async function eliminarEmpaquetado"));
+  assert.match(fn, /\.delete\(\)\.eq\("id", id\)\.select\("id"\)\.maybeSingle\(\);/);
+  assert.match(fn, /if \(!data\) return \{ ok: false, error:/);
 });
 
 test("empaquetados-actions.ts nunca toca la tabla sillas — un empaquetado no representa cupo negociado", () => {
   assert.doesNotMatch(empActionsSrc, /\.from\(\s*"sillas"\s*\)/, "empaquetados-actions.ts no debe crear/tocar sillas en ningún punto");
 });
 
-test("eliminarEmpaquetado borra la fila (ON DELETE CASCADE de armado_empaquetados limpia los vínculos solo)", () => {
-  const fn = empActionsSrc.slice(empActionsSrc.indexOf("export async function eliminarEmpaquetado"));
-  assert.match(fn, /\.from\(\s*"empaquetados"\s*\)\.delete\(\)/);
+test("defecto 5: setEmpaquetado/setTodosEmpaquetados revisan el error del DELETE de desvincular (antes se ignoraba por completo)", () => {
+  const setEmp = empActionsSrc.slice(empActionsSrc.indexOf("export async function setEmpaquetado"), empActionsSrc.indexOf("export async function setTodosEmpaquetados"));
+  assert.match(setEmp, /if \(!checked\) \{\s*\n\s*const \{ error \} = await sb\.from\("armado_empaquetados"\)\.delete\(\)/, "el DELETE de desvincular debe capturar `error`");
+  assert.match(setEmp, /if \(error\) return \{ ok: false, error: error\.message \};[\s\S]*?\} else \{/, "debe comprobar el error antes de continuar");
+  const setTodos = empActionsSrc.slice(empActionsSrc.indexOf("export async function setTodosEmpaquetados"));
+  assert.match(setTodos, /if \(!checked\) \{\s*\n\s*const \{ error \} = await sb\.from\("armado_empaquetados"\)\.delete\(\)\.eq\("paquete_id", paqueteId\);\s*\n\s*if \(error\) return \{ ok: false, error: error\.message \};/);
 });
 
 test("setEmpaquetado/setTodosEmpaquetados escriben en armado_empaquetados con upsert por PK compuesta (nunca duplican la fila de empaquetados)", () => {
@@ -160,6 +436,33 @@ test("setEmpaquetado/setTodosEmpaquetados escriben en armado_empaquetados con up
   assert.match(empActionsSrc, /export async function setTodosEmpaquetados/);
   const bloque = empActionsSrc.slice(empActionsSrc.indexOf("export async function setEmpaquetado"));
   assert.match(bloque, /onConflict:\s*"paquete_id,empaquetado_id"/);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// UI — Control operativo separado del formulario general (defectos 7/8)
+// ───────────────────────────────────────────────────────────────────────────
+const controlEmpFormSrc = leer("app/(dashboard)/dashboard/vuelos/empaquetados/[id]/ControlEmpaquetadoForm.tsx");
+const editarEmpFormSrc = leer("app/(dashboard)/dashboard/vuelos/empaquetados/[id]/EditarEmpaquetadoForm.tsx");
+
+test("defecto 7: ControlEmpaquetadoForm arranca estadoEmision/estadoPago en '' (Por confirmar) cuando inicial es null — NUNCA los coacciona a 'pendiente'", () => {
+  assert.match(controlEmpFormSrc, /useState<EstadoEmision \| "">\(\(inicial\.estadoEmision as EstadoEmision \| null\) \?\? ""\)/);
+  assert.match(controlEmpFormSrc, /useState<EstadoPago \| "">\(\(inicial\.estadoPago as EstadoPago \| null\) \?\? ""\)/);
+  assert.doesNotMatch(controlEmpFormSrc, /\?\? "pendiente"/, "no debe haber ningún default a 'pendiente' en este formulario");
+});
+
+test("defecto 7: los selects de ControlEmpaquetadoForm tienen una opción real 'Por confirmar' (value=\"\") que se guarda como NULL", () => {
+  assert.match(controlEmpFormSrc, /<option value="">\{POR_CONFIRMAR\}<\/option>/);
+});
+
+test("defecto 8: ControlEmpaquetadoForm llama actualizarControlEmpaquetado (RPC), EditarEmpaquetadoForm (general) ya no maneja record/estados", () => {
+  assert.match(controlEmpFormSrc, /actualizarControlEmpaquetado\(empaquetadoId,/);
+  // Se revisa el USO real (useState/setState/objeto de campos), no la mera
+  // mención de la palabra — el propio archivo documenta en un comentario que
+  // "record/estadoEmision/estadoPago NO viven aquí", lo cual contendría la
+  // palabra sin ser el bug que esta prueba busca.
+  assert.doesNotMatch(editarEmpFormSrc, /useState<EstadoEmision/, "el formulario general no debe seguir con estado de React para estadoEmision");
+  assert.doesNotMatch(editarEmpFormSrc, /estadoEmision,\s*estadoPago,/, "el formulario general no debe seguir enviando estadoEmision/estadoPago en el payload");
+  assert.doesNotMatch(editarEmpFormSrc, /f\.record/, "el formulario general no debe seguir manejando record");
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -183,6 +486,21 @@ for (const [nombre, src] of [["page.tsx", vuelosPageSrc], ["historico/page.tsx",
     assert.match(src, /modalidad:\s*"sistema" as ModalidadControl/, `${nombre} no fija la modalidad "sistema" para las filas de empaquetados`);
   });
 }
+
+// ── Defecto 3: filtrado por activo (Empaquetados/Control Vuelos) ──────────
+test("defecto 3: page.tsx filtra empActivos por activo=true Y no-pasado — un empaquetado desactivado con fecha futura NO debe aparecer como activo", () => {
+  assert.match(vuelosPageSrc, /const empActivos = todosEmp\.filter\(\(e\) => e\.activo && !esPasado\(e\.fecha_ida, hoy\)\);/);
+});
+
+test("defecto 3: historico/page.tsx agrupa pasados O inactivos — un desactivado-futuro sí debe aparecer en el histórico, en vez de desaparecer de ambas vistas", () => {
+  assert.match(historicoPageSrc, /const empPasados = todosEmp\.filter\(\(e\) => !e\.activo \|\| esPasado\(e\.fecha_ida, hoy\)\);/);
+});
+
+test("defecto 3: lib/tarifario/datos.ts (público) también oculta filas de un empaquetado desactivado después de generar el tarifario, no solo al regenerar", () => {
+  const datosSrc = leer("lib/tarifario/datos.ts");
+  assert.match(datosSrc, /empaquetado_id, salida_id/, "el select debe traer empaquetado_id");
+  assert.match(datosSrc, /admin\.from\("empaquetados"\)\.select\("id, activo"\)\.in\("id", empaquetadoIds\)/);
+});
 
 // ───────────────────────────────────────────────────────────────────────────
 // VistaTabs — tercera pestaña EMPAQUETADOS

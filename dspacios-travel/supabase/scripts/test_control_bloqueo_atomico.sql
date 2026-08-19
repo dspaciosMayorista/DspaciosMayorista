@@ -2,6 +2,13 @@
 -- PRUEBA AUTO-VERIFICABLE — atomicidad de actualizar_control_bloqueo()
 -- (migración 152)
 --
+-- ⚠️ Usa 'serie' (no 'individual') como valor de modalidad: la migración 155
+-- amplía el dominio y la 157 lo cierra a solo serie/grupo — 'individual' deja
+-- de ser válido en cuanto la 157 corre. Este script se pega DESPUÉS de la
+-- 157 en la secuencia de despliegue, así que debe usar el valor vigente en
+-- ese punto (mismo criterio de mecánica que probaba antes, solo el literal
+-- cambia con el rename de la 155/157).
+--
 -- Corre contra una base local construida con `local-desde-cero.sh` (o en el
 -- editor SQL de Supabase, DE SOLO LECTURA: termina en ROLLBACK). Se ejecuta
 -- así, para que un fallo real corte la ejecución en vez de seguir de largo:
@@ -69,7 +76,7 @@ $$;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub','55555555-5555-5555-5555-555555555555','role','authenticated')::text, true);
 
-select public.actualizar_control_bloqueo(9201::bigint, 'individual', 'emitido', 'pendiente', '');
+select public.actualizar_control_bloqueo(9201::bigint, 'serie', 'emitido', 'pendiente', '');
 
 reset role;
 select set_config('request.jwt.claims', null, true);
@@ -79,13 +86,13 @@ declare
   v_row record;
   v_hist record;
   v_detalle_esperado text :=
-    'Modalidad de emisión: Sin definir → Individual · '
+    'Modalidad de emisión: Sin definir → Serie · '
     || 'Estado de emisión: Sin definir → Emitido · '
     || 'Estado de pago: Sin definir → Pendiente';
 begin
   select modalidad_emision, estado_emision, estado_pago into v_row
     from public.bloqueos_vuelo where id = 9201;
-  perform pg_temp.assert_eq(v_row.modalidad_emision, 'individual', 'caso 1: modalidad_emision');
+  perform pg_temp.assert_eq(v_row.modalidad_emision, 'serie', 'caso 1: modalidad_emision');
   perform pg_temp.assert_eq(v_row.estado_emision, 'emitido', 'caso 1: estado_emision');
   perform pg_temp.assert_eq(v_row.estado_pago, 'pendiente', 'caso 1: estado_pago');
 
@@ -149,7 +156,7 @@ begin
   -- 'pagado' que llevaba el intento fallido.
   select modalidad_emision, estado_emision, estado_pago into v_row
     from public.bloqueos_vuelo where id = 9201;
-  perform pg_temp.assert_eq(v_row.modalidad_emision, 'individual', 'caso 2: modalidad_emision NO debía cambiar');
+  perform pg_temp.assert_eq(v_row.modalidad_emision, 'serie', 'caso 2: modalidad_emision NO debía cambiar');
   perform pg_temp.assert_eq(v_row.estado_emision, 'emitido', 'caso 2: estado_emision NO debía cambiar');
   perform pg_temp.assert_eq(v_row.estado_pago, 'pendiente', 'caso 2: estado_pago NO debía cambiar');
   perform pg_temp.assert_eq(
@@ -190,7 +197,7 @@ declare v_row record;
 begin
   select modalidad_emision, estado_emision, estado_pago into v_row
     from public.bloqueos_vuelo where id = 9201;
-  perform pg_temp.assert_eq(v_row.modalidad_emision, 'individual', 'caso 3: modalidad_emision NO debía cambiar');
+  perform pg_temp.assert_eq(v_row.modalidad_emision, 'serie', 'caso 3: modalidad_emision NO debía cambiar');
   perform pg_temp.assert_eq(v_row.estado_emision, 'emitido', 'caso 3: estado_emision NO debía cambiar');
   perform pg_temp.assert_eq(v_row.estado_pago, 'pendiente', 'caso 3: estado_pago NO debía cambiar');
   perform pg_temp.assert_eq(
@@ -203,7 +210,7 @@ end $$;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub','55555555-5555-5555-5555-555555555555','role','authenticated')::text, true);
 
-select public.actualizar_control_bloqueo(9201::bigint, 'individual', 'emitido', 'pendiente', 'Solo una nota, sin cambios');
+select public.actualizar_control_bloqueo(9201::bigint, 'serie', 'emitido', 'pendiente', 'Solo una nota, sin cambios');
 
 reset role;
 select set_config('request.jwt.claims', null, true);
@@ -213,7 +220,7 @@ declare v_row record; v_hist record;
 begin
   select modalidad_emision, estado_emision, estado_pago into v_row
     from public.bloqueos_vuelo where id = 9201;
-  perform pg_temp.assert_eq(v_row.modalidad_emision, 'individual', 'caso 4: modalidad_emision NO debía tocarse');
+  perform pg_temp.assert_eq(v_row.modalidad_emision, 'serie', 'caso 4: modalidad_emision NO debía tocarse');
   perform pg_temp.assert_eq(v_row.estado_emision, 'emitido', 'caso 4: estado_emision NO debía tocarse');
   perform pg_temp.assert_eq(v_row.estado_pago, 'pendiente', 'caso 4: estado_pago NO debía tocarse');
 
@@ -229,7 +236,7 @@ end $$;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub','55555555-5555-5555-5555-555555555555','role','authenticated')::text, true);
 
-select public.actualizar_control_bloqueo(9201::bigint, 'individual', 'emitido', 'pagado', '');
+select public.actualizar_control_bloqueo(9201::bigint, 'serie', 'emitido', 'pagado', '');
 select public.actualizar_control_bloqueo(9201::bigint, 'grupo', 'emitido', 'pagado', '');
 
 reset role;
@@ -266,7 +273,7 @@ begin
   -- estado_emision/estado_pago ya estaban en 'emitido'/'pagado', no se
   -- repiten en el detalle aunque se reenviaron con el mismo valor.
   perform pg_temp.assert_eq(
-    v_detalles[4], 'Modalidad de emisión: Individual → Grupo', 'caso 5: detalle del 2do cambio (solo modalidad)'
+    v_detalles[4], 'Modalidad de emisión: Serie → Grupo', 'caso 5: detalle del 2do cambio (solo modalidad)'
   );
 end $$;
 

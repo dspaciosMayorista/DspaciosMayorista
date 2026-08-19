@@ -8,7 +8,7 @@
 // (modalidad) o "Por confirmar" (estados) — nunca se asume 'pendiente' para
 // no afirmar algo que no se sabe. Ver la cabecera de la migración 152.
 //
-// MODALIDAD (migración 155): el valor de dato 'individual' se renombró a
+// MODALIDAD (migración 155/157): el valor de dato 'individual' se renombra a
 // 'serie' — un bloqueo negociado se emite en SERIE (silla por silla) o en
 // GRUPO, nunca es "Sistema" (esa es la tercera modalidad de negocio, pero
 // vive en la tabla `empaquetados`, migración 156, NO como un tercer valor
@@ -17,6 +17,16 @@
 // SOLO para la vista fusionada de Control Vuelos, que también muestra filas
 // de `empaquetados` con modalidad fija "Sistema" (nunca almacenada, se
 // deriva de la tabla de origen — ver ControlVuelosTabla).
+//
+// ⚠️ VENTANA DE TRANSICIÓN (155 → 157, revisión de PR #268): entre que la
+// 155 corre (CHECK acepta individual/serie/grupo) y la 157 corre (cierra a
+// solo serie/grupo), la base de datos puede legítimamente devolver
+// 'individual' — el código nuevo NUNCA lo vuelve a escribir (esModalidadEmision
+// sigue siendo el guardián de ESCRITURA, solo serie/grupo), pero sí lo debe
+// LEER igual que 'serie' en toda la UI (badge, filtro, etiqueta) para no
+// mostrarlo como "Sin definir" ni romper el filtro de Control Vuelos durante
+// la ventana. `normalizarModalidadLegible` es el único punto que sabe de
+// 'individual' en LECTURA — todo lo demás (label/tono/filtro) pasa por ahí.
 //
 // Tono del badge — helpers PUROS y CENTRALIZADOS, usados por ControlVuelosTabla
 // y por ControlBadges (detalle del record) para que lista y detalle se vean
@@ -54,6 +64,16 @@ export const POR_CONFIRMAR = "Por confirmar";
 export function esModalidadEmision(v: unknown): v is ModalidadEmision {
   return v === "serie" || v === "grupo";
 }
+
+// Normaliza un valor LEÍDO de la base de datos a su ModalidadEmision real,
+// aceptando 'individual' (nombre pre-155, todavía posible durante la
+// ventana de transición 155→157) como sinónimo de 'serie'. SOLO para
+// lectura/display/filtro — nunca para decidir qué escribir (eso lo sigue
+// gobernando esModalidadEmision, que jamás acepta 'individual').
+export function normalizarModalidadLegible(v: string | null | undefined): ModalidadEmision | null {
+  if (v === "individual") return "serie";
+  return esModalidadEmision(v) ? v : null;
+}
 export function esEstadoEmision(v: unknown): v is EstadoEmision {
   return v === "pendiente" || v === "emitido";
 }
@@ -62,7 +82,8 @@ export function esEstadoPago(v: unknown): v is EstadoPago {
 }
 
 export function labelModalidad(v: string | null): string {
-  return esModalidadEmision(v) ? MODALIDAD_LABEL[v] : SIN_DEFINIR;
+  const m = normalizarModalidadLegible(v);
+  return m ? MODALIDAD_LABEL[m] : SIN_DEFINIR;
 }
 // Para la vista fusionada de Control Vuelos: "sistema" siempre se conoce de
 // antemano (fila de `empaquetados`, nunca ambigua) — no pasa por SIN_DEFINIR.
@@ -77,7 +98,7 @@ export function labelEstadoPago(v: string | null): string {
 }
 
 export function tonoModalidad(v: string | null): Tono {
-  return v === "grupo" ? "warn" : "neutral"; // serie, null o inválido → neutral
+  return normalizarModalidadLegible(v) === "grupo" ? "warn" : "neutral"; // serie/individual, null o inválido → neutral
 }
 export function tonoModalidadControl(v: ModalidadControl | null): Tono {
   if (v === "sistema") return "info";

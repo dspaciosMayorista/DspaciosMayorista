@@ -282,7 +282,9 @@ test("historico/page.tsx: tituloVista es 'Histórico de vuelos' / 'Empaquetados 
 
 test("historico/page.tsx: el subtítulo también cambia según la vista, incluida Empaquetados", () => {
   assert.match(historicoSrc, /"Bloqueos cuya fecha de ida ya pasó \(inactivos\)\. Entra a un record para ver sus pasajeros\."/);
-  assert.match(historicoSrc, /"Empaquetados cuya fecha de ida ya pasó\."/);
+  // Defecto 3 (revisión de PR #268): el histórico ahora también agrupa los
+  // desactivados-a-mano (no solo los de fecha ya pasada) — texto actualizado.
+  assert.match(historicoSrc, /"Empaquetados cuya fecha de ida ya pasó, o que fueron desactivados a mano\."/);
   assert.match(historicoSrc, /"Modalidad, emisión y pago de los records ya pasados \(bloqueos \+ empaquetados\)\."/);
 });
 

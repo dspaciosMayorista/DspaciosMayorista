@@ -4,9 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { actualizarEmpaquetado, eliminarEmpaquetado, type EmpaquetadoInput } from "../../empaquetados-actions";
+import { actualizarEmpaquetado, eliminarEmpaquetado, type EmpaquetadoInputGeneral } from "../../empaquetados-actions";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
-import { ESTADOS_EMISION, ESTADOS_PAGO, ESTADO_EMISION_LABEL, ESTADO_PAGO_LABEL, type EstadoEmision, type EstadoPago } from "@/lib/vuelos/control";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
@@ -23,10 +22,10 @@ export function EditarEmpaquetadoForm({
   empaquetadoId: number;
   proveedores?: ProvOpt[];
   destinos?: DestinoOpt[];
-  inicial: Omit<EmpaquetadoInput, "estadoEmision" | "estadoPago"> & {
-    estadoEmision: string | null;
-    estadoPago: string | null;
-  };
+  // record/estadoEmision/estadoPago NO viven aquí — son campos operativos,
+  // editados aparte por ControlEmpaquetadoForm (defectos 7/8, revisión de
+  // PR #268: atómico + con historial + preserva NULL).
+  inicial: EmpaquetadoInputGeneral;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -37,12 +36,10 @@ export function EditarEmpaquetadoForm({
   const [origenId, setOrigenId] = useState<number | "">(
     destinos.find((d) => (d.codigo_iata || d.nombre)?.toUpperCase().trim() === inicial.origen)?.id ?? ""
   );
-  const [estadoEmision, setEstadoEmision] = useState<EstadoEmision | "">((inicial.estadoEmision as EstadoEmision | null) ?? "pendiente");
-  const [estadoPago, setEstadoPago] = useState<EstadoPago | "">((inicial.estadoPago as EstadoPago | null) ?? "pendiente");
   const [activo, setActivo] = useState(inicial.activo);
 
   const [f, setF] = useState({
-    record: inicial.record, aerolinea: inicial.aerolinea,
+    aerolinea: inicial.aerolinea,
     vueloIda: inicial.vueloIda, fechaIda: inicial.fechaIda, horaSalidaIda: inicial.horaSalidaIda, horaLlegadaIda: inicial.horaLlegadaIda,
     vueloRegreso: inicial.vueloRegreso, fechaRegreso: inicial.fechaRegreso, horaSalidaReg: inicial.horaSalidaReg, horaLlegadaReg: inicial.horaLlegadaReg,
     tarifaProveedor: String(inicial.tarifaProveedor || ""), tarifaParaEmpaquetar: String(inicial.tarifaParaEmpaquetar || ""),
@@ -64,13 +61,13 @@ export function EditarEmpaquetadoForm({
     setErr(""); setMsg("");
     start(async () => {
       const r = await actualizarEmpaquetado(empaquetadoId, {
-        record: f.record, aerolinea: f.aerolinea, proveedorId: proveedorId === "" ? null : Number(proveedorId),
+        aerolinea: f.aerolinea, proveedorId: proveedorId === "" ? null : Number(proveedorId),
         destinoId: destinoId === "" ? null : Number(destinoId), ruta: rutaAuto, origen: oIATA,
         vueloIda: f.vueloIda, fechaIda: f.fechaIda, horaSalidaIda: f.horaSalidaIda, horaLlegadaIda: f.horaLlegadaIda,
         vueloRegreso: f.vueloRegreso, fechaRegreso: f.fechaRegreso, horaSalidaReg: f.horaSalidaReg, horaLlegadaReg: f.horaLlegadaReg,
         tarifaProveedor: Number(f.tarifaProveedor) || 0, tarifaParaEmpaquetar: Number(f.tarifaParaEmpaquetar) || 0,
         feeInfante: Number(f.feeInfante) || 0, compraInicio: f.compraInicio, compraFin: f.compraFin,
-        estadoEmision, estadoPago, notas: f.notas, activo,
+        notas: f.notas, activo,
       });
       if (r.ok) { setMsg("Guardado."); router.refresh(); } else setErr(r.error);
     });
@@ -89,8 +86,8 @@ export function EditarEmpaquetadoForm({
     <form onSubmit={guardar} className="space-y-5">
       <section className={card}>
         <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Datos del empaquetado</p>
+        <p className="text-xs text-gray-500">El record (PNR) se edita en &quot;Control operativo&quot;, más abajo.</p>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-          <div><label className={lbl}>Record (PNR)</label><Input value={f.record} onChange={set("record")} placeholder="Sin record por ahora" /></div>
           <div><label className={lbl}>Aerolínea</label><Input value={f.aerolinea} onChange={set("aerolinea")} /></div>
           <div>
             <label className={lbl}>Proveedor / plataforma</label>
@@ -146,20 +143,11 @@ export function EditarEmpaquetadoForm({
       </section>
 
       <section className={card}>
-        <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Estado</p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-          <div>
-            <label className={lbl}>Estado de emisión</label>
-            <select value={estadoEmision} onChange={(e) => setEstadoEmision(e.target.value as EstadoEmision)} className={selCls}>
-              {ESTADOS_EMISION.map((e) => <option key={e} value={e}>{ESTADO_EMISION_LABEL[e]}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={lbl}>Estado de pago</label>
-            <select value={estadoPago} onChange={(e) => setEstadoPago(e.target.value as EstadoPago)} className={selCls}>
-              {ESTADOS_PAGO.map((e) => <option key={e} value={e}>{ESTADO_PAGO_LABEL[e]}</option>)}
-            </select>
-          </div>
+        <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Vigencia</p>
+        <p className="text-xs text-gray-500">
+          El estado de emisión y de pago se editan en &quot;Control operativo&quot;, más abajo.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className={lbl}>Activo</label>
             <select value={activo ? "1" : "0"} onChange={(e) => setActivo(e.target.value === "1")} className={selCls}>

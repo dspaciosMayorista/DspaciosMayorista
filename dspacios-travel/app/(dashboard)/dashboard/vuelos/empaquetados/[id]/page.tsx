@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { formatFechaLarga } from "@/lib/utils";
 import { EditarEmpaquetadoForm } from "./EditarEmpaquetadoForm";
+import { ControlEmpaquetadoForm } from "./ControlEmpaquetadoForm";
 import { EstadoBadge } from "@/components/EstadoBadge";
 import { labelEstadoEmision, labelEstadoPago, tonoEstadoEmision, tonoEstadoPago } from "@/lib/vuelos/control";
 
@@ -65,18 +66,24 @@ export default async function EmpaquetadoDetallePage({ params }: { params: Promi
       </section>
 
       <div className="mt-5">
+        <ControlEmpaquetadoForm
+          empaquetadoId={empaquetadoId}
+          inicial={{ record: e.record, estadoEmision: e.estado_emision, estadoPago: e.estado_pago }}
+        />
+      </div>
+
+      <div className="mt-5">
         <EditarEmpaquetadoForm
           empaquetadoId={empaquetadoId}
           proveedores={proveedores ?? []}
           destinos={destinos ?? []}
           inicial={{
-            record: e.record ?? "", aerolinea: e.aerolinea ?? "", proveedorId: e.proveedor_id, destinoId: e.destino_id,
+            aerolinea: e.aerolinea ?? "", proveedorId: e.proveedor_id, destinoId: e.destino_id,
             ruta: e.ruta ?? "", origen: e.origen ?? "",
             vueloIda: e.vuelo_ida ?? "", fechaIda: e.fecha_ida ?? "", horaSalidaIda: e.hora_salida_ida ?? "", horaLlegadaIda: e.hora_llegada_ida ?? "",
             vueloRegreso: e.vuelo_regreso ?? "", fechaRegreso: e.fecha_regreso ?? "", horaSalidaReg: e.hora_salida_reg ?? "", horaLlegadaReg: e.hora_llegada_reg ?? "",
             tarifaProveedor: e.tarifa_proveedor ?? 0, tarifaParaEmpaquetar: e.tarifa_para_empaquetar ?? 0, feeInfante: e.fee_infante ?? 0,
             compraInicio: e.compra_inicio ?? "", compraFin: e.compra_fin ?? "", notas: e.notas ?? "", activo: e.activo,
-            estadoEmision: e.estado_emision, estadoPago: e.estado_pago,
           }}
         />
       </div>

@@ -10,7 +10,7 @@ import { VistaTabs, vistaDeParam } from "./VistaTabs";
 import { History } from "lucide-react";
 import { conteoPorBloqueo, sumarConteos, esPasado, ocupacionPct, conteoCero, type ConteoSillas } from "@/lib/vuelos/stats";
 import { hoyISO } from "@/lib/calc/paquetes";
-import type { ModalidadControl } from "@/lib/vuelos/control";
+import { normalizarModalidadLegible, type ModalidadControl } from "@/lib/vuelos/control";
 
 export const dynamic = "force-dynamic";
 
@@ -83,9 +83,19 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
   const activos = todos.filter((b) => !esPasado(b.fecha_ida, hoy));
   const pasados = todos.filter((b) => esPasado(b.fecha_ida, hoy));
 
+  // Empaquetados: "activo" (defecto 3, revisión de PR #268) — un empaquetado
+  // apagado a mano (activo=false) NUNCA debe aparecer como si estuviera
+  // vigente, sin importar su fecha de ida. Antes solo se filtraba por fecha
+  // (esPasado), así que un empaquetado desactivado con fecha_ida futura
+  // seguía apareciendo en "Empaquetados activos". Los desactivados-futuros
+  // (activo=false, fecha_ida aún no pasa) se muestran junto a los históricos
+  // reales (fecha ya pasada) en /dashboard/vuelos/historico — un registro
+  // ya no vigente por cualquiera de los dos motivos deja de estar en la
+  // vista "activa" y pasa al histórico, que es exactamente el lugar donde
+  // ya se consultan registros fuera de rotación.
   const todosEmp = empaquetadosData ?? [];
-  const empActivos = todosEmp.filter((e) => !esPasado(e.fecha_ida, hoy));
-  const empPasados = todosEmp.filter((e) => esPasado(e.fecha_ida, hoy));
+  const empActivos = todosEmp.filter((e) => e.activo && !esPasado(e.fecha_ida, hoy));
+  const empPasados = todosEmp.filter((e) => !e.activo || esPasado(e.fecha_ida, hoy));
 
   // Conteo de sillas por estado para cada bloqueo — solo tiene sentido (y solo
   // se calcula) en Inventario; Control Vuelos/Empaquetados no cuentan sillas.
@@ -103,7 +113,10 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
           record: b.record, aerolinea: b.aerolinea, ruta: b.ruta,
           fecha_ida: b.fecha_ida, vuelo_ida: b.vuelo_ida, fecha_regreso: b.fecha_regreso, vuelo_regreso: b.vuelo_regreso,
           fecha_emision: b.fecha_emision,
-          modalidad: b.modalidad_emision as ModalidadControl | null,
+          // Normaliza 'individual' (nombre pre-155, posible durante la
+          // ventana de transición 155→157) a 'serie' — nunca se muestra
+          // como si fuera un valor distinto ni se cuela sin normalizar.
+          modalidad: normalizarModalidadLegible(b.modalidad_emision) as ModalidadControl | null,
           estado_emision: b.estado_emision, estado_pago: b.estado_pago,
         })),
         ...empActivos.map((e) => ({
