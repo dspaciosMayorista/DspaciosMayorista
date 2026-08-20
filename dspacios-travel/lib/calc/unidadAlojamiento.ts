@@ -249,6 +249,20 @@ export type SuplementoAplicado = SuplementoConfigurado & {
 // derivado de una tarifa que SÍ es inequívocamente por noche). Por eso
 // este motor NUNCA asume una interpretación para `infante`: la
 // periodicidad es un dato obligatorio de la tarifa, no un default.
+//
+// Revisión de PR (ronda 6, confirmación comercial — NO cambia el motor):
+// el dueño confirmó que para Bernalo 2026 el "seguro hotelero" de 0-3 años
+// SÍ se cobra por noche. Esto resuelve la ambigüedad del PDF como un DATO
+// de la futura carga de tarifas Bernalo, no como una regla del motor:
+//   infante: 30_000
+//   periodicidadInfante: "por_noche"
+// `PeriodicidadCobro` sigue siendo genérico y sin default — otro hotel/
+// tarifario podría legítimamente cobrar el infante `"por_estadia"`, y el
+// motor lo seguirá exigiendo explícito (`validarEntrada` bloquea con
+// `configuracion_invalida` si `infante` está configurado sin
+// `periodicidadInfante`, o viceversa). Ver el caso de prueba
+// "Bernalo 2026 — decisión comercial confirmada" en
+// pruebas/unidadAlojamiento.test.ts.
 export type PeriodicidadCobro = "por_noche" | "por_estadia";
 
 // ── Tarifa (el insumo, no una fila de BD todavía) ───────────────────────

@@ -1533,6 +1533,43 @@ describe("periodicidad de cobros (punto 2) — infante, la única tarifa ambigua
     assert.equal(sumaPorNoche * snap.noches + sumaPorEstadia, snap.totalNeto);
     assert.equal(snap.totalPorEstadia, sumaPorEstadia);
   });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Ronda 6 — decisión comercial CONFIRMADA por el dueño (no es una
+  // suposición del motor): para Bernalo 2026, el seguro hotelero del
+  // infante de 0-3 años se cobra POR NOCHE. Este caso usa los valores
+  // reales de la futura carga Bernalo (infante: 30_000,
+  // periodicidadInfante: "por_noche") y verifica que el snapshot muestre
+  // esa periodicidad explícitamente en la línea del infante, no solo en
+  // los totales agregados.
+  // ───────────────────────────────────────────────────────────────────────
+  test("Bernalo 2026 — decisión comercial confirmada: infante 0-3 años cobra $30.000 por noche", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t-bernalo-infante-confirmado",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: 100_000, infante: 30_000, periodicidadInfante: "por_noche" },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [{ categoria: "infante", edadMinAnios: 0, edadMaxAnios: 3 }] },
+    };
+    const distribucion: DistribucionUnidades = { unidades: [{ adultos: 1, menores: [{ edadAnios: 3 }] }] };
+
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion, noches: 3 });
+    esperarValido(r);
+    assert.equal(r.totalNetoPorNoche, 130_000); // 100.000 (adulto) + 30.000 (infante), ambos por noche
+    assert.equal(r.totalPorEstadia, 0);
+    assert.equal(r.totalNeto, 390_000);
+
+    const snap = construirSnapshotAlojamiento(r);
+    assert.equal(snap.valores.periodicidadInfante, "por_noche");
+    const lineaInfante = snap.desglose.find((l) => l.concepto === "Infantes");
+    assert.ok(lineaInfante, "el snapshot debe traer una línea de Infantes");
+    assert.equal(lineaInfante?.periodicidad, "por_noche");
+    assert.equal(lineaInfante?.cantidad, 1);
+    assert.equal(lineaInfante?.valorUnitario, 30_000);
+    assert.equal(lineaInfante?.valorTotal, 30_000);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
