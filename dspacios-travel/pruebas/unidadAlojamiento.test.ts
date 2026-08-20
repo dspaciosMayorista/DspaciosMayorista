@@ -8,6 +8,7 @@ import {
   derivarOcupacionTotal,
   validarFormaEntrada,
   validarCoherenciaTarifa,
+  validarCoherenciaCapacidad,
   resultadoBloqueado,
   type TarifaAlojamiento,
   type DistribucionUnidades,
@@ -912,5 +913,369 @@ describe("snapshot", () => {
     assert.equal(snap.capacidadUtilizada.length, 1);
     assert.equal(snap.versionTarifario, "bernalo-2026");
     assert.equal(snap.fuente?.pagina, 28);
+  });
+
+  // Punto 5 (ronda 4): el snapshot debe incluir la capacidad completa
+  // (minPax/maxPax/paxIncluidos), para poder explicar el total SIN volver a
+  // consultar la tarifa original.
+  test("incluye la capacidad completa (minPax/maxPax/paxIncluidos) y la unidad de cobro", () => {
+    const r = cotizarUnidadAlojamiento({ tarifa: tarifaBase(), distribucion: distribucionBase(), noches: 1 });
+    esperarValido(r);
+    const snap = construirSnapshotAlojamiento(r);
+    assert.deepEqual(snap.capacidad, { minPax: 2, maxPax: 2, paxIncluidos: 2 });
+    assert.equal(snap.unidadCobro, "habitacion");
+  });
+
+  test("el snapshot explica el total: base + ocupantes incluidos + ocupantes adicionales × suplemento", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t-auditable",
+      unidadCobro: "habitacion",
+      versionTarifario: V,
+      valores: { adulto: 500_000 },
+      capacidad: { minPax: 2, maxPax: 3, paxIncluidos: 2 },
+      suplementos: [{ tipo: "adulto_adicional", valor: 80_000 }],
+      reglaMenores: { reglas: [] },
+    };
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 3, menores: [] }] }, noches: 1 });
+    esperarValido(r);
+    const snap = construirSnapshotAlojamiento(r);
+
+    // Reconstruido ÚNICAMENTE desde el snapshot — sin volver a mirar `r` ni `tarifa`.
+    const lineaBase = snap.desglose.find((l) => l.tipo === "base")!;
+    const lineaSuplemento = snap.desglose.find((l) => l.tipo === "suplemento")!;
+    const unidad = snap.distribucion.unidades[0];
+    const totalPax = unidad.adultos + unidad.menores.length;
+    const ocupantesIncluidos = Math.min(totalPax, snap.capacidad.paxIncluidos);
+    const ocupantesAdicionales = totalPax - ocupantesIncluidos;
+
+    assert.equal(ocupantesIncluidos, 2);
+    assert.equal(ocupantesAdicionales, 1);
+    assert.equal(lineaBase.valorTotal, 500_000);
+    assert.equal(lineaSuplemento.cantidad, ocupantesAdicionales);
+    assert.equal(lineaSuplemento.valorTotal, ocupantesAdicionales * lineaSuplemento.valorUnitario);
+    assert.equal(lineaBase.valorTotal + lineaSuplemento.valorTotal, snap.totalNetoPorNoche);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Punto 1 (ronda 4) — `tarifa.valores.adulto` es SIEMPRE obligatorio.
+// Antes de esta ronda, ninguno de estos casos era rechazado: el bucle
+// genérico sobre `Object.entries(tarifa.valores)` simplemente no
+// encontraba nada que objetar en un objeto vacío o con `adulto: undefined`,
+// y el cálculo seguía adelante hasta `totalAdultos * tarifa.valores.adulto`
+// — que en JS da `NaN` — y el motor respondía `ok: true` con
+// `totalNetoPorNoche: NaN`. Ninguno de los casos de abajo puede producir
+// un `ResultadoValido`.
+// ─────────────────────────────────────────────────────────────────────────
+describe("valor base obligatorio (tarifa.valores.adulto)", () => {
+  function tarifaSinAdulto(valores: Record<string, unknown>): unknown {
+    return {
+      tarifa: {
+        id: "t",
+        unidadCobro: "persona",
+        versionTarifario: V,
+        valores,
+        capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+        suplementos: [],
+        reglaMenores: { reglas: [] },
+      },
+      distribucion: { unidades: [{ adultos: 1, menores: [] }] },
+      noches: 1,
+    };
+  }
+
+  const casos: { nombre: string; valores: Record<string, unknown> }[] = [
+    { nombre: "valores: {}", valores: {} },
+    { nombre: "adulto: undefined", valores: { adulto: undefined } },
+    { nombre: "adulto: NaN", valores: { adulto: NaN } },
+    { nombre: "adulto: Infinity", valores: { adulto: Infinity } },
+    { nombre: "adulto > Number.MAX_SAFE_INTEGER", valores: { adulto: Number.MAX_SAFE_INTEGER + 2 } },
+  ];
+
+  for (const c of casos) {
+    test(`${c.nombre} → nunca produce un ResultadoValido (antes producía ok:true con NaN)`, () => {
+      const entrada = tarifaSinAdulto(c.valores);
+      const r = cotizarUnidadAlojamiento(entrada);
+      assert.equal(r.ok, false, `se esperaba un bloqueo; se obtuvo ${JSON.stringify(r)}`);
+      if (!r.ok) {
+        assert.equal(r.codigo, "configuracion_invalida");
+        assert.notEqual(r.codigo, "tarifa_no_encontrada", "un valor mal formado no es lo mismo que 'no hay precio configurado'");
+      }
+      // Ni siquiera existe la posibilidad de leer un `totalNetoPorNoche: NaN`.
+      assert.equal("totalNetoPorNoche" in r, false);
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Punto 2 (ronda 4) — enteros seguros: cada multiplicación/suma de dinero
+// se recalcula con `Number.isSafeInteger` antes de devolver `ok:true`
+// (`verificarConsistenciaResultado`). Antes de esta ronda, superar
+// `Number.MAX_SAFE_INTEGER` en cualquiera de estos pasos simplemente
+// perdía precisión en silencio (el motor no lo detectaba: JS no lanza en
+// ese caso, solo redondea mal) y el resultado quedaba `ok:true` con un
+// número YA INCORRECTO, no con `Infinity` — el bug era más peligroso que
+// un crash, porque parecía un total válido.
+// ─────────────────────────────────────────────────────────────────────────
+describe("enteros seguros — desbordamiento de Number.MAX_SAFE_INTEGER", () => {
+  test("límite exacto: Number.MAX_SAFE_INTEGER como tarifa persona × 1 noche SÍ se acepta", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: Number.MAX_SAFE_INTEGER },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 1, menores: [] }] }, noches: 1 });
+    esperarValido(r);
+    assert.equal(r.totalNeto, Number.MAX_SAFE_INTEGER);
+  });
+
+  test("valor × cantidad (línea base persona) desborda → configuracion_invalida, no un número impreciso", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: Number.MAX_SAFE_INTEGER },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    // 2 adultos × Number.MAX_SAFE_INTEGER ya no es representable con exactitud.
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 2, menores: [] }] }, noches: 1 });
+    esperarCodigo(r, "configuracion_invalida");
+  });
+
+  test("suplemento × cantidad (pareja, adulto_adicional) desborda → configuracion_invalida", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "pareja",
+      versionTarifario: V,
+      valores: { adulto: 2 },
+      capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
+      suplementos: [{ tipo: "adulto_adicional", valor: Number.MAX_SAFE_INTEGER }],
+      reglaMenores: { reglas: [] },
+    };
+    // diff = 4 - 2 = 2 adultos adicionales × Number.MAX_SAFE_INTEGER.
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 4, menores: [] }] }, noches: 1 });
+    esperarCodigo(r, "configuracion_invalida");
+  });
+
+  test("suplemento × cantidad (habitación, adulto_adicional) desborda → configuracion_invalida", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "habitacion",
+      versionTarifario: V,
+      valores: { adulto: 1 },
+      capacidad: { minPax: 1, maxPax: 10, paxIncluidos: 1 },
+      suplementos: [{ tipo: "adulto_adicional", valor: Number.MAX_SAFE_INTEGER }],
+      reglaMenores: { reglas: [] },
+    };
+    // paxIncluidos=1, 5 adultos → 4 adicionales × Number.MAX_SAFE_INTEGER.
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 5, menores: [] }] }, noches: 1 });
+    esperarCodigo(r, "configuracion_invalida");
+  });
+
+  test("totalNetoPorNoche × noches desborda → configuracion_invalida", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: Number.MAX_SAFE_INTEGER },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    // 1 adulto × Number.MAX_SAFE_INTEGER (seguro) × 2 noches (ya no es seguro).
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 1, menores: [] }] }, noches: 2 });
+    esperarCodigo(r, "configuracion_invalida");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Punto 3 (ronda 4) — coherencia de capacidad por unidadCobro. Antes de
+// esta ronda, `capacidad.paxIncluidos` podía tener CUALQUIER valor en una
+// tarifa "persona" o "pareja" sin que el motor se quejara — parecía
+// configurable, pero nunca se usaba (persona) o el motor asumía 2 sin
+// importar lo que dijera `paxIncluidos` (pareja); y una habitación con
+// `minPax:2, paxIncluidos:0` pasaba de largo, pese a no poder venderse ni
+// en su ocupación mínima sin un suplemento.
+// ─────────────────────────────────────────────────────────────────────────
+describe("coherencia de capacidad por unidadCobro", () => {
+  test("persona: paxIncluidos distinto de 0 → configuracion_invalida (antes se aceptaba cualquier valor, sin efecto real)", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: 100_000 },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 3 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    assert.equal(validarCoherenciaCapacidad(tarifa)?.codigo, "configuracion_invalida");
+    esperarCodigo(cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 1, menores: [] }] }, noches: 1 }), "configuracion_invalida");
+  });
+
+  test("pareja: minPax > 2 → configuracion_invalida", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "pareja",
+      versionTarifario: V,
+      valores: { adulto: 550_000 },
+      capacidad: { minPax: 3, maxPax: 4, paxIncluidos: 2 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    assert.equal(validarCoherenciaCapacidad(tarifa)?.codigo, "configuracion_invalida");
+  });
+
+  test("pareja: maxPax < 2 → configuracion_invalida", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "pareja",
+      versionTarifario: V,
+      valores: { adulto: 550_000 },
+      capacidad: { minPax: 1, maxPax: 1, paxIncluidos: 1 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    assert.equal(validarCoherenciaCapacidad(tarifa)?.codigo, "configuracion_invalida");
+  });
+
+  test("pareja: paxIncluidos distinto de 2 → configuracion_invalida (antes se aceptaba, pero el motor siempre asumía 2)", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "pareja",
+      versionTarifario: V,
+      valores: { adulto: 550_000 },
+      capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 3 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    assert.equal(validarCoherenciaCapacidad(tarifa)?.codigo, "configuracion_invalida");
+  });
+
+  test("habitación: minPax:2, paxIncluidos:0 → configuracion_invalida (caso explícito del encargo)", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "habitacion",
+      versionTarifario: V,
+      valores: { adulto: 500_000 },
+      capacidad: { minPax: 2, maxPax: 2, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    assert.equal(validarCoherenciaCapacidad(tarifa)?.codigo, "configuracion_invalida");
+    esperarCodigo(
+      cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 2, menores: [] }] }, noches: 1 }),
+      "configuracion_invalida"
+    );
+  });
+
+  test("apartamento: paxIncluidos < minPax → configuracion_invalida", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "apartamento",
+      versionTarifario: V,
+      valores: { adulto: 800_000 },
+      capacidad: { minPax: 3, maxPax: 6, paxIncluidos: 2 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    assert.equal(validarCoherenciaCapacidad(tarifa)?.codigo, "configuracion_invalida");
+  });
+
+  test("combinaciones coherentes por unidad pasan sin bloqueo", () => {
+    const persona: TarifaAlojamiento = {
+      id: "t",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: 1 },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    const pareja: TarifaAlojamiento = { ...persona, unidadCobro: "pareja", capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 } };
+    const habitacion: TarifaAlojamiento = { ...persona, unidadCobro: "habitacion", capacidad: { minPax: 2, maxPax: 3, paxIncluidos: 2 } };
+    assert.equal(validarCoherenciaCapacidad(persona), null);
+    assert.equal(validarCoherenciaCapacidad(pareja), null);
+    assert.equal(validarCoherenciaCapacidad(habitacion), null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Punto 4 (ronda 4) — discriminantes en runtime: enums/uniones se
+// verifican exhaustivamente contra datos `unknown`. Siempre
+// configuracion_invalida, nunca tarifa_no_encontrada ni TypeError.
+// ─────────────────────────────────────────────────────────────────────────
+describe("discriminantes en runtime", () => {
+  function base(): { tarifa: Record<string, unknown>; distribucion: unknown; noches: number } {
+    return {
+      tarifa: {
+        id: "t",
+        unidadCobro: "pareja",
+        versionTarifario: V,
+        valores: { adulto: 550_000 },
+        capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
+        suplementos: [],
+        reglaMenores: { reglas: [] },
+      },
+      distribucion: { unidades: [{ adultos: 2, menores: [] }] },
+      noches: 1,
+    };
+  }
+
+  test("ReglaEdadMenor.categoria desconocida → configuracion_invalida", () => {
+    const entrada = base();
+    (entrada.tarifa as { reglaMenores: unknown }).reglaMenores = { reglas: [{ categoria: "adolescente", edadMinAnios: 0, edadMaxAnios: 5 }] };
+    esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
+  });
+
+  test("suplemento.tipo desconocido → configuracion_invalida", () => {
+    const entrada = base();
+    (entrada.tarifa as { suplementos: unknown }).suplementos = [{ tipo: "descuento_fidelidad", valor: 1 }];
+    esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
+  });
+
+  test("menor_adicional sin categoriaMenor → configuracion_invalida", () => {
+    const entrada = base();
+    (entrada.tarifa as { suplementos: unknown }).suplementos = [{ tipo: "menor_adicional", valor: 1 }];
+    esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
+  });
+
+  test("menor_adicional con categoriaMenor inválida → configuracion_invalida", () => {
+    const entrada = base();
+    (entrada.tarifa as { suplementos: unknown }).suplementos = [{ tipo: "menor_adicional", categoriaMenor: "adulto", valor: 1 }];
+    esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
+  });
+
+  test("adulto_adicional con categoriaMenor puesto (no debería tenerla) → configuracion_invalida", () => {
+    const entrada = base();
+    (entrada.tarifa as { suplementos: unknown }).suplementos = [{ tipo: "adulto_adicional", categoriaMenor: "nino", valor: 1 }];
+    esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
+  });
+
+  test("persona_sola con categoriaMenor puesto → configuracion_invalida", () => {
+    const entrada = base();
+    (entrada.tarifa as { suplementos: unknown }).suplementos = [{ tipo: "persona_sola", categoriaMenor: "infante", valor: 1 }];
+    esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
+  });
+
+  test("temporada/categoria/alimentacion deben ser string o null", () => {
+    for (const campo of ["temporada", "categoria", "alimentacion"] as const) {
+      for (const valorInvalido of [123, {}, [], true]) {
+        const entrada = base();
+        (entrada.tarifa as Record<string, unknown>)[campo] = valorInvalido;
+        esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
+      }
+    }
+  });
+
+  test("tarifa.valores con una clave desconocida → configuracion_invalida", () => {
+    const entrada = base();
+    (entrada.tarifa as { valores: unknown }).valores = { adulto: 550_000, descuento: 10 };
+    esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
   });
 });

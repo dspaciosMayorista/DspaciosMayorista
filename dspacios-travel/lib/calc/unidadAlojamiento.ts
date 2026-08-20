@@ -68,6 +68,46 @@
 //      ellos no se puede construir un snapshot persistible, así que se
 //      exigen desde el principio, no al momento de snapshotear.
 //
+// Revisión de PR (ronda 4, final): seis correcciones más.
+//   1) `tarifa.valores.adulto` es SIEMPRE obligatorio y se valida como
+//      entero seguro >= 0 — antes `{ valores: {} }` pasaba de largo (el
+//      bucle genérico sobre `Object.entries` simplemente no encontraba
+//      nada que objetar) y terminaba en `ok:true` con `totalNetoPorNoche:
+//      NaN`. Ahora se exige su presencia en `validarFormaEntrada` (forma)
+//      y su rango en `validarEntrada` (`esEnteroSeguro`).
+//   2) `esEnteroValido` se volvió `esEnteroSeguro` (`Number.isSafeInteger`,
+//      no solo `Number.isInteger`) en TODO el motor — dinero, pax, edades,
+//      noches. Además, `verificarConsistenciaResultado` (ver punto 6)
+//      recalcula cada multiplicación/suma con esa misma función antes de
+//      devolver `ok:true`, así que un desbordamiento de
+//      `Number.MAX_SAFE_INTEGER` en cualquier paso queda cubierto en un
+//      solo lugar, sin tener que propagar un "posible overflow" por cada
+//      función interna.
+//   3) Nueva `validarCoherenciaCapacidad`: persona exige
+//      `paxIncluidos === 0` (no interviene en el precio, así que no puede
+//      "parecer" que sí); pareja exige `minPax<=2<=maxPax` y
+//      `paxIncluidos === 2` (la base siempre son 2 adultos, hardcoded);
+//      habitación/apartamento exigen `paxIncluidos >= minPax` (antes solo
+//      se validaba el límite superior).
+//   4) `validarFormaEntrada` ahora valida discriminantes por unión
+//      exhaustivamente: `ReglaEdadMenor.categoria` (solo nino/infante),
+//      `suplemento.tipo` (solo los 3 valores), `menor_adicional` exige
+//      `categoriaMenor` válida, `adulto_adicional`/`persona_sola` la
+//      rechazan si viene puesta, `temporada`/`categoria`/`alimentacion`
+//      deben ser string o null, y `tarifa.valores` no admite claves fuera
+//      de adulto/nino/infante. Todo esto es `configuracion_invalida`,
+//      nunca `tarifa_no_encontrada` ni un `TypeError`.
+//   5) `DatosFuenteSnapshot`/`SnapshotAlojamiento` ahora incluyen
+//      `capacidad` (minPax/maxPax/paxIncluidos) completa — antes faltaba,
+//      así que el snapshot no alcanzaba a explicar por sí solo cómo se
+//      llegó al total (base + incluidos + adicionales × suplemento).
+//   6) `verificarConsistenciaResultado`: aserción interna, corre justo
+//      antes de devolver `ok:true` — recalcula cada línea (cantidad ×
+//      valorUnitario === valorTotal, con enteros seguros), la suma del
+//      desglose contra `totalNetoPorNoche`, y `totalNetoPorNoche × noches`
+//      contra `totalNeto`. Si algo no cuadra, `configuracion_invalida` en
+//      vez de `ok:true`.
+//
 // Compatibilidad con lo que ya existe: la calculadora Corporativa
 // (`lib/calc/calculadoras.ts`) ya preserva el total de habitación exacto
 // cuando `persona_adicional = 0` — `neto_X × pax_tarifa_default[X] = rack`
@@ -79,7 +119,7 @@
 // esa equivalencia con casos reales del PDF (Casa Amanzi, Mumu).
 // ─────────────────────────────────────────────────────────────────────────
 
-export const VERSION_MOTOR_ALOJAMIENTO = "unidad-alojamiento@2";
+export const VERSION_MOTOR_ALOJAMIENTO = "unidad-alojamiento@3";
 
 // ── Unidad de cobro ─────────────────────────────────────────────────────
 // Vive en la TARIFA (o plan tarifario), nunca en el hotel: un mismo hotel
@@ -233,7 +273,9 @@ function esBloqueado(x: unknown): x is ResultadoBloqueado {
 export type DatosFuenteSnapshot = {
   tarifaId: string;
   versionTarifario: string;
+  unidadCobro: UnidadCobro;
   valores: ValoresPorCategoria;
+  capacidad: CapacidadUnidad;
   reglaMenoresAplicada: ReglaMenores;
   distribucion: DistribucionUnidades;
   temporada: string | null;
@@ -293,8 +335,16 @@ function etiquetaSuplemento(s: SuplementoConfigurado): string {
   return s.categoriaMenor === "nino" ? "Niño adicional" : "Infante adicional";
 }
 
-function esEnteroValido(n: unknown): n is number {
-  return typeof n === "number" && Number.isInteger(n); // rechaza NaN, Infinity y decimales por construcción
+// `Number.isSafeInteger` (no solo `Number.isInteger`): además de rechazar
+// NaN/Infinity/decimales, rechaza enteros por fuera de
+// [-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER] — un valor "entero" mayor a eso ya
+// no se representa con precisión exacta en un `number` de JS, así que
+// cualquier suma/multiplicación posterior podría perder precisión en
+// silencio. Se usa para TODO campo numérico de este motor (dinero, pax,
+// edades, noches) — no solo dinero — porque el mismo riesgo aplica a
+// cualquiera de ellos si llegara un valor patológico desde afuera.
+function esEnteroSeguro(n: unknown): n is number {
+  return typeof n === "number" && Number.isSafeInteger(n);
 }
 
 function esObjeto(v: unknown): v is Record<string, unknown> {
@@ -345,6 +395,26 @@ export function validarFormaEntrada(entradaDesconocida: unknown): { entrada: Ent
   if (!esObjeto(tarifa.valores)) {
     return resultadoBloqueado("configuracion_invalida", "`tarifa.valores` debe ser un objeto.");
   }
+  for (const clave of Object.keys(tarifa.valores)) {
+    if (clave !== "adulto" && clave !== "nino" && clave !== "infante") {
+      return resultadoBloqueado("configuracion_invalida", `"tarifa.valores" no puede contener la clave "${clave}" — solo admite adulto/nino/infante.`, {
+        clave,
+      });
+    }
+  }
+  // `adulto` es el único valor SIEMPRE obligatorio — sin él el motor
+  // producía `NaN` en el desglose (ya lo bloquea también la validación
+  // numérica de más abajo, pero exigirlo aquí evita depender solo de eso:
+  // `{ valores: {} }` y `{ adulto: undefined }` fallan ya en esta forma).
+  if (typeof tarifa.valores.adulto !== "number") {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.valores.adulto` es obligatorio y debe ser un número.");
+  }
+  if (tarifa.valores.nino !== undefined && typeof tarifa.valores.nino !== "number") {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.valores.nino`, si existe, debe ser un número.");
+  }
+  if (tarifa.valores.infante !== undefined && typeof tarifa.valores.infante !== "number") {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.valores.infante`, si existe, debe ser un número.");
+  }
   if (!esObjeto(tarifa.capacidad)) {
     return resultadoBloqueado("configuracion_invalida", "`tarifa.capacidad` debe ser un objeto.");
   }
@@ -358,15 +428,51 @@ export function validarFormaEntrada(entradaDesconocida: unknown): { entrada: Ent
         indice: i,
       });
     }
+    if (s.tipo !== "adulto_adicional" && s.tipo !== "persona_sola" && s.tipo !== "menor_adicional") {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        `El suplemento en la posición ${i + 1} tiene un "tipo" desconocido: "${s.tipo}" (solo adulto_adicional/persona_sola/menor_adicional).`,
+        { indice: i, tipo: s.tipo }
+      );
+    }
+    if (s.tipo === "menor_adicional") {
+      if (s.categoriaMenor !== "nino" && s.categoriaMenor !== "infante") {
+        return resultadoBloqueado(
+          "configuracion_invalida",
+          `El suplemento "menor_adicional" en la posición ${i + 1} requiere "categoriaMenor" ("nino" o "infante").`,
+          { indice: i, categoriaMenor: s.categoriaMenor }
+        );
+      }
+    } else if (s.categoriaMenor !== undefined) {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        `El suplemento "${s.tipo}" en la posición ${i + 1} no admite "categoriaMenor".`,
+        { indice: i, tipo: s.tipo }
+      );
+    }
   }
   if (!esObjeto(tarifa.reglaMenores) || !Array.isArray(tarifa.reglaMenores.reglas)) {
     return resultadoBloqueado("configuracion_invalida", "`tarifa.reglaMenores.reglas` debe ser un arreglo.");
   }
   for (let i = 0; i < tarifa.reglaMenores.reglas.length; i++) {
-    if (!esObjeto(tarifa.reglaMenores.reglas[i])) {
+    const r = tarifa.reglaMenores.reglas[i];
+    if (!esObjeto(r)) {
       return resultadoBloqueado("configuracion_invalida", `La regla de menores en la posición ${i + 1} debe ser un objeto.`, {
         indice: i,
       });
+    }
+    if (r.categoria !== "nino" && r.categoria !== "infante") {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        `La regla de menores en la posición ${i + 1} tiene una "categoria" desconocida: "${r.categoria}" (solo nino/infante).`,
+        { indice: i, categoria: r.categoria }
+      );
+    }
+  }
+  for (const campo of ["temporada", "categoria", "alimentacion"] as const) {
+    const v = tarifa[campo];
+    if (v !== undefined && v !== null && typeof v !== "string") {
+      return resultadoBloqueado("configuracion_invalida", `"tarifa.${campo}", si existe, debe ser un string o null.`, { campo, valor: v });
     }
   }
   if (tarifa.fuente !== undefined && tarifa.fuente !== null) {
@@ -454,6 +560,73 @@ export function validarCoherenciaTarifa(tarifa: TarifaAlojamiento): ResultadoBlo
   return null;
 }
 
+// ── 0.ter Coherencia de capacidad según `unidadCobro` ───────────────────
+// Se ejecuta DESPUÉS de `validarEntrada` (que ya garantiza minPax/maxPax/
+// paxIncluidos enteros seguros, minPax<=maxPax y paxIncluidos<=maxPax) —
+// aquí solo se agregan las reglas ESPECÍFICAS de cada unidad, para que
+// `capacidad.paxIncluidos` nunca "parezca" tener un efecto que en realidad
+// no tiene:
+//   persona    → paxIncluidos no interviene en el precio; se exige 0 como
+//                único valor canónico (cualquier otro sería engañoso).
+//   pareja     → la base SIEMPRE representa exactamente 2 adultos
+//                (hardcoded en `aplicarSuplementosUnidad`); minPax debe
+//                permitir 2, maxPax debe admitir 2, y paxIncluidos debe SER
+//                2 — no hay otro valor que tenga sentido.
+//   habitación/apartamento → paxIncluidos debe estar entre minPax y maxPax
+//                (el límite superior ya lo valida `validarEntrada`; aquí se
+//                agrega el inferior: `minPax:2, paxIncluidos:0` significa
+//                "ni siquiera la ocupación mínima está cubierta sin
+//                suplemento", una configuración incoherente).
+export function validarCoherenciaCapacidad(tarifa: TarifaAlojamiento): ResultadoBloqueado | null {
+  const { minPax, maxPax, paxIncluidos } = tarifa.capacidad;
+
+  if (tarifa.unidadCobro === "persona") {
+    if (paxIncluidos !== 0) {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        '`capacidad.paxIncluidos` no interviene en el precio de una tarifa "persona" — debe ser exactamente 0 para no sugerir un efecto que no existe.',
+        { paxIncluidos }
+      );
+    }
+    return null;
+  }
+
+  if (tarifa.unidadCobro === "pareja") {
+    if (minPax > 2) {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        'Una tarifa "pareja" representa exactamente 2 adultos — `capacidad.minPax` no puede ser mayor que 2.',
+        { minPax }
+      );
+    }
+    if (maxPax !== null && maxPax < 2) {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        'Una tarifa "pareja" representa exactamente 2 adultos — `capacidad.maxPax` no puede ser menor que 2.',
+        { maxPax }
+      );
+    }
+    if (paxIncluidos !== 2) {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        'Una tarifa "pareja" siempre representa exactamente 2 adultos — `capacidad.paxIncluidos` debe ser exactamente 2.',
+        { paxIncluidos }
+      );
+    }
+    return null;
+  }
+
+  // habitacion | apartamento
+  if (paxIncluidos < minPax) {
+    return resultadoBloqueado(
+      "configuracion_invalida",
+      '`capacidad.paxIncluidos` no puede ser menor que `capacidad.minPax` — la unidad no podría venderse ni en su ocupación mínima sin un suplemento.',
+      { minPax, paxIncluidos }
+    );
+  }
+  return null;
+}
+
 // ── A. Aplicación de reglas de menores ──────────────────────────────────
 // Clasifica cada menor por edad. Una edad sin regla que la cubra NO se
 // convierte en adulto — falla cerrado. Una edad cubierta por más de una
@@ -504,31 +677,45 @@ export function validarEntrada(
   tarifa: TarifaAlojamiento,
   entrada: EntradaCotizacion
 ): { mapaSuplementos: Map<string, SuplementoConfigurado> } | ResultadoBloqueado {
-  if (!esEnteroValido(entrada.noches)) {
+  if (!esEnteroSeguro(entrada.noches)) {
     return resultadoBloqueado("configuracion_invalida", "`noches` debe ser un entero.", { noches: entrada.noches });
   }
   if (entrada.noches < 0) {
     return resultadoBloqueado("configuracion_invalida", "`noches` no puede ser negativo.", { noches: entrada.noches });
   }
 
-  for (const [campo, valor] of Object.entries(tarifa.valores)) {
-    if (valor === undefined) continue;
-    if (!esEnteroValido(valor) || valor < 0) {
-      return resultadoBloqueado("configuracion_invalida", `El valor de "${campo}" debe ser un entero >= 0.`, { campo, valor });
-    }
+  // `adulto` es SIEMPRE obligatorio (ya se exigió su tipo en
+  // `validarFormaEntrada`; aquí se exige que además sea un entero SEGURO —
+  // rechaza NaN, Infinity y valores mayores a `Number.MAX_SAFE_INTEGER`,
+  // que antes de esta ronda pasaban sin más y producían `totalNetoPorNoche:
+  // NaN` con `ok: true`).
+  if (!esEnteroSeguro(tarifa.valores.adulto) || tarifa.valores.adulto < 0) {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.valores.adulto` debe ser un entero seguro >= 0.", {
+      valor: tarifa.valores.adulto,
+    });
+  }
+  if (tarifa.valores.nino !== undefined && (!esEnteroSeguro(tarifa.valores.nino) || tarifa.valores.nino < 0)) {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.valores.nino` debe ser un entero seguro >= 0.", {
+      valor: tarifa.valores.nino,
+    });
+  }
+  if (tarifa.valores.infante !== undefined && (!esEnteroSeguro(tarifa.valores.infante) || tarifa.valores.infante < 0)) {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.valores.infante` debe ser un entero seguro >= 0.", {
+      valor: tarifa.valores.infante,
+    });
   }
 
   const { minPax, maxPax, paxIncluidos } = tarifa.capacidad;
-  if (!esEnteroValido(minPax) || minPax < 1) {
+  if (!esEnteroSeguro(minPax) || minPax < 1) {
     return resultadoBloqueado("configuracion_invalida", "`capacidad.minPax` debe ser un entero >= 1.", { minPax });
   }
-  if (maxPax !== null && (!esEnteroValido(maxPax) || maxPax < minPax)) {
+  if (maxPax !== null && (!esEnteroSeguro(maxPax) || maxPax < minPax)) {
     return resultadoBloqueado("configuracion_invalida", "`capacidad.maxPax` debe ser null o un entero >= minPax.", {
       minPax,
       maxPax,
     });
   }
-  if (!esEnteroValido(paxIncluidos) || paxIncluidos < 0 || (maxPax !== null && paxIncluidos > maxPax)) {
+  if (!esEnteroSeguro(paxIncluidos) || paxIncluidos < 0 || (maxPax !== null && paxIncluidos > maxPax)) {
     return resultadoBloqueado(
       "configuracion_invalida",
       "`capacidad.paxIncluidos` debe ser un entero dentro de la capacidad (>= 0 y <= maxPax si existe).",
@@ -538,8 +725,8 @@ export function validarEntrada(
 
   for (const r of tarifa.reglaMenores.reglas) {
     if (
-      !esEnteroValido(r.edadMinAnios) ||
-      !esEnteroValido(r.edadMaxAnios) ||
+      !esEnteroSeguro(r.edadMinAnios) ||
+      !esEnteroSeguro(r.edadMaxAnios) ||
       r.edadMinAnios < 0 ||
       r.edadMaxAnios < 0 ||
       r.edadMinAnios > r.edadMaxAnios
@@ -554,7 +741,7 @@ export function validarEntrada(
 
   const mapaSuplementos = new Map<string, SuplementoConfigurado>();
   for (const s of tarifa.suplementos) {
-    if (!esEnteroValido(s.valor) || s.valor < 0) {
+    if (!esEnteroSeguro(s.valor) || s.valor < 0) {
       return resultadoBloqueado("configuracion_invalida", `El suplemento "${s.tipo}" debe tener un valor entero >= 0.`, {
         suplemento: s,
       });
@@ -575,14 +762,14 @@ export function validarEntrada(
   }
   for (let i = 0; i < entrada.distribucion.unidades.length; i++) {
     const u = entrada.distribucion.unidades[i];
-    if (!esEnteroValido(u.adultos) || u.adultos < 0) {
+    if (!esEnteroSeguro(u.adultos) || u.adultos < 0) {
       return resultadoBloqueado("configuracion_invalida", `La unidad ${i + 1}: "adultos" debe ser un entero >= 0.`, {
         indice: i,
         adultos: u.adultos,
       });
     }
     for (const m of u.menores) {
-      if (!esEnteroValido(m.edadAnios) || m.edadAnios < 0) {
+      if (!esEnteroSeguro(m.edadAnios) || m.edadAnios < 0) {
         return resultadoBloqueado(
           "configuracion_invalida",
           `La unidad ${i + 1}: la edad de un menor debe ser un entero >= 0.`,
@@ -839,6 +1026,9 @@ export function cotizarUnidadAlojamiento(entradaDesconocida: unknown): Resultado
   if (esBloqueado(validacion)) return validacion;
   const { mapaSuplementos } = validacion;
 
+  const coherenciaCapacidad = validarCoherenciaCapacidad(tarifa);
+  if (coherenciaCapacidad) return coherenciaCapacidad;
+
   if (noches === 0) {
     return resultadoBloqueado(
       "producto_no_soportado",
@@ -853,13 +1043,24 @@ export function cotizarUnidadAlojamiento(entradaDesconocida: unknown): Resultado
       : calcularNoPersona(tarifa, distribucion, noches, mapaSuplementos);
   if (esBloqueado(calculo)) return calculo;
 
+  // Aserción interna antes de devolver `ok:true`: recalcula cada línea y
+  // cada total con aritmética SEGURA y los compara contra lo que
+  // `calculo` produjo. Antes de esta ronda, un desbordamiento de
+  // `Number.MAX_SAFE_INTEGER` en cualquier multiplicación/suma (valor ×
+  // cantidad, suplemento × cantidad, total × noches) simplemente perdía
+  // precisión en silencio y el motor igual respondía `ok:true`.
+  const inconsistencia = verificarConsistenciaResultado(calculo);
+  if (inconsistencia) return inconsistencia;
+
   // `datosFuente` se arma UNA sola vez, aquí, con la MISMA tarifa/
   // distribución que efectivamente produjeron `calculo` — no hay otro
   // punto de entrada que pueda mezclar datos de otro cálculo.
   const datosFuente: DatosFuenteSnapshot = clonarProfundo({
     tarifaId: tarifa.id,
     versionTarifario: tarifa.versionTarifario,
+    unidadCobro: tarifa.unidadCobro,
     valores: tarifa.valores,
+    capacidad: tarifa.capacidad,
     reglaMenoresAplicada: tarifa.reglaMenores,
     distribucion,
     temporada: tarifa.temporada ?? null,
@@ -974,6 +1175,63 @@ function calcularNoPersona(
   };
 }
 
+// ── Aserción interna de consistencia (punto 6 + parte del punto 2) ─────
+// Único punto de salida "sí": recalcula cada línea y cada total con
+// aritmética SEGURA (`esEnteroSeguro`) y los compara contra lo que
+// `calcularPersona`/`calcularNoPersona` ya produjeron. Cubre, en un solo
+// lugar, TODAS las multiplicaciones/sumas del motor (valor × cantidad de
+// cada línea, suma del desglose, total × noches) sin tener que propagar un
+// "posible desbordamiento" por cada función interna. Si algo no cuadra —
+// por desbordamiento de `Number.MAX_SAFE_INTEGER` o por cualquier otra
+// inconsistencia — el motor NUNCA responde `ok:true`.
+function verificarConsistenciaResultado(nucleo: Omit<ResultadoValido, "datosFuente">): ResultadoBloqueado | null {
+  let sumaLineas = 0;
+  for (const l of nucleo.desglose) {
+    if (!esEnteroSeguro(l.cantidad) || l.cantidad < 0) {
+      return resultadoBloqueado("configuracion_invalida", `La línea "${l.concepto}" tiene una cantidad que no es un entero seguro.`, { linea: l });
+    }
+    if (!esEnteroSeguro(l.valorUnitario) || l.valorUnitario < 0) {
+      return resultadoBloqueado("configuracion_invalida", `La línea "${l.concepto}" tiene un valor unitario que no es un entero seguro.`, {
+        linea: l,
+      });
+    }
+    const esperado = l.cantidad * l.valorUnitario;
+    if (!esEnteroSeguro(esperado) || esperado !== l.valorTotal) {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        `La línea "${l.concepto}" es inconsistente: cantidad × valorUnitario no coincide con valorTotal, o el producto excede un entero seguro.`,
+        { linea: l }
+      );
+    }
+    const nuevaSuma = sumaLineas + l.valorTotal;
+    if (!esEnteroSeguro(nuevaSuma)) {
+      return resultadoBloqueado("configuracion_invalida", "La suma del desglose excede un entero seguro.", {
+        sumaParcial: sumaLineas,
+        linea: l,
+      });
+    }
+    sumaLineas = nuevaSuma;
+  }
+  if (sumaLineas !== nucleo.totalNetoPorNoche) {
+    return resultadoBloqueado("configuracion_invalida", "La suma del desglose no coincide con `totalNetoPorNoche`.", {
+      sumaLineas,
+      totalNetoPorNoche: nucleo.totalNetoPorNoche,
+    });
+  }
+  if (!esEnteroSeguro(nucleo.noches) || nucleo.noches < 0) {
+    return resultadoBloqueado("configuracion_invalida", "`noches` no es un entero seguro.", { noches: nucleo.noches });
+  }
+  const totalEsperado = nucleo.totalNetoPorNoche * nucleo.noches;
+  if (!esEnteroSeguro(totalEsperado) || totalEsperado !== nucleo.totalNeto) {
+    return resultadoBloqueado(
+      "configuracion_invalida",
+      "`totalNetoPorNoche` × `noches` no coincide con `totalNeto`, o excede un entero seguro.",
+      { totalNetoPorNoche: nucleo.totalNetoPorNoche, noches: nucleo.noches, totalNeto: nucleo.totalNeto }
+    );
+  }
+  return null;
+}
+
 // ── Copia profunda ───────────────────────────────────────────────────────
 function clonarProfundo<T>(valor: T): T {
   return typeof structuredClone === "function" ? structuredClone(valor) : (JSON.parse(JSON.stringify(valor)) as T);
@@ -996,6 +1254,7 @@ export type SnapshotAlojamiento = {
   unidadCobro: UnidadCobro;
   tarifaId: string;
   valores: ValoresPorCategoria;
+  capacidad: CapacidadUnidad;
   distribucion: DistribucionUnidades;
   capacidadUtilizada: CapacidadUtilizadaUnidad[];
   cantidadUnidades: number;
@@ -1021,6 +1280,7 @@ export function construirSnapshotAlojamiento(resultado: ResultadoValido): Snapsh
     unidadCobro: resultado.unidadCobro,
     tarifaId: f.tarifaId,
     valores: f.valores,
+    capacidad: f.capacidad,
     distribucion: f.distribucion,
     capacidadUtilizada: resultado.capacidadUtilizada,
     cantidadUnidades: resultado.cantidadUnidades,
