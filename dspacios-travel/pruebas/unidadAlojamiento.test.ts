@@ -10,6 +10,7 @@ import {
   validarCoherenciaTarifa,
   validarCoherenciaCapacidad,
   resultadoBloqueado,
+  MAX_OCUPANTES_POR_UNIDAD,
   type TarifaAlojamiento,
   type DistribucionUnidades,
   type ResultadoValido,
@@ -96,7 +97,7 @@ describe("unidad persona", () => {
     assert.equal(r.totalNetoPorNoche, 270_000);
     assert.equal(r.totalNeto, 810_000);
     assert.equal(r.cantidadUnidades, 2);
-    assert.equal(r.menoresClasificados[0].categoria, "nino");
+    assert.equal(r.menoresClasificados[0].categoriaTarifaria, "nino");
     assert.deepEqual(
       r.desglose.map((l) => l.concepto),
       ["Adultos", "Niños"]
@@ -110,7 +111,7 @@ describe("unidad persona", () => {
       noches: 1,
     });
     esperarValido(r);
-    assert.equal(r.menoresClasificados[0].categoria, "nino");
+    assert.equal(r.menoresClasificados[0].categoriaTarifaria, "nino");
   });
 
   test("niño sin regla → edad_fuera_de_regla", () => {
@@ -889,7 +890,12 @@ describe("snapshot", () => {
     distribucion.unidades[0].menores.push({ edadAnios: 5 });
     r.desglose[0].valorTotal = -1;
     r.suplementosAplicados[0].valorTotal = -1;
-    r.menoresClasificados.push({ edadAnios: 1, categoria: "infante" });
+    r.menoresClasificados.push({
+      edadAnios: 1,
+      categoriaTarifaria: "infante",
+      reglaAplicada: { categoria: "infante", edadMinAnios: 0, edadMaxAnios: 1 },
+      valorAplicado: null,
+    });
     r.capacidadUtilizada[0].adultos = -1;
     r.datosFuente.valores.adulto = -1;
     r.datosFuente.distribucion.unidades[0].adultos = -1;
@@ -1277,5 +1283,348 @@ describe("discriminantes en runtime", () => {
     const entrada = base();
     (entrada.tarifa as { valores: unknown }).valores = { adulto: 550_000, descuento: 10 };
     esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Punto 1 (ronda 5) — Menor con tarifa de adulto. La política Bernalo
+// real (pág. 4 y repetida en los 15 hoteles por persona) es de TRES
+// tramos, no dos: "0-3 años $30.000 seguro hotelero"; "4-10 años 70% de la
+// tarifa de adulto"; "11 años en adelante pagan tarifa normal" — es decir,
+// tarifariamente adultos. Antes de esta ronda, `ReglaEdadMenor.categoria`
+// solo admitía nino/infante — no había forma de representar el tercer
+// tramo sin depender de que la UI convirtiera silenciosamente al pasajero
+// en adulto (perdiendo su condición de menor en la reserva).
+// ─────────────────────────────────────────────────────────────────────────
+describe("menor con tarifa de adulto (11-17 años, tercer tramo Bernalo)", () => {
+  const reglaBernalo = {
+    reglas: [
+      { categoria: "infante" as const, edadMinAnios: 0, edadMaxAnios: 3 },
+      { categoria: "nino" as const, edadMinAnios: 4, edadMaxAnios: 10 },
+      { categoria: "adulto" as const, edadMinAnios: 11, edadMaxAnios: 17 },
+    ],
+  };
+  const tarifaPersonaBernalo: TarifaAlojamiento = {
+    id: "t-bernalo",
+    unidadCobro: "persona",
+    versionTarifario: V,
+    valores: { adulto: 100_000, nino: 70_000 },
+    capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+    suplementos: [],
+    reglaMenores: reglaBernalo,
+  };
+
+  const fronteras: { edad: number; categoriaEsperada: "infante" | "nino" | "adulto" }[] = [
+    { edad: 3, categoriaEsperada: "infante" },
+    { edad: 4, categoriaEsperada: "nino" },
+    { edad: 10, categoriaEsperada: "nino" },
+    { edad: 11, categoriaEsperada: "adulto" },
+    { edad: 17, categoriaEsperada: "adulto" },
+  ];
+  for (const f of fronteras) {
+    test(`edad de frontera ${f.edad} años → categoría tarifaria "${f.categoriaEsperada}"`, () => {
+      const c = clasificarMenores([{ edadAnios: f.edad }], reglaBernalo);
+      assert.equal("clasificados" in c, true);
+      if ("clasificados" in c) assert.equal(c.clasificados[0].categoriaTarifaria, f.categoriaEsperada);
+    });
+  }
+
+  test("edad sin regla (18 años, fuera de los 3 tramos configurados) → edad_fuera_de_regla", () => {
+    const c = clasificarMenores([{ edadAnios: 18 }], reglaBernalo);
+    assert.equal("codigo" in c ? c.codigo : null, "edad_fuera_de_regla");
+  });
+
+  test("rangos superpuestos entre nino y adulto → combinacion_ambigua", () => {
+    const reglaSolapada = {
+      reglas: [
+        { categoria: "nino" as const, edadMinAnios: 4, edadMaxAnios: 12 },
+        { categoria: "adulto" as const, edadMinAnios: 11, edadMaxAnios: 17 },
+      ],
+    };
+    const c = clasificarMenores([{ edadAnios: 11 }], reglaSolapada);
+    assert.equal("codigo" in c ? c.codigo : null, "combinacion_ambigua");
+  });
+
+  test("un menor de 15 años NO se suma a los adultos declarados; aparece como línea propia usando valores.adulto", () => {
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaPersonaBernalo,
+      distribucion: { unidades: [{ adultos: 2, menores: [{ edadAnios: 15 }] }] },
+      noches: 1,
+    });
+    esperarValido(r);
+    assert.equal(r.cantidadUnidades, 2, "el menor de 15 no debe contarse como adulto declarado");
+    const lineaMenorAdulto = r.desglose.find((l) => l.concepto === "Menor con tarifa de adulto");
+    assert.ok(lineaMenorAdulto, "debe existir la línea 'Menor con tarifa de adulto'");
+    assert.equal(lineaMenorAdulto?.valorUnitario, 100_000); // valores.adulto
+    assert.equal(lineaMenorAdulto?.cantidad, 1);
+    // 2 adultos × 100.000 + 1 menor-con-tarifa-adulto × 100.000 = 300.000
+    assert.equal(r.totalNetoPorNoche, 300_000);
+  });
+
+  test("el snapshot conserva edad real, categoría tarifaria, regla aplicada y valor utilizado", () => {
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaPersonaBernalo,
+      distribucion: { unidades: [{ adultos: 1, menores: [{ edadAnios: 15 }] }] },
+      noches: 1,
+    });
+    esperarValido(r);
+    const snap = construirSnapshotAlojamiento(r);
+    const menor = snap.menoresClasificados[0];
+    assert.equal(menor.edadAnios, 15);
+    assert.equal(menor.categoriaTarifaria, "adulto");
+    assert.deepEqual(menor.reglaAplicada, { categoria: "adulto", edadMinAnios: 11, edadMaxAnios: 17 });
+    assert.equal(menor.valorAplicado, 100_000);
+  });
+
+  test("no se cobra dos veces: el total con un menor-adulto es exactamente el de un adulto real equivalente", () => {
+    const conAdultoReal = cotizarUnidadAlojamiento({
+      tarifa: tarifaPersonaBernalo,
+      distribucion: { unidades: [{ adultos: 3, menores: [] }] },
+      noches: 1,
+    });
+    const conMenorAdulto = cotizarUnidadAlojamiento({
+      tarifa: tarifaPersonaBernalo,
+      distribucion: { unidades: [{ adultos: 2, menores: [{ edadAnios: 15 }] }] },
+      noches: 1,
+    });
+    esperarValido(conAdultoReal);
+    esperarValido(conMenorAdulto);
+    assert.equal(conAdultoReal.totalNetoPorNoche, conMenorAdulto.totalNetoPorNoche);
+    // Pero la cantidad de "adultos declarados" SÍ debe diferir — el menor sigue siendo menor.
+    assert.notEqual(conAdultoReal.cantidadUnidades, conMenorAdulto.cantidadUnidades);
+  });
+
+  test("pareja: un menor de 15 años cuenta como adulto equivalente, necesita adulto_adicional si excede la base de 2", () => {
+    const tarifaPareja: TarifaAlojamiento = {
+      id: "t-pareja-bernalo",
+      unidadCobro: "pareja",
+      versionTarifario: V,
+      valores: { adulto: 550_000 },
+      capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
+      suplementos: [{ tipo: "adulto_adicional", valor: 90_000 }],
+      reglaMenores: reglaBernalo,
+    };
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaPareja,
+      distribucion: { unidades: [{ adultos: 2, menores: [{ edadAnios: 15 }] }] },
+      noches: 1,
+    });
+    esperarValido(r);
+    assert.equal(r.totalNetoPorNoche, 550_000 + 90_000);
+    assert.equal(r.suplementosAplicados[0].tipo, "adulto_adicional");
+  });
+
+  test("habitación: un menor de 15 años dentro de paxIncluidos no genera suplemento; fuera de paxIncluidos sí (adulto_adicional, no menor_adicional)", () => {
+    const tarifaHab: TarifaAlojamiento = {
+      id: "t-hab-bernalo",
+      unidadCobro: "habitacion",
+      versionTarifario: V,
+      valores: { adulto: 300_000 },
+      capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 3 },
+      suplementos: [{ tipo: "adulto_adicional", valor: 50_000 }],
+      reglaMenores: reglaBernalo,
+    };
+    const dentro = cotizarUnidadAlojamiento({
+      tarifa: tarifaHab,
+      distribucion: { unidades: [{ adultos: 2, menores: [{ edadAnios: 15 }] }] }, // 3 pax, paxIncluidos=3
+      noches: 1,
+    });
+    esperarValido(dentro);
+    assert.equal(dentro.totalNetoPorNoche, 300_000);
+    assert.equal(dentro.suplementosAplicados.length, 0);
+
+    const fuera = cotizarUnidadAlojamiento({
+      tarifa: tarifaHab,
+      distribucion: { unidades: [{ adultos: 3, menores: [{ edadAnios: 15 }] }] }, // 4 pax, 1 sobre paxIncluidos=3
+      noches: 1,
+    });
+    esperarValido(fuera);
+    assert.equal(fuera.totalNetoPorNoche, 300_000 + 50_000);
+    assert.equal(fuera.suplementosAplicados[0].tipo, "adulto_adicional");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Punto 2 (ronda 5) — Periodicidad de cobros.
+//
+// EVIDENCIA DEL PDF (releído textualmente, no de memoria): la nota de
+// "Niños y niñas de 0 - 3 años" dice literalmente
+// "$30.000 seguro hotelero; los consumos son adicionales, comparten cama
+// con los padres" — SIN ningún calificador de tiempo ("por noche" o "por
+// estadía"). Esto contrasta con el resto de la misma nota, que SÍ es
+// inequívoco: el encabezado de la tabla dice "Precio por persona por
+// noche", y el tramo de 4-10 años se define como "70% de la tarifa de
+// adulto" (derivado matemáticamente de una tarifa que sí es por noche).
+// El texto del PDF NO permite decidir si los $30.000 son por noche o por
+// toda la estadía — es AMBIGUO y queda como decisión comercial pendiente
+// de confirmar con el dueño. Por eso este motor nunca precarga una
+// interpretación: `periodicidadInfante` es un dato obligatorio de la
+// tarifa cuando `infante` está configurado.
+// ─────────────────────────────────────────────────────────────────────────
+describe("periodicidad de cobros (punto 2) — infante, la única tarifa ambigua del PDF", () => {
+  function tarifaConInfante(periodicidadInfante?: "por_noche" | "por_estadia"): TarifaAlojamiento {
+    return {
+      id: "t-periodicidad",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: 100_000, infante: 30_000, ...(periodicidadInfante ? { periodicidadInfante } : {}) },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [{ categoria: "infante", edadMinAnios: 0, edadMaxAnios: 3 }] },
+    };
+  }
+  const distribucionConInfante: DistribucionUnidades = { unidades: [{ adultos: 1, menores: [{ edadAnios: 1 }] }] };
+
+  test("alojamiento $100.000 por noche × 3 noches + seguro $30.000 por estadía → total $330.000", () => {
+    const r = cotizarUnidadAlojamiento({ tarifa: tarifaConInfante("por_estadia"), distribucion: distribucionConInfante, noches: 3 });
+    esperarValido(r);
+    assert.equal(r.totalNetoPorNoche, 100_000); // solo la línea de adulto es por noche
+    assert.equal(r.totalPorEstadia, 30_000); // el seguro, cobrado UNA sola vez
+    assert.equal(r.totalNeto, 330_000);
+  });
+
+  test("seguro $30.000 por noche configurado explícitamente → total $390.000", () => {
+    const r = cotizarUnidadAlojamiento({ tarifa: tarifaConInfante("por_noche"), distribucion: distribucionConInfante, noches: 3 });
+    esperarValido(r);
+    assert.equal(r.totalNetoPorNoche, 130_000); // 100.000 + 30.000, ambos por noche
+    assert.equal(r.totalPorEstadia, 0);
+    assert.equal(r.totalNeto, 390_000);
+  });
+
+  test("periodicidad ausente con infante configurado → configuracion_invalida (nunca se precarga una interpretación)", () => {
+    esperarCodigo(
+      cotizarUnidadAlojamiento({ tarifa: tarifaConInfante(undefined), distribucion: distribucionConInfante, noches: 1 }),
+      "configuracion_invalida"
+    );
+  });
+
+  test("periodicidadInfante presente sin infante configurado → configuracion_invalida", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t-sin-infante",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: 100_000, periodicidadInfante: "por_noche" },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    esperarCodigo(
+      cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 1, menores: [] }] }, noches: 1 }),
+      "configuracion_invalida"
+    );
+  });
+
+  test("periodicidadInfante fuera del enum → configuracion_invalida", () => {
+    const entrada = {
+      tarifa: { ...tarifaConInfante("por_noche"), valores: { adulto: 100_000, infante: 30_000, periodicidadInfante: "mensual" } },
+      distribucion: distribucionConInfante,
+      noches: 1,
+    };
+    esperarCodigo(cotizarUnidadAlojamiento(entrada), "configuracion_invalida");
+  });
+
+  test("el snapshot conserva la periodicidad y permite reconstruir el total", () => {
+    const r = cotizarUnidadAlojamiento({ tarifa: tarifaConInfante("por_estadia"), distribucion: distribucionConInfante, noches: 3 });
+    esperarValido(r);
+    const snap = construirSnapshotAlojamiento(r);
+    assert.equal(snap.valores.periodicidadInfante, "por_estadia");
+    const sumaPorNoche = snap.desglose.filter((l) => l.periodicidad === "por_noche").reduce((a, l) => a + l.valorTotal, 0);
+    const sumaPorEstadia = snap.desglose.filter((l) => l.periodicidad === "por_estadia").reduce((a, l) => a + l.valorTotal, 0);
+    assert.equal(sumaPorNoche * snap.noches + sumaPorEstadia, snap.totalNeto);
+    assert.equal(snap.totalPorEstadia, sumaPorEstadia);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Punto 3 (ronda 5) — sin asignación proporcional al número de adultos.
+// Antes de esta ronda, `aplicarSuplementosUnidad` construía
+// `Array.from({length: unidad.adultos})` — un arreglo del tamaño exacto de
+// `adultos` — para determinar quién quedaba fuera de `paxIncluidos`. Con
+// `adultos` extremadamente grande (incluso siendo un entero seguro válido)
+// eso intentaba reservar memoria proporcional a ese número.
+// ─────────────────────────────────────────────────────────────────────────
+describe("sin asignación proporcional al número de adultos (punto 3)", () => {
+  test("adultos extremadamente grande con maxPax:null → configuracion_invalida rápido, por límite comercial", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t-enorme",
+      unidadCobro: "habitacion",
+      versionTarifario: V,
+      valores: { adulto: 500_000 },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 2 },
+      suplementos: [{ tipo: "adulto_adicional", valor: 10_000 }],
+      reglaMenores: { reglas: [] },
+    };
+    const inicio = process.hrtime.bigint();
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 50_000_000, menores: [] }] }, noches: 1 });
+    const ms = Number(process.hrtime.bigint() - inicio) / 1e6;
+    esperarCodigo(r, "configuracion_invalida");
+    assert.ok(ms < 200, `debe fallar rápido, sin reservar memoria proporcional a 50 millones (tardó ${ms}ms)`);
+  });
+
+  test("MAX_OCUPANTES_POR_UNIDAD es un límite exportado, comercialmente razonable", () => {
+    assert.ok(MAX_OCUPANTES_POR_UNIDAD > 0 && MAX_OCUPANTES_POR_UNIDAD < 100_000);
+  });
+
+  test("justo en el límite comercial: adultos = MAX_OCUPANTES_POR_UNIDAD sigue calculando (no es un off-by-one)", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t-limite",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: 1 },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: MAX_OCUPANTES_POR_UNIDAD, menores: [] }] }, noches: 1 });
+    esperarValido(r);
+    assert.equal(r.totalNeto, MAX_OCUPANTES_POR_UNIDAD);
+  });
+
+  test("uno más que el límite comercial → configuracion_invalida", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t-limite-mas-uno",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: 1 },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+    esperarCodigo(
+      cotizarUnidadAlojamiento({
+        tarifa,
+        distribucion: { unidades: [{ adultos: MAX_OCUPANTES_POR_UNIDAD + 1, menores: [] }] },
+        noches: 1,
+      }),
+      "configuracion_invalida"
+    );
+  });
+
+  test("el reparto algebraico de paxIncluidos da el mismo resultado con pocos o con muchos adultos (dentro del límite comercial)", () => {
+    const tarifaHabitacion = (paxIncluidos: number, maxPax: number): TarifaAlojamiento => ({
+      id: `t-${maxPax}`,
+      unidadCobro: "habitacion",
+      versionTarifario: V,
+      valores: { adulto: 500_000 },
+      capacidad: { minPax: 1, maxPax, paxIncluidos },
+      suplementos: [{ tipo: "adulto_adicional", valor: 10_000 }],
+      reglaMenores: { reglas: [] },
+    });
+
+    const pocos = cotizarUnidadAlojamiento({
+      tarifa: tarifaHabitacion(2, 4),
+      distribucion: { unidades: [{ adultos: 4, menores: [] }] }, // 2 incluidos + 2 extra
+      noches: 1,
+    });
+    const muchos = cotizarUnidadAlojamiento({
+      tarifa: tarifaHabitacion(398, 400),
+      distribucion: { unidades: [{ adultos: 400, menores: [] }] }, // 398 incluidos + 2 extra
+      noches: 1,
+    });
+    esperarValido(pocos);
+    esperarValido(muchos);
+    // En ambos casos: 2 adultos extra × 10.000 = 20.000 sobre la base.
+    assert.equal(pocos.totalNetoPorNoche, 500_000 + 20_000);
+    assert.equal(muchos.totalNetoPorNoche, 500_000 + 20_000);
   });
 });
