@@ -34,6 +34,40 @@
 // con `derivarOcupacionTotal`, nunca se reciben como input aparte — una
 // sola fuente de verdad.
 //
+// Revisión de PR (ronda 3): tres correcciones más.
+//   1) `construirSnapshotAlojamiento` ya NO acepta tarifa/distribución por
+//      separado — solo toma `resultado`. `ResultadoValido` ahora transporta
+//      su propia copia normalizada (`datosFuente`), poblada UNA sola vez
+//      dentro de `cotizarUnidadAlojamiento` en el momento exacto en que ese
+//      resultado se calculó. Mezclar el resultado de una tarifa/distribución/
+//      noches con los datos de otra queda impedido por construcción — la
+//      función ya no tiene un parámetro por el que colar un dato ajeno.
+//   2) Se auditaron los 27 hoteles del PDF Bernalo uno por uno: ningún hotel
+//      cobrado por pareja o por habitación tiene política de menores — la
+//      cláusula de niños (seguro/70%/cama compartida) SOLO aparece en los
+//      15 hoteles cobrados por persona (incluidos Mauku y Talam, que aunque
+//      tienen apartamentos/suites físicos, publican "Precio por persona por
+//      noche"). No se construye una unión discriminada para reglas de
+//      menores en unidades no-persona — no hay caso real que la necesite en
+//      este dataset (ver inventario completo en el PR).
+//   3) `TarifaAlojamiento` valida coherencia exhaustiva por `unidadCobro`
+//      (`validarCoherenciaTarifa`): "persona" no admite suplementos;
+//      pareja/habitación/apartamento no admiten `valores.nino`/`infante`
+//      (el cálculo los ignoraría en silencio); habitación/apartamento no
+//      admiten el suplemento `persona_sola` (una SGL es OTRA tarifa, no un
+//      reemplazo). Cualquier combinación incoherente falla con
+//      `configuracion_invalida` antes de calcular nada.
+//   4) Nueva validación de FORMA (`validarFormaEntrada`), corre primero de
+//      todas: los datos reales vendrán de Postgres/adaptadores como
+//      `unknown`, no como el tipo `EntradaCotizacion` que TypeScript
+//      garantiza en compilación. `cotizarUnidadAlojamiento` ahora acepta
+//      `unknown` y nunca lanza `TypeError` ante un dato externo malformado
+//      (null en vez de arreglo, objeto en vez de arreglo, etc.) — siempre
+//      responde `configuracion_invalida`. `tarifa.id` y
+//      `tarifa.versionTarifario` son obligatorios (string no vacío): sin
+//      ellos no se puede construir un snapshot persistible, así que se
+//      exigen desde el principio, no al momento de snapshotear.
+//
 // Compatibilidad con lo que ya existe: la calculadora Corporativa
 // (`lib/calc/calculadoras.ts`) ya preserva el total de habitación exacto
 // cuando `persona_adicional = 0` — `neto_X × pax_tarifa_default[X] = rack`
@@ -120,6 +154,14 @@ export type ValoresPorCategoria = {
   infante?: number;
 };
 
+// Combinaciones válidas por `unidadCobro` (verificadas por
+// `validarCoherenciaTarifa`, no solo por el tipo): "persona" nunca lleva
+// suplementos (cada categoría de pax ya tiene su propio valor); pareja/
+// habitación/apartamento nunca leen `valores.nino`/`infante` (quedarían
+// cargados pero ignorados); habitación/apartamento nunca admiten el
+// suplemento `persona_sola` (una tarifa SGL es OTRA fila de tarifa, no un
+// reemplazo dentro de esta). `id` y `versionTarifario` son obligatorios —
+// sin ellos no hay snapshot persistible posible.
 export type TarifaAlojamiento = {
   id: string;
   unidadCobro: UnidadCobro;
@@ -131,7 +173,7 @@ export type TarifaAlojamiento = {
   categoria?: string | null; // tipo de habitación/apartamento
   alimentacion?: string | null;
   fuente?: { documento: string; pagina: number | null } | null;
-  versionTarifario?: string | null;
+  versionTarifario: string;
 };
 
 // ── Desglose ─────────────────────────────────────────────────────────────
@@ -183,6 +225,23 @@ function esBloqueado(x: unknown): x is ResultadoBloqueado {
   return typeof x === "object" && x !== null && (x as { ok?: unknown }).ok === false;
 }
 
+// Copia normalizada de todo lo que el snapshot necesita de la tarifa/
+// distribución fuente — poblada UNA sola vez, dentro de
+// `cotizarUnidadAlojamiento`, en el momento exacto en que este resultado se
+// calculó. Es la única fuente de la que `construirSnapshotAlojamiento` lee:
+// no hay forma de pasarle una tarifa o distribución de otro cálculo.
+export type DatosFuenteSnapshot = {
+  tarifaId: string;
+  versionTarifario: string;
+  valores: ValoresPorCategoria;
+  reglaMenoresAplicada: ReglaMenores;
+  distribucion: DistribucionUnidades;
+  temporada: string | null;
+  categoria: string | null;
+  alimentacion: string | null;
+  fuente: { documento: string; pagina: number | null } | null;
+};
+
 // ── Resultado válido ─────────────────────────────────────────────────────
 export type ResultadoValido = {
   ok: true;
@@ -195,6 +254,7 @@ export type ResultadoValido = {
   menoresClasificados: MenorClasificado[];
   suplementosAplicados: SuplementoAplicado[];
   capacidadUtilizada: CapacidadUtilizadaUnidad[];
+  datosFuente: DatosFuenteSnapshot;
 };
 
 export type ResultadoCotizacionUnidad = ResultadoValido | ResultadoBloqueado;
@@ -235,6 +295,163 @@ function etiquetaSuplemento(s: SuplementoConfigurado): string {
 
 function esEnteroValido(n: unknown): n is number {
   return typeof n === "number" && Number.isInteger(n); // rechaza NaN, Infinity y decimales por construcción
+}
+
+function esObjeto(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// ── 0. Validación de FORMA (datos externos, todavía no tipados) ────────
+// Este es el punto de entrada real: los datos vendrán de Postgres/
+// adaptadores como `unknown`, no como el `EntradaCotizacion` que
+// TypeScript garantiza solo en tiempo de compilación. Aquí se verifica que
+// cada pieza tenga la FORMA correcta (objeto/arreglo/string donde
+// corresponde) ANTES de que cualquier otra función intente leer una
+// propiedad — así un `null` donde se esperaba un arreglo nunca llega a
+// producir un `TypeError`, siempre produce `configuracion_invalida`.
+// `tarifa.id`/`versionTarifario` se exigen aquí (no al construir el
+// snapshot) porque un `ResultadoValido` debe poder snapshotearse siempre —
+// no queremos un cálculo exitoso que después falle al persistir.
+export function validarFormaEntrada(entradaDesconocida: unknown): { entrada: EntradaCotizacion } | ResultadoBloqueado {
+  if (!esObjeto(entradaDesconocida)) {
+    return resultadoBloqueado("configuracion_invalida", "La entrada debe ser un objeto con `tarifa`, `distribucion` y `noches`.");
+  }
+  const { tarifa, distribucion, noches } = entradaDesconocida;
+
+  if (!esObjeto(tarifa)) {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa` debe ser un objeto.");
+  }
+  if (typeof tarifa.id !== "string" || tarifa.id.trim() === "") {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.id` es obligatorio (string no vacío).");
+  }
+  if (typeof tarifa.versionTarifario !== "string" || tarifa.versionTarifario.trim() === "") {
+    return resultadoBloqueado(
+      "configuracion_invalida",
+      "`tarifa.versionTarifario` es obligatorio (string no vacío) — sin él no se puede construir un snapshot persistible."
+    );
+  }
+  if (
+    tarifa.unidadCobro !== "persona" &&
+    tarifa.unidadCobro !== "pareja" &&
+    tarifa.unidadCobro !== "habitacion" &&
+    tarifa.unidadCobro !== "apartamento"
+  ) {
+    return resultadoBloqueado(
+      "configuracion_invalida",
+      '`tarifa.unidadCobro` debe ser "persona", "pareja", "habitacion" o "apartamento".',
+      { unidadCobro: tarifa.unidadCobro }
+    );
+  }
+  if (!esObjeto(tarifa.valores)) {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.valores` debe ser un objeto.");
+  }
+  if (!esObjeto(tarifa.capacidad)) {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.capacidad` debe ser un objeto.");
+  }
+  if (!Array.isArray(tarifa.suplementos)) {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.suplementos` debe ser un arreglo.");
+  }
+  for (let i = 0; i < tarifa.suplementos.length; i++) {
+    const s = tarifa.suplementos[i];
+    if (!esObjeto(s) || typeof s.tipo !== "string") {
+      return resultadoBloqueado("configuracion_invalida", `El suplemento en la posición ${i + 1} debe ser un objeto con "tipo".`, {
+        indice: i,
+      });
+    }
+  }
+  if (!esObjeto(tarifa.reglaMenores) || !Array.isArray(tarifa.reglaMenores.reglas)) {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.reglaMenores.reglas` debe ser un arreglo.");
+  }
+  for (let i = 0; i < tarifa.reglaMenores.reglas.length; i++) {
+    if (!esObjeto(tarifa.reglaMenores.reglas[i])) {
+      return resultadoBloqueado("configuracion_invalida", `La regla de menores en la posición ${i + 1} debe ser un objeto.`, {
+        indice: i,
+      });
+    }
+  }
+  if (tarifa.fuente !== undefined && tarifa.fuente !== null) {
+    if (!esObjeto(tarifa.fuente)) {
+      return resultadoBloqueado("configuracion_invalida", "`tarifa.fuente` debe ser un objeto, null o estar ausente.");
+    }
+    if (typeof tarifa.fuente.documento !== "string" || tarifa.fuente.documento.trim() === "") {
+      return resultadoBloqueado("configuracion_invalida", "`tarifa.fuente.documento` debe ser un string no vacío.");
+    }
+    const pagina = tarifa.fuente.pagina;
+    if (pagina !== null && !(typeof pagina === "number" && Number.isInteger(pagina) && pagina > 0)) {
+      return resultadoBloqueado("configuracion_invalida", "`tarifa.fuente.pagina` debe ser un entero positivo o null.");
+    }
+  }
+
+  if (!esObjeto(distribucion) || !Array.isArray(distribucion.unidades)) {
+    return resultadoBloqueado("configuracion_invalida", "`distribucion.unidades` debe ser un arreglo.");
+  }
+  for (let i = 0; i < distribucion.unidades.length; i++) {
+    const u = distribucion.unidades[i];
+    if (!esObjeto(u)) {
+      return resultadoBloqueado("configuracion_invalida", `La unidad ${i + 1} debe ser un objeto.`, { indice: i });
+    }
+    if (!Array.isArray(u.menores)) {
+      return resultadoBloqueado("configuracion_invalida", `La unidad ${i + 1}: "menores" debe ser un arreglo.`, { indice: i });
+    }
+    for (let j = 0; j < u.menores.length; j++) {
+      if (!esObjeto(u.menores[j])) {
+        return resultadoBloqueado("configuracion_invalida", `La unidad ${i + 1}, menor ${j + 1}: debe ser un objeto.`, {
+          indice: i,
+          menorIndice: j,
+        });
+      }
+    }
+  }
+
+  if (typeof noches !== "number") {
+    return resultadoBloqueado("configuracion_invalida", "`noches` debe ser un número.");
+  }
+
+  return { entrada: entradaDesconocida as EntradaCotizacion };
+}
+
+// ── 0.bis Coherencia de la tarifa según su unidadCobro ──────────────────
+// Cierra el hueco de "campos que la tarifa admite pero el cálculo ignora en
+// silencio": una tarifa "persona" con suplementos configurados, o una
+// pareja/habitación con `valores.nino`/`infante` cargados, quedaban
+// aceptadas por el tipo pero nunca se usaban — ahora son
+// `configuracion_invalida` explícito.
+const SUPLEMENTOS_VALIDOS_POR_UNIDAD: Record<UnidadCobro, ReadonlySet<SuplementoConfigurado["tipo"]>> = {
+  persona: new Set([]),
+  pareja: new Set(["adulto_adicional", "persona_sola", "menor_adicional"]),
+  habitacion: new Set(["adulto_adicional", "menor_adicional"]), // sin persona_sola: una SGL es otra tarifa
+  apartamento: new Set(["adulto_adicional", "menor_adicional"]),
+};
+
+export function validarCoherenciaTarifa(tarifa: TarifaAlojamiento): ResultadoBloqueado | null {
+  if (tarifa.unidadCobro === "persona" && tarifa.suplementos.length > 0) {
+    return resultadoBloqueado(
+      "configuracion_invalida",
+      'Una tarifa "persona" no admite suplementos — cada categoría de pasajero ya tiene su propio valor en `valores`.',
+      { unidadCobro: tarifa.unidadCobro, suplementos: tarifa.suplementos }
+    );
+  }
+
+  if (tarifa.unidadCobro !== "persona" && (tarifa.valores.nino !== undefined || tarifa.valores.infante !== undefined)) {
+    return resultadoBloqueado(
+      "configuracion_invalida",
+      `Una tarifa "${tarifa.unidadCobro}" no usa \`valores.nino\`/\`valores.infante\` — el cálculo los ignoraría en silencio.`,
+      { unidadCobro: tarifa.unidadCobro }
+    );
+  }
+
+  const validos = SUPLEMENTOS_VALIDOS_POR_UNIDAD[tarifa.unidadCobro];
+  for (const s of tarifa.suplementos) {
+    if (!validos.has(s.tipo)) {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        `El suplemento "${s.tipo}" no es válido para una tarifa "${tarifa.unidadCobro}".`,
+        { unidadCobro: tarifa.unidadCobro, tipo: s.tipo }
+      );
+    }
+  }
+
+  return null;
 }
 
 // ── A. Aplicación de reglas de menores ──────────────────────────────────
@@ -602,8 +819,21 @@ export function construirDesglosePersona(
 // Compone las funciones puras de arriba. No consulta Supabase: recibe la
 // tarifa YA seleccionada (la selección entre varias tarifas candidatas por
 // prioridad/vigencia es del motor de selección, un PR posterior).
-export function cotizarUnidadAlojamiento(entrada: EntradaCotizacion): ResultadoCotizacionUnidad {
+//
+// Acepta `unknown` a propósito: es el límite real del motor contra datos
+// externos (Postgres/adaptadores). Un llamador con datos ya tipados
+// (`EntradaCotizacion`) sigue teniendo el mismo chequeo de TypeScript de
+// siempre — `unknown` no le quita nada — pero un dato genuinamente
+// malformado en runtime nunca produce un `TypeError`, siempre
+// `configuracion_invalida`.
+export function cotizarUnidadAlojamiento(entradaDesconocida: unknown): ResultadoCotizacionUnidad {
+  const forma = validarFormaEntrada(entradaDesconocida);
+  if (esBloqueado(forma)) return forma;
+  const { entrada } = forma;
   const { tarifa, distribucion, noches } = entrada;
+
+  const coherencia = validarCoherenciaTarifa(tarifa);
+  if (coherencia) return coherencia;
 
   const validacion = validarEntrada(tarifa, entrada);
   if (esBloqueado(validacion)) return validacion;
@@ -617,13 +847,36 @@ export function cotizarUnidadAlojamiento(entrada: EntradaCotizacion): ResultadoC
     );
   }
 
-  if (tarifa.unidadCobro === "persona") {
-    return calcularPersona(tarifa, distribucion, noches);
-  }
-  return calcularNoPersona(tarifa, distribucion, noches, mapaSuplementos);
+  const calculo =
+    tarifa.unidadCobro === "persona"
+      ? calcularPersona(tarifa, distribucion, noches)
+      : calcularNoPersona(tarifa, distribucion, noches, mapaSuplementos);
+  if (esBloqueado(calculo)) return calculo;
+
+  // `datosFuente` se arma UNA sola vez, aquí, con la MISMA tarifa/
+  // distribución que efectivamente produjeron `calculo` — no hay otro
+  // punto de entrada que pueda mezclar datos de otro cálculo.
+  const datosFuente: DatosFuenteSnapshot = clonarProfundo({
+    tarifaId: tarifa.id,
+    versionTarifario: tarifa.versionTarifario,
+    valores: tarifa.valores,
+    reglaMenoresAplicada: tarifa.reglaMenores,
+    distribucion,
+    temporada: tarifa.temporada ?? null,
+    categoria: tarifa.categoria ?? null,
+    alimentacion: tarifa.alimentacion ?? null,
+    fuente: tarifa.fuente ?? null,
+  });
+
+  return { ...calculo, datosFuente };
 }
 
-function calcularPersona(tarifa: TarifaAlojamiento, distribucion: DistribucionUnidades, noches: number): ResultadoCotizacionUnidad {
+// El núcleo del cálculo todavía no trae `datosFuente` — lo agrega el
+// orquestador, una sola vez, para que sea imposible construirlo con datos
+// de otra tarifa/distribución.
+type ResultadoCalculoCore = Omit<ResultadoValido, "datosFuente"> | ResultadoBloqueado;
+
+function calcularPersona(tarifa: TarifaAlojamiento, distribucion: DistribucionUnidades, noches: number): ResultadoCalculoCore {
   let totalAdultos = 0;
   const menoresClasificados: MenorClasificado[] = [];
   const capacidadUtilizada: CapacidadUtilizadaUnidad[] = [];
@@ -676,7 +929,7 @@ function calcularNoPersona(
   distribucion: DistribucionUnidades,
   noches: number,
   mapaSuplementos: Map<string, SuplementoConfigurado>
-): ResultadoCotizacionUnidad {
+): ResultadoCalculoCore {
   const desglose: DesgloseLinea[] = [];
   const suplementosAplicados: SuplementoAplicado[] = [];
   const menoresClasificados: MenorClasificado[] = [];
@@ -758,34 +1011,31 @@ export type SnapshotAlojamiento = {
   totalNeto: number;
   ajusteComercial: null;
   fuente: { documento: string; pagina: number | null } | null;
-  versionTarifario: string | null;
+  versionTarifario: string;
 };
 
-export function construirSnapshotAlojamiento(
-  resultado: ResultadoValido,
-  tarifa: TarifaAlojamiento,
-  distribucion: DistribucionUnidades
-): SnapshotAlojamiento {
+export function construirSnapshotAlojamiento(resultado: ResultadoValido): SnapshotAlojamiento {
+  const f = resultado.datosFuente;
   return clonarProfundo({
     versionMotor: VERSION_MOTOR_ALOJAMIENTO,
     unidadCobro: resultado.unidadCobro,
-    tarifaId: tarifa.id,
-    valores: tarifa.valores,
-    distribucion,
+    tarifaId: f.tarifaId,
+    valores: f.valores,
+    distribucion: f.distribucion,
     capacidadUtilizada: resultado.capacidadUtilizada,
     cantidadUnidades: resultado.cantidadUnidades,
     menoresClasificados: resultado.menoresClasificados,
-    reglaMenoresAplicada: tarifa.reglaMenores,
+    reglaMenoresAplicada: f.reglaMenoresAplicada,
     suplementosAplicados: resultado.suplementosAplicados,
     desglose: resultado.desglose,
     noches: resultado.noches,
-    temporada: tarifa.temporada ?? null,
-    categoria: tarifa.categoria ?? null,
-    alimentacion: tarifa.alimentacion ?? null,
+    temporada: f.temporada,
+    categoria: f.categoria,
+    alimentacion: f.alimentacion,
     totalNetoPorNoche: resultado.totalNetoPorNoche,
     totalNeto: resultado.totalNeto,
     ajusteComercial: null,
-    fuente: tarifa.fuente ?? null,
-    versionTarifario: tarifa.versionTarifario ?? null,
+    fuente: f.fuente,
+    versionTarifario: f.versionTarifario,
   });
 }
