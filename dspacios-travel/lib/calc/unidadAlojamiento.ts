@@ -942,11 +942,16 @@ export function validarEntrada(
     // `maxPax: null`) falle rápido por sí solo — sin depender de que la
     // capacidad configurada lo capture, y sin que el motor llegue siquiera
     // a intentar clasificar menores o aplicar suplementos para esa unidad.
-    if (u.adultos > MAX_OCUPANTES_POR_UNIDAD || u.menores.length > MAX_OCUPANTES_POR_UNIDAD) {
+    // Ronda 6: el límite es sobre el TOTAL de ocupantes de la unidad
+    // (adultos + menores), no sobre cada uno por separado — comparar cada
+    // campo contra el techo por separado permitía, ej., 500 adultos + 500
+    // menores en la misma unidad (1000 ocupantes reales).
+    const totalOcupantes = u.adultos + u.menores.length;
+    if (!esEnteroSeguro(totalOcupantes) || totalOcupantes > MAX_OCUPANTES_POR_UNIDAD) {
       return resultadoBloqueado(
         "configuracion_invalida",
         `La unidad ${i + 1} excede el límite comercial de ocupantes de este motor (${MAX_OCUPANTES_POR_UNIDAD}).`,
-        { indice: i, adultos: u.adultos, menores: u.menores.length, limite: MAX_OCUPANTES_POR_UNIDAD }
+        { indice: i, adultos: u.adultos, menores: u.menores.length, totalOcupantes, limite: MAX_OCUPANTES_POR_UNIDAD }
       );
     }
     for (const m of u.menores) {
@@ -1288,7 +1293,15 @@ export function cotizarUnidadAlojamiento(entradaDesconocida: unknown): Resultado
     fuente: tarifa.fuente ?? null,
   });
 
-  return { ...calculo, datosFuente };
+  // Ronda 6: `calculo` puede seguir conservando referencias anidadas hacia
+  // la entrada ORIGINAL (ej. `menoresClasificados[].reglaAplicada`, que
+  // `clasificarMenores` toma directo de `tarifa.reglaMenores.reglas`, sin
+  // copiar). `datosFuente` ya se clona arriba, pero eso no protege el
+  // resto de `calculo` — si el llamador muta la entrada después de
+  // cotizar (antes de construir el snapshot), esa mutación se filtraría
+  // al resultado ya devuelto. Se clona el objeto completo para que
+  // `ResultadoValido` quede totalmente desligado de la entrada.
+  return clonarProfundo({ ...calculo, datosFuente });
 }
 
 // El núcleo del cálculo todavía no trae `datosFuente` — lo agrega el

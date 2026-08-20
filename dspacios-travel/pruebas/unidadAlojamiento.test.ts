@@ -15,6 +15,7 @@ import {
   type DistribucionUnidades,
   type ResultadoValido,
   type EntradaCotizacion,
+  type ReglaMenores,
 } from "../lib/calc/unidadAlojamiento.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1663,5 +1664,133 @@ describe("sin asignación proporcional al número de adultos (punto 3)", () => {
     // En ambos casos: 2 adultos extra × 10.000 = 20.000 sobre la base.
     assert.equal(pocos.totalNetoPorNoche, 500_000 + 20_000);
     assert.equal(muchos.totalNetoPorNoche, 500_000 + 20_000);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Ronda 6, corrección 1 — el límite comercial es sobre el TOTAL de
+// ocupantes de la unidad (adultos + menores), no sobre cada campo por
+// separado. Antes de esta ronda, `u.adultos > MAX` || `u.menores.length >
+// MAX` permitía, ej., 500 adultos + 500 menores en la misma unidad (1000
+// ocupantes reales) porque ninguno de los dos campos por sí solo excedía
+// el techo de 500.
+// ─────────────────────────────────────────────────────────────────────────
+describe("límite comercial sobre el TOTAL de ocupantes de la unidad (ronda 6)", () => {
+  const tarifaBase = (): TarifaAlojamiento => ({
+    id: "t-total-ocupantes",
+    unidadCobro: "persona",
+    versionTarifario: V,
+    valores: { adulto: 1, nino: 1 },
+    capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+    suplementos: [],
+    reglaMenores: { reglas: [{ categoria: "nino", edadMinAnios: 0, edadMaxAnios: 17 }] },
+  });
+
+  test("250 adultos + 250 menores (total 500, justo en el límite) no falla por este límite", () => {
+    const menores = Array.from({ length: 250 }, () => ({ edadAnios: 5 }));
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaBase(),
+      distribucion: { unidades: [{ adultos: 250, menores }] },
+      noches: 1,
+    });
+    esperarValido(r);
+    assert.equal(r.totalNeto, 250 * 1 + 250 * 1);
+  });
+
+  test("250 adultos + 251 menores (total 501, uno más que el límite) → configuracion_invalida por el TOTAL", () => {
+    const menores = Array.from({ length: 251 }, () => ({ edadAnios: 5 }));
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaBase(),
+      distribucion: { unidades: [{ adultos: 250, menores }] },
+      noches: 1,
+    });
+    esperarCodigo(r, "configuracion_invalida");
+    if (!r.ok) assert.match(r.mensaje, /límite comercial/);
+  });
+
+  test("500 adultos + 500 menores (total 1000) → configuracion_invalida (antes de esta ronda pasaba: cada campo por separado no excedía 500 por sí solo)", () => {
+    const menores = Array.from({ length: 500 }, () => ({ edadAnios: 5 }));
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaBase(),
+      distribucion: { unidades: [{ adultos: 500, menores }] },
+      noches: 1,
+    });
+    esperarCodigo(r, "configuracion_invalida");
+    if (!r.ok) assert.match(r.mensaje, /límite comercial/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Ronda 6, corrección 2 — el orquestador debe devolver una copia
+// PROFUNDA del resultado completo, no solo de `datosFuente`. Antes de
+// esta ronda, `menoresClasificados[].reglaAplicada` (construido dentro de
+// `clasificarMenores` a partir de `tarifa.reglaMenores.reglas`) seguía
+// siendo la MISMA referencia que la regla de la entrada original — mutar
+// la entrada después de cotizar (pero antes de construir el snapshot)
+// contaminaba el resultado ya devuelto.
+// ─────────────────────────────────────────────────────────────────────────
+describe("el resultado queda totalmente desligado de la entrada (ronda 6 — copia profunda del cálculo completo)", () => {
+  test("mutar la entrada original DESPUÉS de cotizar (reglas/categorías, edades, valores, capacidad, fuente, distribución) no afecta el resultado ni el snapshot construido después", () => {
+    const reglaMenores: ReglaMenores = { reglas: [{ categoria: "infante", edadMinAnios: 0, edadMaxAnios: 3 }] };
+    const tarifa: TarifaAlojamiento = {
+      id: "t-desligado",
+      unidadCobro: "persona",
+      versionTarifario: V,
+      valores: { adulto: 100_000, infante: 30_000, periodicidadInfante: "por_noche" },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores,
+      temporada: "ALTA",
+      categoria: "Estándar",
+      alimentacion: "PC",
+      fuente: { documento: "Bernalo 2026", pagina: 12 },
+    };
+    const distribucion: DistribucionUnidades = { unidades: [{ adultos: 1, menores: [{ edadAnios: 3 }] }] };
+
+    // 1-2-3: crear la entrada, ejecutar, confirmar válido.
+    const r = cotizarUnidadAlojamiento({ tarifa, distribucion, noches: 3 });
+    esperarValido(r);
+
+    // 4: mutar la entrada ORIGINAL, en todos los frentes pedidos, ANTES de
+    // construir el snapshot.
+    reglaMenores.reglas[0].categoria = "adulto"; // reglas y categorías
+    reglaMenores.reglas[0].edadMinAnios = 99;
+    reglaMenores.reglas[0].edadMaxAnios = 99;
+    distribucion.unidades[0].menores[0].edadAnios = 99; // edades
+    tarifa.valores.adulto = 999_999; // valores
+    tarifa.valores.infante = 999_999;
+    tarifa.valores.periodicidadInfante = "por_estadia";
+    tarifa.capacidad.maxPax = 1; // capacidad
+    tarifa.capacidad.paxIncluidos = 999;
+    tarifa.fuente!.documento = "OTRO DOCUMENTO"; // fuente
+    tarifa.fuente!.pagina = 999;
+    distribucion.unidades[0].adultos = 999; // distribución
+    distribucion.unidades.push({ adultos: 5, menores: [] });
+
+    // 5: construir el snapshot DESPUÉS de mutar, desde el resultado que ya
+    // se había calculado.
+    const snap = construirSnapshotAlojamiento(r);
+
+    // 6: todo debe conservar exactamente los datos del momento del cálculo.
+    assert.equal(r.totalNeto, 390_000);
+    assert.equal(snap.valores.adulto, 100_000);
+    assert.equal(snap.valores.infante, 30_000);
+    assert.equal(snap.valores.periodicidadInfante, "por_noche");
+    assert.equal(snap.capacidad.maxPax, null);
+    assert.equal(snap.capacidad.paxIncluidos, 0);
+    assert.equal(snap.fuente?.documento, "Bernalo 2026");
+    assert.equal(snap.fuente?.pagina, 12);
+    assert.equal(snap.distribucion.unidades.length, 1);
+    assert.equal(snap.distribucion.unidades[0].adultos, 1);
+    assert.equal(snap.distribucion.unidades[0].menores[0].edadAnios, 3);
+    assert.equal(snap.reglaMenoresAplicada.reglas[0].categoria, "infante");
+    assert.equal(snap.reglaMenoresAplicada.reglas[0].edadMaxAnios, 3);
+    // El campo puntual del reporte: `menoresClasificados[].reglaAplicada`
+    // venía directo de `tarifa.reglaMenores.reglas`, sin copiar.
+    assert.equal(r.menoresClasificados[0].reglaAplicada.categoria, "infante");
+    assert.equal(r.menoresClasificados[0].reglaAplicada.edadMaxAnios, 3);
+    assert.equal(snap.menoresClasificados[0].reglaAplicada.categoria, "infante");
+    assert.equal(snap.menoresClasificados[0].reglaAplicada.edadMaxAnios, 3);
+    assert.equal(snap.totalNeto, 390_000);
   });
 });
