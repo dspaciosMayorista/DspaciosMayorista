@@ -9,7 +9,7 @@
 //
 // Alcance deliberado de este PR (ver plan aprobado):
 //   - Solo modelo de dominio + funciones puras. CERO consultas a Supabase:
-//     toda dependencia de datos (tarifa, ocupación, reglas) llega por
+//     toda dependencia de datos (tarifa, distribución, reglas) llega por
 //     argumento.
 //   - CERO integración con `tarifa_hotel`, `computo.ts`, reservar,
 //     cotizaciones o contratos. Este motor no se llama todavía desde
@@ -19,9 +19,20 @@
 //     (para que un PR futuro lo use al integrar `hotel_temporadas.solo_paquete`)
 //     pero este motor nunca lo devuelve por sí solo — no hay lógica de
 //     paquetes que decidir aquí.
-//   - La comisión en el snapshot es SIEMPRE opcional y nunca trae un
-//     porcentaje por defecto — es una decisión comercial pendiente
-//     (ver CLAUDE.md / artefacto Bernalo), no un dato de este motor.
+//   - La comisión/ajuste comercial en el snapshot es SIEMPRE `null` en este
+//     PR — no se ejecuta ninguna fórmula (`totalVenta = totalNeto + x`).
+//     La regla 20%/10% del PDF no está confirmada y ni siquiera sabemos si
+//     será markup, comisión incluida en PVP o descuento sobre rack — eso se
+//     define en un PR futuro cuando el dueño confirme la semántica.
+//
+// Revisión de PR (ronda 2, sobre el PR #269 en draft): la distribución por
+// unidad reemplaza la cuenta agregada — cada habitación/pareja/apartamento
+// se valida y calcula INDIVIDUALMENTE (capacidad, persona sola, suplementos
+// por exceso de pax), y el total es la suma. Ya no existe una "ocupación
+// total" editable en paralelo a la distribución: los agregados (adultos
+// totales, menores totales) siempre se DERIVAN de `distribucion.unidades`
+// con `derivarOcupacionTotal`, nunca se reciben como input aparte — una
+// sola fuente de verdad.
 //
 // Compatibilidad con lo que ya existe: la calculadora Corporativa
 // (`lib/calc/calculadoras.ts`) ya preserva el total de habitación exacto
@@ -34,7 +45,7 @@
 // esa equivalencia con casos reales del PDF (Casa Amanzi, Mumu).
 // ─────────────────────────────────────────────────────────────────────────
 
-export const VERSION_MOTOR_ALOJAMIENTO = "unidad-alojamiento@1";
+export const VERSION_MOTOR_ALOJAMIENTO = "unidad-alojamiento@2";
 
 // ── Unidad de cobro ─────────────────────────────────────────────────────
 // Vive en la TARIFA (o plan tarifario), nunca en el hotel: un mismo hotel
@@ -44,10 +55,15 @@ export type UnidadCobro = "persona" | "pareja" | "habitacion" | "apartamento";
 // ── Ocupación y edades ──────────────────────────────────────────────────
 export type Menor = { edadAnios: number };
 
-export type OcupacionSolicitada = {
+// Una unidad = UNA habitación/pareja/apartamento con sus propios ocupantes.
+// La distribución completa (`DistribucionUnidades`) es la ÚNICA fuente de
+// verdad de la ocupación — no existe un total agregado editable aparte.
+export type UnidadOcupada = {
   adultos: number;
   menores: Menor[];
 };
+
+export type DistribucionUnidades = { unidades: UnidadOcupada[] }; // no vacío
 
 // Reglas de menores: por hotel/tarifa, nunca globales. Rango inclusivo.
 // Ausencia de una regla que cubra una edad NO se resuelve como adulto
@@ -65,31 +81,25 @@ export type ReglaMenores = { reglas: ReglaEdadMenor[] };
 export type MenorClasificado = { edadAnios: number; categoria: CategoriaMenor };
 
 // ── Capacidad ────────────────────────────────────────────────────────────
-// `maxPax: null` = sin límite (persona no la usa realmente). `paxIncluidos`
-// es cuántos pax cubre `valores.adulto` sin recargo — solo aplica a
-// habitación/apartamento (para pareja, ver `capacidad` de cada tarifa: el
-// caso base son 2 adultos, cualquier desvío pasa por suplementos).
+// Se valida POR UNIDAD, nunca sobre el total agregado — dos habitaciones de
+// 2 pax cada una no son lo mismo que una "ocupación total de 4" repartida
+// como 3+1. `maxPax: null` = sin límite. `paxIncluidos` es cuántos pax cubre
+// `valores.adulto` sin recargo, dentro de ESA unidad (habitación/apartamento;
+// para pareja el caso base son 2 adultos, ver "persona sola" más abajo).
 export type CapacidadUnidad = {
   minPax: number;
   maxPax: number | null;
   paxIncluidos: number;
 };
 
-// ── Distribución (cuántas unidades del MISMO tipo/tarifa) ──────────────
-// Para habitación/apartamento/pareja: cuántas habitaciones/apartamentos/
-// parejas de ESTA tarifa se están cobrando. Repartir pax entre habitaciones
-// de tipos DISTINTOS es responsabilidad del llamador (igual que hoy
-// `ReservaForm` suma habitaciones por tipo) — este PR no lo modela.
-export type DistribucionUnidades = { cantidadUnidades: number };
+// ── Suplementos: unión discriminada ─────────────────────────────────────
+// Evita estados inválidos por construcción (ej. un "persona_sola" con
+// `categoriaMenor` puesto, que no significa nada).
+export type SuplementoAdultoAdicional = { tipo: "adulto_adicional"; valor: number };
+export type SuplementoPersonaSola = { tipo: "persona_sola"; valor: number };
+export type SuplementoMenorAdicional = { tipo: "menor_adicional"; categoriaMenor: CategoriaMenor; valor: number };
 
-// ── Suplementos ──────────────────────────────────────────────────────────
-export type TipoSuplemento = "adulto_adicional" | "menor_adicional" | "persona_sola";
-
-export type SuplementoConfigurado = {
-  tipo: TipoSuplemento;
-  categoriaMenor?: CategoriaMenor; // solo si tipo === "menor_adicional"
-  valor: number; // monto por unidad de suplemento, por noche
-};
+export type SuplementoConfigurado = SuplementoAdultoAdicional | SuplementoPersonaSola | SuplementoMenorAdicional;
 
 export type SuplementoAplicado = SuplementoConfigurado & {
   cantidad: number;
@@ -125,22 +135,34 @@ export type TarifaAlojamiento = {
 };
 
 // ── Desglose ─────────────────────────────────────────────────────────────
+// `unidadIndex`: a qué habitación/pareja/apartamento pertenece la línea
+// (índice en `distribucion.unidades`). `null` para las líneas agregadas de
+// la unidad "persona" (ahí el cobro es por pasajero, no por unidad física).
 export type DesgloseLinea = {
   concepto: string;
   tipo: "base" | "menor" | "suplemento";
   cantidad: number;
   valorUnitario: number;
   valorTotal: number;
+  unidadIndex: number | null;
+};
+
+export type CapacidadUtilizadaUnidad = {
+  indice: number;
+  adultos: number;
+  menores: number;
+  totalPax: number;
 };
 
 // ── Resultado bloqueado (fail-closed, con código explícito) ────────────
 export type CodigoBloqueo =
-  | "tarifa_no_encontrada" // capacidad OK, pero no hay precio configurado para lo pedido (categoría de menor o suplemento sin valor)
-  | "ocupacion_no_permitida" // viola capacidad mínima/máxima, o la ocupación es estructuralmente inválida
+  | "tarifa_no_encontrada" // capacidad OK, pero no hay precio configurado para lo pedido (categoría de menor, persona sola, o suplemento sin valor)
+  | "ocupacion_no_permitida" // una unidad viola su capacidad mínima/máxima o su regla de "al menos un adulto" (números bien formados, pero la ocupación no es válida)
   | "edad_fuera_de_regla" // la edad de un menor no está cubierta por ninguna regla configurada
   | "combinacion_ambigua" // la edad de un menor cae en más de una regla a la vez
   | "requiere_cotizacion_manual" // reservado para integraciones futuras (ej. hotel_temporadas.solo_paquete) — este motor no lo dispara todavía
-  | "producto_no_soportado"; // el producto pedido no lo cubre este motor (ej. day use = 0 noches)
+  | "producto_no_soportado" // el producto pedido no lo cubre este motor (ej. day use = 0 noches)
+  | "configuracion_invalida"; // la tarifa o la entrada tienen un valor mal formado (no entero, negativo, NaN, Infinity, rangos invertidos, suplementos duplicados) — nunca se confunde con "no hay precio configurado"
 
 export type ResultadoBloqueado = {
   ok: false;
@@ -157,6 +179,10 @@ export function resultadoBloqueado(
   return { ok: false, codigo, mensaje, ...(contexto !== undefined ? { contexto } : {}) };
 }
 
+function esBloqueado(x: unknown): x is ResultadoBloqueado {
+  return typeof x === "object" && x !== null && (x as { ok?: unknown }).ok === false;
+}
+
 // ── Resultado válido ─────────────────────────────────────────────────────
 export type ResultadoValido = {
   ok: true;
@@ -168,22 +194,50 @@ export type ResultadoValido = {
   totalNeto: number; // totalNetoPorNoche × noches
   menoresClasificados: MenorClasificado[];
   suplementosAplicados: SuplementoAplicado[];
+  capacidadUtilizada: CapacidadUtilizadaUnidad[];
 };
 
 export type ResultadoCotizacionUnidad = ResultadoValido | ResultadoBloqueado;
 
 export type EntradaCotizacion = {
   tarifa: TarifaAlojamiento;
-  ocupacion: OcupacionSolicitada;
-  distribucion?: DistribucionUnidades; // default {cantidadUnidades:1}
+  distribucion: DistribucionUnidades; // obligatoria — sin default oculto
   noches: number;
 };
 
-function esBloqueado(x: unknown): x is ResultadoBloqueado {
-  return typeof x === "object" && x !== null && (x as { ok?: unknown }).ok === false;
+// ── Derivación de agregados (nunca un input aparte) ─────────────────────
+// Único lugar donde se calcula "cuántos adultos/menores en total" — para
+// reportes o UI que quieran mostrar el agregado. La distribución sigue
+// siendo la única fuente de verdad; esto es una lectura derivada, no un
+// segundo estado editable.
+export function derivarOcupacionTotal(distribucion: DistribucionUnidades): { adultos: number; menores: Menor[] } {
+  return {
+    adultos: distribucion.unidades.reduce((acc, u) => acc + u.adultos, 0),
+    menores: distribucion.unidades.flatMap((u) => u.menores),
+  };
 }
 
-// ── 1. Aplicación de reglas de menores ──────────────────────────────────
+function agruparPorCategoria(menores: MenorClasificado[]): { categoria: CategoriaMenor; cantidad: number }[] {
+  const mapa = new Map<CategoriaMenor, number>();
+  for (const m of menores) mapa.set(m.categoria, (mapa.get(m.categoria) ?? 0) + 1);
+  return [...mapa.entries()].map(([categoria, cantidad]) => ({ categoria, cantidad }));
+}
+
+function claveSuplemento(s: SuplementoConfigurado): string {
+  return s.tipo === "menor_adicional" ? `menor_adicional:${s.categoriaMenor}` : s.tipo;
+}
+
+function etiquetaSuplemento(s: SuplementoConfigurado): string {
+  if (s.tipo === "adulto_adicional") return "Adulto adicional";
+  if (s.tipo === "persona_sola") return "Persona sola";
+  return s.categoriaMenor === "nino" ? "Niño adicional" : "Infante adicional";
+}
+
+function esEnteroValido(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n); // rechaza NaN, Infinity y decimales por construcción
+}
+
+// ── A. Aplicación de reglas de menores ──────────────────────────────────
 // Clasifica cada menor por edad. Una edad sin regla que la cubra NO se
 // convierte en adulto — falla cerrado. Una edad cubierta por más de una
 // regla a la vez es una configuración ambigua — también falla cerrado (el
@@ -218,140 +272,211 @@ export function clasificarMenores(
   return { clasificados };
 }
 
-// ── 2. Validación de ocupación ──────────────────────────────────────────
-// Solo valida estructura y capacidad. NO decide precio ni suplementos —
-// eso es de `aplicarSuplementos`.
-export function validarOcupacion(
+// ── B. Validación fail-closed de la configuración/entrada ──────────────
+// Corre ANTES de calcular nada. Separa "el dato está mal formado" de "no
+// hay precio configurado": un valor no-entero/negativo/NaN/Infinity, un
+// rango de edad invertido, o un suplemento duplicado son errores de
+// CONFIGURACIÓN (`configuracion_invalida`) — nunca se confunden con
+// `tarifa_no_encontrada` (que significa "todo bien formado, pero falta un
+// precio para este caso puntual"). También arma el mapa de suplementos por
+// clave única (sin duplicados) que el resto del motor usa en vez de
+// `.find()` — con `.find()` una configuración duplicada se resuelve
+// arbitrariamente por la primera coincidencia; con el mapa, se detecta y
+// bloquea antes de calcular cualquier cosa.
+export function validarEntrada(
   tarifa: TarifaAlojamiento,
-  ocupacion: OcupacionSolicitada,
-  distribucion: DistribucionUnidades
-): ResultadoBloqueado | null {
-  if (ocupacion.adultos < 0 || ocupacion.menores.some((m) => m.edadAnios < 0)) {
-    return resultadoBloqueado("ocupacion_no_permitida", "La ocupación no puede tener valores negativos.");
+  entrada: EntradaCotizacion
+): { mapaSuplementos: Map<string, SuplementoConfigurado> } | ResultadoBloqueado {
+  if (!esEnteroValido(entrada.noches)) {
+    return resultadoBloqueado("configuracion_invalida", "`noches` debe ser un entero.", { noches: entrada.noches });
   }
-  if (!Number.isInteger(distribucion.cantidadUnidades) || distribucion.cantidadUnidades < 1) {
+  if (entrada.noches < 0) {
+    return resultadoBloqueado("configuracion_invalida", "`noches` no puede ser negativo.", { noches: entrada.noches });
+  }
+
+  for (const [campo, valor] of Object.entries(tarifa.valores)) {
+    if (valor === undefined) continue;
+    if (!esEnteroValido(valor) || valor < 0) {
+      return resultadoBloqueado("configuracion_invalida", `El valor de "${campo}" debe ser un entero >= 0.`, { campo, valor });
+    }
+  }
+
+  const { minPax, maxPax, paxIncluidos } = tarifa.capacidad;
+  if (!esEnteroValido(minPax) || minPax < 1) {
+    return resultadoBloqueado("configuracion_invalida", "`capacidad.minPax` debe ser un entero >= 1.", { minPax });
+  }
+  if (maxPax !== null && (!esEnteroValido(maxPax) || maxPax < minPax)) {
+    return resultadoBloqueado("configuracion_invalida", "`capacidad.maxPax` debe ser null o un entero >= minPax.", {
+      minPax,
+      maxPax,
+    });
+  }
+  if (!esEnteroValido(paxIncluidos) || paxIncluidos < 0 || (maxPax !== null && paxIncluidos > maxPax)) {
     return resultadoBloqueado(
-      "ocupacion_no_permitida",
-      "La cantidad de unidades (habitaciones/apartamentos/parejas) debe ser un entero mayor o igual a 1.",
-      { cantidadUnidades: distribucion.cantidadUnidades }
+      "configuracion_invalida",
+      "`capacidad.paxIncluidos` debe ser un entero dentro de la capacidad (>= 0 y <= maxPax si existe).",
+      { paxIncluidos, minPax, maxPax }
     );
   }
 
-  switch (tarifa.unidadCobro) {
-    case "persona":
-      if (ocupacion.adultos < 1) {
-        return resultadoBloqueado("ocupacion_no_permitida", "Se requiere al menos un adulto.");
-      }
-      return null;
-    case "pareja":
-      if (ocupacion.adultos < 1) {
-        return resultadoBloqueado("ocupacion_no_permitida", "Se requiere al menos un adulto para la tarifa por pareja.");
-      }
-      return null;
-    case "habitacion":
-    case "apartamento": {
-      const totalPax = ocupacion.adultos + ocupacion.menores.length;
-      const { minPax, maxPax } = tarifa.capacidad;
-      const cantidad = distribucion.cantidadUnidades;
-      if (maxPax !== null && totalPax > maxPax * cantidad) {
-        return resultadoBloqueado(
-          "ocupacion_no_permitida",
-          `La ocupación (${totalPax} pax) excede la capacidad máxima (${maxPax} × ${cantidad}).`,
-          { totalPax, maxPax, cantidadUnidades: cantidad }
-        );
-      }
-      if (totalPax < minPax * cantidad) {
-        return resultadoBloqueado(
-          "ocupacion_no_permitida",
-          `La ocupación (${totalPax} pax) no alcanza la ocupación mínima (${minPax} × ${cantidad}).`,
-          { totalPax, minPax, cantidadUnidades: cantidad }
-        );
-      }
-      return null;
+  for (const r of tarifa.reglaMenores.reglas) {
+    if (
+      !esEnteroValido(r.edadMinAnios) ||
+      !esEnteroValido(r.edadMaxAnios) ||
+      r.edadMinAnios < 0 ||
+      r.edadMaxAnios < 0 ||
+      r.edadMinAnios > r.edadMaxAnios
+    ) {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        `La regla de edad para "${r.categoria}" es inválida (límites deben ser enteros >= 0 con mínimo <= máximo).`,
+        { regla: r }
+      );
     }
   }
+
+  const mapaSuplementos = new Map<string, SuplementoConfigurado>();
+  for (const s of tarifa.suplementos) {
+    if (!esEnteroValido(s.valor) || s.valor < 0) {
+      return resultadoBloqueado("configuracion_invalida", `El suplemento "${s.tipo}" debe tener un valor entero >= 0.`, {
+        suplemento: s,
+      });
+    }
+    const clave = claveSuplemento(s);
+    if (mapaSuplementos.has(clave)) {
+      return resultadoBloqueado(
+        "configuracion_invalida",
+        `Hay más de un suplemento configurado para "${clave}" — configuración ambigua, no se elige arbitrariamente el primero.`,
+        { clave }
+      );
+    }
+    mapaSuplementos.set(clave, s);
+  }
+
+  if (!Array.isArray(entrada.distribucion?.unidades) || entrada.distribucion.unidades.length === 0) {
+    return resultadoBloqueado("configuracion_invalida", "`distribucion.unidades` debe tener al menos 1 unidad.");
+  }
+  for (let i = 0; i < entrada.distribucion.unidades.length; i++) {
+    const u = entrada.distribucion.unidades[i];
+    if (!esEnteroValido(u.adultos) || u.adultos < 0) {
+      return resultadoBloqueado("configuracion_invalida", `La unidad ${i + 1}: "adultos" debe ser un entero >= 0.`, {
+        indice: i,
+        adultos: u.adultos,
+      });
+    }
+    for (const m of u.menores) {
+      if (!esEnteroValido(m.edadAnios) || m.edadAnios < 0) {
+        return resultadoBloqueado(
+          "configuracion_invalida",
+          `La unidad ${i + 1}: la edad de un menor debe ser un entero >= 0.`,
+          { indice: i, edadAnios: m.edadAnios }
+        );
+      }
+    }
+  }
+
+  return { mapaSuplementos };
 }
 
-// ── 3. Determinación de cantidad de unidades cobradas ───────────────────
-// persona: 1 unidad = 1 adulto (los menores se cobran aparte, por
-// categoría, nunca como "unidades"). pareja/habitación/apartamento: 1
-// unidad = 1 pareja/habitación/apartamento de ESTA tarifa — viene de la
-// distribución explícita, nunca se deriva multiplicando por pax.
-export function determinarCantidadUnidades(
-  tarifa: TarifaAlojamiento,
-  ocupacion: OcupacionSolicitada,
-  distribucion: DistribucionUnidades
-): number {
-  if (tarifa.unidadCobro === "persona") return ocupacion.adultos;
-  return distribucion.cantidadUnidades;
+// ── C. Validación de ocupación (por unidad) ─────────────────────────────
+// Solo decide si ESTA unidad, ya con números bien formados, es una
+// ocupación aceptable: capacidad y "al menos un adulto". No decide precio.
+export function validarUnidadOcupada(tarifa: TarifaAlojamiento, unidad: UnidadOcupada, indice: number): ResultadoBloqueado | null {
+  const totalPax = unidad.adultos + unidad.menores.length;
+  const { minPax, maxPax } = tarifa.capacidad;
+  if (maxPax !== null && totalPax > maxPax) {
+    return resultadoBloqueado(
+      "ocupacion_no_permitida",
+      `La unidad ${indice + 1} (${totalPax} pax) excede su capacidad máxima (${maxPax}).`,
+      { indice, totalPax, maxPax }
+    );
+  }
+  if (totalPax < minPax) {
+    return resultadoBloqueado(
+      "ocupacion_no_permitida",
+      `La unidad ${indice + 1} (${totalPax} pax) no alcanza la ocupación mínima (${minPax}).`,
+      { indice, totalPax, minPax }
+    );
+  }
+  if (unidad.adultos < 1) {
+    // No existe todavía una regla comercial configurable para admitir una
+    // unidad sin ningún adulto (ej. menores con acompañante externo) — se
+    // documenta como reservado, no se implementa en este PR.
+    return resultadoBloqueado(
+      "ocupacion_no_permitida",
+      `La unidad ${indice + 1} no tiene ningún adulto (no hay una regla comercial configurada que lo admita).`,
+      { indice }
+    );
+  }
+  return null;
 }
 
-// ── 4. Aplicación de suplementos ────────────────────────────────────────
+// ── D. Determinación de cantidad de unidades cobradas ───────────────────
+// persona: suma de adultos de TODAS las unidades (los menores se cobran
+// aparte, por categoría, nunca como "unidades"). pareja/habitación/
+// apartamento: cuántas unidades hay en la distribución — nunca se deriva
+// multiplicando por pax, siempre viene de contar/sumar `distribucion.unidades`.
+export function determinarCantidadUnidades(tarifa: TarifaAlojamiento, distribucion: DistribucionUnidades): number {
+  if (tarifa.unidadCobro === "persona") {
+    return distribucion.unidades.reduce((acc, u) => acc + u.adultos, 0);
+  }
+  return distribucion.unidades.length;
+}
+
+// ── E. Aplicación de suplementos (una unidad de pareja/habitación/apartamento) ──
 // Nunca deriva un precio por persona a partir de la tarifa base y lo vuelve
-// a multiplicar: cada pax/adulto por fuera de lo ya cubierto por la tarifa
-// exige un `SuplementoConfigurado` EXACTO, o falla cerrado.
-export type SuplementosResultado = {
+// a multiplicar: cada pax por fuera de lo ya cubierto por ESTA unidad exige
+// un suplemento EXACTO (buscado por clave en el mapa ya validado sin
+// duplicados), o falla cerrado.
+export type ResultadoSuplementosUnidad = {
   suplementos: SuplementoAplicado[];
-  // Solo para pareja + "persona sola": ese caso no es un cargo ADICIONAL
-  // sobre la tarifa de pareja completa (eso duplicaría el cobro) — es una
-  // tarifa que REEMPLAZA la línea base. `null` en cualquier otro caso.
+  // Solo para pareja + "persona sola": no es un cargo ADICIONAL sobre la
+  // tarifa de pareja completa (eso duplicaría el cobro) — es una tarifa que
+  // REEMPLAZA la línea base de esta unidad. `null` en cualquier otro caso.
   reemplazaBase: SuplementoAplicado | null;
 };
 
-export function aplicarSuplementos(
+export function aplicarSuplementosUnidad(
   tarifa: TarifaAlojamiento,
-  ocupacion: OcupacionSolicitada,
-  cantidadUnidades: number,
-  menoresClasificados: MenorClasificado[]
-): SuplementosResultado | ResultadoBloqueado {
-  if (tarifa.unidadCobro === "persona") {
-    // Cada categoría de pax ya tiene su propio valor en `valores` — no hay
-    // "suplemento" que aplicar aquí (ver `construirDesglose`).
-    return { suplementos: [], reemplazaBase: null };
-  }
-
+  unidad: UnidadOcupada,
+  indice: number,
+  menoresClasificados: MenorClasificado[],
+  mapaSuplementos: Map<string, SuplementoConfigurado>
+): ResultadoSuplementosUnidad | ResultadoBloqueado {
   if (tarifa.unidadCobro === "pareja") {
-    const adultosEsperados = cantidadUnidades * 2;
-    const diff = ocupacion.adultos - adultosEsperados;
+    const diff = unidad.adultos - 2;
     const suplementos: SuplementoAplicado[] = [];
     let reemplazaBase: SuplementoAplicado | null = null;
 
     if (diff > 0) {
-      const cfg = tarifa.suplementos.find((s) => s.tipo === "adulto_adicional");
+      const cfg = mapaSuplementos.get("adulto_adicional");
       if (!cfg) {
         return resultadoBloqueado(
           "tarifa_no_encontrada",
-          `No hay suplemento configurado para adultos adicionales (${diff}) sobre la tarifa por pareja.`,
-          { adultosAdicionales: diff }
+          `Unidad ${indice + 1}: no hay suplemento configurado para ${diff} adulto(s) adicional(es) sobre la tarifa por pareja.`,
+          { indice, adultosAdicionales: diff }
         );
       }
       suplementos.push({ ...cfg, cantidad: diff, valorTotal: cfg.valor * diff });
     } else if (diff < 0) {
-      // Solo se admite el caso "falta exactamente 1 adulto para completar
-      // 1 pareja" (persona sola). Cualquier otro déficit es una ocupación
-      // que la tarifa por pareja no puede representar.
-      if (diff !== -1 || cantidadUnidades !== 1) {
-        return resultadoBloqueado(
-          "ocupacion_no_permitida",
-          `La ocupación (${ocupacion.adultos} adultos) no corresponde a ${cantidadUnidades} pareja(s).`,
-          { adultos: ocupacion.adultos, cantidadUnidades }
-        );
-      }
-      const cfg = tarifa.suplementos.find((s) => s.tipo === "persona_sola");
+      // `validarUnidadOcupada` ya garantizó adultos >= 1, así que el único
+      // déficit posible aquí es adultos === 1 (diff === -1): persona sola.
+      const cfg = mapaSuplementos.get("persona_sola");
       if (!cfg) {
-        return resultadoBloqueado("tarifa_no_encontrada", "No hay suplemento configurado para persona sola.");
+        return resultadoBloqueado("tarifa_no_encontrada", `Unidad ${indice + 1}: no hay tarifa de persona sola configurada.`, {
+          indice,
+        });
       }
-      // Reemplaza la línea base de pareja — NUNCA se suma sobre ella.
       reemplazaBase = { ...cfg, cantidad: 1, valorTotal: cfg.valor };
     }
 
     for (const grupo of agruparPorCategoria(menoresClasificados)) {
-      const cfg = tarifa.suplementos.find((s) => s.tipo === "menor_adicional" && s.categoriaMenor === grupo.categoria);
+      const cfg = mapaSuplementos.get(`menor_adicional:${grupo.categoria}`);
       if (!cfg) {
         return resultadoBloqueado(
           "tarifa_no_encontrada",
-          `No hay suplemento configurado para menor adicional (${grupo.categoria}).`,
-          { categoria: grupo.categoria, cantidad: grupo.cantidad }
+          `Unidad ${indice + 1}: no hay suplemento configurado para menor adicional (${grupo.categoria}).`,
+          { indice, categoria: grupo.categoria, cantidad: grupo.cantidad }
         );
       }
       suplementos.push({ ...cfg, cantidad: grupo.cantidad, valorTotal: cfg.valor * grupo.cantidad });
@@ -360,42 +485,42 @@ export function aplicarSuplementos(
     return { suplementos, reemplazaBase };
   }
 
-  // habitacion | apartamento: el pax por fuera de `paxIncluidos × cantidadUnidades`
-  // se factura en orden fijo (adultos primero, luego menores) contra un
-  // suplemento configurado exacto.
-  const incluidos = tarifa.capacidad.paxIncluidos * cantidadUnidades;
+  // habitacion | apartamento: el pax por fuera de `paxIncluidos` DE ESTA
+  // UNIDAD se factura en orden fijo (adultos primero, luego menores) contra
+  // un suplemento configurado exacto.
+  const incluidos = tarifa.capacidad.paxIncluidos;
   const paxOrdenado: Array<{ tipo: "adulto" } | { tipo: "menor"; categoria: CategoriaMenor }> = [
-    ...Array.from({ length: ocupacion.adultos }, () => ({ tipo: "adulto" as const })),
+    ...Array.from({ length: unidad.adultos }, () => ({ tipo: "adulto" as const })),
     ...menoresClasificados.map((m) => ({ tipo: "menor" as const, categoria: m.categoria })),
   ];
   const extra = paxOrdenado.slice(incluidos);
   if (extra.length === 0) return { suplementos: [], reemplazaBase: null };
 
-  const adultosExtra = extra.filter((p) => p.tipo === "adulto").length;
-  const menoresExtra = agruparPorCategoria(
-    extra.filter((p): p is { tipo: "menor"; categoria: CategoriaMenor } => p.tipo === "menor")
-      .map((p) => ({ edadAnios: -1, categoria: p.categoria }))
-  );
-
   const suplementos: SuplementoAplicado[] = [];
+  const adultosExtra = extra.filter((p) => p.tipo === "adulto").length;
   if (adultosExtra > 0) {
-    const cfg = tarifa.suplementos.find((s) => s.tipo === "adulto_adicional");
+    const cfg = mapaSuplementos.get("adulto_adicional");
     if (!cfg) {
       return resultadoBloqueado(
         "tarifa_no_encontrada",
-        `No hay suplemento configurado para adultos adicionales (${adultosExtra}) sobre la capacidad incluida.`,
-        { adultosAdicionales: adultosExtra }
+        `Unidad ${indice + 1}: no hay suplemento configurado para ${adultosExtra} adulto(s) adicional(es) sobre la capacidad incluida.`,
+        { indice, adultosAdicionales: adultosExtra }
       );
     }
     suplementos.push({ ...cfg, cantidad: adultosExtra, valorTotal: cfg.valor * adultosExtra });
   }
+  const menoresExtra = agruparPorCategoria(
+    extra
+      .filter((p): p is { tipo: "menor"; categoria: CategoriaMenor } => p.tipo === "menor")
+      .map((p) => ({ edadAnios: -1, categoria: p.categoria }))
+  );
   for (const grupo of menoresExtra) {
-    const cfg = tarifa.suplementos.find((s) => s.tipo === "menor_adicional" && s.categoriaMenor === grupo.categoria);
+    const cfg = mapaSuplementos.get(`menor_adicional:${grupo.categoria}`);
     if (!cfg) {
       return resultadoBloqueado(
         "tarifa_no_encontrada",
-        `No hay suplemento configurado para menor adicional (${grupo.categoria}) sobre la capacidad incluida.`,
-        { categoria: grupo.categoria, cantidad: grupo.cantidad }
+        `Unidad ${indice + 1}: no hay suplemento configurado para menor adicional (${grupo.categoria}) sobre la capacidad incluida.`,
+        { indice, categoria: grupo.categoria, cantidad: grupo.cantidad }
       );
     }
     suplementos.push({ ...cfg, cantidad: grupo.cantidad, valorTotal: cfg.valor * grupo.cantidad });
@@ -403,53 +528,21 @@ export function aplicarSuplementos(
   return { suplementos, reemplazaBase: null };
 }
 
-function agruparPorCategoria(menores: MenorClasificado[]): { categoria: CategoriaMenor; cantidad: number }[] {
-  const mapa = new Map<CategoriaMenor, number>();
-  for (const m of menores) mapa.set(m.categoria, (mapa.get(m.categoria) ?? 0) + 1);
-  return [...mapa.entries()].map(([categoria, cantidad]) => ({ categoria, cantidad }));
-}
-
-// ── 5. Construcción del desglose ────────────────────────────────────────
-export function construirDesglose(
+// ── F. Construcción del desglose ────────────────────────────────────────
+export function construirDesgloseUnidad(
   tarifa: TarifaAlojamiento,
-  cantidadUnidades: number,
-  ocupacion: OcupacionSolicitada,
-  menoresClasificados: MenorClasificado[],
-  suplementosAplicados: SuplementoAplicado[],
-  reemplazaBase: SuplementoAplicado | null = null
+  indice: number,
+  resultado: ResultadoSuplementosUnidad
 ): DesgloseLinea[] {
   const lineas: DesgloseLinea[] = [];
-
-  if (tarifa.unidadCobro === "persona") {
+  if (resultado.reemplazaBase) {
     lineas.push({
-      concepto: "Adultos",
+      concepto: etiquetaSuplemento(resultado.reemplazaBase),
       tipo: "base",
-      cantidad: ocupacion.adultos,
-      valorUnitario: tarifa.valores.adulto,
-      valorTotal: ocupacion.adultos * tarifa.valores.adulto,
-    });
-    for (const grupo of agruparPorCategoria(menoresClasificados)) {
-      const valorUnitario = tarifa.valores[grupo.categoria] as number; // ya validado antes de llegar aquí
-      lineas.push({
-        concepto: grupo.categoria === "nino" ? "Niños" : "Infantes",
-        tipo: "menor",
-        cantidad: grupo.cantidad,
-        valorUnitario,
-        valorTotal: grupo.cantidad * valorUnitario,
-      });
-    }
-    return lineas;
-  }
-
-  if (reemplazaBase) {
-    // "Persona sola" (u otra tarifa de reemplazo): sustituye la línea base
-    // de pareja/habitación/apartamento — nunca se suma sobre ella.
-    lineas.push({
-      concepto: etiquetaSuplemento(reemplazaBase),
-      tipo: "base",
-      cantidad: reemplazaBase.cantidad,
-      valorUnitario: reemplazaBase.valor,
-      valorTotal: reemplazaBase.valorTotal,
+      cantidad: 1,
+      valorUnitario: resultado.reemplazaBase.valor,
+      valorTotal: resultado.reemplazaBase.valorTotal,
+      unidadIndex: indice,
     });
   } else {
     const conceptoBase =
@@ -457,27 +550,52 @@ export function construirDesglose(
     lineas.push({
       concepto: conceptoBase,
       tipo: "base",
-      cantidad: cantidadUnidades,
+      cantidad: 1,
       valorUnitario: tarifa.valores.adulto,
-      valorTotal: cantidadUnidades * tarifa.valores.adulto,
+      valorTotal: tarifa.valores.adulto,
+      unidadIndex: indice,
     });
   }
-  for (const s of suplementosAplicados) {
+  for (const s of resultado.suplementos) {
     lineas.push({
       concepto: etiquetaSuplemento(s),
       tipo: "suplemento",
       cantidad: s.cantidad,
       valorUnitario: s.valor,
       valorTotal: s.valorTotal,
+      unidadIndex: indice,
     });
   }
   return lineas;
 }
 
-function etiquetaSuplemento(s: SuplementoConfigurado): string {
-  if (s.tipo === "adulto_adicional") return "Adulto adicional";
-  if (s.tipo === "persona_sola") return "Persona sola";
-  return s.categoriaMenor === "nino" ? "Niño adicional" : "Infante adicional";
+export function construirDesglosePersona(
+  tarifa: TarifaAlojamiento,
+  totalAdultos: number,
+  menoresClasificados: MenorClasificado[]
+): DesgloseLinea[] {
+  const lineas: DesgloseLinea[] = [
+    {
+      concepto: "Adultos",
+      tipo: "base",
+      cantidad: totalAdultos,
+      valorUnitario: tarifa.valores.adulto,
+      valorTotal: totalAdultos * tarifa.valores.adulto,
+      unidadIndex: null,
+    },
+  ];
+  for (const grupo of agruparPorCategoria(menoresClasificados)) {
+    const valorUnitario = tarifa.valores[grupo.categoria] as number; // ya validado antes de llegar aquí
+    lineas.push({
+      concepto: grupo.categoria === "nino" ? "Niños" : "Infantes",
+      tipo: "menor",
+      cantidad: grupo.cantidad,
+      valorUnitario,
+      valorTotal: grupo.cantidad * valorUnitario,
+      unidadIndex: null,
+    });
+  }
+  return lineas;
 }
 
 // ── Orquestador ──────────────────────────────────────────────────────────
@@ -485,114 +603,189 @@ function etiquetaSuplemento(s: SuplementoConfigurado): string {
 // tarifa YA seleccionada (la selección entre varias tarifas candidatas por
 // prioridad/vigencia es del motor de selección, un PR posterior).
 export function cotizarUnidadAlojamiento(entrada: EntradaCotizacion): ResultadoCotizacionUnidad {
-  const { tarifa, ocupacion, noches } = entrada;
-  const distribucion = entrada.distribucion ?? { cantidadUnidades: 1 };
+  const { tarifa, distribucion, noches } = entrada;
 
-  if (!Number.isFinite(noches) || noches <= 0) {
+  const validacion = validarEntrada(tarifa, entrada);
+  if (esBloqueado(validacion)) return validacion;
+  const { mapaSuplementos } = validacion;
+
+  if (noches === 0) {
     return resultadoBloqueado(
       "producto_no_soportado",
-      "Este motor cubre alojamiento por noches (≥1); day use (0 noches) no está soportado en este alcance.",
+      "Este motor cubre alojamiento por noches (>= 1); day use (0 noches) no está soportado en este alcance.",
       { noches }
     );
   }
 
-  const bloqueoOcupacion = validarOcupacion(tarifa, ocupacion, distribucion);
-  if (bloqueoOcupacion) return bloqueoOcupacion;
-
-  const clasificacion = clasificarMenores(ocupacion.menores, tarifa.reglaMenores);
-  if (esBloqueado(clasificacion)) return clasificacion;
-  const { clasificados } = clasificacion;
-
   if (tarifa.unidadCobro === "persona") {
-    for (const grupo of agruparPorCategoria(clasificados)) {
-      if (tarifa.valores[grupo.categoria] === undefined) {
-        return resultadoBloqueado(
-          "tarifa_no_encontrada",
-          `No hay tarifa configurada para la categoría "${grupo.categoria}".`,
-          { categoria: grupo.categoria }
-        );
-      }
+    return calcularPersona(tarifa, distribucion, noches);
+  }
+  return calcularNoPersona(tarifa, distribucion, noches, mapaSuplementos);
+}
+
+function calcularPersona(tarifa: TarifaAlojamiento, distribucion: DistribucionUnidades, noches: number): ResultadoCotizacionUnidad {
+  let totalAdultos = 0;
+  const menoresClasificados: MenorClasificado[] = [];
+  const capacidadUtilizada: CapacidadUtilizadaUnidad[] = [];
+
+  for (let i = 0; i < distribucion.unidades.length; i++) {
+    const unidad = distribucion.unidades[i];
+    const bloqueoCapacidad = validarUnidadOcupada(tarifa, unidad, i);
+    if (bloqueoCapacidad) return bloqueoCapacidad;
+
+    const clasif = clasificarMenores(unidad.menores, tarifa.reglaMenores);
+    if (esBloqueado(clasif)) return clasif;
+
+    totalAdultos += unidad.adultos;
+    menoresClasificados.push(...clasif.clasificados);
+    capacidadUtilizada.push({
+      indice: i,
+      adultos: unidad.adultos,
+      menores: unidad.menores.length,
+      totalPax: unidad.adultos + unidad.menores.length,
+    });
+  }
+
+  for (const grupo of agruparPorCategoria(menoresClasificados)) {
+    if (tarifa.valores[grupo.categoria] === undefined) {
+      return resultadoBloqueado("tarifa_no_encontrada", `No hay tarifa configurada para la categoría "${grupo.categoria}".`, {
+        categoria: grupo.categoria,
+      });
     }
   }
 
-  const cantidadUnidades = determinarCantidadUnidades(tarifa, ocupacion, distribucion);
+  const desglose = construirDesglosePersona(tarifa, totalAdultos, menoresClasificados);
+  const totalNetoPorNoche = desglose.reduce((acc, l) => acc + l.valorTotal, 0);
 
-  const suplementosResultado = aplicarSuplementos(tarifa, ocupacion, cantidadUnidades, clasificados);
-  if (esBloqueado(suplementosResultado)) return suplementosResultado;
-  const { suplementos, reemplazaBase } = suplementosResultado;
+  return {
+    ok: true,
+    unidadCobro: "persona",
+    cantidadUnidades: totalAdultos,
+    noches,
+    desglose,
+    totalNetoPorNoche,
+    totalNeto: totalNetoPorNoche * noches,
+    menoresClasificados,
+    suplementosAplicados: [],
+    capacidadUtilizada,
+  };
+}
 
-  const desglose = construirDesglose(tarifa, cantidadUnidades, ocupacion, clasificados, suplementos, reemplazaBase);
+function calcularNoPersona(
+  tarifa: TarifaAlojamiento,
+  distribucion: DistribucionUnidades,
+  noches: number,
+  mapaSuplementos: Map<string, SuplementoConfigurado>
+): ResultadoCotizacionUnidad {
+  const desglose: DesgloseLinea[] = [];
+  const suplementosAplicados: SuplementoAplicado[] = [];
+  const menoresClasificados: MenorClasificado[] = [];
+  const capacidadUtilizada: CapacidadUtilizadaUnidad[] = [];
+
+  for (let i = 0; i < distribucion.unidades.length; i++) {
+    const unidad = distribucion.unidades[i];
+
+    const bloqueoCapacidad = validarUnidadOcupada(tarifa, unidad, i);
+    if (bloqueoCapacidad) return bloqueoCapacidad;
+
+    const clasif = clasificarMenores(unidad.menores, tarifa.reglaMenores);
+    if (esBloqueado(clasif)) return clasif;
+
+    const supResultado = aplicarSuplementosUnidad(tarifa, unidad, i, clasif.clasificados, mapaSuplementos);
+    if (esBloqueado(supResultado)) return supResultado;
+
+    desglose.push(...construirDesgloseUnidad(tarifa, i, supResultado));
+    suplementosAplicados.push(...supResultado.suplementos);
+    menoresClasificados.push(...clasif.clasificados);
+    capacidadUtilizada.push({
+      indice: i,
+      adultos: unidad.adultos,
+      menores: unidad.menores.length,
+      totalPax: unidad.adultos + unidad.menores.length,
+    });
+  }
+
   const totalNetoPorNoche = desglose.reduce((acc, l) => acc + l.valorTotal, 0);
 
   return {
     ok: true,
     unidadCobro: tarifa.unidadCobro,
-    cantidadUnidades,
+    cantidadUnidades: distribucion.unidades.length,
     noches,
     desglose,
     totalNetoPorNoche,
     totalNeto: totalNetoPorNoche * noches,
-    menoresClasificados: clasificados,
-    suplementosAplicados: suplementos,
+    menoresClasificados,
+    suplementosAplicados,
+    capacidadUtilizada,
   };
 }
 
+// ── Copia profunda ───────────────────────────────────────────────────────
+function clonarProfundo<T>(valor: T): T {
+  return typeof structuredClone === "function" ? structuredClone(valor) : (JSON.parse(JSON.stringify(valor)) as T);
+}
+
 // ── Snapshot (todavía sin persistir) ────────────────────────────────────
-// Serializable (solo datos planos), sin referencias vivas a Supabase ni a
-// funciones. Recalcular tarifas futuras nunca puede alterar un snapshot ya
-// construido porque no guarda ningún id que se vuelva a resolver — copia
-// los valores usados en el momento del cálculo (mismo principio que ya usa
+// Copia profunda de TODO lo que entra — nunca conserva una referencia viva
+// a la tarifa, la distribución o cualquier objeto anidado que el llamador
+// pueda seguir mutando después. Recalcular tarifas futuras nunca puede
+// alterar un snapshot ya construido (mismo principio que ya usa
 // `contrato_hoteles`/`contrato_items` en el sistema real, ver CLAUDE.md).
+//
+// `ajusteComercial` queda SIEMPRE en `null` en este PR: la comisión/markup
+// Bernalo no está confirmada (ni siquiera se sabe si será markup, comisión
+// incluida en PVP o descuento sobre rack) — este motor no ejecuta ninguna
+// fórmula de liquidación comercial. El campo existe como espacio
+// versionable para cuando esa regla se confirme, en un PR posterior.
 export type SnapshotAlojamiento = {
   versionMotor: string;
   unidadCobro: UnidadCobro;
   tarifaId: string;
   valores: ValoresPorCategoria;
+  distribucion: DistribucionUnidades;
+  capacidadUtilizada: CapacidadUtilizadaUnidad[];
   cantidadUnidades: number;
-  ocupacion: OcupacionSolicitada;
   menoresClasificados: MenorClasificado[];
+  reglaMenoresAplicada: ReglaMenores;
   suplementosAplicados: SuplementoAplicado[];
+  desglose: DesgloseLinea[];
   noches: number;
   temporada: string | null;
   categoria: string | null;
   alimentacion: string | null;
+  totalNetoPorNoche: number;
   totalNeto: number;
-  comision: { pct: number; valor: number } | null;
-  totalVenta: number;
+  ajusteComercial: null;
   fuente: { documento: string; pagina: number | null } | null;
   versionTarifario: string | null;
 };
 
-// `comisionPct` nunca tiene default: si no se pasa, el snapshot no incluye
-// comisión. La regla 20%/10% del PDF NO está confirmada — ver artefacto —
-// así que este motor jamás precarga un porcentaje.
 export function construirSnapshotAlojamiento(
   resultado: ResultadoValido,
   tarifa: TarifaAlojamiento,
-  ocupacion: OcupacionSolicitada,
-  opciones?: { comisionPct?: number | null }
+  distribucion: DistribucionUnidades
 ): SnapshotAlojamiento {
-  const comisionPct = opciones?.comisionPct ?? null;
-  const comision =
-    comisionPct !== null ? { pct: comisionPct, valor: Math.round(resultado.totalNeto * (comisionPct / 100)) } : null;
-
-  return {
+  return clonarProfundo({
     versionMotor: VERSION_MOTOR_ALOJAMIENTO,
     unidadCobro: resultado.unidadCobro,
     tarifaId: tarifa.id,
     valores: tarifa.valores,
+    distribucion,
+    capacidadUtilizada: resultado.capacidadUtilizada,
     cantidadUnidades: resultado.cantidadUnidades,
-    ocupacion,
     menoresClasificados: resultado.menoresClasificados,
+    reglaMenoresAplicada: tarifa.reglaMenores,
     suplementosAplicados: resultado.suplementosAplicados,
+    desglose: resultado.desglose,
     noches: resultado.noches,
     temporada: tarifa.temporada ?? null,
     categoria: tarifa.categoria ?? null,
     alimentacion: tarifa.alimentacion ?? null,
+    totalNetoPorNoche: resultado.totalNetoPorNoche,
     totalNeto: resultado.totalNeto,
-    comision,
-    totalVenta: resultado.totalNeto + (comision?.valor ?? 0),
+    ajusteComercial: null,
     fuente: tarifa.fuente ?? null,
     versionTarifario: tarifa.versionTarifario ?? null,
-  };
+  });
 }
