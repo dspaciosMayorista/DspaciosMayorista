@@ -427,6 +427,48 @@ create view public.ventas_basica as
 
 grant select on public.ventas_basica to authenticated;
 
+-- ── Vista mínima: inventario aéreo "por sistema" para el módulo Vuelos ──────
+-- (hallazgo 2 de la revisión posterior al PR #268, "LISTA UNIFICADA Y RLS").
+-- `/dashboard/vuelos` (pestaña Empaquetados) necesita mostrar records de
+-- contratos reales (dinámicos, o reservados desde un Empaquetado) junto a
+-- las tarifas promocionales — antes consultaba `public.ventas` directo con
+-- el cliente de SESIÓN. `control_vuelo` SÍ entra al módulo Vuelos
+-- (lib/constants.ts, LECTURA_MODULO) pero NO tiene NINGUNA policy de SELECT
+-- sobre `ventas` (la única lectura operativa de esa tabla, migración 116,
+-- es superadmin/gerencia/administracion/operaciones) — así que para
+-- control_vuelo la consulta devolvía 0 filas por RLS, sin error, y la
+-- pestaña se veía incompleta según el rol, sin ningún aviso. `venta` no
+-- entra a este módulo en absoluto (bloqueado por `proxy.ts`/nav) — se deja
+-- fuera del set de roles a propósito, no por omisión.
+--
+-- Mismo patrón que `ventas_basica`/`abonos_resumen`/`contrato_vuelos_basica`:
+-- una vista NO es "security definer" per se, pero al no tener `authenticated`
+-- ningún GRANT directo sobre la tabla base, el único camino de lectura es
+-- A TRAVÉS de esta vista — y su propio `where` (que sí evalúa `mi_rol()`/
+-- `puede_ver_tenant()` con la sesión REAL del que llama, porque esas
+-- funciones leen `request.jwt.claims`, un ajuste de sesión, no de rol de
+-- Postgres) ES la frontera de acceso.
+--
+-- Expone SOLO lo que un contrato dinámico/empaquetado realmente tiene de
+-- vuelo — numero_contrato, tenant (filtrado), aerolínea, fechas, origen
+-- (dinámico/empaquetado) y empaquetado_ref_id — NUNCA cliente, precio,
+-- costo, comisión ni ningún otro dato financiero o personal de `ventas`.
+-- Incluye AMBOS orígenes: `tipo_paquete='dinamico'` (sin empaquetado_ref_id,
+-- ese tipo de contrato nunca lo tiene) Y cualquier contrato con
+-- `empaquetado_ref_id` poblado (nace con `tipo_paquete='bloqueo'`, no
+-- 'dinamico' — se perdería si el filtro fuera solo por tipo_paquete).
+create or replace view public.ventas_vuelo_sistema as
+  select
+    v.numero_contrato, v.tenant, v.tipo_paquete, v.aerolinea,
+    v.fecha_salida, v.fecha_regreso, v.empaquetado_ref_id,
+    case when v.empaquetado_ref_id is not null then 'empaquetado' else 'dinamico' end as origen
+  from public.ventas v
+  where (v.tipo_paquete = 'dinamico' or v.empaquetado_ref_id is not null)
+    and public.mi_rol() in ('superadmin','gerencia','administracion','operaciones','control_vuelo')
+    and public.puede_ver_tenant(v.tenant);
+
+grant select on public.ventas_vuelo_sistema to authenticated;
+
 -- ── RLS ─────────────────────────────────────────────────────────────────────
 alter table public.empaquetados        enable row level security;
 alter table public.armado_empaquetados enable row level security;

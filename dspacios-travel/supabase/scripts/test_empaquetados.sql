@@ -57,6 +57,13 @@ insert into public.usuarios (id, email, nombre, rol, activo) values
   ('88888888-8888-8888-8888-888888888888', 'venta-emp@test.com', 'Venta Empaquetados', 'venta', true)
   on conflict (id) do update set nombre = excluded.nombre, rol = excluded.rol, activo = excluded.activo;
 
+-- control_vuelo, tenant 'mayorista' — el rol con el gap reportado (hallazgo 2):
+-- entra al módulo Vuelos pero no tenía SELECT sobre ventas.
+insert into auth.users (id, email) values ('99999999-9999-9999-9999-999999999999', 'control-emp@test.com');
+insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
+  ('99999999-9999-9999-9999-999999999999', 'control-emp@test.com', 'Control Vuelo Empaquetados', 'control_vuelo', true, 'mayorista')
+  on conflict (id) do update set nombre = excluded.nombre, rol = excluded.rol, activo = excluded.activo, tenant = excluded.tenant;
+
 -- ═════════════════════════════════════════════════════════════════════════
 -- A. Migración 155→157: modalidad_emision terminó cerrada a serie/grupo
 -- ═════════════════════════════════════════════════════════════════════════
@@ -386,9 +393,78 @@ end $$;
 reset role;
 select set_config('request.jwt.claims', null, true);
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- I. ventas_vuelo_sistema — RLS por rol y aislamiento entre tenants
+--    (revisión posterior al PR #268, hallazgo 2 "LISTA UNIFICADA Y RLS").
+--    Prueba real por rol: control_vuelo (el gap reportado), venta (excluido
+--    a propósito del set de roles) — superadmin/gerencia/administracion/
+--    operaciones ya tenían SELECT directo sobre `ventas` desde la 116, sin
+--    cambios de esta revisión, no se repiten aquí.
+-- ═════════════════════════════════════════════════════════════════════════
+insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) values
+  ('99-9992', 'Cliente dinámico mayorista', 'mayorista', 'dinamico'),
+  ('99-9991', 'Cliente dinámico minorista', 'minorista', 'dinamico');
+insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete, empaquetado_ref_id) values
+  ('99-9990', 'Cliente empaquetado mayorista', 'mayorista', 'bloqueo', 9310);
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','99999999-9999-9999-9999-999999999999','role','authenticated')::text, true);
+
+do $$
+declare v_contratos text[];
+begin
+  select array_agg(numero_contrato order by numero_contrato) into v_contratos
+    from public.ventas_vuelo_sistema
+   where numero_contrato in ('99-9992', '99-9991', '99-9990');
+  perform pg_temp.assert_eq(
+    v_contratos, array['99-9990', '99-9992']::text[],
+    'I1: control_vuelo (tenant mayorista) debe ver 99-9992 (dinámico) y 99-9990 (empaquetado_ref_id) — NUNCA 99-9991 (minorista, aislamiento entre tenants)'
+  );
+end $$;
+
+do $$
+declare v_origen text;
+begin
+  select origen into v_origen from public.ventas_vuelo_sistema where numero_contrato = '99-9990';
+  perform pg_temp.assert_eq(v_origen, 'empaquetado'::text, 'I2: el origen calculado debe ser ''empaquetado'' cuando empaquetado_ref_id no es null');
+  select origen into v_origen from public.ventas_vuelo_sistema where numero_contrato = '99-9992';
+  perform pg_temp.assert_eq(v_origen, 'dinamico'::text, 'I3: el origen calculado debe ser ''dinamico'' para tipo_paquete=''dinamico'' sin empaquetado_ref_id');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+-- control_vuelo NUNCA debe alcanzar precio_venta/cliente/costo — ni siquiera
+-- pidiéndolo directo por PostgREST: la vista no tiene esas columnas, así que
+-- no hay `select *` que las devuelva por accidente.
+do $$
+declare v_cols bigint;
+begin
+  select count(*) into v_cols
+    from information_schema.columns
+   where table_name = 'ventas_vuelo_sistema'
+     and column_name in ('cliente', 'precio_venta', 'costo_hotel', 'costo_aereo', 'comision_b2b', 'cliente_documento', 'cliente_telefono', 'cliente_email');
+  perform pg_temp.assert_eq(v_cols, 0::bigint, 'I4: ventas_vuelo_sistema no debe tener NINGUNA columna financiera/PII');
+end $$;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','88888888-8888-8888-8888-888888888888','role','authenticated')::text, true);
+
+do $$
+declare v_n bigint;
+begin
+  select count(*) into v_n
+    from public.ventas_vuelo_sistema
+   where numero_contrato in ('99-9992', '99-9991', '99-9990');
+  perform pg_temp.assert_eq(v_n, 0::bigint, 'I5: venta NO debe ver NINGUNA fila de ventas_vuelo_sistema — excluido a propósito del set de roles (no entra al módulo Vuelos)');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
 do $$
 begin
-  raise notice 'TODAS LAS PRUEBAS PASARON: test_empaquetados.sql (secciones A-H)';
+  raise notice 'TODAS LAS PRUEBAS PASARON: test_empaquetados.sql (secciones A-I)';
 end $$;
 
 rollback;

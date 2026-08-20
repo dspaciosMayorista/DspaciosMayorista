@@ -26,6 +26,25 @@
 // Un empaquetado NUNCA tiene sillas ni cupo negociado — a diferencia de
 // `bloqueos_vuelo`, el caller jamás debe intentar reservar/decrementar
 // `sillas` para el resultado que devuelve esta función.
+//
+// COSTO FINANCIERO (revisión posterior al PR #268, hallazgo 1): el
+// formulario de Empaquetados pide DOS tarifas — `tarifa_proveedor`
+// ("Tarifa proveedor/sistema (neto)") y `tarifa_para_empaquetar` ("Tarifa
+// para empaquetar (reventa)") — pero esta función solo devolvía la segunda,
+// y `reservar/actions.ts` la usaba tanto para `ventas.costo_aereo` como
+// para la CxP al proveedor. Con tarifa_proveedor=200.000 y
+// tarifa_para_empaquetar=242.022 (2 pax), el costo/CxP quedaba en $484.044
+// en vez de los $400.000 que realmente se le deben al proveedor — se le
+// estaba pagando (en el registro contable) la reventa, no el neto.
+// `costo_neto` es ahora el campo AUTORITATIVO para costo_aereo/CxP en TODOS
+// los orígenes: para bloqueo/salida, que no tienen un campo "neto" separado
+// del "para empaquetar"/"tiquete", `costo_neto` es el mismo valor de
+// siempre (sin cambio de comportamiento ahí). `tarifa_para_empaquetar` se
+// CONSERVA en el tipo — sigue siendo la base de la que se deriva el PVP del
+// vuelo en `generarTarifario()` (`aporteVuelo()`, decisión de negocio
+// confirmada: el margen del paquete SÍ se aplica de nuevo sobre la reventa
+// tecleada a mano — ver el comentario de `paquetes/actions.ts`), pero en
+// este flujo (reservar) queda como dato informativo, no se usa para costear.
 // ─────────────────────────────────────────────────────────────────────────
 
 import type { OrigenVuelo } from "@/lib/reservar/origen";
@@ -45,6 +64,12 @@ export type DatosVueloOrigen = {
   hora_llegada_ida: string | null;
   hora_salida_reg: string | null;
   hora_llegada_reg: string | null;
+  // Costo NETO real (lo que se le paga al proveedor) — única fuente para
+  // ventas.costo_aereo y la CxP aérea. NUNCA usar tarifa_para_empaquetar
+  // para esto.
+  costo_neto: number;
+  // Reventa (informativa en este flujo) — bloqueo/salida no tienen un
+  // campo "neto" separado, así que aquí queda igual a costo_neto.
   tarifa_para_empaquetar: number;
   fee_infante: number;
   proveedor: ProveedorVuelo;
@@ -75,6 +100,9 @@ export async function datosVueloBloqueo(sb: ClienteSb, bloqueoId: number): Promi
       vuelo_ida: b.vuelo_ida, vuelo_regreso: b.vuelo_regreso,
       hora_salida_ida: b.hora_salida_ida, hora_llegada_ida: b.hora_llegada_ida,
       hora_salida_reg: b.hora_salida_reg, hora_llegada_reg: b.hora_llegada_reg,
+      // bloqueos_vuelo no tiene un campo "neto" separado del "para
+      // empaquetar" — el mismo valor de siempre sirve para ambos.
+      costo_neto: Number(b.tarifa_para_empaquetar) || 0,
       tarifa_para_empaquetar: Number(b.tarifa_para_empaquetar) || 0,
       fee_infante: 0, // bloqueos_vuelo no tiene fee_infante propio — el infante no ocupa silla.
       proveedor: b.proveedores as unknown as ProveedorVuelo,
@@ -92,7 +120,7 @@ export async function datosVueloEmpaquetado(sb: ClienteSb, empaquetadoId: number
   const { data: e, error } = await sb
     .from("empaquetados")
     .select(
-      "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, tarifa_para_empaquetar, fee_infante, activo, compra_inicio, compra_fin, proveedores(nombre, aplica_retencion, pct_retencion)"
+      "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, tarifa_proveedor, tarifa_para_empaquetar, fee_infante, activo, compra_inicio, compra_fin, proveedores(nombre, aplica_retencion, pct_retencion)"
     )
     .eq("id", empaquetadoId)
     .maybeSingle();
@@ -109,6 +137,8 @@ export async function datosVueloEmpaquetado(sb: ClienteSb, empaquetadoId: number
       vuelo_ida: e.vuelo_ida, vuelo_regreso: e.vuelo_regreso,
       hora_salida_ida: e.hora_salida_ida, hora_llegada_ida: e.hora_llegada_ida,
       hora_salida_reg: e.hora_salida_reg, hora_llegada_reg: e.hora_llegada_reg,
+      // El PROVEEDOR (neto) es lo que se le paga — nunca la reventa.
+      costo_neto: Number(e.tarifa_proveedor) || 0,
       tarifa_para_empaquetar: Number(e.tarifa_para_empaquetar) || 0,
       fee_infante: Number(e.fee_infante) || 0,
       proveedor: e.proveedores as unknown as ProveedorVuelo,
@@ -132,6 +162,8 @@ export async function datosVueloSalida(sb: ClienteSb, salidaId: number): Promise
       vuelo_ida: null, vuelo_regreso: null,
       hora_salida_ida: s.hora_salida_ida, hora_llegada_ida: s.hora_llegada_ida,
       hora_salida_reg: s.hora_salida_reg, hora_llegada_reg: s.hora_llegada_reg,
+      // salidas_dinamicas tampoco tiene un campo "neto" separado.
+      costo_neto: Number(s.valor_tiquete) || 0,
       tarifa_para_empaquetar: Number(s.valor_tiquete) || 0,
       fee_infante: Number(s.fee_infante) || 0,
       proveedor: null,

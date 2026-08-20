@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -538,7 +538,36 @@ test("defecto 3: historico/page.tsx agrupa pasados O inactivos — un desactivad
 test("defecto 3: lib/tarifario/datos.ts (público) también oculta filas de un empaquetado desactivado después de generar el tarifario, no solo al regenerar", () => {
   const datosSrc = leer("lib/tarifario/datos.ts");
   assert.match(datosSrc, /empaquetado_id, salida_id/, "el select debe traer empaquetado_id");
-  assert.match(datosSrc, /admin\.from\("empaquetados"\)\.select\("id, activo"\)\.in\("id", empaquetadoIds\)/);
+  assert.match(datosSrc, /\.select\("id, activo, compra_inicio, compra_fin"\)/);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Revisión posterior al PR #268 — hallazgo 4 "VIGENCIA EN LA VITRINA"
+// ───────────────────────────────────────────────────────────────────────────
+describe("lib/tarifario/datos.ts — vigencia de empaquetados en LECTURA del tarifario público (hallazgo 4)", () => {
+  const datosSrc = leer("lib/tarifario/datos.ts");
+  const bloque = datosSrc.slice(datosSrc.indexOf("const empaquetadoIds ="), datosSrc.indexOf("// En la vitrina"));
+
+  test("vigente: filtra por activo Y empaquetadoVigente juntos, no solo activo", () => {
+    assert.match(bloque, /\.filter\(\(e\) => e\.activo && empaquetadoVigente\(e\.compra_inicio, e\.compra_fin, hoyEmp\)\)/);
+  });
+
+  test("aún no inicia / vencido: ambos casos quedan cubiertos por la misma llamada a empaquetadoVigente (fechas inclusivas, America/Bogota — ver reservarOrigen.test.ts)", () => {
+    assert.match(bloque, /empaquetadoVigente/);
+    assert.match(datosSrc, /import \{ empaquetadoVigente, hoyBogota \} from "@\/lib\/reservar\/origen";/);
+  });
+
+  test("desactivado DESPUÉS de generar: el filtro corre en LECTURA (esta función), no solo al regenerar — mismo mecanismo que activo", () => {
+    assert.match(bloque, /e\.activo && empaquetadoVigente/);
+  });
+
+  test("FALLA CERRADA: si la consulta de vigencia devuelve error, TODAS las filas de empaquetado se ocultan (nunca se publica una tarifa sin verificar)", () => {
+    assert.match(bloque, /const vigentes = empsError\s*\n\s*\? new Set<number>\(\)/);
+  });
+
+  test("FALLA CERRADA: sin SUPABASE_SERVICE_ROLE_KEY, las filas de empaquetado también se ocultan (antes se mostraban sin chequeo)", () => {
+    assert.match(bloque, /if \(!process\.env\.SUPABASE_SERVICE_ROLE_KEY\) \{\s*\n\s*filas = filas\.filter\(\(f\) => f\.empaquetado_id == null\);/);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -565,4 +594,94 @@ test("ArmadoClient: la sección de Empaquetados usa setEmpaquetado/armado_empaqu
   assert.match(armadoClientSrc, /empaquetadosDisp:\s*Empaquetado\[\];/);
   assert.match(armadoClientSrc, /selEmpaquetados:\s*SelEmpaquetado\[\];/);
   assert.match(armadoClientSrc, /function EmpaquetadoRow/);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Revisión posterior al PR #268 — hallazgo 5 "COTIZACIÓN debe fallar cerrada"
+// ───────────────────────────────────────────────────────────────────────────
+describe("crearCotizacion — falla cerrada si el origen del vuelo no se puede resolver (hallazgo 5)", () => {
+  test("ya NO existe el patrón silencioso 'if (rv.ok) datosVueloSnap = rv.data' sin rama de error", () => {
+    assert.doesNotMatch(reservarActionsSrc, /if \(rv\.ok\) datosVueloSnap = rv\.data;/, "el patrón viejo (silencioso) no debe seguir en el archivo");
+  });
+
+  test("un fallo de resolverDatosVuelo hace return ANTES de construir el snapshot — cero cotización creada", () => {
+    const inicio = reservarActionsSrc.indexOf("let datosVueloSnap: DatosVueloOrigen | null = null;");
+    const finCotizacionInsert = reservarActionsSrc.indexOf('.from("cotizaciones").insert(');
+    const bloque = reservarActionsSrc.slice(inicio, finCotizacionInsert);
+    assert.match(bloque, /const rv = await resolverDatosVuelo\(createAdminClient\(\), origen\);/);
+    assert.match(bloque, /if \(!rv\.ok\) return \{ ok: false, error: rv\.error \};/, "debe retornar el error de rv sin insertar nada");
+    // El insert de cotizaciones debe estar DESPUÉS de este bloque, nunca antes.
+    assert.ok(inicio < finCotizacionInsert, "la resolución del vuelo debe ocurrir antes del insert de cotizaciones");
+  });
+
+  test("sin SUPABASE_SERVICE_ROLE_KEY, también falla cerrado en vez de omitir el vuelo en silencio", () => {
+    const inicio = reservarActionsSrc.indexOf("let datosVueloSnap: DatosVueloOrigen | null = null;");
+    const bloque = reservarActionsSrc.slice(inicio, inicio + 400);
+    assert.match(bloque, /if \(!process\.env\.SUPABASE_SERVICE_ROLE_KEY\)\s*\n\s*return \{ ok: false, error: "No se pudo resolver el origen del vuelo/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Revisión posterior al PR #268 — hallazgo 6 "BORRADO" (ventas.empaquetado_ref_id)
+// ───────────────────────────────────────────────────────────────────────────
+describe("eliminarEmpaquetado — también revisa ventas.empaquetado_ref_id antes del DELETE (hallazgo 6)", () => {
+  test("consulta ventas por empaquetado_ref_id con service-role (control_vuelo no tiene SELECT sobre ventas)", () => {
+    const fn = empActionsSrc.slice(empActionsSrc.indexOf("export async function eliminarEmpaquetado"), empActionsSrc.indexOf("// ── Vincular/desvincular"));
+    assert.match(fn, /const admin = createAdminClient\(\);/);
+    assert.match(fn, /\.from\("ventas"\)\s*\n\s*\.select\("numero_contrato"\)\s*\n\s*\.eq\("empaquetado_ref_id", id\)/);
+  });
+
+  test("mensaje útil: lista los números de contrato vinculados, no un genérico", () => {
+    const fn = empActionsSrc.slice(empActionsSrc.indexOf("export async function eliminarEmpaquetado"), empActionsSrc.indexOf("// ── Vincular/desvincular"));
+    assert.match(fn, /No se puede eliminar: este empaquetado tiene \$\{enContratos\.length\} contrato\(s\) vinculado\(s\) \(\$\{lista\}\)/);
+  });
+
+  test("el chequeo de ventas ocurre ANTES del DELETE — nunca se borra primero y se avisa después", () => {
+    const fn = empActionsSrc.slice(empActionsSrc.indexOf("export async function eliminarEmpaquetado"), empActionsSrc.indexOf("// ── Vincular/desvincular"));
+    const idxCheck = fn.indexOf('.from("ventas")');
+    const idxDelete = fn.indexOf('.from("empaquetados").delete()');
+    assert.ok(idxCheck > 0 && idxDelete > 0 && idxCheck < idxDelete, "el chequeo de ventas debe ocurrir antes del DELETE");
+  });
+
+  test("el FK ventas.empaquetado_ref_id sigue como defensa final (sin ON DELETE CASCADE)", () => {
+    const mig156 = leer("supabase/migrations/20260601000156_empaquetados.sql");
+    assert.match(mig156, /add column if not exists empaquetado_ref_id bigint references public\.empaquetados\(id\);/, "sin ON DELETE CASCADE — el default es RESTRICT/NO ACTION");
+    assert.doesNotMatch(mig156, /empaquetado_ref_id bigint references public\.empaquetados\(id\) on delete cascade/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Revisión posterior al PR #268 — hallazgo 2 "LISTA UNIFICADA Y RLS"
+// ───────────────────────────────────────────────────────────────────────────
+describe("ventas_vuelo_sistema — vista mínima para el inventario aéreo por sistema (hallazgo 2)", () => {
+  const mig156 = leer("supabase/migrations/20260601000156_empaquetados.sql");
+
+  test("incluye control_vuelo en el set de roles permitidos (el gap reportado)", () => {
+    const vista = mig156.slice(mig156.indexOf("create or replace view public.ventas_vuelo_sistema"), mig156.indexOf("grant select on public.ventas_vuelo_sistema"));
+    assert.match(vista, /'superadmin','gerencia','administracion','operaciones','control_vuelo'/);
+  });
+
+  test("filtra por tenant con puede_ver_tenant (aislamiento entre agencias)", () => {
+    const vista = mig156.slice(mig156.indexOf("create or replace view public.ventas_vuelo_sistema"), mig156.indexOf("grant select on public.ventas_vuelo_sistema"));
+    assert.match(vista, /and public\.puede_ver_tenant\(v\.tenant\);/);
+  });
+
+  test("nunca expone columnas financieras/PII de ventas (cliente, precio_venta, costo_*, comisión)", () => {
+    const vista = mig156.slice(
+      mig156.indexOf("create or replace view public.ventas_vuelo_sistema"),
+      mig156.indexOf("grant select on public.ventas_vuelo_sistema")
+    );
+    for (const col of ["cliente", "precio_venta", "costo_hotel", "costo_aereo", "comision_b2b", "cliente_documento", "cliente_telefono"]) {
+      assert.doesNotMatch(vista, new RegExp(`v\\.${col}\\b`), `la vista no debe exponer ${col}`);
+    }
+  });
+
+  test("incluye AMBOS orígenes: tipo_paquete='dinamico' O empaquetado_ref_id no nulo (no solo dinámico)", () => {
+    assert.match(mig156, /where \(v\.tipo_paquete = 'dinamico' or v\.empaquetado_ref_id is not null\)/);
+  });
+
+  test("vuelos/page.tsx consulta la vista, nunca public.ventas directo", () => {
+    assert.match(vuelosPageSrc, /sb\.from\("ventas_vuelo_sistema"\)\.select\("\*"\)/);
+    assert.doesNotMatch(vuelosPageSrc, /sb\.from\("ventas"\)/, "no debe quedar ninguna consulta directa a ventas en esta página");
+  });
 });

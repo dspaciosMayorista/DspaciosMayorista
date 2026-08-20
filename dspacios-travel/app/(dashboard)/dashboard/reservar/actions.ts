@@ -97,7 +97,11 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     }
   }
   const infantesN = Math.max(0, Math.trunc(Number(input.infantes) || 0));
-  const costoAereo = datosVuelo ? datosVuelo.tarifa_para_empaquetar * paxConSilla + datosVuelo.fee_infante * infantesN : 0;
+  // Costo NETO real (lo que se le debe al proveedor) — nunca la reventa. Con
+  // tarifa_proveedor=200.000/tarifa_para_empaquetar=242.022 (2 pax), usar la
+  // reventa dejaba costo_aereo/CxP en $484.044 en vez de los $400.000 reales
+  // (hallazgo de la revisión posterior al PR #268, punto 1 "COSTO FINANCIERO").
+  const costoAereo = datosVuelo ? datosVuelo.costo_neto * paxConSilla + datosVuelo.fee_infante * infantesN : 0;
 
   // 3) Número de contrato
   const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
@@ -283,7 +287,41 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // `empaquetadoId` directos, así que no hay forma de que este paso arme el
   // tramo de un origen distinto al que se usó para el precio (defecto 1).
   // (La salida dinámica no arma `contrato_vuelos` aquí — comportamiento
-  // preexistente, sin cambios: solo queda en el snapshot de la cotización.)
+  // preexistente, sin cambios: solo queda en el snapshot de la cotización.
+  //
+  // HALLAZGO 7 (revisión posterior al PR #268) — DOCUMENTADO, NO
+  // IMPLEMENTADO EN ESTA RONDA (se pidió "analiza", no "implementa"):
+  //
+  // Los contratos dinámicos HISTÓRICOS (ya creados antes de esta revisión)
+  // NUNCA tuvieron `contrato_vuelos` — sus únicos datos de vuelo son las
+  // columnas planas de `ventas` (`aerolinea`/`fecha_salida`/`fecha_regreso`/
+  // `costo_aereo`), sin ruta IATA, sin horarios, sin número de vuelo. Esto
+  // es estructural, no un bug de esta revisión — no hay ruta segura de
+  // "backfill por coincidencia de texto" (record/aerolínea/fecha) sin
+  // arriesgar emparejar el contrato equivocado; por eso `ventas_vuelo_sistema`
+  // (hallazgo 2) expone SOLO lo que existe, y por eso el diagnóstico de
+  // solo lectura (`supabase/scripts/diagnostico_empaquetados_dinamico.sql`)
+  // es el punto de partida si se quiere clasificar los casos ambiguos.
+  //
+  // Para contratos dinámicos FUTUROS, sí seria viable insertar
+  // `contrato_vuelos` desde `salidas_dinamicas` en este mismo paso 7 — la
+  // salida SÍ tiene `ruta`/`origen` (aunque no horarios/número de vuelo, que
+  // esa tabla tampoco captura hoy). Análisis del cambio, si se decide hacer:
+  //   1. Agregar una rama `else if (origen.tipo === "salida" && datosVuelo)`
+  //      aquí mismo, con el mismo shape de tramos ida/regreso — `datosVuelo`
+  //      YA trae `ruta`/`fecha_ida`/`fecha_regreso`/`hora_*` para salida
+  //      (`datosVueloSalida`, `lib/reservar/empaquetadoOrigen.ts`); solo
+  //      faltaría decidir qué va en `record`/`numero_vuelo` (hoy `null`,
+  //      ninguna salida dinámica los captura).
+  //   2. Alcance: SOLO contratos nuevos desde que se active — el histórico
+  //      sigue dependiendo de `ventas_vuelo_sistema`. Ningún backfill.
+  //   3. Impacto: `ventas_vuelo_sistema.origen='dinamico'` seguiría
+  //      necesitando la columna `tenant`/`aerolinea` planas de `ventas` para
+  //      lo YA existente, pero los contratos nuevos podrían leerse por
+  //      `contrato_vuelos_basica` en vez de o además de esta vista — a
+  //      decidir cuando se implemente, no en esta ronda.
+  //   4. Riesgo: ninguno nuevo — es aditivo, no toca bloqueo/empaquetado.
+  // Pendiente de decisión del dueño antes de implementarlo.)
   if ((origen.tipo === "bloqueo" || origen.tipo === "empaquetado") && datosVuelo) {
     const r = parseRuta(datosVuelo.ruta);
     const tramos: {
@@ -598,15 +636,23 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
 
   // Origen del vuelo (bloqueo/empaquetado/salida) para el snapshot de la
   // cotización — misma fuente única que usa `reservarDesdeTarifarioInterno`
-  // al convertir. Un fallo de lectura aquí NO bloquea la cotización (es un
-  // documento preliminar, no dinero comprometido) — el vuelo simplemente
-  // queda ausente del PDF, y se revalida por completo (fail-closed) recién
-  // al convertir en contrato.
+  // al convertir.
+  //
+  // FALLA CERRADA (hallazgo 5 de la revisión posterior al PR #268): antes,
+  // un fallo de `resolverDatosVuelo` (lectura rota, RLS, empaquetado
+  // desactivado/vencido) se ignoraba en silencio (`if (rv.ok) ...`, sin
+  // rama de error) — se generaba una cotización de un paquete tipo bloqueo/
+  // dinámico SIN el vuelo, como si el paquete no lo llevara. Una cotización
+  // de un paquete con vuelo no puede existir sin ese vuelo: si el origen no
+  // se puede resolver, la cotización NO se crea (mismo criterio que
+  // `reservarDesdeTarifarioInterno`, que ya fallaba cerrado en su paso 2c).
   let datosVueloSnap: DatosVueloOrigen | null = null;
   if (origen.tipo !== "ninguno") {
-    const clienteVuelo = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
-    const rv = await resolverDatosVuelo(clienteVuelo, origen);
-    if (rv.ok) datosVueloSnap = rv.data;
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
+      return { ok: false, error: "No se pudo resolver el origen del vuelo (configuración del servidor incompleta)." };
+    const rv = await resolverDatosVuelo(createAdminClient(), origen);
+    if (!rv.ok) return { ok: false, error: rv.error };
+    datosVueloSnap = rv.data;
   }
 
   const hoy = new Date().toISOString().slice(0, 10);

@@ -43,7 +43,11 @@ alter table public.tarifario_resultado drop column if exists empaquetado_id;
 -- borrar la columna, o Postgres rechaza el DROP COLUMN con una dependencia
 -- rota. Se restaura EXACTAMENTE como la dejó la migración 148 (sin
 -- `empaquetado_ref_id`, que ya no existirá en `ventas` tras el drop de abajo).
+-- `ventas_vuelo_sistema` (revisión posterior, hallazgo 2) TAMBIÉN depende de
+-- `empaquetado_ref_id` — se suelta aquí mismo, sin restaurarla (no existía
+-- antes de esta migración).
 drop view if exists public.ventas_basica;
+drop view if exists public.ventas_vuelo_sistema;
 
 alter table public.ventas drop constraint if exists ventas_origen_excluyente_check;
 alter table public.ventas drop column if exists empaquetado_ref_id;

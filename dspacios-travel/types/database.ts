@@ -2754,6 +2754,23 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Migración 156 (editada, revisión posterior — hallazgo 2): inventario
+      // aéreo "por sistema" mínimo para el módulo Vuelos — solo lo que un
+      // contrato dinámico/empaquetado tiene de vuelo, nunca cliente/precio/
+      // costo/comisión. Único camino de lectura de `ventas` para `control_vuelo`.
+      ventas_vuelo_sistema: {
+        Row: {
+          numero_contrato: string;
+          tenant: string;
+          tipo_paquete: string | null;
+          aerolinea: string | null;
+          fecha_salida: string | null;
+          fecha_regreso: string | null;
+          empaquetado_ref_id: number | null;
+          origen: "dinamico" | "empaquetado";
+        };
+        Relationships: [];
+      };
     };
     Functions: {
       // Migración 142. La misma función que usan las policies para decidir si

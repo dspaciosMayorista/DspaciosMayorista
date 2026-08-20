@@ -73,16 +73,20 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
       ? sb.from("sillas").select("bloqueo_id, estado")
       : Promise.resolve({ data: null as { bloqueo_id: number; estado: string | null }[] | null }),
     sb.from("empaquetados").select("*").order("fecha_ida", { ascending: true }),
-    // Records/vuelos "por sistema" que YA existen como contratos reales tipo
-    // dinámico (defecto 3 de la revisión de PR #268) — solo se consulta en
-    // la pestaña Empaquetados (a diferencia de bloqueos_vuelo/empaquetados,
-    // `ventas` es una tabla transaccional grande, no vale la pena traerla
-    // siempre). Campos exactos disponibles, sin inventar nada — ver
-    // `supabase/scripts/diagnostico_empaquetados_dinamico.sql`.
+    // Records/vuelos "por sistema" que YA existen como contratos reales,
+    // dinámicos O reservados desde un Empaquetado (defecto 3 original +
+    // hallazgo 2 de la revisión posterior — "LISTA UNIFICADA Y RLS"). Se lee
+    // por la vista `ventas_vuelo_sistema` (migración 156), NUNCA por
+    // `public.ventas` directo: esa tabla no tiene ninguna policy de SELECT
+    // para `control_vuelo` (que sí entra a este módulo), así que consultarla
+    // directo dejaba la pestaña vacía para ese rol sin ningún aviso — y de
+    // paso, la vista nunca expone costo/precio/cliente (evita mostrar
+    // finanzas por esta pantalla operativa, ver hallazgo 3 "columna
+    // engañosa": ya no hay una cifra que se pueda confundir con una tarifa
+    // unitaria). Solo se consulta en la pestaña Empaquetados.
     vistaEmpaquetados
-      ? sb.from("ventas").select("numero_contrato, aerolinea, costo_aereo, fecha_salida, fecha_regreso, estado")
-          .eq("tipo_paquete", "dinamico").order("fecha_salida", { ascending: true })
-      : Promise.resolve({ data: null as { numero_contrato: string; aerolinea: string | null; costo_aereo: number | null; fecha_salida: string | null; fecha_regreso: string | null; estado: string | null }[] | null }),
+      ? sb.from("ventas_vuelo_sistema").select("*").order("fecha_salida", { ascending: true })
+      : Promise.resolve({ data: null as { numero_contrato: string; tenant: string; tipo_paquete: string | null; aerolinea: string | null; fecha_salida: string | null; fecha_regreso: string | null; empaquetado_ref_id: number | null; origen: "dinamico" | "empaquetado" }[] | null }),
   ]);
 
   // Activos vs pasados: una fila cuya fecha de ida ya pasó queda INACTIVA y
@@ -204,14 +208,21 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
                 tarifa_para_empaquetar: e.tarifa_para_empaquetar, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
                 activo: e.activo,
               })),
-              // Origen "Contrato" (defecto 3) — sin backfill/fusión con
-              // `empaquetados`: cada contrato dinámico es su propia fila,
-              // con SOLO los campos que `ventas` realmente tiene.
+              // Origen "Contrato" (defecto 3 + hallazgo 3 "columna
+              // engañosa") — sin backfill/fusión con `empaquetados`: cada
+              // contrato es su propia fila, con SOLO los campos que
+              // `ventas_vuelo_sistema` realmente tiene. Nunca se muestra
+              // costo_aereo (ni se divide entre pax para "inventar" una
+              // tarifa unitaria) — la vista ni siquiera lo expone, así que
+              // esta columna queda en "—" a propósito para los orígenes
+              // "Contrato": no hay una tarifa unitaria verificable que
+              // mostrar, mezclar el total del contrato con una tarifa por
+              // asiento sería engañoso.
               ...dinamicosActivos.map((d) => ({
                 id: `contrato:${d.numero_contrato}`, origen: "contrato" as const, record: null, numeroContrato: d.numero_contrato,
                 aerolinea: d.aerolinea, ruta: null,
                 fecha_ida: d.fecha_salida, vuelo_ida: null, fecha_regreso: d.fecha_regreso, vuelo_regreso: null,
-                tarifa_para_empaquetar: d.costo_aereo, estado_emision: null, estado_pago: null,
+                tarifa_para_empaquetar: null, estado_emision: null, estado_pago: null,
                 activo: true,
               })),
             ]}

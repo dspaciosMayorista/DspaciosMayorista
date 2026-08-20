@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { esEstadoEmision, esEstadoPago, type EstadoEmision, type EstadoPago } from "@/lib/vuelos/control";
 
@@ -219,6 +220,34 @@ export async function eliminarEmpaquetado(id: number): Promise<Result> {
       ok: false,
       error: `No se puede eliminar: este empaquetado está vinculado a ${lista}. Desvincúlalo de esos paquetes o desactívalo (Activo = No) en vez de borrarlo.`,
     };
+  }
+
+  // Revisión posterior al PR #268, hallazgo 6: `armado_empaquetados` no era
+  // el único vínculo que bloquea el borrado — un CONTRATO real ya reservado
+  // desde este empaquetado (`ventas.empaquetado_ref_id`, migración 156)
+  // tampoco debe perder su origen en silencio. Se consulta con service-role
+  // (no con `sb`, el cliente de sesión): `control_vuelo` puede llegar hasta
+  // aquí (tiene escritura sobre `empaquetados`) pero NO tiene SELECT sobre
+  // `ventas` — con el cliente de sesión este chequeo daría "0 contratos"
+  // por RLS aunque sí los hubiera, dejando pasar un borrado que debía
+  // bloquearse. El FK (`ON DELETE RESTRICT` en `empaquetados` vía la CxP —
+  // no, vía la propia referencia de `ventas.empaquetado_ref_id`) sigue como
+  // defensa final si este chequeo se saltara por cualquier motivo.
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const admin = createAdminClient();
+    const { data: enContratos, error: eCon } = await admin
+      .from("ventas")
+      .select("numero_contrato")
+      .eq("empaquetado_ref_id", id)
+      .order("numero_contrato");
+    if (eCon) return { ok: false, error: eCon.message };
+    if (enContratos && enContratos.length) {
+      const lista = enContratos.map((v) => v.numero_contrato).join(", ");
+      return {
+        ok: false,
+        error: `No se puede eliminar: este empaquetado tiene ${enContratos.length} contrato(s) vinculado(s) (${lista}). Desactívalo (Activo = No) en vez de borrarlo.`,
+      };
+    }
   }
 
   const { data, error } = await sb.from("empaquetados").delete().eq("id", id).select("id").maybeSingle();
