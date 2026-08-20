@@ -304,6 +304,9 @@ export type Database = {
           freelance_nombre: string | null;
           paquete_armado_id: number | null;
           bloqueo_ref_id: number | null;
+          // Migración 156: vínculo fuerte y nullable con el Empaquetado de
+          // origen (excluyente con bloqueo_ref_id — CHECK en la BD).
+          empaquetado_ref_id: number | null;
           share_token: string;
           b2b_usuario_id: string | null;
           // Migración 143: vínculo fuerte con el catálogo `aliados`.
@@ -367,6 +370,7 @@ export type Database = {
           freelance_nombre?: string | null;
           paquete_armado_id?: number | null;
           bloqueo_ref_id?: number | null;
+          empaquetado_ref_id?: number | null;
           share_token?: string;
           b2b_usuario_id?: string | null;
           aliado_id?: number | null;

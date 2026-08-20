@@ -67,12 +67,22 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
   // (Empaquetados y Control comparten `empaquetados`; Inventario y Control
   // comparten `bloqueos_vuelo`), así que optimizar por vista aquí solo
   // agregaría complejidad de tipos sin un ahorro real.
-  const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }] = await Promise.all([
+  const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }, { data: dinamicosData }] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: true }),
     vistaInventario
       ? sb.from("sillas").select("bloqueo_id, estado")
       : Promise.resolve({ data: null as { bloqueo_id: number; estado: string | null }[] | null }),
     sb.from("empaquetados").select("*").order("fecha_ida", { ascending: true }),
+    // Records/vuelos "por sistema" que YA existen como contratos reales tipo
+    // dinámico (defecto 3 de la revisión de PR #268) — solo se consulta en
+    // la pestaña Empaquetados (a diferencia de bloqueos_vuelo/empaquetados,
+    // `ventas` es una tabla transaccional grande, no vale la pena traerla
+    // siempre). Campos exactos disponibles, sin inventar nada — ver
+    // `supabase/scripts/diagnostico_empaquetados_dinamico.sql`.
+    vistaEmpaquetados
+      ? sb.from("ventas").select("numero_contrato, aerolinea, costo_aereo, fecha_salida, fecha_regreso, estado")
+          .eq("tipo_paquete", "dinamico").order("fecha_salida", { ascending: true })
+      : Promise.resolve({ data: null as { numero_contrato: string; aerolinea: string | null; costo_aereo: number | null; fecha_salida: string | null; fecha_regreso: string | null; estado: string | null }[] | null }),
   ]);
 
   // Activos vs pasados: una fila cuya fecha de ida ya pasó queda INACTIVA y
@@ -96,6 +106,12 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
   const todosEmp = empaquetadosData ?? [];
   const empActivos = todosEmp.filter((e) => e.activo && !esPasado(e.fecha_ida, hoy));
   const empPasados = todosEmp.filter((e) => !e.activo || esPasado(e.fecha_ida, hoy));
+
+  // Origen "Contrato" (defecto 3): sin columna `activo` propia — un contrato
+  // no se "desactiva", así que el único criterio es la fecha de salida ya
+  // pasada (mismo criterio `esPasado` que el resto de esta pantalla).
+  const todosDinamicos = dinamicosData ?? [];
+  const dinamicosActivos = todosDinamicos.filter((d) => !esPasado(d.fecha_salida, hoy));
 
   // Conteo de sillas por estado para cada bloqueo — solo tiene sentido (y solo
   // se calcula) en Inventario; Control Vuelos/Empaquetados no cuentan sillas.
@@ -173,19 +189,32 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
       )}
 
       {vistaEmpaquetados ? (
-        !empActivos.length ? (
+        !empActivos.length && !dinamicosActivos.length ? (
           <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">
             <p className="text-lg">No hay empaquetados activos</p>
             <p className="mt-1 text-sm">Crea el primero con el botón “Nuevo empaquetado”.</p>
           </div>
         ) : (
           <EmpaquetadosTabla
-            filas={empActivos.map((e) => ({
-              id: e.id, record: e.record, aerolinea: e.aerolinea, ruta: e.ruta,
-              fecha_ida: e.fecha_ida, vuelo_ida: e.vuelo_ida, fecha_regreso: e.fecha_regreso, vuelo_regreso: e.vuelo_regreso,
-              tarifa_para_empaquetar: e.tarifa_para_empaquetar, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
-              activo: e.activo,
-            }))}
+            filas={[
+              ...empActivos.map((e) => ({
+                id: `promocion:${e.id}`, origen: "promocion" as const, record: e.record, numeroContrato: null,
+                aerolinea: e.aerolinea, ruta: e.ruta,
+                fecha_ida: e.fecha_ida, vuelo_ida: e.vuelo_ida, fecha_regreso: e.fecha_regreso, vuelo_regreso: e.vuelo_regreso,
+                tarifa_para_empaquetar: e.tarifa_para_empaquetar, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
+                activo: e.activo,
+              })),
+              // Origen "Contrato" (defecto 3) — sin backfill/fusión con
+              // `empaquetados`: cada contrato dinámico es su propia fila,
+              // con SOLO los campos que `ventas` realmente tiene.
+              ...dinamicosActivos.map((d) => ({
+                id: `contrato:${d.numero_contrato}`, origen: "contrato" as const, record: null, numeroContrato: d.numero_contrato,
+                aerolinea: d.aerolinea, ruta: null,
+                fecha_ida: d.fecha_salida, vuelo_ida: null, fecha_regreso: d.fecha_regreso, vuelo_regreso: null,
+                tarifa_para_empaquetar: d.costo_aereo, estado_emision: null, estado_pago: null,
+                activo: true,
+              })),
+            ]}
           />
         )
       ) : vistaControl ? (

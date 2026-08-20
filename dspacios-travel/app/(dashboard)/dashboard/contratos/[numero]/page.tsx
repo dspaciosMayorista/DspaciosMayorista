@@ -223,8 +223,19 @@ export default async function ContratoDetallePage({
           <p className="mt-1 text-sm text-gray-500">
             {venta.cliente} · {venta.destino ?? "—"} · Viaje {formatFechaLarga(venta.fecha_salida)}
           </p>
-          <div className="mt-2">
+          <div className="mt-2 flex flex-wrap items-center gap-3">
             <EstadoVenta numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
+            {/* Trazabilidad venta → empaquetado (revisión de PR #268, defecto 4):
+                el vuelo de este contrato vino de una tarifa de Sistema, no de un
+                bloqueo negociado — navega directo al Empaquetado de origen. */}
+            {venta.empaquetado_ref_id != null && (
+              <Link
+                href={`/dashboard/vuelos/empaquetados/${venta.empaquetado_ref_id}`}
+                className="text-xs font-medium text-[#1D7C9A] hover:underline"
+              >
+                Ver empaquetado de origen →
+              </Link>
+            )}
           </div>
         </div>
         {/* En solo lectura el documento sale incompleto por RLS (sin pasajeros,

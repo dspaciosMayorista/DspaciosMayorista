@@ -1,6 +1,24 @@
 -- ───────────────────────────────────────────────────────────────────────────
 -- 156 · VUELOS — inventario de EMPAQUETADOS (tarifas de Sistema)
 --
+-- ⚠️ EDITADA (revisión de PR #268, defectos 1 y 4 — 155/156/157 aún no se
+-- habían corrido, así que se corrige el archivo existente en vez de crear
+-- una migración 158 solo para esto):
+--   · CHECK `tarifario_resultado_origen_excluyente_check`: impide que una
+--     fila tenga `bloqueo_id` Y `empaquetado_id` a la vez (defecto 1, "ORIGEN
+--     DOBLE"). Segura de agregar sin revisar histórico: `empaquetado_id` es
+--     nueva en esta misma migración, 100% NULL en lo existente.
+--   · `ventas.empaquetado_ref_id` (FK nullable a `empaquetados`) + CHECK
+--     `ventas_origen_excluyente_check` (mutuamente excluyente con
+--     `bloqueo_ref_id`) — trazabilidad fuerte venta→empaquetado (defecto 4).
+--     Misma razón: columna nueva, histórico trivialmente en NULL.
+--   · `ventas_basica` (vista de la 148, ya en producción) se re-declara para
+--     exponer `empaquetado_ref_id` — no se puede alterar una columna suelta
+--     de una vista.
+-- Ver `lib/reservar/origen.ts` (el discriminante que hace que estas dos
+-- columnas nunca lleguen pobladas a la vez desde la aplicación) y el reporte
+-- de la ronda de corrección en el PR para el detalle completo.
+--
 -- QUÉ ES
 --   Una salida aérea comprada/cotizada POR SISTEMA (sin cupo negociado con
 --   la aerolínea) que la agencia usa para armar promociones. A diferencia de
@@ -315,6 +333,99 @@ create index if not exists idx_tarifario_resultado_empaquetado on public.tarifar
 comment on column public.tarifario_resultado.empaquetado_id is
   'Origen "Sistema" de la fila (tabla empaquetados) cuando el módulo es ''bloqueo'' pero NO '
   'viene de un bloqueo negociado — mutuamente excluyente con bloqueo_id. Migración 156.';
+
+-- CHECK mínimo (revisión de PR #268, defecto 1 "ORIGEN DOBLE"): una fila de
+-- `tarifario_resultado` nunca puede tener `bloqueo_id` Y `empaquetado_id` a
+-- la vez — son dos fuentes de vuelo mutuamente excluyentes por diseño (ver
+-- el comentario de columna de arriba). Es SEGURA de agregar sin revisar
+-- datos históricos: `empaquetado_id` es una columna nueva de ESTA misma
+-- migración, así que el 100% de las filas existentes la tiene en NULL antes
+-- de que este ALTER corra — el CHECK se satisface trivialmente para todo lo
+-- que ya existe. Deliberadamente NO se extiende a `salida_id` (paquete
+-- dinámico, migración 094): una exclusión de 3 columnas exigiría revisar el
+-- uso histórico real de `salida_id` primero, y el pedido explícito fue el
+-- mínimo — bloqueo_id/empaquetado_id.
+alter table public.tarifario_resultado
+  drop constraint if exists tarifario_resultado_origen_excluyente_check;
+alter table public.tarifario_resultado
+  add constraint tarifario_resultado_origen_excluyente_check
+  check (not (bloqueo_id is not null and empaquetado_id is not null));
+
+-- ── Trazabilidad venta → empaquetado (defecto 4) ────────────────────────────
+-- `ventas.bloqueo_ref_id` (migración 022) es la única relación fuerte que
+-- existía con el origen del vuelo — un contrato reservado desde un
+-- Empaquetado no dejaba NINGÚN rastro estructural de cuál fue. Mismo patrón
+-- exacto que `bloqueo_ref_id`: FK nullable, sin ON DELETE (un empaquetado no
+-- se puede borrar si está referenciado por una venta real — ver el CHECK de
+-- abajo, que además impide que las dos referencias convivan).
+alter table public.ventas
+  add column if not exists empaquetado_ref_id bigint references public.empaquetados(id);
+create index if not exists idx_ventas_empaquetado_ref on public.ventas(empaquetado_ref_id);
+comment on column public.ventas.empaquetado_ref_id is
+  'Empaquetado de origen del vuelo de este contrato (si lo hay) — excluyente '
+  'con bloqueo_ref_id (CHECK ventas_origen_excluyente_check). NULL en '
+  'contratos sin vuelo o con vuelo negociado (bloqueo_ref_id) o dinámico '
+  '(sin columna de referencia — ver "Novedades" del handoff). Migración 156.';
+
+-- Misma razón que el CHECK de `tarifario_resultado`: `empaquetado_ref_id` es
+-- nueva en esta migración, 100% NULL en todo lo existente — el CHECK se
+-- satisface trivialmente para el histórico, sin necesidad de revisarlo antes.
+alter table public.ventas
+  drop constraint if exists ventas_origen_excluyente_check;
+alter table public.ventas
+  add constraint ventas_origen_excluyente_check
+  check (not (bloqueo_ref_id is not null and empaquetado_ref_id is not null));
+
+-- `ventas_basica` (vista de la migración 148, ya en producción) se
+-- re-declara COMPLETA con la única columna nueva agregada
+-- (`empaquetado_ref_id`, junto a `bloqueo_ref_id`) — no se puede alterar una
+-- columna suelta de una vista. El resto queda IDÉNTICO a como lo dejó la 148
+-- (enmascarado de `cliente_documento`/`cliente_direccion`/`asesor_firma_cc`/
+-- `share_token` incluido). `venta` navega así del contrato al Empaquetado de
+-- origen sin necesitar la tabla base `ventas`.
+drop view if exists public.ventas_basica;
+create view public.ventas_basica as
+  select
+    v.numero_contrato, v.fecha_venta, v.asesor, v.canal, v.tipo_cliente,
+    v.cliente,
+    case
+      when public.mi_rol() <> 'venta' or public.soy_asesor_del_contrato(v.numero_contrato)
+        then v.cliente_documento
+      when v.cliente_documento is null then null
+      when length(v.cliente_documento) <= 4 then '••••'
+      else '••••' || right(v.cliente_documento, 4)
+    end as cliente_documento,
+    v.cliente_telefono, v.cliente_email,
+    v.destino, v.tipo_paquete, v.fecha_salida, v.fecha_regreso, v.fecha_emision,
+    v.pax, v.hotel, v.aerolinea, v.receptivo, v.asistencia, v.otros_proveedores,
+    v.precio_venta, v.moneda, v.estado, v.facturado, v.numero_documento,
+    v.plan_nombre, v.tours_traslados, v.asistencia_medica, v.plazo,
+    v.tipo_asesor, v.agencia_nombre, v.agencia_asesor, v.freelance_nombre, v.aliado_id,
+    v.asesor_firma_nombre, v.asesor_firma_cargo, v.asesor_firma_tel,
+    v.paquete_armado_id, v.bloqueo_ref_id, v.empaquetado_ref_id, v.tenant,
+    case
+      when public.mi_rol() <> 'venta' or public.soy_asesor_del_contrato(v.numero_contrato)
+        then v.cliente_direccion
+      else null
+    end as cliente_direccion,
+    case
+      when public.mi_rol() <> 'venta' or public.soy_asesor_del_contrato(v.numero_contrato)
+        then v.asesor_firma_cc
+      else null
+    end as asesor_firma_cc,
+    case
+      when public.mi_rol() <> 'venta' or public.soy_asesor_del_contrato(v.numero_contrato)
+        then v.share_token
+      else null
+    end as share_token,
+    v.created_at, v.updated_at
+  from public.ventas v
+  where
+    public.mi_rol() in ('superadmin','gerencia')
+    or (public.mi_rol() in ('administracion','operaciones','venta')
+        and public.puede_ver_tenant(v.tenant));
+
+grant select on public.ventas_basica to authenticated;
 
 -- ── RLS ─────────────────────────────────────────────────────────────────────
 alter table public.empaquetados        enable row level security;

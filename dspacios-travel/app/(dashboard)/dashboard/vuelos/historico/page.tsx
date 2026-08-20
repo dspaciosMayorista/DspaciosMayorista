@@ -115,6 +115,11 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
         </>
       )}
 
+      {/* Contratos dinámicos históricos (defecto 3, revisión de PR #268) NO
+          se listan aquí todavía — el histórico de Empaquetados sigue
+          mostrando solo promociones; ver el diagnóstico de solo lectura
+          (supabase/scripts/diagnostico_empaquetados_dinamico.sql) para
+          dimensionar un follow-up antes de extenderlo también aquí. */}
       {vistaEmpaquetados ? (
         !empPasados.length ? (
           <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center text-gray-400">
@@ -124,7 +129,8 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
         ) : (
           <EmpaquetadosTabla
             filas={empPasados.map((e) => ({
-              id: e.id, record: e.record, aerolinea: e.aerolinea, ruta: e.ruta,
+              id: `promocion:${e.id}`, origen: "promocion" as const, record: e.record, numeroContrato: null,
+              aerolinea: e.aerolinea, ruta: e.ruta,
               fecha_ida: e.fecha_ida, vuelo_ida: e.vuelo_ida, fecha_regreso: e.fecha_regreso, vuelo_regreso: e.vuelo_regreso,
               tarifa_para_empaquetar: e.tarifa_para_empaquetar, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
               activo: e.activo,

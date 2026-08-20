@@ -17,16 +17,30 @@ import { mesKey, mesLabel, matchControl, SIN_DEFINIR_VAL } from "@/lib/vuelos/fi
 // emitirse. Mismo lenguaje visual que ControlVuelosTabla (filtros + tabla +
 // EstadoBadge con los mismos tonos), para que el inventario de Sistema se
 // sienta parte de la misma pantalla de vuelos.
+// Revisión de PR #268, defecto 3: el requerimiento original era mostrar DOS
+// orígenes — tarifas promocionales cargadas a mano ("promocion", tabla
+// `empaquetados`) Y records/vuelos por sistema que YA existen como contratos
+// reales tipo dinámico ("contrato", `ventas` con tipo_paquete='dinamico').
+// Se listan uno junto al otro con el origen explícito — NUNCA se intenta
+// "fusionar" un contrato con una fila de `empaquetados` por coincidencia de
+// record/aerolínea/fecha (sería adivinar sin una relación real; ver el
+// diagnóstico de solo lectura `supabase/scripts/diagnostico_empaquetados_dinamico.sql`).
+// Clave estable: `promocion:<id>` / `contrato:<numero_contrato>` — nunca un
+// id numérico crudo compartido entre las dos fuentes.
+export type OrigenEmpaquetadoFila = "promocion" | "contrato";
+
 export type EmpaquetadoFila = {
-  id: number;
+  id: string; // clave estable: `promocion:<id>` | `contrato:<numero_contrato>`
+  origen: OrigenEmpaquetadoFila;
   record: string | null;
+  numeroContrato: string | null; // solo origen "contrato" — para el link
   aerolinea: string | null;
   ruta: string | null;
   fecha_ida: string | null;
   vuelo_ida: string | null;
   fecha_regreso: string | null;
   vuelo_regreso: string | null;
-  tarifa_para_empaquetar: number;
+  tarifa_para_empaquetar: number | null; // null en "contrato": no es una tarifa de reventa, es costo interno
   estado_emision: string | null;
   estado_pago: string | null;
   activo: boolean;
@@ -104,6 +118,7 @@ export function EmpaquetadosTabla({ filas }: { filas: EmpaquetadoFila[] }) {
         <table className="w-full min-w-[980px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+              <th className="px-3 py-2">Origen</th>
               <th className="px-3 py-2">Record</th>
               <th className="px-3 py-2">Aerolínea</th>
               <th className="px-3 py-2">Ruta</th>
@@ -119,8 +134,16 @@ export function EmpaquetadosTabla({ filas }: { filas: EmpaquetadoFila[] }) {
             {vis.map((f) => (
               <tr key={f.id} className="border-t border-gray-50">
                 <td className="px-3 py-2">
-                  <Link href={`/dashboard/vuelos/empaquetados/${f.id}`} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">
-                    {f.record ?? "Sin record"}
+                  {f.origen === "contrato"
+                    ? <EstadoBadge estado="Contrato" tono="info" />
+                    : <EstadoBadge estado="Promoción" tono="neutral" />}
+                </td>
+                <td className="px-3 py-2">
+                  <Link
+                    href={f.origen === "contrato" ? `/dashboard/contratos/${f.numeroContrato}` : `/dashboard/vuelos/empaquetados/${f.id.split(":")[1]}`}
+                    className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline"
+                  >
+                    {f.origen === "contrato" ? f.numeroContrato : (f.record ?? "Sin record")}
                   </Link>
                 </td>
                 <td className="px-3 py-2 text-gray-600">{f.aerolinea ?? "—"}</td>

@@ -275,7 +275,7 @@ const paquetesActionsSrc = leer("app/(dashboard)/dashboard/paquetes/actions.ts")
 
 test("generarTarifario lee armado_empaquetados (join con empaquetados) — antes NO lo consultaba en absoluto", () => {
   assert.match(paquetesActionsSrc, /\.from\("armado_empaquetados"\)/, "generarTarifario debe consultar armado_empaquetados");
-  assert.match(paquetesActionsSrc, /empaquetados\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo\)/);
+  assert.match(paquetesActionsSrc, /empaquetados\(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo, compra_inicio, compra_fin\)/);
 });
 
 test("generarTarifario: la rama 'bloqueo' liquida empaquetados con la MISMA función aporteVuelo/filasHoteles que un bloqueo negociado, usando tarifa_para_empaquetar (nunca tarifa_proveedor) como costoTiquete", () => {
@@ -320,20 +320,59 @@ const computoSrc = leer("lib/reservar/computo.ts");
 const reservarActionsSrc = leer("app/(dashboard)/dashboard/reservar/actions.ts");
 const empaquetadoOrigenSrc = leer("lib/reservar/empaquetadoOrigen.ts");
 
-test("computo.ts: la búsqueda de tarifario_resultado por empaquetadoId se revisa ANTES que bloqueoId (bloqueo_id siempre es null en una fila de origen empaquetado)", () => {
-  assert.match(computoSrc, /empaquetadoId\??:\s*number \| null/, "ReservaInput debe tener empaquetadoId");
-  assert.match(
-    computoSrc,
-    /else if \(input\.modulo === "bloqueo" && input\.empaquetadoId\) q = q\.eq\("empaquetado_id", input\.empaquetadoId\);/
-  );
+// Revisión de PR #268 (defecto 1, "ORIGEN DOBLE"): `computo.ts` ya no
+// prioriza silenciosamente empaquetadoId sobre bloqueoId con un else-if
+// sobre campos crudos — ahora el origen se resuelve UNA vez, discriminado y
+// validado (`resolverOrigenVuelo`), y todo lo demás (query de tarifario,
+// contrato_vuelos, sillas, CxP) lee de ese único resultado. Ver
+// `lib/reservar/origen.ts` y las pruebas de `origen.test.ts`.
+test("computo.ts: el origen se resuelve con resolverOrigenVuelo (discriminado) y la query de tarifario_resultado se filtra por origen.tipo, nunca por campos crudos", () => {
+  assert.match(computoSrc, /import \{ resolverOrigenVuelo, empaquetadoVigente, hoyBogota/, "computarReserva debe importar el discriminante");
+  assert.match(computoSrc, /const resOrigen = resolverOrigenVuelo\(input\);/, "el origen debe resolverse como primer paso");
+  assert.match(computoSrc, /if \(!resOrigen\.ok\) return \{ ok: false, error: resOrigen\.error \};/, "un origen inválido debe abortar antes de cualquier consulta");
+  assert.match(computoSrc, /if \(origen\.tipo === "salida"\) q = q\.eq\("salida_id", origen\.id\);/);
+  assert.match(computoSrc, /else if \(origen\.tipo === "empaquetado"\) q = q\.eq\("empaquetado_id", origen\.id\);/);
+  assert.match(computoSrc, /else if \(origen\.tipo === "bloqueo"\) q = q\.eq\("bloqueo_id", origen\.id\);/);
+  assert.doesNotMatch(computoSrc, /q\.eq\("empaquetado_id", input\.empaquetadoId\)/, "la query ya no debe leer input.empaquetadoId directo");
+  assert.doesNotMatch(computoSrc, /q\.eq\("bloqueo_id", input\.bloqueoId\)/, "la query ya no debe leer input.bloqueoId directo");
 });
 
-test("reservar/actions.ts: reservarDesdeTarifarioInterno arma el tramo del contrato para un empaquetado (record/ruta/vuelo), y su costo aéreo/CxP van SIN tocar sillas", () => {
-  assert.match(reservarActionsSrc, /import \{ datosVueloEmpaquetado \} from "@\/lib\/reservar\/empaquetadoOrigen";/);
-  assert.match(reservarActionsSrc, /else if \(input\.modulo === "bloqueo" && input\.empaquetadoId\) \{/, "falta la rama de contrato_vuelos para empaquetados");
-  const bloqueCosto = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 9-bis-empaquetado)"));
-  assert.match(bloqueCosto.slice(0, 900), /datosVueloEmpaquetado\(admin, input\.empaquetadoId\)/);
-  assert.doesNotMatch(bloqueCosto.slice(0, 900), /\.from\("sillas"\)/, "el costo aéreo de un empaquetado NUNCA debe tocar sillas");
+test("computo.ts: revalida activo/vigencia del empaquetado en el momento de resolver la reserva (no solo al generar el tarifario)", () => {
+  const bloque = computoSrc.slice(computoSrc.indexOf('if (origen.tipo === "empaquetado") {'), computoSrc.indexOf("const esServicios"));
+  assert.match(bloque, /\.select\("activo, compra_inicio, compra_fin"\)/);
+  assert.match(bloque, /if \(!eq\.activo\) return \{ ok: false,/);
+  assert.match(bloque, /empaquetadoVigente\(eq\.compra_inicio, eq\.compra_fin, hoyBogota\(new Date\(\)\)\)/);
+});
+
+test("reservar/actions.ts: resuelve y valida el origen COMPLETO (paso 2c) antes del número de contrato y del insert de ventas — no crea nada si falla", () => {
+  assert.match(reservarActionsSrc, /import \{ resolverDatosVuelo, type DatosVueloOrigen \} from "@\/lib\/reservar\/empaquetadoOrigen";/);
+  const paso2c = reservarActionsSrc.indexOf("// 2c) Resolver y VALIDAR el origen completo");
+  const paso3 = reservarActionsSrc.indexOf("// 3) Número de contrato");
+  const pasoVenta = reservarActionsSrc.indexOf('// 4) Venta (cabecera) — nace PENDIENTE');
+  assert.ok(paso2c > 0 && paso2c < paso3 && paso3 < pasoVenta, "la resolución del origen debe ocurrir ANTES del número de contrato y del insert de ventas");
+  const bloque2c = reservarActionsSrc.slice(paso2c, paso3);
+  assert.match(bloque2c, /const rv = await resolverDatosVuelo\(admin, origen\);/);
+  assert.match(bloque2c, /if \(!rv\.ok\) return \{ ok: false, error: rv\.error \};/, "un origen que no se pueda leer debe abortar ANTES de insertar la venta");
+});
+
+test("reservar/actions.ts: el tramo del contrato (paso 7) y la CxP aérea (paso 9) usan EXCLUSIVAMENTE datosVuelo — nunca vuelven a leer input.bloqueoId/empaquetadoId", () => {
+  const paso7 = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 7) Vuelo del contrato"), reservarActionsSrc.indexOf("// 8) Ítems de valores"));
+  assert.match(paso7, /if \(\(origen\.tipo === "bloqueo" \|\| origen\.tipo === "empaquetado"\) && datosVuelo\) \{/);
+  // El código EJECUTABLE (fuera de comentarios) ya no debe volver a leer los
+  // campos crudos — se compara línea por línea, no con un doesNotMatch sobre
+  // todo el bloque, porque el propio comentario explicativo los menciona.
+  const codigoSinComentarios = paso7.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+  assert.doesNotMatch(codigoSinComentarios, /input\.bloqueoId|input\.empaquetadoId/, "el tramo del contrato ya no debe leer los campos crudos");
+
+  const paso9 = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 9) CxP aérea"), reservarActionsSrc.indexOf("// 10) Costo neto del HOTEL"));
+  assert.match(paso9, /if \(datosVuelo\) \{/);
+  assert.match(paso9, /if \(origen\.tipo === "bloqueo" && process\.env\.SUPABASE_SERVICE_ROLE_KEY\) \{/, "sillas SOLO para origen.tipo==='bloqueo'");
+  assert.doesNotMatch(paso9, /input\.bloqueoId|input\.empaquetadoId|input\.salidaId/, "el paso de sillas/CxP ya no debe leer los campos crudos");
+});
+
+test("reservar/actions.ts: empaquetado_ref_id se estampa desde `origen` (nunca desde input.empaquetadoId), excluyente con bloqueo_ref_id", () => {
+  assert.match(reservarActionsSrc, /bloqueo_ref_id: origen\.tipo === "bloqueo" \? origen\.id : null,/);
+  assert.match(reservarActionsSrc, /empaquetado_ref_id: origen\.tipo === "empaquetado" \? origen\.id : null,/);
 });
 
 test("lib/reservar/empaquetadoOrigen.ts: helper compartido, un solo SELECT normalizado — evita repetir el mismo shape en 3 call sites distintos", () => {

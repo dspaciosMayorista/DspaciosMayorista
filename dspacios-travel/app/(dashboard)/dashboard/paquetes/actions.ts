@@ -15,6 +15,7 @@ import {
   toTemporadaRango,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
+import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -287,7 +288,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // armado_vuelos/bloqueos_vuelo; ver la nota de integración más abajo.
     sb
       .from("armado_empaquetados")
-      .select("empaquetado_id, aplica_mk, ta, empaquetados(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo)")
+      .select("empaquetado_id, aplica_mk, ta, empaquetados(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo, compra_inicio, compra_fin)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
@@ -504,7 +505,13 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   // Vuelos por SISTEMA (Empaquetados) — mismo shape que `vuelos`, filtrando
   // los desactivados (un empaquetado apagado a mano no debe seguir
-  // alimentando un tarifario ya generado con una tarifa que ya no aplica).
+  // alimentando un tarifario ya generado con una tarifa que ya no aplica) Y
+  // los que están fuera de su vigencia de compra (revisión de PR #268,
+  // defecto 2, checkpoint "al generar tarifario"). Esta NO es la única
+  // validación de vigencia — `computarReserva` la vuelve a revisar en vivo
+  // al resolver la reserva (`tarifario_resultado` es una caché, no la
+  // fuente de verdad) — pero evitar publicar de entrada una tarifa vencida
+  // reduce el caso de "se ve en el tarifario pero no se puede reservar".
   const empaquetadosVuelos = (empaquetadosSel ?? [])
     .map((v) => ({
       aplica_mk: v.aplica_mk as boolean,
@@ -517,9 +524,14 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
         fecha_regreso: string | null;
         tarifa_para_empaquetar: number;
         activo: boolean;
+        compra_inicio: string | null;
+        compra_fin: string | null;
       } | null,
     }))
-    .filter((v): v is typeof v & { e: NonNullable<typeof v.e> } => !!v.e && v.e.activo && !!v.e.fecha_ida && !!v.e.fecha_regreso);
+    .filter((v): v is typeof v & { e: NonNullable<typeof v.e> } =>
+      !!v.e && v.e.activo && !!v.e.fecha_ida && !!v.e.fecha_regreso
+      && empaquetadoVigente(v.e.compra_inicio, v.e.compra_fin, hoyBogota(new Date()))
+    );
 
   const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
 

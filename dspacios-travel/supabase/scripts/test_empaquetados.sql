@@ -314,9 +314,81 @@ begin
     'F: solo el empaquetado activo y futuro (9304) debe pasar el filtro "activos" — 9305 (inactivo-futuro) y 9306 (pasado) deben quedar fuera');
 end $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- G. CHECK de origen excluyente (defecto 1, "ORIGEN DOBLE" — revisión de
+--    la ronda posterior al PR #268): ni `tarifario_resultado` ni `ventas`
+--    pueden tener bloqueo_id/bloqueo_ref_id Y empaquetado_id/empaquetado_ref_id
+--    a la vez. Última línea de defensa a nivel de BD — el discriminante de
+--    `lib/reservar/origen.ts` ya lo impide en la aplicación, pero el CHECK
+--    protege contra cualquier insert que no pase por ahí (ej. un script,
+--    una migración de datos futura, un bug nuevo).
+-- ═════════════════════════════════════════════════════════════════════════
+insert into public.armado_paquetes (id, nombre, tipo) overriding system value values (9310, 'Paquete test G', 'bloqueo')
+  on conflict (id) do nothing;
+insert into public.bloqueos_vuelo (id, record, fecha_ida, cupos_total, tarifa_para_empaquetar, fecha_devolucion) overriding system value
+  values (9310, 'TESTG1', current_date + 10, 1, 100000, current_date + 5)
+  on conflict (id) do nothing;
+insert into public.empaquetados (id, fecha_ida) overriding system value values (9310, current_date + 10)
+  on conflict (id) do nothing;
+
+do $$
+declare v_lanzo boolean := false;
+begin
+  begin
+    insert into public.tarifario_resultado (paquete_id, modulo, bloqueo_id, empaquetado_id)
+    values (9310, 'bloqueo', 9310, 9310);
+  exception when check_violation then v_lanzo := true;
+  end;
+  perform pg_temp.assert_eq(v_lanzo, true, 'G1: tarifario_resultado con bloqueo_id Y empaquetado_id a la vez debe RECHAZARSE');
+end $$;
+
+do $$
+declare v_lanzo boolean := false;
+begin
+  begin
+    insert into public.ventas (numero_contrato, cliente, bloqueo_ref_id, empaquetado_ref_id)
+    values ('99-9998', 'Cliente prueba G', 9310, 9310);
+  exception when check_violation then v_lanzo := true;
+  end;
+  perform pg_temp.assert_eq(v_lanzo, true, 'G2: ventas con bloqueo_ref_id Y empaquetado_ref_id a la vez debe RECHAZARSE');
+end $$;
+
+-- Confirma que CADA UNO por separado sí es válido (el CHECK no bloquea el
+-- uso normal, solo la combinación de los dos).
 do $$
 begin
-  raise notice 'TODAS LAS PRUEBAS PASARON: test_empaquetados.sql (secciones A-F)';
+  insert into public.ventas (numero_contrato, cliente, empaquetado_ref_id) values ('99-9997', 'Cliente prueba G3', 9310);
+  insert into public.ventas (numero_contrato, cliente, bloqueo_ref_id) values ('99-9996', 'Cliente prueba G4', 9310);
+end $$;
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- H. Trazabilidad venta → empaquetado (defecto 4): la vista `ventas_basica`
+--    (por la que navega el rol `venta`) expone `empaquetado_ref_id` para que
+--    la pantalla del contrato pueda enlazar al Empaquetado de origen.
+-- ═════════════════════════════════════════════════════════════════════════
+do $$
+declare v_ref bigint;
+begin
+  select empaquetado_ref_id into v_ref from public.ventas where numero_contrato = '99-9997';
+  perform pg_temp.assert_eq(v_ref, 9310::bigint, 'H1: ventas.empaquetado_ref_id debe guardar el id del empaquetado de origen');
+end $$;
+
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','88888888-8888-8888-8888-888888888888','role','authenticated')::text, true);
+
+do $$
+declare v_ref bigint;
+begin
+  select empaquetado_ref_id into v_ref from public.ventas_basica where numero_contrato = '99-9997';
+  perform pg_temp.assert_eq(v_ref, 9310::bigint, 'H2: ventas_basica (por la que navega el rol venta) debe exponer empaquetado_ref_id');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+do $$
+begin
+  raise notice 'TODAS LAS PRUEBAS PASARON: test_empaquetados.sql (secciones A-H)';
 end $$;
 
 rollback;
