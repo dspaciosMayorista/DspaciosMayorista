@@ -357,7 +357,10 @@ test("reservar/actions.ts: resuelve y valida el origen COMPLETO (paso 2c) antes 
 
 test("reservar/actions.ts: el tramo del contrato (paso 7) y la CxP aérea (paso 9) usan EXCLUSIVAMENTE datosVuelo — nunca vuelven a leer input.bloqueoId/empaquetadoId", () => {
   const paso7 = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 7) Vuelo del contrato"), reservarActionsSrc.indexOf("// 8) Ítems de valores"));
-  assert.match(paso7, /if \(\(origen\.tipo === "bloqueo" \|\| origen\.tipo === "empaquetado"\) && datosVuelo\) \{/);
+  // Ronda siguiente, hallazgo 5 "ALCANCE FUNCIONAL": el paso 7 ahora también
+  // arma el tramo para origen.tipo === "salida" (contratos dinámicos
+  // futuros) — antes solo bloqueo/empaquetado.
+  assert.match(paso7, /if \(\(origen\.tipo === "bloqueo" \|\| origen\.tipo === "empaquetado" \|\| origen\.tipo === "salida"\) && datosVuelo\) \{/);
   // El código EJECUTABLE (fuera de comentarios) ya no debe volver a leer los
   // campos crudos — se compara línea por línea, no con un doesNotMatch sobre
   // todo el bloque, porque el propio comentario explicativo los menciona.
@@ -656,14 +659,15 @@ describe("eliminarEmpaquetado — también revisa ventas.empaquetado_ref_id ante
 describe("ventas_vuelo_sistema — vista mínima para el inventario aéreo por sistema (hallazgo 2)", () => {
   const mig156 = leer("supabase/migrations/20260601000156_empaquetados.sql");
 
-  test("incluye control_vuelo en el set de roles permitidos (el gap reportado)", () => {
-    const vista = mig156.slice(mig156.indexOf("create or replace view public.ventas_vuelo_sistema"), mig156.indexOf("grant select on public.ventas_vuelo_sistema"));
-    assert.match(vista, /'superadmin','gerencia','administracion','operaciones','control_vuelo'/);
+  test("incluye control_vuelo en el set de roles con acceso (el gap original reportado)", () => {
+    const fn = mig156.slice(mig156.indexOf("create or replace function public.acceso_ventas_vuelo_sistema"), mig156.indexOf("create or replace view public.ventas_vuelo_sistema"));
+    assert.match(fn, /'gerencia','administracion','operaciones','control_vuelo'/);
   });
 
-  test("filtra por tenant con puede_ver_tenant (aislamiento entre agencias)", () => {
+  test("la vista llama acceso_ventas_vuelo_sistema(v.tenant) en su where — el filtro vive en la función, no inline", () => {
     const vista = mig156.slice(mig156.indexOf("create or replace view public.ventas_vuelo_sistema"), mig156.indexOf("grant select on public.ventas_vuelo_sistema"));
-    assert.match(vista, /and public\.puede_ver_tenant\(v\.tenant\);/);
+    assert.match(vista, /and public\.acceso_ventas_vuelo_sistema\(v\.tenant\);/);
+    assert.doesNotMatch(vista, /puede_ver_tenant/, "la vista NO debe llamar puede_ver_tenant() directo — ese alcance es global para gerencia, este puntual no debe serlo");
   });
 
   test("nunca expone columnas financieras/PII de ventas (cliente, precio_venta, costo_*, comisión)", () => {
@@ -683,5 +687,205 @@ describe("ventas_vuelo_sistema — vista mínima para el inventario aéreo por s
   test("vuelos/page.tsx consulta la vista, nunca public.ventas directo", () => {
     assert.match(vuelosPageSrc, /sb\.from\("ventas_vuelo_sistema"\)\.select\("\*"\)/);
     assert.doesNotMatch(vuelosPageSrc, /sb\.from\("ventas"\)/, "no debe quedar ninguna consulta directa a ventas en esta página");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda siguiente a la revisión de PR #268 — hallazgo 1 "AISLAMIENTO DE
+// GERENCIA": la primera versión de `ventas_vuelo_sistema` usaba
+// `puede_ver_tenant()`, que le da a `gerencia` alcance GLOBAL (correcto para
+// el resto del sistema, migración 107, pero NO para esta vista puntual). La
+// prueba SQL real (`test_empaquetados.sql`, sección I) ya cubre el
+// comportamiento observable por rol/tenant; estas pruebas de patrón
+// verifican que la función NUEVA existe con la forma correcta y que
+// `puede_ver_tenant()` NUNCA se tocó (sigue siendo global para gerencia en
+// TODO el resto del sistema, sin cambios de esta ronda).
+// ───────────────────────────────────────────────────────────────────────────
+describe("acceso_ventas_vuelo_sistema() — aislamiento ESTRICTO por tenant, solo superadmin es global (hallazgo 1)", () => {
+  const mig156 = leer("supabase/migrations/20260601000156_empaquetados.sql");
+  const fn = mig156.slice(
+    mig156.indexOf("create or replace function public.acceso_ventas_vuelo_sistema"),
+    mig156.indexOf("create or replace view public.ventas_vuelo_sistema")
+  );
+
+  test("superadmin: alcance global — comparación directa con '=', SIN comparar tenant", () => {
+    assert.match(fn, /public\.mi_rol\(\) = 'superadmin'/);
+  });
+
+  test("gerencia/administracion/operaciones/control_vuelo: exige mi_tenant() = t (nunca puede_ver_tenant)", () => {
+    assert.match(fn, /public\.mi_rol\(\) in \('gerencia','administracion','operaciones','control_vuelo'\)\s*\n\s*and public\.mi_tenant\(\) = t/);
+  });
+
+  test("venta NO aparece en ninguna rama de la función (excluido a propósito, igual que antes)", () => {
+    assert.doesNotMatch(fn, /'venta'/);
+  });
+
+  test("puede_ver_tenant() en sí NUNCA se modificó — sigue dando alcance global a gerencia en todo el resto del sistema", () => {
+    const mig107 = leer("supabase/migrations/20260601000107_multitenant.sql");
+    assert.match(
+      mig107,
+      /select public\.mi_rol\(\) in \('superadmin','gerencia'\) or public\.mi_tenant\(\) = t;/,
+      "esta ronda no debía tocar puede_ver_tenant() — la función dedicada nueva es la única que cambia de comportamiento"
+    );
+  });
+
+  test("el rollback de la 156 también suelta acceso_ventas_vuelo_sistema() (después de la vista, antes que nada más dependa)", () => {
+    const rollback156 = leer("supabase/scripts/rollback_156_empaquetados.sql");
+    const idxDropVista = rollback156.indexOf("drop view if exists public.ventas_vuelo_sistema;");
+    const idxDropFn = rollback156.indexOf("drop function if exists public.acceso_ventas_vuelo_sistema(text);");
+    assert.ok(idxDropVista > 0 && idxDropFn > 0 && idxDropVista < idxDropFn, "la vista debe soltarse ANTES que la función de la que depende");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda siguiente — hallazgo 2 "ENLACE DE CONTRATO": un origen "contrato" en
+// EmpaquetadosTabla enlazaba SIEMPRE a /dashboard/contratos/[numero], sin
+// importar si el rol que mira la tabla tiene o no SELECT sobre `ventas` —
+// `control_vuelo` sí entra al módulo Vuelos pero NO tiene esa policy
+// (confirmado en la propia migración 116), así que el link cargaba una
+// ficha vacía por RLS sin ningún aviso.
+// ───────────────────────────────────────────────────────────────────────────
+describe("EmpaquetadosTabla / vuelos-page — el link a /dashboard/contratos se oculta cuando el rol no tiene acceso real (hallazgo 2)", () => {
+  const tablaSrc = leer("app/(dashboard)/dashboard/vuelos/EmpaquetadosTabla.tsx");
+  const rolesSrc = leer("lib/roles.ts");
+
+  test("ROLES_CONTRATO_COMPLETO existe y coincide EXACTAMENTE con la policy RLS real de SELECT sobre ventas (migración 116)", () => {
+    assert.match(rolesSrc, /export const ROLES_CONTRATO_COMPLETO: readonly Rol\[\] = \["superadmin", "gerencia", "administracion", "operaciones"\];/);
+    const mig116 = leer("supabase/migrations/20260601000116_rls_tenant_isolation.sql");
+    assert.match(mig116, /public\.mi_rol\(\) in \('superadmin','gerencia','administracion','operaciones'\)\s*\n\s*and public\.puede_ver_tenant\(tenant\)/, "ROLES_CONTRATO_COMPLETO debe reflejar exactamente esta policy — control_vuelo/venta NO están aquí");
+  });
+
+  test("EmpaquetadosTabla recibe puedeVerContrato y NO renderiza <Link> para origen 'contrato' cuando es false", () => {
+    assert.match(tablaSrc, /puedeVerContrato: boolean;/);
+    const render = tablaSrc.slice(tablaSrc.indexOf("{f.origen === \"contrato\" && !puedeVerContrato"), tablaSrc.indexOf("{f.aerolinea ?? "));
+    assert.match(render, /<span className="font-mono text-sm font-semibold text-gray-500"/, "sin acceso: texto plano, nunca un <Link>");
+    assert.match(render, /<Link/, "con acceso (u origen no-contrato): sigue existiendo el <Link> normal");
+  });
+
+  test("vuelos/page.tsx calcula puedeVerContrato con miRol()/ROLES_CONTRATO_COMPLETO y lo pasa a EmpaquetadosTabla — nunca fijo en true", () => {
+    assert.match(vuelosPageSrc, /import \{ miRol, ROLES_CONTRATO_COMPLETO \} from "@\/lib\/roles";/);
+    assert.match(vuelosPageSrc, /const puedeVerContrato = !!rol && ROLES_CONTRATO_COMPLETO\.includes\(rol\);/);
+    assert.match(vuelosPageSrc, /<EmpaquetadosTabla\s*\n\s*puedeVerContrato=\{puedeVerContrato\}/);
+  });
+
+  test("historico/page.tsx también calcula y propaga puedeVerContrato (mismo criterio que la vista activa)", () => {
+    assert.match(historicoPageSrc, /import \{ miRol, ROLES_CONTRATO_COMPLETO \} from "@\/lib\/roles";/);
+    assert.match(historicoPageSrc, /const puedeVerContrato = !!rol && ROLES_CONTRATO_COMPLETO\.includes\(rol\);/);
+    assert.match(historicoPageSrc, /<EmpaquetadosTabla\s*\n\s*puedeVerContrato=\{puedeVerContrato\}/);
+  });
+
+  test("los orígenes 'promocion' y 'sistema' (no 'contrato') conservan su link normal — el gate es SOLO para el link al contrato", () => {
+    assert.match(tablaSrc, /f\.origen === "contrato" \? f\.numeroContrato : \(f\.record \?\? "Sin record"\)/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda siguiente — hallazgo 3 "ERRORES DE CONSULTA": un fallo real de la
+// consulta a `ventas_vuelo_sistema` (RLS, red, timeout) se interpretaba
+// exactamente igual que "no hay empaquetados/contratos" — la pantalla
+// afirmaba algo falso ("No hay empaquetados activos") en vez de avisar que
+// la consulta falló.
+// ───────────────────────────────────────────────────────────────────────────
+describe("vuelos/page.tsx y historico/page.tsx — el error de ventas_vuelo_sistema se muestra, nunca se confunde con 'vacío' (hallazgo 3)", () => {
+  test("vuelos/page.tsx captura el error (no solo `data`) de la consulta a ventas_vuelo_sistema", () => {
+    assert.match(vuelosPageSrc, /data: dinamicosData, error: dinamicosError \}, rol\]/);
+  });
+
+  test("vuelos/page.tsx muestra un banner de error visible cuando dinamicosError existe", () => {
+    assert.match(vuelosPageSrc, /\{dinamicosError && \(/);
+    assert.match(vuelosPageSrc, /No se pudieron cargar los vuelos por contrato/);
+  });
+
+  test("vuelos/page.tsx NO muestra 'No hay empaquetados activos' cuando la consulta falló (solo cuando de verdad no hay datos)", () => {
+    // Búsqueda directa del ternario en sí (no por proximidad de texto): el
+    // estado "vacío" exige explícitamente `!dinamicosError` como TERCERA
+    // condición — sin ella, un error de la consulta caería en la misma
+    // rama que "de verdad no hay nada".
+    assert.match(vuelosPageSrc, /!empActivos\.length && !dinamicosActivos\.length && !dinamicosError \? \(/);
+  });
+
+  test("historico/page.tsx tiene el mismo tratamiento de error (captura + banner + no confundir con vacío)", () => {
+    assert.match(historicoPageSrc, /data: dinamicosData, error: dinamicosError \}, rol\]/);
+    assert.match(historicoPageSrc, /\{dinamicosError && \(/);
+    assert.match(historicoPageSrc, /!empPasados\.length && !dinamicosPasados\.length && !dinamicosError \? \(/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda siguiente — hallazgo 4 "BORRADO": sin SUPABASE_SERVICE_ROLE_KEY
+// configurada, `eliminarEmpaquetado` saltaba el chequeo de contratos
+// vinculados EN SILENCIO y caía directo al DELETE (con el FK como única
+// defensa, sin el mensaje útil). Ahora debe fallar cerrado.
+// ───────────────────────────────────────────────────────────────────────────
+describe("eliminarEmpaquetado — falla cerrado si falta SUPABASE_SERVICE_ROLE_KEY, nunca llega al DELETE (hallazgo 4)", () => {
+  const fn = empActionsSrc.slice(empActionsSrc.indexOf("export async function eliminarEmpaquetado"), empActionsSrc.indexOf("// ── Vincular/desvincular"));
+
+  test("ya NO existe el patrón viejo 'if (process.env.SUPABASE_SERVICE_ROLE_KEY) { ... }' que saltaba el chequeo en silencio", () => {
+    assert.doesNotMatch(fn, /if \(process\.env\.SUPABASE_SERVICE_ROLE_KEY\) \{/, "el chequeo ya no debe ser condicional-silencioso");
+  });
+
+  test("sin la clave, retorna error de configuración ANTES de crear el cliente admin o tocar ventas/empaquetados", () => {
+    assert.match(fn, /if \(!process\.env\.SUPABASE_SERVICE_ROLE_KEY\) \{\s*\n\s*return \{\s*\n\s*ok: false,\s*\n\s*error: "No se pudo verificar si este empaquetado tiene contratos vinculados/);
+  });
+
+  test("el return de fallo cerrado ocurre ANTES de createAdminClient() y del DELETE — nunca después", () => {
+    const idxFalloCerrado = fn.indexOf('if (!process.env.SUPABASE_SERVICE_ROLE_KEY)');
+    const idxAdmin = fn.indexOf('const admin = createAdminClient();');
+    const idxDelete = fn.indexOf('.from("empaquetados").delete()');
+    assert.ok(idxFalloCerrado > 0 && idxAdmin > 0 && idxDelete > 0, "los tres puntos deben existir");
+    assert.ok(idxFalloCerrado < idxAdmin && idxAdmin < idxDelete, "orden: fallo cerrado → cliente admin → DELETE, nunca al revés");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda siguiente — hallazgo 5 "ALCANCE FUNCIONAL": para contratos dinámicos
+// FUTUROS, se implementa el guardado de contrato_vuelos desde la salida
+// dinámica (origen.tipo === "salida") — el histórico sigue sin backfill de
+// lo ya existente. El histórico de Empaquetados también pasa a incluir el
+// origen "Contrato" ya pasado (antes solo mostraba promociones).
+// ───────────────────────────────────────────────────────────────────────────
+describe("reservar/actions.ts — contrato_vuelos se guarda también para origen 'salida' (contratos dinámicos futuros) (hallazgo 5)", () => {
+  test("el paso 7 incluye origen.tipo === \"salida\" junto a bloqueo/empaquetado (antes solo esos dos)", () => {
+    assert.match(
+      reservarActionsSrc,
+      /if \(\(origen\.tipo === "bloqueo" \|\| origen\.tipo === "empaquetado" \|\| origen\.tipo === "salida"\) && datosVuelo\) \{/
+    );
+  });
+
+  test("record/numero_vuelo quedan NULL para el tramo de una salida dinámica — nunca se inventa un valor que la fuente no tiene", () => {
+    // `datosVueloSalida` (lib/reservar/empaquetadoOrigen.ts) ya construye
+    // `record: null, vuelo_ida: null, vuelo_regreso: null` — el paso 7 arma
+    // el tramo a partir de esos mismos campos de `datosVuelo`, así que no
+    // hace falta un `if` especial: el shape genérico ya produce NULL para
+    // salida sin ningún caso aparte que pudiera inventar un valor.
+    const datosVueloSalidaSrc = leer("lib/reservar/empaquetadoOrigen.ts");
+    const fn = datosVueloSalidaSrc.slice(datosVueloSalidaSrc.indexOf("export async function datosVueloSalida"), datosVueloSalidaSrc.indexOf("/**\n * Resuelve"));
+    assert.match(fn, /aerolinea: s\.aerolinea, record: null, ruta: s\.ruta,/);
+    assert.match(fn, /vuelo_ida: null, vuelo_regreso: null,/);
+  });
+
+  test("ningún backfill de contratos dinámicos históricos — el comentario documenta explícitamente que es solo hacia adelante", () => {
+    assert.match(reservarActionsSrc, /NINGÚN backfill automático — solo contratos NUEVOS desde este cambio en/);
+  });
+});
+
+describe("historico/page.tsx — incluye el origen 'Contrato' ya pasado, mismo criterio que ../page.tsx (hallazgo 5)", () => {
+  test("consulta ventas_vuelo_sistema (nunca public.ventas directo), igual que la pantalla activa", () => {
+    assert.match(historicoPageSrc, /sb\.from\("ventas_vuelo_sistema"\)\.select\("\*"\)/);
+    assert.doesNotMatch(historicoPageSrc, /sb\.from\("ventas"\)/, "no debe quedar ninguna consulta directa a ventas en esta página");
+  });
+
+  test("filtra por esPasado(fecha_salida) — mismo criterio que dinamicosActivos en la pantalla activa", () => {
+    assert.match(historicoPageSrc, /const dinamicosPasados = todosDinamicos\.filter\(\(d\) => esPasado\(d\.fecha_salida, hoy\)\);/);
+  });
+
+  test("el viejo comentario 'NO se listan aquí todavía' ya no existe — el alcance se implementó", () => {
+    assert.doesNotMatch(historicoPageSrc, /NO\s*\n\s*se listan aquí todavía/);
+  });
+
+  test("EmpaquetadosTabla en el histórico recibe también las filas de origen 'contrato'", () => {
+    const bloque = historicoPageSrc.slice(historicoPageSrc.indexOf("vistaEmpaquetados ? ("), historicoPageSrc.indexOf("vistaControl ? ("));
+    assert.match(bloque, /\.\.\.dinamicosPasados\.map\(\(d\) => \(\{/);
+    assert.match(bloque, /id: `contrato:\$\{d\.numero_contrato\}`, origen: "contrato" as const/);
   });
 });

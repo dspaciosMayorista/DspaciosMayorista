@@ -280,49 +280,39 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     });
   }
 
-  // 7) Vuelo del contrato (bloqueo o empaquetado) — 1 fila por tramo (ida y
-  // regreso), no 1 fila mezclando ambos sentidos. Usa EXCLUSIVAMENTE
-  // `datosVuelo`, ya resuelto y validado en el paso 2c contra el `origen`
-  // discriminado — nunca vuelve a consultar por `input.bloqueoId`/
-  // `empaquetadoId` directos, así que no hay forma de que este paso arme el
-  // tramo de un origen distinto al que se usó para el precio (defecto 1).
-  // (La salida dinámica no arma `contrato_vuelos` aquí — comportamiento
-  // preexistente, sin cambios: solo queda en el snapshot de la cotización.
+  // 7) Vuelo del contrato (bloqueo, empaquetado o salida dinámica) — 1 fila
+  // por tramo (ida y regreso), no 1 fila mezclando ambos sentidos. Usa
+  // EXCLUSIVAMENTE `datosVuelo`, ya resuelto y validado en el paso 2c contra
+  // el `origen` discriminado — nunca vuelve a consultar por
+  // `input.bloqueoId`/`empaquetadoId`/`salidaId` directos, así que no hay
+  // forma de que este paso arme el tramo de un origen distinto al que se
+  // usó para el precio (defecto 1).
   //
-  // HALLAZGO 7 (revisión posterior al PR #268) — DOCUMENTADO, NO
-  // IMPLEMENTADO EN ESTA RONDA (se pidió "analiza", no "implementa"):
+  // HALLAZGO 7 (revisión posterior al PR #268) + su implementación en la
+  // ronda siguiente (hallazgo 5, "ALCANCE FUNCIONAL"):
   //
-  // Los contratos dinámicos HISTÓRICOS (ya creados antes de esta revisión)
-  // NUNCA tuvieron `contrato_vuelos` — sus únicos datos de vuelo son las
-  // columnas planas de `ventas` (`aerolinea`/`fecha_salida`/`fecha_regreso`/
+  // Los contratos dinámicos HISTÓRICOS (creados ANTES de esta rama) NUNCA
+  // tuvieron `contrato_vuelos` — sus únicos datos de vuelo son las columnas
+  // planas de `ventas` (`aerolinea`/`fecha_salida`/`fecha_regreso`/
   // `costo_aereo`), sin ruta IATA, sin horarios, sin número de vuelo. Esto
-  // es estructural, no un bug de esta revisión — no hay ruta segura de
-  // "backfill por coincidencia de texto" (record/aerolínea/fecha) sin
-  // arriesgar emparejar el contrato equivocado; por eso `ventas_vuelo_sistema`
-  // (hallazgo 2) expone SOLO lo que existe, y por eso el diagnóstico de
-  // solo lectura (`supabase/scripts/diagnostico_empaquetados_dinamico.sql`)
-  // es el punto de partida si se quiere clasificar los casos ambiguos.
+  // sigue siendo estructural, no se toca: no hay ruta segura de "backfill
+  // por coincidencia de texto" (record/aerolínea/fecha) sin arriesgar
+  // emparejar el contrato equivocado — por eso `ventas_vuelo_sistema`
+  // (hallazgo 2) expone SOLO lo que existe, y el diagnóstico de solo
+  // lectura (`supabase/scripts/diagnostico_empaquetados_dinamico.sql`) sigue
+  // siendo el punto de partida si se quiere clasificar los casos ambiguos.
+  // NINGÚN backfill automático — solo contratos NUEVOS desde este cambio en
+  // adelante quedan con `contrato_vuelos` real.
   //
-  // Para contratos dinámicos FUTUROS, sí seria viable insertar
-  // `contrato_vuelos` desde `salidas_dinamicas` en este mismo paso 7 — la
-  // salida SÍ tiene `ruta`/`origen` (aunque no horarios/número de vuelo, que
-  // esa tabla tampoco captura hoy). Análisis del cambio, si se decide hacer:
-  //   1. Agregar una rama `else if (origen.tipo === "salida" && datosVuelo)`
-  //      aquí mismo, con el mismo shape de tramos ida/regreso — `datosVuelo`
-  //      YA trae `ruta`/`fecha_ida`/`fecha_regreso`/`hora_*` para salida
-  //      (`datosVueloSalida`, `lib/reservar/empaquetadoOrigen.ts`); solo
-  //      faltaría decidir qué va en `record`/`numero_vuelo` (hoy `null`,
-  //      ninguna salida dinámica los captura).
-  //   2. Alcance: SOLO contratos nuevos desde que se active — el histórico
-  //      sigue dependiendo de `ventas_vuelo_sistema`. Ningún backfill.
-  //   3. Impacto: `ventas_vuelo_sistema.origen='dinamico'` seguiría
-  //      necesitando la columna `tenant`/`aerolinea` planas de `ventas` para
-  //      lo YA existente, pero los contratos nuevos podrían leerse por
-  //      `contrato_vuelos_basica` en vez de o además de esta vista — a
-  //      decidir cuando se implemente, no en esta ronda.
-  //   4. Riesgo: ninguno nuevo — es aditivo, no toca bloqueo/empaquetado.
-  // Pendiente de decisión del dueño antes de implementarlo.)
-  if ((origen.tipo === "bloqueo" || origen.tipo === "empaquetado") && datosVuelo) {
+  // Para contratos dinámicos NUEVOS: `datosVuelo` (origen.tipo === "salida",
+  // vía `datosVueloSalida`, `lib/reservar/empaquetadoOrigen.ts`) YA trae
+  // `ruta`/`fecha_ida`/`fecha_regreso`/`hora_*` desde `salidas_dinamicas` —
+  // se arma el mismo shape de tramos ida/regreso que bloqueo/empaquetado.
+  // `record`/`numero_vuelo` quedan `null` a propósito: `salidas_dinamicas`
+  // no captura esos datos hoy (no existe PNR ni número de vuelo negociado en
+  // una salida por sistema) — usar SOLO datos reales, nunca inventar un
+  // valor donde la fuente no lo tiene.
+  if ((origen.tipo === "bloqueo" || origen.tipo === "empaquetado" || origen.tipo === "salida") && datosVuelo) {
     const r = parseRuta(datosVuelo.ruta);
     const tramos: {
       numero_contrato: string; aerolinea: string | null; record: string | null; direccion: string;

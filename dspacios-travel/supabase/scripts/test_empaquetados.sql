@@ -394,12 +394,25 @@ reset role;
 select set_config('request.jwt.claims', null, true);
 
 -- ═════════════════════════════════════════════════════════════════════════
--- I. ventas_vuelo_sistema — RLS por rol y aislamiento entre tenants
---    (revisión posterior al PR #268, hallazgo 2 "LISTA UNIFICADA Y RLS").
---    Prueba real por rol: control_vuelo (el gap reportado), venta (excluido
---    a propósito del set de roles) — superadmin/gerencia/administracion/
---    operaciones ya tenían SELECT directo sobre `ventas` desde la 116, sin
---    cambios de esta revisión, no se repiten aquí.
+-- I. ventas_vuelo_sistema — RLS por rol y aislamiento ESTRICTO entre tenants
+--    (revisión posterior al PR #268, hallazgo 2 "LISTA UNIFICADA Y RLS" +
+--    ronda siguiente, hallazgo 1 "AISLAMIENTO DE GERENCIA"). La primera
+--    versión de esta vista usaba `puede_ver_tenant()` — que le da a
+--    `gerencia` alcance GLOBAL, igual que al resto del sistema — pero para
+--    ESTA vista puntual se pidió que `gerencia` quede acotada a SU tenant,
+--    igual que administracion/operaciones/control_vuelo, y que SOLO
+--    `superadmin` conserve alcance global. La vista ahora usa
+--    `acceso_ventas_vuelo_sistema()`, una función DEDICADA — `puede_ver_
+--    tenant()` en sí NUNCA se tocó (sigue dando alcance global a `gerencia`
+--    en todo el resto del sistema, sin cambios).
+--
+--    Matriz COMPLETA por rol, contra los mismos 3 fixtures de `ventas`:
+--    superadmin (global) · gerencia mayorista/minorista (solo su tenant,
+--    el caso central de este hallazgo) · administracion (solo su tenant) ·
+--    operaciones (solo su tenant) · control_vuelo (solo su tenant, el gap
+--    original de la ronda anterior) · venta (excluido, 0 filas) · usuario
+--    INACTIVO (0 filas, aunque su rol guardado SÍ tendría acceso) · perfil
+--    AUSENTE (0 filas) · anon (0 filas o rechazado antes de RLS).
 -- ═════════════════════════════════════════════════════════════════════════
 insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) values
   ('99-9992', 'Cliente dinámico mayorista', 'mayorista', 'dinamico'),
@@ -407,36 +420,140 @@ insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) value
 insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete, empaquetado_ref_id) values
   ('99-9990', 'Cliente empaquetado mayorista', 'mayorista', 'bloqueo', 9310);
 
-set local role authenticated;
-select set_config('request.jwt.claims', json_build_object('sub','99999999-9999-9999-9999-999999999999','role','authenticated')::text, true);
+-- Fixtures de rol adicionales para la matriz (operaciones/venta/control_vuelo
+-- ya existen más arriba en este script, con tenant 'mayorista').
+insert into auth.users (id, email) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'superadmin-emp@test.com');
+insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'superadmin-emp@test.com', 'Superadmin Empaquetados', 'superadmin', true, 'mayorista')
+  on conflict (id) do update set nombre = excluded.nombre, rol = excluded.rol, activo = excluded.activo, tenant = excluded.tenant;
 
-do $$
+insert into auth.users (id, email) values ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'gerencia-may-emp@test.com');
+insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'gerencia-may-emp@test.com', 'Gerencia Mayorista Empaquetados', 'gerencia', true, 'mayorista')
+  on conflict (id) do update set nombre = excluded.nombre, rol = excluded.rol, activo = excluded.activo, tenant = excluded.tenant;
+
+-- El caso CENTRAL de este hallazgo: gerencia de la OTRA agencia. Con
+-- puede_ver_tenant() (versión anterior de la vista) esta usuaria vería LOS
+-- 3 fixtures (alcance global) — con acceso_ventas_vuelo_sistema() debe ver
+-- SOLO el suyo (99-9991).
+insert into auth.users (id, email) values ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'gerencia-min-emp@test.com');
+insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', 'gerencia-min-emp@test.com', 'Gerencia Minorista Empaquetados', 'gerencia', true, 'minorista')
+  on conflict (id) do update set nombre = excluded.nombre, rol = excluded.rol, activo = excluded.activo, tenant = excluded.tenant;
+
+insert into auth.users (id, email) values ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'admin-emp@test.com');
+insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
+  ('dddddddd-dddd-dddd-dddd-dddddddddddd', 'admin-emp@test.com', 'Administracion Empaquetados', 'administracion', true, 'mayorista')
+  on conflict (id) do update set nombre = excluded.nombre, rol = excluded.rol, activo = excluded.activo, tenant = excluded.tenant;
+
+-- Usuario INACTIVO: rol con acceso normal (gerencia, tenant mayorista) pero
+-- activo=false — por migración 140, mi_rol() no devuelve rol si activo es
+-- false, así que debe dar CERO filas sin importar qué rol tenga guardado.
+insert into auth.users (id, email) values ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'inactivo-emp@test.com');
+insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
+  ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'inactivo-emp@test.com', 'Inactivo Empaquetados', 'gerencia', false, 'mayorista')
+  on conflict (id) do update set nombre = excluded.nombre, rol = excluded.rol, activo = excluded.activo, tenant = excluded.tenant;
+
+-- Perfil AUSENTE: `auth.uid()` en este stub lee el claim `sub` del JWT
+-- directamente (request.jwt.claims), sin depender de ninguna fila en
+-- auth.users ni en public.usuarios — así que ni siquiera hace falta
+-- insertar en auth.users: un UUID fresco, nunca usado en ningún lado, ya
+-- reproduce "perfil ausente" tal cual.
+
+create function pg_temp.assert_ventas_vuelo_sistema(p_uid text, p_esperado text[], p_etiqueta text)
+returns void language plpgsql as $$
 declare v_contratos text[];
 begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('sub', p_uid, 'role', 'authenticated')::text, true);
   select array_agg(numero_contrato order by numero_contrato) into v_contratos
     from public.ventas_vuelo_sistema
    where numero_contrato in ('99-9992', '99-9991', '99-9990');
-  perform pg_temp.assert_eq(
-    v_contratos, array['99-9990', '99-9992']::text[],
-    'I1: control_vuelo (tenant mayorista) debe ver 99-9992 (dinámico) y 99-9990 (empaquetado_ref_id) — NUNCA 99-9991 (minorista, aislamiento entre tenants)'
-  );
-end $$;
+  reset role;
+  perform set_config('request.jwt.claims', null, true);
+  if v_contratos is distinct from p_esperado then
+    raise exception 'ASSERT FALLÓ (%): esperado=%, obtuvo=%', p_etiqueta, p_esperado, v_contratos;
+  end if;
+end;
+$$;
+
+-- superadmin: alcance GLOBAL — ve los 3 fixtures, de AMBOS tenants.
+select pg_temp.assert_ventas_vuelo_sistema(
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', array['99-9990','99-9991','99-9992']::text[],
+  'I1: superadmin debe ver los 3 fixtures (alcance global, sin comparar tenant)'
+);
+
+-- gerencia mayorista: SOLO su tenant — nunca 99-9991 (minorista).
+select pg_temp.assert_ventas_vuelo_sistema(
+  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', array['99-9990','99-9992']::text[],
+  'I2: gerencia (tenant mayorista) debe ver SOLO su tenant — NUNCA 99-9991 (minorista). Con puede_ver_tenant() (versión anterior) habría visto los 3 — este es el caso CENTRAL del hallazgo'
+);
+
+-- gerencia minorista: el espejo de la I2 — SOLO 99-9991, nunca los 2 de mayorista.
+select pg_temp.assert_ventas_vuelo_sistema(
+  'cccccccc-cccc-cccc-cccc-cccccccccccc', array['99-9991']::text[],
+  'I3: gerencia (tenant minorista) debe ver SOLO su tenant — NUNCA 99-9990/99-9992 (mayorista)'
+);
+
+-- administracion: mismo criterio que gerencia (solo su tenant, nunca global).
+select pg_temp.assert_ventas_vuelo_sistema(
+  'dddddddd-dddd-dddd-dddd-dddddddddddd', array['99-9990','99-9992']::text[],
+  'I4: administracion (tenant mayorista) debe ver SOLO su tenant'
+);
+
+-- operaciones: mismo criterio (fixture 'op-emp', ya creado más arriba, tenant mayorista).
+select pg_temp.assert_ventas_vuelo_sistema(
+  '77777777-7777-7777-7777-777777777777', array['99-9990','99-9992']::text[],
+  'I5: operaciones (tenant mayorista) debe ver SOLO su tenant'
+);
+
+-- control_vuelo: el gap ORIGINAL reportado en la ronda anterior — sigue viendo su tenant.
+select pg_temp.assert_ventas_vuelo_sistema(
+  '99999999-9999-9999-9999-999999999999', array['99-9990','99-9992']::text[],
+  'I6: control_vuelo (tenant mayorista) debe ver 99-9992 (dinámico) y 99-9990 (empaquetado_ref_id) — NUNCA 99-9991 (minorista)'
+);
+
+-- venta: excluido a propósito del set de roles — 0 filas.
+select pg_temp.assert_ventas_vuelo_sistema(
+  '88888888-8888-8888-8888-888888888888', null::text[],
+  'I7: venta NO debe ver NINGUNA fila — excluido a propósito del set de roles (no entra al módulo Vuelos)'
+);
+
+-- usuario INACTIVO (rol gerencia, activo=false): 0 filas — mi_rol() no
+-- devuelve rol si activo=false (migración 140), así que ninguna rama del
+-- OR de acceso_ventas_vuelo_sistema() puede ser verdadera.
+select pg_temp.assert_ventas_vuelo_sistema(
+  'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', null::text[],
+  'I8: usuario inactivo (rol gerencia guardado, activo=false) debe ver 0 filas'
+);
+
+-- perfil AUSENTE (UUID nunca insertado en usuarios ni en auth.users): 0
+-- filas — mi_rol() debe devolver NULL, nunca colar un rol por accidente.
+select pg_temp.assert_ventas_vuelo_sistema(
+  'ffffffff-ffff-ffff-ffff-ffffffffffff', null::text[],
+  'I9: perfil ausente (sin fila en public.usuarios) debe ver 0 filas'
+);
+
+-- Origen calculado correcto (independiente de la matriz de roles — se
+-- verifica una vez, impersonando control_vuelo).
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','99999999-9999-9999-9999-999999999999','role','authenticated')::text, true);
 
 do $$
 declare v_origen text;
 begin
   select origen into v_origen from public.ventas_vuelo_sistema where numero_contrato = '99-9990';
-  perform pg_temp.assert_eq(v_origen, 'empaquetado'::text, 'I2: el origen calculado debe ser ''empaquetado'' cuando empaquetado_ref_id no es null');
+  perform pg_temp.assert_eq(v_origen, 'empaquetado'::text, 'I10: el origen calculado debe ser ''empaquetado'' cuando empaquetado_ref_id no es null');
   select origen into v_origen from public.ventas_vuelo_sistema where numero_contrato = '99-9992';
-  perform pg_temp.assert_eq(v_origen, 'dinamico'::text, 'I3: el origen calculado debe ser ''dinamico'' para tipo_paquete=''dinamico'' sin empaquetado_ref_id');
+  perform pg_temp.assert_eq(v_origen, 'dinamico'::text, 'I11: el origen calculado debe ser ''dinamico'' para tipo_paquete=''dinamico'' sin empaquetado_ref_id');
 end $$;
 
 reset role;
 select set_config('request.jwt.claims', null, true);
 
--- control_vuelo NUNCA debe alcanzar precio_venta/cliente/costo — ni siquiera
--- pidiéndolo directo por PostgREST: la vista no tiene esas columnas, así que
--- no hay `select *` que las devuelva por accidente.
+-- Ningún rol (incl. control_vuelo) debe alcanzar precio_venta/cliente/costo
+-- — ni siquiera pidiéndolo directo por PostgREST: la vista no tiene esas
+-- columnas, así que no hay `select *` que las devuelva por accidente.
 do $$
 declare v_cols bigint;
 begin
@@ -444,19 +561,27 @@ begin
     from information_schema.columns
    where table_name = 'ventas_vuelo_sistema'
      and column_name in ('cliente', 'precio_venta', 'costo_hotel', 'costo_aereo', 'comision_b2b', 'cliente_documento', 'cliente_telefono', 'cliente_email');
-  perform pg_temp.assert_eq(v_cols, 0::bigint, 'I4: ventas_vuelo_sistema no debe tener NINGUNA columna financiera/PII');
+  perform pg_temp.assert_eq(v_cols, 0::bigint, 'I12: ventas_vuelo_sistema no debe tener NINGUNA columna financiera/PII');
 end $$;
 
-set local role authenticated;
-select set_config('request.jwt.claims', json_build_object('sub','88888888-8888-8888-8888-888888888888','role','authenticated')::text, true);
+-- anon: sin JWT, rol de Postgres 'anon' (sin GRANT sobre la vista — solo se
+-- otorgó a 'authenticated'). Debe dar 0 filas, ya sea porque la consulta
+-- vacía o porque Postgres la rechaza ANTES de evaluar RLS (permission
+-- denied) — cualquiera de los dos casos es 0 filas alcanzables.
+set local role anon;
+select set_config('request.jwt.claims', '{}', true);
 
 do $$
-declare v_n bigint;
+declare v_n bigint := -1;
 begin
-  select count(*) into v_n
-    from public.ventas_vuelo_sistema
-   where numero_contrato in ('99-9992', '99-9991', '99-9990');
-  perform pg_temp.assert_eq(v_n, 0::bigint, 'I5: venta NO debe ver NINGUNA fila de ventas_vuelo_sistema — excluido a propósito del set de roles (no entra al módulo Vuelos)');
+  begin
+    select count(*) into v_n
+      from public.ventas_vuelo_sistema
+     where numero_contrato in ('99-9992', '99-9991', '99-9990');
+  exception when insufficient_privilege then
+    v_n := 0;
+  end;
+  perform pg_temp.assert_eq(v_n, 0::bigint, 'I13: anon debe ver 0 filas (select vacío, o rechazado con permission denied antes de RLS)');
 end $$;
 
 reset role;

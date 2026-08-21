@@ -19,6 +19,16 @@
 -- columnas nunca lleguen pobladas a la vez desde la aplicación) y el reporte
 -- de la ronda de corrección en el PR para el detalle completo.
 --
+-- ⚠️ EDITADA OTRA VEZ (ronda siguiente, hallazgo 1 "AISLAMIENTO DE
+-- GERENCIA"): la vista `ventas_vuelo_sistema` (agregada en la edición
+-- anterior de este mismo archivo) usaba `puede_ver_tenant()`, que le da a
+-- `gerencia` alcance GLOBAL — para esta vista puntual se pidió que `gerencia`
+-- quede acotada a SU tenant (solo `superadmin` es global), sin tocar
+-- `puede_ver_tenant()` en general. Se agrega la función dedicada
+-- `acceso_ventas_vuelo_sistema(t text)` y la vista pasa a usarla — ver el
+-- comentario junto a la definición de la vista, más abajo, para el detalle
+-- completo. Aditivo dentro de la misma migración 156, sigue sin ejecutarse.
+--
 -- QUÉ ES
 --   Una salida aérea comprada/cotizada POR SISTEMA (sin cupo negociado con
 --   la aerolínea) que la agencia usa para armar promociones. A diferencia de
@@ -457,6 +467,42 @@ grant select on public.ventas_basica to authenticated;
 -- ese tipo de contrato nunca lo tiene) Y cualquier contrato con
 -- `empaquetado_ref_id` poblado (nace con `tipo_paquete='bloqueo'`, no
 -- 'dinamico' — se perdería si el filtro fuera solo por tipo_paquete).
+--
+-- ⚠️ AISLAMIENTO ESTRICTO POR TENANT (hallazgo 1 de la ronda siguiente,
+-- "AISLAMIENTO DE GERENCIA"): la primera versión de esta vista reutilizaba
+-- `public.puede_ver_tenant()` — la misma función que usa el resto del
+-- sistema (`ventas`, `ventas_basica`, etc.), donde `gerencia` tiene alcance
+-- GLOBAL a propósito (migración 107). Para ESTA vista puntual (inventario
+-- operativo de vuelos, no la ficha financiera del contrato) se pidió que
+-- `gerencia` quede acotada a SU tenant, igual que administracion/
+-- operaciones/control_vuelo, y que SOLO `superadmin` conserve alcance
+-- global — así que NO se puede usar `puede_ver_tenant()` aquí sin cambiar su
+-- comportamiento para TODO el resto del sistema (algo que no se pidió y que
+-- rompería garantías ya probadas en otras vistas/policies). Se define una
+-- función DEDICADA en su lugar, nunca se toca `puede_ver_tenant()`.
+--
+-- Comportamiento exacto (ver `test_empaquetados.sql`, sección I, para la
+-- matriz completa por rol):
+--   · superadmin                                    → alcance global.
+--   · gerencia / administracion / operaciones /
+--     control_vuelo                                 → SOLO su propio tenant
+--     (`mi_tenant() = t`), nunca el de la otra agencia.
+--   · cualquier otro rol (incl. `venta`, excluido a propósito)  → 0 filas.
+--   · `mi_rol()` ya devuelve NULL si el usuario está inactivo o no tiene
+--     fila en `public.usuarios` (migración 140, `mi_rol()` filtra
+--     `activo`) — con NULL, ninguna rama de este `or` es verdadera, así que
+--     un perfil ausente/inactivo obtiene 0 filas sin necesitar un caso
+--     aparte aquí.
+create or replace function public.acceso_ventas_vuelo_sistema(t text) returns boolean
+  language sql stable security definer set search_path = public as $$
+  select
+    public.mi_rol() = 'superadmin'
+    or (
+      public.mi_rol() in ('gerencia','administracion','operaciones','control_vuelo')
+      and public.mi_tenant() = t
+    );
+$$;
+
 create or replace view public.ventas_vuelo_sistema as
   select
     v.numero_contrato, v.tenant, v.tipo_paquete, v.aerolinea,
@@ -464,8 +510,7 @@ create or replace view public.ventas_vuelo_sistema as
     case when v.empaquetado_ref_id is not null then 'empaquetado' else 'dinamico' end as origen
   from public.ventas v
   where (v.tipo_paquete = 'dinamico' or v.empaquetado_ref_id is not null)
-    and public.mi_rol() in ('superadmin','gerencia','administracion','operaciones','control_vuelo')
-    and public.puede_ver_tenant(v.tenant);
+    and public.acceso_ventas_vuelo_sistema(v.tenant);
 
 grant select on public.ventas_vuelo_sistema to authenticated;
 

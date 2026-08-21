@@ -233,21 +233,38 @@ export async function eliminarEmpaquetado(id: number): Promise<Result> {
   // bloquearse. El FK (`ON DELETE RESTRICT` en `empaquetados` vía la CxP —
   // no, vía la propia referencia de `ventas.empaquetado_ref_id`) sigue como
   // defensa final si este chequeo se saltara por cualquier motivo.
-  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const admin = createAdminClient();
-    const { data: enContratos, error: eCon } = await admin
-      .from("ventas")
-      .select("numero_contrato")
-      .eq("empaquetado_ref_id", id)
-      .order("numero_contrato");
-    if (eCon) return { ok: false, error: eCon.message };
-    if (enContratos && enContratos.length) {
-      const lista = enContratos.map((v) => v.numero_contrato).join(", ");
-      return {
-        ok: false,
-        error: `No se puede eliminar: este empaquetado tiene ${enContratos.length} contrato(s) vinculado(s) (${lista}). Desactívalo (Activo = No) en vez de borrarlo.`,
-      };
-    }
+  //
+  // FALLO CERRADO (ronda siguiente, hallazgo 4 "BORRADO"): la primera
+  // versión de este chequeo solo corría `if (process.env.
+  // SUPABASE_SERVICE_ROLE_KEY)` — sin esa variable configurada, el `if`
+  // completo se saltaba EN SILENCIO y el código caía directo al DELETE de
+  // abajo, dejando la comprobación de contratos vinculados como si nunca
+  // hubiera existido (el FK seguía como última defensa, pero el mensaje útil
+  // con la lista de contratos nunca aparecía — y para `control_vuelo`, sin
+  // SELECT sobre `ventas`, el FK tampoco lo hubiera detenido si el borrado
+  // llegara a colarse por cualquier otra vía). Ahora, sin la clave de
+  // servicio configurada, la función NO intenta el DELETE — falla cerrado
+  // con un mensaje explícito de configuración, igual criterio que el paso
+  // 2c de `reservar/actions.ts` para el mismo caso.
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return {
+      ok: false,
+      error: "No se pudo verificar si este empaquetado tiene contratos vinculados (configuración del servidor incompleta). No se eliminó nada — intenta de nuevo más tarde o contacta a soporte.",
+    };
+  }
+  const admin = createAdminClient();
+  const { data: enContratos, error: eCon } = await admin
+    .from("ventas")
+    .select("numero_contrato")
+    .eq("empaquetado_ref_id", id)
+    .order("numero_contrato");
+  if (eCon) return { ok: false, error: eCon.message };
+  if (enContratos && enContratos.length) {
+    const lista = enContratos.map((v) => v.numero_contrato).join(", ");
+    return {
+      ok: false,
+      error: `No se puede eliminar: este empaquetado tiene ${enContratos.length} contrato(s) vinculado(s) (${lista}). Desactívalo (Activo = No) en vez de borrarlo.`,
+    };
   }
 
   const { data, error } = await sb.from("empaquetados").delete().eq("id", id).select("id").maybeSingle();

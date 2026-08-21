@@ -11,6 +11,7 @@ import { History } from "lucide-react";
 import { conteoPorBloqueo, sumarConteos, esPasado, ocupacionPct, conteoCero, type ConteoSillas } from "@/lib/vuelos/stats";
 import { hoyISO } from "@/lib/calc/paquetes";
 import { normalizarModalidadLegible, type ModalidadControl } from "@/lib/vuelos/control";
+import { miRol, ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +68,9 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
   // (Empaquetados y Control comparten `empaquetados`; Inventario y Control
   // comparten `bloqueos_vuelo`), así que optimizar por vista aquí solo
   // agregaría complejidad de tipos sin un ahorro real.
-  const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }, { data: dinamicosData }] = await Promise.all([
+  type FilaVentaVueloSistema = { numero_contrato: string; tenant: string; tipo_paquete: string | null; aerolinea: string | null; fecha_salida: string | null; fecha_regreso: string | null; empaquetado_ref_id: number | null; origen: "dinamico" | "empaquetado" };
+
+  const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }, { data: dinamicosData, error: dinamicosError }, rol] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: true }),
     vistaInventario
       ? sb.from("sillas").select("bloqueo_id, estado")
@@ -83,11 +86,20 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
     // paso, la vista nunca expone costo/precio/cliente (evita mostrar
     // finanzas por esta pantalla operativa, ver hallazgo 3 "columna
     // engañosa": ya no hay una cifra que se pueda confundir con una tarifa
-    // unitaria). Solo se consulta en la pestaña Empaquetados.
+    // unitaria). Solo se consulta en la pestaña Empaquetados. `error` se
+    // conserva (hallazgo 3, ronda siguiente, "ERRORES DE CONSULTA"): antes se
+    // descartaba y un fallo de lectura se veía IDÉNTICO a "no hay
+    // empaquetados/contratos", afirmando algo falso ante el usuario.
     vistaEmpaquetados
       ? sb.from("ventas_vuelo_sistema").select("*").order("fecha_salida", { ascending: true })
-      : Promise.resolve({ data: null as { numero_contrato: string; tenant: string; tipo_paquete: string | null; aerolinea: string | null; fecha_salida: string | null; fecha_regreso: string | null; empaquetado_ref_id: number | null; origen: "dinamico" | "empaquetado" }[] | null }),
+      : Promise.resolve({ data: null as FilaVentaVueloSistema[] | null, error: null as { message: string } | null }),
+    miRol(),
   ]);
+
+  // Rol con acceso real a /dashboard/contratos/[numero] (hallazgo 2, ronda
+  // siguiente, "ENLACE DE CONTRATO") — ver el comentario junto a
+  // `ROLES_CONTRATO_COMPLETO` en lib/roles.ts.
+  const puedeVerContrato = !!rol && ROLES_CONTRATO_COMPLETO.includes(rol);
 
   // Activos vs pasados: una fila cuya fecha de ida ya pasó queda INACTIVA y
   // se mueve al histórico (/dashboard/vuelos/historico). Mismo criterio
@@ -193,13 +205,28 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
       )}
 
       {vistaEmpaquetados ? (
-        !empActivos.length && !dinamicosActivos.length ? (
-          <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">
-            <p className="text-lg">No hay empaquetados activos</p>
-            <p className="mt-1 text-sm">Crea el primero con el botón “Nuevo empaquetado”.</p>
-          </div>
-        ) : (
+        <>
+          {/* Hallazgo 3 (ronda siguiente, "ERRORES DE CONSULTA"): un fallo de
+              la consulta a `ventas_vuelo_sistema` (RLS, red, timeout) NO debe
+              verse igual que "no hay contratos por sistema" — antes
+              `dinamicosData` quedaba `null` en cualquiera de los dos casos y
+              la pantalla afirmaba "No hay empaquetados activos" aunque en
+              realidad la consulta hubiera fallado. Las tarifas promocionales
+              (`empaquetadosData`) son una consulta aparte y se siguen
+              mostrando normalmente si esa sí tuvo éxito. */}
+          {dinamicosError && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              No se pudieron cargar los vuelos por contrato (dinámicos/empaquetados vinculados a una venta real): {dinamicosError.message}. Los datos de esta sección pueden estar incompletos — intenta recargar la página.
+            </div>
+          )}
+          {!empActivos.length && !dinamicosActivos.length && !dinamicosError ? (
+            <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">
+              <p className="text-lg">No hay empaquetados activos</p>
+              <p className="mt-1 text-sm">Crea el primero con el botón “Nuevo empaquetado”.</p>
+            </div>
+          ) : !empActivos.length && !dinamicosActivos.length && dinamicosError ? null : (
           <EmpaquetadosTabla
+            puedeVerContrato={puedeVerContrato}
             filas={[
               ...empActivos.map((e) => ({
                 id: `promocion:${e.id}`, origen: "promocion" as const, record: e.record, numeroContrato: null,
@@ -227,7 +254,8 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
               })),
             ]}
           />
-        )
+          )}
+        </>
       ) : vistaControl ? (
         !filasControl.length ? (
           <div className="rounded-2xl border-2 border-dashed border-gray-200 py-20 text-center text-gray-400">

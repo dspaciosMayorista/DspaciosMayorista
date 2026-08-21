@@ -45,9 +45,13 @@ alter table public.tarifario_resultado drop column if exists empaquetado_id;
 -- `empaquetado_ref_id`, que ya no existirá en `ventas` tras el drop de abajo).
 -- `ventas_vuelo_sistema` (revisión posterior, hallazgo 2) TAMBIÉN depende de
 -- `empaquetado_ref_id` — se suelta aquí mismo, sin restaurarla (no existía
--- antes de esta migración).
+-- antes de esta migración). `acceso_ventas_vuelo_sistema()` (ronda
+-- siguiente, hallazgo 1 "AISLAMIENTO DE GERENCIA") es la función que usa esa
+-- vista en su `where` — se suelta DESPUÉS de la vista (la vista depende de
+-- la función, no al revés) y también sin restaurarla, mismo motivo.
 drop view if exists public.ventas_basica;
 drop view if exists public.ventas_vuelo_sistema;
+drop function if exists public.acceso_ventas_vuelo_sistema(text);
 
 alter table public.ventas drop constraint if exists ventas_origen_excluyente_check;
 alter table public.ventas drop column if exists empaquetado_ref_id;

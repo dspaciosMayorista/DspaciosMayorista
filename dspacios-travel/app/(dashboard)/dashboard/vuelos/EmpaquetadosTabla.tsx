@@ -46,7 +46,23 @@ export type EmpaquetadoFila = {
   activo: boolean;
 };
 
-export function EmpaquetadosTabla({ filas }: { filas: EmpaquetadoFila[] }) {
+export function EmpaquetadosTabla({
+  filas,
+  puedeVerContrato,
+}: {
+  filas: EmpaquetadoFila[];
+  // Hallazgo 2 (ronda posterior al PR #268, "ENLACE DE CONTRATO"): un origen
+  // "contrato" siempre enlazaba a /dashboard/contratos/[numero] sin importar
+  // el rol de quien mira esta tabla — pero `control_vuelo` (que SÍ entra al
+  // módulo Vuelos) no tiene SELECT sobre `ventas`/`contrato_*`, así que ese
+  // link cargaba una ficha vacía por RLS, sin ningún aviso. Decidido por el
+  // SERVIDOR (`ROLES_CONTRATO_COMPLETO`, lib/roles.ts) y pasado como prop —
+  // nunca inferido en el cliente. Cuando es `false`, el número de contrato se
+  // muestra como texto plano (sin link, sin acceso a PII/finanzas); el resto
+  // de roles (superadmin/gerencia/administracion/operaciones) conserva el
+  // link tal como antes.
+  puedeVerContrato: boolean;
+}) {
   const [fRuta, setFRuta] = useState("");
   const [fMes, setFMes] = useState("");
   const [fAerolinea, setFAerolinea] = useState("");
@@ -139,12 +155,18 @@ export function EmpaquetadosTabla({ filas }: { filas: EmpaquetadoFila[] }) {
                     : <EstadoBadge estado="Promoción" tono="neutral" />}
                 </td>
                 <td className="px-3 py-2">
-                  <Link
-                    href={f.origen === "contrato" ? `/dashboard/contratos/${f.numeroContrato}` : `/dashboard/vuelos/empaquetados/${f.id.split(":")[1]}`}
-                    className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline"
-                  >
-                    {f.origen === "contrato" ? f.numeroContrato : (f.record ?? "Sin record")}
-                  </Link>
+                  {f.origen === "contrato" && !puedeVerContrato ? (
+                    <span className="font-mono text-sm font-semibold text-gray-500" title="Tu rol no tiene acceso a la ficha del contrato">
+                      {f.numeroContrato}
+                    </span>
+                  ) : (
+                    <Link
+                      href={f.origen === "contrato" ? `/dashboard/contratos/${f.numeroContrato}` : `/dashboard/vuelos/empaquetados/${f.id.split(":")[1]}`}
+                      className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline"
+                    >
+                      {f.origen === "contrato" ? f.numeroContrato : (f.record ?? "Sin record")}
+                    </Link>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-gray-600">{f.aerolinea ?? "—"}</td>
                 <td className="px-3 py-2 text-gray-600">{f.ruta ?? "—"}</td>

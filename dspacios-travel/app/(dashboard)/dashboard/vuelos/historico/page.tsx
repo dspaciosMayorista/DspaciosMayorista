@@ -7,6 +7,7 @@ import { VistaTabs, vistaDeParam } from "../VistaTabs";
 import { conteoPorBloqueo, sumarConteos, esPasado, ventaPct, ocupacionPct, conteoCero, type ConteoSillas } from "@/lib/vuelos/stats";
 import { hoyISO } from "@/lib/calc/paquetes";
 import { normalizarModalidadLegible, type ModalidadControl } from "@/lib/vuelos/control";
+import { miRol, ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -29,16 +30,33 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
   const vistaControl = vista === "control-vuelos";
   const sb = await createClient();
 
+  type FilaVentaVueloSistema = { numero_contrato: string; tenant: string; tipo_paquete: string | null; aerolinea: string | null; fecha_salida: string | null; fecha_regreso: string | null; empaquetado_ref_id: number | null; origen: "dinamico" | "empaquetado" };
+
   // Control Vuelos no usa sillas — se consulta SOLO en Inventario (ver misma
   // nota en ../page.tsx). `bloqueos_vuelo`/`empaquetados` se consultan
   // siempre, una sola vez cada una (mismo criterio que ../page.tsx).
-  const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }] = await Promise.all([
+  //
+  // Hallazgo 5 (ronda siguiente, "ALCANCE FUNCIONAL"): el histórico de
+  // Empaquetados solo mostraba promociones (`empaquetados`) — los contratos
+  // dinámicos/empaquetado_ref_id YA PASADOS nunca aparecían aquí, aunque
+  // `../page.tsx` sí los mostrara mientras estaban activos. Se consulta la
+  // MISMA vista mínima y con el MISMO aislamiento estricto que la pantalla
+  // activa (`ventas_vuelo_sistema`, migración 156 — ver
+  // `acceso_ventas_vuelo_sistema()`) — nunca `public.ventas` directo. Sin
+  // backfill de nada: solo aparecen los contratos que la vista ya expone.
+  const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }, { data: dinamicosData, error: dinamicosError }, rol] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: false }),
     vistaInventario
       ? sb.from("sillas").select("bloqueo_id, estado")
       : Promise.resolve({ data: null as { bloqueo_id: number; estado: string | null }[] | null }),
     sb.from("empaquetados").select("*").order("fecha_ida", { ascending: false }),
+    vistaEmpaquetados
+      ? sb.from("ventas_vuelo_sistema").select("*").order("fecha_salida", { ascending: false })
+      : Promise.resolve({ data: null as FilaVentaVueloSistema[] | null, error: null as { message: string } | null }),
+    miRol(),
   ]);
+
+  const puedeVerContrato = !!rol && ROLES_CONTRATO_COMPLETO.includes(rol);
 
   const hoy = hoyISO();
   const todos = bloqueos ?? [];
@@ -53,6 +71,13 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
   // consultarse una vez sale de "Empaquetados activos".
   const todosEmp = empaquetadosData ?? [];
   const empPasados = todosEmp.filter((e) => !e.activo || esPasado(e.fecha_ida, hoy));
+
+  // Origen "Contrato" en el histórico (hallazgo 5, "ALCANCE FUNCIONAL"):
+  // mismo criterio `esPasado` que ../page.tsx usa para los activos — un
+  // contrato no se "desactiva", así que lo único que lo mueve al histórico
+  // es que su fecha de salida ya pasó.
+  const todosDinamicos = dinamicosData ?? [];
+  const dinamicosPasados = todosDinamicos.filter((d) => esPasado(d.fecha_salida, hoy));
 
   // Conteo HISTÓRICO GENERAL = de TODOS los bloqueos (vida del inventario).
   // Solo tiene sentido (y solo se calcula) en Inventario.
@@ -115,28 +140,44 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
         </>
       )}
 
-      {/* Contratos dinámicos históricos (defecto 3, revisión de PR #268) NO
-          se listan aquí todavía — el histórico de Empaquetados sigue
-          mostrando solo promociones; ver el diagnóstico de solo lectura
-          (supabase/scripts/diagnostico_empaquetados_dinamico.sql) para
-          dimensionar un follow-up antes de extenderlo también aquí. */}
+      {/* Contratos dinámicos/empaquetado_ref_id ya pasados (hallazgo 5,
+          ronda siguiente, "ALCANCE FUNCIONAL") — mismo origen "Contrato" y
+          la MISMA vista mínima (`ventas_vuelo_sistema`) que ../page.tsx usa
+          para los activos, ya no acotado a solo promociones. */}
       {vistaEmpaquetados ? (
-        !empPasados.length ? (
-          <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center text-gray-400">
-            <p className="text-lg">Aún no hay empaquetados en el histórico</p>
-            <p className="mt-1 text-sm">Pasan aquí automáticamente cuando su fecha de ida queda atrás.</p>
-          </div>
-        ) : (
+        <>
+          {dinamicosError && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              No se pudieron cargar los vuelos por contrato (dinámicos/empaquetados vinculados a una venta real): {dinamicosError.message}. Los datos de esta sección pueden estar incompletos — intenta recargar la página.
+            </div>
+          )}
+          {!empPasados.length && !dinamicosPasados.length && !dinamicosError ? (
+            <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center text-gray-400">
+              <p className="text-lg">Aún no hay empaquetados en el histórico</p>
+              <p className="mt-1 text-sm">Pasan aquí automáticamente cuando su fecha de ida queda atrás.</p>
+            </div>
+          ) : !empPasados.length && !dinamicosPasados.length && dinamicosError ? null : (
           <EmpaquetadosTabla
-            filas={empPasados.map((e) => ({
-              id: `promocion:${e.id}`, origen: "promocion" as const, record: e.record, numeroContrato: null,
-              aerolinea: e.aerolinea, ruta: e.ruta,
-              fecha_ida: e.fecha_ida, vuelo_ida: e.vuelo_ida, fecha_regreso: e.fecha_regreso, vuelo_regreso: e.vuelo_regreso,
-              tarifa_para_empaquetar: e.tarifa_para_empaquetar, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
-              activo: e.activo,
-            }))}
+            puedeVerContrato={puedeVerContrato}
+            filas={[
+              ...empPasados.map((e) => ({
+                id: `promocion:${e.id}`, origen: "promocion" as const, record: e.record, numeroContrato: null,
+                aerolinea: e.aerolinea, ruta: e.ruta,
+                fecha_ida: e.fecha_ida, vuelo_ida: e.vuelo_ida, fecha_regreso: e.fecha_regreso, vuelo_regreso: e.vuelo_regreso,
+                tarifa_para_empaquetar: e.tarifa_para_empaquetar, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
+                activo: e.activo,
+              })),
+              ...dinamicosPasados.map((d) => ({
+                id: `contrato:${d.numero_contrato}`, origen: "contrato" as const, record: null, numeroContrato: d.numero_contrato,
+                aerolinea: d.aerolinea, ruta: null,
+                fecha_ida: d.fecha_salida, vuelo_ida: null, fecha_regreso: d.fecha_regreso, vuelo_regreso: null,
+                tarifa_para_empaquetar: null, estado_emision: null, estado_pago: null,
+                activo: true,
+              })),
+            ]}
           />
-        )
+          )}
+        </>
       ) : vistaControl ? (
         !filasControl.length ? (
           <div className="rounded-2xl border-2 border-dashed border-gray-200 py-16 text-center text-gray-400">
