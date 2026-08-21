@@ -30,7 +30,19 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
   const vistaControl = vista === "control-vuelos";
   const sb = await createClient();
 
-  type FilaVentaVueloSistema = { numero_contrato: string; tenant: string; tipo_paquete: string | null; aerolinea: string | null; fecha_salida: string | null; fecha_regreso: string | null; empaquetado_ref_id: number | null; origen: "dinamico" | "empaquetado" };
+  // Detalle aéreo mínimo desde contrato_vuelos (ronda siguiente, hallazgo 1
+  // "CONECTAR CONTRATO_VUELOS CON LA LISTA") — NULL para contratos sin
+  // contrato_vuelos (todo el histórico dinámico anterior a esa migración).
+  type FilaVentaVueloSistema = {
+    numero_contrato: string; tenant: string; tipo_paquete: string | null; aerolinea: string | null;
+    fecha_salida: string | null; fecha_regreso: string | null; empaquetado_ref_id: number | null;
+    origen: "dinamico" | "empaquetado";
+    record: string | null; origen_codigo: string | null; destino_codigo: string | null; ruta: string | null;
+    vuelo_ida: string | null; vuelo_regreso: string | null;
+    hora_salida_ida: string | null; hora_llegada_ida: string | null;
+    hora_salida_reg: string | null; hora_llegada_reg: string | null;
+    vuelo_fecha_ida: string | null; vuelo_fecha_regreso: string | null;
+  };
 
   // Control Vuelos no usa sillas — se consulta SOLO en Inventario (ver misma
   // nota en ../page.tsx). `bloqueos_vuelo`/`empaquetados` se consultan
@@ -168,9 +180,9 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
                 activo: e.activo,
               })),
               ...dinamicosPasados.map((d) => ({
-                id: `contrato:${d.numero_contrato}`, origen: "contrato" as const, record: null, numeroContrato: d.numero_contrato,
-                aerolinea: d.aerolinea, ruta: null,
-                fecha_ida: d.fecha_salida, vuelo_ida: null, fecha_regreso: d.fecha_regreso, vuelo_regreso: null,
+                id: `contrato:${d.numero_contrato}`, origen: "contrato" as const, record: d.record, numeroContrato: d.numero_contrato,
+                aerolinea: d.aerolinea, ruta: d.ruta,
+                fecha_ida: d.fecha_salida, vuelo_ida: d.vuelo_ida, fecha_regreso: d.fecha_regreso, vuelo_regreso: d.vuelo_regreso,
                 tarifa_para_empaquetar: null, estado_emision: null, estado_pago: null,
                 activo: true,
               })),

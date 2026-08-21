@@ -2768,6 +2768,22 @@ export type Database = {
           fecha_regreso: string | null;
           empaquetado_ref_id: number | null;
           origen: "dinamico" | "empaquetado";
+          // Detalle aéreo mínimo desde contrato_vuelos (ronda siguiente,
+          // hallazgo 1 "CONECTAR CONTRATO_VUELOS CON LA LISTA") — NULL para
+          // contratos sin contrato_vuelos (todo el histórico dinámico
+          // anterior a esta migración).
+          record: string | null;
+          origen_codigo: string | null;
+          destino_codigo: string | null;
+          ruta: string | null;
+          vuelo_ida: string | null;
+          vuelo_regreso: string | null;
+          hora_salida_ida: string | null;
+          hora_llegada_ida: string | null;
+          hora_salida_reg: string | null;
+          hora_llegada_reg: string | null;
+          vuelo_fecha_ida: string | null;
+          vuelo_fecha_regreso: string | null;
         };
         Relationships: [];
       };

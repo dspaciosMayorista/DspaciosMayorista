@@ -135,7 +135,12 @@ export function EmpaquetadosTabla({
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-3 py-2">Origen</th>
-              <th className="px-3 py-2">Record</th>
+              {/* "Record / Contrato" (ronda siguiente, hallazgo 1 "CONECTAR
+                  CONTRATO_VUELOS CON LA LISTA"): un origen "Contrato" ahora
+                  puede o no tener PNR real (contrato_vuelos.record) — "Record"
+                  a secas sería engañoso cuando lo que se muestra es el número
+                  de contrato porque no hay PNR. */}
+              <th className="px-3 py-2">Record / Contrato</th>
               <th className="px-3 py-2">Aerolínea</th>
               <th className="px-3 py-2">Ruta</th>
               <th className="px-3 py-2">Ida</th>
@@ -157,14 +162,18 @@ export function EmpaquetadosTabla({
                 <td className="px-3 py-2">
                   {f.origen === "contrato" && !puedeVerContrato ? (
                     <span className="font-mono text-sm font-semibold text-gray-500" title="Tu rol no tiene acceso a la ficha del contrato">
-                      {f.numeroContrato}
+                      {f.record ?? f.numeroContrato}
                     </span>
                   ) : (
                     <Link
                       href={f.origen === "contrato" ? `/dashboard/contratos/${f.numeroContrato}` : `/dashboard/vuelos/empaquetados/${f.id.split(":")[1]}`}
                       className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline"
                     >
-                      {f.origen === "contrato" ? f.numeroContrato : (f.record ?? "Sin record")}
+                      {/* record real cuando existe (contrato_vuelos.record —
+                          hallazgo 1 de esta ronda); si no, el número de
+                          contrato para orígenes "contrato", nunca "Sin
+                          record" (sí sabemos a qué contrato pertenece). */}
+                      {f.origen === "contrato" ? (f.record ?? f.numeroContrato) : (f.record ?? "Sin record")}
                     </Link>
                   )}
                 </td>

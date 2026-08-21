@@ -587,9 +587,223 @@ end $$;
 reset role;
 select set_config('request.jwt.claims', null, true);
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- J. ventas_vuelo_sistema — detalle aéreo desde contrato_vuelos, UNA fila
+--    por contrato, sin inventar datos, sin mezclar contratos (ronda
+--    siguiente, hallazgo 1 "CONECTAR CONTRATO_VUELOS CON LA LISTA").
+--    Reutiliza los fixtures de `ventas` de la sección I: 99-9992 (dinámico,
+--    mayorista), 99-9990 (empaquetado_ref_id, mayorista), 99-9991 (dinámico,
+--    minorista — SIN contrato_vuelos, prueba el caso "histórico sin
+--    tramos"). Se agrega 99-9989 (dinámico, mayorista) para probar que dos
+--    contratos nunca se mezclan.
+-- ═════════════════════════════════════════════════════════════════════════
+insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) values
+  ('99-9989', 'Cliente dinámico mayorista 2', 'mayorista', 'dinamico');
+
+-- 99-9992: contrato dinámico FUTURO con tramos ida/regreso reales (lo que
+-- inserta el paso 7 de reservar/actions.ts, origen.tipo === "salida") — MÁS
+-- un tercer tramo 'ida' con `orden` mayor, simulando una anomalía de datos
+-- (nunca debería ocurrir en un contrato normal), para probar que la vista
+-- sigue devolviendo EXACTAMENTE una fila por contrato (J2) tomando siempre
+-- el de menor `orden`.
+insert into public.contrato_vuelos (numero_contrato, aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, hora_salida, hora_llegada, fecha_salida, orden) values
+  ('99-9992', 'JetSMART', 'ABC123', 'ida',     'MDE', 'CTG', 'JA101', '08:00', '09:00', current_date + 10, 0),
+  ('99-9992', 'JetSMART', 'ABC123', 'regreso', 'CTG', 'MDE', 'JA102', '18:00', '19:00', current_date + 13, 1),
+  ('99-9992', 'JetSMART', 'ZZZ999', 'ida',     'BOG', 'PEI', 'XX000', '00:00', '00:00', current_date + 99, 9);
+
+-- 99-9990: contrato reservado desde un Empaquetado — SOLO tramo de ida (caso
+-- real: un empaquetado one-way), SIN record todavía (no se ha comprado/
+-- emitido) — prueba que `record` sale NULL cuando de verdad no existe, y que
+-- `ruta`/`vuelo_regreso` no inventan un tramo de regreso que no hay.
+insert into public.contrato_vuelos (numero_contrato, aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, hora_salida, hora_llegada, fecha_salida, orden) values
+  ('99-9990', 'Wingo', null, 'ida', 'MDE', 'SMR', 'WJ55', '07:00', '08:15', current_date + 5, 0);
+
+-- 99-9989: OTRO contrato dinámico, mismo tenant que 99-9992 — con un
+-- vuelo/ruta DISTINTO, para confirmar que la vista nunca cruza tramos entre
+-- dos contratos (J5).
+insert into public.contrato_vuelos (numero_contrato, aerolinea, direccion, origen_codigo, destino_codigo, numero_vuelo, hora_salida, hora_llegada, fecha_salida, orden) values
+  ('99-9989', 'Avianca', 'ida', 'BOG', 'CTG', 'LA999', '10:00', '11:00', current_date + 20, 0);
+
+-- 99-9991 (minorista, de la sección I) NO recibe contrato_vuelos — queda tal
+-- cual para representar "histórico sin tramos" (J4).
+
+-- La vista exige sesión impersonada (acceso_ventas_vuelo_sistema() lee
+-- mi_rol()/mi_tenant(), que a su vez leen request.jwt.claims) — sin esto
+-- devuelve 0 filas incluso corriendo como superusuario, porque el filtro
+-- vive en el propio `where` de la vista, no en RLS de la tabla base. J1-J6
+-- corren impersonando `superadmin` (alcance global, fixture de la sección I)
+-- para poder inspeccionar los 3 contratos sin filtrar por tenant.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','role','authenticated')::text, true);
+
+do $$
+declare v_row record;
+begin
+  select * into v_row from public.ventas_vuelo_sistema where numero_contrato = '99-9992';
+  perform pg_temp.assert_eq(v_row.vuelo_ida, 'JA101'::text, 'J1: 99-9992 — vuelo_ida debe salir del tramo con menor orden (JA101), nunca del tramo anómalo (XX000)');
+  perform pg_temp.assert_eq(v_row.vuelo_regreso, 'JA102'::text, 'J1: 99-9992 — vuelo_regreso correcto');
+  perform pg_temp.assert_eq(v_row.record, 'ABC123'::text, 'J1: 99-9992 — record real (contrato_vuelos.record), no un dato inventado');
+  perform pg_temp.assert_eq(v_row.origen_codigo, 'MDE'::text, 'J1: 99-9992 — origen_codigo del tramo de ida');
+  perform pg_temp.assert_eq(v_row.destino_codigo, 'CTG'::text, 'J1: 99-9992 — destino_codigo del tramo de ida');
+  perform pg_temp.assert_eq(v_row.ruta, 'MDE - CTG - MDE'::text, 'J1: 99-9992 — ruta construida DETERMINÍSTICAMENTE (ida + regreso), formato igual a bloqueos_vuelo.ruta');
+  perform pg_temp.assert_eq(v_row.hora_salida_ida, '08:00'::text, 'J1: 99-9992 — hora_salida_ida');
+  perform pg_temp.assert_eq(v_row.hora_llegada_reg, '19:00'::text, 'J1: 99-9992 — hora_llegada_reg');
+end $$;
+
+do $$
+declare v_n bigint;
+begin
+  select count(*) into v_n from public.ventas_vuelo_sistema where numero_contrato = '99-9992';
+  perform pg_temp.assert_eq(v_n, 1::bigint, 'J2: ventas_vuelo_sistema debe devolver EXACTAMENTE una fila para 99-9992, aunque tenga 3 filas en contrato_vuelos (2 tramos reales + 1 anómalo)');
+end $$;
+
+do $$
+declare v_row record;
+begin
+  select * into v_row from public.ventas_vuelo_sistema where numero_contrato = '99-9990';
+  perform pg_temp.assert_eq(v_row.vuelo_ida, 'WJ55'::text, 'J3: 99-9990 (origen empaquetado_ref_id) — vuelo_ida correcto');
+  perform pg_temp.assert_eq(v_row.vuelo_regreso, null::text, 'J3: 99-9990 — vuelo_regreso NULL (one-way real, nunca se inventa un tramo de regreso)');
+  perform pg_temp.assert_eq(v_row.ruta, 'MDE - SMR'::text, 'J3: 99-9990 — ruta de un solo tramo (sin el tercer segmento del regreso, porque no existe)');
+  perform pg_temp.assert_eq(v_row.record, null::text, 'J3: 99-9990 — record NULL (no se ha comprado/emitido), nunca inventado');
+end $$;
+
+do $$
+declare v_row record;
+begin
+  select * into v_row from public.ventas_vuelo_sistema where numero_contrato = '99-9991';
+  perform pg_temp.assert_eq(v_row.vuelo_ida, null::text, 'J4: 99-9991 (sin contrato_vuelos, "histórico sin tramos") — vuelo_ida NULL');
+  perform pg_temp.assert_eq(v_row.ruta, null::text, 'J4: 99-9991 — ruta NULL');
+  perform pg_temp.assert_eq(v_row.record, null::text, 'J4: 99-9991 — record NULL');
+  perform pg_temp.assert_eq(v_row.origen_codigo, null::text, 'J4: 99-9991 — origen_codigo NULL, nunca inventado');
+end $$;
+
+do $$
+declare v_row record;
+begin
+  select * into v_row from public.ventas_vuelo_sistema where numero_contrato = '99-9989';
+  perform pg_temp.assert_eq(v_row.vuelo_ida, 'LA999'::text, 'J5: 99-9989 — vuelo_ida propio (LA999), nunca el de 99-9992 (JA101) ni el de 99-9990 (WJ55) — dos contratos nunca se mezclan');
+  perform pg_temp.assert_eq(v_row.origen_codigo, 'BOG'::text, 'J5: 99-9989 — origen_codigo propio, no cruzado con otro contrato');
+end $$;
+
+-- J6: el set de columnas de la vista es EXACTAMENTE el esperado — ni de más
+-- (fuga de PII/financiero, o de columnas internas de contrato_vuelos como
+-- `id`/`servicios`/`orden`) ni de menos (campo pedido que faltara).
+do $$
+declare v_cols text[];
+begin
+  select array_agg(column_name order by column_name) into v_cols
+    from information_schema.columns
+   where table_name = 'ventas_vuelo_sistema';
+  perform pg_temp.assert_eq(
+    v_cols,
+    array[
+      'aerolinea','destino_codigo','empaquetado_ref_id','fecha_regreso','fecha_salida',
+      'hora_llegada_ida','hora_llegada_reg','hora_salida_ida','hora_salida_reg',
+      'numero_contrato','origen','origen_codigo','record','ruta','tenant','tipo_paquete',
+      'vuelo_fecha_ida','vuelo_fecha_regreso','vuelo_ida','vuelo_regreso'
+    ]::text[],
+    'J6: el set de columnas de la vista debe ser EXACTAMENTE el esperado — nada de PII/financiero, nada de columnas internas de contrato_vuelos sin filtrar'
+  );
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+-- control_vuelo (mayorista) también debe ver el detalle aéreo completo de
+-- SU tenant a través de la vista (no solo superadmin) — confirma que el
+-- join lateral funciona igual sin importar qué rol evalúa acceso_ventas_vuelo_sistema().
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','99999999-9999-9999-9999-999999999999','role','authenticated')::text, true);
+
+do $$
+declare v_row record;
+begin
+  select * into v_row from public.ventas_vuelo_sistema where numero_contrato = '99-9992';
+  perform pg_temp.assert_eq(v_row.vuelo_ida, 'JA101'::text, 'J7: control_vuelo (mayorista) debe ver el vuelo_ida real de 99-9992 (su tenant)');
+end $$;
+
+do $$
+declare v_n bigint;
+begin
+  select count(*) into v_n from public.ventas_vuelo_sistema where numero_contrato = '99-9991';
+  perform pg_temp.assert_eq(v_n, 0::bigint, 'J8: control_vuelo (mayorista) NO debe ver 99-9991 (minorista) — aislamiento de tenant se conserva con las columnas nuevas');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- K. acceso_ventas_vuelo_sistema() — EXECUTE revocado de PUBLIC (ronda
+--    siguiente, hallazgo 2 "FUNCIÓN SECURITY DEFINER"). Tres demostraciones
+--    pedidas explícitamente: (1) anon no puede invocarla como RPC directo;
+--    (2) authenticated no obtiene datos fuera de su rol/tenant (la función
+--    en sí respeta el límite, aunque SÍ pueda invocarla); (3) la vista sigue
+--    funcionando para los roles autorizados (no se rompió nada con el revoke).
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- K1: anon — ni siquiera puede EJECUTAR la función (permission denied),
+-- nunca llega a evaluar su lógica interna.
+set local role anon;
+select set_config('request.jwt.claims', '{}', true);
+
+do $$
+declare v_lanzo boolean := false;
+begin
+  begin
+    perform public.acceso_ventas_vuelo_sistema('mayorista');
+  exception when insufficient_privilege then
+    v_lanzo := true;
+  end;
+  perform pg_temp.assert_eq(v_lanzo, true, 'K1: anon debe recibir permission denied al invocar acceso_ventas_vuelo_sistema() directo — EXECUTE revocado de PUBLIC');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+-- K2: authenticated SÍ puede invocarla (EXECUTE otorgado explícitamente),
+-- pero la función en sí nunca devuelve `true` fuera del tenant/rol correcto
+-- — invocada DIRECTO (no a través de la vista), gerencia mayorista debe dar
+-- true para 'mayorista' y false para 'minorista'.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','role','authenticated')::text, true);
+
+do $$
+declare v_may boolean; v_min boolean;
+begin
+  select public.acceso_ventas_vuelo_sistema('mayorista') into v_may;
+  select public.acceso_ventas_vuelo_sistema('minorista') into v_min;
+  perform pg_temp.assert_eq(v_may, true, 'K2: gerencia mayorista invocando la función DIRECTO para su propio tenant debe dar true');
+  perform pg_temp.assert_eq(v_min, false, 'K2: gerencia mayorista invocando la función DIRECTO para el OTRO tenant debe dar false — nunca obtiene acceso fuera de su tenant, ni siquiera por RPC directo');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+-- K3: la vista SIGUE funcionando para los roles autorizados después del
+-- revoke — reconfirma un caso ya probado en la sección I, esta vez con el
+-- EXECUTE de PUBLIC ya revocado, para probar que el `grant ... to
+-- authenticated` explícito es suficiente y nada se rompió.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','role','authenticated')::text, true);
+
+do $$
+declare v_contratos text[];
+begin
+  select array_agg(numero_contrato order by numero_contrato) into v_contratos
+    from public.ventas_vuelo_sistema
+   where numero_contrato in ('99-9992', '99-9991', '99-9990', '99-9989');
+  perform pg_temp.assert_eq(
+    v_contratos, array['99-9989','99-9990','99-9992']::text[],
+    'K3: gerencia mayorista sigue viendo su tenant a través de la vista (99-9989/99-9990/99-9992) tras revocar EXECUTE de PUBLIC en la función'
+  );
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
 do $$
 begin
-  raise notice 'TODAS LAS PRUEBAS PASARON: test_empaquetados.sql (secciones A-I)';
+  raise notice 'TODAS LAS PRUEBAS PASARON: test_empaquetados.sql (secciones A-K)';
 end $$;
 
 rollback;

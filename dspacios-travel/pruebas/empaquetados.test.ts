@@ -775,7 +775,11 @@ describe("EmpaquetadosTabla / vuelos-page — el link a /dashboard/contratos se 
   });
 
   test("los orígenes 'promocion' y 'sistema' (no 'contrato') conservan su link normal — el gate es SOLO para el link al contrato", () => {
-    assert.match(tablaSrc, /f\.origen === "contrato" \? f\.numeroContrato : \(f\.record \?\? "Sin record"\)/);
+    // Actualizado en la ronda "CONECTAR CONTRATO_VUELOS CON LA LISTA": un
+    // origen "contrato" ahora puede tener record REAL (contrato_vuelos), así
+    // que cae a numeroContrato solo si NO hay record — nunca "Sin record"
+    // para ese origen (sí se sabe a qué contrato pertenece).
+    assert.match(tablaSrc, /f\.origen === "contrato" \? \(f\.record \?\? f\.numeroContrato\) : \(f\.record \?\? "Sin record"\)/);
   });
 });
 
@@ -887,5 +891,139 @@ describe("historico/page.tsx — incluye el origen 'Contrato' ya pasado, mismo c
     const bloque = historicoPageSrc.slice(historicoPageSrc.indexOf("vistaEmpaquetados ? ("), historicoPageSrc.indexOf("vistaControl ? ("));
     assert.match(bloque, /\.\.\.dinamicosPasados\.map\(\(d\) => \(\{/);
     assert.match(bloque, /id: `contrato:\$\{d\.numero_contrato\}`, origen: "contrato" as const/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda siguiente (2ª) — hallazgo 1 "CONECTAR CONTRATO_VUELOS CON LA LISTA":
+// ventas_vuelo_sistema solo traía columnas planas de `ventas` — un contrato
+// dinámico NUEVO que sí inserta `contrato_vuelos` (implementado en la ronda
+// anterior) seguía mostrando ruta/vuelo_ida/vuelo_regreso/horarios en NULL en
+// la tabla, aunque el dato ya existiera. Ahora la vista trae ese detalle vía
+// LEFT JOIN LATERAL — ver `supabase/scripts/test_empaquetados.sql` sección J
+// para las pruebas reales (una sola fila por contrato, sin mezclar
+// contratos, histórico sin tramos en NULL).
+// ───────────────────────────────────────────────────────────────────────────
+describe("ventas_vuelo_sistema — detalle aéreo desde contrato_vuelos, una fila por contrato (hallazgo 1, 2ª ronda siguiente)", () => {
+  const mig156 = leer("supabase/migrations/20260601000156_empaquetados.sql");
+  const vista = mig156.slice(mig156.indexOf("create or replace view public.ventas_vuelo_sistema"), mig156.indexOf("grant select on public.ventas_vuelo_sistema"));
+
+  test("usa LEFT JOIN LATERAL, uno para direccion='ida' y otro para direccion='regreso', cada uno con order by + limit 1 (determinismo, nunca duplica filas)", () => {
+    assert.match(vista, /left join lateral \(/g);
+    const matches = vista.match(/left join lateral \(/g) ?? [];
+    assert.equal(matches.length, 2, "debe haber EXACTAMENTE 2 LEFT JOIN LATERAL — uno por dirección, nunca más");
+    assert.match(vista, /cv\.direccion = 'ida'/);
+    assert.match(vista, /cv\.direccion = 'regreso'/);
+    assert.match(vista, /order by cv\.orden asc, cv\.id asc\s*\n\s*limit 1/g);
+  });
+
+  test("cada lateral filtra por cv.numero_contrato = v.numero_contrato — nunca puede mezclar tramos de dos contratos distintos", () => {
+    const matches = vista.match(/cv\.numero_contrato = v\.numero_contrato/g) ?? [];
+    assert.equal(matches.length, 2, "los DOS laterales (ida y regreso) deben filtrar por el numero_contrato del contrato actual");
+  });
+
+  test("ruta se construye DETERMINÍSTICAMENTE desde los códigos IATA del propio tramo (nunca parseando un string ajeno)", () => {
+    assert.match(vista, /ida\.origen_codigo \|\| ' - ' \|\| ida\.destino_codigo/);
+    assert.match(vista, /reg\.destino_codigo is not null then ' - ' \|\| reg\.destino_codigo/);
+  });
+
+  test("record sale de coalesce(ida.record, reg.record) — nunca se inventa si el tramo no lo trae", () => {
+    assert.match(vista, /coalesce\(ida\.record, reg\.record\) as record/);
+  });
+
+  test("las fechas de tramo (vuelo_fecha_ida/vuelo_fecha_regreso) son columnas NUEVAS, separadas de fecha_salida/fecha_regreso (que siguen viniendo de ventas sin cambio)", () => {
+    assert.match(vista, /ida\.fecha_salida as vuelo_fecha_ida/);
+    assert.match(vista, /reg\.fecha_salida as vuelo_fecha_regreso/);
+    assert.match(vista, /v\.fecha_salida, v\.fecha_regreso, v\.empaquetado_ref_id/, "fecha_salida/fecha_regreso de ventas se conservan sin cambio");
+  });
+
+  test("cero PII/financiero: contrato_vuelos no aporta ninguna columna de cliente/costo/precio a la vista", () => {
+    for (const col of ["cliente", "precio_venta", "costo_hotel", "costo_aereo", "comision_b2b"]) {
+      assert.doesNotMatch(vista, new RegExp(`\\b${col}\\b`), `la vista no debe exponer ${col}`);
+    }
+  });
+
+  test("el aislamiento estricto por tenant (acceso_ventas_vuelo_sistema) sigue siendo el único filtro de acceso — no se agregó ningún filtro adicional que lo debilite o lo saltee", () => {
+    assert.match(vista, /and public\.acceso_ventas_vuelo_sistema\(v\.tenant\);/);
+  });
+
+  test("types/database.ts: el Row de ventas_vuelo_sistema declara las columnas aéreas nuevas", () => {
+    const dbTypesSrc = leer("types/database.ts");
+    const tipoVista = dbTypesSrc.slice(dbTypesSrc.indexOf("ventas_vuelo_sistema: {"), dbTypesSrc.indexOf("ventas_vuelo_sistema: {") + 1200);
+    for (const campo of ["record", "origen_codigo", "destino_codigo", "ruta", "vuelo_ida", "vuelo_regreso", "hora_salida_ida", "hora_llegada_ida", "hora_salida_reg", "hora_llegada_reg", "vuelo_fecha_ida", "vuelo_fecha_regreso"]) {
+      assert.match(tipoVista, new RegExp(`${campo}: string \\| null;`), `Row de ventas_vuelo_sistema debe declarar ${campo}`);
+    }
+  });
+});
+
+describe("vuelos/page.tsx, historico/page.tsx y EmpaquetadosTabla — conectan el detalle aéreo nuevo (hallazgo 1, 2ª ronda siguiente)", () => {
+  const tablaSrc = leer("app/(dashboard)/dashboard/vuelos/EmpaquetadosTabla.tsx");
+
+  test("vuelos/page.tsx mapea record/ruta/vuelo_ida/vuelo_regreso REALES para el origen 'contrato' (ya no null fijo)", () => {
+    const bloque = vuelosPageSrc.slice(vuelosPageSrc.indexOf("...dinamicosActivos.map((d) =>"), vuelosPageSrc.indexOf("...dinamicosActivos.map((d) =>") + 500);
+    assert.match(bloque, /record: d\.record, numeroContrato: d\.numero_contrato/);
+    assert.match(bloque, /aerolinea: d\.aerolinea, ruta: d\.ruta,/);
+    assert.match(bloque, /vuelo_ida: d\.vuelo_ida, fecha_regreso: d\.fecha_regreso, vuelo_regreso: d\.vuelo_regreso,/);
+  });
+
+  test("historico/page.tsx mapea los mismos campos reales para dinamicosPasados", () => {
+    const bloque = historicoPageSrc.slice(historicoPageSrc.indexOf("...dinamicosPasados.map((d) =>"), historicoPageSrc.indexOf("...dinamicosPasados.map((d) =>") + 500);
+    assert.match(bloque, /record: d\.record, numeroContrato: d\.numero_contrato/);
+    assert.match(bloque, /aerolinea: d\.aerolinea, ruta: d\.ruta,/);
+    assert.match(bloque, /vuelo_ida: d\.vuelo_ida, fecha_regreso: d\.fecha_regreso, vuelo_regreso: d\.vuelo_regreso,/);
+  });
+
+  test("EmpaquetadosTabla: el encabezado ya no es 'Record' a secas — pasa a 'Record / Contrato' (no engañoso cuando no hay PNR)", () => {
+    assert.match(tablaSrc, /<th className="px-3 py-2">Record \/ Contrato<\/th>/);
+    assert.doesNotMatch(tablaSrc, /<th className="px-3 py-2">Record<\/th>/);
+  });
+
+  test("EmpaquetadosTabla: origen 'contrato' muestra el record REAL cuando existe, y cae al número de contrato solo si no hay record (nunca 'Sin record' para ese origen)", () => {
+    assert.match(tablaSrc, /f\.origen === "contrato" \? \(f\.record \?\? f\.numeroContrato\) : \(f\.record \?\? "Sin record"\)/);
+  });
+
+  test("EmpaquetadosTabla: el fallback SIN acceso (span, sin link) también prefiere el record real sobre el número de contrato", () => {
+    assert.match(tablaSrc, /\{f\.record \?\? f\.numeroContrato\}\s*\n\s*<\/span>/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda siguiente (2ª) — hallazgo 2 "FUNCIÓN SECURITY DEFINER":
+// acceso_ventas_vuelo_sistema(text) conservaba por defecto EXECUTE para
+// PUBLIC (todo `create function` lo hace salvo que se revoque explícito) —
+// cualquier rol, incluido `anon`, podía invocarla directo como RPC. Mismo
+// patrón YA usado en este repo para acceso_archivo_contratos() (migración
+// 150): revoke all from public + grant execute solo a authenticated. Ver
+// `supabase/scripts/test_empaquetados.sql` sección K para la prueba real
+// (anon rechazado, authenticated respeta tenant, la vista sigue funcionando).
+// ───────────────────────────────────────────────────────────────────────────
+describe("acceso_ventas_vuelo_sistema() — EXECUTE revocado de PUBLIC (hallazgo 2, 2ª ronda siguiente)", () => {
+  const mig156 = leer("supabase/migrations/20260601000156_empaquetados.sql");
+
+  test("revoke all ... from public + grant execute ... to authenticated, en ese orden, inmediatamente después de crear la función", () => {
+    const inicioFn = mig156.indexOf("create or replace function public.acceso_ventas_vuelo_sistema");
+    const inicioVista = mig156.indexOf("create or replace view public.ventas_vuelo_sistema");
+    const bloque = mig156.slice(inicioFn, inicioVista);
+    const idxRevoke = bloque.indexOf("revoke all on function public.acceso_ventas_vuelo_sistema(text) from public;");
+    const idxGrant = bloque.indexOf("grant execute on function public.acceso_ventas_vuelo_sistema(text) to authenticated;");
+    assert.ok(idxRevoke > 0, "debe existir el revoke all ... from public");
+    assert.ok(idxGrant > 0, "debe existir el grant execute ... to authenticated");
+    assert.ok(idxRevoke < idxGrant, "el revoke debe ir ANTES del grant (revocar todo, luego otorgar el mínimo)");
+    assert.ok(idxGrant < bloque.length, "ambos deben ocurrir ANTES de crear la vista que depende de la función");
+  });
+
+  test("nunca se otorga EXECUTE a anon — el mínimo indispensable es SOLO authenticated", () => {
+    const inicioFn = mig156.indexOf("create or replace function public.acceso_ventas_vuelo_sistema");
+    const inicioVista = mig156.indexOf("create or replace view public.ventas_vuelo_sistema");
+    const bloque = mig156.slice(inicioFn, inicioVista);
+    assert.doesNotMatch(bloque, /grant execute.*to anon/, "nunca debe otorgarse EXECUTE a anon");
+    assert.doesNotMatch(bloque, /grant execute.*to public/i, "nunca debe volver a otorgarse a PUBLIC");
+  });
+
+  test("rollback_156: dropea la función DESPUÉS de dropear la vista (la vista depende de la función) — el revoke/grant desaparecen solos con el DROP FUNCTION", () => {
+    const rollback156 = leer("supabase/scripts/rollback_156_empaquetados.sql");
+    const idxDropVista = rollback156.indexOf("drop view if exists public.ventas_vuelo_sistema;");
+    const idxDropFn = rollback156.indexOf("drop function if exists public.acceso_ventas_vuelo_sistema(text);");
+    assert.ok(idxDropVista > 0 && idxDropFn > 0 && idxDropVista < idxDropFn, "orden correcto de dependencias: vista antes que función");
   });
 });

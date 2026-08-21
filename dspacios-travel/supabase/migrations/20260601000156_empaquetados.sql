@@ -503,12 +503,105 @@ create or replace function public.acceso_ventas_vuelo_sistema(t text) returns bo
     );
 $$;
 
+-- ⚠️ SECURITY DEFINER conserva por defecto EXECUTE para PUBLIC (ronda
+-- siguiente, hallazgo 2 "FUNCIÓN SECURITY DEFINER") — cualquier rol de
+-- Postgres (incl. `anon`, incl. cualquier función SQL de otro módulo que no
+-- debería poder colarse) podía invocarla DIRECTO como RPC
+-- (`select public.acceso_ventas_vuelo_sistema('mayorista')` o
+-- `/rest/v1/rpc/acceso_ventas_vuelo_sistema`), aunque el resultado (un solo
+-- boolean, sin datos) no filtre nada por sí mismo. Mismo patrón YA usado en
+-- este mismo repo para `acceso_archivo_contratos()` (migración 150): revocar
+-- de PUBLIC y otorgar el mínimo indispensable a `authenticated` (nunca a
+-- `anon`) — la vista de abajo sigue funcionando igual para los roles
+-- autorizados porque una vista normal (sin `security_invoker`) evalúa el
+-- acceso a los objetos que referencia (tablas, funciones) con los privilegios
+-- del DUEÑO de la vista, no con los del rol que la consulta — el rol que
+-- consulta solo necesita SELECT sobre la VISTA misma (el `grant select`, más
+-- abajo). Verificado con una prueba SQL real (`test_empaquetados.sql`,
+-- sección I): `anon` no puede invocar la función ni por RPC directo ni a
+-- través de la vista; `authenticated` sigue viendo exactamente su tenant a
+-- través de la vista, nunca más.
+revoke all on function public.acceso_ventas_vuelo_sistema(text) from public;
+grant execute on function public.acceso_ventas_vuelo_sistema(text) to authenticated;
+
+-- ⚠️ AMPLIADA (ronda siguiente, hallazgo 1 "CONECTAR CONTRATO_VUELOS CON LA
+-- LISTA"): la versión anterior de esta vista solo traía columnas planas de
+-- `ventas` — origen_codigo/destino_codigo/ruta/vuelo_ida/vuelo_regreso/
+-- horarios quedaban siempre NULL aunque `contrato_vuelos` ya tuviera esos
+-- datos (para contratos dinámicos NUEVOS, que sí insertan `contrato_vuelos`
+-- desde la salida dinámica — ver la ronda anterior, hallazgo 5). Ahora la
+-- vista trae también el detalle aéreo MÍNIMO desde `contrato_vuelos`, vía dos
+-- `LEFT JOIN LATERAL` (uno para el tramo `direccion='ida'`, otro para
+-- `direccion='regreso'`) — cada uno con `order by orden, id limit 1` para
+-- garantizar EXACTAMENTE una fila por dirección incluso si un contrato
+-- llegara a tener más de un tramo por sentido (multi-ciudad futuro): nunca
+-- se duplica la fila de `ventas`, y nunca se mezclan tramos de DOS contratos
+-- distintos (el join siempre filtra por `cv.numero_contrato = v.numero_contrato`).
+-- Contratos SIN `contrato_vuelos` (todo el histórico dinámico anterior a esta
+-- función, y cualquier contrato futuro cuyo origen no sea bloqueo/empaquetado/
+-- salida) devuelven NULL en todas estas columnas — nunca se inventa un dato.
+--
+-- `ruta` se construye de forma DETERMINISTA a partir de los códigos IATA del
+-- propio tramo — NUNCA parseando un string ajeno: `origen–destino` (ida) y,
+-- si existe tramo de regreso, se le agrega `–destino_regreso` (que en un
+-- viaje redondo normal coincide con el origen de la ida) — mismo formato
+-- "MDE - CTG - MDE" que ya usa `bloqueos_vuelo.ruta`/`empaquetados.ruta`.
+--
+-- `record` sale del tramo (nunca se inventa si no existe) — no se enmascara
+-- por rol aquí: a diferencia de `contrato_vuelos_basica` (donde `venta` sí
+-- entra y el PNR ajeno es sensible), esta vista YA excluye a `venta` por
+-- completo, y los roles que sí quedan (superadmin/gerencia/administracion/
+-- operaciones/control_vuelo) ya tienen SELECT directo sobre `bloqueos_vuelo`
+-- (con su propio `record`) sin ningún enmascarado — mismo criterio de
+-- exposición ya aplicado a esos roles en el resto del módulo Vuelos.
+--
+-- Las fechas de cada tramo (`vuelo_fecha_ida`/`vuelo_fecha_regreso`) se traen
+-- APARTE de `fecha_salida`/`fecha_regreso` (que siguen viniendo de `ventas`,
+-- sin cambios, y ya las usa `vuelos/page.tsx`) — nunca se asume que ambas
+-- fuentes van a coincidir siempre; son columnas nuevas, no un reemplazo.
+--
+-- Cero PII, cero valores financieros (sin cambios respecto a la versión
+-- anterior): `contrato_vuelos` no tiene ninguna columna de cliente/costo/
+-- precio que pudiera colarse por accidente con un `select *` — se listan
+-- las columnas una por una, igual que el resto de esta vista.
 create or replace view public.ventas_vuelo_sistema as
   select
     v.numero_contrato, v.tenant, v.tipo_paquete, v.aerolinea,
     v.fecha_salida, v.fecha_regreso, v.empaquetado_ref_id,
-    case when v.empaquetado_ref_id is not null then 'empaquetado' else 'dinamico' end as origen
+    case when v.empaquetado_ref_id is not null then 'empaquetado' else 'dinamico' end as origen,
+    coalesce(ida.record, reg.record) as record,
+    ida.origen_codigo, ida.destino_codigo,
+    case
+      when ida.origen_codigo is not null and ida.destino_codigo is not null then
+        ida.origen_codigo || ' - ' || ida.destino_codigo
+        || case when reg.destino_codigo is not null then ' - ' || reg.destino_codigo else '' end
+      else null
+    end as ruta,
+    ida.numero_vuelo as vuelo_ida,
+    reg.numero_vuelo as vuelo_regreso,
+    ida.hora_salida as hora_salida_ida,
+    ida.hora_llegada as hora_llegada_ida,
+    reg.hora_salida as hora_salida_reg,
+    reg.hora_llegada as hora_llegada_reg,
+    ida.fecha_salida as vuelo_fecha_ida,
+    reg.fecha_salida as vuelo_fecha_regreso
   from public.ventas v
+  left join lateral (
+    select cv.record, cv.origen_codigo, cv.destino_codigo, cv.numero_vuelo,
+           cv.hora_salida, cv.hora_llegada, cv.fecha_salida
+      from public.contrato_vuelos cv
+     where cv.numero_contrato = v.numero_contrato and cv.direccion = 'ida'
+     order by cv.orden asc, cv.id asc
+     limit 1
+  ) ida on true
+  left join lateral (
+    select cv.record, cv.numero_vuelo, cv.destino_codigo,
+           cv.hora_salida, cv.hora_llegada, cv.fecha_salida
+      from public.contrato_vuelos cv
+     where cv.numero_contrato = v.numero_contrato and cv.direccion = 'regreso'
+     order by cv.orden asc, cv.id asc
+     limit 1
+  ) reg on true
   where (v.tipo_paquete = 'dinamico' or v.empaquetado_ref_id is not null)
     and public.acceso_ventas_vuelo_sistema(v.tenant);
 

@@ -68,7 +68,19 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
   // (Empaquetados y Control comparten `empaquetados`; Inventario y Control
   // comparten `bloqueos_vuelo`), así que optimizar por vista aquí solo
   // agregaría complejidad de tipos sin un ahorro real.
-  type FilaVentaVueloSistema = { numero_contrato: string; tenant: string; tipo_paquete: string | null; aerolinea: string | null; fecha_salida: string | null; fecha_regreso: string | null; empaquetado_ref_id: number | null; origen: "dinamico" | "empaquetado" };
+  // Detalle aéreo mínimo desde contrato_vuelos (ronda siguiente, hallazgo 1
+  // "CONECTAR CONTRATO_VUELOS CON LA LISTA") — NULL para contratos sin
+  // contrato_vuelos (todo el histórico dinámico anterior a esa migración).
+  type FilaVentaVueloSistema = {
+    numero_contrato: string; tenant: string; tipo_paquete: string | null; aerolinea: string | null;
+    fecha_salida: string | null; fecha_regreso: string | null; empaquetado_ref_id: number | null;
+    origen: "dinamico" | "empaquetado";
+    record: string | null; origen_codigo: string | null; destino_codigo: string | null; ruta: string | null;
+    vuelo_ida: string | null; vuelo_regreso: string | null;
+    hora_salida_ida: string | null; hora_llegada_ida: string | null;
+    hora_salida_reg: string | null; hora_llegada_reg: string | null;
+    vuelo_fecha_ida: string | null; vuelo_fecha_regreso: string | null;
+  };
 
   const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }, { data: dinamicosData, error: dinamicosError }, rol] = await Promise.all([
     sb.from("bloqueos_vuelo").select("*").order("fecha_ida", { ascending: true }),
@@ -245,10 +257,19 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
               // "Contrato": no hay una tarifa unitaria verificable que
               // mostrar, mezclar el total del contrato con una tarifa por
               // asiento sería engañoso.
+              //
+              // Detalle aéreo (ronda siguiente, hallazgo 1 "CONECTAR
+              // CONTRATO_VUELOS CON LA LISTA"): `record`/`ruta`/`vuelo_ida`/
+              // `vuelo_regreso` ahora vienen de `contrato_vuelos` (vía la
+              // vista) para contratos NUEVOS que sí lo insertan — quedan
+              // `null` sin inventar nada para el histórico que no lo tiene.
+              // `fecha_ida`/`fecha_regreso` siguen viniendo de `ventas`
+              // (columnas ya existentes, sin cambio) — son las fechas del
+              // VIAJE, no del tramo puntual.
               ...dinamicosActivos.map((d) => ({
-                id: `contrato:${d.numero_contrato}`, origen: "contrato" as const, record: null, numeroContrato: d.numero_contrato,
-                aerolinea: d.aerolinea, ruta: null,
-                fecha_ida: d.fecha_salida, vuelo_ida: null, fecha_regreso: d.fecha_regreso, vuelo_regreso: null,
+                id: `contrato:${d.numero_contrato}`, origen: "contrato" as const, record: d.record, numeroContrato: d.numero_contrato,
+                aerolinea: d.aerolinea, ruta: d.ruta,
+                fecha_ida: d.fecha_salida, vuelo_ida: d.vuelo_ida, fecha_regreso: d.fecha_regreso, vuelo_regreso: d.vuelo_regreso,
                 tarifa_para_empaquetar: null, estado_emision: null, estado_pago: null,
                 activo: true,
               })),
