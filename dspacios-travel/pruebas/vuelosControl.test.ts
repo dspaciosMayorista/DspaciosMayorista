@@ -27,8 +27,16 @@ test("labelModalidad: null/valor desconocido cae en 'Sin definir', nunca inventa
   assert.equal(labelModalidad(null), SIN_DEFINIR);
   assert.equal(labelModalidad(""), SIN_DEFINIR);
   assert.equal(labelModalidad("lo-que-sea"), SIN_DEFINIR);
-  assert.equal(labelModalidad("individual"), "Individual");
+  assert.equal(labelModalidad("serie"), "Serie");
   assert.equal(labelModalidad("grupo"), "Grupo");
+  // Migración 155→157 (revisión de PR #268, defecto 1 — ventana de
+  // transición): mientras el CHECK de la BD todavía acepta 'individual'
+  // (entre que corre la 155 y corre la 157, después del despliegue), el
+  // código nuevo debe LEERLO igual que 'serie' — nunca como "Sin definir".
+  // Después de la 157 no debería quedar ninguna fila en 'individual', pero
+  // la función sigue leyéndolo así por si alguna fila vieja no se hubiera
+  // convertido (defensivo, no depende de que la migración de cierre corra).
+  assert.equal(labelModalidad("individual"), "Serie");
 });
 
 test("labelEstadoEmision/labelEstadoPago: null cae en 'Por confirmar', no en 'Pendiente'", () => {
@@ -47,9 +55,10 @@ test("labelEstadoEmision/labelEstadoPago: null cae en 'Por confirmar', no en 'Pe
 });
 
 test("los type guards solo aceptan los valores exactos del enum", () => {
-  assert.equal(esModalidadEmision("individual"), true);
+  assert.equal(esModalidadEmision("serie"), true);
   assert.equal(esModalidadEmision("grupo"), true);
-  assert.equal(esModalidadEmision("Individual"), false); // sensible a mayúsculas: la normalización va antes
+  assert.equal(esModalidadEmision("Serie"), false); // sensible a mayúsculas: la normalización va antes
+  assert.equal(esModalidadEmision("individual"), false); // migración 155: ya no es un valor válido
   assert.equal(esModalidadEmision(null), false);
   assert.equal(esModalidadEmision(undefined), false);
 

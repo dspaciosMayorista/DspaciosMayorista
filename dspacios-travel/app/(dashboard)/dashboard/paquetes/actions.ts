@@ -15,6 +15,7 @@ import {
   toTemporadaRango,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
+import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -278,10 +279,16 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const paqueteDestinoId = pq.destino_id;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
-  const [{ data: vuelosSel }, { data: hotelesSel }, { data: serviciosSel }] = await Promise.all([
+  const [{ data: vuelosSel }, { data: empaquetadosSel }, { data: hotelesSel }, { data: serviciosSel }] = await Promise.all([
     sb
       .from("armado_vuelos")
       .select("bloqueo_id, aplica_mk, ta, bloqueos_vuelo(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar)")
+      .eq("paquete_id", paqueteId),
+    // Vuelos por SISTEMA (Empaquetados, migración 156) — mismo patrón que
+    // armado_vuelos/bloqueos_vuelo; ver la nota de integración más abajo.
+    sb
+      .from("armado_empaquetados")
+      .select("empaquetado_id, aplica_mk, ta, empaquetados(id, record, ruta, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo, compra_inicio, compra_fin)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
@@ -397,6 +404,13 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     // donde el asesor elige fecha al reservar (re-liquida). Bloqueo = fecha fija.
     masBarato = false,
     salidaId: number | null = null,
+    // Origen "Sistema" (empaquetados, migración 156) — mutuamente excluyente
+    // con bloqueoId: una fila de un paquete tipo 'bloqueo' viene de UN cupo
+    // negociado (bloqueoId) O de UNA tarifa de sistema (empaquetadoId), nunca
+    // de los dos a la vez. Se guarda en su propia columna
+    // (tarifario_resultado.empaquetado_id) para que la procedencia quede
+    // inequívoca en el resultado — ver la nota de integración más abajo.
+    empaquetadoId: number | null = null,
   ) {
     if (numNoches <= 0) return;
     const aporteServ = aporteServiciosIncluidos(numNoches); // solo servicios incluidos
@@ -452,6 +466,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
             modulo,
             bloqueo_id: bloqueoId,
             bloqueo_label: bloqueoLabel,
+            empaquetado_id: empaquetadoId,
             hotel_id: h.hotel_id,
             hotel_nombre: hotelNombre,
             destino_id: paqueteDestinoId,
@@ -488,6 +503,36 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     }))
     .filter((v): v is typeof v & { b: NonNullable<typeof v.b> } => !!v.b && !!v.b.fecha_ida && !!v.b.fecha_regreso);
 
+  // Vuelos por SISTEMA (Empaquetados) — mismo shape que `vuelos`, filtrando
+  // los desactivados (un empaquetado apagado a mano no debe seguir
+  // alimentando un tarifario ya generado con una tarifa que ya no aplica) Y
+  // los que están fuera de su vigencia de compra (revisión de PR #268,
+  // defecto 2, checkpoint "al generar tarifario"). Esta NO es la única
+  // validación de vigencia — `computarReserva` la vuelve a revisar en vivo
+  // al resolver la reserva (`tarifario_resultado` es una caché, no la
+  // fuente de verdad) — pero evitar publicar de entrada una tarifa vencida
+  // reduce el caso de "se ve en el tarifario pero no se puede reservar".
+  const empaquetadosVuelos = (empaquetadosSel ?? [])
+    .map((v) => ({
+      aplica_mk: v.aplica_mk as boolean,
+      ta: Number(v.ta) || 0,
+      e: v.empaquetados as unknown as {
+        id: number;
+        record: string | null;
+        ruta: string | null;
+        fecha_ida: string | null;
+        fecha_regreso: string | null;
+        tarifa_para_empaquetar: number;
+        activo: boolean;
+        compra_inicio: string | null;
+        compra_fin: string | null;
+      } | null,
+    }))
+    .filter((v): v is typeof v & { e: NonNullable<typeof v.e> } =>
+      !!v.e && v.e.activo && !!v.e.fecha_ida && !!v.e.fecha_regreso
+      && empaquetadoVigente(v.e.compra_inicio, v.e.compra_fin, hoyBogota(new Date()))
+    );
+
   const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
 
   // Salidas dinámicas (vuelo por sistema): solo para el tipo 'dinamico'.
@@ -496,9 +541,17 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     : { data: null };
   const salidas = salidasRaw ?? [];
 
-  // Validaciones según el tipo (mensajes claros en vez de 0 silencioso)
-  if (tipo === "bloqueo" && !vuelos.length)
-    return { ok: false, error: "Bloqueo: selecciona al menos un vuelo." };
+  // Validaciones según el tipo (mensajes claros en vez de 0 silencioso).
+  // 'bloqueo' acepta cupos negociados (armado_vuelos) O tarifas de Sistema
+  // (armado_empaquetados) — no se limita en silencio a solo bloqueos: el
+  // mismo tipo de paquete ('bloqueo', el único con paso de "vuelo" en el
+  // armado) es el punto de integración natural para Empaquetados, igual que
+  // ya lo es para bloqueos negociados. 'porcion_terrestre'/'servicios' no
+  // tienen vuelo en absoluto; 'dinamico' ya tiene su propio mecanismo
+  // dedicado (`salidas_dinamicas`, deliberadamente no fusionado con
+  // Empaquetados — ver la migración 156).
+  if (tipo === "bloqueo" && !vuelos.length && !empaquetadosVuelos.length)
+    return { ok: false, error: "Bloqueo: selecciona al menos un vuelo o un empaquetado." };
   if (tipo === "porcion_terrestre" && (!pq.fecha_viaje_inicio || !pq.fecha_viaje_fin))
     return { ok: false, error: "Porción terrestre: define el rango de viaje (fechas) en la Configuración inicial." };
   if (tipo === "dinamico" && !salidas.length)
@@ -509,7 +562,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     return { ok: false, error: "Agrega al menos un servicio." };
 
   if (tipo === "bloqueo") {
-    // MÓDULO BLOQUEOS: una liquidación por ciclo aéreo
+    // MÓDULO BLOQUEOS: una liquidación por ciclo aéreo negociado
     for (const { aplica_mk, ta, b } of vuelos) {
       const numNoches = calcNoches(b.fecha_ida!, b.fecha_regreso!);
       const costoTiquete = Number(b.tarifa_para_empaquetar) || 0;
@@ -519,6 +572,31 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       // NO debe aparecer en el tarifario que ven clientes B2C/B2B).
       const label = b.ruta || "";
       filasHoteles(b.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", b.id, label, b.fecha_regreso);
+    }
+    // MÓDULO BLOQUEOS (Sistema): una liquidación por empaquetado — MISMA
+    // matemática que un ciclo aéreo negociado, el único cambio es la fuente
+    // del costo del tiquete (`empaquetados.tarifa_para_empaquetar` en vez de
+    // `bloqueos_vuelo.tarifa_para_empaquetar`).
+    //
+    // Base y NO doble margen: la fila trae DOS tarifas (`tarifa_proveedor` =
+    // neto crudo del proveedor/sistema, informativo — no entra al PVP aquí,
+    // igual que `bloqueos_vuelo` tampoco expone un "neto" separado en este
+    // cálculo; y `tarifa_para_empaquetar` = ya lista para reventa). Se usa
+    // ÚNICAMENTE `tarifa_para_empaquetar` como `costoTiquete`, exactamente
+    // igual que un bloqueo negociado — entra UNA sola vez a `aporteVuelo()`,
+    // que aplica el margen (`aplica_mk`+`pctMk`) O la TA (nunca ambos, es un
+    // if/else dentro de esa función). `aplica_mk`/`ta` vienen del enlace
+    // `armado_empaquetados` (decisión POR PAQUETE, igual que `armado_vuelos`)
+    // — no hay un segundo punto donde se vuelva a marginar el mismo costo.
+    for (const { aplica_mk, ta, e } of empaquetadosVuelos) {
+      const numNoches = calcNoches(e.fecha_ida!, e.fecha_regreso!);
+      const costoTiquete = Number(e.tarifa_para_empaquetar) || 0;
+      const aporteVueloVal = aporteVuelo(costoTiquete, aplica_mk, pctMk, ta);
+      const impuesto = pq.impuesto_tipo === "tiquete" ? costoTiquete : Number(pq.impuesto_fijo) || 0;
+      // Mismo criterio de privacidad que un bloqueo negociado: solo la ruta
+      // en el label público, nunca el record/PNR.
+      const label = e.ruta || "";
+      filasHoteles(e.fecha_ida!, numNoches, aporteVueloVal, impuesto, "bloqueo", null, label, e.fecha_regreso, false, null, e.id);
     }
   } else if (tipo === "porcion_terrestre" && pq.fecha_viaje_inicio) {
     // MÓDULO PORCIÓN TERRESTRE: sin vuelo; noches del paquete desde la fecha inicio

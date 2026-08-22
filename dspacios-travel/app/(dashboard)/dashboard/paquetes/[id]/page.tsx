@@ -35,6 +35,18 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   if (viajeIni) qVuelos = qVuelos.gte("fecha_ida", viajeIni);
   if (viajeFin) qVuelos = qVuelos.lte("fecha_ida", viajeFin);
 
+  // Vuelos por SISTEMA (Empaquetados, migración 156) — mismo filtro de
+  // destino/rango de viaje que los bloqueos negociados; solo los activos
+  // (uno apagado no debe ofrecerse para armar un paquete nuevo).
+  let qEmpaquetados = sb
+    .from("empaquetados")
+    .select("id, record, ruta, aerolinea, fecha_ida, fecha_regreso, tarifa_para_empaquetar, destino_id")
+    .eq("activo", true)
+    .order("fecha_ida");
+  if (destinoId) qEmpaquetados = qEmpaquetados.eq("destino_id", destinoId);
+  if (viajeIni) qEmpaquetados = qEmpaquetados.gte("fecha_ida", viajeIni);
+  if (viajeFin) qEmpaquetados = qEmpaquetados.lte("fecha_ida", viajeFin);
+
   let qHoteles = sb.from("hoteles").select("id, nombre, zona, destino_id, moneda").eq("activo", true).order("nombre");
   if (destinoId) qHoteles = qHoteles.eq("destino_id", destinoId);
 
@@ -54,17 +66,21 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
   const [
     { data: destinos },
     { data: vuelosDisp },
+    { data: empaquetadosDisp },
     { data: hotelesDisp },
     { data: serviciosDisp },
     { data: selVuelos },
+    { data: selEmpaquetados },
     { data: selHoteles },
     { data: selServicios },
   ] = await Promise.all([
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     qVuelos,
+    qEmpaquetados,
     qHoteles,
     qServicios,
     sb.from("armado_vuelos").select("bloqueo_id, aplica_mk, ta").eq("paquete_id", paqueteId),
+    sb.from("armado_empaquetados").select("empaquetado_id, aplica_mk, ta").eq("paquete_id", paqueteId),
     sb.from("armado_hoteles").select("hotel_id, categorias, regimenes").eq("paquete_id", paqueteId),
     sb.from("armado_servicios").select("servicio_id, modo, incluido").eq("paquete_id", paqueteId),
   ]);
@@ -129,9 +145,11 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
         }}
         tieneDestino={!!destinoId}
         vuelosDisp={vuelosDisp ?? []}
+        empaquetadosDisp={empaquetadosDisp ?? []}
         hotelesDisp={hotelesDisp ?? []}
         serviciosDisp={(serviciosDisp ?? []) as unknown as Parameters<typeof ArmadoClient>[0]["serviciosDisp"]}
         selVuelos={selVuelos ?? []}
+        selEmpaquetados={selEmpaquetados ?? []}
         selHoteles={selHoteles ?? []}
         selServicios={selServicios ?? []}
         resultado={resultado as unknown as Parameters<typeof ArmadoClient>[0]["resultado"]}

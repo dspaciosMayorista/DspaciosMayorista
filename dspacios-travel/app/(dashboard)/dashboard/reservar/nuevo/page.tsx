@@ -9,12 +9,13 @@ export const dynamic = "force-dynamic";
 export default async function NuevaReservaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ paquete?: string; hotel?: string; bloqueo?: string; salida?: string; modulo?: string }>;
+  searchParams: Promise<{ paquete?: string; hotel?: string; bloqueo?: string; empaquetado?: string; salida?: string; modulo?: string }>;
 }) {
   const sp = await searchParams;
   const paqueteId = Number(sp.paquete);
   const hotelId = Number(sp.hotel) || 0;
   const bloqueoId = sp.bloqueo ? Number(sp.bloqueo) : null;
+  const empaquetadoId = sp.empaquetado ? Number(sp.empaquetado) : null;
   const salidaId = sp.salida ? Number(sp.salida) : null;
   const modulo = (sp.modulo === "porcion_terrestre" ? "porcion_terrestre" : sp.modulo === "servicios" ? "servicios" : sp.modulo === "dinamico" ? "dinamico" : "bloqueo") as Meta["modulo"];
   const esServicios = modulo === "servicios";
@@ -30,7 +31,16 @@ export default async function NuevaReservaPage({
       .select("categoria, regimen, acomodacion, precio_pvp, hotel_nombre, destino_nombre, fecha_ida, fecha_regreso, noches, bloqueo_label, moneda")
       .eq("paquete_id", paqueteId)
       .eq("hotel_id", hotelId);
-    q = modulo === "dinamico" && salidaId ? q.eq("salida_id", salidaId) : (bloqueoId ? q.eq("bloqueo_id", bloqueoId) : q.is("bloqueo_id", null));
+    // Empaquetado (Sistema) se revisa ANTES que bloqueoId: para una fila
+    // sourced de empaquetados, bloqueo_id siempre es null (mismo patrón que
+    // salida_id/dinámico) — si se revisara al revés, `q.is("bloqueo_id", null)`
+    // atraparía por error las filas de empaquetado en vez de las de "sin
+    // vuelo elegido".
+    q = modulo === "dinamico" && salidaId
+      ? q.eq("salida_id", salidaId)
+      : empaquetadoId
+        ? q.eq("empaquetado_id", empaquetadoId)
+        : (bloqueoId ? q.eq("bloqueo_id", bloqueoId) : q.is("bloqueo_id", null));
     const { data: filas } = await q;
     if (!filas || !filas.length) {
       return (
@@ -49,7 +59,7 @@ export default async function NuevaReservaPage({
       .eq("id", hotelId)
       .maybeSingle();
     meta = {
-      paqueteId, hotelId, bloqueoId, salidaId, modulo,
+      paqueteId, hotelId, bloqueoId, empaquetadoId, salidaId, modulo,
       moneda: (filas[0] as { moneda?: string | null }).moneda ?? "COP",
       hotelNombre: filas[0].hotel_nombre ?? "",
       destino: filas[0].destino_nombre ?? "",
@@ -90,7 +100,7 @@ export default async function NuevaReservaPage({
       .limit(1)
       .maybeSingle();
     meta = {
-      paqueteId, hotelId: 0, bloqueoId: null, modulo,
+      paqueteId, hotelId: 0, bloqueoId: null, empaquetadoId: null, modulo,
       moneda: (m as { moneda?: string | null } | null)?.moneda ?? "COP",
       hotelNombre: m?.paquete_nombre ?? "Servicios",
       destino: m?.destino_nombre ?? "",

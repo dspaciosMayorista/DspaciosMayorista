@@ -5,6 +5,7 @@ import type { FilaTarifario } from "@/app/tarifario/TarifarioPublic";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
 import { hoyISO } from "@/lib/calc/paquetes";
+import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
 
 export type InfoHotelDato = {
   estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null;
@@ -43,7 +44,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
     const { data: page } = await sb
       .from("tarifario_resultado")
       .select(
-        "modulo, bloqueo_label, bloqueo_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda"
+        "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda"
       )
       .eq("paquete_activo", true)
       .order("destino_nombre")
@@ -84,6 +85,45 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
   // Oculta salidas de BLOQUEO cuya fecha de ida ya pasó.
   const hoyTarifa = hoyISO();
   filas = filas.filter((f) => (f.modulo !== "bloqueo" && f.modulo !== "dinamico") || !f.fecha_ida || f.fecha_ida >= hoyTarifa);
+
+  // Oculta filas de EMPAQUETADO cuyo origen fue desactivado O quedó fuera de
+  // vigencia de compra después de generar el tarifario (defecto 3 original +
+  // hallazgo 4 de la revisión posterior, "VIGENCIA EN LA VITRINA"):
+  // generarTarifario() solo excluye empaquetados inactivos/vencidos al
+  // REGENERAR — una fila ya escrita en tarifario_resultado no desaparece
+  // sola si el empaquetado se apaga o vence después, así que el filtro
+  // también se aplica aquí, en LECTURA, para el caso (más probable) de que
+  // nadie vuelva a pulsar "Generar tarifario" justo después.
+  //
+  // FALLA CERRADA: si la consulta de vigencia FALLA (`error` presente,
+  // service-role caído, etc.), las filas de empaquetado se ocultan TODAS —
+  // nunca se publican tarifas cuya vigencia no se pudo verificar. Antes esto
+  // ya pasaba por accidente (`emps ?? []` daba un set vacío → todo se
+  // filtraba), ahora es explícito e independiente de si la causa fue "cero
+  // empaquetados activos" o "la consulta reventó".
+  const empaquetadoIds = [...new Set(
+    filas.filter((f) => f.empaquetado_id != null).map((f) => f.empaquetado_id as number)
+  )];
+  if (empaquetadoIds.length) {
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      filas = filas.filter((f) => f.empaquetado_id == null);
+    } else {
+      const admin = createAdminClient();
+      const { data: emps, error: empsError } = await admin
+        .from("empaquetados")
+        .select("id, activo, compra_inicio, compra_fin")
+        .in("id", empaquetadoIds);
+      const hoyEmp = hoyBogota(new Date());
+      const vigentes = empsError
+        ? new Set<number>() // fallo cerrado: la consulta falló, no se publica ninguna
+        : new Set(
+            (emps ?? [])
+              .filter((e) => e.activo && empaquetadoVigente(e.compra_inicio, e.compra_fin, hoyEmp))
+              .map((e) => e.id)
+          );
+      filas = filas.filter((f) => f.empaquetado_id == null || vigentes.has(f.empaquetado_id));
+    }
+  }
 
   // En la vitrina "Servicios" solo deben verse los paquetes de tipo 'servicios'.
   // Los servicios de paquetes porción/bloqueo existen como add-on para Reservar,

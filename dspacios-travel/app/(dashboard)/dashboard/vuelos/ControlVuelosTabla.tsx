@@ -5,9 +5,10 @@ import Link from "next/link";
 import { formatFechaLarga } from "@/lib/utils";
 import { EstadoBadge } from "@/components/EstadoBadge";
 import {
-  MODALIDAD_LABEL, ESTADO_EMISION_LABEL, ESTADO_PAGO_LABEL, SIN_DEFINIR, POR_CONFIRMAR,
-  labelModalidad, labelEstadoEmision, labelEstadoPago,
-  tonoModalidad, tonoEstadoEmision, tonoEstadoPago,
+  MODALIDAD_LABEL, MODALIDAD_CONTROL_LABEL, ESTADO_EMISION_LABEL, ESTADO_PAGO_LABEL, SIN_DEFINIR, POR_CONFIRMAR,
+  labelModalidadControl, labelEstadoEmision, labelEstadoPago,
+  tonoModalidadControl, tonoEstadoEmision, tonoEstadoPago,
+  type ModalidadControl,
 } from "@/lib/vuelos/control";
 import { mesKey, mesLabel, matchControl, SIN_DEFINIR_VAL } from "@/lib/vuelos/filtros";
 
@@ -17,20 +18,35 @@ import { mesKey, mesLabel, matchControl, SIN_DEFINIR_VAL } from "@/lib/vuelos/fi
 // `ControlBadges`, que se usa en el detalle del record con la MISMA
 // semántica de color — ambos toman el tono de tonoModalidad/tonoEstadoEmision/
 // tonoEstadoPago en lib/vuelos/control.ts).
+//
+// FUSIÓN con Empaquetados (Sistema): esta tabla mezcla filas de dos tablas
+// distintas (`bloqueos_vuelo` y `empaquetados`) — NUNCA se mezclan sus ids
+// numéricos crudos (un id=12 de un bloqueo y un id=12 de un empaquetado son
+// filas completamente distintas). Cada fila trae una clave discriminada
+// `origen:id` (`bloqueo:12` / `sistema:12`) como `id` de React, y `origen`+
+// `numericId` por separado para construir el link correcto a cada detalle
+// (`/dashboard/vuelos/{id}` vs `/dashboard/vuelos/empaquetados/{id}`).
+export type ControlOrigen = "bloqueo" | "sistema";
 export type ControlFila = {
-  id: number;
-  record: string;
+  id: string;             // clave discriminada "bloqueo:12" / "sistema:12" — NUNCA un id crudo compartido
+  origen: ControlOrigen;
+  numericId: number;
+  record: string | null;  // nullable: un empaquetado puede no tener PNR todavía
   aerolinea: string | null;
   ruta: string | null;
   fecha_ida: string | null;
   vuelo_ida: string | null;
   fecha_regreso: string | null;
   vuelo_regreso: string | null;
-  fecha_emision: string | null; // "Fecha límite de emisión" — NO es fecha_devolucion.
-  modalidad_emision: string | null;
+  fecha_emision: string | null; // "Fecha límite de emisión" — SOLO aplica a bloqueos; null en sistema (concepto distinto: vigencia de compra, ver el detalle del empaquetado)
+  modalidad: ModalidadControl | null;
   estado_emision: string | null;
   estado_pago: string | null;
 };
+
+function hrefDetalle(f: ControlFila): string {
+  return f.origen === "bloqueo" ? `/dashboard/vuelos/${f.numericId}` : `/dashboard/vuelos/empaquetados/${f.numericId}`;
+}
 
 export function ControlVuelosTabla({ filas }: { filas: ControlFila[] }) {
   const [fRuta, setFRuta] = useState("");
@@ -48,7 +64,7 @@ export function ControlVuelosTabla({ filas }: { filas: ControlFila[] }) {
         (b) =>
           (!fRuta || b.ruta === fRuta) &&
           (!fMes || mesKey(b.fecha_ida) === fMes) &&
-          matchControl(b.modalidad_emision, fModalidad) &&
+          (!fModalidad || (fModalidad === SIN_DEFINIR_VAL ? b.modalidad == null : b.modalidad === fModalidad)) &&
           matchControl(b.estado_emision, fEmision) &&
           matchControl(b.estado_pago, fPago)
       ),
@@ -72,7 +88,8 @@ export function ControlVuelosTabla({ filas }: { filas: ControlFila[] }) {
         </select>
         <select value={fModalidad} onChange={(e) => setFModalidad(e.target.value)} className={selCls} aria-label="Filtrar por modalidad">
           <option value="">Modalidad: todas</option>
-          <option value="individual">{MODALIDAD_LABEL.individual}</option>
+          <option value="sistema">{MODALIDAD_CONTROL_LABEL.sistema}</option>
+          <option value="serie">{MODALIDAD_LABEL.serie}</option>
           <option value="grupo">{MODALIDAD_LABEL.grupo}</option>
           <option value={SIN_DEFINIR_VAL}>{SIN_DEFINIR}</option>
         </select>
@@ -119,14 +136,16 @@ export function ControlVuelosTabla({ filas }: { filas: ControlFila[] }) {
             {vis.map((b) => (
               <tr key={b.id} className="border-t border-gray-50">
                 <td className="px-3 py-2">
-                  <Link href={`/dashboard/vuelos/${b.id}`} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">{b.record}</Link>
+                  <Link href={hrefDetalle(b)} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">
+                    {b.record ?? "Sin record"}
+                  </Link>
                 </td>
                 <td className="px-3 py-2 text-gray-600">{b.aerolinea ?? "—"}</td>
                 <td className="px-3 py-2 text-gray-600">{b.ruta ?? "—"}</td>
                 <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_ida)}{b.vuelo_ida ? ` · ${b.vuelo_ida}` : ""}</td>
                 <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_regreso)}{b.vuelo_regreso ? ` · ${b.vuelo_regreso}` : ""}</td>
-                <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(b.fecha_emision)}</td>
-                <td className="px-3 py-2"><EstadoBadge estado={labelModalidad(b.modalidad_emision)} tono={tonoModalidad(b.modalidad_emision)} /></td>
+                <td className="px-3 py-2 text-xs text-gray-500">{b.origen === "bloqueo" ? formatFechaLarga(b.fecha_emision) : "—"}</td>
+                <td className="px-3 py-2"><EstadoBadge estado={labelModalidadControl(b.modalidad)} tono={tonoModalidadControl(b.modalidad)} /></td>
                 <td className="px-3 py-2"><EstadoBadge estado={labelEstadoEmision(b.estado_emision)} tono={tonoEstadoEmision(b.estado_emision)} /></td>
                 <td className="px-3 py-2"><EstadoBadge estado={labelEstadoPago(b.estado_pago)} tono={tonoEstadoPago(b.estado_pago)} /></td>
               </tr>

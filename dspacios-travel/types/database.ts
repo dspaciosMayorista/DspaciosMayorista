@@ -304,6 +304,9 @@ export type Database = {
           freelance_nombre: string | null;
           paquete_armado_id: number | null;
           bloqueo_ref_id: number | null;
+          // Migración 156: vínculo fuerte y nullable con el Empaquetado de
+          // origen (excluyente con bloqueo_ref_id — CHECK en la BD).
+          empaquetado_ref_id: number | null;
           share_token: string;
           b2b_usuario_id: string | null;
           // Migración 143: vínculo fuerte con el catálogo `aliados`.
@@ -367,6 +370,7 @@ export type Database = {
           freelance_nombre?: string | null;
           paquete_armado_id?: number | null;
           bloqueo_ref_id?: number | null;
+          empaquetado_ref_id?: number | null;
           share_token?: string;
           b2b_usuario_id?: string | null;
           aliado_id?: number | null;
@@ -1093,6 +1097,78 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["bloqueos_vuelo"]["Insert"]>;
+        Relationships: [];
+      };
+      empaquetados: {
+        Row: {
+          id: number;
+          record: string | null;
+          aerolinea: string | null;
+          proveedor_id: number | null;
+          destino_id: number | null;
+          ruta: string | null;
+          origen: string | null;
+          vuelo_ida: string | null;
+          fecha_ida: string;
+          hora_salida_ida: string | null;
+          hora_llegada_ida: string | null;
+          vuelo_regreso: string | null;
+          fecha_regreso: string | null;
+          hora_salida_reg: string | null;
+          hora_llegada_reg: string | null;
+          tarifa_proveedor: number;
+          tarifa_para_empaquetar: number;
+          fee_infante: number;
+          compra_inicio: string | null;
+          compra_fin: string | null;
+          estado_emision: string | null;
+          estado_pago: string | null;
+          notas: string | null;
+          activo: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          record?: string | null;
+          aerolinea?: string | null;
+          proveedor_id?: number | null;
+          destino_id?: number | null;
+          ruta?: string | null;
+          origen?: string | null;
+          vuelo_ida?: string | null;
+          fecha_ida: string;
+          hora_salida_ida?: string | null;
+          hora_llegada_ida?: string | null;
+          vuelo_regreso?: string | null;
+          fecha_regreso?: string | null;
+          hora_salida_reg?: string | null;
+          hora_llegada_reg?: string | null;
+          tarifa_proveedor?: number;
+          tarifa_para_empaquetar?: number;
+          fee_infante?: number;
+          compra_inicio?: string | null;
+          compra_fin?: string | null;
+          estado_emision?: string | null;
+          estado_pago?: string | null;
+          notas?: string | null;
+          activo?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["empaquetados"]["Insert"]>;
+        Relationships: [];
+      };
+      armado_empaquetados: {
+        Row: { paquete_id: number; empaquetado_id: number; aplica_mk: boolean; ta: number };
+        Insert: { paquete_id: number; empaquetado_id: number; aplica_mk?: boolean; ta?: number };
+        Update: Partial<Database["public"]["Tables"]["armado_empaquetados"]["Insert"]>;
+        Relationships: [];
+      };
+      empaquetado_cambios: {
+        Row: { id: number; empaquetado_id: number; detalle: string | null; nota: string | null; registrado_por: string | null; created_at: string };
+        Insert: { id?: number; empaquetado_id: number; detalle?: string | null; nota?: string | null; registrado_por?: string | null; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["empaquetado_cambios"]["Insert"]>;
         Relationships: [];
       };
       sillas: {
@@ -1994,6 +2070,7 @@ export type Database = {
           modulo: Database["public"]["Enums"]["tarifario_modulo"];
           bloqueo_id: number | null;
           bloqueo_label: string | null;
+          empaquetado_id: number | null;
           hotel_id: number | null;
           hotel_nombre: string | null;
           servicio_id: number | null;
@@ -2031,6 +2108,7 @@ export type Database = {
           modulo: Database["public"]["Enums"]["tarifario_modulo"];
           bloqueo_id?: number | null;
           bloqueo_label?: string | null;
+          empaquetado_id?: number | null;
           hotel_id?: number | null;
           hotel_nombre?: string | null;
           servicio_id?: number | null;
@@ -2676,6 +2754,39 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Migración 156 (editada, revisión posterior — hallazgo 2): inventario
+      // aéreo "por sistema" mínimo para el módulo Vuelos — solo lo que un
+      // contrato dinámico/empaquetado tiene de vuelo, nunca cliente/precio/
+      // costo/comisión. Único camino de lectura de `ventas` para `control_vuelo`.
+      ventas_vuelo_sistema: {
+        Row: {
+          numero_contrato: string;
+          tenant: string;
+          tipo_paquete: string | null;
+          aerolinea: string | null;
+          fecha_salida: string | null;
+          fecha_regreso: string | null;
+          empaquetado_ref_id: number | null;
+          origen: "dinamico" | "empaquetado";
+          // Detalle aéreo mínimo desde contrato_vuelos (ronda siguiente,
+          // hallazgo 1 "CONECTAR CONTRATO_VUELOS CON LA LISTA") — NULL para
+          // contratos sin contrato_vuelos (todo el histórico dinámico
+          // anterior a esta migración).
+          record: string | null;
+          origen_codigo: string | null;
+          destino_codigo: string | null;
+          ruta: string | null;
+          vuelo_ida: string | null;
+          vuelo_regreso: string | null;
+          hora_salida_ida: string | null;
+          hora_llegada_ida: string | null;
+          hora_salida_reg: string | null;
+          hora_llegada_reg: string | null;
+          vuelo_fecha_ida: string | null;
+          vuelo_fecha_regreso: string | null;
+        };
+        Relationships: [];
+      };
     };
     Functions: {
       // Migración 142. La misma función que usan las policies para decidir si
@@ -2723,6 +2834,19 @@ export type Database = {
           p_estado_emision: string;
           p_estado_pago: string;
           p_nota: string;
+        };
+        Returns: undefined;
+      };
+      // Migración 156. Mismo patrón que actualizar_control_bloqueo, para
+      // empaquetados: actualiza record/estado_emision/estado_pago y registra
+      // el cambio en empaquetado_cambios en una sola transacción.
+      actualizar_control_empaquetado: {
+        Args: {
+          p_empaquetado_id: number;
+          p_record: string | null;
+          p_estado_emision: string | null;
+          p_estado_pago: string | null;
+          p_nota: string | null;
         };
         Returns: undefined;
       };

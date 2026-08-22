@@ -36,6 +36,7 @@ export type Meta = {
   paqueteId: number;
   hotelId: number;
   bloqueoId: number | null;
+  empaquetadoId?: number | null;
   salidaId?: number | null;
   modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   moneda?: string | null;
@@ -249,7 +250,7 @@ export function ReservaForm({
     const pasajeros = paxRows.map((p, idx) => ({ ...p, esInfante: idx >= cortePax }));
     start(async () => {
       const r = await crearCotizacion({
-        paqueteId: meta.paqueteId, bloqueoId: meta.bloqueoId, salidaId: meta.salidaId ?? null, modulo: meta.modulo, hotelId: meta.hotelId,
+        paqueteId: meta.paqueteId, bloqueoId: meta.bloqueoId, empaquetadoId: meta.empaquetadoId ?? null, salidaId: meta.salidaId ?? null, modulo: meta.modulo, hotelId: meta.hotelId,
         categoria: esServicios ? "" : catSel, regimen: esServicios ? "" : reg,
         fechaIda: esPorFechas ? (fIda || undefined) : undefined,
         fechaRegreso: esPorFechas ? (fReg || undefined) : undefined,

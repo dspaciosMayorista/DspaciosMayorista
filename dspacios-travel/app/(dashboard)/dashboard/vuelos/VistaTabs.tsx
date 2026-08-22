@@ -1,21 +1,24 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-// Pestañas Inventario/Control de la pantalla de vuelos (activa e histórico).
-// Estado en la URL (`?vista=`), no en useState: así la pestaña elegida
-// sobrevive a una recarga y es enlazable directamente. Server component (sin
-// "use client"): no necesita ningún hook, solo compara el `vista` que ya
-// resolvió la página (desde `searchParams`) contra cada link.
-export type VistaVuelos = "inventario" | "control-vuelos";
+// Pestañas Inventario/Empaquetados/Control de la pantalla de vuelos (activa e
+// histórico). Estado en la URL (`?vista=`), no en useState: así la pestaña
+// elegida sobrevive a una recarga y es enlazable directamente. Server
+// component (sin "use client"): no necesita ningún hook, solo compara el
+// `vista` que ya resolvió la página (desde `searchParams`) contra cada link.
+export type VistaVuelos = "inventario" | "empaquetados" | "control-vuelos";
 
 export function vistaDeParam(v: string | undefined): VistaVuelos {
-  return v === "control-vuelos" ? "control-vuelos" : "inventario";
+  if (v === "control-vuelos") return "control-vuelos";
+  if (v === "empaquetados") return "empaquetados";
+  return "inventario";
 }
 
 export function VistaTabs({ basePath, vista }: { basePath: string; vista: VistaVuelos }) {
   return (
     <div className="mb-5 flex gap-1 border-b border-gray-200">
       <TabLink href={`${basePath}?vista=inventario`} activo={vista === "inventario"}>Inventario</TabLink>
+      <TabLink href={`${basePath}?vista=empaquetados`} activo={vista === "empaquetados"}>EMPAQUETADOS</TabLink>
       <TabLink href={`${basePath}?vista=control-vuelos`} activo={vista === "control-vuelos"}>CONTROL VUELOS</TabLink>
     </div>
   );

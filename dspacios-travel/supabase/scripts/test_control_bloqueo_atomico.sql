@@ -2,6 +2,13 @@
 -- PRUEBA AUTO-VERIFICABLE — atomicidad de actualizar_control_bloqueo()
 -- (migración 152)
 --
+-- ⚠️ Usa 'serie' (no 'individual') como valor de modalidad: la migración 155
+-- amplía el dominio y la 157 lo cierra a solo serie/grupo — 'individual' deja
+-- de ser válido en cuanto la 157 corre. Este script se pega DESPUÉS de la
+-- 157 en la secuencia de despliegue, así que debe usar el valor vigente en
+-- ese punto (mismo criterio de mecánica que probaba antes, solo el literal
+-- cambia con el rename de la 155/157).
+--
 -- Corre contra una base local construida con `local-desde-cero.sh` (o en el
 -- editor SQL de Supabase, DE SOLO LECTURA: termina en ROLLBACK). Se ejecuta
 -- así, para que un fallo real corte la ejecución en vez de seguir de largo:
@@ -39,6 +46,22 @@
 --      antes→después REAL de ESE cambio puntual (no el estado original ni
 --      el final) — se verifican los 4 registros completos, en orden, con
 --      su detalle exacto.
+--   6. Privilegios de EXECUTE (ronda posterior — consulta preventiva en
+--      producción sobre migraciones 155/157, aún sin correr): la consulta
+--      mostró `actualizar_control_bloqueo` con `security_definer=false` pero
+--      `anon EXECUTE=true` pese al `revoke ... from public` que ya traía la
+--      152 — Supabase le otorga a `anon` un grant EXECUTE directo al crear
+--      cualquier función nueva (`ALTER DEFAULT PRIVILEGES` de proyecto),
+--      independiente de PUBLIC. Las migraciones 155/157 (y sus rollbacks)
+--      ahora repiten `revoke ... from public/anon` + `grant execute ... to
+--      authenticated` en cada `create or replace` de esta función. Se
+--      prueba: (a) `anon` recibe `permission denied` al invocar el RPC
+--      directo, sin efecto alguno; (b) `authenticated` autorizado (control_
+--      vuelo) SÍ puede ejecutarlo con éxito; (c) `authenticated` SIN permiso
+--      sobre la fila (`venta`) sigue bloqueado por RLS — el `grant execute`
+--      amplio a `authenticated` NUNCA reemplaza la policy de la tabla base,
+--      la función no es `security definer` así que corre con los privilegios
+--      del que llama.
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -69,7 +92,7 @@ $$;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub','55555555-5555-5555-5555-555555555555','role','authenticated')::text, true);
 
-select public.actualizar_control_bloqueo(9201::bigint, 'individual', 'emitido', 'pendiente', '');
+select public.actualizar_control_bloqueo(9201::bigint, 'serie', 'emitido', 'pendiente', '');
 
 reset role;
 select set_config('request.jwt.claims', null, true);
@@ -79,13 +102,13 @@ declare
   v_row record;
   v_hist record;
   v_detalle_esperado text :=
-    'Modalidad de emisión: Sin definir → Individual · '
+    'Modalidad de emisión: Sin definir → Serie · '
     || 'Estado de emisión: Sin definir → Emitido · '
     || 'Estado de pago: Sin definir → Pendiente';
 begin
   select modalidad_emision, estado_emision, estado_pago into v_row
     from public.bloqueos_vuelo where id = 9201;
-  perform pg_temp.assert_eq(v_row.modalidad_emision, 'individual', 'caso 1: modalidad_emision');
+  perform pg_temp.assert_eq(v_row.modalidad_emision, 'serie', 'caso 1: modalidad_emision');
   perform pg_temp.assert_eq(v_row.estado_emision, 'emitido', 'caso 1: estado_emision');
   perform pg_temp.assert_eq(v_row.estado_pago, 'pendiente', 'caso 1: estado_pago');
 
@@ -149,7 +172,7 @@ begin
   -- 'pagado' que llevaba el intento fallido.
   select modalidad_emision, estado_emision, estado_pago into v_row
     from public.bloqueos_vuelo where id = 9201;
-  perform pg_temp.assert_eq(v_row.modalidad_emision, 'individual', 'caso 2: modalidad_emision NO debía cambiar');
+  perform pg_temp.assert_eq(v_row.modalidad_emision, 'serie', 'caso 2: modalidad_emision NO debía cambiar');
   perform pg_temp.assert_eq(v_row.estado_emision, 'emitido', 'caso 2: estado_emision NO debía cambiar');
   perform pg_temp.assert_eq(v_row.estado_pago, 'pendiente', 'caso 2: estado_pago NO debía cambiar');
   perform pg_temp.assert_eq(
@@ -190,7 +213,7 @@ declare v_row record;
 begin
   select modalidad_emision, estado_emision, estado_pago into v_row
     from public.bloqueos_vuelo where id = 9201;
-  perform pg_temp.assert_eq(v_row.modalidad_emision, 'individual', 'caso 3: modalidad_emision NO debía cambiar');
+  perform pg_temp.assert_eq(v_row.modalidad_emision, 'serie', 'caso 3: modalidad_emision NO debía cambiar');
   perform pg_temp.assert_eq(v_row.estado_emision, 'emitido', 'caso 3: estado_emision NO debía cambiar');
   perform pg_temp.assert_eq(v_row.estado_pago, 'pendiente', 'caso 3: estado_pago NO debía cambiar');
   perform pg_temp.assert_eq(
@@ -203,7 +226,7 @@ end $$;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub','55555555-5555-5555-5555-555555555555','role','authenticated')::text, true);
 
-select public.actualizar_control_bloqueo(9201::bigint, 'individual', 'emitido', 'pendiente', 'Solo una nota, sin cambios');
+select public.actualizar_control_bloqueo(9201::bigint, 'serie', 'emitido', 'pendiente', 'Solo una nota, sin cambios');
 
 reset role;
 select set_config('request.jwt.claims', null, true);
@@ -213,7 +236,7 @@ declare v_row record; v_hist record;
 begin
   select modalidad_emision, estado_emision, estado_pago into v_row
     from public.bloqueos_vuelo where id = 9201;
-  perform pg_temp.assert_eq(v_row.modalidad_emision, 'individual', 'caso 4: modalidad_emision NO debía tocarse');
+  perform pg_temp.assert_eq(v_row.modalidad_emision, 'serie', 'caso 4: modalidad_emision NO debía tocarse');
   perform pg_temp.assert_eq(v_row.estado_emision, 'emitido', 'caso 4: estado_emision NO debía tocarse');
   perform pg_temp.assert_eq(v_row.estado_pago, 'pendiente', 'caso 4: estado_pago NO debía tocarse');
 
@@ -229,7 +252,7 @@ end $$;
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub','55555555-5555-5555-5555-555555555555','role','authenticated')::text, true);
 
-select public.actualizar_control_bloqueo(9201::bigint, 'individual', 'emitido', 'pagado', '');
+select public.actualizar_control_bloqueo(9201::bigint, 'serie', 'emitido', 'pagado', '');
 select public.actualizar_control_bloqueo(9201::bigint, 'grupo', 'emitido', 'pagado', '');
 
 reset role;
@@ -266,13 +289,105 @@ begin
   -- estado_emision/estado_pago ya estaban en 'emitido'/'pagado', no se
   -- repiten en el detalle aunque se reenviaron con el mismo valor.
   perform pg_temp.assert_eq(
-    v_detalles[4], 'Modalidad de emisión: Individual → Grupo', 'caso 5: detalle del 2do cambio (solo modalidad)'
+    v_detalles[4], 'Modalidad de emisión: Serie → Grupo', 'caso 5: detalle del 2do cambio (solo modalidad)'
+  );
+end $$;
+
+-- ── Caso 6 — Privilegios de EXECUTE (ronda posterior, consulta preventiva) ─
+
+-- 6a) anon: permission denied al invocar el RPC DIRECTO — sin efecto alguno.
+set local role anon;
+select set_config('request.jwt.claims', '{}', true);
+
+do $$
+declare v_lanzo boolean := false;
+begin
+  begin
+    perform public.actualizar_control_bloqueo(9201::bigint, 'grupo', 'emitido', 'pagado', 'nota anon — no debe llegar a ejecutarse');
+  exception when insufficient_privilege then
+    v_lanzo := true;
+  end;
+  perform pg_temp.assert_eq(v_lanzo, true, 'caso 6a: anon debe recibir permission denied al invocar actualizar_control_bloqueo() directo — EXECUTE revocado de PUBLIC y de anon');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+do $$
+declare v_row record;
+begin
+  select modalidad_emision, estado_emision, estado_pago into v_row
+    from public.bloqueos_vuelo where id = 9201;
+  perform pg_temp.assert_eq(v_row.modalidad_emision, 'grupo', 'caso 6a: modalidad_emision NO debía cambiar (estado final del caso 5)');
+  perform pg_temp.assert_eq(v_row.estado_emision, 'emitido', 'caso 6a: estado_emision NO debía cambiar');
+  perform pg_temp.assert_eq(v_row.estado_pago, 'pagado', 'caso 6a: estado_pago NO debía cambiar');
+  perform pg_temp.assert_eq(
+    (select count(*) from public.bloqueo_cambios where bloqueo_id = 9201), 4::bigint,
+    'caso 6a: el intento de anon (rechazado antes de ejecutar) no debía dejar ningún historial nuevo'
+  );
+end $$;
+
+-- 6b) authenticated AUTORIZADO (control_vuelo): SÍ puede ejecutar el RPC.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','55555555-5555-5555-5555-555555555555','role','authenticated')::text, true);
+
+select public.actualizar_control_bloqueo(9201::bigint, 'grupo', 'emitido', 'pagado', 'Nota de prueba de privilegios EXECUTE');
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+do $$
+declare v_hist record;
+begin
+  perform pg_temp.assert_eq(
+    (select count(*) from public.bloqueo_cambios where bloqueo_id = 9201), 5::bigint,
+    'caso 6b: authenticated autorizado (control_vuelo) SÍ pudo ejecutar el RPC — un historial nuevo'
+  );
+  select nota into v_hist from public.bloqueo_cambios where bloqueo_id = 9201 order by id desc limit 1;
+  perform pg_temp.assert_eq(v_hist.nota, 'Nota de prueba de privilegios EXECUTE', 'caso 6b: la nota registrada confirma que el RPC corrió de verdad, no solo que no lanzó error');
+end $$;
+
+-- 6c) authenticated SIN permiso sobre la fila (venta): sigue bloqueado por
+--     RLS — el grant amplio de EXECUTE a `authenticated` nunca reemplaza la
+--     policy de bloqueos_vuelo/bloqueo_cambios (la función NO es `security
+--     definer`, corre con los privilegios del que llama).
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','66666666-6666-6666-6666-666666666666','role','authenticated')::text, true);
+
+do $$
+declare
+  v_lanzo boolean := false;
+  v_msg text;
+begin
+  begin
+    perform public.actualizar_control_bloqueo(9201::bigint, 'serie', 'emitido', 'pagado', 'venta intenta de nuevo');
+  exception
+    when others then
+      v_lanzo := true;
+      get stacked diagnostics v_msg = message_text;
+      if sqlstate is distinct from 'P0001' or v_msg is distinct from 'Bloqueo no encontrado o sin permiso para verlo.' then
+        raise exception 'ASSERT FALLÓ (caso 6c): error inesperado sqlstate=% mensaje=%', sqlstate, v_msg;
+      end if;
+  end;
+  if not v_lanzo then
+    raise exception 'ASSERT FALLÓ (caso 6c): venta (authenticated CON EXECUTE) debía seguir bloqueada por RLS y no lo fue — otorgar EXECUTE al rol no debe abrir el acceso a filas que RLS no permite';
+  end if;
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+do $$
+begin
+  perform pg_temp.assert_eq(
+    (select count(*) from public.bloqueo_cambios where bloqueo_id = 9201), 5::bigint,
+    'caso 6c: el intento de venta, bloqueado por RLS, no debía registrar nada nuevo'
   );
 end $$;
 
 do $$
 begin
-  raise notice 'TODAS LAS PRUEBAS PASARON: test_control_bloqueo_atomico.sql (5 casos)';
+  raise notice 'TODAS LAS PRUEBAS PASARON: test_control_bloqueo_atomico.sql (6 casos)';
 end $$;
 
 rollback;

@@ -11,9 +11,16 @@ import {
   setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, generarTarifario,
   getTarifasHotel, setHotelFiltros, type TarifaHotelPreview,
 } from "../actions";
+import { setEmpaquetado, setTodosEmpaquetados } from "../../vuelos/empaquetados-actions";
 
 type Opt = { id: number; nombre: string; codigo_iata?: string | null };
 type Vuelo = {
+  id: number; record: string | null; ruta: string | null; aerolinea: string | null;
+  fecha_ida: string | null; fecha_regreso: string | null; tarifa_para_empaquetar: number; destino_id: number | null;
+};
+// Vuelos por Sistema (Empaquetados, migración 156) — mismo patrón que Vuelo,
+// pero record puede ser null (PNR opcional, se agrega al comprar/emitir).
+type Empaquetado = {
   id: number; record: string | null; ruta: string | null; aerolinea: string | null;
   fecha_ida: string | null; fecha_regreso: string | null; tarifa_para_empaquetar: number; destino_id: number | null;
 };
@@ -21,6 +28,7 @@ type Hotel = { id: number; nombre: string; zona: string | null; destino_id: numb
 type Servicio = { id: number; nombre: string; precio_persona: number | null; destino_id: number | null; servicio_tarifa_pax: { pax_desde: number }[] };
 type SelServicio = { servicio_id: number; modo: string; incluido: boolean };
 type SelVuelo = { bloqueo_id: number; aplica_mk: boolean; ta: number };
+type SelEmpaquetado = { empaquetado_id: number; aplica_mk: boolean; ta: number };
 type SelHotel = { hotel_id: number; categorias: string[] | null; regimenes: string[] | null };
 type Resultado = {
   id: number; modulo: string; bloqueo_label: string | null; hotel_nombre: string | null;
@@ -39,9 +47,11 @@ export function ArmadoClient(props: {
   config: Parameters<typeof ConfigForm>[0]["initial"];
   tieneDestino: boolean;
   vuelosDisp: Vuelo[];
+  empaquetadosDisp: Empaquetado[];
   hotelesDisp: Hotel[];
   serviciosDisp: Servicio[];
   selVuelos: SelVuelo[];
+  selEmpaquetados: SelEmpaquetado[];
   selHoteles: SelHotel[];
   selServicios: SelServicio[];
   resultado: Resultado[];
@@ -55,6 +65,7 @@ export function ArmadoClient(props: {
   const [msg, setMsg] = useState("");
 
   const vueloSel = new Map(props.selVuelos.map((v) => [v.bloqueo_id, v]));
+  const empaquetadoSel = new Map(props.selEmpaquetados.map((e) => [e.empaquetado_id, e]));
   const hotelSel = new Map(props.selHoteles.map((h) => [h.hotel_id, h]));
   const servSel = new Map(props.selServicios.map((s) => [s.servicio_id, s]));
 
@@ -134,6 +145,54 @@ export function ArmadoClient(props: {
         )}
       </Section>
 
+      )}
+
+      {/* Vuelos por SISTEMA (Empaquetados, migración 156) — mismo tipo de
+          paquete ("bloqueo"), fuente de datos distinta: bloqueos_vuelo arriba
+          (Serie/Grupo, negociado) vs. empaquetados aquí (Sistema, sin cupo
+          negociado). Nunca se mezclan los ids: setVuelo/armado_vuelos para
+          uno, setEmpaquetado/armado_empaquetados para el otro — cada
+          empaquetado se vincula sin duplicarse (upsert por PK compuesta). */}
+      {tipo === "bloqueo" && (
+      <Section title={`Vuelos por Sistema — Empaquetados (${empaquetadoSel.size})`} open onToggle={() => {}}>
+        {!props.empaquetadosDisp.length ? (
+          <Empty>No hay empaquetados del destino en el rango de viaje.</Empty>
+        ) : (
+          <>
+            <label className="mb-1 flex items-center gap-2 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
+              <input
+                type="checkbox"
+                checked={empaquetadoSel.size === props.empaquetadosDisp.length && props.empaquetadosDisp.length > 0}
+                ref={(el) => {
+                  if (el) el.indeterminate = empaquetadoSel.size > 0 && empaquetadoSel.size < props.empaquetadosDisp.length;
+                }}
+                onChange={(e) =>
+                  start(async () => {
+                    await setTodosEmpaquetados(
+                      props.paqueteId,
+                      props.empaquetadosDisp.map((e) => e.id),
+                      e.target.checked
+                    );
+                    refrescar();
+                  })
+                }
+              />
+              Seleccionar todos
+            </label>
+            <ul className="divide-y divide-gray-100">
+              {props.empaquetadosDisp.map((e) => (
+              <EmpaquetadoRow
+                key={e.id}
+                e={e}
+                sel={empaquetadoSel.get(e.id)}
+                paqueteId={props.paqueteId}
+                onDone={refrescar}
+              />
+              ))}
+            </ul>
+          </>
+        )}
+      </Section>
       )}
 
       {/* Salidas dinámicas (vuelo por sistema) */}
@@ -286,6 +345,86 @@ function VueloRow({
                     min={0}
                     value={ta}
                     onChange={(e) => setTa(e.target.value)}
+                    onBlur={() => save(true, false, ta)}
+                    className="h-7 w-28"
+                    placeholder="0"
+                  />
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+// Mismo patrón que VueloRow, sobre `empaquetados`/`armado_empaquetados` en
+// vez de `bloqueos_vuelo`/`armado_vuelos`. `e.record` puede ser null (un
+// empaquetado puede no tener PNR todavía) — se muestra "Sin record", nunca
+// como si faltara un dato obligatorio.
+function EmpaquetadoRow({
+  e, sel, paqueteId, onDone,
+}: {
+  e: Empaquetado; sel: SelEmpaquetado | undefined; paqueteId: number; onDone: () => void;
+}) {
+  const [, start] = useTransition();
+  const checked = !!sel;
+  const [aplicaMk, setAplicaMk] = useState(sel?.aplica_mk ?? true);
+  const [ta, setTa] = useState(sel ? String(sel.ta) : "");
+
+  function save(nextChecked: boolean, nextMk = aplicaMk, nextTa = ta) {
+    start(async () => {
+      await setEmpaquetado(paqueteId, e.id, nextChecked, nextMk, Number(nextTa) || 0);
+      onDone();
+    });
+  }
+
+  return (
+    <li className="py-3">
+      <div className="flex items-start gap-3">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={checked}
+          onChange={(ev) => save(ev.target.checked)}
+        />
+        <div className="flex-1">
+          <p className="text-sm font-medium text-gray-800">
+            {e.record ?? "Sin record"} <span className="text-gray-400">·</span> {e.ruta ?? ""}{" "}
+            {e.aerolinea ? <span className="text-gray-400">· {e.aerolinea}</span> : null}
+            <span className="ml-1 rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold text-teal-700">Sistema</span>
+          </p>
+          <p className="text-xs text-gray-500">
+            {e.fecha_ida} → {e.fecha_regreso} · tarifa empaquetar {formatCOP(e.tarifa_para_empaquetar)}
+          </p>
+
+          {checked && (
+            <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg bg-gray-50 p-2">
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  checked={aplicaMk}
+                  onChange={() => { setAplicaMk(true); save(true, true, ta); }}
+                />
+                Aplicar mk del paquete
+              </label>
+              <label className="flex items-center gap-1 text-xs">
+                <input
+                  type="radio"
+                  checked={!aplicaMk}
+                  onChange={() => { setAplicaMk(false); save(true, false, ta); }}
+                />
+                Sumar TA
+              </label>
+              {!aplicaMk && (
+                <span className="flex items-center gap-1">
+                  <span className="text-xs text-gray-500">TA</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={ta}
+                    onChange={(ev) => setTa(ev.target.value)}
                     onBlur={() => save(true, false, ta)}
                     className="h-7 w-28"
                     placeholder="0"

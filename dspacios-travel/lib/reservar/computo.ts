@@ -28,6 +28,7 @@ import {
 } from "@/lib/acomodaciones";
 import { calcularEdad } from "@/lib/utils";
 import { liquidarHotelPaquete } from "@/lib/reservar/cotizar";
+import { resolverOrigenVuelo, empaquetadoVigente, hoyBogota, type OrigenVuelo } from "@/lib/reservar/origen";
 
 export type PasajeroReserva = {
   nombres: string;
@@ -42,6 +43,7 @@ export type PasajeroReserva = {
 export type ReservaInput = {
   paqueteId: number;
   bloqueoId: number | null;
+  empaquetadoId?: number | null;  // vuelo de SISTEMA (tabla empaquetados, migración 156) — mutuamente excluyente con bloqueoId
   salidaId?: number | null;   // salida dinámica (modulo 'dinamico')
   modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
   hotelId: number;
@@ -69,6 +71,7 @@ export type ReservaInput = {
 };
 
 export type ComputoReserva = {
+  origen: OrigenVuelo;
   meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   pvpPorAcom: Record<string, number>;
   netoPorAcom: Record<string, number>; // costo neto/persona por acomodación (autoritativo)
@@ -90,6 +93,32 @@ export async function computarReserva(
   sb: Awaited<ReturnType<typeof createClient>>,
   input: ReservaInput
 ): Promise<{ ok: true; data: ComputoReserva } | { ok: false; error: string }> {
+  // Origen del vuelo — discriminante único y validado ANTES de cualquier
+  // consulta. `computarReserva` es el primer paso, compartido, de TODO flujo
+  // de reserva/cotización (`crearCotizacion`, `reservarDesdeTarifarioInterno`
+  // vía `convertirCotizacion`) — un origen ambiguo o inválido nunca llega a
+  // generar precio, contrato_vuelos, sillas ni CxP (ver `lib/reservar/origen.ts`).
+  const resOrigen = resolverOrigenVuelo(input);
+  if (!resOrigen.ok) return { ok: false, error: resOrigen.error };
+  const origen = resOrigen.origen;
+
+  // Vigencia y activo del Empaquetado — revalidados en el momento exacto de
+  // resolver la reserva (no solo al generar el tarifario): un empaquetado
+  // puede desactivarse o vencer DESPUÉS de que el tarifario ya quedó
+  // publicado, y `tarifario_resultado` es una caché, no la fuente de verdad.
+  if (origen.tipo === "empaquetado") {
+    const { data: eq, error: eqErr } = await sb
+      .from("empaquetados")
+      .select("activo, compra_inicio, compra_fin")
+      .eq("id", origen.id)
+      .maybeSingle();
+    if (eqErr) return { ok: false, error: `No se pudo validar el empaquetado: ${eqErr.message}` };
+    if (!eq) return { ok: false, error: "El empaquetado seleccionado ya no existe." };
+    if (!eq.activo) return { ok: false, error: "Este empaquetado fue desactivado y ya no se puede reservar." };
+    if (!empaquetadoVigente(eq.compra_inicio, eq.compra_fin, hoyBogota(new Date())))
+      return { ok: false, error: "Este empaquetado está fuera de su vigencia de compra." };
+  }
+
   const esServicios = input.modulo === "servicios";
 
   const pvpPorAcom: Record<string, number> = {};
@@ -197,8 +226,15 @@ export async function computarReserva(
       .eq("hotel_id", input.hotelId)
       .eq("categoria", input.categoria)
       .eq("regimen", input.regimen);
-    if (input.modulo === "dinamico" && input.salidaId) q = q.eq("salida_id", input.salidaId);
-    else q = input.bloqueoId ? q.eq("bloqueo_id", input.bloqueoId) : q.is("bloqueo_id", null);
+    // El filtro sale ÚNICAMENTE del origen ya validado y discriminado por
+    // `resolverOrigenVuelo` (nunca de los campos crudos `input.bloqueoId`/
+    // `empaquetadoId`/`salidaId` por separado) — así la fila de tarifario
+    // que se usa para el precio es exactamente la que pertenece al origen
+    // resuelto, para este paquete/hotel/categoría/régimen, o no hay fila.
+    if (origen.tipo === "salida") q = q.eq("salida_id", origen.id);
+    else if (origen.tipo === "empaquetado") q = q.eq("empaquetado_id", origen.id);
+    else if (origen.tipo === "bloqueo") q = q.eq("bloqueo_id", origen.id);
+    else q = q.is("bloqueo_id", null).is("empaquetado_id", null).is("salida_id", null);
     const { data: filas, error: fe } = await q;
     if (fe) return { ok: false, error: fe.message };
     if (!filas || !filas.length) return { ok: false, error: "No se encontró la tarifa seleccionada en el tarifario." };
@@ -428,6 +464,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
+    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
   };
 }

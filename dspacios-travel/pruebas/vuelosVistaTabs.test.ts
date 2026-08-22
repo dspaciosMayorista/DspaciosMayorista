@@ -84,8 +84,16 @@ test("ControlVuelosTabla no incluye acción de eliminar (esa acción es solo de 
   assert.doesNotMatch(controlTablaSrc, /EliminarBloqueoBtn/, "Control Vuelos permite eliminar records");
 });
 
-test("ControlVuelosTabla: el record enlaza al detalle del bloqueo", () => {
-  assert.match(controlTablaSrc, /href=\{`\/dashboard\/vuelos\/\$\{b\.id\}`\}/, "el record ya no enlaza a /dashboard/vuelos/{id}");
+test("ControlVuelosTabla: el record enlaza al detalle correcto según su origen (bloqueo vs sistema/empaquetado)", () => {
+  // PR A (fusión con Empaquetados): ya no hay un único href fijo — una fila
+  // puede venir de bloqueos_vuelo o de empaquetados, cada una con su propia
+  // ruta de detalle. hrefDetalle() es la única función que decide el link,
+  // nunca se construye el href inline en el JSX (así no se puede mezclar el
+  // id de una tabla con la ruta de la otra).
+  assert.match(controlTablaSrc, /function hrefDetalle\(f: ControlFila\): string/, "falta la función que decide el link según el origen");
+  assert.match(controlTablaSrc, /f\.origen === "bloqueo" \? `\/dashboard\/vuelos\/\$\{f\.numericId\}`/, "el link de un bloqueo no usa /dashboard/vuelos/{numericId}");
+  assert.match(controlTablaSrc, /`\/dashboard\/vuelos\/empaquetados\/\$\{f\.numericId\}`/, "el link de un empaquetado no usa /dashboard/vuelos/empaquetados/{numericId}");
+  assert.match(controlTablaSrc, /href=\{hrefDetalle\(b\)\}/, "la celda Record no usa hrefDetalle(b) para armar el link");
 });
 
 test("ControlVuelosTabla: mismo número de encabezados y celdas, EN EL MISMO ORDEN", () => {
@@ -112,7 +120,10 @@ test("ControlVuelosTabla: cada valor va en la celda de SU columna, por posición
   assert.match(celdas[4], /b\.fecha_regreso/, "celda 5 (Regreso) no usa b.fecha_regreso");
   assert.match(celdas[5], /b\.fecha_emision/, "celda 6 (Fecha límite de emisión) no usa b.fecha_emision");
   assert.doesNotMatch(celdas[5], /fecha_devolucion/, "celda 6 usa fecha_devolucion en vez de fecha_emision");
-  assert.match(celdas[6], /labelModalidad\(b\.modalidad_emision\)/, "celda 7 (Modalidad) no usa labelModalidad");
+  // PR A: la modalidad ahora es "sistema"/serie/grupo (fusión con Empaquetados)
+  // — pasa por labelModalidadControl/tonoModalidadControl, no por las
+  // versiones sin "Control" (esas solo conocen serie/grupo, nunca "sistema").
+  assert.match(celdas[6], /labelModalidadControl\(b\.modalidad\)/, "celda 7 (Modalidad) no usa labelModalidadControl");
   assert.match(celdas[7], /labelEstadoEmision\(b\.estado_emision\)/, "celda 8 (Emisión) no usa labelEstadoEmision");
   assert.match(celdas[8], /labelEstadoPago\(b\.estado_pago\)/, "celda 9 (Pago) no usa labelEstadoPago");
 });
@@ -155,11 +166,18 @@ test("matchControl/mesKey/mesLabel viven en un helper puro compartido, sin lógi
 
 // ── Activos e históricos no se mezclan ───────────────────────────────────────
 
-test("/dashboard/vuelos: ControlVuelosTabla recibe SOLO activos, nunca pasados ni todos", () => {
-  const i = pageSrc.indexOf("<ControlVuelosTabla");
-  const bloque = pageSrc.slice(i, i + 400);
-  assert.match(bloque, /activos\.map/, "Control Vuelos (activo) no usa activos.map");
-  assert.doesNotMatch(bloque, /pasados\.map|todos\.map/, "Control Vuelos (activo) mezcla con pasados/todos");
+test("/dashboard/vuelos: filasControl (lo que recibe ControlVuelosTabla) se arma SOLO desde activos/empActivos, nunca pasados/todos", () => {
+  // PR A: el armado de filas se movió a una constante `filasControl` (fusiona
+  // bloqueos + empaquetados) calculada ANTES del JSX, en vez de un
+  // `.map()` inline dentro de <ControlVuelosTabla ...>. La prueba ahora mira
+  // el bloque de esa constante, no los 400 caracteres después del tag.
+  const i = pageSrc.indexOf("const filasControl: ControlFila[] = vistaControl");
+  assert.notEqual(i, -1, "no se encontró la constante filasControl");
+  const bloque = pageSrc.slice(i, pageSrc.indexOf("const tituloVista", i));
+  assert.match(bloque, /activos\.map/, "filasControl no usa activos.map para los bloqueos");
+  assert.match(bloque, /empActivos\.map/, "filasControl no usa empActivos.map para los empaquetados");
+  assert.doesNotMatch(bloque, /\bpasados\.map|\btodos\.map|\bempPasados\.map|\btodosEmp\.map/, "filasControl (vista activa) mezcla con pasados/todos");
+  assert.match(pageSrc, /<ControlVuelosTabla filas=\{filasControl\} \/>/, "ControlVuelosTabla ya no recibe filasControl directamente");
 });
 
 test("/dashboard/vuelos: BloqueosTabla recibe SOLO activos, nunca pasados ni todos", () => {
@@ -169,11 +187,14 @@ test("/dashboard/vuelos: BloqueosTabla recibe SOLO activos, nunca pasados ni tod
   assert.doesNotMatch(bloque, /pasados\.map|todos\.map/, "Inventario (activo) mezcla con pasados/todos");
 });
 
-test("/dashboard/vuelos/historico: ControlVuelosTabla recibe SOLO pasados, nunca activos ni todos", () => {
-  const i = historicoSrc.indexOf("<ControlVuelosTabla");
-  const bloque = historicoSrc.slice(i, i + 400);
-  assert.match(bloque, /pasados\.map/, "Control Vuelos (histórico) no usa pasados.map");
-  assert.doesNotMatch(bloque, /activos\.map|todos\.map/, "Control Vuelos (histórico) mezcla con activos/todos");
+test("/dashboard/vuelos/historico: filasControl se arma SOLO desde pasados/empPasados, nunca activos/todos", () => {
+  const i = historicoSrc.indexOf("const filasControl: ControlFila[] = vistaControl");
+  assert.notEqual(i, -1, "no se encontró la constante filasControl");
+  const bloque = historicoSrc.slice(i, historicoSrc.indexOf("const tituloVista", i));
+  assert.match(bloque, /pasados\.map/, "filasControl (histórico) no usa pasados.map para los bloqueos");
+  assert.match(bloque, /empPasados\.map/, "filasControl (histórico) no usa empPasados.map para los empaquetados");
+  assert.doesNotMatch(bloque, /\bactivos\.map|\btodos\.map|\bempActivos\.map|\btodosEmp\.map/, "filasControl (histórico) mezcla con activos/todos");
+  assert.match(historicoSrc, /<ControlVuelosTabla filas=\{filasControl\} \/>/, "ControlVuelosTabla ya no recibe filasControl directamente");
 });
 
 test("/dashboard/vuelos/historico: BloqueosTabla recibe SOLO pasados, nunca activos ni todos", () => {
@@ -194,12 +215,17 @@ test("VistaTabs usa <Link href='?vista=...'> — la pestaña vive en la URL, no 
   assert.match(vistaTabsSrc, /href=\{`\$\{basePath\}\?vista=control-vuelos`\}/, "falta el link a ?vista=control-vuelos");
 });
 
-test("vistaDeParam: 'control-vuelos' explícito activa Control; CUALQUIER OTRO valor (ausente, inválido) cae en 'inventario'", () => {
-  assert.match(
-    vistaTabsSrc,
-    /export function vistaDeParam\(v: string \| undefined\): VistaVuelos \{\s*return v === "control-vuelos" \? "control-vuelos" : "inventario";\s*\}/,
-    "vistaDeParam ya no tiene el fallback incondicional a 'inventario'"
+test("vistaDeParam: 'control-vuelos'/'empaquetados' explícitos activan su vista; CUALQUIER OTRO valor (ausente, inválido) cae en 'inventario'", () => {
+  // PR A: tercera pestaña — ya no es un ternario de una sola línea, pero el
+  // criterio de fallback (default duro a "inventario" para cualquier valor
+  // que no sea exactamente uno de los otros dos) se mantiene igual.
+  const fn = vistaTabsSrc.slice(
+    vistaTabsSrc.indexOf("export function vistaDeParam"),
+    vistaTabsSrc.indexOf("export function VistaTabs")
   );
+  assert.match(fn, /if \(v === "control-vuelos"\) return "control-vuelos";/, "no reconoce 'control-vuelos' explícito");
+  assert.match(fn, /if \(v === "empaquetados"\) return "empaquetados";/, "no reconoce 'empaquetados' explícito");
+  assert.match(fn, /return "inventario";\s*\}\s*$/, "el fallback final no es un 'inventario' incondicional");
 });
 
 test("page.tsx y historico/page.tsx resuelven la pestaña desde searchParams (servidor), no desde el cliente", () => {
@@ -228,26 +254,38 @@ test("VistaTabs: el texto del tab de Control es EXACTAMENTE 'CONTROL VUELOS'", (
   assert.doesNotMatch(vistaTabsSrc, />Control Vuelos<\/TabLink>/, "quedó el texto viejo 'Control Vuelos' sin mayúsculas");
 });
 
-test("page.tsx: el encabezado H1 es 'Inventario de vuelos' en inventario, 'Control vuelos' en control-vuelos", () => {
-  assert.match(pageSrc, /\{vistaInventario \? "Inventario de vuelos" : "Control vuelos"\}/, "el H1 no cambia según vistaInventario");
+test("page.tsx: el título (tituloVista) es 'Inventario de vuelos' / 'Empaquetados' / 'Control vuelos' según la vista", () => {
+  // PR A: pasó de un ternario inline en el JSX a una constante `tituloVista`
+  // (ahora 3 vistas, no 2) — mismo criterio, un valor fijo por vista.
+  assert.match(
+    pageSrc,
+    /const tituloVista = vistaInventario \? "Inventario de vuelos" : vistaEmpaquetados \? "Empaquetados" : "Control vuelos";/,
+    "tituloVista no cubre las 3 vistas con los textos esperados"
+  );
+  assert.match(pageSrc, /<h1[^>]*>\{tituloVista\}<\/h1>/, "el H1 no usa la constante tituloVista");
 });
 
-test("page.tsx: el subtítulo también cambia según la vista (no solo el H1)", () => {
+test("page.tsx: el subtítulo (subtituloVista) también cambia según la vista, incluida Empaquetados", () => {
   assert.match(pageSrc, /"Bloqueos de sillas negociadas con la aerolínea"/, "falta el subtítulo de Inventario");
-  assert.match(pageSrc, /"Modalidad, emisión y pago por record"/, "falta el subtítulo de Control Vuelos");
+  assert.match(pageSrc, /"Tarifas de Sistema para armar promociones — sin cupo negociado, sin sillas"/, "falta el subtítulo de Empaquetados");
+  assert.match(pageSrc, /"Modalidad, emisión y pago por record \(bloqueos \+ empaquetados\)"/, "falta el subtítulo de Control Vuelos");
 });
 
-test("historico/page.tsx: el encabezado H1 es 'Histórico de vuelos' en inventario, 'Control vuelos histórico' en control-vuelos", () => {
+test("historico/page.tsx: tituloVista es 'Histórico de vuelos' / 'Empaquetados histórico' / 'Control vuelos histórico' según la vista", () => {
   assert.match(
     historicoSrc,
-    /\{vistaInventario \? "Histórico de vuelos" : "Control vuelos histórico"\}/,
-    "el H1 del histórico no cambia según vistaInventario"
+    /const tituloVista = vistaInventario \? "Histórico de vuelos" : vistaEmpaquetados \? "Empaquetados histórico" : "Control vuelos histórico";/,
+    "tituloVista no cubre las 3 vistas con los textos esperados"
   );
+  assert.match(historicoSrc, /<h1[^>]*>\{tituloVista\}<\/h1>/, "el H1 del histórico no usa la constante tituloVista");
 });
 
-test("historico/page.tsx: el subtítulo también cambia según la vista", () => {
+test("historico/page.tsx: el subtítulo también cambia según la vista, incluida Empaquetados", () => {
   assert.match(historicoSrc, /"Bloqueos cuya fecha de ida ya pasó \(inactivos\)\. Entra a un record para ver sus pasajeros\."/);
-  assert.match(historicoSrc, /"Modalidad, emisión y pago de los records ya pasados\."/);
+  // Defecto 3 (revisión de PR #268): el histórico ahora también agrupa los
+  // desactivados-a-mano (no solo los de fecha ya pasada) — texto actualizado.
+  assert.match(historicoSrc, /"Empaquetados cuya fecha de ida ya pasó, o que fueron desactivados a mano\."/);
+  assert.match(historicoSrc, /"Modalidad, emisión y pago de los records ya pasados \(bloqueos \+ empaquetados\)\."/);
 });
 
 // ── 2) La pestaña se conserva navegando a histórico y de vuelta ────────────
@@ -257,10 +295,15 @@ test("page.tsx: el botón 'Histórico' conserva el ?vista= actual (no un link es
   assert.doesNotMatch(pageSrc, /href="\/dashboard\/vuelos\/historico"/, "quedó un link estático a histórico sin ?vista=");
 });
 
-test("page.tsx: el link del estado vacío 'No hay vuelos activos' también conserva ?vista=", () => {
-  const i = pageSrc.indexOf("No hay vuelos activos");
+test("page.tsx: el link del estado vacío de Inventario (bloqueos ya pasados) conserva ?vista=", () => {
+  // PR A: "No hay vuelos activos" ahora aparece en DOS estados vacíos
+  // distintos (Control Vuelos fusionado, y el de Inventario que sí trae el
+  // link a histórico) — se ancla por un texto único de cada uno para no
+  // depender de cuál aparece primero en el archivo.
+  const i = pageSrc.indexOf("Todos los bloqueos ya pasaron su fecha de ida");
+  assert.notEqual(i, -1, "no se encontró el estado vacío de Inventario (bloqueos activos=0)");
   const bloque = pageSrc.slice(i, i + 400);
-  assert.match(bloque, /href=\{`\/dashboard\/vuelos\/historico\?vista=\$\{vista\}`\}/, "el link del estado vacío no manda ?vista=");
+  assert.match(bloque, /href=\{`\/dashboard\/vuelos\/historico\?vista=\$\{vista\}`\}/, "el link del estado vacío de Inventario no manda ?vista=");
 });
 
 test("historico/page.tsx: el link de regreso a Inventario conserva el ?vista= actual (no un link estático)", () => {
@@ -306,10 +349,12 @@ test("historico/page.tsx: gen/totPas NO se calculan en Control Vuelos (solo si v
   assert.match(historicoSrc, /const totPas = vistaInventario \? sumarConteos\(conteo, pasados\.map\(\(b\) => b\.id\)\) : conteoCero\(\);/);
 });
 
-test("page.tsx y historico/page.tsx: bloqueos_vuelo se consulta UNA sola vez cada una (nunca duplicada)", () => {
+test("page.tsx y historico/page.tsx: bloqueos_vuelo Y empaquetados se consultan UNA sola vez cada una (nunca duplicadas)", () => {
   for (const [nombre, src] of [["page.tsx", pageSrc], ["historico/page.tsx", historicoSrc]] as const) {
-    const veces = [...src.matchAll(/\.from\("bloqueos_vuelo"\)/g)].length;
-    assert.equal(veces, 1, `${nombre} llama a .from("bloqueos_vuelo") ${veces} veces — debía ser exactamente 1`);
+    const vecesBloqueos = [...src.matchAll(/\.from\("bloqueos_vuelo"\)/g)].length;
+    assert.equal(vecesBloqueos, 1, `${nombre} llama a .from("bloqueos_vuelo") ${vecesBloqueos} veces — debía ser exactamente 1`);
+    const vecesEmpaquetados = [...src.matchAll(/\.from\("empaquetados"\)/g)].length;
+    assert.equal(vecesEmpaquetados, 1, `${nombre} llama a .from("empaquetados") ${vecesEmpaquetados} veces — debía ser exactamente 1`);
   }
 });
 

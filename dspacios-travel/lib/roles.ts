@@ -36,6 +36,18 @@ export function puedeEscribir(recurso: keyof typeof ESCRITURA, rol: string | nul
   return !!rol && (ESCRITURA[recurso] as readonly string[]).includes(rol);
 }
 
+// Roles con SELECT real sobre `ventas` (migración 116, policy "ventas:
+// lectura operativa") — DEBE reflejar exactamente esa policy, igual que
+// `ESCRITURA` arriba. `control_vuelo` entra al módulo Vuelos (LECTURA_MODULO
+// incluye TODOS los roles internos ahí) pero NO tiene ninguna policy de
+// SELECT sobre `ventas`/`ventas_basica`/`contrato_*` — un link a
+// `/dashboard/contratos/[numero]` para ese rol cargaría una página vacía por
+// RLS, sin ningún aviso (hallazgo 2, revisión posterior al PR #268, ronda
+// "ENLACE DE CONTRATO"). Se usa para decidir, del lado del servidor, cuándo
+// mostrar ese link en `EmpaquetadosTabla` — nunca en el cliente, para no
+// depender de que el navegador tenga el rol correcto.
+export const ROLES_CONTRATO_COMPLETO: readonly Rol[] = ["superadmin", "gerencia", "administracion", "operaciones"];
+
 /** Rol del usuario autenticado actual (o null si no hay sesión / no está en `usuarios`). */
 export async function miRol(): Promise<Rol | null> {
   const sb = await createClient();

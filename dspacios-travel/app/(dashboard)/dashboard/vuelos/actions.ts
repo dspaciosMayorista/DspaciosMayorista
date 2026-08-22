@@ -46,7 +46,7 @@ export type BloqueoInput = {
 
 export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
   if (!esModalidadEmision(input.modalidadEmision)) {
-    return { ok: false, error: "Selecciona la modalidad de emisión (individual o grupo)." };
+    return { ok: false, error: "Selecciona la modalidad de emisión (serie o grupo)." };
   }
   const sb = await createClient();
 
@@ -332,7 +332,7 @@ export async function cargarBloqueosMasivo(
     const cupos = numCsv(r.cupos_total);
 
     const modalidad = parseModalidadCSV(r.modalidad_emision);
-    if (!modalidad) { errores.push(`Fila ${linea} (${record}): modalidad_emision debe ser "individual" o "grupo".`); continue; }
+    if (!modalidad) { errores.push(`Fila ${linea} (${record}): modalidad_emision debe ser "serie" o "grupo".`); continue; }
     const estadoEmision = parseEstadoEmisionCSV(r.estado_emision);
     if (!estadoEmision) { errores.push(`Fila ${linea} (${record}): estado_emision debe ser "pendiente" o "emitido" (o dejarse vacío).`); continue; }
     const estadoPago = parseEstadoPagoCSV(r.estado_pago);

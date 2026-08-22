@@ -28,6 +28,7 @@ import {
   type PasajeroReserva,
   type ComputoReserva,
 } from "@/lib/reservar/computo";
+import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -64,25 +65,43 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
+  const { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
 
-  // 2c) Validar cupos del bloqueo ANTES de crear nada (no sobre-vender sillas).
-  if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    try {
-      const admin = createAdminClient();
-      const { count } = await admin
+  // 2c) Resolver y VALIDAR el origen completo del vuelo (bloqueo negociado,
+  // empaquetado o salida dinámica) ANTES de crear nada — ni sillas, ni venta,
+  // ni contrato_vuelos, ni CxP. `origen` ya viene discriminado y validado por
+  // `resolverOrigenVuelo` (dentro de `computarReserva`): a lo sumo UNO de los
+  // tres está presente. Si la lectura falla o el origen ya no existe/no está
+  // vigente, la reserva se detiene aquí — nunca queda un contrato "a medias"
+  // sin el vuelo/costo que le corresponde (revisión de PR #268, defecto 5).
+  let datosVuelo: DatosVueloOrigen | null = null;
+  if (origen.tipo !== "ninguno") {
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
+      return { ok: false, error: "No se pudo resolver el origen del vuelo (configuración del servidor incompleta)." };
+    const admin = createAdminClient();
+    const rv = await resolverDatosVuelo(admin, origen);
+    if (!rv.ok) return { ok: false, error: rv.error };
+    datosVuelo = rv.data;
+
+    if (origen.tipo === "bloqueo") {
+      const { count, error: ce } = await admin
         .from("sillas")
         .select("id", { count: "exact", head: true })
-        .eq("bloqueo_id", input.bloqueoId)
+        .eq("bloqueo_id", origen.id)
         .in("estado", ["disponible", "cambio_entrante"]);
+      if (ce) return { ok: false, error: `No se pudo validar los cupos del vuelo: ${ce.message}` };
       const disponibles = count ?? 0;
       if (disponibles < paxConSilla) {
         return { ok: false, error: `No hay cupos suficientes en este vuelo (disponibles: ${disponibles}, requeridos: ${paxConSilla}).` };
       }
-    } catch {
-      // Si falla la verificación, dejamos que el paso de sillas (más abajo) controle.
     }
   }
+  const infantesN = Math.max(0, Math.trunc(Number(input.infantes) || 0));
+  // Costo NETO real (lo que se le debe al proveedor) — nunca la reventa. Con
+  // tarifa_proveedor=200.000/tarifa_para_empaquetar=242.022 (2 pax), usar la
+  // reventa dejaba costo_aereo/CxP en $484.044 en vez de los $400.000 reales
+  // (hallazgo de la revisión posterior al PR #268, punto 1 "COSTO FINANCIERO").
+  const costoAereo = datosVuelo ? datosVuelo.costo_neto * paxConSilla + datosVuelo.fee_infante * infantesN : 0;
 
   // 3) Número de contrato
   const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
@@ -148,6 +167,10 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     hotel: esServicios ? null : meta.hotel_nombre,
     precio_venta: precioFinal,
     impuesto: impuestoTotal,
+    // Costo aéreo/aerolínea del origen ya resuelto y validado en el paso 2c
+    // (nunca de una consulta posterior que pueda fallar en silencio).
+    costo_aereo: datosVuelo ? costoAereo : undefined,
+    aerolinea: datosVuelo?.aerolinea ?? null,
     estado: "pendiente",
     canal,
     tipo_asesor: input.tipoAsesor,
@@ -165,7 +188,12 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     aliado_id: input.tipoAsesor !== "interno" ? input.aliadoId ?? null : null,
     plazo: oNull(input.plazo),
     paquete_armado_id: input.paqueteId,
-    bloqueo_ref_id: input.bloqueoId,
+    // Trazabilidad del origen — se toma del `origen` YA VALIDADO (nunca de
+    // `input.bloqueoId`/`input.empaquetadoId` directos), así que los dos son
+    // estructuralmente excluyentes: si `origen.tipo` es "empaquetado",
+    // `bloqueo_ref_id` queda null y viceversa (defecto 4 de la revisión).
+    bloqueo_ref_id: origen.tipo === "bloqueo" ? origen.id : null,
+    empaquetado_ref_id: origen.tipo === "empaquetado" ? origen.id : null,
     asesor_firma_nombre: oNull(asesorNombre),
     asesor: oNull(input.asesorInterno),
     plan_nombre: `${input.categoria} · ${input.regimen}`,
@@ -252,40 +280,63 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     });
   }
 
-  // 7) Vuelo del contrato (si es bloqueo) — 1 fila por tramo (ida y regreso),
-  // no 1 fila mezclando ambos sentidos.
-  if (input.modulo === "bloqueo" && input.bloqueoId) {
-    const { data: bq } = await sb
-      .from("bloqueos_vuelo")
-      .select("aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg")
-      .eq("id", input.bloqueoId)
-      .maybeSingle();
-    if (bq) {
-      // Origen/Destino desde la ruta ("MDE - CTG - MDE" → origen MDE, destino CTG).
-      const r = parseRuta(bq.ruta);
-      const tramos: {
-        numero_contrato: string; aerolinea: string | null; record: string | null; direccion: string;
-        origen_codigo: string | null; origen_ciudad: string | null; destino_codigo: string | null; destino_ciudad: string | null;
-        numero_vuelo: string | null; hora_salida: string | null; hora_llegada: string | null;
-        fecha_salida: string | null; orden: number;
-      }[] = [
-        {
-          numero_contrato: numero, aerolinea: bq.aerolinea, record: bq.record, direccion: "ida",
-          origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen), destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
-          numero_vuelo: bq.vuelo_ida, hora_salida: bq.hora_salida_ida, hora_llegada: bq.hora_llegada_ida,
-          fecha_salida: bq.fecha_ida, orden: 0,
-        },
-      ];
-      if (bq.fecha_regreso || bq.vuelo_regreso) {
-        tramos.push({
-          numero_contrato: numero, aerolinea: bq.aerolinea, record: bq.record, direccion: "regreso",
-          origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino), destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
-          numero_vuelo: bq.vuelo_regreso, hora_salida: bq.hora_salida_reg, hora_llegada: bq.hora_llegada_reg,
-          fecha_salida: bq.fecha_regreso, orden: 1,
-        });
-      }
-      await sb.from("contrato_vuelos").insert(tramos);
+  // 7) Vuelo del contrato (bloqueo, empaquetado o salida dinámica) — 1 fila
+  // por tramo (ida y regreso), no 1 fila mezclando ambos sentidos. Usa
+  // EXCLUSIVAMENTE `datosVuelo`, ya resuelto y validado en el paso 2c contra
+  // el `origen` discriminado — nunca vuelve a consultar por
+  // `input.bloqueoId`/`empaquetadoId`/`salidaId` directos, así que no hay
+  // forma de que este paso arme el tramo de un origen distinto al que se
+  // usó para el precio (defecto 1).
+  //
+  // HALLAZGO 7 (revisión posterior al PR #268) + su implementación en la
+  // ronda siguiente (hallazgo 5, "ALCANCE FUNCIONAL"):
+  //
+  // Los contratos dinámicos HISTÓRICOS (creados ANTES de esta rama) NUNCA
+  // tuvieron `contrato_vuelos` — sus únicos datos de vuelo son las columnas
+  // planas de `ventas` (`aerolinea`/`fecha_salida`/`fecha_regreso`/
+  // `costo_aereo`), sin ruta IATA, sin horarios, sin número de vuelo. Esto
+  // sigue siendo estructural, no se toca: no hay ruta segura de "backfill
+  // por coincidencia de texto" (record/aerolínea/fecha) sin arriesgar
+  // emparejar el contrato equivocado — por eso `ventas_vuelo_sistema`
+  // (hallazgo 2) expone SOLO lo que existe, y el diagnóstico de solo
+  // lectura (`supabase/scripts/diagnostico_empaquetados_dinamico.sql`) sigue
+  // siendo el punto de partida si se quiere clasificar los casos ambiguos.
+  // NINGÚN backfill automático — solo contratos NUEVOS desde este cambio en
+  // adelante quedan con `contrato_vuelos` real.
+  //
+  // Para contratos dinámicos NUEVOS: `datosVuelo` (origen.tipo === "salida",
+  // vía `datosVueloSalida`, `lib/reservar/empaquetadoOrigen.ts`) YA trae
+  // `ruta`/`fecha_ida`/`fecha_regreso`/`hora_*` desde `salidas_dinamicas` —
+  // se arma el mismo shape de tramos ida/regreso que bloqueo/empaquetado.
+  // `record`/`numero_vuelo` quedan `null` a propósito: `salidas_dinamicas`
+  // no captura esos datos hoy (no existe PNR ni número de vuelo negociado en
+  // una salida por sistema) — usar SOLO datos reales, nunca inventar un
+  // valor donde la fuente no lo tiene.
+  if ((origen.tipo === "bloqueo" || origen.tipo === "empaquetado" || origen.tipo === "salida") && datosVuelo) {
+    const r = parseRuta(datosVuelo.ruta);
+    const tramos: {
+      numero_contrato: string; aerolinea: string | null; record: string | null; direccion: string;
+      origen_codigo: string | null; origen_ciudad: string | null; destino_codigo: string | null; destino_ciudad: string | null;
+      numero_vuelo: string | null; hora_salida: string | null; hora_llegada: string | null;
+      fecha_salida: string | null; orden: number;
+    }[] = [
+      {
+        numero_contrato: numero, aerolinea: datosVuelo.aerolinea, record: datosVuelo.record, direccion: "ida",
+        origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen), destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+        numero_vuelo: datosVuelo.vuelo_ida, hora_salida: datosVuelo.hora_salida_ida, hora_llegada: datosVuelo.hora_llegada_ida,
+        fecha_salida: datosVuelo.fecha_ida, orden: 0,
+      },
+    ];
+    if (datosVuelo.fecha_regreso || datosVuelo.vuelo_regreso) {
+      tramos.push({
+        numero_contrato: numero, aerolinea: datosVuelo.aerolinea, record: datosVuelo.record, direccion: "regreso",
+        origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino), destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+        numero_vuelo: datosVuelo.vuelo_regreso, hora_salida: datosVuelo.hora_salida_reg, hora_llegada: datosVuelo.hora_llegada_reg,
+        fecha_salida: datosVuelo.fecha_regreso, orden: 1,
+      });
     }
+    const { error: cve } = await sb.from("contrato_vuelos").insert(tramos);
+    if (cve) return { ok: false, error: `No se pudo guardar el vuelo del contrato: ${cve.message}` };
   }
 
   // 8) Ítems de valores: una fila por tipo de habitación (adultos = pax que cubre)
@@ -382,25 +433,26 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     });
   };
 
-  // 9) Sillas + costo aéreo (admin: oculto al asesor). Requiere service-role.
-  if (input.modulo === "bloqueo" && input.bloqueoId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // 9) CxP aérea (a partir de `datosVuelo`, ya resuelto/validado en el paso
+  // 2c — `costo_aereo`/`aerolinea` de `ventas` ya se guardaron en el insert
+  // del paso 4, así que aquí no vuelve a haber un UPDATE que pueda divergir
+  // ni fallar en silencio). Ninguna rama de origen crea CxP dos veces, porque
+  // `origen` es un discriminado único (defecto 1).
+  if (datosVuelo) {
+    pushCxP("aereo", `Aéreo ${datosVuelo.aerolinea ?? ""}`.trim(), costoAereo, datosVuelo.proveedor, datosVuelo.aerolinea);
+  }
+
+  // 9-bis) Sillas del BLOQUEO negociado — únicas, solo cuando `origen.tipo
+  // === "bloqueo"`. Un empaquetado o una salida dinámica NUNCA tocan
+  // `sillas`: no representan cupo negociado ni garantizado (defecto 1/§9 de
+  // la revisión: "Empaquetados no afecta sillas de bloqueos negociados").
+  if (origen.tipo === "bloqueo" && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
-      const { data: bq } = await admin
-        .from("bloqueos_vuelo")
-        .select("tarifa_para_empaquetar, aerolinea, proveedores(nombre, aplica_retencion, pct_retencion)")
-        .eq("id", input.bloqueoId)
-        .maybeSingle();
-      if (bq) {
-        const costoAereo = (Number(bq.tarifa_para_empaquetar) || 0) * paxConSilla;
-        await admin.from("ventas").update({ costo_aereo: costoAereo }).eq("numero_contrato", numero);
-        const prA = bq.proveedores as unknown as ProvFact;
-        pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, prA, bq.aerolinea);
-      }
       const { data: libres } = await admin
         .from("sillas")
         .select("id")
-        .eq("bloqueo_id", input.bloqueoId)
+        .eq("bloqueo_id", origen.id)
         .in("estado", ["disponible", "cambio_entrante"])
         .order("numero_silla")
         .limit(paxConSilla);
@@ -428,27 +480,10 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
         );
       }
     } catch {
-      // No bloquear la reserva si falla el paso administrativo.
+      // No bloquear la reserva si falla el paso administrativo de asignar
+      // silla — la disponibilidad ya se validó en el paso 2c; un fallo aquí
+      // es una condición de carrera de última hora, no un origen inválido.
     }
-  }
-
-  // 9-bis) Costo aéreo de la SALIDA DINÁMICA (vuelo por sistema, SIN sillas).
-  // Adultos (2+) y niños pagan valor_tiquete; infantes pagan fee_infante.
-  if (input.modulo === "dinamico" && input.salidaId && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    try {
-      const admin = createAdminClient();
-      const { data: sal } = await admin
-        .from("salidas_dinamicas")
-        .select("valor_tiquete, fee_infante, aerolinea")
-        .eq("id", input.salidaId)
-        .maybeSingle();
-      if (sal) {
-        const infs = Math.max(0, Math.trunc(Number(input.infantes) || 0));
-        const costoAereo = (Number(sal.valor_tiquete) || 0) * paxConSilla + (Number(sal.fee_infante) || 0) * infs;
-        await admin.from("ventas").update({ costo_aereo: costoAereo, aerolinea: sal.aerolinea }).eq("numero_contrato", numero);
-        pushCxP("aereo", `Aéreo ${sal.aerolinea ?? ""}`.trim(), costoAereo, null, sal.aerolinea);
-      }
-    } catch { /* no bloquear */ }
   }
 
   // 10) Costo neto del HOTEL y su cuenta por pagar. El neto YA se calculó en
@@ -587,7 +622,28 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   const esServicios = input.modulo === "servicios";
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva, cargoMascota } = comp.data;
+  const { origen, meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva, cargoMascota } = comp.data;
+
+  // Origen del vuelo (bloqueo/empaquetado/salida) para el snapshot de la
+  // cotización — misma fuente única que usa `reservarDesdeTarifarioInterno`
+  // al convertir.
+  //
+  // FALLA CERRADA (hallazgo 5 de la revisión posterior al PR #268): antes,
+  // un fallo de `resolverDatosVuelo` (lectura rota, RLS, empaquetado
+  // desactivado/vencido) se ignoraba en silencio (`if (rv.ok) ...`, sin
+  // rama de error) — se generaba una cotización de un paquete tipo bloqueo/
+  // dinámico SIN el vuelo, como si el paquete no lo llevara. Una cotización
+  // de un paquete con vuelo no puede existir sin ese vuelo: si el origen no
+  // se puede resolver, la cotización NO se crea (mismo criterio que
+  // `reservarDesdeTarifarioInterno`, que ya fallaba cerrado en su paso 2c).
+  let datosVueloSnap: DatosVueloOrigen | null = null;
+  if (origen.tipo !== "ninguno") {
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
+      return { ok: false, error: "No se pudo resolver el origen del vuelo (configuración del servidor incompleta)." };
+    const rv = await resolverDatosVuelo(createAdminClient(), origen);
+    if (!rv.ok) return { ok: false, error: rv.error };
+    datosVueloSnap = rv.data;
+  }
 
   const hoy = new Date().toISOString().slice(0, 10);
   const asesorNombre = input.asesorInterno;
@@ -655,54 +711,30 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     });
   }
 
+  // Snapshot del vuelo — misma forma para los 3 orígenes, tomada de
+  // `datosVueloSnap` (resuelta arriba, una sola vez, a partir del `origen`
+  // discriminado). Salida dinámica no lleva `record`/`numero_vuelo` (nunca
+  // tuvo esos datos negociados) — mismo comportamiento que antes.
   const vuelosSnap: Record<string, unknown>[] = [];
-  if (input.modulo === "bloqueo" && input.bloqueoId) {
-    const { data: bq } = await sb
-      .from("bloqueos_vuelo")
-      .select("aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg")
-      .eq("id", input.bloqueoId).maybeSingle();
-    if (bq) {
-      const r = parseRuta(bq.ruta);
+  if (datosVueloSnap) {
+    const r = parseRuta(datosVueloSnap.ruta);
+    const numeroVueloIda = origen.tipo === "salida" ? null : datosVueloSnap.vuelo_ida;
+    const numeroVueloReg = origen.tipo === "salida" ? null : datosVueloSnap.vuelo_regreso;
+    vuelosSnap.push({
+      id: 1, aerolinea: datosVueloSnap.aerolinea, record: datosVueloSnap.record, direccion: "ida",
+      origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
+      destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+      numero_vuelo: numeroVueloIda, hora_salida: datosVueloSnap.hora_salida_ida, hora_llegada: datosVueloSnap.hora_llegada_ida,
+      fecha_salida: datosVueloSnap.fecha_ida,
+    });
+    if (datosVueloSnap.fecha_regreso || datosVueloSnap.vuelo_regreso) {
       vuelosSnap.push({
-        id: 1, aerolinea: bq.aerolinea, record: bq.record, direccion: "ida",
-        origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
-        destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
-        numero_vuelo: bq.vuelo_ida, hora_salida: bq.hora_salida_ida, hora_llegada: bq.hora_llegada_ida,
-        fecha_salida: bq.fecha_ida,
+        id: 2, aerolinea: datosVueloSnap.aerolinea, record: datosVueloSnap.record, direccion: "regreso",
+        origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino),
+        destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+        numero_vuelo: numeroVueloReg, hora_salida: datosVueloSnap.hora_salida_reg, hora_llegada: datosVueloSnap.hora_llegada_reg,
+        fecha_salida: datosVueloSnap.fecha_regreso,
       });
-      if (bq.fecha_regreso || bq.vuelo_regreso) {
-        vuelosSnap.push({
-          id: 2, aerolinea: bq.aerolinea, record: bq.record, direccion: "regreso",
-          origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino),
-          destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
-          numero_vuelo: bq.vuelo_regreso, hora_salida: bq.hora_salida_reg, hora_llegada: bq.hora_llegada_reg,
-          fecha_salida: bq.fecha_regreso,
-        });
-      }
-    }
-  } else if (input.modulo === "dinamico" && input.salidaId) {
-    const { data: sal } = await sb
-      .from("salidas_dinamicas")
-      .select("aerolinea, ruta, fecha_ida, fecha_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg")
-      .eq("id", input.salidaId).maybeSingle();
-    if (sal) {
-      const r = parseRuta(sal.ruta);
-      vuelosSnap.push({
-        id: 1, aerolinea: sal.aerolinea, record: null, direccion: "ida",
-        origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
-        destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
-        numero_vuelo: null, hora_salida: sal.hora_salida_ida, hora_llegada: sal.hora_llegada_ida,
-        fecha_salida: sal.fecha_ida,
-      });
-      if (sal.fecha_regreso) {
-        vuelosSnap.push({
-          id: 2, aerolinea: sal.aerolinea, record: null, direccion: "regreso",
-          origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino),
-          destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
-          numero_vuelo: null, hora_salida: sal.hora_salida_reg, hora_llegada: sal.hora_llegada_reg,
-          fecha_salida: sal.fecha_regreso,
-        });
-      }
     }
   }
 
