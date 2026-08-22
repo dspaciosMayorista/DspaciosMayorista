@@ -22,6 +22,14 @@
 --   4. Verifica: cero filas deben quedar en 'individual', cero violaciones
 --      del CHECK nuevo — si algo no cuadra, aborta (nunca se fuerza un valor
 --      ni se deja el cierre a medias).
+--   5. Repite explícitamente `revoke ... from public/anon` + `grant execute
+--      ... to authenticated` sobre `actualizar_control_bloqueo()` (ronda
+--      posterior, consulta preventiva en producción — ver el comentario
+--      junto al `revoke`, más abajo): la 152 ya lo hacía, pero solo contra
+--      PUBLIC, y Supabase le da a `anon` un grant EXECUTE directo al crear
+--      la función — sin revocárselo a `anon` explícitamente, ese acceso
+--      sobrevive cualquier `create or replace` por más que el `revoke from
+--      public` se repita.
 --
 -- QUÉ NO CAMBIA
 --   `estado_emision`/`estado_pago`, `bloqueo_cambios`, y el resto del RPC
@@ -155,6 +163,17 @@ comment on function public.actualizar_control_bloqueo(bigint, text, text, text, 
   'corre con el rol del que llama, sujeta a las mismas policies de bloqueos_vuelo/bloqueo_cambios. '
   'Modalidad válida: serie/grupo (cerrado en la migración 157; individual/serie/grupo durante '
   'la transición de la 155).';
+
+-- Repetido explícitamente (152, 155, 157) — nunca se asume que sobrevive
+-- solo. Consulta preventiva en producción (antes de correr esta migración):
+-- `actualizar_control_bloqueo` tenía `anon EXECUTE = true` pese al `revoke
+-- ... from public` de la 152 — Supabase otorga EXECUTE directo a
+-- `anon`/`authenticated` sobre funciones nuevas vía `ALTER DEFAULT
+-- PRIVILEGES` a nivel de proyecto, así que hace falta revocárselo a `anon`
+-- explícitamente, no solo a PUBLIC. Ver el mismo bloque en la migración 155.
+revoke all on function public.actualizar_control_bloqueo(bigint, text, text, text, text) from public;
+revoke all on function public.actualizar_control_bloqueo(bigint, text, text, text, text) from anon;
+grant execute on function public.actualizar_control_bloqueo(bigint, text, text, text, text) to authenticated;
 
 -- 4) Verificación: cero 'individual' remanentes, cero violaciones del CHECK.
 do $$

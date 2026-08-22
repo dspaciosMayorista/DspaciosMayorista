@@ -133,6 +133,18 @@ comment on function public.actualizar_control_bloqueo(bigint, text, text, text, 
   'corre con el rol del que llama, sujeta a las mismas policies de bloqueos_vuelo/bloqueo_cambios. '
   'Migración 152.';
 
+-- Mismo modelo de privilegios que la migración 155/157: `revoke ... from
+-- public/anon` + `grant execute ... to authenticated`, nunca EXECUTE para
+-- PUBLIC/anon. El `create or replace` de arriba NO basta por sí solo para
+-- dejar `anon` sin acceso — Supabase le otorga EXECUTE directo a `anon` al
+-- crear cualquier función nueva (`ALTER DEFAULT PRIVILEGES` a nivel de
+-- proyecto), independiente de PUBLIC (ver el comentario de la migración
+-- 155). Se repite aquí para que el rollback deje exactamente el mismo
+-- estado de privilegios que tenía antes de la 155, nunca uno más abierto.
+revoke all on function public.actualizar_control_bloqueo(bigint, text, text, text, text) from public;
+revoke all on function public.actualizar_control_bloqueo(bigint, text, text, text, text) from anon;
+grant execute on function public.actualizar_control_bloqueo(bigint, text, text, text, text) to authenticated;
+
 -- 4) Verificación: cero filas con modalidad_emision fuera de individual/grupo/null.
 do $$
 declare

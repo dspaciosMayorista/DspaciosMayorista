@@ -127,4 +127,16 @@ comment on function public.actualizar_control_bloqueo(bigint, text, text, text, 
   'si el INSERT del historial falla, el UPDATE también se revierte. SIN security definer. '
   'FASE TRANSITORIA (reabierta por rollback de la 157): dominio individual/serie/grupo.';
 
+-- Mismo modelo de privilegios que las migraciones 155/157 y su rollback de
+-- la 155: `revoke ... from public/anon` + `grant execute ... to
+-- authenticated`, nunca EXECUTE para PUBLIC/anon. El `create or replace` de
+-- arriba NO basta por sí solo (Supabase le da a `anon` un grant EXECUTE
+-- directo al crear la función, vía `ALTER DEFAULT PRIVILEGES` de proyecto —
+-- ver el comentario de la migración 155/157) — se repite aquí para que este
+-- rollback deje exactamente el mismo estado de privilegios que tenía la 155,
+-- nunca uno más abierto.
+revoke all on function public.actualizar_control_bloqueo(bigint, text, text, text, text) from public;
+revoke all on function public.actualizar_control_bloqueo(bigint, text, text, text, text) from anon;
+grant execute on function public.actualizar_control_bloqueo(bigint, text, text, text, text) to authenticated;
+
 commit;
