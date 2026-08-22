@@ -49,6 +49,16 @@ alter table public.tarifario_resultado drop column if exists empaquetado_id;
 -- siguiente, hallazgo 1 "AISLAMIENTO DE GERENCIA") es la función que usa esa
 -- vista en su `where` — se suelta DESPUÉS de la vista (la vista depende de
 -- la función, no al revés) y también sin restaurarla, mismo motivo.
+--
+-- ⚠️ Revisado (ronda posterior, cierre del hueco `anon EXECUTE` sobre las
+-- dos funciones de esta migración — ver el comentario de cabecera de
+-- `20260601000156_empaquetados.sql`): este `DROP FUNCTION` se lleva consigo
+-- TODO el ACL de `acceso_ventas_vuelo_sistema()` (el `revoke`/`grant`
+-- incluidos) — no hay nada que revertir aparte, porque la función deja de
+-- existir por completo. `actualizar_control_empaquetado()` (abajo, junto a
+-- las tablas) tiene la misma propiedad: su `DROP FUNCTION` también se lleva
+-- su ACL completo. Ninguna de las dos se recrea en este rollback — no hace
+-- falta repetir el `revoke`/`grant` aquí.
 drop view if exists public.ventas_basica;
 drop view if exists public.ventas_vuelo_sistema;
 drop function if exists public.acceso_ventas_vuelo_sistema(text);

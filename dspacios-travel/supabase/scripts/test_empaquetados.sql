@@ -33,6 +33,17 @@
 --   F. Inactivo futuro vs activo (defecto 3): un empaquetado con
 --      activo=false y fecha_ida futura NO debe aparecer en el filtro
 --      "activo=true AND no pasado" que usa /dashboard/vuelos (page.tsx).
+--   L. actualizar_control_empaquetado() y acceso_ventas_vuelo_sistema() —
+--      cierre de EXECUTE de `anon` (ronda posterior, mismo hallazgo de la
+--      consulta preventiva de producción que corrigió actualizar_control_
+--      bloqueo() en las migraciones 155/157): simula el escenario real de
+--      Supabase (GRANT explícito previo a `anon`, no solo ausencia de
+--      default privileges locales), re-aplica el revoke/grant tal cual lo
+--      escribe la migración 156, y confirma con has_function_privilege que
+--      el ACL final queda anon=false/authenticated=true/PUBLIC=false para
+--      AMBAS funciones — más la llamada directa de `anon` (permission
+--      denied) y que `authenticated` sigue sujeto a RLS (EXECUTE no salta
+--      las policies de las tablas subyacentes).
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -801,9 +812,229 @@ end $$;
 reset role;
 select set_config('request.jwt.claims', null, true);
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- L. actualizar_control_empaquetado() y acceso_ventas_vuelo_sistema() —
+--    cierre de EXECUTE de `anon` (ronda posterior, misma consulta preventiva
+--    de producción que reveló `anon EXECUTE = true` sobre actualizar_control_
+--    bloqueo() pese al `revoke ... from public` de la migración 152 — el
+--    revoke solo alcanza a PUBLIC, nunca a `anon`, porque Supabase otorga
+--    EXECUTE DIRECTO a `anon`/`authenticated` sobre TODA función nueva vía
+--    `ALTER DEFAULT PRIVILEGES` de proyecto, independiente de PUBLIC).
+--
+--    ⚠️ Este local NO reproduce ese mecanismo de Supabase (no hay ningún
+--    `ALTER DEFAULT PRIVILEGES` configurado en esta base de pruebas) — así
+--    que si solo se verificara el ACL tal cual quedó tras correr la
+--    migración 156 una vez, la prueba pasaría incluso si el `revoke ...
+--    from anon` NUNCA se hubiera escrito (porque local jamás le otorgó nada
+--    a `anon` para empezar). Para no depender de eso, L1 primero SIMULA el
+--    escenario real de producción — un GRANT EXECUTE explícito y previo a
+--    `anon`/PUBLIC, como el que deja `ALTER DEFAULT PRIVILEGES` de Supabase
+--    — y L2 recién ahí re-aplica el `revoke`/`grant` EXACTO de la migración
+--    156. Solo entonces las aserciones de L3-L7 prueban algo real: que el
+--    revoke SÍ retira un EXECUTE que de verdad existía, no que confirma una
+--    ausencia que el harness local nunca iba a crear por sí solo.
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- L1: simula el ALTER DEFAULT PRIVILEGES de Supabase — GRANT EXECUTE previo
+-- y explícito a anon (y a PUBLIC, para no dejar ninguna duda) sobre AMBAS
+-- funciones, como si acabaran de crearse en un proyecto real de Supabase.
+grant execute on function public.actualizar_control_empaquetado(bigint, text, text, text, text) to anon, public;
+grant execute on function public.acceso_ventas_vuelo_sistema(text) to anon, public;
+
 do $$
 begin
-  raise notice 'TODAS LAS PRUEBAS PASARON: test_empaquetados.sql (secciones A-K)';
+  perform pg_temp.assert_eq(
+    has_function_privilege('anon', 'public.actualizar_control_empaquetado(bigint, text, text, text, text)', 'EXECUTE'),
+    true, 'L1a: tras simular el GRANT de Supabase, anon SÍ debe tener EXECUTE sobre actualizar_control_empaquetado (precondición del escenario)'
+  );
+  perform pg_temp.assert_eq(
+    has_function_privilege('anon', 'public.acceso_ventas_vuelo_sistema(text)', 'EXECUTE'),
+    true, 'L1b: tras simular el GRANT de Supabase, anon SÍ debe tener EXECUTE sobre acceso_ventas_vuelo_sistema (precondición del escenario)'
+  );
+end $$;
+
+-- L2: re-aplica el revoke/grant EXACTO tal cual lo escribe la migración 156
+-- (copiado línea por línea de 20260601000156_empaquetados.sql) sobre el
+-- estado "contaminado" que acaba de simular L1.
+revoke all on function public.actualizar_control_empaquetado(bigint, text, text, text, text) from public;
+revoke all on function public.actualizar_control_empaquetado(bigint, text, text, text, text) from anon;
+grant execute on function public.actualizar_control_empaquetado(bigint, text, text, text, text) to authenticated;
+
+revoke all on function public.acceso_ventas_vuelo_sistema(text) from public;
+revoke all on function public.acceso_ventas_vuelo_sistema(text) from anon;
+grant execute on function public.acceso_ventas_vuelo_sistema(text) to authenticated;
+
+-- L3: ACL final — has_function_privilege para anon/authenticated/PUBLIC,
+-- para AMBAS funciones. `has_function_privilege('public', ...)` consulta el
+-- privilegio del pseudo-rol PUBLIC en sí (no confundir con el esquema
+-- `public.` de la firma) — documentado en el manual de Postgres para las
+-- funciones de inspección de privilegios.
+do $$
+begin
+  -- actualizar_control_empaquetado(bigint, text, text, text, text)
+  perform pg_temp.assert_eq(
+    has_function_privilege('anon', 'public.actualizar_control_empaquetado(bigint, text, text, text, text)', 'EXECUTE'),
+    false, 'L3a: actualizar_control_empaquetado — anon EXECUTE debe quedar false tras el revoke (había sido otorgado explícitamente en L1, no es una ausencia trivial)'
+  );
+  perform pg_temp.assert_eq(
+    has_function_privilege('authenticated', 'public.actualizar_control_empaquetado(bigint, text, text, text, text)', 'EXECUTE'),
+    true, 'L3b: actualizar_control_empaquetado — authenticated EXECUTE debe quedar true'
+  );
+  perform pg_temp.assert_eq(
+    has_function_privilege('public', 'public.actualizar_control_empaquetado(bigint, text, text, text, text)', 'EXECUTE'),
+    false, 'L3c: actualizar_control_empaquetado — PUBLIC (el pseudo-rol) no debe tener EXECUTE propio'
+  );
+
+  -- acceso_ventas_vuelo_sistema(text)
+  perform pg_temp.assert_eq(
+    has_function_privilege('anon', 'public.acceso_ventas_vuelo_sistema(text)', 'EXECUTE'),
+    false, 'L3d: acceso_ventas_vuelo_sistema — anon EXECUTE debe quedar false tras el revoke (había sido otorgado explícitamente en L1, no es una ausencia trivial)'
+  );
+  perform pg_temp.assert_eq(
+    has_function_privilege('authenticated', 'public.acceso_ventas_vuelo_sistema(text)', 'EXECUTE'),
+    true, 'L3e: acceso_ventas_vuelo_sistema — authenticated EXECUTE debe quedar true'
+  );
+  perform pg_temp.assert_eq(
+    has_function_privilege('public', 'public.acceso_ventas_vuelo_sistema(text)', 'EXECUTE'),
+    false, 'L3f: acceso_ventas_vuelo_sistema — PUBLIC (el pseudo-rol) no debe tener EXECUTE propio'
+  );
+end $$;
+
+-- L4: anon — llamada DIRECTA a actualizar_control_empaquetado() debe dar
+-- permission denied, nunca llegar a evaluar la lógica interna de la función.
+-- Usa deliberadamente el id 9301 (ya borrado en D2, sección D) — si el
+-- rechazo fuera por "no encontrado" en vez de por falta de EXECUTE, el
+-- SQLSTATE sería distinto (P0001, no insufficient_privilege); usar un id
+-- inexistente prueba que Postgres nunca llega a ejecutar el cuerpo de la
+-- función, se detiene en el chequeo de privilegios antes de evaluar nada.
+set local role anon;
+select set_config('request.jwt.claims', '{}', true);
+
+do $$
+declare v_lanzo boolean := false;
+begin
+  begin
+    perform public.actualizar_control_empaquetado(9301::bigint, 'NUNCA', 'emitido', 'pagado', 'anon — no debe llegar a ejecutarse');
+  exception when insufficient_privilege then
+    v_lanzo := true;
+  end;
+  perform pg_temp.assert_eq(v_lanzo, true, 'L4: anon debe recibir permission denied al invocar actualizar_control_empaquetado() directo — EXECUTE revocado');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+-- L5: anon — llamada DIRECTA a acceso_ventas_vuelo_sistema() debe dar
+-- permission denied (reconfirma K1, esta vez bajo el escenario "hardened"
+-- de L1/L2 en vez del estado tal cual dejó la migración una sola vez).
+set local role anon;
+select set_config('request.jwt.claims', '{}', true);
+
+do $$
+declare v_lanzo boolean := false;
+begin
+  begin
+    perform public.acceso_ventas_vuelo_sistema('mayorista');
+  exception when insufficient_privilege then
+    v_lanzo := true;
+  end;
+  perform pg_temp.assert_eq(v_lanzo, true, 'L5: anon debe recibir permission denied al invocar acceso_ventas_vuelo_sistema() directo — EXECUTE revocado (escenario hardened de L1/L2)');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+-- L6: authenticated SIGUE SUJETO A RLS — el EXECUTE otorgado en L2 no salta
+-- las policies de `empaquetados`/`empaquetado_cambios`. Fixture nuevo (9401,
+-- 9301 ya fue borrado en D2): operaciones (con policy de escritura) sí
+-- puede aplicar el cambio; venta (sin policy de escritura, aunque SÍ tiene
+-- EXECUTE sobre la función) sigue rechazada con el mismo mensaje que C3.
+insert into public.empaquetados (id, fecha_ida, record, estado_emision, estado_pago)
+  overriding system value
+  values (9401, '2026-12-01', null, null, null);
+
+-- L6a: operaciones (rol con permiso de escritura) — el cambio SÍ se aplica.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','77777777-7777-7777-7777-777777777777','role','authenticated')::text, true);
+
+select public.actualizar_control_empaquetado(9401::bigint, 'L6OK', 'emitido', 'pagado', 'Prueba L6a — EXECUTE + RLS autorizado');
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+do $$
+declare v_row record;
+begin
+  select record, estado_emision, estado_pago into v_row from public.empaquetados where id = 9401;
+  perform pg_temp.assert_eq(v_row.record, 'L6OK'::text, 'L6a: operaciones (autorizado) debe poder aplicar el cambio pese al ACL endurecido de L1/L2');
+  perform pg_temp.assert_eq(v_row.estado_emision, 'emitido'::text, 'L6a: estado_emision debe reflejar el cambio');
+  perform pg_temp.assert_eq(
+    (select count(*) from public.empaquetado_cambios where empaquetado_id = 9401), 1::bigint, 'L6a: un historial'
+  );
+end $$;
+
+-- L6b: venta (EXECUTE sí lo tiene — el grant es a `authenticated` en
+-- general — pero SIN policy de escritura sobre empaquetados/empaquetado_
+-- cambios) — la RLS de la tabla sigue rechazando el UPDATE, mismo mensaje
+-- que C3. Esto es lo que prueba que el EXECUTE de la función NUNCA sustituye
+-- a la RLS: la función no es `security definer`, corre con el rol del
+-- caller, sujeta a las mismas policies que cualquier UPDATE directo.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','88888888-8888-8888-8888-888888888888','role','authenticated')::text, true);
+
+do $$
+declare v_lanzo boolean := false; v_msg text;
+begin
+  begin
+    perform public.actualizar_control_empaquetado(9401::bigint, 'INTENTO_L6B', 'emitido', 'pagado', '');
+  exception when others then
+    v_lanzo := true;
+    get stacked diagnostics v_msg = message_text;
+  end;
+  if not v_lanzo then raise exception 'ASSERT FALLÓ (L6b): venta (con EXECUTE, sin policy de escritura) debía ser rechazada por RLS'; end if;
+  perform pg_temp.assert_eq(v_msg, 'Empaquetado no encontrado o sin permiso para verlo.', 'L6b: mensaje de rechazo — RLS, no un permission denied a nivel de función (venta SÍ puede ejecutar la función, la tabla es la que la frena)');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+do $$
+declare v_row record;
+begin
+  select record, estado_emision into v_row from public.empaquetados where id = 9401;
+  perform pg_temp.assert_eq(v_row.record, 'L6OK'::text, 'L6b: record NO debía cambiar (RLS bloqueó el UPDATE)');
+  perform pg_temp.assert_eq(v_row.estado_emision, 'emitido'::text, 'L6b: estado_emision NO debía cambiar');
+  perform pg_temp.assert_eq(
+    (select count(*) from public.empaquetado_cambios where empaquetado_id = 9401), 1::bigint, 'L6b: sigue en un solo historial — el intento de venta no debía registrarse'
+  );
+end $$;
+
+-- L7: authenticated SIGUE SUJETO A la lógica de tenant de acceso_ventas_
+-- vuelo_sistema() — reconfirma K3 (la vista sigue funcionando para roles
+-- autorizados), esta vez bajo el ACL endurecido de L1/L2, para probar que
+-- revocar/otorgar dos veces (una desde la migración normal, otra desde este
+-- escenario simulado) es idempotente y no rompió nada funcional.
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','role','authenticated')::text, true);
+
+do $$
+declare v_contratos text[];
+begin
+  select array_agg(numero_contrato order by numero_contrato) into v_contratos
+    from public.ventas_vuelo_sistema
+   where numero_contrato in ('99-9992', '99-9991', '99-9990', '99-9989');
+  perform pg_temp.assert_eq(
+    v_contratos, array['99-9989','99-9990','99-9992']::text[],
+    'L7: gerencia mayorista sigue viendo SOLO su tenant a través de la vista tras el ACL endurecido de L1/L2 — el revoke/grant repetido no rompió el acceso legítimo'
+  );
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', null, true);
+
+do $$
+begin
+  raise notice 'TODAS LAS PRUEBAS PASARON: test_empaquetados.sql (secciones A-L)';
 end $$;
 
 rollback;

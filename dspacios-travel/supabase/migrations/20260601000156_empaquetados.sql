@@ -29,6 +29,18 @@
 -- comentario junto a la definición de la vista, más abajo, para el detalle
 -- completo. Aditivo dentro de la misma migración 156, sigue sin ejecutarse.
 --
+-- ⚠️ EDITADA OTRA VEZ (ronda posterior, misma consulta preventiva de
+-- producción que reveló `anon EXECUTE = true` sobre `actualizar_control_
+-- bloqueo()` — ver migraciones 155/157): el mismo hueco de privilegios
+-- (revocar solo de PUBLIC no alcanza a `anon`, porque Supabase otorga
+-- EXECUTE directo a `anon`/`authenticated` sobre toda función nueva vía
+-- `ALTER DEFAULT PRIVILEGES` de proyecto) también aplicaba, potencialmente,
+-- a las dos funciones nuevas de ESTA migración: `actualizar_control_
+-- empaquetado()` y `acceso_ventas_vuelo_sistema()`. Se agrega `revoke ...
+-- from anon` explícito junto a cada una — ver los comentarios puntuales
+-- junto a cada `revoke`/`grant`, más abajo. Aditivo dentro de la misma
+-- migración 156, sigue sin ejecutarse.
+--
 -- QUÉ ES
 --   Una salida aérea comprada/cotizada POR SISTEMA (sin cupo negociado con
 --   la aerolínea) que la agencia usa para armar promociones. A diferencia de
@@ -327,7 +339,15 @@ comment on function public.actualizar_control_empaquetado(bigint, text, text, te
   'p_estado_emision/p_estado_pago NULL = "Por confirmar", se conserva NULL (nunca se fuerza '
   'a ''pendiente''). Migración 156.';
 
+-- ⚠️ EDITADA OTRA VEZ (ronda posterior, consulta preventiva en producción
+-- sobre `actualizar_control_bloqueo()` — ver migraciones 155/157): el
+-- `revoke ... from public` de arriba NO alcanza a `anon`. Supabase, a nivel
+-- de proyecto, tiene configurado `ALTER DEFAULT PRIVILEGES` que le otorga
+-- `EXECUTE` DIRECTO a `anon`/`authenticated` sobre TODA función nueva,
+-- independiente del pseudo-rol PUBLIC — así que revocar solo de PUBLIC deja
+-- a `anon` con acceso igual. Se repite el `revoke` explícito contra `anon`.
 revoke all on function public.actualizar_control_empaquetado(bigint, text, text, text, text) from public;
+revoke all on function public.actualizar_control_empaquetado(bigint, text, text, text, text) from anon;
 grant execute on function public.actualizar_control_empaquetado(bigint, text, text, text, text) to authenticated;
 
 -- ── Provenance en el tarifario (defecto 2): de dónde salió cada fila ────────
@@ -521,7 +541,16 @@ $$;
 -- sección I): `anon` no puede invocar la función ni por RPC directo ni a
 -- través de la vista; `authenticated` sigue viendo exactamente su tenant a
 -- través de la vista, nunca más.
+--
+-- ⚠️ EDITADA OTRA VEZ (ronda posterior, misma consulta preventiva de
+-- producción que corrigió `actualizar_control_bloqueo()` en las migraciones
+-- 155/157): el `revoke ... from public` de abajo NO alcanza a `anon` —
+-- Supabase otorga `EXECUTE` DIRECTO a `anon`/`authenticated` sobre TODA
+-- función nueva vía `ALTER DEFAULT PRIVILEGES` de proyecto, independiente de
+-- PUBLIC. Se repite el `revoke` explícito contra `anon`, mismo criterio que
+-- `actualizar_control_empaquetado()` más arriba en este mismo archivo.
 revoke all on function public.acceso_ventas_vuelo_sistema(text) from public;
+revoke all on function public.acceso_ventas_vuelo_sistema(text) from anon;
 grant execute on function public.acceso_ventas_vuelo_sistema(text) to authenticated;
 
 -- ⚠️ AMPLIADA (ronda siguiente, hallazgo 1 "CONECTAR CONTRATO_VUELOS CON LA
