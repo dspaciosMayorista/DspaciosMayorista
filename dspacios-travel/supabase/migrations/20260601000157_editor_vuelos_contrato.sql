@@ -260,6 +260,14 @@ declare
   v_detalle         text := '';
   v_registrado_por  text;
 begin
+  if p_numero_contrato is null or length(p_numero_contrato) = 0 or length(p_numero_contrato) > 30 then
+    raise exception 'Número de contrato inválido.';
+  end if;
+
+  if p_nota is not null and length(p_nota) > 500 then
+    raise exception 'La nota es demasiado larga (máximo 500 caracteres).';
+  end if;
+
   if not public.acceso_editar_vuelos_contrato(p_numero_contrato) then
     raise exception 'Contrato no encontrado o sin permiso para editarlo.';
   end if;
@@ -374,7 +382,23 @@ create function public.guardar_tramos_contrato(
   p_numero_contrato text,
   p_tramos          jsonb
 )
-returns setof public.contrato_vuelos
+returns table (
+  id              bigint,
+  numero_contrato text,
+  aerolinea       text,
+  record          text,
+  direccion       text,
+  origen_codigo   text,
+  origen_ciudad   text,
+  destino_codigo  text,
+  destino_ciudad  text,
+  numero_vuelo    text,
+  fecha_salida    date,
+  hora_salida     text,
+  hora_llegada    text,
+  servicios       text,
+  orden           integer
+)
 language plpgsql
 security definer
 set search_path = public
@@ -385,6 +409,15 @@ declare
     'id', 'aerolinea', 'record', 'direccion', 'origenCodigo', 'origenCiudad',
     'destinoCodigo', 'destinoCiudad', 'numeroVuelo', 'fecha', 'horaSalida',
     'horaLlegada', 'servicios'
+  ];
+  -- Campos de texto libre (no id/direccion/origenCodigo/destinoCodigo, que
+  -- ya tienen su propio chequeo de tipo+formato): deben ser ausentes, JSON
+  -- null, o JSON string — NUNCA número/boolean/array/objeto. `->>` convierte
+  -- cualquiera de esos a texto en silencio (ej. 123 -> '123', true ->
+  -- 'true'), así que sin este chequeo se colarían como si fueran texto real.
+  v_campos_texto   constant text[] := array[
+    'aerolinea', 'record', 'origenCiudad', 'destinoCiudad', 'numeroVuelo',
+    'fecha', 'horaSalida', 'horaLlegada', 'servicios'
   ];
   v_tramo          jsonb;
   v_clave          text;
@@ -408,15 +441,21 @@ declare
   v_ajenos         int;
   v_encontrados    int;
 begin
+  if p_numero_contrato is null or length(p_numero_contrato) = 0 or length(p_numero_contrato) > 30 then
+    raise exception 'Número de contrato inválido.';
+  end if;
+
   if not public.acceso_editar_vuelos_contrato(p_numero_contrato) then
     raise exception 'Contrato no encontrado o sin permiso para editarlo.';
   end if;
 
   -- ═══════════════════════════════════════════════════════════════════════
-  -- Validación COMPLETA del payload — nada de lo de abajo toca una sola fila
-  -- de contrato_vuelos todavía. Aunque cualquier `raise exception` revertiría
-  -- igual la transacción entera, el candado del negocio es no empezar a
-  -- escribir antes de saber que TODO el payload es válido.
+  -- FASE A — validación de FORMA/TIPO/LÍMITES del payload, sin consultar
+  -- contrato_vuelos todavía (nada de esto depende del estado actual de la
+  -- base — es válido o no válido por su propia forma). Nada de lo de abajo
+  -- toca una sola fila. Aunque cualquier `raise exception` revertiría igual
+  -- la transacción entera, el candado del negocio es no empezar a escribir
+  -- antes de saber que TODO el payload es válido.
   -- ═══════════════════════════════════════════════════════════════════════
   if p_tramos is null or jsonb_typeof(p_tramos) <> 'array' then
     raise exception 'El listado de tramos debe ser un arreglo.';
@@ -444,7 +483,8 @@ begin
     end loop;
 
     -- id: ausente/null, o entero positivo — nunca otro tipo, nunca repetido
-    -- dentro del mismo payload.
+    -- dentro del mismo payload. (La existencia real del id se reconfirma en
+    -- la Fase B, DESPUÉS del candado — ver más abajo.)
     v_id := null;
     if v_tramo ? 'id' and jsonb_typeof(v_tramo->'id') <> 'null' then
       if jsonb_typeof(v_tramo->'id') <> 'number' then
@@ -467,6 +507,7 @@ begin
 
     -- direccion: ausente/null/''/'ida'/'regreso' — cualquier otro tipo o
     -- valor se rechaza.
+    v_direccion := null;
     if v_tramo ? 'direccion' and jsonb_typeof(v_tramo->'direccion') <> 'null' then
       if jsonb_typeof(v_tramo->'direccion') <> 'string' then
         raise exception 'La dirección de un tramo es inválida.';
@@ -476,6 +517,15 @@ begin
         raise exception 'La dirección de un tramo debe ser ida, regreso o ninguna.';
       end if;
     end if;
+
+    -- Todo campo de texto libre: ausente/null/string — NUNCA número,
+    -- boolean, array u objeto (que `->>` convertiría en texto en silencio).
+    foreach v_clave in array v_campos_texto
+    loop
+      if v_tramo ? v_clave and jsonb_typeof(v_tramo->v_clave) not in ('null', 'string') then
+        raise exception 'El campo % de un tramo debe ser texto.', v_clave;
+      end if;
+    end loop;
 
     -- Códigos IATA: ausente/null/'' o EXACTO 3 letras (A-Z tras upper/trim);
     -- origen y destino deben venir juntos, o ninguno de los dos.
@@ -497,14 +547,19 @@ begin
       raise exception 'Un tramo debe traer origen y destino juntos, o ninguno de los dos.';
     end if;
 
-    -- Fecha: ausente/null/'' o fecha ISO válida (nunca se deja pasar un
-    -- error crudo de casteo al usuario).
+    -- Fecha: ausente/null/'' o fecha ISO ESTRICTA (regex YYYY-MM-DD antes
+    -- del cast — Postgres, según DateStyle, podría aceptar otros formatos
+    -- si solo se confiara en `::date`) y que además exista de verdad en el
+    -- calendario (ej. 2026-02-30 pasa la regex pero no es una fecha real).
     v_fecha := nullif(trim(coalesce(v_tramo->>'fecha', '')), '');
     if v_fecha is not null then
+      if v_fecha !~ '^\d{4}-\d{2}-\d{2}$' then
+        raise exception 'La fecha de un tramo debe tener el formato AAAA-MM-DD.';
+      end if;
       begin
         perform v_fecha::date;
       exception when others then
-        raise exception 'La fecha de un tramo no es válida.';
+        raise exception 'La fecha de un tramo no existe en el calendario.';
       end;
     end if;
 
@@ -533,21 +588,54 @@ begin
     if length(coalesce(v_numero_vuelo, '')) > 15 then raise exception 'El número de vuelo de un tramo es demasiado largo.'; end if;
     if length(coalesce(v_servicios, '')) > 500 then raise exception 'El campo de servicios de un tramo es demasiado largo.'; end if;
 
-    -- Rechaza un tramo completamente vacío.
-    v_vacio := v_aerolinea is null and v_record is null and coalesce(v_direccion, '') = ''
+    -- Rechaza un tramo completamente vacío. `direccion` NO cuenta como dato
+    -- útil por sí sola (un tramo con SOLO direccion='ida' no dice nada del
+    -- vuelo real) — deliberadamente NO entra en este chequeo. Un PNR solo
+    -- (`record`) SÍ se conserva permitido: puede conocerse antes que el
+    -- itinerario completo.
+    v_vacio := v_aerolinea is null and v_record is null
       and v_origen is null and v_destino is null and v_numero_vuelo is null
       and v_fecha is null and v_hora_salida is null and v_hora_llegada is null
       and v_servicios is null;
     if v_vacio then
-      raise exception 'Un tramo no puede estar completamente vacío.';
+      raise exception 'Un tramo no puede estar completamente vacío (la dirección sola no es información de vuelo).';
     end if;
-
-    v_direccion := null; -- reinicia para el siguiente tramo del loop
   end loop;
 
-  -- Ningún id del payload puede pertenecer a OTRO contrato (evita colar un
-  -- id ajeno para pisar el vuelo de otra agencia/contrato), ni ser un id
-  -- que ya no existe en absoluto — ambas se comprueban ANTES del DELETE.
+  -- ═══════════════════════════════════════════════════════════════════════
+  -- Payload válido en su FORMA. Recién AHORA se bloquea la fila PADRE
+  -- (ventas) por numero_contrato — mismo candado, mismo orden (autorizar →
+  -- validar forma → bloquear → re-validar contra el estado real → escribir)
+  -- que actualizar_estado_emision_contrato(), para que dos guardados
+  -- concurrentes del mismo contrato se serialicen aquí: el segundo espera a
+  -- que el primero libere el candado (al hacer commit) y luego reemplaza
+  -- TODO de nuevo con su propio payload completo — el resultado final es
+  -- siempre uno de los dos guardados completos, nunca una mezcla de campos
+  -- de ambos.
+  -- ═══════════════════════════════════════════════════════════════════════
+  -- ⚠️ Calificado como `ventas.numero_contrato`: esta función devuelve
+  -- `returns table (... numero_contrato text ...)`, así que dentro del
+  -- cuerpo `numero_contrato` a secas es AMBIGUO (Postgres no sabe si te
+  -- refieres a la columna de la tabla o al parámetro OUT implícito de la
+  -- función) — hay que calificar toda referencia bare al nombre de columna
+  -- desde aquí en adelante.
+  perform 1 from public.ventas where ventas.numero_contrato = p_numero_contrato for update;
+
+  -- ═══════════════════════════════════════════════════════════════════════
+  -- FASE B — recién CON el candado tomado, re-confirma autorización y que
+  -- los ids del payload sigan existiendo y perteneciendo a este contrato.
+  -- Estas comprobaciones NO pueden ir en la Fase A: si dos conexiones A y B
+  -- validan el MISMO id existente antes de bloquear, A podría tomar el
+  -- candado, borrar/reemplazar ese tramo y hacer commit — y B, si solo
+  -- confiara en su validación ya obsoleta, seguiría creyendo que el id
+  -- existe. En READ COMMITTED (el nivel por defecto), cada sentencia nueva
+  -- toma una foto fresca de la base — así que estas consultas, ejecutadas
+  -- DESPUÉS de esperar el candado, ya ven el commit de A si lo hubo.
+  -- ═══════════════════════════════════════════════════════════════════════
+  if not public.acceso_editar_vuelos_contrato(p_numero_contrato) then
+    raise exception 'Contrato no encontrado o sin permiso para editarlo.';
+  end if;
+
   if array_length(v_ids_mantener, 1) > 0 then
     select count(*) into v_ajenos
       from public.contrato_vuelos cv
@@ -560,26 +648,15 @@ begin
       from public.contrato_vuelos cv
      where cv.id = any(v_ids_mantener) and cv.numero_contrato = p_numero_contrato;
     if v_encontrados <> array_length(v_ids_mantener, 1) then
-      raise exception 'Uno de los tramos ya no existe.';
+      raise exception 'Uno de los tramos ya no existe (puede haber sido modificado por otro guardado mientras tanto). Vuelve a cargar el editor e inténtalo de nuevo.';
     end if;
   end if;
 
-  -- ═══════════════════════════════════════════════════════════════════════
-  -- Payload validado por completo. Recién AHORA se bloquea la fila PADRE
-  -- (ventas) por numero_contrato — mismo candado, mismo orden (autorizar →
-  -- validar → bloquear → escribir) que actualizar_estado_emision_contrato(),
-  -- para que dos guardados concurrentes del mismo contrato se serialicen
-  -- aquí: el segundo espera a que el primero libere el candado (al hacer
-  -- commit) y luego reemplaza TODO de nuevo con su propio payload completo
-  -- — el resultado final es siempre uno de los dos guardados completos,
-  -- nunca una mezcla de campos de ambos.
-  -- ═══════════════════════════════════════════════════════════════════════
-  perform 1 from public.ventas where numero_contrato = p_numero_contrato for update;
-
-  -- Borra los tramos existentes que YA NO vienen en el payload.
+  -- Borra los tramos existentes que YA NO vienen en el payload. (Mismo
+  -- motivo de calificar `numero_contrato` explícito — ver nota arriba.)
   delete from public.contrato_vuelos
-   where numero_contrato = p_numero_contrato
-     and (array_length(v_ids_mantener, 1) is null or not (id = any(v_ids_mantener)));
+   where contrato_vuelos.numero_contrato = p_numero_contrato
+     and (array_length(v_ids_mantener, 1) is null or not (contrato_vuelos.id = any(v_ids_mantener)));
 
   for v_tramo in select * from jsonb_array_elements(p_tramos)
   loop
@@ -600,7 +677,7 @@ begin
         hora_llegada   = nullif(trim(v_tramo->>'horaLlegada'), ''),
         servicios      = nullif(trim(v_tramo->>'servicios'), ''),
         orden          = v_orden
-      where id = v_id and numero_contrato = p_numero_contrato;
+      where contrato_vuelos.id = v_id and contrato_vuelos.numero_contrato = p_numero_contrato;
 
       if not found then
         raise exception 'No se pudo actualizar un tramo (id % no pertenece a este contrato).', v_id;
@@ -635,10 +712,19 @@ begin
   -- asignados a los que llegaron con id null) — el cliente sincroniza su
   -- estado local con esto en vez de confiar en volver a leer después de un
   -- `router.refresh()`, que no actualiza el estado de React por sí solo.
+  -- ⚠️ NUNCA `select *`: esta función es SECURITY DEFINER, así que un
+  -- `select *` expondría automáticamente cualquier columna que se agregue a
+  -- `contrato_vuelos` en el futuro (aunque fuera sensible) sin que nadie
+  -- tenga que tocar este RPC — la lista de columnas de `returns table` de
+  -- arriba y este `select` explícito son la única superficie real.
   return query
-    select * from public.contrato_vuelos
-     where numero_contrato = p_numero_contrato
-     order by orden asc, id asc;
+    select cv.id, cv.numero_contrato, cv.aerolinea, cv.record, cv.direccion,
+           cv.origen_codigo, cv.origen_ciudad, cv.destino_codigo, cv.destino_ciudad,
+           cv.numero_vuelo, cv.fecha_salida, cv.hora_salida, cv.hora_llegada,
+           cv.servicios, cv.orden
+      from public.contrato_vuelos cv
+     where cv.numero_contrato = p_numero_contrato
+     order by cv.orden asc, cv.id asc;
 end;
 $$;
 
@@ -647,13 +733,14 @@ comment on function public.guardar_tramos_contrato(text, jsonb) is
   'id los que ya existían (conserva el id), inserta los que no traen id, borra los que '
   'ya no vienen en el payload — todo en UNA transacción (función plpgsql): si cualquier '
   'paso falla, Postgres revierte TODO, el contrato nunca queda sin vuelos a medio '
-  'guardar. Exige al menos un tramo, valida el payload COMPLETO (tipos, longitudes, '
-  'IATA, fechas/horas, ids duplicados/ajenos/inexistentes) antes de tocar una sola fila, '
-  'y bloquea (SELECT...FOR UPDATE) la fila padre de ventas por numero_contrato recién '
-  'después de validar y antes de escribir, para serializar guardados concurrentes del '
-  'mismo contrato. Devuelve los tramos ya guardados (con id real). SECURITY DEFINER por '
-  'el mismo motivo que actualizar_estado_emision_contrato() — ver comentario de cabecera '
-  'de la migración 157.';
+  'guardar. Exige al menos un tramo, valida FORMA/tipos/longitudes/IATA/fechas-horas/ids '
+  'duplicados en la Fase A (antes del candado), bloquea (SELECT...FOR UPDATE) la fila '
+  'padre de ventas por numero_contrato, y en la Fase B (ya con el candado) re-confirma '
+  'autorización y que los ids sigan existiendo/perteneciendo al contrato contra el '
+  'estado real — evita la ventana TOCTOU de validar ids antes de bloquear. Devuelve '
+  'EXPLÍCITAMENTE (returns table, nunca setof + select *) los tramos ya guardados con id '
+  'real — un select * expondría cualquier columna futura de contrato_vuelos sin querer, '
+  'al ser SECURITY DEFINER. Ver comentario de cabecera de la migración 157.';
 
 revoke all on function public.guardar_tramos_contrato(text, jsonb) from public;
 revoke all on function public.guardar_tramos_contrato(text, jsonb) from anon;

@@ -59,6 +59,24 @@ const MAX_TRAMOS = 20;
 const RE_IATA = /^[A-Z]{3}$/;
 const RE_HORA = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_NUMERO_CONTRATO = 30;
+const MAX_NOTA = 500;
+
+// SQLSTATE que Postgres asigna a un `RAISE EXCEPTION` sin ERRCODE explícito
+// (todas las excepciones de negocio de guardar_tramos_contrato()/
+// actualizar_estado_emision_contrato() son así) — confirmado contra el RPC
+// real. Cualquier OTRO código (violación de constraint, timeout, error de
+// red, RLS/permiso inesperado, etc.) es un error interno: nunca se
+// reenvía tal cual al navegador — nombres de tabla/función/constraint/SQL
+// no son para el usuario final. Se registra del lado del servidor (esta
+// Server Action YA corre en el servidor) y se devuelve un mensaje genérico.
+const SQLSTATE_EXCEPCION_NEGOCIO = "P0001";
+
+function mensajeSeguro(error: { message: string; code?: string }, contexto: string): string {
+  if (error.code === SQLSTATE_EXCEPCION_NEGOCIO) return error.message;
+  console.error(`[contrato-vuelos-actions:${contexto}] error inesperado (code=${error.code ?? "?"}):`, error);
+  return "No se pudo completar la operación. Intenta de nuevo o contacta a soporte.";
+}
 
 // Espejo LIVIANO (solo UX, feedback inmediato) de la validación real, que
 // vive en Postgres dentro de guardar_tramos_contrato() — esa es la única
@@ -102,6 +120,10 @@ function validarTramos(tramos: TramoInput[]): string | null {
 }
 
 export async function guardarTramosContrato(numeroContrato: string, tramos: TramoInput[]): Promise<ResultTramos> {
+  if (!numeroContrato || numeroContrato.length > MAX_NUMERO_CONTRATO) {
+    return { ok: false, error: "Número de contrato inválido." };
+  }
+
   const err = validarTramos(tramos);
   if (err) return { ok: false, error: err };
 
@@ -124,7 +146,7 @@ export async function guardarTramosContrato(numeroContrato: string, tramos: Tram
       servicios: oNull(t.servicios),
     })),
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSeguro(error, "guardar_tramos_contrato") };
 
   revalidatePath(`/dashboard/vuelos/contrato/${numeroContrato}`);
   revalidatePath("/dashboard/vuelos");
@@ -141,6 +163,12 @@ export async function actualizarEstadoEmisionContrato(
   estadoEmision: EstadoEmision | "",
   nota: string
 ): Promise<Result> {
+  if (!numeroContrato || numeroContrato.length > MAX_NUMERO_CONTRATO) {
+    return { ok: false, error: "Número de contrato inválido." };
+  }
+  if (nota && nota.length > MAX_NOTA) {
+    return { ok: false, error: `La nota es demasiado larga (máximo ${MAX_NOTA} caracteres).` };
+  }
   if (estadoEmision && !esEstadoEmision(estadoEmision)) return { ok: false, error: "Estado de emisión inválido." };
 
   const sb = await createClient();
@@ -149,7 +177,7 @@ export async function actualizarEstadoEmisionContrato(
     p_estado_emision: estadoEmision || null,
     p_nota: oNull(nota),
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSeguro(error, "actualizar_estado_emision_contrato") };
 
   revalidatePath(`/dashboard/vuelos/contrato/${numeroContrato}`);
   revalidatePath("/dashboard/vuelos");

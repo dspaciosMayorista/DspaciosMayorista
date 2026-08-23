@@ -144,4 +144,115 @@ if [ "$N_FILAS" != "1" ]; then
   exit 1
 fi
 
-echo "== PASÓ: guardado concurrente serializado correctamente — el resultado final es el guardado completo de B, ninguna fila de A sobrevivió, sin mezcla de campos."
+echo "== PASÓ (escenario 1: dos payloads nuevos): guardado concurrente serializado correctamente — el resultado final es el guardado completo de B, ninguna fila de A sobrevivió, sin mezcla de campos."
+
+# ═════════════════════════════════════════════════════════════════════════
+# ESCENARIO 2 — TOCTOU real: ambos payloads referencian el MISMO id
+# existente. A lo borra/reemplaza mientras B espera el candado; cuando B
+# por fin lo toma, debe re-descubrir (Fase B, después del candado) que ese
+# id YA NO EXISTE y fallar de forma CONTROLADA — nunca con un error crudo
+# de Postgres, nunca dejando una mezcla. El escenario 1 (dos payloads
+# nuevos, sin ids) NO ejercita esta ventana: la validación de existencia de
+# ids solo importa cuando el payload REFERENCIA un id que la otra conexión
+# puede haber movido mientras se esperaba el candado.
+# ═════════════════════════════════════════════════════════════════════════
+echo "== Escenario 2 (TOCTOU): fixture — contrato con 1 tramo existente, ambos payloads lo referencian"
+psql -p "$PUERTO" -d "$BASE" -v ON_ERROR_STOP=1 -q <<'SQL'
+insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) values
+  ('77-9002', 'Cliente concurrencia TOCTOU', 'mayorista', 'dinamico')
+  on conflict (numero_contrato) do nothing;
+insert into public.contrato_vuelos (numero_contrato, aerolinea, direccion, numero_vuelo, orden) values
+  ('77-9002', 'Original TOCTOU', 'ida', 'TC100', 0)
+  on conflict do nothing;
+SQL
+
+ID_EXISTENTE=$(psql -p "$PUERTO" -d "$BASE" -tAc "select id from public.contrato_vuelos where numero_contrato = '77-9002' and numero_vuelo = 'TC100';")
+echo "   id existente a disputar: $ID_EXISTENTE"
+
+# ── Conexión A (TOCTOU): toma el candado, duerme 3s, guarda un payload que
+#    NO incluye el id existente (junto con uno nuevo) — el id existente
+#    queda BORRADO al comitear A.
+(
+  psql -p "$PUERTO" -d "$BASE" -v ON_ERROR_STOP=1 -q <<'SQL' > /tmp/concurrencia_toctou_A.log 2>&1
+begin;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', 'c0000001-0000-0000-0000-000000000001', 'role', 'authenticated')::text, true);
+
+select 1 from public.ventas where numero_contrato = '77-9002' for update;
+select pg_sleep(3);
+
+select * from public.guardar_tramos_contrato('77-9002', '[
+  {"aerolinea":"TOCTOU_A","direccion":"ida","numeroVuelo":"TC900"}
+]'::jsonb);
+
+commit;
+SQL
+) &
+PID_A2=$!
+
+sleep 1
+echo "== A ya tiene el candado — lanzando B, que referencia el id existente ($ID_EXISTENTE) que A está a punto de borrar"
+
+# ── Conexión B (TOCTOU): payload que REFERENCIA el id existente (intenta
+#    actualizarlo, no borrarlo) — bloqueada por el candado de A. Cuando por
+#    fin avanza, la Fase B (post-candado) debe descubrir que ese id ya no
+#    existe y rechazar limpio — NUNCA una mezcla, NUNCA un error crudo.
+(
+  psql -p "$PUERTO" -d "$BASE" -q <<SQL > /tmp/concurrencia_toctou_B.log 2>&1
+begin;
+set local role authenticated;
+select set_config('request.jwt.claims', json_build_object('sub', 'c0000001-0000-0000-0000-000000000001', 'role', 'authenticated')::text, true);
+
+select * from public.guardar_tramos_contrato('77-9002', '[
+  {"id":$ID_EXISTENTE,"aerolinea":"TOCTOU_B","direccion":"ida","numeroVuelo":"TC999"}
+]'::jsonb);
+
+commit;
+SQL
+) &
+PID_B2=$!
+
+wait "$PID_A2" "$PID_B2"
+echo "== Ambas conexiones del escenario 2 terminaron"
+
+echo "== Verificando que B falló con un mensaje de NEGOCIO limpio (nunca un error crudo de Postgres)"
+if ! grep -q 'Uno de los tramos ya no existe' /tmp/concurrencia_toctou_B.log; then
+  echo "   FALLÓ: B no reportó el mensaje de negocio esperado ('Uno de los tramos ya no existe...')."
+  cat /tmp/concurrencia_toctou_B.log
+  exit 1
+fi
+# Ninguna pista interna (nombre de tabla/función/constraint/columna cruda,
+# o un SQLSTATE distinto al de nuestra excepción de negocio) debe llegar
+# al log que representa lo que vería el cliente.
+if grep -qiE 'constraint|relation "|violates|duplicate key|column "id" is ambiguous|syntax error' /tmp/concurrencia_toctou_B.log; then
+  echo "   FALLÓ: el log de B contiene detalles internos crudos de Postgres, no solo el mensaje de negocio controlado."
+  cat /tmp/concurrencia_toctou_B.log
+  exit 1
+fi
+echo "   ok: B recibió exactamente la excepción de negocio, sin detalles internos."
+
+echo "== Verificando el estado final: SOLO el guardado de A (TOCTOU_A) — nada de B, sin mezcla"
+RESULTADO2=$(psql -p "$PUERTO" -d "$BASE" -tAc "
+  select string_agg(aerolinea || '|' || direccion || '|' || numero_vuelo, ',' order by orden)
+    from public.contrato_vuelos where numero_contrato = '77-9002';
+")
+ESPERADO2="TOCTOU_A|ida|TC900"
+
+echo "   obtenido:  $RESULTADO2"
+echo "   esperado:  $ESPERADO2"
+
+if [ "$RESULTADO2" != "$ESPERADO2" ]; then
+  echo "   FALLÓ: el estado final del escenario 2 no es exactamente el guardado de A — hay mezcla o el B fallido alcanzó a escribir algo."
+  cat /tmp/concurrencia_toctou_A.log
+  echo "---"
+  cat /tmp/concurrencia_toctou_B.log
+  exit 1
+fi
+
+N_FILAS2=$(psql -p "$PUERTO" -d "$BASE" -tAc "select count(*) from public.contrato_vuelos where numero_contrato = '77-9002';")
+if [ "$N_FILAS2" != "1" ]; then
+  echo "   FALLÓ: se esperaba EXACTAMENTE 1 fila en el escenario 2 (solo la de A), se encontraron $N_FILAS2."
+  exit 1
+fi
+
+echo "== PASÓ (escenario 2: TOCTOU con id existente en disputa): B se rechazó de forma controlada al descubrir, YA CON EL CANDADO, que el id que referenciaba había sido borrado por A — nunca una mezcla, nunca un error crudo."

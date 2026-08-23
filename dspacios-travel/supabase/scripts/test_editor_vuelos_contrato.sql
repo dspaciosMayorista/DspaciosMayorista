@@ -59,11 +59,26 @@
 --   S. Un usuario pierde el acceso (se desactiva) A MITAD DE SESIÓN, con el
 --      MISMO JWT que antes sí funcionaba — el guardado se rechaza igual que
 --      si nunca hubiera tenido acceso, nada cambia.
+--   T. Revisión 3: cada campo de texto libre (aerolinea/record/origenCiudad/
+--      destinoCiudad/numeroVuelo/fecha/horaSalida/horaLlegada/servicios)
+--      debe ser ausente/null/string — nunca número/boolean/array/objeto
+--      (`->>` los convertiría a texto en silencio sin este chequeo).
+--   U. Revisión 3: fecha ESTRICTAMENTE ISO — regex AAAA-MM-DD antes del
+--      cast (rechaza dd/mm/aaaa, mm/dd/aaaa, mes sin cero a la izquierda,
+--      número JSON) Y que la fecha exista de verdad en el calendario
+--      (rechaza 2026-02-30, que pasa el regex pero no existe).
+--   V. Revisión 3: un tramo con SOLO `direccion` (sin ningún otro dato) es
+--      operativamente vacío y se rechaza — un PNR solo sigue permitido.
+--   W. Revisión 3: el tipo de retorno EXACTO de guardar_tramos_contrato()
+--      es un `returns table` explícito de 15 columnas — nunca `setof
+--      contrato_vuelos` + `select *` (blindado contra pg_get_function_
+--      result, no contra el texto del archivo).
 --
 -- La concurrencia real (dos conexiones separadas guardando el MISMO
--- contrato al mismo tiempo) NO se puede probar en un script de una sola
--- conexión como este — ver supabase/scripts/test_concurrencia_tramos_
--- contrato.sh (dos procesos psql reales, orquestados por bash).
+-- contrato al mismo tiempo, INCLUIDO el caso TOCTOU donde ambos payloads
+-- referencian el MISMO id existente) NO se puede probar en un script de una
+-- sola conexión como este — ver supabase/scripts/test_concurrencia_tramos_
+-- contrato.sh (dos escenarios, procesos psql reales, orquestados por bash).
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -806,9 +821,123 @@ end $$;
 reset role;
 select set_config('request.jwt.claims', '{}', true);
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- T — revisión 3 del PR #270: cada campo de TEXTO debe ser ausente/null/
+--     string — NUNCA número/boolean/array/objeto (`->>` los convertiría en
+--     silencio a texto). Un solo contrato de fixture, se confirma al final
+--     que ninguno de los 36 rechazos (9 campos × 4 tipos no-string) tocó
+--     una fila.
+-- ═════════════════════════════════════════════════════════════════════════
+insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) values ('77-0017', 'Cliente tipos R3', 'mayorista', 'dinamico');
+insert into public.contrato_vuelos (numero_contrato, aerolinea, direccion, numero_vuelo, orden) values
+  ('77-0017', 'Original T', 'ida', 'ORT100', 0);
+
+set local role authenticated;
+select pg_temp.como('a0000001-0000-0000-0000-000000000001'); -- superadmin
+
+do $$
+declare v_campo text; v_valor_malo jsonb;
+begin
+  foreach v_campo in array array['aerolinea','record','origenCiudad','destinoCiudad','numeroVuelo','fecha','horaSalida','horaLlegada','servicios']
+  loop
+    foreach v_valor_malo in array array['123'::jsonb, 'true'::jsonb, '["x"]'::jsonb, '{"dato":"x"}'::jsonb]
+    loop
+      perform pg_temp.assert_guardar_falla(
+        '77-0017',
+        jsonb_build_array(jsonb_set('{"aerolinea":"placeholder"}'::jsonb, array[v_campo], v_valor_malo)),
+        format('T: campo %s con valor JSON %s (tipo %s) se rechaza', v_campo, v_valor_malo, jsonb_typeof(v_valor_malo))
+      );
+    end loop;
+  end loop;
+
+  perform pg_temp.assert_eq(
+    (select count(*) from public.contrato_vuelos where numero_contrato = '77-0017'), 1::bigint,
+    'T: tras 36 rechazos (9 campos × 4 tipos no-string), el contrato sigue con EXACTAMENTE su tramo original'
+  );
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', '{}', true);
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- U — revisión 3: fecha ESTRICTAMENTE ISO (regex AAAA-MM-DD antes del
+--     cast, y la fecha debe existir de verdad en el calendario).
+-- ═════════════════════════════════════════════════════════════════════════
+set local role authenticated;
+select pg_temp.como('a0000001-0000-0000-0000-000000000001');
+
 do $$
 begin
-  raise notice 'TODAS LAS PRUEBAS PASARON: test_editor_vuelos_contrato.sql (secciones A-S)';
+  perform pg_temp.assert_guardar_falla('77-0017', '[{"aerolinea":"X","fecha":"23/08/2026"}]'::jsonb, 'U1: dd/mm/yyyy con barras se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0017', '[{"aerolinea":"X","fecha":"08/23/2026"}]'::jsonb, 'U2: mm/dd/yyyy con barras se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0017', '[{"aerolinea":"X","fecha":"2026-2-03"}]'::jsonb, 'U3: mes sin cero a la izquierda (2026-2-03) se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0017', '[{"aerolinea":"X","fecha":"2026-02-30"}]'::jsonb, 'U4: fecha con formato válido pero que NO existe en el calendario (30 de febrero) se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0017', '[{"aerolinea":"X","fecha":20260823}]'::jsonb, 'U5: fecha como número JSON se rechaza (por tipo, antes de llegar al regex)');
+  -- Control positivo: una fecha ISO real y válida SÍ debe aceptarse.
+  perform public.guardar_tramos_contrato('77-0017', '[{"aerolinea":"X","fecha":"2026-08-23"}]'::jsonb);
+  perform pg_temp.assert_eq(
+    (select fecha_salida from public.contrato_vuelos where numero_contrato = '77-0017'),
+    '2026-08-23'::date, 'U6: control positivo — una fecha ISO real y válida SÍ se guarda'
+  );
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', '{}', true);
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- V — revisión 3: un tramo con SOLO `direccion` (sin ningún otro dato) es
+--     operativamente vacío y se rechaza — la dirección sola no es
+--     información de vuelo. Un PNR (`record`) solo SÍ se conserva permitido.
+-- ═════════════════════════════════════════════════════════════════════════
+insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) values ('77-0018', 'Cliente vacio-direccion R3', 'mayorista', 'dinamico');
+
+set local role authenticated;
+select pg_temp.como('a0000001-0000-0000-0000-000000000001');
+
+do $$
+begin
+  perform pg_temp.assert_guardar_falla('77-0018', '[{"direccion":"ida"}]'::jsonb, 'V1: SOLO direccion=ida (sin ningún otro dato) se rechaza como vacío');
+  perform pg_temp.assert_guardar_falla('77-0018', '[{"direccion":"regreso"}]'::jsonb, 'V2: SOLO direccion=regreso también se rechaza');
+
+  -- Control positivo: un PNR solo SÍ es información útil (puede conocerse
+  -- antes que el itinerario completo) — se conserva permitido.
+  perform public.guardar_tramos_contrato('77-0018', '[{"record":"PNRSOLO"}]'::jsonb);
+  perform pg_temp.assert_eq(
+    (select count(*) from public.contrato_vuelos where numero_contrato = '77-0018'), 1::bigint,
+    'V3: control positivo — un PNR solo (sin dirección ni nada más) SÍ se guarda'
+  );
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', '{}', true);
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- W — revisión 3: guardar_tramos_contrato() debe devolver EXPLÍCITAMENTE
+--     (returns table), NUNCA `setof contrato_vuelos` + `select *` — que
+--     expondría automáticamente cualquier columna futura de la tabla, al
+--     ser SECURITY DEFINER. Se blinda el conjunto EXACTO de columnas
+--     devueltas contra el catálogo real de Postgres (pg_get_function_
+--     result), no contra el texto del archivo — si alguien vuelve a
+--     `setof`/`select *`, esta prueba se rompe.
+-- ═════════════════════════════════════════════════════════════════════════
+do $$
+declare v_firma text;
+begin
+  select pg_get_function_result('public.guardar_tramos_contrato(text, jsonb)'::regprocedure) into v_firma;
+  perform pg_temp.assert_eq(
+    v_firma,
+    'TABLE(id bigint, numero_contrato text, aerolinea text, record text, direccion text, origen_codigo text, origen_ciudad text, destino_codigo text, destino_ciudad text, numero_vuelo text, fecha_salida date, hora_salida text, hora_llegada text, servicios text, orden integer)'::text,
+    'W1: el tipo de retorno EXACTO de guardar_tramos_contrato() es un TABLE() explícito con estas 15 columnas — nunca setof contrato_vuelos'
+  );
+  perform pg_temp.assert_eq(
+    v_firma !~ 'contrato_vuelos', true,
+    'W2: el tipo de retorno NUNCA menciona el nombre de la tabla base (confirma que no es setof)'
+  );
+end $$;
+
+do $$
+begin
+  raise notice 'TODAS LAS PRUEBAS PASARON: test_editor_vuelos_contrato.sql (secciones A-W)';
 end $$;
 
 rollback;

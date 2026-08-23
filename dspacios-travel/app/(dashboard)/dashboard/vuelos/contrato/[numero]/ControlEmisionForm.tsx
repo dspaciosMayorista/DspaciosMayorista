@@ -54,7 +54,7 @@ export function ControlEmisionForm({
         </div>
         <div className="sm:col-span-2">
           <label className={lbl}>Nota (opcional)</label>
-          <Input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Referencia de emisión, motivo del cambio, etc." />
+          <Input value={nota} onChange={(e) => setNota(e.target.value)} maxLength={500} placeholder="Referencia de emisión, motivo del cambio, etc." />
         </div>
       </div>
       <div className="mt-4 flex items-center gap-3">

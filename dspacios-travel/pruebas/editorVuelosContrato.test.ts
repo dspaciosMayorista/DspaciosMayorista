@@ -136,9 +136,45 @@ describe("contrato-vuelos-actions.ts — server actions del editor", () => {
     assert.match(src, /Debe haber al menos un tramo/);
   });
 
-  test("errores del RPC se propagan como { ok: false, error }, nunca se tragan en silencio", () => {
-    const matches = src.match(/if \(error\) return \{ ok: false, error: error\.message \};/g) ?? [];
-    assert.ok(matches.length >= 2, "ambas funciones (tramos y estado de emisión) deben propagar el error del RPC");
+  test("errores del RPC se propagan como { ok: false, error }, nunca se tragan en silencio, y nunca crudos (revisión 3, punto 6)", () => {
+    const matches = src.match(/if \(error\) return \{ ok: false, error: mensajeSeguro\(error, "[a-z_]+"\) \};/g) ?? [];
+    assert.ok(matches.length >= 2, "ambas funciones (tramos y estado de emisión) deben propagar el error del RPC, saneado con mensajeSeguro()");
+    assert.doesNotMatch(src, /error: error\.message/, "error.message crudo NUNCA debe llegar directo al navegador");
+  });
+
+  // ── Revisión adicional del PR #270, punto 6: distinguir excepciones de
+  // negocio (SQLSTATE P0001, propias de los RAISE EXCEPTION del RPC) de
+  // cualquier error inesperado (constraint, red, permiso) — solo las
+  // primeras se muestran tal cual; el resto es un mensaje genérico + log
+  // server-side, nunca detalles internos crudos. ──
+  describe("mensajeSeguro() — nunca expone errores internos crudos al navegador", () => {
+    test("P0001 (RAISE EXCEPTION de negocio) se muestra tal cual", () => {
+      assert.match(src, /const SQLSTATE_EXCEPCION_NEGOCIO = "P0001";/);
+      assert.match(src, /if \(error\.code === SQLSTATE_EXCEPCION_NEGOCIO\) return error\.message;/);
+    });
+
+    test("cualquier otro código se convierte en un mensaje genérico y se registra server-side", () => {
+      assert.match(src, /console\.error\(`\[contrato-vuelos-actions:\$\{contexto\}\] error inesperado/);
+      assert.match(src, /return "No se pudo completar la operación\. Intenta de nuevo o contacta a soporte\."/);
+    });
+  });
+
+  // ── Revisión adicional del PR #270, punto 6: numeroContrato y nota
+  // limitados también del lado servidor (espejo de los límites en
+  // Postgres), no solo confiar en el RPC. ──
+  describe("límites de longitud — numeroContrato y nota (revisión 3, punto 6)", () => {
+    test("guardarTramosContrato rechaza un numeroContrato ausente o excesivamente largo antes de llamar al RPC", () => {
+      assert.match(src, /MAX_NUMERO_CONTRATO = 30;/);
+      const fn = src.match(/export async function guardarTramosContrato\([\s\S]*?\n\}/)?.[0] ?? "";
+      assert.match(fn, /if \(!numeroContrato \|\| numeroContrato\.length > MAX_NUMERO_CONTRATO\)/);
+    });
+
+    test("actualizarEstadoEmisionContrato rechaza numeroContrato inválido y nota demasiado larga", () => {
+      assert.match(src, /MAX_NOTA = 500;/);
+      const fn = src.match(/export async function actualizarEstadoEmisionContrato\([\s\S]*?\n\}/)?.[0] ?? "";
+      assert.match(fn, /if \(!numeroContrato \|\| numeroContrato\.length > MAX_NUMERO_CONTRATO\)/);
+      assert.match(fn, /if \(nota && nota\.length > MAX_NOTA\)/);
+    });
   });
 
   // ── Revisión adicional del PR #270, punto 4: guardarTramosContrato debe
