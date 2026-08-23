@@ -3,11 +3,11 @@
 -- (migración 152)
 --
 -- ⚠️ Usa 'serie' (no 'individual') como valor de modalidad: la migración 155
--- amplía el dominio y la 157 lo cierra a solo serie/grupo — 'individual' deja
--- de ser válido en cuanto la 157 corre. Este script se pega DESPUÉS de la
--- 157 en la secuencia de despliegue, así que debe usar el valor vigente en
+-- amplía el dominio y la 158 lo cierra a solo serie/grupo — 'individual' deja
+-- de ser válido en cuanto la 158 corre. Este script se pega DESPUÉS de la
+-- 158 en la secuencia de despliegue, así que debe usar el valor vigente en
 -- ese punto (mismo criterio de mecánica que probaba antes, solo el literal
--- cambia con el rename de la 155/157).
+-- cambia con el rename de la 155/158).
 --
 -- Corre contra una base local construida con `local-desde-cero.sh` (o en el
 -- editor SQL de Supabase, DE SOLO LECTURA: termina en ROLLBACK). Se ejecuta
@@ -47,12 +47,12 @@
 --      el final) — se verifican los 4 registros completos, en orden, con
 --      su detalle exacto.
 --   6. Privilegios de EXECUTE (ronda posterior — consulta preventiva en
---      producción sobre migraciones 155/157, aún sin correr): la consulta
+--      producción sobre migraciones 155/158, aún sin correr): la consulta
 --      mostró `actualizar_control_bloqueo` con `security_definer=false` pero
 --      `anon EXECUTE=true` pese al `revoke ... from public` que ya traía la
 --      152 — Supabase le otorga a `anon` un grant EXECUTE directo al crear
 --      cualquier función nueva (`ALTER DEFAULT PRIVILEGES` de proyecto),
---      independiente de PUBLIC. Las migraciones 155/157 (y sus rollbacks)
+--      independiente de PUBLIC. Las migraciones 155/158 (y sus rollbacks)
 --      ahora repiten `revoke ... from public/anon` + `grant execute ... to
 --      authenticated` en cada `create or replace` de esta función. Se
 --      prueba: (a) `anon` recibe `permission denied` al invocar el RPC

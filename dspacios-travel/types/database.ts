@@ -1667,6 +1667,20 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["contrato_vuelos"]["Insert"]>;
         Relationships: [];
       };
+      // Migración 157: estado de emisión de UN contrato completo (no por
+      // tramo) — editor operativo de vuelos, módulo Vuelos.
+      contrato_vuelo_control: {
+        Row: { numero_contrato: string; estado_emision: string | null; created_at: string; updated_at: string };
+        Insert: { numero_contrato: string; estado_emision?: string | null; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["contrato_vuelo_control"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_vuelo_control_cambios: {
+        Row: { id: number; numero_contrato: string; detalle: string | null; nota: string | null; registrado_por: string | null; created_at: string };
+        Insert: { id?: number; numero_contrato: string; detalle?: string | null; nota?: string | null; registrado_por?: string | null; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["contrato_vuelo_control_cambios"]["Insert"]>;
+        Relationships: [];
+      };
       contrato_servicios: {
         Row: { id: number; numero_contrato: string; tipo: string; descripcion: string; proveedor: string | null; costo: number | null; orden: number | null };
         Insert: { id?: number; numero_contrato: string; tipo?: string; descripcion: string; proveedor?: string | null; costo?: number | null; orden?: number | null };
@@ -2758,6 +2772,10 @@ export type Database = {
       // aéreo "por sistema" mínimo para el módulo Vuelos — solo lo que un
       // contrato dinámico/empaquetado tiene de vuelo, nunca cliente/precio/
       // costo/comisión. Único camino de lectura de `ventas` para `control_vuelo`.
+      // Migración 157: `aerolinea` pasa a venir de contrato_vuelos primero
+      // (ventas.aerolinea solo como respaldo histórico); se agregan
+      // estado_emision (contrato_vuelo_control) y estado_pago/conteos
+      // derivados de las CxP aéreas reales (nunca un valor monetario).
       ventas_vuelo_sistema: {
         Row: {
           numero_contrato: string;
@@ -2784,6 +2802,34 @@ export type Database = {
           hora_llegada_reg: string | null;
           vuelo_fecha_ida: string | null;
           vuelo_fecha_regreso: string | null;
+          // Migración 157.
+          estado_emision: string | null;
+          estado_pago: string | null;
+          cxp_aereas_total: number | null;
+          cxp_aereas_pagadas: number | null;
+        };
+        Relationships: [];
+      };
+      // Migración 157: TODOS los tramos de contrato_vuelos de un contrato
+      // (a diferencia de ventas_vuelo_sistema, que solo trae el tramo
+      // ida/regreso "principal") — fuente del editor operativo de vuelos.
+      contrato_vuelos_editor: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          aerolinea: string | null;
+          record: string | null;
+          direccion: string | null;
+          origen_codigo: string | null;
+          origen_ciudad: string | null;
+          destino_codigo: string | null;
+          destino_ciudad: string | null;
+          numero_vuelo: string | null;
+          fecha_salida: string | null;
+          hora_salida: string | null;
+          hora_llegada: string | null;
+          servicios: string | null;
+          orden: number;
         };
         Relationships: [];
       };
@@ -2846,6 +2892,25 @@ export type Database = {
           p_record: string | null;
           p_estado_emision: string | null;
           p_estado_pago: string | null;
+          p_nota: string | null;
+        };
+        Returns: undefined;
+      };
+      // Migración 157. Reemplaza atómicamente los tramos de contrato_vuelos
+      // de un contrato — ver el comentario de cabecera de la migración.
+      guardar_tramos_contrato: {
+        Args: {
+          p_numero_contrato: string;
+          p_tramos: Json;
+        };
+        Returns: undefined;
+      };
+      // Migración 157. Estado de emisión 1:1 del contrato (no por tramo) +
+      // historial, mismo patrón que actualizar_control_empaquetado.
+      actualizar_estado_emision_contrato: {
+        Args: {
+          p_numero_contrato: string;
+          p_estado_emision: string | null;
           p_nota: string | null;
         };
         Returns: undefined;

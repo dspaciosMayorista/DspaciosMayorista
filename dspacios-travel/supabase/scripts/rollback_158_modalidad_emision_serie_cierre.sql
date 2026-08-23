@@ -1,8 +1,12 @@
 -- ───────────────────────────────────────────────────────────────────────────
--- ROLLBACK de la migración 157 (modalidad_emision: CIERRE)
+-- ROLLBACK de la migración 158 (modalidad_emision: CIERRE)
+--
+-- ⚠️ Renombrado de rollback_157 a rollback_158 junto con su migración —
+-- el número 157 quedó libre para una migración nueva y distinta (editor
+-- operativo de vuelos del contrato). Sin cambios de fondo.
 --
 -- Reabre el CHECK/RPC a ('individual','serie','grupo') — el mismo estado
--- transitorio que dejó la 155. NO hay ningún dato que "devolver": la 157
+-- transitorio que dejó la 155. NO hay ningún dato que "devolver": la 158
 -- convirtió cualquier 'individual' remanente a 'serie' y, para cuando este
 -- rollback se ejecute, todo lo que antes era 'individual' ya está en
 -- 'serie' — no existe una forma de saber cuáles filas eran 'individual'
@@ -11,7 +15,7 @@
 -- 'individual' fila por fila, es una operación manual aparte con la lista
 -- de IDs a mano — este rollback NO la hace.
 --
--- Uso: solo si hay que revertir un despliegue completo (código + 157) a la
+-- Uso: solo si hay que revertir un despliegue completo (código + 158) a la
 -- fase transitoria (código viejo o mixto sirviendo tráfico otra vez).
 --
 -- Todo el archivo corre en una transacción explícita (`begin`/`commit`). Se
@@ -29,7 +33,7 @@ alter table public.bloqueos_vuelo
 
 comment on column public.bloqueos_vuelo.modalidad_emision is
   'Serie o grupo (antes: individual/grupo — "individual" se renombra a "serie"). '
-  'FASE TRANSITORIA (reabierta por rollback de la 157): el CHECK acepta ''individual'' '
+  'FASE TRANSITORIA (reabierta por rollback de la 158): el CHECK acepta ''individual'' '
   'además de ''serie''/''grupo''. Obligatoria en registros nuevos; null en registros '
   'anteriores a la 152 = "Sin definir", nunca se infiere.';
 
@@ -125,14 +129,14 @@ comment on function public.actualizar_control_bloqueo(bigint, text, text, text, 
   'Actualiza modalidad/estado de emisión/estado de pago de un bloqueo y registra el cambio '
   'en bloqueo_cambios en UNA sola transacción (SELECT ... FOR UPDATE + UPDATE + INSERT) — '
   'si el INSERT del historial falla, el UPDATE también se revierte. SIN security definer. '
-  'FASE TRANSITORIA (reabierta por rollback de la 157): dominio individual/serie/grupo.';
+  'FASE TRANSITORIA (reabierta por rollback de la 158): dominio individual/serie/grupo.';
 
--- Mismo modelo de privilegios que las migraciones 155/157 y su rollback de
+-- Mismo modelo de privilegios que las migraciones 155/158 y su rollback de
 -- la 155: `revoke ... from public/anon` + `grant execute ... to
 -- authenticated`, nunca EXECUTE para PUBLIC/anon. El `create or replace` de
 -- arriba NO basta por sí solo (Supabase le da a `anon` un grant EXECUTE
 -- directo al crear la función, vía `ALTER DEFAULT PRIVILEGES` de proyecto —
--- ver el comentario de la migración 155/157) — se repite aquí para que este
+-- ver el comentario de la migración 155/158) — se repite aquí para que este
 -- rollback deje exactamente el mismo estado de privilegios que tenía la 155,
 -- nunca uno más abierto.
 revoke all on function public.actualizar_control_bloqueo(bigint, text, text, text, text) from public;

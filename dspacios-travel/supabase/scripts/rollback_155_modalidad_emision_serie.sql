@@ -13,9 +13,9 @@
 -- corriendo mientras se aplica este rollback, sus inserts/updates a 'serie'
 -- empezarán a fallar contra el CHECK cerrado.
 --
--- ⚠️ Si la migración 157 (cierre) YA corrió, este rollback NO tiene sentido
--- — usa en su lugar `rollback_157_modalidad_emision_serie_cierre.sql`, que
--- reabre el dominio a individual/serie/grupo (157 dejó todo en 'serie', así
+-- ⚠️ Si la migración 158 (cierre) YA corrió, este rollback NO tiene sentido
+-- — usa en su lugar `rollback_158_modalidad_emision_serie_cierre.sql`, que
+-- reabre el dominio a individual/serie/grupo (158 dejó todo en 'serie', así
 -- que cerrar aquí a individual/grupo dejaría CERO filas válidas si alguna
 -- quedó en 'serie').
 --
@@ -133,7 +133,7 @@ comment on function public.actualizar_control_bloqueo(bigint, text, text, text, 
   'corre con el rol del que llama, sujeta a las mismas policies de bloqueos_vuelo/bloqueo_cambios. '
   'Migración 152.';
 
--- Mismo modelo de privilegios que la migración 155/157: `revoke ... from
+-- Mismo modelo de privilegios que la migración 155/158: `revoke ... from
 -- public/anon` + `grant execute ... to authenticated`, nunca EXECUTE para
 -- PUBLIC/anon. El `create or replace` de arriba NO basta por sí solo para
 -- dejar `anon` sin acceso — Supabase le otorga EXECUTE directo a `anon` al
@@ -156,7 +156,7 @@ begin
      and modalidad_emision not in ('individual', 'grupo');
 
   if v_remanentes > 0 then
-    raise exception 'ROLLBACK 155 FALLÓ: % filas tienen un modalidad_emision fuera de individual/grupo/null — probablemente ya corrió la 157 (que deja todo en ''serie''). Usa el rollback de la 157 en su lugar.', v_remanentes;
+    raise exception 'ROLLBACK 155 FALLÓ: % filas tienen un modalidad_emision fuera de individual/grupo/null — probablemente ya corrió la 158 (que deja todo en ''serie''). Usa el rollback de la 158 en su lugar.', v_remanentes;
   end if;
 end $$;
 

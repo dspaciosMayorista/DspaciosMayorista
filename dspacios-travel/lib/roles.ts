@@ -48,6 +48,17 @@ export function puedeEscribir(recurso: keyof typeof ESCRITURA, rol: string | nul
 // depender de que el navegador tenga el rol correcto.
 export const ROLES_CONTRATO_COMPLETO: readonly Rol[] = ["superadmin", "gerencia", "administracion", "operaciones"];
 
+// Roles que pueden usar el editor operativo de vuelos del contrato (migración
+// 157: `contrato_vuelo_control`/`contrato_vuelos_editor`/`guardar_tramos_
+// contrato()`/`actualizar_estado_emision_contrato()`). DEBE reflejar
+// exactamente el rol/tenant de `acceso_editar_vuelos_contrato()` (que a su
+// vez reutiliza `acceso_ventas_vuelo_sistema()`, sin duplicar la lista en
+// Postgres) — si cambia uno, cambia el otro. Incluye `control_vuelo` a
+// propósito (por eso este editor existe, separado de `ContenidoContratoEditor`,
+// que es superadmin-only y vive en la ficha financiera completa) y EXCLUYE
+// a `venta` a propósito (no es un asesor el que controla vuelos).
+export const ROLES_EDITOR_VUELOS_CONTRATO: readonly Rol[] = ["superadmin", "gerencia", "administracion", "operaciones", "control_vuelo"];
+
 /** Rol del usuario autenticado actual (o null si no hay sesión / no está en `usuarios`). */
 export async function miRol(): Promise<Rol | null> {
   const sb = await createClient();

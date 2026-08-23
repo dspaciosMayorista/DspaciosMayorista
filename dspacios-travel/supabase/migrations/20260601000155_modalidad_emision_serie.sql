@@ -25,7 +25,7 @@
 --     toda la UI; ESCRIBE únicamente 'serie' — nunca vuelve a producir
 --     'individual') ↓
 --   ↓ smoke test: crear/editar un bloqueo, confirmar que guarda 'serie' ↓
---   157 (aparte, CIERRE) → convierte cualquier 'individual' remanente a
+--   158 (aparte, CIERRE) → convierte cualquier 'individual' remanente a
 --                          'serie' y cierra el CHECK/RPC a solo
 --                          ('serie','grupo'). Se corre DESPUÉS del
 --                          despliegue y el smoke test, nunca antes.
@@ -34,9 +34,9 @@
 -- rompa: código viejo + esquema 155 (ambos conocen 'individual', CHECK
 -- también acepta 'serie' pero el código viejo nunca lo escribe) · código
 -- nuevo + esquema 155 (el código escribe 'serie', el CHECK ya lo acepta) ·
--- código nuevo + esquema 157 (mismo caso, dominio ya cerrado). La única
--- combinación que NO se soporta a propósito es código viejo + esquema 157
--- (el CHECK ya no acepta 'individual') — por diseño, 157 solo se corre
+-- código nuevo + esquema 158 (mismo caso, dominio ya cerrado). La única
+-- combinación que NO se soporta a propósito es código viejo + esquema 158
+-- (el CHECK ya no acepta 'individual') — por diseño, 158 solo se corre
 -- DESPUÉS de confirmar que el código nuevo ya está sirviendo tráfico.
 --
 -- "Sistema" (la tercera modalidad del negocio, para el inventario de
@@ -92,7 +92,7 @@ comment on column public.bloqueos_vuelo.modalidad_emision is
   'Serie o grupo (antes: individual/grupo — "individual" se renombra a "serie"). '
   'FASE TRANSITORIA (migración 155): el CHECK todavía acepta ''individual'' además de '
   '''serie''/''grupo'' — el código nuevo LEE ambos como "Serie" pero solo ESCRIBE ''serie''. '
-  'La migración 157 (cierre, posterior al despliegue) convierte cualquier ''individual'' '
+  'La migración 158 (cierre, posterior al despliegue) convierte cualquier ''individual'' '
   'remanente y cierra el dominio a solo serie/grupo. Obligatoria en registros nuevos '
   '(validada en crearBloqueo); null en registros anteriores a la 152 = "Sin definir" en la '
   'UI, nunca se infiere. "Sistema" (la tercera modalidad del negocio) NUNCA es un valor de '
@@ -117,7 +117,7 @@ comment on column public.bloqueos_vuelo.modalidad_emision is
 -- función nueva vía `ALTER DEFAULT PRIVILEGES` a nivel de proyecto,
 -- INDEPENDIENTE de PUBLIC** — así que `revoke ... from public` nunca alcanzó
 -- el grant explícito que Supabase le dio a `anon` en el momento de crearse.
--- Por eso este `create or replace` (y el de la migración 157) ahora repiten
+-- Por eso este `create or replace` (y el de la migración 158) ahora repiten
 -- el `revoke`/`grant` explícitamente — incluyendo el `revoke ... from anon`
 -- que faltaba — en vez de asumir que sobreviven solos.
 create or replace function public.actualizar_control_bloqueo(
@@ -213,10 +213,10 @@ comment on function public.actualizar_control_bloqueo(bigint, text, text, text, 
   'si el INSERT del historial falla, el UPDATE también se revierte. SIN security definer: '
   'corre con el rol del que llama, sujeta a las mismas policies de bloqueos_vuelo/bloqueo_cambios. '
   'FASE TRANSITORIA (155): dominio válido individual/serie/grupo (ambos individual y serie se '
-  'etiquetan "Serie"); la migración 157 cierra el dominio a solo serie/grupo.';
+  'etiquetan "Serie"); la migración 158 cierra el dominio a solo serie/grupo.';
 
 -- Repetido explícitamente en cada `create or replace` de esta función (152,
--- 155, 157) — nunca se asume que sobrevive sola. `revoke ... from public`
+-- 155, 158) — nunca se asume que sobrevive sola. `revoke ... from public`
 -- por sí solo NO bastaba (ver el comentario junto al `create or replace` más
 -- arriba): Supabase otorga EXECUTE directo a `anon`/`authenticated` sobre
 -- funciones nuevas vía `ALTER DEFAULT PRIVILEGES` a nivel de proyecto, así
