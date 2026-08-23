@@ -23,14 +23,17 @@ export function ControlEmisionForm({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
+  const [ok, setOk] = useState(false);
   const [estadoEmision, setEstadoEmision] = useState<EstadoEmision | "">((estadoEmisionInicial as EstadoEmision | null) ?? "");
   const [nota, setNota] = useState("");
 
   function guardar() {
-    setMsg("");
+    setMsg(""); setOk(false);
     start(async () => {
       const r = await actualizarEstadoEmisionContrato(numeroContrato, estadoEmision, nota);
-      if (r.ok) { setMsg("Guardado."); setNota(""); router.refresh(); } else setMsg(r.error);
+      // Nunca se comporta como éxito si el RPC falló: `nota` solo se limpia
+      // en la rama ok — si falla, el usuario conserva lo que escribió.
+      if (r.ok) { setOk(true); setMsg("Guardado."); setNota(""); router.refresh(); } else { setOk(false); setMsg(r.error); }
     });
   }
 
@@ -58,7 +61,7 @@ export function ControlEmisionForm({
         <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Guardar estado de emisión"}
         </Button>
-        {msg && <span className="text-sm text-gray-600">{msg}</span>}
+        {msg && <span className={`text-sm ${ok ? "text-green-700" : "text-red-600"}`}>{msg}</span>}
       </div>
     </section>
   );

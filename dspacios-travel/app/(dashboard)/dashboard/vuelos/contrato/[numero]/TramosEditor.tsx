@@ -102,7 +102,18 @@ export function TramosEditor({ numeroContrato, tramosIniciales }: { numeroContra
     if (!tramos.length) { setMsg("Debe haber al menos un tramo."); return; }
     start(async () => {
       const r = await guardarTramosContrato(numeroContrato, tramos);
-      if (r.ok) { setOk(true); setMsg("Vuelo guardado."); router.refresh(); } else { setOk(false); setMsg(r.error); }
+      if (r.ok) {
+        // Sincroniza el estado local con los tramos YA guardados (id reales
+        // incluidos) — nunca basta con router.refresh(): eso re-renderiza el
+        // Server Component, pero NO toca el useState de este cliente. Sin
+        // esto, un tramo recién creado (id:null al enviarlo) seguía viéndose
+        // como id:null en memoria, así que el siguiente guardado lo borraba
+        // y lo reinsertaba con un id DISTINTO en vez de conservarlo.
+        setTramos(r.tramos.length ? r.tramos.map(deDB) : [TRAMO_VACIO]);
+        setOk(true); setMsg("Vuelo guardado."); router.refresh();
+      } else {
+        setOk(false); setMsg(r.error);
+      }
     });
   }
 

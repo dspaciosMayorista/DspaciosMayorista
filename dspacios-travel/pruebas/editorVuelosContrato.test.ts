@@ -140,6 +140,48 @@ describe("contrato-vuelos-actions.ts — server actions del editor", () => {
     const matches = src.match(/if \(error\) return \{ ok: false, error: error\.message \};/g) ?? [];
     assert.ok(matches.length >= 2, "ambas funciones (tramos y estado de emisión) deben propagar el error del RPC");
   });
+
+  // ── Revisión adicional del PR #270, punto 4: guardarTramosContrato debe
+  // devolver los tramos YA guardados (con id real) — TramosEditor.tsx los
+  // necesita para sincronizar su estado local sin depender solo de
+  // router.refresh(). ──
+  test("guardarTramosContrato devuelve { ok: true, tramos } con los datos del RPC, nunca solo { ok: true }", () => {
+    assert.match(src, /return \{ ok: true, tramos: \(data \?\? \[\]\) as TramoGuardado\[\] \};/);
+  });
+
+  test("TramoGuardado/ResultTramos existen y guardarTramosContrato declara devolver Promise<ResultTramos>", () => {
+    assert.match(src, /export type TramoGuardado = \{/);
+    assert.match(src, /type ResultTramos = \{ ok: true; tramos: TramoGuardado\[\] \} \| \{ ok: false; error: string \};/);
+    assert.match(src, /export async function guardarTramosContrato\([^)]*\): Promise<ResultTramos>/);
+  });
+
+  // ── Revisión adicional del PR #270, punto 3: validarTramos() debe ser un
+  // espejo LIVIANO de la validación real en Postgres — nunca la autoridad,
+  // pero tampoco vacío como antes. ──
+  describe("validarTramos() — espejo de la validación real en Postgres (solo UX)", () => {
+    test("límite de tramos por contrato (20), igual que el RPC", () => {
+      assert.match(src, /MAX_TRAMOS = 20/);
+      assert.match(src, /tramos\.length > MAX_TRAMOS/);
+    });
+
+    test("valida id duplicado dentro del mismo payload", () => {
+      assert.match(src, /idsVistos\.has\(t\.id\)/);
+    });
+
+    test("valida IATA de exactamente 3 letras y origen/destino juntos o ninguno", () => {
+      assert.match(src, /RE_IATA = \/\^\[A-Z\]\{3\}\$\//);
+      assert.match(src, /Boolean\(origen\) !== Boolean\(destino\)/);
+    });
+
+    test("valida formato de hora (HH:MM) y de fecha (YYYY-MM-DD)", () => {
+      assert.match(src, /RE_HORA = \/\^\(\[01\]\[0-9\]\|2\[0-3\]\):\[0-5\]\[0-9\]\$\//);
+      assert.match(src, /RE_FECHA = \/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//);
+    });
+
+    test("rechaza un tramo completamente vacío", () => {
+      assert.match(src, /completamente vacío/);
+    });
+  });
 });
 
 describe("TramosEditor.tsx — editor de tramos, reemplazo atómico con ids preservados", () => {
@@ -167,6 +209,33 @@ describe("TramosEditor.tsx — editor de tramos, reemplazo atómico con ids pres
   test("usa ciudadIata para autocompletar la ciudad desde el código IATA (reutiliza lib/iata.ts, no reinventa el catálogo)", () => {
     assert.match(src, /import \{ ciudadIata \} from "@\/lib\/iata";/);
   });
+
+  // ── Revisión adicional del PR #270, punto 4: tras guardar, el estado
+  // local de React debe sincronizarse con los tramos YA guardados (id
+  // reales) — nunca depender solo de router.refresh(), que no toca el
+  // useState de este Client Component. Sin esto, un tramo nuevo (id:null al
+  // enviarlo) seguía viéndose como id:null en memoria y el SIGUIENTE
+  // guardado lo borraba y reinsertaba con un id DISTINTO en vez de
+  // conservarlo. ──
+  describe("guardar() sincroniza el estado local con los ids reales devueltos (fix del punto 4)", () => {
+    const fn = src.match(/function guardar\(\) \{[\s\S]*?\n  \}/)?.[0] ?? "";
+
+    test("en éxito, llama setTramos(...) con r.tramos (nunca confía solo en router.refresh())", () => {
+      assert.match(fn, /setTramos\(r\.tramos\.length \? r\.tramos\.map\(deDB\) : \[TRAMO_VACIO\]\)/);
+      assert.match(fn, /router\.refresh\(\);/, "router.refresh() se conserva para el resto de la página (historial), pero ya no es la única fuente de verdad del estado local");
+    });
+
+    test("en éxito usa deDB() para mapear los tramos devueltos — mismo mapper que la carga inicial, ninguno duplicado", () => {
+      // 1 definición de deDB + 2 usos como mapper (.map(deDB)): carga inicial
+      // (useState) y sincronización tras guardar (fix del punto 4).
+      const usosMapDeDB = (src.match(/\.map\(deDB\)/g) ?? []).length;
+      assert.equal(usosMapDeDB, 2, "deDB debe usarse como mapper tanto en la carga inicial (useState) como al sincronizar tras guardar — nunca un mapper distinto/duplicado");
+    });
+
+    test("en error, NUNCA toca setTramos ni router.refresh() — el estado local no cambia si el guardado falló", () => {
+      assert.match(fn, /\} else \{\s*setOk\(false\); setMsg\(r\.error\);\s*\}/);
+    });
+  });
 });
 
 describe("ControlEmisionForm.tsx — estado de emisión del contrato completo (1:1, no por tramo)", () => {
@@ -184,6 +253,33 @@ describe("ControlEmisionForm.tsx — estado de emisión del contrato completo (1
 
   test("llama a actualizarEstadoEmisionContrato con el numeroContrato del contrato completo (no un id de tramo)", () => {
     assert.match(src, /actualizarEstadoEmisionContrato\(numeroContrato,/);
+  });
+
+  // ── Revisión adicional del PR #270, punto 5: éxito y error deben verse
+  // DISTINTOS (verde/rojo, no el mismo gris para ambos), nunca comportarse
+  // como éxito si el RPC falló, el botón debe deshabilitarse mientras
+  // guarda, y la nota se conserva si falla / se limpia solo si tuvo éxito. ──
+  describe("feedback visual de éxito/error (fix del punto 5)", () => {
+    test("mensaje de éxito y de error usan colores DISTINTOS (verde vs rojo) — nunca el mismo gris", () => {
+      assert.match(src, /const \[ok, setOk\] = useState\(false\);/);
+      assert.match(src, /\{msg && <span className=\{`text-sm \$\{ok \? "text-green-700" : "text-red-600"\}`\}>\{msg\}<\/span>\}/);
+      assert.doesNotMatch(src, /text-gray-600.*\{msg\}/, "ya no debe quedar el span gris genérico que no distinguía éxito de error");
+    });
+
+    test("guardar(): éxito marca ok=true, error marca ok=false — nunca al revés", () => {
+      const fn = src.match(/function guardar\(\) \{[\s\S]*?\n  \}/)?.[0] ?? "";
+      assert.match(fn, /if \(r\.ok\) \{ setOk\(true\); setMsg\("Guardado\."\); setNota\(""\); router\.refresh\(\); \} else \{ setOk\(false\); setMsg\(r\.error\); \}/);
+    });
+
+    test("la nota SOLO se limpia en la rama de éxito — en error, setNota nunca se llama", () => {
+      const fn = src.match(/function guardar\(\) \{[\s\S]*?\n  \}/)?.[0] ?? "";
+      const ramaError = fn.match(/\} else \{[\s\S]*?\}$/)?.[0] ?? "";
+      assert.doesNotMatch(ramaError, /setNota/, "si el guardado falla, la nota que el usuario escribió no debe borrarse");
+    });
+
+    test("el botón se deshabilita mientras la operación está en curso (pending)", () => {
+      assert.match(src, /<Button onClick=\{guardar\} disabled=\{pending\}/);
+    });
   });
 });
 

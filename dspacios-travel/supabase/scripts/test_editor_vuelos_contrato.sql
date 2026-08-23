@@ -48,6 +48,22 @@
 --      test_empaquetados.sql.
 --   Q. Errores de lectura/escritura visibles (payload inválido → excepción
 --      clara, nunca un resultado vacío silencioso).
+--   R. Validación COMPLETA del payload en Postgres (revisión adicional del
+--      PR #270): tramo vacío, dirección inválida, IATA de 2/4 letras,
+--      origen sin destino y viceversa, hora imposible, fecha inválida, id
+--      duplicado dentro del mismo payload, id de otro contrato, id
+--      inexistente, más de 20 tramos, y varios tipos JSON incorrectos
+--      (arreglo esperado, id no numérico, campo no reconocido, dirección/
+--      código como número) — TODOS rechazados sin tocar una sola fila
+--      (se confirma que el contrato de fixture queda intacto después).
+--   S. Un usuario pierde el acceso (se desactiva) A MITAD DE SESIÓN, con el
+--      MISMO JWT que antes sí funcionaba — el guardado se rechaza igual que
+--      si nunca hubiera tenido acceso, nada cambia.
+--
+-- La concurrencia real (dos conexiones separadas guardando el MISMO
+-- contrato al mismo tiempo) NO se puede probar en un script de una sola
+-- conexión como este — ver supabase/scripts/test_concurrencia_tramos_
+-- contrato.sh (dos procesos psql reales, orquestados por bash).
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -244,7 +260,7 @@ begin
 end $$;
 
 reset role;
-select set_config('request.jwt.claims', null, true);
+select set_config('request.jwt.claims', '{}', true);
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- J — estado de emisión: Por confirmar / Pendiente / Emitido, con historial
@@ -294,7 +310,7 @@ begin
 end $$;
 
 reset role;
-select set_config('request.jwt.claims', null, true);
+select set_config('request.jwt.claims', '{}', true);
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- K — control_vuelo edita el vuelo pero NUNCA alcanza PII/finanzas
@@ -326,7 +342,7 @@ begin
 end $$;
 
 reset role;
-select set_config('request.jwt.claims', null, true);
+select set_config('request.jwt.claims', '{}', true);
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- L — atomicidad: fallo forzado a mitad de guardar_tramos_contrato()
@@ -369,7 +385,7 @@ begin
 end $$;
 
 reset role;
-select set_config('request.jwt.claims', null, true);
+select set_config('request.jwt.claims', '{}', true);
 drop trigger _trg_forzar_fallo_tramo on public.contrato_vuelos;
 
 do $$
@@ -440,7 +456,7 @@ begin
 end $$;
 
 reset role;
-select set_config('request.jwt.claims', null, true);
+select set_config('request.jwt.claims', '{}', true);
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- N — seguridad por rol/tenant
@@ -508,7 +524,7 @@ begin
 end $$;
 
 reset role;
-select set_config('request.jwt.claims', null, true);
+select set_config('request.jwt.claims', '{}', true);
 
 -- anon: permission denied al invocar CUALQUIERA de las 3 funciones directo.
 set local role anon;
@@ -534,7 +550,7 @@ begin
 end $$;
 
 reset role;
-select set_config('request.jwt.claims', null, true);
+select set_config('request.jwt.claims', '{}', true);
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- O — authenticated con EXECUTE pero SIN el rol permitido no puede modificar
@@ -602,7 +618,7 @@ begin
   perform pg_temp.assert_eq((select public.acceso_editar_vuelos_contrato('77-0013')), true, 'P2: control_vuelo mayorista sigue con acceso a su tenant tras el ACL endurecido de P');
 end $$;
 reset role;
-select set_config('request.jwt.claims', null, true);
+select set_config('request.jwt.claims', '{}', true);
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- Q — errores visibles: payload inválido nunca da un resultado vacío mudo
@@ -632,11 +648,167 @@ begin
 end $$;
 
 reset role;
-select set_config('request.jwt.claims', null, true);
+select set_config('request.jwt.claims', '{}', true);
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- R — validación completa del payload en Postgres (revisión adicional del
+--     PR #270, punto 3): cada caso debe rechazarse ANTES de tocar una sola
+--     fila — se comprueba abajo, tras cada bloque de rechazos, que el
+--     contrato de fixture sigue con EXACTAMENTE su tramo original.
+-- ═════════════════════════════════════════════════════════════════════════
+insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) values ('77-0016', 'Cliente validación R', 'mayorista', 'dinamico');
+insert into public.contrato_vuelos (numero_contrato, aerolinea, direccion, numero_vuelo, orden) values
+  ('77-0016', 'Original R', 'ida', 'ORG100', 0);
+
+create function pg_temp.assert_guardar_falla(p_num text, p_tramos jsonb, p_etiqueta text) returns void
+language plpgsql as $$
+declare v_lanzo boolean := false;
+begin
+  begin
+    perform public.guardar_tramos_contrato(p_num, p_tramos);
+  exception when others then v_lanzo := true;
+  end;
+  perform pg_temp.assert_eq(v_lanzo, true, p_etiqueta);
+end;
+$$;
+
+set local role authenticated;
+select pg_temp.como('a0000001-0000-0000-0000-000000000001'); -- superadmin
+
+do $$
+declare v_id bigint;
+begin
+  select id into v_id from public.contrato_vuelos where numero_contrato = '77-0016';
+
+  -- R1: tramo completamente vacío.
+  perform pg_temp.assert_guardar_falla('77-0016', '[{}]'::jsonb, 'R1: tramo completamente vacío se rechaza');
+
+  -- R2: dirección inválida (ni null/''/ida/regreso).
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","direccion":"lateral"}]'::jsonb, 'R2: dirección inválida se rechaza');
+
+  -- R3/R4: código IATA de 2 y de 4 caracteres.
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","origenCodigo":"MD","destinoCodigo":"CTG"}]'::jsonb, 'R3: código IATA de 2 letras se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","origenCodigo":"MDEE","destinoCodigo":"CTG"}]'::jsonb, 'R4: código IATA de 4 letras se rechaza');
+
+  -- R5/R6: origen sin destino y destino sin origen.
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","origenCodigo":"MDE"}]'::jsonb, 'R5: origen sin destino se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","destinoCodigo":"CTG"}]'::jsonb, 'R6: destino sin origen se rechaza');
+
+  -- R7: hora imposible.
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","horaSalida":"25:99"}]'::jsonb, 'R7: hora imposible se rechaza');
+
+  -- R8: fecha inválida.
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","fecha":"no-es-una-fecha"}]'::jsonb, 'R8: fecha inválida se rechaza');
+
+  -- R9: id duplicado dentro del MISMO payload.
+  perform pg_temp.assert_guardar_falla('77-0016', jsonb_build_array(
+    jsonb_build_object('id', v_id, 'aerolinea', 'X', 'direccion', 'ida', 'numeroVuelo', '1'),
+    jsonb_build_object('id', v_id, 'aerolinea', 'Y', 'direccion', 'regreso', 'numeroVuelo', '2')
+  ), 'R9: id repetido dentro del mismo guardado se rechaza');
+
+  -- R10: id de OTRO contrato (repite el criterio de M3 contra este fixture).
+  perform pg_temp.assert_guardar_falla('77-0016',
+    jsonb_build_array(jsonb_build_object('id', (select id from public.contrato_vuelos where numero_contrato = '77-0014' limit 1), 'aerolinea', 'X', 'direccion', 'ida', 'numeroVuelo', '1')),
+    'R10: id que pertenece a OTRO contrato se rechaza'
+  );
+
+  -- R11: id que no existe en ABSOLUTO (ni en este contrato ni en otro).
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"id":999999999,"aerolinea":"X","direccion":"ida","numeroVuelo":"1"}]'::jsonb, 'R11: id inexistente se rechaza');
+
+  -- R12: payload que excede el límite de tramos por contrato (20).
+  perform pg_temp.assert_guardar_falla('77-0016',
+    (select jsonb_agg(jsonb_build_object('aerolinea', 'X', 'direccion', 'ida', 'numeroVuelo', g::text)) from generate_series(1, 21) g),
+    'R12: más de 20 tramos en un solo guardado se rechaza'
+  );
+
+  -- R13: tipos JSON incorrectos — el arreglo en sí, un id no numérico, un
+  -- campo no reconocido, y un objeto donde se esperaba un string.
+  perform pg_temp.assert_guardar_falla('77-0016', '{"no":"es un arreglo"}'::jsonb, 'R13a: p_tramos que no es un arreglo se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"id":"no-numerico","aerolinea":"X"}]'::jsonb, 'R13b: id no numérico (string) se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","campoQueNoExiste":"y"}]'::jsonb, 'R13c: campo no reconocido en un tramo se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","direccion":123}]'::jsonb, 'R13d: dirección con tipo JSON incorrecto (número) se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0016', '[{"aerolinea":"X","origenCodigo":123,"destinoCodigo":"CTG"}]'::jsonb, 'R13e: código de origen con tipo JSON incorrecto (número) se rechaza');
+  perform pg_temp.assert_guardar_falla('77-0016', '[[]]'::jsonb, 'R13f: un elemento que no es un objeto (arreglo anidado) se rechaza');
+
+  -- Confirma que NINGUNO de los rechazos anteriores tocó una sola fila:
+  -- el fixture sigue EXACTAMENTE con su tramo original, sin cambios.
+  perform pg_temp.assert_eq(
+    (select count(*) from public.contrato_vuelos where numero_contrato = '77-0016'), 1::bigint,
+    'R14: tras 17 rechazos, el contrato sigue con EXACTAMENTE 1 tramo (el original) — ningún DELETE llegó a ejecutarse'
+  );
+  perform pg_temp.assert_eq(
+    (select numero_vuelo from public.contrato_vuelos where numero_contrato = '77-0016'), 'ORG100'::text,
+    'R14: el tramo original sigue intacto, sin tocar'
+  );
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', '{}', true);
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- S — un usuario pierde el acceso ENTRE que carga el editor y que guarda
+--     (revocado/desactivado a mitad de sesión) — debe rechazarse igual que
+--     si nunca hubiera tenido acceso, nunca "porque ya estaba adentro".
+-- ═════════════════════════════════════════════════════════════════════════
+insert into auth.users (id, email) values ('a0000010-0000-0000-0000-000000000010', 'cv-se-va-evc@test.com')
+  on conflict (id) do nothing;
+insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
+  ('a0000010-0000-0000-0000-000000000010', 'cv-se-va-evc@test.com', 'Control Vuelo Que Se Va', 'control_vuelo', true, 'mayorista')
+  on conflict (id) do update set nombre=excluded.nombre, rol=excluded.rol, activo=excluded.activo, tenant=excluded.tenant;
+
+set local role authenticated;
+select pg_temp.como('a0000010-0000-0000-0000-000000000010');
 
 do $$
 begin
-  raise notice 'TODAS LAS PRUEBAS PASARON: test_editor_vuelos_contrato.sql (secciones A-Q)';
+  -- Con acceso todavía activo: el RPC responde (puede fallar por otra razón,
+  -- pero NO por permiso) — confirma la precondición antes de revocar.
+  perform pg_temp.assert_eq((select public.acceso_editar_vuelos_contrato('77-0016')), true, 'S0: precondición — todavía tiene acceso');
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', '{}', true);
+
+-- Se desactiva el usuario A MITAD DE SESIÓN (ej. lo desactivó un admin
+-- mientras este control_vuelo tenía el editor abierto en el navegador).
+update public.usuarios set activo = false where id = 'a0000010-0000-0000-0000-000000000010';
+
+set local role authenticated;
+select pg_temp.como('a0000010-0000-0000-0000-000000000010'); -- mismo JWT de antes — el token no caduca, pero mi_rol() ya no responde
+
+do $$
+declare v_lanzo boolean := false; v_msg text; v_n_antes bigint;
+begin
+  select count(*) into v_n_antes from public.contrato_vuelos where numero_contrato = '77-0016';
+
+  perform pg_temp.assert_eq((select public.acceso_editar_vuelos_contrato('77-0016')), false, 'S1: sin acceso tras ser desactivado, con el MISMO JWT de antes');
+
+  begin
+    perform public.guardar_tramos_contrato('77-0016', '[{"aerolinea":"Intento tardío","direccion":"ida","numeroVuelo":"1"}]'::jsonb);
+  exception when others then
+    v_lanzo := true; get stacked diagnostics v_msg = message_text;
+  end;
+  perform pg_temp.assert_eq(v_lanzo, true, 'S2: guardar_tramos_contrato rechaza el guardado tras perder el acceso a mitad de sesión');
+  perform pg_temp.assert_eq(v_msg, 'Contrato no encontrado o sin permiso para editarlo.'::text, 'S2: mismo mensaje de rechazo que un usuario sin acceso desde el inicio');
+
+  begin
+    perform public.actualizar_estado_emision_contrato('77-0016', 'emitido', '');
+  exception when others then v_lanzo := true;
+  end;
+  perform pg_temp.assert_eq(v_lanzo, true, 'S3: actualizar_estado_emision_contrato también rechaza tras perder el acceso');
+
+  perform pg_temp.assert_eq(
+    (select count(*) from public.contrato_vuelos where numero_contrato = '77-0016'), v_n_antes,
+    'S4: el intento rechazado no cambió absolutamente nada'
+  );
+end $$;
+
+reset role;
+select set_config('request.jwt.claims', '{}', true);
+
+do $$
+begin
+  raise notice 'TODAS LAS PRUEBAS PASARON: test_editor_vuelos_contrato.sql (secciones A-S)';
 end $$;
 
 rollback;

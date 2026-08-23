@@ -2898,12 +2898,14 @@ export type Database = {
       };
       // Migración 157. Reemplaza atómicamente los tramos de contrato_vuelos
       // de un contrato — ver el comentario de cabecera de la migración.
+      // Devuelve los tramos YA guardados (con id real) para que el cliente
+      // sincronice su estado local sin depender solo de router.refresh().
       guardar_tramos_contrato: {
         Args: {
           p_numero_contrato: string;
           p_tramos: Json;
         };
-        Returns: undefined;
+        Returns: Database["public"]["Tables"]["contrato_vuelos"]["Row"][];
       };
       // Migración 157. Estado de emisión 1:1 del contrato (no por tramo) +
       // historial, mismo patrón que actualizar_control_empaquetado.
