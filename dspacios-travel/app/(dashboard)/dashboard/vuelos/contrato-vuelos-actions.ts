@@ -2,15 +2,25 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { esEstadoEmision, type EstadoEmision } from "@/lib/vuelos/control";
+import {
+  type TramoInput,
+  MAX_NOTA,
+  oNull,
+  parsearNumeroContrato,
+  parsearNota,
+  parsearEstadoEmisionInput,
+  parsearTramos,
+  validarTramos,
+} from "./frontera-tramos";
+
+export type { TramoInput };
 
 type Result = { ok: true } | { ok: false; error: string };
 
-const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
-
-// Forma que devuelve `guardar_tramos_contrato()` (setof contrato_vuelos) —
-// mismas columnas snake_case que ya consume TramosEditor.tsx vía su tipo
-// local `TramoDB` (carga inicial desde la vista `contrato_vuelos_editor`).
+// Forma que devuelve `guardar_tramos_contrato()` (returns table explícito,
+// NUNCA setof contrato_vuelos + select * — ver migración 157) — mismas
+// columnas snake_case que ya consume TramosEditor.tsx vía su tipo local
+// `TramoDB` (carga inicial desde la vista `contrato_vuelos_editor`).
 export type TramoGuardado = {
   id: number;
   numero_contrato: string;
@@ -39,28 +49,12 @@ type ResultTramos = { ok: true; tramos: TramoGuardado[] } | { ok: false; error: 
 // archivo NUNCA usa el cliente service-role: siempre el cliente de sesión
 // (`createClient()`), así que el tenant/rol que decide es el del usuario
 // autenticado real, nunca uno que el cliente pudiera mandar.
-export type TramoInput = {
-  id: number | null;
-  aerolinea: string;
-  record: string;
-  direccion: "" | "ida" | "regreso";
-  origenCodigo: string;
-  origenCiudad: string;
-  destinoCodigo: string;
-  destinoCiudad: string;
-  numeroVuelo: string;
-  fecha: string;
-  horaSalida: string;
-  horaLlegada: string;
-  servicios: string;
-};
-
-const MAX_TRAMOS = 20;
-const RE_IATA = /^[A-Z]{3}$/;
-const RE_HORA = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
-const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
-const MAX_NUMERO_CONTRATO = 30;
-const MAX_NOTA = 500;
+//
+// La validación/parsing de los argumentos PÚBLICOS (tratados como
+// `unknown` — una Server Action se puede invocar con lo que sea que llegue
+// en el cuerpo de la petición HTTP, los tipos de TS no protegen eso en
+// runtime) vive en ./frontera-tramos.ts, un módulo puro sin "use server"
+// para poder probarse importándolo directo desde node --test.
 
 // SQLSTATE que Postgres asigna a un `RAISE EXCEPTION` sin ERRCODE explícito
 // (todas las excepciones de negocio de guardar_tramos_contrato()/
@@ -78,51 +72,13 @@ function mensajeSeguro(error: { message: string; code?: string }, contexto: stri
   return "No se pudo completar la operación. Intenta de nuevo o contacta a soporte.";
 }
 
-// Espejo LIVIANO (solo UX, feedback inmediato) de la validación real, que
-// vive en Postgres dentro de guardar_tramos_contrato() — esa es la única
-// autoridad (el RPC es SECURITY DEFINER, nunca confía en lo que valide el
-// cliente). Mismos límites/reglas que el lado servidor.
-function validarTramos(tramos: TramoInput[]): string | null {
-  if (!tramos.length) return "Debe haber al menos un tramo.";
-  if (tramos.length > MAX_TRAMOS) return `No se pueden guardar más de ${MAX_TRAMOS} tramos en un solo contrato.`;
+export async function guardarTramosContrato(numeroContratoIn: unknown, tramosIn: unknown): Promise<ResultTramos> {
+  const numeroContrato = parsearNumeroContrato(numeroContratoIn);
+  if (!numeroContrato) return { ok: false, error: "Número de contrato inválido." };
 
-  const idsVistos = new Set<number>();
-  for (const t of tramos) {
-    if (t.id !== null) {
-      if (!Number.isInteger(t.id) || t.id <= 0) return "El id de un tramo es inválido.";
-      if (idsVistos.has(t.id)) return `Un tramo repite el id ${t.id}.`;
-      idsVistos.add(t.id);
-    }
-
-    if (t.direccion && t.direccion !== "ida" && t.direccion !== "regreso") return "La dirección de un tramo es inválida.";
-
-    const origen = oNull(t.origenCodigo);
-    const destino = oNull(t.destinoCodigo);
-    if (origen && !RE_IATA.test(origen.toUpperCase())) return "El código de origen debe tener exactamente 3 letras.";
-    if (destino && !RE_IATA.test(destino.toUpperCase())) return "El código de destino debe tener exactamente 3 letras.";
-    if (Boolean(origen) !== Boolean(destino)) return "Un tramo debe traer origen y destino juntos, o ninguno de los dos.";
-
-    if (t.fecha && !RE_FECHA.test(t.fecha.trim())) return "La fecha de un tramo no es válida.";
-    if (t.horaSalida && !RE_HORA.test(t.horaSalida.trim())) return "La hora de salida de un tramo no es válida.";
-    if (t.horaLlegada && !RE_HORA.test(t.horaLlegada.trim())) return "La hora de llegada de un tramo no es válida.";
-
-    if (t.aerolinea.length > 80) return "La aerolínea de un tramo es demasiado larga.";
-    if (t.record.length > 20) return "El record (PNR) de un tramo es demasiado largo.";
-    if (t.origenCiudad.length > 80 || t.destinoCiudad.length > 80) return "El nombre de una ciudad es demasiado largo.";
-    if (t.numeroVuelo.length > 15) return "El número de vuelo es demasiado largo.";
-    if (t.servicios.length > 500) return "El campo de servicios es demasiado largo.";
-
-    const vacio = !oNull(t.aerolinea) && !oNull(t.record) && !t.direccion && !origen && !destino
-      && !oNull(t.numeroVuelo) && !oNull(t.fecha) && !oNull(t.horaSalida) && !oNull(t.horaLlegada) && !oNull(t.servicios);
-    if (vacio) return "Un tramo no puede estar completamente vacío.";
-  }
-  return null;
-}
-
-export async function guardarTramosContrato(numeroContrato: string, tramos: TramoInput[]): Promise<ResultTramos> {
-  if (!numeroContrato || numeroContrato.length > MAX_NUMERO_CONTRATO) {
-    return { ok: false, error: "Número de contrato inválido." };
-  }
+  const tramosR = parsearTramos(tramosIn);
+  if (!tramosR.ok) return { ok: false, error: tramosR.error };
+  const tramos = tramosR.tramos;
 
   const err = validarTramos(tramos);
   if (err) return { ok: false, error: err };
@@ -159,23 +115,24 @@ export async function guardarTramosContrato(numeroContrato: string, tramos: Tram
 // guardar_tramos_contrato. `""` se traduce a `null` ("Por confirmar") — nunca
 // se fuerza a 'pendiente'.
 export async function actualizarEstadoEmisionContrato(
-  numeroContrato: string,
-  estadoEmision: EstadoEmision | "",
-  nota: string
+  numeroContratoIn: unknown,
+  estadoEmisionIn: unknown,
+  notaIn: unknown
 ): Promise<Result> {
-  if (!numeroContrato || numeroContrato.length > MAX_NUMERO_CONTRATO) {
-    return { ok: false, error: "Número de contrato inválido." };
-  }
-  if (nota && nota.length > MAX_NOTA) {
-    return { ok: false, error: `La nota es demasiado larga (máximo ${MAX_NOTA} caracteres).` };
-  }
-  if (estadoEmision && !esEstadoEmision(estadoEmision)) return { ok: false, error: "Estado de emisión inválido." };
+  const numeroContrato = parsearNumeroContrato(numeroContratoIn);
+  if (!numeroContrato) return { ok: false, error: "Número de contrato inválido." };
+
+  const estadoR = parsearEstadoEmisionInput(estadoEmisionIn);
+  if (!estadoR.ok) return { ok: false, error: "Estado de emisión inválido." };
+
+  const notaR = parsearNota(notaIn);
+  if (!notaR.ok) return { ok: false, error: `La nota debe ser texto de máximo ${MAX_NOTA} caracteres.` };
 
   const sb = await createClient();
   const { error } = await sb.rpc("actualizar_estado_emision_contrato", {
     p_numero_contrato: numeroContrato,
-    p_estado_emision: estadoEmision || null,
-    p_nota: oNull(nota),
+    p_estado_emision: estadoR.valor || null,
+    p_nota: oNull(notaR.nota),
   });
   if (error) return { ok: false, error: mensajeSeguro(error, "actualizar_estado_emision_contrato") };
 

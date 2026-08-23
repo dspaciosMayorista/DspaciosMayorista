@@ -116,6 +116,12 @@ describe("vuelos/page.tsx y historico/page.tsx — estado_emision/estado_pago RE
 
 describe("contrato-vuelos-actions.ts — server actions del editor", () => {
   const src = leer("app/(dashboard)/dashboard/vuelos/contrato-vuelos-actions.ts");
+  // La validación/parsing de FORMA (revisión 4 del PR) vive en el módulo
+  // puro frontera-tramos.ts (sin "use server", importable directo desde
+  // node --test — ver pruebas/fronteraTramos.test.ts para la ejecución real
+  // de esa lógica). Este describe cubre solo lo que sigue viviendo en el
+  // propio archivo "use server": el llamado al RPC y el saneamiento de error.
+  const frontera = leer("app/(dashboard)/dashboard/vuelos/frontera-tramos.ts");
 
   test("es un archivo 'use server' — nunca usa el cliente service-role", () => {
     assert.match(src, /^"use server";/);
@@ -132,8 +138,27 @@ describe("contrato-vuelos-actions.ts — server actions del editor", () => {
     assert.match(src, /sb\.rpc\("actualizar_estado_emision_contrato",\s*\{/);
   });
 
-  test("guardarTramosContrato exige al menos un tramo ANTES de llamar al servidor (defensa temprana; el RPC es la autoridad real)", () => {
-    assert.match(src, /Debe haber al menos un tramo/);
+  // ── Revisión adicional del PR #270, ronda 4: los argumentos públicos de
+  // ambas Server Actions se tratan como `unknown` — el parsing/validación
+  // real de FORMA vive en frontera-tramos.ts (módulo puro), nunca confía en
+  // los tipos de TypeScript en runtime. ──
+  describe("frontera unknown — ambas Server Actions tratan sus argumentos públicos como unknown (revisión 4)", () => {
+    test("guardarTramosContrato/actualizarEstadoEmisionContrato declaran sus parámetros públicos como unknown", () => {
+      assert.match(src, /export async function guardarTramosContrato\(numeroContratoIn: unknown, tramosIn: unknown\): Promise<ResultTramos>/);
+      assert.match(src, /export async function actualizarEstadoEmisionContrato\(\s*numeroContratoIn: unknown,\s*estadoEmisionIn: unknown,\s*notaIn: unknown\s*\): Promise<Result>/);
+    });
+
+    test("ambas funciones parsean con las funciones puras de frontera-tramos.ts antes de tocar el RPC", () => {
+      assert.match(src, /import \{[\s\S]*?parsearNumeroContrato,[\s\S]*?\} from "\.\/frontera-tramos";/);
+      assert.match(src, /const numeroContrato = parsearNumeroContrato\(numeroContratoIn\);/g);
+      assert.match(src, /const tramosR = parsearTramos\(tramosIn\);/);
+      assert.match(src, /const estadoR = parsearEstadoEmisionInput\(estadoEmisionIn\);/);
+      assert.match(src, /const notaR = parsearNota\(notaIn\);/);
+    });
+
+    test("guardarTramosContrato exige al menos un tramo ANTES de llamar al servidor (defensa temprana; el RPC es la autoridad real)", () => {
+      assert.match(frontera, /Debe haber al menos un tramo/);
+    });
   });
 
   test("errores del RPC se propagan como { ok: false, error }, nunca se tragan en silencio, y nunca crudos (revisión 3, punto 6)", () => {
@@ -161,19 +186,19 @@ describe("contrato-vuelos-actions.ts — server actions del editor", () => {
 
   // ── Revisión adicional del PR #270, punto 6: numeroContrato y nota
   // limitados también del lado servidor (espejo de los límites en
-  // Postgres), no solo confiar en el RPC. ──
-  describe("límites de longitud — numeroContrato y nota (revisión 3, punto 6)", () => {
-    test("guardarTramosContrato rechaza un numeroContrato ausente o excesivamente largo antes de llamar al RPC", () => {
-      assert.match(src, /MAX_NUMERO_CONTRATO = 30;/);
-      const fn = src.match(/export async function guardarTramosContrato\([\s\S]*?\n\}/)?.[0] ?? "";
-      assert.match(fn, /if \(!numeroContrato \|\| numeroContrato\.length > MAX_NUMERO_CONTRATO\)/);
+  // Postgres), no solo confiar en el RPC. Revisión 4: el límite en sí vive
+  // en frontera-tramos.ts, junto al parsing/validación de tipo. ──
+  describe("límites de longitud — numeroContrato y nota (revisión 3 punto 6, revisión 4)", () => {
+    test("MAX_NUMERO_CONTRATO/MAX_NOTA viven en frontera-tramos.ts y ambas funciones los usan", () => {
+      assert.match(frontera, /export const MAX_NUMERO_CONTRATO = 30;/);
+      assert.match(frontera, /export const MAX_NOTA = 500;/);
+      assert.match(src, /if \(!numeroContrato\) return \{ ok: false, error: "Número de contrato inválido\." \};/g);
     });
 
-    test("actualizarEstadoEmisionContrato rechaza numeroContrato inválido y nota demasiado larga", () => {
-      assert.match(src, /MAX_NOTA = 500;/);
-      const fn = src.match(/export async function actualizarEstadoEmisionContrato\([\s\S]*?\n\}/)?.[0] ?? "";
-      assert.match(fn, /if \(!numeroContrato \|\| numeroContrato\.length > MAX_NUMERO_CONTRATO\)/);
-      assert.match(fn, /if \(nota && nota\.length > MAX_NOTA\)/);
+    test("parsearNumeroContrato rechaza ausente/demasiado largo; parsearNota rechaza no-string/demasiado larga", () => {
+      assert.match(frontera, /if \(typeof v !== "string"\) return null;/);
+      assert.match(frontera, /if \(v\.length === 0 \|\| v\.length > MAX_NUMERO_CONTRATO\) return null;/);
+      assert.match(frontera, /if \(typeof v !== "string" \|\| v\.length > MAX_NOTA\) return \{ ok: false \};/);
     });
   });
 
@@ -193,29 +218,31 @@ describe("contrato-vuelos-actions.ts — server actions del editor", () => {
 
   // ── Revisión adicional del PR #270, punto 3: validarTramos() debe ser un
   // espejo LIVIANO de la validación real en Postgres — nunca la autoridad,
-  // pero tampoco vacío como antes. ──
+  // pero tampoco vacío como antes. Revisión 4: vive en frontera-tramos.ts —
+  // pruebas/fronteraTramos.test.ts la ejecuta de verdad (importándola
+  // directo), estas solo confirman que las reglas siguen presentes en texto. ──
   describe("validarTramos() — espejo de la validación real en Postgres (solo UX)", () => {
     test("límite de tramos por contrato (20), igual que el RPC", () => {
-      assert.match(src, /MAX_TRAMOS = 20/);
-      assert.match(src, /tramos\.length > MAX_TRAMOS/);
+      assert.match(frontera, /MAX_TRAMOS = 20/);
+      assert.match(frontera, /tramos\.length > MAX_TRAMOS/);
     });
 
     test("valida id duplicado dentro del mismo payload", () => {
-      assert.match(src, /idsVistos\.has\(t\.id\)/);
+      assert.match(frontera, /idsVistos\.has\(t\.id\)/);
     });
 
     test("valida IATA de exactamente 3 letras y origen/destino juntos o ninguno", () => {
-      assert.match(src, /RE_IATA = \/\^\[A-Z\]\{3\}\$\//);
-      assert.match(src, /Boolean\(origen\) !== Boolean\(destino\)/);
+      assert.match(frontera, /RE_IATA = \/\^\[A-Z\]\{3\}\$\//);
+      assert.match(frontera, /Boolean\(origen\) !== Boolean\(destino\)/);
     });
 
     test("valida formato de hora (HH:MM) y de fecha (YYYY-MM-DD)", () => {
-      assert.match(src, /RE_HORA = \/\^\(\[01\]\[0-9\]\|2\[0-3\]\):\[0-5\]\[0-9\]\$\//);
-      assert.match(src, /RE_FECHA = \/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//);
+      assert.match(frontera, /RE_HORA = \/\^\(\[01\]\[0-9\]\|2\[0-3\]\):\[0-5\]\[0-9\]\$\//);
+      assert.match(frontera, /RE_FECHA = \/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//);
     });
 
     test("rechaza un tramo completamente vacío", () => {
-      assert.match(src, /completamente vacío/);
+      assert.match(frontera, /completamente vacío/);
     });
   });
 });
@@ -223,9 +250,16 @@ describe("contrato-vuelos-actions.ts — server actions del editor", () => {
 describe("TramosEditor.tsx — editor de tramos, reemplazo atómico con ids preservados", () => {
   const src = leer("app/(dashboard)/dashboard/vuelos/contrato/[numero]/TramosEditor.tsx");
 
-  test("cada tramo lleva su propio id (null si es nuevo) para que el RPC pueda conservarlo — el tipo TramoInput viene de contrato-vuelos-actions.ts", () => {
+  test("cada tramo lleva su propio id (null si es nuevo) para que el RPC pueda conservarlo — el tipo TramoInput viene ahora de frontera-tramos.ts (revisión 4), re-exportado por contrato-vuelos-actions.ts", () => {
+    // TramoInput se movió al módulo puro frontera-tramos.ts (revisión 4:
+    // parsing/validación de FORMA testeable directo); contrato-vuelos-
+    // actions.ts lo re-exporta con `export type { TramoInput };` para que
+    // este import (por contrato-vuelos-actions) siga funcionando sin tocar
+    // TramosEditor.tsx.
+    const frontera = leer("app/(dashboard)/dashboard/vuelos/frontera-tramos.ts");
     const actions = leer("app/(dashboard)/dashboard/vuelos/contrato-vuelos-actions.ts");
-    assert.match(actions, /id:\s*number\s*\|\s*null;/);
+    assert.match(frontera, /id:\s*number\s*\|\s*null;/);
+    assert.match(actions, /export type \{ TramoInput \};/, "contrato-vuelos-actions.ts debe re-exportar TramoInput para no romper el import existente en TramosEditor.tsx");
     assert.match(src, /import \{ guardarTramosContrato, type TramoInput \} from "\.\.\/\.\.\/contrato-vuelos-actions";/);
     assert.match(src, /id:\s*t\.id/, "deDB() debe conservar el id real de la fila leída de la base");
     assert.match(src, /id:\s*null,.*aerolinea:\s*""/, "TRAMO_VACIO (tramo nuevo) debe nacer con id null");

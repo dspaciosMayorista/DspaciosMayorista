@@ -117,10 +117,11 @@
 --   vuelos de los que tenía antes de intentar guardar. Exige al menos un
 --   tramo en el arreglo — nunca se puede vaciar el itinerario a cero desde
 --   este RPC (si de verdad hace falta borrar el último tramo, es una
---   operación aparte, fuera de este editor). Devuelve `setof
---   contrato_vuelos` con los tramos ya guardados (id reales incluidos) —
---   el cliente sincroniza su estado local con esto, nunca solo con
---   `router.refresh()` (que no toca el `useState` de React).
+--   operación aparte, fuera de este editor). Devuelve un `returns table`
+--   EXPLÍCITO (15 columnas, nunca `setof contrato_vuelos` + `select *` —
+--   ver más abajo por qué) con los tramos ya guardados (id reales
+--   incluidos) — el cliente sincroniza su estado local con esto, nunca
+--   solo con `router.refresh()` (que no toca el `useState` de React).
 --
 -- ⚠️ ORDEN OBLIGATORIO dentro de las dos funciones de escritura de este
 --   archivo (`guardar_tramos_contrato`/`actualizar_estado_emision_contrato`):
@@ -371,10 +372,12 @@ grant select on public.contrato_vuelos_editor to authenticated;
 -- 4) Reemplazo atómico de tramos — preserva ids, nunca deja el contrato sin
 --    vuelos si algo falla a mitad de camino
 -- ═════════════════════════════════════════════════════════════════════════
--- `drop` explícito: el tipo de retorno cambia de `void` a `setof
--- contrato_vuelos` (devuelve los tramos YA guardados, con sus id reales —
--- lo necesita el cliente para no desincronizar sus ids locales entre un
--- guardado y el siguiente), y Postgres no permite cambiar el tipo de
+-- `drop` explícito: el tipo de retorno cambia de `void` a un `returns
+-- table` explícito de 15 columnas (devuelve los tramos YA guardados, con
+-- sus id reales — lo necesita el cliente para no desincronizar sus ids
+-- locales entre un guardado y el siguiente; nunca `setof contrato_vuelos`
+-- + `select *`, que en una función SECURITY DEFINER expondría cualquier
+-- columna futura de la tabla), y Postgres no permite cambiar el tipo de
 -- retorno de una función con `create or replace`.
 drop function if exists public.guardar_tramos_contrato(text, jsonb);
 
