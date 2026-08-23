@@ -2,11 +2,8 @@
 -- 156 · VUELOS — inventario de EMPAQUETADOS (tarifas de Sistema)
 --
 -- ⚠️ EDITADA (revisión de PR #268, defectos 1 y 4 — 155/156/157 aún no se
--- habían corrido en ese momento, así que se corrige el archivo existente en
--- vez de crear una migración aparte solo para esto; la 157 mencionada aquí
--- era la de cierre individual→serie, renombrada más adelante a 158 — ver el
--- comentario de cabecera de la 155/158 — no confundir con la 157 ACTUAL, que
--- es un feature aparte (editor operativo de vuelos del contrato)):
+-- habían corrido, así que se corrige el archivo existente en vez de crear
+-- una migración 158 solo para esto):
 --   · CHECK `tarifario_resultado_origen_excluyente_check`: impide que una
 --     fila tenga `bloqueo_id` Y `empaquetado_id` a la vez (defecto 1, "ORIGEN
 --     DOBLE"). Segura de agregar sin revisar histórico: `empaquetado_id` es
@@ -34,7 +31,7 @@
 --
 -- ⚠️ EDITADA OTRA VEZ (ronda posterior, misma consulta preventiva de
 -- producción que reveló `anon EXECUTE = true` sobre `actualizar_control_
--- bloqueo()` — ver migraciones 155/158): el mismo hueco de privilegios
+-- bloqueo()` — ver migraciones 155/157): el mismo hueco de privilegios
 -- (revocar solo de PUBLIC no alcanza a `anon`, porque Supabase otorga
 -- EXECUTE directo a `anon`/`authenticated` sobre toda función nueva vía
 -- `ALTER DEFAULT PRIVILEGES` de proyecto) también aplicaba, potencialmente,
@@ -343,7 +340,7 @@ comment on function public.actualizar_control_empaquetado(bigint, text, text, te
   'a ''pendiente''). Migración 156.';
 
 -- ⚠️ EDITADA OTRA VEZ (ronda posterior, consulta preventiva en producción
--- sobre `actualizar_control_bloqueo()` — ver migraciones 155/158): el
+-- sobre `actualizar_control_bloqueo()` — ver migraciones 155/157): el
 -- `revoke ... from public` de arriba NO alcanza a `anon`. Supabase, a nivel
 -- de proyecto, tiene configurado `ALTER DEFAULT PRIVILEGES` que le otorga
 -- `EXECUTE` DIRECTO a `anon`/`authenticated` sobre TODA función nueva,
@@ -547,7 +544,7 @@ $$;
 --
 -- ⚠️ EDITADA OTRA VEZ (ronda posterior, misma consulta preventiva de
 -- producción que corrigió `actualizar_control_bloqueo()` en las migraciones
--- 155/158): el `revoke ... from public` de abajo NO alcanza a `anon` —
+-- 155/157): el `revoke ... from public` de abajo NO alcanza a `anon` —
 -- Supabase otorga `EXECUTE` DIRECTO a `anon`/`authenticated` sobre TODA
 -- función nueva vía `ALTER DEFAULT PRIVILEGES` de proyecto, independiente de
 -- PUBLIC. Se repite el `revoke` explícito contra `anon`, mismo criterio que
