@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────
--- PRUEBA AUTO-VERIFICABLE — Empaquetados (migraciones 155/156/157)
+-- PRUEBA AUTO-VERIFICABLE — Empaquetados (migraciones 155/156/158)
 --
 -- Corre contra una base local construida replayando supabase/migrations/
 -- (ver el stub de auth/storage usado en este repo para pruebas locales). DE
@@ -12,7 +12,7 @@
 -- script aborta con RAISE EXCEPTION y psql sale con código distinto de cero.
 --
 -- Cobertura (responde directamente a los 9 defectos de la revisión de PR #268):
---   A. Migración 155→157: el CHECK de bloqueos_vuelo.modalidad_emision pasó
+--   A. Migración 155→158: el CHECK de bloqueos_vuelo.modalidad_emision pasó
 --      por individual+serie+grupo (transición) y terminó en solo serie/grupo
 --      (cierre) — se verifica el estado FINAL del constraint.
 --   B. CHECK de empaquetados: tarifas negativas, fecha_regreso < fecha_ida,
@@ -36,7 +36,7 @@
 --   L. actualizar_control_empaquetado() y acceso_ventas_vuelo_sistema() —
 --      cierre de EXECUTE de `anon` (ronda posterior, mismo hallazgo de la
 --      consulta preventiva de producción que corrigió actualizar_control_
---      bloqueo() en las migraciones 155/157): simula el escenario real de
+--      bloqueo() en las migraciones 155/158): simula el escenario real de
 --      Supabase (GRANT explícito previo a `anon`, no solo ausencia de
 --      default privileges locales), re-aplica el revoke/grant tal cual lo
 --      escribe la migración 156, y confirma con has_function_privilege que
@@ -76,7 +76,7 @@ insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
   on conflict (id) do update set nombre = excluded.nombre, rol = excluded.rol, activo = excluded.activo, tenant = excluded.tenant;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- A. Migración 155→157: modalidad_emision terminó cerrada a serie/grupo
+-- A. Migración 155→158: modalidad_emision terminó cerrada a serie/grupo
 -- ═════════════════════════════════════════════════════════════════════════
 do $$
 declare v_def text;
@@ -85,7 +85,7 @@ begin
     from pg_constraint where conname = 'bloqueos_vuelo_modalidad_emision_check';
   perform pg_temp.assert_eq(
     v_def, $c$CHECK ((modalidad_emision = ANY (ARRAY['serie'::text, 'grupo'::text])))$c$,
-    'A: el CHECK de modalidad_emision debe quedar cerrado a serie/grupo tras la 157'
+    'A: el CHECK de modalidad_emision debe quedar cerrado a serie/grupo tras la 158'
   );
 end $$;
 
@@ -699,6 +699,9 @@ end $$;
 -- J6: el set de columnas de la vista es EXACTAMENTE el esperado — ni de más
 -- (fuga de PII/financiero, o de columnas internas de contrato_vuelos como
 -- `id`/`servicios`/`orden`) ni de menos (campo pedido que faltara).
+-- ⚠️ Ampliado en la migración 157 (editor operativo de vuelos del contrato):
+-- estado_emision/estado_pago/cxp_aereas_total/cxp_aereas_pagadas — ninguna
+-- es PII ni un valor monetario (dos son un estado derivado, dos son conteos).
 do $$
 declare v_cols text[];
 begin
@@ -708,12 +711,13 @@ begin
   perform pg_temp.assert_eq(
     v_cols,
     array[
-      'aerolinea','destino_codigo','empaquetado_ref_id','fecha_regreso','fecha_salida',
+      'aerolinea','cxp_aereas_pagadas','cxp_aereas_total','destino_codigo','empaquetado_ref_id',
+      'estado_emision','estado_pago','fecha_regreso','fecha_salida',
       'hora_llegada_ida','hora_llegada_reg','hora_salida_ida','hora_salida_reg',
       'numero_contrato','origen','origen_codigo','record','ruta','tenant','tipo_paquete',
       'vuelo_fecha_ida','vuelo_fecha_regreso','vuelo_ida','vuelo_regreso'
     ]::text[],
-    'J6: el set de columnas de la vista debe ser EXACTAMENTE el esperado — nada de PII/financiero, nada de columnas internas de contrato_vuelos sin filtrar'
+    'J6: el set de columnas de la vista debe ser EXACTAMENTE el esperado — nada de PII/financiero, nada de columnas internas de contrato_vuelos sin filtrar (migración 157 agrega estado_emision/estado_pago/cxp_aereas_total/cxp_aereas_pagadas)'
   );
 end $$;
 

@@ -306,6 +306,42 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 
 ## 13. Estado del proyecto (handoff) — actualizado en desarrollo
 
+> ⚠️ **Nota puntual (PR #270, rama `vuelos-empaquetados-editor-contrato`) — renumeración
+> de migración 157:** en producción, `main` tiene ejecutadas hasta la **156**
+> (`20260601000155_modalidad_emision_serie.sql` y `20260601000156_empaquetados.sql`
+> incluidas). Ya existía en el repo, escrita pero **sin correr**, una migración de
+> cierre `20260601000157_modalidad_emision_serie_cierre.sql`. El PR #270 agrega una
+> migración aditiva NUEVA (editor operativo de vuelos del contrato) que necesitaba el
+> número 157 por orden de negocio (debe correr antes que el cierre). Como el archivo
+> 157-cierre **todavía no se ha ejecutado en producción**, se pudo renumerar sin violar
+> inmutabilidad: pasó a **`20260601000158_modalidad_emision_serie_cierre.sql`** (con nota
+> "RENUMERADA de 157 a 158" en su encabezado), y el 157 quedó libre para
+> `20260601000157_editor_vuelos_contrato.sql`. **Los archivos 155 y 156 —ya ejecutados—
+> NO se tocaron**: sus comentarios siguen mencionando el número histórico "157" tal como
+> corrieron en producción; la inmutabilidad de una migración ya ejecutada tiene prioridad
+> sobre que un comentario quede "desactualizado". El detalle completo de la renumeración
+> vive en: el encabezado de la migración 157 nueva, el encabezado de la 158, los scripts
+> `rollback_157_editor_vuelos_contrato.sql`/`rollback_158_modalidad_emision_serie_cierre.sql`,
+> los scripts de prueba SQL, y el cuerpo del PR #270. **Ninguna migración de este PR se ha
+> ejecutado en producción** (ni la 157 nueva ni la 158 renumerada) — pendiente de validación
+> y aprobación del dueño antes de correrlas.
+
+> ⚠️ **Actualización — estado real de producción confirmado por el dueño (PR #270):**
+> las migraciones **155, 156 y la nueva 157** (`20260601000157_editor_vuelos_contrato.sql`
+> — editor operativo de vuelos del contrato) **ya se aplicaron en producción** y se
+> verificaron: tablas creadas, RLS activa, funciones SECURITY DEFINER correctas, `anon`
+> bloqueado/`authenticated` habilitado, `ventas_vuelo_sistema` actualizada. **Por error se
+> ejecutó también el archivo antiguo que en el repo se había renombrado a 158**
+> (`20260601000158_modalidad_emision_serie_cierre.sql`) — se corrió bajo su nombre
+> histórico "157" (el de cierre `modalidad_emision`, antes de la renumeración explicada
+> arriba), pero su contenido es exactamente el mismo que el archivo 158 actual. Se
+> verificó en producción: ninguna fila con `modalidad_emision = 'individual'`; las
+> modalidades presentes son únicamente `NULL`, `grupo` y `serie`; el RPC
+> `actualizar_control_bloqueo` rechaza `'individual'` y acepta `'serie'`. **Por lo tanto la
+> migración 158 se considera YA APLICADA en producción y NO debe volver a ejecutarse** —
+> tratarla como pendiente y correrla de nuevo sería un no-op en el mejor caso, pero no debe
+> intentarse sin verificar antes que en verdad no se aplicó dos veces.
+
 > Rama de trabajo actual: **`claude/peaceful-noether-713c7c`** (ya **mergeada a `main`**).
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase de D'spacios
 > es única** y compartida entre `main` y sus ramas de trabajo (`claude/*`); las migraciones

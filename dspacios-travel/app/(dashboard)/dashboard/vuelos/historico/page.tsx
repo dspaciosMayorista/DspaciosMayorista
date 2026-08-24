@@ -7,7 +7,7 @@ import { VistaTabs, vistaDeParam } from "../VistaTabs";
 import { conteoPorBloqueo, sumarConteos, esPasado, ventaPct, ocupacionPct, conteoCero, type ConteoSillas } from "@/lib/vuelos/stats";
 import { hoyISO } from "@/lib/calc/paquetes";
 import { normalizarModalidadLegible, type ModalidadControl } from "@/lib/vuelos/control";
-import { miRol, ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
+import { miRol, ROLES_CONTRATO_COMPLETO, ROLES_EDITOR_VUELOS_CONTRATO } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +42,9 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
     hora_salida_ida: string | null; hora_llegada_ida: string | null;
     hora_salida_reg: string | null; hora_llegada_reg: string | null;
     vuelo_fecha_ida: string | null; vuelo_fecha_regreso: string | null;
+    // Migración 157: estado de emisión real y de pago derivado — ya NO se
+    // hardcodean a null como antes.
+    estado_emision: string | null; estado_pago: string | null;
   };
 
   // Control Vuelos no usa sillas — se consulta SOLO en Inventario (ver misma
@@ -69,6 +72,7 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
   ]);
 
   const puedeVerContrato = !!rol && ROLES_CONTRATO_COMPLETO.includes(rol);
+  const puedeEditarVuelo = !!rol && ROLES_EDITOR_VUELOS_CONTRATO.includes(rol);
 
   const hoy = hoyISO();
   const todos = bloqueos ?? [];
@@ -171,6 +175,7 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
           ) : !empPasados.length && !dinamicosPasados.length && dinamicosError ? null : (
           <EmpaquetadosTabla
             puedeVerContrato={puedeVerContrato}
+            puedeEditarVuelo={puedeEditarVuelo}
             filas={[
               ...empPasados.map((e) => ({
                 id: `promocion:${e.id}`, origen: "promocion" as const, record: e.record, numeroContrato: null,
@@ -179,11 +184,13 @@ export default async function HistoricoVuelosPage({ searchParams }: { searchPara
                 tarifa_para_empaquetar: e.tarifa_para_empaquetar, estado_emision: e.estado_emision, estado_pago: e.estado_pago,
                 activo: e.activo,
               })),
+              // Estado de emisión/pago REALES (migración 157) — ver el mismo
+              // comentario en ../page.tsx.
               ...dinamicosPasados.map((d) => ({
                 id: `contrato:${d.numero_contrato}`, origen: "contrato" as const, record: d.record, numeroContrato: d.numero_contrato,
                 aerolinea: d.aerolinea, ruta: d.ruta,
                 fecha_ida: d.fecha_salida, vuelo_ida: d.vuelo_ida, fecha_regreso: d.fecha_regreso, vuelo_regreso: d.vuelo_regreso,
-                tarifa_para_empaquetar: null, estado_emision: null, estado_pago: null,
+                tarifa_para_empaquetar: null, estado_emision: d.estado_emision, estado_pago: d.estado_pago,
                 activo: true,
               })),
             ]}

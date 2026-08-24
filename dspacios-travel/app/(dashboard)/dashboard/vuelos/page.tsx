@@ -11,7 +11,7 @@ import { History } from "lucide-react";
 import { conteoPorBloqueo, sumarConteos, esPasado, ocupacionPct, conteoCero, type ConteoSillas } from "@/lib/vuelos/stats";
 import { hoyISO } from "@/lib/calc/paquetes";
 import { normalizarModalidadLegible, type ModalidadControl } from "@/lib/vuelos/control";
-import { miRol, ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
+import { miRol, ROLES_CONTRATO_COMPLETO, ROLES_EDITOR_VUELOS_CONTRATO } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -80,6 +80,10 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
     hora_salida_ida: string | null; hora_llegada_ida: string | null;
     hora_salida_reg: string | null; hora_llegada_reg: string | null;
     vuelo_fecha_ida: string | null; vuelo_fecha_regreso: string | null;
+    // Migración 157: estado de emisión real (contrato_vuelo_control) y
+    // estado de pago derivado de las CxP aéreas reales — ya NO se hardcodean
+    // a null como antes.
+    estado_emision: string | null; estado_pago: string | null;
   };
 
   const [{ data: bloqueos }, { data: sillas }, { data: empaquetadosData }, { data: dinamicosData, error: dinamicosError }, rol] = await Promise.all([
@@ -112,6 +116,9 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
   // siguiente, "ENLACE DE CONTRATO") — ver el comentario junto a
   // `ROLES_CONTRATO_COMPLETO` en lib/roles.ts.
   const puedeVerContrato = !!rol && ROLES_CONTRATO_COMPLETO.includes(rol);
+  // Rol con acceso al editor operativo de vuelos del contrato (migración
+  // 157) — incluye control_vuelo a propósito, a diferencia de puedeVerContrato.
+  const puedeEditarVuelo = !!rol && ROLES_EDITOR_VUELOS_CONTRATO.includes(rol);
 
   // Activos vs pasados: una fila cuya fecha de ida ya pasó queda INACTIVA y
   // se mueve al histórico (/dashboard/vuelos/historico). Mismo criterio
@@ -239,6 +246,7 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
           ) : !empActivos.length && !dinamicosActivos.length && dinamicosError ? null : (
           <EmpaquetadosTabla
             puedeVerContrato={puedeVerContrato}
+            puedeEditarVuelo={puedeEditarVuelo}
             filas={[
               ...empActivos.map((e) => ({
                 id: `promocion:${e.id}`, origen: "promocion" as const, record: e.record, numeroContrato: null,
@@ -266,11 +274,18 @@ export default async function VuelosPage({ searchParams }: { searchParams: Promi
               // `fecha_ida`/`fecha_regreso` siguen viniendo de `ventas`
               // (columnas ya existentes, sin cambio) — son las fechas del
               // VIAJE, no del tramo puntual.
+              // Estado de emisión/pago (migración 157): REALES — el de
+              // emisión sale de `contrato_vuelo_control` (1:1 por contrato,
+              // editable desde el editor operativo nuevo); el de pago se
+              // deriva en la vista misma de las CxP aéreas reales (nunca un
+              // valor monetario, solo el estado). Antes se fijaban a `null`
+              // a mano, así que TODA fila de origen Contrato mostraba
+              // siempre "Por confirmar" sin importar el estado real.
               ...dinamicosActivos.map((d) => ({
                 id: `contrato:${d.numero_contrato}`, origen: "contrato" as const, record: d.record, numeroContrato: d.numero_contrato,
                 aerolinea: d.aerolinea, ruta: d.ruta,
                 fecha_ida: d.fecha_salida, vuelo_ida: d.vuelo_ida, fecha_regreso: d.fecha_regreso, vuelo_regreso: d.vuelo_regreso,
-                tarifa_para_empaquetar: null, estado_emision: null, estado_pago: null,
+                tarifa_para_empaquetar: null, estado_emision: d.estado_emision, estado_pago: d.estado_pago,
                 activo: true,
               })),
             ]}

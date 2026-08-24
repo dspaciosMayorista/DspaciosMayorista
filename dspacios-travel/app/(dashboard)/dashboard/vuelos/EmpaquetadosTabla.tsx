@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { Pencil, Plus } from "lucide-react";
 import { formatFechaLarga } from "@/lib/utils";
 import { EstadoBadge } from "@/components/EstadoBadge";
 import {
@@ -46,9 +47,19 @@ export type EmpaquetadoFila = {
   activo: boolean;
 };
 
+// Un contrato de origen "Contrato" ya tiene datos aéreos ESTRUCTURADOS
+// (contrato_vuelos) cuando existe al menos ruta, vuelo_ida o vuelo_regreso —
+// nunca cuando solo hay record (un PNR puede haberse anotado sin cargar el
+// itinerario todavía). Decide "Completar vuelo" vs. "Editar vuelo" — nunca un
+// guion ambiguo cuando la acción esperada es completar información.
+function tieneVueloEstructurado(f: EmpaquetadoFila): boolean {
+  return Boolean(f.ruta || f.vuelo_ida || f.vuelo_regreso);
+}
+
 export function EmpaquetadosTabla({
   filas,
   puedeVerContrato,
+  puedeEditarVuelo,
 }: {
   filas: EmpaquetadoFila[];
   // Hallazgo 2 (ronda posterior al PR #268, "ENLACE DE CONTRATO"): un origen
@@ -62,6 +73,12 @@ export function EmpaquetadosTabla({
   // de roles (superadmin/gerencia/administracion/operaciones) conserva el
   // link tal como antes.
   puedeVerContrato: boolean;
+  // Migración 157: quién puede abrir el editor operativo de vuelos del
+  // contrato (`ROLES_EDITOR_VUELOS_CONTRATO`, lib/roles.ts — incluye
+  // control_vuelo, que `puedeVerContrato` a propósito NO incluye, porque ese
+  // prop es sobre la ficha FINANCIERA completa, no sobre el vuelo). Decidido
+  // en el servidor, nunca en el cliente — mismo criterio que puedeVerContrato.
+  puedeEditarVuelo: boolean;
 }) {
   const [fRuta, setFRuta] = useState("");
   const [fMes, setFMes] = useState("");
@@ -131,16 +148,16 @@ export function EmpaquetadosTabla({
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="w-full min-w-[980px] text-sm">
+        <table className="w-full min-w-[1120px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
               <th className="px-3 py-2">Origen</th>
-              {/* "Record / Contrato" (ronda siguiente, hallazgo 1 "CONECTAR
-                  CONTRATO_VUELOS CON LA LISTA"): un origen "Contrato" ahora
-                  puede o no tener PNR real (contrato_vuelos.record) — "Record"
-                  a secas sería engañoso cuando lo que se muestra es el número
-                  de contrato porque no hay PNR. */}
-              <th className="px-3 py-2">Record / Contrato</th>
+              {/* Record y Contrato SEPARADOS (esta ronda) — antes una sola
+                  columna "Record / Contrato" mezclaba el PNR real con el
+                  número de contrato cuando no había PNR, sin dejar claro cuál
+                  de los dos se estaba mostrando. */}
+              <th className="px-3 py-2">Record</th>
+              <th className="px-3 py-2">Contrato</th>
               <th className="px-3 py-2">Aerolínea</th>
               <th className="px-3 py-2">Ruta</th>
               <th className="px-3 py-2">Ida</th>
@@ -149,6 +166,7 @@ export function EmpaquetadosTabla({
               <th className="px-3 py-2">Emisión</th>
               <th className="px-3 py-2">Pago</th>
               <th className="px-3 py-2">Estado</th>
+              <th className="px-3 py-2">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -160,20 +178,29 @@ export function EmpaquetadosTabla({
                     : <EstadoBadge estado="Promoción" tono="neutral" />}
                 </td>
                 <td className="px-3 py-2">
-                  {f.origen === "contrato" && !puedeVerContrato ? (
-                    <span className="font-mono text-sm font-semibold text-gray-500" title="Tu rol no tiene acceso a la ficha del contrato">
-                      {f.record ?? f.numeroContrato}
-                    </span>
+                  {f.origen === "contrato" ? (
+                    // PNR real (contrato_vuelos.record) o "Sin PNR" — nunca cae
+                    // al número de contrato: eso ahora vive en su propia columna.
+                    <span className="font-mono text-sm text-gray-700">{f.record ?? "Sin PNR"}</span>
                   ) : (
                     <Link
-                      href={f.origen === "contrato" ? `/dashboard/contratos/${f.numeroContrato}` : `/dashboard/vuelos/empaquetados/${f.id.split(":")[1]}`}
+                      href={`/dashboard/vuelos/empaquetados/${f.id.split(":")[1]}`}
                       className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline"
                     >
-                      {/* record real cuando existe (contrato_vuelos.record —
-                          hallazgo 1 de esta ronda); si no, el número de
-                          contrato para orígenes "contrato", nunca "Sin
-                          record" (sí sabemos a qué contrato pertenece). */}
-                      {f.origen === "contrato" ? (f.record ?? f.numeroContrato) : (f.record ?? "Sin record")}
+                      {f.record ?? "Sin record"}
+                    </Link>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  {f.origen !== "contrato" ? (
+                    <span className="text-gray-300">—</span>
+                  ) : !puedeVerContrato ? (
+                    <span className="font-mono text-sm font-semibold text-gray-500" title="Tu rol no tiene acceso a la ficha del contrato">
+                      {f.numeroContrato}
+                    </span>
+                  ) : (
+                    <Link href={`/dashboard/contratos/${f.numeroContrato}`} className="font-mono text-sm font-semibold text-[#1D7C9A] hover:underline">
+                      {f.numeroContrato}
                     </Link>
                   )}
                 </td>
@@ -188,6 +215,27 @@ export function EmpaquetadosTabla({
                   {f.activo
                     ? <EstadoBadge estado="Activo" tono="ok" />
                     : <EstadoBadge estado="Inactivo" tono="neutral" />}
+                </td>
+                <td className="px-3 py-2">
+                  {f.origen !== "contrato" || !puedeEditarVuelo ? (
+                    <span className="text-gray-300">—</span>
+                  ) : tieneVueloEstructurado(f) ? (
+                    <Link
+                      href={`/dashboard/vuelos/contrato/${f.numeroContrato}`}
+                      title="Editar vuelo"
+                      aria-label="Editar vuelo"
+                      className="inline-flex items-center justify-center rounded-md border border-gray-300 p-1.5 text-gray-500 hover:border-[var(--brand-primary)] hover:text-[var(--brand-primary)]"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Link>
+                  ) : (
+                    <Link
+                      href={`/dashboard/vuelos/contrato/${f.numeroContrato}`}
+                      className="inline-flex items-center gap-1 rounded-md border border-dashed border-gray-300 px-2 py-1 text-xs font-medium text-gray-500 hover:border-[var(--brand-primary)] hover:text-[var(--brand-primary)]"
+                    >
+                      <Plus className="h-3 w-3" /> Completar vuelo
+                    </Link>
+                  )}
                 </td>
               </tr>
             ))}

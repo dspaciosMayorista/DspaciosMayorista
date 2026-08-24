@@ -21,7 +21,9 @@ const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
 
 // ───────────────────────────────────────────────────────────────────────────
 // PR A (+ revisión de PR #268) — modalidad serie/grupo/sistema + inventario
-// de Empaquetados (migraciones 155/156/157). Estas pruebas cubren lo que
+// de Empaquetados (migraciones 155/156/158 — el cierre se renumeró de 157 a
+// 158 en la rama `vuelos-empaquetados-editor-contrato`, ver más abajo).
+// Estas pruebas cubren lo que
 // pruebas/vuelosControl.test.ts (migración 152) no cubría: el rename en sí
 // (ahora en dos fases, transitoria + cierre — ver más abajo), el pseudo-valor
 // "sistema" SOLO para la vista fusionada de Control Vuelos, y el wiring de
@@ -58,7 +60,7 @@ test("esModalidadEmision sigue sin aceptar 'sistema' — esa columna (bloqueos_v
   assert.equal(esModalidadEmision("sistema"), false);
 });
 
-// ── Ventana de transición 155→157 (defecto 1, revisión de PR #268) ─────────
+// ── Ventana de transición 155→158 (defecto 1, revisión de PR #268; cierre renumerado de 157 a 158) ─────────
 test("normalizarModalidadLegible: LEE 'individual' como sinónimo de 'serie' (ventana de transición), pero esModalidadEmision (guardián de ESCRITURA) sigue sin aceptarlo", () => {
   assert.equal(normalizarModalidadLegible("individual"), "serie");
   assert.equal(normalizarModalidadLegible("serie"), "serie");
@@ -90,7 +92,7 @@ test("migración 155 (transitoria): corre en una transacción explícita, AMPLÍ
   assert.doesNotMatch(
     mig155,
     /set modalidad_emision = 'serie'\s*\n\s*where modalidad_emision = 'individual';/,
-    "la 155 transitoria NO debe convertir el dato 'individual'→'serie' — eso es responsabilidad exclusiva de la 157 (cierre), después del despliegue (el RPC sí contiene un UPDATE, pero es su comportamiento normal en tiempo de ejecución, no una conversión de datos históricos)"
+    "la 155 transitoria NO debe convertir el dato 'individual'→'serie' — eso es responsabilidad exclusiva de la 158 (cierre, renombrada de 157), después del despliegue (el RPC sí contiene un UPDATE, pero es su comportamiento normal en tiempo de ejecución, no una conversión de datos históricos)"
   );
 });
 
@@ -103,7 +105,7 @@ test("migración 155 (transitoria): el RPC actualizar_control_bloqueo acepta ind
 });
 
 test("migración 155 (transitoria): NO tiene ningún bloque de verificación 'FALLÓ' — no hay nada que verificar en una migración puramente aditiva que no toca datos", () => {
-  assert.doesNotMatch(mig155, /raise exception '155 FALLÓ/, "la 155 ya no es la migración que cierra el dominio — ese bloque vive en la 157");
+  assert.doesNotMatch(mig155, /raise exception '155 FALLÓ/, "la 155 ya no es la migración que cierra el dominio — ese bloque vive en la 158 (renombrada de 157, ver más abajo)");
 });
 
 const rollback155 = leer("supabase/scripts/rollback_155_modalidad_emision_serie.sql");
@@ -115,45 +117,51 @@ test("rollback 155 (transitoria): transaccional, CIERRA de vuelta a individual/g
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// Migración 157 — CIERRE (posterior al despliegue, revisión de PR #268 defecto 1)
+// Migración 158 — CIERRE (posterior al despliegue, revisión de PR #268 defecto 1)
+// ⚠️ Renumerada de 157 a 158 en la rama `vuelos-empaquetados-editor-contrato`:
+// en producción ya corrieron 155/156, así que se le pudo cambiar el número a
+// esta (que seguía sin ejecutarse) sin ningún riesgo — el 157 quedó libre
+// para una migración nueva y distinta (editor operativo de vuelos del
+// contrato, ver el describe "editor operativo de vuelos del contrato" más
+// abajo). El contenido de esta migración no cambió, solo el número.
 // ───────────────────────────────────────────────────────────────────────────
-const mig157 = leer("supabase/migrations/20260601000157_modalidad_emision_serie_cierre.sql");
+const mig158 = leer("supabase/migrations/20260601000158_modalidad_emision_serie_cierre.sql");
 
-test("migración 157 (cierre): corre en transacción explícita, renombra el 'individual' remanente a 'serie', y CIERRA el CHECK a solo serie/grupo", () => {
-  assert.match(mig157, /^begin;/m);
-  assert.match(mig157, /^commit;/m);
+test("migración 158 (cierre, antes 157): corre en transacción explícita, renombra el 'individual' remanente a 'serie', y CIERRA el CHECK a solo serie/grupo", () => {
+  assert.match(mig158, /^begin;/m);
+  assert.match(mig158, /^commit;/m);
   assert.match(
-    mig157,
+    mig158,
     /update public\.bloqueos_vuelo\s*\n\s*set modalidad_emision = 'serie'\s*\n\s*where modalidad_emision = 'individual';/,
     "el UPDATE de cierre no tiene exactamente esta forma (solo 'individual' → 'serie')"
   );
-  assert.match(mig157, /check \(modalidad_emision in \('serie', 'grupo'\)\)/, "el CHECK de cierre no es exactamente serie/grupo");
+  assert.match(mig158, /check \(modalidad_emision in \('serie', 'grupo'\)\)/, "el CHECK de cierre no es exactamente serie/grupo");
 });
 
-test("migración 157 (cierre): reemplaza el RPC a solo serie/grupo (cierra el dominio también ahí, no solo en la tabla)", () => {
-  const inicio = mig157.indexOf("create or replace function public.actualizar_control_bloqueo");
-  assert.notEqual(inicio, -1, "la 157 no reemplaza el RPC");
-  const fin = mig157.indexOf("comment on function public.actualizar_control_bloqueo", inicio);
-  const fn = mig157.slice(inicio, fin > inicio ? fin : undefined);
+test("migración 158 (cierre, antes 157): reemplaza el RPC a solo serie/grupo (cierra el dominio también ahí, no solo en la tabla)", () => {
+  const inicio = mig158.indexOf("create or replace function public.actualizar_control_bloqueo");
+  assert.notEqual(inicio, -1, "la 158 no reemplaza el RPC");
+  const fin = mig158.indexOf("comment on function public.actualizar_control_bloqueo", inicio);
+  const fn = mig158.slice(inicio, fin > inicio ? fin : undefined);
   assert.match(fn, /p_modalidad_emision not in \('serie', 'grupo'\)/, "el RPC de cierre sigue validando contra individual/grupo");
   assert.doesNotMatch(fn, /'individual'/, "el RPC de cierre todavía menciona 'individual' en algún lado (validación o etiqueta del historial)");
 });
 
-test("migración 157 (cierre): verifica al final que no quede ninguna fila en 'individual' ni fuera de serie/grupo/null — aborta si no cuadra", () => {
-  assert.match(mig157, /raise exception '157 FALLÓ/);
-  assert.match(mig157, /modalidad_emision = 'individual'/);
+test("migración 158 (cierre, antes 157): verifica al final que no quede ninguna fila en 'individual' ni fuera de serie/grupo/null — aborta si no cuadra", () => {
+  assert.match(mig158, /raise exception '158 FALLÓ/);
+  assert.match(mig158, /modalidad_emision = 'individual'/);
 });
 
-test("migración 157 (cierre): el comentario de despliegue advierte NO correrla en el mismo despliegue que la 155/156", () => {
-  assert.match(mig157, /NO CORRER en el mismo despliegue/i);
+test("migración 158 (cierre, antes 157): el comentario de despliegue advierte NO correrla en el mismo despliegue que la 155/156", () => {
+  assert.match(mig158, /NO CORRER en el mismo despliegue/i);
 });
 
-const rollback157 = leer("supabase/scripts/rollback_157_modalidad_emision_serie_cierre.sql");
-test("rollback 157 (cierre): transaccional, REABRE el CHECK/RPC a individual/serie/grupo (misma fase transitoria de la 155)", () => {
-  assert.match(rollback157, /^begin;/m);
-  assert.match(rollback157, /^commit;/m);
-  assert.match(rollback157, /check \(modalidad_emision in \('individual', 'serie', 'grupo'\)\)/);
-  assert.match(rollback157, /p_modalidad_emision not in \('individual', 'serie', 'grupo'\)/);
+const rollback158 = leer("supabase/scripts/rollback_158_modalidad_emision_serie_cierre.sql");
+test("rollback 158 (cierre, antes 157): transaccional, REABRE el CHECK/RPC a individual/serie/grupo (misma fase transitoria de la 155)", () => {
+  assert.match(rollback158, /^begin;/m);
+  assert.match(rollback158, /^commit;/m);
+  assert.match(rollback158, /check \(modalidad_emision in \('individual', 'serie', 'grupo'\)\)/);
+  assert.match(rollback158, /p_modalidad_emision not in \('individual', 'serie', 'grupo'\)/);
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -755,31 +763,35 @@ describe("EmpaquetadosTabla / vuelos-page — el link a /dashboard/contratos se 
     assert.match(mig116, /public\.mi_rol\(\) in \('superadmin','gerencia','administracion','operaciones'\)\s*\n\s*and public\.puede_ver_tenant\(tenant\)/, "ROLES_CONTRATO_COMPLETO debe reflejar exactamente esta policy — control_vuelo/venta NO están aquí");
   });
 
-  test("EmpaquetadosTabla recibe puedeVerContrato y NO renderiza <Link> para origen 'contrato' cuando es false", () => {
+  test("EmpaquetadosTabla recibe puedeVerContrato y NO renderiza <Link> en la columna Contrato cuando es false (migración 157: Record y Contrato ya son columnas separadas)", () => {
     assert.match(tablaSrc, /puedeVerContrato: boolean;/);
-    const render = tablaSrc.slice(tablaSrc.indexOf("{f.origen === \"contrato\" && !puedeVerContrato"), tablaSrc.indexOf("{f.aerolinea ?? "));
-    assert.match(render, /<span className="font-mono text-sm font-semibold text-gray-500"/, "sin acceso: texto plano, nunca un <Link>");
-    assert.match(render, /<Link/, "con acceso (u origen no-contrato): sigue existiendo el <Link> normal");
+    const colContrato = tablaSrc.slice(tablaSrc.indexOf('{f.origen !== "contrato" ? ('), tablaSrc.indexOf("{f.aerolinea ?? "));
+    assert.match(colContrato, /!puedeVerContrato/, "la columna Contrato debe seguir gateando por puedeVerContrato");
+    assert.match(colContrato, /<span className="font-mono text-sm font-semibold text-gray-500"/, "sin acceso: texto plano, nunca un <Link>");
+    assert.match(colContrato, /<Link href=\{`\/dashboard\/contratos\/\$\{f\.numeroContrato\}`\}/, "con acceso: sigue existiendo el <Link> normal al contrato");
   });
 
   test("vuelos/page.tsx calcula puedeVerContrato con miRol()/ROLES_CONTRATO_COMPLETO y lo pasa a EmpaquetadosTabla — nunca fijo en true", () => {
-    assert.match(vuelosPageSrc, /import \{ miRol, ROLES_CONTRATO_COMPLETO \} from "@\/lib\/roles";/);
+    assert.match(vuelosPageSrc, /import \{ miRol, ROLES_CONTRATO_COMPLETO, ROLES_EDITOR_VUELOS_CONTRATO \} from "@\/lib\/roles";/);
     assert.match(vuelosPageSrc, /const puedeVerContrato = !!rol && ROLES_CONTRATO_COMPLETO\.includes\(rol\);/);
     assert.match(vuelosPageSrc, /<EmpaquetadosTabla\s*\n\s*puedeVerContrato=\{puedeVerContrato\}/);
   });
 
   test("historico/page.tsx también calcula y propaga puedeVerContrato (mismo criterio que la vista activa)", () => {
-    assert.match(historicoPageSrc, /import \{ miRol, ROLES_CONTRATO_COMPLETO \} from "@\/lib\/roles";/);
+    assert.match(historicoPageSrc, /import \{ miRol, ROLES_CONTRATO_COMPLETO, ROLES_EDITOR_VUELOS_CONTRATO \} from "@\/lib\/roles";/);
     assert.match(historicoPageSrc, /const puedeVerContrato = !!rol && ROLES_CONTRATO_COMPLETO\.includes\(rol\);/);
     assert.match(historicoPageSrc, /<EmpaquetadosTabla\s*\n\s*puedeVerContrato=\{puedeVerContrato\}/);
   });
 
-  test("los orígenes 'promocion' y 'sistema' (no 'contrato') conservan su link normal — el gate es SOLO para el link al contrato", () => {
-    // Actualizado en la ronda "CONECTAR CONTRATO_VUELOS CON LA LISTA": un
-    // origen "contrato" ahora puede tener record REAL (contrato_vuelos), así
-    // que cae a numeroContrato solo si NO hay record — nunca "Sin record"
-    // para ese origen (sí se sabe a qué contrato pertenece).
-    assert.match(tablaSrc, /f\.origen === "contrato" \? \(f\.record \?\? f\.numeroContrato\) : \(f\.record \?\? "Sin record"\)/);
+  test("Record y Contrato son columnas SEPARADAS (migración 157) — origen 'contrato' nunca cae al número de contrato en la celda Record, origen 'promocion' no tiene columna Contrato", () => {
+    // Antes (dos rondas atrás): una sola columna combinada
+    // `f.origen === "contrato" ? (f.record ?? f.numeroContrato) : (f.record ?? "Sin record")`.
+    // Ahora: Record siempre es el PNR real o "Sin PNR"/"Sin record"; el
+    // número de contrato vive en su PROPIA columna, nunca como fallback de Record.
+    assert.doesNotMatch(tablaSrc, /f\.record \?\? f\.numeroContrato/, "Record ya no debe caer al número de contrato");
+    assert.match(tablaSrc, /f\.record \?\? "Sin PNR"/);
+    assert.match(tablaSrc, /f\.record \?\? "Sin record"/);
+    assert.match(tablaSrc, /f\.origen !== "contrato" \? \(\s*<span className="text-gray-300">—<\/span>/, "origen 'promocion' muestra un guion en la columna Contrato (no aplica)");
   });
 });
 
@@ -973,17 +985,23 @@ describe("vuelos/page.tsx, historico/page.tsx y EmpaquetadosTabla — conectan e
     assert.match(bloque, /vuelo_ida: d\.vuelo_ida, fecha_regreso: d\.fecha_regreso, vuelo_regreso: d\.vuelo_regreso,/);
   });
 
-  test("EmpaquetadosTabla: el encabezado ya no es 'Record' a secas — pasa a 'Record / Contrato' (no engañoso cuando no hay PNR)", () => {
-    assert.match(tablaSrc, /<th className="px-3 py-2">Record \/ Contrato<\/th>/);
-    assert.doesNotMatch(tablaSrc, /<th className="px-3 py-2">Record<\/th>/);
+  // ⚠️ Migración 157 (ronda posterior a esta): "Record / Contrato" se separó
+  // en DOS columnas — ver pruebas/editorVuelosContrato.test.ts para el detalle
+  // completo del nuevo wiring (columnas separadas + Acciones). Aquí solo se
+  // deja constancia de que el encabezado combinado de ESTA ronda ya no existe.
+  test("EmpaquetadosTabla: el encabezado combinado 'Record / Contrato' de esta ronda fue reemplazado por columnas separadas en una ronda posterior", () => {
+    assert.doesNotMatch(tablaSrc, /<th className="px-3 py-2">Record \/ Contrato<\/th>/);
+    assert.match(tablaSrc, /<th className="px-3 py-2">Record<\/th>/);
+    assert.match(tablaSrc, /<th className="px-3 py-2">Contrato<\/th>/);
   });
 
-  test("EmpaquetadosTabla: origen 'contrato' muestra el record REAL cuando existe, y cae al número de contrato solo si no hay record (nunca 'Sin record' para ese origen)", () => {
-    assert.match(tablaSrc, /f\.origen === "contrato" \? \(f\.record \?\? f\.numeroContrato\) : \(f\.record \?\? "Sin record"\)/);
+  test("EmpaquetadosTabla: origen 'contrato' muestra el record REAL o 'Sin PNR' en SU columna — el número de contrato vive en la columna Contrato, no como fallback de Record", () => {
+    assert.match(tablaSrc, /f\.record \?\? "Sin PNR"/);
+    assert.doesNotMatch(tablaSrc, /f\.record \?\? f\.numeroContrato/);
   });
 
-  test("EmpaquetadosTabla: el fallback SIN acceso (span, sin link) también prefiere el record real sobre el número de contrato", () => {
-    assert.match(tablaSrc, /\{f\.record \?\? f\.numeroContrato\}\s*\n\s*<\/span>/);
+  test("EmpaquetadosTabla: la columna Contrato (sin acceso) muestra el número de contrato como texto plano, sin link", () => {
+    assert.match(tablaSrc, /!puedeVerContrato \? \(\s*<span className="font-mono text-sm font-semibold text-gray-500" title="Tu rol no tiene acceso a la ficha del contrato">\s*\{f\.numeroContrato\}/);
   });
 });
 
