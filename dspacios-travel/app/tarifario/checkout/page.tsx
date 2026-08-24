@@ -63,6 +63,7 @@ export default function CheckoutPage() {
           hotelNombre: it.hotelNombre, destino: it.destino, categoria: it.categoria, regimen: it.regimen,
           fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, noches: it.noches,
           habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes, pax: it.pax, precio: it.precio,
+          edadesMenores: it.edadesMenores,
         })),
         // Los tours aún no generan su propia cotización (próxima fase) — se
         // incluyen tal cual en el mensaje/total de la solicitud.

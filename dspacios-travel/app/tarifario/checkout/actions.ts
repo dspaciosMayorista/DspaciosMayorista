@@ -28,6 +28,11 @@ export type SolicitudItem = {
   infantes: number;
   pax: number;
   precio: number;
+  // Edad exacta de cada menor tal como se pidió en Vista Booking — ver
+  // lib/reservar/edadesMenores.ts. Ítems del carrito de antes de este cambio
+  // no la traen (undefined): `computarReserva` conserva entonces el reparto
+  // legado ninos/ninos2/infantes de arriba en vez de recalcular por edad.
+  edadesMenores?: number[];
 };
 
 // Tour/servicio agregado al carrito — entra a la MISMA cotización combinada
@@ -223,6 +228,15 @@ async function crearCotizacionCarrito(input: {
       ninos: it.ninos,
       ninos2: it.ninos2,
       infantes: it.infantes || 0,
+      // `edadesMenores` (si el ítem del carrito lo trae) hace que
+      // `computarReserva` IGNORE ninos/ninos2/infantes de arriba y reclasifique
+      // por edad real — nunca confía en lo que haya calculado el navegador.
+      // `cantidadMenores` se deriva de los mismos 3 campos ya sanitizados
+      // (nunca del arreglo mismo) para poder exigir que coincidan.
+      edadesMenores: it.edadesMenores,
+      cantidadMenores: it.edadesMenores !== undefined
+        ? Math.max(0, Math.trunc(Number(it.ninos) || 0)) + Math.max(0, Math.trunc(Number(it.ninos2) || 0)) + Math.max(0, Math.trunc(Number(it.infantes) || 0))
+        : undefined,
       cliente: {
         nombres: input.cliente.nombres, apellidos: input.cliente.apellidos, tipoDoc: "CC",
         numeroDoc: input.cliente.numeroDoc, telefono: input.cliente.telefono, email: input.cliente.email,
@@ -232,7 +246,7 @@ async function crearCotizacionCarrito(input: {
     };
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
-    const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2 } = comp.data;
+    const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes } = comp.data;
 
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
       excluidos.push(`${it.hotelNombre} (moneda ${monedaReserva})`);
@@ -247,13 +261,18 @@ async function crearCotizacionCarrito(input: {
     const partes = lineasHab.map((l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`);
     if (numNinos > 0) partes.push(`${numNinos} Niño 1`);
     if (numNinos2 > 0) partes.push(`${numNinos2} Niño 2`);
-    if ((it.infantes || 0) > 0) partes.push(`${it.infantes} Infante(s)`);
+    if (numInfantes > 0) partes.push(`${numInfantes} Infante(s)`);
 
     hIdx++;
     hotelesSnap.push({
       id: hIdx, nombre: meta.hotel_nombre ?? it.hotelNombre, categoria: it.categoria, ciudad: meta.destino_nombre ?? it.destino,
       proveedor: null, alimentacion: it.regimen, acomodacion: it.categoria, detalle_acomodacion: partes.join(", "),
       fecha_ingreso: meta.fecha_ida, fecha_salida: meta.fecha_regreso, nota_regimen: null, foto_url: fotoUrl,
+      // Edad exacta de cada menor tal como se cotizó (si el ítem la trae) —
+      // snapshot autoritativo, ya reclasificado por el servidor (numNinos/
+      // numNinos2/numInfantes de arriba), no lo que haya mandado el navegador.
+      edades_menores: it.edadesMenores ?? null,
+      menores_clasificados: { infantes: numInfantes, nino: numNinos, nino2: numNinos2 },
     });
 
     if (it.modulo === "bloqueo" && it.bloqueoId) {

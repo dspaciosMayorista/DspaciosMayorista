@@ -25,6 +25,11 @@ export type HotelCartItem = {
   infantes: number;
   pax: number;
   precio: number;
+  // Edad exacta de cada menor tal como se pidió en Vista Booking (misma
+  // cantidad que ninos+ninos2+infantes), en el orden en que se capturó —
+  // ver lib/reservar/edadesMenores.ts. Opcional: ítems del carrito
+  // guardados en localStorage ANTES de este cambio no lo traen.
+  edadesMenores?: number[];
 };
 
 // Ítem de SERVICIO/TOUR (add-on de un paquete, agregado desde Receptivos —
