@@ -326,6 +326,22 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 > ejecutado en producción** (ni la 157 nueva ni la 158 renumerada) — pendiente de validación
 > y aprobación del dueño antes de correrlas.
 
+> ⚠️ **Actualización — estado real de producción confirmado por el dueño (PR #270):**
+> las migraciones **155, 156 y la nueva 157** (`20260601000157_editor_vuelos_contrato.sql`
+> — editor operativo de vuelos del contrato) **ya se aplicaron en producción** y se
+> verificaron: tablas creadas, RLS activa, funciones SECURITY DEFINER correctas, `anon`
+> bloqueado/`authenticated` habilitado, `ventas_vuelo_sistema` actualizada. **Por error se
+> ejecutó también el archivo antiguo que en el repo se había renombrado a 158**
+> (`20260601000158_modalidad_emision_serie_cierre.sql`) — se corrió bajo su nombre
+> histórico "157" (el de cierre `modalidad_emision`, antes de la renumeración explicada
+> arriba), pero su contenido es exactamente el mismo que el archivo 158 actual. Se
+> verificó en producción: ninguna fila con `modalidad_emision = 'individual'`; las
+> modalidades presentes son únicamente `NULL`, `grupo` y `serie`; el RPC
+> `actualizar_control_bloqueo` rechaza `'individual'` y acepta `'serie'`. **Por lo tanto la
+> migración 158 se considera YA APLICADA en producción y NO debe volver a ejecutarse** —
+> tratarla como pendiente y correrla de nuevo sería un no-op en el mejor caso, pero no debe
+> intentarse sin verificar antes que en verdad no se aplicó dos veces.
+
 > Rama de trabajo actual: **`claude/peaceful-noether-713c7c`** (ya **mergeada a `main`**).
 > Producción = `main` (Vercel despliega de `main`). La **base de datos Supabase de D'spacios
 > es única** y compartida entre `main` y sus ramas de trabajo (`claude/*`); las migraciones
