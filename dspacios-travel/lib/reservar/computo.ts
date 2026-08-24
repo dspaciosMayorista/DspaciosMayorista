@@ -23,11 +23,13 @@ import {
   PAX_TARIFA_DEFAULT,
   clasificarPorEdad,
   validarReservaHabitaciones,
+  defaultAcomConfig,
   type AcomRoom,
   type AcomConfig,
 } from "@/lib/acomodaciones";
 import { calcularEdad } from "@/lib/utils";
-import { validarCantidadMenores, validarEdadesMenores, clasificarYRepartirMenores, verificarTarifasMenoresDisponibles } from "@/lib/reservar/edadesMenores";
+import { validarCantidadMenores, validarEdadesMenores, clasificarMenoresPorEdad, verificarTarifasMenoresDisponibles } from "@/lib/reservar/edadesMenores";
+import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHabitacion } from "@/lib/reservar/distribucionHabitaciones";
 import { liquidarHotelPaquete } from "@/lib/reservar/cotizar";
 import { resolverOrigenVuelo, empaquetadoVigente, hoyBogota, type OrigenVuelo } from "@/lib/reservar/origen";
 
@@ -92,6 +94,12 @@ export type ComputoReserva = {
   numNinos: number;
   numNinos2: number;
   numInfantes: number;
+  // Distribución por habitación (quién paga Niño 1/Niño 2/infante EN CADA
+  // habitación) — solo se calcula cuando la reserva llega con `edadesMenores`
+  // (Vista Booking). `null` en el flujo legado (reparto manual ninos/ninos2/
+  // infantes sin edad), que no tiene esta granularidad. Se persiste en el
+  // snapshot jsonb de la cotización para trazabilidad (ver checkout/actions.ts).
+  distribucionMenores: AsignacionHabitacion[] | null;
   lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[];
   serviciosItems: { nombre: string; precio: number }[];
   impuestoTotal: number;
@@ -101,6 +109,26 @@ export type ComputoReserva = {
   notaMascota: string | null;  // anotación informativa (ej. "máximo 1 mascota por habitación")
 };
 
+// Expande `habitaciones: {doble: 2, triple: 1}` (conteo por tipo, la única
+// forma que hoy captura EditorPax — nunca tuvo un arreglo con una entrada
+// por instancia de habitación) a una lista de habitaciones consultadas, una
+// entrada por habitación, en el orden fijo de ACOM_ROOMS (mismo orden que ya
+// usa el resto del motor para iterar acomodaciones) — determinista, no
+// depende del orden de inserción del objeto.
+function construirHabitacionesConsultadas(
+  habitacionesInput: Record<string, number> | undefined,
+  reglas: AcomConfig[]
+): HabitacionConsultada[] {
+  const lista: HabitacionConsultada[] = [];
+  for (const a of ACOM_ROOMS) {
+    const rooms = Math.max(0, Math.trunc(Number(habitacionesInput?.[a]) || 0));
+    if (rooms <= 0) continue;
+    const config = reglas.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
+    for (let i = 0; i < rooms; i++) lista.push({ acom: a, config });
+  }
+  return lista;
+}
+
 // Recalcula ninos/ninos2/infantes DESDE CERO a partir de `input.edadesMenores`
 // + los umbrales reales del hotel — nunca a partir de lo que el cliente haya
 // mandado en `input.ninos`/`ninos2`/`infantes` (ver comentario de esos campos
@@ -108,21 +136,48 @@ export type ComputoReserva = {
 // (backward-compatible: los llamadores que no mandan edades individuales
 // —hoy, el formulario interno de Reservar, `ReservaForm.tsx`, fuera del
 // alcance de este cambio— siguen con el reparto manual de siempre).
+//
+// Clasifica por edad (infante/niño/edad-de-adulto) y LUEGO distribuye por
+// habitación (`distribuirPorHabitaciones` — Niño 1/Niño 2 son un tope de 2
+// POR HABITACIÓN, no en toda la reserva). EditorPax no pide un campo
+// "Adultos" aparte (los adultos ya son exactamente los que implican las
+// habitaciones elegidas — habitaciones × pax_tarifa, fórmula de precio sin
+// cambios), así que se declara ese mismo valor implícito como "adultos
+// declarados": la validación de `distribuirPorHabitaciones` pasa siempre
+// para este llamador, y solo protege de verdad al llamador que sí pide
+// Adultos por separado (`buscarHoteles`, ver lib/reservar/cotizar.ts).
 function resolverMenoresPorEdad(
   input: ReservaInput,
   infanteMax: number,
   ninoMax: number,
-  pvpPorAcom: Record<string, number>
-): { ok: true; numNinos: number; numNinos2: number; numInfantes: number } | { ok: false; error: string } {
+  pvpPorAcom: Record<string, number>,
+  reglas: AcomConfig[]
+): { ok: true; numNinos: number; numNinos2: number; numInfantes: number; distribucion: AsignacionHabitacion[] } | { ok: false; error: string } {
   const vCant = validarCantidadMenores(input.cantidadMenores);
   if (!vCant.ok) return { ok: false, error: vCant.error };
   const vEdades = validarEdadesMenores(input.edadesMenores, vCant.cantidad);
   if (!vEdades.ok) return { ok: false, error: vEdades.error };
-  const r = clasificarYRepartirMenores(vEdades.edades, infanteMax, ninoMax);
-  if (!r.ok) return { ok: false, error: r.error };
-  const errTarifa = verificarTarifasMenoresDisponibles(r.c, { nino: pvpPorAcom["nino"] != null, nino2: pvpPorAcom["nino2"] != null });
+  const rClas = clasificarMenoresPorEdad(vEdades.edades, infanteMax, ninoMax);
+  if (!rClas.ok) return { ok: false, error: rClas.error };
+
+  const habitacionesConsultadas = construirHabitacionesConsultadas(input.habitaciones, reglas);
+  if (!habitacionesConsultadas.length) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
+  const adultosImplicitos = habitacionesConsultadas.reduce((s, h) => s + h.config.pax_tarifa, 0);
+
+  const rDist = distribuirPorHabitaciones({
+    adultosDeclarados: adultosImplicitos,
+    ninos: rClas.c.ninos,
+    infantes: rClas.c.infantes,
+    habitaciones: habitacionesConsultadas,
+  });
+  if (!rDist.ok) return { ok: false, error: rDist.error };
+
+  const errTarifa = verificarTarifasMenoresDisponibles(
+    { infantes: rDist.totales.infantes, nino: rDist.totales.nino, nino2: rDist.totales.nino2 },
+    { nino: pvpPorAcom["nino"] != null, nino2: pvpPorAcom["nino2"] != null }
+  );
   if (errTarifa) return { ok: false, error: errTarifa };
-  return { ok: true, numNinos: r.c.nino, numNinos2: r.c.nino2, numInfantes: r.c.infantes };
+  return { ok: true, numNinos: rDist.totales.nino, numNinos2: rDist.totales.nino2, numInfantes: rDist.totales.infantes, distribucion: rDist.habitaciones };
 }
 
 export async function computarReserva(
@@ -169,6 +224,7 @@ export async function computarReserva(
   let numNinos = Math.max(0, Math.trunc(Number(input.ninos) || 0));
   let numNinos2 = Math.max(0, Math.trunc(Number(input.ninos2) || 0));
   let numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
+  let distribucionMenores: AsignacionHabitacion[] | null = null;
   const numMascotas = Math.max(0, Math.trunc(Number(input.mascotas) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   let monedaReserva = "COP";  // moneda del paquete (USD si los hoteles son internacionales)
@@ -225,21 +281,23 @@ export async function computarReserva(
     petCostoDesc = hotelRowF?.pet_costo_desc ?? null;
     petNotaTxt = hotelRowF?.pet_nota ?? null;
 
-    // Reclasifica ninos/ninos2/infantes desde la edad real de cada menor
-    // (nunca desde lo que haya mandado el cliente) ANTES de sumar su tarifa
-    // al precio — necesita el umbral real del hotel, recién consultado.
-    if (input.edadesMenores !== undefined) {
-      const rMenores = resolverMenoresPorEdad(input, hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10, pvpPorAcom);
-      if (!rMenores.ok) return { ok: false, error: rMenores.error };
-      numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
-    }
-
     const { data: acomCfgF } = await sb
       .from("hotel_acomodaciones")
       .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
       .eq("hotel_id", input.hotelId);
     const reglasF = (acomCfgF ?? []) as AcomConfig[];
     const paxTarifaF = (a: AcomRoom) => reglasF.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
+
+    // Reclasifica ninos/ninos2/infantes desde la edad real de cada menor
+    // (nunca desde lo que haya mandado el cliente) ANTES de sumar su tarifa
+    // al precio — necesita el umbral real del hotel Y la config real de
+    // habitaciones (para distribuir por habitación), ambas ya consultadas.
+    if (input.edadesMenores !== undefined) {
+      const rMenores = resolverMenoresPorEdad(input, hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10, pvpPorAcom, reglasF);
+      if (!rMenores.ok) return { ok: false, error: rMenores.error };
+      numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
+      distribucionMenores = rMenores.distribucion;
+    }
     for (const a of ACOM_ROOMS) {
       const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
       if (rooms <= 0 || pvpPorAcom[a] == null) continue;
@@ -311,12 +369,6 @@ export async function computarReserva(
     petCostoDesc = hotelRow?.pet_costo_desc ?? null;
     petNotaTxt = hotelRow?.pet_nota ?? null;
 
-    if (input.edadesMenores !== undefined) {
-      const rMenores = resolverMenoresPorEdad(input, hotelRow?.edad_infante_max ?? 2, hotelRow?.edad_nino_max ?? 10, pvpPorAcom);
-      if (!rMenores.ok) return { ok: false, error: rMenores.error };
-      numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
-    }
-
     const { data: acomCfg } = await sb
       .from("hotel_acomodaciones")
       .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
@@ -326,6 +378,13 @@ export async function computarReserva(
       const c = reglas.find((x) => x.acomodacion === a);
       return c?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
     };
+
+    if (input.edadesMenores !== undefined) {
+      const rMenores = resolverMenoresPorEdad(input, hotelRow?.edad_infante_max ?? 2, hotelRow?.edad_nino_max ?? 10, pvpPorAcom, reglas);
+      if (!rMenores.ok) return { ok: false, error: rMenores.error };
+      numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
+      distribucionMenores = rMenores.distribucion;
+    }
 
     for (const a of ACOM_ROOMS) {
       const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
@@ -530,6 +589,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, lineasHab, serviciosItems, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
+    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, distribucionMenores, lineasHab, serviciosItems, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
   };
 }

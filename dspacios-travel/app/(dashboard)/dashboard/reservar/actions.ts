@@ -17,7 +17,6 @@ import {
   buscarHoteles as buscarHotelesImpl,
   buscarReceptivos as buscarReceptivosImpl,
   type CotizarResult,
-  type BusquedaInput,
   type BusquedaResultado,
   type BusquedaServiciosInput,
   type ResultadoServicio,
@@ -39,7 +38,11 @@ export async function cotizarPorFechas(input: {
   return cotizarPorFechasImpl(input);
 }
 
-export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; resultados: BusquedaResultado[] } | { ok: false; error: string }> {
+// `input` es `unknown` a propósito: esta Server Action es alcanzable desde el
+// navegador (Vista Booking pública) con cualquier body HTTP — toda la
+// validación de forma vive en `buscarHotelesImpl` (lib/reservar/cotizar.ts),
+// nunca se confía en el tipo `BusquedaInput` en tiempo de ejecución.
+export async function buscarHoteles(input: unknown): Promise<{ ok: true; resultados: BusquedaResultado[]; diagnostico?: string } | { ok: false; error: string }> {
   return buscarHotelesImpl(input);
 }
 

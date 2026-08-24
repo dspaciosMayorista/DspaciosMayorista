@@ -21,14 +21,20 @@ import {
   redondearVenta,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
-import { PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
+import { defaultAcomConfig, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import {
   MAX_PAX_CONSULTA,
   validarCantidadMenores,
   validarEdadesMenores,
-  clasificarYRepartirMenores,
+  validarHabitacionesConsultadas,
+  validarAdultosDeclarados,
+  validarFechaConsulta,
+  validarDestinoConsulta,
+  clasificarMenoresPorEdad,
+  verificarTarifasMenoresDisponibles,
   type ClasificacionMenores,
 } from "@/lib/reservar/edadesMenores";
+import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 
 // Acomodaciones (incluye niños e infante) y su columna neta en tarifa_hotel.
 const ACOM_ALL = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "infante"] as const;
@@ -216,19 +222,27 @@ export async function cotizarPorFechas(input: {
 // ── Mini-motor de búsqueda (público): liquida TODOS los hoteles de porción para
 // las fechas y la composición de habitaciones, y devuelve los que CABEN ya con
 // precio (el combo categoría/régimen más barato por hotel). Los menores se
-// declaran por EDAD EXACTA (nunca fecha de nacimiento), global — no por
-// habitación — y se clasifican infante/Niño 1/Niño 2 PER HOTEL, porque cada
-// hotel puede tener un umbral de edad distinto (`edad_infante_max`/
-// `edad_nino_max`, ver lib/reservar/edadesMenores.ts): un hotel cuyo umbral no
-// deja acomodar la composición (por edad o por no tener las 2 tarifas de
-// niño) simplemente no aparece en el resultado — es una búsqueda entre varios
-// hoteles, no un solo cálculo que deba fallar entero por uno de ellos. ───────
+// declaran por EDAD EXACTA (nunca fecha de nacimiento) y se clasifican
+// infante/niño PER HOTEL, porque cada hotel puede tener un umbral de edad
+// distinto (`edad_infante_max`/`edad_nino_max`, ver
+// lib/reservar/edadesMenores.ts). Quién paga Niño 1/Niño 2 se decide
+// DESPUÉS, repartiendo por HABITACIÓN (`distribuirPorHabitaciones`, ver
+// lib/reservar/distribucionHabitaciones.ts) — NO es un límite de 2 niños en
+// toda la búsqueda: un hotel cuyas habitaciones consultadas no alcanzan a
+// acomodar la composición (por edad, por capacidad de niño/infante o por la
+// cantidad de adultos declarada) simplemente no aparece en el resultado — es
+// una búsqueda entre varios hoteles, no un solo cálculo que deba fallar
+// entero por uno de ellos. `adultos` es la cantidad REAL declarada por el
+// usuario (campo "Adultos" de Vista Booking) — debe coincidir con lo que las
+// habitaciones elegidas implican (`pax_tarifa` por habitación), si no la
+// búsqueda entera falla con un mensaje claro (no es un rechazo por hotel). ──
 export type BusquedaInput = {
   fechaIda: string;
   fechaRegreso: string;
-  habitaciones: { acom: AcomRoom }[]; // una entrada por habitación (sin niños por habitación)
+  habitaciones: { acom: AcomRoom }[]; // una entrada por habitación, en orden de captura
+  adultos: number; // cantidad real de adultos declarada — debe cuadrar con las habitaciones
   cantidadMenores: number;
-  edadesMenores: number[]; // edad exacta de cada menor — global, no por habitación
+  edadesMenores: number[]; // edad exacta de cada menor
   destino?: string; // filtra por destino (vacío = todos)
 };
 export type BusquedaResultado = {
@@ -236,7 +250,7 @@ export type BusquedaResultado = {
   paqueteId: number; categoria: string; regimen: string;
   total: number; noches: number; fechaIda: string; fechaRegreso: string;
   habitaciones: Record<string, number>;
-  menores: ClasificacionMenores; // clasificación real (infante/Niño 1/Niño 2) para ESTE hotel
+  menores: ClasificacionMenores; // totales de la distribución por habitación, para ESTE hotel
   edadesMenores: number[]; // las mismas edades de la búsqueda — para persistir en el carrito
   pax: number;
   // Todos los combos válidos (categoría × régimen) para esta composición, con su
@@ -244,18 +258,41 @@ export type BusquedaResultado = {
   combos: { categoria: string; regimen: string; total: number; pax: number; menores: ClasificacionMenores }[];
 };
 
-export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; resultados: BusquedaResultado[] } | { ok: false; error: string }> {
+// `inputRaw` se trata como `unknown` — esta función es alcanzable desde el
+// navegador (Server Action) con cualquier body HTTP, sin importar lo que
+// declare el tipo `BusquedaInput`. Se valida la FORMA completa (objeto,
+// fechas, destino, adultos, habitaciones, cantidad de menores, edades) antes
+// de tocar la base de datos o el motor de liquidación.
+export async function buscarHoteles(inputRaw: unknown): Promise<{ ok: true; resultados: BusquedaResultado[]; diagnostico?: string } | { ok: false; error: string }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
-  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y regreso." };
+  if (typeof inputRaw !== "object" || inputRaw === null || Array.isArray(inputRaw)) {
+    return { ok: false, error: "La consulta no tiene una forma válida." };
+  }
+  const o = inputRaw as Record<string, unknown>;
+  const vIda = validarFechaConsulta(o.fechaIda);
+  if (!vIda.ok) return { ok: false, error: vIda.error };
+  const vReg = validarFechaConsulta(o.fechaRegreso);
+  if (!vReg.ok) return { ok: false, error: vReg.error };
+  const vDestino = validarDestinoConsulta(o.destino);
+  if (!vDestino.ok) return { ok: false, error: vDestino.error };
+  const vHabs = validarHabitacionesConsultadas(o.habitaciones);
+  if (!vHabs.ok) return { ok: false, error: vHabs.error };
+  const vAdultos = validarAdultosDeclarados(o.adultos);
+  if (!vAdultos.ok) return { ok: false, error: vAdultos.error };
+  const vCant = validarCantidadMenores(o.cantidadMenores);
+  if (!vCant.ok) return { ok: false, error: vCant.error };
+  const vEdades = validarEdadesMenores(o.edadesMenores, vCant.cantidad);
+  if (!vEdades.ok) return { ok: false, error: vEdades.error };
+
+  const input: BusquedaInput = {
+    fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, habitaciones: vHabs.habitaciones,
+    adultos: vAdultos.adultos, cantidadMenores: vCant.cantidad, edadesMenores: vEdades.edades,
+    destino: vDestino.destino || undefined,
+  };
+  const edades = input.edadesMenores;
+
   const numNoches = noches(input.fechaIda, input.fechaRegreso);
   if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
-  if (!input.habitaciones.length) return { ok: false, error: "Indica al menos una habitación." };
-
-  const vCant = validarCantidadMenores(input.cantidadMenores);
-  if (!vCant.ok) return { ok: false, error: vCant.error };
-  const vEdades = validarEdadesMenores(input.edadesMenores, vCant.cantidad);
-  if (!vEdades.ok) return { ok: false, error: vEdades.error };
-  const edades = vEdades.edades;
   if (input.habitaciones.length + edades.length > MAX_PAX_CONSULTA) {
     return { ok: false, error: `No se pueden cotizar más de ${MAX_PAX_CONSULTA} pax en una sola búsqueda.` };
   }
@@ -271,65 +308,78 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
   const pares = new Map<string, { paquete: number; hotel: number }>();
   for (const f of filas ?? []) if (f.paquete_id != null && f.hotel_id != null) pares.set(`${f.paquete_id}-${f.hotel_id}`, { paquete: f.paquete_id, hotel: f.hotel_id });
 
-  // Composición agregada por acomodación: nº de habitaciones por tipo.
+  // Composición agregada por acomodación (nº de habitaciones por tipo, para
+  // el precio de cada combo). La LISTA en orden de captura (`input.habitaciones`)
+  // se conserva aparte para la distribución por habitación, que sí depende
+  // del orden en que se armaron las habitaciones.
   const porAcom = new Map<AcomRoom, number>();
   for (const r of input.habitaciones) porAcom.set(r.acom, (porAcom.get(r.acom) ?? 0) + 1);
-  const habitaciones: Record<string, number> = {};
-  for (const [a, count] of porAcom) habitaciones[a] = count;
+  const habitacionesOut: Record<string, number> = {};
+  for (const [a, count] of porAcom) habitacionesOut[a] = count;
 
   const resultados: BusquedaResultado[] = [];
+  // Motivo de rechazo por hotel evaluado — nunca se expone cuál hotel dio
+  // cuál motivo; solo sirve para armar un diagnóstico agregado si la
+  // búsqueda entera queda en 0 resultados por la misma composición.
+  const rechazos = new Map<string, number>();
+  let evaluados = 0;
+  const registrarRechazo = (motivo: string) => rechazos.set(motivo, (rechazos.get(motivo) ?? 0) + 1);
+
   for (const { paquete, hotel } of pares.values()) {
     const res = await liquidarHotelPaquete(admin, paquete, hotel, input.fechaIda, numNoches);
     if (!res || !res.combos.length) continue;
     if (numNoches < (res.minNoches ?? 1)) continue; // exige más noches de las buscadas
 
     const [{ data: acomCfg }, { data: hotelRow }] = await Promise.all([
-      admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, chd_max, inf_max").eq("hotel_id", hotel),
+      admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotel),
       admin.from("hoteles").select("edad_infante_max, edad_nino_max, adults_only").eq("id", hotel).maybeSingle(),
     ]);
-    if (edades.length > 0 && hotelRow?.adults_only) continue; // Adults Only: no acepta menores, sin excepción
+    evaluados++;
+    if (edades.length > 0 && hotelRow?.adults_only) { registrarRechazo("Este hotel es Adults Only y no acepta menores."); continue; }
 
-    const reglas = (acomCfg ?? []) as { acomodacion: string; pax_tarifa: number; chd_max: number; inf_max: number }[];
-    const paxTarifa = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
-    let capChd = 0, capInf = 0;
-    for (const [a, count] of porAcom) {
-      const r = reglas.find((x) => x.acomodacion === a);
-      capChd += count * (r?.chd_max ?? PAX_TARIFA_DEFAULT[a]);
-      capInf += count * (r?.inf_max ?? PAX_TARIFA_DEFAULT[a]);
-    }
+    const reglas = (acomCfg ?? []) as AcomConfig[];
+    const configDe = (a: AcomRoom): AcomConfig => reglas.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
 
     // Clasificación REAL por edad, contra el umbral de ESTE hotel — nunca una
-    // edad de referencia genérica. Si no cuadra (alguien mayor al umbral de
-    // niño, o más de 2 menores en edad de niño, o excede la capacidad de las
-    // habitaciones elegidas), este hotel queda fuera del resultado.
-    let menores: ClasificacionMenores = { infantes: 0, nino: 0, nino2: 0 };
+    // edad de referencia genérica. Alguien mayor al umbral de niño no tiene
+    // cabida en este campo (falla cerrado, nunca se cuenta como adulto solo).
+    let ninosClasif = 0, infantesClasif = 0;
     if (edades.length > 0) {
-      const rClasif = clasificarYRepartirMenores(edades, hotelRow?.edad_infante_max ?? 2, hotelRow?.edad_nino_max ?? 10);
-      if (!rClasif.ok) continue;
-      if (rClasif.c.infantes > capInf || rClasif.c.nino + rClasif.c.nino2 > capChd) continue;
-      menores = rClasif.c;
+      const rClasif = clasificarMenoresPorEdad(edades, hotelRow?.edad_infante_max ?? 2, hotelRow?.edad_nino_max ?? 10);
+      if (!rClasif.ok) { registrarRechazo(rClasif.error); continue; }
+      ninosClasif = rClasif.c.ninos;
+      infantesClasif = rClasif.c.infantes;
     }
+
+    // Distribución REAL por habitación: primer niño de cada habitación →
+    // Niño 1, segundo → Niño 2 (nunca un límite global de 2 en toda la
+    // búsqueda), respetando la capacidad real de cada habitación consultada
+    // y la cantidad de adultos declarada.
+    const habitacionesConsultadas: HabitacionConsultada[] = input.habitaciones.map((h) => ({ acom: h.acom, config: configDe(h.acom) }));
+    const rDist = distribuirPorHabitaciones({
+      adultosDeclarados: input.adultos,
+      ninos: ninosClasif,
+      infantes: infantesClasif,
+      habitaciones: habitacionesConsultadas,
+    });
+    if (!rDist.ok) { registrarRechazo(rDist.error); continue; }
+    const menores: ClasificacionMenores = { infantes: rDist.totales.infantes, nino: rDist.totales.nino, nino2: rDist.totales.nino2 };
 
     const combosValidos: { total: number; categoria: string; regimen: string; pax: number; menores: ClasificacionMenores }[] = [];
     for (const combo of res.combos) {
+      const errTarifa = verificarTarifasMenoresDisponibles(menores, { nino: combo.precios["nino"] != null, nino2: combo.precios["nino2"] != null });
+      if (errTarifa) continue; // este combo (categoría/régimen) no tiene la tarifa de niño que hace falta
+
       let total = 0; let pax = 0; let ok = true;
       for (const [acom, count] of porAcom) {
         const pvp = combo.precios[acom];
         if (pvp == null) { ok = false; break; }
-        const adultos = count * paxTarifa(acom);
+        const adultos = count * configDe(acom).pax_tarifa;
         total += adultos * pvp; pax += adultos;
       }
       if (!ok) continue;
-      if (menores.nino > 0) {
-        const pvpN = combo.precios["nino"];
-        if (pvpN == null) continue; // sin tarifa de Niño 1: este combo no sirve, nunca gratis
-        total += menores.nino * pvpN; pax += menores.nino;
-      }
-      if (menores.nino2 > 0) {
-        const pvpN2 = combo.precios["nino2"];
-        if (pvpN2 == null) continue; // sin tarifa de Niño 2: este combo no sirve
-        total += menores.nino2 * pvpN2; pax += menores.nino2;
-      }
+      if (menores.nino > 0) { total += menores.nino * combo.precios["nino"]!; pax += menores.nino; }
+      if (menores.nino2 > 0) { total += menores.nino2 * combo.precios["nino2"]!; pax += menores.nino2; }
       // Infante: si el hotel no configuró tarifa para este combo, es gratis
       // (misma asimetría documentada del resto del motor de reservas).
       if (menores.infantes > 0 && combo.precios["infante"] != null) total += menores.infantes * combo.precios["infante"];
@@ -342,13 +392,23 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
         hotelId: hotel, hotelNombre: res.hotelNombre, destino: res.destinoNombre,
         paqueteId: paquete, categoria: mejor.categoria, regimen: mejor.regimen,
         total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso,
-        habitaciones, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
+        habitaciones: habitacionesOut, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
         combos: combosValidos,
       });
+    } else {
+      registrarRechazo("Ninguna categoría/régimen de este hotel tiene tarifa configurada para esa composición.");
     }
   }
   resultados.sort((a, b) => a.total - b.total);
-  return { ok: true, resultados };
+
+  // Nunca "sin resultados" a secas si sí había hoteles candidatos y todos
+  // quedaron descartados por la misma composición: se entrega el motivo más
+  // frecuente entre los evaluados, sin exponer cuál hotel lo dio.
+  let diagnostico: string | undefined;
+  if (!resultados.length && evaluados > 0 && rechazos.size) {
+    diagnostico = [...rechazos.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  }
+  return { ok: true, resultados, diagnostico };
 }
 
 // ── Mini-motor de búsqueda de RECEPTIVOS (servicios): liquida EN VIVO cada

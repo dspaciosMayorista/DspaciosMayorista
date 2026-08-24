@@ -7,12 +7,19 @@ import {
   EDAD_MENOR_MAX,
   MAX_MENORES_POR_CONSULTA,
   MAX_PAX_CONSULTA,
+  MAX_HABITACIONES_CONSULTA,
   ajustarCantidadEdades,
   parseEdadMenor,
   validarCantidadMenores,
   validarEdadesMenores,
-  clasificarYRepartirMenores,
+  clasificarMenoresPorEdad,
   verificarTarifasMenoresDisponibles,
+  normalizarEdadesMenoresCarrito,
+  validarHabitacionesConsultadas,
+  validarAdultosDeclarados,
+  validarFechaConsulta,
+  validarDestinoConsulta,
+  validarSolicitudItem,
 } from "../lib/reservar/edadesMenores.ts";
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,10 +30,14 @@ const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
 // nacimiento, nunca una edad de referencia genérica). Este archivo importa
 // DIRECTO lib/reservar/edadesMenores.ts (módulo puro, sin "use client"/
 // Supabase) para ejecutar la lógica real de validación/clasificación — no
-// solo inspeccionar texto. Las pruebas de "wiring" al final leen el código
-// fuente de VistaBooking.tsx/BuscadorBooking.tsx/computo.ts/cotizar.ts/
-// checkout/actions.ts como texto para confirmar que usan este mismo módulo
-// (mismo patrón que pruebas/fronteraTramos.test.ts y pruebas/tipoPaquetes.test.ts).
+// solo inspeccionar texto. El reparto Niño 1/Niño 2 POR HABITACIÓN vive en
+// lib/reservar/distribucionHabitaciones.ts (pruebas propias en
+// pruebas/distribucionHabitaciones.test.ts); este módulo solo clasifica la
+// edad (infante/niño/edad-de-adulto) y valida la FORMA de lo que llega desde
+// el navegador. Las pruebas de "wiring" al final leen el código fuente de
+// VistaBooking.tsx/BuscadorBooking.tsx/computo.ts/cotizar.ts/
+// checkout/actions.ts/checkout/page.tsx como texto para confirmar que usan
+// este mismo módulo (mismo patrón que pruebas/fronteraTramos.test.ts).
 // ───────────────────────────────────────────────────────────────────────────
 
 describe("1. 0 menores → arreglo vacío y sin campos", () => {
@@ -38,9 +49,9 @@ describe("1. 0 menores → arreglo vacío y sin campos", () => {
     assert.deepEqual(validarCantidadMenores(0), { ok: true, cantidad: 0 });
     assert.deepEqual(validarEdadesMenores([], 0), { ok: true, edades: [] });
   });
-  test("clasificarYRepartirMenores con 0 edades no clasifica a nadie", () => {
-    const r = clasificarYRepartirMenores([], 2, 10);
-    assert.deepEqual(r, { ok: true, c: { infantes: 0, nino: 0, nino2: 0 } });
+  test("clasificarMenoresPorEdad con 0 edades no clasifica a nadie", () => {
+    const r = clasificarMenoresPorEdad([], 2, 10);
+    assert.deepEqual(r, { ok: true, c: { infantes: 0, ninos: 0 } });
   });
 });
 
@@ -149,56 +160,51 @@ describe("9. Cantidad de menores distinta al largo del arreglo", () => {
   });
 });
 
-describe("10. Límites exactos entre infante/niño/adulto", () => {
+describe("10. Límites exactos entre infante/niño/adulto (clasificación por edad, SIN repartir Niño 1/Niño 2 — eso es aparte)", () => {
   const infanteMax = 2, ninoMax = 10;
   test("edad == infanteMax clasifica infante", () => {
-    const r = clasificarYRepartirMenores([infanteMax], infanteMax, ninoMax);
+    const r = clasificarMenoresPorEdad([infanteMax], infanteMax, ninoMax);
     assert.equal(r.ok, true);
-    if (r.ok) assert.deepEqual(r.c, { infantes: 1, nino: 0, nino2: 0 });
+    if (r.ok) assert.deepEqual(r.c, { infantes: 1, ninos: 0 });
   });
   test("edad == infanteMax + 1 clasifica niño (primer año fuera de infante)", () => {
-    const r = clasificarYRepartirMenores([infanteMax + 1], infanteMax, ninoMax);
+    const r = clasificarMenoresPorEdad([infanteMax + 1], infanteMax, ninoMax);
     assert.equal(r.ok, true);
-    if (r.ok) assert.deepEqual(r.c, { infantes: 0, nino: 1, nino2: 0 });
+    if (r.ok) assert.deepEqual(r.c, { infantes: 0, ninos: 1 });
   });
   test("edad == ninoMax clasifica niño (último año dentro del rango)", () => {
-    const r = clasificarYRepartirMenores([ninoMax], infanteMax, ninoMax);
+    const r = clasificarMenoresPorEdad([ninoMax], infanteMax, ninoMax);
     assert.equal(r.ok, true);
-    if (r.ok) assert.deepEqual(r.c, { infantes: 0, nino: 1, nino2: 0 });
+    if (r.ok) assert.deepEqual(r.c, { infantes: 0, ninos: 1 });
   });
   test("edad == ninoMax + 1 ya es adulto (falla cerrado, no se cobra como niño)", () => {
-    const r = clasificarYRepartirMenores([ninoMax + 1], infanteMax, ninoMax);
+    const r = clasificarMenoresPorEdad([ninoMax + 1], infanteMax, ninoMax);
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.codigo, "edad_adulto");
   });
 });
 
-describe("11. Dos menores con edades distintas liquidan categorías distintas", () => {
+describe("11. Varios menores con edades distintas clasifican bien (el reparto Niño1/Niño2 es aparte, por habitación)", () => {
   test("un infante y un niño en la misma consulta", () => {
-    const r = clasificarYRepartirMenores([1, 5], 2, 10);
+    const r = clasificarMenoresPorEdad([1, 5], 2, 10);
     assert.equal(r.ok, true);
-    if (r.ok) assert.deepEqual(r.c, { infantes: 1, nino: 1, nino2: 0 });
+    if (r.ok) assert.deepEqual(r.c, { infantes: 1, ninos: 1 });
   });
-  test("dos niños se reparten Niño 1 / Niño 2 (por orden de captura, nunca ambos en la misma tarifa)", () => {
-    const r = clasificarYRepartirMenores([4, 8], 2, 10);
+  test("cuatro niños clasifican los 4 como 'niño' — la clasificación NUNCA limita a 2 (eso lo decide la habitación, no la edad)", () => {
+    const r = clasificarMenoresPorEdad([3, 4, 5, 6], 2, 10);
     assert.equal(r.ok, true);
-    if (r.ok) assert.deepEqual(r.c, { infantes: 0, nino: 1, nino2: 1 });
+    if (r.ok) assert.deepEqual(r.c, { infantes: 0, ninos: 4 });
   });
 });
 
-describe("12. Menor con tarifa de adulto SOLO cuando la regla lo indique", () => {
-  test("el sistema no tiene una tarifa de adulto individual — una edad de adulto siempre falla cerrado, nunca se cobra en silencio", () => {
-    const r = clasificarYRepartirMenores([16], 2, 10);
+describe("12. Menor con edad de adulto siempre falla cerrado, nunca se cobra en silencio", () => {
+  test("el sistema no tiene una tarifa de adulto individual — una edad de adulto siempre falla cerrado", () => {
+    const r = clasificarMenoresPorEdad([16], 2, 10);
     assert.equal(r.ok, false);
     if (!r.ok) {
       assert.equal(r.codigo, "edad_adulto");
       assert.match(r.error, /adulto/);
     }
-  });
-  test("un 3er menor en edad de niño tampoco se aproxima a una tarifa existente — falla cerrado", () => {
-    const r = clasificarYRepartirMenores([4, 5, 6], 2, 10);
-    assert.equal(r.ok, false);
-    if (!r.ok) assert.equal(r.codigo, "sin_cupo_tarifa_menores");
   });
 });
 
@@ -222,10 +228,6 @@ describe("14. No se usa 0 ni una edad de referencia silenciosa", () => {
     const err1 = verificarTarifasMenoresDisponibles({ infantes: 0, nino: 1, nino2: 1 }, { nino: false, nino2: false });
     assert.ok(err1);
   });
-  test("clasificarYRepartirMenores nunca inventa un reparto cuando hay 0 menores válidos de más de 2 en edad de niño", () => {
-    const r = clasificarYRepartirMenores([3, 4, 5, 6], 2, 10);
-    assert.equal(r.ok, false);
-  });
 });
 
 describe("15. La edad llega intacta a cálculo, snapshot y creación de la reserva/cotización — wiring", () => {
@@ -239,17 +241,32 @@ describe("15. La edad llega intacta a cálculo, snapshot y creación de la reser
     assert.match(computo, /from "@\/lib\/reservar\/edadesMenores"/);
     assert.match(computo, /resolverMenoresPorEdad/);
     assert.match(computo, /input\.edadesMenores !== undefined/);
+    assert.match(computo, /distribuirPorHabitaciones/);
   });
-  test("cotizar.ts (buscarHoteles) clasifica por edad real por hotel con el helper real", () => {
+  test("cotizar.ts (buscarHoteles) recibe unknown, valida forma completa y distribuye por habitación con el helper real", () => {
     assert.match(cotizar, /from "@\/lib\/reservar\/edadesMenores"/);
-    assert.match(cotizar, /clasificarYRepartirMenores/);
+    assert.match(cotizar, /clasificarMenoresPorEdad/);
+    assert.match(cotizar, /distribuirPorHabitaciones/);
+    assert.match(cotizar, /validarAdultosDeclarados/);
+    assert.match(cotizar, /validarHabitacionesConsultadas/);
+    assert.match(cotizar, /export async function buscarHoteles\(inputRaw: unknown\)/);
+    assert.doesNotMatch(cotizar, /clasificarYRepartirMenores/);
   });
-  test("checkout/actions.ts propaga edadesMenores del ítem del carrito al ReservaInput y al snapshot persistido", () => {
+  test("cotizar.ts nunca devuelve 'sin resultados' a secas: arma un diagnóstico cuando todos los hoteles evaluados se descartan", () => {
+    assert.match(cotizar, /diagnostico/);
+  });
+  test("checkout/actions.ts propaga edadesMenores del ítem validado al ReservaInput y al snapshot persistido", () => {
     assert.match(checkout, /edadesMenores: it\.edadesMenores/);
     assert.match(checkout, /edades_menores: it\.edadesMenores/);
+    assert.match(checkout, /validarSolicitudItem/);
+    assert.match(checkout, /export async function crearSolicitudReserva\(inputRaw: unknown\)/);
   });
-  test("checkout/page.tsx manda edadesMenores del carrito al server action", () => {
-    assert.match(checkoutPage, /edadesMenores: it\.edadesMenores/);
+  test("checkout/actions.ts persiste la distribución por habitación en el snapshot (autoritativa, de comp.data)", () => {
+    assert.match(checkout, /distribucion_menores: distribucionMenores/);
+  });
+  test("checkout/page.tsx normaliza carritos viejos y manda cantidadMenores derivado de edadesMenores", () => {
+    assert.match(checkoutPage, /normalizarEdadesMenoresCarrito/);
+    assert.match(checkoutPage, /cantidadMenores: edadesMenores\.length/);
   });
   test("HotelCartItem persiste edadesMenores", () => {
     assert.match(cart, /edadesMenores\?:\s*number\[\]/);
@@ -299,18 +316,80 @@ describe("19. Payload manipulado no produce TypeError ni error 500", () => {
   test("MAX_PAX_CONSULTA está definido y es un entero positivo razonable", () => {
     assert.ok(Number.isInteger(MAX_PAX_CONSULTA) && MAX_PAX_CONSULTA > 0);
   });
+
+  const payloadsAdultos: unknown[] = [null, undefined, "2", -1, 0, 1.5, NaN, Infinity, {}, [], "abc"];
+  for (const p of payloadsAdultos) {
+    test(`validarAdultosDeclarados(${JSON.stringify(p)}) no lanza y rechaza`, () => {
+      assert.doesNotThrow(() => validarAdultosDeclarados(p));
+      assert.equal(validarAdultosDeclarados(p).ok, false);
+    });
+  }
+  test("validarAdultosDeclarados(1) y valores enteros ≥ 1 se aceptan", () => {
+    assert.equal(validarAdultosDeclarados(1).ok, true);
+    assert.equal(validarAdultosDeclarados(4).ok, true);
+  });
+
+  const payloadsHabitaciones: unknown[] = [null, undefined, "doble", 42, {}, [null], [42], [{ acom: "invalida" }], [{}], Array.from({ length: MAX_HABITACIONES_CONSULTA + 1 }, () => ({ acom: "doble" }))];
+  for (const p of payloadsHabitaciones) {
+    test(`validarHabitacionesConsultadas(${JSON.stringify(p)}) no lanza y rechaza`, () => {
+      assert.doesNotThrow(() => validarHabitacionesConsultadas(p));
+      assert.equal(validarHabitacionesConsultadas(p).ok, false);
+    });
+  }
+  test("validarHabitacionesConsultadas con habitaciones válidas acepta y respeta el orden", () => {
+    const r = validarHabitacionesConsultadas([{ acom: "doble" }, { acom: "sencilla" }]);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.habitaciones.map((h) => h.acom), ["doble", "sencilla"]);
+  });
+
+  const payloadsFecha: unknown[] = [null, undefined, 20260101, {}, [], "01/01/2026", ""];
+  for (const p of payloadsFecha) {
+    test(`validarFechaConsulta(${JSON.stringify(p)}) no lanza y rechaza forma inválida`, () => {
+      assert.doesNotThrow(() => validarFechaConsulta(p));
+      assert.equal(validarFechaConsulta(p).ok, false);
+    });
+  }
+  test("validarFechaConsulta acepta AAAA-MM-DD", () => {
+    assert.equal(validarFechaConsulta("2026-01-05").ok, true);
+  });
+  test("validarFechaConsulta solo valida la FORMA, no que el día/mes exista de verdad (documentado: eso lo hace la comparación de fechas en BD)", () => {
+    assert.equal(validarFechaConsulta("2026-13-40").ok, true);
+  });
+
+  const payloadsDestino: unknown[] = [42, {}, [], true];
+  for (const p of payloadsDestino) {
+    test(`validarDestinoConsulta(${JSON.stringify(p)}) no lanza y rechaza forma inválida`, () => {
+      assert.doesNotThrow(() => validarDestinoConsulta(p));
+      assert.equal(validarDestinoConsulta(p).ok, false);
+    });
+  }
+  test("validarDestinoConsulta acepta ausente/null como vacío", () => {
+    assert.deepEqual(validarDestinoConsulta(undefined), { ok: true, destino: "" });
+    assert.deepEqual(validarDestinoConsulta(null), { ok: true, destino: "" });
+  });
+
+  const payloadsSolicitudItem: unknown[] = [null, undefined, "item", 42, [], {}, { modulo: "otro" }, { modulo: "bloqueo", paqueteId: "1" }];
+  for (const p of payloadsSolicitudItem) {
+    test(`validarSolicitudItem(${JSON.stringify(p)}, 0) no lanza y rechaza forma inválida`, () => {
+      assert.doesNotThrow(() => validarSolicitudItem(p, 0));
+      assert.equal(validarSolicitudItem(p, 0).ok, false);
+    });
+  }
 });
 
 describe("20. Wiring — Vista Booking usa el helper real, no una copia/aproximación", () => {
   const vistaBooking = leer("app/tarifario/VistaBooking.tsx");
   const buscador = leer("app/tarifario/BuscadorBooking.tsx");
 
-  test("VistaBooking.tsx (EditorPax) importa y usa el módulo real de edadesMenores", () => {
+  test("VistaBooking.tsx (EditorPax) importa y usa el módulo real de edadesMenores/distribución por habitación", () => {
     assert.match(vistaBooking, /from "@\/lib\/reservar\/edadesMenores"/);
-    assert.match(vistaBooking, /clasificarYRepartirMenores/);
+    assert.match(vistaBooking, /clasificarMenoresPorEdad/);
+    assert.match(vistaBooking, /from "@\/lib\/reservar\/distribucionHabitaciones"/);
+    assert.match(vistaBooking, /distribuirPorHabitaciones/);
     assert.match(vistaBooking, /verificarTarifasMenoresDisponibles/);
     assert.match(vistaBooking, /ajustarCantidadEdades/);
     assert.match(vistaBooking, /parseEdadMenor/);
+    assert.doesNotMatch(vistaBooking, /clasificarYRepartirMenores/);
   });
   test("VistaBooking.tsx ya NO tiene los inputs manuales de niños 1/niños 2/infantes (reemplazados por edad)", () => {
     assert.doesNotMatch(vistaBooking, /Niños 1 \(/);
@@ -333,5 +412,71 @@ describe("20. Wiring — Vista Booking usa el helper real, no una copia/aproxima
   });
   test("BuscadorBooking.tsx nunca usa fecha de nacimiento", () => {
     assert.doesNotMatch(buscador, /fechaNacimiento|fecha_nacimiento/);
+  });
+});
+
+describe("21. Wiring — snapshot usa edades y distribución validadas por el servidor", () => {
+  const checkout = leer("app/tarifario/checkout/actions.ts");
+  test("hotelesSnap toma la distribución de comp.data (servidor), no del ítem crudo del cliente", () => {
+    assert.match(checkout, /distribucionMenores \} = comp\.data/);
+    assert.match(checkout, /distribucion_menores: distribucionMenores/);
+  });
+  test("hotelesSnap toma la clasificación agregada (numNinos\\/numNinos2\\/numInfantes) de comp.data", () => {
+    assert.match(checkout, /menores_clasificados: \{ infantes: numInfantes, nino: numNinos, nino2: numNinos2 \}/);
+  });
+});
+
+describe("22. Control negativo del límite global incorrecto de la 1a ronda", () => {
+  test("clasificarMenoresPorEdad ya no existe con el nombre/comportamiento anterior (clasificarYRepartirMenores) en ningún archivo del módulo", () => {
+    const modulo = leer("lib/reservar/edadesMenores.ts");
+    assert.doesNotMatch(modulo, /clasificarYRepartirMenores/);
+  });
+  test("4 niños clasifican los 4 (la edad nunca limita a 2 — ese límite ya no existe a nivel de clasificación)", () => {
+    const r = clasificarMenoresPorEdad([3, 4, 5, 6], 2, 10);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.c.ninos, 4);
+  });
+  test("normalizarEdadesMenoresCarrito: sin menores se normaliza a [] de forma segura (carrito histórico sin menores)", () => {
+    assert.deepEqual(normalizarEdadesMenoresCarrito({ ninos: 0, ninos2: 0, infantes: 0 }), { ok: true, edadesMenores: [] });
+  });
+  test("normalizarEdadesMenoresCarrito: con menores pero sin edades se bloquea con mensaje controlado (nunca infiere edades)", () => {
+    const r = normalizarEdadesMenoresCarrito({ ninos: 1, ninos2: 0, infantes: 0 });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /edad/i);
+  });
+  test("normalizarEdadesMenoresCarrito: si ya trae edadesMenores (aunque sea []), se respeta tal cual", () => {
+    assert.deepEqual(normalizarEdadesMenoresCarrito({ edadesMenores: [], ninos: 2, ninos2: 0, infantes: 0 }), { ok: true, edadesMenores: [] });
+    assert.deepEqual(normalizarEdadesMenoresCarrito({ edadesMenores: [5], ninos: 1, ninos2: 0, infantes: 0 }), { ok: true, edadesMenores: [5] });
+  });
+});
+
+describe("23. Acción pública sin edadesMenores se rechaza aunque mande ninos/ninos2 (nunca cae al reparto legado)", () => {
+  const base = {
+    modulo: "porcion_terrestre", paqueteId: 1, hotelId: 2, bloqueoId: null,
+    hotelNombre: "Hotel de prueba", destino: "San Andrés", categoria: "Estándar", regimen: "PC",
+    fechaIda: "2026-01-01", fechaRegreso: "2026-01-04", noches: 3,
+    habitaciones: { doble: 1 }, cantidadMenores: 0, edadesMenores: [],
+  };
+  test("ítem válido completo con edadesMenores presente se acepta", () => {
+    const r = validarSolicitudItem(base, 0);
+    assert.equal(r.ok, true);
+  });
+  test("mismo ítem SIN la clave edadesMenores se rechaza, aunque traiga ninos/ninos2/infantes/pax/precio del carrito legado", () => {
+    const sinEdades = Object.fromEntries(Object.entries(base).filter(([k]) => k !== "edadesMenores"));
+    const conCamposLegados = { ...sinEdades, ninos: 2, ninos2: 1, infantes: 0, pax: 5, precio: 900000 };
+    const r = validarSolicitudItem(conCamposLegados, 0);
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /edad de sus menores/);
+  });
+  test("validarSolicitudItem nunca lee ninos/ninos2/infantes/pax/precio del objeto (no forman parte del ítem validado)", () => {
+    const r = validarSolicitudItem(base, 0);
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.ok(!("ninos" in r.item));
+      assert.ok(!("ninos2" in r.item));
+      assert.ok(!("infantes" in r.item));
+      assert.ok(!("pax" in r.item));
+      assert.ok(!("precio" in r.item));
+    }
   });
 });

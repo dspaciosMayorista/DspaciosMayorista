@@ -13,9 +13,10 @@ import {
   MAX_MENORES_POR_CONSULTA,
   ajustarCantidadEdades,
   parseEdadMenor,
-  clasificarYRepartirMenores,
+  clasificarMenoresPorEdad,
   verificarTarifasMenoresDisponibles,
 } from "@/lib/reservar/edadesMenores";
+import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking } from "./BuscadorBooking";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
@@ -949,16 +950,40 @@ function EditorPax({
   const edadesFaltantes = edadesParsed.filter((p) => p.valor == null).length;
   const edades = edadesParsed.map((p) => p.valor).filter((v): v is number => v != null);
 
+  // Clasifica primero por edad (infante/niño, contra el umbral real del
+  // hotel) y luego reparte Niño 1/Niño 2 POR HABITACIÓN — cada habitación
+  // admite máximo un Niño 1 y un Niño 2 (nunca un límite de 2 en toda la
+  // reserva); con varias habitaciones caben más niños. Ver
+  // lib/reservar/distribucionHabitaciones.ts.
   let clasifError: string | null = null;
   let ninos = 0, ninos2 = 0, infantes = 0;
   if (cantidadMenores > 0 && edadesValidas) {
-    const r = clasificarYRepartirMenores(edades, infanteMax, ninoMax);
-    if (!r.ok) {
-      clasifError = r.error;
+    const rClas = clasificarMenoresPorEdad(edades, infanteMax, ninoMax);
+    if (!rClas.ok) {
+      clasifError = rClas.error;
     } else {
-      const errTarifa = verificarTarifasMenoresDisponibles(r.c, { nino: pvp["nino"] != null, nino2: pvp["nino2"] != null });
-      if (errTarifa) clasifError = errTarifa;
-      else ({ nino: ninos, nino2: ninos2, infantes } = r.c);
+      const habitacionesConsultadas: HabitacionConsultada[] = [];
+      for (const a of ACOM_ROOMS) {
+        const rooms = habs[a] ?? 0;
+        if (rooms > 0 && pvp[a] != null) {
+          const c = cfg(a);
+          for (let i = 0; i < rooms; i++) habitacionesConsultadas.push({ acom: a, config: c });
+        }
+      }
+      const rDist = distribuirPorHabitaciones({
+        adultosDeclarados: adultos, // ya = suma de pax_tarifa de las habitaciones elegidas
+        ninos: rClas.c.ninos,
+        infantes: rClas.c.infantes,
+        habitaciones: habitacionesConsultadas,
+      });
+      if (!rDist.ok) {
+        clasifError = rDist.error;
+      } else {
+        const totalesM = { infantes: rDist.totales.infantes, nino: rDist.totales.nino, nino2: rDist.totales.nino2 };
+        const errTarifa = verificarTarifasMenoresDisponibles(totalesM, { nino: pvp["nino"] != null, nino2: pvp["nino2"] != null });
+        if (errTarifa) clasifError = errTarifa;
+        else ({ nino: ninos, nino2: ninos2, infantes } = totalesM);
+      }
     }
   }
 

@@ -29,6 +29,7 @@ export function BuscadorBooking({
   const [err, setErr] = useState("");
   const [avisoHab, setAvisoHab] = useState("");
   const [resultados, setResultados] = useState<BusquedaResultado[] | null>(null);
+  const [diagnostico, setDiagnostico] = useState<string | null>(null);
   const [soloPetFriendly, setSoloPetFriendly] = useState(false);
   const [soloAdultsOnly, setSoloAdultsOnly] = useState(false);
 
@@ -61,18 +62,28 @@ export function BuscadorBooking({
   const edades = edadesParsed.map((p) => p.valor).filter((v): v is number => v != null);
   const menoresListos = cantidadMenores === 0 || edadesValidas;
 
+  // "Adultos" es un campo real de la consulta: se valida y se envía al motor
+  // (antes quedaba en el estado sin usarse). Entero ≥ 1, nunca decimal/texto/
+  // negativo — el servidor vuelve a validar esto mismo, este parseo es solo
+  // para dar feedback inmediato y no bloquear con un valor a medio escribir.
+  const adultosTrim = adultos.trim();
+  const adultosParsed = /^\d+$/.test(adultosTrim) ? Number(adultosTrim) : null;
+  const adultosValido = adultosParsed != null && adultosParsed >= 1;
+
   function buscar() {
-    setErr(""); setResultados(null);
+    setErr(""); setResultados(null); setDiagnostico(null);
     if (!fIda || !fReg) { setErr("Indica fecha de ida y de regreso."); return; }
+    if (!adultosValido) { setErr("La cantidad de adultos debe ser un entero mayor o igual a 1."); return; }
     if (!menoresListos) { setErr(`Falta la edad de ${edadesFaltantes} menor(es).`); return; }
     start(async () => {
       const r = await buscarHoteles({
         fechaIda: fIda, fechaRegreso: fReg,
         habitaciones: habs.map((acom) => ({ acom })),
+        adultos: adultosParsed,
         cantidadMenores, edadesMenores: edades,
         destino,
       });
-      if (r.ok) setResultados(r.resultados);
+      if (r.ok) { setResultados(r.resultados); setDiagnostico(r.diagnostico ?? null); }
       else setErr(r.error);
     });
   }
@@ -104,7 +115,10 @@ export function BuscadorBooking({
           )}
           <div><label className="mb-1 block text-xs text-gray-500">Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} /></div>
           <div><label className="mb-1 block text-xs text-gray-500">Regreso</label><input type="date" min={fIda} value={fReg} onChange={(e) => setFReg(e.target.value)} className={sel} /></div>
-          <div><label className="mb-1 block text-xs text-gray-500">Adultos (12+)</label><input type="number" min={1} value={adultos} onChange={(e) => setAdultos(e.target.value)} className={`${sel} w-20`} /></div>
+          <div><label className="mb-1 block text-xs text-gray-500">Adultos (12+)</label>
+            <input type="number" min={1} value={adultos} onChange={(e) => setAdultos(e.target.value)}
+              className={`${sel} w-20 ${!adultosValido ? "border-red-400" : ""}`} aria-invalid={!adultosValido ? true : undefined} />
+          </div>
           <div><label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs text-gray-500">Cantidad de menores</label>
             <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA} value={cantidadMenores}
               onChange={(e) => setCantidadMenores(Number(e.target.value))} className={`${sel} w-20`} />
@@ -158,7 +172,7 @@ export function BuscadorBooking({
         )}
 
         <div className="mt-3 flex items-center gap-3">
-          <button type="button" onClick={buscar} disabled={pending || !menoresListos} className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
+          <button type="button" onClick={buscar} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Buscando…" : "Buscar hoteles"}
           </button>
           {resultados && <button type="button" onClick={() => setResultados(null)} className="text-xs text-gray-400 hover:text-gray-700">Limpiar resultados</button>}
@@ -183,7 +197,11 @@ export function BuscadorBooking({
             </div>
           </div>
           {resultadosFiltrados.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">No hay hoteles que cumplan esa composición/fechas/filtros. Prueba otra acomodación, fechas o quita un filtro.</p>
+            <p className="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">
+              {diagnostico
+                ? diagnostico
+                : "No hay hoteles que cumplan esa composición/fechas/filtros. Prueba otra acomodación, fechas o quita un filtro."}
+            </p>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {resultadosFiltrados.map((r) => (

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem, type HotelCartItem } from "@/lib/cart/CartContext";
+import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
 import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B } from "./actions";
 
 function resumenHab(it: HotelCartItem): string {
@@ -56,14 +57,28 @@ export default function CheckoutPage() {
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
+
+    // Carritos guardados en el navegador ANTES de pedir la edad de cada menor
+    // no traen `edadesMenores`: sin menores declarados se normaliza a `[]`
+    // (nada que perder); con menores pero sin edad de cada uno se bloquea
+    // AQUÍ, con un mensaje que dice qué hotel retirar y volver a agregar —
+    // nunca se manda al servidor a que intente adivinar (ese reparto legado
+    // ya no existe para este flujo público, ver checkout/actions.ts).
+    const itemsNormalizados: { it: HotelCartItem; edadesMenores: number[] }[] = [];
+    for (const it of hotelItems) {
+      const r = normalizarEdadesMenoresCarrito(it);
+      if (!r.ok) { setErr(`${it.hotelNombre}: ${r.error}`); return; }
+      itemsNormalizados.push({ it, edadesMenores: r.edadesMenores });
+    }
+
     start(async () => {
       const r = await crearSolicitudReserva({
-        items: hotelItems.map((it) => ({
+        items: itemsNormalizados.map(({ it, edadesMenores }) => ({
           modulo: it.modulo, paqueteId: it.paqueteId, hotelId: it.hotelId, bloqueoId: it.bloqueoId,
           hotelNombre: it.hotelNombre, destino: it.destino, categoria: it.categoria, regimen: it.regimen,
           fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, noches: it.noches,
           habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes, pax: it.pax, precio: it.precio,
-          edadesMenores: it.edadesMenores,
+          edadesMenores, cantidadMenores: edadesMenores.length,
         })),
         // Los tours aún no generan su propia cotización (próxima fase) — se
         // incluyen tal cual en el mensaje/total de la solicitud.
