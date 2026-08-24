@@ -26,6 +26,9 @@ import {
   validarClienteInput,
   validarCrearSolicitudInput,
   resolverB2BParaMensaje,
+  validarPctComisionB2B,
+  resolverContextoB2B,
+  MAX_PCT_COMISION_B2B,
   MAX_ITEMS_CARRITO,
   MAX_TOURS_CARRITO,
   MAX_LINEAS_CARRITO,
@@ -265,10 +268,21 @@ describe("15. La edad llega intacta a cálculo, snapshot y creación de la reser
   test("cotizar.ts nunca devuelve 'sin resultados' a secas: arma un diagnóstico cuando todos los hoteles evaluados se descartan", () => {
     assert.match(cotizar, /diagnostico/);
   });
-  test("checkout/actions.ts propaga edadesMenores del ítem validado al ReservaInput, y el snapshot usa las edades que comp.data realmente usó (no la referencia cruda del ítem)", () => {
-    assert.match(checkout, /edadesMenores: it\.edadesMenores/);
-    assert.match(checkout, /edades_menores: edadesMenoresUsadas/);
+  test("checkout/actions.ts propaga edadesMenores del ítem validado al ReservaInput, y el snapshot/itemsOk usan SOLO las edades que comp.data realmente usó — nunca la referencia cruda del ítem, ni siquiera como fallback (ronda 4)", () => {
+    assert.match(checkout, /edadesMenores: it\.edadesMenores/); // esto SÍ es correcto: es lo que se manda a computarReserva como entrada
+    // El snapshot/itemsOk usan la variable clonada `edadesMenoresConfirmadas`
+    // (copia de comp.data.edadesMenoresUsadas) — nunca `edadesMenoresUsadas`
+    // directo (evita compartir referencia mutable) ni `?? it.edadesMenores`
+    // (el fallback que existía antes de esta ronda).
+    assert.match(checkout, /edades_menores: edadesMenoresConfirmadas/);
+    assert.match(checkout, /edadesMenores: edadesMenoresConfirmadas/);
     assert.doesNotMatch(checkout, /edades_menores: it\.edadesMenores/);
+    assert.doesNotMatch(checkout, /edadesMenoresUsadas \?\? it\.edadesMenores/);
+    assert.doesNotMatch(checkout, /edades_menores: edadesMenoresUsadas[,\s]/); // nunca la referencia cruda de comp.data sin clonar
+    // Si `comp.data.edadesMenoresUsadas` viene null/undefined, aborta la
+    // cotización — nunca completa en silencio con el ítem crudo.
+    assert.match(checkout, /if \(edadesMenoresUsadas == null\)/);
+    assert.match(checkout, /const edadesMenoresConfirmadas = \[\.\.\.edadesMenoresUsadas\]/);
     assert.match(checkout, /validarSolicitudItem/);
     assert.match(checkout, /export async function crearSolicitudReserva\(inputRaw: unknown\)/);
   });
@@ -606,22 +620,27 @@ describe("24. Tour manipulado — validarTourInput nunca lee nombre/precio/moned
 
 describe("25. Recálculo server-side — el precio nunca sale de lo que mandó el navegador (wiring, DB no disponible en este entorno)", () => {
   const cotizar = leer("lib/reservar/cotizar.ts");
+  const liquidacion = leer("lib/reservar/liquidacionServicio.ts");
   const checkout = leer("app/tarifario/checkout/actions.ts");
-  test("cotizar.ts expone liquidarServicioPuntual con la MISMA fórmula que buscarReceptivos (calcularResultadoServicio compartida, no duplicada)", () => {
+  test("cotizar.ts NO define su propia copia de la fórmula — importa calcularResultadoServicio/resolverLiquidacionServicioPuntual desde el módulo puro compartido", () => {
     assert.match(cotizar, /export async function liquidarServicioPuntual/);
-    assert.match(cotizar, /function calcularResultadoServicio/);
-    // Ambas funciones de búsqueda usan la función compartida — si alguna
-    // volviera a traer su propia copia de la fórmula, esta prueba lo detecta.
-    const usosCalculo = cotizar.match(/calcularResultadoServicio\(/g) ?? [];
-    assert.ok(usosCalculo.length >= 3, "calcularResultadoServicio debe usarse en su definición + buscarReceptivos + liquidarServicioPuntual");
+    assert.doesNotMatch(cotizar, /function calcularResultadoServicio/); // ya no se DEFINE acá
+    assert.match(cotizar, /from "@\/lib\/reservar\/liquidacionServicio"/);
+    assert.match(cotizar, /calcularResultadoServicio,/);
+    assert.match(cotizar, /resolverLiquidacionServicioPuntual,/);
   });
-  test("checkout/actions.ts re-liquida cada tour con liquidarServicioPuntual y usa SOLO el resultado (resultado.total/nombre/moneda) dentro del bucle de tours, nunca t.precio/t.nombre/t.moneda", () => {
+  test("liquidacionServicio.ts: buscarReceptivos (calcularResultadoServicio) y la re-liquidación puntual (resolverLiquidacionServicioPuntual) llaman a la MISMA fórmula base (calcularPrecioConModoYMarkup), nunca duplicada", () => {
+    assert.match(liquidacion, /export function calcularPrecioConModoYMarkup/);
+    const usos = liquidacion.match(/calcularPrecioConModoYMarkup\(/g) ?? [];
+    assert.ok(usos.length >= 3, "calcularPrecioConModoYMarkup debe usarse en su definición + calcularResultadoServicio + resolverLiquidacionServicioPuntual");
+  });
+  test("checkout/actions.ts re-liquida cada tour con liquidarServicioPuntual y usa SOLO resultado.resultado.* dentro del bucle de tours, nunca t.precio/t.nombre/t.moneda", () => {
     const idxInicio = checkout.indexOf("for (const t of input.tours)");
     const idxFin = checkout.indexOf("\n  }\n", idxInicio);
     const bucle = checkout.slice(idxInicio, idxFin);
     assert.match(bucle, /liquidarServicioPuntual\(t\)/);
-    assert.match(bucle, /resultado\.total/);
-    assert.match(bucle, /resultado\.nombre/);
+    assert.match(bucle, /resultado\.resultado\.total/);
+    assert.match(bucle, /resultado\.resultado\.nombre/);
     // `t` (el ítem validado por `validarTourInput`) solo tiene servicioId/
     // paqueteId/fechaIda/fechaRegreso/pax — no HAY t.precio/t.nombre/t.moneda
     // que leer, así que esta prueba confirma que el bucle nunca los inventa.
@@ -629,9 +648,19 @@ describe("25. Recálculo server-side — el precio nunca sale de lo que mandó e
     assert.doesNotMatch(bucle, /t\.nombre/);
     assert.doesNotMatch(bucle, /t\.moneda/);
   });
-  test("un servicio que ya no se puede re-liquidar (null) se excluye, nunca se aproxima un precio", () => {
-    assert.match(checkout, /if \(!resultado\)/);
-    assert.match(checkout, /excluidos\.push/);
+  test("solo 'no_disponible' excluye el tour del carrito — 'error_consulta'/'configuracion_invalida' abortan la cotización COMPLETA (ronda 4)", () => {
+    const idxInicio = checkout.indexOf("for (const t of input.tours)");
+    const idxFin = checkout.indexOf("\n  }\n", idxInicio);
+    const bucle = checkout.slice(idxInicio, idxFin);
+    assert.match(bucle, /if \(!resultado\.ok\)/);
+    assert.match(bucle, /if \(resultado\.tipo === "no_disponible"\)/);
+    assert.match(bucle, /excluidos\.push/);
+    // El abort completo (return ok:false) debe estar en la MISMA rama, fuera
+    // del if de no_disponible — nunca dentro de un `continue` silencioso.
+    const idxNoDisp = bucle.indexOf('if (resultado.tipo === "no_disponible")');
+    const idxReturn = bucle.indexOf("return { ok: false", idxNoDisp);
+    const bloqueNoDisp = bucle.slice(idxNoDisp, idxReturn);
+    assert.match(bloqueNoDisp, /continue/);
   });
 });
 
@@ -739,12 +768,7 @@ describe("28. Comisión B2B manipulada y usuario anónimo — resolverB2BParaMen
     const r = resolverB2BParaMensaje(ctx, "neta");
     assert.deepEqual(r, { modo: "neta", facturacion: agenciaReal, pctComision: 0.12 });
   });
-  test("control negativo: pctComision=1 (100%) en la sesión SÍ se refleja tal cual — la función no la limita a un rango, esa garantía vive en que el valor viene de usuarios.pct_comision, no del navegador", () => {
-    // Esta prueba documenta la frontera de responsabilidad: `resolverB2BParaMensaje`
-    // confía en `ctxSesion` porque ese objeto YA se resolvió en el servidor
-    // (getContextoB2B, fuera del alcance de node --test sin Supabase) — lo que
-    // esta función garantiza es que NINGÚN campo de `modoSolicitado` (lo único
-    // que puede venir del navegador) se filtre a facturacion/pctComision.
+  test("pctComision=1 (100%, el borde exacto del rango permitido) SÍ se refleja — 1 es válido, no mayor a MAX_PCT_COMISION_B2B", () => {
     const ctx = { esB2B: true, agencia: agenciaReal, pctComision: 1 };
     const r = resolverB2BParaMensaje(ctx, "comisionable");
     assert.equal(r?.pctComision, 1);
@@ -795,5 +819,168 @@ describe("30. Wiring — checkout/page.tsx bloquea tours históricos sin servici
     const idx = checkoutPage.indexOf("Facturar a (agencia)");
     const cuerpo = checkoutPage.slice(idx, idx + 600);
     assert.match(cuerpo, /disabled readOnly/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 4 — "USUARIO B2B INACTIVO". `getContextoB2B` (checkout/actions.ts) no
+// validaba `usuarios.activo` ni del usuario logueado ni de la agencia
+// titular, ni el rol de la agencia titular, ni el rango de `pctComision`.
+// `resolverContextoB2B` (edadesMenores.ts) es la decisión PURA extraída de
+// ese flujo — recibe las filas YA CONSULTADAS y decide, nunca consulta — así
+// que estas pruebas ejecutan la lógica real de la ronda 4, no solo texto.
+// ───────────────────────────────────────────────────────────────────────────
+describe("31. validarPctComisionB2B — rango comercial permitido", () => {
+  test("NaN, Infinity, string, null, undefined → inválido", () => {
+    assert.equal(validarPctComisionB2B(NaN), null);
+    assert.equal(validarPctComisionB2B(Infinity), null);
+    assert.equal(validarPctComisionB2B(-Infinity), null);
+    assert.equal(validarPctComisionB2B("0.12"), null);
+    assert.equal(validarPctComisionB2B(null), null);
+    assert.equal(validarPctComisionB2B(undefined), null);
+  });
+  test("negativo → inválido", () => {
+    assert.equal(validarPctComisionB2B(-0.01), null);
+    assert.equal(validarPctComisionB2B(-1), null);
+  });
+  test(`mayor a MAX_PCT_COMISION_B2B (${MAX_PCT_COMISION_B2B}) → inválido`, () => {
+    assert.equal(validarPctComisionB2B(1.01), null);
+    assert.equal(validarPctComisionB2B(1.5), null);
+    assert.equal(validarPctComisionB2B(100), null); // típico error: mandar 100 en vez de 1 (100%)
+  });
+  test("0, 0.12 y el borde exacto (1) son válidos", () => {
+    assert.equal(validarPctComisionB2B(0), 0);
+    assert.equal(validarPctComisionB2B(0.12), 0.12);
+    assert.equal(validarPctComisionB2B(MAX_PCT_COMISION_B2B), MAX_PCT_COMISION_B2B);
+  });
+});
+
+describe("32. resolverContextoB2B — falla cerrado en cada paso (ronda 4)", () => {
+  const agenciaOk = { nombre: "Agencia Titular S.A.S.", email: "titular@agencia.com", rol: "agencia", pct_comision: 0.12, activo: true };
+  const solOk = { nombre: "Agencia Titular S.A.S.", nit: "900123456", email: "titular@agencia.com", telefono: "3001234567" };
+  function inputBase(overrides: Partial<Parameters<typeof resolverContextoB2B>[0]> = {}) {
+    return {
+      usuarioAutenticado: true,
+      perfil: agenciaOk, perfilError: false,
+      agenciaId: null,
+      agenciaTitular: null, agenciaTitularError: false,
+      solicitud: solOk, solicitudError: false,
+      pctComisionDefault: 0.12,
+      ...overrides,
+    };
+  }
+
+  test("camino feliz: agencia titular activa, rol válido, comisión en rango → esB2B true", () => {
+    const r = resolverContextoB2B(inputBase());
+    assert.equal(r.esB2B, true);
+    if (r.esB2B) { assert.equal(r.tipo, "agencia"); assert.equal(r.pctComision, 0.12); }
+  });
+
+  test("usuario anónimo (no autenticado) → sin B2B, sin importar qué más se mande", () => {
+    const r = resolverContextoB2B(inputBase({ usuarioAutenticado: false }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+
+  test("anónimo 'enviando modo=neta' no tiene efecto acá — resolverContextoB2B ni siquiera recibe `modo` (esa decisión es de resolverB2BParaMensaje, que ya solo actúa si esB2B=true)", () => {
+    // Documenta la frontera: `resolverContextoB2B` no tiene ningún parámetro
+    // de "modo solicitado" — la identidad del usuario decide esB2B, y el modo
+    // (comisionable/neta) es una elección POSTERIOR que solo aplica si ya es B2B.
+    const r = resolverContextoB2B(inputBase({ usuarioAutenticado: false }));
+    assert.equal(r.esB2B, false);
+  });
+
+  test("B2B INACTIVO (usuarios.activo = false) → contexto B2C/sin comisión, aunque el rol sea agencia/freelance válido", () => {
+    const r = resolverContextoB2B(inputBase({ perfil: { ...agenciaOk, activo: false } }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+
+  test("usuarios.activo = null (no explícitamente true) también falla cerrado — nunca se asume activo por default", () => {
+    const r = resolverContextoB2B(inputBase({ perfil: { ...agenciaOk, activo: null } }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+
+  test("agente (agenciaId presente) con agencia TITULAR inactiva → sin B2B, aunque el agente mismo esté activo", () => {
+    const r = resolverContextoB2B(inputBase({
+      agenciaId: "titular-uuid",
+      agenciaTitular: { ...agenciaOk, activo: false },
+    }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+
+  test("agente con agencia titular activa pero con rol inválido (dato corrupto: ni agencia ni freelance) → sin B2B", () => {
+    const r = resolverContextoB2B(inputBase({
+      agenciaId: "titular-uuid",
+      agenciaTitular: { ...agenciaOk, rol: "venta" },
+    }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+
+  test("perfil no encontrado (null, sin error) → sin B2B", () => {
+    const r = resolverContextoB2B(inputBase({ perfil: null }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+  test("perfil con error de consulta → sin B2B (nunca se sigue con un perfil parcial)", () => {
+    const r = resolverContextoB2B(inputBase({ perfilError: true }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+  test("agencia titular no encontrada (null, sin error) → sin B2B", () => {
+    const r = resolverContextoB2B(inputBase({ agenciaId: "titular-uuid", agenciaTitular: null }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+  test("agencia titular con error de consulta → sin B2B", () => {
+    const r = resolverContextoB2B(inputBase({ agenciaId: "titular-uuid", agenciaTitular: agenciaOk, agenciaTitularError: true }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+  test("error al leer b2b_solicitudes → sin B2B (nunca se arma la facturación sin confirmar la solicitud)", () => {
+    const r = resolverContextoB2B(inputBase({ solicitudError: true }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+
+  test("rol del usuario logueado inválido (ni agencia ni freelance) → sin B2B", () => {
+    const r = resolverContextoB2B(inputBase({ perfil: { ...agenciaOk, rol: "cliente_final" } }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+
+  test("comisión inválida (NaN) en la agencia → fallo cerrado, sin B2B", () => {
+    const r = resolverContextoB2B(inputBase({ perfil: { ...agenciaOk, pct_comision: NaN } }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+  test("comisión inválida (>1, ej. 100 en vez de 1) → fallo cerrado, sin B2B", () => {
+    const r = resolverContextoB2B(inputBase({ perfil: { ...agenciaOk, pct_comision: 100 } }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+  test("comisión inválida (negativa) → fallo cerrado, sin B2B", () => {
+    const r = resolverContextoB2B(inputBase({ perfil: { ...agenciaOk, pct_comision: -0.1 } }));
+    assert.deepEqual(r, { esB2B: false });
+  });
+  test("sin pct_comision propio (null) cae al default general — el default también se valida (no puede tampoco ser NaN/negativo/>1)", () => {
+    const r = resolverContextoB2B(inputBase({ perfil: { ...agenciaOk, pct_comision: null }, pctComisionDefault: 0.11 }));
+    assert.equal(r.esB2B, true);
+    if (r.esB2B) assert.equal(r.pctComision, 0.11);
+  });
+});
+
+describe("33. Wiring — getContextoB2B (checkout/actions.ts) consulta y valida `activo` para el usuario y la agencia titular", () => {
+  const checkout = leer("app/tarifario/checkout/actions.ts");
+  test("selecciona `activo` del usuario logueado y de la agencia titular, nunca solo del rol", () => {
+    const idx = checkout.indexOf("export async function getContextoB2B");
+    const cuerpo = checkout.slice(idx, checkout.indexOf("\n}", idx));
+    // La columna `activo` se pide en AMBAS consultas de `usuarios` (perfil propio
+    // y, si aplica, la agencia titular) — antes de esta ronda solo se pedía rol.
+    const selects = cuerpo.match(/\.select\("[^"]*activo[^"]*"\)/g) ?? [];
+    assert.ok(selects.length >= 2, "getContextoB2B debe seleccionar `activo` en al menos 2 consultas (perfil + agencia titular)");
+  });
+  test("delega TODA la decisión a resolverContextoB2B (módulo puro) — nunca decide esB2B por su cuenta comparando .rol/.activo inline", () => {
+    const idx = checkout.indexOf("export async function getContextoB2B");
+    const cuerpo = checkout.slice(idx, checkout.indexOf("\n}", idx));
+    assert.match(cuerpo, /resolverContextoB2B\(/);
+    assert.doesNotMatch(cuerpo, /rol !== "agencia" && rol !== "freelance"/); // la comparación vieja, inline, ya no debe estar acá
+  });
+  test("revisa el error de cada consulta (perfil, agencia titular, b2b_solicitudes) antes de resolver el contexto", () => {
+    const idx = checkout.indexOf("export async function getContextoB2B");
+    const cuerpo = checkout.slice(idx, checkout.indexOf("\n}", idx));
+    assert.match(cuerpo, /error: perfilErr/);
+    assert.match(cuerpo, /error: apErr/);
+    assert.match(cuerpo, /error: solsErr/);
   });
 });

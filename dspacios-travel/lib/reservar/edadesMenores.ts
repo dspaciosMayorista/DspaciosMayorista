@@ -39,6 +39,11 @@
 // motivo por el que otros módulos puros del repo (lib/reservar/origen.ts,
 // lib/vuelos/control.ts) evitan imports con alias.
 import { clasificarPorEdad, esAcomRoom, type AcomRoom } from "../acomodaciones.ts";
+// `lib/b2b.ts` solo importa TIPOS con alias (`import type`) — se eliden por
+// completo al compilar/ejecutar, así que sí es seguro importarlo relativo
+// desde node --test (confirmado: sin este import, `categoriaAliado` habría
+// quedado duplicado en dos archivos).
+import { categoriaAliado } from "../b2b.ts";
 
 // Un "menor" nunca puede declararse con 18 años o más — la propia
 // definición de adulto del sistema (ocupación de habitación, nunca tarifa
@@ -499,12 +504,100 @@ export type B2BParaMensaje = {
   pctComision: number;
 };
 
+// Rango comercial permitido para un % de comisión B2B — nunca negativo,
+// nunca superior al 100% del PVP (pagar más comisión que el valor de la
+// venta no tiene sentido de negocio, y llegaría al mensaje del cliente como
+// un descuento absurdo o un "TOTAL NETO" negativo). `pctComision` sale de
+// `usuarios.pct_comision`, un campo editable en el catálogo — nunca se
+// confía en que ya venga sano (defecto real corregido, ronda 4: antes
+// `getContextoB2B` lo pasaba tal cual, sin validar NaN/negativo/>1).
+export const MAX_PCT_COMISION_B2B = 1;
+
+export function validarPctComisionB2B(pct: unknown): number | null {
+  if (typeof pct !== "number" || !Number.isFinite(pct)) return null;
+  if (pct < 0 || pct > MAX_PCT_COMISION_B2B) return null;
+  return pct;
+}
+
 export function resolverB2BParaMensaje(
   ctxSesion: ContextoB2BSesion,
   modoSolicitado: "comisionable" | "neta" | undefined
 ): B2BParaMensaje | undefined {
   if (!ctxSesion.esB2B || !ctxSesion.agencia) return undefined;
-  return { modo: modoSolicitado ?? "comisionable", facturacion: ctxSesion.agencia, pctComision: ctxSesion.pctComision };
+  // Segunda capa de fallo cerrado (defensa en profundidad): aunque
+  // `getContextoB2B` ya valide la comisión antes de construir el contexto,
+  // esta función es la ÚLTIMA frontera antes de que el % entre al mensaje de
+  // WhatsApp/email — nunca deja pasar NaN/negativo/>1 aunque el llamador
+  // regresione.
+  const pct = validarPctComisionB2B(ctxSesion.pctComision);
+  if (pct == null) return undefined;
+  return { modo: modoSolicitado ?? "comisionable", facturacion: ctxSesion.agencia, pctComision: pct };
+}
+
+// ── Resolución completa del contexto B2B, a partir de filas YA CONSULTADAS
+// (`getContextoB2B` en checkout/actions.ts, que sí toca Supabase) — módulo
+// PURO: decide, nunca consulta. Mismo patrón que
+// `resolverLiquidacionServicioPuntual` (lib/reservar/liquidacionServicio.ts).
+// Falla cerrado en cada paso — nunca "casi B2B":
+// - usuario no autenticado, sin perfil, o con error al leerlo → sin B2B;
+// - `usuarios.activo !== true` (del usuario logueado O de la agencia
+//   titular, si aplica) → sin B2B;
+// - rol inválido (ni "agencia" ni "freelance") en cualquiera de los dos → sin B2B;
+// - error al leer la agencia titular o la solicitud B2B → sin B2B;
+// - comisión NaN/negativa/mayor a `MAX_PCT_COMISION_B2B` → sin B2B.
+export type FilaUsuarioB2B = { nombre: string | null; email: string | null; rol: string | null; pct_comision: number | null; activo: boolean | null };
+export type FilaSolicitudB2B = { nombre: string | null; nit: string | null; email: string | null; telefono: string | null };
+
+export type ResultadoContextoB2B =
+  | { esB2B: true; tipo: "agencia" | "freelance"; agencia: { nombre: string; nit: string; email: string; telefono: string }; pctComision: number; categoria: string }
+  | { esB2B: false };
+
+const SIN_B2B: ResultadoContextoB2B = { esB2B: false };
+
+export function resolverContextoB2B(input: {
+  usuarioAutenticado: boolean;
+  perfil: FilaUsuarioB2B | null;
+  perfilError: boolean;
+  // Cuando el usuario tiene `agencia_id` (es un AGENTE bajo una agencia
+  // titular), estas tres describen la consulta de esa agencia titular —
+  // `agenciaId` viene null cuando el usuario logueado ES la titular, y en
+  // ese caso `agenciaTitular*` se ignoran (se usa `perfil` directamente).
+  agenciaId: string | null;
+  agenciaTitular: FilaUsuarioB2B | null;
+  agenciaTitularError: boolean;
+  solicitud: FilaSolicitudB2B | null;
+  solicitudError: boolean;
+  pctComisionDefault: number;
+}): ResultadoContextoB2B {
+  if (!input.usuarioAutenticado) return SIN_B2B;
+  if (input.perfilError || !input.perfil) return SIN_B2B;
+  if (input.perfil.activo !== true) return SIN_B2B;
+  const rol = input.perfil.rol;
+  if (rol !== "agencia" && rol !== "freelance") return SIN_B2B;
+
+  let agenciaPerfil: FilaUsuarioB2B = input.perfil;
+  if (input.agenciaId) {
+    if (input.agenciaTitularError || !input.agenciaTitular) return SIN_B2B;
+    if (input.agenciaTitular.activo !== true) return SIN_B2B;
+    if (input.agenciaTitular.rol !== "agencia" && input.agenciaTitular.rol !== "freelance") return SIN_B2B;
+    agenciaPerfil = input.agenciaTitular;
+  }
+
+  if (input.solicitudError) return SIN_B2B;
+  const sol = input.solicitud;
+  const agencia = {
+    nombre: sol?.nombre ?? agenciaPerfil.nombre ?? "",
+    nit: sol?.nit ?? "",
+    email: sol?.email ?? agenciaPerfil.email ?? "",
+    telefono: sol?.telefono ?? "",
+  };
+
+  const pctRaw = agenciaPerfil.pct_comision ?? input.pctComisionDefault;
+  const pct = validarPctComisionB2B(pctRaw);
+  if (pct == null) return SIN_B2B;
+
+  const categoria = categoriaAliado(rol, pct, input.pctComisionDefault).label;
+  return { esB2B: true, tipo: rol, agencia, pctComision: pct, categoria };
 }
 
 // ── Solicitud completa del checkout público (`crearSolicitudReserva`) ──────

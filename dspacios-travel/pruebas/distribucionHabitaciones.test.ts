@@ -8,6 +8,15 @@ import { distribuirPorHabitaciones, type ConfigCapacidadHabitacion, type Habitac
 // es un límite de 2 niños en TODA la reserva — es un límite de 2 (Niño 1 +
 // Niño 2) POR HABITACIÓN. Con 2 habitaciones caben hasta 4; con 3, hasta 6.
 // Un niño de más solo se rechaza si NINGUNA habitación consultada tiene cupo.
+//
+// Ronda 4: corrige un SEGUNDO defecto — el reparto voraz por orden de
+// captura llenaba cada habitación hasta su máximo ANTES de reservar los
+// mínimos (`chd_min`/`inf_min`) de las demás, produciendo falsos rechazos
+// aunque existiera una distribución válida. Ahora: fase 1 valida que cada
+// configuración sea coherente en sí misma ("configuración inválida" si no);
+// fase 2 reserva el mínimo de cada habitación; fase 3 rechaza si ni sumando
+// todos los mínimos alcanza lo declarado; fase 4 reparte el resto por orden
+// de captura hasta el máximo de cada habitación.
 // ───────────────────────────────────────────────────────────────────────────
 
 function cfg(overrides: Partial<ConfigCapacidadHabitacion> = {}): ConfigCapacidadHabitacion {
@@ -46,15 +55,15 @@ describe("2. Una habitación + 2 niños → Niño 1 = 1, Niño 2 = 1", () => {
   });
 });
 
-describe("3. Una habitación + 3 niños → rechazo", () => {
+describe("3. Una habitación + 3 niños → rechazo (conservado)", () => {
   test("capacidad máxima 2 en una sola habitación", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 3, infantes: 0, habitaciones: [hab({ chd_max: 2 })] });
     assert.equal(r.ok, false);
-    if (!r.ok) assert.match(r.error, /habitación seleccionada admite máximo 2 niño/);
+    if (!r.ok) { assert.equal(r.tipo, "seleccion_invalida"); assert.match(r.error, /habitación seleccionada admite máximo 2 niño/); }
   });
 });
 
-describe("4. Dos habitaciones + 3 niños → Niño 1 = 2, Niño 2 = 1", () => {
+describe("4. Dos habitaciones + 3 niños → Niño 1 = 2, Niño 2 = 1 (conservado)", () => {
   test("primera habitación llena (1+2), segunda recibe el 3º como Niño 1", () => {
     const habitaciones = [hab({ chd_max: 2 }), hab({ chd_max: 2 })];
     const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 3, infantes: 0, habitaciones });
@@ -66,7 +75,7 @@ describe("4. Dos habitaciones + 3 niños → Niño 1 = 2, Niño 2 = 1", () => {
   });
 });
 
-describe("5. Dos habitaciones + 4 niños → Niño 1 = 2, Niño 2 = 2", () => {
+describe("5. Dos habitaciones + 4 niños → Niño 1 = 2, Niño 2 = 2 (conservado)", () => {
   test("cada habitación toma un Niño 1 y un Niño 2", () => {
     const habitaciones = [hab({ chd_max: 2 }), hab({ chd_max: 2 })];
     const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 4, infantes: 0, habitaciones });
@@ -83,7 +92,7 @@ describe("6. Dos habitaciones + 5 niños → rechazo", () => {
     const habitaciones = [hab({ chd_max: 2 }), hab({ chd_max: 2 })];
     const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 5, infantes: 0, habitaciones });
     assert.equal(r.ok, false);
-    if (!r.ok) assert.match(r.error, /2 habitaciones seleccionadas admiten máximo 4 niño/);
+    if (!r.ok) { assert.equal(r.tipo, "seleccion_invalida"); assert.match(r.error, /2 habitaciones seleccionadas admiten máximo 4 niño/); }
   });
 });
 
@@ -115,7 +124,7 @@ describe("9. Infantes respetan inf_max", () => {
   test("una habitación con inf_max=2 rechaza 3 infantes", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 3, habitaciones: [hab({ inf_max: 2 })] });
     assert.equal(r.ok, false);
-    if (!r.ok) assert.match(r.error, /máximo 2 infante\(s\); hay 3/);
+    if (!r.ok) { assert.equal(r.tipo, "seleccion_invalida"); assert.match(r.error, /máximo 2 infante\(s\); hay 3/); }
   });
   test("el infante NO consume el cupo de niño (usa su propio inf_max)", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 2, infantes: 2, habitaciones: [hab({ chd_max: 2, inf_max: 2 })] });
@@ -125,61 +134,60 @@ describe("9. Infantes respetan inf_max", () => {
 });
 
 describe("10. Adultos respetan adt_min, adt_max (POR HABITACIÓN, no suma) y capacidad total", () => {
-  test("adultos declarados distinto al implícito de las habitaciones (pax_tarifa) se rechaza", () => {
+  test("adultos declarados distinto al implícito de las habitaciones (pax_tarifa) se rechaza como selección inválida", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 3, ninos: 0, infantes: 0, habitaciones: [hab({ pax_tarifa: 2 })] });
     assert.equal(r.ok, false);
-    if (!r.ok) assert.match(r.error, /Las habitaciones elegidas son para 2 adulto\(s\); declaraste 3/);
+    if (!r.ok) { assert.equal(r.tipo, "seleccion_invalida"); assert.match(r.error, /Las habitaciones elegidas son para 2 adulto\(s\); declaraste 3/); }
   });
-  test("una habitación cuyo pax_tarifa cae fuera de su propio adt_min/adt_max se rechaza", () => {
+  test("una habitación cuyo pax_tarifa cae fuera de su propio adt_min/adt_max es CONFIGURACIÓN INVÁLIDA (no una mala elección del cliente)", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ pax_tarifa: 2, adt_min: 3, adt_max: 4 })] });
     assert.equal(r.ok, false);
-    if (!r.ok) assert.match(r.error, /admite entre 3 y 4 adulto\(s\); está configurada para 2/);
+    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.error, /admite entre 3 y 4 adulto\(s\); está configurada para 2/); }
   });
   test("adultos que sí cuadran con pax_tarifa y adt_min/adt_max pasa", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ pax_tarifa: 2, adt_min: 1, adt_max: 2 })] });
     assert.equal(r.ok, true);
   });
   test("una habitación bien configurada NO se ve afectada por otra habitación mal configurada (chequeo per-room, no agregado)", () => {
-    // Antes de este fix, una habitación con adt_min=3 fuera de rango podía
-    // "compensarse" en la suma agregada si otra habitación del mismo pedido
-    // tenía margen — con el chequeo per-room, la habitación 2 (mal
-    // configurada) rechaza SOLA, sin importar la habitación 1 (bien
-    // configurada).
     const habitaciones = [hab({ pax_tarifa: 1, adt_min: 1, adt_max: 1 }), hab({ pax_tarifa: 2, adt_min: 3, adt_max: 4 })];
     const r = distribuirPorHabitaciones({ adultosDeclarados: 3, ninos: 0, infantes: 0, habitaciones });
     assert.equal(r.ok, false);
-    if (!r.ok) assert.match(r.error, /admite entre 3 y 4 adulto\(s\); está configurada para 2/);
+    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.error, /admite entre 3 y 4 adulto\(s\); está configurada para 2/); }
   });
 });
 
-describe("10b. chd_min/inf_min se exigen POR HABITACIÓN, no como suma global (auditado: antes no se leían)", () => {
-  test("una habitación con chd_min=1 rechaza si le tocan 0 niños, aunque el total declarado alcance en otra habitación", () => {
-    // 2 habitaciones, 1 niño total: el niño se lo lleva la primera habitación
-    // (orden de captura); la segunda, que EXIGE mínimo 1 niño, se queda en 0.
+describe("10b. chd_min/inf_min — mínimos por habitación, reparto en dos fases (ronda 4)", () => {
+  test("REGRESIÓN corregida: 2 habitaciones (chd_min 0 y 1), 1 niño total → antes se rechazaba por reparto voraz; ahora encuentra [0,1]", () => {
     const habitaciones = [hab({ chd_max: 2, chd_min: 0 }), hab({ chd_max: 2, chd_min: 1 })];
     const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 1, infantes: 0, habitaciones });
-    assert.equal(r.ok, false);
-    if (!r.ok) assert.match(r.error, /exige mínimo 1 niño\(s\); esta distribución le asigna 0/);
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.deepEqual(r.habitaciones.map((h) => h.nino + h.nino2), [0, 1]);
+      assert.ok(r.habitaciones[1].nino + r.habitaciones[1].nino2 >= 1); // cubre su propio mínimo
+    }
   });
-  test("con niños suficientes para cubrir el mínimo de cada habitación, pasa", () => {
+  test("con niños suficientes para cubrir el mínimo de cada habitación y sobrar, pasa y reparte el resto por orden de captura", () => {
     const habitaciones = [hab({ chd_max: 2, chd_min: 0 }), hab({ chd_max: 2, chd_min: 1 })];
     const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 3, infantes: 0, habitaciones });
     assert.equal(r.ok, true);
-    if (r.ok) assert.ok(r.habitaciones[1].nino + r.habitaciones[1].nino2 >= 1);
+    if (r.ok) {
+      assert.deepEqual(r.habitaciones.map((h) => h.nino + h.nino2), [2, 1]);
+      assert.ok(r.habitaciones[1].nino + r.habitaciones[1].nino2 >= 1);
+    }
   });
   test("chd_min=0 (default) nunca restringe una habitación sin menores", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ chd_min: 0 })] });
     assert.equal(r.ok, true);
   });
-  test("una habitación con inf_min=1 rechaza si le tocan 0 infantes", () => {
-    const habitaciones = [hab({ inf_max: 2, inf_min: 0 }), hab({ inf_max: 0, inf_min: 1 })];
-    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 0, infantes: 1, habitaciones });
-    assert.equal(r.ok, false);
-    if (!r.ok) assert.match(r.error, /exige mínimo 1 infante\(s\); esta distribución le asigna 0/);
-  });
   test("inf_min=0 (default) nunca restringe una habitación sin infantes", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ inf_min: 0 })] });
     assert.equal(r.ok, true);
+  });
+  test("inf_min por encima de inf_max es CONFIGURACIÓN INVÁLIDA (no un rechazo por selección del cliente)", () => {
+    const habitaciones = [hab({ inf_max: 2, inf_min: 0 }), hab({ inf_max: 0, inf_min: 1 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 0, infantes: 1, habitaciones });
+    assert.equal(r.ok, false);
+    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.error, /inf_min \(1\) mayor que inf_max \(0\)/); }
   });
 });
 
@@ -187,6 +195,7 @@ describe("11. Sin habitaciones consultadas se rechaza", () => {
   test("arreglo vacío de habitaciones", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [] });
     assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.tipo, "seleccion_invalida");
   });
 });
 
@@ -205,10 +214,7 @@ describe("14. Orden de captura produce una distribución determinista", () => {
     assert.equal(rA.ok, true);
     assert.equal(rB.ok, true);
     if (rA.ok && rB.ok) {
-      // El total agregado es el mismo (2 Niño1 + 1 Niño2)...
       assert.deepEqual(rA.totales, rB.totales);
-      // ...pero la asignación POR HABITACIÓN sigue el orden de captura: la
-      // habitación chica va primero en rA y segunda en rB.
       assert.deepEqual(rA.habitaciones[0].acom, "sencilla");
       assert.deepEqual(rB.habitaciones[1].acom, "sencilla");
     }
@@ -243,5 +249,108 @@ describe("22. Control negativo del límite global de 2 niños (defecto de la 1a 
     const r = distribuirPorHabitaciones({ adultosDeclarados: 6, ninos: 6, infantes: 0, habitaciones });
     assert.equal(r.ok, true);
     if (r.ok) assert.equal(r.totales.nino + r.totales.nino2, 6);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 23. Ronda 4 — pruebas obligatorias explícitas del pedido de corrección
+// ───────────────────────────────────────────────────────────────────────────
+describe("23. Ronda 4: dos habitaciones min=1 y 2 niños → [1,1], no rechazo", () => {
+  test("cada habitación se queda exactamente con su mínimo, sin sobrante que repartir", () => {
+    const habitaciones = [hab({ chd_max: 2, chd_min: 1 }), hab({ chd_max: 2, chd_min: 1 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 2, infantes: 0, habitaciones });
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.deepEqual(r.habitaciones.map((h) => h.nino + h.nino2), [1, 1]);
+      assert.equal(r.totales.nino + r.totales.nino2, 2);
+    }
+  });
+});
+
+describe("24. Ronda 4: dos habitaciones min=1 y 3 niños → [2,1]", () => {
+  test("mínimos reservados primero ([1,1]), el sobrante (1) va a la primera habitación por orden de captura", () => {
+    const habitaciones = [hab({ chd_max: 2, chd_min: 1 }), hab({ chd_max: 2, chd_min: 1 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 3, infantes: 0, habitaciones });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.habitaciones.map((h) => h.nino + h.nino2), [2, 1]);
+  });
+});
+
+describe("25. Ronda 4: suma de mínimos mayor a niños → rechazo (selección inválida, no configuración)", () => {
+  test("2 habitaciones con chd_min=2 cada una (config coherente: chd_max=2) exigen 4 en total; solo hay 3", () => {
+    const habitaciones = [hab({ chd_max: 2, chd_min: 2 }), hab({ chd_max: 2, chd_min: 2 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 3, infantes: 0, habitaciones });
+    assert.equal(r.ok, false);
+    if (!r.ok) { assert.equal(r.tipo, "seleccion_invalida"); assert.match(r.error, /exigen un mínimo de 4 niño\(s\) en total; hay 3/); }
+  });
+});
+
+describe("26. Ronda 4: min mayor al máximo efectivo → configuración inválida", () => {
+  test("chd_min excede min(chd_max, 2, pax_max−adultos): pax_max=pax_tarifa (sin espacio para niños) pero chd_min=1", () => {
+    const habitaciones = [hab({ pax_tarifa: 4, pax_max: 4, adt_min: 4, adt_max: 4, chd_max: 2, chd_min: 1 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 0, infantes: 0, habitaciones });
+    assert.equal(r.ok, false);
+    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.error, /exige chd_min \(1\) por encima de su capacidad efectiva de niño \(0/); }
+  });
+});
+
+describe("27. Ronda 4: infantes con mínimos equivalentes → sin rechazo", () => {
+  test("2 habitaciones inf_min=1/inf_max=3 cada una, 2 infantes en total → [1,1]", () => {
+    const habitaciones = [hab({ inf_max: 3, inf_min: 1 }), hab({ inf_max: 3, inf_min: 1 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 0, infantes: 2, habitaciones });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.habitaciones.map((h) => h.infantes), [1, 1]);
+  });
+  test("mismos mínimos, 3 infantes (1 de sobra) → el sobrante va por orden de captura a la primera habitación", () => {
+    const habitaciones = [hab({ inf_max: 3, inf_min: 1 }), hab({ inf_max: 3, inf_min: 1 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 0, infantes: 3, habitaciones });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.habitaciones.map((h) => h.infantes), [2, 1]);
+  });
+});
+
+describe("28. Ronda 4: 1 habitación / 3 niños sigue rechazado (conservado explícitamente)", () => {
+  test("no cambia con el nuevo algoritmo de dos fases", () => {
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 3, infantes: 0, habitaciones: [hab({ chd_max: 2, chd_min: 0 })] });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.tipo, "seleccion_invalida");
+  });
+});
+
+describe("29. Ronda 4: 2 habitaciones / 3 y 4 niños siguen aceptados (conservado explícitamente)", () => {
+  test("3 niños → [2,1]", () => {
+    const habitaciones = [hab({ chd_max: 2 }), hab({ chd_max: 2 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 3, infantes: 0, habitaciones });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.habitaciones.map((h) => h.nino + h.nino2), [2, 1]);
+  });
+  test("4 niños → [2,2]", () => {
+    const habitaciones = [hab({ chd_max: 2 }), hab({ chd_max: 2 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 4, infantes: 0, habitaciones });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.habitaciones.map((h) => h.nino + h.nino2), [2, 2]);
+  });
+});
+
+describe("30. Ronda 4: validación de forma de la configuración (enteros seguros, no negativos)", () => {
+  test("un campo no entero es configuración inválida", () => {
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ chd_max: 2.5 })] });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.tipo, "configuracion_invalida");
+  });
+  test("un campo negativo es configuración inválida", () => {
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ chd_min: -1 })] });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.tipo, "configuracion_invalida");
+  });
+  test("adt_min mayor que adt_max es configuración inválida", () => {
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ pax_tarifa: 2, adt_min: 3, adt_max: 2 })] });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.tipo, "configuracion_invalida");
+  });
+  test("pax_tarifa mayor que pax_max es configuración inválida", () => {
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 5, ninos: 0, infantes: 0, habitaciones: [hab({ pax_tarifa: 5, pax_max: 4, adt_min: 5, adt_max: 5 })] });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.tipo, "configuracion_invalida");
   });
 });

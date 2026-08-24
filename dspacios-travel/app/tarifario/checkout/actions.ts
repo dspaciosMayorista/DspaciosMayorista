@@ -7,9 +7,9 @@ import { computarReserva, type ReservaInput } from "@/lib/reservar/computo";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { formatMoneda } from "@/lib/utils";
-import { comisionDefault, categoriaAliado } from "@/lib/b2b";
+import { comisionDefault } from "@/lib/b2b";
 import {
-  resolverB2BParaMensaje, validarCrearSolicitudInput,
+  resolverB2BParaMensaje, validarCrearSolicitudInput, resolverContextoB2B,
   type SolicitudItemValidado, type SolicitudTourValidado,
 } from "@/lib/reservar/edadesMenores";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
@@ -99,42 +99,59 @@ export type ContextoB2B = {
 
 // Contexto del aliado logueado (para el checkout B2B): tipo, datos de
 // facturación de la agencia y su % de comisión.
+//
+// FALLA CERRADO (ronda 4): esta función solo consulta — TODA la decisión
+// (usuario activo, agencia titular activa y con rol B2B válido, comisión en
+// rango) vive en `resolverContextoB2B` (lib/reservar/edadesMenores.ts,
+// módulo puro, testeable con node --test sin tocar Supabase). Defecto real
+// corregido: antes ni el usuario logueado ni la agencia titular se
+// verificaban contra `usuarios.activo` — un aliado B2B desactivado por un
+// administrador seguía viendo la sección B2B del checkout (facturación neta,
+// % de comisión) hasta que expirara su sesión.
 export async function getContextoB2B(): Promise<ContextoB2B> {
+  const DEFAULT: ContextoB2B = { esB2B: false, tipo: null, agencia: null, pctComision: 0, categoria: null };
   const sb = await createClient();
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return { esB2B: false, tipo: null, agencia: null, pctComision: 0, categoria: null };
-  const { data: perfil } = await sb.from("usuarios").select("nombre, email, rol, agencia_id, pct_comision").eq("id", user.id).maybeSingle();
-  const rol = perfil?.rol ?? null;
-  if (rol !== "agencia" && rol !== "freelance") return { esB2B: false, tipo: null, agencia: null, pctComision: 0, categoria: null };
+  const { data: { user }, error: userErr } = await sb.auth.getUser();
+  if (userErr || !user) return DEFAULT;
 
-  // Si es un AGENTE, la facturación/comisión es la de su AGENCIA titular.
-  const agenciaUserId = perfil?.agencia_id ?? user.id;
-  let agenciaPerfil = perfil;
-  if (perfil?.agencia_id) {
-    const { data: ap } = await sb.from("usuarios").select("nombre, email, rol, pct_comision").eq("id", perfil.agencia_id).maybeSingle();
-    if (ap) agenciaPerfil = { ...ap, agencia_id: null };
+  const { data: perfil, error: perfilErr } = await sb
+    .from("usuarios").select("nombre, email, rol, agencia_id, pct_comision, activo").eq("id", user.id).maybeSingle();
+  if (perfilErr) return DEFAULT;
+
+  // El default general de comisión (parámetro tributario) hace falta para
+  // decidir la categoría (Junior/Senior) y como fallback si `pct_comision`
+  // del usuario está vacío — se consulta con el rol crudo (si no es
+  // "agencia"/"freelance", `comisionDefault` ya cae a un default razonable;
+  // `resolverContextoB2B` de todas formas rechaza cualquier rol inválido).
+  const def = await comisionDefault(sb, perfil?.rol ?? "");
+
+  let agenciaTitular: { nombre: string | null; email: string | null; rol: string | null; pct_comision: number | null; activo: boolean | null } | null = null;
+  let agenciaTitularErr = false;
+  const agenciaId: string | null = perfil?.agencia_id ?? null;
+  if (agenciaId) {
+    const { data: ap, error: apErr } = await sb
+      .from("usuarios").select("nombre, email, rol, pct_comision, activo").eq("id", agenciaId).maybeSingle();
+    agenciaTitular = ap ?? null;
+    agenciaTitularErr = !!apErr;
   }
 
-  const { data: sols } = await sb
+  const agenciaUserId = agenciaId ?? user.id;
+  const { data: sols, error: solsErr } = await sb
     .from("b2b_solicitudes")
     .select("nombre, nit, email, telefono")
     .eq("usuario_id", agenciaUserId)
     .order("created_at", { ascending: false })
     .limit(1);
-  const sol = sols?.[0];
-  const agencia: Facturacion = {
-    nombre: sol?.nombre ?? agenciaPerfil?.nombre ?? "",
-    nit: sol?.nit ?? "",
-    email: sol?.email ?? agenciaPerfil?.email ?? "",
-    telefono: sol?.telefono ?? "",
-  };
 
-  // Comisión POR AGENCIA: el % vive en el usuario (la agencia titular). El
-  // default general sale del parámetro tributario; la categoría compara contra él.
-  const def = await comisionDefault(sb, rol);
-  const pct = agenciaPerfil?.pct_comision ?? def;
-  const categoria = categoriaAliado(rol, pct, def).label;
-  return { esB2B: true, tipo: rol, agencia, pctComision: pct, categoria };
+  const r = resolverContextoB2B({
+    usuarioAutenticado: true,
+    perfil: perfil ?? null, perfilError: !!perfilErr,
+    agenciaId, agenciaTitular, agenciaTitularError: agenciaTitularErr,
+    solicitud: sols?.[0] ?? null, solicitudError: !!solsErr,
+    pctComisionDefault: def,
+  });
+  if (!r.esB2B) return DEFAULT;
+  return { esB2B: true, tipo: r.tipo, agencia: r.agencia, pctComision: r.pctComision, categoria: r.categoria };
 }
 
 // Portada actual por hotel (para resolver la foto de ítems del carrito que se
@@ -232,12 +249,20 @@ function construirMensaje(
 // mezcla monedas (raro: un hotel/tour en USD junto a otros en COP), los ítems
 // de la moneda minoritaria quedan FUERA de esta cotización (se listan en
 // `excluidos` para avisar) — evita totales mezclando pesos y dólares.
+// Un ítem excluido siempre trae SU motivo real — nunca se resume todo el
+// arreglo bajo un solo texto genérico ("otra moneda") aunque la causa real
+// haya sido que el servicio no estaba disponible (defecto real corregido,
+// ronda 4: `notaExcluidos` en `crearSolicitudReserva` decía "por estar en
+// otra moneda" para CUALQUIER exclusión, incl. tours simplemente no
+// disponibles para esas fechas/pax).
+export type ItemExcluido = { etiqueta: string; motivo: "moneda" | "no_disponible" };
+
 async function crearCotizacionCarrito(input: {
   items: SolicitudItemValidado[];
   tours: SolicitudTourValidado[];
   cliente: SolicitudCliente;
 }): Promise<
-  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; toursOk: SolicitudTourComputado[]; excluidos: string[] }
+  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[] }
   | { ok: false; error: string }
 > {
   const sb = await createClient();
@@ -250,7 +275,7 @@ async function crearCotizacionCarrito(input: {
   const itemsSnap: Record<string, unknown>[] = [];
   const itemsOk: SolicitudItemComputado[] = [];
   const toursOk: SolicitudTourComputado[] = [];
-  const excluidos: string[] = [];
+  const excluidos: ItemExcluido[] = [];
   let monedaPrincipal: string | null = null;
   let total = 0;
   let hIdx = 0, vIdx = 0, iIdx = 0;
@@ -286,10 +311,25 @@ async function crearCotizacionCarrito(input: {
     const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas } = comp.data;
 
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
-      excluidos.push(`${it.hotelNombre} (moneda ${monedaReserva})`);
+      excluidos.push({ etiqueta: `${it.hotelNombre} (moneda ${monedaReserva})`, motivo: "moneda" });
       continue;
     }
     monedaPrincipal = monedaPrincipal ?? monedaReserva;
+
+    // Las edades usadas para clasificar infante/Niño 1/Niño 2 SIEMPRE deben
+    // salir de `comp.data` (única fuente autoritativa, ver
+    // `resolverMenoresPorEdad` en computo.ts) — en este flujo público
+    // `edadesMenores` es obligatorio en el ítem de entrada, así que
+    // `computarReserva` siempre reclasifica por edad y siempre debería
+    // devolver un arreglo. Si por algún motivo no lo hace, es una
+    // inconsistencia interna del servidor — nunca se completa en silencio
+    // con `it.edadesMenores` (defecto real corregido, ronda 4: ese fallback
+    // podía dejar en el snapshot/cotización una edad que NO fue la que en
+    // realidad se usó para calcular el precio).
+    if (edadesMenoresUsadas == null) {
+      return { ok: false, error: `No se pudo confirmar la edad de los menores cotizados para ${it.hotelNombre} (inconsistencia interna del servidor) — inténtalo de nuevo.` };
+    }
+    const edadesMenoresConfirmadas = [...edadesMenoresUsadas]; // copia — nunca la referencia de comp.data
 
     let fotoUrl: string | null = null;
     const { data: fotos } = await sb.from("hotel_fotos").select("url, es_portada, orden").eq("hotel_id", it.hotelId).order("orden");
@@ -312,7 +352,7 @@ async function crearCotizacionCarrito(input: {
       // una) — estructura estable de `distribuirPorHabitaciones()` (ver
       // lib/reservar/distribucionHabitaciones.ts), útil para auditar cómo se
       // llegó a `menores_clasificados` sin tener que recalcularlo.
-      edades_menores: edadesMenoresUsadas,
+      edades_menores: edadesMenoresConfirmadas,
       menores_clasificados: { infantes: numInfantes, nino: numNinos, nino2: numNinos2 },
       distribucion_menores: distribucionMenores,
     });
@@ -352,39 +392,49 @@ async function crearCotizacionCarrito(input: {
       adultos: 1, ninos: 0, tarifa_adulto: precioVenta, tarifa_nino: 0,
     });
     total += precioVenta;
-    // `edadesMenores` se sobreescribe con lo que `comp.data` realmente usó
-    // (única fuente, ver `resolverMenoresPorEdad` en computo.ts) — nunca la
-    // referencia cruda de `it`, aunque ya haya sido validada antes.
-    itemsOk.push({ ...it, edadesMenores: edadesMenoresUsadas ?? it.edadesMenores, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta });
+    itemsOk.push({ ...it, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta });
   }
 
   for (const t of input.tours) {
     // Re-liquida EN VIVO con la misma fórmula de `buscarReceptivos` — nunca
     // se usa nombre/precio/moneda/destino que haya mandado el navegador
     // (esos ni siquiera llegan hasta acá: `validarTourInput` no los lee).
-    // `null` = el servicio ya no está publicado/activo o no tiene tarifa
-    // vigente para esas fechas/pax: se excluye (mismo criterio que un
-    // choque de moneda), nunca se aproxima ni se inventa un precio.
+    //
+    // FALLO CERRADO (ronda 4): `liquidarServicioPuntual` ahora distingue tres
+    // motivos de fallo (ver lib/reservar/liquidacionServicio.ts). Solo
+    // "no_disponible" es un motivo legítimo de negocio para EXCLUIR el tour
+    // y seguir con el resto del carrito — un "error_consulta" (Supabase
+    // falló técnicamente) o una "configuracion_invalida" (el catálogo tiene
+    // un dato incompleto/incoherente) aborta la cotización COMPLETA: nunca
+    // se genera una cotización parcial a partir de un fallo técnico, y nunca
+    // se cobra un tour con un modo/margen inventado por no encontrar su
+    // configuración real.
     const resultado = await liquidarServicioPuntual(t);
-    if (!resultado) {
-      excluidos.push(`Servicio #${t.servicioId} (ya no disponible para esas fechas/pax)`);
+    if (!resultado.ok) {
+      if (resultado.tipo === "no_disponible") {
+        excluidos.push({ etiqueta: `Servicio #${t.servicioId} (${resultado.error})`, motivo: "no_disponible" });
+        continue;
+      }
+      return { ok: false, error: `No se pudo cotizar el servicio #${t.servicioId}: ${resultado.error}` };
+    }
+    const tMoneda = resultado.resultado.moneda || "COP";
+    if (monedaPrincipal && tMoneda !== monedaPrincipal) {
+      excluidos.push({ etiqueta: `${resultado.resultado.nombre} (moneda ${tMoneda})`, motivo: "moneda" });
       continue;
     }
-    const tMoneda = resultado.moneda || "COP";
-    if (monedaPrincipal && tMoneda !== monedaPrincipal) { excluidos.push(`${resultado.nombre} (moneda ${tMoneda})`); continue; }
     monedaPrincipal = monedaPrincipal ?? tMoneda;
     iIdx++;
     itemsSnap.push({
       id: iIdx,
-      descripcion: `Servicio · ${resultado.nombre}${resultado.destino ? ` — ${resultado.destino}` : ""}`,
-      adultos: 1, ninos: 0, tarifa_adulto: resultado.total, tarifa_nino: 0,
+      descripcion: `Servicio · ${resultado.resultado.nombre}${resultado.resultado.destino ? ` — ${resultado.resultado.destino}` : ""}`,
+      adultos: 1, ninos: 0, tarifa_adulto: resultado.resultado.total, tarifa_nino: 0,
     });
-    total += resultado.total;
+    total += resultado.resultado.total;
     toursOk.push({
-      servicioId: resultado.servicioId, paqueteId: resultado.paqueteId,
-      nombre: resultado.nombre, destino: resultado.destino, descripcion: resultado.descripcion,
-      fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, noches: resultado.noches,
-      pax: resultado.pax, precio: resultado.total, moneda: resultado.moneda,
+      servicioId: resultado.resultado.servicioId, paqueteId: resultado.resultado.paqueteId,
+      nombre: resultado.resultado.nombre, destino: resultado.resultado.destino, descripcion: resultado.resultado.descripcion,
+      fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, noches: resultado.resultado.noches,
+      pax: resultado.resultado.pax, precio: resultado.resultado.total, moneda: resultado.resultado.moneda,
     });
   }
 
@@ -510,11 +560,21 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   // llegaba tal cual del cliente (podía mandar `1` = 100%/"gratis").
   const ctxB2B = await getContextoB2B();
   const b2b = resolverB2BParaMensaje(ctxB2B, input.modo);
-  // Si algo del carrito quedó fuera de la cotización (moneda distinta a la del
-  // resto), se avisa igual en el mensaje para no perderlo silenciosamente.
-  const notaExcluidos = cot.excluidos.length
-    ? `Nota: quedaron fuera de esta cotización por estar en otra moneda — coordinar aparte: ${cot.excluidos.join(", ")}.`
-    : null;
+  // Si algo del carrito quedó fuera de la cotización, se avisa igual en el
+  // mensaje para no perderlo silenciosamente — pero cada motivo se reporta
+  // por separado (nunca todos como "otra moneda": un tour excluido por no
+  // estar disponible para esas fechas/pax es un motivo distinto, y decir lo
+  // contrario sería falso — defecto real corregido, ronda 4).
+  const excluidosPorMoneda = cot.excluidos.filter((e) => e.motivo === "moneda").map((e) => e.etiqueta);
+  const excluidosNoDisponibles = cot.excluidos.filter((e) => e.motivo === "no_disponible").map((e) => e.etiqueta);
+  const notasExcluidos: string[] = [];
+  if (excluidosPorMoneda.length) {
+    notasExcluidos.push(`Nota: quedaron fuera de esta cotización por estar en otra moneda — coordinar aparte: ${excluidosPorMoneda.join(", ")}.`);
+  }
+  if (excluidosNoDisponibles.length) {
+    notasExcluidos.push(`Nota: no se pudieron incluir en esta cotización (ya no disponibles) — coordinar aparte: ${excluidosNoDisponibles.join(", ")}.`);
+  }
+  const notaExcluidos = notasExcluidos.length ? notasExcluidos.join("\n") : null;
   const extra = [mensajeExtra?.trim() || null, notaExcluidos].filter(Boolean).join("\n\n") || null;
   const mensaje = construirMensaje(input.cliente, { codigo: cot.codigo, url: cot.url }, cot.itemsOk, cot.toursOk, cot.moneda, extra, b2b);
   const wa = (whatsapp ?? "").replace(/\D/g, "");
