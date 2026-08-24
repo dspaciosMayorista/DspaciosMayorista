@@ -100,6 +100,11 @@ export type ComputoReserva = {
   // infantes sin edad), que no tiene esta granularidad. Se persiste en el
   // snapshot jsonb de la cotización para trazabilidad (ver checkout/actions.ts).
   distribucionMenores: AsignacionHabitacion[] | null;
+  // Edades EXACTAS que se usaron para clasificar (arreglo validado por
+  // `validarEdadesMenores`, nunca la referencia cruda del llamador) — fuente
+  // única para persistir "qué edad se cotizó" en el snapshot; `null` en el
+  // flujo legado (sin `edadesMenores`).
+  edadesMenoresUsadas: number[] | null;
   lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[];
   serviciosItems: { nombre: string; precio: number }[];
   impuestoTotal: number;
@@ -152,7 +157,7 @@ function resolverMenoresPorEdad(
   ninoMax: number,
   pvpPorAcom: Record<string, number>,
   reglas: AcomConfig[]
-): { ok: true; numNinos: number; numNinos2: number; numInfantes: number; distribucion: AsignacionHabitacion[] } | { ok: false; error: string } {
+): { ok: true; numNinos: number; numNinos2: number; numInfantes: number; distribucion: AsignacionHabitacion[]; edades: number[] } | { ok: false; error: string } {
   const vCant = validarCantidadMenores(input.cantidadMenores);
   if (!vCant.ok) return { ok: false, error: vCant.error };
   const vEdades = validarEdadesMenores(input.edadesMenores, vCant.cantidad);
@@ -177,7 +182,11 @@ function resolverMenoresPorEdad(
     { nino: pvpPorAcom["nino"] != null, nino2: pvpPorAcom["nino2"] != null }
   );
   if (errTarifa) return { ok: false, error: errTarifa };
-  return { ok: true, numNinos: rDist.totales.nino, numNinos2: rDist.totales.nino2, numInfantes: rDist.totales.infantes, distribucion: rDist.habitaciones };
+  // `vEdades.edades` es un arreglo NUEVO construido por `validarEdadesMenores`
+  // (nunca la misma referencia que `input.edadesMenores`) — mutar el objeto
+  // original del llamador después de este punto no puede alterar lo que se
+  // devuelve aquí ni lo que termine en el snapshot (ver checkout/actions.ts).
+  return { ok: true, numNinos: rDist.totales.nino, numNinos2: rDist.totales.nino2, numInfantes: rDist.totales.infantes, distribucion: rDist.habitaciones, edades: vEdades.edades };
 }
 
 export async function computarReserva(
@@ -225,6 +234,7 @@ export async function computarReserva(
   let numNinos2 = Math.max(0, Math.trunc(Number(input.ninos2) || 0));
   let numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
   let distribucionMenores: AsignacionHabitacion[] | null = null;
+  let edadesMenoresUsadas: number[] | null = null;
   const numMascotas = Math.max(0, Math.trunc(Number(input.mascotas) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   let monedaReserva = "COP";  // moneda del paquete (USD si los hoteles son internacionales)
@@ -297,6 +307,7 @@ export async function computarReserva(
       if (!rMenores.ok) return { ok: false, error: rMenores.error };
       numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
       distribucionMenores = rMenores.distribucion;
+      edadesMenoresUsadas = rMenores.edades;
     }
     for (const a of ACOM_ROOMS) {
       const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
@@ -384,6 +395,7 @@ export async function computarReserva(
       if (!rMenores.ok) return { ok: false, error: rMenores.error };
       numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
       distribucionMenores = rMenores.distribucion;
+      edadesMenoresUsadas = rMenores.edades;
     }
 
     for (const a of ACOM_ROOMS) {
@@ -589,6 +601,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, distribucionMenores, lineasHab, serviciosItems, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
+    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
   };
 }

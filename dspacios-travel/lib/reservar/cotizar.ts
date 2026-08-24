@@ -23,13 +23,13 @@ import {
 } from "@/lib/calc/paquetes";
 import { defaultAcomConfig, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import {
-  MAX_PAX_CONSULTA,
   validarCantidadMenores,
   validarEdadesMenores,
   validarHabitacionesConsultadas,
   validarAdultosDeclarados,
   validarFechaConsulta,
   validarDestinoConsulta,
+  validarPaxTotalConsulta,
   clasificarMenoresPorEdad,
   verificarTarifasMenoresDisponibles,
   type ClasificacionMenores,
@@ -293,9 +293,8 @@ export async function buscarHoteles(inputRaw: unknown): Promise<{ ok: true; resu
 
   const numNoches = noches(input.fechaIda, input.fechaRegreso);
   if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
-  if (input.habitaciones.length + edades.length > MAX_PAX_CONSULTA) {
-    return { ok: false, error: `No se pueden cotizar más de ${MAX_PAX_CONSULTA} pax en una sola búsqueda.` };
-  }
+  const vPaxTotal = validarPaxTotalConsulta(input.adultos, edades.length);
+  if (!vPaxTotal.ok) return { ok: false, error: vPaxTotal.error };
 
   const admin = createAdminClient();
   let q = admin
@@ -426,6 +425,82 @@ export type ResultadoServicio = {
   paqueteId: number; total: number; pax: number; noches: number; moneda: string;
 };
 
+type DatosServicioPar = { servicioId: number; paqueteId: number; nombre: string; destino: string | null; descripcion: string | null };
+type FilaServicioAdicional = { id: number; precio_persona: number | null; recargo_individual: number | null; liquidacion: string | null; moneda: string | null };
+type FilaGrupoTarifa = { pax_desde: number; pax_hasta: number; precio: number };
+type ContextoServicios = {
+  pctMkPorPaquete: Map<number, number>;
+  modoPorPar: Map<string, "grupo" | "persona">;
+  svcPorId: Map<number, FilaServicioAdicional>;
+  gruposPorServ: Map<string, FilaGrupoTarifa[]>;
+  tempsPorServ: Map<number, TemporadaRango[]>;
+  netoTempServ: Map<string, number>;
+  recTempServ: Map<string, number>;
+};
+
+// Arma el contexto de liquidación (mapas por servicio/temporada/grupo) a
+// partir de las filas ya consultadas — compartido por `buscarReceptivos`
+// (consulta en lote, N pares) y `liquidarServicioPuntual` (un solo par, para
+// re-liquidar en el checkout) para no tener dos copias de este armado.
+function construirContextoServicios(datos: {
+  paquetes: { id: number; pct_mk: number | null }[];
+  armado: { paquete_id: number; servicio_id: number; modo: string | null }[];
+  servicios: FilaServicioAdicional[];
+  grupos: (FilaGrupoTarifa & { servicio_id: number; temporada: string | null })[];
+  temporadas: { servicio_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; compra_inicio: string | null; compra_fin: string | null; prioridad: number | null; precio_persona: number | null; recargo_individual: number | null }[];
+}): ContextoServicios {
+  const pctMkPorPaquete = new Map(datos.paquetes.map((p) => [p.id, Number(p.pct_mk) || 0]));
+  const modoPorPar = new Map(datos.armado.map((a) => [`${a.paquete_id}-${a.servicio_id}`, a.modo === "grupo" ? "grupo" as const : "persona" as const]));
+  const svcPorId = new Map(datos.servicios.map((s) => [s.id, s]));
+
+  const gruposPorServ = new Map<string, FilaGrupoTarifa[]>();
+  for (const g of datos.grupos) {
+    const k = `${g.servicio_id}|${g.temporada ?? "GENERAL"}`;
+    (gruposPorServ.get(k) ?? gruposPorServ.set(k, []).get(k)!).push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
+  }
+  const tempsPorServ = new Map<number, TemporadaRango[]>();
+  const netoTempServ = new Map<string, number>();
+  const recTempServ = new Map<string, number>();
+  for (const t of datos.temporadas) {
+    (tempsPorServ.get(t.servicio_id) ?? tempsPorServ.set(t.servicio_id, []).get(t.servicio_id)!).push(toTemporadaRango(t));
+    if (t.precio_persona != null) netoTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
+    if (t.recargo_individual != null) recTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
+  }
+  return { pctMkPorPaquete, modoPorPar, svcPorId, gruposPorServ, tempsPorServ, netoTempServ, recTempServ };
+}
+
+// Fórmula ÚNICA de liquidación de un servicio/tour — misma que ya calculaba
+// `buscarReceptivos` (temporada vigente por fecha, modo persona/grupo, recargo
+// individual, markup del paquete, redondeo por moneda). La usan tanto la
+// búsqueda (varios pares a la vez) como `liquidarServicioPuntual` (un único
+// par, para re-liquidar el precio real del checkout) — NUNCA se duplica.
+function calcularResultadoServicio(
+  par: DatosServicioPar, ctx: ContextoServicios, fechaIdaDate: Date, numNoches: number, pax: number
+): ResultadoServicio | null {
+  const srv = ctx.svcPorId.get(par.servicioId);
+  if (!srv) return null;
+  const modo = ctx.modoPorPar.get(`${par.paqueteId}-${par.servicioId}`) ?? "persona";
+  const tt = ctx.tempsPorServ.get(par.servicioId);
+  const nombreTemp = tt?.length ? temporadaVigenteParaFecha(fechaIdaDate, tt) : null;
+  const netoPersona = (nombreTemp ? ctx.netoTempServ.get(`${par.servicioId}|${nombreTemp}`) : undefined) ?? srv.precio_persona ?? null;
+  const gruposTemp = nombreTemp ? ctx.gruposPorServ.get(`${par.servicioId}|${nombreTemp}`) : undefined;
+  const gruposServ = gruposTemp?.length ? gruposTemp : (ctx.gruposPorServ.get(`${par.servicioId}|GENERAL`) ?? []);
+  if (modo === "persona" && netoPersona == null) return null; // sin tarifa para esa fecha
+  if (modo === "grupo" && !gruposServ.length) return null;
+
+  let costoNeto = precioServicio(modo, netoPersona, gruposServ, pax) * factorLiquidacion(srv.liquidacion, numNoches);
+  if (modo === "persona" && pax === 1) {
+    const recTemp = nombreTemp ? ctx.recTempServ.get(`${par.servicioId}|${nombreTemp}`) : undefined;
+    costoNeto += Math.max(recTemp ?? (Number(srv.recargo_individual) || 0), 0);
+  }
+  const pctMk = ctx.pctMkPorPaquete.get(par.paqueteId) ?? 0;
+  const moneda = srv.moneda ?? "COP";
+  const total = redondearVenta(marcar(costoNeto, pctMk), moneda);
+  if (total <= 0) return null;
+
+  return { servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion, paqueteId: par.paqueteId, total, pax, noches: numNoches, moneda };
+}
+
 export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
   if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y regreso." };
@@ -441,7 +516,7 @@ export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{
     .not("servicio_id", "is", null);
   if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
   const { data: filas } = await q;
-  const pares = new Map<string, { paqueteId: number; servicioId: number; nombre: string; destino: string | null; descripcion: string | null }>();
+  const pares = new Map<string, DatosServicioPar>();
   for (const f of filas ?? []) {
     if (f.paquete_id == null || f.servicio_id == null) continue;
     pares.set(`${f.paquete_id}-${f.servicio_id}`, {
@@ -462,53 +537,68 @@ export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{
     admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", servicioIds),
   ]);
 
-  const pctMkPorPaquete = new Map((paquetes ?? []).map((p) => [p.id, Number(p.pct_mk) || 0]));
-  const modoPorPar = new Map((armado ?? []).map((a) => [`${a.paquete_id}-${a.servicio_id}`, a.modo === "grupo" ? "grupo" as const : "persona" as const]));
-  const svcPorId = new Map((servicios ?? []).map((s) => [s.id, s]));
-
-  const gruposPorServ = new Map<string, { pax_desde: number; pax_hasta: number; precio: number }[]>();
-  for (const g of grupos ?? []) {
-    const k = `${g.servicio_id}|${g.temporada ?? "GENERAL"}`;
-    (gruposPorServ.get(k) ?? gruposPorServ.set(k, []).get(k)!).push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
-  }
-  const tempsPorServ = new Map<number, TemporadaRango[]>();
-  const netoTempServ = new Map<string, number>();
-  const recTempServ = new Map<string, number>();
-  for (const t of temporadas ?? []) {
-    (tempsPorServ.get(t.servicio_id) ?? tempsPorServ.set(t.servicio_id, []).get(t.servicio_id)!).push(toTemporadaRango(t));
-    if (t.precio_persona != null) netoTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
-    if (t.recargo_individual != null) recTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
-  }
+  const ctx = construirContextoServicios({
+    paquetes: paquetes ?? [], armado: armado ?? [], servicios: servicios ?? [], grupos: grupos ?? [], temporadas: temporadas ?? [],
+  });
 
   const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
   const resultados: ResultadoServicio[] = [];
   for (const par of pares.values()) {
-    const srv = svcPorId.get(par.servicioId);
-    if (!srv) continue;
-    const modo = modoPorPar.get(`${par.paqueteId}-${par.servicioId}`) ?? "persona";
-    const tt = tempsPorServ.get(par.servicioId);
-    const nombreTemp = tt?.length ? temporadaVigenteParaFecha(fechaIdaDate, tt) : null;
-    const netoPersona = (nombreTemp ? netoTempServ.get(`${par.servicioId}|${nombreTemp}`) : undefined) ?? srv.precio_persona ?? null;
-    const gruposTemp = nombreTemp ? gruposPorServ.get(`${par.servicioId}|${nombreTemp}`) : undefined;
-    const gruposServ = gruposTemp?.length ? gruposTemp : (gruposPorServ.get(`${par.servicioId}|GENERAL`) ?? []);
-    if (modo === "persona" && netoPersona == null) continue; // sin tarifa para esa fecha
-    if (modo === "grupo" && !gruposServ.length) continue;
-
-    let costoNeto = precioServicio(modo, netoPersona, gruposServ, pax) * factorLiquidacion(srv.liquidacion, numNoches);
-    if (modo === "persona" && pax === 1) {
-      const recTemp = nombreTemp ? recTempServ.get(`${par.servicioId}|${nombreTemp}`) : undefined;
-      costoNeto += Math.max(recTemp ?? (Number(srv.recargo_individual) || 0), 0);
-    }
-    const pctMk = pctMkPorPaquete.get(par.paqueteId) ?? 0;
-    const moneda = srv.moneda ?? "COP";
-    const total = redondearVenta(marcar(costoNeto, pctMk), moneda);
-    if (total <= 0) continue;
-
-    resultados.push({
-      servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion,
-      paqueteId: par.paqueteId, total, pax, noches: numNoches, moneda,
-    });
+    const r = calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax);
+    if (r) resultados.push(r);
   }
   resultados.sort((a, b) => a.total - b.total);
   return { ok: true, resultados };
+}
+
+// Re-liquida EN VIVO un único servicio/tour puntual — usado por el checkout
+// público para volver a calcular el precio real de un tour del carrito,
+// nunca confiando en nombre/precio/moneda/pax que mande el navegador (ver
+// FRONTERA en app/tarifario/checkout/actions.ts). Confirma primero que el par
+// (paqueteId, servicioId) esté REALMENTE publicado y activo en
+// `tarifario_resultado` — el nombre/destino/descripción canónicos salen de
+// ahí, nunca del cliente. `null` = no se pudo re-liquidar (par inválido,
+// desactivado, o sin tarifa vigente para esas fechas/pax) — el llamador
+// decide qué hacer (excluir el ítem, avisar, etc.), nunca se aproxima ni se
+// inventa un precio.
+export async function liquidarServicioPuntual(input: {
+  paqueteId: number; servicioId: number; fechaIda: string; fechaRegreso: string; pax: number;
+}): Promise<ResultadoServicio | null> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  const numNoches = Math.max(1, noches(input.fechaIda, input.fechaRegreso));
+  if (numNoches <= 0) return null;
+  const pax = Math.max(1, Math.trunc(input.pax) || 1);
+
+  const admin = createAdminClient();
+  const { data: fila } = await admin
+    .from("tarifario_resultado")
+    .select("servicio_nombre, destino_nombre, descripcion")
+    .eq("modulo", "servicios")
+    .eq("paquete_activo", true)
+    .eq("paquete_id", input.paqueteId)
+    .eq("servicio_id", input.servicioId)
+    .limit(1)
+    .maybeSingle();
+  if (!fila) return null; // el par no está publicado/activo — nunca se inventa
+
+  const par: DatosServicioPar = {
+    servicioId: input.servicioId, paqueteId: input.paqueteId,
+    nombre: fila.servicio_nombre ?? "Servicio", destino: fila.destino_nombre, descripcion: fila.descripcion,
+  };
+
+  const [{ data: paquete }, { data: armado }, { data: servicio }, { data: grupos }, { data: temporadas }] = await Promise.all([
+    admin.from("armado_paquetes").select("id, pct_mk").eq("id", input.paqueteId).maybeSingle(),
+    admin.from("armado_servicios").select("paquete_id, servicio_id, modo").eq("paquete_id", input.paqueteId).eq("servicio_id", input.servicioId).maybeSingle(),
+    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda").eq("id", input.servicioId).maybeSingle(),
+    admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").eq("servicio_id", input.servicioId),
+    admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").eq("servicio_id", input.servicioId),
+  ]);
+  if (!servicio) return null;
+
+  const ctx = construirContextoServicios({
+    paquetes: paquete ? [paquete] : [], armado: armado ? [armado] : [], servicios: [servicio], grupos: grupos ?? [], temporadas: temporadas ?? [],
+  });
+
+  const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
+  return calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax);
 }

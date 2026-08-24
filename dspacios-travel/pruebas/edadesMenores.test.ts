@@ -18,8 +18,18 @@ import {
   validarHabitacionesConsultadas,
   validarAdultosDeclarados,
   validarFechaConsulta,
+  validarRangoFechas,
   validarDestinoConsulta,
   validarSolicitudItem,
+  validarTourInput,
+  validarPaxTotalConsulta,
+  validarClienteInput,
+  validarCrearSolicitudInput,
+  resolverB2BParaMensaje,
+  MAX_ITEMS_CARRITO,
+  MAX_TOURS_CARRITO,
+  MAX_LINEAS_CARRITO,
+  MAX_LONGITUD_TEXTO,
 } from "../lib/reservar/edadesMenores.ts";
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -255,9 +265,10 @@ describe("15. La edad llega intacta a cálculo, snapshot y creación de la reser
   test("cotizar.ts nunca devuelve 'sin resultados' a secas: arma un diagnóstico cuando todos los hoteles evaluados se descartan", () => {
     assert.match(cotizar, /diagnostico/);
   });
-  test("checkout/actions.ts propaga edadesMenores del ítem validado al ReservaInput y al snapshot persistido", () => {
+  test("checkout/actions.ts propaga edadesMenores del ítem validado al ReservaInput, y el snapshot usa las edades que comp.data realmente usó (no la referencia cruda del ítem)", () => {
     assert.match(checkout, /edadesMenores: it\.edadesMenores/);
-    assert.match(checkout, /edades_menores: it\.edadesMenores/);
+    assert.match(checkout, /edades_menores: edadesMenoresUsadas/);
+    assert.doesNotMatch(checkout, /edades_menores: it\.edadesMenores/);
     assert.match(checkout, /validarSolicitudItem/);
     assert.match(checkout, /export async function crearSolicitudReserva\(inputRaw: unknown\)/);
   });
@@ -349,11 +360,50 @@ describe("19. Payload manipulado no produce TypeError ni error 500", () => {
       assert.equal(validarFechaConsulta(p).ok, false);
     });
   }
-  test("validarFechaConsulta acepta AAAA-MM-DD", () => {
+  test("validarFechaConsulta acepta AAAA-MM-DD real", () => {
     assert.equal(validarFechaConsulta("2026-01-05").ok, true);
   });
-  test("validarFechaConsulta solo valida la FORMA, no que el día/mes exista de verdad (documentado: eso lo hace la comparación de fechas en BD)", () => {
-    assert.equal(validarFechaConsulta("2026-13-40").ok, true);
+  // Fechas imposibles: la FORMA (regex) es correcta pero el día no existe en
+  // el calendario real — validarFechaConsulta debe rechazarlas (no solo la
+  // forma), preservando la cadena exacta cuando SÍ es válida.
+  const fechasImposibles = ["2026-13-40", "2026-13-01", "2026-01-00", "2026-02-31", "2026-04-31", "2026-02-30"];
+  for (const f of fechasImposibles) {
+    test(`validarFechaConsulta("${f}") se rechaza — no es un día real del calendario`, () => {
+      const r = validarFechaConsulta(f);
+      assert.equal(r.ok, false);
+      if (!r.ok) assert.match(r.error, /no es un día real del calendario/);
+    });
+  }
+  test("años bisiestos: 2024-02-29 es válido (2024 SÍ es bisiesto)", () => {
+    assert.equal(validarFechaConsulta("2024-02-29").ok, true);
+  });
+  test("años no bisiestos: 2026-02-29 se rechaza (2026 NO es bisiesto)", () => {
+    assert.equal(validarFechaConsulta("2026-02-29").ok, false);
+  });
+  test("2000-02-29 es válido (bisiesto — divisible por 400)", () => {
+    assert.equal(validarFechaConsulta("2000-02-29").ok, true);
+  });
+  test("1900-02-29 se rechaza (NO bisiesto — divisible por 100 pero no por 400)", () => {
+    assert.equal(validarFechaConsulta("1900-02-29").ok, false);
+  });
+  test("la cadena original se conserva intacta cuando la fecha es válida", () => {
+    const r = validarFechaConsulta("2026-03-07");
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.fecha, "2026-03-07");
+  });
+
+  describe("validarRangoFechas: regreso estrictamente posterior a la ida", () => {
+    test("regreso posterior a la ida pasa", () => {
+      assert.equal(validarRangoFechas("2026-01-01", "2026-01-05").ok, true);
+    });
+    test("regreso igual a la ida se rechaza", () => {
+      const r = validarRangoFechas("2026-01-05", "2026-01-05");
+      assert.equal(r.ok, false);
+    });
+    test("regreso anterior a la ida se rechaza", () => {
+      const r = validarRangoFechas("2026-01-05", "2026-01-01");
+      assert.equal(r.ok, false);
+    });
   });
 
   const payloadsDestino: unknown[] = [42, {}, [], true];
@@ -418,7 +468,7 @@ describe("20. Wiring — Vista Booking usa el helper real, no una copia/aproxima
 describe("21. Wiring — snapshot usa edades y distribución validadas por el servidor", () => {
   const checkout = leer("app/tarifario/checkout/actions.ts");
   test("hotelesSnap toma la distribución de comp.data (servidor), no del ítem crudo del cliente", () => {
-    assert.match(checkout, /distribucionMenores \} = comp\.data/);
+    assert.match(checkout, /distribucionMenores, edadesMenoresUsadas \} = comp\.data/);
     assert.match(checkout, /distribucion_menores: distribucionMenores/);
   });
   test("hotelesSnap toma la clasificación agregada (numNinos\\/numNinos2\\/numInfantes) de comp.data", () => {
@@ -478,5 +528,272 @@ describe("23. Acción pública sin edadesMenores se rechaza aunque mande ninos/n
       assert.ok(!("pax" in r.item));
       assert.ok(!("precio" in r.item));
     }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// RONDA 3 — corrección de hallazgos de revisión (ejecución real, no solo
+// wiring): tours con precio/pax controlados por el navegador, comisión B2B
+// manipulada por un anónimo, límite de pax mal calculado, payloads masivos
+// sin tope previo, fechas imposibles. Los validadores puros que antes vivían
+// dentro de `app/tarifario/checkout/actions.ts` (archivo "use server", que
+// en Next.js solo puede exportar funciones async) se movieron a este módulo
+// para poder ejecutarlos de verdad aquí — mismo criterio que ya se usó con
+// `validarSolicitudItem` en la ronda anterior.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("24. Tour manipulado — validarTourInput nunca lee nombre/precio/moneda/destino del navegador", () => {
+  const tourValido = { servicioId: 7, paqueteId: 3, fechaIda: "2026-06-01", fechaRegreso: "2026-06-05", pax: 2 };
+
+  test("tour válido se acepta y el resultado solo trae servicioId/paqueteId/fechaIda/fechaRegreso/pax", () => {
+    const r = validarTourInput(tourValido, 0);
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.deepEqual(Object.keys(r.tour).sort(), ["fechaIda", "fechaRegreso", "pax", "paqueteId", "servicioId"].sort());
+      assert.equal(r.tour.servicioId, 7);
+      assert.equal(r.tour.paqueteId, 3);
+    }
+  });
+  test("un tour manipulado con precio/nombre/moneda falsos NO afecta el resultado — esos campos ni se leen", () => {
+    const manipulado = { ...tourValido, nombre: "Tour gratis (hackeado)", precio: 0, moneda: "COP", destino: "Inventado" };
+    const r = validarTourInput(manipulado, 0);
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.ok(!("nombre" in r.tour));
+      assert.ok(!("precio" in r.tour));
+      assert.ok(!("moneda" in r.tour));
+      assert.ok(!("destino" in r.tour));
+    }
+  });
+  test("carrito histórico de tour SIN servicioId se bloquea con mensaje claro (nunca se sigue con el nombre/precio del navegador)", () => {
+    const sinServicioId = Object.fromEntries(Object.entries(tourValido).filter(([k]) => k !== "servicioId"));
+    const r = validarTourInput(sinServicioId, 0);
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /se agregó antes de poder re-liquidarlo/);
+  });
+  test("servicioId null (histórico) también se bloquea", () => {
+    const r = validarTourInput({ ...tourValido, servicioId: null }, 0);
+    assert.equal(r.ok, false);
+  });
+  test("servicioId/paqueteId no numéricos se rechazan sin lanzar", () => {
+    assert.doesNotThrow(() => validarTourInput({ ...tourValido, servicioId: "7" }, 0));
+    assert.equal(validarTourInput({ ...tourValido, servicioId: "7" }, 0).ok, false);
+    assert.equal(validarTourInput({ ...tourValido, paqueteId: "3" }, 0).ok, false);
+  });
+  test("fecha de ida/regreso imposible se rechaza (usa la misma validación real de calendario)", () => {
+    const r = validarTourInput({ ...tourValido, fechaIda: "2026-02-30" }, 0);
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /no es un día real del calendario/);
+  });
+  test("regreso igual o anterior a la ida se rechaza", () => {
+    assert.equal(validarTourInput({ ...tourValido, fechaRegreso: tourValido.fechaIda }, 0).ok, false);
+    assert.equal(validarTourInput({ ...tourValido, fechaIda: "2026-06-05", fechaRegreso: "2026-06-01" }, 0).ok, false);
+  });
+  test("pax inválido (0, negativo, decimal, > MAX_PAX_CONSULTA) se rechaza", () => {
+    assert.equal(validarTourInput({ ...tourValido, pax: 0 }, 0).ok, false);
+    assert.equal(validarTourInput({ ...tourValido, pax: -1 }, 0).ok, false);
+    assert.equal(validarTourInput({ ...tourValido, pax: 1.5 }, 0).ok, false);
+    assert.equal(validarTourInput({ ...tourValido, pax: MAX_PAX_CONSULTA + 1 }, 0).ok, false);
+  });
+  const payloadsRarosTour: unknown[] = [null, undefined, "tour", 42, [], {}, { servicioId: 1 }];
+  for (const p of payloadsRarosTour) {
+    test(`validarTourInput(${JSON.stringify(p)}, 0) no lanza y rechaza`, () => {
+      assert.doesNotThrow(() => validarTourInput(p, 0));
+      assert.equal(validarTourInput(p, 0).ok, false);
+    });
+  }
+});
+
+describe("25. Recálculo server-side — el precio nunca sale de lo que mandó el navegador (wiring, DB no disponible en este entorno)", () => {
+  const cotizar = leer("lib/reservar/cotizar.ts");
+  const checkout = leer("app/tarifario/checkout/actions.ts");
+  test("cotizar.ts expone liquidarServicioPuntual con la MISMA fórmula que buscarReceptivos (calcularResultadoServicio compartida, no duplicada)", () => {
+    assert.match(cotizar, /export async function liquidarServicioPuntual/);
+    assert.match(cotizar, /function calcularResultadoServicio/);
+    // Ambas funciones de búsqueda usan la función compartida — si alguna
+    // volviera a traer su propia copia de la fórmula, esta prueba lo detecta.
+    const usosCalculo = cotizar.match(/calcularResultadoServicio\(/g) ?? [];
+    assert.ok(usosCalculo.length >= 3, "calcularResultadoServicio debe usarse en su definición + buscarReceptivos + liquidarServicioPuntual");
+  });
+  test("checkout/actions.ts re-liquida cada tour con liquidarServicioPuntual y usa SOLO el resultado (resultado.total/nombre/moneda) dentro del bucle de tours, nunca t.precio/t.nombre/t.moneda", () => {
+    const idxInicio = checkout.indexOf("for (const t of input.tours)");
+    const idxFin = checkout.indexOf("\n  }\n", idxInicio);
+    const bucle = checkout.slice(idxInicio, idxFin);
+    assert.match(bucle, /liquidarServicioPuntual\(t\)/);
+    assert.match(bucle, /resultado\.total/);
+    assert.match(bucle, /resultado\.nombre/);
+    // `t` (el ítem validado por `validarTourInput`) solo tiene servicioId/
+    // paqueteId/fechaIda/fechaRegreso/pax — no HAY t.precio/t.nombre/t.moneda
+    // que leer, así que esta prueba confirma que el bucle nunca los inventa.
+    assert.doesNotMatch(bucle, /t\.precio/);
+    assert.doesNotMatch(bucle, /t\.nombre/);
+    assert.doesNotMatch(bucle, /t\.moneda/);
+  });
+  test("un servicio que ya no se puede re-liquidar (null) se excluye, nunca se aproxima un precio", () => {
+    assert.match(checkout, /if \(!resultado\)/);
+    assert.match(checkout, /excluidos\.push/);
+  });
+});
+
+describe("26. Payloads masivos — los topes de arreglo se revisan ANTES de iterar", () => {
+  const clienteValido = { nombres: "Ana", apellidos: "Pérez", numeroDoc: "123", telefono: "3001234567", email: "a@b.com" };
+  test("MAX_ITEMS_CARRITO/MAX_TOURS_CARRITO/MAX_LINEAS_CARRITO están definidos y son enteros positivos", () => {
+    for (const n of [MAX_ITEMS_CARRITO, MAX_TOURS_CARRITO, MAX_LINEAS_CARRITO]) {
+      assert.ok(Number.isInteger(n) && n > 0);
+    }
+  });
+  test(`un carrito con ${MAX_ITEMS_CARRITO + 1} hoteles se rechaza por tamaño, sin llegar a validar cada ítem (bastan objetos vacíos)`, () => {
+    const items = Array.from({ length: MAX_ITEMS_CARRITO + 1 }, () => ({}));
+    const r = validarCrearSolicitudInput({ items, tours: [], cliente: clienteValido });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, new RegExp(`más de ${MAX_ITEMS_CARRITO} hoteles`));
+  });
+  test(`un carrito con ${MAX_TOURS_CARRITO + 1} tours se rechaza por tamaño`, () => {
+    const tours = Array.from({ length: MAX_TOURS_CARRITO + 1 }, () => ({}));
+    const r = validarCrearSolicitudInput({ items: [], tours, cliente: clienteValido });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, new RegExp(`más de ${MAX_TOURS_CARRITO} servicios`));
+  });
+  test("items + tours combinados por encima de MAX_LINEAS_CARRITO (pero cada uno bajo su propio máximo) se rechaza", () => {
+    const mitad = Math.ceil(MAX_LINEAS_CARRITO / 2) + 1;
+    assert.ok(mitad <= MAX_ITEMS_CARRITO && mitad <= MAX_TOURS_CARRITO, "el caso de prueba asume que la mitad+1 cabe en los topes individuales");
+    const items = Array.from({ length: mitad }, () => ({}));
+    const tours = Array.from({ length: mitad }, () => ({}));
+    const r = validarCrearSolicitudInput({ items, tours, cliente: clienteValido });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, new RegExp(`más de ${MAX_LINEAS_CARRITO} líneas`));
+  });
+  test("un carrito dentro de los topes pero vacío de items/tours válidos sigue validando cada ítem normalmente", () => {
+    const r = validarCrearSolicitudInput({ items: [{}], tours: [], cliente: clienteValido });
+    assert.equal(r.ok, false); // el ítem vacío falla su propia validación de forma, no el tope
+  });
+  const payloadsRarosSolicitud: unknown[] = [null, undefined, "x", 42, [], { items: "no es arreglo" }, { items: [] }];
+  for (const p of payloadsRarosSolicitud) {
+    test(`validarCrearSolicitudInput(${JSON.stringify(p)}) no lanza`, () => {
+      assert.doesNotThrow(() => validarCrearSolicitudInput(p));
+    });
+  }
+
+  describe("validarClienteInput / longitudes de texto acotadas", () => {
+    test("cliente válido se acepta", () => {
+      assert.equal(validarClienteInput(clienteValido).ok, true);
+    });
+    test(`un campo de más de ${MAX_LONGITUD_TEXTO} caracteres se rechaza`, () => {
+      const r = validarClienteInput({ ...clienteValido, nombres: "A".repeat(MAX_LONGITUD_TEXTO + 1) });
+      assert.equal(r.ok, false);
+    });
+    test("email vacío se permite (único campo opcional en forma); nombres vacío no", () => {
+      assert.equal(validarClienteInput({ ...clienteValido, email: "" }).ok, true);
+      assert.equal(validarClienteInput({ ...clienteValido, nombres: "" }).ok, false);
+    });
+    const payloadsRarosCliente: unknown[] = [null, undefined, "x", 42, [], {}];
+    for (const p of payloadsRarosCliente) {
+      test(`validarClienteInput(${JSON.stringify(p)}) no lanza`, () => {
+        assert.doesNotThrow(() => validarClienteInput(p));
+        assert.equal(validarClienteInput(p).ok, false);
+      });
+    }
+  });
+});
+
+describe("27. Límite total de personas — adultos + menores, no habitaciones (defecto real corregido)", () => {
+  test("adultos + menores dentro del máximo pasa", () => {
+    assert.equal(validarPaxTotalConsulta(10, 5).ok, true);
+  });
+  test("adultos + menores exactamente en el máximo pasa", () => {
+    assert.equal(validarPaxTotalConsulta(MAX_PAX_CONSULTA, 0).ok, true);
+    assert.equal(validarPaxTotalConsulta(MAX_PAX_CONSULTA - 3, 3).ok, true);
+  });
+  test(`no se pueden combinar ${MAX_PAX_CONSULTA} adultos con NINGÚN menor adicional`, () => {
+    const r = validarPaxTotalConsulta(MAX_PAX_CONSULTA, 1);
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, new RegExp(`más de ${MAX_PAX_CONSULTA} pax`));
+  });
+  test("un total de adultos+menores uno por encima del máximo se rechaza", () => {
+    assert.equal(validarPaxTotalConsulta(MAX_PAX_CONSULTA + 1, 0).ok, false);
+    assert.equal(validarPaxTotalConsulta(0, MAX_PAX_CONSULTA + 1).ok, false);
+  });
+  test("control negativo del bug anterior: muchas HABITACIONES con pocos adultos+menores ya no importan — el cálculo es por personas, no por habitaciones", () => {
+    // Antes: `habitaciones.length + edades.length`. Con 8 habitaciones (el
+    // máximo permitido) pero solo 2 adultos + 1 menor, el cálculo viejo daría
+    // 8+1=9 (irrelevante para el límite); el correcto es 2+1=3 — el número de
+    // habitaciones nunca debe entrar en esta cuenta.
+    assert.equal(validarPaxTotalConsulta(2, 1).ok, true);
+  });
+});
+
+describe("28. Comisión B2B manipulada y usuario anónimo — resolverB2BParaMensaje", () => {
+  const agenciaReal = { nombre: "Agencia Real S.A.S.", nit: "900123456", email: "real@agencia.com", telefono: "3009999999" };
+  test("usuario anónimo (esB2B=false) nunca genera bloque B2B, sin importar qué modo pida", () => {
+    const ctx = { esB2B: false, agencia: null, pctComision: 0 };
+    assert.equal(resolverB2BParaMensaje(ctx, "neta"), undefined);
+    assert.equal(resolverB2BParaMensaje(ctx, "comisionable"), undefined);
+    assert.equal(resolverB2BParaMensaje(ctx, undefined), undefined);
+  });
+  test("esB2B=true pero sin agencia registrada (dato inconsistente) tampoco genera bloque B2B — falla cerrado", () => {
+    const ctx = { esB2B: true, agencia: null, pctComision: 0.2 };
+    assert.equal(resolverB2BParaMensaje(ctx, "neta"), undefined);
+  });
+  test("B2B real: la facturación y la comisión SIEMPRE son las de la sesión, nunca un valor que 'llegue' de otro lado", () => {
+    const ctx = { esB2B: true, agencia: agenciaReal, pctComision: 0.12 };
+    const r = resolverB2BParaMensaje(ctx, "neta");
+    assert.deepEqual(r, { modo: "neta", facturacion: agenciaReal, pctComision: 0.12 });
+  });
+  test("control negativo: pctComision=1 (100%) en la sesión SÍ se refleja tal cual — la función no la limita a un rango, esa garantía vive en que el valor viene de usuarios.pct_comision, no del navegador", () => {
+    // Esta prueba documenta la frontera de responsabilidad: `resolverB2BParaMensaje`
+    // confía en `ctxSesion` porque ese objeto YA se resolvió en el servidor
+    // (getContextoB2B, fuera del alcance de node --test sin Supabase) — lo que
+    // esta función garantiza es que NINGÚN campo de `modoSolicitado` (lo único
+    // que puede venir del navegador) se filtre a facturacion/pctComision.
+    const ctx = { esB2B: true, agencia: agenciaReal, pctComision: 1 };
+    const r = resolverB2BParaMensaje(ctx, "comisionable");
+    assert.equal(r?.pctComision, 1);
+  });
+  test("modo no solicitado (undefined) usa 'comisionable' por defecto, nunca 'neta' en silencio", () => {
+    const ctx = { esB2B: true, agencia: agenciaReal, pctComision: 0.1 };
+    const r = resolverB2BParaMensaje(ctx, undefined);
+    assert.equal(r?.modo, "comisionable");
+  });
+  test("la facturación devuelta es SIEMPRE la misma referencia/valor de ctxSesion.agencia — nunca se mezcla con datos externos", () => {
+    const ctx = { esB2B: true, agencia: agenciaReal, pctComision: 0.1 };
+    const r = resolverB2BParaMensaje(ctx, "neta");
+    assert.deepEqual(r?.facturacion, agenciaReal);
+  });
+});
+
+describe("29. Wiring — crearSolicitudReserva resuelve B2B desde la sesión, nunca desde el input del navegador", () => {
+  const checkout = leer("app/tarifario/checkout/actions.ts");
+  test("crearSolicitudReserva llama getContextoB2B() y resolverB2BParaMensaje(ctxB2B, input.modo) — nunca lee input.facturacion/input.pctComision", () => {
+    assert.match(checkout, /const ctxB2B = await getContextoB2B\(\)/);
+    assert.match(checkout, /resolverB2BParaMensaje\(ctxB2B, input\.modo\)/);
+    assert.doesNotMatch(checkout, /input\.facturacion/);
+    assert.doesNotMatch(checkout, /input\.pctComision/);
+  });
+  test("CrearSolicitudInputValidado (edadesMenores.ts) ya no tiene campos facturacion/pctComision en su forma", () => {
+    const modulo = leer("lib/reservar/edadesMenores.ts");
+    const idx = modulo.indexOf("export type CrearSolicitudInputValidado");
+    const cuerpo = modulo.slice(idx, modulo.indexOf("}", idx));
+    assert.doesNotMatch(cuerpo, /facturacion/);
+    assert.doesNotMatch(cuerpo, /pctComision/);
+  });
+});
+
+describe("30. Wiring — checkout/page.tsx bloquea tours históricos sin servicioId antes de enviar", () => {
+  const checkoutPage = leer("app/tarifario/checkout/page.tsx");
+  test("checkout/page.tsx valida it.servicioId antes de armar el payload de tours", () => {
+    assert.match(checkoutPage, /it\.servicioId == null/);
+  });
+  test("checkout/page.tsx manda servicioId/paqueteId/fechaIda/fechaRegreso/pax al servidor, no nombre/precio/moneda", () => {
+    const idx = checkoutPage.indexOf("tours: tourItems.map");
+    const cuerpo = checkoutPage.slice(idx, idx + 300);
+    assert.match(cuerpo, /servicioId: it\.servicioId/);
+    assert.match(cuerpo, /paqueteId: it\.paqueteId/);
+    assert.doesNotMatch(cuerpo, /precio: it\.precio/);
+    assert.doesNotMatch(cuerpo, /nombre: it\.nombre/);
+  });
+  test("la sección 'Facturar a' quedó de solo lectura (disabled) — ya no se envía facturación editada por el cliente", () => {
+    const idx = checkoutPage.indexOf("Facturar a (agencia)");
+    const cuerpo = checkoutPage.slice(idx, idx + 600);
+    assert.match(cuerpo, /disabled readOnly/);
   });
 });

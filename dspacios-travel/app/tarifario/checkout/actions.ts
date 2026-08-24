@@ -8,7 +8,11 @@ import { parseRuta, ciudadIata } from "@/lib/iata";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { formatMoneda } from "@/lib/utils";
 import { comisionDefault, categoriaAliado } from "@/lib/b2b";
-import { validarSolicitudItem, type SolicitudItemValidado } from "@/lib/reservar/edadesMenores";
+import {
+  resolverB2BParaMensaje, validarCrearSolicitudInput,
+  type SolicitudItemValidado, type SolicitudTourValidado,
+} from "@/lib/reservar/edadesMenores";
+import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import type { Json } from "@/types/database";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
@@ -58,9 +62,25 @@ type SolicitudItemComputado = SolicitudItemValidado & {
 
 // Tour/servicio agregado al carrito — entra a la MISMA cotización combinada
 // que los hoteles del carrito (ver crearCotizacionCarrito), como una línea
-// más de "Servicios adicionales".
+// más de "Servicios adicionales". `servicioId`/`paqueteId` (ver
+// lib/cart/CartContext.tsx → TourCartItem, siempre los trae desde que
+// BuscadorReceptivos es el único lugar que arma este ítem) son la ÚNICA
+// forma de re-liquidar el precio real en el servidor — `nombre`/`precio`/
+// `moneda`/`destino` que manda el navegador NUNCA se usan para calcular ni
+// para persistir: son solo lo que el cliente cree que agregó, y se
+// descartan por completo en cuanto se re-liquida (ver `validarTourInput`).
 export type SolicitudTour = {
+  servicioId: number | null; paqueteId: number;
   nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null;
+  pax: number; precio: number; moneda: string;
+};
+
+// Ítem YA re-liquidado en servidor (`liquidarServicioPuntual`, misma fórmula
+// que `buscarReceptivos`) — lo único que se usa para mensaje/snapshot.
+type SolicitudTourComputado = {
+  servicioId: number; paqueteId: number;
+  nombre: string; destino: string | null; descripcion: string | null;
+  fechaIda: string; fechaRegreso: string; noches: number;
   pax: number; precio: number; moneda: string;
 };
 
@@ -149,7 +169,7 @@ function construirMensaje(
   cliente: SolicitudCliente,
   cot: { codigo: string; url: string },
   items: SolicitudItemComputado[],
-  tours: SolicitudTour[],
+  tours: SolicitudTourComputado[],
   moneda: string,
   extra: string | null,
   b2b?: { modo: "comisionable" | "neta"; facturacion: Facturacion; pctComision: number },
@@ -214,10 +234,10 @@ function construirMensaje(
 // `excluidos` para avisar) — evita totales mezclando pesos y dólares.
 async function crearCotizacionCarrito(input: {
   items: SolicitudItemValidado[];
-  tours: SolicitudTour[];
+  tours: SolicitudTourValidado[];
   cliente: SolicitudCliente;
 }): Promise<
-  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; toursOk: SolicitudTour[]; excluidos: string[] }
+  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; toursOk: SolicitudTourComputado[]; excluidos: string[] }
   | { ok: false; error: string }
 > {
   const sb = await createClient();
@@ -229,7 +249,7 @@ async function crearCotizacionCarrito(input: {
   const vuelosSnap: Record<string, unknown>[] = [];
   const itemsSnap: Record<string, unknown>[] = [];
   const itemsOk: SolicitudItemComputado[] = [];
-  const toursOk: SolicitudTour[] = [];
+  const toursOk: SolicitudTourComputado[] = [];
   const excluidos: string[] = [];
   let monedaPrincipal: string | null = null;
   let total = 0;
@@ -263,7 +283,7 @@ async function crearCotizacionCarrito(input: {
     };
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
-    const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores } = comp.data;
+    const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas } = comp.data;
 
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
       excluidos.push(`${it.hotelNombre} (moneda ${monedaReserva})`);
@@ -292,7 +312,7 @@ async function crearCotizacionCarrito(input: {
       // una) — estructura estable de `distribuirPorHabitaciones()` (ver
       // lib/reservar/distribucionHabitaciones.ts), útil para auditar cómo se
       // llegó a `menores_clasificados` sin tener que recalcularlo.
-      edades_menores: it.edadesMenores,
+      edades_menores: edadesMenoresUsadas,
       menores_clasificados: { infantes: numInfantes, nino: numNinos, nino2: numNinos2 },
       distribucion_menores: distribucionMenores,
     });
@@ -332,21 +352,40 @@ async function crearCotizacionCarrito(input: {
       adultos: 1, ninos: 0, tarifa_adulto: precioVenta, tarifa_nino: 0,
     });
     total += precioVenta;
-    itemsOk.push({ ...it, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta });
+    // `edadesMenores` se sobreescribe con lo que `comp.data` realmente usó
+    // (única fuente, ver `resolverMenoresPorEdad` en computo.ts) — nunca la
+    // referencia cruda de `it`, aunque ya haya sido validada antes.
+    itemsOk.push({ ...it, edadesMenores: edadesMenoresUsadas ?? it.edadesMenores, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta });
   }
 
   for (const t of input.tours) {
-    const tMoneda = t.moneda || "COP";
-    if (monedaPrincipal && tMoneda !== monedaPrincipal) { excluidos.push(`${t.nombre} (moneda ${tMoneda})`); continue; }
+    // Re-liquida EN VIVO con la misma fórmula de `buscarReceptivos` — nunca
+    // se usa nombre/precio/moneda/destino que haya mandado el navegador
+    // (esos ni siquiera llegan hasta acá: `validarTourInput` no los lee).
+    // `null` = el servicio ya no está publicado/activo o no tiene tarifa
+    // vigente para esas fechas/pax: se excluye (mismo criterio que un
+    // choque de moneda), nunca se aproxima ni se inventa un precio.
+    const resultado = await liquidarServicioPuntual(t);
+    if (!resultado) {
+      excluidos.push(`Servicio #${t.servicioId} (ya no disponible para esas fechas/pax)`);
+      continue;
+    }
+    const tMoneda = resultado.moneda || "COP";
+    if (monedaPrincipal && tMoneda !== monedaPrincipal) { excluidos.push(`${resultado.nombre} (moneda ${tMoneda})`); continue; }
     monedaPrincipal = monedaPrincipal ?? tMoneda;
     iIdx++;
     itemsSnap.push({
       id: iIdx,
-      descripcion: `Servicio · ${t.nombre}${t.destino ? ` — ${t.destino}` : ""}`,
-      adultos: 1, ninos: 0, tarifa_adulto: t.precio, tarifa_nino: 0,
+      descripcion: `Servicio · ${resultado.nombre}${resultado.destino ? ` — ${resultado.destino}` : ""}`,
+      adultos: 1, ninos: 0, tarifa_adulto: resultado.total, tarifa_nino: 0,
     });
-    total += t.precio;
-    toursOk.push(t);
+    total += resultado.total;
+    toursOk.push({
+      servicioId: resultado.servicioId, paqueteId: resultado.paqueteId,
+      nombre: resultado.nombre, destino: resultado.destino, descripcion: resultado.descripcion,
+      fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, noches: resultado.noches,
+      pax: resultado.pax, precio: resultado.total, moneda: resultado.moneda,
+    });
   }
 
   if (!itemsOk.length && !toursOk.length) return { ok: false, error: "No se pudo generar la cotización (revisa disponibilidad)." };
@@ -416,114 +455,6 @@ async function crearCotizacionCarrito(input: {
   return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, toursOk, excluidos };
 }
 
-function esObjeto(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function validarClienteInput(v: unknown): { ok: true; cliente: SolicitudCliente } | { ok: false; error: string } {
-  if (!esObjeto(v)) return { ok: false, error: "Los datos del cliente no tienen una forma válida." };
-  const campos: (keyof SolicitudCliente)[] = ["nombres", "apellidos", "numeroDoc", "telefono", "email"];
-  const cliente = {} as SolicitudCliente;
-  for (const c of campos) {
-    if (typeof v[c] !== "string") return { ok: false, error: "Los datos del cliente tienen un campo inválido." };
-    cliente[c] = v[c] as string;
-  }
-  return { ok: true, cliente };
-}
-
-function validarFacturacionInput(v: unknown): { ok: true; facturacion: Facturacion } | { ok: false; error: string } {
-  if (!esObjeto(v)) return { ok: false, error: "Los datos de facturación no tienen una forma válida." };
-  const campos: (keyof Facturacion)[] = ["nombre", "nit", "email", "telefono"];
-  const facturacion = {} as Facturacion;
-  for (const c of campos) {
-    if (typeof v[c] !== "string") return { ok: false, error: "Los datos de facturación tienen un campo inválido." };
-    facturacion[c] = v[c] as string;
-  }
-  return { ok: true, facturacion };
-}
-
-// El precio/pax del tour SÍ viene del navegador (Vista Booking no guarda un
-// id de servicio en el carrito para poder re-liquidarlo en el servidor) —
-// solo se valida la FORMA (nunca .length/.trim/aritmética sobre algo que
-// pueda no ser lo esperado), no se re-deriva el precio. Alcance ya existente,
-// distinto del de hoteles (que sí se recalculan por completo, ver
-// `SolicitudItemComputado`).
-function validarTourInput(v: unknown, indice: number): { ok: true; tour: SolicitudTour } | { ok: false; error: string } {
-  const ctx = `El servicio ${indice + 1} del carrito`;
-  if (!esObjeto(v)) return { ok: false, error: `${ctx} no tiene una forma válida.` };
-  if (typeof v.nombre !== "string") return { ok: false, error: `${ctx} no tiene nombre.` };
-  if (!(v.destino === null || v.destino === undefined || typeof v.destino === "string")) return { ok: false, error: `${ctx} tiene un destino inválido.` };
-  if (!(v.fechaIda === null || v.fechaIda === undefined || typeof v.fechaIda === "string")) return { ok: false, error: `${ctx} tiene una fecha de ida inválida.` };
-  if (!(v.fechaRegreso === null || v.fechaRegreso === undefined || typeof v.fechaRegreso === "string")) return { ok: false, error: `${ctx} tiene una fecha de regreso inválida.` };
-  if (typeof v.pax !== "number" || !Number.isFinite(v.pax) || v.pax < 0) return { ok: false, error: `${ctx} tiene un pax inválido.` };
-  if (typeof v.precio !== "number" || !Number.isFinite(v.precio) || v.precio < 0) return { ok: false, error: `${ctx} tiene un precio inválido.` };
-  if (typeof v.moneda !== "string") return { ok: false, error: `${ctx} tiene una moneda inválida.` };
-  return {
-    ok: true,
-    tour: {
-      nombre: v.nombre, destino: (v.destino as string | null | undefined) ?? null,
-      fechaIda: (v.fechaIda as string | undefined) ?? null, fechaRegreso: (v.fechaRegreso as string | undefined) ?? null,
-      pax: v.pax, precio: v.precio, moneda: v.moneda,
-    },
-  };
-}
-
-type CrearSolicitudInputValidado = {
-  items: SolicitudItemValidado[];
-  tours: SolicitudTour[];
-  cliente: SolicitudCliente;
-  modo?: "comisionable" | "neta";
-  facturacion?: Facturacion;
-  pctComision?: number;
-};
-
-// Frontera completa: `inputRaw` es `unknown` (esta Server Action es pública,
-// alcanzable con cualquier body HTTP) — se valida objeto, arreglos, cada
-// ítem/tour anidado y cada campo antes de usar `.length`/`.map()`/`.trim()`/
-// aritmética sobre cualquiera de ellos. Los ítems de hotel se validan con
-// `validarSolicitudItem` (lib/reservar/edadesMenores.ts), que exige
-// `edadesMenores` — nunca se cae al reparto legado ninos/ninos2/infantes en
-// este flujo público.
-function validarCrearSolicitudInput(v: unknown): { ok: true; input: CrearSolicitudInputValidado } | { ok: false; error: string } {
-  if (!esObjeto(v)) return { ok: false, error: "La solicitud no tiene una forma válida." };
-  if (!Array.isArray(v.items)) return { ok: false, error: "El carrito de hoteles debe ser un arreglo." };
-  const items: SolicitudItemValidado[] = [];
-  for (let i = 0; i < v.items.length; i++) {
-    const r = validarSolicitudItem(v.items[i], i);
-    if (!r.ok) return { ok: false, error: r.error };
-    items.push(r.item);
-  }
-  const tours: SolicitudTour[] = [];
-  if (v.tours !== undefined) {
-    if (!Array.isArray(v.tours)) return { ok: false, error: "El carrito de servicios debe ser un arreglo." };
-    for (let i = 0; i < v.tours.length; i++) {
-      const r = validarTourInput(v.tours[i], i);
-      if (!r.ok) return { ok: false, error: r.error };
-      tours.push(r.tour);
-    }
-  }
-  const vCliente = validarClienteInput(v.cliente);
-  if (!vCliente.ok) return { ok: false, error: vCliente.error };
-
-  let modo: "comisionable" | "neta" | undefined;
-  if (v.modo !== undefined) {
-    if (v.modo !== "comisionable" && v.modo !== "neta") return { ok: false, error: "La modalidad de compra es inválida." };
-    modo = v.modo;
-  }
-  let facturacion: Facturacion | undefined;
-  if (v.facturacion !== undefined) {
-    const r = validarFacturacionInput(v.facturacion);
-    if (!r.ok) return { ok: false, error: r.error };
-    facturacion = r.facturacion;
-  }
-  let pctComision: number | undefined;
-  if (v.pctComision !== undefined) {
-    if (typeof v.pctComision !== "number" || !Number.isFinite(v.pctComision)) return { ok: false, error: "El % de comisión es inválido." };
-    pctComision = v.pctComision;
-  }
-  return { ok: true, input: { items, tours, cliente: vCliente.cliente, modo, facturacion, pctComision } };
-}
-
 // Genera UNA sola cotización combinada para todo el carrito y arma los
 // enlaces wa.me + mailto hacia los destinatarios configurados. Público (sin
 // login) — `inputRaw` se trata como `unknown`, ver `validarCrearSolicitudInput`.
@@ -568,9 +499,17 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
     whatsapp = cfg?.whatsapp ?? null; emails = cfg?.emails ?? null; mensajeExtra = cfg?.mensaje_extra ?? null;
   } catch { /* ignore */ }
 
-  const b2b = input.modo && input.facturacion
-    ? { modo: input.modo, facturacion: input.facturacion, pctComision: input.pctComision ?? 0 }
-    : undefined;
+  // El contexto B2B se resuelve ENTERO desde la sesión autenticada + la base
+  // de datos (`getContextoB2B()`, la misma fuente que ya usa el cliente para
+  // decidir si mostrar la sección B2B) — nunca desde `input`. Un visitante
+  // anónimo (o un usuario B2C autenticado) nunca puede autodeclararse B2B,
+  // elegir modo neto ni inflar una comisión: `ctxB2B.esB2B` sale de
+  // `usuarios.rol` vía `auth.getUser()`, y `pctComision`/`agencia` salen de
+  // `usuarios.pct_comision`/`b2b_solicitudes` — ninguno es un valor que el
+  // navegador pueda mandar. Corrige un defecto real: antes `pctComision`
+  // llegaba tal cual del cliente (podía mandar `1` = 100%/"gratis").
+  const ctxB2B = await getContextoB2B();
+  const b2b = resolverB2BParaMensaje(ctxB2B, input.modo);
   // Si algo del carrito quedó fuera de la cotización (moneda distinta a la del
   // resto), se avisa igual en el mensaje para no perderlo silenciosamente.
   const notaExcluidos = cot.excluidos.length

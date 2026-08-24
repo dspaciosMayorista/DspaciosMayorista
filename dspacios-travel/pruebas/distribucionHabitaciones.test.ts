@@ -124,19 +124,61 @@ describe("9. Infantes respetan inf_max", () => {
   });
 });
 
-describe("10. Adultos respetan adt_min, adt_max y capacidad total", () => {
+describe("10. Adultos respetan adt_min, adt_max (POR HABITACIÓN, no suma) y capacidad total", () => {
   test("adultos declarados distinto al implícito de las habitaciones (pax_tarifa) se rechaza", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 3, ninos: 0, infantes: 0, habitaciones: [hab({ pax_tarifa: 2 })] });
     assert.equal(r.ok, false);
     if (!r.ok) assert.match(r.error, /Las habitaciones elegidas son para 2 adulto\(s\); declaraste 3/);
   });
-  test("adultos dentro del implícito pero fuera de adt_min/adt_max agregado se rechaza", () => {
+  test("una habitación cuyo pax_tarifa cae fuera de su propio adt_min/adt_max se rechaza", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ pax_tarifa: 2, adt_min: 3, adt_max: 4 })] });
     assert.equal(r.ok, false);
-    if (!r.ok) assert.match(r.error, /no admite 2 adulto\(s\)/);
+    if (!r.ok) assert.match(r.error, /admite entre 3 y 4 adulto\(s\); está configurada para 2/);
   });
   test("adultos que sí cuadran con pax_tarifa y adt_min/adt_max pasa", () => {
     const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ pax_tarifa: 2, adt_min: 1, adt_max: 2 })] });
+    assert.equal(r.ok, true);
+  });
+  test("una habitación bien configurada NO se ve afectada por otra habitación mal configurada (chequeo per-room, no agregado)", () => {
+    // Antes de este fix, una habitación con adt_min=3 fuera de rango podía
+    // "compensarse" en la suma agregada si otra habitación del mismo pedido
+    // tenía margen — con el chequeo per-room, la habitación 2 (mal
+    // configurada) rechaza SOLA, sin importar la habitación 1 (bien
+    // configurada).
+    const habitaciones = [hab({ pax_tarifa: 1, adt_min: 1, adt_max: 1 }), hab({ pax_tarifa: 2, adt_min: 3, adt_max: 4 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 3, ninos: 0, infantes: 0, habitaciones });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /admite entre 3 y 4 adulto\(s\); está configurada para 2/);
+  });
+});
+
+describe("10b. chd_min/inf_min se exigen POR HABITACIÓN, no como suma global (auditado: antes no se leían)", () => {
+  test("una habitación con chd_min=1 rechaza si le tocan 0 niños, aunque el total declarado alcance en otra habitación", () => {
+    // 2 habitaciones, 1 niño total: el niño se lo lleva la primera habitación
+    // (orden de captura); la segunda, que EXIGE mínimo 1 niño, se queda en 0.
+    const habitaciones = [hab({ chd_max: 2, chd_min: 0 }), hab({ chd_max: 2, chd_min: 1 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 1, infantes: 0, habitaciones });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /exige mínimo 1 niño\(s\); esta distribución le asigna 0/);
+  });
+  test("con niños suficientes para cubrir el mínimo de cada habitación, pasa", () => {
+    const habitaciones = [hab({ chd_max: 2, chd_min: 0 }), hab({ chd_max: 2, chd_min: 1 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 3, infantes: 0, habitaciones });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.ok(r.habitaciones[1].nino + r.habitaciones[1].nino2 >= 1);
+  });
+  test("chd_min=0 (default) nunca restringe una habitación sin menores", () => {
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ chd_min: 0 })] });
+    assert.equal(r.ok, true);
+  });
+  test("una habitación con inf_min=1 rechaza si le tocan 0 infantes", () => {
+    const habitaciones = [hab({ inf_max: 2, inf_min: 0 }), hab({ inf_max: 0, inf_min: 1 })];
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 4, ninos: 0, infantes: 1, habitaciones });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /exige mínimo 1 infante\(s\); esta distribución le asigna 0/);
+  });
+  test("inf_min=0 (default) nunca restringe una habitación sin infantes", () => {
+    const r = distribuirPorHabitaciones({ adultosDeclarados: 2, ninos: 0, infantes: 0, habitaciones: [hab({ inf_min: 0 })] });
     assert.equal(r.ok, true);
   });
 });

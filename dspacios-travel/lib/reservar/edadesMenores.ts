@@ -61,6 +61,31 @@ export const MAX_PAX_CONSULTA = 24;
 // ahora también exigido en el servidor.
 export const MAX_HABITACIONES_CONSULTA = 8;
 
+// ── Límites centralizados de la frontera pública (checkout) ────────────────
+// Protegen contra payloads gigantes ANTES de iterar/tocar Supabase — no son
+// reglas de negocio de ocupación (esas ya las validan `distribuirPorHabitaciones`/
+// `validarReservaHabitaciones` por acomodación), son topes de payload/DoS.
+// Un solo lugar para todos: evita que cada validador invente su propio
+// número sin relación con los demás.
+export const MAX_ITEMS_CARRITO = 20;          // hoteles por solicitud
+export const MAX_TOURS_CARRITO = 20;          // servicios/tours por solicitud
+export const MAX_LINEAS_CARRITO = 30;         // hoteles + tours combinados
+export const MAX_NOCHES_CONSULTA = 60;        // ~2 meses, ningún viaje real pasa de esto
+export const MAX_LONGITUD_TEXTO = 200;        // nombres, destino, categoría, régimen, documento, teléfono, NIT…
+export const MAX_LONGITUD_TEXTO_LARGO = 500;  // campos de texto libre (ninguno hoy en esta frontera, reservado)
+export const MAX_LONGITUD_MONEDA = 10;        // "COP"/"USD" — nunca un texto largo
+
+// Cadena no vacía dentro de un largo máximo — helper compartido por todos los
+// campos de texto de la frontera pública (cliente, facturación, ítems, tours).
+export function validarTextoAcotado(
+  v: unknown, campo: string, maxLen: number = MAX_LONGITUD_TEXTO, permitirVacio = false
+): { ok: true; texto: string } | { ok: false; error: string } {
+  if (typeof v !== "string") return { ok: false, error: `${campo} debe ser texto.` };
+  if (!permitirVacio && v.trim() === "") return { ok: false, error: `${campo} es obligatorio.` };
+  if (v.length > maxLen) return { ok: false, error: `${campo} no puede superar ${maxLen} caracteres.` };
+  return { ok: true, texto: v };
+}
+
 // Parser de UN campo de edad tal como lo escribe el usuario (string —
 // controlado así para poder dejarlo vacío mientras escribe). Compartido por
 // todos los formularios de Vista Booking que piden edad por menor, para no
@@ -241,15 +266,46 @@ export function validarAdultosDeclarados(v: unknown): { ok: true; adultos: numbe
   return { ok: true, adultos: v };
 }
 
+// Personas REALES de la consulta: adultos + menores (edades ya validadas,
+// que incluyen infantes — son personas de la búsqueda igual que un niño,
+// aunque el infante no ocupe silla/habitación). Defecto real corregido: la
+// consulta original sumaba `habitaciones.length` (cantidad de HABITACIONES,
+// no de personas) en vez de adultos — dejaba pasar, por ejemplo,
+// MAX_PAX_CONSULTA adultos + varios menores adicionales sin bloquear nada.
+export function validarPaxTotalConsulta(adultos: number, cantidadMenores: number): { ok: true } | { ok: false; error: string } {
+  if (adultos + cantidadMenores > MAX_PAX_CONSULTA) {
+    return { ok: false, error: `No se pueden cotizar más de ${MAX_PAX_CONSULTA} pax en una sola búsqueda.` };
+  }
+  return { ok: true };
+}
+
 // Fecha en formato `YYYY-MM-DD` — mismo formato que ya produce/consume todo
 // el motor de reservar (`input type="date"`, columnas `date` de Postgres).
-// No valida que el día/mes exista de verdad (eso lo hace la base de datos al
-// comparar fechas) — solo que la FORMA sea la esperada, para no dejar pasar
-// un objeto, un número o texto arbitrario a una comparación de fechas.
+// Valida DOS cosas: la FORMA (regex) y que sea un día real del calendario
+// (ej. "2026-13-40" o "2026-02-31" tienen la forma correcta pero no existen).
+// `Date.UTC` "desborda" un mes/día fuera de rango hacia el mes/año
+// siguiente en vez de fallar — por eso se reconstruye la fecha con los
+// mismos año/mes/día que se pidieron y se compara componente por componente;
+// si no coincide, el día no existe. Se usa UTC (nunca hora local) para que
+// el resultado no dependa de la zona horaria del proceso. La cadena
+// original se conserva intacta (nunca se reformatea).
 const RE_FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 export function validarFechaConsulta(v: unknown): { ok: true; fecha: string } | { ok: false; error: string } {
   if (typeof v !== "string" || !RE_FECHA_ISO.test(v)) return { ok: false, error: "La fecha debe tener el formato AAAA-MM-DD." };
+  const [anio, mes, dia] = v.split("-").map(Number);
+  const d = new Date(Date.UTC(anio, mes - 1, dia));
+  if (d.getUTCFullYear() !== anio || d.getUTCMonth() !== mes - 1 || d.getUTCDate() !== dia) {
+    return { ok: false, error: `La fecha ${v} no es un día real del calendario.` };
+  }
   return { ok: true, fecha: v };
+}
+
+// Confirma que la fecha de regreso sea REALMENTE posterior a la de ida
+// (nunca igual ni anterior) — comparación de cadenas AAAA-MM-DD, válida
+// porque ese formato ordena lexicográficamente igual que cronológicamente.
+export function validarRangoFechas(fechaIda: string, fechaRegreso: string): { ok: true } | { ok: false; error: string } {
+  if (fechaRegreso <= fechaIda) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+  return { ok: true };
 }
 
 export function validarDestinoConsulta(v: unknown): { ok: true; destino: string } | { ok: false; error: string } {
@@ -296,20 +352,66 @@ export function validarSolicitudItem(v: unknown, indice: number): { ok: true; it
   if (typeof o.paqueteId !== "number" || !Number.isInteger(o.paqueteId)) return { ok: false, error: `${ctx} tiene un paquete inválido.` };
   if (typeof o.hotelId !== "number" || !Number.isInteger(o.hotelId)) return { ok: false, error: `${ctx} tiene un hotel inválido.` };
   if (!(o.bloqueoId === null || (typeof o.bloqueoId === "number" && Number.isInteger(o.bloqueoId)))) return { ok: false, error: `${ctx} tiene un bloqueo inválido.` };
-  if (typeof o.hotelNombre !== "string") return { ok: false, error: `${ctx} no trae el nombre del hotel.` };
-  if (!(o.destino === null || typeof o.destino === "string")) return { ok: false, error: `${ctx} tiene un destino inválido.` };
-  if (typeof o.categoria !== "string" || typeof o.regimen !== "string") return { ok: false, error: `${ctx} tiene categoría/régimen inválidos.` };
-  if (!(o.fechaIda === null || o.fechaIda === undefined || typeof o.fechaIda === "string")) return { ok: false, error: `${ctx} tiene una fecha de ida inválida.` };
-  if (!(o.fechaRegreso === null || o.fechaRegreso === undefined || typeof o.fechaRegreso === "string")) return { ok: false, error: `${ctx} tiene una fecha de regreso inválida.` };
-  if (!(o.noches === null || o.noches === undefined || (typeof o.noches === "number" && Number.isInteger(o.noches)))) return { ok: false, error: `${ctx} tiene un número de noches inválido.` };
+  const vNombre = validarTextoAcotado(o.hotelNombre, `${ctx}: el nombre del hotel`);
+  if (!vNombre.ok) return { ok: false, error: vNombre.error };
+  if (o.destino !== null && o.destino !== undefined) {
+    const vDest = validarTextoAcotado(o.destino, `${ctx}: el destino`, MAX_LONGITUD_TEXTO, true);
+    if (!vDest.ok) return { ok: false, error: vDest.error };
+  }
+  const vCategoria = validarTextoAcotado(o.categoria, `${ctx}: la categoría`);
+  if (!vCategoria.ok) return { ok: false, error: vCategoria.error };
+  const vRegimen = validarTextoAcotado(o.regimen, `${ctx}: el régimen`);
+  if (!vRegimen.ok) return { ok: false, error: vRegimen.error };
+
+  // Fechas: "bloqueo" trae fechas fijas del record (pueden venir ausentes,
+  // `crearCotizacionCarrito` ni las usa para ese módulo); "porcion_terrestre"
+  // SIEMPRE las necesita — es justamente el módulo que liquida EN VIVO por
+  // fecha (si no vinieran, computarReserva caería silenciosamente a la
+  // liquidación estática del tarifario en vez de re-liquidar por fecha real).
+  // Cuando SÍ vienen, siempre se validan como fecha real de calendario
+  // (nunca solo la forma) y con el regreso estrictamente posterior a la ida.
+  let fechaIda: string | null = null;
+  let fechaRegreso: string | null = null;
+  if (o.modulo === "porcion_terrestre") {
+    if (typeof o.fechaIda !== "string") return { ok: false, error: `${ctx} no trae fecha de ida.` };
+    if (typeof o.fechaRegreso !== "string") return { ok: false, error: `${ctx} no trae fecha de regreso.` };
+  } else {
+    if (!(o.fechaIda === null || o.fechaIda === undefined || typeof o.fechaIda === "string")) return { ok: false, error: `${ctx} tiene una fecha de ida inválida.` };
+    if (!(o.fechaRegreso === null || o.fechaRegreso === undefined || typeof o.fechaRegreso === "string")) return { ok: false, error: `${ctx} tiene una fecha de regreso inválida.` };
+  }
+  if (typeof o.fechaIda === "string") {
+    const vIda = validarFechaConsulta(o.fechaIda);
+    if (!vIda.ok) return { ok: false, error: `${ctx}: ${vIda.error}` };
+    fechaIda = vIda.fecha;
+  }
+  if (typeof o.fechaRegreso === "string") {
+    const vReg = validarFechaConsulta(o.fechaRegreso);
+    if (!vReg.ok) return { ok: false, error: `${ctx}: ${vReg.error}` };
+    fechaRegreso = vReg.fecha;
+  }
+  if (fechaIda !== null && fechaRegreso !== null) {
+    const vRango = validarRangoFechas(fechaIda, fechaRegreso);
+    if (!vRango.ok) return { ok: false, error: `${ctx}: ${vRango.error}` };
+  }
+
+  if (!(o.noches === null || o.noches === undefined || (typeof o.noches === "number" && Number.isInteger(o.noches) && o.noches > 0 && o.noches <= MAX_NOCHES_CONSULTA))) {
+    return { ok: false, error: `${ctx} tiene un número de noches inválido.` };
+  }
 
   if (typeof o.habitaciones !== "object" || o.habitaciones === null || Array.isArray(o.habitaciones)) {
     return { ok: false, error: `${ctx} tiene habitaciones inválidas.` };
   }
   const habitaciones: Record<string, number> = {};
+  let totalHabitaciones = 0;
   for (const [k, val] of Object.entries(o.habitaciones as Record<string, unknown>)) {
     if (!esAcomRoom(k) || !esEnteroPositivoONulo(val)) return { ok: false, error: `${ctx} tiene una habitación inválida.` };
-    habitaciones[k] = (val as number) ?? 0;
+    const n = (val as number) ?? 0;
+    if (n > MAX_HABITACIONES_CONSULTA) return { ok: false, error: `${ctx}: no se pueden pedir más de ${MAX_HABITACIONES_CONSULTA} habitaciones de un mismo tipo.` };
+    habitaciones[k] = n;
+    totalHabitaciones += n;
+  }
+  if (totalHabitaciones > MAX_HABITACIONES_CONSULTA) {
+    return { ok: false, error: `${ctx}: no se pueden pedir más de ${MAX_HABITACIONES_CONSULTA} habitaciones en total.` };
   }
 
   // `edadesMenores` es obligatorio (nunca undefined) en este flujo público.
@@ -325,11 +427,164 @@ export function validarSolicitudItem(v: unknown, indice: number): { ok: true; it
     ok: true,
     item: {
       modulo: o.modulo, paqueteId: o.paqueteId, hotelId: o.hotelId, bloqueoId: o.bloqueoId as number | null,
-      hotelNombre: o.hotelNombre, destino: (o.destino as string | null) ?? null,
-      categoria: o.categoria, regimen: o.regimen,
-      fechaIda: (o.fechaIda as string | undefined) ?? null, fechaRegreso: (o.fechaRegreso as string | undefined) ?? null,
+      hotelNombre: vNombre.texto, destino: o.destino == null ? null : (o.destino as string),
+      categoria: vCategoria.texto, regimen: vRegimen.texto,
+      fechaIda, fechaRegreso,
       noches: (o.noches as number | undefined) ?? null,
       habitaciones, cantidadMenores: vCant.cantidad, edadesMenores: vEdades.edades,
     },
   };
+}
+
+// ── Tours/servicios del carrito (checkout público) ──────────────────────────
+// Ítem YA validado en forma — solo lo mínimo para RE-LIQUIDAR el precio real
+// en el servidor (`liquidarServicioPuntual` en lib/reservar/cotizar.ts, misma
+// fórmula que `buscarReceptivos`): `servicioId`/`paqueteId` identifican el
+// servicio real; `fechaIda`/`fechaRegreso`/`pax` son los parámetros de
+// liquidación. `nombre`/`precio`/`moneda`/`destino` que mande el navegador
+// NUNCA se leen aquí — no existen en este tipo, así que no hay forma de que
+// se cuelen más adelante (defecto real corregido: antes se usaban tal cual).
+export type SolicitudTourValidado = { servicioId: number; paqueteId: number; fechaIda: string; fechaRegreso: string; pax: number };
+
+function esObjetoNoNulo(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+export function validarTourInput(v: unknown, indice: number): { ok: true; tour: SolicitudTourValidado } | { ok: false; error: string } {
+  const ctx = `El servicio ${indice + 1} del carrito`;
+  if (!esObjetoNoNulo(v)) return { ok: false, error: `${ctx} no tiene una forma válida.` };
+  // Carrito histórico (agregado antes de este cambio, o de un tour cuyo
+  // `servicioId` nunca se guardó): sin identificador real no hay forma
+  // honesta de re-liquidar — se bloquea con un mensaje claro, nunca se sigue
+  // con el precio/nombre que mande el navegador.
+  if (v.servicioId === null || v.servicioId === undefined) {
+    return { ok: false, error: `${ctx} se agregó antes de poder re-liquidarlo en el servidor. Quítalo del carrito y agrégalo de nuevo.` };
+  }
+  if (typeof v.servicioId !== "number" || !Number.isInteger(v.servicioId)) return { ok: false, error: `${ctx} tiene un servicio inválido.` };
+  if (typeof v.paqueteId !== "number" || !Number.isInteger(v.paqueteId)) return { ok: false, error: `${ctx} tiene un paquete inválido.` };
+  if (typeof v.fechaIda !== "string") return { ok: false, error: `${ctx} no trae fecha de ida.` };
+  if (typeof v.fechaRegreso !== "string") return { ok: false, error: `${ctx} no trae fecha de regreso.` };
+  const vIda = validarFechaConsulta(v.fechaIda);
+  if (!vIda.ok) return { ok: false, error: `${ctx}: ${vIda.error}` };
+  const vReg = validarFechaConsulta(v.fechaRegreso);
+  if (!vReg.ok) return { ok: false, error: `${ctx}: ${vReg.error}` };
+  const vRango = validarRangoFechas(vIda.fecha, vReg.fecha);
+  if (!vRango.ok) return { ok: false, error: `${ctx}: ${vRango.error}` };
+  if (typeof v.pax !== "number" || !Number.isInteger(v.pax) || v.pax < 1 || v.pax > MAX_PAX_CONSULTA) {
+    return { ok: false, error: `${ctx} tiene un pax inválido.` };
+  }
+  return { ok: true, tour: { servicioId: v.servicioId, paqueteId: v.paqueteId, fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, pax: v.pax } };
+}
+
+// ── Contexto B2B del mensaje/cotización — SOLO decide, nunca consulta ──────
+// Defecto real corregido: `crearSolicitudReserva` armaba el bloque B2B del
+// mensaje (modo/facturación/comisión) directo desde lo que mandaba el
+// navegador — un visitante anónimo podía autodeclararse B2B, elegir "modo
+// neto" y mandar `pctComision: 1` (100%) o una facturación inventada. Ahora
+// esta función PURA es la única que decide qué se muestra: recibe el
+// contexto YA resuelto desde la sesión + base de datos (`getContextoB2B()`,
+// que vive en checkout/actions.ts porque sí toca Supabase) y el `modo` que
+// pidió el cliente — ese `modo` es la ÚNICA parte que puede venir del
+// navegador (una elección legítima de un B2B YA autenticado), nunca la
+// facturación ni el % de comisión. Si la sesión no es B2B, el resultado es
+// SIEMPRE `undefined` sin importar qué haya pedido el cliente.
+export type ContextoB2BSesion = {
+  esB2B: boolean;
+  agencia: { nombre: string; nit: string; email: string; telefono: string } | null;
+  pctComision: number;
+};
+export type B2BParaMensaje = {
+  modo: "comisionable" | "neta";
+  facturacion: { nombre: string; nit: string; email: string; telefono: string };
+  pctComision: number;
+};
+
+export function resolverB2BParaMensaje(
+  ctxSesion: ContextoB2BSesion,
+  modoSolicitado: "comisionable" | "neta" | undefined
+): B2BParaMensaje | undefined {
+  if (!ctxSesion.esB2B || !ctxSesion.agencia) return undefined;
+  return { modo: modoSolicitado ?? "comisionable", facturacion: ctxSesion.agencia, pctComision: ctxSesion.pctComision };
+}
+
+// ── Solicitud completa del checkout público (`crearSolicitudReserva`) ──────
+function esObjetoRaiz(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+export type SolicitudClienteValidado = { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
+
+export function validarClienteInput(v: unknown): { ok: true; cliente: SolicitudClienteValidado } | { ok: false; error: string } {
+  if (!esObjetoRaiz(v)) return { ok: false, error: "Los datos del cliente no tienen una forma válida." };
+  const campos: (keyof SolicitudClienteValidado)[] = ["nombres", "apellidos", "numeroDoc", "telefono", "email"];
+  const cliente = {} as SolicitudClienteValidado;
+  for (const c of campos) {
+    // El correo es el único campo que se permite vacío en la forma (el
+    // checkout ya lo exige aparte solo para nombres/documento/teléfono).
+    const r = validarTextoAcotado(v[c], `El campo "${c}" del cliente`, MAX_LONGITUD_TEXTO, c === "email");
+    if (!r.ok) return { ok: false, error: r.error };
+    cliente[c] = r.texto;
+  }
+  return { ok: true, cliente };
+}
+
+export type CrearSolicitudInputValidado = {
+  items: SolicitudItemValidado[];
+  tours: SolicitudTourValidado[];
+  cliente: SolicitudClienteValidado;
+  modo?: "comisionable" | "neta";
+};
+
+// Frontera completa: `v` es `unknown` (esta Server Action pública es
+// alcanzable con cualquier body HTTP) — se valida objeto, arreglos, cada
+// ítem/tour anidado y cada campo antes de usar `.length`/`.map()`/`.trim()`/
+// aritmética sobre cualquiera de ellos. Los ítems de hotel se validan con
+// `validarSolicitudItem`, que exige `edadesMenores` — nunca se cae al
+// reparto legado ninos/ninos2/infantes en este flujo público. Los topes de
+// arreglo (`MAX_*_CARRITO`) se revisan ANTES de iterar — un payload gigante
+// falla por tamaño, nunca llega a procesar ítem por ítem ni a tocar Supabase.
+export function validarCrearSolicitudInput(v: unknown): { ok: true; input: CrearSolicitudInputValidado } | { ok: false; error: string } {
+  if (!esObjetoRaiz(v)) return { ok: false, error: "La solicitud no tiene una forma válida." };
+  if (!Array.isArray(v.items)) return { ok: false, error: "El carrito de hoteles debe ser un arreglo." };
+  if (v.items.length > MAX_ITEMS_CARRITO) return { ok: false, error: `No se pueden cotizar más de ${MAX_ITEMS_CARRITO} hoteles a la vez.` };
+  const toursRaw = v.tours;
+  if (toursRaw !== undefined && !Array.isArray(toursRaw)) return { ok: false, error: "El carrito de servicios debe ser un arreglo." };
+  const toursLen = Array.isArray(toursRaw) ? toursRaw.length : 0;
+  if (toursLen > MAX_TOURS_CARRITO) return { ok: false, error: `No se pueden cotizar más de ${MAX_TOURS_CARRITO} servicios a la vez.` };
+  if (v.items.length + toursLen > MAX_LINEAS_CARRITO) {
+    return { ok: false, error: `No se pueden cotizar más de ${MAX_LINEAS_CARRITO} líneas (hoteles + servicios) a la vez.` };
+  }
+
+  const items: SolicitudItemValidado[] = [];
+  for (let i = 0; i < v.items.length; i++) {
+    const r = validarSolicitudItem(v.items[i], i);
+    if (!r.ok) return { ok: false, error: r.error };
+    items.push(r.item);
+  }
+  const tours: SolicitudTourValidado[] = [];
+  if (Array.isArray(toursRaw)) {
+    for (let i = 0; i < toursRaw.length; i++) {
+      const r = validarTourInput(toursRaw[i], i);
+      if (!r.ok) return { ok: false, error: r.error };
+      tours.push(r.tour);
+    }
+  }
+  const vCliente = validarClienteInput(v.cliente);
+  if (!vCliente.ok) return { ok: false, error: vCliente.error };
+
+  // `modo` (comisionable/neta) es una elección legítima de un B2B YA
+  // autenticado — se valida la forma acá, pero solo tiene efecto si
+  // `crearSolicitudReserva` confirma `esB2B` server-side (`getContextoB2B()`
+  // + `resolverB2BParaMensaje`). Un visitante anónimo puede mandar cualquier
+  // `modo`: no importa, nunca se usa si la sesión no es B2B.
+  // `facturacion`/`pctComision` YA NO se aceptan del navegador en absoluto
+  // (defecto real corregido: antes un anónimo podía mandar `pctComision: 1`
+  // y aparentar 100% de comisión/gratis) — el servidor los resuelve siempre
+  // desde la sesión + base de datos.
+  let modo: "comisionable" | "neta" | undefined;
+  if (v.modo !== undefined) {
+    if (v.modo !== "comisionable" && v.modo !== "neta") return { ok: false, error: "La modalidad de compra es inválida." };
+    modo = v.modo;
+  }
+  return { ok: true, input: { items, tours, cliente: vCliente.cliente, modo } };
 }
