@@ -27,6 +27,7 @@ import {
   validarFechaConsulta,
   validarDestinoConsulta,
   validarPaxTotalConsulta,
+  validarPaxServicioConsulta,
   clasificarMenoresPorEdad,
   verificarTarifasMenoresDisponibles,
   type ClasificacionMenores,
@@ -423,11 +424,36 @@ export type BusquedaServiciosInput = {
 };
 export type { ResultadoServicio, ResultadoServicioPuntual };
 
-export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
+// `inputRaw` se trata como `unknown` — igual que `buscarHoteles` — esta
+// función es alcanzable desde el navegador (Server Action, ver
+// app/(dashboard)/dashboard/reservar/actions.ts) con cualquier body HTTP.
+// Se valida la FORMA completa (objeto, fechas reales de calendario + rango,
+// pax entero acotado, destino con longitud máxima) ANTES de tocar la base de
+// datos con service-role — ningún payload manipulado (null, arreglos,
+// fechas imposibles, pax decimal/NaN/Infinity/negativo/gigante, destino
+// gigante) debe poder lanzar un TypeError ni llegar a consultar Supabase.
+export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
-  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y regreso." };
-  const numNoches = Math.max(1, noches(input.fechaIda, input.fechaRegreso));
-  const pax = Math.max(1, Math.trunc(input.pax) || 1);
+  if (typeof inputRaw !== "object" || inputRaw === null || Array.isArray(inputRaw)) {
+    return { ok: false, error: "La consulta no tiene una forma válida." };
+  }
+  const o = inputRaw as Record<string, unknown>;
+  const vIda = validarFechaConsulta(o.fechaIda);
+  if (!vIda.ok) return { ok: false, error: vIda.error };
+  const vReg = validarFechaConsulta(o.fechaRegreso);
+  if (!vReg.ok) return { ok: false, error: vReg.error };
+  const vDestino = validarDestinoConsulta(o.destino);
+  if (!vDestino.ok) return { ok: false, error: vDestino.error };
+  const vPax = validarPaxServicioConsulta(o.pax);
+  if (!vPax.ok) return { ok: false, error: vPax.error };
+
+  const input: BusquedaServiciosInput = {
+    fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, pax: vPax.pax, destino: vDestino.destino || undefined,
+  };
+
+  const numNoches = noches(input.fechaIda, input.fechaRegreso);
+  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+  const pax = input.pax;
 
   const admin = createAdminClient();
   let q = admin

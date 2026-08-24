@@ -5,6 +5,9 @@ import {
   calcularPrecioConModoYMarkup,
   calcularResultadoServicio,
   resolverLiquidacionServicioPuntual,
+  resolverConfiguracionServicio,
+  validarModoServicio,
+  validarPctMarkup,
   type DatosServicioPar,
   type FilaPaquete,
   type FilaArmadoServicio,
@@ -177,5 +180,182 @@ describe("9. calcularPrecioConModoYMarkup nunca decide defaults por sí sola —
     const r = calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "persona", 0);
     assert.ok(r);
     if (r) assert.equal(r.total, 200_000); // 2 pax × 100000, sin margen, sin recargo (pax≠1)
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 5 — hallazgos puntuales sobre la ronda 4: el modo/markup inválidos
+// TODAVÍA caían a "persona"/0% en resolverLiquidacionServicioPuntual (el
+// fallo cerrado declarado no era real), la búsqueda (calcularResultadoServicio)
+// seguía publicando precios con esos mismos defaults, y buscarReceptivos no
+// trataba su input como `unknown`. NO se toca el algoritmo de menores
+// (distribuirPorHabitaciones) — sigue correcto desde la ronda 4.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("10. Ronda 5: validarModoServicio — solo 'persona'/'grupo' son válidos", () => {
+  test("null, cadena vacía, texto arbitrario, mayúsculas y valores manipulados nunca cotizan como 'persona'", () => {
+    assert.equal(validarModoServicio(null), null);
+    assert.equal(validarModoServicio(undefined), null);
+    assert.equal(validarModoServicio(""), null);
+    assert.equal(validarModoServicio("otro"), null);
+    assert.equal(validarModoServicio("Persona"), null); // mayúscula inicial
+    assert.equal(validarModoServicio("PERSONA"), null); // todo mayúsculas
+    assert.equal(validarModoServicio("GRUPO"), null);
+    assert.equal(validarModoServicio("persona "), null); // espacio final
+    assert.equal(validarModoServicio(" persona"), null); // espacio inicial
+    assert.equal(validarModoServicio(0), null);
+    assert.equal(validarModoServicio(1), null);
+    assert.equal(validarModoServicio(["persona"]), null);
+    assert.equal(validarModoServicio({ modo: "persona" }), null);
+  });
+  test("'persona' y 'grupo' exactos son los únicos válidos", () => {
+    assert.equal(validarModoServicio("persona"), "persona");
+    assert.equal(validarModoServicio("grupo"), "grupo");
+  });
+});
+
+describe("11. Ronda 5: resolverLiquidacionServicioPuntual — modo inválido/null/manipulado nunca cotiza como 'persona'", () => {
+  const modosInvalidos: unknown[] = [null, "", "otro", "Persona", "PERSONA", "GRUPO", 0, 1, ["persona"], { modo: "persona" }];
+  for (const modo of modosInvalidos) {
+    test(`armado.modo = ${JSON.stringify(modo)} → configuracion_invalida, nunca ok:true`, () => {
+      const r = resolverLiquidacionServicioPuntual(baseInput({ armado: { ...ARMADO, modo: modo as string | null } }));
+      assert.equal(r.ok, false);
+      if (!r.ok) assert.equal(r.tipo, "configuracion_invalida");
+    });
+  }
+  test("un modo inválido nunca produce el mismo total que el modo 'persona' real (prueba que NO se está calculando igual)", () => {
+    const rValido = resolverLiquidacionServicioPuntual(baseInput());
+    const rInvalido = resolverLiquidacionServicioPuntual(baseInput({ armado: { ...ARMADO, modo: "otro" } }));
+    assert.equal(rValido.ok, true);
+    assert.equal(rInvalido.ok, false);
+  });
+});
+
+describe("12. Ronda 5: validarPctMarkup — rango comercial real de armado_paquetes.pct_mk", () => {
+  test("null, NaN, Infinity, -Infinity, texto y negativos son inválidos", () => {
+    assert.equal(validarPctMarkup(null), null);
+    assert.equal(validarPctMarkup(undefined), null);
+    assert.equal(validarPctMarkup(NaN), null);
+    assert.equal(validarPctMarkup(Infinity), null);
+    assert.equal(validarPctMarkup(-Infinity), null);
+    assert.equal(validarPctMarkup("0.2"), null);
+    assert.equal(validarPctMarkup(-0.01), null);
+    assert.equal(validarPctMarkup(-1), null);
+  });
+  test("el límite inválido — pct_mk >= 1 — se rechaza siempre (produciría división por cero/negativa en marcar())", () => {
+    assert.equal(validarPctMarkup(1), null);
+    assert.equal(validarPctMarkup(1.5), null);
+    assert.equal(validarPctMarkup(100), null); // típico error: mandar 100 en vez de 1 (100%)
+  });
+  test("0 (markup real de 0%, legítimo) y valores intermedios sí son válidos", () => {
+    assert.equal(validarPctMarkup(0), 0);
+    assert.equal(validarPctMarkup(0.2), 0.2);
+    assert.equal(validarPctMarkup(0.99), 0.99);
+  });
+});
+
+describe("13. Ronda 5: resolverLiquidacionServicioPuntual — markup inválido nunca cotiza al 0%", () => {
+  const markupsInvalidos: unknown[] = [null, NaN, Infinity, -Infinity, -0.01, 1, 1.5, 100, "0.2"];
+  for (const pct_mk of markupsInvalidos) {
+    test(`paquete.pct_mk = ${String(pct_mk)} → configuracion_invalida, nunca ok:true con 0% aplicado`, () => {
+      const r = resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 10, pct_mk: pct_mk as number | null } }));
+      assert.equal(r.ok, false);
+      if (!r.ok) assert.equal(r.tipo, "configuracion_invalida");
+    });
+  }
+  test("pct_mk = 0 (markup real de 0%) SÍ cotiza — total = neto sin margen, nunca se confunde con el markup inválido", () => {
+    const r = resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 10, pct_mk: 0 } }));
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.resultado.total, 200_000); // 2 pax × 100000, sin margen
+  });
+  test("un markup inválido nunca produce el mismo total que 0% legítimo (prueba que NO se está sustituyendo por 0 en silencio)", () => {
+    const rInvalido = resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 10, pct_mk: NaN } }));
+    const rCero = resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 10, pct_mk: 0 } }));
+    assert.equal(rInvalido.ok, false);
+    assert.equal(rCero.ok, true);
+  });
+});
+
+describe("14. Ronda 5: calcularPrecioConModoYMarkup — defensa final, total/costoNeto finitos/seguros/positivos", () => {
+  test("pctMk inválido pasado directo (bypass de validarPctMarkup) igual se rechaza — defensa en profundidad", () => {
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    assert.equal(calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "persona", NaN), null);
+    assert.equal(calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "persona", Infinity), null);
+    assert.equal(calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "persona", 1), null);
+    assert.equal(calcularPrecioConModoYMarkup(PAR, ctx, FECHA, 1, 2, "persona", -0.5), null);
+  });
+});
+
+describe("15. Ronda 5: resolverConfiguracionServicio — validador COMPARTIDO por búsqueda y checkout", () => {
+  test("paquete o armado ausentes → null", () => {
+    assert.equal(resolverConfiguracionServicio(null, ARMADO, PAR), null);
+    assert.equal(resolverConfiguracionServicio(PAQUETE, null, PAR), null);
+    assert.equal(resolverConfiguracionServicio(null, null, PAR), null);
+  });
+  test("paquete de otro id (cruzado) → null, aunque armado/par coincidan", () => {
+    assert.equal(resolverConfiguracionServicio({ id: 999, pct_mk: 0.2 }, ARMADO, PAR), null);
+  });
+  test("armado de otro par (cruzado) → null", () => {
+    assert.equal(resolverConfiguracionServicio(PAQUETE, { paquete_id: 999, servicio_id: 1, modo: "persona" }, PAR), null);
+    assert.equal(resolverConfiguracionServicio(PAQUETE, { paquete_id: 10, servicio_id: 999, modo: "persona" }, PAR), null);
+  });
+  test("modo inválido → null", () => {
+    assert.equal(resolverConfiguracionServicio(PAQUETE, { ...ARMADO, modo: "otro" }, PAR), null);
+    assert.equal(resolverConfiguracionServicio(PAQUETE, { ...ARMADO, modo: null }, PAR), null);
+  });
+  test("markup inválido → null", () => {
+    assert.equal(resolverConfiguracionServicio({ id: 10, pct_mk: NaN }, ARMADO, PAR), null);
+    assert.equal(resolverConfiguracionServicio({ id: 10, pct_mk: 1 }, ARMADO, PAR), null);
+  });
+  test("configuración válida → { modo, pctMk }", () => {
+    assert.deepEqual(resolverConfiguracionServicio(PAQUETE, ARMADO, PAR), { modo: "persona", pctMk: 0.2 });
+  });
+});
+
+describe("16. Ronda 5: calcularResultadoServicio (buscarReceptivos) — controles negativos, nunca publica un precio con configuración inválida", () => {
+  test("falta paquete (solo armado+servicio) → null, se omite el par, nunca modo 'persona' con 0% implícito", () => {
+    const ctx = construirContextoServicios({ paquetes: [], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
+  });
+  test("falta armado (solo paquete+servicio) → null, se omite el par, nunca cae a modo 'persona'", () => {
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
+  });
+  test("armado con modo inválido → null, se omite (nunca se muestra un precio calculado como 'persona')", () => {
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [{ ...ARMADO, modo: "otro" }], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
+  });
+  test("paquete con markup inválido (NaN) → null, se omite (nunca se muestra un precio sin margen real)", () => {
+    const ctx = construirContextoServicios({ paquetes: [{ id: 10, pct_mk: NaN }], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
+  });
+  test("paquete con markup >= 1 → null, se omite (nunca se sustituye por 0% en silencio)", () => {
+    const ctx = construirContextoServicios({ paquetes: [{ id: 10, pct_mk: 1 }], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    assert.equal(calcularResultadoServicio(PAR, ctx, FECHA, 1, 2), null);
+  });
+  test("markup 0% explícito y válido SÍ funciona (no se penaliza un 0% real)", () => {
+    const ctx = construirContextoServicios({ paquetes: [{ id: 10, pct_mk: 0 }], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const r = calcularResultadoServicio(PAR, ctx, FECHA, 1, 2);
+    assert.ok(r);
+    if (r) assert.equal(r.total, 200_000);
+  });
+  test("configuración completamente válida (paquete+armado+servicio, modo/markup correctos) SÍ publica un precio", () => {
+    const ctx = construirContextoServicios({ paquetes: [PAQUETE], armado: [ARMADO], servicios: [SERVICIO], grupos: [], temporadas: [] });
+    const r = calcularResultadoServicio(PAR, ctx, FECHA, 1, 2);
+    assert.ok(r);
+    if (r) assert.equal(r.total, 250_000); // 2 pax × 100000, marcado al 20%
+  });
+});
+
+describe("17. Ronda 5: consistencia defensiva del par en resolverLiquidacionServicioPuntual", () => {
+  test("paquete.id distinto de par.paqueteId (filas cruzadas) → configuracion_invalida", () => {
+    const r = resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 999, pct_mk: 0.2 } }));
+    assert.equal(r.ok, false);
+    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.error, /paquete consultado no corresponde/); }
+  });
+  test("servicio.id distinto de par.servicioId (filas cruzadas) → configuracion_invalida", () => {
+    const r = resolverLiquidacionServicioPuntual(baseInput({ servicio: { ...SERVICIO, id: 999 } }));
+    assert.equal(r.ok, false);
+    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.error, /servicio consultado no corresponde/); }
   });
 });

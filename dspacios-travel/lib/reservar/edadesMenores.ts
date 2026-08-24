@@ -271,6 +271,18 @@ export function validarAdultosDeclarados(v: unknown): { ok: true; adultos: numbe
   return { ok: true, adultos: v };
 }
 
+// Pax de una consulta de servicios/receptivos (buscarReceptivos) — mismo
+// criterio que `validarAdultosDeclarados` (entero, ≥1, tope MAX_PAX_CONSULTA)
+// pero con su propio mensaje: acá "pax" no son necesariamente adultos-por-
+// habitación, son la cantidad de personas para las que se cotiza el tour.
+export function validarPaxServicioConsulta(v: unknown): { ok: true; pax: number } | { ok: false; error: string } {
+  if (typeof v !== "number" || !Number.isInteger(v) || !Number.isFinite(v) || v < 1) {
+    return { ok: false, error: "La cantidad de pax debe ser un entero mayor o igual a 1." };
+  }
+  if (v > MAX_PAX_CONSULTA) return { ok: false, error: `No se pueden cotizar más de ${MAX_PAX_CONSULTA} pax en una sola consulta.` };
+  return { ok: true, pax: v };
+}
+
 // Personas REALES de la consulta: adultos + menores (edades ya validadas,
 // que incluyen infantes — son personas de la búsqueda igual que un niño,
 // aunque el infante no ocupe silla/habitación). Defecto real corregido: la

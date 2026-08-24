@@ -23,6 +23,7 @@ import {
   validarSolicitudItem,
   validarTourInput,
   validarPaxTotalConsulta,
+  validarPaxServicioConsulta,
   validarClienteInput,
   validarCrearSolicitudInput,
   resolverB2BParaMensaje,
@@ -982,5 +983,66 @@ describe("33. Wiring — getContextoB2B (checkout/actions.ts) consulta y valida 
     assert.match(cuerpo, /error: perfilErr/);
     assert.match(cuerpo, /error: apErr/);
     assert.match(cuerpo, /error: solsErr/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 5 — "FRONTERA PÚBLICA DE buscarReceptivos". `buscarReceptivos`
+// (lib/reservar/cotizar.ts) seguía tipada con `BusquedaServiciosInput` y leía
+// sus propiedades directamente — a diferencia de `buscarHoteles`, un payload
+// manipulado (null, arreglos, fechas imposibles, pax decimal/NaN/Infinity/
+// negativo/gigante, destino gigante) podía llegar hasta el `noches()`/
+// `.trim()` sin haberse validado, con riesgo de TypeError o de tocar
+// Supabase con datos basura. Ahora trata `inputRaw` como `unknown`, igual
+// que `buscarHoteles` — misma frontera, mismos validadores puros.
+// ───────────────────────────────────────────────────────────────────────────
+describe("34. Ronda 5: validarPaxServicioConsulta (pax de buscarReceptivos) — ejecución real", () => {
+  const invalidos: unknown[] = [
+    null, undefined, "2", true, [], {}, NaN, Infinity, -Infinity,
+    0, -1, -100, 1.5, 2.99, MAX_PAX_CONSULTA + 1, 1e9, Number.MAX_SAFE_INTEGER,
+  ];
+  for (const v of invalidos) {
+    test(`validarPaxServicioConsulta(${JSON.stringify(v)}) no lanza y rechaza`, () => {
+      assert.doesNotThrow(() => validarPaxServicioConsulta(v));
+      assert.equal(validarPaxServicioConsulta(v).ok, false);
+    });
+  }
+  test("enteros válidos entre 1 y MAX_PAX_CONSULTA se aceptan", () => {
+    assert.equal(validarPaxServicioConsulta(1).ok, true);
+    assert.equal(validarPaxServicioConsulta(2).ok, true);
+    assert.equal(validarPaxServicioConsulta(MAX_PAX_CONSULTA).ok, true);
+    const r = validarPaxServicioConsulta(4);
+    assert.deepEqual(r, { ok: true, pax: 4 });
+  });
+});
+
+describe("35. Ronda 5: Wiring — buscarReceptivos trata su input como unknown, igual que buscarHoteles", () => {
+  const cotizar = leer("lib/reservar/cotizar.ts");
+  const reservarActions = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+
+  test("cotizar.ts: la firma es (inputRaw: unknown), no BusquedaServiciosInput directo", () => {
+    assert.match(cotizar, /export async function buscarReceptivos\(inputRaw: unknown\)/);
+  });
+  test("cotizar.ts: valida objeto no nulo/no arreglo antes de leer cualquier propiedad", () => {
+    const idx = cotizar.indexOf("export async function buscarReceptivos(inputRaw: unknown)");
+    const cuerpo = cotizar.slice(idx, cotizar.indexOf("\nexport", idx + 10));
+    assert.match(cuerpo, /typeof inputRaw !== "object" \|\| inputRaw === null \|\| Array\.isArray\(inputRaw\)/);
+  });
+  test("cotizar.ts: usa los mismos validadores puros que buscarHoteles (fecha real, destino acotado, pax entero acotado)", () => {
+    const idx = cotizar.indexOf("export async function buscarReceptivos(inputRaw: unknown)");
+    const cuerpo = cotizar.slice(idx, cotizar.indexOf("\nexport", idx + 10));
+    assert.match(cuerpo, /validarFechaConsulta\(o\.fechaIda\)/);
+    assert.match(cuerpo, /validarFechaConsulta\(o\.fechaRegreso\)/);
+    assert.match(cuerpo, /validarDestinoConsulta\(o\.destino\)/);
+    assert.match(cuerpo, /validarPaxServicioConsulta\(o\.pax\)/);
+  });
+  test("cotizar.ts: rechaza el rango de fechas inválido (regreso <= ida) antes de consultar Supabase", () => {
+    const idx = cotizar.indexOf("export async function buscarReceptivos(inputRaw: unknown)");
+    const cuerpo = cotizar.slice(idx, cotizar.indexOf("\nexport", idx + 10));
+    assert.match(cuerpo, /numNoches <= 0/);
+  });
+  test("actions.ts: el wrapper de la Server Action también tipa el parámetro como unknown (no BusquedaServiciosInput)", () => {
+    assert.match(reservarActions, /export async function buscarReceptivos\(input: unknown\)/);
+    assert.doesNotMatch(reservarActions, /export async function buscarReceptivos\(input: BusquedaServiciosInput\)/);
   });
 });

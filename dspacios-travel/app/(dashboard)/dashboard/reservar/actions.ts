@@ -18,7 +18,6 @@ import {
   buscarReceptivos as buscarReceptivosImpl,
   type CotizarResult,
   type BusquedaResultado,
-  type BusquedaServiciosInput,
   type ResultadoServicio,
 } from "@/lib/reservar/cotizar";
 import {
@@ -46,7 +45,11 @@ export async function buscarHoteles(input: unknown): Promise<{ ok: true; resulta
   return buscarHotelesImpl(input);
 }
 
-export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
+// `input` es `unknown` a propósito (ronda 5) — misma razón que `buscarHoteles`
+// arriba: toda la validación de forma vive en `buscarReceptivosImpl`
+// (lib/reservar/cotizar.ts), nunca se confía en el tipo `BusquedaServiciosInput`
+// en tiempo de ejecución.
+export async function buscarReceptivos(input: unknown): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
   return buscarReceptivosImpl(input);
 }
 

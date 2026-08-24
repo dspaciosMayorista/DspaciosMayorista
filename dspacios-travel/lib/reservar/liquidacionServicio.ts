@@ -59,8 +59,15 @@ export type ResultadoServicio = {
 };
 
 export type ContextoServicios = {
-  pctMkPorPaquete: Map<number, number>;
-  modoPorPar: Map<string, "grupo" | "persona">;
+  // Filas CRUDAS de paquete/armado (nunca modo/markup ya coercionados a un
+  // default) — la validación de "modo/markup real vs inválido" vive en
+  // `validarModoServicio`/`validarPctMarkup`/`resolverConfiguracionServicio`
+  // más abajo, compartida por búsqueda y checkout. Guardar el default
+  // aplicado DENTRO del contexto (como hacía la versión anterior) hacía
+  // imposible distinguir "sin armado" de "armado con modo inválido" una vez
+  // armado el mapa — ambos colapsaban al mismo `"persona"`.
+  paquetesPorId: Map<number, FilaPaquete>;
+  armadoPorPar: Map<string, FilaArmadoServicio>;
   svcPorId: Map<number, FilaServicioAdicional>;
   gruposPorServ: Map<string, FilaGrupoTarifa[]>;
   tempsPorServ: Map<number, TemporadaRango[]>;
@@ -78,8 +85,8 @@ export function construirContextoServicios(datos: {
   grupos: FilaGrupoServicio[];
   temporadas: FilaTemporadaServicio[];
 }): ContextoServicios {
-  const pctMkPorPaquete = new Map(datos.paquetes.map((p) => [p.id, Number(p.pct_mk) || 0]));
-  const modoPorPar = new Map(datos.armado.map((a) => [`${a.paquete_id}-${a.servicio_id}`, a.modo === "grupo" ? "grupo" as const : "persona" as const]));
+  const paquetesPorId = new Map(datos.paquetes.map((p) => [p.id, p]));
+  const armadoPorPar = new Map(datos.armado.map((a) => [`${a.paquete_id}-${a.servicio_id}`, a]));
   const svcPorId = new Map(datos.servicios.map((s) => [s.id, s]));
 
   const gruposPorServ = new Map<string, FilaGrupoTarifa[]>();
@@ -95,7 +102,65 @@ export function construirContextoServicios(datos: {
     if (t.precio_persona != null) netoTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
     if (t.recargo_individual != null) recTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
   }
-  return { pctMkPorPaquete, modoPorPar, svcPorId, gruposPorServ, tempsPorServ, netoTempServ, recTempServ };
+  return { paquetesPorId, armadoPorPar, svcPorId, gruposPorServ, tempsPorServ, netoTempServ, recTempServ };
+}
+
+// ── Validadores de configuración — COMPARTIDOS por búsqueda y checkout ─────
+// (ronda 5, corrige que ambos caminos coercionaban modo/markup inválidos a
+// "persona"/0% en silencio). Ninguno de los dos decide qué hacer con un
+// resultado inválido — eso es responsabilidad de cada llamador:
+// `calcularResultadoServicio` (búsqueda) omite el par; `resolverLiquidacionServicioPuntual`
+// (checkout) aborta con `configuracion_invalida`.
+
+// El modo de cobro (`armado_servicios.modo`) solo tiene dos valores de
+// negocio válidos — cualquier otra cosa (null, "", "OTRO", mayúsculas,
+// texto manipulado) es una configuración incompleta/corrupta, nunca "persona
+// por default".
+export function validarModoServicio(modo: unknown): "persona" | "grupo" | null {
+  if (modo === "persona" || modo === "grupo") return modo;
+  return null;
+}
+
+// Rango comercial real de `armado_paquetes.pct_mk`: se captura en la UI como
+// un % entre 0 y 99 (`ConfigForm.tsx`, `<Input type="number" min={0} max={99}>`,
+// dividido entre 100 al guardar — ver `paquetes/actions.ts`) — nunca
+// negativo, nunca ≥1. `marcar()` (`lib/calc/paquetes.ts`, usada en TODO el
+// motor de precios, no solo servicios) ya blinda el caso `pctMk >= 1`
+// devolviendo `0` en silencio, para no dividir por cero/negativo en los
+// demás flujos que confían en ese blindaje — pero un "0% fantasma" así
+// generado sería indistinguible de un 0% real configurado. Este módulo
+// SIEMPRE valida `pctMk` ANTES de llamar a `marcar()`, así que ese blindaje
+// interno nunca llega a activarse desde acá: un markup fuera de rango se
+// rechaza como configuración inválida, nunca se sustituye por 0.
+export function validarPctMarkup(pctMk: unknown): number | null {
+  if (typeof pctMk !== "number" || !Number.isFinite(pctMk)) return null;
+  if (pctMk < 0 || pctMk >= 1) return null;
+  return pctMk;
+}
+
+export type ConfiguracionServicioResuelta = { modo: "persona" | "grupo"; pctMk: number };
+
+// Resuelve modo+markup a partir de las filas de paquete/armado YA
+// CONSULTADAS — usa los MISMOS dos validadores de arriba que usa
+// `resolverLiquidacionServicioPuntual` directamente (checkout), así que el
+// criterio de "qué es una configuración válida" es idéntico en los dos
+// caminos; la única diferencia legítima es qué hace cada llamador con un
+// resultado `null` (omitir vs abortar). Falla cerrado ante CUALQUIER
+// inconsistencia: paquete/armado ausentes, que no pertenezcan al par
+// consultado, o que su modo/markup no sean válidos — nunca decide un default.
+export function resolverConfiguracionServicio(
+  paquete: FilaPaquete | null,
+  armado: FilaArmadoServicio | null,
+  par: DatosServicioPar
+): ConfiguracionServicioResuelta | null {
+  if (!paquete || !armado) return null;
+  if (paquete.id !== par.paqueteId) return null;
+  if (armado.paquete_id !== par.paqueteId || armado.servicio_id !== par.servicioId) return null;
+  const modo = validarModoServicio(armado.modo);
+  if (modo == null) return null;
+  const pctMk = validarPctMarkup(paquete.pct_mk);
+  if (pctMk == null) return null;
+  return { modo, pctMk };
 }
 
 // Fórmula ÚNICA de liquidación de un servicio/tour, dado un modo y un markup
@@ -107,6 +172,13 @@ export function calcularPrecioConModoYMarkup(
   par: DatosServicioPar, ctx: ContextoServicios, fechaIdaDate: Date, numNoches: number, pax: number,
   modo: "grupo" | "persona", pctMk: number
 ): ResultadoServicio | null {
+  // Defensa en profundidad: aunque los dos llamadores (`calcularResultadoServicio`
+  // vía `resolverConfiguracionServicio`, `resolverLiquidacionServicioPuntual`
+  // directo) ya validan `pctMk` antes de llegar acá, esta función — el
+  // núcleo compartido de la fórmula — nunca debe poder calcular con un
+  // markup fuera de rango sin importar quién la invoque.
+  if (validarPctMarkup(pctMk) == null) return null;
+
   const srv = ctx.svcPorId.get(par.servicioId);
   if (!srv) return null;
   const tt = ctx.tempsPorServ.get(par.servicioId);
@@ -122,23 +194,35 @@ export function calcularPrecioConModoYMarkup(
     const recTemp = nombreTemp ? ctx.recTempServ.get(`${par.servicioId}|${nombreTemp}`) : undefined;
     costoNeto += Math.max(recTemp ?? (Number(srv.recargo_individual) || 0), 0);
   }
+  // Costo neto no finito (dato corrupto aguas arriba) nunca debe llegar a
+  // `marcar()`/`redondearVenta()` — se rechaza acá, antes de calcular el total.
+  if (!Number.isFinite(costoNeto)) return null;
+
   const moneda = srv.moneda ?? "COP";
   const total = redondearVenta(marcar(costoNeto, pctMk), moneda);
-  if (total <= 0) return null;
+  // El total debe ser finito, seguro (entero representable sin pérdida de
+  // precisión — `redondearVenta` siempre produce un entero, en pesos o
+  // dólares) y positivo antes de darlo por válido.
+  if (!Number.isSafeInteger(total) || total <= 0) return null;
 
   return { servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion, paqueteId: par.paqueteId, total, pax, noches: numNoches, moneda };
 }
 
-// ── Búsqueda en lote (buscarReceptivos): TOLERANTE — un par sin armado o sin
-// paquete simplemente no debe romper la búsqueda de los demás; se resuelve
-// con el default de siempre (modo "persona", 0% markup) y, si aun así no hay
-// tarifa, ese resultado no aparece en la lista. Nunca se usa para checkout.
+// ── Búsqueda en lote (buscarReceptivos): TOLERANTE con la AUSENCIA de datos
+// (un par sin armado/paquete simplemente no aparece en los resultados, no
+// rompe la búsqueda de los demás) pero NUNCA con un modo/markup INVÁLIDO —
+// usa el MISMO validador de configuración que el checkout
+// (`resolverConfiguracionServicio`); si el par existe pero su configuración
+// no es válida, también se omite (nunca se calcula con "persona"/0% por
+// default). Nunca se usa para checkout — ese usa `resolverLiquidacionServicioPuntual`.
 export function calcularResultadoServicio(
   par: DatosServicioPar, ctx: ContextoServicios, fechaIdaDate: Date, numNoches: number, pax: number
 ): ResultadoServicio | null {
-  const modo = ctx.modoPorPar.get(`${par.paqueteId}-${par.servicioId}`) ?? "persona";
-  const pctMk = ctx.pctMkPorPaquete.get(par.paqueteId) ?? 0;
-  return calcularPrecioConModoYMarkup(par, ctx, fechaIdaDate, numNoches, pax, modo, pctMk);
+  const paquete = ctx.paquetesPorId.get(par.paqueteId) ?? null;
+  const armado = ctx.armadoPorPar.get(`${par.paqueteId}-${par.servicioId}`) ?? null;
+  const cfg = resolverConfiguracionServicio(paquete, armado, par);
+  if (!cfg) return null;
+  return calcularPrecioConModoYMarkup(par, ctx, fechaIdaDate, numNoches, pax, cfg.modo, cfg.pctMk);
 }
 
 // ── Re-liquidación puntual (liquidarServicioPuntual): FALLO CERRADO ────────
@@ -194,19 +278,54 @@ export function resolverLiquidacionServicioPuntual(input: {
   if (!input.armado) return { ok: false, tipo: "configuracion_invalida", error: "Este servicio no tiene armado (armado_servicios) para este paquete — no hay modo de cobro configurado." };
   if (!input.servicio) return { ok: false, tipo: "no_disponible", error: "El servicio ya no existe." };
 
-  // 4) El armado consultado debe pertenecer EXACTAMENTE al par pedido —
-  // nunca se confía en que el filtro de la consulta baste por sí solo.
+  // 4) Consistencia defensiva del par (ronda 5): aunque las consultas del
+  // llamador ya filtran por id, el resolvedor puro nunca confía en eso —
+  // verifica explícitamente que CADA fila pertenezca al par consultado.
+  if (input.paquete.id !== input.par.paqueteId) {
+    return { ok: false, tipo: "configuracion_invalida", error: "El paquete consultado no corresponde al paqueteId solicitado." };
+  }
+  if (input.servicio.id !== input.par.servicioId) {
+    return { ok: false, tipo: "configuracion_invalida", error: "El servicio consultado no corresponde al servicioId solicitado." };
+  }
   if (input.armado.paquete_id !== input.par.paqueteId || input.armado.servicio_id !== input.par.servicioId) {
     return { ok: false, tipo: "configuracion_invalida", error: "El armado consultado no corresponde al par paquete/servicio solicitado." };
+  }
+
+  // 5) Modo y markup — MISMOS validadores que usa la búsqueda
+  // (`validarModoServicio`/`validarPctMarkup`, vía `resolverConfiguracionServicio`
+  // en `calcularResultadoServicio`): fallo cerrado, nunca "persona"/0% por
+  // default cuando el valor real es inválido, ausente o fuera de rango
+  // comercial (ronda 5, corrige el defecto real reportado).
+  const modo = validarModoServicio(input.armado.modo);
+  if (modo == null) {
+    return {
+      ok: false, tipo: "configuracion_invalida",
+      error: `El modo de cobro configurado (${JSON.stringify(input.armado.modo)}) no es válido — debe ser "persona" o "grupo".`,
+    };
+  }
+  const pctMk = validarPctMarkup(input.paquete.pct_mk);
+  if (pctMk == null) {
+    return {
+      ok: false, tipo: "configuracion_invalida",
+      error: `El markup configurado del paquete (${JSON.stringify(input.paquete.pct_mk)}) no es un valor comercial válido (debe ser un número entre 0 y 1, sin llegar a 1).`,
+    };
   }
 
   const ctx = construirContextoServicios({
     paquetes: [input.paquete], armado: [input.armado], servicios: [input.servicio],
     grupos: input.grupos, temporadas: input.temporadas,
   });
-  const modo = input.armado.modo === "grupo" ? "grupo" as const : "persona" as const;
-  const pctMk = Number(input.paquete.pct_mk) || 0;
   const resultado = calcularPrecioConModoYMarkup(input.par, ctx, input.fechaIdaDate, input.numNoches, input.pax, modo, pctMk);
   if (!resultado) return { ok: false, tipo: "no_disponible", error: "Este servicio no tiene tarifa vigente para esas fechas/pax." };
+
+  // 6) Defensa final: `calcularPrecioConModoYMarkup` ya garantiza que
+  // `total` sea finito/seguro/positivo (devuelve `null` si no), pero se
+  // re-verifica acá como segunda capa antes de dar la cotización por buena
+  // — mismo criterio de defensa en profundidad que `resolverB2BParaMensaje`
+  // re-validando `pctComision` aunque `getContextoB2B` ya lo haya hecho.
+  if (!Number.isFinite(resultado.total) || !Number.isSafeInteger(resultado.total) || resultado.total <= 0) {
+    return { ok: false, tipo: "configuracion_invalida", error: "El total calculado no es un valor numérico válido." };
+  }
+
   return { ok: true, resultado };
 }
