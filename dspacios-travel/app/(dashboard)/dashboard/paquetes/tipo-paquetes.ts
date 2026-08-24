@@ -44,6 +44,33 @@ export const TABS_TIPO_PAQUETE: readonly TabTipoPaquete[] = [
 
 export const TAB_TIPO_PAQUETE_DEFECTO: TipoPaquete = TABS_TIPO_PAQUETE[0].key;
 
+// Resuelve el `?tipo=` de `searchParams` (Next.js 16: puede llegar string,
+// string[] si el query repite la clave, o undefined si no viene) al tipo
+// inicial de la pestaña. `esTipoPaqueteValido` ya descarta cualquier valor
+// que no sea exactamente uno de los 4 strings reales (incluido un arreglo,
+// que falla el `typeof v !== "string"`), así que esto es un simple wrapper
+// con el valor por defecto — se exporta aparte para poder probarlo solo.
+export function resolverTabInicial(v: unknown): TipoPaquete {
+  return esTipoPaqueteValido(v) ? v : TAB_TIPO_PAQUETE_DEFECTO;
+}
+
+// Nombre del parámetro de query — una sola fuente para el lector
+// (resolverTabInicial, vía page.tsx) y el escritor (construirUrlConTab).
+export const QS_TIPO_PAQUETE = "tipo";
+
+// Construye la URL a la que se debe mover el historial al cambiar de
+// pestaña: parte de la URL ACTUAL completa (`hrefActual`, típicamente
+// `window.location.href`) y solo reemplaza/agrega el parámetro `tipo` —
+// cualquier otro query param y el hash quedan intactos, tal cual estaban.
+// Función pura (WHATWG URL es global también en Node, no solo en el
+// navegador) para poder probar la preservación de otros parámetros/hash sin
+// un DOM real.
+export function construirUrlConTab(hrefActual: string, tipo: TipoPaquete): string {
+  const url = new URL(hrefActual);
+  url.searchParams.set(QS_TIPO_PAQUETE, tipo);
+  return url.toString();
+}
+
 export interface PaqueteListable {
   id: number;
   nombre: string;

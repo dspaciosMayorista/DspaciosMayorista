@@ -2,10 +2,18 @@ import { createClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { PaquetesListado, type PaqueteItem } from "./PaquetesListado";
+import { resolverTabInicial } from "./tipo-paquetes";
 
 export const dynamic = "force-dynamic";
 
-export default async function PaquetesPage() {
+export default async function PaquetesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tipo?: string | string[] }>;
+}) {
+  const { tipo: tipoParam } = await searchParams;
+  const tabInicial = resolverTabInicial(tipoParam);
+
   const sb = await createClient();
   const { data: paquetesRaw } = await sb
     .from("armado_paquetes")
@@ -70,7 +78,7 @@ export default async function PaquetesPage() {
         </Link>
       </div>
 
-      <PaquetesListado paquetes={paquetes} />
+      <PaquetesListado paquetes={paquetes} tabInicial={tabInicial} />
     </div>
   );
 }

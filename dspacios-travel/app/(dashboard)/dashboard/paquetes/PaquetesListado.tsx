@@ -1,17 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { formatCOP } from "@/lib/utils";
 import { EliminarPaqueteBtn } from "./EliminarPaqueteBtn";
-import {
-  TABS_TIPO_PAQUETE,
-  TAB_TIPO_PAQUETE_DEFECTO,
-  esTipoPaqueteValido,
-  filtrarYOrdenarPaquetes,
-  type TipoPaquete,
-} from "./tipo-paquetes";
+import { TABS_TIPO_PAQUETE, construirUrlConTab, filtrarYOrdenarPaquetes, type TipoPaquete } from "./tipo-paquetes";
 
 export type PaqueteItem = {
   id: number;
@@ -26,29 +19,27 @@ export type PaqueteItem = {
   desde: number | null;
 };
 
-const QS_TIPO = "tipo";
-
-export function PaquetesListado({ paquetes }: { paquetes: PaqueteItem[] }) {
-  const pathname = usePathname();
-  const [tab, setTab] = useState<TipoPaquete>(TAB_TIPO_PAQUETE_DEFECTO);
+export function PaquetesListado({ paquetes, tabInicial }: { paquetes: PaqueteItem[]; tabInicial: TipoPaquete }) {
+  // `tabInicial` ya viene resuelto por el Server Component (page.tsx, vía
+  // resolverTabInicial() sobre `searchParams`) — se usa directo como valor
+  // inicial del estado, sin un efecto que lea `window` después de montar:
+  // eso evitaba el flash pestaña-por-defecto → pestaña-real y disparaba
+  // react-hooks/set-state-in-effect. Cambiar de pestaña sigue siendo 100%
+  // en memoria (filtra sobre `paquetes`, ya cargado por el server).
+  const [tab, setTab] = useState<TipoPaquete>(tabInicial);
 
   // El query string es solo una conveniencia (conservar el filtro al
-  // recargar) — se lee después de montar en vez de en el estado inicial
-  // para no depender de `window` durante el render en servidor, y se
-  // escribe con history.replaceState (nunca router.push/replace) para NO
-  // disparar una navegación/refetch de este Server Component: los datos ya
-  // están cargados y cambiar de pestaña filtra en memoria.
-  useEffect(() => {
-    const actual = new URLSearchParams(window.location.search).get(QS_TIPO);
-    if (esTipoPaqueteValido(actual)) setTab(actual);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  // recargar/compartir el link). Se escribe con history.replaceState —
+  // nunca router.push/replace — para NO disparar una navegación/refetch de
+  // este Server Component: los datos ya están cargados y cambiar de
+  // pestaña filtra en memoria. Se construye la URL completa a partir de
+  // `window.location.href` (conserva pathname, cualquier otro query param y
+  // el hash — solo se toca `tipo`) y se pasa `window.history.state` como
+  // primer argumento (en vez de `null`) para no pisar el estado interno que
+  // Next.js guarda ahí (scroll/navegación).
   function seleccionarTab(siguiente: TipoPaquete) {
     setTab(siguiente);
-    const qs = new URLSearchParams(window.location.search);
-    qs.set(QS_TIPO, siguiente);
-    window.history.replaceState(null, "", `${pathname}?${qs.toString()}`);
+    window.history.replaceState(window.history.state, "", construirUrlConTab(window.location.href, siguiente));
   }
 
   const visibles = useMemo(() => filtrarYOrdenarPaquetes(paquetes, tab), [paquetes, tab]);

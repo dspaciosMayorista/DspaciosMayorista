@@ -7,7 +7,10 @@ import {
   TABS_TIPO_PAQUETE,
   TAB_TIPO_PAQUETE_DEFECTO,
   TIPOS_PAQUETE_VALIDOS,
+  QS_TIPO_PAQUETE,
   esTipoPaqueteValido,
+  resolverTabInicial,
+  construirUrlConTab,
   filtrarYOrdenarPaquetes,
   type PaqueteListable,
   type TipoPaquete,
@@ -71,6 +74,78 @@ describe("TABS_TIPO_PAQUETE — dominio real", () => {
 
   test("TAB_TIPO_PAQUETE_DEFECTO es la primera pestaña (bloqueo/PAQUETES)", () => {
     assert.equal(TAB_TIPO_PAQUETE_DEFECTO, "bloqueo");
+  });
+});
+
+describe("resolverTabInicial — ?tipo= de searchParams al tab inicial (sin useEffect)", () => {
+  test('"servicios" (string válido) llega tal cual como tabInicial', () => {
+    assert.equal(resolverTabInicial("servicios"), "servicios");
+  });
+
+  test("cada uno de los 4 valores reales se resuelve a sí mismo", () => {
+    for (const v of TIPOS_PAQUETE_VALIDOS) assert.equal(resolverTabInicial(v), v);
+  });
+
+  test("valor inválido cae en TAB_TIPO_PAQUETE_DEFECTO (bloqueo)", () => {
+    assert.equal(resolverTabInicial("receptivos"), TAB_TIPO_PAQUETE_DEFECTO);
+    assert.equal(resolverTabInicial("cualquier-cosa"), TAB_TIPO_PAQUETE_DEFECTO);
+    assert.equal(resolverTabInicial(""), TAB_TIPO_PAQUETE_DEFECTO);
+  });
+
+  test("ausente (undefined) cae en TAB_TIPO_PAQUETE_DEFECTO", () => {
+    assert.equal(resolverTabInicial(undefined), TAB_TIPO_PAQUETE_DEFECTO);
+  });
+
+  test("arreglo (query repetido: ?tipo=a&tipo=b, Next.js lo entrega como string[]) cae en TAB_TIPO_PAQUETE_DEFECTO", () => {
+    assert.equal(resolverTabInicial(["servicios", "bloqueo"]), TAB_TIPO_PAQUETE_DEFECTO);
+    assert.equal(resolverTabInicial([]), TAB_TIPO_PAQUETE_DEFECTO);
+  });
+
+  test("otros tipos inesperados (null/número/objeto) caen en TAB_TIPO_PAQUETE_DEFECTO sin lanzar", () => {
+    assert.doesNotThrow(() => resolverTabInicial(null));
+    assert.equal(resolverTabInicial(null), TAB_TIPO_PAQUETE_DEFECTO);
+    assert.equal(resolverTabInicial(42), TAB_TIPO_PAQUETE_DEFECTO);
+    assert.equal(resolverTabInicial({ tipo: "servicios" }), TAB_TIPO_PAQUETE_DEFECTO);
+  });
+});
+
+describe("construirUrlConTab — cambia SOLO `tipo`, conserva los demás params y el hash", () => {
+  test("agrega `tipo` cuando no existía, conservando otro param y el hash", () => {
+    const r = construirUrlConTab("https://app.example.com/dashboard/paquetes?ordenar=nombre#lista", "servicios");
+    const url = new URL(r);
+    assert.equal(url.pathname, "/dashboard/paquetes");
+    assert.equal(url.searchParams.get("ordenar"), "nombre");
+    assert.equal(url.searchParams.get(QS_TIPO_PAQUETE), "servicios");
+    assert.equal(url.hash, "#lista");
+  });
+
+  test("reemplaza `tipo` cuando ya existía, sin tocar otros params ni el hash", () => {
+    const r = construirUrlConTab(
+      "https://app.example.com/dashboard/paquetes?tipo=bloqueo&pagina=2#seccion-x",
+      "porcion_terrestre"
+    );
+    const url = new URL(r);
+    assert.equal(url.searchParams.get(QS_TIPO_PAQUETE), "porcion_terrestre");
+    assert.equal(url.searchParams.get("pagina"), "2");
+    assert.equal(url.hash, "#seccion-x");
+  });
+
+  test("sin otros params ni hash: solo agrega `tipo`, el pathname no cambia", () => {
+    const r = construirUrlConTab("https://app.example.com/dashboard/paquetes", "dinamico");
+    const url = new URL(r);
+    assert.equal(url.pathname, "/dashboard/paquetes");
+    assert.equal(url.searchParams.get(QS_TIPO_PAQUETE), "dinamico");
+    assert.equal(url.hash, "");
+    assert.equal([...url.searchParams.keys()].length, 1);
+  });
+
+  test("conserva varios params existentes a la vez, en orden y valor", () => {
+    const r = construirUrlConTab("https://app.example.com/x?a=1&b=2&tipo=servicios&c=3", "bloqueo");
+    const url = new URL(r);
+    assert.equal(url.searchParams.get("a"), "1");
+    assert.equal(url.searchParams.get("b"), "2");
+    assert.equal(url.searchParams.get("c"), "3");
+    assert.equal(url.searchParams.get(QS_TIPO_PAQUETE), "bloqueo");
   });
 });
 
@@ -212,15 +287,23 @@ describe("wiring — la pantalla usa el helper real, no una copia/aproximación"
     assert.match(page, /\.select\(\s*"[^"]*\btipo\b[^"]*"/);
   });
 
-  test("page.tsx NO calcula el listado él mismo — delega en PaquetesListado", () => {
-    assert.match(page, /from "\.\/PaquetesListado"/);
-    assert.match(page, /<PaquetesListado\s+paquetes=\{paquetes\}\s*\/>/);
+  test("page.tsx recibe `searchParams` (Next.js 16: Promise) y resuelve `tipo` con el helper real, no con lógica propia", () => {
+    assert.match(page, /searchParams:\s*Promise</);
+    assert.match(page, /await searchParams/);
+    assert.match(page, /resolverTabInicial\(/);
+    assert.match(page, /from "\.\/tipo-paquetes"/);
   });
 
-  test("PaquetesListado.tsx importa filtrarYOrdenarPaquetes/TABS_TIPO_PAQUETE del módulo puro real (no redeclara el dominio)", () => {
+  test("page.tsx NO calcula el listado él mismo — delega en PaquetesListado, pasando tabInicial ya resuelto", () => {
+    assert.match(page, /from "\.\/PaquetesListado"/);
+    assert.match(page, /<PaquetesListado\s+paquetes=\{paquetes\}\s+tabInicial=\{tabInicial\}\s*\/>/);
+  });
+
+  test("PaquetesListado.tsx importa filtrarYOrdenarPaquetes/TABS_TIPO_PAQUETE/construirUrlConTab del módulo puro real (no redeclara el dominio)", () => {
     assert.match(listado, /from "\.\/tipo-paquetes"/);
     assert.match(listado, /filtrarYOrdenarPaquetes/);
     assert.match(listado, /TABS_TIPO_PAQUETE/);
+    assert.match(listado, /construirUrlConTab/);
     // No debe existir una lista de labels hardcodeada aparte — la única
     // fuente de las 3 etiquetas pedidas es tipo-paquetes.ts.
     assert.doesNotMatch(listado, /"PAQUETES"/);
@@ -228,9 +311,20 @@ describe("wiring — la pantalla usa el helper real, no una copia/aproximación"
     assert.doesNotMatch(listado, /"RECEPTIVOS"/);
   });
 
+  test("PaquetesListado.tsx usa tabInicial directo como valor inicial del useState — SIN useEffect ni eslint-disable", () => {
+    assert.match(listado, /useState<TipoPaquete>\(tabInicial\)/);
+    assert.doesNotMatch(listado, /useEffect/);
+    assert.doesNotMatch(listado, /\beslint-disable\b/);
+  });
+
   test("PaquetesListado.tsx no dispara una consulta nueva al cambiar de pestaña (no usa router.push/replace ni fetch en el cambio de tab)", () => {
     assert.doesNotMatch(listado, /router\.(push|replace)\(/);
     assert.match(listado, /history\.replaceState/);
+  });
+
+  test("PaquetesListado.tsx conserva window.history.state (nunca lo pisa con null) al escribir el query string", () => {
+    assert.match(listado, /window\.history\.replaceState\(\s*window\.history\.state\s*,/);
+    assert.doesNotMatch(listado, /history\.replaceState\(\s*null\s*,/);
   });
 
   test("PaquetesListado.tsx muestra un estado vacío específico por pestaña además del estado vacío global", () => {
@@ -241,5 +335,18 @@ describe("wiring — la pantalla usa el helper real, no una copia/aproximación"
   test("PaquetesListado.tsx conserva las acciones existentes de cada fila (link al detalle + eliminar)", () => {
     assert.match(listado, /EliminarPaqueteBtn/);
     assert.match(listado, /\/dashboard\/paquetes\/\$\{p\.id\}/);
+  });
+
+  test("no existe ningún eslint-disable en todo el módulo del listado (ni en tipo-paquetes.ts)", () => {
+    const helper = leer("app/(dashboard)/dashboard/paquetes/tipo-paquetes.ts");
+    assert.doesNotMatch(listado, /eslint-disable/);
+    assert.doesNotMatch(helper, /eslint-disable/);
+  });
+
+  test("filtrarYOrdenarPaquetes y TABS_TIPO_PAQUETE no cambiaron: misma firma/lógica de filtro+orden que antes del fix", () => {
+    const helper = leer("app/(dashboard)/dashboard/paquetes/tipo-paquetes.ts");
+    assert.match(helper, /export function filtrarYOrdenarPaquetes<T extends PaqueteListable>/);
+    assert.match(helper, /paquetes\s*\n\s*\.filter\(\(p\) => p\.tipo === tipo\)/);
+    assert.match(helper, /new Intl\.Collator\("es", \{ sensitivity: "base" \}\)/);
   });
 });
