@@ -424,3 +424,43 @@ describe("16. Sin combos y sin datos → nunca lanza, devuelve arreglo vacío", 
     assert.equal(evaluarHotelPorFechas(baseDatos(), "2026-09-20", 0), null);
   });
 });
+
+describe("17. Ronda 3 — control negativo: evaluarHotelPorFechas SÍ mezcla margen/destino de un paquete con tarifas de un hotel no asociado cuando armadoHotel es null (por eso el candado tiene que vivir en el LOADER, cargarDatosHotelPaquete, no acá)", () => {
+  test("con armadoHotel: null, el PVP usa pct_mk/destino del PAQUETE A sobre las tarifas del HOTEL B — la función pura no tiene forma de detectar que nunca fueron asociados", () => {
+    // Reproduce EXACTAMENTE el comportamiento que tenía `cargarDatosHotelPaquete`
+    // antes de la ronda 3: cuando `armado_hoteles` no tenía fila para el par
+    // (paqueteId, hotelId), seguía adelante con `armadoHotel: null` en vez de
+    // fallar cerrado. `evaluarHotelPorFechas` en sí NUNCA cambió — sigue
+    // aceptando `armadoHotel: null` como "sin filtro, moneda COP" (mismo
+    // comportamiento documentado desde la primera ronda de esta rama) — el
+    // candado real está en el loader (`cargarDatosHotelPaquete`), que ahora
+    // nunca construye este estado en producción.
+    const paqueteA = {
+      pct_mk: 0.5, // margen deliberadamente alto para hacer el mezclado obvio (0.5 evita el redondeo binario de 0.9)
+      impuesto_fijo: 0,
+      destino_nombre: "DESTINO-DEL-PAQUETE-A",
+      fecha_viaje_inicio: null,
+      fecha_viaje_fin: null,
+    };
+    const tarifasHotelB = [tarifaPara("ALTA", { neto_doble: 200_000, neto_sencilla: null, neto_triple: null, neto_multiple: null, neto_nino: null, neto_nino2: null, neto_infante: null })];
+    const datosMezclados: DatosHotelPaquete = {
+      paquete: paqueteA,
+      armadoHotel: null, // el hotel B nunca fue asociado al paquete A (sin fila armado_hoteles)
+      temporadas: [temporadaAlta()],
+      tarifas: tarifasHotelB,
+      serviciosIncluidos: [],
+      blackouts: [],
+    };
+    const r = evaluarHotelPorFechas(datosMezclados, "2026-09-05", 3);
+    assert.ok(r && r.combos.length > 0, "premisa del caso: SÍ produce un resultado utilizable, sin fallar, aunque el hotel nunca se asoció al paquete");
+    // El destino que se muestra es el del PAQUETE A — no hay forma de saber
+    // (ni de validar) que corresponde de verdad al hotel B:
+    assert.equal(r!.destinoNombre, "DESTINO-DEL-PAQUETE-A");
+    // El PVP usa el pct_mk del PAQUETE A (50%) sobre el neto del HOTEL B:
+    // 200.000 × 3 noches = 600.000; marcar(600.000, 0.5) = 600.000/(1-0.5) = 1.200.000.
+    assert.equal(r!.combos[0].precios["doble"], 1_200_000, "el PVP mezcla el margen del paquete A con la tarifa neta del hotel B");
+    // Y el nombre del hotel se pierde por completo (armadoHotel es null) —
+    // otra señal de que este resultado es un producto "huérfano".
+    assert.equal(r!.hotelNombre, null);
+  });
+});

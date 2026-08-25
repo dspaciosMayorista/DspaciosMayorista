@@ -310,3 +310,120 @@ describe("7. BuscadorBooking.tsx — pulsar una sugerencia de fecha conserva des
   });
 });
 
+describe("8. Ronda 3 — buscarHoteles/buscarReceptivos usan validarRangoFechasConsulta (ida no anterior a hoy + noches acotadas), no un rango sin límite", () => {
+  test("buscarHoteles: valida con validarRangoFechasConsulta ANTES de crear el cliente admin", () => {
+    const cuerpo = cuerpoFuncion(cotizar, "export async function buscarHoteles(");
+    assert.match(cuerpo, /const vRango = validarRangoFechasConsulta\(o\.fechaIda, o\.fechaRegreso\)/);
+    assert.match(cuerpo, /if \(!vRango\.ok\) return \{ ok: false, error: vRango\.error \};/);
+    const idxVRango = cuerpo.indexOf("validarRangoFechasConsulta(");
+    const idxAdmin = cuerpo.indexOf("createAdminClient()");
+    assert.ok(idxVRango > -1 && idxAdmin > -1 && idxVRango < idxAdmin, "la validación de rango debe preceder cualquier consulta a Supabase");
+    // `numNoches` sale del validador, no de una resta de fechas suelta sin tope.
+    assert.match(cuerpo, /const numNoches = vRango\.noches;/);
+    assert.doesNotMatch(cuerpo, /const numNoches = noches\(input\.fechaIda, input\.fechaRegreso\)/);
+  });
+  test("buscarReceptivos: mismo validador compartido, misma posición antes de tocar Supabase", () => {
+    const cuerpo = cuerpoFuncion(cotizar, "export async function buscarReceptivos(");
+    assert.match(cuerpo, /const vRango = validarRangoFechasConsulta\(o\.fechaIda, o\.fechaRegreso\)/);
+    assert.match(cuerpo, /const numNoches = vRango\.noches;/);
+    assert.doesNotMatch(cuerpo, /const numNoches = noches\(input\.fechaIda, input\.fechaRegreso\)/);
+  });
+  test("la regla vive en UN solo lugar (lib/reservar/edadesMenores.ts) — cotizar.ts no reimplementa el tope de noches ni el umbral 'no antes de hoy'", () => {
+    // cotizar.ts nunca declara/importa MAX_NOCHES_CONSULTA ni compara fechas
+    // contra "hoy" por su cuenta — esa lógica vive ÚNICAMENTE detrás de
+    // `validarRangoFechasConsulta` (edadesMenores.ts), que buscarHoteles y
+    // buscarReceptivos llaman directo, y que `validarEntradaCotizarPorFechas`
+    // (también en edadesMenores.ts) reutiliza para `cotizarPorFechas` —
+    // ninguno de los 3 repite la regla dentro de cotizar.ts.
+    assert.doesNotMatch(cotizar, /MAX_NOCHES_CONSULTA/);
+    const usos = cotizar.match(/validarRangoFechasConsulta\(/g) ?? [];
+    assert.equal(usos.length, 2, `buscarHoteles y buscarReceptivos deben llamar validarRangoFechasConsulta directo — hubo ${usos.length} usos en cotizar.ts`);
+  });
+});
+
+describe("9. Ronda 3 — combinación paquete+hotel: cargarDatosHotelPaquete falla cerrado si no hay fila armado_hoteles", () => {
+  const cuerpoCarga = cuerpoFuncion(cotizar, "async function cargarDatosHotelPaquete(");
+
+  test("cargarDatosHotelPaquete: `if (!hsel)` devuelve motivo estructurado 'hotel_no_asociado' — ANTES de construir `datos` o evaluar tarifas", () => {
+    assert.match(cuerpoCarga, /if \(!hsel\) return \{ ok: false, motivo: "hotel_no_asociado" \};/);
+    const idxCheck = cuerpoCarga.indexOf('if (!hsel) return { ok: false, motivo: "hotel_no_asociado" };');
+    const idxDatos = cuerpoCarga.indexOf("const datos: DatosHotelPaquete = {");
+    assert.ok(idxCheck > -1 && idxDatos > idxCheck, "el candado debe preceder la construcción de `datos`");
+  });
+  test("ya no existe el fallback `hsel ? {...} : null` — armadoHotel siempre viene de una fila real cuando carga.ok es true", () => {
+    assert.doesNotMatch(cuerpoCarga, /armadoHotel: hsel \? \{/);
+    assert.match(cuerpoCarga, /armadoHotel: \{\s*categorias:/);
+  });
+  test("el tipo ResultadoCargaHotelPaquete declara el motivo 'hotel_no_asociado' como caso propio (no un texto libre)", () => {
+    assert.match(cotizar, /\| \{ ok: false; motivo: "hotel_no_asociado" \}/);
+  });
+
+  test("liquidarHotelPaquete: registra el motivo hotel_no_asociado con console.error antes de `return null` — el contrato de retorno no cambia", () => {
+    const cuerpo = cuerpoFuncion(cotizar, "export async function liquidarHotelPaquete(");
+    const idxRama = cuerpo.indexOf('carga.motivo === "hotel_no_asociado"');
+    assert.ok(idxRama > -1, "debe haber una rama explícita para hotel_no_asociado");
+    const idxConsoleErr = cuerpo.indexOf("console.error", idxRama);
+    const idxReturnNull = cuerpo.indexOf("return null;", idxRama);
+    assert.ok(idxConsoleErr > -1 && idxConsoleErr < idxReturnNull, "debe loguear antes del return null compartido");
+  });
+
+  test("cotizarPorFechas: hotel_no_asociado responde el mismo mensaje comercial genérico que 'sin tarifa', con sugerencias vacías, y registra el detalle server-side", () => {
+    const cuerpo = cuerpoFuncion(cotizar, "export async function cotizarPorFechas(");
+    const idxRama = cuerpo.indexOf('carga.motivo === "hotel_no_asociado"');
+    assert.ok(idxRama > -1, "debe haber una rama explícita para hotel_no_asociado");
+    const idxReturn = cuerpo.indexOf("return { ok: false, error: MENSAJE_HOTEL_SIN_TARIFA, sugerencias: [] };", idxRama);
+    assert.ok(idxReturn > -1, "la rama debe terminar devolviendo el mensaje comercial genérico con sugerencias vacías");
+    const rama = cuerpo.slice(idxRama, idxReturn + "return { ok: false, error: MENSAJE_HOTEL_SIN_TARIFA, sugerencias: [] };".length);
+    assert.match(rama, /console\.error/);
+    const idxConsoleErr = rama.indexOf("console.error");
+    const idxReturnEnRama = rama.indexOf("return { ok: false, error: MENSAJE_HOTEL_SIN_TARIFA, sugerencias: [] };");
+    assert.ok(idxConsoleErr > -1 && idxConsoleErr < idxReturnEnRama, "el log debe ocurrir antes del return");
+    // Nunca genera sugerencias para una pareja inválida: la única forma de
+    // producirlas es `generarSugerenciasFechas`, que necesita `datos` reales
+    // (nunca se llega a tenerlos en esta rama).
+    assert.doesNotMatch(rama, /generarSugerenciasFechas\(/);
+  });
+
+  test("buscarHoteles: ignora el par (continue) sin marcar falloTecnico, y registra la inconsistencia — no cuenta como evaluado ni entra a datosSinTarifaParaFecha", () => {
+    const cuerpo = cuerpoFuncion(cotizar, "export async function buscarHoteles(");
+    const idxRama = cuerpo.indexOf('carga.motivo === "hotel_no_asociado"');
+    assert.ok(idxRama > -1, "debe haber una rama explícita para hotel_no_asociado");
+    const idxContinue = cuerpo.indexOf("continue;", idxRama);
+    const rama = cuerpo.slice(idxRama, idxContinue);
+    assert.match(rama, /console\.error/);
+    assert.doesNotMatch(rama, /falloTecnico = true/);
+    assert.doesNotMatch(rama, /datosSinTarifaParaFecha\.push/);
+    assert.doesNotMatch(rama, /evaluados\+\+/);
+  });
+
+  test("checkout/computo.ts conserva comportamiento válido para parejas REALES — no se tocó, sigue llamando liquidarHotelPaquete con la misma firma exacta", () => {
+    const computo = leer("lib/reservar/computo.ts");
+    assert.match(computo, /liquidarHotelPaquete\(admin, input\.paqueteId, input\.hotelId, input\.fechaIda!, numNoches\)/);
+    // El candado vive ENTERO dentro de cargarDatosHotelPaquete (compartido
+    // por los 3 llamadores) — computo.ts no necesita ni referencia
+    // armado_hoteles directamente, hereda el fail-closed automáticamente.
+    assert.doesNotMatch(computo, /armado_hoteles/);
+  });
+});
+
+describe("10. Ronda 3 — sugerenciasBusquedaGeneral falla cerrado por hotel sin fila maestra en `hoteles`, conserva defaultAcomConfig para hotel_acomodaciones vacío", () => {
+  const cuerpoFn = cuerpoFuncion(cotizar, "async function sugerenciasBusquedaGeneral(");
+
+  test("si falta la fila del hotel en `hoteles` (hotelRowPorId.get devuelve undefined), se omite ESE hotel — nunca inventa edadInfanteMax/edadNinoMax/adultsOnly", () => {
+    const idxCheck = cuerpoFn.indexOf("const hotelRow = hotelRowPorId?.get(hotel);");
+    assert.ok(idxCheck > -1, "debe leer la fila del hotel candidato ANTES de construir la composición");
+    const idxIfFalta = cuerpoFn.indexOf("if (!hotelRow)", idxCheck);
+    assert.ok(idxIfFalta > -1 && idxIfFalta > idxCheck);
+    const idxContinue = cuerpoFn.indexOf("continue;", idxIfFalta);
+    const idxComposicion = cuerpoFn.indexOf("composicion = {", idxIfFalta);
+    assert.ok(idxContinue > -1 && idxContinue < idxComposicion, "el `continue` por hotel sin fila maestra debe preceder la construcción de la composición");
+  });
+  test("una vez confirmada la fila, los defaults por CAMPO null (edad_infante_max/edad_nino_max) siguen siendo el criterio ya establecido (?? 2 / ?? 10) — eso NO es lo que se corrigió, la fila ya existe", () => {
+    assert.match(cuerpoFn, /edadInfanteMax: hotelRow\.edad_infante_max \?\? 2/);
+    assert.match(cuerpoFn, /edadNinoMax: hotelRow\.edad_nino_max \?\? 10/);
+  });
+  test("defaultAcomConfig se conserva para hotel_acomodaciones sin filas — regla deliberada y documentada del sistema (mismo default 1/2/3/4 que usa el resto del motor de reservas cuando un hotel no configuró acomodaciones), no un fail-closed nuevo", () => {
+    assert.match(cuerpoFn, /reglas\.find\(\(x\) => x\.acomodacion === a\) \?\? defaultAcomConfig\(a\)/);
+  });
+});
+

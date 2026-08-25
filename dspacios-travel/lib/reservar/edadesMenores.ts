@@ -734,6 +734,41 @@ export function formatearLogInsertCotizacion(ctx: { etapa: string; detalle: stri
   return `[crearCotizacionCarrito] etapa=${ctx.etapa} detalle=${ctx.detalle}`;
 }
 
+// ── Rango de fechas de una CONSULTA pública (ronda 3) ───────────────────────
+// Regla ÚNICA compartida por `cotizarPorFechas`, `buscarHoteles` y
+// `buscarReceptivos` (lib/reservar/cotizar.ts): fecha de ida real, fecha de
+// regreso real, regreso estrictamente posterior a la ida, ida NO anterior a
+// "hoy", y número de noches entre 1 y `MAX_NOCHES_CONSULTA`. Defecto real
+// corregido (ronda 3): `buscarHoteles`/`buscarReceptivos` validaban fecha
+// real + rango, pero NUNCA "no antes de hoy" ni el tope de noches — un
+// payload manipulado podía pedir un rango de años/décadas (`evaluarHotelPorFechas`
+// construye `nochesStay` recorriendo `numNoches` uno a uno; `calcularResultadoServicio`
+// recorre las noches igual), y repetirlo por cada hotel/servicio candidato de
+// la búsqueda. Antes de esta ronda esta regla SOLO vivía duplicada dentro de
+// `validarEntradaCotizarPorFechas` (ronda 2) — ahora es la única fuente y ese
+// validador la reutiliza en vez de repetirla.
+export function validarRangoFechasConsulta(
+  fechaIdaRaw: unknown,
+  fechaRegresoRaw: unknown,
+  hoy: string = hoyISO()
+): { ok: true; fechaIda: string; fechaRegreso: string; noches: number } | { ok: false; error: string } {
+  const vIda = validarFechaConsulta(fechaIdaRaw);
+  if (!vIda.ok) return { ok: false, error: vIda.error };
+  const vReg = validarFechaConsulta(fechaRegresoRaw);
+  if (!vReg.ok) return { ok: false, error: vReg.error };
+  const vRango = validarRangoFechas(vIda.fecha, vReg.fecha);
+  if (!vRango.ok) return { ok: false, error: vRango.error };
+
+  if (vIda.fecha < hoy) return { ok: false, error: "La fecha de ida no puede ser anterior a hoy." };
+
+  const numNoches = noches(vIda.fecha, vReg.fecha);
+  if (numNoches <= 0 || numNoches > MAX_NOCHES_CONSULTA) {
+    return { ok: false, error: `El número de noches debe estar entre 1 y ${MAX_NOCHES_CONSULTA}.` };
+  }
+
+  return { ok: true, fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, noches: numNoches };
+}
+
 // ── Frontera pública de `cotizarPorFechas` (ronda 2) ────────────────────────
 // Defecto real corregido: `cotizarPorFechas` (lib/reservar/cotizar.ts) seguía
 // recibiendo el input tipado directo como `{ paqueteId: number; hotelId:
@@ -741,9 +776,9 @@ export function formatearLogInsertCotizacion(ctx: { etapa: string; detalle: stri
 // pública (Vista Booking) es alcanzable con cualquier body HTTP sin importar
 // lo que declare ese tipo: `null`, un arreglo, ids decimales/negativos/
 // `Infinity`, o fechas imposibles llegaban sin validar. Mismo patrón que el
-// resto de este archivo: se valida la FORMA completa (objeto → ids → fechas
-// → rango → "no antes de hoy" → noches acotadas) antes de leer una sola
-// propiedad para tocar Supabase.
+// resto de este archivo: se valida la FORMA completa (objeto → ids → rango de
+// fechas, vía `validarRangoFechasConsulta`) antes de leer una sola propiedad
+// para tocar Supabase.
 export type EntradaCotizarPorFechasValidada = {
   paqueteId: number;
   hotelId: number;
@@ -764,22 +799,11 @@ export function validarEntradaCotizarPorFechas(
   if (!esEnteroSeguroPositivo(v.paqueteId)) return { ok: false, error: "El paquete indicado no es válido." };
   if (!esEnteroSeguroPositivo(v.hotelId)) return { ok: false, error: "El hotel indicado no es válido." };
 
-  const vIda = validarFechaConsulta(v.fechaIda);
-  if (!vIda.ok) return { ok: false, error: vIda.error };
-  const vReg = validarFechaConsulta(v.fechaRegreso);
-  if (!vReg.ok) return { ok: false, error: vReg.error };
-  const vRango = validarRangoFechas(vIda.fecha, vReg.fecha);
+  const vRango = validarRangoFechasConsulta(v.fechaIda, v.fechaRegreso, hoy);
   if (!vRango.ok) return { ok: false, error: vRango.error };
-
-  if (vIda.fecha < hoy) return { ok: false, error: "La fecha de ida no puede ser anterior a hoy." };
-
-  const numNoches = noches(vIda.fecha, vReg.fecha);
-  if (numNoches <= 0 || numNoches > MAX_NOCHES_CONSULTA) {
-    return { ok: false, error: `El número de noches debe estar entre 1 y ${MAX_NOCHES_CONSULTA}.` };
-  }
 
   return {
     ok: true,
-    input: { paqueteId: v.paqueteId, hotelId: v.hotelId, fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, noches: numNoches },
+    input: { paqueteId: v.paqueteId, hotelId: v.hotelId, fechaIda: vRango.fechaIda, fechaRegreso: vRango.fechaRegreso, noches: vRango.noches },
   };
 }

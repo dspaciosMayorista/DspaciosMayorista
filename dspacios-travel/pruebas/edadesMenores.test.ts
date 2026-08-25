@@ -38,8 +38,10 @@ import {
   formatearLogInsertCotizacion,
   MENSAJE_ERROR_COTIZACION,
   validarEntradaCotizarPorFechas,
+  validarRangoFechasConsulta,
   MAX_NOCHES_CONSULTA,
 } from "../lib/reservar/edadesMenores.ts";
+import { noches } from "../lib/calc/paquetes.ts";
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
 const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
@@ -1068,18 +1070,24 @@ describe("35. Ronda 5: Wiring — buscarReceptivos trata su input como unknown, 
     const cuerpo = cotizar.slice(idx, cotizar.indexOf("\nexport", idx + 10));
     assert.match(cuerpo, /typeof inputRaw !== "object" \|\| inputRaw === null \|\| Array\.isArray\(inputRaw\)/);
   });
-  test("cotizar.ts: usa los mismos validadores puros que buscarHoteles (fecha real, destino acotado, pax entero acotado)", () => {
+  test("cotizar.ts: usa los mismos validadores puros que buscarHoteles (rango de fechas compartido, destino acotado, pax entero acotado)", () => {
     const idx = cotizar.indexOf("export async function buscarReceptivos(inputRaw: unknown)");
     const cuerpo = cotizar.slice(idx, cotizar.indexOf("\nexport", idx + 10));
-    assert.match(cuerpo, /validarFechaConsulta\(o\.fechaIda\)/);
-    assert.match(cuerpo, /validarFechaConsulta\(o\.fechaRegreso\)/);
+    // Ronda 3: el rango de fechas (real + regreso>ida + no antes de hoy +
+    // noches acotadas) se validaba antes con `validarFechaConsulta` suelto
+    // sin esos dos últimos candados — ahora comparte `validarRangoFechasConsulta`
+    // con `buscarHoteles`/`cotizarPorFechas` (una sola fuente de la regla).
+    assert.match(cuerpo, /validarRangoFechasConsulta\(o\.fechaIda, o\.fechaRegreso\)/);
     assert.match(cuerpo, /validarDestinoConsulta\(o\.destino\)/);
     assert.match(cuerpo, /validarPaxServicioConsulta\(o\.pax\)/);
   });
-  test("cotizar.ts: rechaza el rango de fechas inválido (regreso <= ida) antes de consultar Supabase", () => {
+  test("cotizar.ts: rechaza el rango de fechas inválido (regreso <= ida) antes de consultar Supabase — vía validarRangoFechasConsulta", () => {
     const idx = cotizar.indexOf("export async function buscarReceptivos(inputRaw: unknown)");
     const cuerpo = cotizar.slice(idx, cotizar.indexOf("\nexport", idx + 10));
-    assert.match(cuerpo, /numNoches <= 0/);
+    assert.match(cuerpo, /if \(!vRango\.ok\) return \{ ok: false, error: vRango\.error \};/);
+    const idxAdmin = cuerpo.indexOf("createAdminClient()");
+    const idxVRango = cuerpo.indexOf("validarRangoFechasConsulta(");
+    assert.ok(idxVRango > -1 && idxAdmin > -1 && idxVRango < idxAdmin, "la validación de rango debe preceder cualquier consulta a Supabase");
   });
   test("actions.ts: el wrapper de la Server Action también tipa el parámetro como unknown (no BusquedaServiciosInput)", () => {
     assert.match(reservarActions, /export async function buscarReceptivos\(input: unknown\)/);
@@ -1380,3 +1388,70 @@ function addDiasISOLocal(fechaISO: string, dias: number): string {
   const t = new Date(`${fechaISO}T00:00:00`).getTime() + dias * 86_400_000;
   return new Date(t).toISOString().slice(0, 10);
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 3 (vista-booking-fechas-sugeridas) — `validarRangoFechasConsulta`:
+// regla ÚNICA compartida por `buscarHoteles`/`buscarReceptivos`/`cotizarPorFechas`.
+// Defecto real corregido: `buscarHoteles`/`buscarReceptivos` validaban fecha
+// real + regreso>ida, pero NUNCA "ida no anterior a hoy" ni el tope de
+// noches — un payload manipulado podía pedir un rango de años/décadas,
+// repetido por cada hotel/servicio candidato de la búsqueda (N × rango
+// gigante). Ejecución REAL del parser puro.
+// ───────────────────────────────────────────────────────────────────────────
+describe("43. Ronda 3: validarRangoFechasConsulta — rango de fechas compartido, nunca lanza", () => {
+  const HOY = "2026-06-01";
+
+  test("1 noche pasa (mínimo)", () => {
+    const r = validarRangoFechasConsulta(HOY, addDiasISOLocal(HOY, 1), HOY);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.noches, 1);
+  });
+  test(`exactamente ${MAX_NOCHES_CONSULTA} noches pasa (límite inclusive)`, () => {
+    const r = validarRangoFechasConsulta(HOY, addDiasISOLocal(HOY, MAX_NOCHES_CONSULTA), HOY);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.noches, MAX_NOCHES_CONSULTA);
+  });
+  test(`${MAX_NOCHES_CONSULTA + 1} noches (un día más del límite) se rechaza`, () => {
+    const r = validarRangoFechasConsulta(HOY, addDiasISOLocal(HOY, MAX_NOCHES_CONSULTA + 1), HOY);
+    assert.equal(r.ok, false);
+  });
+  test("un rango de varios años se rechaza antes de crear el cliente de Supabase (el llamador nunca llega a `createAdminClient()`)", () => {
+    const r = validarRangoFechasConsulta("2000-01-01", "2030-01-01", HOY);
+    assert.equal(r.ok, false);
+  });
+  test("fecha de ida en el pasado se rechaza, aunque el rango en sí sea corto y válido", () => {
+    const r = validarRangoFechasConsulta("2020-01-01", "2020-01-04", HOY);
+    assert.equal(r.ok, false);
+  });
+  test("fecha de ida = hoy se acepta (no se rechaza por ser 'anterior')", () => {
+    const r = validarRangoFechasConsulta(HOY, addDiasISOLocal(HOY, 2), HOY);
+    assert.equal(r.ok, true);
+  });
+
+  const payloadsManipulados: [unknown, unknown][] = [
+    [null, null], [undefined, undefined], ["", ""], [42, 42], [true, false], [[], []],
+    [{}, {}], ["10-06-2026", "13-06-2026"], ["2026-13-40", "2026-06-13"], ["2026-06-10", "2026-02-30"],
+    [HOY, HOY], // regreso == ida, 0 noches
+    [addDiasISOLocal(HOY, 5), HOY], // regreso antes que la ida
+  ];
+  for (const [fechaIda, fechaRegreso] of payloadsManipulados) {
+    test(`payload manipulado (fechaIda=${JSON.stringify(fechaIda)}, fechaRegreso=${JSON.stringify(fechaRegreso)}) no lanza y se rechaza`, () => {
+      assert.doesNotThrow(() => validarRangoFechasConsulta(fechaIda, fechaRegreso, HOY));
+      assert.equal(validarRangoFechasConsulta(fechaIda, fechaRegreso, HOY).ok, false);
+    });
+  }
+
+  test("control negativo: noches() por sí sola no impone ningún límite — por eso hace falta el validador explícito antes de tocar Supabase", () => {
+    // `noches()` (lib/calc/paquetes.ts) es la misma resta de fechas que usa
+    // `evaluarHotelPorFechas` para construir `nochesStay` — reproduce lo que
+    // el código de `buscarHoteles`/`buscarReceptivos` habría aceptado ANTES
+    // de esta ronda (cuando solo validaban fecha real + regreso>ida, sin
+    // tope): un rango de 30 años da un número de noches enorme, sin lanzar
+    // ni acotarse por sí solo.
+    const rangoEnorme = noches("2000-01-01", "2030-01-01");
+    assert.ok(rangoEnorme > MAX_NOCHES_CONSULTA, `noches() no acota nada por sí sola (dio ${rangoEnorme} para un rango de 30 años) — confirma que el candado tiene que vivir en el validador, no en la resta de fechas`);
+    // El mismo input, a través del validador nuevo, se rechaza:
+    const r = validarRangoFechasConsulta("2000-01-01", "2030-01-01", HOY);
+    assert.equal(r.ok, false);
+  });
+});

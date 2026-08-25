@@ -18,10 +18,10 @@ import {
   validarEdadesMenores,
   validarHabitacionesConsultadas,
   validarAdultosDeclarados,
-  validarFechaConsulta,
   validarDestinoConsulta,
   validarPaxTotalConsulta,
   validarPaxServicioConsulta,
+  validarRangoFechasConsulta,
   validarEntradaCotizarPorFechas,
   clasificarMenoresPorEdad,
   verificarTarifasMenoresDisponibles,
@@ -53,6 +53,7 @@ const MENSAJE_BUSQUEDA_HOTELES_NO_DISPONIBLE = "Búsqueda no disponible en este 
 type ResultadoCargaHotelPaquete =
   | { ok: true; datos: DatosHotelPaquete }
   | { ok: false; motivo: "paquete_no_encontrado" }
+  | { ok: false; motivo: "hotel_no_asociado" }
   | { ok: false; motivo: "error_consulta"; etapa: string; detalleInterno: string };
 
 // ── Carga EN VIVO (una sola vez por hotel/paquete, sin importar cuántas
@@ -63,6 +64,28 @@ type ResultadoCargaHotelPaquete =
 // hay tarifa para esas fechas" — antes de esta ronda sí ocurría, porque el
 // código seguía con `?? []`/`undefined` sin mirar el error de ninguna de
 // estas consultas.
+//
+// Ronda 3, defecto real corregido (combinación paquete+hotel manipulable):
+// si `armado_hoteles` NO tiene fila para este (paquete_id, hotel_id), esta
+// función ANTES seguía adelante con `armadoHotel: null`, que
+// `evaluarHotelPorFechas` interpreta como "sin filtro de categoría/régimen,
+// moneda COP" — es decir, cotizaba usando el margen/impuesto/destino/
+// servicios incluidos del PAQUETE junto con las tarifas/temporadas del
+// HOTEL, aunque ese hotel nunca hubiera sido asociado a ese paquete. Se
+// auditaron los 3 llamadores (`liquidarHotelPaquete`/`cotizarPorFechas`/
+// `buscarHoteles`) y el checkout (`computo.ts` vía `liquidarHotelPaquete`,
+// con `paqueteId`/`hotelId` que llegan del carrito público solo validados
+// por TIPO, nunca por existencia del vínculo): ninguno re-valida el vínculo
+// `armado_hoteles` de forma independiente, así que el candado tiene que
+// vivir acá, en el ÚNICO punto que consulta esa tabla. No existe ningún
+// flujo de negocio documentado que dependa de cotizar un hotel sin esa
+// fila — el único caso real donde `hsel` puede faltar es un `tarifario_
+// resultado` desactualizado (un hotel se desmarcó de un paquete sin
+// regenerar el tarifario), que es justamente el caso en el que NO se debe
+// seguir cotizando con datos mezclados. Ahora falla cerrado con un motivo
+// ESTRUCTURADO (`hotel_no_asociado`, nunca un mensaje de texto) para que
+// cada llamador decida su propio mensaje comercial/log sin tener que
+// adivinar la causa.
 async function cargarDatosHotelPaquete(
   admin: ReturnType<typeof createAdminClient>,
   paqueteId: number,
@@ -90,12 +113,13 @@ async function cargarDatosHotelPaquete(
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
   ]);
   if (hselErr) return { ok: false, motivo: "error_consulta", etapa: "armado_hoteles", detalleInterno: hselErr.message };
+  if (!hsel) return { ok: false, motivo: "hotel_no_asociado" };
   if (tempsErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_temporadas", detalleInterno: tempsErr.message };
   if (tarifasErr) return { ok: false, motivo: "error_consulta", etapa: "tarifa_hotel", detalleInterno: tarifasErr.message };
   if (servSelErr) return { ok: false, motivo: "error_consulta", etapa: "armado_servicios", detalleInterno: servSelErr.message };
   if (blackoutsErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_blackouts", detalleInterno: blackoutsErr.message };
 
-  const hotelMeta = hsel?.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
+  const hotelMeta = hsel.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
   const datos: DatosHotelPaquete = {
@@ -103,12 +127,12 @@ async function cargarDatosHotelPaquete(
       pct_mk: pq.pct_mk, impuesto_fijo: pq.impuesto_fijo, destino_nombre: destinoNombre,
       fecha_viaje_inicio: pq.fecha_viaje_inicio, fecha_viaje_fin: pq.fecha_viaje_fin,
     },
-    armadoHotel: hsel ? {
+    armadoHotel: {
       categorias: (hsel.categorias as string[] | null) ?? null,
       regimenes: (hsel.regimenes as string[] | null) ?? null,
       hotel_nombre: hotelMeta?.nombre ?? null,
       hotel_moneda: hotelMeta?.moneda ?? null,
-    } : null,
+    },
     temporadas: (temps ?? []) as FilaTemporadaHotelRaw[],
     tarifas: (tarifas ?? []) as FilaTarifaHotelRaw[],
     serviciosIncluidos: (servSel ?? []).map((s) => ({
@@ -152,10 +176,17 @@ export async function liquidarHotelPaquete(
     // Ronda 2, defecto real corregido: un fallo TÉCNICO al cargar (RLS,
     // tabla renombrada, columna eliminada) se devolvía como `null` sin dejar
     // rastro — indistinguible en los logs de "paquete/hotel no encontrado".
-    // El contrato de retorno (`null`) no cambia — `computo.ts` sigue viendo
+    // Ronda 3: mismo criterio para `hotel_no_asociado` — este es el ÚNICO
+    // llamador que alimenta directamente el checkout (computo.ts), con
+    // `paqueteId`/`hotelId` que llegan del carrito público validados solo
+    // por tipo, así que un intento de combinar un paquete real con un hotel
+    // no asociado a él debe quedar registrado acá. El contrato de retorno
+    // (`null`) no cambia en ningún caso — `computo.ts` sigue viendo
     // exactamente lo mismo — solo se agrega el registro server-side.
     if (carga.motivo === "error_consulta") {
       console.error(`[liquidarHotelPaquete] etapa=${carga.etapa} paqueteId=${paqueteId} hotelId=${hotelId} detalle=${carga.detalleInterno}`);
+    } else if (carga.motivo === "hotel_no_asociado") {
+      console.error(`[liquidarHotelPaquete] etapa=hotel_no_asociado paqueteId=${paqueteId} hotelId=${hotelId} detalle=el hotel no tiene fila armado_hoteles para este paquete — combinación rechazada`);
     }
     return null;
   }
@@ -203,6 +234,16 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
   const carga = await cargarDatosHotelPaquete(admin, input.paqueteId, input.hotelId);
   if (!carga.ok) {
     if (carga.motivo === "paquete_no_encontrado") return { ok: false, error: MENSAJE_HOTEL_SIN_TARIFA, sugerencias: [] };
+    if (carga.motivo === "hotel_no_asociado") {
+      // Ronda 3: combinación paquete+hotel sin fila `armado_hoteles` — nunca
+      // se evalúan tarifas ni se generan sugerencias (no hay `datos` reales
+      // que ofrecer), el cliente recibe el mismo mensaje comercial genérico
+      // que "sin tarifa" (nunca revela que el par es inválido), y el detalle
+      // se registra server-side para poder detectar caché desactualizada o
+      // un intento de combinación fabricada.
+      console.error(`[cotizarPorFechas] etapa=hotel_no_asociado paqueteId=${input.paqueteId} hotelId=${input.hotelId} detalle=el par no tiene fila armado_hoteles`);
+      return { ok: false, error: MENSAJE_HOTEL_SIN_TARIFA, sugerencias: [] };
+    }
     console.error(`[cotizarPorFechas] etapa=${carga.etapa} paqueteId=${input.paqueteId} hotelId=${input.hotelId} detalle=${carga.detalleInterno}`);
     return { ok: false, error: MENSAJE_HOTEL_ERROR_TECNICO, sugerencias: [] };
   }
@@ -340,16 +381,34 @@ async function sugerenciasBusquedaGeneral(
     if (sugerencias.length >= 4) break;
     let composicion: ComposicionSugerencia | null = null;
     if (input.habitaciones.length) {
+      // Ronda 3, defecto real corregido: si la consulta a `hoteles` tuvo
+      // éxito pero NO trajo fila para este hotel puntual (fila maestra
+      // faltante — inconsistencia real, no un error técnico), el código
+      // antes caía a `?? 2`/`?? 10`/`false` — inventando umbrales de
+      // edad y "no es Adults Only" sin ninguna base. Eso podría sugerir una
+      // fecha realmente incompatible (ej. un hotel Adults Only real
+      // apareciendo como si aceptara menores). Fail-closed POR HOTEL: sin la
+      // fila maestra, este hotel no participa de las sugerencias — nunca se
+      // inventa la restricción, solo se omite (no revienta el resto del
+      // lote). La ausencia de `hotel_acomodaciones` (reglas.length === 0) es
+      // otro caso, ya cubierto por `defaultAcomConfig` — regla deliberada y
+      // documentada del sistema (mismo fallback 1/2/3/4 que usa el resto del
+      // motor de reservas cuando un hotel no configuró acomodaciones), no se
+      // toca acá.
+      const hotelRow = hotelRowPorId?.get(hotel);
+      if (!hotelRow) {
+        console.error(`[buscarHoteles.sugerenciasBusquedaGeneral] etapa=hotel_sin_fila_maestra hotelId=${hotel} detalle=falta la fila en 'hoteles' para este candidato — se omite del lote de sugerencias`);
+        continue;
+      }
       const reglas = acomCfgPorHotel?.get(hotel) ?? [];
-      const hotelRow = hotelRowPorId?.get(hotel) ?? null;
       const configDe = (a: AcomRoom): AcomConfig => reglas.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
       composicion = {
         adultosDeclarados: input.adultos,
         habitacionesConsultadas: input.habitaciones.map((h) => ({ acom: h.acom, config: configDe(h.acom) })),
         edadesMenores: input.edadesMenores,
-        edadInfanteMax: hotelRow?.edad_infante_max ?? 2,
-        edadNinoMax: hotelRow?.edad_nino_max ?? 10,
-        adultsOnly: !!hotelRow?.adults_only,
+        edadInfanteMax: hotelRow.edad_infante_max ?? 2,
+        edadNinoMax: hotelRow.edad_nino_max ?? 10,
+        adultsOnly: !!hotelRow.adults_only,
       };
     }
     const propias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: input.fechaIda, numNochesSolicitadas: numNoches, composicion });
@@ -381,10 +440,15 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
     return { ok: false, error: "La consulta no tiene una forma válida." };
   }
   const o = inputRaw as Record<string, unknown>;
-  const vIda = validarFechaConsulta(o.fechaIda);
-  if (!vIda.ok) return { ok: false, error: vIda.error };
-  const vReg = validarFechaConsulta(o.fechaRegreso);
-  if (!vReg.ok) return { ok: false, error: vReg.error };
+  // Ronda 3, defecto real corregido: antes solo se validaba fecha real +
+  // rango (regreso > ida), sin exigir "ida no anterior a hoy" ni acotar el
+  // número de noches — un payload manipulado podía pedir un rango de años/
+  // décadas, y `evaluarHotelPorFechas` construye `nochesStay` recorriendo
+  // `numNoches` uno a uno POR CADA hotel candidato de la búsqueda. Mismo
+  // validador compartido que usa `cotizarPorFechas`/`buscarReceptivos` — la
+  // regla vive en un solo lugar (`validarRangoFechasConsulta`).
+  const vRango = validarRangoFechasConsulta(o.fechaIda, o.fechaRegreso);
+  if (!vRango.ok) return { ok: false, error: vRango.error };
   const vDestino = validarDestinoConsulta(o.destino);
   if (!vDestino.ok) return { ok: false, error: vDestino.error };
   const vHabs = validarHabitacionesConsultadas(o.habitaciones);
@@ -397,14 +461,12 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
   if (!vEdades.ok) return { ok: false, error: vEdades.error };
 
   const input: BusquedaInput = {
-    fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, habitaciones: vHabs.habitaciones,
+    fechaIda: vRango.fechaIda, fechaRegreso: vRango.fechaRegreso, habitaciones: vHabs.habitaciones,
     adultos: vAdultos.adultos, cantidadMenores: vCant.cantidad, edadesMenores: vEdades.edades,
     destino: vDestino.destino || undefined,
   };
   const edades = input.edadesMenores;
-
-  const numNoches = noches(input.fechaIda, input.fechaRegreso);
-  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+  const numNoches = vRango.noches;
   const vPaxTotal = validarPaxTotalConsulta(input.adultos, edades.length);
   if (!vPaxTotal.ok) return { ok: false, error: vPaxTotal.error };
 
@@ -453,6 +515,16 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
       if (carga.motivo === "error_consulta") {
         console.error(`[buscarHoteles] etapa=${carga.etapa} paqueteId=${paquete} hotelId=${hotel} detalle=${carga.detalleInterno}`);
         falloTecnico = true;
+      } else if (carga.motivo === "hotel_no_asociado") {
+        // Ronda 3: `pares` sale de `tarifario_resultado`, que es un CACHÉ —
+        // puede quedar desactualizado si un hotel se desmarca de un paquete
+        // (armado_hoteles) sin regenerar el tarifario, o el par podría ser
+        // fabricado. En ningún caso corresponde cotizar mezclando margen/
+        // impuesto/servicios del paquete con tarifas de un hotel que HOY no
+        // está asociado — se ignora el par (no cuenta como `evaluados` ni
+        // entra a `datosSinTarifaParaFecha`, tampoco es un fallo técnico) y
+        // se registra para poder detectar caché desactualizada.
+        console.error(`[buscarHoteles] etapa=hotel_no_asociado paqueteId=${paquete} hotelId=${hotel} detalle=el par no tiene fila armado_hoteles — posible tarifario_resultado desactualizado`);
       }
       continue; // "paquete_no_encontrado" no debería pasar (viene de tarifario_resultado), pero tampoco revienta la búsqueda de los demás pares
     }
@@ -622,21 +694,23 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
     return { ok: false, error: "La consulta no tiene una forma válida." };
   }
   const o = inputRaw as Record<string, unknown>;
-  const vIda = validarFechaConsulta(o.fechaIda);
-  if (!vIda.ok) return { ok: false, error: vIda.error };
-  const vReg = validarFechaConsulta(o.fechaRegreso);
-  if (!vReg.ok) return { ok: false, error: vReg.error };
+  // Ronda 3, mismo defecto real y misma corrección que `buscarHoteles`: sin
+  // "ida no anterior a hoy" ni tope de noches, un rango de años/décadas
+  // llegaba a `calcularResultadoServicio` (recorre las noches una a una) por
+  // cada servicio/tour candidato. Comparte el validador — la fórmula de
+  // liquidación no se toca.
+  const vRango = validarRangoFechasConsulta(o.fechaIda, o.fechaRegreso);
+  if (!vRango.ok) return { ok: false, error: vRango.error };
   const vDestino = validarDestinoConsulta(o.destino);
   if (!vDestino.ok) return { ok: false, error: vDestino.error };
   const vPax = validarPaxServicioConsulta(o.pax);
   if (!vPax.ok) return { ok: false, error: vPax.error };
 
   const input: BusquedaServiciosInput = {
-    fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, pax: vPax.pax, destino: vDestino.destino || undefined,
+    fechaIda: vRango.fechaIda, fechaRegreso: vRango.fechaRegreso, pax: vPax.pax, destino: vDestino.destino || undefined,
   };
 
-  const numNoches = noches(input.fechaIda, input.fechaRegreso);
-  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+  const numNoches = vRango.noches;
   const pax = input.pax;
 
   const admin = createAdminClient();
