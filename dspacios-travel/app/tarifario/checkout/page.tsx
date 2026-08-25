@@ -5,6 +5,7 @@ import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem, type HotelCartItem } from "@/lib/cart/CartContext";
+import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
 import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B } from "./actions";
 
 function resumenHab(it: HotelCartItem): string {
@@ -56,22 +57,54 @@ export default function CheckoutPage() {
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
+
+    // Carritos guardados en el navegador ANTES de pedir la edad de cada menor
+    // no traen `edadesMenores`: sin menores declarados se normaliza a `[]`
+    // (nada que perder); con menores pero sin edad de cada uno se bloquea
+    // AQUÍ, con un mensaje que dice qué hotel retirar y volver a agregar —
+    // nunca se manda al servidor a que intente adivinar (ese reparto legado
+    // ya no existe para este flujo público, ver checkout/actions.ts).
+    const itemsNormalizados: { it: HotelCartItem; edadesMenores: number[] }[] = [];
+    for (const it of hotelItems) {
+      const r = normalizarEdadesMenoresCarrito(it);
+      if (!r.ok) { setErr(`${it.hotelNombre}: ${r.error}`); return; }
+      itemsNormalizados.push({ it, edadesMenores: r.edadesMenores });
+    }
+
+    // Tours agregados antes de que el carrito guardara `servicioId` (o cuyo
+    // servicio no quedó identificado por algún motivo) no se pueden
+    // re-liquidar en el servidor — se bloquea acá con un mensaje claro en vez
+    // de mandarlos y que el servidor los rechace uno por uno sin contexto.
+    for (const it of tourItems) {
+      if (it.servicioId == null || !it.fechaIda || !it.fechaRegreso) {
+        setErr(`${it.nombre}: este servicio se agregó antes de poder re-liquidarlo en el servidor. Quítalo del carrito y agrégalo de nuevo desde Receptivos.`);
+        return;
+      }
+    }
+
     start(async () => {
       const r = await crearSolicitudReserva({
-        items: hotelItems.map((it) => ({
+        items: itemsNormalizados.map(({ it, edadesMenores }) => ({
           modulo: it.modulo, paqueteId: it.paqueteId, hotelId: it.hotelId, bloqueoId: it.bloqueoId,
           hotelNombre: it.hotelNombre, destino: it.destino, categoria: it.categoria, regimen: it.regimen,
           fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, noches: it.noches,
           habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes, pax: it.pax, precio: it.precio,
+          edadesMenores, cantidadMenores: edadesMenores.length,
         })),
-        // Los tours aún no generan su propia cotización (próxima fase) — se
-        // incluyen tal cual en el mensaje/total de la solicitud.
+        // El servidor re-liquida cada tour EN VIVO por `servicioId`/
+        // `paqueteId` (nunca confía en nombre/precio/moneda del carrito) —
+        // ver liquidarServicioPuntual en lib/reservar/cotizar.ts.
         tours: tourItems.map((it) => ({
-          nombre: it.nombre, destino: it.destino, fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso,
-          pax: it.pax, precio: it.precio, moneda: it.moneda ?? "COP",
+          servicioId: it.servicioId, paqueteId: it.paqueteId,
+          fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, pax: it.pax,
         })),
         cliente: c,
-        ...(esB2B ? { modo, facturacion: fact, pctComision: pct } : {}),
+        // `facturacion`/`pctComision` YA NO se envían: el servidor los
+        // resuelve siempre desde la sesión autenticada (`getContextoB2B()`),
+        // nunca desde lo que mande el navegador. `modo` sí viaja — es una
+        // elección legítima del B2B ya autenticado, pero solo tiene efecto
+        // si el servidor confirma la sesión como B2B.
+        ...(esB2B ? { modo } : {}),
       });
       if (r.ok) { setRes(r); clear(); }
       else setErr(r.error);
@@ -187,16 +220,18 @@ export default function CheckoutPage() {
               </section>
             )}
 
-            {/* Facturación (solo contrato neto) */}
+            {/* Facturación (solo contrato neto) — SOLO LECTURA: son los datos
+                registrados de tu agencia; el servidor los toma directo de tu
+                sesión, así que editarlos acá no cambiaría lo que se cotiza. */}
             {esB2B && modo === "neta" && (
               <section className="rounded-2xl border border-gray-200 bg-white p-5">
                 <h2 className="mb-1 text-sm font-semibold text-gray-700">Facturar a (agencia)</h2>
-                <p className="mb-3 text-xs text-gray-400">Prellenado con los datos de tu agencia; puedes ajustarlo.</p>
+                <p className="mb-3 text-xs text-gray-400">Datos registrados de tu agencia. Para corregirlos, actualiza tu perfil B2B.</p>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div><label className={lbl}>Razón social / Nombre</label><input className={inp} value={fact.nombre} onChange={(e) => setFact({ ...fact, nombre: e.target.value })} /></div>
-                  <div><label className={lbl}>NIT</label><input className={inp} value={fact.nit} onChange={(e) => setFact({ ...fact, nit: e.target.value })} /></div>
-                  <div><label className={lbl}>Teléfono</label><input className={inp} value={fact.telefono} onChange={(e) => setFact({ ...fact, telefono: e.target.value })} /></div>
-                  <div><label className={lbl}>Correo</label><input type="email" className={inp} value={fact.email} onChange={(e) => setFact({ ...fact, email: e.target.value })} /></div>
+                  <div><label className={lbl}>Razón social / Nombre</label><input className={inp} value={fact.nombre} disabled readOnly /></div>
+                  <div><label className={lbl}>NIT</label><input className={inp} value={fact.nit} disabled readOnly /></div>
+                  <div><label className={lbl}>Teléfono</label><input className={inp} value={fact.telefono} disabled readOnly /></div>
+                  <div><label className={lbl}>Correo</label><input className={inp} value={fact.email} disabled readOnly /></div>
                 </div>
               </section>
             )}

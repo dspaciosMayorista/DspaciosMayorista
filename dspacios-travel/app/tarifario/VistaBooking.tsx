@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useState, useTransition } from "react";
 import Image from "next/image";
 import { Star, Check } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -8,6 +8,15 @@ import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type 
 import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type ComboCotizado } from "@/lib/reservar/cotizar";
+import {
+  EDAD_MENOR_MAX,
+  MAX_MENORES_POR_CONSULTA,
+  ajustarCantidadEdades,
+  parseEdadMenor,
+  clasificarMenoresPorEdad,
+  verificarTarifasMenoresDisponibles,
+} from "@/lib/reservar/edadesMenores";
+import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking } from "./BuscadorBooking";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
@@ -836,14 +845,14 @@ function Selector({
 
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) =>
+  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) =>
     onAgregar({
       tipo: "hotel",
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: opcion.bloqueoId,
       hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
       categoria: catEff, regimen: regEff,
       fechaIda: opcion.fechaIda, fechaRegreso: opcion.fechaRegreso, noches: opcion.noches,
-      habitaciones, ninos, ninos2, infantes, pax, precio,
+      habitaciones, ninos, ninos2, infantes, pax, precio, edadesMenores,
     });
 
   return (
@@ -868,15 +877,20 @@ function Selector({
         </div>
       </div>
 
-      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
+      <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem} />
     </div>
   );
 }
 
-// Editor de habitaciones/niños + total + botón. Recibe el PVP por acomodación y
+// Editor de habitaciones/menores + total + botón. Recibe el PVP por acomodación y
 // reporta la selección (no conoce fechas ni módulo). Reutilizado por bloqueo y porción.
+// La edad de cada menor se pide EXACTA (nunca fecha de nacimiento — esa se
+// diligencia después, en el listado real de pasajeros del contrato) y decide
+// sola, contra las reglas reales del hotel, si liquida como infante, Niño 1 o
+// Niño 2 (ver lib/reservar/edadesMenores.ts) — nunca un conteo manual por tarifa.
 function EditorPax({
-  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota, onAgregar, btnLabel = "Agregar al carrito", moneda = "COP",
+  pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
+  edadInfanteMax, edadNinoMax, onAgregar, btnLabel = "Agregar al carrito", moneda = "COP",
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -884,21 +898,31 @@ function EditorPax({
   paxMax?: number | null;
   nota?: string;
   edadesNota?: string | null;
-  onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) => void;
+  edadInfanteMax?: number | null;
+  edadNinoMax?: number | null;
+  onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) => void;
   btnLabel?: string;
   moneda?: string | null;
 }) {
+  const idBase = useId();
   const [habs, setHabs] = useState<Record<string, number>>({});
-  const [ninos, setNinos] = useState(0);
-  const [ninos2, setNinos2] = useState(0);
-  const [infantes, setInfantes] = useState(0);
+  const [cantidadMenores, setCantidadMenoresState] = useState(0);
+  const [edadesTxt, setEdadesTxt] = useState<string[]>([]);
   const setHab = (a: AcomRoom, n: number) => setHabs((p) => ({ ...p, [a]: Math.max(0, n) }));
+
+  // Al cambiar la cantidad: agrega campos vacíos al final o quita solo los
+  // sobrantes del final — las edades ya escritas nunca se reordenan/pierden.
+  function setCantidadMenores(nRaw: number) {
+    setCantidadMenoresState(Math.max(0, Math.min(MAX_MENORES_POR_CONSULTA, Math.trunc(nRaw) || 0)));
+    setEdadesTxt((prev) => ajustarCantidadEdades(prev, nRaw));
+  }
+  const setEdadAt = (i: number, v: string) => setEdadesTxt((prev) => prev.map((x, idx) => (idx === i ? v : x)));
 
   // Config de cada acomodación (la del hotel o el default si no está configurada).
   const cfg = (a: AcomRoom): AcomConfig => acomConfig.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
 
-  // Adultos (por pax_tarifa), precio y CAPACIDADES según las habitaciones elegidas.
-  let precio = 0;
+  // Adultos (por pax_tarifa) y CAPACIDADES según las habitaciones elegidas.
+  let adultosPrecio = 0;
   let adultos = 0;
   let capPax = 0;   // máx personas que admiten las habitaciones elegidas
   let capChd = 0;   // máx niños
@@ -908,23 +932,72 @@ function EditorPax({
     if (rooms > 0 && pvp[a] != null) {
       const c = cfg(a);
       adultos += rooms * c.pax_tarifa;
-      precio += rooms * c.pax_tarifa * pvp[a];
+      adultosPrecio += rooms * c.pax_tarifa * pvp[a];
       capPax += rooms * c.pax_max;
       capChd += rooms * c.chd_max;
       capInf += rooms * c.inf_max;
     }
   }
+  const hayHab = adultos > 0;
+
+  // Umbrales reales del hotel (mismo default que el motor de reservas —
+  // computo.ts — cuando el hotel no los configuró: 2 años infante, 10 niño).
+  const infanteMax = edadInfanteMax ?? 2;
+  const ninoMax = edadNinoMax ?? 10;
+
+  const edadesParsed = edadesTxt.map(parseEdadMenor);
+  const edadesValidas = edadesParsed.every((p) => p.error == null);
+  const edadesFaltantes = edadesParsed.filter((p) => p.valor == null).length;
+  const edades = edadesParsed.map((p) => p.valor).filter((v): v is number => v != null);
+
+  // Clasifica primero por edad (infante/niño, contra el umbral real del
+  // hotel) y luego reparte Niño 1/Niño 2 POR HABITACIÓN — cada habitación
+  // admite máximo un Niño 1 y un Niño 2 (nunca un límite de 2 en toda la
+  // reserva); con varias habitaciones caben más niños. Ver
+  // lib/reservar/distribucionHabitaciones.ts.
+  let clasifError: string | null = null;
+  let ninos = 0, ninos2 = 0, infantes = 0;
+  if (cantidadMenores > 0 && edadesValidas) {
+    const rClas = clasificarMenoresPorEdad(edades, infanteMax, ninoMax);
+    if (!rClas.ok) {
+      clasifError = rClas.error;
+    } else {
+      const habitacionesConsultadas: HabitacionConsultada[] = [];
+      for (const a of ACOM_ROOMS) {
+        const rooms = habs[a] ?? 0;
+        if (rooms > 0 && pvp[a] != null) {
+          const c = cfg(a);
+          for (let i = 0; i < rooms; i++) habitacionesConsultadas.push({ acom: a, config: c });
+        }
+      }
+      const rDist = distribuirPorHabitaciones({
+        adultosDeclarados: adultos, // ya = suma de pax_tarifa de las habitaciones elegidas
+        ninos: rClas.c.ninos,
+        infantes: rClas.c.infantes,
+        habitaciones: habitacionesConsultadas,
+      });
+      if (!rDist.ok) {
+        clasifError = rDist.error;
+      } else {
+        const totalesM = { infantes: rDist.totales.infantes, nino: rDist.totales.nino, nino2: rDist.totales.nino2 };
+        const errTarifa = verificarTarifasMenoresDisponibles(totalesM, { nino: pvp["nino"] != null, nino2: pvp["nino2"] != null });
+        if (errTarifa) clasifError = errTarifa;
+        else ({ nino: ninos, nino2: ninos2, infantes } = totalesM);
+      }
+    }
+  }
+
+  let precio = adultosPrecio;
   if (ninos > 0 && pvp["nino"] != null) precio += ninos * pvp["nino"];
   if (ninos2 > 0 && pvp["nino2"] != null) precio += ninos2 * pvp["nino2"];
   const ninosTotal = ninos + ninos2;
   const pax = adultos + ninosTotal;
-  const hayHab = adultos > 0;
 
   // Topes efectivos (capacidad de habitaciones + límites del hotel).
   const maxPax = paxMax != null ? Math.min(capPax, paxMax) : capPax;
-  const maxNinos = Math.max(0, Math.min(capChd, maxPax - adultos));
 
   const totalHab = ACOM_ROOMS.reduce((s, a) => s + (habs[a] ?? 0), 0);
+  const muestraMenores = hayHab && (capChd > 0 || capInf > 0);
 
   const errores: string[] = [];
   if (totalHab > 8) errores.push("A partir de 9 habitaciones, contacta a un asesor.");
@@ -934,16 +1007,18 @@ function EditorPax({
     if (pax > maxPax) errores.push(`Las habitaciones elegidas admiten máximo ${maxPax} persona(s).`);
     if (paxMin != null && pax < paxMin) errores.push(`Este hotel exige un mínimo de ${paxMin} persona(s).`);
   }
-  const puede = precio > 0 && errores.length === 0;
+  const menoresListos = cantidadMenores === 0 || (edadesValidas && !clasifError);
+  const puede = adultosPrecio > 0 && errores.length === 0 && menoresListos;
 
   function agregar() {
     if (!puede) return;
     const habitaciones: Record<string, number> = {};
     for (const a of ACOM_ROOMS) if ((habs[a] ?? 0) > 0) habitaciones[a] = habs[a];
-    onAgregar(habitaciones, ninos, ninos2, infantes, pax, precio);
+    onAgregar(habitaciones, ninos, ninos2, infantes, pax, precio, edades);
   }
 
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
+  const inputEdadCls = "w-14 rounded-lg border px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
 
   return (
     <>
@@ -961,36 +1036,50 @@ function EditorPax({
         </div>
       </div>
 
-      {(pvp["nino"] != null || pvp["nino2"] != null) && (
+      {muestraMenores && (
         <div>
-          {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
-          <div className="flex flex-wrap gap-3">
-            {pvp["nino"] != null && (
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">Niños 1 ({formatMoneda(pvp["nino"], moneda)})</label>
-                <input type="number" min={0} max={Math.max(0, maxNinos - ninos2)} value={ninos} disabled={!hayHab}
-                  onChange={(e) => setNinos(Math.min(Math.max(0, Number(e.target.value)), Math.max(0, maxNinos - ninos2)))} className={inputCls} />
-              </div>
-            )}
-            {pvp["nino2"] != null && (
-              <div>
-                <label className="mb-1 block text-xs font-medium text-gray-600">Niños 2 ({formatMoneda(pvp["nino2"], moneda)})</label>
-                <input type="number" min={0} max={Math.max(0, maxNinos - ninos)} value={ninos2} disabled={!hayHab}
-                  onChange={(e) => setNinos2(Math.min(Math.max(0, Number(e.target.value)), Math.max(0, maxNinos - ninos)))} className={inputCls} />
-              </div>
-            )}
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <label htmlFor={`${idBase}-cant`} className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores</label>
           </div>
-          <p className="mt-1 text-[11px] text-gray-400">
-            {hayHab ? `Máximo ${maxNinos} niño(s) y ${maxPax} pax para las habitaciones elegidas.` : "Elige primero las habitaciones."}
-          </p>
-        </div>
-      )}
-
-      {hayHab && capInf > 0 && (
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">Infantes (sin costo · máx {capInf})</label>
-          <input type="number" min={0} max={capInf} value={infantes} disabled={!hayHab}
-            onChange={(e) => setInfantes(Math.min(Math.max(0, Number(e.target.value)), capInf))} className={inputCls} />
+          {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
+              <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
+                value={cantidadMenores} disabled={!hayHab}
+                onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
+            </div>
+            {edadesTxt.map((v, i) => {
+              const err = edadesParsed[i]?.error;
+              const mostrarError = v.trim() !== "" && err;
+              return (
+                <div key={i}>
+                  <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
+                  <input
+                    id={`${idBase}-edad-${i}`}
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    max={EDAD_MENOR_MAX}
+                    value={v}
+                    onChange={(e) => setEdadAt(i, e.target.value)}
+                    className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                    aria-invalid={mostrarError ? true : undefined}
+                  />
+                  {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+                </div>
+              );
+            })}
+          </div>
+          {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
+            <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
+          )}
+          {clasifError && <p className="mt-1 text-[11px] text-red-600">{clasifError}</p>}
+          {cantidadMenores > 0 && !clasifError && edadesValidas && (
+            <p className="mt-1 text-[11px] text-gray-400">
+              {[infantes > 0 ? `${infantes} infante(s)` : null, ninosTotal > 0 ? `${ninosTotal} niño(s)` : null].filter(Boolean).join(" · ") || "Todas las edades corresponden a adulto."}
+            </p>
+          )}
         </div>
       )}
 
@@ -1059,14 +1148,14 @@ function SelectorPorFechas({
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
   const dateCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number) =>
+  const agregarItem = (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) =>
     onAgregar({
       tipo: "hotel",
       modulo: opcion.modulo, paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, bloqueoId: null,
       hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
       categoria: catEff, regimen: regEff,
       fechaIda: fIda, fechaRegreso: fReg, noches: nochesCot ?? calcNoches(fIda, fReg),
-      habitaciones, ninos, ninos2, infantes, pax, precio,
+      habitaciones, ninos, ninos2, infantes, pax, precio, edadesMenores,
     });
 
   return (
@@ -1124,7 +1213,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
-          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} onAgregar={agregarItem} />
+          <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem} />
         </>
       )}
     </div>

@@ -13,15 +13,31 @@ import {
   marcar,
   componerTarifa,
   temporadaParaFecha,
-  temporadaVigenteParaFecha,
   toTemporadaRango,
   minNochesAplicable,
   factorLiquidacion,
-  precioServicio,
-  redondearVenta,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
-import { PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
+import { defaultAcomConfig, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
+import {
+  validarCantidadMenores,
+  validarEdadesMenores,
+  validarHabitacionesConsultadas,
+  validarAdultosDeclarados,
+  validarFechaConsulta,
+  validarDestinoConsulta,
+  validarPaxTotalConsulta,
+  validarPaxServicioConsulta,
+  clasificarMenoresPorEdad,
+  verificarTarifasMenoresDisponibles,
+  type ClasificacionMenores,
+} from "@/lib/reservar/edadesMenores";
+import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
+import {
+  construirContextoServicios, calcularResultadoServicio, resolverLiquidacionServicioPuntual,
+  respuestaPublicaServicioPuntual, formatearLogLiquidacionServicioPuntual, fallaErrorConsulta,
+  type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual,
+} from "@/lib/reservar/liquidacionServicio";
 
 // Acomodaciones (incluye niños e infante) y su columna neta en tarifa_hotel.
 const ACOM_ALL = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "infante"] as const;
@@ -208,30 +224,80 @@ export async function cotizarPorFechas(input: {
 
 // ── Mini-motor de búsqueda (público): liquida TODOS los hoteles de porción para
 // las fechas y la composición de habitaciones, y devuelve los que CABEN ya con
-// precio (el combo categoría/régimen más barato por hotel). ───────────────────
+// precio (el combo categoría/régimen más barato por hotel). Los menores se
+// declaran por EDAD EXACTA (nunca fecha de nacimiento) y se clasifican
+// infante/niño PER HOTEL, porque cada hotel puede tener un umbral de edad
+// distinto (`edad_infante_max`/`edad_nino_max`, ver
+// lib/reservar/edadesMenores.ts). Quién paga Niño 1/Niño 2 se decide
+// DESPUÉS, repartiendo por HABITACIÓN (`distribuirPorHabitaciones`, ver
+// lib/reservar/distribucionHabitaciones.ts) — NO es un límite de 2 niños en
+// toda la búsqueda: un hotel cuyas habitaciones consultadas no alcanzan a
+// acomodar la composición (por edad, por capacidad de niño/infante o por la
+// cantidad de adultos declarada) simplemente no aparece en el resultado — es
+// una búsqueda entre varios hoteles, no un solo cálculo que deba fallar
+// entero por uno de ellos. `adultos` es la cantidad REAL declarada por el
+// usuario (campo "Adultos" de Vista Booking) — debe coincidir con lo que las
+// habitaciones elegidas implican (`pax_tarifa` por habitación), si no la
+// búsqueda entera falla con un mensaje claro (no es un rechazo por hotel). ──
 export type BusquedaInput = {
   fechaIda: string;
   fechaRegreso: string;
-  habitaciones: { acom: AcomRoom; ninos: number }[]; // una entrada por habitación
-  infantes: number;
+  habitaciones: { acom: AcomRoom }[]; // una entrada por habitación, en orden de captura
+  adultos: number; // cantidad real de adultos declarada — debe cuadrar con las habitaciones
+  cantidadMenores: number;
+  edadesMenores: number[]; // edad exacta de cada menor
   destino?: string; // filtra por destino (vacío = todos)
 };
 export type BusquedaResultado = {
   hotelId: number; hotelNombre: string | null; destino: string | null;
   paqueteId: number; categoria: string; regimen: string;
   total: number; noches: number; fechaIda: string; fechaRegreso: string;
-  habitaciones: Record<string, number>; ninos: number; pax: number;
+  habitaciones: Record<string, number>;
+  menores: ClasificacionMenores; // totales de la distribución por habitación, para ESTE hotel
+  edadesMenores: number[]; // las mismas edades de la búsqueda — para persistir en el carrito
+  pax: number;
   // Todos los combos válidos (categoría × régimen) para esta composición, con su
   // precio. El top-level categoria/regimen/total es el más barato (predeterminado).
-  combos: { categoria: string; regimen: string; total: number; pax: number }[];
+  combos: { categoria: string; regimen: string; total: number; pax: number; menores: ClasificacionMenores }[];
 };
 
-export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; resultados: BusquedaResultado[] } | { ok: false; error: string }> {
+// `inputRaw` se trata como `unknown` — esta función es alcanzable desde el
+// navegador (Server Action) con cualquier body HTTP, sin importar lo que
+// declare el tipo `BusquedaInput`. Se valida la FORMA completa (objeto,
+// fechas, destino, adultos, habitaciones, cantidad de menores, edades) antes
+// de tocar la base de datos o el motor de liquidación.
+export async function buscarHoteles(inputRaw: unknown): Promise<{ ok: true; resultados: BusquedaResultado[]; diagnostico?: string } | { ok: false; error: string }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
-  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y regreso." };
+  if (typeof inputRaw !== "object" || inputRaw === null || Array.isArray(inputRaw)) {
+    return { ok: false, error: "La consulta no tiene una forma válida." };
+  }
+  const o = inputRaw as Record<string, unknown>;
+  const vIda = validarFechaConsulta(o.fechaIda);
+  if (!vIda.ok) return { ok: false, error: vIda.error };
+  const vReg = validarFechaConsulta(o.fechaRegreso);
+  if (!vReg.ok) return { ok: false, error: vReg.error };
+  const vDestino = validarDestinoConsulta(o.destino);
+  if (!vDestino.ok) return { ok: false, error: vDestino.error };
+  const vHabs = validarHabitacionesConsultadas(o.habitaciones);
+  if (!vHabs.ok) return { ok: false, error: vHabs.error };
+  const vAdultos = validarAdultosDeclarados(o.adultos);
+  if (!vAdultos.ok) return { ok: false, error: vAdultos.error };
+  const vCant = validarCantidadMenores(o.cantidadMenores);
+  if (!vCant.ok) return { ok: false, error: vCant.error };
+  const vEdades = validarEdadesMenores(o.edadesMenores, vCant.cantidad);
+  if (!vEdades.ok) return { ok: false, error: vEdades.error };
+
+  const input: BusquedaInput = {
+    fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, habitaciones: vHabs.habitaciones,
+    adultos: vAdultos.adultos, cantidadMenores: vCant.cantidad, edadesMenores: vEdades.edades,
+    destino: vDestino.destino || undefined,
+  };
+  const edades = input.edadesMenores;
+
   const numNoches = noches(input.fechaIda, input.fechaRegreso);
   if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
-  if (!input.habitaciones.length) return { ok: false, error: "Indica al menos una habitación." };
+  const vPaxTotal = validarPaxTotalConsulta(input.adultos, edades.length);
+  if (!vPaxTotal.ok) return { ok: false, error: vPaxTotal.error };
 
   const admin = createAdminClient();
   let q = admin
@@ -244,43 +310,82 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
   const pares = new Map<string, { paquete: number; hotel: number }>();
   for (const f of filas ?? []) if (f.paquete_id != null && f.hotel_id != null) pares.set(`${f.paquete_id}-${f.hotel_id}`, { paquete: f.paquete_id, hotel: f.hotel_id });
 
-  // Composición agregada por acomodación: nº de habitaciones y niños asignados.
-  const porAcom = new Map<AcomRoom, { count: number; ninos: number }>();
-  for (const r of input.habitaciones) {
-    const g = porAcom.get(r.acom) ?? { count: 0, ninos: 0 };
-    g.count += 1; g.ninos += Math.max(0, Math.trunc(r.ninos) || 0);
-    porAcom.set(r.acom, g);
-  }
-  const totalNinos = [...porAcom.values()].reduce((s, g) => s + g.ninos, 0);
-  const habitaciones: Record<string, number> = {};
-  for (const [a, g] of porAcom) habitaciones[a] = g.count;
+  // Composición agregada por acomodación (nº de habitaciones por tipo, para
+  // el precio de cada combo). La LISTA en orden de captura (`input.habitaciones`)
+  // se conserva aparte para la distribución por habitación, que sí depende
+  // del orden en que se armaron las habitaciones.
+  const porAcom = new Map<AcomRoom, number>();
+  for (const r of input.habitaciones) porAcom.set(r.acom, (porAcom.get(r.acom) ?? 0) + 1);
+  const habitacionesOut: Record<string, number> = {};
+  for (const [a, count] of porAcom) habitacionesOut[a] = count;
 
   const resultados: BusquedaResultado[] = [];
+  // Motivo de rechazo por hotel evaluado — nunca se expone cuál hotel dio
+  // cuál motivo; solo sirve para armar un diagnóstico agregado si la
+  // búsqueda entera queda en 0 resultados por la misma composición.
+  const rechazos = new Map<string, number>();
+  let evaluados = 0;
+  const registrarRechazo = (motivo: string) => rechazos.set(motivo, (rechazos.get(motivo) ?? 0) + 1);
+
   for (const { paquete, hotel } of pares.values()) {
     const res = await liquidarHotelPaquete(admin, paquete, hotel, input.fechaIda, numNoches);
     if (!res || !res.combos.length) continue;
     if (numNoches < (res.minNoches ?? 1)) continue; // exige más noches de las buscadas
-    const { data: acomCfg } = await admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, chd_max").eq("hotel_id", hotel);
-    const reglas = (acomCfg ?? []) as { acomodacion: string; pax_tarifa: number; chd_max: number }[];
-    const paxTarifa = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
-    const chdMax = (a: AcomRoom) => reglas.find((x) => x.acomodacion === a)?.chd_max ?? PAX_TARIFA_DEFAULT[a];
 
-    const combosValidos: { total: number; categoria: string; regimen: string; pax: number }[] = [];
+    const [{ data: acomCfg }, { data: hotelRow }] = await Promise.all([
+      admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotel),
+      admin.from("hoteles").select("edad_infante_max, edad_nino_max, adults_only").eq("id", hotel).maybeSingle(),
+    ]);
+    evaluados++;
+    if (edades.length > 0 && hotelRow?.adults_only) { registrarRechazo("Este hotel es Adults Only y no acepta menores."); continue; }
+
+    const reglas = (acomCfg ?? []) as AcomConfig[];
+    const configDe = (a: AcomRoom): AcomConfig => reglas.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
+
+    // Clasificación REAL por edad, contra el umbral de ESTE hotel — nunca una
+    // edad de referencia genérica. Alguien mayor al umbral de niño no tiene
+    // cabida en este campo (falla cerrado, nunca se cuenta como adulto solo).
+    let ninosClasif = 0, infantesClasif = 0;
+    if (edades.length > 0) {
+      const rClasif = clasificarMenoresPorEdad(edades, hotelRow?.edad_infante_max ?? 2, hotelRow?.edad_nino_max ?? 10);
+      if (!rClasif.ok) { registrarRechazo(rClasif.error); continue; }
+      ninosClasif = rClasif.c.ninos;
+      infantesClasif = rClasif.c.infantes;
+    }
+
+    // Distribución REAL por habitación: primer niño de cada habitación →
+    // Niño 1, segundo → Niño 2 (nunca un límite global de 2 en toda la
+    // búsqueda), respetando la capacidad real de cada habitación consultada
+    // y la cantidad de adultos declarada.
+    const habitacionesConsultadas: HabitacionConsultada[] = input.habitaciones.map((h) => ({ acom: h.acom, config: configDe(h.acom) }));
+    const rDist = distribuirPorHabitaciones({
+      adultosDeclarados: input.adultos,
+      ninos: ninosClasif,
+      infantes: infantesClasif,
+      habitaciones: habitacionesConsultadas,
+    });
+    if (!rDist.ok) { registrarRechazo(rDist.error); continue; }
+    const menores: ClasificacionMenores = { infantes: rDist.totales.infantes, nino: rDist.totales.nino, nino2: rDist.totales.nino2 };
+
+    const combosValidos: { total: number; categoria: string; regimen: string; pax: number; menores: ClasificacionMenores }[] = [];
     for (const combo of res.combos) {
+      const errTarifa = verificarTarifasMenoresDisponibles(menores, { nino: combo.precios["nino"] != null, nino2: combo.precios["nino2"] != null });
+      if (errTarifa) continue; // este combo (categoría/régimen) no tiene la tarifa de niño que hace falta
+
       let total = 0; let pax = 0; let ok = true;
-      for (const [acom, g] of porAcom) {
+      for (const [acom, count] of porAcom) {
         const pvp = combo.precios[acom];
         if (pvp == null) { ok = false; break; }
-        const adultos = g.count * paxTarifa(acom);
+        const adultos = count * configDe(acom).pax_tarifa;
         total += adultos * pvp; pax += adultos;
-        if (g.ninos > 0) {
-          if (g.ninos > g.count * chdMax(acom)) { ok = false; break; }
-          const pvpN = combo.precios["nino"];
-          if (pvpN == null) { ok = false; break; }
-          total += g.ninos * pvpN; pax += g.ninos;
-        }
       }
-      if (ok) combosValidos.push({ total, categoria: combo.categoria, regimen: combo.regimen, pax });
+      if (!ok) continue;
+      if (menores.nino > 0) { total += menores.nino * combo.precios["nino"]!; pax += menores.nino; }
+      if (menores.nino2 > 0) { total += menores.nino2 * combo.precios["nino2"]!; pax += menores.nino2; }
+      // Infante: si el hotel no configuró tarifa para este combo, es gratis
+      // (misma asimetría documentada del resto del motor de reservas).
+      if (menores.infantes > 0 && combo.precios["infante"] != null) total += menores.infantes * combo.precios["infante"];
+      combosValidos.push({ total, categoria: combo.categoria, regimen: combo.regimen, pax, menores });
     }
     if (combosValidos.length) {
       combosValidos.sort((a, b) => a.total - b.total); // más barato primero (predeterminado)
@@ -289,13 +394,23 @@ export async function buscarHoteles(input: BusquedaInput): Promise<{ ok: true; r
         hotelId: hotel, hotelNombre: res.hotelNombre, destino: res.destinoNombre,
         paqueteId: paquete, categoria: mejor.categoria, regimen: mejor.regimen,
         total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso,
-        habitaciones, ninos: totalNinos, pax: mejor.pax,
+        habitaciones: habitacionesOut, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
         combos: combosValidos,
       });
+    } else {
+      registrarRechazo("Ninguna categoría/régimen de este hotel tiene tarifa configurada para esa composición.");
     }
   }
   resultados.sort((a, b) => a.total - b.total);
-  return { ok: true, resultados };
+
+  // Nunca "sin resultados" a secas si sí había hoteles candidatos y todos
+  // quedaron descartados por la misma composición: se entrega el motivo más
+  // frecuente entre los evaluados, sin exponer cuál hotel lo dio.
+  let diagnostico: string | undefined;
+  if (!resultados.length && evaluados > 0 && rechazos.size) {
+    diagnostico = [...rechazos.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  }
+  return { ok: true, resultados, diagnostico };
 }
 
 // ── Mini-motor de búsqueda de RECEPTIVOS (servicios): liquida EN VIVO cada
@@ -308,16 +423,60 @@ export type BusquedaServiciosInput = {
   pax: number;
   destino?: string; // vacío = todos
 };
-export type ResultadoServicio = {
-  servicioId: number; nombre: string; destino: string | null; descripcion: string | null;
-  paqueteId: number; total: number; pax: number; noches: number; moneda: string;
-};
+export type { ResultadoServicio, RespuestaPublicaServicioPuntual };
 
-export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
-  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y regreso." };
-  const numNoches = Math.max(1, noches(input.fechaIda, input.fechaRegreso));
-  const pax = Math.max(1, Math.trunc(input.pax) || 1);
+// Mensaje público ÚNICO para cualquier fallo técnico de esta búsqueda
+// (ronda 7) — nunca revela configuración interna (antes: "falta
+// service-role", que expone que el servidor depende de una service-role key)
+// ni texto de Supabase (nombres de tabla/columna/policy). El detalle técnico
+// real se registra con `console.error` en cada punto de falla, server-side.
+const MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE = "Búsqueda no disponible en este momento. Intenta nuevamente.";
+
+// `inputRaw` se trata como `unknown` — igual que `buscarHoteles` — esta
+// función es alcanzable desde el navegador (Server Action, ver
+// app/(dashboard)/dashboard/reservar/actions.ts) con cualquier body HTTP.
+// Se valida la FORMA completa (objeto, fechas reales de calendario + rango,
+// pax entero acotado, destino con longitud máxima) ANTES de tocar la base de
+// datos con service-role — ningún payload manipulado (null, arreglos,
+// fechas imposibles, pax decimal/NaN/Infinity/negativo/gigante, destino
+// gigante) debe poder lanzar un TypeError ni llegar a consultar Supabase.
+//
+// FALLA CERRADA en cada consulta (ronda 7): defecto real corregido — la
+// consulta inicial a `tarifario_resultado` y las 5 consultas paralelas
+// posteriores (paquetes/armado/servicios/grupos/temporadas) descartaban su
+// `error` y seguían con `?? []`, así que un fallo técnico real de Supabase
+// (RLS, tabla renombrada, columna eliminada) se veía IDÉNTICO a "no hay
+// servicios" o a "faltan datos de configuración para ese par" — resultado
+// funcional y financieramente incorrecto (omitir servicios en silencio).
+// Ahora CADA consulta conserva y revisa su `error`; cualquier fallo aborta
+// la búsqueda COMPLETA con el mensaje genérico de arriba — "sin resultados"
+// solo se devuelve cuando las consultas fueron exitosas y de verdad no hay
+// servicios para esos filtros.
+export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("[buscarReceptivos] etapa=arranque detalle=SUPABASE_SERVICE_ROLE_KEY no configurada");
+    return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+  }
+  if (typeof inputRaw !== "object" || inputRaw === null || Array.isArray(inputRaw)) {
+    return { ok: false, error: "La consulta no tiene una forma válida." };
+  }
+  const o = inputRaw as Record<string, unknown>;
+  const vIda = validarFechaConsulta(o.fechaIda);
+  if (!vIda.ok) return { ok: false, error: vIda.error };
+  const vReg = validarFechaConsulta(o.fechaRegreso);
+  if (!vReg.ok) return { ok: false, error: vReg.error };
+  const vDestino = validarDestinoConsulta(o.destino);
+  if (!vDestino.ok) return { ok: false, error: vDestino.error };
+  const vPax = validarPaxServicioConsulta(o.pax);
+  if (!vPax.ok) return { ok: false, error: vPax.error };
+
+  const input: BusquedaServiciosInput = {
+    fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, pax: vPax.pax, destino: vDestino.destino || undefined,
+  };
+
+  const numNoches = noches(input.fechaIda, input.fechaRegreso);
+  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+  const pax = input.pax;
 
   const admin = createAdminClient();
   let q = admin
@@ -327,8 +486,12 @@ export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{
     .eq("paquete_activo", true)
     .not("servicio_id", "is", null);
   if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
-  const { data: filas } = await q;
-  const pares = new Map<string, { paqueteId: number; servicioId: number; nombre: string; destino: string | null; descripcion: string | null }>();
+  const { data: filas, error: filasErr } = await q;
+  if (filasErr) {
+    console.error(`[buscarReceptivos] etapa=tarifario_resultado detalle=${filasErr.message}`);
+    return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+  }
+  const pares = new Map<string, DatosServicioPar>();
   for (const f of filas ?? []) {
     if (f.paquete_id == null || f.servicio_id == null) continue;
     pares.set(`${f.paquete_id}-${f.servicio_id}`, {
@@ -336,12 +499,22 @@ export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{
       nombre: f.servicio_nombre ?? "Servicio", destino: f.destino_nombre, descripcion: f.descripcion,
     });
   }
+  // "Sin resultados" solo se devuelve acá porque la consulta de arriba SÍ
+  // tuvo éxito (ya se abortó antes si `filasErr` venía presente) — un
+  // arreglo vacío en este punto significa de verdad "no hay servicios
+  // publicados para ese destino", nunca "la consulta falló".
   if (!pares.size) return { ok: true, resultados: [] };
 
   const paqueteIds = [...new Set([...pares.values()].map((p) => p.paqueteId))];
   const servicioIds = [...new Set([...pares.values()].map((p) => p.servicioId))];
 
-  const [{ data: paquetes }, { data: armado }, { data: servicios }, { data: grupos }, { data: temporadas }] = await Promise.all([
+  const [
+    { data: paquetes, error: paquetesErr },
+    { data: armado, error: armadoErr },
+    { data: servicios, error: serviciosErr },
+    { data: grupos, error: gruposErr },
+    { data: temporadas, error: temporadasErr },
+  ] = await Promise.all([
     admin.from("armado_paquetes").select("id, pct_mk").in("id", paqueteIds),
     admin.from("armado_servicios").select("paquete_id, servicio_id, modo").in("paquete_id", paqueteIds).in("servicio_id", servicioIds),
     admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda").in("id", servicioIds),
@@ -349,53 +522,131 @@ export async function buscarReceptivos(input: BusquedaServiciosInput): Promise<{
     admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", servicioIds),
   ]);
 
-  const pctMkPorPaquete = new Map((paquetes ?? []).map((p) => [p.id, Number(p.pct_mk) || 0]));
-  const modoPorPar = new Map((armado ?? []).map((a) => [`${a.paquete_id}-${a.servicio_id}`, a.modo === "grupo" ? "grupo" as const : "persona" as const]));
-  const svcPorId = new Map((servicios ?? []).map((s) => [s.id, s]));
+  // Cualquiera de las 5 consultas paralelas que falle aborta la búsqueda
+  // COMPLETA — nunca se sigue con `?? []` sobre una consulta que SÍ falló
+  // (eso escondería el fallo como "sin tarifa"/"sin armado" para todos los
+  // pares, un resultado funcional y financieramente incorrecto).
+  if (paquetesErr || armadoErr || serviciosErr || gruposErr || temporadasErr) {
+    const detalle = [
+      paquetesErr && `armado_paquetes: ${paquetesErr.message}`,
+      armadoErr && `armado_servicios: ${armadoErr.message}`,
+      serviciosErr && `servicios_adicionales: ${serviciosErr.message}`,
+      gruposErr && `servicio_tarifa_pax: ${gruposErr.message}`,
+      temporadasErr && `servicio_temporadas: ${temporadasErr.message}`,
+    ].filter(Boolean).join(" | ");
+    console.error(`[buscarReceptivos] etapa=consultas_paralelas detalle=${detalle}`);
+    return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+  }
 
-  const gruposPorServ = new Map<string, { pax_desde: number; pax_hasta: number; precio: number }[]>();
-  for (const g of grupos ?? []) {
-    const k = `${g.servicio_id}|${g.temporada ?? "GENERAL"}`;
-    (gruposPorServ.get(k) ?? gruposPorServ.set(k, []).get(k)!).push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
-  }
-  const tempsPorServ = new Map<number, TemporadaRango[]>();
-  const netoTempServ = new Map<string, number>();
-  const recTempServ = new Map<string, number>();
-  for (const t of temporadas ?? []) {
-    (tempsPorServ.get(t.servicio_id) ?? tempsPorServ.set(t.servicio_id, []).get(t.servicio_id)!).push(toTemporadaRango(t));
-    if (t.precio_persona != null) netoTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.precio_persona));
-    if (t.recargo_individual != null) recTempServ.set(`${t.servicio_id}|${t.nombre}`, Number(t.recargo_individual));
-  }
+  const ctx = construirContextoServicios({
+    paquetes: paquetes ?? [], armado: armado ?? [], servicios: servicios ?? [], grupos: grupos ?? [], temporadas: temporadas ?? [],
+  });
 
   const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
   const resultados: ResultadoServicio[] = [];
   for (const par of pares.values()) {
-    const srv = svcPorId.get(par.servicioId);
-    if (!srv) continue;
-    const modo = modoPorPar.get(`${par.paqueteId}-${par.servicioId}`) ?? "persona";
-    const tt = tempsPorServ.get(par.servicioId);
-    const nombreTemp = tt?.length ? temporadaVigenteParaFecha(fechaIdaDate, tt) : null;
-    const netoPersona = (nombreTemp ? netoTempServ.get(`${par.servicioId}|${nombreTemp}`) : undefined) ?? srv.precio_persona ?? null;
-    const gruposTemp = nombreTemp ? gruposPorServ.get(`${par.servicioId}|${nombreTemp}`) : undefined;
-    const gruposServ = gruposTemp?.length ? gruposTemp : (gruposPorServ.get(`${par.servicioId}|GENERAL`) ?? []);
-    if (modo === "persona" && netoPersona == null) continue; // sin tarifa para esa fecha
-    if (modo === "grupo" && !gruposServ.length) continue;
-
-    let costoNeto = precioServicio(modo, netoPersona, gruposServ, pax) * factorLiquidacion(srv.liquidacion, numNoches);
-    if (modo === "persona" && pax === 1) {
-      const recTemp = nombreTemp ? recTempServ.get(`${par.servicioId}|${nombreTemp}`) : undefined;
-      costoNeto += Math.max(recTemp ?? (Number(srv.recargo_individual) || 0), 0);
-    }
-    const pctMk = pctMkPorPaquete.get(par.paqueteId) ?? 0;
-    const moneda = srv.moneda ?? "COP";
-    const total = redondearVenta(marcar(costoNeto, pctMk), moneda);
-    if (total <= 0) continue;
-
-    resultados.push({
-      servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion,
-      paqueteId: par.paqueteId, total, pax, noches: numNoches, moneda,
-    });
+    const r = calcularResultadoServicio(par, ctx, fechaIdaDate, numNoches, pax);
+    if (r) resultados.push(r);
   }
   resultados.sort((a, b) => a.total - b.total);
   return { ok: true, resultados };
+}
+
+// Re-liquida EN VIVO un único servicio/tour puntual — usado por el checkout
+// público para volver a calcular el precio real de un tour del carrito,
+// nunca confiando en nombre/precio/moneda/pax que mande el navegador (ver
+// FRONTERA en app/tarifario/checkout/actions.ts). Confirma primero que el par
+// (paqueteId, servicioId) esté REALMENTE publicado y activo en
+// `tarifario_resultado` — el nombre/destino/descripción canónicos salen de
+// ahí, nunca del cliente.
+//
+// FALLA CERRADO (ronda 4): esta función solo consulta — TODA la decisión de
+// qué hacer con lo consultado (incl. no usar defaults de modo/markup, exigir
+// que el armado pertenezca exactamente al par, y distinguir un error técnico
+// de una configuración incompleta de un servicio genuinamente no disponible)
+// vive en `resolverLiquidacionServicioPuntual` (lib/reservar/liquidacionServicio.ts,
+// módulo puro, testeable con node --test sin tocar Supabase). El llamador
+// (`crearCotizacionCarrito` en checkout/actions.ts) debe abortar la
+// cotización COMPLETA ante `tipo: "error_consulta"` o `"configuracion_invalida"`
+// — solo `"no_disponible"` es un motivo legítimo para excluir el tour del
+// carrito y seguir con el resto.
+//
+// FRONTERA PÚBLICA (ronda 6): esta función devuelve `RespuestaPublicaServicioPuntual`
+// (`respuestaPublicaServicioPuntual`, lib/reservar/liquidacionServicio.ts) — NUNCA
+// el `ResultadoServicioPuntual` interno con `detalleInterno` (mensajes reales
+// de Supabase, nombres de tabla/columna, valores de configuración). El
+// detalle técnico se registra ACÁ, server-side, con `console.error` — este
+// es el único punto de esta función que de verdad toca Supabase/consola, así
+// que es donde debe vivir el logging (el resolutor puro no hace I/O).
+export async function liquidarServicioPuntual(input: {
+  paqueteId: number; servicioId: number; fechaIda: string; fechaRegreso: string; pax: number;
+}): Promise<RespuestaPublicaServicioPuntual> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const r = fallaErrorConsulta("service_role_faltante", "SUPABASE_SERVICE_ROLE_KEY no configurada");
+    if (!r.ok) {
+      console.error(formatearLogLiquidacionServicioPuntual({
+        servicioId: input.servicioId, paqueteId: input.paqueteId, tipo: r.tipo, codigo: r.codigo, detalle: r.detalleInterno,
+      }));
+    }
+    return respuestaPublicaServicioPuntual(r);
+  }
+  const numNoches = Math.max(1, noches(input.fechaIda, input.fechaRegreso));
+  const pax = Math.max(1, Math.trunc(input.pax) || 1);
+
+  const admin = createAdminClient();
+  const { data: fila, error: filaErr } = await admin
+    .from("tarifario_resultado")
+    .select("servicio_nombre, destino_nombre, descripcion")
+    .eq("modulo", "servicios")
+    .eq("paquete_activo", true)
+    .eq("paquete_id", input.paqueteId)
+    .eq("servicio_id", input.servicioId)
+    .limit(1)
+    .maybeSingle();
+
+  const par: DatosServicioPar = {
+    servicioId: input.servicioId, paqueteId: input.paqueteId,
+    nombre: fila?.servicio_nombre ?? "Servicio", destino: fila?.destino_nombre ?? null, descripcion: fila?.descripcion ?? null,
+  };
+
+  // Se consultan las 5 tablas restantes en paralelo sin importar si la fila
+  // del tarifario se confirmó — `resolverLiquidacionServicioPuntual` revisa
+  // `filaTarifarioError`/`filaTarifarioEncontrada` ANTES que cualquier otro
+  // dato, así que un tarifario ausente/erróneo aborta igual sin depender de
+  // que estas consultas hayan encontrado algo.
+  const [
+    { data: paquete, error: paqueteErr },
+    { data: armado, error: armadoErr },
+    { data: servicio, error: servicioErr },
+    { data: grupos, error: gruposErr },
+    { data: temporadas, error: temporadasErr },
+  ] = await Promise.all([
+    admin.from("armado_paquetes").select("id, pct_mk").eq("id", input.paqueteId).maybeSingle(),
+    admin.from("armado_servicios").select("paquete_id, servicio_id, modo").eq("paquete_id", input.paqueteId).eq("servicio_id", input.servicioId).maybeSingle(),
+    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda").eq("id", input.servicioId).maybeSingle(),
+    admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").eq("servicio_id", input.servicioId),
+    admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").eq("servicio_id", input.servicioId),
+  ]);
+
+  const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
+  const resultado = resolverLiquidacionServicioPuntual({
+    par, fechaIdaDate, numNoches, pax,
+    filaTarifarioEncontrada: !!fila,
+    filaTarifarioError: filaErr?.message ?? null,
+    paquete: paquete ?? null, paqueteError: paqueteErr?.message ?? null,
+    armado: armado ?? null, armadoError: armadoErr?.message ?? null,
+    servicio: servicio ?? null, servicioError: servicioErr?.message ?? null,
+    grupos: grupos ?? [], gruposError: gruposErr?.message ?? null,
+    temporadas: temporadas ?? [], temporadasError: temporadasErr?.message ?? null,
+  });
+  // El detalle técnico real (mensaje de Supabase, tabla/columna/valor de
+  // configuración involucrado) se registra SOLO acá, server-side — nunca
+  // sale de esta función (ver `respuestaPublicaServicioPuntual` abajo).
+  if (!resultado.ok) {
+    console.error(formatearLogLiquidacionServicioPuntual({
+      servicioId: input.servicioId, paqueteId: input.paqueteId,
+      tipo: resultado.tipo, codigo: resultado.codigo, detalle: resultado.detalleInterno,
+    }));
+  }
+  return respuestaPublicaServicioPuntual(resultado);
 }
