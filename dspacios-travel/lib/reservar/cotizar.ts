@@ -34,7 +34,7 @@ import {
   type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual,
 } from "@/lib/reservar/liquidacionServicio";
 import {
-  evaluarHotelPorFechas, generarSugerenciasFechas,
+  evaluarHotelPorFechas, generarSugerenciasFechas, consolidarSugerenciasGlobales,
   type ComboCotizado, type DatosHotelPaquete, type FilaTemporadaHotelRaw, type FilaTarifaHotelRaw,
   type FilaBlackoutHotelRaw, type SugerenciaFecha, type ComposicionSugerencia,
 } from "@/lib/reservar/liquidacionHotel";
@@ -345,6 +345,20 @@ const MAX_HOTELES_SUGERENCIA_FECHA = 6;
 // Cada consulta revisa su propio error POR SEPARADO: si cualquiera falla, no
 // se muestran sugerencias engañosas (fail-closed) para NINGÚN hotel de este
 // lote — el detalle técnico se registra solo server-side.
+//
+// Ronda 4, defecto real corregido (elección global, no por el primer hotel):
+// el bucle antes cortaba con `if (sugerencias.length >= 4) break` apenas el
+// PRIMER hotel del lote aportaba 4 sugerencias, y el resultado final se
+// reordenaba con `localeCompare` (cronológico simple) en vez del criterio de
+// cercanía compartido — un hotel evaluado DESPUÉS con una fecha mucho más
+// cercana a `input.fechaIda` nunca llegaba a evaluarse. Ahora se evalúan
+// TODOS los candidatos del lote (cada uno sigue acotado internamente a
+// `MAX_SUGERENCIAS_FECHAS` por `generarSugerenciasFechas`, sin cambios ahí —
+// hasta `MAX_HOTELES_SUGERENCIA_FECHA` × `MAX_SUGERENCIAS_FECHAS` = 24
+// candidatas en memoria, ninguna consulta nueva) y la selección final es una
+// decisión GLOBAL de `consolidarSugerenciasGlobales`
+// (lib/reservar/liquidacionHotel.ts, pura y testeable), que dedupe y ordena
+// con el MISMO `compararPorCercania` que ya usa `generarSugerenciasFechas`.
 async function sugerenciasBusquedaGeneral(
   admin: ReturnType<typeof createAdminClient>,
   datosPorPar: { paquete: number; hotel: number; datos: DatosHotelPaquete }[],
@@ -375,10 +389,8 @@ async function sugerenciasBusquedaGeneral(
     for (const h of hotelRows ?? []) hotelRowPorId.set(h.id, h);
   }
 
-  const vistas = new Set<string>();
-  const sugerencias: SugerenciaFecha[] = [];
+  const porHotel: SugerenciaFecha[][] = [];
   for (const { hotel, datos } of candidatos) {
-    if (sugerencias.length >= 4) break;
     let composicion: ComposicionSugerencia | null = null;
     if (input.habitaciones.length) {
       // Ronda 3, defecto real corregido: si la consulta a `hoteles` tuvo
@@ -412,16 +424,9 @@ async function sugerenciasBusquedaGeneral(
       };
     }
     const propias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: input.fechaIda, numNochesSolicitadas: numNoches, composicion });
-    for (const s of propias) {
-      const key = `${s.fechaIda}|${s.fechaRegreso}`;
-      if (vistas.has(key)) continue;
-      vistas.add(key);
-      sugerencias.push(s);
-      if (sugerencias.length >= 4) break;
-    }
+    if (propias.length) porHotel.push(propias);
   }
-  sugerencias.sort((a, b) => a.fechaIda.localeCompare(b.fechaIda));
-  return sugerencias.slice(0, 4);
+  return consolidarSugerenciasGlobales(porHotel, input.fechaIda);
 }
 
 // `inputRaw` se trata como `unknown` — esta función es alcanzable desde el

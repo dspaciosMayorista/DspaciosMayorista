@@ -419,3 +419,37 @@ export function generarSugerenciasFechas(args: {
   sugerencias.sort((a, b) => compararPorCercania(a.fechaIda, b.fechaIda, args.fechaIdaSolicitada));
   return sugerencias;
 }
+
+/**
+ * Consolida las sugerencias de VARIOS hoteles en un solo resultado GLOBAL —
+ * ronda 4, defecto real corregido: `sugerenciasBusquedaGeneral` (cotizar.ts)
+ * antes recorría los hoteles candidatos y cortaba el bucle en cuanto el
+ * PRIMER hotel aportaba 4 sugerencias (`if (sugerencias.length >= 4) break`),
+ * así que un hotel evaluado DESPUÉS con una fecha mucho más cercana a la
+ * solicitada nunca llegaba a evaluarse; y el resultado final se reordenaba
+ * con `localeCompare` (cronológico simple), no con el criterio de cercanía
+ * compartido. Esta función pura recibe el lote COMPLETO ya evaluado (un
+ * arreglo por hotel, cada uno ya acotado internamente por
+ * `generarSugerenciasFechas` a `MAX_SUGERENCIAS_FECHAS`), deduplica por
+ * `fechaIda`+`fechaRegreso` y ordena el conjunto GLOBAL con el MISMO
+ * `compararPorCercania` — nunca una fórmula de orden distinta — antes de
+ * cortar a `max`.
+ */
+export function consolidarSugerenciasGlobales(
+  porHotel: SugerenciaFecha[][],
+  fechaIdaSolicitada: string,
+  max: number = MAX_SUGERENCIAS_FECHAS
+): SugerenciaFecha[] {
+  const vistas = new Set<string>();
+  const todas: SugerenciaFecha[] = [];
+  for (const lote of porHotel) {
+    for (const s of lote) {
+      const key = `${s.fechaIda}|${s.fechaRegreso}`;
+      if (vistas.has(key)) continue;
+      vistas.add(key);
+      todas.push(s);
+    }
+  }
+  todas.sort((a, b) => compararPorCercania(a.fechaIda, b.fechaIda, fechaIdaSolicitada));
+  return todas.slice(0, max);
+}

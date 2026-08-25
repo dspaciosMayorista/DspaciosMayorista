@@ -4,6 +4,7 @@ import {
   evaluarHotelPorFechas,
   candidatosFecha,
   generarSugerenciasFechas,
+  consolidarSugerenciasGlobales,
   addDiasISO,
   compararPorCercania,
   MAX_SUGERENCIAS_FECHAS,
@@ -12,6 +13,7 @@ import {
   type FilaTarifaHotelRaw,
   type FilaBlackoutHotelRaw,
   type ComposicionSugerencia,
+  type SugerenciaFecha,
 } from "../lib/reservar/liquidacionHotel.ts";
 import { defaultAcomConfig } from "../lib/acomodaciones.ts";
 
@@ -462,5 +464,111 @@ describe("17. Ronda 3 — control negativo: evaluarHotelPorFechas SÍ mezcla mar
     // Y el nombre del hotel se pierde por completo (armadoHotel es null) —
     // otra señal de que este resultado es un producto "huérfano".
     assert.equal(r!.hotelNombre, null);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 4 — `consolidarSugerenciasGlobales`: la búsqueda general
+// (sugerenciasBusquedaGeneral, lib/reservar/cotizar.ts) evaluaba los hoteles
+// candidatos en orden y cortaba el bucle apenas el PRIMER hotel aportaba 4
+// sugerencias (`break`), reordenando el resultado final con `localeCompare`
+// (cronológico simple) en vez de cercanía real. Este helper puro recibe el
+// lote COMPLETO ya evaluado (un arreglo por hotel) y decide la selección
+// GLOBAL — dedup + orden por `compararPorCercania` + corte a `max`.
+// ───────────────────────────────────────────────────────────────────────────
+function sug(fechaIda: string, numNoches = 3): SugerenciaFecha {
+  const fechaRegreso = addDiasISO(fechaIda, numNoches);
+  return { fechaIda, fechaRegreso, noches: numNoches, etiqueta: `${fechaIda} · ${numNoches} noches` };
+}
+
+// Reproduce EXACTAMENTE el comportamiento que tenía `sugerenciasBusquedaGeneral`
+// antes de esta ronda: recorre los lotes por hotel EN ORDEN, corta con
+// `break` apenas junta 4, y reordena el resultado con `localeCompare`
+// (cronológico simple, no cercanía). Solo existe en la prueba — nunca se
+// reintrodujo en el código de producción — para demostrar el defecto real.
+function comportamientoAnteriorAlaRonda4(porHotel: SugerenciaFecha[][]): SugerenciaFecha[] {
+  const vistas = new Set<string>();
+  const sugerencias: SugerenciaFecha[] = [];
+  for (const lote of porHotel) {
+    if (sugerencias.length >= 4) break;
+    for (const s of lote) {
+      const key = `${s.fechaIda}|${s.fechaRegreso}`;
+      if (vistas.has(key)) continue;
+      vistas.add(key);
+      sugerencias.push(s);
+      if (sugerencias.length >= 4) break;
+    }
+  }
+  sugerencias.sort((a, b) => a.fechaIda.localeCompare(b.fechaIda));
+  return sugerencias.slice(0, 4);
+}
+
+describe("18. Ronda 4 — consolidarSugerenciasGlobales: elección de las 4 fechas más cercanas GLOBALMENTE, no por el primer hotel evaluado", () => {
+  const fechaSolicitada = "2026-01-01";
+
+  test("hotel A (procesado primero) aporta fechas lejanas (40-43 días); hotel B (procesado después) aporta fechas cercanas (1-2 días) → las de hotel B deben ir primero", () => {
+    const hotelA = [40, 41, 42, 43].map((d) => sug(addDiasISO(fechaSolicitada, d)));
+    const hotelB = [1, 2].map((d) => sug(addDiasISO(fechaSolicitada, d)));
+    const resultado = consolidarSugerenciasGlobales([hotelA, hotelB], fechaSolicitada);
+    assert.equal(resultado.length, 4);
+    assert.equal(resultado[0].fechaIda, addDiasISO(fechaSolicitada, 1), "la más cercana (1 día, hotel B) debe ir primero");
+    assert.equal(resultado[1].fechaIda, addDiasISO(fechaSolicitada, 2), "la segunda más cercana (2 días, hotel B) debe ir segunda");
+    // Las 2 restantes son las más cercanas de hotel A (40 y 41 días).
+    assert.equal(resultado[2].fechaIda, addDiasISO(fechaSolicitada, 40));
+    assert.equal(resultado[3].fechaIda, addDiasISO(fechaSolicitada, 41));
+  });
+
+  test("empate real de distancia: solicitada 20-sep, 19-sep y 21-sep (ambas a 1 día, de hoteles distintos) → gana la POSTERIOR (21-sep)", () => {
+    const resultado = consolidarSugerenciasGlobales([[sug("2026-09-19")], [sug("2026-09-21")]], "2026-09-20");
+    assert.equal(resultado.length, 2);
+    assert.equal(resultado[0].fechaIda, "2026-09-21");
+    assert.equal(resultado[1].fechaIda, "2026-09-19");
+  });
+
+  test("dos hoteles generan el mismo rango (misma fechaIda+fechaRegreso) → aparece una sola vez", () => {
+    const fecha = addDiasISO(fechaSolicitada, 5);
+    const hotelA = [sug(fecha)];
+    const hotelB = [sug(fecha)]; // mismo fechaIda/fechaRegreso/noches, hotel distinto
+    const resultado = consolidarSugerenciasGlobales([hotelA, hotelB], fechaSolicitada);
+    assert.equal(resultado.length, 1, "la misma combinación fechaIda+fechaRegreso no debe duplicarse aunque venga de hoteles distintos");
+  });
+
+  test("más de 24 candidatas en total → la salida nunca supera 4", () => {
+    const porHotel: SugerenciaFecha[][] = [];
+    for (let h = 0; h < 8; h++) {
+      porHotel.push([1, 2, 3, 4].map((d) => sug(addDiasISO(fechaSolicitada, h * 10 + d))));
+    }
+    assert.ok(porHotel.flat().length > 24, "premisa del caso: más de 24 candidatas totales");
+    const resultado = consolidarSugerenciasGlobales(porHotel, fechaSolicitada);
+    assert.equal(resultado.length, 4);
+  });
+
+  test("control negativo: el patrón anterior a esta ronda (primer hotel llena 4 + break, orden por localeCompare) SÍ habría omitido la fecha más cercana de un segundo hotel", () => {
+    const hotelA = [40, 41, 42, 43].map((d) => sug(addDiasISO(fechaSolicitada, d)));
+    const hotelB = [sug(addDiasISO(fechaSolicitada, 1))]; // la fecha MÁS cercana de todo el lote
+    const anterior = comportamientoAnteriorAlaRonda4([hotelA, hotelB]);
+    assert.ok(
+      !anterior.some((s) => s.fechaIda === addDiasISO(fechaSolicitada, 1)),
+      "el patrón anterior corta el bucle en hotel A (ya junta 4) y nunca llega a evaluar hotel B — reproduce el defecto real"
+    );
+    const actual = consolidarSugerenciasGlobales([hotelA, hotelB], fechaSolicitada);
+    assert.ok(
+      actual.some((s) => s.fechaIda === addDiasISO(fechaSolicitada, 1)),
+      "consolidarSugerenciasGlobales SÍ incluye la fecha más cercana del segundo hotel"
+    );
+    assert.equal(actual[0].fechaIda, addDiasISO(fechaSolicitada, 1), "y la ubica primera, por ser la más cercana");
+  });
+
+  test("lote vacío o sin candidatas → arreglo vacío, sin lanzar", () => {
+    assert.deepEqual(consolidarSugerenciasGlobales([], fechaSolicitada), []);
+    assert.deepEqual(consolidarSugerenciasGlobales([[], []], fechaSolicitada), []);
+  });
+
+  test("respeta un `max` explícito distinto de 4", () => {
+    const lote = [1, 2, 3, 4, 5].map((d) => sug(addDiasISO(fechaSolicitada, d)));
+    const resultado = consolidarSugerenciasGlobales([lote], fechaSolicitada, 2);
+    assert.equal(resultado.length, 2);
+    assert.equal(resultado[0].fechaIda, addDiasISO(fechaSolicitada, 1));
+    assert.equal(resultado[1].fechaIda, addDiasISO(fechaSolicitada, 2));
   });
 });

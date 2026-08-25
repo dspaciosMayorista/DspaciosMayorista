@@ -427,3 +427,40 @@ describe("10. Ronda 3 — sugerenciasBusquedaGeneral falla cerrado por hotel sin
   });
 });
 
+describe("11. Ronda 4 — sugerenciasBusquedaGeneral elige las 4 fechas más cercanas GLOBALMENTE, no por el primer hotel evaluado", () => {
+  const cuerpoFn = cuerpoFuncion(cotizar, "async function sugerenciasBusquedaGeneral(");
+
+  test("nunca usa localeCompare directo — la selección final delega en consolidarSugerenciasGlobales", () => {
+    assert.doesNotMatch(cuerpoFn, /localeCompare/);
+    assert.match(cuerpoFn, /return consolidarSugerenciasGlobales\(porHotel, input\.fechaIda\);/);
+  });
+  test("no corta el bucle principal por haber acumulado 4 sugerencias antes de evaluar el lote completo — el `break` viejo ya no existe", () => {
+    const idxFor = cuerpoFn.indexOf("for (const { hotel, datos } of candidatos)");
+    assert.ok(idxFor > -1, "debe existir el bucle principal sobre los candidatos");
+    const cuerpoBucle = cuerpoFn.slice(idxFor);
+    assert.doesNotMatch(cuerpoBucle, /if \(sugerencias\.length >= 4\) break;/);
+    assert.doesNotMatch(cuerpoBucle, /if \(porHotel\.length >= 4\)/);
+  });
+  test("cada hotel candidato se acumula en `porHotel` (un arreglo por hotel) — la consolidación ocurre DESPUÉS de terminar el bucle completo, no dentro de él", () => {
+    const idxFor = cuerpoFn.indexOf("for (const { hotel, datos } of candidatos)");
+    const idxFinBucle = cuerpoFn.indexOf("const propias = generarSugerenciasFechas(", idxFor);
+    assert.ok(idxFinBucle > -1);
+    const idxPush = cuerpoFn.indexOf("porHotel.push(propias);", idxFinBucle);
+    const idxConsolidar = cuerpoFn.indexOf("consolidarSugerenciasGlobales(", idxFinBucle);
+    assert.ok(idxPush > -1 && idxConsolidar > idxPush, "porHotel.push debe ocurrir DENTRO del bucle, consolidarSugerenciasGlobales DESPUÉS de que termine");
+  });
+  test("no agrega consultas nuevas dentro del bucle por hotel (sigue siendo, como máximo, 2 consultas .in(...) totales, ya cubierto en la sección 'elimina el N+1')", () => {
+    const idxFor = cuerpoFn.indexOf("for (const { hotel, datos } of candidatos)");
+    const dentroDelBucle = cuerpoFn.slice(idxFor);
+    assert.doesNotMatch(dentroDelBucle, /admin\.from\(/);
+  });
+  test("cotizar.ts importa consolidarSugerenciasGlobales desde lib/reservar/liquidacionHotel (reutiliza compararPorCercania ahí adentro, no duplica la fórmula de orden)", () => {
+    assert.match(cotizar, /import \{[^}]*consolidarSugerenciasGlobales[^}]*\} from "@\/lib\/reservar\/liquidacionHotel";/);
+    // cotizar.ts no vuelve a LLAMAR compararPorCercania por su cuenta (no está
+    // importada ni se invoca como función — solo se referencia por nombre en
+    // comentarios explicando de dónde sale el orden).
+    assert.doesNotMatch(cotizar, /compararPorCercania\(/);
+    assert.doesNotMatch(cotizar, /import \{[^}]*\bcompararPorCercania\b[^}]*\} from/);
+  });
+});
+
