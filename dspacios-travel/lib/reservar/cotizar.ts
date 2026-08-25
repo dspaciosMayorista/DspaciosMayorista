@@ -425,6 +425,13 @@ export type BusquedaServiciosInput = {
 };
 export type { ResultadoServicio, RespuestaPublicaServicioPuntual };
 
+// Mensaje público ÚNICO para cualquier fallo técnico de esta búsqueda
+// (ronda 7) — nunca revela configuración interna (antes: "falta
+// service-role", que expone que el servidor depende de una service-role key)
+// ni texto de Supabase (nombres de tabla/columna/policy). El detalle técnico
+// real se registra con `console.error` en cada punto de falla, server-side.
+const MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE = "Búsqueda no disponible en este momento. Intenta nuevamente.";
+
 // `inputRaw` se trata como `unknown` — igual que `buscarHoteles` — esta
 // función es alcanzable desde el navegador (Server Action, ver
 // app/(dashboard)/dashboard/reservar/actions.ts) con cualquier body HTTP.
@@ -433,8 +440,23 @@ export type { ResultadoServicio, RespuestaPublicaServicioPuntual };
 // datos con service-role — ningún payload manipulado (null, arreglos,
 // fechas imposibles, pax decimal/NaN/Infinity/negativo/gigante, destino
 // gigante) debe poder lanzar un TypeError ni llegar a consultar Supabase.
+//
+// FALLA CERRADA en cada consulta (ronda 7): defecto real corregido — la
+// consulta inicial a `tarifario_resultado` y las 5 consultas paralelas
+// posteriores (paquetes/armado/servicios/grupos/temporadas) descartaban su
+// `error` y seguían con `?? []`, así que un fallo técnico real de Supabase
+// (RLS, tabla renombrada, columna eliminada) se veía IDÉNTICO a "no hay
+// servicios" o a "faltan datos de configuración para ese par" — resultado
+// funcional y financieramente incorrecto (omitir servicios en silencio).
+// Ahora CADA consulta conserva y revisa su `error`; cualquier fallo aborta
+// la búsqueda COMPLETA con el mensaje genérico de arriba — "sin resultados"
+// solo se devuelve cuando las consultas fueron exitosas y de verdad no hay
+// servicios para esos filtros.
 export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("[buscarReceptivos] etapa=arranque detalle=SUPABASE_SERVICE_ROLE_KEY no configurada");
+    return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+  }
   if (typeof inputRaw !== "object" || inputRaw === null || Array.isArray(inputRaw)) {
     return { ok: false, error: "La consulta no tiene una forma válida." };
   }
@@ -464,7 +486,11 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
     .eq("paquete_activo", true)
     .not("servicio_id", "is", null);
   if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
-  const { data: filas } = await q;
+  const { data: filas, error: filasErr } = await q;
+  if (filasErr) {
+    console.error(`[buscarReceptivos] etapa=tarifario_resultado detalle=${filasErr.message}`);
+    return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+  }
   const pares = new Map<string, DatosServicioPar>();
   for (const f of filas ?? []) {
     if (f.paquete_id == null || f.servicio_id == null) continue;
@@ -473,18 +499,44 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
       nombre: f.servicio_nombre ?? "Servicio", destino: f.destino_nombre, descripcion: f.descripcion,
     });
   }
+  // "Sin resultados" solo se devuelve acá porque la consulta de arriba SÍ
+  // tuvo éxito (ya se abortó antes si `filasErr` venía presente) — un
+  // arreglo vacío en este punto significa de verdad "no hay servicios
+  // publicados para ese destino", nunca "la consulta falló".
   if (!pares.size) return { ok: true, resultados: [] };
 
   const paqueteIds = [...new Set([...pares.values()].map((p) => p.paqueteId))];
   const servicioIds = [...new Set([...pares.values()].map((p) => p.servicioId))];
 
-  const [{ data: paquetes }, { data: armado }, { data: servicios }, { data: grupos }, { data: temporadas }] = await Promise.all([
+  const [
+    { data: paquetes, error: paquetesErr },
+    { data: armado, error: armadoErr },
+    { data: servicios, error: serviciosErr },
+    { data: grupos, error: gruposErr },
+    { data: temporadas, error: temporadasErr },
+  ] = await Promise.all([
     admin.from("armado_paquetes").select("id, pct_mk").in("id", paqueteIds),
     admin.from("armado_servicios").select("paquete_id, servicio_id, modo").in("paquete_id", paqueteIds).in("servicio_id", servicioIds),
     admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda").in("id", servicioIds),
     admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", servicioIds),
     admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", servicioIds),
   ]);
+
+  // Cualquiera de las 5 consultas paralelas que falle aborta la búsqueda
+  // COMPLETA — nunca se sigue con `?? []` sobre una consulta que SÍ falló
+  // (eso escondería el fallo como "sin tarifa"/"sin armado" para todos los
+  // pares, un resultado funcional y financieramente incorrecto).
+  if (paquetesErr || armadoErr || serviciosErr || gruposErr || temporadasErr) {
+    const detalle = [
+      paquetesErr && `armado_paquetes: ${paquetesErr.message}`,
+      armadoErr && `armado_servicios: ${armadoErr.message}`,
+      serviciosErr && `servicios_adicionales: ${serviciosErr.message}`,
+      gruposErr && `servicio_tarifa_pax: ${gruposErr.message}`,
+      temporadasErr && `servicio_temporadas: ${temporadasErr.message}`,
+    ].filter(Boolean).join(" | ");
+    console.error(`[buscarReceptivos] etapa=consultas_paralelas detalle=${detalle}`);
+    return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
+  }
 
   const ctx = construirContextoServicios({
     paquetes: paquetes ?? [], armado: armado ?? [], servicios: servicios ?? [], grupos: grupos ?? [], temporadas: temporadas ?? [],

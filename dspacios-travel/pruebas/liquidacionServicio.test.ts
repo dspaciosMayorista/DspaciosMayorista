@@ -451,7 +451,7 @@ describe("19. Ronda 6: configuracion_invalida — nunca expone nombres de tabla/
   });
 });
 
-describe("20. Ronda 6: respuestaPublicaServicioPuntual — la frontera pública SIEMPRE descarta detalleInterno", () => {
+describe("20. Ronda 6/7: respuestaPublicaServicioPuntual — la frontera pública SIEMPRE descarta detalleInterno y (desde ronda 7) también codigo", () => {
   test("camino ok:true — pasa el resultado tal cual, sin campos internos de más", () => {
     const r = resolverLiquidacionServicioPuntual(baseInput());
     const publico = respuestaPublicaServicioPuntual(r);
@@ -460,7 +460,7 @@ describe("20. Ronda 6: respuestaPublicaServicioPuntual — la frontera pública 
       assert.deepEqual(Object.keys(publico).sort(), ["ok", "resultado"]);
     }
   });
-  test("camino ok:false — el objeto público NUNCA tiene la clave detalleInterno, sin importar el caso", () => {
+  test("camino ok:false — el objeto público es EXACTAMENTE {ok, tipo, mensaje} — nunca detalleInterno, mensajePublico ni codigo", () => {
     const casos = [
       baseInput({ paqueteError: "relation \"armado_paquetes\" does not exist" }),
       baseInput({ paquete: null }),
@@ -472,12 +472,16 @@ describe("20. Ronda 6: respuestaPublicaServicioPuntual — la frontera pública 
       const publico = respuestaPublicaServicioPuntual(interno);
       assert.equal(publico.ok, false);
       if (publico.ok) continue;
-      assert.deepEqual(Object.keys(publico).sort(), ["codigo", "mensaje", "ok", "tipo"]);
+      // Ronda 7: el navegador no necesita `codigo` (crearCotizacionCarrito
+      // solo lee `.tipo`/`.mensaje`) — sale del DTO público por exposición
+      // mínima, aunque sea un enum estable y no texto libre.
+      assert.deepEqual(Object.keys(publico).sort(), ["mensaje", "ok", "tipo"]);
       assert.ok(!("detalleInterno" in publico));
       assert.ok(!("mensajePublico" in publico)); // se renombra a `mensaje`, no se duplica
+      assert.ok(!("codigo" in publico));
     }
   });
-  test("fuzz: un ResultadoServicioPuntual construido a mano con detalleInterno realista de Postgres nunca deja rastro en JSON.stringify del resultado público", () => {
+  test("fuzz: un ResultadoServicioPuntual construido a mano con detalleInterno realista de Postgres nunca deja rastro en JSON.stringify del resultado público, y desde ronda 7 tampoco el codigo interno", () => {
     const interno: ResultadoServicioPuntual = {
       ok: false, tipo: "error_consulta", codigo: "paquete_consulta_fallida",
       mensajePublico: "No pudimos validar el servicio en este momento. Intenta nuevamente.",
@@ -486,7 +490,10 @@ describe("20. Ronda 6: respuestaPublicaServicioPuntual — la frontera pública 
     const publico = respuestaPublicaServicioPuntual(interno);
     const serializado = JSON.stringify(publico);
     assert.doesNotMatch(serializado, /armado_paquetes|relation|permission denied|schema public|pct_mk/i);
-    assert.match(serializado, /paquete_consulta_fallida/); // el código SÍ sobrevive, es seguro
+    // Ronda 7: `codigo` ya NO viaja al público — ni siquiera el valor
+    // "seguro" (enum estable) sobrevive, porque el DTO público ya no tiene
+    // esa clave en absoluto.
+    assert.doesNotMatch(serializado, /paquete_consulta_fallida/);
   });
 });
 
@@ -551,5 +558,74 @@ describe("23. Ronda 6: los mensajes públicos son EXACTAMENTE los pedidos, palab
     assert.equal(r.ok, false);
     if (r.ok) return;
     assert.doesNotMatch(r.mensajePublico, /armado_servicios|armado_paquetes|tarifario_resultado|relation|permission denied/i);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 7 — hallazgo 4: "CÓDIGOS INTERNOS EN LA RESPUESTA PÚBLICA". La ronda
+// 6 ya sacaba `detalleInterno` del DTO público, pero dejaba viajar `codigo`
+// (valores como "armado_consulta_fallida", "markup_invalido",
+// "service_role_faltante") — un enum estable, no texto libre, pero el
+// navegador nunca lo usa (`crearCotizacionCarrito` solo lee `.tipo`/
+// `.mensaje`). Estas pruebas confirman, con los mismos 6 mensajes reales de
+// Postgres de la sección 18, que `codigo` ya no cruza la frontera pública en
+// NINGÚN caso — ni siquiera como valor "seguro".
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("24. Ronda 7: codigo NUNCA viaja al público, con los mismos 6 mensajes reales de Postgres de la ronda 6", () => {
+  for (const detalle of ERRORES_POSTGRES_REALISTAS) {
+    test(`paqueteError = ${JSON.stringify(detalle)} → la respuesta pública no tiene "codigo" y su JSON no menciona ningún código interno`, () => {
+      const interno = resolverLiquidacionServicioPuntual(baseInput({ paqueteError: detalle }));
+      assert.equal(interno.ok, false);
+      if (interno.ok) return;
+      // El interno SÍ tiene un código estable (es lo que va al log) — la
+      // prueba real es que la traducción pública lo descarta.
+      assert.ok(typeof interno.codigo === "string" && interno.codigo.length > 0);
+      const publico = respuestaPublicaServicioPuntual(interno);
+      assert.equal(publico.ok, false);
+      if (publico.ok) return;
+      assert.deepEqual(Object.keys(publico).sort(), ["mensaje", "ok", "tipo"]);
+      const serializado = JSON.stringify(publico);
+      assert.doesNotMatch(serializado, /consulta_fallida|invalido|ausente|no_coincide|no_existe|no_encontrado|faltante/i);
+    });
+  }
+
+  test("los 17 valores posibles de CodigoErrorServicioPuntual no aparecen en ningún JSON.stringify de una respuesta pública de error", () => {
+    const TODOS_LOS_CODIGOS = [
+      "service_role_faltante", "tarifario_consulta_fallida", "paquete_consulta_fallida",
+      "armado_consulta_fallida", "servicio_consulta_fallida", "grupos_consulta_fallida",
+      "temporadas_consulta_fallida", "tarifario_no_encontrado", "servicio_no_existe",
+      "sin_tarifa_vigente", "paquete_ausente", "armado_ausente", "paquete_no_coincide",
+      "servicio_no_coincide", "armado_no_coincide", "modo_invalido", "markup_invalido", "total_invalido",
+    ];
+    const casos: ResultadoServicioPuntual[] = [
+      resolverLiquidacionServicioPuntual(baseInput({ filaTarifarioError: "x" })),
+      resolverLiquidacionServicioPuntual(baseInput({ paquete: null })),
+      resolverLiquidacionServicioPuntual(baseInput({ armado: { ...ARMADO, modo: "otro" } })),
+      resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 10, pct_mk: NaN } })),
+      resolverLiquidacionServicioPuntual(baseInput({ filaTarifarioEncontrada: false })),
+      fallaErrorConsulta("service_role_faltante", "SUPABASE_SERVICE_ROLE_KEY no configurada"),
+    ];
+    for (const interno of casos) {
+      const publico = respuestaPublicaServicioPuntual(interno);
+      const serializado = JSON.stringify(publico);
+      for (const codigo of TODOS_LOS_CODIGOS) assert.doesNotMatch(serializado, new RegExp(`"${codigo}"`));
+    }
+  });
+
+  test("control negativo — la RespuestaPublicaServicioPuntual de la ronda 6 (con codigo) SÍ habría dejado ver el código interno; confirma que el defecto era real", () => {
+    // Reconstruye a propósito la forma de la ronda 6 (antes de esta ronda 7)
+    // para demostrar que el hallazgo era real: si la traducción pública
+    // todavía incluyera `codigo`, un cliente vería "markup_invalido" o
+    // "armado_consulta_fallida" — información de la estructura interna que
+    // el navegador nunca necesitó.
+    const interno = resolverLiquidacionServicioPuntual(baseInput({ paqueteError: "permission denied for table armado_paquetes" }));
+    assert.equal(interno.ok, false);
+    if (interno.ok) return;
+    const publicoRonda6Simulado = { ok: false as const, tipo: interno.tipo, codigo: interno.codigo, mensaje: interno.mensajePublico };
+    assert.match(JSON.stringify(publicoRonda6Simulado), /paquete_consulta_fallida/);
+    // La traducción REAL de esta ronda 7 ya no produce esa forma:
+    const publicoReal = respuestaPublicaServicioPuntual(interno);
+    assert.doesNotMatch(JSON.stringify(publicoReal), /paquete_consulta_fallida/);
   });
 });

@@ -393,19 +393,24 @@ export function resolverLiquidacionServicioPuntual(input: {
 // en checkout/actions.ts) en vez de leer los campos internos directamente,
 // así que no hay forma de que un cambio futuro en ese código vuelva a filtrar
 // el detalle técnico por accidente.
-// `tipo`/`codigo` SÍ viajan al público — son valores categóricos fijos (3 y
-// 17 posibles respectivamente), nunca texto libre ni datos de Supabase, así
-// que no revelan nada de la estructura interna; el llamador (`crearCotizacionCarrito`)
-// los necesita para decidir si excluye el tour (`no_disponible`) o aborta la
-// cotización completa (`error_consulta`/`configuracion_invalida`) SIN volver
-// a tocar `detalleInterno`. Solo `detalleInterno` queda estrictamente fuera.
+// `tipo` SÍ viaja al público — son 3 valores categóricos fijos, nunca texto
+// libre ni datos de Supabase; el llamador (`crearCotizacionCarrito`) lo
+// necesita para decidir si excluye el tour (`no_disponible`) o aborta la
+// cotización completa (`error_consulta`/`configuracion_invalida`).
+// `codigo` (ronda 7): aunque es un enum estable y no texto libre, el
+// navegador no lo necesita para nada — `crearCotizacionCarrito` solo lee
+// `.tipo`/`.mensaje` — así que sale del DTO público por defecto de
+// exposición mínima (nunca dar más de lo que el consumidor real usa).
+// `codigo` sigue disponible en `ResultadoServicioPuntual` (interno) y en la
+// línea de log (`formatearLogLiquidacionServicioPuntual`), para poder
+// correlacionar el incidente real sin exponerlo.
 export type RespuestaPublicaServicioPuntual =
   | { ok: true; resultado: ResultadoServicio }
-  | { ok: false; tipo: "no_disponible" | "error_consulta" | "configuracion_invalida"; codigo: CodigoErrorServicioPuntual; mensaje: string };
+  | { ok: false; tipo: "no_disponible" | "error_consulta" | "configuracion_invalida"; mensaje: string };
 
 export function respuestaPublicaServicioPuntual(r: ResultadoServicioPuntual): RespuestaPublicaServicioPuntual {
   if (r.ok) return { ok: true, resultado: r.resultado };
-  return { ok: false, tipo: r.tipo, codigo: r.codigo, mensaje: r.mensajePublico };
+  return { ok: false, tipo: r.tipo, mensaje: r.mensajePublico };
 }
 
 // ── Logging server-side (ronda 6) — construye la línea de log a partir del

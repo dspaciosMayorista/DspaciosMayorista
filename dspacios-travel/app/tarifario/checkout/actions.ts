@@ -10,6 +10,7 @@ import { formatMoneda } from "@/lib/utils";
 import { comisionDefault } from "@/lib/b2b";
 import {
   resolverB2BParaMensaje, validarCrearSolicitudInput, resolverContextoB2B,
+  respuestaPublicaInsertCotizacion, formatearLogInsertCotizacion,
   type SolicitudItemValidado, type SolicitudTourValidado,
 } from "@/lib/reservar/edadesMenores";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
@@ -499,7 +500,20 @@ async function crearCotizacionCarrito(input: {
     asesor: null,
     creado_por: user?.email ?? null,
   }).select("id, codigo, share_token").single();
-  if (error || !row) return { ok: false, error: error?.message ?? "No se pudo crear la cotización." };
+  // FRONTERA PÚBLICA (ronda 7): nunca se reenvía `error.message` — un fallo
+  // real de Postgres/Supabase (columna faltante, RLS, restricción violada)
+  // no debe llegar a esta Server Action pública. `respuestaPublicaInsertCotizacion`
+  // (lib/reservar/edadesMenores.ts, función pura) decide el mensaje FIJO; el
+  // detalle técnico real se registra ACÁ, server-side — nunca datos del
+  // cliente (nombre/documento/teléfono/email) ni el payload de la cotización.
+  // El `if (error || !row)` se conserva explícito (en vez de solo leer
+  // `pubInsert.ok`) para que TypeScript siga estrechando `row` a no-nulo en
+  // el resto de la función — `pubInsert` decide el MENSAJE, no el control de flujo.
+  if (error || !row) {
+    const detalle = error?.message ?? "insert no devolvió fila (row ausente)";
+    console.error(formatearLogInsertCotizacion({ etapa: "insertar_cotizacion", detalle }));
+    return respuestaPublicaInsertCotizacion(detalle);
+  }
 
   const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host");

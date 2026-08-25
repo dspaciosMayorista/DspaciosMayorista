@@ -693,3 +693,39 @@ export function validarCrearSolicitudInput(v: unknown): { ok: true; input: Crear
   }
   return { ok: true, input: { items, tours, cliente: vCliente.cliente, modo } };
 }
+
+// ── Frontera pública del INSERT de `cotizaciones` (ronda 7) ────────────────
+// Defecto real corregido: `crearCotizacionCarrito` (checkout/actions.ts)
+// devolvía `error?.message ?? "No se pudo crear la cotización."` — un fallo
+// real de Postgres/Supabase al insertar (columna faltante, política RLS,
+// tabla inexistente, restricción violada) llegaba tal cual a una Server
+// Action pública. Mismo patrón que `respuestaPublicaServicioPuntual` en
+// lib/reservar/liquidacionServicio.ts: mensaje público FIJO (nunca
+// interpolado con `error.message`), detalle técnico solo para el log
+// server-side. Función PURA — no hace I/O, solo decide a partir del
+// resultado YA CONSULTADO del insert (el `admin.from("cotizaciones").insert(...)`
+// real vive en checkout/actions.ts, el único punto que toca Supabase).
+export const MENSAJE_ERROR_COTIZACION = "No pudimos generar la cotización en este momento. Intenta nuevamente.";
+
+export type RespuestaPublicaInsertCotizacion = { ok: false; error: string };
+
+// Mismo patrón que `fallaErrorConsulta` en liquidacionServicio.ts: el
+// mensaje público es SIEMPRE el mismo texto fijo, nunca construido a partir
+// de `detalleInterno` — el parámetro solo existe para dejar explícito, en
+// la prueba, que un mensaje real de Postgres pasado acá NUNCA sobrevive en
+// el campo `error` del objeto devuelto. Solo se llama desde la rama de
+// fallo (`if (error || !row)` en checkout/actions.ts); no decide control de
+// flujo por sí sola.
+export function respuestaPublicaInsertCotizacion(detalleInterno: string): RespuestaPublicaInsertCotizacion {
+  void detalleInterno;
+  return { ok: false, error: MENSAJE_ERROR_COTIZACION };
+}
+
+// Log server-side (ronda 7): SOLO contexto técnico (etapa fija + el detalle
+// real de Supabase) — nunca nombre/documento/teléfono/email del cliente ni
+// el payload de la cotización. La firma no acepta esos campos, así que
+// agregarlos requeriría ampliarla explícitamente (revisión obligada), mismo
+// criterio que `formatearLogLiquidacionServicioPuntual`.
+export function formatearLogInsertCotizacion(ctx: { etapa: string; detalle: string }): string {
+  return `[crearCotizacionCarrito] etapa=${ctx.etapa} detalle=${ctx.detalle}`;
+}

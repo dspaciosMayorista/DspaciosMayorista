@@ -34,6 +34,9 @@ import {
   MAX_TOURS_CARRITO,
   MAX_LINEAS_CARRITO,
   MAX_LONGITUD_TEXTO,
+  respuestaPublicaInsertCotizacion,
+  formatearLogInsertCotizacion,
+  MENSAJE_ERROR_COTIZACION,
 } from "../lib/reservar/edadesMenores.ts";
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -1079,5 +1082,205 @@ describe("35. Ronda 5: Wiring — buscarReceptivos trata su input como unknown, 
   test("actions.ts: el wrapper de la Server Action también tipa el parámetro como unknown (no BusquedaServiciosInput)", () => {
     assert.match(reservarActions, /export async function buscarReceptivos\(input: unknown\)/);
     assert.doesNotMatch(reservarActions, /export async function buscarReceptivos\(input: BusquedaServiciosInput\)/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 7 — hallazgo 1: "ERROR CRUDO AL INSERTAR COTIZACIONES". El insert de
+// `cotizaciones` en `crearCotizacionCarrito` (checkout/actions.ts) devolvía
+// `error?.message ?? "No se pudo crear la cotización."` al navegador — un
+// fallo real de Postgres/Supabase (columna faltante, política RLS, tabla
+// renombrada, restricción violada) llegaba tal cual a una Server Action
+// pública. `respuestaPublicaInsertCotizacion`/`formatearLogInsertCotizacion`
+// (lib/reservar/edadesMenores.ts, módulo puro) separan mensaje fijo vs.
+// detalle para el log, mismo patrón que `fallaErrorConsulta` en
+// liquidacionServicio.ts.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("37. Ronda 7: respuestaPublicaInsertCotizacion — mensaje público SIEMPRE fijo, con mensajes reales de Postgres", () => {
+  const ERRORES_POSTGRES_INSERT = [
+    'null value in column "tenant" of relation "cotizaciones" violates not-null constraint',
+    "new row violates row-level security policy for table \"cotizaciones\"",
+    'relation "cotizaciones" does not exist',
+    "permission denied for table cotizaciones",
+    'duplicate key value violates unique constraint "cotizaciones_codigo_key"',
+    'column "payload" of relation "cotizaciones" does not exist',
+  ];
+  for (const detalle of ERRORES_POSTGRES_INSERT) {
+    test(`detalleInterno = ${JSON.stringify(detalle)} → error público es EXACTAMENTE el texto fijo, nunca el mensaje real`, () => {
+      const r = respuestaPublicaInsertCotizacion(detalle);
+      assert.equal(r.ok, false);
+      if (r.ok) return;
+      assert.equal(r.error, MENSAJE_ERROR_COTIZACION);
+      assert.doesNotMatch(r.error, /cotizaciones|tenant|constraint|relation|permission denied|row-level security|column/i);
+      const serializado = JSON.stringify(r);
+      assert.doesNotMatch(serializado, new RegExp(detalle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    });
+  }
+  test("el objeto público es exactamente {ok, error} — sin campos internos de más", () => {
+    const r = respuestaPublicaInsertCotizacion("cualquier detalle técnico");
+    assert.deepEqual(Object.keys(r).sort(), ["error", "ok"]);
+  });
+  test("control negativo — el defecto real: `error?.message ?? \"No se pudo crear la cotización.\"` sí habría reenviado el mensaje de Postgres tal cual", () => {
+    // Reconstruye a propósito el patrón de la ronda 6 (antes de esta ronda 7)
+    // para demostrar que el hallazgo era real.
+    const errorSupabaseSimulado = { message: 'permission denied for table "cotizaciones"' };
+    const mensajeViejo = errorSupabaseSimulado?.message ?? "No se pudo crear la cotización.";
+    assert.match(mensajeViejo, /permission denied for table "cotizaciones"/); // el defecto: SÍ se filtraba
+    const mensajeNuevo = respuestaPublicaInsertCotizacion(errorSupabaseSimulado.message);
+    assert.equal(mensajeNuevo.ok, false);
+    if (mensajeNuevo.ok) return;
+    assert.doesNotMatch(mensajeNuevo.error, /permission denied|cotizaciones/i); // la corrección: ya no
+  });
+});
+
+describe("38. Ronda 7: formatearLogInsertCotizacion — el log SÍ conserva la etapa y el detalle técnico completo, nunca datos del cliente", () => {
+  test("la línea de log incluye la etapa y el detalle técnico completo", () => {
+    const linea = formatearLogInsertCotizacion({ etapa: "insertar_cotizacion", detalle: 'permission denied for table "cotizaciones"' });
+    assert.match(linea, /etapa=insertar_cotizacion/);
+    assert.match(linea, /permission denied for table "cotizaciones"/);
+  });
+  test("la firma solo acepta etapa/detalle — no hay forma de pasarle nombre/documento/teléfono/email del cliente ni el payload de la cotización", () => {
+    const linea = formatearLogInsertCotizacion({ etapa: "insertar_cotizacion", detalle: "x" });
+    assert.equal(typeof linea, "string");
+  });
+});
+
+describe("39. Ronda 7: Wiring — checkout/actions.ts usa la frontera sanitizada para el insert de cotizaciones, nunca error.message directo", () => {
+  const checkout = leer("app/tarifario/checkout/actions.ts");
+
+  test("el insert de cotizaciones nunca construye el error público con `error?.message` ni `error.message`", () => {
+    const idx = checkout.indexOf('.from("cotizaciones").insert(');
+    const idxFin = checkout.indexOf("\n\n", idx);
+    const bloque = checkout.slice(idx, idxFin);
+    assert.doesNotMatch(bloque, /error:\s*error\??\.message/);
+    assert.match(bloque, /respuestaPublicaInsertCotizacion\(detalle\)/);
+    assert.match(bloque, /console\.error\(formatearLogInsertCotizacion/);
+  });
+  test("checkout/actions.ts importa respuestaPublicaInsertCotizacion/formatearLogInsertCotizacion desde lib/reservar/edadesMenores", () => {
+    assert.match(checkout, /respuestaPublicaInsertCotizacion, formatearLogInsertCotizacion/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 7 — hallazgos 2 y 3: "SERVICE ROLE EXPUESTO EN buscarReceptivos" y
+// "ERRORES DE CONSULTA IGNORADOS EN buscarReceptivos". `buscarReceptivos`
+// (lib/reservar/cotizar.ts) revelaba "falta service-role" al público y
+// descartaba el `error` de la consulta inicial y de las 5 consultas
+// paralelas — un fallo técnico real de Supabase se veía idéntico a "sin
+// resultados", lo cual es funcional y financieramente incorrecto (omitir
+// servicios en silencio). Estas pruebas de wiring confirman, sobre el código
+// FUENTE real (no una reimplementación), que las 6 consultas revisan su
+// `error` y abortan ANTES de usar `?? []`.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("40. Ronda 7: Wiring — buscarReceptivos ya no revela 'service-role' en el mensaje público", () => {
+  const cotizar = leer("lib/reservar/cotizar.ts");
+
+  function cuerpoBuscarReceptivos(): string {
+    const idx = cotizar.indexOf("export async function buscarReceptivos(inputRaw: unknown)");
+    return cotizar.slice(idx, cotizar.indexOf("\nexport", idx + 10));
+  }
+
+  test("el mensaje de arranque (falta SUPABASE_SERVICE_ROLE_KEY) ya no contiene la palabra 'service-role'", () => {
+    const cuerpo = cuerpoBuscarReceptivos();
+    const idxArranque = cuerpo.indexOf("SUPABASE_SERVICE_ROLE_KEY");
+    const idxReturn = cuerpo.indexOf("return", idxArranque);
+    const idxFinReturn = cuerpo.indexOf(";", idxReturn);
+    const bloqueReturn = cuerpo.slice(idxReturn, idxFinReturn);
+    assert.doesNotMatch(bloqueReturn, /service-role/i);
+    // El detalle real (que sí menciona la env var) queda SOLO en el
+    // console.error previo al return, nunca en el string devuelto.
+    assert.match(cuerpo.slice(idxArranque, idxReturn), /console\.error/);
+  });
+  test("control negativo — el mensaje viejo 'Búsqueda no disponible (falta service-role)' ya no aparece en ningún return de buscarReceptivos", () => {
+    const cuerpo = cuerpoBuscarReceptivos();
+    assert.doesNotMatch(cuerpo, /falta service-role/);
+  });
+  test("el mensaje público de arranque es el mismo texto genérico fijo usado en el resto de fallos de esta función", () => {
+    const cuerpo = cuerpoBuscarReceptivos();
+    const usosDelMensaje = cuerpo.match(/MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE/g) ?? [];
+    // Se usa en el arranque + en el fallo de la consulta inicial + en el
+    // fallo de las 5 consultas paralelas = al menos 3 apariciones.
+    assert.ok(usosDelMensaje.length >= 3, `se esperaban al menos 3 usos del mensaje fijo, hubo ${usosDelMensaje.length}`);
+  });
+});
+
+describe("41. Ronda 7: Wiring — buscarReceptivos revisa el error de CADA una de sus 6 consultas antes de usar los datos", () => {
+  const cotizar = leer("lib/reservar/cotizar.ts");
+
+  function cuerpoBuscarReceptivos(): string {
+    const idx = cotizar.indexOf("export async function buscarReceptivos(inputRaw: unknown)");
+    return cotizar.slice(idx, cotizar.indexOf("\nexport", idx + 10));
+  }
+
+  test("la consulta inicial a tarifario_resultado captura y revisa su error ANTES de construir `pares`", () => {
+    const cuerpo = cuerpoBuscarReceptivos();
+    const idxQuery = cuerpo.indexOf('const { data: filas');
+    const idxPares = cuerpo.indexOf("const pares = new Map");
+    assert.ok(idxQuery > -1 && idxPares > idxQuery);
+    const bloque = cuerpo.slice(idxQuery, idxPares);
+    assert.match(bloque, /error:\s*filasErr/);
+    assert.match(bloque, /if\s*\(filasErr\)/);
+    // El abort (return de error) debe estar ANTES de construir `pares` — si
+    // la consulta falló, nunca se debe llegar a iterar `filas ?? []`. Como
+    // `bloque` ya termina justo donde empieza `const pares = new Map`
+    // (idxPares), cualquier posición encontrada DENTRO de `bloque` ya está,
+    // por construcción, antes de esa línea — no hace falta buscar el `for`.
+    const idxIfErr = bloque.indexOf("if (filasErr)");
+    const idxReturnErr = bloque.indexOf("return", idxIfErr);
+    assert.ok(idxIfErr > -1 && idxReturnErr > idxIfErr);
+  });
+  test("las 5 consultas paralelas (paquetes/armado/servicios/grupos/temporadas) capturan TODOS sus errores, no solo `data`", () => {
+    const cuerpo = cuerpoBuscarReceptivos();
+    const idxPromiseAll = cuerpo.indexOf("Promise.all([");
+    const idxDestructuring = cuerpo.lastIndexOf("] = await Promise.all", idxPromiseAll + 5000);
+    // El bloque de destructuring está ANTES del `Promise.all([` — se busca
+    // hacia atrás desde ahí hasta el `const [`.
+    const idxConst = cuerpo.lastIndexOf("const [", idxPromiseAll);
+    const bloqueDestructuring = cuerpo.slice(idxConst, idxPromiseAll);
+    for (const campo of ["paquetesErr", "armadoErr", "serviciosErr", "gruposErr", "temporadasErr"]) {
+      assert.match(bloqueDestructuring, new RegExp(`error:\\s*${campo}`), `falta capturar el error de ${campo}`);
+    }
+    void idxDestructuring;
+  });
+  test("cualquiera de los 5 errores paralelos aborta la búsqueda COMPLETA antes de llamar construirContextoServicios", () => {
+    const cuerpo = cuerpoBuscarReceptivos();
+    const idxIf = cuerpo.indexOf("if (paquetesErr || armadoErr || serviciosErr || gruposErr || temporadasErr)");
+    const idxCtx = cuerpo.indexOf("construirContextoServicios({");
+    assert.ok(idxIf > -1 && idxCtx > idxIf, "el chequeo de errores paralelos debe preceder a construirContextoServicios");
+    const bloque = cuerpo.slice(idxIf, idxCtx);
+    assert.match(bloque, /return \{ ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE \}/);
+  });
+  test("control negativo — el patrón viejo (`const [{ data: paquetes }, ...] = await Promise.all`, sin `error:`) ya no está presente", () => {
+    const cuerpo = cuerpoBuscarReceptivos();
+    assert.doesNotMatch(cuerpo, /const \[\{ data: paquetes \}, \{ data: armado \}, \{ data: servicios \}, \{ data: grupos \}, \{ data: temporadas \}\]/);
+  });
+  test("control negativo — `const { data: filas } = await q;` (sin capturar error) ya no está presente", () => {
+    const cuerpo = cuerpoBuscarReceptivos();
+    assert.doesNotMatch(cuerpo, /const \{ data: filas \} = await q;/);
+  });
+});
+
+describe("42. Ronda 7: Wiring — checkout/actions.ts nunca lee resultado.codigo de la respuesta pública de liquidarServicioPuntual", () => {
+  const checkout = leer("app/tarifario/checkout/actions.ts");
+  const liquidacion = leer("lib/reservar/liquidacionServicio.ts");
+
+  test("checkout/actions.ts (el bucle de tours) nunca referencia resultado.codigo", () => {
+    const idxInicio = checkout.indexOf("for (const t of input.tours)");
+    const idxFin = checkout.indexOf("\n  }\n", idxInicio);
+    const bucle = checkout.slice(idxInicio, idxFin);
+    assert.doesNotMatch(bucle, /resultado\.codigo/);
+  });
+  test("RespuestaPublicaServicioPuntual (el DTO público) ya no declara la clave codigo en su rama de error", () => {
+    const idx = liquidacion.indexOf("export type RespuestaPublicaServicioPuntual");
+    // El tipo es una unión multi-línea con `;` DENTRO de cada rama (ej.
+    // "{ ok: true; resultado: ... }") — el primer `;` del texto NO es el fin
+    // de la declaración. El límite real es el `\n\n` en blanco antes de la
+    // siguiente función exportada.
+    const idxFin = liquidacion.indexOf("\n\nexport function respuestaPublicaServicioPuntual", idx);
+    const tipo = liquidacion.slice(idx, idxFin);
+    assert.doesNotMatch(tipo, /codigo:/);
+    assert.match(tipo, /mensaje: string/);
   });
 });
