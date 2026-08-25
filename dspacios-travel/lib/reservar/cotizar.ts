@@ -22,6 +22,7 @@ import {
   validarDestinoConsulta,
   validarPaxTotalConsulta,
   validarPaxServicioConsulta,
+  validarEntradaCotizarPorFechas,
   clasificarMenoresPorEdad,
   verificarTarifasMenoresDisponibles,
   type ClasificacionMenores,
@@ -147,7 +148,17 @@ export async function liquidarHotelPaquete(
 ): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number; moneda: string } | null> {
   if (numNoches <= 0) return null;
   const carga = await cargarDatosHotelPaquete(admin, paqueteId, hotelId);
-  if (!carga.ok) return null;
+  if (!carga.ok) {
+    // Ronda 2, defecto real corregido: un fallo TÉCNICO al cargar (RLS,
+    // tabla renombrada, columna eliminada) se devolvía como `null` sin dejar
+    // rastro — indistinguible en los logs de "paquete/hotel no encontrado".
+    // El contrato de retorno (`null`) no cambia — `computo.ts` sigue viendo
+    // exactamente lo mismo — solo se agrega el registro server-side.
+    if (carga.motivo === "error_consulta") {
+      console.error(`[liquidarHotelPaquete] etapa=${carga.etapa} paqueteId=${paqueteId} hotelId=${hotelId} detalle=${carga.detalleInterno}`);
+    }
+    return null;
+  }
   return evaluarHotelPorFechas(carga.datos, fechaIda, numNoches);
 }
 
@@ -165,22 +176,28 @@ export type CotizarResult =
  * un arreglo (vacío si no aplica o si el fallo fue técnico) para que el
  * llamador no tenga que distinguir `undefined` de "no hay".
  *
- * FRONTERA PÚBLICA: el detalle interno de un fallo técnico o de catálogo
+ * FRONTERA PÚBLICA: `inputRaw` se trata como `unknown` (ronda 2, defecto real
+ * corregido: esta función seguía tipada como `{ paqueteId; hotelId; fechaIda;
+ * fechaRegreso }` directo, sin validar la forma — un caller manipulado podía
+ * mandar `null`, un arreglo, ids decimales/negativos/`Infinity` o fechas
+ * imposibles). `validarEntradaCotizarPorFechas` (lib/reservar/edadesMenores.ts)
+ * valida objeto → ids enteros seguros positivos → fechas reales → rango →
+ * "no antes de hoy" → noches acotadas, ANTES de leer una sola propiedad para
+ * tocar Supabase. El detalle interno de un fallo técnico o de catálogo
  * (mensaje real de Supabase, o qué temporada específica falta cargar) NUNCA
  * cruza hacia el navegador — se registra con `console.error` server-side; el
  * cliente recibe siempre uno de dos mensajes fijos y comerciales
  * (`MENSAJE_HOTEL_SIN_TARIFA`/`MENSAJE_HOTEL_ERROR_TECNICO`).
  */
-export async function cotizarPorFechas(input: {
-  paqueteId: number; hotelId: number; fechaIda: string; fechaRegreso: string;
-}): Promise<CotizarResult> {
+export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     console.error("[cotizarPorFechas] etapa=arranque detalle=SUPABASE_SERVICE_ROLE_KEY no configurada");
     return { ok: false, error: MENSAJE_HOTEL_ERROR_TECNICO, sugerencias: [] };
   }
-  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y de regreso.", sugerencias: [] };
-  const numNoches = noches(input.fechaIda, input.fechaRegreso);
-  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida.", sugerencias: [] };
+  const vEntrada = validarEntradaCotizarPorFechas(inputRaw);
+  if (!vEntrada.ok) return { ok: false, error: vEntrada.error, sugerencias: [] };
+  const input = vEntrada.input;
+  const numNoches = input.noches;
 
   const admin = createAdminClient();
   const carga = await cargarDatosHotelPaquete(admin, input.paqueteId, input.hotelId);
@@ -277,31 +294,54 @@ const MAX_HOTELES_SUGERENCIA_FECHA = 6;
 
 // Recorre un subconjunto ACOTADO de los pares hotel/paquete cuya carga fue
 // exitosa (cacheada durante el bucle principal de `buscarHoteles`, cero
-// consultas nuevas para eso) y les pide sugerencias de fecha reales — el
-// único fetch adicional es `hotel_acomodaciones`/`hoteles` por hotel
-// candidato, necesario para validar que la composición (habitaciones/
-// menores) siga cabiendo en la fecha sugerida, nunca solo "hay tarifa".
+// consultas nuevas para eso) y les pide sugerencias de fecha reales.
+//
+// Ronda 2, defecto real corregido (N+1): antes se consultaba
+// `hotel_acomodaciones`/`hoteles` UNA VEZ POR HOTEL dentro del bucle
+// (hasta `MAX_HOTELES_SUGERENCIA_FECHA` × 2 consultas). Ahora se toman
+// primero los `hotelId` candidatos y se hacen exactamente DOS consultas
+// totales con `.in(...)` — nunca dos por hotel — armando mapas en memoria.
+// Cada consulta revisa su propio error POR SEPARADO: si cualquiera falla, no
+// se muestran sugerencias engañosas (fail-closed) para NINGÚN hotel de este
+// lote — el detalle técnico se registra solo server-side.
 async function sugerenciasBusquedaGeneral(
   admin: ReturnType<typeof createAdminClient>,
   datosPorPar: { paquete: number; hotel: number; datos: DatosHotelPaquete }[],
   input: BusquedaInput,
   numNoches: number
 ): Promise<SugerenciaFecha[]> {
+  const candidatos = datosPorPar.slice(0, MAX_HOTELES_SUGERENCIA_FECHA);
+  let acomCfgPorHotel: Map<number, AcomConfig[]> | null = null;
+  let hotelRowPorId: Map<number, { edad_infante_max: number | null; edad_nino_max: number | null; adults_only: boolean | null }> | null = null;
+
+  if (input.habitaciones.length && candidatos.length) {
+    const hotelIds = [...new Set(candidatos.map((c) => c.hotel))];
+    const [{ data: acomCfg, error: acomCfgErr }, { data: hotelRows, error: hotelRowsErr }] = await Promise.all([
+      admin.from("hotel_acomodaciones").select("hotel_id, acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").in("hotel_id", hotelIds),
+      admin.from("hoteles").select("id, edad_infante_max, edad_nino_max, adults_only").in("id", hotelIds),
+    ]);
+    if (acomCfgErr || hotelRowsErr) {
+      console.error(`[buscarHoteles.sugerenciasBusquedaGeneral] etapa=hotel_acomodaciones_o_hoteles detalle=${acomCfgErr?.message ?? hotelRowsErr?.message}`);
+      return []; // fail-closed: sin datos de composición confiables, no se sugiere nada engañoso
+    }
+    acomCfgPorHotel = new Map();
+    for (const r of (acomCfg ?? []) as (AcomConfig & { hotel_id: number })[]) {
+      const arr = acomCfgPorHotel.get(r.hotel_id) ?? [];
+      arr.push(r);
+      acomCfgPorHotel.set(r.hotel_id, arr);
+    }
+    hotelRowPorId = new Map();
+    for (const h of hotelRows ?? []) hotelRowPorId.set(h.id, h);
+  }
+
   const vistas = new Set<string>();
   const sugerencias: SugerenciaFecha[] = [];
-  for (const { hotel, datos } of datosPorPar.slice(0, MAX_HOTELES_SUGERENCIA_FECHA)) {
+  for (const { hotel, datos } of candidatos) {
     if (sugerencias.length >= 4) break;
     let composicion: ComposicionSugerencia | null = null;
     if (input.habitaciones.length) {
-      const [{ data: acomCfg, error: acomCfgErr }, { data: hotelRow, error: hotelRowErr }] = await Promise.all([
-        admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotel),
-        admin.from("hoteles").select("edad_infante_max, edad_nino_max, adults_only").eq("id", hotel).maybeSingle(),
-      ]);
-      // Fallo técnico puntual acá solo excluye ESTE hotel de las sugerencias
-      // (best-effort) — nunca revienta la búsqueda ya resuelta, que ya
-      // terminó y se está devolviendo `ok: true` con 0 resultados.
-      if (acomCfgErr || hotelRowErr) continue;
-      const reglas = (acomCfg ?? []) as AcomConfig[];
+      const reglas = acomCfgPorHotel?.get(hotel) ?? [];
+      const hotelRow = hotelRowPorId?.get(hotel) ?? null;
       const configDe = (a: AcomRoom): AcomConfig => reglas.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
       composicion = {
         adultosDeclarados: input.adultos,

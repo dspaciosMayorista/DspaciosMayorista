@@ -31,10 +31,12 @@ import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaqu
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
+// `input` es `unknown` a propósito (ronda 2) — misma razón que `buscarHoteles`
+// abajo: toda la validación de forma vive en `cotizarPorFechasImpl`
+// (lib/reservar/cotizar.ts → `validarEntradaCotizarPorFechas`), nunca se
+// confía en el tipo declarado en tiempo de ejecución.
 /** Cotiza un hotel para las fechas que elige el asesor (porción/dinámico). */
-export async function cotizarPorFechas(input: {
-  paqueteId: number; hotelId: number; fechaIda: string; fechaRegreso: string;
-}): Promise<CotizarResult> {
+export async function cotizarPorFechas(input: unknown): Promise<CotizarResult> {
   return cotizarPorFechasImpl(input);
 }
 

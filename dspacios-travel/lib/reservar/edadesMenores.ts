@@ -44,6 +44,10 @@ import { clasificarPorEdad, esAcomRoom, type AcomRoom } from "../acomodaciones.t
 // desde node --test (confirmado: sin este import, `categoriaAliado` habría
 // quedado duplicado en dos archivos).
 import { categoriaAliado } from "../b2b.ts";
+// `hoyISO`/`noches` son funciones puras sin dependencias (paquetes.ts no
+// importa nada) — mismo criterio de import relativo que el resto del
+// archivo, seguro para `node --test`.
+import { hoyISO, noches } from "../calc/paquetes.ts";
 
 // Un "menor" nunca puede declararse con 18 años o más — la propia
 // definición de adulto del sistema (ocupación de habitación, nunca tarifa
@@ -728,4 +732,54 @@ export function respuestaPublicaInsertCotizacion(detalleInterno: string): Respue
 // criterio que `formatearLogLiquidacionServicioPuntual`.
 export function formatearLogInsertCotizacion(ctx: { etapa: string; detalle: string }): string {
   return `[crearCotizacionCarrito] etapa=${ctx.etapa} detalle=${ctx.detalle}`;
+}
+
+// ── Frontera pública de `cotizarPorFechas` (ronda 2) ────────────────────────
+// Defecto real corregido: `cotizarPorFechas` (lib/reservar/cotizar.ts) seguía
+// recibiendo el input tipado directo como `{ paqueteId: number; hotelId:
+// number; fechaIda: string; fechaRegreso: string }` — una Server Action
+// pública (Vista Booking) es alcanzable con cualquier body HTTP sin importar
+// lo que declare ese tipo: `null`, un arreglo, ids decimales/negativos/
+// `Infinity`, o fechas imposibles llegaban sin validar. Mismo patrón que el
+// resto de este archivo: se valida la FORMA completa (objeto → ids → fechas
+// → rango → "no antes de hoy" → noches acotadas) antes de leer una sola
+// propiedad para tocar Supabase.
+export type EntradaCotizarPorFechasValidada = {
+  paqueteId: number;
+  hotelId: number;
+  fechaIda: string;
+  fechaRegreso: string;
+  noches: number;
+};
+
+function esEnteroSeguroPositivo(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) && Number.isSafeInteger(v) && v > 0;
+}
+
+export function validarEntradaCotizarPorFechas(
+  v: unknown,
+  hoy: string = hoyISO()
+): { ok: true; input: EntradaCotizarPorFechasValidada } | { ok: false; error: string } {
+  if (!esObjetoRaiz(v)) return { ok: false, error: "La consulta de fechas no tiene una forma válida." };
+  if (!esEnteroSeguroPositivo(v.paqueteId)) return { ok: false, error: "El paquete indicado no es válido." };
+  if (!esEnteroSeguroPositivo(v.hotelId)) return { ok: false, error: "El hotel indicado no es válido." };
+
+  const vIda = validarFechaConsulta(v.fechaIda);
+  if (!vIda.ok) return { ok: false, error: vIda.error };
+  const vReg = validarFechaConsulta(v.fechaRegreso);
+  if (!vReg.ok) return { ok: false, error: vReg.error };
+  const vRango = validarRangoFechas(vIda.fecha, vReg.fecha);
+  if (!vRango.ok) return { ok: false, error: vRango.error };
+
+  if (vIda.fecha < hoy) return { ok: false, error: "La fecha de ida no puede ser anterior a hoy." };
+
+  const numNoches = noches(vIda.fecha, vReg.fecha);
+  if (numNoches <= 0 || numNoches > MAX_NOCHES_CONSULTA) {
+    return { ok: false, error: `El número de noches debe estar entre 1 y ${MAX_NOCHES_CONSULTA}.` };
+  }
+
+  return {
+    ok: true,
+    input: { paqueteId: v.paqueteId, hotelId: v.hotelId, fechaIda: vIda.fecha, fechaRegreso: vReg.fecha, noches: numNoches },
+  };
 }

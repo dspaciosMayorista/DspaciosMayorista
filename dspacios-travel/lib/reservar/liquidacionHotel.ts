@@ -231,24 +231,63 @@ export function addDiasISO(fechaISO: string, dias: number): string {
 }
 
 // Techo ESTRICTO de candidatos evaluados por hotel — nunca un barrido diario
-// sin límite. `PASOS_DIARIOS` es un barrido local ACOTADO (2 semanas) para
-// encontrar fechas cercanas primero (lo que de verdad quiere el cliente);
-// `PASOS_SEMANALES` extiende la búsqueda hasta el horizonte en saltos de 7
-// días. Ambos son semillas — nunca se aceptan sin pasar por
-// `evaluarHotelPorFechas` (el motor real).
+// sin límite. `PASOS_DIARIOS` es un barrido local ACOTADO (2 semanas,
+// bidireccional) para encontrar fechas cercanas primero (lo que de verdad
+// quiere el cliente); `PASOS_SEMANALES` extiende la búsqueda hasta el
+// horizonte en saltos de 7 días (también bidireccional). Ambos son semillas
+// de BARRIDO — nunca se aceptan sin pasar por `evaluarHotelPorFechas` (el
+// motor real), y nunca desplazan a una semilla ESTRUCTURAL (ver más abajo).
 const MAX_CANDIDATOS = 60;
 const PASOS_DIARIOS = 13;
 const PASOS_SEMANALES = 50;
 
+function distanciaDiasFirmada(fecha: string, referencia: string): number {
+  return Math.round(
+    (new Date(`${fecha}T00:00:00`).getTime() - new Date(`${referencia}T00:00:00`).getTime()) / MS_DIA
+  );
+}
+
 /**
- * Candidatas de fecha de ida (semillas ACOTADAS, ordenadas, sin duplicados,
- * dentro de [ventanaInicio, ventanaFin] y nunca la fecha ya solicitada).
- * Combina: barrido diario cercano + saltos semanales + los límites reales de
- * cada temporada (inicio de cada rango de cobertura, fin+1 de cada
- * black-out de temporada/hotel, inicio de vigencia de compra) — estos
- * últimos son solo SEMILLAS para no perderse una apertura de temporada que
- * caiga fuera del barrido local; NUNCA se devuelven como sugerencia sin
- * pasar por `evaluarHotelPorFechas`.
+ * Compara dos fechas ISO por CERCANÍA a `referencia` — nunca por orden
+ * cronológico simple (ronda 2, defecto real corregido: `candidatosFecha`
+ * ordenaba `[...set].sort()`, así que una temporada vieja-pero-todavía-
+ * futura podía aparecer antes que una fecha a un solo día de la solicitada).
+ * Criterio: 1) menor distancia absoluta en días gana; 2) en empate, la fecha
+ * POSTERIOR a `referencia` gana (más útil para replanificar el viaje que una
+ * que ya casi pasó); 3) último desempate, orden ISO determinista.
+ */
+export function compararPorCercania(a: string, b: string, referencia: string): number {
+  const da = Math.abs(distanciaDiasFirmada(a, referencia));
+  const db = Math.abs(distanciaDiasFirmada(b, referencia));
+  if (da !== db) return da - db;
+  const posA = a > referencia;
+  const posB = b > referencia;
+  if (posA !== posB) return posA ? -1 : 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Candidatas de fecha de ida — semillas ACOTADAS, sin duplicados, dentro de
+ * [ventanaInicio, ventanaFin], nunca la fecha ya solicitada, ordenadas por
+ * CERCANÍA a `fechaIdaSolicitada` (ver `compararPorCercania`). Dos familias
+ * de semillas, con prioridad estricta entre ellas (ronda 2, reestructurado):
+ *
+ * 1) ESTRUCTURALES (inicio de cada rango de cobertura de temporada, fin+1 de
+ *    cada black-out de temporada/hotel) — SIEMPRE entran primero, sin que el
+ *    barrido las desplace: una temporada corta y lejana solo existe en este
+ *    candidate-set por su fecha de inicio, y ningún salto diario/semanal
+ *    garantiza caer justo dentro de ella. `compra_inicio` NUNCA es semilla:
+ *    es vigencia de COMPRA (cuándo se puede reservar), no una fecha para
+ *    HOSPEDARSE — presentarla como tal sugeriría una fecha de viaje sin
+ *    relación real con la disponibilidad de esa noche (puede influir en la
+ *    validación del motor, pero nunca como semilla de viaje por sí sola).
+ * 2) BARRIDO (diario cercano bidireccional + saltos semanales bidireccionales
+ *    hasta el horizonte) — solo llena lo que sobra del cupo después de las
+ *    estructurales, nunca las desplaza.
+ *
+ * Ninguna de las dos familias se devuelve "tal cual" como sugerencia: son
+ * solo semillas — cada candidata pasa después por `evaluarHotelPorFechas`
+ * (el motor real) en `generarSugerenciasFechas`.
  */
 export function candidatosFecha(
   datos: DatosHotelPaquete,
@@ -256,22 +295,40 @@ export function candidatosFecha(
   ventanaInicio: string,
   ventanaFin: string
 ): string[] {
-  const set = new Set<string>();
-  const dentro = (f: string | null | undefined): f is string => !!f && f >= ventanaInicio && f <= ventanaFin && f !== fechaIdaSolicitada;
+  const dentro = (f: string | null | undefined): f is string =>
+    !!f && f >= ventanaInicio && f <= ventanaFin && f !== fechaIdaSolicitada;
+  const porCercania = (a: string, b: string) => compararPorCercania(a, b, fechaIdaSolicitada);
 
-  for (let i = 1; i <= PASOS_DIARIOS; i++) { const f = addDiasISO(fechaIdaSolicitada, i); if (dentro(f)) set.add(f); }
-  for (let i = 1; i <= PASOS_SEMANALES; i++) { const f = addDiasISO(fechaIdaSolicitada, i * 7); if (dentro(f)) set.add(f); }
-
+  const estructurales = new Set<string>();
   for (const t of datos.temporadas) {
     const rangos = normRangos(t.rangos);
     const base = rangos.length ? rangos : (t.fecha_inicio && t.fecha_fin ? [{ fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin }] : []);
-    for (const r of base) if (dentro(r.fecha_inicio)) set.add(r.fecha_inicio);
-    for (const b of normRangos(t.blackouts)) { const f = addDiasISO(b.fecha_fin, 1); if (dentro(f)) set.add(f); }
-    if (dentro(t.compra_inicio)) set.add(t.compra_inicio as string);
+    for (const r of base) if (dentro(r.fecha_inicio)) estructurales.add(r.fecha_inicio);
+    for (const b of normRangos(t.blackouts)) { const f = addDiasISO(b.fecha_fin, 1); if (dentro(f)) estructurales.add(f); }
   }
-  for (const b of datos.blackouts) { const f = addDiasISO(b.fecha_fin, 1); if (dentro(f)) set.add(f); }
+  for (const b of datos.blackouts) { const f = addDiasISO(b.fecha_fin, 1); if (dentro(f)) estructurales.add(f); }
 
-  return [...set].sort().slice(0, MAX_CANDIDATOS);
+  const barrido = new Set<string>();
+  for (let i = 1; i <= PASOS_DIARIOS; i++) {
+    const adelante = addDiasISO(fechaIdaSolicitada, i); if (dentro(adelante)) barrido.add(adelante);
+    const atras = addDiasISO(fechaIdaSolicitada, -i); if (dentro(atras)) barrido.add(atras);
+  }
+  for (let i = 1; i <= PASOS_SEMANALES; i++) {
+    const adelante = addDiasISO(fechaIdaSolicitada, i * 7); if (dentro(adelante)) barrido.add(adelante);
+    const atras = addDiasISO(fechaIdaSolicitada, -i * 7); if (dentro(atras)) barrido.add(atras);
+  }
+
+  // Las estructurales entran primero (sin que el barrido las desplace); si
+  // por sí solas ya llenan el cupo se priorizan también por cercanía. El
+  // barrido solo agrega lo que sobra, sin duplicar una fecha ya incluida.
+  const resultado = [...estructurales].sort(porCercania).slice(0, MAX_CANDIDATOS);
+  if (resultado.length < MAX_CANDIDATOS) {
+    const yaIncluidas = new Set(resultado);
+    const restante = MAX_CANDIDATOS - resultado.length;
+    const extra = [...barrido].filter((f) => !yaIncluidas.has(f)).sort(porCercania).slice(0, restante);
+    resultado.push(...extra);
+  }
+  return resultado.sort(porCercania);
 }
 
 const MESES_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
@@ -328,22 +385,37 @@ export function generarSugerenciasFechas(args: {
     if (!directa) continue;
 
     if (directa.combos.length > 0 && args.numNochesSolicitadas >= directa.minNoches) {
-      if (!args.composicion || compatibleConComposicion(directa, args.composicion)) {
-        const fechaRegreso = addDiasISO(candidato, args.numNochesSolicitadas);
+      // La estancia con la duración PEDIDA nunca puede terminar después del
+      // cierre de la ventana (fecha_viaje_fin del paquete, u horizonte) —
+      // ronda 2, defecto real corregido: antes solo se acotaba `fechaIda`
+      // contra la ventana, nunca el `fechaRegreso` resultante de sumarle las
+      // noches, así que una candidata a 1–2 días del cierre "se veía" válida
+      // y `cotizarPorFechas` la rechazaba igual al pulsarla.
+      const fechaRegreso = addDiasISO(candidato, args.numNochesSolicitadas);
+      if (fechaRegreso <= ventanaFin && (!args.composicion || compatibleConComposicion(directa, args.composicion))) {
         sugerencias.push({ fechaIda: candidato, fechaRegreso, noches: args.numNochesSolicitadas, etiqueta: etiquetaRango(candidato, fechaRegreso, args.numNochesSolicitadas, false) });
       }
       continue;
     }
     // El hotel exige más noches en esta fecha candidata que las pedidas:
     // se reintenta SOLO con el mínimo real de esa temporada (nunca menos de
-    // lo pedido) — la etiqueta lo deja explícito.
+    // lo pedido) — la etiqueta lo deja explícito. La EXTENSIÓN por mínimo
+    // tampoco puede cruzar el cierre de la ventana (mismo defecto, mismo
+    // candado que arriba).
     if (directa.minNoches > args.numNochesSolicitadas) {
+      const fechaRegreso = addDiasISO(candidato, directa.minNoches);
+      if (fechaRegreso > ventanaFin) continue;
       const extendido = evaluarHotelPorFechas(args.datos, candidato, directa.minNoches);
       if (extendido && extendido.combos.length > 0 && (!args.composicion || compatibleConComposicion(extendido, args.composicion))) {
-        const fechaRegreso = addDiasISO(candidato, directa.minNoches);
         sugerencias.push({ fechaIda: candidato, fechaRegreso, noches: directa.minNoches, etiqueta: etiquetaRango(candidato, fechaRegreso, directa.minNoches, true) });
       }
     }
   }
+  // Desempate final explícito (defensivo): `candidatosFecha` ya devuelve las
+  // semillas ordenadas por cercanía, pero el resultado de ESTA función se
+  // reordena igual para que sea correcto por construcción, no solo porque su
+  // entrada ya lo esté (el rechazo por `fechaRegreso > ventanaFin` puede
+  // saltarse una candidata cercana y aceptar una más lejana en su lugar).
+  sugerencias.sort((a, b) => compararPorCercania(a.fechaIda, b.fechaIda, args.fechaIdaSolicitada));
   return sugerencias;
 }

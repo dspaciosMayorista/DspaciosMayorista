@@ -119,6 +119,33 @@ describe("2. cotizarPorFechas — frontera pública: nunca error.message, nunca 
   });
 });
 
+describe("2b. Ronda 2 — cotizarPorFechas trata su input como `unknown`, valida ANTES de tocar Supabase", () => {
+  const cuerpo = cuerpoFuncion(cotizar, "export async function cotizarPorFechas(");
+
+  test("la firma recibe `inputRaw: unknown`, no el tipo tipado directo de antes", () => {
+    assert.match(cotizar, /export async function cotizarPorFechas\(inputRaw: unknown\): Promise<CotizarResult>/);
+  });
+  test("valida con validarEntradaCotizarPorFechas ANTES de crear el cliente admin (createAdminClient)", () => {
+    const idxValida = cuerpo.indexOf("validarEntradaCotizarPorFechas(inputRaw)");
+    const idxAdmin = cuerpo.indexOf("createAdminClient()");
+    assert.ok(idxValida > -1 && idxAdmin > -1 && idxValida < idxAdmin, "la validación de forma debe preceder cualquier consulta a Supabase");
+  });
+  test("si la validación falla, retorna el error de la validación (nunca sigue leyendo propiedades del input crudo)", () => {
+    assert.match(cuerpo, /if \(!vEntrada\.ok\) return \{ ok: false, error: vEntrada\.error, sugerencias: \[\] \};/);
+  });
+  test("el resto de la función usa SOLO los campos ya validados (`input.paqueteId`/`input.hotelId`/`input.fechaIda`/`input.fechaRegreso`/`input.noches`), nunca `inputRaw` directo", () => {
+    const cuerpoTrasValidacion = cuerpo.slice(cuerpo.indexOf("const input = vEntrada.input;"));
+    assert.doesNotMatch(cuerpoTrasValidacion, /\binputRaw\./);
+  });
+});
+
+describe("2c. Ronda 2 — el wrapper de Server Action (reservar/actions.ts) también trata cotizarPorFechas como `unknown`", () => {
+  const acciones = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  test("cotizarPorFechas(input: unknown) — ya no confía en el tipo `{ paqueteId; hotelId; fechaIda; fechaRegreso }` en tiempo de ejecución", () => {
+    assert.match(acciones, /export async function cotizarPorFechas\(input: unknown\): Promise<CotizarResult>/);
+  });
+});
+
 describe("3. buscarHoteles — misma frontera saneada + carga cada par UNA sola vez (sin N+1 nuevo por sugerencia)", () => {
   const cuerpo = cuerpoFuncion(cotizar, "export async function buscarHoteles(");
 
@@ -154,12 +181,41 @@ describe("3. buscarHoteles — misma frontera saneada + carga cada par UNA sola 
     assert.ok(idxCondicion > -1, "la generación de sugerencias debe estar condicionada a evaluados === 0");
   });
   test("sugerenciasBusquedaGeneral reutiliza `datos` YA CARGADO (sin volver a llamar cargarDatosHotelPaquete) — solo consulta hotel_acomodaciones/hoteles, acotado a un máximo de hoteles", () => {
-    const idxFn = cotizar.indexOf("async function sugerenciasBusquedaGeneral(");
-    const idxFinFn = cotizar.indexOf("\n// ", idxFn + 10);
-    const cuerpoFn = cotizar.slice(idxFn, idxFinFn > -1 ? idxFinFn : idxFn + 3000);
+    const cuerpoFn = cuerpoFuncion(cotizar, "async function sugerenciasBusquedaGeneral(");
     assert.doesNotMatch(cuerpoFn, /cargarDatosHotelPaquete/);
     assert.match(cuerpoFn, /MAX_HOTELES_SUGERENCIA_FECHA/);
     assert.match(cuerpoFn, /\.slice\(0, MAX_HOTELES_SUGERENCIA_FECHA\)/);
+  });
+
+  describe("Ronda 2 — elimina el N+1 (antes: 2 consultas POR HOTEL dentro del bucle)", () => {
+    const cuerpoFn = cuerpoFuncion(cotizar, "async function sugerenciasBusquedaGeneral(");
+
+    test("consulta hotel_acomodaciones y hoteles con .in(...) UNA sola vez cada una, FUERA de cualquier bucle/for", () => {
+      const llamadasIn = cuerpoFn.match(/\.in\(("hotel_id"|"id"), hotelIds\)/g) ?? [];
+      assert.equal(llamadasIn.length, 2, `se esperaban exactamente 2 consultas .in(...) totales (hotel_acomodaciones + hoteles), hubo ${llamadasIn.length}`);
+    });
+    test("las dos consultas .in(...) están ANTES del `for (const { hotel, datos } of candidatos)` — nunca dentro del bucle", () => {
+      const idxFor = cuerpoFn.indexOf("for (const { hotel, datos } of candidatos)");
+      assert.ok(idxFor > -1, "debe existir el bucle principal sobre los candidatos");
+      const antesDelBucle = cuerpoFn.slice(0, idxFor);
+      const llamadasInAntes = antesDelBucle.match(/\.in\(("hotel_id"|"id"), hotelIds\)/g) ?? [];
+      assert.equal(llamadasInAntes.length, 2, "las 2 consultas .in(...) deben ejecutarse antes del bucle, no una por hotel dentro de él");
+      const dentroDelBucle = cuerpoFn.slice(idxFor);
+      assert.doesNotMatch(dentroDelBucle, /admin\.from\(/, "el bucle principal no debe volver a tocar Supabase por hotel");
+    });
+    test("cada una de las dos consultas revisa su propio error POR SEPARADO", () => {
+      assert.match(cuerpoFn, /error: acomCfgErr/);
+      assert.match(cuerpoFn, /error: hotelRowsErr/);
+      assert.match(cuerpoFn, /if \(acomCfgErr \|\| hotelRowsErr\)/);
+    });
+    test("si cualquiera de las dos consultas falla, retorna [] (fail-closed: nunca sugerencias engañosas) y registra el detalle SOLO server-side", () => {
+      const idxIf = cuerpoFn.indexOf("if (acomCfgErr || hotelRowsErr)");
+      const idxReturn = cuerpoFn.indexOf("return [];", idxIf);
+      const idxConsoleErr = cuerpoFn.indexOf("console.error", idxIf);
+      assert.ok(idxIf > -1 && idxConsoleErr > idxIf, "debe registrar el fallo con console.error dentro de ese if");
+      assert.ok(idxReturn > idxConsoleErr, "el log debe ocurrir antes del return [] fail-closed, y ambos deben estar dentro del if de error");
+      assert.ok(idxReturn - idxIf < 400, "el return [] debe estar cerca del if (dentro del mismo bloque), no en otra parte de la función");
+    });
   });
 });
 
@@ -169,7 +225,22 @@ describe("4. liquidarHotelPaquete (usado por computo.ts, el motor autoritativo d
   });
   test("un fallo técnico de cargarDatosHotelPaquete se traduce a `null` — el mismo valor que 'paquete no encontrado' ya devolvía antes de esta ronda (computo.ts no cambia de comportamiento)", () => {
     const cuerpo = cuerpoFuncion(cotizar, "export async function liquidarHotelPaquete(");
-    assert.match(cuerpo, /if \(!carga\.ok\) return null;/);
+    assert.match(cuerpo, /if \(!carga\.ok\) \{/);
+    assert.match(cuerpo, /return null;/);
+  });
+  test("ronda 2: un fallo técnico (error_consulta) se registra con console.error (etapa/paqueteId/hotelId/detalle) ANTES del `return null` — antes de esta ronda no dejaba rastro", () => {
+    const cuerpo = cuerpoFuncion(cotizar, "export async function liquidarHotelPaquete(");
+    const idxIf = cuerpo.indexOf("if (!carga.ok)");
+    const idxConsoleErr = cuerpo.indexOf("console.error", idxIf);
+    const idxReturnNull = cuerpo.indexOf("return null;", idxIf);
+    assert.ok(idxConsoleErr > -1 && idxConsoleErr > idxIf, "debe registrar el fallo con console.error");
+    assert.ok(idxReturnNull > idxConsoleErr, "el log debe ocurrir ANTES del return null");
+    assert.match(cuerpo.slice(idxIf, idxReturnNull), /etapa=\$\{carga\.etapa\}/);
+    assert.match(cuerpo.slice(idxIf, idxReturnNull), /paqueteId=\$\{paqueteId\}/);
+    assert.match(cuerpo.slice(idxIf, idxReturnNull), /hotelId=\$\{hotelId\}/);
+    assert.match(cuerpo.slice(idxIf, idxReturnNull), /detalle=\$\{carga\.detalleInterno\}/);
+    // El detalle técnico se registra solo server-side — nunca sale en un valor de retorno.
+    assert.doesNotMatch(cuerpo, /return \{[^}]*detalleInterno/);
   });
   test("computo.ts (el motor de reservar/checkout) no fue tocado por esta ronda", () => {
     const computo = leer("lib/reservar/computo.ts");

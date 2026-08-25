@@ -37,6 +37,8 @@ import {
   respuestaPublicaInsertCotizacion,
   formatearLogInsertCotizacion,
   MENSAJE_ERROR_COTIZACION,
+  validarEntradaCotizarPorFechas,
+  MAX_NOCHES_CONSULTA,
 } from "../lib/reservar/edadesMenores.ts";
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -1284,3 +1286,97 @@ describe("42. Ronda 7: Wiring — checkout/actions.ts nunca lee resultado.codigo
     assert.match(tipo, /mensaje: string/);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 2 (vista-booking-fechas-sugeridas) — `validarEntradaCotizarPorFechas`:
+// frontera pública de `cotizarPorFechas` (lib/reservar/cotizar.ts), que dejó
+// de recibir `{ paqueteId; hotelId; fechaIda; fechaRegreso }` tipado directo
+// y ahora trata el input como `unknown`. Ejecución REAL del parser puro —
+// ningún caso debe lanzar, sin importar la forma del payload.
+// ───────────────────────────────────────────────────────────────────────────
+describe("40. Ronda 2: validarEntradaCotizarPorFechas — frontera pública, nunca lanza", () => {
+  const HOY = "2026-06-01";
+  const entradaValida = { paqueteId: 1, hotelId: 2, fechaIda: "2026-09-10", fechaRegreso: "2026-09-13" };
+
+  test("entrada válida se acepta y calcula las noches correctamente", () => {
+    const r = validarEntradaCotizarPorFechas(entradaValida, HOY);
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.input.paqueteId, 1);
+      assert.equal(r.input.hotelId, 2);
+      assert.equal(r.input.fechaIda, "2026-09-10");
+      assert.equal(r.input.fechaRegreso, "2026-09-13");
+      assert.equal(r.input.noches, 3);
+    }
+  });
+
+  const payloadsManipulados: unknown[] = [
+    null,
+    undefined,
+    "cadena",
+    42,
+    true,
+    [],
+    [entradaValida], // arreglo, no objeto — nunca se debe tratar como el objeto de adentro
+    {},
+    { paqueteId: 1 }, // incompleto: falta hotelId y fechas
+    { paqueteId: 1, hotelId: 2 }, // incompleto: faltan fechas
+    { paqueteId: null, hotelId: 2, fechaIda: "2026-09-10", fechaRegreso: "2026-09-13" },
+    { paqueteId: 1.5, hotelId: 2, fechaIda: "2026-09-10", fechaRegreso: "2026-09-13" }, // decimal
+    { paqueteId: -1, hotelId: 2, fechaIda: "2026-09-10", fechaRegreso: "2026-09-13" }, // negativo
+    { paqueteId: 0, hotelId: 2, fechaIda: "2026-09-10", fechaRegreso: "2026-09-13" }, // cero — no es positivo
+    { paqueteId: Infinity, hotelId: 2, fechaIda: "2026-09-10", fechaRegreso: "2026-09-13" },
+    { paqueteId: NaN, hotelId: 2, fechaIda: "2026-09-10", fechaRegreso: "2026-09-13" },
+    { paqueteId: "1", hotelId: 2, fechaIda: "2026-09-10", fechaRegreso: "2026-09-13" }, // string en vez de número
+    { paqueteId: 1, hotelId: -2, fechaIda: "2026-09-10", fechaRegreso: "2026-09-13" },
+    { paqueteId: 1, hotelId: 2, fechaIda: null, fechaRegreso: "2026-09-13" },
+    { paqueteId: 1, hotelId: 2, fechaIda: "2026-09-10", fechaRegreso: undefined },
+    { paqueteId: 1, hotelId: 2, fechaIda: "2026-13-40", fechaRegreso: "2026-09-13" }, // fecha inexistente (mes 13)
+    { paqueteId: 1, hotelId: 2, fechaIda: "2026-02-30", fechaRegreso: "2026-09-13" }, // fecha inexistente (30 feb)
+    { paqueteId: 1, hotelId: 2, fechaIda: "10-09-2026", fechaRegreso: "13-09-2026" }, // formato incorrecto
+    { paqueteId: 1, hotelId: 2, fechaIda: "2026-09-13", fechaRegreso: "2026-09-10" }, // regreso antes que la ida
+    { paqueteId: 1, hotelId: 2, fechaIda: "2026-09-13", fechaRegreso: "2026-09-13" }, // regreso igual a la ida (0 noches)
+  ];
+  for (const p of payloadsManipulados) {
+    test(`payload manipulado (${JSON.stringify(p)}) no lanza y se rechaza`, () => {
+      assert.doesNotThrow(() => validarEntradaCotizarPorFechas(p, HOY));
+      assert.equal(validarEntradaCotizarPorFechas(p, HOY).ok, false);
+    });
+  }
+
+  test("fecha de ida anterior a hoy se rechaza", () => {
+    const r = validarEntradaCotizarPorFechas({ paqueteId: 1, hotelId: 2, fechaIda: "2026-05-31", fechaRegreso: "2026-06-05" }, HOY);
+    assert.equal(r.ok, false);
+  });
+  test("fecha de ida igual a hoy se acepta (no se rechaza por ser 'anterior')", () => {
+    const r = validarEntradaCotizarPorFechas({ paqueteId: 1, hotelId: 2, fechaIda: HOY, fechaRegreso: "2026-06-05" }, HOY);
+    assert.equal(r.ok, true);
+  });
+  test(`más de ${MAX_NOCHES_CONSULTA} noches se rechaza (límite ya existente del sistema, reutilizado)`, () => {
+    const fechaRegresoLejana = "2027-06-01"; // ~365 noches, muy por encima del límite
+    const r = validarEntradaCotizarPorFechas({ paqueteId: 1, hotelId: 2, fechaIda: HOY, fechaRegreso: fechaRegresoLejana }, HOY);
+    assert.equal(r.ok, false);
+  });
+  test(`exactamente ${MAX_NOCHES_CONSULTA} noches se acepta (límite inclusive)`, () => {
+    const fechaRegreso = addDiasISOLocal(HOY, MAX_NOCHES_CONSULTA);
+    const r = validarEntradaCotizarPorFechas({ paqueteId: 1, hotelId: 2, fechaIda: HOY, fechaRegreso }, HOY);
+    assert.equal(r.ok, true);
+  });
+  test("nunca lee ninguna propiedad antes de confirmar la forma — un getter que lanza no debe ejecutarse en un payload ya inválido por otra razón", () => {
+    let leido = false;
+    const trampa = {
+      paqueteId: "no-es-numero", // ya inválido por tipo, ANTES de llegar a fechaIda
+      hotelId: 2,
+      get fechaIda(): string { leido = true; throw new Error("no debía leerse"); },
+      fechaRegreso: "2026-09-13",
+    };
+    assert.doesNotThrow(() => validarEntradaCotizarPorFechas(trampa, HOY));
+    assert.equal(validarEntradaCotizarPorFechas(trampa, HOY).ok, false);
+    assert.equal(leido, false, "fechaIda no debía leerse: paqueteId ya era inválido");
+  });
+});
+
+function addDiasISOLocal(fechaISO: string, dias: number): string {
+  const t = new Date(`${fechaISO}T00:00:00`).getTime() + dias * 86_400_000;
+  return new Date(t).toISOString().slice(0, 10);
+}

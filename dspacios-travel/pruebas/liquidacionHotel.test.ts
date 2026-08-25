@@ -5,6 +5,7 @@ import {
   candidatosFecha,
   generarSugerenciasFechas,
   addDiasISO,
+  compararPorCercania,
   MAX_SUGERENCIAS_FECHAS,
   type DatosHotelPaquete,
   type FilaTemporadaHotelRaw,
@@ -127,10 +128,16 @@ describe("4. Sugerencias ordenadas, sin duplicados, máximo 4", () => {
     const fechas = sugerencias.map((s) => s.fechaIda);
     assert.equal(new Set(fechas).size, fechas.length);
   });
-  test("vienen ordenadas de la más cercana a la más lejana", () => {
-    const sugerencias = generarSugerenciasFechas({ datos: baseDatos(), fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 3, hoy: HOY });
-    const ordenado = [...sugerencias].sort((a, b) => a.fechaIda.localeCompare(b.fechaIda));
-    assert.deepEqual(sugerencias, ordenado);
+  test("vienen ordenadas por CERCANÍA real a la fecha solicitada, no por orden cronológico simple", () => {
+    // Ronda 2, defecto real corregido: el orden ISO ascendente NO es cercanía
+    // — con el barrido ahora bidireccional, una fecha ANTERIOR a la
+    // solicitada (pero futura respecto de hoy) puede quedar más cerca que
+    // una posterior. Se verifica contra el mismo criterio de cercanía
+    // (`compararPorCercania`), no contra un simple `localeCompare`.
+    const fechaSolicitada = "2026-09-20";
+    const sugerencias = generarSugerenciasFechas({ datos: baseDatos(), fechaIdaSolicitada: fechaSolicitada, numNochesSolicitadas: 3, hoy: HOY });
+    const ordenadoPorCercania = [...sugerencias].sort((a, b) => compararPorCercania(a.fechaIda, b.fechaIda, fechaSolicitada));
+    assert.deepEqual(sugerencias, ordenadoPorCercania);
   });
   test("un hotel con temporada ancha y sin huecos nunca devuelve más de 4 sugerencias", () => {
     const anchaAbierta: FilaTemporadaHotelRaw[] = [temporadaAlta({ nombre: "ANUAL", fecha_inicio: "2026-01-01", fecha_fin: "2026-12-31" })];
@@ -186,7 +193,14 @@ describe("7. Blackout TOTAL nunca se sugiere", () => {
 
 describe("8. Mínimo de noches respetado — extiende la duración con etiqueta explícita, nunca sugiere MENOS de lo pedido", () => {
   test("PUENTE exige 4 noches; pedir 2 produce una sugerencia de 4 noches con la etiqueta indicándolo", () => {
-    const sugerencias = generarSugerenciasFechas({ datos: baseDatos(), fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 2, hoy: HOY });
+    // Datos AISLADOS con SOLO la temporada PUENTE (sin ALTA compitiendo): con
+    // el barrido ahora bidireccional (ronda 2), si ALTA también existiera,
+    // sus fechas hacia atrás (más cercanas a la solicitada, sin necesitar
+    // extensión) ganarían por cercanía y llenarían el cupo de 4 antes de
+    // llegar a PUENTE — lo cual sería el comportamiento CORRECTO (más cerca
+    // gana), pero no es lo que esta prueba puntual quiere ejercitar.
+    const soloPuente = baseDatos({ temporadas: [temporadaPuente()], tarifas: [tarifaPara("PUENTE")] });
+    const sugerencias = generarSugerenciasFechas({ datos: soloPuente, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 2, hoy: HOY });
     const enPuente = sugerencias.filter((s) => s.fechaIda >= "2026-10-01" && s.fechaIda <= "2026-10-10");
     assert.ok(enPuente.length > 0, "debe encontrar al menos una sugerencia dentro de PUENTE");
     for (const s of enPuente) {
@@ -277,14 +291,129 @@ describe("11. Control negativo: tomar SOLO los límites de temporada produciría
   });
 });
 
-describe("12. addDiasISO — aritmética de fechas pura", () => {
+describe("12. Ronda 2 — ninguna estancia termina fuera del rango del paquete", () => {
+  test("una candidata a 1-2 días del cierre, cuyo REGRESO lo supera, se descarta (aunque la IDA sí quepa)", () => {
+    // fecha_viaje_fin = 2026-09-30. ALTA cubre 1-15 sep; se agrega una
+    // segunda temporada FIN_DE_TEMPORADA que cubre justo hasta el cierre del
+    // paquete, para que exista una candidata de IDA válida a 1-2 días del
+    // cierre cuya estadía de 3 noches SÍ tendría tarifa cargada (el motor
+    // real la aceptaría) pero cuyo REGRESO cruza fecha_viaje_fin.
+    const finDeTemporada = temporadaAlta({ nombre: "FIN_DE_TEMPORADA", fecha_inicio: "2026-09-20", fecha_fin: "2026-10-05" });
+    const datos = baseDatos({
+      paquete: { pct_mk: 0.2, impuesto_fijo: 0, destino_nombre: "Cartagena", fecha_viaje_inicio: "2026-01-01", fecha_viaje_fin: "2026-09-30" },
+      temporadas: [temporadaAlta(), finDeTemporada],
+      tarifas: [tarifaPara("ALTA"), tarifaPara("FIN_DE_TEMPORADA")],
+    });
+    // Confirma la premisa del caso límite: 2026-09-29 + 3 noches SÍ tiene
+    // tarifa real (el motor la aceptaría si no fuera por el cierre del
+    // paquete) — así se prueba el candado de `fechaRegreso`, no un hueco de
+    // tarifa disfrazado de límite de paquete.
+    const real = evaluarHotelPorFechas(datos, "2026-09-29", 3);
+    assert.ok(real && real.combos.length > 0, "premisa del caso: 2026-09-29 + 3 noches sí tiene tarifa real");
+    assert.equal(addDiasISO("2026-09-29", 3), "2026-10-02", "premisa del caso: el regreso cae después del cierre (2026-09-30)");
+
+    const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: "2026-09-10", numNochesSolicitadas: 3, hoy: HOY });
+    assert.ok(!sugerencias.some((s) => s.fechaIda === "2026-09-29"), "2026-09-29 no debe sugerirse: su regreso (2026-10-02) supera fecha_viaje_fin (2026-09-30)");
+    for (const s of sugerencias) assert.ok(s.fechaRegreso <= "2026-09-30", `fechaRegreso ${s.fechaRegreso} excede fecha_viaje_fin`);
+  });
+
+  test("la EXTENSIÓN por mínimo de noches del hotel tampoco puede cruzar el cierre del paquete", () => {
+    // PUENTE exige 4 noches y cierra 2026-10-10. Si el paquete cierra el
+    // 2026-10-08, una candidata de ida el 2026-10-07 necesitaría extenderse
+    // a 4 noches (regreso 2026-10-11) — cruza el cierre del PAQUETE (no el
+    // de la temporada) y debe descartarse igual que el camino directo.
+    const datos = baseDatos({
+      paquete: { pct_mk: 0.2, impuesto_fijo: 0, destino_nombre: "Cartagena", fecha_viaje_inicio: "2026-01-01", fecha_viaje_fin: "2026-10-08" },
+      temporadas: [temporadaPuente()],
+      tarifas: [tarifaPara("PUENTE")],
+    });
+    const directa = evaluarHotelPorFechas(datos, "2026-10-07", 2);
+    assert.ok(directa && directa.minNoches === 4, "premisa del caso: PUENTE exige 4 noches");
+    const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: "2026-09-25", numNochesSolicitadas: 2, hoy: HOY });
+    assert.ok(!sugerencias.some((s) => s.fechaIda === "2026-10-07"), "2026-10-07 extendido a 4 noches (regreso 2026-10-11) supera el cierre del paquete (2026-10-08)");
+    for (const s of sugerencias) assert.ok(s.fechaRegreso <= "2026-10-08", `fechaRegreso ${s.fechaRegreso} excede fecha_viaje_fin`);
+  });
+});
+
+describe("13. Ronda 2 — orden por CERCANÍA real, no cronológico simple", () => {
+  function datosDosDiasSueltos(diaA: string, diaB: string): DatosHotelPaquete {
+    const tA = temporadaAlta({ nombre: "A", fecha_inicio: diaA, fecha_fin: diaA });
+    const tB = temporadaAlta({ nombre: "B", fecha_inicio: diaB, fecha_fin: diaB });
+    return baseDatos({ temporadas: [tA, tB], tarifas: [tarifaPara("A"), tarifaPara("B")] });
+  }
+
+  test("caso del hallazgo: solicitada 20-sep, válidas 18-sep y 21-sep → 21-sep aparece primero (más cerca)", () => {
+    const datos = datosDosDiasSueltos("2026-09-18", "2026-09-21");
+    const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 1, hoy: HOY });
+    assert.ok(sugerencias.length >= 2, "deben aparecer ambas fechas");
+    assert.equal(sugerencias[0].fechaIda, "2026-09-21", "21-sep (distancia 1) debe ir antes que 18-sep (distancia 2)");
+    assert.equal(sugerencias[1].fechaIda, "2026-09-18");
+  });
+
+  test("empate real de distancia: solicitada 20-sep, válidas 19-sep y 21-sep (ambas a 1 día) → gana la POSTERIOR", () => {
+    const datos = datosDosDiasSueltos("2026-09-19", "2026-09-21");
+    const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 1, hoy: HOY });
+    assert.ok(sugerencias.length >= 2, "deben aparecer ambas fechas");
+    assert.equal(sugerencias[0].fechaIda, "2026-09-21", "en empate de distancia, la fecha POSTERIOR a la solicitada gana");
+    assert.equal(sugerencias[1].fechaIda, "2026-09-19");
+  });
+
+  test("compararPorCercania — desempate final por orden ISO cuando distancia y posterioridad también empatan", () => {
+    // Caso sintético (no ocurre con fechas reales distintas de la referencia,
+    // ya que la posterioridad ya desempata cualquier par simétrico): prueba
+    // directa de la función pura para dejar cubierto el tercer criterio.
+    assert.equal(compararPorCercania("2026-09-20", "2026-09-20", "2026-09-20"), 0);
+  });
+});
+
+describe("14. Ronda 2 — MAX_CANDIDATOS no debe borrar una semilla ESTRUCTURAL lejana", () => {
+  test("más de 60 semillas de barrido antes + una temporada válida de 1 día, lejana y fuera de los saltos semanales, sobrevive", () => {
+    // La solicitada está a 09-01; el barrido (13 días + 50 saltos de 7,
+    // bidireccional) genera más de 60 fechas candidatas "tempranas" dentro de
+    // la ventana — el escenario exacto que antes desplazaba una semilla
+    // estructural en el `[...set].sort().slice(0, 60)` ingenuo.
+    // La temporada objetivo cubre un solo día, 251 días después (no es
+    // múltiplo de 7 → ningún salto semanal cae ahí; y está muy por fuera del
+    // barrido diario de 13 días), así que SOLO puede aparecer por ser
+    // semilla ESTRUCTURAL (su propio `fecha_inicio`).
+    const fechaSolicitada = "2026-01-01";
+    const diaLejano = addDiasISO(fechaSolicitada, 251);
+    assert.equal(251 % 7, 6, "premisa del caso: 251 no es múltiplo de 7 (ningún salto semanal cae ahí)");
+    const temporadaLejana = temporadaAlta({ nombre: "LEJANA_UN_DIA", fecha_inicio: diaLejano, fecha_fin: diaLejano });
+    const datos = baseDatos({
+      paquete: { pct_mk: 0.2, impuesto_fijo: 0, destino_nombre: "Cartagena", fecha_viaje_inicio: "2026-01-01", fecha_viaje_fin: "2026-12-31" },
+      temporadas: [temporadaLejana],
+      tarifas: [tarifaPara("LEJANA_UN_DIA")],
+    });
+    const cands = candidatosFecha(datos, fechaSolicitada, "2026-01-01", "2026-12-31");
+    assert.ok(cands.length > 60 - 1, "premisa del caso: el barrido por sí solo ya genera más de 60 candidatas tempranas");
+    assert.ok(cands.includes(diaLejano), "la semilla estructural de la temporada lejana debe sobrevivir al recorte de MAX_CANDIDATOS");
+
+    const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: fechaSolicitada, numNochesSolicitadas: 1, hoy: HOY });
+    assert.ok(sugerencias.some((s) => s.fechaIda === diaLejano), "debe producir una sugerencia real para la temporada lejana de 1 día");
+  });
+
+  test("compra_inicio NUNCA se usa como semilla de fecha de viaje", () => {
+    // Una temporada con `compra_inicio` en una fecha REAL (dentro de la
+    // ventana) pero SIN tarifa ni cobertura de estadía en esa fecha: si
+    // `compra_inicio` se colara como semilla, aparecería como candidato;
+    // nunca debe hacerlo (es vigencia de COMPRA, no de viaje).
+    const compraInicioComoTrampa = "2026-06-15";
+    const t = temporadaAlta({ nombre: "SOLO_COMPRA", fecha_inicio: "2026-08-01", fecha_fin: "2026-08-10", compra_inicio: compraInicioComoTrampa });
+    const datos = baseDatos({ temporadas: [t], tarifas: [tarifaPara("SOLO_COMPRA")] });
+    const cands = candidatosFecha(datos, "2026-01-01", "2026-01-01", "2026-12-31");
+    assert.ok(!cands.includes(compraInicioComoTrampa), "compra_inicio no debe aparecer como candidato de fecha de viaje");
+  });
+});
+
+describe("15. addDiasISO — aritmética de fechas pura", () => {
   test("suma días respetando cambio de mes/año", () => {
     assert.equal(addDiasISO("2026-01-30", 3), "2026-02-02");
     assert.equal(addDiasISO("2026-12-30", 3), "2027-01-02");
   });
 });
 
-describe("13. Sin combos y sin datos → nunca lanza, devuelve arreglo vacío", () => {
+describe("16. Sin combos y sin datos → nunca lanza, devuelve arreglo vacío", () => {
   test("paquete sin temporadas ni tarifas: 0 sugerencias, sin excepción", () => {
     const vacio = baseDatos({ temporadas: [], tarifas: [] });
     const sugerencias = generarSugerenciasFechas({ datos: vacio, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 3, hoy: HOY });
