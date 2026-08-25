@@ -9,14 +9,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   noches,
-  liquidarHotelNoches,
-  marcar,
-  componerTarifa,
   temporadaParaFecha,
   toTemporadaRango,
-  minNochesAplicable,
-  factorLiquidacion,
-  type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { defaultAcomConfig, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import {
@@ -38,15 +32,93 @@ import {
   respuestaPublicaServicioPuntual, formatearLogLiquidacionServicioPuntual, fallaErrorConsulta,
   type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual,
 } from "@/lib/reservar/liquidacionServicio";
+import {
+  evaluarHotelPorFechas, generarSugerenciasFechas,
+  type ComboCotizado, type DatosHotelPaquete, type FilaTemporadaHotelRaw, type FilaTarifaHotelRaw,
+  type FilaBlackoutHotelRaw, type SugerenciaFecha, type ComposicionSugerencia,
+} from "@/lib/reservar/liquidacionHotel";
 
-// Acomodaciones (incluye niños e infante) y su columna neta en tarifa_hotel.
-const ACOM_ALL = ["sencilla", "doble", "triple", "multiple", "nino", "nino2", "infante"] as const;
-const COL_NETO: Record<string, string> = {
-  sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple",
-  multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante",
-};
+export type { ComboCotizado, SugerenciaFecha };
 
-export type ComboCotizado = { categoria: string; regimen: string; precios: Record<string, number>; netos?: Record<string, number> };
+// Mensajes públicos FIJOS para fallos técnicos al cargar un hotel/paquete
+// (ronda "fechas sugeridas") — nunca `error.message` de Supabase, nunca
+// nombres de tabla/columna/policy, nunca "falta service-role". El detalle
+// técnico real se registra SOLO server-side (console.error), con la etapa
+// que falló — ver `cargarDatosHotelPaquete` más abajo.
+const MENSAJE_HOTEL_ERROR_TECNICO = "No pudimos cotizar este hotel en este momento. Intenta nuevamente.";
+const MENSAJE_HOTEL_SIN_TARIFA = "Para las fechas elegidas no encontramos una tarifa.";
+const MENSAJE_BUSQUEDA_HOTELES_NO_DISPONIBLE = "Búsqueda no disponible en este momento. Intenta nuevamente.";
+
+type ResultadoCargaHotelPaquete =
+  | { ok: true; datos: DatosHotelPaquete }
+  | { ok: false; motivo: "paquete_no_encontrado" }
+  | { ok: false; motivo: "error_consulta"; etapa: string; detalleInterno: string };
+
+// ── Carga EN VIVO (una sola vez por hotel/paquete, sin importar cuántas
+// fechas se evalúen después) de todo lo que necesita `evaluarHotelPorFechas`
+// (lib/reservar/liquidacionHotel.ts, módulo PURO — no toca Supabase). Cada
+// una de las 6 consultas revisa su propio `error`: un fallo técnico real
+// (RLS, tabla renombrada, columna eliminada) NUNCA debe verse igual que "no
+// hay tarifa para esas fechas" — antes de esta ronda sí ocurría, porque el
+// código seguía con `?? []`/`undefined` sin mirar el error de ninguna de
+// estas consultas.
+async function cargarDatosHotelPaquete(
+  admin: ReturnType<typeof createAdminClient>,
+  paqueteId: number,
+  hotelId: number
+): Promise<ResultadoCargaHotelPaquete> {
+  const { data: pq, error: pqErr } = await admin
+    .from("armado_paquetes")
+    .select("pct_mk, impuesto_fijo, destino_id, destinos(nombre), fecha_viaje_inicio, fecha_viaje_fin")
+    .eq("id", paqueteId)
+    .maybeSingle();
+  if (pqErr) return { ok: false, motivo: "error_consulta", etapa: "armado_paquetes", detalleInterno: pqErr.message };
+  if (!pq) return { ok: false, motivo: "paquete_no_encontrado" };
+
+  const [
+    { data: hsel, error: hselErr },
+    { data: temps, error: tempsErr },
+    { data: tarifas, error: tarifasErr },
+    { data: servSel, error: servSelErr },
+    { data: blackouts, error: blackoutsErr },
+  ] = await Promise.all([
+    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
+    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", hotelId),
+    admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
+    admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
+    admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
+  ]);
+  if (hselErr) return { ok: false, motivo: "error_consulta", etapa: "armado_hoteles", detalleInterno: hselErr.message };
+  if (tempsErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_temporadas", detalleInterno: tempsErr.message };
+  if (tarifasErr) return { ok: false, motivo: "error_consulta", etapa: "tarifa_hotel", detalleInterno: tarifasErr.message };
+  if (servSelErr) return { ok: false, motivo: "error_consulta", etapa: "armado_servicios", detalleInterno: servSelErr.message };
+  if (blackoutsErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_blackouts", detalleInterno: blackoutsErr.message };
+
+  const hotelMeta = hsel?.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
+  const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
+
+  const datos: DatosHotelPaquete = {
+    paquete: {
+      pct_mk: pq.pct_mk, impuesto_fijo: pq.impuesto_fijo, destino_nombre: destinoNombre,
+      fecha_viaje_inicio: pq.fecha_viaje_inicio, fecha_viaje_fin: pq.fecha_viaje_fin,
+    },
+    armadoHotel: hsel ? {
+      categorias: (hsel.categorias as string[] | null) ?? null,
+      regimenes: (hsel.regimenes as string[] | null) ?? null,
+      hotel_nombre: hotelMeta?.nombre ?? null,
+      hotel_moneda: hotelMeta?.moneda ?? null,
+    } : null,
+    temporadas: (temps ?? []) as FilaTemporadaHotelRaw[],
+    tarifas: (tarifas ?? []) as FilaTarifaHotelRaw[],
+    serviciosIncluidos: (servSel ?? []).map((s) => ({
+      incluido: !!s.incluido,
+      precio_persona: (s.servicios_adicionales as unknown as { precio_persona: number | null } | null)?.precio_persona ?? null,
+      liquidacion: (s.servicios_adicionales as unknown as { liquidacion: string | null } | null)?.liquidacion ?? null,
+    })),
+    blackouts: (blackouts ?? []) as FilaBlackoutHotelRaw[],
+  };
+  return { ok: true, datos };
+}
 
 // ── Liquidación EN VIVO de un hotel para fechas elegidas (motor por fechas) ──
 // Reutiliza el mismo motor del generador de tarifario, pero para las noches que
@@ -54,6 +126,18 @@ export type ComboCotizado = { categoria: string; regimen: string; precios: Recor
 // categoría/régimen/acomodación (los costos netos no se exponen al cliente;
 // sí se devuelven aquí como `netos`, autoritativos, para uso interno del
 // cómputo de la reserva).
+//
+// Envoltorio delgado (ronda "fechas sugeridas"): la carga (I/O, con revisión
+// de error por consulta) vive en `cargarDatosHotelPaquete`; el cálculo
+// (idéntico al de siempre, byte a byte) vive en `evaluarHotelPorFechas`
+// (lib/reservar/liquidacionHotel.ts, módulo PURO, testeable sin Supabase).
+// Firma y contrato de retorno SIN CAMBIOS — `computo.ts` (el motor
+// autoritativo de reservar/checkout) sigue viendo exactamente el mismo
+// `{...} | null`: un fallo técnico ahora se comporta igual que "paquete no
+// encontrado" se comportaba antes (`null`), nunca peor ni distinto para ese
+// consumidor — el manejo de error MÁS específico (mensaje sanado + log) vive
+// en `cotizarPorFechas`/`buscarHoteles`, que sí llaman `cargarDatosHotelPaquete`
+// directo para poder distinguirlo.
 export async function liquidarHotelPaquete(
   admin: ReturnType<typeof createAdminClient>,
   paqueteId: number,
@@ -62,148 +146,68 @@ export async function liquidarHotelPaquete(
   numNoches: number
 ): Promise<{ combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number; moneda: string } | null> {
   if (numNoches <= 0) return null;
-  const { data: pq } = await admin
-    .from("armado_paquetes")
-    .select("pct_mk, impuesto_fijo, destino_id, destinos(nombre)")
-    .eq("id", paqueteId)
-    .maybeSingle();
-  if (!pq) return null;
-  const pctMk = Number(pq.pct_mk) || 0;
-  const impuesto = Number(pq.impuesto_fijo) || 0;
-  const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
-
-  const [{ data: hsel }, { data: temps }, { data: tarifas }, { data: servSel }, { data: blackouts }] = await Promise.all([
-    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", hotelId),
-    admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
-    admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
-    admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
-  ]);
-
-  // Black out general del hotel: cierra noches por encima de cualquier vigencia.
-  // Si alguna noche de la estadía cae en un cierre total, el hotel no se vende.
-  // Los cierres parciales se acumulan como reglas y se evalúan por combo más
-  // abajo (migración 145: además de acomodaciones, ahora también por categoría).
-  const nochesStay: string[] = [];
-  { const base = new Date(`${fechaIda}T00:00:00`).getTime(); for (let n = 0; n < numNoches; n++) nochesStay.push(new Date(base + n * 86_400_000).toISOString().slice(0, 10)); }
-  // Cada regla dice qué cierra: categorías vacías = todas; acomodaciones vacías
-  // = todas. Si vienen las dos, cierra la INTERSECCIÓN (esas acomodaciones solo
-  // dentro de esas categorías).
-  const reglasCierre: { categorias: string[]; acomodaciones: string[] }[] = [];
-  let cierreTotal = false;
-  for (const b of blackouts ?? []) {
-    const cubre = nochesStay.some((d) => (b.fecha_inicio as string) <= d && d <= (b.fecha_fin as string));
-    if (!cubre) continue;
-    if (b.total) { cierreTotal = true; continue; }
-    reglasCierre.push({
-      categorias: ((b.categorias as string[] | null) ?? []),
-      acomodaciones: ((b.acomodaciones as string[] | null) ?? []),
-    });
-  }
-  // ¿Está cerrada esta acomodación dentro de esta categoría?
-  const estaCerrada = (categoria: string, acom: string) =>
-    reglasCierre.some((r) =>
-      (r.categorias.length === 0 || r.categorias.includes(categoria)) &&
-      (r.acomodaciones.length === 0 || r.acomodaciones.includes(acom))
-    );
-  const hotelMeta = hsel?.hoteles as unknown as { nombre: string; moneda?: string | null } | null;
-  const monedaHotel = (hotelMeta?.moneda ?? "COP") === "USD" ? "USD" : "COP";
-  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: hotelMeta?.nombre ?? null, minNoches: 1, moneda: monedaHotel };
-  const filtroCat = (hsel?.categorias as string[] | null) ?? null;
-  const filtroReg = (hsel?.regimenes as string[] | null) ?? null;
-  const hotelNombre = hotelMeta?.nombre ?? null;
-  const temporadas: TemporadaRango[] = (temps ?? []).map(toTemporadaRango);
-
-  // Servicios INCLUIDOS se hornean por persona (igual que el generador).
-  let aporteServ = 0;
-  for (const s of servSel ?? []) {
-    if (!(s.incluido as boolean)) continue;
-    const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; liquidacion: string | null } | null;
-    if (srv?.precio_persona == null) continue;
-    aporteServ += marcar(Number(srv.precio_persona) || 0, pctMk) * factorLiquidacion(srv.liquidacion, numNoches);
-  }
-
-  type TarifaRow = Record<string, unknown>;
-  const grupos = new Map<string, Map<string, TarifaRow>>();
-  for (const r of (tarifas ?? []) as TarifaRow[]) {
-    const cat = (r.tipo_habitacion as string) ?? "";
-    const reg = (r.alimentacion as string) ?? "";
-    const key = `${cat}|||${reg}`;
-    if (!grupos.has(key)) grupos.set(key, new Map());
-    grupos.get(key)!.set((r.temporada as string) ?? "", r);
-  }
-
-  const combos: ComboCotizado[] = [];
-  for (const [key, tempMap] of grupos) {
-    const [categoria, regimen] = key.split("|||");
-    if (filtroCat && filtroCat.length && !filtroCat.includes(categoria)) continue;
-    if (filtroReg && filtroReg.length && !filtroReg.includes(regimen)) continue;
-    const precios: Record<string, number> = {};
-    const netos: Record<string, number> = {};
-    for (const acom of ACOM_ALL) {
-      const col = COL_NETO[acom];
-      const netoPorTemporada: Record<string, number | null> = {};
-      for (const [temp, row] of tempMap) { const v = row[col]; netoPorTemporada[temp] = v == null ? null : Number(v); }
-      const costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen });
-      // null = no aplica. En habitaciones, 0 también es "no aplica" (no gratis);
-      // en niños e infante el 0 sí es válido (gratis).
-      const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
-      if (costoHotel == null) continue;
-      if (esRoom && costoHotel <= 0) continue;
-      const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: 0, impuesto, moneda: monedaHotel });
-      precios[acom] = t.pvp;
-      netos[acom] = costoHotel; // costo neto/persona — fuente del costo al reservar
-    }
-    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos });
-  }
-  // Quita lo cerrado por blackout. Se evalúa por (categoría, acomodación), así
-  // que un cierre puede llevarse una categoría entera, una acomodación en todas
-  // las categorías, o solo una acomodación dentro de una categoría.
-  if (reglasCierre.length) {
-    for (const c of combos) {
-      for (const a of Object.keys(c.precios)) {
-        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; }
-      }
-    }
-  }
-  const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2" && a !== "infante"));
-  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel };
+  const carga = await cargarDatosHotelPaquete(admin, paqueteId, hotelId);
+  if (!carga.ok) return null;
+  return evaluarHotelPorFechas(carga.datos, fechaIda, numNoches);
 }
 
 export type CotizarResult =
   | { ok: true; combos: ComboCotizado[]; noches: number; moneda: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; sugerencias: SugerenciaFecha[] };
 
-/** Cotiza un hotel para las fechas que elige el asesor (porción/dinámico). */
+/**
+ * Cotiza un hotel para las fechas que elige el asesor/cliente (porción/
+ * dinámico). Cuando la fecha pedida no tiene tarifa (o exige más noches),
+ * devuelve además hasta 4 `sugerencias` de fechas cercanas donde este MISMO
+ * hotel/paquete SÍ cotiza — validadas con el mismo motor real
+ * (`generarSugerenciasFechas`, lib/reservar/liquidacionHotel.ts), nunca
+ * derivadas solo de los límites de una temporada. `sugerencias` es siempre
+ * un arreglo (vacío si no aplica o si el fallo fue técnico) para que el
+ * llamador no tenga que distinguir `undefined` de "no hay".
+ *
+ * FRONTERA PÚBLICA: el detalle interno de un fallo técnico o de catálogo
+ * (mensaje real de Supabase, o qué temporada específica falta cargar) NUNCA
+ * cruza hacia el navegador — se registra con `console.error` server-side; el
+ * cliente recibe siempre uno de dos mensajes fijos y comerciales
+ * (`MENSAJE_HOTEL_SIN_TARIFA`/`MENSAJE_HOTEL_ERROR_TECNICO`).
+ */
 export async function cotizarPorFechas(input: {
   paqueteId: number; hotelId: number; fechaIda: string; fechaRegreso: string;
 }): Promise<CotizarResult> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Cotización por fechas no disponible (falta service-role)." };
-  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y de regreso." };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("[cotizarPorFechas] etapa=arranque detalle=SUPABASE_SERVICE_ROLE_KEY no configurada");
+    return { ok: false, error: MENSAJE_HOTEL_ERROR_TECNICO, sugerencias: [] };
+  }
+  if (!input.fechaIda || !input.fechaRegreso) return { ok: false, error: "Indica fecha de ida y de regreso.", sugerencias: [] };
   const numNoches = noches(input.fechaIda, input.fechaRegreso);
-  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+  if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida.", sugerencias: [] };
+
   const admin = createAdminClient();
-  const { data: pq } = await admin
-    .from("armado_paquetes")
-    .select("fecha_viaje_inicio, fecha_viaje_fin")
-    .eq("id", input.paqueteId)
-    .maybeSingle();
-  if (pq?.fecha_viaje_inicio && input.fechaIda < pq.fecha_viaje_inicio)
-    return { ok: false, error: `La ida no puede ser antes del ${pq.fecha_viaje_inicio} (rango del paquete).` };
-  if (pq?.fecha_viaje_fin && input.fechaRegreso > pq.fecha_viaje_fin)
-    return { ok: false, error: `El regreso no puede ser después del ${pq.fecha_viaje_fin} (rango del paquete).` };
-  const res = await liquidarHotelPaquete(admin, input.paqueteId, input.hotelId, input.fechaIda, numNoches);
+  const carga = await cargarDatosHotelPaquete(admin, input.paqueteId, input.hotelId);
+  if (!carga.ok) {
+    if (carga.motivo === "paquete_no_encontrado") return { ok: false, error: MENSAJE_HOTEL_SIN_TARIFA, sugerencias: [] };
+    console.error(`[cotizarPorFechas] etapa=${carga.etapa} paqueteId=${input.paqueteId} hotelId=${input.hotelId} detalle=${carga.detalleInterno}`);
+    return { ok: false, error: MENSAJE_HOTEL_ERROR_TECNICO, sugerencias: [] };
+  }
+  const { datos } = carga;
+
+  if (datos.paquete.fecha_viaje_inicio && input.fechaIda < datos.paquete.fecha_viaje_inicio)
+    return { ok: false, error: `La ida no puede ser antes del ${datos.paquete.fecha_viaje_inicio} (rango del paquete).`, sugerencias: [] };
+  if (datos.paquete.fecha_viaje_fin && input.fechaRegreso > datos.paquete.fecha_viaje_fin)
+    return { ok: false, error: `El regreso no puede ser después del ${datos.paquete.fecha_viaje_fin} (rango del paquete).`, sugerencias: [] };
+
+  const res = evaluarHotelPorFechas(datos, input.fechaIda, numNoches);
   if (res && numNoches < (res.minNoches ?? 1)) {
-    return { ok: false, error: `Este alojamiento exige un mínimo de ${res.minNoches} noche(s) para esas fechas.` };
+    const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: input.fechaIda, numNochesSolicitadas: numNoches });
+    return { ok: false, error: `Este alojamiento exige un mínimo de ${res.minNoches} noche(s) para esas fechas.`, sugerencias };
   }
   if (!res || !res.combos.length) {
-    // Diagnóstico: ¿qué temporada de las noches elegidas no tiene tarifa cargada?
-    const [{ data: temps }, { data: tars }] = await Promise.all([
-      admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId),
-      admin.from("tarifa_hotel").select("temporada").eq("hotel_id", input.hotelId),
-    ]);
-    const temporadas = (temps ?? []).map(toTemporadaRango);
-    const conTarifa = new Set((tars ?? []).map((t) => (t.temporada ?? "").trim()));
+    // Diagnóstico técnico (SOLO para el log — nunca al cliente, ver mensaje
+    // fijo más abajo): ¿qué temporada de las noches elegidas no tiene tarifa
+    // cargada? Reutiliza los datos YA CONSULTADOS por `cargarDatosHotelPaquete`
+    // — antes de esta ronda esto repetía 2 consultas más a Supabase.
+    const temporadas = datos.temporadas.map(toTemporadaRango);
+    const conTarifa = new Set(datos.tarifas.map((t) => ((t.temporada as string) ?? "").trim()));
     const base = new Date(`${input.fechaIda}T00:00:00`).getTime();
     const faltan = new Set<string>();
     let hayNocheSinTemp = false;
@@ -212,10 +216,13 @@ export async function cotizarPorFechas(input: {
       if (!temp) hayNocheSinTemp = true;
       else if (!conTarifa.has(temp.trim())) faltan.add(temp);
     }
-    let error = "No hay tarifa para esas fechas (revisa temporadas del hotel).";
-    if (faltan.size) error = `Falta cargar la tarifa de la temporada: ${[...faltan].join(", ")} (cae dentro de tu rango de fechas).`;
-    else if (hayNocheSinTemp) error = "Hay noches que no caen en ninguna temporada del hotel; define la temporada para esas fechas.";
-    return { ok: false, error };
+    let detalle = "sin diagnóstico adicional (0 combos)";
+    if (faltan.size) detalle = `falta cargar la tarifa de la temporada: ${[...faltan].join(", ")}`;
+    else if (hayNocheSinTemp) detalle = "hay noches que no caen en ninguna temporada del hotel";
+    console.error(`[cotizarPorFechas] etapa=sin_tarifa paqueteId=${input.paqueteId} hotelId=${input.hotelId} detalle=${detalle}`);
+
+    const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: input.fechaIda, numNochesSolicitadas: numNoches });
+    return { ok: false, error: MENSAJE_HOTEL_SIN_TARIFA, sugerencias };
   }
   // Se devuelve al cliente SIN `netos` (el costo interno no sale del servidor).
   const combosPublicos = res.combos.map((c) => ({ categoria: c.categoria, regimen: c.regimen, precios: c.precios }));
@@ -261,13 +268,75 @@ export type BusquedaResultado = {
   combos: { categoria: string; regimen: string; total: number; pax: number; menores: ClasificacionMenores }[];
 };
 
+// Máximo de hoteles/paquetes cuyo `DatosHotelPaquete` (ya cargado durante la
+// búsqueda principal, sin I/O adicional) se usa para intentar sugerencias de
+// fecha — acota el trabajo extra (fetch de acomodaciones/edades por hotel,
+// necesario SOLO para validar composición) cuando el destino consultado
+// tiene muchos hoteles.
+const MAX_HOTELES_SUGERENCIA_FECHA = 6;
+
+// Recorre un subconjunto ACOTADO de los pares hotel/paquete cuya carga fue
+// exitosa (cacheada durante el bucle principal de `buscarHoteles`, cero
+// consultas nuevas para eso) y les pide sugerencias de fecha reales — el
+// único fetch adicional es `hotel_acomodaciones`/`hoteles` por hotel
+// candidato, necesario para validar que la composición (habitaciones/
+// menores) siga cabiendo en la fecha sugerida, nunca solo "hay tarifa".
+async function sugerenciasBusquedaGeneral(
+  admin: ReturnType<typeof createAdminClient>,
+  datosPorPar: { paquete: number; hotel: number; datos: DatosHotelPaquete }[],
+  input: BusquedaInput,
+  numNoches: number
+): Promise<SugerenciaFecha[]> {
+  const vistas = new Set<string>();
+  const sugerencias: SugerenciaFecha[] = [];
+  for (const { hotel, datos } of datosPorPar.slice(0, MAX_HOTELES_SUGERENCIA_FECHA)) {
+    if (sugerencias.length >= 4) break;
+    let composicion: ComposicionSugerencia | null = null;
+    if (input.habitaciones.length) {
+      const [{ data: acomCfg, error: acomCfgErr }, { data: hotelRow, error: hotelRowErr }] = await Promise.all([
+        admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotel),
+        admin.from("hoteles").select("edad_infante_max, edad_nino_max, adults_only").eq("id", hotel).maybeSingle(),
+      ]);
+      // Fallo técnico puntual acá solo excluye ESTE hotel de las sugerencias
+      // (best-effort) — nunca revienta la búsqueda ya resuelta, que ya
+      // terminó y se está devolviendo `ok: true` con 0 resultados.
+      if (acomCfgErr || hotelRowErr) continue;
+      const reglas = (acomCfg ?? []) as AcomConfig[];
+      const configDe = (a: AcomRoom): AcomConfig => reglas.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
+      composicion = {
+        adultosDeclarados: input.adultos,
+        habitacionesConsultadas: input.habitaciones.map((h) => ({ acom: h.acom, config: configDe(h.acom) })),
+        edadesMenores: input.edadesMenores,
+        edadInfanteMax: hotelRow?.edad_infante_max ?? 2,
+        edadNinoMax: hotelRow?.edad_nino_max ?? 10,
+        adultsOnly: !!hotelRow?.adults_only,
+      };
+    }
+    const propias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: input.fechaIda, numNochesSolicitadas: numNoches, composicion });
+    for (const s of propias) {
+      const key = `${s.fechaIda}|${s.fechaRegreso}`;
+      if (vistas.has(key)) continue;
+      vistas.add(key);
+      sugerencias.push(s);
+      if (sugerencias.length >= 4) break;
+    }
+  }
+  sugerencias.sort((a, b) => a.fechaIda.localeCompare(b.fechaIda));
+  return sugerencias.slice(0, 4);
+}
+
 // `inputRaw` se trata como `unknown` — esta función es alcanzable desde el
 // navegador (Server Action) con cualquier body HTTP, sin importar lo que
 // declare el tipo `BusquedaInput`. Se valida la FORMA completa (objeto,
 // fechas, destino, adultos, habitaciones, cantidad de menores, edades) antes
 // de tocar la base de datos o el motor de liquidación.
-export async function buscarHoteles(inputRaw: unknown): Promise<{ ok: true; resultados: BusquedaResultado[]; diagnostico?: string } | { ok: false; error: string }> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Búsqueda no disponible (falta service-role)." };
+export async function buscarHoteles(inputRaw: unknown): Promise<
+  { ok: true; resultados: BusquedaResultado[]; diagnostico?: string; sugerenciasFecha?: SugerenciaFecha[] } | { ok: false; error: string }
+> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("[buscarHoteles] etapa=arranque detalle=SUPABASE_SERVICE_ROLE_KEY no configurada");
+    return { ok: false, error: MENSAJE_BUSQUEDA_HOTELES_NO_DISPONIBLE };
+  }
   if (typeof inputRaw !== "object" || inputRaw === null || Array.isArray(inputRaw)) {
     return { ok: false, error: "La consulta no tiene una forma válida." };
   }
@@ -306,7 +375,11 @@ export async function buscarHoteles(inputRaw: unknown): Promise<{ ok: true; resu
     .eq("modulo", "porcion_terrestre")
     .eq("paquete_activo", true);
   if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
-  const { data: filas } = await q;
+  const { data: filas, error: filasErr } = await q;
+  if (filasErr) {
+    console.error(`[buscarHoteles] etapa=tarifario_resultado detalle=${filasErr.message}`);
+    return { ok: false, error: MENSAJE_BUSQUEDA_HOTELES_NO_DISPONIBLE };
+  }
   const pares = new Map<string, { paquete: number; hotel: number }>();
   for (const f of filas ?? []) if (f.paquete_id != null && f.hotel_id != null) pares.set(`${f.paquete_id}-${f.hotel_id}`, { paquete: f.paquete_id, hotel: f.hotel_id });
 
@@ -325,17 +398,44 @@ export async function buscarHoteles(inputRaw: unknown): Promise<{ ok: true; resu
   // búsqueda entera queda en 0 resultados por la misma composición.
   const rechazos = new Map<string, number>();
   let evaluados = 0;
+  let falloTecnico = false;
   const registrarRechazo = (motivo: string) => rechazos.set(motivo, (rechazos.get(motivo) ?? 0) + 1);
+  // Datos crudos de cada hotel/paquete cuya carga tuvo éxito pero NO tenía
+  // tarifa para la fecha pedida (o exigía más noches) — se guardan (sin
+  // I/O extra, ya están en memoria) para poder intentar sugerencias de
+  // fecha DESPUÉS, solo si la búsqueda completa termina en 0 resultados por
+  // motivo de fechas (ver el cierre de la función).
+  const datosSinTarifaParaFecha: { paquete: number; hotel: number; datos: DatosHotelPaquete }[] = [];
 
   for (const { paquete, hotel } of pares.values()) {
-    const res = await liquidarHotelPaquete(admin, paquete, hotel, input.fechaIda, numNoches);
-    if (!res || !res.combos.length) continue;
-    if (numNoches < (res.minNoches ?? 1)) continue; // exige más noches de las buscadas
+    const carga = await cargarDatosHotelPaquete(admin, paquete, hotel);
+    if (!carga.ok) {
+      if (carga.motivo === "error_consulta") {
+        console.error(`[buscarHoteles] etapa=${carga.etapa} paqueteId=${paquete} hotelId=${hotel} detalle=${carga.detalleInterno}`);
+        falloTecnico = true;
+      }
+      continue; // "paquete_no_encontrado" no debería pasar (viene de tarifario_resultado), pero tampoco revienta la búsqueda de los demás pares
+    }
+    const { datos } = carga;
+    const res = evaluarHotelPorFechas(datos, input.fechaIda, numNoches);
+    if (!res || !res.combos.length || numNoches < (res.minNoches ?? 1)) {
+      // Sin tarifa para ESTA fecha (o exige más noches) — motivo de fecha,
+      // nunca de composición: se guarda para sugerencias, nunca se cuenta
+      // en `evaluados` (esa cuenta es exclusiva de los pares que SÍ tenían
+      // tarifa y llegaron a la etapa de composición).
+      datosSinTarifaParaFecha.push({ paquete, hotel, datos });
+      continue;
+    }
 
-    const [{ data: acomCfg }, { data: hotelRow }] = await Promise.all([
+    const [{ data: acomCfg, error: acomCfgErr }, { data: hotelRow, error: hotelRowErr }] = await Promise.all([
       admin.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotel),
       admin.from("hoteles").select("edad_infante_max, edad_nino_max, adults_only").eq("id", hotel).maybeSingle(),
     ]);
+    if (acomCfgErr || hotelRowErr) {
+      console.error(`[buscarHoteles] etapa=hotel_acomodaciones_o_hoteles paqueteId=${paquete} hotelId=${hotel} detalle=${acomCfgErr?.message ?? hotelRowErr?.message}`);
+      falloTecnico = true;
+      continue;
+    }
     evaluados++;
     if (edades.length > 0 && hotelRow?.adults_only) { registrarRechazo("Este hotel es Adults Only y no acepta menores."); continue; }
 
@@ -403,14 +503,35 @@ export async function buscarHoteles(inputRaw: unknown): Promise<{ ok: true; resu
   }
   resultados.sort((a, b) => a.total - b.total);
 
+  // Un fallo técnico real en TODOS los pares evaluados nunca debe verse como
+  // "sin resultados" a secas — aborta con el mensaje genérico saneado. Si
+  // solo ALGUNOS pares fallaron técnicamente pero otros sí se evaluaron con
+  // éxito (con o sin resultado), la búsqueda sigue: esos pares puntuales
+  // simplemente no aparecen, igual que "sin tarifa" — mismo criterio que
+  // `buscarReceptivos` (ronda 7) adaptado a que acá son MUCHOS pares
+  // independientes por búsqueda, no una sola liquidación puntual.
+  if (!resultados.length && falloTecnico && evaluados === 0 && !datosSinTarifaParaFecha.length) {
+    return { ok: false, error: MENSAJE_BUSQUEDA_HOTELES_NO_DISPONIBLE };
+  }
+
   // Nunca "sin resultados" a secas si sí había hoteles candidatos y todos
   // quedaron descartados por la misma composición: se entrega el motivo más
   // frecuente entre los evaluados, sin exponer cuál hotel lo dio.
   let diagnostico: string | undefined;
+  let sugerenciasFecha: SugerenciaFecha[] | undefined;
   if (!resultados.length && evaluados > 0 && rechazos.size) {
     diagnostico = [...rechazos.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  } else if (!resultados.length && evaluados === 0 && datosSinTarifaParaFecha.length > 0) {
+    // NINGÚN par llegó siquiera a la etapa de composición (edad/capacidad/
+    // Adults Only) — el motivo de los 0 resultados es 100% de fechas, nunca
+    // de composición, así que sí vale la pena sugerir fechas cercanas con
+    // tarifa real para esta MISMA composición (nunca al revés: si algún par
+    // sí llegó a composición y fue rechazado ahí, `evaluados > 0` gana
+    // arriba y no se sugieren fechas — cambiar de fecha no arreglaría un
+    // problema de capacidad/edad/Adults Only).
+    sugerenciasFecha = await sugerenciasBusquedaGeneral(admin, datosSinTarifaParaFecha, input, numNoches);
   }
-  return { ok: true, resultados, diagnostico };
+  return { ok: true, resultados, diagnostico, sugerenciasFecha };
 }
 
 // ── Mini-motor de búsqueda de RECEPTIVOS (servicios): liquida EN VIVO cada

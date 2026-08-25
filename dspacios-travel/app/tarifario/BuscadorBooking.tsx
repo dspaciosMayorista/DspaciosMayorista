@@ -5,7 +5,7 @@ import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
 import { buscarHoteles } from "@/app/(dashboard)/dashboard/reservar/actions";
-import { type BusquedaResultado } from "@/lib/reservar/cotizar";
+import { type BusquedaResultado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { EDAD_MENOR_MAX, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseEdadMenor } from "@/lib/reservar/edadesMenores";
 
 export function BuscadorBooking({
@@ -30,6 +30,13 @@ export function BuscadorBooking({
   const [avisoHab, setAvisoHab] = useState("");
   const [resultados, setResultados] = useState<BusquedaResultado[] | null>(null);
   const [diagnostico, setDiagnostico] = useState<string | null>(null);
+  // Sugerencias de fecha cuando la búsqueda entera queda en 0 hoteles SOLO
+  // por motivo de fechas (ningún hotel llegó siquiera a evaluar capacidad/
+  // edad/Adults Only — ver lib/reservar/cotizar.ts) — nunca cuando el motivo
+  // real es de composición (ahí `diagnostico` ya cubre el caso, y mostrar
+  // fechas sería engañoso: cambiar de fecha no resuelve un problema de
+  // capacidad).
+  const [sugerenciasFecha, setSugerenciasFecha] = useState<SugerenciaFecha[] | null>(null);
   const [soloPetFriendly, setSoloPetFriendly] = useState(false);
   const [soloAdultsOnly, setSoloAdultsOnly] = useState(false);
 
@@ -70,22 +77,33 @@ export function BuscadorBooking({
   const adultosParsed = /^\d+$/.test(adultosTrim) ? Number(adultosTrim) : null;
   const adultosValido = adultosParsed != null && adultosParsed >= 1;
 
-  function buscar() {
-    setErr(""); setResultados(null); setDiagnostico(null);
-    if (!fIda || !fReg) { setErr("Indica fecha de ida y de regreso."); return; }
+  function buscar(overrideIda?: string, overrideRegreso?: string) {
+    setErr(""); setResultados(null); setDiagnostico(null); setSugerenciasFecha(null);
+    const idaUsada = overrideIda ?? fIda;
+    const regresoUsada = overrideRegreso ?? fReg;
+    if (!idaUsada || !regresoUsada) { setErr("Indica fecha de ida y de regreso."); return; }
     if (!adultosValido) { setErr("La cantidad de adultos debe ser un entero mayor o igual a 1."); return; }
     if (!menoresListos) { setErr(`Falta la edad de ${edadesFaltantes} menor(es).`); return; }
     start(async () => {
       const r = await buscarHoteles({
-        fechaIda: fIda, fechaRegreso: fReg,
+        fechaIda: idaUsada, fechaRegreso: regresoUsada,
         habitaciones: habs.map((acom) => ({ acom })),
         adultos: adultosParsed,
         cantidadMenores, edadesMenores: edades,
         destino,
       });
-      if (r.ok) { setResultados(r.resultados); setDiagnostico(r.diagnostico ?? null); }
+      if (r.ok) { setResultados(r.resultados); setDiagnostico(r.diagnostico ?? null); setSugerenciasFecha(r.sugerenciasFecha ?? null); }
       else setErr(r.error);
     });
+  }
+
+  // Pulsar una sugerencia: actualiza ida/regreso (conserva destino,
+  // habitaciones, adultos y edades — todo el resto de la composición ya
+  // capturada) y repite la búsqueda. Nunca agrega nada al carrito.
+  function aplicarSugerenciaFecha(s: SugerenciaFecha) {
+    setFIda(s.fechaIda);
+    setFReg(s.fechaRegreso);
+    buscar(s.fechaIda, s.fechaRegreso);
   }
 
   const resultadosFiltrados = useMemo(() => {
@@ -172,7 +190,7 @@ export function BuscadorBooking({
         )}
 
         <div className="mt-3 flex items-center gap-3">
-          <button type="button" onClick={buscar} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
+          <button type="button" onClick={() => buscar()} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Buscando…" : "Buscar hoteles"}
           </button>
           {resultados && <button type="button" onClick={() => setResultados(null)} className="text-xs text-gray-400 hover:text-gray-700">Limpiar resultados</button>}
@@ -197,11 +215,31 @@ export function BuscadorBooking({
             </div>
           </div>
           {resultadosFiltrados.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-gray-200 py-8 text-center text-sm text-gray-400">
-              {diagnostico
-                ? diagnostico
-                : "No hay hoteles que cumplan esa composición/fechas/filtros. Prueba otra acomodación, fechas o quita un filtro."}
-            </p>
+            <div className="rounded-xl border border-dashed border-gray-200 py-8 text-center">
+              <p className="text-sm text-gray-400">
+                {diagnostico
+                  ? diagnostico
+                  : "No hay hoteles que cumplan esa composición/fechas/filtros. Prueba otra acomodación, fechas o quita un filtro."}
+              </p>
+              {!!sugerenciasFecha?.length && (
+                <div className="mt-3">
+                  <p className="text-xs font-medium text-gray-500">Prueba estas fechas con tarifa</p>
+                  <div className="mt-1.5 flex flex-wrap justify-center gap-1.5">
+                    {sugerenciasFecha.map((s) => (
+                      <button
+                        key={s.fechaIda}
+                        type="button"
+                        onClick={() => aplicarSugerenciaFecha(s)}
+                        disabled={pending}
+                        className="rounded-full border border-gray-300 bg-transparent px-3 py-1 text-xs font-medium text-gray-600 transition-colors hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] disabled:opacity-50"
+                      >
+                        {s.etiqueta}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {resultadosFiltrados.map((r) => (
