@@ -7,7 +7,7 @@ import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
-import { type ComboCotizado } from "@/lib/reservar/cotizar";
+import { type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import {
   EDAD_MENOR_MAX,
   MAX_MENORES_POR_CONSULTA,
@@ -1126,17 +1126,43 @@ function SelectorPorFechas({
   const [pending, start] = useTransition();
   const [cat, setCat] = useState("");
   const [reg, setReg] = useState("");
+  // Sugerencias de fecha cuando la cotización pedida no encontró tarifa —
+  // siempre REALES (validadas por el mismo motor, ver
+  // lib/reservar/liquidacionHotel.ts), nunca solo derivadas de límites de
+  // temporada. `viaSugerencia` habilita el aviso "Tarifa cargada para esas
+  // fechas..." solo cuando el resultado vino de pulsar una sugerencia (no de
+  // una cotización manual normal). `sugerenciaAplicando` identifica cuál
+  // botón está en curso, para su propio estado de carga.
+  const [sugerencias, setSugerencias] = useState<SugerenciaFecha[]>([]);
+  const [viaSugerencia, setViaSugerencia] = useState(false);
+  const [sugerenciaAplicando, setSugerenciaAplicando] = useState<string | null>(null);
 
-  function cotizar() {
+  function cotizar(overrideIda?: string, overrideRegreso?: string, desdeSugerencia = false) {
     setErr("");
-    if (!fIda || !fReg) { setErr("Indica fecha de ida y de regreso."); return; }
+    const idaUsada = overrideIda ?? fIda;
+    const regresoUsada = overrideRegreso ?? fReg;
+    if (!idaUsada || !regresoUsada) { setErr("Indica fecha de ida y de regreso."); return; }
     start(async () => {
-      const r = await cotizarPorFechas({ paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, fechaIda: fIda, fechaRegreso: fReg });
+      const r = await cotizarPorFechas({ paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, fechaIda: idaUsada, fechaRegreso: regresoUsada });
       if (r.ok) {
         setCombos(r.combos); setNochesCot(r.noches);
         setCat(r.combos[0]?.categoria ?? ""); setReg(r.combos[0]?.regimen ?? "");
-      } else { setCombos(null); setErr(r.error); }
+        setSugerencias([]); setViaSugerencia(desdeSugerencia);
+      } else {
+        setCombos(null); setErr(r.error); setSugerencias(r.sugerencias); setViaSugerencia(false);
+      }
+      setSugerenciaAplicando(null);
     });
+  }
+
+  // Pulsar una sugerencia: completa ida/regreso, conserva hotel (nada más
+  // cambia de contexto — habitaciones/edades todavía no se han elegido en
+  // este punto del flujo) y vuelve a cotizar. Nunca agrega nada al carrito.
+  function aplicarSugerencia(s: SugerenciaFecha) {
+    setFIda(s.fechaIda);
+    setFReg(s.fechaRegreso);
+    setSugerenciaAplicando(s.fechaIda);
+    cotizar(s.fechaIda, s.fechaRegreso, true);
   }
 
   const cats = combos ? [...new Set(combos.map((c) => c.categoria))] : [];
@@ -1172,23 +1198,46 @@ function SelectorPorFechas({
                 // Sin auto-relleno de regreso: si deja de ser posterior a la
                 // nueva ida, se limpia (el usuario elige la fecha real).
                 if (nueva && fReg && fReg <= nueva) setFReg("");
-                setCombos(null);
+                setCombos(null); setSugerencias([]); setViaSugerencia(false);
               }}
               className={dateCls} />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Regreso</label>
-            <input type="date" value={fReg} min={fIda || minIda} max={ventana.max ?? undefined} onChange={(e) => { setFReg(e.target.value); setCombos(null); }} className={dateCls} />
+            <input type="date" value={fReg} min={fIda || minIda} max={ventana.max ?? undefined}
+              onChange={(e) => { setFReg(e.target.value); setCombos(null); setSugerencias([]); setViaSugerencia(false); }}
+              className={dateCls} />
           </div>
-          <button type="button" onClick={cotizar} disabled={pending || !fIda || !fReg}
+          <button type="button" onClick={() => cotizar()} disabled={pending || !fIda || !fReg}
             className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-accent)" }}>
-            {pending ? "Cotizando…" : "Cotizar"}
+            {pending && !sugerenciaAplicando ? "Cotizando…" : "Cotizar"}
           </button>
         </div>
         {(ventana.min || ventana.max) && (
           <p className="mt-1 text-[11px] text-gray-400">Rango del paquete: {ventana.min ?? "—"} → {ventana.max ?? "—"}</p>
         )}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+        {!!sugerencias.length && (
+          <div className="mt-2">
+            <p className="text-xs font-medium text-gray-500">Fechas con tarifa para este hotel</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {sugerencias.map((s) => (
+                <button
+                  key={s.fechaIda}
+                  type="button"
+                  onClick={() => aplicarSugerencia(s)}
+                  disabled={pending}
+                  className="rounded-full border border-gray-300 bg-transparent px-3 py-1 text-xs font-medium text-gray-600 transition-colors hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] disabled:opacity-50"
+                >
+                  {pending && sugerenciaAplicando === s.fechaIda ? "Cotizando…" : s.etiqueta}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {viaSugerencia && combos && combos.length > 0 && (
+          <p className="mt-2 text-xs font-medium" style={{ color: "var(--brand-success)" }}>Tarifa cargada para esas fechas. Cupo sujeto a confirmación.</p>
+        )}
       </div>
 
       {combos && combos.length > 0 && (

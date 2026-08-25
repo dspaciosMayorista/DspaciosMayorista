@@ -19,6 +19,7 @@ import {
   type CotizarResult,
   type BusquedaResultado,
   type ResultadoServicio,
+  type SugerenciaFecha,
 } from "@/lib/reservar/cotizar";
 import {
   computarReserva,
@@ -30,10 +31,12 @@ import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaqu
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
+// `input` es `unknown` a propósito (ronda 2) — misma razón que `buscarHoteles`
+// abajo: toda la validación de forma vive en `cotizarPorFechasImpl`
+// (lib/reservar/cotizar.ts → `validarEntradaCotizarPorFechas`), nunca se
+// confía en el tipo declarado en tiempo de ejecución.
 /** Cotiza un hotel para las fechas que elige el asesor (porción/dinámico). */
-export async function cotizarPorFechas(input: {
-  paqueteId: number; hotelId: number; fechaIda: string; fechaRegreso: string;
-}): Promise<CotizarResult> {
+export async function cotizarPorFechas(input: unknown): Promise<CotizarResult> {
   return cotizarPorFechasImpl(input);
 }
 
@@ -41,7 +44,9 @@ export async function cotizarPorFechas(input: {
 // navegador (Vista Booking pública) con cualquier body HTTP — toda la
 // validación de forma vive en `buscarHotelesImpl` (lib/reservar/cotizar.ts),
 // nunca se confía en el tipo `BusquedaInput` en tiempo de ejecución.
-export async function buscarHoteles(input: unknown): Promise<{ ok: true; resultados: BusquedaResultado[]; diagnostico?: string } | { ok: false; error: string }> {
+export async function buscarHoteles(input: unknown): Promise<
+  { ok: true; resultados: BusquedaResultado[]; diagnostico?: string; sugerenciasFecha?: SugerenciaFecha[] } | { ok: false; error: string }
+> {
   return buscarHotelesImpl(input);
 }
 
