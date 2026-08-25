@@ -8,10 +8,14 @@ import {
   resolverConfiguracionServicio,
   validarModoServicio,
   validarPctMarkup,
+  respuestaPublicaServicioPuntual,
+  formatearLogLiquidacionServicioPuntual,
+  fallaErrorConsulta,
   type DatosServicioPar,
   type FilaPaquete,
   type FilaArmadoServicio,
   type FilaServicioAdicional,
+  type ResultadoServicioPuntual,
 } from "../lib/reservar/liquidacionServicio.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -88,7 +92,7 @@ describe("4. El armado debe pertenecer EXACTAMENTE al par consultado", () => {
     const armadoAjeno: FilaArmadoServicio = { paquete_id: 999, servicio_id: 1, modo: "persona" };
     const r = resolverLiquidacionServicioPuntual(baseInput({ armado: armadoAjeno }));
     assert.equal(r.ok, false);
-    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.error, /no corresponde al par/); }
+    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.detalleInterno, /no coincide con par/); }
   });
 });
 
@@ -351,11 +355,201 @@ describe("17. Ronda 5: consistencia defensiva del par en resolverLiquidacionServ
   test("paquete.id distinto de par.paqueteId (filas cruzadas) → configuracion_invalida", () => {
     const r = resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 999, pct_mk: 0.2 } }));
     assert.equal(r.ok, false);
-    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.error, /paquete consultado no corresponde/); }
+    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.detalleInterno, /no coincide con par\.paqueteId/); }
   });
   test("servicio.id distinto de par.servicioId (filas cruzadas) → configuracion_invalida", () => {
     const r = resolverLiquidacionServicioPuntual(baseInput({ servicio: { ...SERVICIO, id: 999 } }));
     assert.equal(r.ok, false);
-    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.error, /servicio consultado no corresponde/); }
+    if (!r.ok) { assert.equal(r.tipo, "configuracion_invalida"); assert.match(r.detalleInterno, /no coincide con par\.servicioId/); }
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Ronda 6 — "ERROR INTERNO DE SUPABASE EXPUESTO AL CLIENTE". El `error` de
+// las rondas 4/5 concatenaba texto REAL de Supabase (`${input.paqueteError}`,
+// etc.) directo en el string que terminaba devuelto por la Server Action
+// pública — una llamada anónima podía ver mensajes técnicos de Postgres
+// (nombres de relación/tabla/columna, "permission denied", etc.). Ahora
+// `ResultadoServicioPuntual` separa `mensajePublico` (fijo, controlado) de
+// `detalleInterno` (solo logging server-side), y `respuestaPublicaServicioPuntual`
+// es la frontera que DESCARTA `detalleInterno` antes de que cualquier cosa
+// cruce hacia el navegador. Estas pruebas ejecutan la lógica REAL con textos
+// de error de Postgres realistas y confirman que nunca sobreviven a la
+// traducción pública, pero sí quedan disponibles para el log.
+// ───────────────────────────────────────────────────────────────────────────
+
+const ERRORES_POSTGRES_REALISTAS = [
+  'relation "armado_servicios" does not exist',
+  "permission denied for table armado_paquetes",
+  "permission denied for table servicios_adicionales",
+  'column "pct_mk" does not exist',
+  "column pct_mk does not exist",
+  "new row violates row-level security policy for table \"servicio_temporadas\"",
+];
+
+describe("18. Ronda 6: error_consulta — un mensaje de Postgres realista NUNCA sobrevive a mensajePublico", () => {
+  const campos: (keyof ReturnType<typeof baseInput>)[] = [
+    "filaTarifarioError", "paqueteError", "armadoError", "servicioError", "gruposError", "temporadasError",
+  ];
+  for (const campo of campos) {
+    for (const detalle of ERRORES_POSTGRES_REALISTAS) {
+      test(`${campo} = ${JSON.stringify(detalle)} → mensajePublico es el texto fijo, detalleInterno SÍ lo conserva`, () => {
+        const r = resolverLiquidacionServicioPuntual(baseInput({ [campo]: detalle } as Partial<Parameters<typeof resolverLiquidacionServicioPuntual>[0]>));
+        assert.equal(r.ok, false);
+        if (r.ok) return;
+        assert.equal(r.tipo, "error_consulta");
+        assert.equal(r.mensajePublico, "No pudimos validar el servicio en este momento. Intenta nuevamente.");
+        assert.doesNotMatch(r.mensajePublico, /armado_servicios|armado_paquetes|servicios_adicionales|pct_mk|relation|permission denied|row-level security|policy/i);
+        // El detalle SÍ debe conservarse — es lo que se registra en el log.
+        assert.match(r.detalleInterno, new RegExp(detalle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+        assert.ok(typeof r.codigo === "string" && r.codigo.length > 0);
+      });
+    }
+  }
+});
+
+describe("19. Ronda 6: configuracion_invalida — nunca expone nombres de tabla/columna ni valores de configuración", () => {
+  test("modo inválido: mensajePublico es el texto fijo, nunca menciona armado_servicios ni el valor real de modo", () => {
+    const r = resolverLiquidacionServicioPuntual(baseInput({ armado: { ...ARMADO, modo: "'; DROP TABLE armado_servicios; --" } }));
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.tipo, "configuracion_invalida");
+    assert.equal(r.mensajePublico, "Este servicio requiere una revisión interna antes de poder cotizarse.");
+    assert.doesNotMatch(r.mensajePublico, /armado_servicios|DROP TABLE|modo/i);
+    assert.match(r.detalleInterno, /armado_servicios\.modo/); // el detalle técnico SÍ vive acá, para el log
+  });
+  test("markup inválido: mensajePublico es el texto fijo, nunca menciona pct_mk ni armado_paquetes", () => {
+    const r = resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 10, pct_mk: NaN } }));
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.mensajePublico, "Este servicio requiere una revisión interna antes de poder cotizarse.");
+    assert.doesNotMatch(r.mensajePublico, /pct_mk|armado_paquetes/i);
+  });
+  test("paquete/armado ausentes: mensajePublico nunca menciona 'armado_servicios' aunque el detalle interno sí lo haga", () => {
+    const rPaquete = resolverLiquidacionServicioPuntual(baseInput({ paquete: null }));
+    const rArmado = resolverLiquidacionServicioPuntual(baseInput({ armado: null }));
+    for (const r of [rPaquete, rArmado]) {
+      assert.equal(r.ok, false);
+      if (r.ok) continue;
+      assert.equal(r.mensajePublico, "Este servicio requiere una revisión interna antes de poder cotizarse.");
+      assert.doesNotMatch(r.mensajePublico, /armado_servicios|armado_paquetes/i);
+    }
+  });
+  test("todos los códigos de configuracion_invalida son distintos entre sí y estables (identificables para el log)", () => {
+    const casos: ResultadoServicioPuntual[] = [
+      resolverLiquidacionServicioPuntual(baseInput({ paquete: null })),
+      resolverLiquidacionServicioPuntual(baseInput({ armado: null })),
+      resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 999, pct_mk: 0.2 } })),
+      resolverLiquidacionServicioPuntual(baseInput({ servicio: { ...SERVICIO, id: 999 } })),
+      resolverLiquidacionServicioPuntual(baseInput({ armado: { paquete_id: 999, servicio_id: 1, modo: "persona" } })),
+      resolverLiquidacionServicioPuntual(baseInput({ armado: { ...ARMADO, modo: "otro" } })),
+      resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 10, pct_mk: NaN } })),
+    ];
+    const codigos = casos.map((r) => (r.ok ? null : r.codigo));
+    assert.equal(new Set(codigos).size, codigos.length, "cada motivo de configuracion_invalida debe tener su propio código, sin colisiones");
+    assert.ok(codigos.every((c) => typeof c === "string"));
+  });
+});
+
+describe("20. Ronda 6: respuestaPublicaServicioPuntual — la frontera pública SIEMPRE descarta detalleInterno", () => {
+  test("camino ok:true — pasa el resultado tal cual, sin campos internos de más", () => {
+    const r = resolverLiquidacionServicioPuntual(baseInput());
+    const publico = respuestaPublicaServicioPuntual(r);
+    assert.equal(publico.ok, true);
+    if (publico.ok) {
+      assert.deepEqual(Object.keys(publico).sort(), ["ok", "resultado"]);
+    }
+  });
+  test("camino ok:false — el objeto público NUNCA tiene la clave detalleInterno, sin importar el caso", () => {
+    const casos = [
+      baseInput({ paqueteError: "relation \"armado_paquetes\" does not exist" }),
+      baseInput({ paquete: null }),
+      baseInput({ armado: { ...ARMADO, modo: "otro" } }),
+      baseInput({ filaTarifarioEncontrada: false }),
+    ];
+    for (const input of casos) {
+      const interno = resolverLiquidacionServicioPuntual(input);
+      const publico = respuestaPublicaServicioPuntual(interno);
+      assert.equal(publico.ok, false);
+      if (publico.ok) continue;
+      assert.deepEqual(Object.keys(publico).sort(), ["codigo", "mensaje", "ok", "tipo"]);
+      assert.ok(!("detalleInterno" in publico));
+      assert.ok(!("mensajePublico" in publico)); // se renombra a `mensaje`, no se duplica
+    }
+  });
+  test("fuzz: un ResultadoServicioPuntual construido a mano con detalleInterno realista de Postgres nunca deja rastro en JSON.stringify del resultado público", () => {
+    const interno: ResultadoServicioPuntual = {
+      ok: false, tipo: "error_consulta", codigo: "paquete_consulta_fallida",
+      mensajePublico: "No pudimos validar el servicio en este momento. Intenta nuevamente.",
+      detalleInterno: 'armado_paquetes: relation "armado_paquetes" does not exist, permission denied for schema public, column "pct_mk" does not exist',
+    };
+    const publico = respuestaPublicaServicioPuntual(interno);
+    const serializado = JSON.stringify(publico);
+    assert.doesNotMatch(serializado, /armado_paquetes|relation|permission denied|schema public|pct_mk/i);
+    assert.match(serializado, /paquete_consulta_fallida/); // el código SÍ sobrevive, es seguro
+  });
+});
+
+describe("21. Ronda 6: formatearLogLiquidacionServicioPuntual — el log SÍ conserva el detalle técnico completo y el código", () => {
+  test("la línea de log incluye tipo/código/ids/detalle técnico completo, para poder investigar el incidente real", () => {
+    const linea = formatearLogLiquidacionServicioPuntual({
+      servicioId: 42, paqueteId: 7, tipo: "error_consulta", codigo: "armado_consulta_fallida",
+      detalle: 'armado_servicios: permission denied for table armado_servicios',
+    });
+    assert.match(linea, /servicioId=42/);
+    assert.match(linea, /paqueteId=7/);
+    assert.match(linea, /tipo=error_consulta/);
+    assert.match(linea, /codigo=armado_consulta_fallida/);
+    assert.match(linea, /permission denied for table armado_servicios/);
+  });
+  test("la firma de la función solo acepta contexto de catálogo (servicioId/paqueteId/tipo/codigo/detalle) — no hay forma de pasarle nombre/documento/teléfono/email del cliente", () => {
+    // Prueba estructural: el objeto de entrada declarado no tiene ningún campo
+    // de cliente — si alguien intentara agregar datos del cliente al log
+    // tendría que ampliar esta firma explícitamente (revisión obligada).
+    const linea = formatearLogLiquidacionServicioPuntual({ servicioId: 1, paqueteId: 1, tipo: "no_disponible", codigo: "sin_tarifa_vigente", detalle: "x" });
+    assert.equal(typeof linea, "string");
+  });
+});
+
+describe("22. Ronda 6: fallaErrorConsulta (usado por cotizar.ts para el caso 'falta service-role') respeta el mismo mensaje público fijo", () => {
+  test("cualquier código/detalle produce el mismo mensajePublico exacto que el resto de error_consulta", () => {
+    const r = fallaErrorConsulta("service_role_faltante", "SUPABASE_SERVICE_ROLE_KEY no configurada");
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.tipo, "error_consulta");
+    assert.equal(r.codigo, "service_role_faltante");
+    assert.equal(r.mensajePublico, "No pudimos validar el servicio en este momento. Intenta nuevamente.");
+    assert.doesNotMatch(r.mensajePublico, /SUPABASE_SERVICE_ROLE_KEY/);
+  });
+});
+
+describe("23. Ronda 6: los mensajes públicos son EXACTAMENTE los pedidos, palabra por palabra, y consistentes entre causas distintas", () => {
+  test("error_consulta: mismo texto exacto sin importar cuál de las 6 consultas falló", () => {
+    const mensajes = new Set([
+      resolverLiquidacionServicioPuntual(baseInput({ filaTarifarioError: "x" })),
+      resolverLiquidacionServicioPuntual(baseInput({ paqueteError: "y" })),
+      resolverLiquidacionServicioPuntual(baseInput({ armadoError: "z" })),
+      resolverLiquidacionServicioPuntual(baseInput({ servicioError: "w" })),
+      resolverLiquidacionServicioPuntual(baseInput({ gruposError: "v" })),
+      resolverLiquidacionServicioPuntual(baseInput({ temporadasError: "u" })),
+    ].map((r) => (r.ok ? null : r.mensajePublico)));
+    assert.equal(mensajes.size, 1);
+    assert.deepEqual([...mensajes], ["No pudimos validar el servicio en este momento. Intenta nuevamente."]);
+  });
+  test("configuracion_invalida: mismo texto exacto sin importar cuál pieza de configuración era inválida", () => {
+    const mensajes = new Set([
+      resolverLiquidacionServicioPuntual(baseInput({ paquete: null })),
+      resolverLiquidacionServicioPuntual(baseInput({ armado: null })),
+      resolverLiquidacionServicioPuntual(baseInput({ armado: { ...ARMADO, modo: "otro" } })),
+      resolverLiquidacionServicioPuntual(baseInput({ paquete: { id: 10, pct_mk: NaN } })),
+    ].map((r) => (r.ok ? null : r.mensajePublico)));
+    assert.equal(mensajes.size, 1);
+    assert.deepEqual([...mensajes], ["Este servicio requiere una revisión interna antes de poder cotizarse."]);
+  });
+  test("no_disponible: mensajes comerciales claros, ya sin detalle técnico (se mantiene el criterio previo)", () => {
+    const r = resolverLiquidacionServicioPuntual(baseInput({ filaTarifarioEncontrada: false }));
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.doesNotMatch(r.mensajePublico, /armado_servicios|armado_paquetes|tarifario_resultado|relation|permission denied/i);
   });
 });

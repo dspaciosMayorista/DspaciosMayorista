@@ -226,16 +226,73 @@ export function calcularResultadoServicio(
 }
 
 // ── Re-liquidación puntual (liquidarServicioPuntual): FALLO CERRADO ────────
+//
+// Frontera pública (ronda 6): el `error` de ronda 4/5 concatenaba texto
+// técnico REAL de Supabase (mensaje de la excepción, a veces con nombres de
+// tabla/columna/policy) directo en el string que terminaba devuelto por la
+// Server Action pública (`crearSolicitudReserva`) — una llamada anónima
+// podía ver "relation \"armado_servicios\" does not exist" o "permission
+// denied for table X". Se separan DOS canales, nunca mezclados:
+// - `mensajePublico`: texto FIJO por familia de error (nunca interpolado con
+//   nada que venga de Supabase/la config) — lo único que puede cruzar la
+//   frontera pública, vía `respuestaPublicaServicioPuntual()` más abajo.
+// - `detalleInterno`: texto técnico real (mensaje de Supabase, o qué fila/
+//   columna de catálogo está mal) — SOLO para logging server-side (ver
+//   `formatearLogLiquidacionServicioPuntual`), nunca se expone.
+// `codigo` es estable y sirve para correlacionar el log con el motivo real
+// sin tener que exponer `detalleInterno`.
+export type CodigoErrorServicioPuntual =
+  | "service_role_faltante"
+  | "tarifario_consulta_fallida" | "paquete_consulta_fallida" | "armado_consulta_fallida"
+  | "servicio_consulta_fallida" | "grupos_consulta_fallida" | "temporadas_consulta_fallida"
+  | "tarifario_no_encontrado" | "servicio_no_existe" | "sin_tarifa_vigente"
+  | "paquete_ausente" | "armado_ausente"
+  | "paquete_no_coincide" | "servicio_no_coincide" | "armado_no_coincide"
+  | "modo_invalido" | "markup_invalido" | "total_invalido";
+
 export type ResultadoServicioPuntual =
   | { ok: true; resultado: ResultadoServicio }
-  | { ok: false; tipo: "no_disponible" | "error_consulta" | "configuracion_invalida"; error: string };
+  | {
+      ok: false;
+      tipo: "no_disponible" | "error_consulta" | "configuracion_invalida";
+      codigo: CodigoErrorServicioPuntual;
+      mensajePublico: string;
+      detalleInterno: string;
+    };
+
+// Mensajes públicos FIJOS (nunca construidos por interpolación de datos
+// externos) — uno por familia. `no_disponible` sí puede variar (son mensajes
+// comerciales ya honestos, sin detalle técnico); `error_consulta` y
+// `configuracion_invalida` son SIEMPRE el mismo texto exacto pedido, sin
+// importar cuál de las 6 consultas falló o cuál pieza de configuración era
+// inválida — así no hay forma de que un detalle técnico se filtre por accidente.
+const MENSAJE_ERROR_CONSULTA = "No pudimos validar el servicio en este momento. Intenta nuevamente.";
+const MENSAJE_CONFIGURACION_INVALIDA = "Este servicio requiere una revisión interna antes de poder cotizarse.";
+
+// Exportada: también la usa `cotizar.ts` para el caso de arranque (falta
+// `SUPABASE_SERVICE_ROLE_KEY`), que nunca llega a `resolverLiquidacionServicioPuntual`
+// (aborta antes de tocar Supabase) pero debe fallar cerrado con el MISMO
+// mensaje público fijo que cualquier otro `error_consulta`.
+export function fallaErrorConsulta(codigo: CodigoErrorServicioPuntual, detalleInterno: string): ResultadoServicioPuntual {
+  return { ok: false, tipo: "error_consulta", codigo, mensajePublico: MENSAJE_ERROR_CONSULTA, detalleInterno };
+}
+function fallaConfiguracionInvalida(codigo: CodigoErrorServicioPuntual, detalleInterno: string): ResultadoServicioPuntual {
+  return { ok: false, tipo: "configuracion_invalida", codigo, mensajePublico: MENSAJE_CONFIGURACION_INVALIDA, detalleInterno };
+}
+// `no_disponible` reutiliza el mismo mensaje comercial como público e
+// interno — ya es honesto y sin detalle técnico, no hace falta un segundo texto.
+function fallaNoDisponible(codigo: CodigoErrorServicioPuntual, mensaje: string): ResultadoServicioPuntual {
+  return { ok: false, tipo: "no_disponible", codigo, mensajePublico: mensaje, detalleInterno: mensaje };
+}
 
 // Recibe cada fila YA CONSULTADA por el llamador (que sí toca Supabase, ver
 // `liquidarServicioPuntual` en cotizar.ts) junto con el `error` de SU
 // consulta puntual — nunca se combinan en un solo booleano: "no existe" (fila
 // null, sin error) y "la consulta falló" (error presente) son motivos
 // distintos y se reportan distinto (no_disponible/configuracion_invalida vs
-// error_consulta). Esta función es PURA: no consulta nada, solo decide.
+// error_consulta). Esta función es PURA: no consulta nada, solo decide (y no
+// hace logging — eso es responsabilidad del llamador con I/O real, ver
+// `liquidarServicioPuntual` en cotizar.ts).
 export function resolverLiquidacionServicioPuntual(input: {
   par: DatosServicioPar;
   fechaIdaDate: Date;
@@ -256,59 +313,57 @@ export function resolverLiquidacionServicioPuntual(input: {
 }): ResultadoServicioPuntual {
   // 1) Cada consulta se revisa por separado — un error técnico de CUALQUIERA
   // de ellas aborta la cotización con "error_consulta": nunca se sigue con
-  // datos parciales asumiendo un valor por defecto.
-  if (input.filaTarifarioError) return { ok: false, tipo: "error_consulta", error: `No se pudo confirmar el servicio publicado: ${input.filaTarifarioError}` };
-  if (input.paqueteError) return { ok: false, tipo: "error_consulta", error: `No se pudo consultar el paquete: ${input.paqueteError}` };
-  if (input.armadoError) return { ok: false, tipo: "error_consulta", error: `No se pudo consultar el armado del servicio: ${input.armadoError}` };
-  if (input.servicioError) return { ok: false, tipo: "error_consulta", error: `No se pudo consultar el servicio: ${input.servicioError}` };
-  if (input.gruposError) return { ok: false, tipo: "error_consulta", error: `No se pudo consultar las tarifas de grupo: ${input.gruposError}` };
-  if (input.temporadasError) return { ok: false, tipo: "error_consulta", error: `No se pudo consultar las temporadas del servicio: ${input.temporadasError}` };
+  // datos parciales asumiendo un valor por defecto. El texto real de
+  // Supabase va SOLO a `detalleInterno` (logging), nunca al mensaje público.
+  if (input.filaTarifarioError) return fallaErrorConsulta("tarifario_consulta_fallida", `tarifario_resultado: ${input.filaTarifarioError}`);
+  if (input.paqueteError) return fallaErrorConsulta("paquete_consulta_fallida", `armado_paquetes: ${input.paqueteError}`);
+  if (input.armadoError) return fallaErrorConsulta("armado_consulta_fallida", `armado_servicios: ${input.armadoError}`);
+  if (input.servicioError) return fallaErrorConsulta("servicio_consulta_fallida", `servicios_adicionales: ${input.servicioError}`);
+  if (input.gruposError) return fallaErrorConsulta("grupos_consulta_fallida", `servicio_tarifa_pax: ${input.gruposError}`);
+  if (input.temporadasError) return fallaErrorConsulta("temporadas_consulta_fallida", `servicio_temporadas: ${input.temporadasError}`);
 
   // 2) El par debe estar realmente publicado/activo — motivo de negocio
-  // legítimo, no un fallo técnico.
+  // legítimo, no un fallo técnico. El mensaje ya es comercial (sin detalle
+  // técnico), así que sirve igual como público e interno.
   if (!input.filaTarifarioEncontrada) {
-    return { ok: false, tipo: "no_disponible", error: "Este servicio ya no está publicado/activo para ese paquete." };
+    return fallaNoDisponible("tarifario_no_encontrado", "Este servicio ya no está publicado/activo para ese paquete.");
   }
 
   // 3) Paquete, armado y servicio son OBLIGATORIOS — nunca se cae a un modo o
-  // markup por defecto cuando alguno falta (el defecto real corregido de
-  // esta ronda). Faltar cualquiera de los tres es un dato incompleto del
-  // catálogo, no una elección inválida del cliente.
-  if (!input.paquete) return { ok: false, tipo: "configuracion_invalida", error: "El paquete de este servicio no existe o fue eliminado." };
-  if (!input.armado) return { ok: false, tipo: "configuracion_invalida", error: "Este servicio no tiene armado (armado_servicios) para este paquete — no hay modo de cobro configurado." };
-  if (!input.servicio) return { ok: false, tipo: "no_disponible", error: "El servicio ya no existe." };
+  // markup por defecto cuando alguno falta (el defecto real corregido en la
+  // ronda 4). Faltar cualquiera de los tres es un dato incompleto del
+  // catálogo, no una elección inválida del cliente — el detalle técnico
+  // (qué tabla/id falta) queda SOLO en `detalleInterno`.
+  if (!input.paquete) return fallaConfiguracionInvalida("paquete_ausente", `armado_paquetes sin fila para paqueteId=${input.par.paqueteId}`);
+  if (!input.armado) return fallaConfiguracionInvalida("armado_ausente", `armado_servicios sin fila para paqueteId=${input.par.paqueteId} servicioId=${input.par.servicioId}`);
+  if (!input.servicio) return fallaNoDisponible("servicio_no_existe", "El servicio ya no existe.");
 
   // 4) Consistencia defensiva del par (ronda 5): aunque las consultas del
   // llamador ya filtran por id, el resolvedor puro nunca confía en eso —
   // verifica explícitamente que CADA fila pertenezca al par consultado.
   if (input.paquete.id !== input.par.paqueteId) {
-    return { ok: false, tipo: "configuracion_invalida", error: "El paquete consultado no corresponde al paqueteId solicitado." };
+    return fallaConfiguracionInvalida("paquete_no_coincide", `armado_paquetes.id=${input.paquete.id} no coincide con par.paqueteId=${input.par.paqueteId}`);
   }
   if (input.servicio.id !== input.par.servicioId) {
-    return { ok: false, tipo: "configuracion_invalida", error: "El servicio consultado no corresponde al servicioId solicitado." };
+    return fallaConfiguracionInvalida("servicio_no_coincide", `servicios_adicionales.id=${input.servicio.id} no coincide con par.servicioId=${input.par.servicioId}`);
   }
   if (input.armado.paquete_id !== input.par.paqueteId || input.armado.servicio_id !== input.par.servicioId) {
-    return { ok: false, tipo: "configuracion_invalida", error: "El armado consultado no corresponde al par paquete/servicio solicitado." };
+    return fallaConfiguracionInvalida("armado_no_coincide", `armado_servicios(${input.armado.paquete_id}-${input.armado.servicio_id}) no coincide con par(${input.par.paqueteId}-${input.par.servicioId})`);
   }
 
   // 5) Modo y markup — MISMOS validadores que usa la búsqueda
   // (`validarModoServicio`/`validarPctMarkup`, vía `resolverConfiguracionServicio`
   // en `calcularResultadoServicio`): fallo cerrado, nunca "persona"/0% por
   // default cuando el valor real es inválido, ausente o fuera de rango
-  // comercial (ronda 5, corrige el defecto real reportado).
+  // comercial (ronda 5). El valor real configurado (`armado.modo`/`pct_mk`)
+  // va SOLO a `detalleInterno` — el público nunca ve la configuración interna.
   const modo = validarModoServicio(input.armado.modo);
   if (modo == null) {
-    return {
-      ok: false, tipo: "configuracion_invalida",
-      error: `El modo de cobro configurado (${JSON.stringify(input.armado.modo)}) no es válido — debe ser "persona" o "grupo".`,
-    };
+    return fallaConfiguracionInvalida("modo_invalido", `armado_servicios.modo=${JSON.stringify(input.armado.modo)} inválido para paqueteId=${input.par.paqueteId} servicioId=${input.par.servicioId}`);
   }
   const pctMk = validarPctMarkup(input.paquete.pct_mk);
   if (pctMk == null) {
-    return {
-      ok: false, tipo: "configuracion_invalida",
-      error: `El markup configurado del paquete (${JSON.stringify(input.paquete.pct_mk)}) no es un valor comercial válido (debe ser un número entre 0 y 1, sin llegar a 1).`,
-    };
+    return fallaConfiguracionInvalida("markup_invalido", `armado_paquetes.pct_mk=${JSON.stringify(input.paquete.pct_mk)} fuera de rango para paqueteId=${input.par.paqueteId}`);
   }
 
   const ctx = construirContextoServicios({
@@ -316,7 +371,7 @@ export function resolverLiquidacionServicioPuntual(input: {
     grupos: input.grupos, temporadas: input.temporadas,
   });
   const resultado = calcularPrecioConModoYMarkup(input.par, ctx, input.fechaIdaDate, input.numNoches, input.pax, modo, pctMk);
-  if (!resultado) return { ok: false, tipo: "no_disponible", error: "Este servicio no tiene tarifa vigente para esas fechas/pax." };
+  if (!resultado) return fallaNoDisponible("sin_tarifa_vigente", "Este servicio no tiene tarifa vigente para esas fechas/pax.");
 
   // 6) Defensa final: `calcularPrecioConModoYMarkup` ya garantiza que
   // `total` sea finito/seguro/positivo (devuelve `null` si no), pero se
@@ -324,8 +379,44 @@ export function resolverLiquidacionServicioPuntual(input: {
   // — mismo criterio de defensa en profundidad que `resolverB2BParaMensaje`
   // re-validando `pctComision` aunque `getContextoB2B` ya lo haya hecho.
   if (!Number.isFinite(resultado.total) || !Number.isSafeInteger(resultado.total) || resultado.total <= 0) {
-    return { ok: false, tipo: "configuracion_invalida", error: "El total calculado no es un valor numérico válido." };
+    return fallaConfiguracionInvalida("total_invalido", `total calculado no válido: ${JSON.stringify(resultado.total)}`);
   }
 
   return { ok: true, resultado };
+}
+
+// ── Frontera pública — traduce el resultado interno a lo ÚNICO que puede
+// cruzar hacia el navegador. Nunca reenvía `detalleInterno`: aunque
+// `resolverLiquidacionServicioPuntual` ya construye `mensajePublico` sin
+// concatenar texto técnico, esta función es la que de verdad DESCARTA
+// `detalleInterno` del objeto — la usa el llamador (`crearCotizacionCarrito`
+// en checkout/actions.ts) en vez de leer los campos internos directamente,
+// así que no hay forma de que un cambio futuro en ese código vuelva a filtrar
+// el detalle técnico por accidente.
+// `tipo`/`codigo` SÍ viajan al público — son valores categóricos fijos (3 y
+// 17 posibles respectivamente), nunca texto libre ni datos de Supabase, así
+// que no revelan nada de la estructura interna; el llamador (`crearCotizacionCarrito`)
+// los necesita para decidir si excluye el tour (`no_disponible`) o aborta la
+// cotización completa (`error_consulta`/`configuracion_invalida`) SIN volver
+// a tocar `detalleInterno`. Solo `detalleInterno` queda estrictamente fuera.
+export type RespuestaPublicaServicioPuntual =
+  | { ok: true; resultado: ResultadoServicio }
+  | { ok: false; tipo: "no_disponible" | "error_consulta" | "configuracion_invalida"; codigo: CodigoErrorServicioPuntual; mensaje: string };
+
+export function respuestaPublicaServicioPuntual(r: ResultadoServicioPuntual): RespuestaPublicaServicioPuntual {
+  if (r.ok) return { ok: true, resultado: r.resultado };
+  return { ok: false, tipo: r.tipo, codigo: r.codigo, mensaje: r.mensajePublico };
+}
+
+// ── Logging server-side (ronda 6) — construye la línea de log a partir del
+// resultado + el par que se estaba re-liquidando; NUNCA incluye datos del
+// cliente (nombre/documento/teléfono/email), credenciales ni tokens — solo
+// contexto de catálogo (servicioId/paqueteId), el código estable y el
+// detalle técnico. Función PURA (solo arma el string); el I/O real
+// (`console.error`) vive en el llamador (`liquidarServicioPuntual` en
+// cotizar.ts, el único punto que de verdad toca Supabase/consola).
+export function formatearLogLiquidacionServicioPuntual(ctx: {
+  servicioId: number; paqueteId: number; tipo: string; codigo: string; detalle: string;
+}): string {
+  return `[liquidarServicioPuntual] tipo=${ctx.tipo} codigo=${ctx.codigo} paqueteId=${ctx.paqueteId} servicioId=${ctx.servicioId} detalle=${ctx.detalle}`;
 }

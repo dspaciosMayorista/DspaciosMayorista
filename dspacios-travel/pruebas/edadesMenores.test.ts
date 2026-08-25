@@ -665,6 +665,41 @@ describe("25. Recálculo server-side — el precio nunca sale de lo que mandó e
   });
 });
 
+describe("36. Ronda 6: Wiring — checkout/actions.ts nunca reenvía el detalle técnico interno de liquidarServicioPuntual", () => {
+  const checkout = leer("app/tarifario/checkout/actions.ts");
+  const cotizar = leer("lib/reservar/cotizar.ts");
+  const liquidacion = leer("lib/reservar/liquidacionServicio.ts");
+
+  test("liquidarServicioPuntual (cotizar.ts) devuelve RespuestaPublicaServicioPuntual, no el ResultadoServicioPuntual interno con detalleInterno", () => {
+    const idx = cotizar.indexOf("export async function liquidarServicioPuntual");
+    const cuerpo = cotizar.slice(idx, cotizar.indexOf("\nexport", idx + 10));
+    assert.match(cuerpo, /Promise<RespuestaPublicaServicioPuntual>/);
+    assert.match(cuerpo, /return respuestaPublicaServicioPuntual\(resultado\)/);
+    // El log del detalle técnico ocurre ACÁ, server-side, antes de traducir.
+    assert.match(cuerpo, /console\.error\(formatearLogLiquidacionServicioPuntual/);
+  });
+  test("el bucle de tours en checkout/actions.ts solo lee resultado.tipo/resultado.mensaje — nunca .error/.detalleInterno/.mensajePublico", () => {
+    const idxInicio = checkout.indexOf("for (const t of input.tours)");
+    const idxFin = checkout.indexOf("\n  }\n", idxInicio);
+    const bucle = checkout.slice(idxInicio, idxFin);
+    assert.match(bucle, /resultado\.mensaje/);
+    assert.doesNotMatch(bucle, /resultado\.error\b/);
+    assert.doesNotMatch(bucle, /resultado\.detalleInterno/);
+    assert.doesNotMatch(bucle, /resultado\.mensajePublico/);
+  });
+  test("checkout/actions.ts nunca importa/usa ResultadoServicioPuntual (el tipo interno con detalleInterno) — solo el tipo público", () => {
+    assert.doesNotMatch(checkout, /ResultadoServicioPuntual/);
+  });
+  test("liquidacionServicio.ts: la frontera pública (respuestaPublicaServicioPuntual) es la ÚNICA función que construye el objeto sin detalleInterno — se define una sola vez", () => {
+    const usos = liquidacion.match(/export function respuestaPublicaServicioPuntual/g) ?? [];
+    assert.equal(usos.length, 1);
+  });
+  test("liquidacionServicio.ts: los mensajes públicos fijos nunca se construyen por interpolación de template literal (serían potencialmente inseguros) — son constantes de texto plano", () => {
+    assert.match(liquidacion, /const MENSAJE_ERROR_CONSULTA = "No pudimos validar el servicio en este momento\. Intenta nuevamente\."/);
+    assert.match(liquidacion, /const MENSAJE_CONFIGURACION_INVALIDA = "Este servicio requiere una revisión interna antes de poder cotizarse\."/);
+  });
+});
+
 describe("26. Payloads masivos — los topes de arreglo se revisan ANTES de iterar", () => {
   const clienteValido = { nombres: "Ana", apellidos: "Pérez", numeroDoc: "123", telefono: "3001234567", email: "a@b.com" };
   test("MAX_ITEMS_CARRITO/MAX_TOURS_CARRITO/MAX_LINEAS_CARRITO están definidos y son enteros positivos", () => {

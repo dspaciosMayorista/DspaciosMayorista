@@ -409,13 +409,18 @@ async function crearCotizacionCarrito(input: {
     // se genera una cotización parcial a partir de un fallo técnico, y nunca
     // se cobra un tour con un modo/margen inventado por no encontrar su
     // configuración real.
+    //
+    // FRONTERA PÚBLICA (ronda 6): `liquidarServicioPuntual` ya devuelve la
+    // respuesta SANEADA (`resultado.mensaje`, nunca el detalle técnico real
+    // de Supabase — ese queda solo en el log del servidor, ver cotizar.ts).
+    // Este bloque NUNCA debe leer un campo que no sea `.tipo`/`.codigo`/`.mensaje`.
     const resultado = await liquidarServicioPuntual(t);
     if (!resultado.ok) {
       if (resultado.tipo === "no_disponible") {
-        excluidos.push({ etiqueta: `Servicio #${t.servicioId} (${resultado.error})`, motivo: "no_disponible" });
+        excluidos.push({ etiqueta: `Servicio #${t.servicioId} (${resultado.mensaje})`, motivo: "no_disponible" });
         continue;
       }
-      return { ok: false, error: `No se pudo cotizar el servicio #${t.servicioId}: ${resultado.error}` };
+      return { ok: false, error: `No se pudo cotizar el servicio #${t.servicioId}: ${resultado.mensaje}` };
     }
     const tMoneda = resultado.resultado.moneda || "COP";
     if (monedaPrincipal && tMoneda !== monedaPrincipal) {

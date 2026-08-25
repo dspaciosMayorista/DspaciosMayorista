@@ -35,7 +35,8 @@ import {
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import {
   construirContextoServicios, calcularResultadoServicio, resolverLiquidacionServicioPuntual,
-  type DatosServicioPar, type ResultadoServicio, type ResultadoServicioPuntual,
+  respuestaPublicaServicioPuntual, formatearLogLiquidacionServicioPuntual, fallaErrorConsulta,
+  type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual,
 } from "@/lib/reservar/liquidacionServicio";
 
 // Acomodaciones (incluye niños e infante) y su columna neta en tarifa_hotel.
@@ -422,7 +423,7 @@ export type BusquedaServiciosInput = {
   pax: number;
   destino?: string; // vacío = todos
 };
-export type { ResultadoServicio, ResultadoServicioPuntual };
+export type { ResultadoServicio, RespuestaPublicaServicioPuntual };
 
 // `inputRaw` se trata como `unknown` — igual que `buscarHoteles` — esta
 // función es alcanzable desde el navegador (Server Action, ver
@@ -517,11 +518,25 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
 // cotización COMPLETA ante `tipo: "error_consulta"` o `"configuracion_invalida"`
 // — solo `"no_disponible"` es un motivo legítimo para excluir el tour del
 // carrito y seguir con el resto.
+//
+// FRONTERA PÚBLICA (ronda 6): esta función devuelve `RespuestaPublicaServicioPuntual`
+// (`respuestaPublicaServicioPuntual`, lib/reservar/liquidacionServicio.ts) — NUNCA
+// el `ResultadoServicioPuntual` interno con `detalleInterno` (mensajes reales
+// de Supabase, nombres de tabla/columna, valores de configuración). El
+// detalle técnico se registra ACÁ, server-side, con `console.error` — este
+// es el único punto de esta función que de verdad toca Supabase/consola, así
+// que es donde debe vivir el logging (el resolutor puro no hace I/O).
 export async function liquidarServicioPuntual(input: {
   paqueteId: number; servicioId: number; fechaIda: string; fechaRegreso: string; pax: number;
-}): Promise<ResultadoServicioPuntual> {
+}): Promise<RespuestaPublicaServicioPuntual> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return { ok: false, tipo: "error_consulta", error: "Cotización de servicios no disponible (falta service-role)." };
+    const r = fallaErrorConsulta("service_role_faltante", "SUPABASE_SERVICE_ROLE_KEY no configurada");
+    if (!r.ok) {
+      console.error(formatearLogLiquidacionServicioPuntual({
+        servicioId: input.servicioId, paqueteId: input.paqueteId, tipo: r.tipo, codigo: r.codigo, detalle: r.detalleInterno,
+      }));
+    }
+    return respuestaPublicaServicioPuntual(r);
   }
   const numNoches = Math.max(1, noches(input.fechaIda, input.fechaRegreso));
   const pax = Math.max(1, Math.trunc(input.pax) || 1);
@@ -562,7 +577,7 @@ export async function liquidarServicioPuntual(input: {
   ]);
 
   const fechaIdaDate = new Date(`${input.fechaIda}T00:00:00`);
-  return resolverLiquidacionServicioPuntual({
+  const resultado = resolverLiquidacionServicioPuntual({
     par, fechaIdaDate, numNoches, pax,
     filaTarifarioEncontrada: !!fila,
     filaTarifarioError: filaErr?.message ?? null,
@@ -572,4 +587,14 @@ export async function liquidarServicioPuntual(input: {
     grupos: grupos ?? [], gruposError: gruposErr?.message ?? null,
     temporadas: temporadas ?? [], temporadasError: temporadasErr?.message ?? null,
   });
+  // El detalle técnico real (mensaje de Supabase, tabla/columna/valor de
+  // configuración involucrado) se registra SOLO acá, server-side — nunca
+  // sale de esta función (ver `respuestaPublicaServicioPuntual` abajo).
+  if (!resultado.ok) {
+    console.error(formatearLogLiquidacionServicioPuntual({
+      servicioId: input.servicioId, paqueteId: input.paqueteId,
+      tipo: resultado.tipo, codigo: resultado.codigo, detalle: resultado.detalleInterno,
+    }));
+  }
+  return respuestaPublicaServicioPuntual(resultado);
 }
