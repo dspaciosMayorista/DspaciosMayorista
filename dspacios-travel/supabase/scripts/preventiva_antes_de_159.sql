@@ -42,10 +42,21 @@
 -- de argumentos) tal como los resolvería Postgres al ejecutar `CREATE
 -- SEQUENCE`/`CREATE FUNCTION` reales, y devuelven NULL (sin lanzar error) si
 -- el objeto no existe — a diferencia de `::regclass`/`::regprocedure`, que sí
--- lanzarían un error y romperían esta consulta de solo lectura. El chequeo
--- de la secuencia además confirma que el objeto resuelto es efectivamente
--- una secuencia (`relkind = 'S'`), no cualquier otro tipo de objeto que por
--- casualidad tuviera ese nombre exacto en `public`.
+-- lanzarían un error y romperían esta consulta de solo lectura.
+--
+-- ⚠️ El chequeo de la secuencia bloquea ante CUALQUIER relación con el
+-- nombre exacto `public.contrato_seq_mayorista`, sea cual sea su tipo — no
+-- solo cuando es una secuencia. El primer borrador de este chequeo (misma
+-- ronda 3) filtraba además `relkind = 'S'`, lo que abría un FALSO OK: si
+-- existiera una TABLA, VISTA u otra relación con ese nombre exacto,
+-- `to_regclass()` la resuelve (no es NULL), pero el filtro `relkind = 'S'`
+-- descartaba el conteo a 0 — el preflight decía OK aunque
+-- `CREATE SEQUENCE public.contrato_seq_mayorista` fallaría igual, por
+-- colisión de nombre, al aplicar la 159. Ahora basta con que
+-- `to_regclass('public.contrato_seq_mayorista')` no sea NULL para bloquear;
+-- el tipo de objeto encontrado (`relkind` traducido a texto legible) se
+-- informa en el detalle SOLO como diagnóstico, nunca para decidir si
+-- bloquea o no.
 --
 -- Complementa (no reemplaza) `preventiva_formatos_pool_reciclaje.sql`, que
 -- da el desglose completo por formato del pool si el chequeo 3 bloquea aquí
@@ -72,15 +83,15 @@ with
      where not (numero like 'MIN-%' or numero ~ '^00-[0-9]+$')
   ),
   chk_secuencia as (
-    select case
-             when to_regclass('public.contrato_seq_mayorista') is null then 0::bigint
-             else (
-               select count(*)::bigint
-                 from pg_class c
-                where c.oid = to_regclass('public.contrato_seq_mayorista')
-                  and c.relkind = 'S'
-             )
-           end as n
+    select
+      (to_regclass('public.contrato_seq_mayorista') is not null)::int::bigint as n,
+      -- Solo diagnóstico: qué tipo de objeto es, si existe alguno. NULL si
+      -- no existe nada con ese nombre exacto en el esquema public.
+      (
+        select c.relkind
+          from pg_class c
+         where c.oid = to_regclass('public.contrato_seq_mayorista')
+      ) as relkind_encontrado
   ),
   chk_funcion as (
     select case
@@ -106,7 +117,24 @@ with
     union all
     select 4, 'contrato_seq_mayorista_no_existe_todavia',
            n, (n = 0),
-           'Debe ser 0 — la secuencia NO debe existir todavía (la crea la 159). Si ya existe, alguien la creó por fuera de esta migración: investigar antes de aplicar la 159 (create sequence fallaría).'
+           case
+             when n = 0 then 'Debe ser 0 — la secuencia NO debe existir todavía (la crea la 159). Si ya existe, alguien la creó por fuera de esta migración: investigar antes de aplicar la 159 (create sequence fallaría).'
+             else 'BLOQUEADO — ya existe una relación exacta llamada public.contrato_seq_mayorista, tipo: ' ||
+                  coalesce(
+                    case relkind_encontrado
+                      when 'S' then 'secuencia (SEQUENCE)'
+                      when 'r' then 'tabla ordinaria (TABLE)'
+                      when 'v' then 'vista (VIEW)'
+                      when 'm' then 'vista materializada (MATERIALIZED VIEW)'
+                      when 'f' then 'tabla foránea (FOREIGN TABLE)'
+                      when 'p' then 'tabla particionada (PARTITIONED TABLE)'
+                      when 'i' then 'índice (INDEX)'
+                      else 'tipo desconocido (relkind=' || coalesce(relkind_encontrado::text, '?') || ')'
+                    end,
+                    'tipo no determinado'
+                  ) ||
+                  ' — CREATE SEQUENCE fallaría por colisión de nombre. Investigar y resolver (renombrar/eliminar el objeto existente, o confirmar si alguien ya corrió parte de la 159 a mano) antes de aplicar la migración 159.'
+           end
       from chk_secuencia
     union all
     select 5, 'funcion_siguiente_numero_contrato_para_tenant_no_existe_todavia',

@@ -11,9 +11,30 @@
 --   3) Aplicar la 159 (aditiva).
 --   4) Desplegar el código que usa `siguiente_numero_contrato_para_tenant`.
 --   5) Validar los 5 caminos de creación de contrato ÚNICAMENTE en base
---      local o staging (nunca con contratos reales en producción — los
---      scripts de este PR ya cubren esto: `test_consecutivo_dtm_mayorista.sh`
---      y `test_concurrencia_dtm_mayorista.sh`).
+--      local o staging (nunca con contratos reales en producción).
+--      ⚠️ Distinguir tres niveles de cobertura, sin confundirlos (revisión
+--      posterior al PR #274, ronda 4 — el borrador anterior de este paso
+--      afirmaba que los scripts SQL "ya cubren" la validación de los 5
+--      caminos, lo cual es INEXACTO: esos scripts no ejecutan ninguna Server
+--      Action real):
+--        a) Scripts SQL (`test_consecutivo_dtm_mayorista.sh`,
+--           `test_concurrencia_dtm_mayorista.sh`): prueban la MECÁNICA del
+--           generador — la función `siguiente_numero_contrato_para_tenant()`
+--           en sí, permisos/ACL, avance de la secuencia, reciclaje del pool
+--           de minorista, formato del número devuelto y concurrencia (dos
+--           sesiones simultáneas nunca chocan). No invocan ninguna Server
+--           Action de Next.js ni tocan datos de negocio reales.
+--        b) Tests unitarios/wiring (`pruebas/*.test.ts`): prueban la CONEXIÓN
+--           ESTRUCTURAL de los 5 caminos — que cada Server Action llama a
+--           `contextoCrearContrato()`/el generador correcto como primera
+--           operación, con lógica pura (sin red, sin Supabase real).
+--        c) Local/staging (este paso): la ÚNICA prueba FUNCIONAL completa —
+--           ejecutar de verdad, contra una base de datos real (nunca
+--           producción), cada uno de los 5 caminos aplicables
+--           (`crearContrato`, `reservarPrograma`, y los demás que generan
+--           `numero_contrato` mayorista) y confirmar el resultado end-to-end.
+--      Ninguno de los tres niveles reemplaza a los otros dos — los tres son
+--      necesarios antes de considerar el frente validado.
 --   6) En producción, crear SOLAMENTE el primer contrato mayorista REAL por
 --      el flujo operativo que corresponda (uno solo, el que el negocio use
 --      de verdad) y verificar que su numero_contrato sea exactamente

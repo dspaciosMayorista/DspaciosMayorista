@@ -9,7 +9,7 @@
 #
 #   supabase/scripts/test_preventiva_antes_de_159.sh [base] [puerto]
 #
-# QUÉ PRUEBA (los 4 controles pedidos, dos negativos + dos positivos):
+# QUÉ PRUEBA (5 escenarios: dos negativos + tres positivos):
 #   N1) Objeto homónimo en OTRO esquema (una secuencia `contrato_seq_
 #       mayorista` en un esquema que no es `public`) NO bloquea — el
 #       chequeo 4 debe seguir dando n=0/ok=true.
@@ -22,6 +22,12 @@
 #   P2) La función EXACTA (`public.siguiente_numero_contrato_para_
 #       tenant(text)`) SÍ bloquea — el chequeo 5 pasa a n=1/ok=false y el
 #       veredicto general queda BLOQUEADO.
+#   P3) CUALQUIER relación exacta con el nombre `public.contrato_seq_
+#       mayorista` bloquea, no solo una secuencia — una TABLA exacta con ese
+#       nombre también deja el chequeo 4 y el veredicto en BLOQUEADO (fix de
+#       esta misma ronda: el primer borrador solo contaba si `relkind = 'S'`,
+#       lo que daba un falso OK ante una tabla/vista homónima, aunque
+#       `CREATE SEQUENCE` fallaría igual por colisión de nombre).
 #
 # Corre contra una base SIN la migración 159 aplicada todavía (hasta la
 # 158) — es justamente el escenario real en el que se usa este preflight.
@@ -113,6 +119,21 @@ psql -p "$PUERTO" -d "$BASE" -v ON_ERROR_STOP=1 -q -c "
   || fail "la función exacta no disparó el chequeo — debía bloquear"
 [ "$(veredicto)" = "f" ] && ok "el veredicto general quedó BLOQUEADO" || fail "el veredicto general debía quedar BLOQUEADO"
 psql -p "$PUERTO" -d "$BASE" -v ON_ERROR_STOP=1 -q -c "drop function public.siguiente_numero_contrato_para_tenant(text);"
+
+# ═════════════════════════════════════════════════════════════════════════
+# P3 — CUALQUIER relación exacta bloquea, no solo una secuencia (fix de esta
+# ronda: el primer borrador filtraba `relkind = 'S'`, dando un falso OK ante
+# una tabla/vista homónima aunque CREATE SEQUENCE fallaría igual)
+# ═════════════════════════════════════════════════════════════════════════
+echo "== P3: una TABLA exacta public.contrato_seq_mayorista también debe bloquear (no solo una secuencia)"
+psql -p "$PUERTO" -d "$BASE" -v ON_ERROR_STOP=1 -q -c "create table public.contrato_seq_mayorista (id int);"
+[ "$(ok_de_chequeo contrato_seq_mayorista_no_existe_todavia)" = "f" ] && ok "la tabla exacta SÍ disparó el chequeo (BLOQUEADO, como debe ser — ya no hay falso OK)" \
+  || fail "la tabla exacta no disparó el chequeo — debía bloquear igual que una secuencia"
+[ "$(veredicto)" = "f" ] && ok "el veredicto general pasó a BLOQUEADO" || fail "el veredicto general debía quedar BLOQUEADO"
+psql -p "$PUERTO" -d "$BASE" -v ON_ERROR_STOP=1 -q -c "drop table public.contrato_seq_mayorista;"
+
+echo "== Confirmando que P3 no dejó rastro (chequeo 4 vuelve a OK tras limpiar)"
+[ "$(ok_de_chequeo contrato_seq_mayorista_no_existe_todavia)" = "t" ] && ok "chequeo 4 = OK de nuevo tras limpiar la tabla" || fail "chequeo 4 no volvió a OK tras limpiar la tabla"
 
 echo "== Confirmando que el script vuelve a OK tras limpiar todo (deja la base como la encontró)"
 [ "$(veredicto)" = "t" ] && ok "veredicto general = OK, la base quedó exactamente como al empezar" || fail "quedó algún objeto de prueba sin limpiar"
