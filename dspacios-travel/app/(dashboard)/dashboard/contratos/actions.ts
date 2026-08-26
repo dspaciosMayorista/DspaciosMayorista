@@ -6,8 +6,8 @@ import { revalidatePath } from "next/cache";
 import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
 import { asegurarCuentasPorPagar } from "../reservar/actions";
 import { formatMoneda } from "@/lib/utils";
-import { getTenant } from "@/lib/tenant.server";
-import { numeroConTenant } from "@/lib/tenant";
+import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
+import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
 
 // Postea (o reemplaza) el asiento de un abono: Debe Caja/Bancos (según forma
@@ -164,23 +164,16 @@ export type CrearContratoResult =
 export async function crearContrato(
   input: ContratoInput
 ): Promise<CrearContratoResult> {
+  // Contexto fail-closed: sesión + activo=true + rol con permiso real de
+  // escritura sobre `ventas` (revisión posterior al PR #274 — antes se
+  // resolvía el tenant con la cookie de agencia a secas, sin sesión ni rol
+  // verificados, y como el generador de número corre ahora con service_role,
+  // esta validación de aplicación es la ÚNICA barrera real antes de gastar
+  // un consecutivo DTM/MIN).
+  const ctx = await contextoCrearContrato();
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+  const { tenant } = ctx;
   const sb = await createClient();
-  const tenant = await getTenant();
-
-  // 1. Número de contrato (00-NNNN) vía secuencia GLOBAL en la BD. La secuencia es
-  // compartida con la mayorista, así que en minorista se le antepone el prefijo
-  // MIN- (numeroConTenant) para que NUNCA choque ni se confunda con la numeración
-  // real de la mayorista (dos agencias, misma secuencia, PK distinta).
-  const { data: numeroRaw, error: ne } = await sb.rpc("siguiente_numero_contrato");
-  if (ne || !numeroRaw) {
-    return {
-      ok: false,
-      error:
-        (ne?.message ?? "No se pudo generar el número de contrato.") +
-        " — Verifica que la migración 010 esté aplicada en Supabase.",
-    };
-  }
-  const numero = numeroConTenant(numeroRaw, tenant);
 
   // Precio BLOQUEADO del producto para negociados: se ignoran las tarifas que
   // venga del cliente y se usan las del paquete (el asesor no puede cambiarlas).
@@ -264,14 +257,9 @@ export async function crearContrato(
     const pvpMin = totalCostosManual / (1 - MARKUP_MIN);
     if (precioVenta + 0.5 < pvpMin) {
       const margenActual = precioVenta > 0 ? 1 - totalCostosManual / precioVenta : 0;
-      let autorizado = false;
-      if (input.forzarMargen) {
-        const { data: { user } } = await sb.auth.getUser();
-        const { data: perfil } = user
-          ? await sb.from("usuarios").select("rol").eq("id", user.id).maybeSingle()
-          : { data: null };
-        if (perfil && ["superadmin", "administracion"].includes(perfil.rol)) autorizado = true;
-      }
+      // El rol ya se resolvió y verificó server-side en `contextoCrearContrato()`
+      // (`ctx.rol`) — no hace falta una segunda consulta para revalidarlo aquí.
+      const autorizado = !!input.forzarMargen && ["superadmin", "administracion"].includes(ctx.rol);
       if (!autorizado) {
         return {
           ok: false,
@@ -297,6 +285,16 @@ export async function crearContrato(
     aliado = data;
     if (tipoVenta === "agencia") agenciaNombre = data.nombre; else freelanceNombre = data.nombre;
   }
+
+  // Número de contrato — se genera AQUÍ, justo antes del primer INSERT que lo
+  // necesita, DESPUÉS de todas las validaciones que pueden fallar (tarifas del
+  // negociado, ítems, BNC, margen mínimo, aliado B2B). Generarlo antes
+  // gastaría un consecutivo DTM/MIN por cada formulario inválido — con el RPC
+  // ahora en service_role (ver lib/contrato/numeracion.ts), este es el punto
+  // razonable más tardío antes del INSERT que lo requiere.
+  const numRes = await siguienteNumeroContrato(tenant);
+  if (!numRes.ok) return { ok: false, error: numRes.error };
+  const numero = numRes.numero;
 
   // 2. Crear la venta (cabecera del contrato) — estampada con la agencia activa.
   const { error: ve } = await sb.from("ventas").insert({

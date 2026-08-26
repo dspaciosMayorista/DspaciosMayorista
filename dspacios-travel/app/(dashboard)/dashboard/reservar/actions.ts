@@ -10,6 +10,8 @@ import { calcularEdad } from "@/lib/utils";
 import { pvpPrograma } from "@/lib/programas";
 import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
+import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
+import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import type { Tenant } from "@/lib/tenant";
 import type { Json } from "@/types/database";
 import {
@@ -114,9 +116,11 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // (hallazgo de la revisión posterior al PR #268, punto 1 "COSTO FINANCIERO").
   const costoAereo = datosVuelo ? datosVuelo.costo_neto * paxConSilla + datosVuelo.fee_infante * infantesN : 0;
 
-  // 3) Número de contrato
-  const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
-  if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+  // 3) Número de contrato — ya completo (DTM-#### / MIN-00-####), tenant
+  // recibido como parámetro ya validado por el caller (nunca del navegador).
+  const numRes = await siguienteNumeroContrato(tenant);
+  if (!numRes.ok) return { ok: false, error: numRes.error };
+  const numero = numRes.numero;
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
@@ -991,8 +995,9 @@ export async function convertirCotizacionCarrito(
   const numeros: string[] = [];
 
   for (const { grupo, validados } of gruposValidados) {
-    const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
-    if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+    const numRes = await siguienteNumeroContrato(tenantCotizacion);
+    if (!numRes.ok) return { ok: false, error: numRes.error };
+    const numero = numRes.numero;
 
     const clienteNombre = `${cliente.nombres} ${cliente.apellidos}`.trim();
     const destinos = [...new Set(validados.map((v) => v.comp.meta.destino_nombre ?? v.item.destino).filter((d): d is string => !!d))];
@@ -1366,6 +1371,32 @@ function sumarDias(fecha: string, dias: number): string {
 
 export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaResult> {
   const sb = await createClient();
+  // Contexto fail-closed INTERNO (revisión posterior al PR #274, ronda 2):
+  // reservarPrograma() es exportada y por lo tanto alcanzable directo por
+  // red — este flujo NO es autoservicio B2B como convertirCotizacion*/
+  // reservarDesdeTarifarioInterno (no hay ninguna cotización previa cuya
+  // propiedad valide el acceso; `tipoAsesor`/`agenciaNombre`/`freelanceNombre`
+  // en `input` son solo la clasificación comercial de la venta —de quién
+  // cobra comisión, elegida por el asesor interno que la vende— NUNCA la
+  // identidad de quien llama). Su único caller real
+  // (`ProgramaReservaForm.tsx`) vive bajo `/dashboard/reservar/programa/
+  // [id]`, un módulo listado en `LECTURA_MODULO.reservar = ROLES_INTERNOS`
+  // en `lib/constants.ts` — los roles externos (agencia/freelance/
+  // cliente_final) YA quedan fuera de esa ruta por el propio `proxy.ts`
+  // (el "único módulo permitido" para ellos no incluye "reservar" en
+  // LECTURA_MODULO, pese a la excepción de bloqueo-de-dashboard). Por eso se
+  // usa el MISMO contexto que `crearContrato()` (`contextoCrearContrato()`):
+  // sesión + activo=true + rol con permiso real de escritura sobre `ventas`
+  // (`ESCRITURA.ventas` = superadmin/administracion/gerencia/operaciones/
+  // venta) — esto es lo que cierra el hueco real: antes, el gate de sesión
+  // usado por las cotizaciones (mismo criterio que `autorizaTenant`) solo
+  // exigía un perfil activo, así que un `control_vuelo` (rol interno,
+  // pero SIN permiso de crear ventas) activo podía alcanzar este RPC
+  // administrativo, gastar un consecutivo DTM y fallar recién al insertar
+  // en `ventas` por RLS.
+  const ctx = await contextoCrearContrato();
+  if (!ctx.ok) return { ok: false, error: ctx.error };
+  const tenant = ctx.tenant;
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
   if (!input.fechaIda) return { ok: false, error: "Elige la fecha de salida." };
@@ -1529,9 +1560,10 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
     }
   }
 
-  // 4) Número de contrato
-  const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
-  if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+  // 4) Número de contrato — ya completo, tenant resuelto arriba (nunca del navegador)
+  const numRes = await siguienteNumeroContrato(tenant);
+  if (!numRes.ok) return { ok: false, error: numRes.error };
+  const numero = numRes.numero;
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
@@ -1542,6 +1574,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
+    tenant,
     cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
     cliente_documento: oNull(input.cliente.numeroDoc),
     cliente_telefono: oNull(input.cliente.telefono),
