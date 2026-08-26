@@ -206,9 +206,18 @@ done
 
 # ═══════════════════════════════════════════════════════════════════════
 # PARTE 3 — MATRIZ DE PERMISOS REAL (fix de la revisión posterior al PR
-# #274): el RPC solo debe poder invocarlo service_role.
+# #274): el RPC solo debe poder invocarlo service_role. Cada intento
+# RECHAZADO además se comprueba que NO avanzó contrato_seq_mayorista —
+# Postgres nunca llega a ejecutar el cuerpo de la función (ni por lo tanto
+# su nextval() interno) cuando el permiso se niega ANTES de entrar a la
+# función, así que el valor de la secuencia debe quedar EXACTAMENTE igual
+# antes y después de cada rechazo (ronda 2 de la revisión: "un intento
+# rechazado no cambia el valor/estado de contrato_seq_mayorista").
 # ═══════════════════════════════════════════════════════════════════════
-echo "== Prueba 6a: anon NO puede invocar la función nueva"
+last_value_seq() { psql -p "$PUERTO" -d "$BASE" -tAc "select last_value from public.contrato_seq_mayorista;"; }
+
+echo "== Prueba 6a: anon NO puede invocar la función nueva, y NO avanza la secuencia"
+SEQ_ANTES_6A=$(last_value_seq)
 if psql -p "$PUERTO" -d "$BASE" -tAc "set role anon; select public.siguiente_numero_contrato_para_tenant('mayorista');" > /tmp/dtm_anon.log 2>&1; then
   fail "anon SÍ pudo invocar la función (debía estar revocada)"
   cat /tmp/dtm_anon.log
@@ -216,8 +225,12 @@ else
   grep -qi "permission denied" /tmp/dtm_anon.log && ok "anon fue rechazado por falta de permiso (EXECUTE revocado)" \
     || { fail "anon fue rechazado pero no por permisos"; cat /tmp/dtm_anon.log; }
 fi
+SEQ_DESPUES_6A=$(last_value_seq)
+[ "$SEQ_ANTES_6A" = "$SEQ_DESPUES_6A" ] && ok "contrato_seq_mayorista quedó en $SEQ_DESPUES_6A, sin cambios (el intento de anon no consumió nada)" \
+  || fail "contrato_seq_mayorista cambió de $SEQ_ANTES_6A a $SEQ_DESPUES_6A pese a que el intento de anon fue rechazado"
 
-echo "== Prueba 6b: authenticated (superadmin, tenant=mayorista) pidiendo 'mayorista' DIRECTO -> permission denied"
+echo "== Prueba 6b: authenticated (superadmin, tenant=mayorista) pidiendo 'mayorista' DIRECTO -> permission denied, sin avanzar la secuencia"
+SEQ_ANTES_6B=$(last_value_seq)
 if psql -p "$PUERTO" -d "$BASE" -tAc "begin; $AUTH_SUPERADMIN select public.siguiente_numero_contrato_para_tenant('mayorista'); commit;" > /tmp/dtm_auth_may.log 2>&1; then
   fail "un usuario authenticated SÍ pudo invocar el RPC directo (debía estar revocado incluso para superadmin/mayorista)"
   cat /tmp/dtm_auth_may.log
@@ -225,8 +238,12 @@ else
   grep -qi "permission denied" /tmp/dtm_auth_may.log && ok "authenticated (mayorista) fue rechazado por falta de permiso — ni siquiera un rol/tenant legítimo puede invocar el RPC directo, solo la app vía service_role" \
     || { fail "authenticated (mayorista) fue rechazado pero no por permisos"; cat /tmp/dtm_auth_may.log; }
 fi
+SEQ_DESPUES_6B=$(last_value_seq)
+[ "$SEQ_ANTES_6B" = "$SEQ_DESPUES_6B" ] && ok "contrato_seq_mayorista quedó en $SEQ_DESPUES_6B, sin cambios (superadmin/authenticated rechazado no consumió nada)" \
+  || fail "contrato_seq_mayorista cambió de $SEQ_ANTES_6B a $SEQ_DESPUES_6B pese al rechazo"
 
-echo "== Prueba 6c: authenticated (asesor MINORISTA) pidiendo 'mayorista' DIRECTO -> permission denied"
+echo "== Prueba 6c: authenticated (asesor MINORISTA) pidiendo 'mayorista' DIRECTO -> permission denied, sin avanzar la secuencia"
+SEQ_ANTES_6C=$(last_value_seq)
 if psql -p "$PUERTO" -d "$BASE" -tAc "begin; $AUTH_VENTA_MINORISTA select public.siguiente_numero_contrato_para_tenant('mayorista'); commit;" > /tmp/dtm_auth_min.log 2>&1; then
   fail "un usuario authenticated de OTRO tenant (minorista) SÍ pudo pedir un número mayorista (debía estar revocado)"
   cat /tmp/dtm_auth_min.log
@@ -234,13 +251,20 @@ else
   grep -qi "permission denied" /tmp/dtm_auth_min.log && ok "authenticated (minorista pidiendo mayorista) fue rechazado por falta de permiso — el candado es a nivel de GRANT, no depende de qué tenant pida" \
     || { fail "authenticated (minorista) fue rechazado pero no por permisos"; cat /tmp/dtm_auth_min.log; }
 fi
+SEQ_DESPUES_6C=$(last_value_seq)
+[ "$SEQ_ANTES_6C" = "$SEQ_DESPUES_6C" ] && ok "contrato_seq_mayorista quedó en $SEQ_DESPUES_6C, sin cambios (asesor minorista rechazado no consumió nada)" \
+  || fail "contrato_seq_mayorista cambió de $SEQ_ANTES_6C a $SEQ_DESPUES_6C pese al rechazo"
 
-echo "== Prueba 6d: service_role SÍ puede ejecutar el RPC (control positivo, confirma que el candado es selectivo, no total)"
+echo "== Prueba 6d: service_role SÍ puede ejecutar el RPC (control positivo: confirma que el candado es selectivo, no total, Y que una llamada AUTORIZADA sí avanza la secuencia)"
+SEQ_ANTES_6D=$(last_value_seq)
 if psql -p "$PUERTO" -d "$BASE" -v ON_ERROR_STOP=1 -tAc "begin; $SERVICE_SETUP select public.siguiente_numero_contrato_para_tenant('mayorista'); commit;" > /tmp/dtm_service_ok.log 2>&1; then
   ok "service_role ejecutó el RPC sin error (único rol con EXECUTE)"
 else
   fail "service_role NO pudo ejecutar el RPC (debía poder)"; cat /tmp/dtm_service_ok.log
 fi
+SEQ_DESPUES_6D=$(last_value_seq)
+[ "$SEQ_DESPUES_6D" -gt "$SEQ_ANTES_6D" ] 2>/dev/null && ok "contrato_seq_mayorista avanzó de $SEQ_ANTES_6D a $SEQ_DESPUES_6D (la llamada autorizada SÍ consume — confirma que 6a/6b/6c no eran falsos negativos por un candado 'roto que nunca avanza nada')" \
+  || fail "contrato_seq_mayorista NO avanzó tras una llamada autorizada por service_role ($SEQ_ANTES_6D -> $SEQ_DESPUES_6D)"
 
 echo "== Prueba 6e: anon/authenticated tampoco tienen USAGE sobre la secuencia mayorista"
 for ROL in anon authenticated; do

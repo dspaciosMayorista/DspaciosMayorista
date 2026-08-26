@@ -123,7 +123,7 @@ describe("reservarPrograma (reservar/actions.ts) — genera después de validar 
   const cuerpo = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/reservar/actions.ts"), "reservarPrograma");
   test("orden: sesión → programa → vigencia/blackouts → precios → habitaciones → edades → NÚMERO", () => {
     assertOrdenAntesDeGenerar(cuerpo, [
-      "contextoCotizacion()",
+      "contextoCrearContrato()",
       "Programa no encontrado.",
       "La fecha de salida es anterior a la vigencia",
       "Indica cuántas habitaciones reservas",
