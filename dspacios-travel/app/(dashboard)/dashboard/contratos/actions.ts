@@ -9,7 +9,7 @@ import { formatMoneda } from "@/lib/utils";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
-import { medirEtapa } from "@/lib/observabilidad/medicion";
+import { generarFlujoId, crearMedidor, registrarEtapa, type Medidor, type ResultadoEtapa } from "@/lib/observabilidad/medicion";
 
 // Postea (o reemplaza) el asiento de un abono: Debe Caja/Bancos (según forma
 // de pago) / Haber Anticipos de clientes (280505) si el contrato AÚN no está
@@ -162,8 +162,41 @@ export type CrearContratoResult =
   | { ok: true; numero: string }
   | { ok: false; error: string; margenInsuficiente?: true; margenActual?: number; pvpMinimo?: number };
 
+// Flujo real (revisión posterior — corrección de observabilidad): la Server
+// Action exportada es un wrapper delgado que SOLO se encarga de generar el
+// `flujo_id` de esta ejecución y de medir la duración TOTAL percibida por el
+// asesor (incluye `revalidatePath` y cualquier trabajo posterior al último
+// INSERT) — la etapa "total" se registra en `finally`, así que se emite
+// tanto en éxito como en cualquier rechazo de validación (early-return) o
+// excepción no capturada, sin tener que tocar cada uno de los `return`
+// anticipados de la lógica real. `crearContratoInterno` es exactamente el
+// cuerpo que existía antes de esta ronda, con las llamadas de medición ahora
+// atadas al mismo `flujo_id` y con la clasificación de resultado corregida
+// (ver `lib/observabilidad/medicion.ts` y el detalle etapa por etapa abajo).
 export async function crearContrato(
   input: ContratoInput
+): Promise<CrearContratoResult> {
+  const flujoId = generarFlujoId();
+  const medir = crearMedidor("crear_contrato", flujoId);
+  const _tTotal0 = performance.now();
+  let _resultadoTotal: ResultadoEtapa = "error";
+  try {
+    const res = await crearContratoInterno(input, flujoId, medir);
+    _resultadoTotal = res.ok ? "ok" : "rechazado";
+    return res;
+  } catch (err) {
+    _resultadoTotal = "error";
+    console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=total detalle=excepcion`, err instanceof Error ? err.message : String(err));
+    throw err;
+  } finally {
+    registrarEtapa("crear_contrato", flujoId, "total", Math.round(performance.now() - _tTotal0), _resultadoTotal);
+  }
+}
+
+async function crearContratoInterno(
+  input: ContratoInput,
+  flujoId: string,
+  medir: Medidor
 ): Promise<CrearContratoResult> {
   // Contexto fail-closed: sesión + activo=true + rol con permiso real de
   // escritura sobre `ventas` (revisión posterior al PR #274 — antes se
@@ -171,12 +204,13 @@ export async function crearContrato(
   // verificados, y como el generador de número corre ahora con service_role,
   // esta validación de aplicación es la ÚNICA barrera real antes de gastar
   // un consecutivo DTM/MIN).
-  // Medición server-side por etapas (sin PII — solo nombre de etapa, duración
-  // y resultado técnico): diagnóstico de la demora del botón "Generar
-  // contrato" pedido en la revisión posterior al PR #274. `contexto` incluye
-  // las sub-etapas medidas dentro de `contextoCrearContrato()` (auth.getUser
-  // + consulta de perfil, ya no duplicadas — ver lib/contrato/contexto.ts).
-  const ctx = await medirEtapa("contexto", () => contextoCrearContrato(), (r) => (r.ok ? "ok" : "rechazado"));
+  // Medición server-side por etapas (sin PII — solo flujo, flujo_id, nombre
+  // de etapa, duración y resultado técnico): diagnóstico de la demora del
+  // botón "Generar contrato" pedido en la revisión posterior al PR #274.
+  // `contexto` incluye las sub-etapas medidas dentro de
+  // `contextoCrearContrato()` (auth.getUser + consulta de perfil, ya no
+  // duplicadas — ver lib/contrato/contexto.ts), atadas al mismo `flujo_id`.
+  const ctx = await medir("contexto", () => contextoCrearContrato("crear_contrato", flujoId), (r) => (r.ok ? "ok" : "rechazado"));
   if (!ctx.ok) return { ok: false, error: ctx.error };
   // Reutiliza el MISMO cliente de sesión que `contextoCrearContrato()` ya
   // creó y autenticó — en vez de crear uno nuevo aquí (optimización posterior
@@ -299,7 +333,7 @@ export async function crearContrato(
     aliado = data;
     if (tipoVenta === "agencia") agenciaNombre = data.nombre; else freelanceNombre = data.nombre;
   }
-  console.log(`[medicion] etapa=validacion_negocio duracion_ms=${Math.round(performance.now() - _tValidacion0)} resultado=ok`);
+  registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "ok");
 
   // Número de contrato — se genera AQUÍ, justo antes del primer INSERT que lo
   // necesita, DESPUÉS de todas las validaciones que pueden fallar (tarifas del
@@ -307,7 +341,7 @@ export async function crearContrato(
   // gastaría un consecutivo DTM/MIN por cada formulario inválido — con el RPC
   // ahora en service_role (ver lib/contrato/numeracion.ts), este es el punto
   // razonable más tardío antes del INSERT que lo requiere.
-  const numRes = await medirEtapa("numero_contrato", () => siguienteNumeroContrato(tenant), (r) => (r.ok ? "ok" : "error"));
+  const numRes = await medir("numero_contrato", () => siguienteNumeroContrato(tenant), (r) => (r.ok ? "ok" : "error"));
   if (!numRes.ok) return { ok: false, error: numRes.error };
   const numero = numRes.numero;
 
@@ -357,7 +391,7 @@ export async function crearContrato(
     asesor_firma_cc: oNull(input.asesorCc),
     asesor_firma_tel: oNull(input.asesorTel),
   });
-  console.log(`[medicion] etapa=insert_venta duracion_ms=${Math.round(performance.now() - _tVenta0)} resultado=${ve ? "error" : "ok"}`);
+  registrarEtapa("crear_contrato", flujoId, "insert_venta", Math.round(performance.now() - _tVenta0), ve ? "error" : "ok");
   if (ve) return { ok: false, error: ve.message };
 
   // 3. Tablas hijas — 5 inserts secuenciales (pasajeros/hoteles/vuelos/
@@ -366,7 +400,19 @@ export async function crearContrato(
   // depende del resultado de otra, pero todas comparten `numero_contrato` de
   // la venta recién creada, así que el orden actual —secuencial, después de
   // la venta— se conserva tal cual en esta ronda).
+  //
+  // `_errorHijas`: registra la etapa como "error" (nunca "ok" por omisión —
+  // antes, un retorno anticipado dentro de este grupo no dejaba NINGÚN log,
+  // lo cual se podía confundir con una ejecución exitosa) y manda el detalle
+  // técnico solo a `console.error` server-side, nunca al navegador (el
+  // `return` sigue devolviendo exactamente el mismo `error.message` que
+  // antes — ese contrato con el caller no cambia).
   const _tHijas0 = performance.now();
+  const _errorHijas = (detalle: string, error: { message: string }) => {
+    registrarEtapa("crear_contrato", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
+    console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=insert_hijas detalle=${detalle}`, error.message);
+    return { ok: false as const, error: error.message };
+  };
   if (input.pasajeros.length) {
     const { error } = await sb.from("contrato_pasajeros").insert(
       input.pasajeros.map((p, i) => ({
@@ -379,7 +425,7 @@ export async function crearContrato(
         orden: i,
       }))
     );
-    if (error) return { ok: false, error: error.message };
+    if (error) return _errorHijas("pasajeros", error);
   }
 
   if (input.hoteles.length) {
@@ -398,7 +444,7 @@ export async function crearContrato(
         orden: i,
       }))
     );
-    if (error) return { ok: false, error: error.message };
+    if (error) return _errorHijas("hoteles", error);
   }
 
   if (input.vuelos.length) {
@@ -420,7 +466,7 @@ export async function crearContrato(
         orden: i,
       }))
     );
-    if (error) return { ok: false, error: error.message };
+    if (error) return _errorHijas("vuelos", error);
   }
 
   if (servicios.length) {
@@ -434,7 +480,7 @@ export async function crearContrato(
         orden: i,
       }))
     );
-    if (error) return { ok: false, error: error.message };
+    if (error) return _errorHijas("servicios", error);
   }
 
   if (items.length) {
@@ -449,14 +495,20 @@ export async function crearContrato(
         orden: i,
       }))
     );
-    if (error) return { ok: false, error: error.message };
+    if (error) return _errorHijas("items", error);
   }
-  console.log(`[medicion] etapa=insert_hijas duracion_ms=${Math.round(performance.now() - _tHijas0)} resultado=ok`);
+  registrarEtapa("crear_contrato", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "ok");
 
   // ── CxP automáticas del contrato manual (dinámico/empaquetado) ────────────
   // Una cuenta por pagar por hotel y por vuelo con costo > 0 y proveedor, en la
   // moneda del contrato. Toma la retención del catálogo de proveedores.
+  // Best-effort, igual que antes (no bloquea la creación del contrato si algo
+  // aquí falla) — pero ahora la MÉTRICA distingue "error" (la consulta de
+  // proveedores o el insert de la CxP en sí fallaron — probablemente ninguna
+  // cuenta se creó bien) de "parcial" (las CxP se crearon, pero algún asiento
+  // contable individual no se pudo postear) en vez de reportar "ok" a ciegas.
   const _tCxp0 = performance.now();
+  let _resultadoCxp: ResultadoEtapa = "ok";
   if (!negociado) {
     const cxpRows: { proveedor: string; tipo: string; servicio: string; valor: number }[] = [];
     for (const h of input.hoteles) {
@@ -485,10 +537,14 @@ export async function crearContrato(
     }
     if (cxpRows.length) {
       const nombres = [...new Set(cxpRows.map((r) => r.proveedor))];
-      const { data: provs } = await sb.from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres);
+      const { data: provs, error: provsError } = await sb.from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres);
+      if (provsError) {
+        _resultadoCxp = "error";
+        console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=cxp_automaticas detalle=error_consulta_proveedores`, provsError.message);
+      }
       const provMap = new Map((provs ?? []).map((p) => [p.nombre, p]));
       const hoyCxP = oNull(input.fechaEmision) ?? new Date().toISOString().slice(0, 10);
-      const { data: cxpCreadas } = await sb.from("cuentas_por_pagar").insert(
+      const { data: cxpCreadas, error: cxpInsertError } = await sb.from("cuentas_por_pagar").insert(
         cxpRows.map((r) => {
           const p = provMap.get(r.proveedor);
           return {
@@ -505,15 +561,23 @@ export async function crearContrato(
           };
         })
       ).select("id, tipo_proveedor, proveedor, servicio, valor_total");
+      if (cxpInsertError) {
+        _resultadoCxp = "error";
+        console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=cxp_automaticas detalle=error_insert_cuentas_por_pagar`, cxpInsertError.message);
+      }
       for (const c of cxpCreadas ?? []) {
-        await postearAsientoCxP({
+        const asiento = await postearAsientoCxP({
           cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
           servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyCxP,
         });
+        if (!asiento.ok) {
+          if (_resultadoCxp === "ok") _resultadoCxp = "parcial";
+          console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=cxp_automaticas detalle=error_asiento_cxp`, asiento.error);
+        }
       }
     }
   }
-  console.log(`[medicion] etapa=cxp_automaticas duracion_ms=${Math.round(performance.now() - _tCxp0)} resultado=ok`);
+  registrarEtapa("crear_contrato", flujoId, "cxp_automaticas", Math.round(performance.now() - _tCxp0), _resultadoCxp);
 
   // ── Productos negociados: costos desde el módulo de producto + cupos ──────
   // Se hace con el cliente service-role para que el asesor nunca vea los costos
@@ -522,6 +586,12 @@ export async function crearContrato(
     input.tipoPaquete === "bloqueo" || input.tipoPaquete === "porcion_terrestre";
   const _tAdmin0 = performance.now();
   let _huboBloqueAdmin = false;
+  // Best-effort igual que antes: ningún error de este bloque bloquea la
+  // creación del contrato. La diferencia es que la MÉTRICA ya no dice "ok"
+  // a ciegas: "parcial" si algún paso individual devolvió `error` sin lanzar
+  // excepción (el patrón normal del cliente Supabase), "error" si entró al
+  // catch (una excepción real, ej. `createAdminClient()` sin llave configurada).
+  let _resultadoAdmin: ResultadoEtapa = "ok";
   if ((esNegociado && input.paqueteId) || (input.tipoPaquete === "bloqueo" && input.bloqueoId)) {
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
       _huboBloqueAdmin = true;
@@ -530,13 +600,17 @@ export async function crearContrato(
 
         // 1) Copiar costos negociados del paquete a la venta (ocultos al asesor)
         if (esNegociado && input.paqueteId) {
-          const { data: costos } = await admin
+          const { data: costos, error: costosError } = await admin
             .from("paquete_costos")
             .select("*")
             .eq("paquete_id", input.paqueteId)
             .maybeSingle();
+          if (costosError) {
+            _resultadoAdmin = "parcial";
+            console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=error_consulta_costos`, costosError.message);
+          }
           if (costos) {
-            await admin
+            const { error: updateError } = await admin
               .from("ventas")
               .update({
                 costo_hotel: costos.costo_hotel,
@@ -546,6 +620,10 @@ export async function crearContrato(
                 otros_costos: costos.otros_costos,
               })
               .eq("numero_contrato", numero);
+            if (updateError) {
+              _resultadoAdmin = "parcial";
+              console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=error_update_costos`, updateError.message);
+            }
           }
         }
 
@@ -553,15 +631,19 @@ export async function crearContrato(
         if (input.tipoPaquete === "bloqueo" && input.bloqueoId) {
           const holders = input.pasajeros.filter((p) => !p.esInfante);
           const adultos = holders.length || pax;
-          const { data: libres } = await admin
+          const { data: libres, error: libresError } = await admin
             .from("sillas")
             .select("id")
             .eq("bloqueo_id", input.bloqueoId)
             .in("estado", ["disponible", "cambio_entrante"])
             .order("numero_silla")
             .limit(adultos);
+          if (libresError) {
+            _resultadoAdmin = "parcial";
+            console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=error_consulta_sillas`, libresError.message);
+          }
           if (libres && libres.length) {
-            await Promise.all(
+            const resultadosSillas = await Promise.all(
               libres.map((s, i) => {
                 const p = holders[i];
                 return admin.from("sillas").update({
@@ -578,24 +660,33 @@ export async function crearContrato(
                 }).eq("id", s.id);
               })
             );
+            if (resultadosSillas.some((r) => r.error)) {
+              _resultadoAdmin = "parcial";
+              console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=error_update_sillas`, resultadosSillas.find((r) => r.error)?.error?.message);
+            }
           }
         }
-      } catch {
-        // No bloquear la creación del contrato si falla el paso administrativo.
+      } catch (e) {
+        // No bloquear la creación del contrato si falla el paso
+        // administrativo (comportamiento histórico sin cambios) — pero la
+        // métrica SÍ debe decir "error", nunca "ok".
+        _resultadoAdmin = "error";
+        console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=excepcion`, e instanceof Error ? e.message : String(e));
       }
     }
   }
   if (_huboBloqueAdmin) {
-    console.log(`[medicion] etapa=negociado_admin duracion_ms=${Math.round(performance.now() - _tAdmin0)} resultado=ok`);
+    registrarEtapa("crear_contrato", flujoId, "negociado_admin", Math.round(performance.now() - _tAdmin0), _resultadoAdmin);
   }
 
   // Auto-comisión B2B: usa el % propio del aliado o, si no tiene, el default general.
   const _tAliado0 = performance.now();
+  let _resultadoAliado: ResultadoEtapa = "ok";
   if (aliado) {
     const defParam = tipoVenta === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
     const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
     const pct = aliado.pct_comision ?? Number(p?.valor) ?? (tipoVenta === "agencia" ? 0.12 : 0.11);
-    await sb.from("aliados_b2b").insert({
+    const { error: aliadoError } = await sb.from("aliados_b2b").insert({
       numero_contrato: numero,
       tenant,
       aliado: aliado.nombre,
@@ -609,9 +700,13 @@ export async function crearContrato(
       pct_retencion: aliado.pct_retencion,
       estado: "pendiente",
     });
+    if (aliadoError) {
+      _resultadoAliado = "error";
+      console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=aliado_b2b detalle=error_insert`, aliadoError.message);
+    }
   }
   if (aliado) {
-    console.log(`[medicion] etapa=aliado_b2b duracion_ms=${Math.round(performance.now() - _tAliado0)} resultado=ok`);
+    registrarEtapa("crear_contrato", flujoId, "aliado_b2b", Math.round(performance.now() - _tAliado0), _resultadoAliado);
   }
 
   revalidatePath("/dashboard/contratos");

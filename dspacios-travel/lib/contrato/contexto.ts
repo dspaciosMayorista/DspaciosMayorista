@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { COOKIE_TENANT, resolverTenantActivo, type Tenant } from "@/lib/tenant";
 import { puedeEscribir } from "@/lib/roles";
-import { medirEtapa } from "@/lib/observabilidad/medicion";
+import { crearMedidor } from "@/lib/observabilidad/medicion";
 import { resolverContextoCrearContratoOrquestado, type ContextoCrearContrato } from "./contextoPuro";
 
 export type { ContextoCrearContrato };
@@ -45,25 +45,44 @@ export type ContextoCrearContratoResuelto =
  * puede probar con EJECUCIÓN REAL (espías, no grep) que `auth.getUser` y la
  * consulta de perfil se invocan EXACTAMENTE una vez cada uno — nunca dos,
  * como pasaba antes de esta ronda al llamar a `getTenant()` a secas.
+ *
+ * `flujo`/`flujoId` (revisión posterior — corrección de observabilidad):
+ * los recibe el CALLER (`crearContrato()`/`reservarPrograma()`, que generan
+ * un `flujo_id` único por ejecución con `generarFlujoId()`) para que las
+ * etapas medidas AQUÍ DENTRO (`contexto_auth_getUser`, `contexto_perfil_
+ * query`) queden asociadas al mismo `flujo_id` que el resto de las etapas de
+ * esa ejecución — necesario para poder distinguir dos reservas simultáneas
+ * en los logs. `resultadoDe` de cada consulta distingue un error TÉCNICO de
+ * Supabase (`r.error`) de la ausencia legítima de sesión/fila — antes ambos
+ * casos se reportaban igual ("sin_sesion"/"sin_perfil"), lo que ocultaba
+ * fallas reales de la base de datos como si fueran simplemente "no hay
+ * sesión". El detalle técnico del error (nunca expuesto al navegador — el
+ * gate sigue devolviendo el mismo mensaje público genérico) se registra
+ * server-side con `console.error`, asociado al `flujo_id`.
  */
-export async function contextoCrearContrato(): Promise<ContextoCrearContratoResuelto> {
+export async function contextoCrearContrato(flujo: string, flujoId: string): Promise<ContextoCrearContratoResuelto> {
   const sb = await createClient();
   const ck = (await cookies()).get(COOKIE_TENANT)?.value;
+  const medir = crearMedidor(flujo, flujoId);
 
   const ctx = await resolverContextoCrearContratoOrquestado(
     async () => {
-      const {
-        data: { user },
-      } = await medirEtapa("contexto_auth_getUser", () => sb.auth.getUser(), (r) => (r.data.user ? "ok" : "sin_sesion"));
-      return user;
+      const res = await medir(
+        "contexto_auth_getUser",
+        () => sb.auth.getUser(),
+        (r) => (r.error ? "error" : r.data.user ? "ok" : "sin_sesion")
+      );
+      if (res.error) console.error(`[medicion] flujo=${flujo} flujo_id=${flujoId} etapa=contexto_auth_getUser detalle=error_auth_getUser`, res.error.message);
+      return res.data.user;
     },
     async (userId) => {
-      const { data: perfil } = await medirEtapa(
+      const res = await medir(
         "contexto_perfil_query",
         () => sb.from("usuarios").select("rol, activo, tenant").eq("id", userId).maybeSingle(),
-        (r) => (r.data ? "ok" : "sin_perfil")
+        (r) => (r.error ? "error" : r.data ? "ok" : "sin_perfil")
       );
-      return perfil;
+      if (res.error) console.error(`[medicion] flujo=${flujo} flujo_id=${flujoId} etapa=contexto_perfil_query detalle=error_consulta_perfil`, res.error.message);
+      return res.data;
     },
     (perfil) => resolverTenantActivo(perfil as { rol?: string; tenant?: string } | null, ck),
     (rol) => puedeEscribir("ventas", rol)

@@ -245,14 +245,17 @@ function cuerpoDeFuncion(src: string, nombre: string): string {
 }
 
 describe("reservar/actions.ts: reservarPrograma usa contextoCrearContrato(), no contextoCotizacion()", () => {
-  const cuerpo = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/reservar/actions.ts"), "reservarPrograma");
+  // Desde la ronda de observabilidad, la Server Action exportada
+  // `reservarPrograma` es un wrapper delgado (flujo_id + medición total) que
+  // delega en `reservarProgramaInterno`, donde vive el uso real de `ctx`.
+  const cuerpo = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/reservar/actions.ts"), "reservarProgramaInterno");
 
   test("llama a contextoCrearContrato()", () => {
-    // Acepta tanto la llamada directa como envuelta en `medirEtapa(...)`
-    // (medición de rendimiento sin PII agregada en la ronda de optimización
-    // del botón "Reservar"/"Generar contrato" — sigue siendo, en cualquier
-    // caso, la MISMA función real la que resuelve `ctx`).
-    assert.match(cuerpo, /const\s+ctx\s*=\s*await\s+[\s\S]{0,80}?contextoCrearContrato\(\)/);
+    // Acepta tanto la llamada directa como envuelta en `medir(...)` (medición
+    // de rendimiento sin PII), y con los argumentos `flujo, flujoId` que
+    // agregó la corrección de observabilidad — sigue siendo, en cualquier
+    // caso, la MISMA función real la que resuelve `ctx`.
+    assert.match(cuerpo, /const\s+ctx\s*=\s*await\s+[\s\S]{0,80}?contextoCrearContrato\(/);
   });
 
   test("ya NO llama a contextoCotizacion() (el gate viejo, sin verificación de rol)", () => {
@@ -263,6 +266,11 @@ describe("reservar/actions.ts: reservarPrograma usa contextoCrearContrato(), no 
     // El tenant debe salir de `ctx.tenant` (resuelto server-side), nunca de
     // un campo homónimo leído de `input`.
     assert.doesNotMatch(cuerpo, /const\s+tenant\s*=\s*input\./);
+  });
+
+  test("reservarPrograma (wrapper exportado) delega en reservarProgramaInterno", () => {
+    const cuerpoWrapper = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/reservar/actions.ts"), "reservarPrograma");
+    assert.match(cuerpoWrapper, /reservarProgramaInterno\(/);
   });
 });
 

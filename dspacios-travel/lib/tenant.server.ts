@@ -3,8 +3,10 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { COOKIE_TENANT, esTenant, resolverTenantActivo, TENANTS, type Tenant } from "@/lib/tenant";
 
-// Contexto de agencia del usuario: su agencia "home", si puede cambiar (solo
-// superadmin/gerencia) y la agencia ACTIVA (cookie validada contra lo permitido).
+// Contexto de agencia del usuario: su agencia "home", si puede cambiar (SOLO
+// superadmin — ver `puedeCambiar` abajo, `resolverTenantActivo()` en
+// lib/tenant.ts aplica la misma regla) y la agencia ACTIVA (cookie validada
+// contra lo permitido).
 export async function tenantContext(): Promise<{
   tenant: Tenant; userTenant: Tenant; puedeCambiar: boolean; permitidos: Tenant[];
 }> {

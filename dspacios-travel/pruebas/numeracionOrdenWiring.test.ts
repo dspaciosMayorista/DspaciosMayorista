@@ -93,18 +93,29 @@ function assertOrdenAntesDeGenerar(cuerpo: string, marcadores: string[], etiquet
 }
 
 describe("crearContrato (contratos/actions.ts) — genera el número después de validar", () => {
-  const cuerpo = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/contratos/actions.ts"), "crearContrato");
+  // La Server Action exportada `crearContrato` es, desde la ronda de
+  // observabilidad, un wrapper delgado (genera flujo_id, mide el total en
+  // `finally`) que delega TODA la lógica real —incluida la generación del
+  // número— en `crearContratoInterno`. El orden de validación que importa
+  // aquí (evitar consumo prematuro de consecutivos) vive en esa función.
+  const cuerpo = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/contratos/actions.ts"), "crearContratoInterno");
 
   test("orden: contexto fail-closed → tarifas del negociado → ítems → BNC → margen → aliado → NÚMERO", () => {
     assertOrdenAntesDeGenerar(cuerpo, [
-      "contextoCrearContrato()",
+      "contextoCrearContrato(",
       "El paquete negociado no tiene tarifas configuradas",
       "Cantidades o tarifas inválidas en los ítems",
       "La BNC fija no puede ser menor",
       "La BNC no puede ser mayor",
       "margenInsuficiente: true",
       "del catálogo.",
-    ], "crearContrato");
+    ], "crearContratoInterno");
+  });
+
+  test("crearContrato (wrapper exportado) delega en crearContratoInterno — no reimplementa la lógica de validación/generación por separado", () => {
+    const cuerpoWrapper = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/contratos/actions.ts"), "crearContrato");
+    assert.match(cuerpoWrapper, /crearContratoInterno\(/);
+    assert.doesNotMatch(cuerpoWrapper, /siguienteNumeroContrato\(/);
   });
 });
 
@@ -120,15 +131,24 @@ describe("reservarDesdeTarifarioInterno (reservar/actions.ts) — genera despué
 });
 
 describe("reservarPrograma (reservar/actions.ts) — genera después de validar programa/vigencia/precios/edades", () => {
-  const cuerpo = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/reservar/actions.ts"), "reservarPrograma");
+  // Mismo patrón que crearContrato: la Server Action exportada es un
+  // wrapper delgado (flujo_id + medición total) que delega en
+  // `reservarProgramaInterno`, donde vive el orden real de validación.
+  const cuerpo = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/reservar/actions.ts"), "reservarProgramaInterno");
   test("orden: sesión → programa → vigencia/blackouts → precios → habitaciones → edades → NÚMERO", () => {
     assertOrdenAntesDeGenerar(cuerpo, [
-      "contextoCrearContrato()",
+      "contextoCrearContrato(",
       "Programa no encontrado.",
       "La fecha de salida es anterior a la vigencia",
       "Indica cuántas habitaciones reservas",
       "Debe haber al menos un pasajero.",
-    ], "reservarPrograma");
+    ], "reservarProgramaInterno");
+  });
+
+  test("reservarPrograma (wrapper exportado) delega en reservarProgramaInterno — no reimplementa la lógica de validación/generación por separado", () => {
+    const cuerpoWrapper = cuerpoDeFuncion(leer("app/(dashboard)/dashboard/reservar/actions.ts"), "reservarPrograma");
+    assert.match(cuerpoWrapper, /reservarProgramaInterno\(/);
+    assert.doesNotMatch(cuerpoWrapper, /siguienteNumeroContrato\(/);
   });
 });
 

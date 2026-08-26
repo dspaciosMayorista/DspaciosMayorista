@@ -12,7 +12,7 @@ import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
-import { medirEtapa } from "@/lib/observabilidad/medicion";
+import { generarFlujoId, crearMedidor, registrarEtapa, type Medidor, type ResultadoEtapa } from "@/lib/observabilidad/medicion";
 import type { Tenant } from "@/lib/tenant";
 import type { Json } from "@/types/database";
 import {
@@ -1370,7 +1370,38 @@ function sumarDias(fecha: string, dias: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Flujo real (revisión posterior — corrección de observabilidad, mismo
+// patrón que `crearContrato()` en contratos/actions.ts): la Server Action
+// exportada es un wrapper delgado que genera el `flujo_id` de esta ejecución
+// y mide la duración TOTAL (incluye `revalidatePath`) en `finally`, así que
+// se emite en éxito, en cualquier rechazo de validación (early-return) y en
+// excepción no capturada. `reservarProgramaInterno` es el cuerpo real, con
+// las etapas atadas al mismo `flujo_id` — antes esta Server Action solo
+// medía "contexto" y nada más, lo que no permitía diagnosticar el botón
+// "Generar reserva" de Programas más allá del gate de autorización.
 export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaResult> {
+  const flujoId = generarFlujoId();
+  const medir = crearMedidor("reservar_programa", flujoId);
+  const _tTotal0 = performance.now();
+  let _resultadoTotal: ResultadoEtapa = "error";
+  try {
+    const res = await reservarProgramaInterno(input, flujoId, medir);
+    _resultadoTotal = res.ok ? "ok" : "rechazado";
+    return res;
+  } catch (err) {
+    _resultadoTotal = "error";
+    console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=total detalle=excepcion`, err instanceof Error ? err.message : String(err));
+    throw err;
+  } finally {
+    registrarEtapa("reservar_programa", flujoId, "total", Math.round(performance.now() - _tTotal0), _resultadoTotal);
+  }
+}
+
+async function reservarProgramaInterno(
+  input: ReservaProgramaInput,
+  flujoId: string,
+  medir: Medidor
+): Promise<ReservaResult> {
   // Contexto fail-closed INTERNO (revisión posterior al PR #274, ronda 2):
   // reservarPrograma() es exportada y por lo tanto alcanzable directo por
   // red — este flujo NO es autoservicio B2B como convertirCotizacion*/
@@ -1394,7 +1425,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // pero SIN permiso de crear ventas) activo podía alcanzar este RPC
   // administrativo, gastar un consecutivo DTM y fallar recién al insertar
   // en `ventas` por RLS.
-  const ctx = await medirEtapa("contexto", () => contextoCrearContrato(), (r) => (r.ok ? "ok" : "rechazado"));
+  const ctx = await medir("contexto", () => contextoCrearContrato("reservar_programa", flujoId), (r) => (r.ok ? "ok" : "rechazado"));
   if (!ctx.ok) return { ok: false, error: ctx.error };
   // Reutiliza el MISMO cliente de sesión que `contextoCrearContrato()` ya
   // creó y autenticó (optimización posterior al PR #274, ver el comentario
@@ -1402,6 +1433,13 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // así que un intento rechazado también pagaba el costo de un cliente
   // (barato, pero innecesario) que nunca se llegaba a usar.
   const { tenant, sb } = ctx;
+
+  // Etapa "validacion_programa": programa + vigencia + blackouts + precios +
+  // habitaciones/pax + validación de edades — varias validaciones con
+  // retorno anticipado; el cierre se loguea justo antes de generar el
+  // número de contrato (único punto que se alcanza solo si todas pasaron).
+  const _tValidacionProg0 = performance.now();
+
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
   if (!input.fechaIda) return { ok: false, error: "Elige la fecha de salida." };
@@ -1565,8 +1603,10 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
     }
   }
 
+  registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "ok");
+
   // 4) Número de contrato — ya completo, tenant resuelto arriba (nunca del navegador)
-  const numRes = await siguienteNumeroContrato(tenant);
+  const numRes = await medir("numero_contrato", () => siguienteNumeroContrato(tenant), (r) => (r.ok ? "ok" : "error"));
   if (!numRes.ok) return { ok: false, error: numRes.error };
   const numero = numRes.numero;
 
@@ -1577,6 +1617,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   const fechaRegreso = nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
 
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
+  const _tVenta0 = performance.now();
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
     tenant,
@@ -1602,7 +1643,24 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
     asesor_firma_nombre: oNull(asesorNombre),
     plan_nombre: catNombre ?? prog.nombre,
   });
+  registrarEtapa("reservar_programa", flujoId, "insert_venta", Math.round(performance.now() - _tVenta0), ve ? "error" : "ok");
   if (ve) return { ok: false, error: ve.message };
+
+  // 6-8) Tablas hijas — pasajeros/items/hoteles, medidas como un solo grupo
+  // (etapa=insert_hijas, mismo criterio que crearContrato()): no se
+  // reordenan ni paralelizan sin antes demostrar sus dependencias. Antes de
+  // esta ronda, los INSERT de ítems y hoteles descartaban su `error` en
+  // silencio (nunca bloqueaban, pero tampoco quedaba registro de que algo
+  // había fallado) — ahora se capturan para que la métrica diga "error" en
+  // vez de "ok" si alguno falla, sin cambiar el comportamiento histórico
+  // (siguen sin bloquear la reserva).
+  const _tHijas0 = performance.now();
+  const _errorHijas = (detalle: string, error: { message: string }) => {
+    registrarEtapa("reservar_programa", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
+    console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=insert_hijas detalle=${detalle}`, error.message);
+    return { ok: false as const, error: error.message };
+  };
+  let _resultadoHijas: ResultadoEtapa = "ok";
 
   // 6) Pasajeros
   if (input.pasajeros.length) {
@@ -1618,25 +1676,35 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
         orden: i,
       }))
     );
-    if (error) return { ok: false, error: error.message };
+    if (error) return _errorHijas("pasajeros", error);
   }
 
   // 7) Ítems (líneas por acomodación)
   for (const it of items) it.numero_contrato = numero;
-  if (items.length) await sb.from("contrato_items").insert(items);
+  if (items.length) {
+    const { error } = await sb.from("contrato_items").insert(items);
+    if (error) return _errorHijas("items", error);
+  }
 
-  // 8) Hoteles por ciudad (de la categoría elegida) — informativo en el contrato.
-  //    En modo salida no hay matriz de hoteles; se usa el hotel de la columna si lo hay.
+  // 8) Hoteles por ciudad (de la categoría elegida) — informativo en el
+  //    contrato: su fallo NO bloquea la reserva (comportamiento histórico
+  //    sin cambios), pero ya no queda como "ok" sin más — la métrica pasa a
+  //    "parcial". En modo salida no hay matriz de hoteles; se usa el hotel
+  //    de la columna si lo hay.
   const provNombre = (prog.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
-  const { data: hotelesCat } = modoSalida
-    ? { data: hotelSalida ? [{ ciudad: prog.subtitulo ?? prog.nombre, hotel: hotelSalida, orden: 0 }] : [] }
+  const { data: hotelesCat, error: hotelesCatError } = modoSalida
+    ? { data: hotelSalida ? [{ ciudad: prog.subtitulo ?? prog.nombre, hotel: hotelSalida, orden: 0 }] : [], error: null }
     : await sb
         .from("programa_categoria_hoteles")
         .select("ciudad, hotel, orden")
         .eq("categoria_id", input.categoriaId)
         .order("orden");
+  if (hotelesCatError) {
+    _resultadoHijas = "parcial";
+    console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=insert_hijas detalle=error_consulta_hoteles_categoria`, hotelesCatError.message);
+  }
   if (hotelesCat?.length) {
-    await sb.from("contrato_hoteles").insert(
+    const { error: hotelesInsertError } = await sb.from("contrato_hoteles").insert(
       hotelesCat.map((h, i) => ({
         numero_contrato: numero,
         nombre: h.hotel ?? "",
@@ -1647,16 +1715,32 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
         orden: i,
       }))
     );
+    if (hotelesInsertError) {
+      _resultadoHijas = "parcial";
+      console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=insert_hijas detalle=error_insert_hoteles`, hotelesInsertError.message);
+    }
   }
+  registrarEtapa("reservar_programa", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), _resultadoHijas);
 
-  // 9) Cuenta por pagar al proveedor del programa (neto, en la moneda del programa).
+  // 9) Cuenta por pagar al proveedor del programa (neto, en la moneda del
+  // programa). Best-effort igual que antes (no bloquea la reserva), pero la
+  // MÉTRICA ya no dice "ok" a ciegas: "parcial" si algún paso individual
+  // devolvió `error` sin lanzar excepción, "error" si entró al catch.
+  const _tCxp0 = performance.now();
+  let _huboBloqueCxp = false;
+  let _resultadoCxp: ResultadoEtapa = "ok";
   if (costoNeto > 0 && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    _huboBloqueCxp = true;
     try {
       const admin = createAdminClient();
       const pr = prog.proveedores as unknown as { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
-      await admin.from("ventas").update({ costo_receptivo: costoNeto }).eq("numero_contrato", numero);
+      const { error: updateError } = await admin.from("ventas").update({ costo_receptivo: costoNeto }).eq("numero_contrato", numero);
+      if (updateError) {
+        _resultadoCxp = "parcial";
+        console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=cxp_programa detalle=error_update_costo`, updateError.message);
+      }
       const fechaProg = new Date().toISOString().slice(0, 10);
-      const { data: cProg } = await admin.from("cuentas_por_pagar").insert({
+      const { data: cProg, error: cProgError } = await admin.from("cuentas_por_pagar").insert({
         numero_contrato: numero,
         proveedor: pr?.nombre ?? null,
         tipo_proveedor: "programa",
@@ -1668,15 +1752,29 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
         pct_retencion: Number(pr?.pct_retencion) || 0,
         observaciones: "Generado automáticamente desde el tarifario (programa)",
       }).select("id").single();
+      if (cProgError) {
+        _resultadoCxp = "error";
+        console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=cxp_programa detalle=error_insert_cxp`, cProgError.message);
+      }
       if (cProg) {
-        await postearAsientoCxP({
+        const asiento = await postearAsientoCxP({
           cuentaId: cProg.id, numeroContrato: numero, tipoProveedor: "programa", proveedor: pr?.nombre ?? null,
           servicio: prog.nombre, valorTotal: costoNeto, fecha: fechaProg,
         });
+        if (!asiento.ok) {
+          if (_resultadoCxp === "ok") _resultadoCxp = "parcial";
+          console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=cxp_programa detalle=error_asiento_cxp`, asiento.error);
+        }
       }
-    } catch {
-      // No bloquear la reserva si falla el paso administrativo.
+    } catch (e) {
+      // No bloquear la reserva si falla el paso administrativo (sin
+      // cambios) — pero la métrica SÍ debe decir "error", nunca "ok".
+      _resultadoCxp = "error";
+      console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=cxp_programa detalle=excepcion`, e instanceof Error ? e.message : String(e));
     }
+  }
+  if (_huboBloqueCxp) {
+    registrarEtapa("reservar_programa", flujoId, "cxp_programa", Math.round(performance.now() - _tCxp0), _resultadoCxp);
   }
 
   revalidatePath("/dashboard/contratos");
