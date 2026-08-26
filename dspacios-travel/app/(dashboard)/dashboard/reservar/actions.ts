@@ -10,6 +10,7 @@ import { calcularEdad } from "@/lib/utils";
 import { pvpPrograma } from "@/lib/programas";
 import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
+import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import type { Tenant } from "@/lib/tenant";
 import type { Json } from "@/types/database";
 import {
@@ -114,9 +115,11 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // (hallazgo de la revisión posterior al PR #268, punto 1 "COSTO FINANCIERO").
   const costoAereo = datosVuelo ? datosVuelo.costo_neto * paxConSilla + datosVuelo.fee_infante * infantesN : 0;
 
-  // 3) Número de contrato
-  const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
-  if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+  // 3) Número de contrato — ya completo (DTM-#### / MIN-00-####), tenant
+  // recibido como parámetro ya validado por el caller (nunca del navegador).
+  const numRes = await siguienteNumeroContrato(sb, tenant);
+  if (!numRes.ok) return { ok: false, error: numRes.error };
+  const numero = numRes.numero;
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
@@ -991,8 +994,9 @@ export async function convertirCotizacionCarrito(
   const numeros: string[] = [];
 
   for (const { grupo, validados } of gruposValidados) {
-    const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
-    if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+    const numRes = await siguienteNumeroContrato(sb, tenantCotizacion);
+    if (!numRes.ok) return { ok: false, error: numRes.error };
+    const numero = numRes.numero;
 
     const clienteNombre = `${cliente.nombres} ${cliente.apellidos}`.trim();
     const destinos = [...new Set(validados.map((v) => v.comp.meta.destino_nombre ?? v.item.destino).filter((d): d is string => !!d))];
@@ -1366,6 +1370,14 @@ function sumarDias(fecha: string, dias: number): string {
 
 export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaResult> {
   const sb = await createClient();
+  // Tenant resuelto del servidor con la MISMA fuente que el resto de este
+  // archivo (nunca getTenant() a secas: sin sesión cae en silencio a
+  // "mayorista" — contextoCotizacion() falla cerrado). Los programas hoy son
+  // exclusivos de mayorista, pero se resuelve explícito en vez de depender
+  // del default de columna de `ventas`.
+  const ctx = await contextoCotizacion();
+  if (!ctx.ok) return { ok: false, error: "No tienes una sesión válida para reservar." };
+  const tenant = ctx.tenant;
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
   if (!input.fechaIda) return { ok: false, error: "Elige la fecha de salida." };
@@ -1529,9 +1541,10 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
     }
   }
 
-  // 4) Número de contrato
-  const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
-  if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+  // 4) Número de contrato — ya completo, tenant resuelto arriba (nunca del navegador)
+  const numRes = await siguienteNumeroContrato(sb, tenant);
+  if (!numRes.ok) return { ok: false, error: numRes.error };
+  const numero = numRes.numero;
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
@@ -1542,6 +1555,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
+    tenant,
     cliente: `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim(),
     cliente_documento: oNull(input.cliente.numeroDoc),
     cliente_telefono: oNull(input.cliente.telefono),

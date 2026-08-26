@@ -7,7 +7,7 @@ import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
 import { asegurarCuentasPorPagar } from "../reservar/actions";
 import { formatMoneda } from "@/lib/utils";
 import { getTenant } from "@/lib/tenant.server";
-import { numeroConTenant } from "@/lib/tenant";
+import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
 
 // Postea (o reemplaza) el asiento de un abono: Debe Caja/Bancos (según forma
@@ -167,20 +167,13 @@ export async function crearContrato(
   const sb = await createClient();
   const tenant = await getTenant();
 
-  // 1. Número de contrato (00-NNNN) vía secuencia GLOBAL en la BD. La secuencia es
-  // compartida con la mayorista, así que en minorista se le antepone el prefijo
-  // MIN- (numeroConTenant) para que NUNCA choque ni se confunda con la numeración
-  // real de la mayorista (dos agencias, misma secuencia, PK distinta).
-  const { data: numeroRaw, error: ne } = await sb.rpc("siguiente_numero_contrato");
-  if (ne || !numeroRaw) {
-    return {
-      ok: false,
-      error:
-        (ne?.message ?? "No se pudo generar el número de contrato.") +
-        " — Verifica que la migración 010 esté aplicada en Supabase.",
-    };
+  // 1. Número de contrato — ya completo (DTM-#### / MIN-00-####), migración
+  // 159: mayorista tiene su propia secuencia, minorista sigue igual.
+  const numRes = await siguienteNumeroContrato(sb, tenant);
+  if (!numRes.ok) {
+    return { ok: false, error: numRes.error + " — Verifica que la migración 159 esté aplicada en Supabase." };
   }
-  const numero = numeroConTenant(numeroRaw, tenant);
+  const numero = numRes.numero;
 
   // Precio BLOQUEADO del producto para negociados: se ignoran las tarifas que
   // venga del cliente y se usan las del paquete (el asesor no puede cambiarlas).

@@ -2856,6 +2856,12 @@ export type Database = {
         Args: Record<PropertyKey, never>;
         Returns: string;
       };
+      // Migración 159. Generador único por tenant — devuelve el número
+      // COMPLETO ya prefijado (DTM-#### / MIN-00-####).
+      siguiente_numero_contrato_para_tenant: {
+        Args: { p_tenant: string };
+        Returns: string;
+      };
       eliminar_contrato: {
         Args: { p_numero: string; p_reusar: boolean };
         Returns: undefined;

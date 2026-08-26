@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { marcar } from "@/lib/calc/paquetes";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
+import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import type { Tenant } from "@/lib/tenant";
 import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 
@@ -442,9 +443,12 @@ export async function convertirCotizacionManualAContrato(
 
   const ss = servicios ?? [];
 
-  // Número de contrato (secuencia BD)
-  const { data: numero, error: ne } = await sb.rpc("siguiente_numero_contrato");
-  if (ne || !numero) return { ok: false, error: ne?.message ?? "No se pudo generar el número de contrato." };
+  // Número de contrato — ya completo (DTM-#### / MIN-00-####). Corrige el
+  // defecto de antes: este camino podía guardar el número crudo sin prefijo
+  // si tenantCotizacion era minorista (la función nueva siempre lo aplica).
+  const numRes = await siguienteNumeroContrato(sb, tenantCotizacion);
+  if (!numRes.ok) return { ok: false, error: numRes.error };
+  const numero = numRes.numero;
 
   // Costos netos por tipo, cada uno EN SU LUGAR (rentabilidad / flujo de caja):
   // aéreo, hotel, receptivo (traslados), asistencia y otros.
