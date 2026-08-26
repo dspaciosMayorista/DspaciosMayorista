@@ -2,19 +2,30 @@
 -- 160 · ventas_formato_numero_por_tenant (CIERRE — correr DESPUÉS de la 159,
 --   del despliegue de código y de las pruebas operativas. NO antes.)
 --
--- ⚠️ ORDEN OBLIGATORIO DE DESPLIEGUE (ver también el cuerpo del PR):
---   1) Aplicar la 159 (aditiva).
---   2) Desplegar el código que usa `siguiente_numero_contrato_para_tenant`.
---   3) Probar en producción: al menos un contrato mayorista real generado
---      por cada uno de los 5 caminos (o los que aplique el negocio), y
---      confirmar que salió DTM-0001, DTM-0002... sin prefijo doble.
---   4) Recién ENTONCES aplicar esta migración (160).
---   5) Correr las pruebas finales (test_ventas_formato_por_tenant.sql).
+-- ⚠️ ORDEN OBLIGATORIO DE DESPLIEGUE (ver también el cuerpo del PR — corregido
+-- en la revisión posterior al PR #274: el orden anterior pedía probar los 5
+-- caminos EN PRODUCCIÓN con contratos reales, lo que habría consumido varios
+-- consecutivos DTM de forma PERMANENTE, ya que mayorista nunca los recicla):
+--   1) Ejecutar `supabase/scripts/preventiva_antes_de_159.sql` (solo lectura).
+--   2) Confirmar que su veredicto es OK (no BLOQUEADO).
+--   3) Aplicar la 159 (aditiva).
+--   4) Desplegar el código que usa `siguiente_numero_contrato_para_tenant`.
+--   5) Validar los 5 caminos de creación de contrato ÚNICAMENTE en base
+--      local o staging (nunca con contratos reales en producción — los
+--      scripts de este PR ya cubren esto: `test_consecutivo_dtm_mayorista.sh`
+--      y `test_concurrencia_dtm_mayorista.sh`).
+--   6) En producción, crear SOLAMENTE el primer contrato mayorista REAL por
+--      el flujo operativo que corresponda (uno solo, el que el negocio use
+--      de verdad) y verificar que su numero_contrato sea exactamente
+--      DTM-0001, sin prefijo doble.
+--   7) Recién ENTONCES aplicar esta migración (160).
+--   8) Correr las pruebas finales (test_ventas_formato_por_tenant.sql).
 --
--- Invertir el orden (correr la 160 antes de desplegar el código nuevo, o
--- antes de las pruebas operativas) puede dejar el candado activo mientras el
--- código viejo todavía intenta escribir un número que no cumple el formato
--- nuevo — evitable simplemente respetando el orden de arriba.
+-- Invertir el orden (correr la 160 antes de desplegar el código nuevo, antes
+-- de validar en local/staging, o antes de confirmar el veredicto OK del
+-- preflight) puede dejar el candado activo mientras el código viejo todavía
+-- intenta escribir un número que no cumple el formato nuevo — evitable
+-- simplemente respetando el orden de arriba.
 --
 -- QUÉ HACE
 --   Verifica el formato de TODOS los contratos existentes y, si todos pasan,

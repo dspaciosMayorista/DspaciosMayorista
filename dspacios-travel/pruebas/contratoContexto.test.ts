@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { resolverContextoCrearContrato } from "../lib/contrato/contextoPuro.ts";
+import { resolverContextoCrearContrato, intentarGenerarNumeroContrato } from "../lib/contrato/contextoPuro.ts";
 
 // resolverContextoCrearContrato — el gate fail-closed de crearContrato()
 // (revisión posterior al PR #274): a diferencia de resolverContextoCotizacion
@@ -125,6 +125,83 @@ describe("ESCRITURA.ventas real (lib/roles.ts) — reconstruida y evaluada, no a
       assert.equal(ctx.ok, true);
     });
   }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// COBERTURA COMPUESTA DE NO-CONSUMO (revisión posterior al PR #274, ronda 3,
+// ítem 3): las dos piezas de arriba — "la base rechaza invocaciones directas
+// de anon/authenticated" (SQL, test_consecutivo_dtm_mayorista.sh) y
+// "resolverContextoCrearContrato rechaza control_vuelo" (pura, arriba) — se
+// probaban por separado. Eso NO demuestra, compuestas, que un intento de
+// control_vuelo nunca llega a invocar el generador. Aquí SÍ se compone: se
+// llama a `intentarGenerarNumeroContrato()` (que internamente usa la función
+// REAL `resolverContextoCrearContrato`, la misma que production) con un
+// GENERADOR ESPÍA (cuenta invocaciones, nunca hace I/O real) y se cuenta
+// exactamente cuántas veces se invocó.
+//
+// ⚠️ Esto NO es una prueba end-to-end de la Server Action `reservarPrograma`/
+// `crearContrato`: no las invoca, no corre contra una base real, y por lo
+// tanto NO mide `contrato_seq_mayorista` en el momento de llamar a esas
+// Server Actions — eso se prueba aparte, con SQL real, en
+// `test_consecutivo_dtm_mayorista.sh` (Pruebas 6a/6b/6c: un intento
+// RECHAZADO a nivel de base no cambia `contrato_seq_mayorista.last_value`).
+// Lo que esta prueba SÍ demuestra con ejecución real y composición real es
+// la invariante que hace que ese no-consumo sea posible en primer lugar: el
+// generador (aquí un espía; en producción, siempre `siguienteNumeroContrato`,
+// importado por el módulo — nunca algo que el navegador pueda elegir, ya que
+// las Server Actions de Next.js solo aceptan argumentos serializables, nunca
+// funciones) JAMÁS se invoca si el gate real rechaza.
+describe("intentarGenerarNumeroContrato — compone el gate REAL con un generador espía", () => {
+  function espia<T>(valor: T): { fn: (tenant: string) => Promise<T>; llamadas: string[] } {
+    const llamadas: string[] = [];
+    return {
+      llamadas,
+      fn: async (tenant: string) => {
+        llamadas.push(tenant);
+        return valor;
+      },
+    };
+  }
+
+  test("control_vuelo activo (rol sin permiso, ESCRITURA.ventas real) → el generador se llama 0 veces", async () => {
+    const { fn, llamadas } = espia("DTM-9999");
+    const res = await intentarGenerarNumeroContrato({ rol: "control_vuelo", activo: true }, false, "mayorista", fn);
+    assert.equal(res.ok, false);
+    assert.equal(llamadas.length, 0, `se esperaban 0 llamadas al generador, hubo ${llamadas.length}`);
+  });
+
+  test("usuario inactivo (rol venta, activo=false) → el generador se llama 0 veces", async () => {
+    const { fn, llamadas } = espia("DTM-9999");
+    const res = await intentarGenerarNumeroContrato({ rol: "venta", activo: false }, true, "mayorista", fn);
+    assert.equal(res.ok, false);
+    assert.equal(llamadas.length, 0, `se esperaban 0 llamadas al generador, hubo ${llamadas.length}`);
+  });
+
+  test("perfil ausente (sin sesión / sin fila en usuarios) → el generador se llama 0 veces", async () => {
+    const { fn, llamadas } = espia("DTM-9999");
+    const res = await intentarGenerarNumeroContrato(null, true, "mayorista", fn);
+    assert.equal(res.ok, false);
+    assert.equal(llamadas.length, 0, `se esperaban 0 llamadas al generador, hubo ${llamadas.length}`);
+  });
+
+  test("rol venta activo (autorizado) → el generador se llama EXACTAMENTE 1 vez, con el tenant correcto", async () => {
+    const { fn, llamadas } = espia("DTM-0007");
+    const res = await intentarGenerarNumeroContrato({ rol: "venta", activo: true }, true, "mayorista", fn);
+    assert.equal(res.ok, true);
+    if (res.ok) assert.equal(res.valor, "DTM-0007");
+    assert.equal(llamadas.length, 1, `se esperaba EXACTAMENTE 1 llamada al generador, hubo ${llamadas.length}`);
+    assert.deepEqual(llamadas, ["mayorista"]);
+  });
+
+  test("dos intentos rechazados seguidos + uno autorizado → el generador acumula exactamente 1 llamada en total", async () => {
+    // Refuerza que el conteo es real y acumulativo, no un artefacto de un
+    // solo caso aislado — compone varios intentos contra el MISMO espía.
+    const { fn, llamadas } = espia("DTM-0008");
+    await intentarGenerarNumeroContrato({ rol: "control_vuelo", activo: true }, false, "mayorista", fn);
+    await intentarGenerarNumeroContrato(null, true, "mayorista", fn);
+    await intentarGenerarNumeroContrato({ rol: "venta", activo: true }, true, "mayorista", fn);
+    assert.equal(llamadas.length, 1, `se esperaba 1 sola llamada acumulada tras 2 rechazos + 1 autorizado, hubo ${llamadas.length}`);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────

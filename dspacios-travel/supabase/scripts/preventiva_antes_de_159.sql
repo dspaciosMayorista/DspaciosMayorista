@@ -30,9 +30,29 @@
 -- no llama nextval()/setval(), no modifica ningún dato. Seguro de correr
 -- las veces que haga falta.
 --
+-- ⚠️ OBJETOS EXACTOS, no por relname/proname sueltos (revisión posterior al
+-- PR #274, ronda 3): un `where relname = 'contrato_seq_mayorista'` o
+-- `where proname = '...'` puede dar un FALSO BLOQUEADO si existe un objeto
+-- homónimo en OTRO esquema (relname/proname no llevan esquema), o —para la
+-- función— si existe una SOBRECARGA con otra firma (proname tampoco
+-- distingue argumentos). Los chequeos 4 y 5 ahora usan
+-- `to_regclass('public.contrato_seq_mayorista')` y
+-- `to_regprocedure('public.siguiente_numero_contrato_para_tenant(text)')` —
+-- ambos resuelven por esquema+nombre (y la función además por firma exacta
+-- de argumentos) tal como los resolvería Postgres al ejecutar `CREATE
+-- SEQUENCE`/`CREATE FUNCTION` reales, y devuelven NULL (sin lanzar error) si
+-- el objeto no existe — a diferencia de `::regclass`/`::regprocedure`, que sí
+-- lanzarían un error y romperían esta consulta de solo lectura. El chequeo
+-- de la secuencia además confirma que el objeto resuelto es efectivamente
+-- una secuencia (`relkind = 'S'`), no cualquier otro tipo de objeto que por
+-- casualidad tuviera ese nombre exacto en `public`.
+--
 -- Complementa (no reemplaza) `preventiva_formatos_pool_reciclaje.sql`, que
 -- da el desglose completo por formato del pool si el chequeo 3 bloquea aquí
 -- y hace falta ver el detalle fila por fila.
+--
+-- Pruebas reales (positivo/negativo) de estos dos chequeos:
+-- `supabase/scripts/test_preventiva_antes_de_159.sh`.
 -- ───────────────────────────────────────────────────────────────────────────
 
 with
@@ -52,14 +72,21 @@ with
      where not (numero like 'MIN-%' or numero ~ '^00-[0-9]+$')
   ),
   chk_secuencia as (
-    select count(*)::bigint as n
-      from pg_class
-     where relname = 'contrato_seq_mayorista' and relkind = 'S'
+    select case
+             when to_regclass('public.contrato_seq_mayorista') is null then 0::bigint
+             else (
+               select count(*)::bigint
+                 from pg_class c
+                where c.oid = to_regclass('public.contrato_seq_mayorista')
+                  and c.relkind = 'S'
+             )
+           end as n
   ),
   chk_funcion as (
-    select count(*)::bigint as n
-      from pg_proc
-     where proname = 'siguiente_numero_contrato_para_tenant'
+    select case
+             when to_regprocedure('public.siguiente_numero_contrato_para_tenant(text)') is null then 0::bigint
+             else 1::bigint
+           end as n
   ),
   filas as (
     select 1 as orden, 'contratos_tenant_mayorista'                                as chequeo,
