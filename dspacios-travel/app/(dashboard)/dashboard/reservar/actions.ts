@@ -12,6 +12,7 @@ import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
+import { medirEtapa } from "@/lib/observabilidad/medicion";
 import type { Tenant } from "@/lib/tenant";
 import type { Json } from "@/types/database";
 import {
@@ -1370,7 +1371,6 @@ function sumarDias(fecha: string, dias: number): string {
 }
 
 export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaResult> {
-  const sb = await createClient();
   // Contexto fail-closed INTERNO (revisión posterior al PR #274, ronda 2):
   // reservarPrograma() es exportada y por lo tanto alcanzable directo por
   // red — este flujo NO es autoservicio B2B como convertirCotizacion*/
@@ -1394,9 +1394,14 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // pero SIN permiso de crear ventas) activo podía alcanzar este RPC
   // administrativo, gastar un consecutivo DTM y fallar recién al insertar
   // en `ventas` por RLS.
-  const ctx = await contextoCrearContrato();
+  const ctx = await medirEtapa("contexto", () => contextoCrearContrato(), (r) => (r.ok ? "ok" : "rechazado"));
   if (!ctx.ok) return { ok: false, error: ctx.error };
-  const tenant = ctx.tenant;
+  // Reutiliza el MISMO cliente de sesión que `contextoCrearContrato()` ya
+  // creó y autenticó (optimización posterior al PR #274, ver el comentario
+  // en `lib/contrato/contexto.ts`) — antes se creaba aquí ANTES del gate,
+  // así que un intento rechazado también pagaba el costo de un cliente
+  // (barato, pero innecesario) que nunca se llegaba a usar.
+  const { tenant, sb } = ctx;
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
   if (!input.fechaIda) return { ok: false, error: "Elige la fecha de salida." };

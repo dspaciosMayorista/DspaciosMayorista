@@ -91,3 +91,39 @@ export async function intentarGenerarNumeroContrato<T>(
   const valor = await generador(ctx.tenant);
   return { ok: true, valor };
 }
+
+// ── Orquestador puro con I/O INYECTADO: cuenta llamadas reales ────────────
+// (optimización posterior al PR #274: `contextoCrearContrato()` duplicaba
+// `auth.getUser()` y la consulta de `usuarios` porque llamaba a `getTenant()`
+// a secas, que internamente vuelve a hacer las dos). Este orquestador es el
+// cuerpo REAL de `contextoCrearContrato()` (lib/contrato/contexto.ts), con
+// sus tres fuentes de I/O — obtener el usuario de la sesión, consultar el
+// perfil, y resolver el tenant activo (que ya no hace I/O propio: recibe la
+// cookie ya leída) — recibidas como funciones. Igual que
+// `intentarGenerarNumeroContrato`, esto permite probar con EJECUCIÓN REAL
+// (no grep, no conteo de texto) que `obtenerUsuario`/`consultarPerfil` se
+// invocan EXACTAMENTE el número de veces esperado — nunca dos, como pasaba
+// antes de esta ronda. `contexto.ts` pasa closures reales que envuelven
+// `sb.auth.getUser()`/`sb.from("usuarios")...`; las pruebas pasan espías.
+//
+// `resolverTenant` es SÍNCRONO a propósito: el cálculo del tenant activo
+// (`resolverTenantActivo()`, lib/tenant.ts) no hace I/O — ya recibe el
+// perfil y la cookie, ambos ya leídos — así que envolverlo en una promesa
+// aquí solo añadiría una vuelta de microtask sin ganar nada.
+export async function resolverContextoCrearContratoOrquestado(
+  obtenerUsuario: () => Promise<{ id: string } | null>,
+  consultarPerfil: (
+    userId: string
+  ) => Promise<{ rol: string; activo: boolean | null | undefined; tenant?: string | null } | null>,
+  resolverTenant: (
+    perfil: { rol: string; activo: boolean | null | undefined; tenant?: string | null } | null
+  ) => Tenant,
+  autorizadoPorRolFn: (rol: string) => boolean
+): Promise<ContextoCrearContrato> {
+  const user = await obtenerUsuario();
+  if (!user) return resolverContextoCrearContrato(null, false, "mayorista");
+
+  const perfil = await consultarPerfil(user.id);
+  const tenant = resolverTenant(perfil);
+  return resolverContextoCrearContrato(perfil, perfil ? autorizadoPorRolFn(perfil.rol) : false, tenant);
+}

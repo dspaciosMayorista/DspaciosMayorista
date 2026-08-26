@@ -9,6 +9,7 @@ import { formatMoneda } from "@/lib/utils";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
+import { medirEtapa } from "@/lib/observabilidad/medicion";
 
 // Postea (o reemplaza) el asiento de un abono: Debe Caja/Bancos (según forma
 // de pago) / Haber Anticipos de clientes (280505) si el contrato AÚN no está
@@ -170,10 +171,23 @@ export async function crearContrato(
   // verificados, y como el generador de número corre ahora con service_role,
   // esta validación de aplicación es la ÚNICA barrera real antes de gastar
   // un consecutivo DTM/MIN).
-  const ctx = await contextoCrearContrato();
+  // Medición server-side por etapas (sin PII — solo nombre de etapa, duración
+  // y resultado técnico): diagnóstico de la demora del botón "Generar
+  // contrato" pedido en la revisión posterior al PR #274. `contexto` incluye
+  // las sub-etapas medidas dentro de `contextoCrearContrato()` (auth.getUser
+  // + consulta de perfil, ya no duplicadas — ver lib/contrato/contexto.ts).
+  const ctx = await medirEtapa("contexto", () => contextoCrearContrato(), (r) => (r.ok ? "ok" : "rechazado"));
   if (!ctx.ok) return { ok: false, error: ctx.error };
-  const { tenant } = ctx;
-  const sb = await createClient();
+  // Reutiliza el MISMO cliente de sesión que `contextoCrearContrato()` ya
+  // creó y autenticó — en vez de crear uno nuevo aquí (optimización posterior
+  // al PR #274, ver el comentario en `lib/contrato/contexto.ts`).
+  const { tenant, sb } = ctx;
+
+  // Etapa "validacion_negocio": tarifas del negociado, ítems, BNC, margen
+  // mínimo y catálogo de aliado B2B — varias validaciones con retorno
+  // anticipado; el cierre de esta etapa se loguea justo antes de generar el
+  // número de contrato (único punto que se alcanza solo si todas pasaron).
+  const _tValidacion0 = performance.now();
 
   // Precio BLOQUEADO del producto para negociados: se ignoran las tarifas que
   // venga del cliente y se usan las del paquete (el asesor no puede cambiarlas).
@@ -285,6 +299,7 @@ export async function crearContrato(
     aliado = data;
     if (tipoVenta === "agencia") agenciaNombre = data.nombre; else freelanceNombre = data.nombre;
   }
+  console.log(`[medicion] etapa=validacion_negocio duracion_ms=${Math.round(performance.now() - _tValidacion0)} resultado=ok`);
 
   // Número de contrato — se genera AQUÍ, justo antes del primer INSERT que lo
   // necesita, DESPUÉS de todas las validaciones que pueden fallar (tarifas del
@@ -292,11 +307,12 @@ export async function crearContrato(
   // gastaría un consecutivo DTM/MIN por cada formulario inválido — con el RPC
   // ahora en service_role (ver lib/contrato/numeracion.ts), este es el punto
   // razonable más tardío antes del INSERT que lo requiere.
-  const numRes = await siguienteNumeroContrato(tenant);
+  const numRes = await medirEtapa("numero_contrato", () => siguienteNumeroContrato(tenant), (r) => (r.ok ? "ok" : "error"));
   if (!numRes.ok) return { ok: false, error: numRes.error };
   const numero = numRes.numero;
 
   // 2. Crear la venta (cabecera del contrato) — estampada con la agencia activa.
+  const _tVenta0 = performance.now();
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
     tenant,
@@ -341,9 +357,16 @@ export async function crearContrato(
     asesor_firma_cc: oNull(input.asesorCc),
     asesor_firma_tel: oNull(input.asesorTel),
   });
+  console.log(`[medicion] etapa=insert_venta duracion_ms=${Math.round(performance.now() - _tVenta0)} resultado=${ve ? "error" : "ok"}`);
   if (ve) return { ok: false, error: ve.message };
 
-  // 3. Tablas hijas
+  // 3. Tablas hijas — 5 inserts secuenciales (pasajeros/hoteles/vuelos/
+  // servicios/items), medidos como un solo grupo (etapa=insert_hijas): no se
+  // reordenan ni paralelizan sin antes demostrar sus dependencias (ninguna
+  // depende del resultado de otra, pero todas comparten `numero_contrato` de
+  // la venta recién creada, así que el orden actual —secuencial, después de
+  // la venta— se conserva tal cual en esta ronda).
+  const _tHijas0 = performance.now();
   if (input.pasajeros.length) {
     const { error } = await sb.from("contrato_pasajeros").insert(
       input.pasajeros.map((p, i) => ({
@@ -428,10 +451,12 @@ export async function crearContrato(
     );
     if (error) return { ok: false, error: error.message };
   }
+  console.log(`[medicion] etapa=insert_hijas duracion_ms=${Math.round(performance.now() - _tHijas0)} resultado=ok`);
 
   // ── CxP automáticas del contrato manual (dinámico/empaquetado) ────────────
   // Una cuenta por pagar por hotel y por vuelo con costo > 0 y proveedor, en la
   // moneda del contrato. Toma la retención del catálogo de proveedores.
+  const _tCxp0 = performance.now();
   if (!negociado) {
     const cxpRows: { proveedor: string; tipo: string; servicio: string; valor: number }[] = [];
     for (const h of input.hoteles) {
@@ -488,14 +513,18 @@ export async function crearContrato(
       }
     }
   }
+  console.log(`[medicion] etapa=cxp_automaticas duracion_ms=${Math.round(performance.now() - _tCxp0)} resultado=ok`);
 
   // ── Productos negociados: costos desde el módulo de producto + cupos ──────
   // Se hace con el cliente service-role para que el asesor nunca vea los costos
   // ni necesite permisos sobre sillas. Si no hay llave service-role, se omite.
   const esNegociado =
     input.tipoPaquete === "bloqueo" || input.tipoPaquete === "porcion_terrestre";
+  const _tAdmin0 = performance.now();
+  let _huboBloqueAdmin = false;
   if ((esNegociado && input.paqueteId) || (input.tipoPaquete === "bloqueo" && input.bloqueoId)) {
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      _huboBloqueAdmin = true;
       try {
         const admin = createAdminClient();
 
@@ -556,8 +585,12 @@ export async function crearContrato(
       }
     }
   }
+  if (_huboBloqueAdmin) {
+    console.log(`[medicion] etapa=negociado_admin duracion_ms=${Math.round(performance.now() - _tAdmin0)} resultado=ok`);
+  }
 
   // Auto-comisión B2B: usa el % propio del aliado o, si no tiene, el default general.
+  const _tAliado0 = performance.now();
   if (aliado) {
     const defParam = tipoVenta === "agencia" ? "COMISION_AGENCIA" : "COMISION_FREELANCE";
     const { data: p } = await sb.from("parametros_tributarios").select("valor").eq("parametro", defParam).maybeSingle();
@@ -576,6 +609,9 @@ export async function crearContrato(
       pct_retencion: aliado.pct_retencion,
       estado: "pendiente",
     });
+  }
+  if (aliado) {
+    console.log(`[medicion] etapa=aliado_b2b duracion_ms=${Math.round(performance.now() - _tAliado0)} resultado=ok`);
   }
 
   revalidatePath("/dashboard/contratos");

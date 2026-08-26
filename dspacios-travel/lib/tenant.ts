@@ -26,3 +26,29 @@ export function numeroConTenant(numero: string, tenant: Tenant): string {
 export function numeroVisible(numero: string | null | undefined): string {
   return (numero ?? "").replace(/^MIN-/, "");
 }
+
+// ── Resolución PURA del tenant activo ───────────────────────────────────────
+// Misma regla que `tenantContext()` (lib/tenant.server.ts), extraída aquí sin
+// I/O para que se pueda reutilizar sin repetir `auth.getUser()` + la consulta
+// de `usuarios` (optimización posterior al PR #274 — `contextoCrearContrato()`
+// llamaba a `getTenant()`, que internamente repetía esas dos llamadas). Recibe
+// el perfil YA CARGADO (rol + tenant "home") y el valor crudo de la cookie de
+// agencia; no hace ninguna llamada de red. `tenantContext()` es la única
+// fuente de verdad — esta función debe reflejar EXACTAMENTE su cálculo del
+// tenant activo; `tenantContext()` la usa directamente (no reimplementa la
+// regla por separado), y `pruebas/contratoContexto.test.ts` prueba esta
+// función con ejecución real (superadmin/cookie válida, cookie manipulada
+// por un rol sin permiso, cookie ausente/basura) además de verificar por
+// wiring que `tenantContext()` delega en ella.
+export function resolverTenantActivo(
+  perfil: { rol?: string | null; tenant?: string | null } | null | undefined,
+  cookieValue: string | undefined
+): Tenant {
+  const rol = perfil?.rol ?? "";
+  const userTenant: Tenant = esTenant(perfil?.tenant) ? perfil!.tenant as Tenant : "mayorista";
+  // Solo el superadmin se comparte entre agencias (puede alternar). Los demás
+  // usuarios se crean por separado en cada agencia y quedan fijos a la suya.
+  const puedeCambiar = rol === "superadmin";
+  const permitidos: Tenant[] = puedeCambiar ? TENANTS : [userTenant];
+  return esTenant(cookieValue) && permitidos.includes(cookieValue) ? cookieValue : (permitidos[0] ?? "mayorista");
+}
