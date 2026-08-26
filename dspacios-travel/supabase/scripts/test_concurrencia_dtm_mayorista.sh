@@ -6,6 +6,16 @@
 # test_concurrencia_tramos_contrato.sh: un script de una sola sesión no
 # puede ejercitar una carrera real entre dos transacciones.
 #
+# ⚠️ Corre como `service_role` (revisión posterior al PR #274): el RPC ya NO
+# tiene EXECUTE para `authenticated`/`anon` — solo `service_role` puede
+# invocarlo (así es como llama `lib/contrato/numeracion.ts` en la
+# aplicación real, vía `createAdminClient()`). No hace falta ningún JWT/
+# `request.jwt.claims`: la función no consulta `auth.uid()`, así que
+# `set role service_role;` basta. La matriz de permisos (quién SÍ y quién NO
+# puede invocar el RPC) se prueba aparte en
+# test_consecutivo_dtm_mayorista.sh — este script se enfoca solo en la
+# concurrencia real entre dos conexiones.
+#
 #   supabase/scripts/test_concurrencia_dtm_mayorista.sh [base] [puerto]
 #
 # QUÉ PRUEBA
@@ -47,16 +57,8 @@ echo "== Levantando '$BASE' con TODAS las migraciones (incluida la 159)"
 }
 echo "   listo"
 
-echo "== Fixture: usuario superadmin autenticado"
-psql -p "$PUERTO" -d "$BASE" -v ON_ERROR_STOP=1 -q <<'SQL'
-insert into auth.users (id, email) values ('e0000001-0000-0000-0000-000000000001', 'sa-dtmconc@test.com')
-  on conflict (id) do nothing;
-insert into public.usuarios (id, email, nombre, rol, activo, tenant) values
-  ('e0000001-0000-0000-0000-000000000001', 'sa-dtmconc@test.com', 'Superadmin Concurrencia DTM', 'superadmin', true, 'mayorista')
-  on conflict (id) do update set nombre=excluded.nombre, rol=excluded.rol, activo=excluded.activo, tenant=excluded.tenant;
-SQL
-
-AUTH_SETUP="set role authenticated; select set_config('request.jwt.claims', json_build_object('sub', 'e0000001-0000-0000-0000-000000000001', 'role', 'authenticated')::text, false);"
+# Sin fixture de usuario/JWT: service_role no necesita sesión ni auth.uid().
+AUTH_SETUP="set role service_role;"
 # Extrae SOLO la línea con el número devuelto (DTM-.../MIN-...) o con
 # ROLLBACK, sin importar cuántas líneas de tags de comando (BEGIN/SET/
 # COMMIT) o el propio valor de set_config/pg_sleep las rodeen — más robusto

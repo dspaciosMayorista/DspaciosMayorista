@@ -446,7 +446,7 @@ export async function convertirCotizacionManualAContrato(
   // Número de contrato — ya completo (DTM-#### / MIN-00-####). Corrige el
   // defecto de antes: este camino podía guardar el número crudo sin prefijo
   // si tenantCotizacion era minorista (la función nueva siempre lo aplica).
-  const numRes = await siguienteNumeroContrato(sb, tenantCotizacion);
+  const numRes = await siguienteNumeroContrato(tenantCotizacion);
   if (!numRes.ok) return { ok: false, error: numRes.error };
   const numero = numRes.numero;
 

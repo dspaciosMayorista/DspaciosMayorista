@@ -1,55 +1,102 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { siguienteNumeroContrato } from "../lib/contrato/numeracion.ts";
+import { readFileSync } from "node:fs";
+import {
+  interpretarRespuestaNumeroContrato,
+  MENSAJE_ERROR_NUMERO_CONTRATO,
+} from "../lib/contrato/numeracionPuro.ts";
 
-// Helper único (migración 159) — envuelve el RPC centralizado
-// siguiente_numero_contrato_para_tenant. Estas pruebas no tocan Postgres
-// (eso lo cubre supabase/scripts/test_consecutivo_dtm_mayorista.sh): solo
-// verifican que el wrapper de TypeScript pasa el tenant tal cual y traduce
-// la respuesta/errores del RPC sin inventar ni perder nada.
-function fakeSb(resultado: { data: string | null; error: { message: string } | null }) {
-  const llamadas: Array<{ nombre: string; args: unknown }> = [];
-  const sb = {
-    rpc: (nombre: string, args: unknown) => {
-      llamadas.push({ nombre, args });
-      return Promise.resolve(resultado);
-    },
-  };
-  return { sb, llamadas };
+// interpretarRespuestaNumeroContrato — la parte PURA de numeracion.ts
+// (revisión posterior al PR #274, ítem 5 "ERRORES INTERNOS"): nunca debe
+// exponer error.message tal cual (podría nombrar la función, la secuencia o
+// el SQLSTATE del rechazo) — siempre un mensaje público fijo.
+describe("interpretarRespuestaNumeroContrato", () => {
+  test("data válido, sin error → ok con el número tal cual", () => {
+    const res = interpretarRespuestaNumeroContrato("DTM-0001", null);
+    assert.deepEqual(res, { ok: true, numero: "DTM-0001" });
+  });
+
+  test("minorista pasa igual, sin transformarlo", () => {
+    const res = interpretarRespuestaNumeroContrato("MIN-00-0533", null);
+    assert.deepEqual(res, { ok: true, numero: "MIN-00-0533" });
+  });
+
+  test("error con nombres internos (función/secuencia/permiso) → NUNCA se propaga, solo el mensaje fijo", () => {
+    const errores = [
+      { message: 'permission denied for function siguiente_numero_contrato_para_tenant' },
+      { message: 'permission denied for sequence contrato_seq_mayorista' },
+      { message: 'relation "public.numeros_contrato_liberados" does not exist' },
+      { message: "ERROR:  tenant inválido: francia (SQLSTATE P0001)" },
+    ];
+    for (const error of errores) {
+      const res = interpretarRespuestaNumeroContrato(null, error);
+      assert.equal(res.ok, false);
+      if (!res.ok) {
+        assert.equal(res.error, MENSAJE_ERROR_NUMERO_CONTRATO);
+        // Ninguno de los nombres internos del error original debe sobrevivir.
+        assert.doesNotMatch(res.error, /siguiente_numero_contrato_para_tenant|contrato_seq_mayorista|numeros_contrato_liberados|SQLSTATE|permission denied/i);
+      }
+    }
+  });
+
+  test("sin data y sin error explícito → igual falla cerrado con el mensaje fijo", () => {
+    const res = interpretarRespuestaNumeroContrato(null, null);
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.error, MENSAJE_ERROR_NUMERO_CONTRATO);
+  });
+
+  test("data vacío (string vacío) sin error → igual falla cerrado (data \"falsy\")", () => {
+    const res = interpretarRespuestaNumeroContrato("", null);
+    assert.equal(res.ok, false);
+  });
+
+  test("error presente PERO con data también presente → el error manda, nunca se usa un data parcial", () => {
+    const res = interpretarRespuestaNumeroContrato("DTM-0001", { message: "algo raro" });
+    assert.equal(res.ok, false);
+    if (!res.ok) assert.equal(res.error, MENSAJE_ERROR_NUMERO_CONTRATO);
+  });
+});
+
+// ── Wiring: numeracion.ts debe usar service_role, no el cliente de sesión ──
+function leer(rel: string): string {
+  return readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
 }
 
-describe("siguienteNumeroContrato", () => {
-  test("llama al RPC correcto con el tenant recibido, sin transformarlo", async () => {
-    const { sb, llamadas } = fakeSb({ data: "DTM-0001", error: null });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = await siguienteNumeroContrato(sb as any, "mayorista");
-    assert.deepEqual(res, { ok: true, numero: "DTM-0001" });
-    assert.equal(llamadas.length, 1);
-    assert.equal(llamadas[0].nombre, "siguiente_numero_contrato_para_tenant");
-    assert.deepEqual(llamadas[0].args, { p_tenant: "mayorista" });
+describe("lib/contrato/numeracion.ts — wiring de seguridad (revisión posterior al PR #274)", () => {
+  const src = leer("lib/contrato/numeracion.ts");
+
+  test("importa server-only (nunca debe poder ejecutarse en el navegador)", () => {
+    assert.match(src, /import\s+"server-only"/);
   });
 
-  test("minorista pasa igual, sin agregarle ningún prefijo por su cuenta", async () => {
-    const { sb, llamadas } = fakeSb({ data: "MIN-00-0533", error: null });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = await siguienteNumeroContrato(sb as any, "minorista");
-    assert.deepEqual(res, { ok: true, numero: "MIN-00-0533" });
-    assert.deepEqual(llamadas[0].args, { p_tenant: "minorista" });
+  test("usa createAdminClient() (service_role) — NUNCA createClient() (cliente de sesión)", () => {
+    assert.match(src, /createAdminClient/);
+    assert.doesNotMatch(src, /\bcreateClient\(/);
+    assert.doesNotMatch(src, /from\s+"@\/lib\/supabase\/server"/);
   });
 
-  test("propaga el mensaje de error del RPC (p.ej. tenant rechazado por la función)", async () => {
-    const { sb } = fakeSb({ data: null, error: { message: "tenant inválido: francia" } });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = await siguienteNumeroContrato(sb as any, "mayorista");
-    assert.equal(res.ok, false);
-    if (!res.ok) assert.equal(res.error, "tenant inválido: francia");
+  test("siguienteNumeroContrato ya NO recibe `sb` como parámetro", () => {
+    const firma = src.match(/export\s+async\s+function\s+siguienteNumeroContrato\(([^)]*)\)/);
+    assert.ok(firma, "no se encontró la firma de siguienteNumeroContrato");
+    assert.doesNotMatch(firma![1], /\bsb\b/);
   });
 
-  test("sin data y sin error explícito, igual falla cerrado con un mensaje por defecto", async () => {
-    const { sb } = fakeSb({ data: null, error: null });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = await siguienteNumeroContrato(sb as any, "mayorista");
-    assert.equal(res.ok, false);
-    if (!res.ok) assert.equal(res.error, "No se pudo generar el número de contrato.");
+  test("el valor de RETORNO nunca se arma con error.message — solo interpretarRespuestaNumeroContrato decide qué devolver", () => {
+    // `error.message` sí puede aparecer (y aparece) dentro de un console.error
+    // — eso es EL PUNTO: el detalle técnico se registra server-side, nunca se
+    // devuelve. Lo que este test verifica es que ningún `return` de la
+    // función arma el resultado con `error.message`/`error?.message`
+    // directamente — la única fuente del valor devuelto es
+    // interpretarRespuestaNumeroContrato(data, error), que internamente
+    // ignora el mensaje crudo (ver numeracionPuro.ts).
+    const returns = src.match(/return\s*\{[^}]*\}/g) ?? [];
+    for (const r of returns) assert.doesNotMatch(r, /error\.message|error\?\.message/);
+    assert.match(src, /return\s+interpretarRespuestaNumeroContrato\(/);
+    // Y si loguea el error crudo, debe ser EXCLUSIVAMENTE vía console.error.
+    const usosDeMessage = [...src.matchAll(/error\??\.message/g)];
+    for (const m of usosDeMessage) {
+      const antes = src.slice(Math.max(0, m.index! - 220), m.index!);
+      assert.match(antes, /console\.error\(/, "error.message se usó fuera de un console.error");
+    }
   });
 });

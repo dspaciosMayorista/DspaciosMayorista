@@ -117,7 +117,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
 
   // 3) Número de contrato — ya completo (DTM-#### / MIN-00-####), tenant
   // recibido como parámetro ya validado por el caller (nunca del navegador).
-  const numRes = await siguienteNumeroContrato(sb, tenant);
+  const numRes = await siguienteNumeroContrato(tenant);
   if (!numRes.ok) return { ok: false, error: numRes.error };
   const numero = numRes.numero;
 
@@ -994,7 +994,7 @@ export async function convertirCotizacionCarrito(
   const numeros: string[] = [];
 
   for (const { grupo, validados } of gruposValidados) {
-    const numRes = await siguienteNumeroContrato(sb, tenantCotizacion);
+    const numRes = await siguienteNumeroContrato(tenantCotizacion);
     if (!numRes.ok) return { ok: false, error: numRes.error };
     const numero = numRes.numero;
 
@@ -1542,7 +1542,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   }
 
   // 4) Número de contrato — ya completo, tenant resuelto arriba (nunca del navegador)
-  const numRes = await siguienteNumeroContrato(sb, tenant);
+  const numRes = await siguienteNumeroContrato(tenant);
   if (!numRes.ok) return { ok: false, error: numRes.error };
   const numero = numRes.numero;
 

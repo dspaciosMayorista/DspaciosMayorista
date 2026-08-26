@@ -5,24 +5,46 @@
 -- secuencia nueva (contrato_seq_mayorista) y el candado agregado a
 -- eliminar_contrato() (la restaura EXACTA a la versión de la migración 117).
 --
--- ⚠️ ANTES DE CORRER ESTO: si ya se desplegó el código que usa
--- siguiente_numero_contrato_para_tenant() y ya se generaron contratos DTM-
--- reales, este rollback deja ese código SIN la función que necesita — hay
--- que revertir el despliegue de código PRIMERO (o al mismo tiempo). Los
--- contratos DTM- ya creados NO se pierden ni se tocan: solo deja de ser
--- posible generar NUEVOS con esa función. Verifica antes (solo lectura):
+-- ⚠️ ABORTA SI YA HAY CONTRATOS DTM (revisión posterior al PR #274): el
+-- primer borrador de este rollback solo lo ADVERTÍA en un comentario, sin
+-- verificarlo de verdad — dejaba borrar la función/secuencia igual aunque ya
+-- hubiera contratos DTM- reales, lo que rompería `crearContrato`/`reservar`/
+-- etc. para mayorista en caliente sin ningún aviso en tiempo de ejecución.
+-- Ahora, DENTRO de la misma transacción y ANTES de tocar cualquier objeto, se
+-- cuenta cuántas filas de `ventas` tienen `tenant='mayorista'` O
+-- `numero_contrato LIKE 'DTM-%'` (las dos condiciones por separado: una fila
+-- podría, en teoría, tener una sin la otra si algo externo la tocó a mano) —
+-- si el conteo es mayor a 0, el rollback ABORTA con RAISE EXCEPTION y no
+-- cambia absolutamente nada (ni siquiera el `create or replace` de
+-- eliminar_contrato llega a ejecutarse: todo va antes, en el mismo bloque).
 --
---   select count(*) from public.ventas where numero_contrato like 'DTM-%';
+-- Solo cuando el conteo es 0 continúa con el resto del rollback.
 --
--- Si el conteo es 0 (nunca se llegó a usar en producción), este rollback es
--- 100% seguro. Si es mayor que 0, coordina con el despliegue de código antes
--- de correrlo.
---
--- Todo el archivo corre en una transacción explícita. Es idempotente
--- (`drop ... if exists`).
+-- Todo el archivo corre en una transacción explícita. Es idempotente en el
+-- tramo de "drop" (`drop ... if exists`), pero el candado de arriba SÍ puede
+-- hacer que la transacción entera aborte — eso es intencional.
 -- ───────────────────────────────────────────────────────────────────────────
 
 begin;
+
+do $$
+declare
+  v_contratos_dtm bigint;
+begin
+  select count(*) into v_contratos_dtm
+    from public.ventas
+   where tenant = 'mayorista' or numero_contrato like 'DTM-%';
+  if v_contratos_dtm > 0 then
+    raise exception
+      'ABORTADO: existen % contrato(s) con tenant=mayorista o numero_contrato '
+      'DTM-%%. Revertir la 159 dejaría esos contratos (y cualquier código que '
+      'siga desplegado y dependa de siguiente_numero_contrato_para_tenant()) '
+      'sin la función/secuencia que necesitan. Coordina primero el rollback '
+      'del código desplegado, o confirma que esos contratos son aceptables '
+      'de perder soporte antes de forzar este rollback a mano.',
+      v_contratos_dtm;
+  end if;
+end $$;
 
 -- 1) eliminar_contrato() vuelve a la versión EXACTA de la migración 117
 --    (sin el candado de DTM-).
@@ -33,6 +55,7 @@ begin
     raise exception 'Solo un superadmin puede eliminar contratos.';
   end if;
 
+  -- Libera las sillas asociadas (vuelven a 'disponible').
   update public.sillas
      set estado = 'disponible', numero_contrato = null,
          pasajero_nombres = null, pasajero_apellidos = null, tipo_doc = null,
@@ -40,9 +63,11 @@ begin
          acomodacion = null, plazo = null
    where numero_contrato = p_numero;
 
+  -- Desvincula la cotización de origen (vuelve a 'abierta' para reconvertir).
   update public.cotizaciones set numero_contrato = null, estado = 'abierta'
    where numero_contrato = p_numero;
 
+  -- Hijas SIN cascade (factura_items cae por cascade de facturacion).
   delete from public.facturacion          where numero_contrato = p_numero;
   delete from public.rentabilidad         where numero_contrato = p_numero;
   delete from public.liquidacion_comisiones where numero_contrato = p_numero;
@@ -50,6 +75,7 @@ begin
   delete from public.cuentas_por_pagar    where numero_contrato = p_numero;
   delete from public.abonos               where numero_contrato = p_numero;
 
+  -- La venta (contrato_pasajeros/hoteles/vuelos/items, vouchers, adjuntos: cascade).
   delete from public.ventas where numero_contrato = p_numero;
 
   if p_reusar then
