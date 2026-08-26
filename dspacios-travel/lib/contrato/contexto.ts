@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { COOKIE_TENANT, resolverTenantActivo, type Tenant } from "@/lib/tenant";
 import { puedeEscribir } from "@/lib/roles";
-import { crearMedidor } from "@/lib/observabilidad/medicion";
+import { crearMedidor, registrarErrorTecnico } from "@/lib/observabilidad/medicion";
 import { resolverContextoCrearContratoOrquestado, type ContextoCrearContrato } from "./contextoPuro";
 
 export type { ContextoCrearContrato };
@@ -58,7 +58,11 @@ export type ContextoCrearContratoResuelto =
  * fallas reales de la base de datos como si fueran simplemente "no hay
  * sesión". El detalle técnico del error (nunca expuesto al navegador — el
  * gate sigue devolviendo el mismo mensaje público genérico) se registra
- * server-side con `console.error`, asociado al `flujo_id`.
+ * server-side con `registrarErrorTecnico()` (revisión posterior, ronda 2:
+ * antes se pasaba `res.error.message` crudo a `console.error` — un mensaje
+ * de Postgres/Supabase puede traer datos de fila o nombres de tabla/policy;
+ * el helper solo deja pasar un `código` corto y de forma segura, o
+ * `tipo=exception`), asociado al `flujo_id`.
  */
 export async function contextoCrearContrato(flujo: string, flujoId: string): Promise<ContextoCrearContratoResuelto> {
   const sb = await createClient();
@@ -72,7 +76,7 @@ export async function contextoCrearContrato(flujo: string, flujoId: string): Pro
         () => sb.auth.getUser(),
         (r) => (r.error ? "error" : r.data.user ? "ok" : "sin_sesion")
       );
-      if (res.error) console.error(`[medicion] flujo=${flujo} flujo_id=${flujoId} etapa=contexto_auth_getUser detalle=error_auth_getUser`, res.error.message);
+      if (res.error) registrarErrorTecnico(flujo, flujoId, "contexto_auth_getUser", "error_auth_getUser", res.error);
       return res.data.user;
     },
     async (userId) => {
@@ -81,7 +85,7 @@ export async function contextoCrearContrato(flujo: string, flujoId: string): Pro
         () => sb.from("usuarios").select("rol, activo, tenant").eq("id", userId).maybeSingle(),
         (r) => (r.error ? "error" : r.data ? "ok" : "sin_perfil")
       );
-      if (res.error) console.error(`[medicion] flujo=${flujo} flujo_id=${flujoId} etapa=contexto_perfil_query detalle=error_consulta_perfil`, res.error.message);
+      if (res.error) registrarErrorTecnico(flujo, flujoId, "contexto_perfil_query", "error_consulta_perfil", res.error);
       return res.data;
     },
     (perfil) => resolverTenantActivo(perfil as { rol?: string; tenant?: string } | null, ck),

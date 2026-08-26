@@ -12,7 +12,11 @@ import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
-import { generarFlujoId, crearMedidor, registrarEtapa, type Medidor, type ResultadoEtapa } from "@/lib/observabilidad/medicion";
+import {
+  generarFlujoId, crearMedidor, registrarEtapa, registrarErrorTecnico,
+  crearEstadoFlujo, elevarEstadoFlujo, resultadoTotal,
+  type Medidor, type ResultadoEtapa, type EstadoFlujo,
+} from "@/lib/observabilidad/medicion";
 import type { Tenant } from "@/lib/tenant";
 import type { Json } from "@/types/database";
 import {
@@ -1382,15 +1386,19 @@ function sumarDias(fecha: string, dias: number): string {
 export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaResult> {
   const flujoId = generarFlujoId();
   const medir = crearMedidor("reservar_programa", flujoId);
+  // Estado técnico INTERNO (revisión posterior — ronda 2, mismo mecanismo que
+  // crearContrato() en contratos/actions.ts): nunca se expone al navegador ni
+  // cambia el contrato público de esta función (lib/observabilidad/medicion.ts).
+  const estado = crearEstadoFlujo();
   const _tTotal0 = performance.now();
   let _resultadoTotal: ResultadoEtapa = "error";
   try {
-    const res = await reservarProgramaInterno(input, flujoId, medir);
-    _resultadoTotal = res.ok ? "ok" : "rechazado";
+    const res = await reservarProgramaInterno(input, flujoId, medir, estado);
+    _resultadoTotal = resultadoTotal(estado, res.ok);
     return res;
   } catch (err) {
     _resultadoTotal = "error";
-    console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=total detalle=excepcion`, err instanceof Error ? err.message : String(err));
+    registrarErrorTecnico("reservar_programa", flujoId, "total", "excepcion", err);
     throw err;
   } finally {
     registrarEtapa("reservar_programa", flujoId, "total", Math.round(performance.now() - _tTotal0), _resultadoTotal);
@@ -1400,7 +1408,8 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
 async function reservarProgramaInterno(
   input: ReservaProgramaInput,
   flujoId: string,
-  medir: Medidor
+  medir: Medidor,
+  estado: EstadoFlujo
 ): Promise<ReservaResult> {
   // Contexto fail-closed INTERNO (revisión posterior al PR #274, ronda 2):
   // reservarPrograma() es exportada y por lo tanto alcanzable directo por
@@ -1439,10 +1448,18 @@ async function reservarProgramaInterno(
   // retorno anticipado; el cierre se loguea justo antes de generar el
   // número de contrato (único punto que se alcanza solo si todas pasaron).
   const _tValidacionProg0 = performance.now();
+  // Revisión posterior — ronda 2 (mismo mecanismo que crearContrato() en
+  // contratos/actions.ts): envuelve cada `return` de rechazo de esta sección
+  // para que la etapa quede en "rechazado" sin duplicar el log de éxito
+  // (mutuamente excluyentes) y sin reordenar ninguna validación.
+  const _rechazarValidacionPrograma = (resultado: ReservaResult): ReservaResult => {
+    registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "rechazado");
+    return resultado;
+  };
 
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
-    return { ok: false, error: "El nombre del cliente es obligatorio." };
-  if (!input.fechaIda) return { ok: false, error: "Elige la fecha de salida." };
+    return _rechazarValidacionPrograma({ ok: false, error: "El nombre del cliente es obligatorio." });
+  if (!input.fechaIda) return _rechazarValidacionPrograma({ ok: false, error: "Elige la fecha de salida." });
 
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
   const { data: prog } = await sb
@@ -1450,14 +1467,14 @@ async function reservarProgramaInterno(
     .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, proveedores(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
-  if (!prog) return { ok: false, error: "Programa no encontrado." };
+  if (!prog) return _rechazarValidacionPrograma({ ok: false, error: "Programa no encontrado." });
   const modoSalida = prog.modo_precio === "salida";
 
   // Vigencia
   if (prog.vigencia_desde && input.fechaIda < prog.vigencia_desde)
-    return { ok: false, error: "La fecha de salida es anterior a la vigencia del programa." };
+    return _rechazarValidacionPrograma({ ok: false, error: "La fecha de salida es anterior a la vigencia del programa." });
   if (prog.vigencia_hasta && input.fechaIda > prog.vigencia_hasta)
-    return { ok: false, error: "La fecha de salida supera la vigencia del programa." };
+    return _rechazarValidacionPrograma({ ok: false, error: "La fecha de salida supera la vigencia del programa." });
 
   // Blackouts
   const { data: bos } = await sb
@@ -1466,7 +1483,7 @@ async function reservarProgramaInterno(
     .eq("programa_id", input.programaId);
   for (const b of bos ?? []) {
     if (b.fecha_inicio && b.fecha_fin && input.fechaIda >= b.fecha_inicio && input.fechaIda <= b.fecha_fin)
-      return { ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` };
+      return _rechazarValidacionPrograma({ ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` });
   }
 
   // 2) Precios — por categoría (matriz) o por salida (fecha × precio).
@@ -1476,14 +1493,14 @@ async function reservarProgramaInterno(
   let hotelSalida: string | null = null;
 
   if (modoSalida) {
-    if (!input.salidaId) return { ok: false, error: "Elige una salida." };
+    if (!input.salidaId) return _rechazarValidacionPrograma({ ok: false, error: "Elige una salida." });
     const { data: sal } = await sb
       .from("programa_salidas")
       .select("etiqueta, columna, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud")
       .eq("id", input.salidaId)
       .eq("programa_id", input.programaId)
       .maybeSingle();
-    if (!sal) return { ok: false, error: "Salida no encontrada." };
+    if (!sal) return _rechazarValidacionPrograma({ ok: false, error: "Salida no encontrada." });
     const bs = sal.bajo_solicitud;
     netoDe["sencilla"] = { neto: sal.neto_sencilla, bs };
     netoDe["doble"] = { neto: sal.neto_doble, bs };
@@ -1498,7 +1515,7 @@ async function reservarProgramaInterno(
       .from("programa_precios")
       .select("acomodacion, neto, bajo_solicitud")
       .eq("categoria_id", input.categoriaId);
-    if (!precios?.length) return { ok: false, error: "La categoría no tiene precios cargados." };
+    if (!precios?.length) return _rechazarValidacionPrograma({ ok: false, error: "La categoría no tiene precios cargados." });
     for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
   }
 
@@ -1520,7 +1537,7 @@ async function reservarProgramaInterno(
   //    persona, así que 1 habitación = pax_tarifa × precio/persona. Niños aparte.
   const habs = Object.entries(input.paxPorAcom).filter(([, n]) => (Number(n) || 0) > 0);
   if (!habs.length && (input.ninos || 0) <= 0)
-    return { ok: false, error: "Indica cuántas habitaciones reservas en cada acomodación." };
+    return _rechazarValidacionPrograma({ ok: false, error: "Indica cuántas habitaciones reservas en cada acomodación." });
 
   let precioVenta = 0;
   let costoNeto = 0;
@@ -1535,7 +1552,7 @@ async function reservarProgramaInterno(
     const nHab = Number(habRaw) || 0;
     const info = netoDe[acom];
     if (!info || info.neto == null || info.bs)
-      return { ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` };
+      return _rechazarValidacionPrograma({ ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` });
     const paxTarifa = paxDeAcomodacion(acom); // pax por habitación (cuadruple = 4)
     const nPax = nHab * paxTarifa;
     const precioPax = pvp(info.neto);
@@ -1557,7 +1574,7 @@ async function reservarProgramaInterno(
   if ((input.ninos || 0) > 0) {
     const info = netoDe["nino"];
     if (!info || info.neto == null || info.bs)
-      return { ok: false, error: `Esta categoría no tiene precio de niño (o es "a solicitud").` };
+      return _rechazarValidacionPrograma({ ok: false, error: `Esta categoría no tiene precio de niño (o es "a solicitud").` });
     const n = Number(input.ninos) || 0;
     const precioPax = pvp(info.neto);
     precioVenta += precioPax * n;
@@ -1576,7 +1593,7 @@ async function reservarProgramaInterno(
   // Los infantes son pasajeros adicionales (sin silla), por cantidad.
   const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
   totalPax += numInfantes;
-  if (totalPax <= 0) return { ok: false, error: "Debe haber al menos un pasajero." };
+  if (totalPax <= 0) return _rechazarValidacionPrograma({ ok: false, error: "Debe haber al menos un pasajero." });
 
   // 3.b) Validación de pasajeros por edad (umbrales del programa, según el
   //      proveedor). Si hay fechas de nacimiento, la clasificación real debe
@@ -1599,7 +1616,7 @@ async function reservarProgramaInterno(
         errores.push(`Por fecha de nacimiento hay ${real.ninos} niño(s), pero declaraste ${numNinos}.`);
       if (real.adultos > adultosEsperados)
         errores.push(`Por fecha de nacimiento hay ${real.adultos} adulto(s), pero la reserva es para ${adultosEsperados}.`);
-      if (errores.length) return { ok: false, error: errores.join(" ") };
+      if (errores.length) return _rechazarValidacionPrograma({ ok: false, error: errores.join(" ") });
     }
   }
 
@@ -1607,7 +1624,12 @@ async function reservarProgramaInterno(
 
   // 4) Número de contrato — ya completo, tenant resuelto arriba (nunca del navegador)
   const numRes = await medir("numero_contrato", () => siguienteNumeroContrato(tenant), (r) => (r.ok ? "ok" : "error"));
-  if (!numRes.ok) return { ok: false, error: numRes.error };
+  if (!numRes.ok) {
+    // Fallo TÉCNICO bloqueante (RPC de numeración) — nunca "rechazado".
+    // `numRes.error` ya es un mensaje saneado por el propio RPC.
+    elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: numRes.error };
+  }
   const numero = numRes.numero;
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
@@ -1644,7 +1666,10 @@ async function reservarProgramaInterno(
     plan_nombre: catNombre ?? prog.nombre,
   });
   registrarEtapa("reservar_programa", flujoId, "insert_venta", Math.round(performance.now() - _tVenta0), ve ? "error" : "ok");
-  if (ve) return { ok: false, error: ve.message };
+  if (ve) {
+    elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: ve.message };
+  }
 
   // 6-8) Tablas hijas — pasajeros/items/hoteles, medidas como un solo grupo
   // (etapa=insert_hijas, mismo criterio que crearContrato()): no se
@@ -1657,7 +1682,8 @@ async function reservarProgramaInterno(
   const _tHijas0 = performance.now();
   const _errorHijas = (detalle: string, error: { message: string }) => {
     registrarEtapa("reservar_programa", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
-    console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=insert_hijas detalle=${detalle}`, error.message);
+    registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", detalle, error);
+    elevarEstadoFlujo(estado, "error");
     return { ok: false as const, error: error.message };
   };
   let _resultadoHijas: ResultadoEtapa = "ok";
@@ -1701,7 +1727,7 @@ async function reservarProgramaInterno(
         .order("orden");
   if (hotelesCatError) {
     _resultadoHijas = "parcial";
-    console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=insert_hijas detalle=error_consulta_hoteles_categoria`, hotelesCatError.message);
+    registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_consulta_hoteles_categoria", hotelesCatError);
   }
   if (hotelesCat?.length) {
     const { error: hotelesInsertError } = await sb.from("contrato_hoteles").insert(
@@ -1717,10 +1743,14 @@ async function reservarProgramaInterno(
     );
     if (hotelesInsertError) {
       _resultadoHijas = "parcial";
-      console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=insert_hijas detalle=error_insert_hoteles`, hotelesInsertError.message);
+      registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_insert_hoteles", hotelesInsertError);
     }
   }
   registrarEtapa("reservar_programa", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), _resultadoHijas);
+  // Solo alcanzable aquí por el fallo NO bloqueante de hoteles (pasajeros/
+  // items bloquean y elevan "error" antes de llegar a esta línea, vía
+  // `_errorHijas`) — best-effort: eleva el TOTAL a "parcial", nunca a "error".
+  if (_resultadoHijas !== "ok") elevarEstadoFlujo(estado, "parcial");
 
   // 9) Cuenta por pagar al proveedor del programa (neto, en la moneda del
   // programa). Best-effort igual que antes (no bloquea la reserva), pero la
@@ -1737,7 +1767,7 @@ async function reservarProgramaInterno(
       const { error: updateError } = await admin.from("ventas").update({ costo_receptivo: costoNeto }).eq("numero_contrato", numero);
       if (updateError) {
         _resultadoCxp = "parcial";
-        console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=cxp_programa detalle=error_update_costo`, updateError.message);
+        registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_update_costo", updateError);
       }
       const fechaProg = new Date().toISOString().slice(0, 10);
       const { data: cProg, error: cProgError } = await admin.from("cuentas_por_pagar").insert({
@@ -1754,7 +1784,7 @@ async function reservarProgramaInterno(
       }).select("id").single();
       if (cProgError) {
         _resultadoCxp = "error";
-        console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=cxp_programa detalle=error_insert_cxp`, cProgError.message);
+        registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_insert_cxp", cProgError);
       }
       if (cProg) {
         const asiento = await postearAsientoCxP({
@@ -1763,18 +1793,20 @@ async function reservarProgramaInterno(
         });
         if (!asiento.ok) {
           if (_resultadoCxp === "ok") _resultadoCxp = "parcial";
-          console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=cxp_programa detalle=error_asiento_cxp`, asiento.error);
+          registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_asiento_cxp", asiento.error);
         }
       }
     } catch (e) {
       // No bloquear la reserva si falla el paso administrativo (sin
       // cambios) — pero la métrica SÍ debe decir "error", nunca "ok".
       _resultadoCxp = "error";
-      console.error(`[medicion] flujo=reservar_programa flujo_id=${flujoId} etapa=cxp_programa detalle=excepcion`, e instanceof Error ? e.message : String(e));
+      registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "excepcion", e);
     }
   }
   if (_huboBloqueCxp) {
     registrarEtapa("reservar_programa", flujoId, "cxp_programa", Math.round(performance.now() - _tCxp0), _resultadoCxp);
+    // Best-effort: nunca bloquea la reserva, pero eleva el TOTAL.
+    if (_resultadoCxp !== "ok") elevarEstadoFlujo(estado, "parcial");
   }
 
   revalidatePath("/dashboard/contratos");

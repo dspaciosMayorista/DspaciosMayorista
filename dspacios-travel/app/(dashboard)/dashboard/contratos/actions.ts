@@ -9,7 +9,11 @@ import { formatMoneda } from "@/lib/utils";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
-import { generarFlujoId, crearMedidor, registrarEtapa, type Medidor, type ResultadoEtapa } from "@/lib/observabilidad/medicion";
+import {
+  generarFlujoId, crearMedidor, registrarEtapa, registrarErrorTecnico,
+  crearEstadoFlujo, elevarEstadoFlujo, resultadoTotal,
+  type Medidor, type ResultadoEtapa, type EstadoFlujo,
+} from "@/lib/observabilidad/medicion";
 
 // Postea (o reemplaza) el asiento de un abono: Debe Caja/Bancos (según forma
 // de pago) / Haber Anticipos de clientes (280505) si el contrato AÚN no está
@@ -178,15 +182,25 @@ export async function crearContrato(
 ): Promise<CrearContratoResult> {
   const flujoId = generarFlujoId();
   const medir = crearMedidor("crear_contrato", flujoId);
+  // Estado técnico INTERNO (revisión posterior — ronda 2): distingue un
+  // rechazo de negocio/sesión (`{ok:false}` sin nada técnico de por medio) de
+  // un fallo TÉCNICO bloqueante (RPC de numeración, insert de `ventas`, un
+  // insert obligatorio de tabla hija — también `{ok:false}`, antes ambos se
+  // reportaban igual como "rechazado") y de un contrato creado con éxito
+  // pero con un paso best-effort caído (antes reportado "ok" a ciegas). Se
+  // muta DENTRO de `crearContratoInterno` en los puntos donde la lógica real
+  // ya sabe que algo técnico falló; nunca se expone al navegador ni cambia
+  // el contrato público de esta función (ver `lib/observabilidad/medicion.ts`).
+  const estado = crearEstadoFlujo();
   const _tTotal0 = performance.now();
   let _resultadoTotal: ResultadoEtapa = "error";
   try {
-    const res = await crearContratoInterno(input, flujoId, medir);
-    _resultadoTotal = res.ok ? "ok" : "rechazado";
+    const res = await crearContratoInterno(input, flujoId, medir, estado);
+    _resultadoTotal = resultadoTotal(estado, res.ok);
     return res;
   } catch (err) {
     _resultadoTotal = "error";
-    console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=total detalle=excepcion`, err instanceof Error ? err.message : String(err));
+    registrarErrorTecnico("crear_contrato", flujoId, "total", "excepcion", err);
     throw err;
   } finally {
     registrarEtapa("crear_contrato", flujoId, "total", Math.round(performance.now() - _tTotal0), _resultadoTotal);
@@ -196,7 +210,8 @@ export async function crearContrato(
 async function crearContratoInterno(
   input: ContratoInput,
   flujoId: string,
-  medir: Medidor
+  medir: Medidor,
+  estado: EstadoFlujo
 ): Promise<CrearContratoResult> {
   // Contexto fail-closed: sesión + activo=true + rol con permiso real de
   // escritura sobre `ventas` (revisión posterior al PR #274 — antes se
@@ -222,6 +237,16 @@ async function crearContratoInterno(
   // anticipado; el cierre de esta etapa se loguea justo antes de generar el
   // número de contrato (único punto que se alcanza solo si todas pasaron).
   const _tValidacion0 = performance.now();
+  // Revisión posterior — ronda 2: antes, un rechazo DENTRO de esta sección
+  // (cualquiera de los `return` de abajo) no dejaba NINGÚN log de la etapa —
+  // solo se registraba si llegaba al final con éxito. `_rechazarValidacion`
+  // envuelve cada `return` de rechazo para que la etapa quede en "rechazado"
+  // SIN duplicar el log de éxito (mutuamente excluyentes: solo se ejecuta un
+  // `return`) y sin reordenar ninguna validación.
+  const _rechazarValidacion = (resultado: CrearContratoResult): CrearContratoResult => {
+    registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "rechazado");
+    return resultado;
+  };
 
   // Precio BLOQUEADO del producto para negociados: se ignoran las tarifas que
   // venga del cliente y se usan las del paquete (el asesor no puede cambiarlas).
@@ -243,7 +268,7 @@ async function crearContratoInterno(
       // Sin tarifas configuradas en el catálogo no hay precio confiable que
       // bloquear: mejor fallar que aceptar en silencio la tarifa que mande el
       // cliente para un contrato marcado como negociado.
-      return { ok: false, error: "El paquete negociado no tiene tarifas configuradas. Configúralas antes de reservar." };
+      return _rechazarValidacion({ ok: false, error: "El paquete negociado no tiene tarifas configuradas. Configúralas antes de reservar." });
     }
   }
 
@@ -251,7 +276,7 @@ async function crearContratoInterno(
   // deben ser números finitos y no negativos antes de sumar el PVP.
   for (const it of items) {
     if (![it.adultos, it.ninos, it.tarifaAdulto, it.tarifaNino].every((n) => Number.isFinite(n) && n >= 0)) {
-      return { ok: false, error: "Cantidades o tarifas inválidas en los ítems del contrato." };
+      return _rechazarValidacion({ ok: false, error: "Cantidades o tarifas inválidas en los ítems del contrato." });
     }
   }
 
@@ -273,10 +298,10 @@ async function crearContratoInterno(
   let bnc = tiquetes;
   if (input.bncModo === "fijo") {
     const fijo = Math.max(0, Number(input.bncFijo) || 0);
-    if (fijo < tiquetes) return { ok: false, error: "La BNC fija no puede ser menor al valor de los tiquetes." };
+    if (fijo < tiquetes) return _rechazarValidacion({ ok: false, error: "La BNC fija no puede ser menor al valor de los tiquetes." });
     bnc = fijo;
   }
-  if (bnc > precioVenta) return { ok: false, error: "La BNC no puede ser mayor al valor total del contrato (PVP)." };
+  if (bnc > precioVenta) return _rechazarValidacion({ ok: false, error: "La BNC no puede ser mayor al valor total del contrato (PVP)." });
 
   // Costos netos del contrato manual (dinámico/empaquetado): el asesor conoce el
   // costo del hotel y del vuelo; alimentan costo_hotel/costo_aereo, las CxP al
@@ -309,13 +334,13 @@ async function crearContratoInterno(
       // (`ctx.rol`) — no hace falta una segunda consulta para revalidarlo aquí.
       const autorizado = !!input.forzarMargen && ["superadmin", "administracion"].includes(ctx.rol);
       if (!autorizado) {
-        return {
+        return _rechazarValidacion({
           ok: false,
           error: `El PVP (${formatMoneda(precioVenta, monedaContrato)}) no cubre el margen mínimo del ${MARKUP_MIN * 100}%. Con costos de ${formatMoneda(totalCostosManual, monedaContrato)}, el PVP mínimo es ${formatMoneda(Math.ceil(pvpMin), monedaContrato)}.`,
           margenInsuficiente: true,
           margenActual,
           pvpMinimo: Math.ceil(pvpMin),
-        };
+        });
       }
     }
   }
@@ -327,9 +352,9 @@ async function crearContratoInterno(
   let freelanceNombre: string | null = null;
   let aliado: { nombre: string; nit: string | null; pct_comision: number | null; aplica_retencion: boolean; pct_retencion: number } | null = null;
   if (tipoVenta !== "interno") {
-    if (!input.aliadoId) return { ok: false, error: `Selecciona la ${tipoVenta} del catálogo.` };
+    if (!input.aliadoId) return _rechazarValidacion({ ok: false, error: `Selecciona la ${tipoVenta} del catálogo.` });
     const { data } = await sb.from("aliados").select("nombre, nit, pct_comision, aplica_retencion, pct_retencion").eq("id", input.aliadoId).maybeSingle();
-    if (!data) return { ok: false, error: "La agencia/freelance seleccionada no existe." };
+    if (!data) return _rechazarValidacion({ ok: false, error: "La agencia/freelance seleccionada no existe." });
     aliado = data;
     if (tipoVenta === "agencia") agenciaNombre = data.nombre; else freelanceNombre = data.nombre;
   }
@@ -342,7 +367,15 @@ async function crearContratoInterno(
   // ahora en service_role (ver lib/contrato/numeracion.ts), este es el punto
   // razonable más tardío antes del INSERT que lo requiere.
   const numRes = await medir("numero_contrato", () => siguienteNumeroContrato(tenant), (r) => (r.ok ? "ok" : "error"));
-  if (!numRes.ok) return { ok: false, error: numRes.error };
+  if (!numRes.ok) {
+    // Fallo TÉCNICO bloqueante (el RPC de numeración falló) — nunca
+    // "rechazado" (eso es para un rechazo de negocio/sesión, no para un
+    // fallo técnico). `numRes.error` ya es un mensaje saneado por el propio
+    // RPC (revisión posterior al PR #274, "sanitizar mensajes de error del
+    // RPC") — no hay detalle crudo adicional que registrar aquí.
+    elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: numRes.error };
+  }
   const numero = numRes.numero;
 
   // 2. Crear la venta (cabecera del contrato) — estampada con la agencia activa.
@@ -392,7 +425,10 @@ async function crearContratoInterno(
     asesor_firma_tel: oNull(input.asesorTel),
   });
   registrarEtapa("crear_contrato", flujoId, "insert_venta", Math.round(performance.now() - _tVenta0), ve ? "error" : "ok");
-  if (ve) return { ok: false, error: ve.message };
+  if (ve) {
+    elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: ve.message };
+  }
 
   // 3. Tablas hijas — 5 inserts secuenciales (pasajeros/hoteles/vuelos/
   // servicios/items), medidos como un solo grupo (etapa=insert_hijas): no se
@@ -410,7 +446,8 @@ async function crearContratoInterno(
   const _tHijas0 = performance.now();
   const _errorHijas = (detalle: string, error: { message: string }) => {
     registrarEtapa("crear_contrato", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
-    console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=insert_hijas detalle=${detalle}`, error.message);
+    registrarErrorTecnico("crear_contrato", flujoId, "insert_hijas", detalle, error);
+    elevarEstadoFlujo(estado, "error");
     return { ok: false as const, error: error.message };
   };
   if (input.pasajeros.length) {
@@ -540,7 +577,7 @@ async function crearContratoInterno(
       const { data: provs, error: provsError } = await sb.from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres);
       if (provsError) {
         _resultadoCxp = "error";
-        console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=cxp_automaticas detalle=error_consulta_proveedores`, provsError.message);
+        registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_consulta_proveedores", provsError);
       }
       const provMap = new Map((provs ?? []).map((p) => [p.nombre, p]));
       const hoyCxP = oNull(input.fechaEmision) ?? new Date().toISOString().slice(0, 10);
@@ -563,7 +600,7 @@ async function crearContratoInterno(
       ).select("id, tipo_proveedor, proveedor, servicio, valor_total");
       if (cxpInsertError) {
         _resultadoCxp = "error";
-        console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=cxp_automaticas detalle=error_insert_cuentas_por_pagar`, cxpInsertError.message);
+        registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_insert_cuentas_por_pagar", cxpInsertError);
       }
       for (const c of cxpCreadas ?? []) {
         const asiento = await postearAsientoCxP({
@@ -572,12 +609,16 @@ async function crearContratoInterno(
         });
         if (!asiento.ok) {
           if (_resultadoCxp === "ok") _resultadoCxp = "parcial";
-          console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=cxp_automaticas detalle=error_asiento_cxp`, asiento.error);
+          registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_asiento_cxp", asiento.error);
         }
       }
     }
   }
   registrarEtapa("crear_contrato", flujoId, "cxp_automaticas", Math.round(performance.now() - _tCxp0), _resultadoCxp);
+  // Best-effort: NUNCA bloquea la creación del contrato, pero un fallo aquí
+  // sí debe elevar el TOTAL a "parcial" (el contrato se creó, pero algo
+  // best-effort quedó incompleto) — antes el total no reflejaba esto.
+  if (_resultadoCxp !== "ok") elevarEstadoFlujo(estado, "parcial");
 
   // ── Productos negociados: costos desde el módulo de producto + cupos ──────
   // Se hace con el cliente service-role para que el asesor nunca vea los costos
@@ -607,7 +648,7 @@ async function crearContratoInterno(
             .maybeSingle();
           if (costosError) {
             _resultadoAdmin = "parcial";
-            console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=error_consulta_costos`, costosError.message);
+            registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_consulta_costos", costosError);
           }
           if (costos) {
             const { error: updateError } = await admin
@@ -622,7 +663,7 @@ async function crearContratoInterno(
               .eq("numero_contrato", numero);
             if (updateError) {
               _resultadoAdmin = "parcial";
-              console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=error_update_costos`, updateError.message);
+              registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_update_costos", updateError);
             }
           }
         }
@@ -640,7 +681,7 @@ async function crearContratoInterno(
             .limit(adultos);
           if (libresError) {
             _resultadoAdmin = "parcial";
-            console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=error_consulta_sillas`, libresError.message);
+            registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_consulta_sillas", libresError);
           }
           if (libres && libres.length) {
             const resultadosSillas = await Promise.all(
@@ -662,7 +703,7 @@ async function crearContratoInterno(
             );
             if (resultadosSillas.some((r) => r.error)) {
               _resultadoAdmin = "parcial";
-              console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=error_update_sillas`, resultadosSillas.find((r) => r.error)?.error?.message);
+              registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_update_sillas", resultadosSillas.find((r) => r.error)?.error);
             }
           }
         }
@@ -671,12 +712,15 @@ async function crearContratoInterno(
         // administrativo (comportamiento histórico sin cambios) — pero la
         // métrica SÍ debe decir "error", nunca "ok".
         _resultadoAdmin = "error";
-        console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=negociado_admin detalle=excepcion`, e instanceof Error ? e.message : String(e));
+        registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "excepcion", e);
       }
     }
   }
   if (_huboBloqueAdmin) {
     registrarEtapa("crear_contrato", flujoId, "negociado_admin", Math.round(performance.now() - _tAdmin0), _resultadoAdmin);
+    // Best-effort (oculto al asesor): un fallo aquí nunca bloquea el
+    // contrato, pero SÍ debe elevar el TOTAL a "parcial" (nunca "ok" a ciegas).
+    if (_resultadoAdmin !== "ok") elevarEstadoFlujo(estado, "parcial");
   }
 
   // Auto-comisión B2B: usa el % propio del aliado o, si no tiene, el default general.
@@ -702,11 +746,13 @@ async function crearContratoInterno(
     });
     if (aliadoError) {
       _resultadoAliado = "error";
-      console.error(`[medicion] flujo=crear_contrato flujo_id=${flujoId} etapa=aliado_b2b detalle=error_insert`, aliadoError.message);
+      registrarErrorTecnico("crear_contrato", flujoId, "aliado_b2b", "error_insert", aliadoError);
     }
   }
   if (aliado) {
     registrarEtapa("crear_contrato", flujoId, "aliado_b2b", Math.round(performance.now() - _tAliado0), _resultadoAliado);
+    // Best-effort: no bloquea la creación del contrato, pero eleva el TOTAL.
+    if (_resultadoAliado !== "ok") elevarEstadoFlujo(estado, "parcial");
   }
 
   revalidatePath("/dashboard/contratos");

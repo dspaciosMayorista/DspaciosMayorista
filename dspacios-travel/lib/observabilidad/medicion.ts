@@ -84,3 +84,82 @@ export function crearMedidor(flujo: string, flujoId: string): Medidor {
 export function registrarEtapa(flujo: string, flujoId: string, etapa: string, duracionMs: number, resultado: ResultadoEtapa): void {
   console.log(formatearLinea(flujo, flujoId, etapa, duracionMs, resultado));
 }
+
+// ── Registro seguro de errores técnicos (revisión posterior — corrección de
+// observabilidad, ronda 2) ───────────────────────────────────────────────────
+// Antes de esta ronda, varios call sites de `crearContrato()`/
+// `reservarPrograma()` pasaban `error.message`/`asiento.error`/`e.message`/
+// `String(e)` (o el objeto de error de Supabase/PostgREST directo) a
+// `console.error`. Aunque sea server-side, Vercel CONSERVA esos logs, y un
+// mensaje de error de Postgres puede traer el valor de una fila, el nombre
+// de una tabla/constraint o un dato comercial (ej. `Key (documento)=
+// (123456789) already exists`, `permission denied for table ventas`,
+// `Failing row contains (...)`). Este es el ÚNICO punto autorizado para
+// mandar detalle técnico a `console.error` dentro de esos dos flujos — nunca
+// imprime `message`/`details`/`hint` ni el objeto de error completo, solo:
+//   - `flujo`/`flujoId`: ya controlados (no vienen del error);
+//   - `etapa`/`detalle`: identificadores FIJOS que decide el caller (un
+//     literal de texto en el código, nunca un valor derivado del error o
+//     del request);
+//   - `codigo`: el campo `.code` del error, SOLO si es un string corto y de
+//     forma segura (alfanumérico/guion bajo, ≤32 caracteres) — el código de
+//     error de Postgres/PostgREST (ej. "23505", "42501", "PGRST116") nunca
+//     trae datos de fila, solo identifica la CLASE de fallo. Si el campo
+//     `code` no existe, no es texto, o no cumple la forma segura, se
+//     descarta por completo (nunca se registra tal cual).
+//   - si no hay código seguro (excepción de JS sin `.code`, string suelto,
+//     código con forma rara), se registra `tipo=exception` — una
+//     clasificación ESTABLE, nunca `err.message`, `String(err)` ni el stack.
+function codigoTecnicoSeguro(error: unknown): string | null {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" && /^[A-Za-z0-9_]{1,32}$/.test(code)) return code;
+  }
+  return null;
+}
+
+export function registrarErrorTecnico(flujo: string, flujoId: string, etapa: string, detalle: string, error: unknown): void {
+  const codigo = codigoTecnicoSeguro(error);
+  const clasificacion = codigo ? `codigo=${codigo}` : "tipo=exception";
+  console.error(`[medicion-error] flujo=${flujo} flujo_id=${flujoId} etapa=${etapa} detalle=${detalle} ${clasificacion}`);
+}
+
+// ── Estado técnico INTERNO peor-de-todos de una ejecución (revisión
+// posterior — corrección de observabilidad, ronda 2) ────────────────────────
+// El resultado público de `crearContrato()`/`reservarPrograma()`
+// (`{ok:true}`/`{ok:false,error}`) no alcanza para clasificar el TOTAL: un
+// rechazo de negocio/sesión y un fallo TÉCNICO bloqueante (RPC de
+// numeración, insert de `ventas`, insert obligatorio de una tabla hija)
+// ambos devuelven `{ok:false}` — antes de esta ronda el wrapper los trataba
+// igual ("rechazado" para los dos). Y un contrato creado con éxito pero con
+// un paso best-effort caído (CxP automáticas, bloque admin de negociado,
+// comisión B2B) devolvía `{ok:true}` sin que el TOTAL reflejara la falla
+// parcial. `EstadoFlujo` se muta en los puntos donde la lógica real YA sabe
+// que algo técnico falló — nunca se expone al navegador (vive solo dentro de
+// la Server Action, del lado del servidor) ni cambia el contrato público de
+// `crearContrato()`/`reservarPrograma()`.
+export type EstadoFlujo = { peor: "error" | "parcial" | null };
+
+export function crearEstadoFlujo(): EstadoFlujo {
+  return { peor: null };
+}
+
+// Solo puede subir de nivel, nunca bajar: "error" (falló un paso técnico
+// REQUERIDO, o hubo una excepción real) es la peor condición y siempre gana
+// sobre "parcial" (el contrato/reserva SÍ se creó, pero un paso best-effort
+// falló) si ambas ocurren en la misma ejecución.
+export function elevarEstadoFlujo(estado: EstadoFlujo, nivel: "error" | "parcial"): void {
+  if (nivel === "error") estado.peor = "error";
+  else if (estado.peor !== "error") estado.peor = "parcial";
+}
+
+// Resultado TOTAL real de la ejecución: si algo técnico se elevó (error o
+// parcial), manda sobre lo que haya devuelto la lógica pública — así un
+// fallo técnico bloqueante nunca queda clasificado como "rechazado", y un
+// paso best-effort caído nunca queda oculto tras un "ok" a secas. Si nada se
+// elevó, el resultado es exactamente el que ya calculaba el wrapper antes de
+// esta ronda: "ok" si la lógica terminó en éxito, "rechazado" si terminó en
+// cualquier otro `{ok:false}` (sesión, rol, o validación de negocio).
+export function resultadoTotal(estado: EstadoFlujo, ok: boolean): ResultadoEtapa {
+  return estado.peor ?? (ok ? "ok" : "rechazado");
+}

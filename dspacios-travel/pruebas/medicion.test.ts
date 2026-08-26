@@ -1,6 +1,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { generarFlujoId, crearMedidor, registrarEtapa } from "../lib/observabilidad/medicion.ts";
+import {
+  generarFlujoId, crearMedidor, registrarEtapa, registrarErrorTecnico,
+  crearEstadoFlujo, elevarEstadoFlujo, resultadoTotal,
+} from "../lib/observabilidad/medicion.ts";
 
 // EJECUCIÓN REAL (no grep) de lib/observabilidad/medicion.ts — revisión
 // posterior al PR #275 (corrección de observabilidad): el `flujo_id` debe
@@ -154,5 +157,213 @@ describe("registrarEtapa() — para etapas con retorno anticipado propio (no med
       registrarEtapa("crear_contrato", flujoId, "etapa", 1, "error");
     });
     assert.equal(errores.length, 0);
+  });
+});
+
+// ── registrarErrorTecnico() — revisión posterior al PR #275 ronda 2 ────────
+// Antes, varios call sites de crearContrato()/reservarPrograma() pasaban
+// `error.message`/`asiento.error`/`e.message`/`String(e)` directo a
+// console.error. Estos casos sintéticos simulan mensajes reales de Postgres/
+// Supabase que traen datos de fila, nombre de tabla/policy o PII — y
+// demuestran con EJECUCIÓN REAL (no grep) que ninguno de esos textos
+// sobrevive, mientras que flujo/flujo_id/etapa/detalle SÍ.
+const CASOS_ERROR_CON_PII: { nombre: string; error: unknown; pii: string[]; codigoEsperado: string | null }[] = [
+  {
+    nombre: "nombre y documento de una persona (constraint violation)",
+    error: { code: "23505", message: "Key (documento)=(123456789) already exists. Juan Pérez ya está registrado en cuentas_por_pagar." },
+    pii: ["Juan Pérez", "123456789"],
+    codigoEsperado: "23505",
+  },
+  {
+    nombre: "permission denied for table ventas",
+    error: { code: "42501", message: "permission denied for table ventas" },
+    pii: ["permission denied for table ventas"],
+    codigoEsperado: "42501",
+  },
+  {
+    nombre: 'relation "usuarios" does not exist (sin .code)',
+    error: { message: 'relation "usuarios" does not exist' },
+    pii: ['relation "usuarios"'],
+    codigoEsperado: null,
+  },
+  {
+    nombre: "email y teléfono",
+    error: { code: "22P02", message: "email juan.perez@example.com telefono 3001234567 inválido para el campo numeric" },
+    pii: ["juan.perez@example.com", "3001234567"],
+    codigoEsperado: "22P02",
+  },
+  {
+    nombre: "una fila completa simulada (Failing row contains)",
+    error: {
+      code: "23502",
+      message: "Failing row contains (12, DTM-0001, Juan Pérez, 123456789, juan.perez@example.com, 3001234567).",
+      details: "Failing row contains (12, DTM-0001, Juan Pérez, 123456789, juan.perez@example.com, 3001234567).",
+      hint: "Revisa el valor de cliente_documento para Juan Pérez.",
+    },
+    pii: ["Failing row contains", "Juan Pérez", "123456789", "juan.perez@example.com", "3001234567", "Revisa el valor"],
+    codigoEsperado: "23502",
+  },
+];
+
+describe("registrarErrorTecnico() — ningún dato de negocio sobrevive, con ejecución real y errores sintéticos", () => {
+  for (const caso of CASOS_ERROR_CON_PII) {
+    test(`caso: ${caso.nombre}`, () => {
+      const flujoId = generarFlujoId();
+      const { errores, logs } = interceptarConsola(() => {
+        registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_insert_cuentas_por_pagar", caso.error);
+      });
+      assert.equal(logs.length, 0, "registrarErrorTecnico nunca debe escribir a console.log");
+      assert.equal(errores.length, 1, "registrarErrorTecnico debe escribir EXACTAMENTE una línea a console.error");
+      const linea = String(errores[0][0]);
+      // Ningún texto de negocio/PII sobrevive.
+      for (const fragmento of caso.pii) {
+        assert.ok(!linea.includes(fragmento), `la línea NO debe contener "${fragmento}": ${linea}`);
+      }
+      // Tampoco debe haber una SEGUNDA parte del console.error con el objeto crudo.
+      assert.equal(errores[0].length, 1, `console.error debe recibir un solo argumento (la línea ya formateada): ${JSON.stringify(errores[0])}`);
+      // flujo_id/etapa/detalle SÍ sobreviven.
+      assert.ok(linea.includes(`flujo_id=${flujoId}`), `debe incluir flujo_id: ${linea}`);
+      assert.ok(linea.includes("etapa=cxp_automaticas"), `debe incluir la etapa: ${linea}`);
+      assert.ok(linea.includes("detalle=error_insert_cuentas_por_pagar"), `debe incluir el detalle: ${linea}`);
+      if (caso.codigoEsperado) {
+        assert.ok(linea.includes(`codigo=${caso.codigoEsperado}`), `debe incluir el código saneado: ${linea}`);
+        assert.ok(!linea.includes("tipo=exception"), `no debe caer a tipo=exception si hay código seguro: ${linea}`);
+      } else {
+        assert.ok(linea.includes("tipo=exception"), `sin .code seguro debe clasificar como tipo=exception: ${linea}`);
+        assert.ok(!linea.includes("codigo="), `no debe inventar un código: ${linea}`);
+      }
+    });
+  }
+
+  test("un código con forma insegura (espacios, punto y coma, muy largo) se descarta — NUNCA se registra tal cual", () => {
+    const flujoId = generarFlujoId();
+    const casosInseguros = [
+      "23505; DROP TABLE ventas;",
+      "23505 OR 1=1",
+      "a".repeat(40),
+      "",
+    ];
+    for (const codigoInseguro of casosInseguros) {
+      const { errores } = interceptarConsola(() => {
+        registrarErrorTecnico("crear_contrato", flujoId, "etapa", "detalle", { code: codigoInseguro, message: "no importa" });
+      });
+      const linea = String(errores[0][0]);
+      assert.ok(!linea.includes(codigoInseguro) || codigoInseguro === "", `el código inseguro no debe aparecer tal cual: ${linea}`);
+      assert.ok(linea.includes("tipo=exception"), `un código con forma insegura debe caer a tipo=exception: ${linea}`);
+    }
+  });
+
+  test("una excepción real (instancia de Error) con datos de negocio en el mensaje — nunca se registra el mensaje ni el stack", () => {
+    const flujoId = generarFlujoId();
+    const e = new Error("fallo real de red al guardar el contrato de Juan Pérez, documento 123456789");
+    const { errores } = interceptarConsola(() => {
+      registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "excepcion", e);
+    });
+    const linea = String(errores[0][0]);
+    assert.ok(!linea.includes("Juan Pérez"));
+    assert.ok(!linea.includes("123456789"));
+    assert.ok(!linea.includes("fallo real de red"));
+    assert.ok(!linea.includes(e.stack ?? " imposible "));
+    assert.ok(linea.includes("tipo=exception"));
+  });
+
+  test("un error como STRING suelto (ej. asiento.error de postearAsientoCxP, ya no es un objeto) — nunca se registra el string", () => {
+    const flujoId = generarFlujoId();
+    const { errores } = interceptarConsola(() => {
+      registrarErrorTecnico("crear_contrato", flujoId, "cxp_automaticas", "error_asiento_cxp", "fallo al postear el asiento contable del cliente Juan Pérez");
+    });
+    const linea = String(errores[0][0]);
+    assert.ok(!linea.includes("Juan Pérez"));
+    assert.ok(!linea.includes("fallo al postear"));
+    assert.ok(linea.includes("tipo=exception"));
+  });
+
+  test("error null/undefined — nunca revienta, siempre cae a tipo=exception", () => {
+    const flujoId = generarFlujoId();
+    for (const errorVacio of [null, undefined]) {
+      const { errores } = interceptarConsola(() => {
+        registrarErrorTecnico("crear_contrato", flujoId, "etapa", "detalle", errorVacio);
+      });
+      assert.equal(errores.length, 1);
+      assert.ok(String(errores[0][0]).includes("tipo=exception"));
+    }
+  });
+});
+
+// ── EstadoFlujo (crearEstadoFlujo/elevarEstadoFlujo/resultadoTotal) —
+// revisión posterior al PR #275 ronda 2, defecto "RESULTADO TOTAL
+// INCORRECTO" ─────────────────────────────────────────────────────────────
+// El wrapper real (crearContrato()/reservarPrograma()) usa exactamente esta
+// secuencia: crea el estado, delega en la función interna (que eleva el
+// estado en los puntos donde YA sabe que algo técnico falló), y al final
+// calcula `resultadoTotal(estado, res.ok)`. Estas pruebas ejecutan esa MISMA
+// secuencia en cada uno de los 6 escenarios pedidos — es la lógica real, no
+// una reimplementación, solo que sin la Server Action alrededor (que no se
+// puede importar bajo `node --test`, ver el comentario de arriba).
+describe("EstadoFlujo — el TOTAL refleja la peor condición real del flujo", () => {
+  test("escenario 'éxito completo': sin elevar nada + res.ok=true → total=ok", () => {
+    const estado = crearEstadoFlujo();
+    assert.equal(resultadoTotal(estado, true), "ok");
+  });
+
+  test("escenario 'sesión/rol/validación comercial rechazada': sin elevar nada + res.ok=false → total=rechazado", () => {
+    const estado = crearEstadoFlujo();
+    assert.equal(resultadoTotal(estado, false), "rechazado");
+  });
+
+  test("escenario 'RPC de número fallido': elevar('error') + res.ok=false → total=error (NUNCA 'rechazado')", () => {
+    const estado = crearEstadoFlujo();
+    elevarEstadoFlujo(estado, "error");
+    assert.equal(resultadoTotal(estado, false), "error");
+  });
+
+  test("escenario 'insert obligatorio fallido' (ventas o una tabla hija bloqueante): elevar('error') + res.ok=false → total=error", () => {
+    const estado = crearEstadoFlujo();
+    elevarEstadoFlujo(estado, "error");
+    assert.equal(resultadoTotal(estado, false), "error");
+  });
+
+  test("escenario 'contrato creado + CxP best-effort fallida': elevar('parcial') + res.ok=true → total=parcial (NUNCA 'ok' a ciegas)", () => {
+    const estado = crearEstadoFlujo();
+    elevarEstadoFlujo(estado, "parcial");
+    assert.equal(resultadoTotal(estado, true), "parcial");
+  });
+
+  test("escenario 'excepción': el wrapper NO usa resultadoTotal() en el catch — fuerza \"error\" directo (probado por wiring en medicionFlujoWiring.test.ts)", () => {
+    // Documentado aquí para que la lista de 6 escenarios quede completa en
+    // este archivo: cuando `crearContratoInterno`/`reservarProgramaInterno`
+    // LANZAN (no retornan `{ok:false}`), el wrapper nunca llega a calcular
+    // `resultadoTotal()` — el `catch` asigna `_resultadoTotal = "error"`
+    // directamente antes de volver a lanzar. No hay nada que ejecutar aquí
+    // sin importar la Server Action real (server-only/next/headers).
+    assert.ok(true);
+  });
+
+  test("'error' SIEMPRE gana sobre 'parcial', sin importar el orden en que se eleven", () => {
+    const a = crearEstadoFlujo();
+    elevarEstadoFlujo(a, "parcial");
+    elevarEstadoFlujo(a, "error");
+    assert.equal(resultadoTotal(a, true), "error");
+
+    const b = crearEstadoFlujo();
+    elevarEstadoFlujo(b, "error");
+    elevarEstadoFlujo(b, "parcial");
+    assert.equal(resultadoTotal(b, true), "error", "una vez en 'error' nunca debe bajar a 'parcial'");
+  });
+
+  test("dos estados de dos ejecuciones distintas nunca se contaminan entre sí", () => {
+    const a = crearEstadoFlujo();
+    const b = crearEstadoFlujo();
+    elevarEstadoFlujo(a, "error");
+    assert.equal(resultadoTotal(a, false), "error");
+    assert.equal(resultadoTotal(b, false), "rechazado", "el estado de una ejecución no debe afectar a otra");
+  });
+
+  test("crearEstadoFlujo() siempre devuelve un objeto NUEVO (peor=null) — no un singleton compartido", () => {
+    const a = crearEstadoFlujo();
+    const b = crearEstadoFlujo();
+    assert.notEqual(a, b);
+    assert.equal(a.peor, null);
+    assert.equal(b.peor, null);
   });
 });
