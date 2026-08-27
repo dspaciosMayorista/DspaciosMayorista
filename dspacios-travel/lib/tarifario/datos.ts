@@ -4,8 +4,15 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { FilaTarifario } from "@/app/tarifario/TarifarioPublic";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
+import { cargarFilasTarifarioPaginado } from "@/lib/tarifario/paginacion";
 import { hoyISO } from "@/lib/calc/paquetes";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
+import { registrarEtapa, registrarDatoPagina } from "@/lib/observabilidad/medicion";
+
+// Columnas completas que necesita Vista Booking (Reservar/tarifario público)
+// — más que las que pide /dashboard/tarifario, ver lib/tarifario/paginacion.ts.
+const COLUMNAS_COMPLETAS =
+  "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda";
 
 export type InfoHotelDato = {
   estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null;
@@ -36,27 +43,27 @@ export type DatosTarifario = {
  * "el motor general") — antes cada página traía su propia copia y una se
  * quedó atrás, por eso "Incluye"/add-ons solo aparecían en una de las dos.
  * Cualquier campo nuevo que necesite Vista Booking se agrega aquí UNA vez.
+ *
+ * `flujo`/`flujoId` (diagnóstico del incidente de ~13s en las 3 rutas de
+ * tarifario): identifican la ejecución en los logs de medición — el caller
+ * (cada page.tsx) genera `flujoId` UNA vez por request y lo pasa aquí para
+ * que sus etapas queden atadas a las del resto de la página. Mide, por
+ * separado: `carga_paginada` (el bucle de `tarifario_resultado`, con
+ * filas/páginas recibidas), `filtro_vigencia` (filtrarTarifarioVencidas), y
+ * `datos_auxiliares` (todo lo demás: cupos, vigencia de empaquetados, el
+ * recorte de "servicios", fotos/hoteles/capacidades, planes, ventana de
+ * viaje, "incluye") — mismos buckets que pide el diagnóstico, sin abrir más
+ * granularidad de la necesaria.
  */
-export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promise<DatosTarifario> {
-  let filas: FilaTarifario[] = [];
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data: page } = await sb
-      .from("tarifario_resultado")
-      .select(
-        "modulo, bloqueo_label, bloqueo_id, empaquetado_id, salida_id, paquete_id, hotel_id, servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, descripcion, recargo_individual, moneda"
-      )
-      .eq("paquete_activo", true)
-      .order("destino_nombre")
-      .order("bloqueo_label")
-      .order("hotel_nombre")
-      .order("categoria")
-      .order("regimen")
-      .range(from, from + PAGE - 1);
-    if (!page || page.length === 0) break;
-    filas.push(...(page as unknown as FilaTarifario[]));
-    if (page.length < PAGE) break;
-  }
+export async function cargarDatosTarifario(sb: SupabaseClient<Database>, flujo: string, flujoId: string): Promise<DatosTarifario> {
+  const _tPaginacion0 = performance.now();
+  const { filas: filasPaginadas, paginasConsultadas } = await cargarFilasTarifarioPaginado<FilaTarifario>(sb, COLUMNAS_COMPLETAS);
+  let filas = filasPaginadas;
+  registrarEtapa(flujo, flujoId, "carga_paginada", Math.round(performance.now() - _tPaginacion0), "ok");
+  registrarDatoPagina(flujo, flujoId, "carga_paginada", `filas=${filas.length} paginas=${paginasConsultadas} consultas=${paginasConsultadas}`);
+
+  const _tAux0 = performance.now();
+  let _consultasAux = 0;
 
   // Cupos disponibles por bloqueo (para mostrar y ocultar salidas sin cupos).
   const cuposPorBloqueo: Record<number, number> = {};
@@ -75,13 +82,23 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
       const ori = (b.origen ?? "").trim() || (b.ruta ? b.ruta.split("-")[0].trim() : "");
       if (ori) origenPorBloqueo[b.id as number] = ori.toUpperCase();
     }
+    _consultasAux += 2;
   }
+  let _msAux = performance.now() - _tAux0;
 
   // Oculta tarifas de hotel cuya vigencia de COMPRA ya venció (se re-liquida HOY).
+  // Etapa propia ("filtro_vigencia"): es una de las 4 mediciones pedidas en
+  // el diagnóstico, separada del resto de "datos_auxiliares".
+  const _tVigencia0 = performance.now();
+  let _huboVigencia = false;
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     filas = await filtrarTarifarioVencidas(createAdminClient(), filas);
+    _huboVigencia = true;
   }
+  registrarEtapa(flujo, flujoId, "filtro_vigencia", Math.round(performance.now() - _tVigencia0), "ok");
+  registrarDatoPagina(flujo, flujoId, "filtro_vigencia", `filas=${filas.length} consultas=${_huboVigencia ? 2 : 0}`);
 
+  const _tAux1 = performance.now();
   // Oculta salidas de BLOQUEO cuya fecha de ida ya pasó.
   const hoyTarifa = hoyISO();
   filas = filas.filter((f) => (f.modulo !== "bloqueo" && f.modulo !== "dinamico") || !f.fecha_ida || f.fecha_ida >= hoyTarifa);
@@ -122,6 +139,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
               .map((e) => e.id)
           );
       filas = filas.filter((f) => f.empaquetado_id == null || vigentes.has(f.empaquetado_id));
+      _consultasAux += 1;
     }
   }
 
@@ -134,6 +152,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
     const { data: pkgs } = await admin.from("armado_paquetes").select("id").eq("tipo", "servicios");
     const idsServicios = new Set((pkgs ?? []).map((p) => p.id));
     filasVisibles = filas.filter((f) => f.modulo !== "servicios" || (f.paquete_id != null && idsServicios.has(f.paquete_id)));
+    _consultasAux += 1;
   }
 
   // Add-ons de CADA paquete de hotel (bloqueo/porción), SIN el recorte de
@@ -153,6 +172,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
       if (fotosPorHotel[f.hotel_id] == null) fotosPorHotel[f.hotel_id] = f.url;
       if (f.es_portada) fotosPorHotel[f.hotel_id] = f.url;
     }
+    _consultasAux += 1;
   }
 
   // Estrellas/clasificación/descripción + capacidades por hotel.
@@ -164,6 +184,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
       infoPorHotel[h.id] = { estrellas: h.estrellas, clasificacion: h.clasificacion, descripcion: h.descripcion, ubicacion: h.ubicacion, video_url: h.video_url, ninoMin: h.edad_nino_min, ninoMax: h.edad_nino_max, infMin: h.edad_infante_min, infMax: h.edad_infante_max, infanteCargo: false, infanteNota: null, ninoNota: h.nino_nota, adultsOnly: h.adults_only ?? false, petFriendly: h.pet_friendly ?? false, petCargo: (Number(h.pet_costo_neto) || 0) > 0, petCostoDesc: h.pet_costo_desc, petNota: h.pet_nota };
       capPorHotel[h.id] = { paxMin: h.pax_min, paxMax: h.pax_max, acom: [] };
     }
+    _consultasAux += 1;
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
       const admin = createAdminClient();
       const [{ data: acs }, { data: tarInfante }] = await Promise.all([
@@ -183,6 +204,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
         if ((Number(r.neto_infante) || 0) > 0) slot.infanteCargo = true;
         if (r.nota_infante && !slot.infanteNota) slot.infanteNota = r.nota_infante;
       }
+      _consultasAux += 2;
     }
   }
 
@@ -192,6 +214,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
   if (servicioIds.length) {
     const { data: svcs } = await sb.from("servicios_adicionales").select("id, foto_url").in("id", servicioIds);
     for (const s of svcs ?? []) if (s.foto_url) fotosPorServicio[s.id] = s.foto_url;
+    _consultasAux += 1;
   }
 
   // Régimen de alimentación: qué incluye cada plan.
@@ -199,6 +222,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
   {
     const { data: planes } = await sb.from("planes_alimentacion").select("codigo, nombre, descripcion, nota_especial");
     for (const p of planes ?? []) planesInfo[(p.codigo ?? "").trim().toUpperCase()] = { nombre: p.nombre, descripcion: p.descripcion, nota_especial: p.nota_especial };
+    _consultasAux += 1;
   }
 
   // Ventana de viaje por paquete (porción/dinámico) para el motor por fechas.
@@ -210,6 +234,7 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
     const admin = createAdminClient();
     const { data: pqs } = await admin.from("armado_paquetes").select("id, fecha_viaje_inicio, fecha_viaje_fin").in("id", paqIdsPorcion);
     for (const p of pqs ?? []) ventanaPorPaquete[p.id as number] = { min: p.fecha_viaje_inicio as string | null, max: p.fecha_viaje_fin as string | null };
+    _consultasAux += 1;
   }
 
   // Servicios marcados "incluido" al armar cada paquete (para "Incluye").
@@ -229,7 +254,12 @@ export async function cargarDatosTarifario(sb: SupabaseClient<Database>): Promis
       if (!nombre) continue;
       (incluidosPorPaquete[r.paquete_id as number] ??= []).push(nombre);
     }
+    _consultasAux += 1;
   }
+
+  _msAux += performance.now() - _tAux1;
+  registrarEtapa(flujo, flujoId, "datos_auxiliares", Math.round(_msAux), "ok");
+  registrarDatoPagina(flujo, flujoId, "datos_auxiliares", `filas_visibles=${filasVisibles.length} filas_addon=${filasAddon.length} consultas=${_consultasAux}`);
 
   return {
     filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,

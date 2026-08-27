@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   generarFlujoId, crearMedidor, registrarEtapa, registrarErrorTecnico,
   crearEstadoFlujo, elevarEstadoFlujo, resultadoTotal,
+  registrarDatoPagina, siguienteInvocacionProceso, tamanoAproximadoBytes,
+  iniciarCronometro,
 } from "../lib/observabilidad/medicion.ts";
 
 // EJECUCIÓN REAL (no grep) de lib/observabilidad/medicion.ts — revisión
@@ -365,5 +367,129 @@ describe("EstadoFlujo — el TOTAL refleja la peor condición real del flujo", (
     assert.notEqual(a, b);
     assert.equal(a.peor, null);
     assert.equal(b.peor, null);
+  });
+});
+
+// ── Helpers de diagnóstico de carga de página (incidente de ~13s en
+// /dashboard/reservar, /dashboard/tarifario y /tarifario) — registrarDatoPagina/
+// siguienteInvocacionProceso/tamanoAproximadoBytes ──────────────────────────
+describe("registrarDatoPagina() — línea hermana de registrarEtapa(), sin duración ni PII", () => {
+  test("emite EXACTAMENTE una línea con el formato [medicion-pagina] flujo=.. flujo_id=.. etapa=.. <detalle>", () => {
+    const flujoId = generarFlujoId();
+    const { logs } = interceptarConsola(() => {
+      registrarDatoPagina("pagina_reservar", flujoId, "carga_paginada", "filas=842 paginas=1 consultas=1");
+    });
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0], `[medicion-pagina] flujo=pagina_reservar flujo_id=${flujoId} etapa=carga_paginada filas=842 paginas=1 consultas=1`);
+  });
+
+  test("nunca escribe a console.error", () => {
+    const flujoId = generarFlujoId();
+    const { errores } = interceptarConsola(() => {
+      registrarDatoPagina("pagina_reservar", flujoId, "etapa", "detalle=x");
+    });
+    assert.equal(errores.length, 0);
+  });
+
+  test("comparte flujo_id con registrarEtapa() del mismo flujo — se pueden correlacionar en los logs", () => {
+    const flujoId = generarFlujoId();
+    const { logs } = interceptarConsola(() => {
+      registrarEtapa("pagina_tarifario_interno", flujoId, "total", 900, "ok");
+      registrarDatoPagina("pagina_tarifario_interno", flujoId, "total", "payload_bytes=12345");
+    });
+    assert.equal(logs.length, 2);
+    for (const linea of logs) assert.ok(linea.includes(`flujo_id=${flujoId}`));
+  });
+});
+
+describe("siguienteInvocacionProceso() — contador por PROCESO (isolate), no por navegador ni usuario", () => {
+  test("primera llamada de un flujo NUEVO devuelve 1", () => {
+    const flujo = `flujo_test_${generarFlujoId()}`;
+    assert.equal(siguienteInvocacionProceso(flujo), 1);
+  });
+
+  test("llamadas sucesivas del MISMO flujo incrementan: 1, 2, 3...", () => {
+    const flujo = `flujo_test_${generarFlujoId()}`;
+    assert.equal(siguienteInvocacionProceso(flujo), 1);
+    assert.equal(siguienteInvocacionProceso(flujo), 2);
+    assert.equal(siguienteInvocacionProceso(flujo), 3);
+  });
+
+  test("dos flujos DISTINTOS mantienen contadores independientes", () => {
+    const flujoA = `flujo_test_a_${generarFlujoId()}`;
+    const flujoB = `flujo_test_b_${generarFlujoId()}`;
+    assert.equal(siguienteInvocacionProceso(flujoA), 1);
+    assert.equal(siguienteInvocacionProceso(flujoA), 2);
+    assert.equal(siguienteInvocacionProceso(flujoB), 1, "un flujo nuevo no debe heredar el contador de otro");
+  });
+});
+
+describe("tamanoAproximadoBytes() — proxy del tamaño del payload RSC, nunca revienta", () => {
+  test("un objeto vacío mide el tamaño de '{}' en bytes UTF-8", () => {
+    assert.equal(tamanoAproximadoBytes({}), Buffer.byteLength("{}", "utf8"));
+  });
+
+  test("crece con el tamaño real del contenido serializado", () => {
+    const chico = tamanoAproximadoBytes({ a: 1 });
+    const grande = tamanoAproximadoBytes({ a: 1, b: "x".repeat(1000), c: Array.from({ length: 50 }, (_, i) => i) });
+    assert.ok(grande > chico, `se esperaba que el payload más grande midiera más bytes: ${grande} vs ${chico}`);
+  });
+
+  test("mide correctamente caracteres multi-byte (UTF-8, no length de JS)", () => {
+    const conTildes = tamanoAproximadoBytes({ nombre: "áéíóú ñ" });
+    const esperado = Buffer.byteLength(JSON.stringify({ nombre: "áéíóú ñ" }), "utf8");
+    assert.equal(conTildes, esperado);
+  });
+
+  test("un valor no serializable (referencia circular) NUNCA revienta — devuelve -1", () => {
+    type ConReferenciaCircular = { a: number; self?: ConReferenciaCircular };
+    const circular: ConReferenciaCircular = { a: 1 };
+    circular.self = circular;
+    assert.equal(tamanoAproximadoBytes(circular), -1);
+  });
+
+  test("un BigInt (JSON.stringify lanza) tampoco revienta — devuelve -1", () => {
+    assert.equal(tamanoAproximadoBytes({ n: BigInt(1) }), -1);
+  });
+
+  test("undefined mide como si no hubiera contenido serializable (JSON.stringify(undefined) === undefined) — no revienta", () => {
+    const n = tamanoAproximadoBytes(undefined);
+    assert.equal(typeof n, "number");
+    assert.ok(n >= 0);
+  });
+});
+
+// ── iniciarCronometro() — revisión posterior: `react-hooks/purity` (parte
+// del linter de React Compiler que trae `eslint-config-next/core-web-vitals`
+// en Next 16) marcaba `performance.now()`/`Math.round()` llamados DIRECTO en
+// el cuerpo de las tres páginas (Server Components) como "impuros durante el
+// render". Este helper saca esas dos llamadas del cuerpo del componente sin
+// cambiar el número que se termina registrando.
+describe("iniciarCronometro() — mismo resultado que Math.round(performance.now() - _t0), sin llamar performance.now() en el caller", () => {
+  test("devuelve una función que, al llamarse, da un número >= 0", () => {
+    const elapsed = iniciarCronometro();
+    assert.equal(typeof elapsed, "function");
+    assert.equal(typeof elapsed(), "number");
+    assert.ok(elapsed() >= 0);
+  });
+
+  test("dos cronómetros iniciados en momentos distintos son independientes entre sí", () => {
+    const a = iniciarCronometro();
+    const b = iniciarCronometro();
+    assert.ok(a() >= 0);
+    assert.ok(b() >= 0);
+  });
+
+  test("llamar la función devuelta varias veces sigue midiendo desde el MISMO inicio (no reinicia el cronómetro)", async () => {
+    const elapsed = iniciarCronometro();
+    const primera = elapsed();
+    await new Promise((r) => setTimeout(r, 5));
+    const segunda = elapsed();
+    assert.ok(segunda >= primera, "la segunda lectura debe ser igual o mayor, nunca menor (el reloj no reinicia)");
+  });
+
+  test("el número devuelto es un entero (redondeado), igual que antes con Math.round()", () => {
+    const elapsed = iniciarCronometro();
+    assert.ok(Number.isInteger(elapsed()));
   });
 });

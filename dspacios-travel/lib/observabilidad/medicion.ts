@@ -163,3 +163,66 @@ export function elevarEstadoFlujo(estado: EstadoFlujo, nivel: "error" | "parcial
 export function resultadoTotal(estado: EstadoFlujo, ok: boolean): ResultadoEtapa {
   return estado.peor ?? (ok ? "ok" : "rechazado");
 }
+
+// ── Diagnóstico de carga de página (incidente de ~13s en /dashboard/reservar,
+// /dashboard/tarifario y /tarifario) ────────────────────────────────────────
+// `registrarEtapa()` deja un número (duración) + una clasificación fija
+// (ok/error/...). El diagnóstico de estas tres rutas también necesita datos
+// estructurales SIN duración asociada — filas/páginas recibidas, cantidad de
+// consultas a Supabase hechas en una etapa, tamaño aproximado del payload
+// serializado — que no encajan en el contrato de `registrarEtapa`. En vez de
+// forzarlos dentro de `resultado` (rompería el formato limpio que ya
+// consumen los otros flujos), este helper deja una línea hermana con el
+// mismo `flujo`/`flujo_id` para poder correlacionarla en los mismos logs.
+// Igual que el resto de este módulo: nunca recibe PII/payload de negocio,
+// solo hechos numéricos/estructurales — `detalle` es un string armado por el
+// caller con pares `campo=valor` (ej. `filas=842 paginas=1`).
+export function registrarDatoPagina(flujo: string, flujoId: string, etapa: string, detalle: string): void {
+  console.log(`[medicion-pagina] flujo=${flujo} flujo_id=${flujoId} etapa=${etapa} ${detalle}`);
+}
+
+// Contador por PROCESO (instancia de función serverless/isolate de Next.js),
+// no por navegador ni por usuario: sirve como proxy aproximado de "cold
+// start" (invocacion=1 en un proceso recién arrancado) vs. reutilización del
+// mismo proceso en pedidos posteriores — Next.js/Vercel pueden reutilizar el
+// mismo isolate entre requests de usuarios distintos, así que esto NO
+// distingue "primera visita de ESTE usuario" de "primera vez que este
+// proceso concreto atiende la ruta". Se documenta así de manera explícita
+// para no sobre-interpretar el número en los logs.
+const invocacionesPorFlujo = new Map<string, number>();
+export function siguienteInvocacionProceso(flujo: string): number {
+  const n = (invocacionesPorFlujo.get(flujo) ?? 0) + 1;
+  invocacionesPorFlujo.set(flujo, n);
+  return n;
+}
+
+// Cronómetro para Server Components (revisión posterior: `react-hooks/purity`
+// —parte del linter de React Compiler que trae `eslint-config-next/core-web-
+// vitals` en Next 16— marca CUALQUIER llamada directa a `performance.now()`/
+// `Math.round()` dentro del cuerpo de una función que retorna JSX como
+// "impura durante el render", sin distinguir un Server Component (async, sin
+// interactividad, sin re-render del lado del cliente) de un Client Component
+// real. La regla analiza el cuerpo de la función-componente misma, no las
+// funciones que esta LLAMA — así que envolver ambas llamadas (marca de
+// inicio + cálculo del elapsed) en un helper de este módulo (no es un
+// componente: no retorna JSX, nombre en minúscula) saca el problema del
+// alcance de la regla sin desactivarla. Mismo resultado que antes
+// (`Math.round(performance.now() - _t0)`), solo que la resta y el redondeo
+// quedan aquí en vez de en el cuerpo de cada page.tsx.
+export function iniciarCronometro(): () => number {
+  const inicio = performance.now();
+  return () => Math.round(performance.now() - inicio);
+}
+
+// Tamaño aproximado (bytes UTF-8) del payload que una página serializa hacia
+// sus Client Components — proxy razonable del tamaño real del RSC payload
+// (que usa su propio formato de wire, no JSON puro), pero del mismo orden de
+// magnitud y útil para comparar entre rutas/despliegues. Nunca se registra
+// el contenido, solo el tamaño.
+export function tamanoAproximadoBytes(valor: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(valor) ?? "", "utf8");
+  } catch {
+    return -1;
+  }
+}
