@@ -479,9 +479,10 @@ async function crearContratoInterno(
   // `_errorHijas`: registra la etapa como "error" (nunca "ok" por omisión —
   // antes, un retorno anticipado dentro de este grupo no dejaba NINGÚN log,
   // lo cual se podía confundir con una ejecución exitosa) y manda el detalle
-  // técnico solo a `console.error` server-side, nunca al navegador (el
-  // `return` sigue devolviendo exactamente el mismo `error.message` que
-  // antes — ese contrato con el caller no cambia).
+  // técnico SOLO a `registrarErrorTecnico()` (server-side, saneado), nunca al
+  // navegador — el `return` devuelve el mensaje público FIJO
+  // `MSG_ERROR_GUARDAR_CONTRATO` (revisión posterior — ronda 3), no
+  // `error.message` crudo de Supabase/Postgres.
   const _tHijas0 = performance.now();
   const _errorHijas = (detalle: string, error: unknown) => {
     registrarEtapa("crear_contrato", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
