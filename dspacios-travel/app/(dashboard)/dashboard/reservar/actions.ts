@@ -42,7 +42,7 @@ const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim()
 // posterior — ronda 3, mismo criterio que MSG_ERROR_VALIDACION_CONTRATO/
 // MSG_ERROR_GUARDAR_CONTRATO en contratos/actions.ts): nunca se devuelve
 // error.message/details/hint/code crudo de Supabase/Postgres al navegador —
-// el detalle técnico se registra aparte, server-side, con registrarErrorTecnico().
+// el detalle técnico se registra aparte, server-side, con el helper registrarErrorTecnico.
 const MSG_ERROR_VALIDACION_PROGRAMA = "No fue posible verificar la información del programa. Intenta nuevamente o contacta a soporte.";
 const MSG_ERROR_GUARDAR_RESERVA = "No fue posible guardar la reserva. Intenta nuevamente o contacta a soporte.";
 
