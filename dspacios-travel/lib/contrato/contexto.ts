@@ -17,7 +17,7 @@ export type { ContextoCrearContrato };
 // (no es una Server Action exportada al navegador).
 export type ContextoCrearContratoResuelto =
   | { ok: true; tenant: Tenant; rol: string; sb: Awaited<ReturnType<typeof createClient>> }
-  | { ok: false; error: string };
+  | { ok: false; error: string; tecnico?: boolean };
 
 /**
  * Contexto fail-closed para `crearContrato()`/`reservarPrograma()` (revisión
@@ -76,8 +76,11 @@ export async function contextoCrearContrato(flujo: string, flujoId: string): Pro
         () => sb.auth.getUser(),
         (r) => (r.error ? "error" : r.data.user ? "ok" : "sin_sesion")
       );
-      if (res.error) registrarErrorTecnico(flujo, flujoId, "contexto_auth_getUser", "error_auth_getUser", res.error);
-      return res.data.user;
+      if (res.error) {
+        registrarErrorTecnico(flujo, flujoId, "contexto_auth_getUser", "error_auth_getUser", res.error);
+        return { tecnico: true, user: null };
+      }
+      return { tecnico: false, user: res.data.user };
     },
     async (userId) => {
       const res = await medir(
@@ -85,8 +88,11 @@ export async function contextoCrearContrato(flujo: string, flujoId: string): Pro
         () => sb.from("usuarios").select("rol, activo, tenant").eq("id", userId).maybeSingle(),
         (r) => (r.error ? "error" : r.data ? "ok" : "sin_perfil")
       );
-      if (res.error) registrarErrorTecnico(flujo, flujoId, "contexto_perfil_query", "error_consulta_perfil", res.error);
-      return res.data;
+      if (res.error) {
+        registrarErrorTecnico(flujo, flujoId, "contexto_perfil_query", "error_consulta_perfil", res.error);
+        return { tecnico: true, perfil: null };
+      }
+      return { tecnico: false, perfil: res.data };
     },
     (perfil) => resolverTenantActivo(perfil as { rol?: string; tenant?: string } | null, ck),
     (rol) => puedeEscribir("ventas", rol)

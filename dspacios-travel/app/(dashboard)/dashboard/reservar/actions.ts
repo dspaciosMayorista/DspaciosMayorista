@@ -38,6 +38,14 @@ import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaqu
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
+// Mensajes públicos FIJOS para fallos TÉCNICOS de reservarPrograma() (revisión
+// posterior — ronda 3, mismo criterio que MSG_ERROR_VALIDACION_CONTRATO/
+// MSG_ERROR_GUARDAR_CONTRATO en contratos/actions.ts): nunca se devuelve
+// error.message/details/hint/code crudo de Supabase/Postgres al navegador —
+// el detalle técnico se registra aparte, server-side, con registrarErrorTecnico().
+const MSG_ERROR_VALIDACION_PROGRAMA = "No fue posible verificar la información del programa. Intenta nuevamente o contacta a soporte.";
+const MSG_ERROR_GUARDAR_RESERVA = "No fue posible guardar la reserva. Intenta nuevamente o contacta a soporte.";
+
 // `input` es `unknown` a propósito (ronda 2) — misma razón que `buscarHoteles`
 // abajo: toda la validación de forma vive en `cotizarPorFechasImpl`
 // (lib/reservar/cotizar.ts → `validarEntradaCotizarPorFechas`), nunca se
@@ -1434,8 +1442,14 @@ async function reservarProgramaInterno(
   // pero SIN permiso de crear ventas) activo podía alcanzar este RPC
   // administrativo, gastar un consecutivo DTM y fallar recién al insertar
   // en `ventas` por RLS.
-  const ctx = await medir("contexto", () => contextoCrearContrato("reservar_programa", flujoId), (r) => (r.ok ? "ok" : "rechazado"));
-  if (!ctx.ok) return { ok: false, error: ctx.error };
+  const ctx = await medir("contexto", () => contextoCrearContrato("reservar_programa", flujoId), (r) => (r.ok ? "ok" : r.tecnico ? "error" : "rechazado"));
+  if (!ctx.ok) {
+    // `ctx.tecnico` (revisión posterior — ronda 3): un fallo TÉCNICO real de
+    // auth.getUser()/la consulta de usuarios eleva el TOTAL a "error" — antes
+    // quedaba indistinguible de "rechazado". El mensaje público no cambia.
+    if (ctx.tecnico) elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: ctx.error };
+  }
   // Reutiliza el MISMO cliente de sesión que `contextoCrearContrato()` ya
   // creó y autenticó (optimización posterior al PR #274, ver el comentario
   // en `lib/contrato/contexto.ts`) — antes se creaba aquí ANTES del gate,
@@ -1456,17 +1470,33 @@ async function reservarProgramaInterno(
     registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "rechazado");
     return resultado;
   };
+  // Revisión posterior — ronda 3 (mismo criterio que crearContratoInterno):
+  // las consultas de esta sección (programas, programa_blackouts,
+  // programa_salidas, programa_precios, programa_categorias) desestructuraban
+  // solo `data` e ignoraban `error` — un fallo TÉCNICO de Supabase terminaba
+  // indistinguible de "no existe"/"sin precios", y en el caso de
+  // programa_blackouts un fallo técnico dejaba pasar la reserva EN SILENCIO
+  // (bos ?? [] = sin blackouts). `_errorValidacionPrograma` eleva el TOTAL a
+  // "error" (nunca "rechazado"), registra el detalle técnico server-side, y
+  // devuelve un mensaje público FIJO — nunca el error crudo de Supabase.
+  const _errorValidacionPrograma = (detalle: string, error: unknown): ReservaResult => {
+    registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "error");
+    registrarErrorTecnico("reservar_programa", flujoId, "validacion_programa", detalle, error);
+    elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: MSG_ERROR_VALIDACION_PROGRAMA };
+  };
 
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
     return _rechazarValidacionPrograma({ ok: false, error: "El nombre del cliente es obligatorio." });
   if (!input.fechaIda) return _rechazarValidacionPrograma({ ok: false, error: "Elige la fecha de salida." });
 
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
-  const { data: prog } = await sb
+  const { data: prog, error: progError } = await sb
     .from("programas")
     .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, proveedores(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
+  if (progError) return _errorValidacionPrograma("error_consulta_programa", progError);
   if (!prog) return _rechazarValidacionPrograma({ ok: false, error: "Programa no encontrado." });
   const modoSalida = prog.modo_precio === "salida";
 
@@ -1477,10 +1507,11 @@ async function reservarProgramaInterno(
     return _rechazarValidacionPrograma({ ok: false, error: "La fecha de salida supera la vigencia del programa." });
 
   // Blackouts
-  const { data: bos } = await sb
+  const { data: bos, error: bosError } = await sb
     .from("programa_blackouts")
     .select("fecha_inicio, fecha_fin, motivo")
     .eq("programa_id", input.programaId);
+  if (bosError) return _errorValidacionPrograma("error_consulta_blackouts", bosError);
   for (const b of bos ?? []) {
     if (b.fecha_inicio && b.fecha_fin && input.fechaIda >= b.fecha_inicio && input.fechaIda <= b.fecha_fin)
       return _rechazarValidacionPrograma({ ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` });
@@ -1494,12 +1525,13 @@ async function reservarProgramaInterno(
 
   if (modoSalida) {
     if (!input.salidaId) return _rechazarValidacionPrograma({ ok: false, error: "Elige una salida." });
-    const { data: sal } = await sb
+    const { data: sal, error: salError } = await sb
       .from("programa_salidas")
       .select("etiqueta, columna, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud")
       .eq("id", input.salidaId)
       .eq("programa_id", input.programaId)
       .maybeSingle();
+    if (salError) return _errorValidacionPrograma("error_consulta_salida", salError);
     if (!sal) return _rechazarValidacionPrograma({ ok: false, error: "Salida no encontrada." });
     const bs = sal.bajo_solicitud;
     netoDe["sencilla"] = { neto: sal.neto_sencilla, bs };
@@ -1511,10 +1543,11 @@ async function reservarProgramaInterno(
     etiquetaOpcion = sal.etiqueta ?? null;
     hotelSalida = sal.columna ?? null;
   } else {
-    const { data: precios } = await sb
+    const { data: precios, error: preciosError } = await sb
       .from("programa_precios")
       .select("acomodacion, neto, bajo_solicitud")
       .eq("categoria_id", input.categoriaId);
+    if (preciosError) return _errorValidacionPrograma("error_consulta_precios", preciosError);
     if (!precios?.length) return _rechazarValidacionPrograma({ ok: false, error: "La categoría no tiene precios cargados." });
     for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
   }
@@ -1543,9 +1576,12 @@ async function reservarProgramaInterno(
   let costoNeto = 0;
   let totalPax = 0;
   const items: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number }[] = [];
-  const catNombre = modoSalida
-    ? etiquetaOpcion
-    : (await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle()).data?.nombre ?? null;
+  let catNombre: string | null = etiquetaOpcion;
+  if (!modoSalida) {
+    const { data: catData, error: catError } = await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle();
+    if (catError) return _errorValidacionPrograma("error_consulta_categoria", catError);
+    catNombre = catData?.nombre ?? null;
+  }
 
   let orden = 0;
   for (const [acom, habRaw] of habs) {
@@ -1668,7 +1704,8 @@ async function reservarProgramaInterno(
   registrarEtapa("reservar_programa", flujoId, "insert_venta", Math.round(performance.now() - _tVenta0), ve ? "error" : "ok");
   if (ve) {
     elevarEstadoFlujo(estado, "error");
-    return { ok: false, error: ve.message };
+    registrarErrorTecnico("reservar_programa", flujoId, "insert_venta", "error_insert_venta", ve);
+    return { ok: false, error: MSG_ERROR_GUARDAR_RESERVA };
   }
 
   // 6-8) Tablas hijas — pasajeros/items/hoteles, medidas como un solo grupo
@@ -1680,11 +1717,11 @@ async function reservarProgramaInterno(
   // vez de "ok" si alguno falla, sin cambiar el comportamiento histórico
   // (siguen sin bloquear la reserva).
   const _tHijas0 = performance.now();
-  const _errorHijas = (detalle: string, error: { message: string }) => {
+  const _errorHijas = (detalle: string, error: unknown) => {
     registrarEtapa("reservar_programa", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
     registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", detalle, error);
     elevarEstadoFlujo(estado, "error");
-    return { ok: false as const, error: error.message };
+    return { ok: false as const, error: MSG_ERROR_GUARDAR_RESERVA };
   };
   let _resultadoHijas: ResultadoEtapa = "ok";
 

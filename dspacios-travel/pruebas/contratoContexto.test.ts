@@ -307,8 +307,8 @@ function espiaLlamadas<A extends unknown[], R>(impl: (...args: A) => R): { fn: (
 
 describe("resolverContextoCrearContratoOrquestado — cuenta llamadas reales de auth/perfil (ejecución real, no grep)", () => {
   test("flujo autorizado: obtenerUsuario se invoca EXACTAMENTE 1 vez", async () => {
-    const obtenerUsuario = espiaLlamadas(async () => ({ id: "u1" }));
-    const consultarPerfil = espiaLlamadas(async () => ({ rol: "venta", activo: true, tenant: "mayorista" }));
+    const obtenerUsuario = espiaLlamadas(async () => ({ tecnico: false, user: { id: "u1" } }));
+    const consultarPerfil = espiaLlamadas(async () => ({ tecnico: false, perfil: { rol: "venta", activo: true, tenant: "mayorista" } }));
     const res = await resolverContextoCrearContratoOrquestado(
       obtenerUsuario.fn, consultarPerfil.fn, () => "mayorista", () => true
     );
@@ -317,8 +317,8 @@ describe("resolverContextoCrearContratoOrquestado — cuenta llamadas reales de 
   });
 
   test("flujo autorizado: consultarPerfil se invoca EXACTAMENTE 1 vez", async () => {
-    const obtenerUsuario = espiaLlamadas(async () => ({ id: "u1" }));
-    const consultarPerfil = espiaLlamadas(async () => ({ rol: "venta", activo: true, tenant: "mayorista" }));
+    const obtenerUsuario = espiaLlamadas(async () => ({ tecnico: false, user: { id: "u1" } }));
+    const consultarPerfil = espiaLlamadas(async () => ({ tecnico: false, perfil: { rol: "venta", activo: true, tenant: "mayorista" } }));
     await resolverContextoCrearContratoOrquestado(
       obtenerUsuario.fn, consultarPerfil.fn, () => "mayorista", () => true
     );
@@ -326,53 +326,92 @@ describe("resolverContextoCrearContratoOrquestado — cuenta llamadas reales de 
     assert.deepEqual(consultarPerfil.llamadas[0], ["u1"], "consultarPerfil debe recibir el id del usuario ya resuelto");
   });
 
-  test("sin sesión (obtenerUsuario devuelve null) → bloqueado, y consultarPerfil NUNCA se invoca (0 veces)", async () => {
-    const obtenerUsuario = espiaLlamadas(async () => null);
-    const consultarPerfil = espiaLlamadas(async () => ({ rol: "venta", activo: true, tenant: "mayorista" }));
+  test("sin sesión, SIN error técnico (obtenerUsuario: tecnico=false, user=null) → bloqueado, total=rechazado (ctx.tecnico falsy), consultarPerfil NUNCA se invoca (0 veces)", async () => {
+    const obtenerUsuario = espiaLlamadas(async () => ({ tecnico: false, user: null }));
+    const consultarPerfil = espiaLlamadas(async () => ({ tecnico: false, perfil: { rol: "venta", activo: true, tenant: "mayorista" } }));
     const res = await resolverContextoCrearContratoOrquestado(
       obtenerUsuario.fn, consultarPerfil.fn, () => "mayorista", () => true
     );
     assert.equal(res.ok, false);
+    if (!res.ok) assert.ok(!res.tecnico, "ausencia REAL de sesión no debe marcarse como fallo técnico");
     assert.equal(obtenerUsuario.llamadas.length, 1);
     assert.equal(consultarPerfil.llamadas.length, 0, `sin sesión, consultarPerfil no debía llamarse — se llamó ${consultarPerfil.llamadas.length} veces`);
   });
 
-  test("perfil ausente (consultarPerfil devuelve null — sin fila, o error de consulta: la misma consulta real descarta el error y deja perfil=null) → bloqueado", async () => {
-    const obtenerUsuario = espiaLlamadas(async () => ({ id: "u1" }));
-    const consultarPerfil = espiaLlamadas(async () => null);
+  test("error TÉCNICO en auth.getUser (obtenerUsuario: tecnico=true) → bloqueado, ctx.tecnico=true, consultarPerfil NUNCA se invoca, mismo mensaje público de sesión", async () => {
+    const obtenerUsuario = espiaLlamadas(async () => ({ tecnico: true, user: null }));
+    const consultarPerfil = espiaLlamadas(async () => ({ tecnico: false, perfil: { rol: "venta", activo: true, tenant: "mayorista" } }));
     const res = await resolverContextoCrearContratoOrquestado(
       obtenerUsuario.fn, consultarPerfil.fn, () => "mayorista", () => true
     );
     assert.equal(res.ok, false);
-    if (!res.ok) assert.match(res.error, /sesión/i);
+    if (!res.ok) {
+      assert.equal(res.tecnico, true, "un fallo técnico de auth.getUser() debe marcarse ctx.tecnico=true");
+      assert.match(res.error, /sesión/i, "el mensaje PÚBLICO sigue siendo el genérico de sesión — nunca revela que fue un fallo técnico");
+    }
+    assert.equal(obtenerUsuario.llamadas.length, 1);
+    assert.equal(consultarPerfil.llamadas.length, 0, "un fallo técnico en auth.getUser() debe cortar antes de consultar el perfil");
+  });
+
+  test("perfil realmente inexistente (consultarPerfil: tecnico=false, perfil=null — sin fila) → bloqueado, total=rechazado (ctx.tecnico falsy)", async () => {
+    const obtenerUsuario = espiaLlamadas(async () => ({ tecnico: false, user: { id: "u1" } }));
+    const consultarPerfil = espiaLlamadas(async () => ({ tecnico: false, perfil: null }));
+    const res = await resolverContextoCrearContratoOrquestado(
+      obtenerUsuario.fn, consultarPerfil.fn, () => "mayorista", () => true
+    );
+    assert.equal(res.ok, false);
+    if (!res.ok) {
+      assert.match(res.error, /sesión/i);
+      assert.ok(!res.tecnico, "perfil realmente inexistente no debe marcarse como fallo técnico");
+    }
     assert.equal(obtenerUsuario.llamadas.length, 1);
     assert.equal(consultarPerfil.llamadas.length, 1, "el intento de consultar el perfil SÍ debe contarse, aunque no haya devuelto fila");
   });
 
-  test("usuario inactivo (activo=false) → bloqueado", async () => {
+  test("error TÉCNICO consultando usuarios (consultarPerfil: tecnico=true) → bloqueado, ctx.tecnico=true, mismo mensaje público de sesión", async () => {
+    const obtenerUsuario = espiaLlamadas(async () => ({ tecnico: false, user: { id: "u1" } }));
+    const consultarPerfil = espiaLlamadas(async () => ({ tecnico: true, perfil: null }));
     const res = await resolverContextoCrearContratoOrquestado(
-      async () => ({ id: "u1" }),
-      async () => ({ rol: "superadmin", activo: false, tenant: "mayorista" }),
+      obtenerUsuario.fn, consultarPerfil.fn, () => "mayorista", () => true
+    );
+    assert.equal(res.ok, false);
+    if (!res.ok) {
+      assert.equal(res.tecnico, true, "un fallo técnico consultando usuarios debe marcarse ctx.tecnico=true");
+      assert.match(res.error, /sesión/i, "el mensaje PÚBLICO sigue siendo el genérico de sesión");
+    }
+    assert.equal(consultarPerfil.llamadas.length, 1);
+  });
+
+  test("usuario inactivo (activo=false) → bloqueado, rechazado (no técnico)", async () => {
+    const res = await resolverContextoCrearContratoOrquestado(
+      async () => ({ tecnico: false, user: { id: "u1" } }),
+      async () => ({ tecnico: false, perfil: { rol: "superadmin", activo: false, tenant: "mayorista" } }),
       () => "mayorista",
       () => true
     );
     assert.equal(res.ok, false);
-    if (!res.ok) assert.match(res.error, /sesión/i);
+    if (!res.ok) {
+      assert.match(res.error, /sesión/i);
+      assert.ok(!res.tecnico);
+    }
   });
 
-  test("rol no autorizado (control_vuelo, ESCRITURA.ventas real) → bloqueado", async () => {
+  test("rol no autorizado (control_vuelo, ESCRITURA.ventas real) → bloqueado, rechazado (no técnico)", async () => {
     const src = leer("lib/roles.ts");
     const adminRoles = extraerArrayDeRoles(src, /ADMIN_ROLES:\s*readonly\s+Rol\[\]\s*=\s*\[([^\]]*)\]/);
     const ventasExtra = extraerArrayDeRoles(src, /ventas:\s*\[\.\.\.ADMIN_ROLES,\s*([^\]]*)\]/);
     const escrituraVentas = [...adminRoles, ...ventasExtra];
     const res = await resolverContextoCrearContratoOrquestado(
-      async () => ({ id: "u1" }),
-      async () => ({ rol: "control_vuelo", activo: true, tenant: "mayorista" }),
+      async () => ({ tecnico: false, user: { id: "u1" } }),
+      async () => ({ tecnico: false, perfil: { rol: "control_vuelo", activo: true, tenant: "mayorista" } }),
       () => "mayorista",
       (rol) => escrituraVentas.includes(rol)
     );
     assert.equal(res.ok, false);
-    if (!res.ok) assert.match(res.error, /rol.*permiso/i);
+    if (!res.ok) {
+      assert.match(res.error, /rol.*permiso/i);
+      assert.ok(!res.tecnico);
+    }
   });
 
   test("rol autorizado (venta, ESCRITURA.ventas real) → autorizado", async () => {
@@ -381,8 +420,8 @@ describe("resolverContextoCrearContratoOrquestado — cuenta llamadas reales de 
     const ventasExtra = extraerArrayDeRoles(src, /ventas:\s*\[\.\.\.ADMIN_ROLES,\s*([^\]]*)\]/);
     const escrituraVentas = [...adminRoles, ...ventasExtra];
     const res = await resolverContextoCrearContratoOrquestado(
-      async () => ({ id: "u1" }),
-      async () => ({ rol: "venta", activo: true, tenant: "mayorista" }),
+      async () => ({ tecnico: false, user: { id: "u1" } }),
+      async () => ({ tecnico: false, perfil: { rol: "venta", activo: true, tenant: "mayorista" } }),
       () => "mayorista",
       (rol) => escrituraVentas.includes(rol)
     );
@@ -392,8 +431,8 @@ describe("resolverContextoCrearContratoOrquestado — cuenta llamadas reales de 
 
   test("flujo autorizado conserva el tenant que devolvió resolverTenant()", async () => {
     const res = await resolverContextoCrearContratoOrquestado(
-      async () => ({ id: "u1" }),
-      async () => ({ rol: "superadmin", activo: true, tenant: "mayorista" }),
+      async () => ({ tecnico: false, user: { id: "u1" } }),
+      async () => ({ tecnico: false, perfil: { rol: "superadmin", activo: true, tenant: "mayorista" } }),
       () => "minorista", // simula superadmin con cookie de agencia = minorista
       () => true
     );

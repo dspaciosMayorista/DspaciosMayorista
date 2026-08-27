@@ -266,15 +266,16 @@ describe("elevarEstadoFlujo(estado, \"error\") — fallos técnicos BLOQUEANTES 
     assert.ok(idxNumElevar > idxNum && idxNumElevar < idxNumRet, "numero_contrato debe elevar 'error' ANTES de devolver el rechazo");
 
     const idxVenta = cuerpo.indexOf("if (ve) {");
-    const idxVentaRet = cuerpo.indexOf("return { ok: false, error: ve.message };", idxVenta);
+    const idxVentaRet = cuerpo.indexOf("return { ok: false, error: MSG_ERROR_GUARDAR_CONTRATO };", idxVenta);
     const idxVentaElevar = cuerpo.indexOf('elevarEstadoFlujo(estado, "error")', idxVenta);
-    assert.ok(idxVenta > -1 && idxVentaRet > -1, "no se encontró el chequeo de insert_venta");
+    assert.ok(idxVenta > -1 && idxVentaRet > -1, "no se encontró el chequeo de insert_venta (con el mensaje público fijo MSG_ERROR_GUARDAR_CONTRATO, nunca ve.message crudo)");
     assert.ok(idxVentaElevar > idxVenta && idxVentaElevar < idxVentaRet, "insert_venta debe elevar 'error' ANTES de devolver el rechazo");
 
     const idxErrorHijas = cuerpo.indexOf("const _errorHijas =");
     assert.ok(idxErrorHijas > -1, "no se encontró el helper _errorHijas");
     const cuerpoErrorHijas = cuerpo.slice(idxErrorHijas, cuerpo.indexOf("};", idxErrorHijas) + 2);
     assert.match(cuerpoErrorHijas, /elevarEstadoFlujo\(estado,\s*"error"\)/, "_errorHijas (bloqueante) debe elevar 'error'");
+    assert.match(cuerpoErrorHijas, /return\s*\{\s*ok:\s*false\s*as\s*const,\s*error:\s*MSG_ERROR_GUARDAR_CONTRATO\s*\}/, "_errorHijas debe devolver el mensaje público FIJO, nunca error.message crudo");
   });
 
   test("reservarProgramaInterno: numero_contrato / insert_venta / insert_hijas (bloqueante) elevan 'error' antes de devolver el rechazo", () => {
@@ -287,7 +288,7 @@ describe("elevarEstadoFlujo(estado, \"error\") — fallos técnicos BLOQUEANTES 
     assert.ok(idxNumElevar > idxNum && idxNumElevar < idxNumRet, "numero_contrato debe elevar 'error' ANTES de devolver el rechazo");
 
     const idxVenta = cuerpo.indexOf("if (ve) {");
-    const idxVentaRet = cuerpo.indexOf("return { ok: false, error: ve.message };", idxVenta);
+    const idxVentaRet = cuerpo.indexOf("return { ok: false, error: MSG_ERROR_GUARDAR_RESERVA };", idxVenta);
     const idxVentaElevar = cuerpo.indexOf('elevarEstadoFlujo(estado, "error")', idxVenta);
     assert.ok(idxVenta > -1 && idxVentaRet > -1, "no se encontró el chequeo de insert_venta");
     assert.ok(idxVentaElevar > idxVenta && idxVentaElevar < idxVentaRet, "insert_venta debe elevar 'error' ANTES de devolver el rechazo");
@@ -296,6 +297,42 @@ describe("elevarEstadoFlujo(estado, \"error\") — fallos técnicos BLOQUEANTES 
     assert.ok(idxErrorHijas > -1, "no se encontró el helper _errorHijas");
     const cuerpoErrorHijas = cuerpo.slice(idxErrorHijas, cuerpo.indexOf("};", idxErrorHijas) + 2);
     assert.match(cuerpoErrorHijas, /elevarEstadoFlujo\(estado,\s*"error"\)/, "_errorHijas (bloqueante) debe elevar 'error'");
+    assert.match(cuerpoErrorHijas, /return\s*\{\s*ok:\s*false\s*as\s*const,\s*error:\s*MSG_ERROR_GUARDAR_RESERVA\s*\}/, "_errorHijas debe devolver el mensaje público FIJO, nunca error.message crudo");
+  });
+});
+
+// ── Defecto 1 confirmado (ronda 3): contextoCrearContrato() clasifica
+// correctamente auth.getUser()/la consulta de usuarios como "error" cuando
+// fallan técnicamente, pero crearContrato()/reservarPrograma() solo recibían
+// `{ok:false}` — el estado técnico interno quedaba vacío y el TOTAL terminaba
+// en "rechazado". `ctx.tecnico` (ver pruebas/contratoContexto.test.ts para la
+// ejecución real que prueba que se calcula bien) debe elevar el estado a
+// "error" — nunca cambia el mensaje público, que sigue siendo `ctx.error`.
+describe("ctx.tecnico (defecto 1) — un fallo TÉCNICO real de contexto (auth.getUser/consulta de usuarios) eleva el TOTAL a 'error', nunca 'rechazado'", () => {
+  test("crearContratoInterno: if (ctx.tecnico) elevarEstadoFlujo(estado, \"error\") ANTES de devolver el rechazo; el mensaje público (ctx.error) no cambia", () => {
+    const cuerpo = cuerpoDeFuncion(leer(CONTRATOS_ARCHIVO), "crearContratoInterno");
+    const idxCtx = cuerpo.indexOf("if (!ctx.ok)");
+    assert.ok(idxCtx > -1, "no se encontró el chequeo de ctx.ok");
+    const idxElevar = cuerpo.indexOf('if (ctx.tecnico) elevarEstadoFlujo(estado, "error")', idxCtx);
+    const idxRet = cuerpo.indexOf("return { ok: false, error: ctx.error };", idxCtx);
+    assert.ok(idxElevar > -1, "falta 'if (ctx.tecnico) elevarEstadoFlujo(estado, \"error\")' tras el chequeo de ctx.ok");
+    assert.ok(idxRet > -1, "el rechazo de contexto debe devolver exactamente ctx.error — el mismo mensaje público sin importar si fue técnico o de negocio");
+    assert.ok(idxElevar < idxRet, "debe elevar el estado ANTES de devolver el rechazo");
+    // La clasificación de la ETAPA "contexto" también distingue error de
+    // rechazado (no solo el TOTAL) — mismo criterio, misma fuente (ctx.tecnico).
+    assert.match(cuerpo, /medir\(\s*"contexto"\s*,\s*\(\)\s*=>\s*contextoCrearContrato\([^)]*\)\s*,\s*\(r\)\s*=>\s*\(r\.ok\s*\?\s*"ok"\s*:\s*r\.tecnico\s*\?\s*"error"\s*:\s*"rechazado"\)\s*\)/);
+  });
+
+  test("reservarProgramaInterno: if (ctx.tecnico) elevarEstadoFlujo(estado, \"error\") ANTES de devolver el rechazo; el mensaje público (ctx.error) no cambia", () => {
+    const cuerpo = cuerpoDeFuncion(leer(RESERVAR_ARCHIVO), "reservarProgramaInterno");
+    const idxCtx = cuerpo.indexOf("if (!ctx.ok)");
+    assert.ok(idxCtx > -1, "no se encontró el chequeo de ctx.ok");
+    const idxElevar = cuerpo.indexOf('if (ctx.tecnico) elevarEstadoFlujo(estado, "error")', idxCtx);
+    const idxRet = cuerpo.indexOf("return { ok: false, error: ctx.error };", idxCtx);
+    assert.ok(idxElevar > -1, "falta 'if (ctx.tecnico) elevarEstadoFlujo(estado, \"error\")' tras el chequeo de ctx.ok");
+    assert.ok(idxRet > -1, "el rechazo de contexto debe devolver exactamente ctx.error");
+    assert.ok(idxElevar < idxRet, "debe elevar el estado ANTES de devolver el rechazo");
+    assert.match(cuerpo, /medir\(\s*"contexto"\s*,\s*\(\)\s*=>\s*contextoCrearContrato\([^)]*\)\s*,\s*\(r\)\s*=>\s*\(r\.ok\s*\?\s*"ok"\s*:\s*r\.tecnico\s*\?\s*"error"\s*:\s*"rechazado"\)\s*\)/);
   });
 });
 
@@ -344,6 +381,77 @@ describe("validacion_negocio/validacion_programa registran 'rechazado' en CADA r
     assert.equal(logsOk.length, 1, "el log de éxito de validacion_programa debe aparecer exactamente una vez (al final de la sección)");
     const logsRechazado = [...cuerpo.matchAll(/registrarEtapa\("reservar_programa", flujoId, "validacion_programa", Math\.round\(performance\.now\(\) - _tValidacionProg0\), "rechazado"\)/g)];
     assert.equal(logsRechazado.length, 1, "el log de rechazo debe estar UNA sola vez, dentro de la definición de _rechazarValidacionPrograma (reutilizada en los 14 returns)");
+  });
+});
+
+// ── Defecto 2 confirmado (ronda 3): las consultas de validacion_negocio/
+// validacion_programa desestructuraban solo `data`, ignorando `error` — un
+// fallo TÉCNICO de Supabase terminaba indistinguible de "sin fila"/"sin
+// configuración" (un rechazo comercial). Cada consulta debe: (a) chequear su
+// propio `error` ANTES del chequeo de "sin fila"; (b) el camino de error
+// técnico (`_errorValidacion*`) debe aparecer ANTES, en el código, que el
+// camino de "sin fila" (`_rechazarValidacion*`) — ambos, y el número de
+// contrato, en ese orden — para que un fallo técnico NUNCA alcance a generar
+// el consecutivo DTM/MIN.
+describe("Defecto 2 — cada consulta de validación diferencia 'sin fila' de 'error técnico', y NINGUNA alcanza el generador de número si falla técnicamente", () => {
+  test("crearContratoInterno: paquete_precios y aliados", () => {
+    const cuerpo = cuerpoDeFuncion(leer(CONTRATOS_ARCHIVO), "crearContratoInterno");
+    const idxNumero = cuerpo.indexOf("siguienteNumeroContrato(");
+    assert.ok(idxNumero > -1, "no se encontró la llamada a siguienteNumeroContrato(");
+
+    const idxPreciosError = cuerpo.indexOf('_errorValidacion("error_consulta_paquete_precios"');
+    const idxPreciosRechazo = cuerpo.indexOf('error: "El paquete negociado no tiene tarifas configuradas');
+    assert.ok(idxPreciosError > -1, "paquete_precios debe manejar su propio error con _errorValidacion()");
+    assert.ok(idxPreciosError < idxPreciosRechazo, "el chequeo de error técnico de paquete_precios debe ir ANTES del rechazo comercial ('sin tarifas')");
+    assert.ok(idxPreciosRechazo < idxNumero, "el rechazo comercial de paquete_precios debe seguir ANTES del número de contrato");
+
+    const idxAliadosError = cuerpo.indexOf('_errorValidacion("error_consulta_aliados"');
+    const idxAliadosRechazo = cuerpo.indexOf('La agencia/freelance seleccionada no existe.');
+    assert.ok(idxAliadosError > -1, "aliados debe manejar su propio error con _errorValidacion()");
+    assert.ok(idxAliadosError < idxAliadosRechazo, "el chequeo de error técnico de aliados debe ir ANTES del rechazo comercial ('no existe')");
+    assert.ok(idxAliadosRechazo < idxNumero, "el rechazo comercial de aliados debe seguir ANTES del número de contrato");
+  });
+
+  test("reservarProgramaInterno: programas, programa_blackouts, programa_salidas, programa_precios, programa_categorias", () => {
+    const cuerpo = cuerpoDeFuncion(leer(RESERVAR_ARCHIVO), "reservarProgramaInterno");
+    const idxNumero = cuerpo.indexOf("siguienteNumeroContrato(");
+    assert.ok(idxNumero > -1, "no se encontró la llamada a siguienteNumeroContrato(");
+
+    const idxProgError = cuerpo.indexOf('_errorValidacionPrograma("error_consulta_programa"');
+    const idxProgRechazo = cuerpo.indexOf("Programa no encontrado.");
+    assert.ok(idxProgError > -1 && idxProgError < idxProgRechazo && idxProgRechazo < idxNumero, "programas: error técnico → rechazo comercial ('no encontrado') → número, en ese orden");
+
+    const idxBosError = cuerpo.indexOf('_errorValidacionPrograma("error_consulta_blackouts"');
+    assert.ok(idxBosError > -1 && idxBosError < idxNumero, "programa_blackouts: un fallo técnico debe bloquear ANTES del número (antes, `bos ?? []` dejaba pasar la reserva en silencio ante un error real)");
+
+    const idxSalError = cuerpo.indexOf('_errorValidacionPrograma("error_consulta_salida"');
+    const idxSalRechazo = cuerpo.indexOf("Salida no encontrada.");
+    assert.ok(idxSalError > -1 && idxSalError < idxSalRechazo && idxSalRechazo < idxNumero, "programa_salidas: error técnico → rechazo comercial ('no encontrada') → número");
+
+    const idxPreciosError = cuerpo.indexOf('_errorValidacionPrograma("error_consulta_precios"');
+    const idxPreciosRechazo = cuerpo.indexOf("La categoría no tiene precios cargados.");
+    assert.ok(idxPreciosError > -1 && idxPreciosError < idxPreciosRechazo && idxPreciosRechazo < idxNumero, "programa_precios: error técnico → rechazo comercial ('sin precios') → número");
+
+    const idxCatError = cuerpo.indexOf('_errorValidacionPrograma("error_consulta_categoria"');
+    assert.ok(idxCatError > -1 && idxCatError < idxNumero, "programa_categorias: un fallo técnico debe bloquear ANTES del número");
+  });
+
+  test("los mensajes de rechazo COMERCIAL existentes no cambiaron de texto (solo se les agregó el chequeo de error técnico delante)", () => {
+    const contratosSrc = leer(CONTRATOS_ARCHIVO);
+    const reservarSrc = leer(RESERVAR_ARCHIVO);
+    for (const msg of [
+      "El paquete negociado no tiene tarifas configuradas. Configúralas antes de reservar.",
+      "La agencia/freelance seleccionada no existe.",
+    ]) {
+      assert.ok(contratosSrc.includes(msg), `mensaje comercial cambiado o eliminado: "${msg}"`);
+    }
+    for (const msg of [
+      "Programa no encontrado.",
+      "Salida no encontrada.",
+      "La categoría no tiene precios cargados.",
+    ]) {
+      assert.ok(reservarSrc.includes(msg), `mensaje comercial cambiado o eliminado: "${msg}"`);
+    }
   });
 });
 

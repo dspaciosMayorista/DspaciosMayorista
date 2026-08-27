@@ -40,6 +40,18 @@ async function postearAsientoAbono(
 // PVP ≥ total de costos ÷ (1 − 20%).
 const MARKUP_MIN = 0.20;
 
+// Mensajes públicos FIJOS para fallos TÉCNICOS de crearContrato() (revisión
+// posterior — ronda 3, defecto "ERROR.MESSAGE TODAVÍA LLEGA AL NAVEGADOR"):
+// antes, un INSERT/consulta de Supabase fallido devolvía `error.message`
+// directo al navegador — un mensaje de Postgres puede revelar tablas,
+// constraints, policies o valores de fila. Estos dos mensajes son literales
+// fijos, nunca derivados del error real (que se registra aparte, server-side,
+// vía `registrarErrorTecnico()`). Diferenciados solo para que el asesor sepa
+// si falló la VERIFICACIÓN (nada se guardó) o el GUARDADO (pudo quedar a
+// medias) — ninguno de los dos incluye detalle técnico.
+const MSG_ERROR_VALIDACION_CONTRATO = "No fue posible verificar la información del contrato. Intenta nuevamente o contacta a soporte.";
+const MSG_ERROR_GUARDAR_CONTRATO = "No fue posible guardar el contrato. Intenta nuevamente o contacta a soporte.";
+
 export type TipoPaquete = "bloqueo" | "porcion_terrestre" | "empaquetado" | "dinamico";
 
 export type PasajeroInput = {
@@ -225,8 +237,16 @@ async function crearContratoInterno(
   // `contexto` incluye las sub-etapas medidas dentro de
   // `contextoCrearContrato()` (auth.getUser + consulta de perfil, ya no
   // duplicadas — ver lib/contrato/contexto.ts), atadas al mismo `flujo_id`.
-  const ctx = await medir("contexto", () => contextoCrearContrato("crear_contrato", flujoId), (r) => (r.ok ? "ok" : "rechazado"));
-  if (!ctx.ok) return { ok: false, error: ctx.error };
+  const ctx = await medir("contexto", () => contextoCrearContrato("crear_contrato", flujoId), (r) => (r.ok ? "ok" : r.tecnico ? "error" : "rechazado"));
+  if (!ctx.ok) {
+    // `ctx.tecnico` (revisión posterior — ronda 3): un fallo TÉCNICO real de
+    // auth.getUser()/la consulta de usuarios (nunca un rechazo de negocio
+    // legítimo) eleva el TOTAL a "error" — antes quedaba indistinguible de
+    // "rechazado". El mensaje público (`ctx.error`) es SIEMPRE el mismo, no
+    // cambia según `tecnico` — ese indicador nunca llega al navegador.
+    if (ctx.tecnico) elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: ctx.error };
+  }
   // Reutiliza el MISMO cliente de sesión que `contextoCrearContrato()` ya
   // creó y autenticó — en vez de crear uno nuevo aquí (optimización posterior
   // al PR #274, ver el comentario en `lib/contrato/contexto.ts`).
@@ -247,6 +267,22 @@ async function crearContratoInterno(
     registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "rechazado");
     return resultado;
   };
+  // Revisión posterior — ronda 3, defecto "ERRORES DE CONSULTA CONFUNDIDOS
+  // CON RECHAZOS COMERCIALES": las consultas de esta sección (paquete_precios,
+  // aliados) desestructuraban solo `data` e ignoraban `error` — un fallo
+  // TÉCNICO de Supabase (timeout, RLS inesperada, etc.) se comportaba
+  // exactamente igual que "sin fila" y terminaba como un rechazo comercial
+  // ("El paquete negociado no tiene tarifas configuradas...") en vez de un
+  // fallo técnico real. `_errorValidacion` es el camino para ese caso: eleva
+  // el TOTAL a "error" (nunca "rechazado"), registra el detalle técnico
+  // server-side, y devuelve un mensaje público FIJO y genérico — nunca el
+  // `error.message` crudo de Supabase/Postgres.
+  const _errorValidacion = (detalle: string, error: unknown): CrearContratoResult => {
+    registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "error");
+    registrarErrorTecnico("crear_contrato", flujoId, "validacion_negocio", detalle, error);
+    elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: MSG_ERROR_VALIDACION_CONTRATO };
+  };
 
   // Precio BLOQUEADO del producto para negociados: se ignoran las tarifas que
   // venga del cliente y se usan las del paquete (el asesor no puede cambiarlas).
@@ -254,10 +290,11 @@ async function crearContratoInterno(
   const negociado =
     input.tipoPaquete === "bloqueo" || input.tipoPaquete === "porcion_terrestre";
   if (negociado && input.paqueteId) {
-    const { data: precios } = await sb
+    const { data: precios, error: preciosError } = await sb
       .from("paquete_precios")
       .select("acomodacion, precio")
       .eq("paquete_id", input.paqueteId);
+    if (preciosError) return _errorValidacion("error_consulta_paquete_precios", preciosError);
     if (precios && precios.length) {
       const doble =
         precios.find((p) => p.acomodacion === "doble")?.precio ??
@@ -353,7 +390,8 @@ async function crearContratoInterno(
   let aliado: { nombre: string; nit: string | null; pct_comision: number | null; aplica_retencion: boolean; pct_retencion: number } | null = null;
   if (tipoVenta !== "interno") {
     if (!input.aliadoId) return _rechazarValidacion({ ok: false, error: `Selecciona la ${tipoVenta} del catálogo.` });
-    const { data } = await sb.from("aliados").select("nombre, nit, pct_comision, aplica_retencion, pct_retencion").eq("id", input.aliadoId).maybeSingle();
+    const { data, error: aliadoQueryError } = await sb.from("aliados").select("nombre, nit, pct_comision, aplica_retencion, pct_retencion").eq("id", input.aliadoId).maybeSingle();
+    if (aliadoQueryError) return _errorValidacion("error_consulta_aliados", aliadoQueryError);
     if (!data) return _rechazarValidacion({ ok: false, error: "La agencia/freelance seleccionada no existe." });
     aliado = data;
     if (tipoVenta === "agencia") agenciaNombre = data.nombre; else freelanceNombre = data.nombre;
@@ -427,7 +465,8 @@ async function crearContratoInterno(
   registrarEtapa("crear_contrato", flujoId, "insert_venta", Math.round(performance.now() - _tVenta0), ve ? "error" : "ok");
   if (ve) {
     elevarEstadoFlujo(estado, "error");
-    return { ok: false, error: ve.message };
+    registrarErrorTecnico("crear_contrato", flujoId, "insert_venta", "error_insert_venta", ve);
+    return { ok: false, error: MSG_ERROR_GUARDAR_CONTRATO };
   }
 
   // 3. Tablas hijas — 5 inserts secuenciales (pasajeros/hoteles/vuelos/
@@ -444,11 +483,11 @@ async function crearContratoInterno(
   // `return` sigue devolviendo exactamente el mismo `error.message` que
   // antes — ese contrato con el caller no cambia).
   const _tHijas0 = performance.now();
-  const _errorHijas = (detalle: string, error: { message: string }) => {
+  const _errorHijas = (detalle: string, error: unknown) => {
     registrarEtapa("crear_contrato", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
     registrarErrorTecnico("crear_contrato", flujoId, "insert_hijas", detalle, error);
     elevarEstadoFlujo(estado, "error");
-    return { ok: false as const, error: error.message };
+    return { ok: false as const, error: MSG_ERROR_GUARDAR_CONTRATO };
   };
   if (input.pasajeros.length) {
     const { error } = await sb.from("contrato_pasajeros").insert(
