@@ -1,10 +1,12 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { COOKIE_TENANT, esTenant, TENANTS, type Tenant } from "@/lib/tenant";
+import { COOKIE_TENANT, esTenant, resolverTenantActivo, TENANTS, type Tenant } from "@/lib/tenant";
 
-// Contexto de agencia del usuario: su agencia "home", si puede cambiar (solo
-// superadmin/gerencia) y la agencia ACTIVA (cookie validada contra lo permitido).
+// Contexto de agencia del usuario: su agencia "home", si puede cambiar (SOLO
+// superadmin — ver `puedeCambiar` abajo, `resolverTenantActivo()` en
+// lib/tenant.ts aplica la misma regla) y la agencia ACTIVA (cookie validada
+// contra lo permitido).
 export async function tenantContext(): Promise<{
   tenant: Tenant; userTenant: Tenant; puedeCambiar: boolean; permitidos: Tenant[];
 }> {
@@ -21,7 +23,10 @@ export async function tenantContext(): Promise<{
   const permitidos: Tenant[] = puedeCambiar ? TENANTS : [userTenant];
 
   const ck = (await cookies()).get(COOKIE_TENANT)?.value;
-  const tenant: Tenant = esTenant(ck) && permitidos.includes(ck) ? ck : (permitidos[0] ?? "mayorista");
+  // Cálculo del tenant activo extraído a `resolverTenantActivo()` (lib/tenant.ts,
+  // sin I/O) — misma regla exacta, ahora compartida con `contextoCrearContrato()`
+  // para que no tenga que repetir esta consulta llamando a esta función.
+  const tenant: Tenant = resolverTenantActivo(perfil as { rol?: string; tenant?: string } | null, ck);
   return { tenant, userTenant, puedeCambiar, permitidos };
 }
 

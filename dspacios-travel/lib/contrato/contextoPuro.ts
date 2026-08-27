@@ -15,9 +15,19 @@ import type { Tenant } from "@/lib/tenant";
 // `autorizadoPorRol` se calcula en el wrapper impuro (`contexto.ts`), que sí
 // puede importar `lib/roles.ts`, para no arrastrar esa dependencia (y su
 // import transitivo de `next/headers`) a este módulo puro.
+// `tecnico?: true` (revisión posterior — ronda 3, defecto "ERROR TÉCNICO DE
+// CONTEXTO NO ELEVA EL TOTAL"): distingue, SOLO para uso interno del
+// servidor, un rechazo de negocio/sesión legítimo (perfil inexistente,
+// usuario inactivo, rol sin permiso, o sesión realmente ausente) de un
+// fallo TÉCNICO real al consultar `auth.getUser()`/`usuarios` (Supabase caído,
+// timeout, error de RLS inesperado, etc.). El mensaje público (`error`) es
+// SIEMPRE el mismo genérico de sesión en ambos casos — `tecnico` nunca se
+// expone al navegador, solo lo lee `crearContrato()`/`reservarPrograma()`
+// para decidir si el TOTAL debe elevarse a "error" en vez de quedar en
+// "rechazado" (ver `lib/observabilidad/medicion.ts`).
 export type ContextoCrearContrato =
   | { ok: true; tenant: Tenant; rol: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; tecnico?: boolean };
 
 const MSG_SESION = "No tienes una sesión válida para crear contratos.";
 const MSG_ROL = "Tu rol no tiene permiso para crear contratos.";
@@ -90,4 +100,58 @@ export async function intentarGenerarNumeroContrato<T>(
   if (!ctx.ok) return ctx;
   const valor = await generador(ctx.tenant);
   return { ok: true, valor };
+}
+
+// ── Orquestador puro con I/O INYECTADO: cuenta llamadas reales ────────────
+// (optimización posterior al PR #274: `contextoCrearContrato()` duplicaba
+// `auth.getUser()` y la consulta de `usuarios` porque llamaba a `getTenant()`
+// a secas, que internamente vuelve a hacer las dos). Este orquestador es el
+// cuerpo REAL de `contextoCrearContrato()` (lib/contrato/contexto.ts), con
+// sus tres fuentes de I/O — obtener el usuario de la sesión, consultar el
+// perfil, y resolver el tenant activo (que ya no hace I/O propio: recibe la
+// cookie ya leída) — recibidas como funciones. Igual que
+// `intentarGenerarNumeroContrato`, esto permite probar con EJECUCIÓN REAL
+// (no grep, no conteo de texto) que `obtenerUsuario`/`consultarPerfil` se
+// invocan EXACTAMENTE el número de veces esperado — nunca dos, como pasaba
+// antes de esta ronda. `contexto.ts` pasa closures reales que envuelven
+// `sb.auth.getUser()`/`sb.from("usuarios")...`; las pruebas pasan espías.
+//
+// `resolverTenant` es SÍNCRONO a propósito: el cálculo del tenant activo
+// (`resolverTenantActivo()`, lib/tenant.ts) no hace I/O — ya recibe el
+// perfil y la cookie, ambos ya leídos — así que envolverlo en una promesa
+// aquí solo añadiría una vuelta de microtask sin ganar nada.
+//
+// `obtenerUsuario`/`consultarPerfil` (revisión posterior — ronda 3): en vez
+// de devolver directamente el valor (`user`/`perfil`), devuelven
+// `{ tecnico, ... }` — `tecnico=true` significa que la consulta a Supabase
+// EN SÍ falló (`r.error` truthy en `contexto.ts`), no que legítimamente no
+// hubiera sesión/fila. Antes, el wrapper impuro (`contexto.ts`) descartaba
+// esa distinción al devolver solo `res.data.user`/`res.data` — un error
+// técnico de `auth.getUser()`/la consulta de `usuarios` se comportaba
+// exactamente igual que "no hay sesión"/"no existe el perfil", y el TOTAL
+// terminaba clasificado como "rechazado" en vez de "error". Aquí, un
+// `tecnico=true` en cualquiera de las dos corta INMEDIATAMENTE con
+// `{ ok:false, error: MSG_SESION, tecnico:true }` (mismo mensaje público que
+// siempre, para no revelar nada distinto al navegador) — nunca sigue hacia
+// `resolverContextoCrearContrato()`, que es la que decide los rechazos de
+// negocio genuinos (sesión ausente, inactivo, rol sin permiso) y por eso
+// jamás pone `tecnico` en su resultado.
+export async function resolverContextoCrearContratoOrquestado(
+  obtenerUsuario: () => Promise<{ tecnico: boolean; user: { id: string } | null }>,
+  consultarPerfil: (
+    userId: string
+  ) => Promise<{ tecnico: boolean; perfil: { rol: string; activo: boolean | null | undefined; tenant?: string | null } | null }>,
+  resolverTenant: (
+    perfil: { rol: string; activo: boolean | null | undefined; tenant?: string | null } | null
+  ) => Tenant,
+  autorizadoPorRolFn: (rol: string) => boolean
+): Promise<ContextoCrearContrato> {
+  const u = await obtenerUsuario();
+  if (u.tecnico) return { ok: false, error: MSG_SESION, tecnico: true };
+  if (!u.user) return resolverContextoCrearContrato(null, false, "mayorista");
+
+  const p = await consultarPerfil(u.user.id);
+  if (p.tecnico) return { ok: false, error: MSG_SESION, tecnico: true };
+  const tenant = resolverTenant(p.perfil);
+  return resolverContextoCrearContrato(p.perfil, p.perfil ? autorizadoPorRolFn(p.perfil.rol) : false, tenant);
 }

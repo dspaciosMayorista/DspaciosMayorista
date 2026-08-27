@@ -12,6 +12,11 @@ import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
+import {
+  generarFlujoId, crearMedidor, registrarEtapa, registrarErrorTecnico,
+  crearEstadoFlujo, elevarEstadoFlujo, resultadoTotal,
+  type Medidor, type ResultadoEtapa, type EstadoFlujo,
+} from "@/lib/observabilidad/medicion";
 import type { Tenant } from "@/lib/tenant";
 import type { Json } from "@/types/database";
 import {
@@ -32,6 +37,14 @@ import {
 import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
+
+// Mensajes públicos FIJOS para fallos TÉCNICOS de reservarPrograma() (revisión
+// posterior — ronda 3, mismo criterio que MSG_ERROR_VALIDACION_CONTRATO/
+// MSG_ERROR_GUARDAR_CONTRATO en contratos/actions.ts): nunca se devuelve
+// error.message/details/hint/code crudo de Supabase/Postgres al navegador —
+// el detalle técnico se registra aparte, server-side, con registrarErrorTecnico().
+const MSG_ERROR_VALIDACION_PROGRAMA = "No fue posible verificar la información del programa. Intenta nuevamente o contacta a soporte.";
+const MSG_ERROR_GUARDAR_RESERVA = "No fue posible guardar la reserva. Intenta nuevamente o contacta a soporte.";
 
 // `input` es `unknown` a propósito (ronda 2) — misma razón que `buscarHoteles`
 // abajo: toda la validación de forma vive en `cotizarPorFechasImpl`
@@ -1369,8 +1382,43 @@ function sumarDias(fecha: string, dias: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Flujo real (revisión posterior — corrección de observabilidad, mismo
+// patrón que `crearContrato()` en contratos/actions.ts): la Server Action
+// exportada es un wrapper delgado que genera el `flujo_id` de esta ejecución
+// y mide la duración TOTAL (incluye `revalidatePath`) en `finally`, así que
+// se emite en éxito, en cualquier rechazo de validación (early-return) y en
+// excepción no capturada. `reservarProgramaInterno` es el cuerpo real, con
+// las etapas atadas al mismo `flujo_id` — antes esta Server Action solo
+// medía "contexto" y nada más, lo que no permitía diagnosticar el botón
+// "Generar reserva" de Programas más allá del gate de autorización.
 export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaResult> {
-  const sb = await createClient();
+  const flujoId = generarFlujoId();
+  const medir = crearMedidor("reservar_programa", flujoId);
+  // Estado técnico INTERNO (revisión posterior — ronda 2, mismo mecanismo que
+  // crearContrato() en contratos/actions.ts): nunca se expone al navegador ni
+  // cambia el contrato público de esta función (lib/observabilidad/medicion.ts).
+  const estado = crearEstadoFlujo();
+  const _tTotal0 = performance.now();
+  let _resultadoTotal: ResultadoEtapa = "error";
+  try {
+    const res = await reservarProgramaInterno(input, flujoId, medir, estado);
+    _resultadoTotal = resultadoTotal(estado, res.ok);
+    return res;
+  } catch (err) {
+    _resultadoTotal = "error";
+    registrarErrorTecnico("reservar_programa", flujoId, "total", "excepcion", err);
+    throw err;
+  } finally {
+    registrarEtapa("reservar_programa", flujoId, "total", Math.round(performance.now() - _tTotal0), _resultadoTotal);
+  }
+}
+
+async function reservarProgramaInterno(
+  input: ReservaProgramaInput,
+  flujoId: string,
+  medir: Medidor,
+  estado: EstadoFlujo
+): Promise<ReservaResult> {
   // Contexto fail-closed INTERNO (revisión posterior al PR #274, ronda 2):
   // reservarPrograma() es exportada y por lo tanto alcanzable directo por
   // red — este flujo NO es autoservicio B2B como convertirCotizacion*/
@@ -1394,36 +1442,79 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // pero SIN permiso de crear ventas) activo podía alcanzar este RPC
   // administrativo, gastar un consecutivo DTM y fallar recién al insertar
   // en `ventas` por RLS.
-  const ctx = await contextoCrearContrato();
-  if (!ctx.ok) return { ok: false, error: ctx.error };
-  const tenant = ctx.tenant;
+  const ctx = await medir("contexto", () => contextoCrearContrato("reservar_programa", flujoId), (r) => (r.ok ? "ok" : r.tecnico ? "error" : "rechazado"));
+  if (!ctx.ok) {
+    // `ctx.tecnico` (revisión posterior — ronda 3): un fallo TÉCNICO real de
+    // auth.getUser()/la consulta de usuarios eleva el TOTAL a "error" — antes
+    // quedaba indistinguible de "rechazado". El mensaje público no cambia.
+    if (ctx.tecnico) elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: ctx.error };
+  }
+  // Reutiliza el MISMO cliente de sesión que `contextoCrearContrato()` ya
+  // creó y autenticó (optimización posterior al PR #274, ver el comentario
+  // en `lib/contrato/contexto.ts`) — antes se creaba aquí ANTES del gate,
+  // así que un intento rechazado también pagaba el costo de un cliente
+  // (barato, pero innecesario) que nunca se llegaba a usar.
+  const { tenant, sb } = ctx;
+
+  // Etapa "validacion_programa": programa + vigencia + blackouts + precios +
+  // habitaciones/pax + validación de edades — varias validaciones con
+  // retorno anticipado; el cierre se loguea justo antes de generar el
+  // número de contrato (único punto que se alcanza solo si todas pasaron).
+  const _tValidacionProg0 = performance.now();
+  // Revisión posterior — ronda 2 (mismo mecanismo que crearContrato() en
+  // contratos/actions.ts): envuelve cada `return` de rechazo de esta sección
+  // para que la etapa quede en "rechazado" sin duplicar el log de éxito
+  // (mutuamente excluyentes) y sin reordenar ninguna validación.
+  const _rechazarValidacionPrograma = (resultado: ReservaResult): ReservaResult => {
+    registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "rechazado");
+    return resultado;
+  };
+  // Revisión posterior — ronda 3 (mismo criterio que crearContratoInterno):
+  // las consultas de esta sección (programas, programa_blackouts,
+  // programa_salidas, programa_precios, programa_categorias) desestructuraban
+  // solo `data` e ignoraban `error` — un fallo TÉCNICO de Supabase terminaba
+  // indistinguible de "no existe"/"sin precios", y en el caso de
+  // programa_blackouts un fallo técnico dejaba pasar la reserva EN SILENCIO
+  // (bos ?? [] = sin blackouts). `_errorValidacionPrograma` eleva el TOTAL a
+  // "error" (nunca "rechazado"), registra el detalle técnico server-side, y
+  // devuelve un mensaje público FIJO — nunca el error crudo de Supabase.
+  const _errorValidacionPrograma = (detalle: string, error: unknown): ReservaResult => {
+    registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "error");
+    registrarErrorTecnico("reservar_programa", flujoId, "validacion_programa", detalle, error);
+    elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: MSG_ERROR_VALIDACION_PROGRAMA };
+  };
+
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
-    return { ok: false, error: "El nombre del cliente es obligatorio." };
-  if (!input.fechaIda) return { ok: false, error: "Elige la fecha de salida." };
+    return _rechazarValidacionPrograma({ ok: false, error: "El nombre del cliente es obligatorio." });
+  if (!input.fechaIda) return _rechazarValidacionPrograma({ ok: false, error: "Elige la fecha de salida." });
 
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
-  const { data: prog } = await sb
+  const { data: prog, error: progError } = await sb
     .from("programas")
     .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, proveedores(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
-  if (!prog) return { ok: false, error: "Programa no encontrado." };
+  if (progError) return _errorValidacionPrograma("error_consulta_programa", progError);
+  if (!prog) return _rechazarValidacionPrograma({ ok: false, error: "Programa no encontrado." });
   const modoSalida = prog.modo_precio === "salida";
 
   // Vigencia
   if (prog.vigencia_desde && input.fechaIda < prog.vigencia_desde)
-    return { ok: false, error: "La fecha de salida es anterior a la vigencia del programa." };
+    return _rechazarValidacionPrograma({ ok: false, error: "La fecha de salida es anterior a la vigencia del programa." });
   if (prog.vigencia_hasta && input.fechaIda > prog.vigencia_hasta)
-    return { ok: false, error: "La fecha de salida supera la vigencia del programa." };
+    return _rechazarValidacionPrograma({ ok: false, error: "La fecha de salida supera la vigencia del programa." });
 
   // Blackouts
-  const { data: bos } = await sb
+  const { data: bos, error: bosError } = await sb
     .from("programa_blackouts")
     .select("fecha_inicio, fecha_fin, motivo")
     .eq("programa_id", input.programaId);
+  if (bosError) return _errorValidacionPrograma("error_consulta_blackouts", bosError);
   for (const b of bos ?? []) {
     if (b.fecha_inicio && b.fecha_fin && input.fechaIda >= b.fecha_inicio && input.fechaIda <= b.fecha_fin)
-      return { ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` };
+      return _rechazarValidacionPrograma({ ok: false, error: `La fecha cae en un blackout${b.motivo ? ` (${b.motivo})` : ""}.` });
   }
 
   // 2) Precios — por categoría (matriz) o por salida (fecha × precio).
@@ -1433,14 +1524,15 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   let hotelSalida: string | null = null;
 
   if (modoSalida) {
-    if (!input.salidaId) return { ok: false, error: "Elige una salida." };
-    const { data: sal } = await sb
+    if (!input.salidaId) return _rechazarValidacionPrograma({ ok: false, error: "Elige una salida." });
+    const { data: sal, error: salError } = await sb
       .from("programa_salidas")
       .select("etiqueta, columna, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud")
       .eq("id", input.salidaId)
       .eq("programa_id", input.programaId)
       .maybeSingle();
-    if (!sal) return { ok: false, error: "Salida no encontrada." };
+    if (salError) return _errorValidacionPrograma("error_consulta_salida", salError);
+    if (!sal) return _rechazarValidacionPrograma({ ok: false, error: "Salida no encontrada." });
     const bs = sal.bajo_solicitud;
     netoDe["sencilla"] = { neto: sal.neto_sencilla, bs };
     netoDe["doble"] = { neto: sal.neto_doble, bs };
@@ -1451,11 +1543,12 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
     etiquetaOpcion = sal.etiqueta ?? null;
     hotelSalida = sal.columna ?? null;
   } else {
-    const { data: precios } = await sb
+    const { data: precios, error: preciosError } = await sb
       .from("programa_precios")
       .select("acomodacion, neto, bajo_solicitud")
       .eq("categoria_id", input.categoriaId);
-    if (!precios?.length) return { ok: false, error: "La categoría no tiene precios cargados." };
+    if (preciosError) return _errorValidacionPrograma("error_consulta_precios", preciosError);
+    if (!precios?.length) return _rechazarValidacionPrograma({ ok: false, error: "La categoría no tiene precios cargados." });
     for (const p of precios) netoDe[p.acomodacion] = { neto: p.neto, bs: p.bajo_solicitud };
   }
 
@@ -1477,22 +1570,25 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   //    persona, así que 1 habitación = pax_tarifa × precio/persona. Niños aparte.
   const habs = Object.entries(input.paxPorAcom).filter(([, n]) => (Number(n) || 0) > 0);
   if (!habs.length && (input.ninos || 0) <= 0)
-    return { ok: false, error: "Indica cuántas habitaciones reservas en cada acomodación." };
+    return _rechazarValidacionPrograma({ ok: false, error: "Indica cuántas habitaciones reservas en cada acomodación." });
 
   let precioVenta = 0;
   let costoNeto = 0;
   let totalPax = 0;
   const items: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number }[] = [];
-  const catNombre = modoSalida
-    ? etiquetaOpcion
-    : (await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle()).data?.nombre ?? null;
+  let catNombre: string | null = etiquetaOpcion;
+  if (!modoSalida) {
+    const { data: catData, error: catError } = await sb.from("programa_categorias").select("nombre").eq("id", input.categoriaId).maybeSingle();
+    if (catError) return _errorValidacionPrograma("error_consulta_categoria", catError);
+    catNombre = catData?.nombre ?? null;
+  }
 
   let orden = 0;
   for (const [acom, habRaw] of habs) {
     const nHab = Number(habRaw) || 0;
     const info = netoDe[acom];
     if (!info || info.neto == null || info.bs)
-      return { ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` };
+      return _rechazarValidacionPrograma({ ok: false, error: `La acomodación ${acom} no tiene precio (o es "a solicitud") en esta categoría.` });
     const paxTarifa = paxDeAcomodacion(acom); // pax por habitación (cuadruple = 4)
     const nPax = nHab * paxTarifa;
     const precioPax = pvp(info.neto);
@@ -1514,7 +1610,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   if ((input.ninos || 0) > 0) {
     const info = netoDe["nino"];
     if (!info || info.neto == null || info.bs)
-      return { ok: false, error: `Esta categoría no tiene precio de niño (o es "a solicitud").` };
+      return _rechazarValidacionPrograma({ ok: false, error: `Esta categoría no tiene precio de niño (o es "a solicitud").` });
     const n = Number(input.ninos) || 0;
     const precioPax = pvp(info.neto);
     precioVenta += precioPax * n;
@@ -1533,7 +1629,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   // Los infantes son pasajeros adicionales (sin silla), por cantidad.
   const numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
   totalPax += numInfantes;
-  if (totalPax <= 0) return { ok: false, error: "Debe haber al menos un pasajero." };
+  if (totalPax <= 0) return _rechazarValidacionPrograma({ ok: false, error: "Debe haber al menos un pasajero." });
 
   // 3.b) Validación de pasajeros por edad (umbrales del programa, según el
   //      proveedor). Si hay fechas de nacimiento, la clasificación real debe
@@ -1556,13 +1652,20 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
         errores.push(`Por fecha de nacimiento hay ${real.ninos} niño(s), pero declaraste ${numNinos}.`);
       if (real.adultos > adultosEsperados)
         errores.push(`Por fecha de nacimiento hay ${real.adultos} adulto(s), pero la reserva es para ${adultosEsperados}.`);
-      if (errores.length) return { ok: false, error: errores.join(" ") };
+      if (errores.length) return _rechazarValidacionPrograma({ ok: false, error: errores.join(" ") });
     }
   }
 
+  registrarEtapa("reservar_programa", flujoId, "validacion_programa", Math.round(performance.now() - _tValidacionProg0), "ok");
+
   // 4) Número de contrato — ya completo, tenant resuelto arriba (nunca del navegador)
-  const numRes = await siguienteNumeroContrato(tenant);
-  if (!numRes.ok) return { ok: false, error: numRes.error };
+  const numRes = await medir("numero_contrato", () => siguienteNumeroContrato(tenant), (r) => (r.ok ? "ok" : "error"));
+  if (!numRes.ok) {
+    // Fallo TÉCNICO bloqueante (RPC de numeración) — nunca "rechazado".
+    // `numRes.error` ya es un mensaje saneado por el propio RPC.
+    elevarEstadoFlujo(estado, "error");
+    return { ok: false, error: numRes.error };
+  }
   const numero = numRes.numero;
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
@@ -1572,6 +1675,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
   const fechaRegreso = nochesViaje != null ? sumarDias(input.fechaIda, nochesViaje) : prog.dias ? sumarDias(input.fechaIda, Math.max(0, prog.dias - 1)) : null;
 
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
+  const _tVenta0 = performance.now();
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
     tenant,
@@ -1597,7 +1701,29 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
     asesor_firma_nombre: oNull(asesorNombre),
     plan_nombre: catNombre ?? prog.nombre,
   });
-  if (ve) return { ok: false, error: ve.message };
+  registrarEtapa("reservar_programa", flujoId, "insert_venta", Math.round(performance.now() - _tVenta0), ve ? "error" : "ok");
+  if (ve) {
+    elevarEstadoFlujo(estado, "error");
+    registrarErrorTecnico("reservar_programa", flujoId, "insert_venta", "error_insert_venta", ve);
+    return { ok: false, error: MSG_ERROR_GUARDAR_RESERVA };
+  }
+
+  // 6-8) Tablas hijas — pasajeros/items/hoteles, medidas como un solo grupo
+  // (etapa=insert_hijas, mismo criterio que crearContrato()): no se
+  // reordenan ni paralelizan sin antes demostrar sus dependencias. Antes de
+  // esta ronda, los INSERT de ítems y hoteles descartaban su `error` en
+  // silencio (nunca bloqueaban, pero tampoco quedaba registro de que algo
+  // había fallado) — ahora se capturan para que la métrica diga "error" en
+  // vez de "ok" si alguno falla, sin cambiar el comportamiento histórico
+  // (siguen sin bloquear la reserva).
+  const _tHijas0 = performance.now();
+  const _errorHijas = (detalle: string, error: unknown) => {
+    registrarEtapa("reservar_programa", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
+    registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", detalle, error);
+    elevarEstadoFlujo(estado, "error");
+    return { ok: false as const, error: MSG_ERROR_GUARDAR_RESERVA };
+  };
+  let _resultadoHijas: ResultadoEtapa = "ok";
 
   // 6) Pasajeros
   if (input.pasajeros.length) {
@@ -1613,25 +1739,35 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
         orden: i,
       }))
     );
-    if (error) return { ok: false, error: error.message };
+    if (error) return _errorHijas("pasajeros", error);
   }
 
   // 7) Ítems (líneas por acomodación)
   for (const it of items) it.numero_contrato = numero;
-  if (items.length) await sb.from("contrato_items").insert(items);
+  if (items.length) {
+    const { error } = await sb.from("contrato_items").insert(items);
+    if (error) return _errorHijas("items", error);
+  }
 
-  // 8) Hoteles por ciudad (de la categoría elegida) — informativo en el contrato.
-  //    En modo salida no hay matriz de hoteles; se usa el hotel de la columna si lo hay.
+  // 8) Hoteles por ciudad (de la categoría elegida) — informativo en el
+  //    contrato: su fallo NO bloquea la reserva (comportamiento histórico
+  //    sin cambios), pero ya no queda como "ok" sin más — la métrica pasa a
+  //    "parcial". En modo salida no hay matriz de hoteles; se usa el hotel
+  //    de la columna si lo hay.
   const provNombre = (prog.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
-  const { data: hotelesCat } = modoSalida
-    ? { data: hotelSalida ? [{ ciudad: prog.subtitulo ?? prog.nombre, hotel: hotelSalida, orden: 0 }] : [] }
+  const { data: hotelesCat, error: hotelesCatError } = modoSalida
+    ? { data: hotelSalida ? [{ ciudad: prog.subtitulo ?? prog.nombre, hotel: hotelSalida, orden: 0 }] : [], error: null }
     : await sb
         .from("programa_categoria_hoteles")
         .select("ciudad, hotel, orden")
         .eq("categoria_id", input.categoriaId)
         .order("orden");
+  if (hotelesCatError) {
+    _resultadoHijas = "parcial";
+    registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_consulta_hoteles_categoria", hotelesCatError);
+  }
   if (hotelesCat?.length) {
-    await sb.from("contrato_hoteles").insert(
+    const { error: hotelesInsertError } = await sb.from("contrato_hoteles").insert(
       hotelesCat.map((h, i) => ({
         numero_contrato: numero,
         nombre: h.hotel ?? "",
@@ -1642,16 +1778,36 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
         orden: i,
       }))
     );
+    if (hotelesInsertError) {
+      _resultadoHijas = "parcial";
+      registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_insert_hoteles", hotelesInsertError);
+    }
   }
+  registrarEtapa("reservar_programa", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), _resultadoHijas);
+  // Solo alcanzable aquí por el fallo NO bloqueante de hoteles (pasajeros/
+  // items bloquean y elevan "error" antes de llegar a esta línea, vía
+  // `_errorHijas`) — best-effort: eleva el TOTAL a "parcial", nunca a "error".
+  if (_resultadoHijas !== "ok") elevarEstadoFlujo(estado, "parcial");
 
-  // 9) Cuenta por pagar al proveedor del programa (neto, en la moneda del programa).
+  // 9) Cuenta por pagar al proveedor del programa (neto, en la moneda del
+  // programa). Best-effort igual que antes (no bloquea la reserva), pero la
+  // MÉTRICA ya no dice "ok" a ciegas: "parcial" si algún paso individual
+  // devolvió `error` sin lanzar excepción, "error" si entró al catch.
+  const _tCxp0 = performance.now();
+  let _huboBloqueCxp = false;
+  let _resultadoCxp: ResultadoEtapa = "ok";
   if (costoNeto > 0 && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    _huboBloqueCxp = true;
     try {
       const admin = createAdminClient();
       const pr = prog.proveedores as unknown as { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
-      await admin.from("ventas").update({ costo_receptivo: costoNeto }).eq("numero_contrato", numero);
+      const { error: updateError } = await admin.from("ventas").update({ costo_receptivo: costoNeto }).eq("numero_contrato", numero);
+      if (updateError) {
+        _resultadoCxp = "parcial";
+        registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_update_costo", updateError);
+      }
       const fechaProg = new Date().toISOString().slice(0, 10);
-      const { data: cProg } = await admin.from("cuentas_por_pagar").insert({
+      const { data: cProg, error: cProgError } = await admin.from("cuentas_por_pagar").insert({
         numero_contrato: numero,
         proveedor: pr?.nombre ?? null,
         tipo_proveedor: "programa",
@@ -1663,15 +1819,31 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
         pct_retencion: Number(pr?.pct_retencion) || 0,
         observaciones: "Generado automáticamente desde el tarifario (programa)",
       }).select("id").single();
+      if (cProgError) {
+        _resultadoCxp = "error";
+        registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_insert_cxp", cProgError);
+      }
       if (cProg) {
-        await postearAsientoCxP({
+        const asiento = await postearAsientoCxP({
           cuentaId: cProg.id, numeroContrato: numero, tipoProveedor: "programa", proveedor: pr?.nombre ?? null,
           servicio: prog.nombre, valorTotal: costoNeto, fecha: fechaProg,
         });
+        if (!asiento.ok) {
+          if (_resultadoCxp === "ok") _resultadoCxp = "parcial";
+          registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_asiento_cxp", asiento.error);
+        }
       }
-    } catch {
-      // No bloquear la reserva si falla el paso administrativo.
+    } catch (e) {
+      // No bloquear la reserva si falla el paso administrativo (sin
+      // cambios) — pero la métrica SÍ debe decir "error", nunca "ok".
+      _resultadoCxp = "error";
+      registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "excepcion", e);
     }
+  }
+  if (_huboBloqueCxp) {
+    registrarEtapa("reservar_programa", flujoId, "cxp_programa", Math.round(performance.now() - _tCxp0), _resultadoCxp);
+    // Best-effort: nunca bloquea la reserva, pero eleva el TOTAL.
+    if (_resultadoCxp !== "ok") elevarEstadoFlujo(estado, "parcial");
   }
 
   revalidatePath("/dashboard/contratos");
