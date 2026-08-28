@@ -28,6 +28,49 @@ export type InfoHotelDato = {
 };
 export type CapHotelDato = { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
 
+export type CuposYOrigen = {
+  cuposPorBloqueo: Record<number, number>;
+  origenPorBloqueo: Record<number, string>;
+  error1: unknown;
+  error2: unknown;
+};
+
+/**
+ * cupos_por_bloqueo + bloqueos_vuelo (origen) para un set de bloqueoIds.
+ * Extraída de `cargarDatosTarifario()` (revisión posterior, ronda "caché
+ * compartida del catálogo") para poder reutilizarla en el refresco EN VIVO
+ * de `lib/tarifario/catalogoCache.ts` — `cupos_por_bloqueo` es una VISTA
+ * derivada de `sillas` (cambia en cada reserva/confirmación/liberación de
+ * silla), así que NUNCA se sirve desde una caché con TTL de minutos: la
+ * caché compartida cachea el resto del catálogo (hoteles, tarifas,
+ * enriquecimiento) pero cupos/origen se piden aquí, siempre en vivo, tanto
+ * en el camino normal (dentro de esta función) como después de leer el
+ * catálogo cacheado. Comportamiento sin cambios respecto al bloque
+ * original: cada consulta se conserva de forma independiente ante el
+ * fallo de la otra.
+ */
+export async function obtenerCuposYOrigen(
+  admin: SupabaseClient<Database>, bloqueoIds: number[]
+): Promise<CuposYOrigen> {
+  const cuposPorBloqueo: Record<number, number> = {};
+  const origenPorBloqueo: Record<number, string> = {};
+  if (!bloqueoIds.length) return { cuposPorBloqueo, origenPorBloqueo, error1: null, error2: null };
+  const [{ data: cup, error: e1 }, { data: blo, error: e2 }] = await Promise.all([
+    admin.from("cupos_por_bloqueo").select("id, cupos_disponibles").in("id", bloqueoIds),
+    admin.from("bloqueos_vuelo").select("id, origen, ruta").in("id", bloqueoIds),
+  ]);
+  if (!e1) {
+    for (const c of cup ?? []) cuposPorBloqueo[c.id as number] = Number(c.cupos_disponibles) || 0;
+  }
+  if (!e2) {
+    for (const b of blo ?? []) {
+      const ori = (b.origen ?? "").trim() || (b.ruta ? b.ruta.split("-")[0].trim() : "");
+      if (ori) origenPorBloqueo[b.id as number] = ori.toUpperCase();
+    }
+  }
+  return { cuposPorBloqueo, origenPorBloqueo, error1: e1 ?? null, error2: e2 ?? null };
+}
+
 export type DatosTarifario = {
   filasVisibles: FilaTarifario[];
   filasAddon: FilaTarifario[];
@@ -154,42 +197,24 @@ export async function cargarDatosTarifario(
   const huboVigencia = admin != null;
 
   const [resCupos, resVigencia] = await Promise.all([
-    (async () => {
-      if (!bloqueoIds.length || !admin) return null;
-      const [{ data: cup, error: e1 }, { data: blo, error: e2 }] = await Promise.all([
-        admin.from("cupos_por_bloqueo").select("id, cupos_disponibles").in("id", bloqueoIds),
-        admin.from("bloqueos_vuelo").select("id, origen, ruta").in("id", bloqueoIds),
-      ]);
-      // ⚠️ Revisión posterior (defecto confirmado): antes un `error: e1 ??
-      // e2 ?? null` combinado descartaba AMBOS resultados si CUALQUIERA de
-      // las dos fallaba — un fallo puntual de `bloqueos_vuelo` borraba
-      // también los cupos ya obtenidos correctamente. VistaBooking.tsx/
-      // TarifarioPublic.tsx tratan `cuposPorBloqueo[id] === undefined` como
-      // "disponibilidad desconocida" y pueden mostrar una salida como
-      // agotada — así que cada consulta se conserva de forma INDEPENDIENTE:
-      // un cupo válido sobrevive aunque el origen falle, y viceversa.
-      return { cup, blo, e1, e2 };
-    })(),
+    bloqueoIds.length && admin ? obtenerCuposYOrigen(admin, bloqueoIds) : null,
     admin ? filtrarTarifarioVencidas(admin, filas) : null,
   ]);
 
   if (resCupos) {
-    if (resCupos.e1) {
+    if (resCupos.error1) {
       _huboErrorAux = true;
-      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_cupos_por_bloqueo", resCupos.e1);
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_cupos_por_bloqueo", resCupos.error1);
       // Best-effort: sin error el enriquecimiento de cupos queda vacío
       // (nunca se inventa un número) — no bloquea la página, el dato solo falta.
     } else {
-      for (const c of resCupos.cup ?? []) cuposPorBloqueo[c.id as number] = Number(c.cupos_disponibles) || 0;
+      Object.assign(cuposPorBloqueo, resCupos.cuposPorBloqueo);
     }
-    if (resCupos.e2) {
+    if (resCupos.error2) {
       _huboErrorAux = true;
-      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_bloqueos_vuelo_origen", resCupos.e2);
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_bloqueos_vuelo_origen", resCupos.error2);
     } else {
-      for (const b of resCupos.blo ?? []) {
-        const ori = (b.origen ?? "").trim() || (b.ruta ? b.ruta.split("-")[0].trim() : "");
-        if (ori) origenPorBloqueo[b.id as number] = ori.toUpperCase();
-      }
+      Object.assign(origenPorBloqueo, resCupos.origenPorBloqueo);
     }
     _consultasAux += 2;
   }

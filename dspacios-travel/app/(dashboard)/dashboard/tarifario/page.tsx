@@ -1,11 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
 import Link from "next/link";
-import { TarifarioPublic, type FilaTarifario } from "@/app/tarifario/TarifarioPublic";
-import { getProgramasResumen } from "@/lib/programas";
-import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
-import { cargarFilasTarifarioPaginado } from "@/lib/tarifario/paginacion";
+import { TarifarioPublic } from "@/app/tarifario/TarifarioPublic";
 import { orquestarCargaInterna } from "@/lib/tarifario/orquestacion";
+import { cargarFilasTarifarioLivianoCompartido, getProgramasResumenCompartido } from "@/lib/tarifario/catalogoCache";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
   siguienteInvocacionProceso, medirPayloadSiHabilitado, textoEstimacionPayload, iniciarCronometro,
@@ -14,15 +11,6 @@ import {
 export const dynamic = "force-dynamic";
 
 const FLUJO = "pagina_tarifario_interno";
-
-// Columnas LIVIANAS — a propósito, más chicas que las de cargarDatosTarifario()
-// (lib/tarifario/datos.ts): esta vista solo necesita mostrar la tabla, no
-// arma el enriquecimiento completo de Vista Booking (cupos, fotos, hoteles,
-// capacidades, planes, ventana, "incluye") que sí necesita Reservar/público.
-// Reusar cargarDatosTarifario() aquí aumentaría consultas y payload sin
-// necesidad — ver auditoría de duplicación en el PR.
-const COLUMNAS_LIVIANAS =
-  "modulo, bloqueo_label, bloqueo_id, paquete_id, hotel_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, moneda";
 
 // Mensaje público FIJO — nunca "no hay tarifas" cuando en realidad falló la
 // consulta (revisión posterior, defecto "PAGINACIÓN IGNORA ERRORES").
@@ -34,6 +22,15 @@ const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este m
 // orquestarCargaInterna() (lib/tarifario/orquestacion.ts, función PURA
 // probada con promesas diferidas en pruebas/tarifarioOrquestacion.test.ts —
 // la garantía de concurrencia real no depende de leer este archivo).
+//
+// ⚠️ CACHÉ COMPARTIDA (ronda posterior, "medición real de ~13s en preview"):
+// ambas fuentes ahora pasan por `lib/tarifario/catalogoCache.ts` — el mismo
+// catálogo (columnas LIVIANAS de esta ruta, y `soloPublicados=false`,
+// idéntico al de siempre) queda cacheado y se comparte entre las 3 rutas
+// de tarifario. Este page.tsx NO necesita saber si sirvió desde caché o
+// recién se calculó: la etapa "catalogo_tarifario" mide lo que tardó de
+// cualquier forma (hit ≈ unos pocos ms, miss ≈ el costo real de siempre).
+// Ver auditoría de qué es global vs. de usuario en el propio módulo.
 export default async function TarifarioInternoPage() {
   const flujoId = generarFlujoId();
   const invocacion = siguienteInvocacionProceso(FLUJO);
@@ -44,44 +41,19 @@ export default async function TarifarioInternoPage() {
   const _cronoCarga = iniciarCronometro();
   const { tarifario: resTarifario, programas: resProgramas } = await orquestarCargaInterna({
     cargarTarifario: async () => {
-      const _cronoPag = iniciarCronometro();
-      const pag = await cargarFilasTarifarioPaginado<FilaTarifario>(sb, COLUMNAS_LIVIANAS);
-      if (!pag.ok) {
-        registrarEtapa(FLUJO, flujoId, "carga_paginada", _cronoPag(), "error");
-        registrarErrorTecnico(FLUJO, flujoId, "carga_paginada", "error_paginacion_tarifario_resultado", pag.error);
+      const _cronoCat = iniciarCronometro();
+      const res = await cargarFilasTarifarioLivianoCompartido(sb);
+      if (!res.ok) {
+        registrarEtapa(FLUJO, flujoId, "catalogo_tarifario", _cronoCat(), "error");
+        registrarErrorTecnico(FLUJO, flujoId, "catalogo_tarifario", "error_catalogo_tarifario_liviano", null);
         return { ok: false as const };
       }
-      registrarEtapa(FLUJO, flujoId, "carga_paginada", _cronoPag(), "ok");
-      registrarDatoPagina(FLUJO, flujoId, "carga_paginada", `filas=${pag.filas.length} paginas=${pag.paginasConsultadas} consultas=${pag.paginasConsultadas}`);
-
-      // Oculta tarifas de hotel con vigencia de compra vencida (igual que el
-      // público: lo vencido no aparece). El histórico se consulta en el
-      // detalle del hotel. Best-effort: un error aquí NO aborta la página
-      // completa (el resto del tarifario sigue mostrándose), pero
-      // `filtrarTarifarioVencidas` FALLA CERRADO ante un error técnico — las
-      // filas de hotel verificables (bloqueo/porción con fecha) se OCULTAN
-      // por completo, nunca se dejan "sin el filtro" ni se publican sin
-      // poder verificar su vigencia — y queda registrado como
-      // resultado=error, nunca "ok".
-      const _cronoVig = iniciarCronometro();
-      let huboVigencia = false;
-      let filasFiltradas = pag.filas;
-      let huboErrorVigencia = false;
-      if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-        const resVig = await filtrarTarifarioVencidas(createAdminClient(), pag.filas);
-        filasFiltradas = resVig.filas;
-        huboVigencia = true;
-        if (resVig.error) {
-          huboErrorVigencia = true;
-          registrarErrorTecnico(FLUJO, flujoId, "filtro_vigencia", "error_hotel_temporadas_o_tarifa_hotel", resVig.error);
-        }
-      }
-      registrarEtapa(FLUJO, flujoId, "filtro_vigencia", _cronoVig(), huboErrorVigencia ? "error" : "ok");
-      registrarDatoPagina(FLUJO, flujoId, "filtro_vigencia", `filas=${filasFiltradas.length} consultas=${huboVigencia ? 2 : 0}`);
-      return { ok: true as const, filas: filasFiltradas };
+      registrarEtapa(FLUJO, flujoId, "catalogo_tarifario", _cronoCat(), "ok");
+      registrarDatoPagina(FLUJO, flujoId, "catalogo_tarifario", `filas=${res.filas.length}`);
+      return { ok: true as const, filas: res.filas };
     },
     // Programas (interno: muestra activos aunque no estén publicados).
-    cargarProgramas: () => getProgramasResumen(sb, false),
+    cargarProgramas: () => getProgramasResumenCompartido(sb, false),
   });
   registrarEtapa(FLUJO, flujoId, "tarifario_y_programas", _cronoCarga(), resTarifario.ok && !resProgramas.error ? "ok" : "error");
 

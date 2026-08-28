@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { regenerarTarifariosDeServicio, generarTarifario } from "../../paquetes/actions";
+import { invalidarCatalogoTarifario } from "@/lib/tarifario/catalogoCache";
 
 type Result = { ok: true } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -145,12 +146,15 @@ async function guardarGrupoTiers(
 
 // Foto de portada del servicio (tour/receptivo): se lee en vivo desde el
 // tarifario público (no se denormaliza en tarifario_resultado), así que no
-// hace falta regenerar nada al cambiarla.
+// hace falta regenerar nada al cambiarla — pero SÍ hace falta invalidar la
+// caché compartida (ronda posterior): `fotosPorServicio` del catálogo
+// cacheado sale de esta misma columna, leída por separado en cada refresco.
 export async function actualizarFotoServicio(id: number, fotoUrl: string | null): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("servicios_adicionales").update({ foto_url: fotoUrl }).eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/producto/servicios");
+  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
