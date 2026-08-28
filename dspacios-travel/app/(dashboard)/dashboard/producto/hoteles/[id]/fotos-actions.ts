@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { invalidarCatalogoTarifario } from "@/lib/tarifario/catalogoCache";
 
 type Result = { ok: true } | { ok: false; error: string };
 const BUCKET = "hotel-fotos";
@@ -27,6 +28,8 @@ export async function registrarFotoHotel(input: {
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
+  // fotosPorHotel del catálogo cacheado sale directo de `hotel_fotos`.
+  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -37,6 +40,7 @@ export async function marcarPortadaFotoHotel(id: number, hotelId: number): Promi
   const { error } = await sb.from("hotel_fotos").update({ es_portada: true }).eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -52,5 +56,6 @@ export async function eliminarFotoHotel(id: number, path: string, hotelId: numbe
     if (otra) await sb.from("hotel_fotos").update({ es_portada: true }).eq("id", otra.id);
   }
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  invalidarCatalogoTarifario();
   return { ok: true };
 }

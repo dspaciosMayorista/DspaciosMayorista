@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
 import { generarTarifas, type DubaiParams, type MixtaParams, type CorporativaParams } from "@/lib/calc/calculadoras";
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
+import { invalidarCatalogoTarifario } from "@/lib/tarifario/catalogoCache";
 import type { Json } from "@/types/database";
 
 type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
@@ -157,6 +158,10 @@ export async function actualizarHotelConfig(
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   revalidatePath("/dashboard/producto/hoteles");
   revalidatePath("/dashboard/producto/destinos");
+  // No pasa por regenerarTarifariosDeHotel() (no toca precio/vigencia), pero
+  // SÍ cambia campos que el catálogo cacheado enriquece directamente
+  // (infoPorHotel: estrellas/descripción/adults_only/pet_friendly/etc.).
+  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -208,6 +213,10 @@ export async function actualizarHotelAcomodaciones(
   }
 
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  // capPorHotel (capacidades por acomodación) del catálogo cacheado sale
+  // directo de `hotel_acomodaciones` — sin esto quedaría desactualizado
+  // hasta que expire el TTL de respaldo.
+  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -706,6 +715,9 @@ export async function cargarAcomodacionesMasivo(rows: Record<string, string>[]):
     insertados++;
   }
   revalidatePath("/dashboard/producto/hoteles");
+  // Igual que actualizarHotelAcomodaciones(): solo invalida si de verdad se
+  // insertó/actualizó al menos una fila (una carga 100% fallida no cambió nada).
+  if (insertados > 0) invalidarCatalogoTarifario();
   return { ok: errores.length === 0, insertados, errores };
 }
 

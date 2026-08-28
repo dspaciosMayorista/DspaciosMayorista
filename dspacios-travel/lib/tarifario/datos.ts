@@ -14,7 +14,6 @@ import { cargarFilasTarifarioPaginado } from "./paginacion.ts";
 import { hoyISO } from "../calc/paquetes.ts";
 import { empaquetadoVigente, hoyBogota } from "../reservar/origen.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico } from "../observabilidad/medicion.ts";
-import { buscarFilasTarifarioPagina, parsearFiltrosTarifario, PAGE_SIZE_PUBLICO, type FiltrosTarifario } from "./consulta.ts";
 
 // Columnas completas que necesita Vista Booking (Reservar/tarifario público)
 // — más que las que pide /dashboard/tarifario, ver lib/tarifario/paginacion.ts.
@@ -176,32 +175,10 @@ export async function cargarDatosTarifario(
     registrarErrorTecnico(flujo, flujoId, "carga_paginada", "error_paginacion_tarifario_resultado", pag.error);
     return { ok: false, error: MSG_ERROR_CARGAR_TARIFARIO };
   }
+  let filas = pag.filas;
   registrarEtapa(flujo, flujoId, "carga_paginada", Math.round(performance.now() - _tPaginacion0), "ok");
-  registrarDatoPagina(flujo, flujoId, "carga_paginada", `filas=${pag.filas.length} paginas=${pag.paginasConsultadas} consultas=${pag.paginasConsultadas}`);
+  registrarDatoPagina(flujo, flujoId, "carga_paginada", `filas=${filas.length} paginas=${pag.paginasConsultadas} consultas=${pag.paginasConsultadas}`);
 
-  const datos = await procesarFilasTarifario(sb, admin, flujo, flujoId, pag.filas);
-  return { ok: true, datos };
-}
-
-/**
- * Todo lo que pasa DESPUÉS de tener un set de filas crudas de
- * `tarifario_resultado` en la mano (vigencia, cupos/origen, empaquetados,
- * recorte de "servicios", enriquecimiento de Vista Booking) — extraído de
- * `cargarDatosTarifario()` (ronda "carga bajo demanda", medición real de
- * ~9s en preview con 17.197 filas/11,1 MB) para poder reutilizarlo con
- * CUALQUIER set de filas, no solo el catálogo COMPLETO: la nueva consulta
- * PAGINADA de `lib/tarifario/consulta.ts` (`buscarPaginaTarifarioCompleta`)
- * le pasa acá solo la página pedida (24-300 filas según la vista), nunca
- * las ~17.000. Esta función es agnóstica de eso — nunca supo que antes
- * recibía el catálogo entero, así que no cambia su comportamiento por
- * recibir un subconjunto: aplica la MISMA vigencia/enriquecimiento a lo que
- * le llegue.
- */
-export async function procesarFilasTarifario(
-  sb: SupabaseClient<Database>, admin: SupabaseClient<Database> | null,
-  flujo: string, flujoId: string, filasCrudas: FilaTarifario[]
-): Promise<DatosTarifario> {
-  let filas = filasCrudas;
   const _tAux0 = performance.now();
   let _consultasAux = 0;
   let _huboErrorAux = false;
@@ -485,51 +462,10 @@ export async function procesarFilasTarifario(
   registrarDatoPagina(flujo, flujoId, "datos_auxiliares", `filas_visibles=${filasVisibles.length} filas_addon=${filasAddon.length} consultas=${_consultasAux}`);
 
   return {
-    filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
-    infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, incluidosPorPaquete,
+    ok: true,
+    datos: {
+      filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
+      infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, incluidosPorPaquete,
+    },
   };
-}
-
-export type ResultadoPaginaTarifarioCompleto =
-  | { ok: true; datos: DatosTarifario; total: number; page: number; pageSize: number }
-  | { ok: false; error: string };
-
-/**
- * Reemplaza, para `/tarifario` y `/dashboard/reservar`, la carga del
- * catálogo COMPLETO (`cargarDatosTarifario()`, hasta 17.197 filas medidas en
- * el incidente real) por UNA página acotada y filtrada en la base de datos
- * (`buscarFilasTarifarioPagina`, `lib/tarifario/consulta.ts`) seguida del
- * MISMO enriquecimiento de siempre (`procesarFilasTarifario`, ver arriba) —
- * escalado solo a los hoteles/servicios/paquetes presentes en ESTA página,
- * nunca a los del catálogo entero. `filtrosRaw` es `unknown`: puede venir de
- * un Server Action invocable desde el navegador (`app/tarifario/
- * tarifario-actions.ts`) con cualquier payload — se valida en
- * `parsearFiltrosTarifario` antes de tocar la base de datos.
- */
-export async function buscarPaginaTarifarioCompleta(
-  sb: SupabaseClient<Database>,
-  filtrosRaw: unknown,
-  flujo: string,
-  flujoId: string,
-  pageSizeDefault: number = PAGE_SIZE_PUBLICO,
-  // Mismo patrón/motivo que `cargarDatosTarifario()`: parámetro por defecto
-  // que en producción SIEMPRE deriva de SUPABASE_SERVICE_ROLE_KEY — existe
-  // para poder inyectar un admin FALSO en pruebas de ejecución real.
-  admin: SupabaseClient<Database> | null = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null
-): Promise<ResultadoPaginaTarifarioCompleto> {
-  const filtros: FiltrosTarifario = parsearFiltrosTarifario(filtrosRaw, pageSizeDefault);
-  const _t0 = performance.now();
-  const res = await buscarFilasTarifarioPagina<FilaTarifario>(sb, COLUMNAS_COMPLETAS, filtros);
-  if (!res.ok) {
-    registrarEtapa(flujo, flujoId, "consulta_pagina", Math.round(performance.now() - _t0), "error");
-    registrarErrorTecnico(flujo, flujoId, "consulta_pagina", "error_consulta_pagina_tarifario_resultado", res.error);
-    return { ok: false, error: MSG_ERROR_CARGAR_TARIFARIO };
-  }
-  registrarEtapa(flujo, flujoId, "consulta_pagina", Math.round(performance.now() - _t0), "ok");
-  registrarDatoPagina(
-    flujo, flujoId, "consulta_pagina",
-    `filas=${res.filas.length} total=${res.total} page=${filtros.page} pageSize=${filtros.pageSize} modulo=${filtros.modulo || "todos"}`
-  );
-  const datos = await procesarFilasTarifario(sb, admin, flujo, flujoId, res.filas);
-  return { ok: true, datos, total: res.total, page: filtros.page, pageSize: filtros.pageSize };
 }
