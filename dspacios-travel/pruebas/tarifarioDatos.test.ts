@@ -298,6 +298,92 @@ describe("cargarDatosTarifario() — enriquecimiento de hotel: capacidades, info
   });
 });
 
+describe("cargarDatosTarifario() — cupos_por_bloqueo y bloqueos_vuelo (origen) se conservan de forma INDEPENDIENTE ante error de la otra", () => {
+  // ⚠️ Defecto confirmado: antes un `error: e1 ?? e2 ?? null` combinado
+  // descartaba AMBOS resultados si CUALQUIERA de las dos consultas fallaba
+  // — un fallo puntual de `bloqueos_vuelo` (origen) borraba también los
+  // cupos ya obtenidos correctamente, y viceversa. VistaBooking.tsx/
+  // TarifarioPublic.tsx tratan `cuposPorBloqueo[id] === undefined` como
+  // "disponibilidad desconocida" y pueden mostrar una salida como agotada
+  // sin estarlo — así que cada consulta debe sobrevivir por separado.
+  test("falla SOLO bloqueos_vuelo (origen): los cupos válidos de cupos_por_bloqueo se conservan", async () => {
+    const filas = [filaBase({ modulo: "bloqueo", bloqueo_id: 1, hotel_id: null, fecha_ida: MANIANA })];
+    const sb = clienteFalso(
+      tablasBase({
+        cupos_por_bloqueo: { data: [{ id: 1, cupos_disponibles: 7 }], error: null },
+        bloqueos_vuelo: { data: null, error: { code: "XX000" } },
+      }),
+      filas
+    );
+    const r = await cargarDatosTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.datos.cuposPorBloqueo[1], 7, "los cupos válidos NO deben perderse por un fallo ajeno en bloqueos_vuelo");
+    assert.equal(r.datos.origenPorBloqueo[1], undefined, "sin origen: bloqueos_vuelo sí falló");
+  });
+
+  test("falla SOLO cupos_por_bloqueo: el origen válido de bloqueos_vuelo se conserva", async () => {
+    const filas = [filaBase({ modulo: "bloqueo", bloqueo_id: 1, hotel_id: null, fecha_ida: MANIANA })];
+    const sb = clienteFalso(
+      tablasBase({
+        cupos_por_bloqueo: { data: null, error: { code: "XX000" } },
+        bloqueos_vuelo: { data: [{ id: 1, origen: "BOG", ruta: "BOG-SMR" }], error: null },
+      }),
+      filas
+    );
+    const r = await cargarDatosTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.datos.cuposPorBloqueo[1], undefined, "sin cupos: cupos_por_bloqueo sí falló");
+    assert.equal(r.datos.origenPorBloqueo[1], "BOG", "el origen válido NO debe perderse por un fallo ajeno en cupos_por_bloqueo");
+  });
+});
+
+describe("cargarDatosTarifario() — hotel_acomodaciones y tarifa de infante se conservan de forma INDEPENDIENTE ante error de la otra", () => {
+  // Mismo defecto que cupos/origen, en el segundo par de consultas
+  // combinadas de esta función. Se usa modulo 'dinamico' (en vez de
+  // 'bloqueo') a propósito: `esFilaHotelVerificable` (lib/tarifario/
+  // vigencia.ts) solo exige vigencia de hotel para 'bloqueo'/
+  // 'porcion_terrestre' — así esta fila NO dispara `filtrarTarifarioVencidas`
+  // contra `hotel_temporadas`/`tarifa_hotel` (hIds queda vacío), dejando
+  // limpio el mock de `tarifa_hotel` para aislar exclusivamente la consulta
+  // de tarifa de infante que sí prueban estos dos tests.
+  test("falla SOLO la tarifa de infante (tarifa_hotel): las acomodaciones válidas se conservan", async () => {
+    const filas = [filaBase({ modulo: "dinamico", hotel_id: 22, fecha_ida: MANIANA })];
+    const sb = clienteFalso(
+      tablasBase({
+        hoteles: { data: [{ id: 22, estrellas: 3, clasificacion: null, descripcion: null, ubicacion: null, video_url: null, pax_min: 1, pax_max: 4, edad_nino_min: null, edad_nino_max: null, edad_infante_min: null, edad_infante_max: null, nino_nota: null, adults_only: false, pet_friendly: false, pet_costo_neto: 0, pet_costo_desc: null, pet_nota: null }], error: null },
+        hotel_acomodaciones: { data: [{ hotel_id: 22, acomodacion: "doble", pax_tarifa: 2, pax_max: 4, adt_min: 1, adt_max: 2, chd_min: 0, chd_max: 2, inf_min: 0, inf_max: 1 }], error: null },
+        tarifa_hotel: { data: null, error: { code: "XX000" } },
+      }),
+      filas
+    );
+    const r = await cargarDatosTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.datos.capPorHotel[22]?.acom.length, 1, "la acomodación válida NO debe perderse por un fallo ajeno en tarifa_hotel");
+    assert.equal(r.datos.infoPorHotel[22]?.infanteCargo, false, "sin tarifa de infante: tarifa_hotel sí falló, queda gratis (fail-closed de negocio, no error silenciado)");
+  });
+
+  test("falla SOLO hotel_acomodaciones: la tarifa de infante válida se conserva", async () => {
+    const filas = [filaBase({ modulo: "dinamico", hotel_id: 22, fecha_ida: MANIANA })];
+    const sb = clienteFalso(
+      tablasBase({
+        hoteles: { data: [{ id: 22, estrellas: 3, clasificacion: null, descripcion: null, ubicacion: null, video_url: null, pax_min: 1, pax_max: 4, edad_nino_min: null, edad_nino_max: null, edad_infante_min: null, edad_infante_max: null, nino_nota: null, adults_only: false, pet_friendly: false, pet_costo_neto: 0, pet_costo_desc: null, pet_nota: null }], error: null },
+        hotel_acomodaciones: { data: null, error: { code: "XX000" } },
+        tarifa_hotel: { data: [{ hotel_id: 22, neto_infante: 50000, nota_infante: "Comparte cama" }], error: null },
+      }),
+      filas
+    );
+    const r = await cargarDatosTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.datos.capPorHotel[22]?.acom.length, 0, "sin acomodaciones: hotel_acomodaciones sí falló (capPorHotel existe por la consulta hoteles, pero sin acom)");
+    assert.equal(r.datos.infoPorHotel[22]?.infanteCargo, true, "la tarifa de infante válida NO debe perderse por un fallo ajeno en hotel_acomodaciones");
+    assert.equal(r.datos.infoPorHotel[22]?.infanteNota, "Comparte cama");
+  });
+});
+
 describe("cargarDatosTarifario() — más de 1.000 filas cargan completas, sin duplicar ni perder ninguna (equivalencia a escala)", () => {
   test("1500 filas de bloqueo (todas con fecha futura, sin hotel/servicio/empaquetado): todas quedan visibles, ningún id duplicado", async () => {
     const filas: FilaTarifario[] = Array.from({ length: 1500 }, (_, i) =>

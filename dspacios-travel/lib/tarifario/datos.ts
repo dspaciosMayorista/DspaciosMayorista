@@ -160,20 +160,32 @@ export async function cargarDatosTarifario(
         admin.from("cupos_por_bloqueo").select("id, cupos_disponibles").in("id", bloqueoIds),
         admin.from("bloqueos_vuelo").select("id, origen, ruta").in("id", bloqueoIds),
       ]);
-      return { cup, blo, error: e1 ?? e2 ?? null };
+      // ⚠️ Revisión posterior (defecto confirmado): antes un `error: e1 ??
+      // e2 ?? null` combinado descartaba AMBOS resultados si CUALQUIERA de
+      // las dos fallaba — un fallo puntual de `bloqueos_vuelo` borraba
+      // también los cupos ya obtenidos correctamente. VistaBooking.tsx/
+      // TarifarioPublic.tsx tratan `cuposPorBloqueo[id] === undefined` como
+      // "disponibilidad desconocida" y pueden mostrar una salida como
+      // agotada — así que cada consulta se conserva de forma INDEPENDIENTE:
+      // un cupo válido sobrevive aunque el origen falle, y viceversa.
+      return { cup, blo, e1, e2 };
     })(),
     admin ? filtrarTarifarioVencidas(admin, filas) : null,
   ]);
 
   if (resCupos) {
-    if (resCupos.error) {
+    if (resCupos.e1) {
       _huboErrorAux = true;
-      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_cupos_o_bloqueos_vuelo", resCupos.error);
-      // Best-effort: sin error el enriquecimiento de cupos/origen queda
-      // vacío (nunca se inventa un número) — no bloquea la página, el
-      // dato solo falta.
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_cupos_por_bloqueo", resCupos.e1);
+      // Best-effort: sin error el enriquecimiento de cupos queda vacío
+      // (nunca se inventa un número) — no bloquea la página, el dato solo falta.
     } else {
       for (const c of resCupos.cup ?? []) cuposPorBloqueo[c.id as number] = Number(c.cupos_disponibles) || 0;
+    }
+    if (resCupos.e2) {
+      _huboErrorAux = true;
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_bloqueos_vuelo_origen", resCupos.e2);
+    } else {
       for (const b of resCupos.blo ?? []) {
         const ori = (b.origen ?? "").trim() || (b.ruta ? b.ruta.split("-")[0].trim() : "");
         if (ori) origenPorBloqueo[b.id as number] = ori.toUpperCase();
@@ -303,7 +315,13 @@ export async function cargarDatosTarifario(
             admin.from("hotel_acomodaciones").select("hotel_id, acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").in("hotel_id", hotelIds),
             admin.from("tarifa_hotel").select("hotel_id, neto_infante, nota_infante").in("hotel_id", hotelIds),
           ]);
-          return { acs, tarInfante, error: e1 ?? e2 ?? null };
+          // ⚠️ Revisión posterior (mismo defecto que cupos/origen): las dos
+          // consultas se conservan de forma INDEPENDIENTE — una acomodación
+          // válida sobrevive aunque falle la tarifa de infante, y una
+          // tarifa de infante válida sobrevive aunque falle la
+          // acomodación. Antes un `error` combinado descartaba ambos
+          // resultados ante cualquier fallo puntual.
+          return { acs, tarInfante, e1, e2 };
         })()
       : null,
     // Foto de portada por servicio adicional (tour/receptivo).
@@ -349,14 +367,19 @@ export async function cargarDatosTarifario(
   }
 
   if (resAcomInfante) {
-    if (resAcomInfante.error) {
+    if (resAcomInfante.e1) {
       _huboErrorAux = true;
-      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_hotel_acomodaciones_o_tarifa_infante", resAcomInfante.error);
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_hotel_acomodaciones", resAcomInfante.e1);
     } else {
       for (const a of resAcomInfante.acs ?? []) {
         const slot = (capPorHotel[a.hotel_id] ??= { paxMin: null, paxMax: null, acom: [] });
         slot.acom.push(a as unknown as AcomConfig);
       }
+    }
+    if (resAcomInfante.e2) {
+      _huboErrorAux = true;
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_tarifa_infante", resAcomInfante.e2);
+    } else {
       for (const r of resAcomInfante.tarInfante ?? []) {
         const slot = infoPorHotel[r.hotel_id];
         if (!slot) continue;

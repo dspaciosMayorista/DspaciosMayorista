@@ -57,8 +57,12 @@ export default async function TarifarioInternoPage() {
       // Oculta tarifas de hotel con vigencia de compra vencida (igual que el
       // público: lo vencido no aparece). El histórico se consulta en el
       // detalle del hotel. Best-effort: un error aquí NO aborta la página
-      // (los precios simplemente quedan sin el filtro extra de vigencia
-      // vieja) pero SÍ queda registrado como resultado=error, nunca "ok".
+      // completa (el resto del tarifario sigue mostrándose), pero
+      // `filtrarTarifarioVencidas` FALLA CERRADO ante un error técnico — las
+      // filas de hotel verificables (bloqueo/porción con fecha) se OCULTAN
+      // por completo, nunca se dejan "sin el filtro" ni se publican sin
+      // poder verificar su vigencia — y queda registrado como
+      // resultado=error, nunca "ok".
       const _cronoVig = iniciarCronometro();
       let huboVigencia = false;
       let filasFiltradas = pag.filas;
