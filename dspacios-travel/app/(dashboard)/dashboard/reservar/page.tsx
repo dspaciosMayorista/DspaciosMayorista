@@ -4,15 +4,20 @@ import { CartDrawer } from "@/app/tarifario/CartDrawer";
 import { CartProvider } from "@/lib/cart/CartContext";
 import { getProgramasResumen } from "@/lib/programas";
 import { cargarDatosTarifario } from "@/lib/tarifario/datos";
+import { orquestarCargaReservar } from "@/lib/tarifario/orquestacion";
 import { liberarVencidas } from "./actions";
 import {
-  generarFlujoId, registrarEtapa, registrarDatoPagina,
-  siguienteInvocacionProceso, tamanoAproximadoBytes, iniciarCronometro,
+  generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
+  siguienteInvocacionProceso, medirPayloadSiHabilitado, textoEstimacionPayload, iniciarCronometro,
 } from "@/lib/observabilidad/medicion";
 
 export const dynamic = "force-dynamic";
 
 const FLUJO = "pagina_reservar";
+
+// Mensaje público FIJO — nunca "no hay tarifas" cuando en realidad falló la
+// consulta (revisión posterior, defecto "PAGINACIÓN IGNORA ERRORES").
+const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este momento. Intenta nuevamente en unos segundos.";
 
 // Diagnóstico del incidente de ~13s en /dashboard/reservar, /dashboard/
 // tarifario y /tarifario (las tres comparten las mismas fuentes pesadas,
@@ -23,48 +28,96 @@ const FLUJO = "pagina_reservar";
 //    sillas vencidas (cambia `sillas`), y `cargarDatosTarifario()` lee cupos
 //    calculados a partir de esas mismas sillas — paralelizarlo arriesgaría
 //    leer cupos ANTES de liberar, mostrando menos disponibilidad de la real.
+//    La secuencia real (nunca se invoca cargarTarifario/cargarProgramas
+//    hasta que liberarVencidas TERMINÓ) la garantiza
+//    `orquestarCargaReservar()` (lib/tarifario/orquestacion.ts, función
+//    PURA probada con promesas diferidas en
+//    pruebas/tarifarioOrquestacion.test.ts) — no un comentario ni el orden
+//    visual del código.
 //  - `tarifario_y_programas` — cargarDatosTarifario() y getProgramasResumen()
 //    NO dependen una de la otra (ninguna lee lo que la otra escribe ni usa su
-//    resultado), así que arrancan CONCURRENTEMENTE con Promise.all. Sus
+//    resultado), así que arrancan CONCURRENTEMENTE (mismo orquestador). Sus
 //    propias etapas internas (carga_paginada/filtro_vigencia/datos_
 //    auxiliares para la primera) se miden aparte dentro de
 //    `cargarDatosTarifario()`.
-//  - `total` — todo el Server Component, incluida la serialización de props
-//    hacia los Client Components (CartDrawer/TarifarioPublic).
+//  - `preparacion_servidor` — el Server Component hasta el `return` del JSX.
+//    NO incluye serialización RSC real, transmisión, hidratación ni pintado
+//    del navegador (revisión posterior, defecto "MEDICIÓN 'TOTAL'
+//    INCORRECTA" — antes se llamaba "total", nombre que sugería falsamente
+//    cubrir la respuesta completa).
 export default async function ReservarPage() {
   const flujoId = generarFlujoId();
   const invocacion = siguienteInvocacionProceso(FLUJO);
-  const _cronoTotal = iniciarCronometro();
+  const _cronoPrep = iniciarCronometro();
 
   const sb = await createClient();
 
-  // Liberar reservas vencidas (perezoso) al entrar — medido aparte, ver nota arriba.
-  const _cronoLiberar = iniciarCronometro();
-  const liberado = await liberarVencidas().catch(() => ({ ok: false, liberadas: 0 }));
-  registrarEtapa(FLUJO, flujoId, "liberar_vencidas", _cronoLiberar(), liberado.ok ? "ok" : "error");
-  registrarDatoPagina(FLUJO, flujoId, "liberar_vencidas", `liberadas=${liberado.liberadas}`);
+  // ⚠️ Ningún cierre de abajo reasigna una variable externa (regla
+  // `react-hooks/immutability` del linter de React Compiler — trata este
+  // Server Component como si fuera a re-renderizar, y prohíbe mutar
+  // variables capturadas por un cierre incluso aunque en la práctica un
+  // Server Component solo corre una vez por request). Cada cierre es puro:
+  // recibe lo que necesita por clausura de solo-lectura (`sb`, `FLUJO`,
+  // `flujoId`) y DEVUELVE todo lo que el cuerpo de la función necesita
+  // después, incluida su propia duración — nunca escribe a una `let` de
+  // afuera. `msTotal - msLiberar` reconstruye la duración del tramo
+  // concurrente (cargarTarifario/cargarProgramas) sin necesitar un
+  // cronómetro que arranque DENTRO de un cierre y se lea DESDE afuera.
+  const _cronoTotal = iniciarCronometro();
+  const { liberado, datos: resDatos, programas: resProgramas } = await orquestarCargaReservar({
+    liberarVencidas: async () => {
+      // Liberar reservas vencidas (perezoso) al entrar — medido aparte, ver nota arriba.
+      const _cronoLiberar = iniciarCronometro();
+      const r = await liberarVencidas().catch(() => ({ ok: false, liberadas: 0 }));
+      const ms = _cronoLiberar();
+      registrarEtapa(FLUJO, flujoId, "liberar_vencidas", ms, r.ok ? "ok" : "error");
+      registrarDatoPagina(FLUJO, flujoId, "liberar_vencidas", `liberadas=${r.liberadas}`);
+      return { ...r, ms };
+    },
+    cargarTarifario: () => cargarDatosTarifario(sb, FLUJO, flujoId),
+    // interno: activos aunque no publicados (igual que /dashboard/tarifario)
+    cargarProgramas: () => getProgramasResumen(sb, false),
+  });
+  registrarEtapa(
+    FLUJO, flujoId, "tarifario_y_programas",
+    Math.max(0, _cronoTotal() - liberado.ms),
+    resDatos.ok && !resProgramas.error ? "ok" : "error"
+  );
 
-  const _cronoCarga = iniciarCronometro();
-  const [datos, programas] = await Promise.all([
-    cargarDatosTarifario(sb, FLUJO, flujoId),
-    getProgramasResumen(sb, false), // interno: activos aunque no publicados (igual que /dashboard/tarifario)
-  ]);
-  registrarEtapa(FLUJO, flujoId, "tarifario_y_programas", _cronoCarga(), "ok");
-
+  if (!resDatos.ok) {
+    // Nunca "no hay tarifas publicadas" cuando en realidad la consulta
+    // falló — eso afirmaría algo falso. El detalle técnico ya quedó
+    // saneado en el log dentro de cargarDatosTarifario() (registrarErrorTecnico).
+    return (
+      <CartProvider>
+        <div className="mx-auto max-w-6xl p-4 md:p-8">
+          <h1 className="mb-1 text-2xl font-semibold text-gray-900">Reservar</h1>
+          <p className="py-20 text-center text-red-500">{MSG_ERROR_CARGAR_TARIFARIO}</p>
+        </div>
+      </CartProvider>
+    );
+  }
   const {
     filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
     infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, incluidosPorPaquete,
-  } = datos;
+  } = resDatos.datos;
+  if (resProgramas.error) {
+    registrarErrorTecnico(FLUJO, flujoId, "programas_resumen", "error_getProgramasResumen", resProgramas.error);
+  }
+  const programas = resProgramas.programas;
 
+  // Costo de la propia instrumentación (revisión posterior, defecto "COSTO
+  // DE LA PROPIA INSTRUMENTACIÓN"): cada valor se estima UNA sola vez y se
+  // reutiliza — la estimación en sí queda detrás de
+  // `DIAGNOSTICO_MEDIR_PAYLOAD=1` (ver el helper medirPayloadSiHabilitado).
+  const estDatos = medirPayloadSiHabilitado(resDatos.datos);
+  const estProgramas = medirPayloadSiHabilitado(programas);
+  registrarDatoPagina(FLUJO, flujoId, "programas_resumen", `programas=${programas.length} ${textoEstimacionPayload(estProgramas)}`);
   registrarDatoPagina(
-    FLUJO, flujoId, "programas_resumen",
-    `programas=${programas.length} payload_bytes=${tamanoAproximadoBytes(programas)}`
+    FLUJO, flujoId, "preparacion_servidor",
+    `invocacion_proceso=${invocacion} datos_estimacion=${textoEstimacionPayload(estDatos)} programas_estimacion=${textoEstimacionPayload(estProgramas)}`
   );
-  registrarDatoPagina(
-    FLUJO, flujoId, "total",
-    `invocacion_proceso=${invocacion} payload_bytes=${tamanoAproximadoBytes(datos) + tamanoAproximadoBytes(programas)}`
-  );
-  registrarEtapa(FLUJO, flujoId, "total", _cronoTotal(), "ok");
+  registrarEtapa(FLUJO, flujoId, "preparacion_servidor", _cronoPrep(), "ok");
 
   return (
     <CartProvider>

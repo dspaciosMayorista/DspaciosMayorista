@@ -214,15 +214,71 @@ export function iniciarCronometro(): () => number {
   return () => Math.round(performance.now() - inicio);
 }
 
-// Tamaño aproximado (bytes UTF-8) del payload que una página serializa hacia
-// sus Client Components — proxy razonable del tamaño real del RSC payload
-// (que usa su propio formato de wire, no JSON puro), pero del mismo orden de
-// magnitud y útil para comparar entre rutas/despliegues. Nunca se registra
-// el contenido, solo el tamaño.
+// ⚠️ ESTIMACIÓN SOLO DE PROPS, NO DEL PAYLOAD RSC REAL (revisión posterior,
+// defecto "TAMAÑO RSC" confirmado): esta función serializa el objeto de
+// props con JSON.stringify y mide esos bytes — es una aproximación del
+// tamaño de los DATOS, útil para comparar entre rutas/despliegues, pero NO
+// es el tamaño real de lo que React Server Components transmite al
+// navegador. El wire format de RSC (Flight) no es JSON: usa su propio
+// formato con referencias, streaming por chunks y deduplicación de
+// estructuras repetidas — puede ser bastante más chico (o más grande, si
+// hay overhead de framing) que el JSON.stringify equivalente. Cualquier
+// reporte que use este número debe decir "estimación JSON de props", nunca
+// "tamaño de la respuesta"/"tamaño RSC". Nunca se registra el contenido,
+// solo el conteo de bytes.
 export function tamanoAproximadoBytes(valor: unknown): number {
   try {
     return Buffer.byteLength(JSON.stringify(valor) ?? "", "utf8");
   } catch {
     return -1;
   }
+}
+
+// ── Costo de la propia instrumentación (revisión posterior — defecto
+// "COSTO DE LA PROPIA INSTRUMENTACIÓN" confirmado) ──────────────────────────
+// `tamanoAproximadoBytes()` serializa con JSON.stringify — para el objeto
+// `datos` de Vista Booking (puede traer >1000 filas + varios diccionarios
+// auxiliares) esa serialización NO es gratis, y antes de esta corrección
+// varias páginas la invocaban dos veces para el MISMO valor (una vez para
+// loguearlo agrupado con "programas", otra vez sola) — el doble costo
+// ocurría en CADA request, permanentemente, solo para diagnosticar. Reglas
+// desde esta ronda:
+//   1) cada valor se serializa COMO MÁXIMO UNA VEZ por request — el caller
+//      guarda el resultado en una constante y la reutiliza en todas las
+//      líneas de log que la necesiten (nunca volver a llamar esta función
+//      con el mismo valor);
+//   2) la propia estimación queda DETRÁS de una variable de entorno de
+//      diagnóstico (`DIAGNOSTICO_MEDIR_PAYLOAD=1`) — sin ella, no se
+//      serializa nada y el costo es cero; encenderla es una decisión
+//      explícita para una sesión de diagnóstico puntual, no el default;
+//   3) se mide también cuánto tarda la propia estimación (`msEstimacion`),
+//      para poder ver en los logs si la "ayuda" de diagnóstico se volvió
+//      parte del problema.
+// `performance.now()` es seguro aquí: este módulo no es un Server Component
+// (no retorna JSX), así que `react-hooks/purity` no lo marca como impuro.
+const DIAGNOSTICO_MEDIR_PAYLOAD = process.env.DIAGNOSTICO_MEDIR_PAYLOAD === "1";
+
+export type EstimacionPayload = { bytes: number; msEstimacion: number };
+
+/**
+ * Estima el tamaño (bytes UTF-8, ver advertencia de `tamanoAproximadoBytes`)
+ * de `valor` SOLO si `DIAGNOSTICO_MEDIR_PAYLOAD=1` está activo en el
+ * entorno — de lo contrario devuelve `null` sin tocar `valor` en absoluto
+ * (ni siquiera intenta serializarlo). Llamar UNA vez por valor distinto y
+ * reutilizar el resultado.
+ */
+export function medirPayloadSiHabilitado(valor: unknown): EstimacionPayload | null {
+  if (!DIAGNOSTICO_MEDIR_PAYLOAD) return null;
+  const inicio = performance.now();
+  const bytes = tamanoAproximadoBytes(valor);
+  const msEstimacion = Math.round(performance.now() - inicio);
+  return { bytes, msEstimacion };
+}
+
+// Texto listo para insertar en el `detalle` de `registrarDatoPagina()` —
+// evita que cada page.tsx repita el mismo `?? "omitido"`/formato.
+export function textoEstimacionPayload(estimacion: EstimacionPayload | null): string {
+  return estimacion
+    ? `payload_bytes_estimado=${estimacion.bytes} estimacion_ms=${estimacion.msEstimacion}`
+    : "payload_bytes_estimado=omitido(DIAGNOSTICO_MEDIR_PAYLOAD no activo)";
 }

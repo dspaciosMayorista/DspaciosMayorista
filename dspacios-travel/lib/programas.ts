@@ -56,8 +56,25 @@ export function pvpPrograma(neto: number, opt: PvpOpciones): number {
   return redondearPvp(sub, opt.moneda);
 }
 
+export type ResultadoProgramasResumen = {
+  programas: ProgramaResumen[];
+  /**
+   * `null` = sin error. Si la consulta CRÍTICA de `programas` falla
+   * técnicamente, `programas` viene `[]` (igual que "sin programas activos")
+   * pero `error` trae el error crudo para que el caller distinga los dos
+   * casos y loguee resultado=error en vez de "ok" — revisión posterior,
+   * defecto "RESULTADOS OK FALSOS" (getProgramasResumen nombrada
+   * explícitamente). Si `programas` sí resuelve pero alguna de las
+   * consultas de ENRIQUECIMIENTO (categorías, ciudades, precios, salidas)
+   * falla, `programas` viene con esa parte degradada best-effort (ciudades
+   * vacías y/o sin "Desde" calculado — nunca un precio INVENTADO) y `error`
+   * trae el primer error encontrado, en el mismo orden en que se consultan.
+   */
+  error: unknown;
+};
+
 /** Resumen de programas para el tarifario (con precio "desde" en PVP). */
-export async function getProgramasResumen(sb: SB, soloPublicados = true): Promise<ProgramaResumen[]> {
+export async function getProgramasResumen(sb: SB, soloPublicados = true): Promise<ResultadoProgramasResumen> {
   let q = sb
     .from("programas")
     .select(
@@ -65,21 +82,31 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
     )
     .eq("activo", true);
   if (soloPublicados) q = q.eq("publicado", true);
-  const { data: programas } = await q.order("nombre");
-  if (!programas?.length) return [];
+  const { data: programas, error: errorProgramas } = await q.order("nombre");
+  if (errorProgramas) return { programas: [], error: errorProgramas };
+  if (!programas?.length) return { programas: [], error: null };
 
+  // ⚠️ Revisión posterior — defecto "OPTIMIZACIÓN INTERNA INCOMPLETA"
+  // (getProgramasResumen nombrada explícitamente): `categorias`, `ciudades`
+  // y `salidas` dependen SOLO de `ids` (el id de programa), NUNCA del
+  // resultado de otra — antes corrían las 4 restantes en secuencia. Ahora
+  // las tres arrancan JUNTAS; `precios` sí depende de `catIds` (que sale de
+  // `categorias`), así que se queda en su propio paso, después.
   const ids = programas.map((p) => p.id);
-  const { data: cats } = await sb.from("programa_categorias").select("id, programa_id").in("programa_id", ids);
+  const [
+    { data: cats, error: errorCats },
+    { data: ciudadesRows, error: errorCiudades },
+    { data: salidas, error: errorSalidas },
+  ] = await Promise.all([
+    sb.from("programa_categorias").select("id, programa_id").in("programa_id", ids),
+    sb.from("programa_ciudades").select("programa_id, nombre, orden").in("programa_id", ids).order("orden"),
+    sb.from("programa_salidas").select("programa_id, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud").in("programa_id", ids),
+  ]);
+
   const catToProg = new Map<number, number>();
   for (const c of cats ?? []) catToProg.set(c.id, c.programa_id);
   const catIds = [...catToProg.keys()];
 
-  // Ciudades por programa (para el filtro de destino en la vitrina).
-  const { data: ciudadesRows } = await sb
-    .from("programa_ciudades")
-    .select("programa_id, nombre, orden")
-    .in("programa_id", ids)
-    .order("orden");
   const ciudadesPorProg = new Map<number, string[]>();
   for (const c of ciudadesRows ?? []) {
     const arr = ciudadesPorProg.get(c.programa_id) ?? [];
@@ -93,12 +120,15 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
     const prev = minNeto.get(pid);
     if (prev == null || neto < prev) minNeto.set(pid, neto);
   };
+
+  let errorPrecios: unknown = null;
   if (catIds.length) {
-    const { data: precios } = await sb
+    const { data: precios, error: ePrecios } = await sb
       .from("programa_precios")
       .select("categoria_id, neto")
       .in("categoria_id", catIds)
       .not("neto", "is", null);
+    errorPrecios = ePrecios;
     for (const row of precios ?? []) {
       const pid = catToProg.get(row.categoria_id);
       if (pid == null) continue;
@@ -106,10 +136,6 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
     }
   }
   // Modo "salida": el mínimo sale de programa_salidas (neto por acomodación).
-  const { data: salidas } = await sb
-    .from("programa_salidas")
-    .select("programa_id, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud")
-    .in("programa_id", ids);
   for (const s of salidas ?? []) {
     if (s.bajo_solicitud) continue;
     for (const v of [s.neto_doble, s.neto_triple, s.neto_multiple, s.neto_sencilla, s.neto_nino]) {
@@ -117,7 +143,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
     }
   }
 
-  return programas.map((p) => {
+  const resultado = programas.map((p) => {
     const neto = minNeto.get(p.id);
     // El "Desde" manual de la cabecera manda sobre el mínimo calculado de la matriz.
     const desdeManual = p.desde_precio != null && p.desde_precio > 0 ? Number(p.desde_precio) : null;
@@ -144,6 +170,8 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
       ciudades: ciudadesPorProg.get(p.id) ?? [],
     };
   });
+
+  return { programas: resultado, error: errorCats ?? errorCiudades ?? errorPrecios ?? errorSalidas ?? null };
 }
 
 export type ProgramaDetalle = {

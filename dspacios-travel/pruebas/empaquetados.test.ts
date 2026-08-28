@@ -565,7 +565,13 @@ describe("lib/tarifario/datos.ts — vigencia de empaquetados en LECTURA del tar
 
   test("aún no inicia / vencido: ambos casos quedan cubiertos por la misma llamada a empaquetadoVigente (fechas inclusivas, America/Bogota — ver reservarOrigen.test.ts)", () => {
     assert.match(bloque, /empaquetadoVigente/);
-    assert.match(datosSrc, /import \{ empaquetadoVigente, hoyBogota \} from "@\/lib\/reservar\/origen";/);
+    // Revisión posterior (diagnóstico de carga del tarifario, defecto
+    // "EQUIVALENCIA FUNCIONAL"): el import de valor pasó de `@/lib/reservar/
+    // origen` a un RELATIVO `../reservar/origen.ts` — necesario para poder
+    // ejecutar este archivo directo bajo `node --test` (el alias `@/` solo
+    // resuelve en build de Next.js/TypeScript, no bajo node plano) — mismo
+    // módulo, mismo comportamiento, solo la forma del specifier cambia.
+    assert.match(datosSrc, /import \{ empaquetadoVigente, hoyBogota \} from "\.\.\/reservar\/origen\.ts";/);
   });
 
   test("desactivado DESPUÉS de generar: el filtro corre en LECTURA (esta función), no solo al regenerar — mismo mecanismo que activo", () => {
@@ -577,7 +583,19 @@ describe("lib/tarifario/datos.ts — vigencia de empaquetados en LECTURA del tar
   });
 
   test("FALLA CERRADA: sin SUPABASE_SERVICE_ROLE_KEY, las filas de empaquetado también se ocultan (antes se mostraban sin chequeo)", () => {
-    assert.match(bloque, /if \(!process\.env\.SUPABASE_SERVICE_ROLE_KEY\) \{\s*\n\s*filas = filas\.filter\(\(f\) => f\.empaquetado_id == null\);/);
+    // Revisión posterior (diagnóstico de carga del tarifario, defecto
+    // "OPTIMIZACIÓN INTERNA INCOMPLETA"): el chequeo directo de
+    // `process.env.SUPABASE_SERVICE_ROLE_KEY` se reemplazó por `!admin`
+    // (un solo admin client, calculado UNA vez a partir de esa MISMA
+    // variable de entorno). Revisión posterior #2 (defecto "EQUIVALENCIA
+    // FUNCIONAL"): ese cálculo se movió al valor por DEFECTO del 4º
+    // parámetro de la función (`admin: SupabaseClient<Database> | null =
+    // process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null`)
+    // — mismo comportamiento exacto para las 3 páginas reales (nunca pasan
+    // ese argumento), pero permite inyectar un admin FALSO en pruebas
+    // (pruebas/tarifarioDatos.test.ts) sin tocar el entorno.
+    assert.match(datosSrc, /admin: SupabaseClient<Database> \| null = process\.env\.SUPABASE_SERVICE_ROLE_KEY \? createAdminClient\(\) : null/, "admin debe derivarse de SUPABASE_SERVICE_ROLE_KEY una sola vez, ahora como valor por defecto del parámetro");
+    assert.match(bloque, /if \(!admin\) \{\s*\n\s*filas = filas\.filter\(\(f\) => f\.empaquetado_id == null\);/);
   });
 });
 
