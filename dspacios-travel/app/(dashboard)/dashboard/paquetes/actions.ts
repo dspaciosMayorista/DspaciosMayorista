@@ -16,7 +16,6 @@ import {
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
-import { invalidarCatalogoTarifario } from "@/lib/tarifario/catalogoCache";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -687,13 +686,6 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   revalidatePath("/tarifario");
-  // Único chokepoint real de escritura de `tarifario_resultado` — se llama
-  // también, indirectamente, desde regenerarTarifariosDe{Hotel,Bloqueo,
-  // Servicio}() (todas invocan esta misma función por cada paquete
-  // afectado), así que invalidar aquí cubre las 4 vías sin repetir la
-  // llamada en cada una. Solo se llega aquí tras pasar TODOS los chequeos
-  // de error de arriba — nunca se invalida una escritura fallida.
-  invalidarCatalogoTarifario();
   return { ok: true, id: filas.length };
 }
 

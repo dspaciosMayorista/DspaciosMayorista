@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { Star, Plane, Bus } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -8,6 +8,11 @@ import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
+import { buscarPaginaTarifarioAccion } from "./tarifario-actions";
+import { type ModuloTarifario } from "@/lib/tarifario/consulta";
+import {
+  type Enriquecimiento, fusionarEnriquecimiento, moduloDeSub, subDeModulo, pageSizeDe,
+} from "@/lib/tarifario/vistaClienteHelpers";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
 
@@ -113,9 +118,9 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
   );
 }
 
-type ModuloKey = FilaTarifario["modulo"] | "programas";
+export type ModuloKey = FilaTarifario["modulo"] | "programas";
 
-type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; infanteCargo?: boolean; infanteNota?: string | null; ninoNota?: string | null; adultsOnly?: boolean; petFriendly?: boolean; petCargo?: boolean; petCostoDesc?: string | null; petNota?: string | null }>;
+export type InfoHotel = Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; infanteCargo?: boolean; infanteNota?: string | null; ninoNota?: string | null; adultsOnly?: boolean; petFriendly?: boolean; petCargo?: boolean; petCostoDesc?: string | null; petNota?: string | null }>;
 
 // Texto de rango de edad de niño/infante (helper centralizado en lib).
 // Tolera `info` undefined (hoteles sin config) devolviendo null.
@@ -186,7 +191,14 @@ function coincideFiltro(f: FilaTarifario, q: string, fCat: string, fReg: string)
 }
 
 export function TarifarioPublic({
-  filas,
+  filasIniciales,
+  totalInicial = 0,
+  // `false` = todavía no se hizo NINGUNA búsqueda (uso en /dashboard/reservar:
+  // la carga inicial no debe traer tarifario — el usuario elige criterios y
+  // pulsa "Buscar"). `true` = ya se cargó una primera página server-side
+  // (uso en /tarifario y /dashboard/reservar tras la primera búsqueda) y el
+  // resto de la exploración es progresiva ("Cargar más"/cambiar filtros).
+  cargaInicial = true,
   programas = [],
   puedeReservar = false,
   cuposPorBloqueo = {},
@@ -200,7 +212,9 @@ export function TarifarioPublic({
   incluidosPorPaquete = {},
   filasAddon = [],
 }: {
-  filas: FilaTarifario[];
+  filasIniciales: FilaTarifario[];
+  totalInicial?: number;
+  cargaInicial?: boolean;
   programas?: ProgramaResumen[];
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
@@ -222,8 +236,87 @@ export function TarifarioPublic({
   const [fCat, setFCat] = useState("");
   const [fReg, setFReg] = useState("");
   const [fAcom, setFAcom] = useState("");
+  const [moduloSel, setModuloSel] = useState<ModuloKey>("bloqueo");
 
-  // Opciones únicas para los selects (de toda la base, ordenadas).
+  // ── Carga progresiva del catálogo (ronda "carga bajo demanda", medición
+  // real: la versión anterior descargaba TODO el catálogo — 17.197 filas,
+  // ~11,1 MB — de una sola vez; Next ni siquiera pudo cachear ese bloque
+  // ("items over 2MB can not be cached"), así que cada visita repetía el
+  // trabajo completo). Ahora `filas`/`enr` arrancan con lo que trajo el
+  // servidor para la PRIMERA página (chica, o vacía en /dashboard/reservar)
+  // y crecen bajo demanda: cambiar de filtro/módulo REEMPLAZA (nueva
+  // búsqueda, pagina 1), "Cargar más" AGREGA (misma búsqueda, página
+  // siguiente). `buscarPaginaTarifarioAccion` (Server Action) valida los
+  // filtros como `unknown` antes de tocar la base — nunca se manda una
+  // consulta sin acotar.
+  const [filas, setFilas] = useState(filasIniciales);
+  const [enr, setEnr] = useState<Enriquecimiento>({
+    cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
+    infoPorHotel, planesInfo, capPorHotel, ventanaPorPaquete, incluidosPorPaquete, filasAddon,
+  });
+  const [pagina, setPagina] = useState(1);
+  const [total, setTotal] = useState(totalInicial);
+  const [haBuscado, setHaBuscado] = useState(cargaInicial);
+  const [errorCarga, setErrorCarga] = useState("");
+  const [pending, startTransicion] = useTransition();
+  const montadoRef = useRef(false);
+
+  // `moduloSel` solo toma valores de MODULOS (bloqueo/dinamico/porcion_terrestre/
+  // servicios) — coincide exactamente con ModuloTarifario, nunca "programas"
+  // (esa es una pestaña de `vista`, un estado aparte).
+  const moduloActivo: ModuloTarifario = moduloSel as ModuloTarifario;
+
+  async function ejecutarBusqueda(paginaPedida: number, modo: "reemplazar" | "agregar") {
+    setErrorCarga("");
+    const res = await buscarPaginaTarifarioAccion({
+      texto: q, categoria: fCat, regimen: fReg, modulo: moduloActivo,
+      page: paginaPedida, pageSize: pageSizeDe(moduloActivo),
+    });
+    if (!res.ok) {
+      setErrorCarga(res.error);
+      return;
+    }
+    const nuevoEnr: Enriquecimiento = {
+      cuposPorBloqueo: res.datos.cuposPorBloqueo, origenPorBloqueo: res.datos.origenPorBloqueo,
+      fotosPorHotel: res.datos.fotosPorHotel, fotosPorServicio: res.datos.fotosPorServicio,
+      infoPorHotel: res.datos.infoPorHotel, planesInfo: res.datos.planesInfo, capPorHotel: res.datos.capPorHotel,
+      ventanaPorPaquete: res.datos.ventanaPorPaquete, incluidosPorPaquete: res.datos.incluidosPorPaquete,
+      filasAddon: res.datos.filasAddon,
+    };
+    if (modo === "reemplazar") {
+      setFilas(res.datos.filasVisibles);
+      setEnr(nuevoEnr);
+    } else {
+      setFilas((prev) => [...prev, ...res.datos.filasVisibles]);
+      setEnr((prev) => fusionarEnriquecimiento(prev, nuevoEnr));
+    }
+    setPagina(res.page);
+    setTotal(res.total);
+    setHaBuscado(true);
+  }
+
+  function buscar() {
+    startTransicion(() => { void ejecutarBusqueda(1, "reemplazar"); });
+  }
+  function cargarMas() {
+    startTransicion(() => { void ejecutarBusqueda(pagina + 1, "agregar"); });
+  }
+
+  // Búsqueda EN VIVO (debounced) solo cuando ya hubo una carga inicial
+  // server-side (/tarifario, o /dashboard/reservar tras el primer "Buscar").
+  // En /dashboard/reservar, ANTES de la primera búsqueda, cambiar estos
+  // campos no dispara ninguna consulta — el usuario pulsa "Buscar" a propósito.
+  useEffect(() => {
+    if (!montadoRef.current) { montadoRef.current = true; return; }
+    if (!haBuscado) return;
+    const t = setTimeout(() => buscar(), 450);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, fCat, fReg, moduloActivo]);
+
+  // Opciones únicas para los selects — de lo YA CARGADO (progresivo, no del
+  // catálogo completo: si el valor buscado todavía no cargó, no aparece en
+  // el desplegable hasta que una página lo traiga).
   const cats = useMemo(
     () => [...new Set(filas.map((f) => f.categoria).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b)),
     [filas]
@@ -239,12 +332,12 @@ export function TarifarioPublic({
   );
   const hayFiltro = !!(q.trim() || fCat || fReg || fAcom);
 
-  const tabs: { key: ModuloKey; label: string }[] = MODULOS.filter((m) =>
-    filasFiltradas.some((f) => f.modulo === m.key)
-  );
-  const [moduloSel, setModuloSel] = useState<ModuloKey>("bloqueo");
-  // Si el módulo activo se queda sin resultados por el filtro, salta al primero con datos.
-  const modulo = tabs.some((t) => t.key === moduloSel) ? moduloSel : (tabs[0]?.key ?? "bloqueo");
+  const tabs: { key: ModuloKey; label: string }[] = MODULOS;
+  const modulo = moduloSel;
+  const hayMas = filas.length < total;
+  // /dashboard/reservar antes de la primera búsqueda: no se muestra ningún
+  // listado (ni "sin resultados", que afirmaría algo falso) — solo el CTA.
+  const mostrarCta = !haBuscado && vista !== "programas";
 
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700";
 
@@ -305,10 +398,36 @@ export function TarifarioPublic({
         </div>
       </div>
 
+      {errorCarga && (
+        <p className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{errorCarga}</p>
+      )}
+
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
+      ) : mostrarCta ? (
+        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 py-16 text-center">
+          <p className="text-sm text-gray-500">Elige un destino/salida arriba y pulsa <b>Buscar</b> para ver hoteles y tarifas.</p>
+          <button
+            type="button"
+            onClick={buscar}
+            disabled={pending}
+            className="mt-4 rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+            style={{ backgroundColor: "var(--brand-primary)" }}
+          >
+            {pending ? "Buscando…" : "Buscar tarifas"}
+          </button>
+        </div>
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} incluidosPorPaquete={incluidosPorPaquete} filasAddon={filasAddon} />
+        <VistaBooking
+          filas={filasFiltradas}
+          fotosPorHotel={enr.fotosPorHotel} fotosPorServicio={enr.fotosPorServicio}
+          cuposPorBloqueo={enr.cuposPorBloqueo} origenPorBloqueo={enr.origenPorBloqueo}
+          puedeReservar={puedeReservar}
+          ventanaPorPaquete={enr.ventanaPorPaquete} infoPorHotel={enr.infoPorHotel}
+          planesInfo={enr.planesInfo} capPorHotel={enr.capPorHotel} soloAcom={fAcom || null}
+          incluidosPorPaquete={enr.incluidosPorPaquete} filasAddon={enr.filasAddon}
+          sub={subDeModulo(moduloSel)} onSubChange={(s) => setModuloSel(moduloDeSub(s))}
+        />
       ) : (
         <>
           {/* Tabs de módulos */}
@@ -330,18 +449,33 @@ export function TarifarioPublic({
             ))}
           </div>
 
-          {tabs.length === 0 ? (
-            <p className="py-12 text-center text-sm text-gray-400">No hay resultados para los filtros aplicados.</p>
+          {filasFiltradas.length === 0 ? (
+            <p className="py-12 text-center text-sm text-gray-400">
+              {pending ? "Buscando…" : "No hay resultados para los filtros aplicados."}
+            </p>
           ) : modulo === "bloqueo" ? (
-            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "bloqueo")} puedeReservar={puedeReservar} cuposPorBloqueo={enr.cuposPorBloqueo} soloAcom={fAcom || null} infoPorHotel={enr.infoPorHotel} planesInfo={enr.planesInfo} />
           ) : modulo === "dinamico" ? (
-            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "dinamico")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+            <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "dinamico")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={enr.infoPorHotel} planesInfo={enr.planesInfo} />
           ) : modulo === "porcion_terrestre" ? (
-            <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+            <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={enr.infoPorHotel} planesInfo={enr.planesInfo} />
           ) : (
             <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
           )}
         </>
+      )}
+
+      {!mostrarCta && vista !== "programas" && hayMas && (
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={cargarMas}
+            disabled={pending}
+            className="rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {pending ? "Cargando…" : `Cargar más (${filas.length} de ${total.toLocaleString("es-CO")})`}
+          </button>
+        </div>
       )}
 
       <p className="mt-4 text-center text-xs text-gray-400">

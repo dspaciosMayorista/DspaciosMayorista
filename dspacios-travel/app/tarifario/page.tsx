@@ -4,7 +4,9 @@ import { CartDrawer } from "./CartDrawer";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
-import { cargarDatosTarifarioCompartido, getProgramasResumenCompartido } from "@/lib/tarifario/catalogoCache";
+import { buscarPaginaTarifarioCompleta } from "@/lib/tarifario/datos";
+import { getProgramasResumen } from "@/lib/programas";
+import { PAGE_SIZE_BLOQUEO } from "@/lib/tarifario/consulta";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
   siguienteInvocacionProceso, medirPayloadSiHabilitado, textoEstimacionPayload, iniciarCronometro,
@@ -18,11 +20,7 @@ import {
 // que revalidar: nunca llega a cachearse en primer lugar). Confirmado en la
 // salida real de `npm run build` de esta rama: `/tarifario` sale marcada
 // `ƒ` (Dynamic, server-rendered on demand), no `○`/ISR — así que HOY esta
-// línea no tiene efecto de caché medible; cada visita paga el costo
-// completo de sesión + datos, sin importar cuántos segundos pasaron desde
-// la anterior. Se deja tal cual (sin tocarla ni quitarla) porque no forma
-// parte del incidente que se está diagnosticando — el problema no es "sirve
-// una respuesta vieja", es que CADA respuesta (cacheada o no) es lenta.
+// línea no tiene efecto de caché medible.
 export const revalidate = 120; // revalida cada 2 min (hoy sin efecto — ver nota arriba)
 
 const FLUJO = "pagina_tarifario_publico";
@@ -31,35 +29,29 @@ const FLUJO = "pagina_tarifario_publico";
 // falló la consulta (revisión posterior, defecto "PAGINACIÓN IGNORA ERRORES").
 const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este momento. Intenta nuevamente en unos segundos.";
 
-// Diagnóstico del incidente de ~13s: la sesión (auth.getUser + consulta de
-// perfil) se resuelve PRIMERO — de ahí sale `esAgencia`/`puedeReservar`, que
-// solo se USAN para el render, nunca para decidir QUÉ datos pedir (el
-// tarifario/programas/config_sitio son los mismos para cualquiera). Después
-// arrancan CONCURRENTEMENTE las 3 fuentes independientes: cargarDatosTarifarioCompartido,
-// getProgramasResumenCompartido y config_sitio. La secuencia real (nunca se
-// invoca ninguna de las 3 hasta que la sesión resolvió) la garantiza
-// `orquestarCargaPublica()` (lib/tarifario/orquestacion.ts, función PURA
-// probada con promesas diferidas en pruebas/tarifarioOrquestacion.test.ts)
-// — no un comentario ni el orden visual del código. La autorización (arrays
-// de roles) y el valor de `puedeReservar` NO cambian.
-//
-// ⚠️ Visitante ANÓNIMO = estado NORMAL, nunca error técnico: en
-// `resolverSesion` de abajo, `user === null` sin `authError` (el caso de
-// cualquier visitante sin sesión) toma la rama por defecto
-// (`esAgencia=false, puedeReservar=false`) y registra `resultado=ok` — el
-// único camino que registra `resultado=error` es un fallo TÉCNICO real de
-// `auth.getUser()`/la consulta de perfil (`authError`/`perfilError`
-// presentes). No se tocó esta lógica en la ronda de caché — se deja
-// documentado aquí porque la caché compartida hace que un visitante
-// anónimo y uno logueado ahora puedan compartir el MISMO catálogo cacheado
-// (correcto: el catálogo nunca dependió de la sesión, ver
-// lib/tarifario/catalogoCache.ts).
-//
-// ⚠️ CACHÉ COMPARTIDA (ronda posterior, "medición real de ~13s en preview"):
-// `cargarDatosTarifarioCompartido()`/`getProgramasResumenCompartido()`
-// (lib/tarifario/catalogoCache.ts) sirven el catálogo desde una caché
-// compartida con /dashboard/tarifario y /dashboard/reservar — la sesión
-// (arriba) sigue resolviéndose siempre en vivo, nunca cacheada.
+/**
+ * Rediseño "carga bajo demanda" (medición real de preview: la versión
+ * anterior descargaba el catálogo COMPLETO — 17.197 filas, ~11,1 MB — antes
+ * de pintar nada, y la caché compartida de la ronda anterior fue rechazada
+ * por Next ("items over 2MB can not be cached"), así que cada visita repetía
+ * el trabajo completo). Ahora esta página solo pide la PRIMERA página
+ * (módulo "Paquetes"/bloqueo, `PAGE_SIZE_BLOQUEO` filas — documentado en
+ * `lib/tarifario/consulta.ts`) — el resto del catálogo se explora con
+ * "Cargar más"/cambiar de pestaña o filtro DESDE EL NAVEGADOR
+ * (`TarifarioPublic`, Server Action `buscarPaginaTarifarioAccion`), nunca
+ * bajando el resto de una sola vez. No se reemplazó la caché de la ronda
+ * anterior por varias cachés más chicas del mismo catálogo completo — eso
+ * conservaría el problema de transferencia/renderizado; se retiró sin
+ * reemplazo (`lib/tarifario/catalogoCache.ts` ya no existe).
+ *
+ * ⚠️ Visitante ANÓNIMO = estado NORMAL, nunca error técnico: en
+ * `resolverSesion` de abajo, `user === null` sin `authError` (el caso de
+ * cualquier visitante sin sesión) toma la rama por defecto
+ * (`esAgencia=false, puedeReservar=false`) y registra `resultado=ok` — el
+ * único camino que registra `resultado=error` es un fallo TÉCNICO real de
+ * `auth.getUser()`/la consulta de perfil (`authError`/`perfilError`
+ * presentes). Esto no cambió en esta ronda.
+ */
 export default async function TarifarioPublicoPage() {
   const flujoId = generarFlujoId();
   const invocacion = siguienteInvocacionProceso(FLUJO);
@@ -67,22 +59,9 @@ export default async function TarifarioPublicoPage() {
 
   const sb = await createClient();
 
-  // ⚠️ Ningún cierre de abajo reasigna una variable externa (regla
-  // `react-hooks/immutability` del linter de React Compiler — trata este
-  // Server Component como si fuera a re-renderizar, y prohíbe mutar
-  // variables capturadas por un cierre incluso aunque en la práctica un
-  // Server Component solo corre una vez por request). `resolverSesion`
-  // DEVUELVE todo lo que el resto de la función necesita (`user`,
-  // `esAgencia`, `puedeReservar`) en vez de escribir a `let`s de afuera.
   const _cronoTotal = iniciarCronometro();
   const { sesion, datos: resDatos, programas: resProgramas, configSitio: cfgSitio } = await orquestarCargaPublica({
     resolverSesion: async () => {
-      // Detectar sesión (badge de agencia + permiso de reservar). Revisión
-      // posterior, defecto "RESULTADOS OK FALSOS" — autenticacion_perfil
-      // nombrada explícitamente: ambas consultas ahora revisan `error`, no
-      // solo `data`. Un fallo técnico real degrada al mismo default seguro
-      // que "sin sesión" (nunca otorga permisos de más), pero queda
-      // reflejado como resultado=error, no "ok".
       const _cronoAuth = iniciarCronometro();
       const { data: { user }, error: authError } = await sb.auth.getUser();
       let esAgencia = false;
@@ -105,8 +84,9 @@ export default async function TarifarioPublicoPage() {
       registrarEtapa(FLUJO, flujoId, "autenticacion_perfil", ms, huboError ? "error" : "ok");
       return { user, esAgencia, puedeReservar, huboError, ms };
     },
-    cargarTarifario: () => cargarDatosTarifarioCompartido(sb, FLUJO, flujoId),
-    cargarProgramas: () => getProgramasResumenCompartido(sb, true), // público: SOLO publicados
+    cargarTarifario: () =>
+      buscarPaginaTarifarioCompleta(sb, { modulo: "bloqueo", page: 1, pageSize: PAGE_SIZE_BLOQUEO }, FLUJO, flujoId, PAGE_SIZE_BLOQUEO),
+    cargarProgramas: () => getProgramasResumen(sb, true), // público: SOLO publicados
     cargarConfigSitio: async () => sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle(),
   });
   const { user, esAgencia, puedeReservar } = sesion;
@@ -117,9 +97,6 @@ export default async function TarifarioPublicoPage() {
   );
 
   if (!resDatos.ok) {
-    // Nunca "Tarifario en preparación" cuando en realidad la consulta
-    // falló — eso afirmaría algo falso. El detalle técnico ya quedó
-    // saneado en el log dentro de cargarDatosTarifario() (registrarErrorTecnico).
     return (
       <div className="app-bg min-h-screen bg-gray-50">
         <main className="mx-auto max-w-[1700px] px-4 py-20 md:px-6">
@@ -128,41 +105,28 @@ export default async function TarifarioPublicoPage() {
       </div>
     );
   }
+  const { datos, total, page, pageSize } = resDatos;
   const {
     filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
     infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, incluidosPorPaquete,
-  } = resDatos.datos;
+  } = datos;
   if (resProgramas.error) {
     registrarErrorTecnico(FLUJO, flujoId, "programas_resumen", "error_getProgramasResumen", resProgramas.error);
   }
   const programas = resProgramas.programas;
 
-  // Video de fondo del tarifario (global, opcional). Un error aquí es
-  // puramente cosmético (el fondo queda sin video) — best-effort, pero
-  // registrado como error técnico si ocurrió, nunca silencioso.
   if (cfgSitio.error) {
     registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_config_sitio", cfgSitio.error);
   }
   const videoFondo = cfgSitio.data?.video_fondo_url ?? null;
   registrarDatoPagina(FLUJO, flujoId, "datos_auxiliares_pagina", `consultas=1 detalle=config_sitio ${cfgSitio.error ? "resultado=error" : "resultado=ok"}`);
 
-  // Costo de la propia instrumentación (revisión posterior, defecto "COSTO
-  // DE LA PROPIA INSTRUMENTACIÓN"): cada valor se estima UNA sola vez y se
-  // reutiliza — la estimación en sí queda detrás de
-  // `DIAGNOSTICO_MEDIR_PAYLOAD=1` (ver el helper medirPayloadSiHabilitado).
-  const estDatos = medirPayloadSiHabilitado(resDatos.datos);
+  const estDatos = medirPayloadSiHabilitado(datos);
   const estProgramas = medirPayloadSiHabilitado(programas);
   registrarDatoPagina(FLUJO, flujoId, "programas_resumen", `programas=${programas.length} ${textoEstimacionPayload(estProgramas)}`);
-
-  // ⚠️ "preparacion_servidor" (revisión posterior, defecto "MEDICIÓN 'TOTAL'
-  // INCORRECTA"): esta etapa termina ANTES del `return` de JSX — NO incluye
-  // el procesamiento posterior del árbol React, la serialización RSC real
-  // (formato Flight, no JSON), la transmisión al navegador, la hidratación
-  // ni el pintado. Antes se llamaba "total", nombre que sugería falsamente
-  // cubrir la respuesta completa.
   registrarDatoPagina(
     FLUJO, flujoId, "preparacion_servidor",
-    `invocacion_proceso=${invocacion} datos_estimacion=${textoEstimacionPayload(estDatos)} programas_estimacion=${textoEstimacionPayload(estProgramas)}`
+    `invocacion_proceso=${invocacion} filas_pagina=${filasVisibles.length} total=${total} page=${page} pageSize=${pageSize} datos_estimacion=${textoEstimacionPayload(estDatos)} programas_estimacion=${textoEstimacionPayload(estProgramas)}`
   );
   registrarEtapa(FLUJO, flujoId, "preparacion_servidor", _cronoPrep(), "ok");
 
@@ -210,7 +174,14 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} incluidosPorPaquete={incluidosPorPaquete} filasAddon={filasAddon} />
+          <TarifarioPublic
+            filasIniciales={filasVisibles} totalInicial={total} cargaInicial
+            programas={programas} puedeReservar={puedeReservar}
+            cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo}
+            fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio}
+            ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo}
+            capPorHotel={capPorHotel} incluidosPorPaquete={incluidosPorPaquete} filasAddon={filasAddon}
+          />
         )}
       </main>
     </div>

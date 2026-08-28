@@ -4,7 +4,6 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { esEstadoEmision, esEstadoPago, type EstadoEmision, type EstadoPago } from "@/lib/vuelos/control";
-import { invalidarCatalogoTarifario } from "@/lib/tarifario/catalogoCache";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -99,10 +98,6 @@ export async function crearEmpaquetado(input: EmpaquetadoInput): Promise<Result>
   if (error) return { ok: false, error: error.message };
 
   revalidatePath("/dashboard/vuelos");
-  // El filtro de vigencia de empaquetados (activo/compra_inicio/compra_fin)
-  // que aplica cargarDatosTarifario() lee esta tabla directamente — no pasa
-  // por regenerarTarifariosDe*() — así que necesita su propia invalidación.
-  invalidarCatalogoTarifario();
   return { ok: true, id: data.id };
 }
 
@@ -164,7 +159,6 @@ export async function actualizarEmpaquetado(id: number, input: EmpaquetadoInputG
   revalidatePath("/dashboard/vuelos");
   revalidatePath(`/dashboard/vuelos/empaquetados/${id}`);
   revalidatePath("/dashboard/vuelos/historico");
-  invalidarCatalogoTarifario();
   return { ok: true, id: data.id };
 }
 
@@ -197,7 +191,6 @@ export async function actualizarControlEmpaquetado(
   revalidatePath("/dashboard/vuelos");
   revalidatePath(`/dashboard/vuelos/empaquetados/${id}`);
   revalidatePath("/dashboard/vuelos/historico");
-  invalidarCatalogoTarifario();
   return { ok: true, id };
 }
 
@@ -280,7 +273,6 @@ export async function eliminarEmpaquetado(id: number): Promise<Result> {
 
   revalidatePath("/dashboard/vuelos");
   revalidatePath("/dashboard/vuelos/historico");
-  invalidarCatalogoTarifario();
   return { ok: true };
 }
 

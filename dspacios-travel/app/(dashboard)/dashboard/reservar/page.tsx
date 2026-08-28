@@ -2,55 +2,37 @@ import { createClient } from "@/lib/supabase/server";
 import { TarifarioPublic } from "@/app/tarifario/TarifarioPublic";
 import { CartDrawer } from "@/app/tarifario/CartDrawer";
 import { CartProvider } from "@/lib/cart/CartContext";
-import { orquestarCargaReservar } from "@/lib/tarifario/orquestacion";
-import { cargarDatosTarifarioCompartido, getProgramasResumenCompartido } from "@/lib/tarifario/catalogoCache";
+import { getProgramasResumen } from "@/lib/programas";
 import { liberarVencidas } from "./actions";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
-  siguienteInvocacionProceso, medirPayloadSiHabilitado, textoEstimacionPayload, iniciarCronometro,
+  siguienteInvocacionProceso, iniciarCronometro,
 } from "@/lib/observabilidad/medicion";
 
 export const dynamic = "force-dynamic";
 
 const FLUJO = "pagina_reservar";
 
-// Mensaje público FIJO — nunca "no hay tarifas" cuando en realidad falló la
-// consulta (revisión posterior, defecto "PAGINACIÓN IGNORA ERRORES").
-const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este momento. Intenta nuevamente en unos segundos.";
-
-// Diagnóstico del incidente de ~13s en /dashboard/reservar, /dashboard/
-// tarifario y /tarifario (las tres comparten las mismas fuentes pesadas,
-// aunque no el mismo código): cada request genera su propio `flujoId` y deja
-// en los logs, con el mismo formato ya usado por crearContrato()/
-// reservarPrograma() (lib/observabilidad/medicion.ts), el tiempo de:
-//  - `liberar_vencidas` — SECUENCIAL antes de lo demás a propósito: libera
-//    sillas vencidas (cambia `sillas`), y `cargarDatosTarifario()` lee cupos
-//    calculados a partir de esas mismas sillas — paralelizarlo arriesgaría
-//    leer cupos ANTES de liberar, mostrando menos disponibilidad de la real.
-//    La secuencia real (nunca se invoca cargarTarifario/cargarProgramas
-//    hasta que liberarVencidas TERMINÓ) la garantiza
-//    `orquestarCargaReservar()` (lib/tarifario/orquestacion.ts, función
-//    PURA probada con promesas diferidas en
-//    pruebas/tarifarioOrquestacion.test.ts) — no un comentario ni el orden
-//    visual del código.
-//  - `tarifario_y_programas` — cargarDatosTarifarioCompartido() y
-//    getProgramasResumenCompartido() NO dependen una de la otra (ninguna lee
-//    lo que la otra escribe ni usa su resultado), así que arrancan
-//    CONCURRENTEMENTE (mismo orquestador).
-//  - `preparacion_servidor` — el Server Component hasta el `return` del JSX.
-//    NO incluye serialización RSC real, transmisión, hidratación ni pintado
-//    del navegador (revisión posterior, defecto "MEDICIÓN 'TOTAL'
-//    INCORRECTA" — antes se llamaba "total", nombre que sugería falsamente
-//    cubrir la respuesta completa).
-//
-// ⚠️ CACHÉ COMPARTIDA (ronda posterior, "medición real de ~13s en preview"):
-// `cargarDatosTarifarioCompartido()` (lib/tarifario/catalogoCache.ts) sirve
-// el catálogo (hoteles/tarifas/enriquecimiento) desde caché compartida con
-// /tarifario y /dashboard/tarifario, PERO cupos/origen de bloqueo se
-// refrescan SIEMPRE en vivo (nunca desde el bloque cacheado — ver auditoría
-// de volatilidad en el módulo) — así que la garantía de arriba (`liberar_
-// vencidas` antes de leer cupos) sigue exacta: la caché del resto del
-// catálogo no adelanta ni retrasa cuándo se leen los cupos reales.
+/**
+ * Rediseño "carga bajo demanda" (medición real de preview: la versión
+ * anterior descargaba el catálogo COMPLETO al entrar — 17.197 filas, ~11,1
+ * MB — y ni siquiera pudo cachearse ("items over 2MB can not be cached")).
+ * Pedido explícito del dueño: esta pantalla NO debe traer tarifario al
+ * entrar. La carga inicial trae solo lo que el formulario necesita para
+ * existir (sesión de carrito + programas, un dataset chico aparte del
+ * problema de las ~17.000 filas) — cero consultas a `tarifario_resultado`.
+ * `TarifarioPublic` (mismo componente que /tarifario) recibe
+ * `filasIniciales=[]`/`cargaInicial={false}` y muestra el CTA "Buscar
+ * tarifas" en vez de cualquier listado; solo al pulsar Buscar dispara la
+ * Server Action `buscarPaginaTarifarioAccion` (compartida con /tarifario),
+ * que reutiliza el MISMO motor server-side de siempre
+ * (`buscarPaginaTarifarioCompleta` → `procesarFilasTarifario`, con
+ * vigencia/cupos/markup/edades/habitaciones/sugerencias de fecha
+ * exactamente como antes) — nunca se replica ningún cálculo en el cliente.
+ * `liberarVencidas()` se conserva EAGER (libera sillas vencidas antes de
+ * que el usuario busque, mismo criterio de siempre) — es independiente de
+ * si se pre-carga tarifario o no.
+ */
 export default async function ReservarPage() {
   const flujoId = generarFlujoId();
   const invocacion = siguienteInvocacionProceso(FLUJO);
@@ -58,71 +40,21 @@ export default async function ReservarPage() {
 
   const sb = await createClient();
 
-  // ⚠️ Ningún cierre de abajo reasigna una variable externa (regla
-  // `react-hooks/immutability` del linter de React Compiler — trata este
-  // Server Component como si fuera a re-renderizar, y prohíbe mutar
-  // variables capturadas por un cierre incluso aunque en la práctica un
-  // Server Component solo corre una vez por request). Cada cierre es puro:
-  // recibe lo que necesita por clausura de solo-lectura (`sb`, `FLUJO`,
-  // `flujoId`) y DEVUELVE todo lo que el cuerpo de la función necesita
-  // después, incluida su propia duración — nunca escribe a una `let` de
-  // afuera. `msTotal - msLiberar` reconstruye la duración del tramo
-  // concurrente (cargarTarifario/cargarProgramas) sin necesitar un
-  // cronómetro que arranque DENTRO de un cierre y se lea DESDE afuera.
-  const _cronoTotal = iniciarCronometro();
-  const { liberado, datos: resDatos, programas: resProgramas } = await orquestarCargaReservar({
-    liberarVencidas: async () => {
-      // Liberar reservas vencidas (perezoso) al entrar — medido aparte, ver nota arriba.
-      const _cronoLiberar = iniciarCronometro();
-      const r = await liberarVencidas().catch(() => ({ ok: false, liberadas: 0 }));
-      const ms = _cronoLiberar();
-      registrarEtapa(FLUJO, flujoId, "liberar_vencidas", ms, r.ok ? "ok" : "error");
-      registrarDatoPagina(FLUJO, flujoId, "liberar_vencidas", `liberadas=${r.liberadas}`);
-      return { ...r, ms };
-    },
-    cargarTarifario: () => cargarDatosTarifarioCompartido(sb, FLUJO, flujoId),
-    // interno: activos aunque no publicados (igual que /dashboard/tarifario)
-    cargarProgramas: () => getProgramasResumenCompartido(sb, false),
-  });
-  registrarEtapa(
-    FLUJO, flujoId, "tarifario_y_programas",
-    Math.max(0, _cronoTotal() - liberado.ms),
-    resDatos.ok && !resProgramas.error ? "ok" : "error"
-  );
+  const _cronoLiberar = iniciarCronometro();
+  const liberado = await liberarVencidas().catch(() => ({ ok: false, liberadas: 0 }));
+  registrarEtapa(FLUJO, flujoId, "liberar_vencidas", _cronoLiberar(), liberado.ok ? "ok" : "error");
+  registrarDatoPagina(FLUJO, flujoId, "liberar_vencidas", `liberadas=${liberado.liberadas}`);
 
-  if (!resDatos.ok) {
-    // Nunca "no hay tarifas publicadas" cuando en realidad la consulta
-    // falló — eso afirmaría algo falso. El detalle técnico ya quedó
-    // saneado en el log dentro de cargarDatosTarifario() (registrarErrorTecnico).
-    return (
-      <CartProvider>
-        <div className="mx-auto max-w-6xl p-4 md:p-8">
-          <h1 className="mb-1 text-2xl font-semibold text-gray-900">Reservar</h1>
-          <p className="py-20 text-center text-red-500">{MSG_ERROR_CARGAR_TARIFARIO}</p>
-        </div>
-      </CartProvider>
-    );
-  }
-  const {
-    filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
-    infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, incluidosPorPaquete,
-  } = resDatos.datos;
+  // Programas (circuitos): dataset chico, no forma parte del problema de las
+  // ~17.000 filas de tarifario_resultado — se sigue trayendo entero, sin
+  // paginar. Interno: activos aunque no publicados.
+  const resProgramas = await getProgramasResumen(sb, false);
   if (resProgramas.error) {
     registrarErrorTecnico(FLUJO, flujoId, "programas_resumen", "error_getProgramasResumen", resProgramas.error);
   }
   const programas = resProgramas.programas;
-
-  // Costo de la propia instrumentación (revisión posterior, defecto "COSTO
-  // DE LA PROPIA INSTRUMENTACIÓN"): cada valor se estima UNA sola vez y se
-  // reutiliza — la estimación en sí queda detrás de
-  // `DIAGNOSTICO_MEDIR_PAYLOAD=1` (ver el helper medirPayloadSiHabilitado).
-  const estDatos = medirPayloadSiHabilitado(resDatos.datos);
-  const estProgramas = medirPayloadSiHabilitado(programas);
-  registrarDatoPagina(FLUJO, flujoId, "programas_resumen", `programas=${programas.length} ${textoEstimacionPayload(estProgramas)}`);
-  registrarDatoPagina(
-    FLUJO, flujoId, "preparacion_servidor",
-    `invocacion_proceso=${invocacion} datos_estimacion=${textoEstimacionPayload(estDatos)} programas_estimacion=${textoEstimacionPayload(estProgramas)}`
-  );
+  registrarDatoPagina(FLUJO, flujoId, "programas_resumen", `programas=${programas.length}`);
+  registrarDatoPagina(FLUJO, flujoId, "preparacion_servidor", `invocacion_proceso=${invocacion} filas_iniciales=0 (carga bajo demanda)`);
   registrarEtapa(FLUJO, flujoId, "preparacion_servidor", _cronoPrep(), "ok");
 
   return (
@@ -132,30 +64,15 @@ export default async function ReservarPage() {
           <div>
             <h1 className="mb-1 text-2xl font-semibold text-gray-900">Reservar</h1>
             <p className="text-sm text-gray-500">
-              Tarifario comercial. Arma tu selección (hoteles y servicios) en el carrito y finaliza para generar la cotización.
+              Elige un destino/salida y pulsa Buscar para ver hoteles y tarifas. Arma tu selección en el carrito y finaliza para generar la cotización.
             </p>
           </div>
-          <CartDrawer checkoutHabilitado fotosPorHotel={fotosPorHotel} />
+          <CartDrawer checkoutHabilitado fotosPorHotel={{}} />
         </div>
-        {!filasVisibles.length && !programas.length ? (
-          <p className="py-20 text-center text-gray-400">No hay tarifas publicadas. Genera el tarifario en un paquete.</p>
-        ) : (
-          <TarifarioPublic
-            filas={filasVisibles}
-            programas={programas}
-            puedeReservar
-            cuposPorBloqueo={cuposPorBloqueo}
-            origenPorBloqueo={origenPorBloqueo}
-            fotosPorHotel={fotosPorHotel}
-            fotosPorServicio={fotosPorServicio}
-            infoPorHotel={infoPorHotel}
-            planesInfo={planesInfo}
-            capPorHotel={capPorHotel}
-            ventanaPorPaquete={ventanaPorPaquete}
-            incluidosPorPaquete={incluidosPorPaquete}
-            filasAddon={filasAddon}
-          />
-        )}
+        <TarifarioPublic
+          filasIniciales={[]} totalInicial={0} cargaInicial={false}
+          programas={programas} puedeReservar
+        />
       </div>
     </CartProvider>
   );

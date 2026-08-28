@@ -156,6 +156,8 @@ export function VistaBooking({
   soloAcom = null,
   incluidosPorPaquete = {},
   filasAddon = [],
+  sub: subProp,
+  onSubChange,
 }: {
   filas: FilaTarifario[];
   fotosPorHotel?: Record<number, string>;
@@ -176,9 +178,19 @@ export function VistaBooking({
   // recorte que aplica `filas` para la vitrina plana de Servicios — de acá
   // sale `addonsPorPaquete`, scoped al hotel que se está viendo.
   filasAddon?: FilaTarifario[];
+  // Submódulo CONTROLADO por el padre (ronda "carga bajo demanda"): el
+  // padre (`TarifarioPublic`) necesita saber qué submódulo está activo para
+  // pedir la página server-side correcta (nunca el catálogo completo) — sin
+  // esto, cambiar de pestaña no traería datos del módulo nuevo. Si no se
+  // pasa, se comporta como antes (estado propio, sin padre que lo escuche).
+  sub?: "bloqueo" | "porcion_terrestre" | "receptivos";
+  onSubChange?: (sub: "bloqueo" | "porcion_terrestre" | "receptivos") => void;
 }) {
-  // Submódulos de la vista Booking.
-  const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
+  // Submódulos de la vista Booking — controlado por el padre si pasa `sub`/
+  // `onSubChange` (ver arriba), si no cae al estado propio de siempre.
+  const [subLocal, setSubLocal] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
+  const sub = subProp ?? subLocal;
+  const setSub = onSubChange ?? setSubLocal;
   // Buscador de bloqueos: origen → destino → salida (vuelo).
   const [origenSel, setOrigenSel] = useState("");
   const [destinoSel, setDestinoSel] = useState("");
@@ -192,7 +204,7 @@ export function VistaBooking({
   // salta directo a Receptivos con destino/fechas/pax ya puestos.
   useEffect(() => {
     if (addonsIntent) setSub("receptivos");
-  }, [addonsIntent]);
+  }, [addonsIntent, setSub]);
 
   // Salidas (bloqueos) con cupos > 0, con su origen/destino/fechas/cupos.
   const salidasBloqueo = useMemo(() => {
