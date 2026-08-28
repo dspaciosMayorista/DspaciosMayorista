@@ -8,6 +8,10 @@ import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
+import {
+  descompactarFilasTarifario,
+  type TarifarioCompacto,
+} from "@/lib/tarifario/compacto";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
 
@@ -186,7 +190,7 @@ function coincideFiltro(f: FilaTarifario, q: string, fCat: string, fReg: string)
 }
 
 export function TarifarioPublic({
-  filas,
+  filas: filasEntrada,
   programas = [],
   puedeReservar = false,
   cuposPorBloqueo = {},
@@ -200,7 +204,7 @@ export function TarifarioPublic({
   incluidosPorPaquete = {},
   filasAddon = [],
 }: {
-  filas: FilaTarifario[];
+  filas: FilaTarifario[] | TarifarioCompacto;
   programas?: ProgramaResumen[];
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
@@ -217,6 +221,12 @@ export function TarifarioPublic({
   // dentro del modal de su propio hotel en Vista Booking (ver VistaBooking.tsx).
   filasAddon?: FilaTarifario[];
 }) {
+  const filas = useMemo(
+    () => Array.isArray(filasEntrada)
+      ? filasEntrada
+      : descompactarFilasTarifario<FilaTarifario>(filasEntrada),
+    [filasEntrada]
+  );
   const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
   const [q, setQ] = useState("");
   const [fCat, setFCat] = useState("");
@@ -828,3 +838,4 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
     </div>
   );
 }
+
