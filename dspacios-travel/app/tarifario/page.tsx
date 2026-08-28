@@ -1,10 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { TarifarioPublic } from "./TarifarioPublic";
 import { CartDrawer } from "./CartDrawer";
+import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
+import { cargarDatosTarifario } from "@/lib/tarifario/datos";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
-import { cargarDatosTarifarioCompartido, getProgramasResumenCompartido } from "@/lib/tarifario/catalogoCache";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
   siguienteInvocacionProceso, medirPayloadSiHabilitado, textoEstimacionPayload, iniciarCronometro,
@@ -35,31 +36,13 @@ const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este m
 // perfil) se resuelve PRIMERO — de ahí sale `esAgencia`/`puedeReservar`, que
 // solo se USAN para el render, nunca para decidir QUÉ datos pedir (el
 // tarifario/programas/config_sitio son los mismos para cualquiera). Después
-// arrancan CONCURRENTEMENTE las 3 fuentes independientes: cargarDatosTarifarioCompartido,
-// getProgramasResumenCompartido y config_sitio. La secuencia real (nunca se
-// invoca ninguna de las 3 hasta que la sesión resolvió) la garantiza
+// arrancan CONCURRENTEMENTE las 3 fuentes independientes: cargarDatosTarifario,
+// getProgramasResumen y config_sitio. La secuencia real (nunca se invoca
+// ninguna de las 3 hasta que la sesión resolvió) la garantiza
 // `orquestarCargaPublica()` (lib/tarifario/orquestacion.ts, función PURA
 // probada con promesas diferidas en pruebas/tarifarioOrquestacion.test.ts)
 // — no un comentario ni el orden visual del código. La autorización (arrays
 // de roles) y el valor de `puedeReservar` NO cambian.
-//
-// ⚠️ Visitante ANÓNIMO = estado NORMAL, nunca error técnico: en
-// `resolverSesion` de abajo, `user === null` sin `authError` (el caso de
-// cualquier visitante sin sesión) toma la rama por defecto
-// (`esAgencia=false, puedeReservar=false`) y registra `resultado=ok` — el
-// único camino que registra `resultado=error` es un fallo TÉCNICO real de
-// `auth.getUser()`/la consulta de perfil (`authError`/`perfilError`
-// presentes). No se tocó esta lógica en la ronda de caché — se deja
-// documentado aquí porque la caché compartida hace que un visitante
-// anónimo y uno logueado ahora puedan compartir el MISMO catálogo cacheado
-// (correcto: el catálogo nunca dependió de la sesión, ver
-// lib/tarifario/catalogoCache.ts).
-//
-// ⚠️ CACHÉ COMPARTIDA (ronda posterior, "medición real de ~13s en preview"):
-// `cargarDatosTarifarioCompartido()`/`getProgramasResumenCompartido()`
-// (lib/tarifario/catalogoCache.ts) sirven el catálogo desde una caché
-// compartida con /dashboard/tarifario y /dashboard/reservar — la sesión
-// (arriba) sigue resolviéndose siempre en vivo, nunca cacheada.
 export default async function TarifarioPublicoPage() {
   const flujoId = generarFlujoId();
   const invocacion = siguienteInvocacionProceso(FLUJO);
@@ -105,8 +88,8 @@ export default async function TarifarioPublicoPage() {
       registrarEtapa(FLUJO, flujoId, "autenticacion_perfil", ms, huboError ? "error" : "ok");
       return { user, esAgencia, puedeReservar, huboError, ms };
     },
-    cargarTarifario: () => cargarDatosTarifarioCompartido(sb, FLUJO, flujoId),
-    cargarProgramas: () => getProgramasResumenCompartido(sb, true), // público: SOLO publicados
+    cargarTarifario: () => cargarDatosTarifario(sb, FLUJO, flujoId),
+    cargarProgramas: () => getProgramasResumen(sb, true), // público: SOLO publicados
     cargarConfigSitio: async () => sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle(),
   });
   const { user, esAgencia, puedeReservar } = sesion;

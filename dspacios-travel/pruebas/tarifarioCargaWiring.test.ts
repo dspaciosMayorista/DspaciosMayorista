@@ -47,13 +47,12 @@ describe("/dashboard/reservar — usa orquestarCargaReservar() (liberarVencidas 
     assert.match(src, /registrarEtapa\(\s*FLUJO, flujoId, "tarifario_y_programas"/);
   });
 
-  test("cargarDatosTarifarioCompartido() y getProgramasResumenCompartido() (caché compartida, ronda posterior) se pasan como cierres `cargarTarifario`/`cargarProgramas` al MISMO orquestador (arrancan concurrentes una vez liberarVencidas termina)", () => {
-    assert.match(src, /import\s*\{\s*cargarDatosTarifarioCompartido,\s*getProgramasResumenCompartido\s*\}\s*from\s*"@\/lib\/tarifario\/catalogoCache"/);
+  test("cargarDatosTarifario() y getProgramasResumen() se pasan como cierres `cargarTarifario`/`cargarProgramas` al MISMO orquestador (arrancan concurrentes una vez liberarVencidas termina)", () => {
     const idxOrq = src.indexOf("orquestarCargaReservar({");
     const idxCierre = src.indexOf("});", idxOrq);
     const bloque = src.slice(idxOrq, idxCierre);
-    assert.match(bloque, /cargarTarifario:\s*\(\)\s*=>\s*cargarDatosTarifarioCompartido\(sb, FLUJO, flujoId\)/);
-    assert.match(bloque, /cargarProgramas:\s*\(\)\s*=>\s*getProgramasResumenCompartido\(sb, false\)/, "interno: activos aunque no publicados — el argumento false debe preservarse");
+    assert.match(bloque, /cargarTarifario:\s*\(\)\s*=>\s*cargarDatosTarifario\(sb, FLUJO, flujoId\)/);
+    assert.match(bloque, /cargarProgramas:\s*\(\)\s*=>\s*getProgramasResumen\(sb, false\)/, "interno: activos aunque no publicados — el argumento false debe preservarse");
   });
 
   test("puedeReservar se pasa como prop fija (permite reservar) — sin cambios respecto al comportamiento previo", () => {
@@ -61,7 +60,7 @@ describe("/dashboard/reservar — usa orquestarCargaReservar() (liberarVencidas 
   });
 });
 
-describe("/dashboard/tarifario — usa orquestarCargaInterna() + la caché compartida del catálogo (ronda posterior, ya NO reimplementa su propia paginación/vigencia inline)", () => {
+describe("/dashboard/tarifario — usa orquestarCargaInterna(); NO usa cargarDatosTarifario() (evita el payload/consultas extra de Vista Booking)", () => {
   const src = leer(TARIFARIO_INTERNO);
 
   test("importa orquestarCargaInterna de lib/tarifario/orquestacion", () => {
@@ -69,25 +68,23 @@ describe("/dashboard/tarifario — usa orquestarCargaInterna() + la caché compa
   });
 
   test("no importa ni invoca cargarDatosTarifario (solo se menciona en comentarios explicando la decisión)", () => {
-    assert.doesNotMatch(src, /import\s*\{[^}]*cargarDatosTarifario\b/, "no debe importar cargarDatosTarifario");
+    assert.doesNotMatch(src, /import\s*\{[^}]*cargarDatosTarifario/, "no debe importar cargarDatosTarifario");
     assert.doesNotMatch(src, /cargarDatosTarifario\(sb/, "no debe invocar cargarDatosTarifario(sb, ...)");
   });
 
-  test("usa cargarFilasTarifarioLivianoCompartido() de lib/tarifario/catalogoCache — ya NO reimplementa paginación/vigencia inline (esa lógica vive ahora en catalogoCompartidoFabrica.ts, compartida con las otras 2 rutas)", () => {
-    assert.match(src, /import\s*\{\s*cargarFilasTarifarioLivianoCompartido,\s*getProgramasResumenCompartido\s*\}\s*from\s*"@\/lib\/tarifario\/catalogoCache"/);
-    assert.match(src, /cargarFilasTarifarioLivianoCompartido\(sb\)/);
-    assert.doesNotMatch(src, /import\s*\{\s*cargarFilasTarifarioPaginado/, "la paginación inline se movió a catalogoCompartidoFabrica.ts");
-    assert.doesNotMatch(src, /import\s*\{\s*filtrarTarifarioVencidas/, "el filtro de vigencia inline se movió a catalogoCompartidoFabrica.ts");
+  test("usa el cargador liviano compartido cargarFilasTarifarioPaginado con su propio set de columnas", () => {
+    assert.match(src, /import\s*\{\s*cargarFilasTarifarioPaginado\s*\}\s*from\s*"@\/lib\/tarifario\/paginacion"/);
+    assert.match(src, /cargarFilasTarifarioPaginado[^(]*\(sb, COLUMNAS_LIVIANAS\)/);
   });
 
-  test("catalogo_tarifario (cierre `cargarTarifario`) y getProgramasResumenCompartido (cierre `cargarProgramas`) se pasan al MISMO orquestador", () => {
+  test("carga_paginada + filtro_vigencia (cierre `cargarTarifario`) y getProgramasResumen (cierre `cargarProgramas`) se pasan al MISMO orquestador", () => {
     const idxOrq = src.indexOf("orquestarCargaInterna({");
     assert.ok(idxOrq > -1, "no se encontró la llamada a orquestarCargaInterna");
     const idxCierre = src.indexOf("});", idxOrq);
     const bloque = src.slice(idxOrq, idxCierre);
-    assert.match(bloque, /cargarFilasTarifarioLivianoCompartido\(sb\)/);
-    assert.match(bloque, /registrarEtapa\(FLUJO, flujoId, "catalogo_tarifario"/);
-    assert.match(bloque, /cargarProgramas:\s*\(\)\s*=>\s*getProgramasResumenCompartido\(sb, false\)/, "interno: activos aunque no publicados");
+    assert.match(bloque, /cargarFilasTarifarioPaginado/);
+    assert.match(bloque, /filtrarTarifarioVencidas/);
+    assert.match(bloque, /cargarProgramas:\s*\(\)\s*=>\s*getProgramasResumen\(sb, false\)/, "interno: activos aunque no publicados");
   });
 
   test("no pasa la prop puedeReservar a TarifarioPublic — depende del default false del componente (no permite reservar)", () => {
@@ -96,10 +93,14 @@ describe("/dashboard/tarifario — usa orquestarCargaInterna() + la caché compa
     assert.doesNotMatch(bloqueJsx, /puedeReservar/);
   });
 
-  test("un fallo del catálogo compartido (`!res.ok`) aborta con mensaje público fijo — nunca dice 'aún no hay tarifas'", () => {
-    assert.match(src, /if \(!res\.ok\)/);
+  test("reutiliza filtrarTarifarioVencidas de lib/tarifario/vigencia (compartido, no reimplementado)", () => {
+    assert.match(src, /import\s*\{\s*filtrarTarifarioVencidas\s*\}\s*from\s*"@\/lib\/tarifario\/vigencia"/);
+  });
+
+  test("un fallo de paginación (`!pag.ok`) aborta con mensaje público fijo — nunca dice 'aún no hay tarifas'", () => {
+    assert.match(src, /if \(!pag\.ok\)/);
     assert.match(src, /MSG_ERROR_CARGAR_TARIFARIO/);
-    assert.match(src, /registrarErrorTecnico\(FLUJO, flujoId, "catalogo_tarifario"/);
+    assert.match(src, /registrarErrorTecnico\(FLUJO, flujoId, "carga_paginada"/);
   });
 });
 
@@ -138,13 +139,12 @@ describe("/tarifario (público) — usa orquestarCargaPublica() (sesión SECUENC
     );
   });
 
-  test("cargarDatosTarifarioCompartido, getProgramasResumenCompartido(sb, true) y config_sitio (caché compartida, ronda posterior) se pasan como cierres al MISMO orquestador (arrancan concurrentes una vez la sesión resuelve)", () => {
-    assert.match(src, /import\s*\{\s*cargarDatosTarifarioCompartido,\s*getProgramasResumenCompartido\s*\}\s*from\s*"@\/lib\/tarifario\/catalogoCache"/);
+  test("cargarDatosTarifario, getProgramasResumen(sb, true) y config_sitio se pasan como cierres al MISMO orquestador (arrancan concurrentes una vez la sesión resuelve)", () => {
     const idxOrq = src.indexOf("orquestarCargaPublica({");
     const idxCierre = src.indexOf("});", idxOrq);
     const bloque = src.slice(idxOrq, idxCierre);
-    assert.match(bloque, /cargarTarifario:\s*\(\)\s*=>\s*cargarDatosTarifarioCompartido\(sb, FLUJO, flujoId\)/);
-    assert.match(bloque, /cargarProgramas:\s*\(\)\s*=>\s*getProgramasResumenCompartido\(sb, true\)/, "público: SOLO publicados — el argumento true debe preservarse");
+    assert.match(bloque, /cargarTarifario:\s*\(\)\s*=>\s*cargarDatosTarifario\(sb, FLUJO, flujoId\)/);
+    assert.match(bloque, /cargarProgramas:\s*\(\)\s*=>\s*getProgramasResumen\(sb, true\)/, "público: SOLO publicados — el argumento true debe preservarse");
     assert.match(bloque, /cargarConfigSitio:[\s\S]*?config_sitio/);
   });
 

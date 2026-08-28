@@ -5,7 +5,6 @@ import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
 import { salidaTieneContenido, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
 import { validarReglaComisionable } from "@/lib/calc/programaPrecio";
-import { invalidarCatalogoTarifario } from "@/lib/tarifario/catalogoCache";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -111,7 +110,6 @@ export async function crearPrograma(input: CabeceraInput): Promise<Result> {
     .single();
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/producto/programas");
-  invalidarCatalogoTarifario();
   return { ok: true, id: data.id };
 }
 
@@ -124,7 +122,6 @@ export async function guardarCabecera(id: number, input: CabeceraInput): Promise
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   rev(id);
-  invalidarCatalogoTarifario();
   return { ok: true, id };
 }
 
@@ -143,18 +140,14 @@ export async function guardarImagenPrograma(
   if (error) return { ok: false, error: error.message };
   rev(id);
   revalidatePath("/tarifario");
-  invalidarCatalogoTarifario();
   return { ok: true, id };
 }
 
-// `publicado` decide directamente qué entra a getProgramasResumen(sb, true)
-// (la vitrina pública) — invalidación crítica, nunca se puede omitir aquí.
 export async function setPublicado(id: number, publicado: boolean): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("programas").update({ publicado }).eq("id", id);
   if (error) return { ok: false, error: error.message };
   rev(id);
-  invalidarCatalogoTarifario();
   return { ok: true, id };
 }
 
@@ -163,7 +156,6 @@ export async function eliminarPrograma(id: number): Promise<Result> {
   const { error } = await sb.from("programas").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/dashboard/producto/programas");
-  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -188,8 +180,6 @@ export async function guardarCiudades(
     if (error) return { ok: false, error: error.message };
   }
   rev(programaId);
-  // `ciudades` es un campo directo de getProgramasResumen().
-  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -270,9 +260,6 @@ export async function guardarMatriz(
     }
   }
   rev(programaId);
-  // programa_categorias + programa_precios alimentan el "desde" (modo
-  // categoría) de getProgramasResumen().
-  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -373,8 +360,6 @@ export async function guardarSalidas(
   });
   if (error) return { ok: false, error: error.message };
   rev(programaId);
-  // programa_salidas alimenta el "desde" (modo salida) de getProgramasResumen().
-  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -527,11 +512,5 @@ export async function importarDesdeTexto(
   }
 
   rev(programaId);
-  // Puede haber tocado `programas.dias/noches` o `programa_ciudades`
-  // (ambos leídos por getProgramasResumen()) según qué casillas se marcaron
-  // — invalidar siempre es más simple y seguro que rastrear cuál de las 4
-  // secciones se importó, y es barato (no repone ningún dato hasta el
-  // siguiente pedido real).
-  invalidarCatalogoTarifario();
   return { ok: true };
 }

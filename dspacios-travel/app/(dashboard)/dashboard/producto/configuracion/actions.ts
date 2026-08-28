@@ -2,7 +2,6 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
-import { invalidarCatalogoTarifario } from "@/lib/tarifario/catalogoCache";
 
 type Result = { ok: true } | { ok: false; error: string };
 const rev = () => revalidatePath("/dashboard/producto/configuracion");
@@ -28,8 +27,6 @@ export async function eliminarCategoria(id: number): Promise<Result> {
 }
 
 // ── Régimen de alimentación (planes_alimentacion) ─────────────────────────
-// `planesInfo` del catálogo cacheado sale directo de esta tabla — las 3
-// funciones de abajo invalidan la caché compartida tras un guardado exitoso.
 export async function crearRegimen(codigo: string, nombre: string, descripcion: string, notaEspecial: string = ""): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("planes_alimentacion").insert({
@@ -40,7 +37,6 @@ export async function crearRegimen(codigo: string, nombre: string, descripcion: 
   });
   if (error) return { ok: false, error: error.message };
   rev();
-  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -54,7 +50,6 @@ export async function actualizarRegimen(id: number, codigo: string, nombre: stri
   }).eq("id", id);
   if (error) return { ok: false, error: error.message };
   rev();
-  invalidarCatalogoTarifario();
   return { ok: true };
 }
 
@@ -63,6 +58,5 @@ export async function eliminarRegimen(id: number): Promise<Result> {
   const { error } = await sb.from("planes_alimentacion").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
   rev();
-  invalidarCatalogoTarifario();
   return { ok: true };
 }
