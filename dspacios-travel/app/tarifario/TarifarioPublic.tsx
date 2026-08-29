@@ -9,8 +9,10 @@ import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 import {
+  deserializarTarifarioCompacto,
   descompactarFilasTarifario,
   type TarifarioCompacto,
+  type TarifarioCompactoSerializado,
 } from "@/lib/tarifario/compacto";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
@@ -204,7 +206,7 @@ export function TarifarioPublic({
   incluidosPorPaquete = {},
   filasAddon = [],
 }: {
-  filas: FilaTarifario[] | TarifarioCompacto;
+  filas: FilaTarifario[] | TarifarioCompacto | TarifarioCompactoSerializado;
   programas?: ProgramaResumen[];
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
@@ -224,7 +226,11 @@ export function TarifarioPublic({
   const filas = useMemo(
     () => Array.isArray(filasEntrada)
       ? filasEntrada
-      : descompactarFilasTarifario<FilaTarifario>(filasEntrada),
+      : descompactarFilasTarifario<FilaTarifario>(
+          typeof filasEntrada === "string"
+            ? deserializarTarifarioCompacto(filasEntrada)
+            : filasEntrada
+        ),
     [filasEntrada]
   );
   const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
@@ -838,4 +844,3 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
     </div>
   );
 }
-
