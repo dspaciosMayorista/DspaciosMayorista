@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { gzipSync } from "node:zlib";
 import {
   compactarFilasTarifario,
+  descomprimirTarifarioCompacto,
   deserializarTarifarioCompacto,
   descompactarFilasTarifario,
   serializarTarifarioCompacto,
@@ -82,4 +84,18 @@ test("el bloque serializado falla cerrado ante una forma desconocida", () => {
     () => deserializarTarifarioCompacto("null" as TarifarioCompactoSerializado),
     /invalido/
   );
+});
+
+test("gzip-base64 reduce el bloque y se abre en el navegador sin perder filas", async () => {
+  const originales = Array.from({ length: 17197 }, (_, i) => fila(i));
+  const compacto = compactarFilasTarifario(originales);
+  const json = serializarTarifarioCompacto(compacto);
+  const comprimido = {
+    version: 1 as const,
+    codec: "gzip-base64" as const,
+    datos: gzipSync(json, { level: 6 }).toString("base64"),
+  };
+  assert.ok(comprimido.datos.length < json.length * 0.2);
+  const restaurado = await descomprimirTarifarioCompacto(comprimido);
+  assert.deepEqual(descompactarFilasTarifario(restaurado), originales);
 });
