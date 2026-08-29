@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Star, Plane, Bus } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -10,8 +10,11 @@ import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 import {
   deserializarTarifarioCompacto,
+  descomprimirTarifarioCompacto,
   descompactarFilasTarifario,
+  esTarifarioCompactoComprimido,
   type TarifarioCompacto,
+  type TarifarioCompactoComprimido,
   type TarifarioCompactoSerializado,
 } from "@/lib/tarifario/compacto";
 
@@ -191,7 +194,60 @@ function coincideFiltro(f: FilaTarifario, q: string, fCat: string, fReg: string)
   return true;
 }
 
-export function TarifarioPublic({
+type TarifarioPublicProps = {
+  filas: FilaTarifario[] | TarifarioCompacto | TarifarioCompactoSerializado | TarifarioCompactoComprimido;
+  programas?: ProgramaResumen[];
+  puedeReservar?: boolean;
+  cuposPorBloqueo?: Record<number, number>;
+  origenPorBloqueo?: Record<number, string>;
+  fotosPorHotel?: Record<number, string>;
+  fotosPorServicio?: Record<number, string>;
+  ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
+  infoPorHotel?: InfoHotel;
+  planesInfo?: PlanesInfo;
+  capPorHotel?: CapHotel;
+  incluidosPorPaquete?: Record<number, string[]>;
+  filasAddon?: FilaTarifario[];
+};
+type TarifarioPublicContenidoProps = Omit<TarifarioPublicProps, "filas"> & {
+  filas: FilaTarifario[] | TarifarioCompacto | TarifarioCompactoSerializado;
+};
+
+export function TarifarioPublic(props: TarifarioPublicProps) {
+  if (esTarifarioCompactoComprimido(props.filas)) {
+    return <TarifarioPublicComprimido {...props} filas={props.filas} />;
+  }
+  return <TarifarioPublicContenido {...props} filas={props.filas} />;
+}
+
+function TarifarioPublicComprimido({ filas, ...props }: Omit<TarifarioPublicProps, "filas"> & { filas: TarifarioCompactoComprimido }) {
+  const [catalogo, setCatalogo] = useState<FilaTarifario[] | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let vigente = true;
+    descomprimirTarifarioCompacto(filas)
+      .then((paquete) => descompactarFilasTarifario<FilaTarifario>(paquete))
+      .then((filasDecodificadas) => { if (vigente) setCatalogo(filasDecodificadas); })
+      .catch(() => { if (vigente) setError(true); });
+    return () => { vigente = false; };
+  }, [filas]);
+
+  if (error) {
+    return <p className="py-12 text-center text-sm text-red-500">No fue posible preparar el tarifario. Recarga la página para intentarlo nuevamente.</p>;
+  }
+  if (!catalogo) {
+    return (
+      <div className="flex min-h-48 items-center justify-center gap-3 py-12 text-sm text-gray-500" role="status">
+        <span className="h-5 w-5 animate-spin rounded-full border-2 border-gray-200 border-t-[var(--brand-primary)]" aria-hidden="true" />
+        Cargando tarifas…
+      </div>
+    );
+  }
+  return <TarifarioPublicContenido {...props} filas={catalogo} />;
+}
+
+function TarifarioPublicContenido({
   filas: filasEntrada,
   programas = [],
   puedeReservar = false,
@@ -205,24 +261,7 @@ export function TarifarioPublic({
   capPorHotel = {},
   incluidosPorPaquete = {},
   filasAddon = [],
-}: {
-  filas: FilaTarifario[] | TarifarioCompacto | TarifarioCompactoSerializado;
-  programas?: ProgramaResumen[];
-  puedeReservar?: boolean;
-  cuposPorBloqueo?: Record<number, number>;
-  origenPorBloqueo?: Record<number, string>;
-  fotosPorHotel?: Record<number, string>;
-  fotosPorServicio?: Record<number, string>;
-  ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
-  infoPorHotel?: InfoHotel;
-  planesInfo?: PlanesInfo;
-  capPorHotel?: CapHotel;
-  incluidosPorPaquete?: Record<number, string[]>;
-  // Add-ons de paquetes de hotel (bloqueo/porción), SIN el recorte que oculta
-  // esas filas de la vitrina plana de Servicios — solo para ofrecerlos scoped
-  // dentro del modal de su propio hotel en Vista Booking (ver VistaBooking.tsx).
-  filasAddon?: FilaTarifario[];
-}) {
+}: TarifarioPublicContenidoProps) {
   const filas = useMemo(
     () => Array.isArray(filasEntrada)
       ? filasEntrada
