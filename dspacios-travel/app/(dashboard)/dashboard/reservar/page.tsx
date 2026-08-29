@@ -5,7 +5,8 @@ import { CartProvider } from "@/lib/cart/CartContext";
 import { getProgramasResumen } from "@/lib/programas";
 import { cargarDatosTarifario } from "@/lib/tarifario/datos";
 import { orquestarCargaReservar } from "@/lib/tarifario/orquestacion";
-import { compactarFilasTarifario, serializarTarifarioCompacto } from "@/lib/tarifario/compacto";
+import { compactarFilasTarifario } from "@/lib/tarifario/compacto";
+import { comprimirTarifarioCompacto } from "@/lib/tarifario/compacto.server";
 import { liberarVencidas } from "./actions";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
@@ -136,7 +137,7 @@ export default async function ReservarPage() {
           <p className="py-20 text-center text-gray-400">No hay tarifas publicadas. Genera el tarifario en un paquete.</p>
         ) : (
           <TarifarioPublic
-            filas={serializarTarifarioCompacto(compactarFilasTarifario(filasVisibles))}
+            filas={comprimirTarifarioCompacto(compactarFilasTarifario(filasVisibles))}
             programas={programas}
             puedeReservar
             cuposPorBloqueo={cuposPorBloqueo}
