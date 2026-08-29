@@ -6,7 +6,8 @@ import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { cargarDatosTarifario } from "@/lib/tarifario/datos";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
-import { compactarFilasTarifario, serializarTarifarioCompacto } from "@/lib/tarifario/compacto";
+import { compactarFilasTarifario } from "@/lib/tarifario/compacto";
+import { comprimirTarifarioCompacto } from "@/lib/tarifario/compacto.server";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
   siguienteInvocacionProceso, medirPayloadSiHabilitado, textoEstimacionPayload, iniciarCronometro,
@@ -194,7 +195,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={serializarTarifarioCompacto(compactarFilasTarifario(filasVisibles))} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} incluidosPorPaquete={incluidosPorPaquete} filasAddon={filasAddon} />
+          <TarifarioPublic filas={comprimirTarifarioCompacto(compactarFilasTarifario(filasVisibles))} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} incluidosPorPaquete={incluidosPorPaquete} filasAddon={filasAddon} />
         )}
       </main>
     </div>
