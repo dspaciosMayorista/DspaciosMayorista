@@ -36,11 +36,6 @@ type FilaCompacta = [
 
 export type TarifarioCompacto = { version: 1; textos: string[]; filas: FilaCompacta[] };
 export type TarifarioCompactoSerializado = string & { readonly __tarifarioCompacto: unique symbol };
-export type TarifarioCompactoComprimido = {
-  version: 1;
-  codec: "gzip-base64";
-  datos: string;
-};
 
 const MODULOS = ["bloqueo", "porcion_terrestre", "servicios", "dinamico"] as const;
 const numero = (valor: number | null | undefined): Numero => valor == null ? null : valor;
@@ -116,26 +111,4 @@ export function deserializarTarifarioCompacto(
     throw new Error("Tarifario compacto serializado invalido");
   }
   return paquete as TarifarioCompacto;
-}
-
-export function esTarifarioCompactoComprimido(
-  valor: unknown
-): valor is TarifarioCompactoComprimido {
-  return valor != null && typeof valor === "object" &&
-    (valor as { version?: unknown }).version === 1 &&
-    (valor as { codec?: unknown }).codec === "gzip-base64" &&
-    typeof (valor as { datos?: unknown }).datos === "string";
-}
-
-export async function descomprimirTarifarioCompacto(
-  paquete: TarifarioCompactoComprimido
-): Promise<TarifarioCompacto> {
-  if (!esTarifarioCompactoComprimido(paquete) || typeof DecompressionStream === "undefined") {
-    throw new Error("Tarifario compacto comprimido no soportado");
-  }
-  const binario = atob(paquete.datos);
-  const bytes = Uint8Array.from(binario, (caracter) => caracter.charCodeAt(0));
-  const flujo = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
-  const json = await new Response(flujo).text();
-  return deserializarTarifarioCompacto(json as TarifarioCompactoSerializado);
 }
