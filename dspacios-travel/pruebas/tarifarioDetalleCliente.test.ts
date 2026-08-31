@@ -1,49 +1,106 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { claveDetalleHotel, conCacheDetalle } from "../lib/tarifario/detalleCliente.ts";
+import { claveDetalleHotel, claveDetalleSalida, claveDetallePaquete, conCacheDetalle } from "../lib/tarifario/detalleCliente.ts";
+import type { ComboIdentidad } from "../lib/tarifario/comboKey.ts";
 
-// EJECUCIÓN REAL de `claveDetalleHotel()`/`conCacheDetalle()` — la caché de
-// detalle bajo demanda del cliente, y el ALCANCE que protege contra
-// reutilizar el detalle de un hotel bajo un filtro de origen/destino/salida
-// distinto (revisión posterior, defecto "no preserva el alcance activo al
-// abrir un hotel").
+// EJECUCIÓN REAL de `claveDetalleHotel()`/`claveDetalleSalida()`/
+// `claveDetallePaquete()`/`conCacheDetalle()` — la caché de detalle bajo
+// demanda del cliente, y el ALCANCE DE COMBOS (ronda 6, ítem 2 — generaliza
+// la revisión anterior, que solo protegía contra un alcance de
+// origen/destino/salida distinto, y solo para el submódulo Bloqueo) que
+// protege contra reutilizar el detalle de un hotel/salida/paquete bajo
+// CUALQUIER filtro activo distinto (búsqueda, categoría, régimen, origen/
+// destino/salida elegida).
 
-describe("claveDetalleHotel() — normaliza el alcance en la clave de caché", () => {
-  test("porcion_terrestre: clave estable, sin alcance", () => {
-    assert.equal(claveDetalleHotel("porcion_terrestre", 7), "hotel:porcion_terrestre:7");
+function combo(overrides: Partial<ComboIdentidad> = {}): ComboIdentidad {
+  return {
+    modulo: "bloqueo", paquete_id: 1, bloqueo_id: 10, salida_id: null, hotel_id: 7,
+    categoria: "Estandar", regimen: "PC", fecha_ida: "2026-12-01", fecha_regreso: "2026-12-04", moneda: "COP",
+    ...overrides,
+  };
+}
+
+describe("claveDetalleHotel() — normaliza el alcance de combos en la clave de caché", () => {
+  test("porcion_terrestre: alcance vacío da una clave estable", () => {
+    assert.equal(claveDetalleHotel("porcion_terrestre", 7, []), "hotel:porcion_terrestre:7:");
   });
-  test("bloqueo: incluye los bloqueoIds ordenados en la clave", () => {
-    assert.equal(claveDetalleHotel("bloqueo", 7, [30, 10, 20]), "hotel:bloqueo:7:10,20,30");
+  test("bloqueo: incluye los combos en la clave (normalizados)", () => {
+    const c1 = claveDetalleHotel("bloqueo", 7, [combo({ bloqueo_id: 30 }), combo({ bloqueo_id: 10 }), combo({ bloqueo_id: 20 })]);
+    assert.match(c1, /^hotel:bloqueo:7:/);
+    assert.ok(c1.length > "hotel:bloqueo:7:".length, "el alcance no vacío debe aportar algo a la clave");
   });
   test("bloqueo: el ORDEN de entrada no importa — mismo alcance, misma clave", () => {
-    assert.equal(claveDetalleHotel("bloqueo", 7, [10, 20, 30]), claveDetalleHotel("bloqueo", 7, [30, 20, 10]));
+    const a = combo({ bloqueo_id: 10 }), b = combo({ bloqueo_id: 20 }), c = combo({ bloqueo_id: 30 });
+    assert.equal(claveDetalleHotel("bloqueo", 7, [a, b, c]), claveDetalleHotel("bloqueo", 7, [c, b, a]));
   });
-  test("bloqueo: duplicados no cambian la clave", () => {
-    assert.equal(claveDetalleHotel("bloqueo", 7, [10, 10, 20]), claveDetalleHotel("bloqueo", 7, [10, 20]));
+  test("bloqueo: combos duplicados (misma clave estructural) no cambian la clave final", () => {
+    const a = combo({ bloqueo_id: 10 });
+    const aRepetido = combo({ bloqueo_id: 10 }); // mismo contenido, objeto distinto
+    const b = combo({ bloqueo_id: 20 });
+    assert.equal(claveDetalleHotel("bloqueo", 7, [a, aRepetido, b]), claveDetalleHotel("bloqueo", 7, [a, b]));
   });
-  test("bloqueo: sin bloqueoIds (undefined) es un alcance vacío distinto de cualquier alcance no vacío", () => {
-    const vacio = claveDetalleHotel("bloqueo", 7);
+  test("bloqueo: alcance vacío es distinto de cualquier alcance no vacío", () => {
+    const vacio = claveDetalleHotel("bloqueo", 7, []);
     assert.equal(vacio, "hotel:bloqueo:7:");
-    assert.notEqual(vacio, claveDetalleHotel("bloqueo", 7, [1]));
+    assert.notEqual(vacio, claveDetalleHotel("bloqueo", 7, [combo({ bloqueo_id: 1 })]));
   });
-  test("⚠️ prueba negativa central del defecto: cambiar de alcance (otra salida/filtro) para el MISMO hotel produce una clave DISTINTA", () => {
-    const claveSalidaA = claveDetalleHotel("bloqueo", 42, [101]);
-    const claveSalidaB = claveDetalleHotel("bloqueo", 42, [202]);
+  test("⚠️ prueba negativa central del defecto: cambiar de alcance (otra salida) para el MISMO hotel produce una clave DISTINTA", () => {
+    const claveSalidaA = claveDetalleHotel("bloqueo", 42, [combo({ bloqueo_id: 101 })]);
+    const claveSalidaB = claveDetalleHotel("bloqueo", 42, [combo({ bloqueo_id: 202 })]);
     assert.notEqual(claveSalidaA, claveSalidaB, "abrir el mismo hotel bajo una salida distinta no puede compartir clave de caché");
   });
-  test("hoteles distintos bajo el mismo alcance producen claves distintas", () => {
-    assert.notEqual(claveDetalleHotel("bloqueo", 1, [101]), claveDetalleHotel("bloqueo", 2, [101]));
+  test("⚠️ ronda 6: cambiar SOLO categoría (mismo bloqueo/hotel) produce una clave DISTINTA — la revisión anterior no cubría esto", () => {
+    const claveCatA = claveDetalleHotel("bloqueo", 42, [combo({ bloqueo_id: 101, categoria: "Estandar" })]);
+    const claveCatB = claveDetalleHotel("bloqueo", 42, [combo({ bloqueo_id: 101, categoria: "Suite" })]);
+    assert.notEqual(claveCatA, claveCatB, "un filtro de categoría distinto no puede compartir clave de caché");
+  });
+  test("⚠️ ronda 6: cambiar SOLO régimen produce una clave DISTINTA", () => {
+    const claveA = claveDetalleHotel("bloqueo", 42, [combo({ regimen: "PC" })]);
+    const claveB = claveDetalleHotel("bloqueo", 42, [combo({ regimen: "PAM" })]);
+    assert.notEqual(claveA, claveB);
+  });
+  test("⚠️ ronda 6: porcion_terrestre TAMBIÉN incorpora el alcance de combos (antes era una clave fija sin alcance)", () => {
+    const claveA = claveDetalleHotel("porcion_terrestre", 42, [combo({ modulo: "porcion_terrestre", bloqueo_id: null, categoria: "Estandar" })]);
+    const claveB = claveDetalleHotel("porcion_terrestre", 42, [combo({ modulo: "porcion_terrestre", bloqueo_id: null, categoria: "Suite" })]);
+    assert.notEqual(claveA, claveB, "porcion_terrestre debe distinguir categorías igual que bloqueo");
+  });
+  test("hoteles distintos bajo el mismo alcance de combos producen claves distintas", () => {
+    assert.notEqual(claveDetalleHotel("bloqueo", 1, [combo({ bloqueo_id: 101 })]), claveDetalleHotel("bloqueo", 2, [combo({ bloqueo_id: 101 })]));
   });
   test("módulos distintos para el mismo hotel producen claves distintas", () => {
-    assert.notEqual(claveDetalleHotel("bloqueo", 5, []), claveDetalleHotel("porcion_terrestre", 5));
+    assert.notEqual(claveDetalleHotel("bloqueo", 5, []), claveDetalleHotel("porcion_terrestre", 5, []));
+  });
+});
+
+describe("claveDetalleSalida() / claveDetallePaquete() — Vista tabla también incorpora el alcance de combos (ronda 6, ítem 2)", () => {
+  test("claveDetalleSalida: id estructural igual pero combos distintos ⇒ claves distintas", () => {
+    const a = claveDetalleSalida("bloqueo", 5, [combo({ bloqueo_id: 5, categoria: "Estandar" })]);
+    const b = claveDetalleSalida("bloqueo", 5, [combo({ bloqueo_id: 5, categoria: "Suite" })]);
+    assert.notEqual(a, b, "la ronda anterior usaba `salida:bloqueo:${id}` a secas — sin alcance, esto colisionaría");
+  });
+  test("claveDetalleSalida: dinamico usa salida_id, no bloqueo_id", () => {
+    const a = claveDetalleSalida("dinamico", 9, [combo({ modulo: "dinamico", bloqueo_id: null, salida_id: 9 })]);
+    assert.match(a, /^salida:dinamico:9:/);
+  });
+  test("claveDetalleSalida: alcance vacío distinto de no vacío", () => {
+    assert.notEqual(claveDetalleSalida("bloqueo", 5, []), claveDetalleSalida("bloqueo", 5, [combo({ bloqueo_id: 5 })]));
+  });
+  test("claveDetallePaquete: id estructural igual pero combos distintos ⇒ claves distintas", () => {
+    const a = claveDetallePaquete(3, [combo({ modulo: "porcion_terrestre", bloqueo_id: null, paquete_id: 3, categoria: "Estandar" })]);
+    const b = claveDetallePaquete(3, [combo({ modulo: "porcion_terrestre", bloqueo_id: null, paquete_id: 3, categoria: "Suite" })]);
+    assert.notEqual(a, b, "la ronda anterior usaba `paquete:${id}` a secas — sin alcance, esto colisionaría");
+  });
+  test("claveDetallePaquete: paquetes distintos producen claves distintas bajo el mismo combo", () => {
+    const c = combo({ modulo: "porcion_terrestre", bloqueo_id: null, paquete_id: 3 });
+    assert.notEqual(claveDetallePaquete(3, [c]), claveDetallePaquete(4, [c]));
   });
 });
 
 describe("conCacheDetalle() — dedup + reutilización + nunca cachea un fallo (con claves reales de claveDetalleHotel)", () => {
   test("⚠️ prueba negativa: una respuesta cacheada bajo el alcance A nunca se sirve para el alcance B del mismo hotel", async () => {
     let llamadas = 0;
-    const claveA = claveDetalleHotel("bloqueo", 9, [1]);
-    const claveB = claveDetalleHotel("bloqueo", 9, [2]);
+    const claveA = claveDetalleHotel("bloqueo", 9, [combo({ bloqueo_id: 1 })]);
+    const claveB = claveDetalleHotel("bloqueo", 9, [combo({ bloqueo_id: 2 })]);
     const cargar = (etiqueta: string) => async () => {
       llamadas++;
       return { ok: true as const, filas: [etiqueta] };
@@ -57,7 +114,7 @@ describe("conCacheDetalle() — dedup + reutilización + nunca cachea un fallo (
 
   test("dedup: dos llamadas concurrentes con la MISMA clave (mismo alcance) reutilizan la misma promesa", async () => {
     let llamadas = 0;
-    const clave = claveDetalleHotel("bloqueo", 55, [1, 2]) + ":dedup-test";
+    const clave = claveDetalleHotel("bloqueo", 55, [combo({ bloqueo_id: 1 }), combo({ bloqueo_id: 2 })]) + ":dedup-test";
     let resolver: (v: { ok: true; filas: string[] }) => void = () => {};
     const pendiente = new Promise<{ ok: true; filas: string[] }>((res) => { resolver = res; });
     const cargar = () => { llamadas++; return pendiente; };
@@ -71,7 +128,7 @@ describe("conCacheDetalle() — dedup + reutilización + nunca cachea un fallo (
 
   test("nunca cachea un fallo: ok:false permite reintentar de verdad", async () => {
     let llamadas = 0;
-    const clave = claveDetalleHotel("bloqueo", 77, [3]) + ":fallo-test";
+    const clave = claveDetalleHotel("bloqueo", 77, [combo({ bloqueo_id: 3 })]) + ":fallo-test";
     const cargar = async () => { llamadas++; return { ok: false as const, error: "boom" }; };
     await conCacheDetalle(clave, cargar);
     await conCacheDetalle(clave, cargar);

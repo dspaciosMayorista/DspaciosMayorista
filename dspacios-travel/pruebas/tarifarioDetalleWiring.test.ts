@@ -38,7 +38,14 @@ describe("detalle-actions.ts — seguridad de la lectura pública", () => {
     const lineasConsulta = detalleActions.split("\n").filter((l) => l.includes('.from("tarifario_resultado")'));
     assert.ok(lineasConsulta.length >= 4, "cada una de las 4 acciones debe consultar tarifario_resultado");
     for (const linea of lineasConsulta) {
-      assert.ok(linea.trim().startsWith("sb.from") || linea.includes("await sb.from") || linea.includes("(sb) =>"), `una consulta a tarifario_resultado no cuelga de "sb": ${linea}`);
+      // `obtenerDetalleHotel` (ronda 6) construye el query builder en una
+      // variable `q` (para poder condicionar el `.in(...)` según haya o no
+      // ids de alcance) — mismo criterio de fondo (siempre `sb`, nunca el
+      // cliente admin), solo un estilo de línea distinto al resto.
+      assert.ok(
+        linea.trim().startsWith("sb.from") || linea.includes("await sb.from") || linea.includes("(sb) =>") || linea.includes("= sb.from"),
+        `una consulta a tarifario_resultado no cuelga de "sb": ${linea}`
+      );
       assert.doesNotMatch(linea, /\bad\.from|\badmin\(\)\.from/, `tarifario_resultado se leyó con el cliente admin/service-role, no con sb: ${linea}`);
     }
   });
@@ -76,15 +83,42 @@ describe("detalle-actions.ts — seguridad de la lectura pública", () => {
     assert.match(resumen, /import \{ aplicarFiltrosPostCarga \} from "\.\/filtrosPostCarga\.ts"/);
   });
 
-  test("⚠️ item 2 — bloqueoIds es obligatorio para modulo:'bloqueo' (nunca 'todo el hotel' sin alcance)", () => {
+  test("⚠️ ronda 6, ítem 2 — combos es obligatorio en las 3 acciones acotadas (nunca 'todo el hotel/salida/paquete' sin alcance)", () => {
     assert.match(detalleActions, /import \{ validarEntradaDetalleHotel, validarEntradaDetalleSalida, validarEntradaDetallePaquete \} from "@\/lib\/tarifario\/detalleValidacion"/);
-    assert.match(detalleActions, /\.eq\("hotel_id", v\.hotelId\)\.in\("bloqueo_id", v\.bloqueoIds\)/, "el filtro de hotel en modulo bloqueo debe cruzar hotel_id CON el alcance de bloqueoIds");
+    assert.match(detalleActions, /import \{ filtrarPorCombos, type ComboIdentidad \} from "@\/lib\/tarifario\/comboKey"/);
+    // El allow-list de combos se post-filtra DENTRO de cargarDetalleAcotado,
+    // usando el cruce PURO Y COMPARTIDO de lib/tarifario/comboKey.ts (mismo
+    // módulo probado con ejecución real en pruebas/tarifarioComboKey.test.ts)
+    // — no solo un hint de la consulta SQL.
+    assert.match(detalleActions, /const filasFinal = combos \? filtrarPorCombos\(res\.filas, combos\) : res\.filas;/);
+    // Las 3 acciones pasan `v.combos` como 3er argumento de cargarDetalleAcotado.
+    for (const fn of ["obtenerDetalleHotel", "obtenerDetalleSalida", "obtenerDetallePaquete"]) {
+      const idxFn = detalleActions.indexOf(`export async function ${fn}(`);
+      const idxSiguiente = detalleActions.indexOf("\nexport async function", idxFn + 1);
+      const cuerpo = detalleActions.slice(idxFn, idxSiguiente > -1 ? idxSiguiente : undefined);
+      assert.match(cuerpo, /v\.combos/, `${fn} debe usar v.combos`);
+      assert.match(cuerpo, /cargarDetalleAcotado\(/, `${fn} debe llamar cargarDetalleAcotado`);
+    }
   });
 
-  test("⚠️ item 2 — alcance vacío devuelve 'sin opciones' (ok:true, filas:[]) SIN consultar Supabase — nunca cae a traer todo el hotel", () => {
+  test("⚠️ ronda 6, ítem 2 — obtenerDetalleHotel cruza hotel_id CON un hint de bloqueoIds/paqueteIds derivado de combos (el post-filtro de combos es lo autoritativo, el `.in(...)` solo acota la consulta)", () => {
     const cuerpo = detalleActions.slice(detalleActions.indexOf("export async function obtenerDetalleHotel"), detalleActions.indexOf("export async function obtenerDetalleSalida"));
-    assert.match(cuerpo, /v\.bloqueoIds\.length === 0/);
-    assert.match(cuerpo, /return \{ ok: true, filas: \[\] \};/);
+    assert.match(cuerpo, /const bloqueoIds = \[\.\.\.new Set\(v\.combos\.map\(\(c\) => c\.bloqueo_id\)/, "bloqueoIds debe derivarse de v.combos, no de un array separado del cliente");
+    assert.match(cuerpo, /const paqueteIds = \[\.\.\.new Set\(v\.combos\.map\(\(c\) => c\.paquete_id\)/, "paqueteIds (porcion_terrestre) también debe derivarse de v.combos — antes este módulo no tenía NINGÚN alcance");
+    assert.match(cuerpo, /if \(bloqueoIds\.length\) q = q\.in\("bloqueo_id", bloqueoIds\);/);
+    assert.match(cuerpo, /if \(paqueteIds\.length\) q = q\.in\("paquete_id", paqueteIds\);/);
+  });
+
+  test("⚠️ ronda 6, ítem 2 — alcance vacío (combos:[]) devuelve 'sin opciones' (ok:true, filas:[]) SIN consultar Supabase — nunca cae a traer todo el hotel/salida/paquete", () => {
+    assert.match(detalleActions, /function alcanceVacio\(etapa: string\): ResultadoDetalle \{/);
+    assert.match(detalleActions, /return \{ ok: true, filas: \[\] \};/);
+    for (const [fn, etapa] of [["obtenerDetalleHotel", "hotel"], ["obtenerDetalleSalida", "salida"], ["obtenerDetallePaquete", "paquete"]] as const) {
+      const idxFn = detalleActions.indexOf(`export async function ${fn}(`);
+      const idxSiguiente = detalleActions.indexOf("\nexport async function", idxFn + 1);
+      const cuerpo = detalleActions.slice(idxFn, idxSiguiente > -1 ? idxSiguiente : undefined);
+      assert.match(cuerpo, /v\.combos\.length === 0/, `${fn} debe chequear alcance vacío`);
+      assert.match(cuerpo, new RegExp(`alcanceVacio\\("${etapa}"\\)`), `${fn} debe devolver alcanceVacio("${etapa}")`);
+    }
   });
 
   test("⚠️ item 4 — falla cerrada de verdad: errorVigencia/errorEmpaquetado hacen que la Server Action devuelva ok:false (nunca ok:true con filas parciales/vacías disfrazadas de 'sin disponibilidad')", () => {
@@ -129,11 +163,11 @@ describe("VistaBooking.tsx — 'Ver opciones' dispara el detalle bajo demanda co
     assert.match(cuerpo, /obtenerDetalleHotel\(/);
   });
 
-  test("⚠️ item 2 — preserva el alcance activo: abrirHotel calcula bloqueoIds de salidasFiltradas (el filtro origen/destino/salida vigente), no 'todo el hotel'", () => {
+  test("⚠️ ronda 6, ítem 2 — preserva el alcance activo COMPLETO: abrirHotel deriva combos de `h.filas` (ya refleja búsqueda/categoría/régimen/origen/destino/salidaSel), no de `salidasFiltradas` (que la revisión anterior usaba y NO incluía salidaSel ni categoría/régimen/búsqueda)", () => {
     const cuerpo = vistaBooking.slice(vistaBooking.indexOf("function abrirHotel"), vistaBooking.indexOf("function cerrarHotel"));
-    assert.match(cuerpo, /salidasFiltradas\.map\(\(s\) => s\.id\)/, "el alcance debe salir de las salidas YA filtradas por origen/destino/salida, no del catálogo completo");
-    assert.match(cuerpo, /claveDetalleHotel\(/, "la clave de caché debe construirse con el helper que normaliza el alcance");
-    assert.match(cuerpo, /bloqueoIds:\s*bloqueoIds/, "bloqueoIds debe viajar como argumento a obtenerDetalleHotel — nunca solo {modulo, hotelId}");
+    assert.doesNotMatch(cuerpo, /salidasFiltradas/, "abrirHotel ya NO debe derivar el alcance de salidasFiltradas — esa lista ignora salidaSel/categoría/régimen/búsqueda");
+    assert.match(cuerpo, /claveDetalleHotel\(esBloqueo \? "bloqueo" : "porcion_terrestre", h\.hotelId, h\.filas\)/, "la clave de caché debe construirse a partir de h.filas (el alcance completo ya filtrado de esta tarjeta)");
+    assert.match(cuerpo, /combos:\s*h\.filas/, "combos debe viajar como argumento a obtenerDetalleHotel para AMBOS módulos (bloqueo y porcion_terrestre) — nunca solo {modulo, hotelId}");
   });
 
   test("el botón 'Ver opciones' llama abrirHotel (no setAbierto directo, que saltaría el detalle)", () => {
@@ -156,9 +190,9 @@ describe("VistaBooking.tsx — 'Ver opciones' dispara el detalle bajo demanda co
 });
 
 describe("TarifarioPublic.tsx — Vista tabla (PorSalida/PorPaquete/PorServicios) pide detalle acotado, no el resumen", () => {
-  test("importa las 3 acciones de detalle + el módulo de caché compartido con VistaBooking", () => {
+  test("importa las 3 acciones de detalle + el módulo de caché compartido con VistaBooking (ahora también claveDetalleSalida/claveDetallePaquete)", () => {
     assert.match(tarifarioPublic, /import \{ obtenerDetalleSalida, obtenerDetallePaquete, obtenerDetalleServicios \} from "\.\/detalle-actions"/);
-    assert.match(tarifarioPublic, /import \{ conCacheDetalle, type EstadoDetalle \} from "@\/lib\/tarifario\/detalleCliente"/);
+    assert.match(tarifarioPublic, /import \{ conCacheDetalle, claveDetalleSalida, claveDetallePaquete, type EstadoDetalle \} from "@\/lib\/tarifario\/detalleCliente"/);
   });
 
   test("useDetalleTabla se usa en PorSalida, PorPaquete y PorServicios", () => {
@@ -166,15 +200,23 @@ describe("TarifarioPublic.tsx — Vista tabla (PorSalida/PorPaquete/PorServicios
     assert.ok(usos.length >= 3, `se esperaban al menos 3 usos de useDetalleTabla (PorSalida, PorPaquete, PorServicios) — hubo ${usos.length}`);
   });
 
-  test("PorSalida acota por bloqueoId/salidaId (no por la clave compuesta de texto usada solo para las pastillas)", () => {
+  test("⚠️ ronda 6, ítem 2 — PorSalida acota por bloqueoId/salidaId Y por `combosSalida` (el alcance de la búsqueda/categoría/régimen activos) — la revisión anterior solo acotaba por el id estructural, ignorando esos filtros", () => {
     const cuerpo = tarifarioPublic.slice(tarifarioPublic.indexOf("function PorSalida"), tarifarioPublic.indexOf("function PorPaquete"));
-    assert.match(cuerpo, /obtenerDetalleSalida\(\{ modulo: "bloqueo", bloqueoId: selFila!\.bloqueo_id \}\)/);
-    assert.match(cuerpo, /obtenerDetalleSalida\(\{ modulo: "dinamico", salidaId: selFila!\.salida_id \}\)/);
+    assert.match(cuerpo, /const combosSalida = useMemo\(/, "debe derivar el alcance de combos de filasConCupo (ya filtrado)");
+    assert.match(cuerpo, /filasConCupo\.filter\(\(f\) => f\.bloqueo_id === selFila\.bloqueo_id\)/);
+    assert.match(cuerpo, /filasConCupo\.filter\(\(f\) => f\.salida_id === selFila\.salida_id\)/);
+    assert.match(cuerpo, /obtenerDetalleSalida\(\{ modulo: "bloqueo", bloqueoId: selFila!\.bloqueo_id, combos: combosSalida \}\)/);
+    assert.match(cuerpo, /obtenerDetalleSalida\(\{ modulo: "dinamico", salidaId: selFila!\.salida_id, combos: combosSalida \}\)/);
+    assert.match(cuerpo, /claveDetalleSalida\("bloqueo", selFila\.bloqueo_id, combosSalida\)/);
+    assert.match(cuerpo, /claveDetalleSalida\("dinamico", selFila\.salida_id, combosSalida\)/);
   });
 
-  test("PorPaquete acota por paqueteId", () => {
+  test("⚠️ ronda 6, ítem 2 — PorPaquete acota por paqueteId Y por `combosPaquete`", () => {
     const cuerpo = tarifarioPublic.slice(tarifarioPublic.indexOf("function PorPaquete"), tarifarioPublic.indexOf("function PorServicios"));
-    assert.match(cuerpo, /obtenerDetallePaquete\(\{ paqueteId: selFila!\.paquete_id \}\)/);
+    assert.match(cuerpo, /const combosPaquete = useMemo\(/);
+    assert.match(cuerpo, /filas\.filter\(\(f\) => f\.paquete_id === selFila\.paquete_id\)/, "combosPaquete debe derivarse de `filas` (la prop, ya filtrada por búsqueda/categoría/régimen)");
+    assert.match(cuerpo, /obtenerDetallePaquete\(\{ paqueteId: selFila!\.paquete_id, combos: combosPaquete \}\)/);
+    assert.match(cuerpo, /claveDetallePaquete\(selFila\.paquete_id, combosPaquete\)/);
   });
 
   test("PorServicios pide el detalle completo de servicios sin parámetros (módulo completo, acotado por módulo)", () => {

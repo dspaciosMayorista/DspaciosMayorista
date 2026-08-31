@@ -127,8 +127,12 @@ describe("Item 1 — el resumen ya NO se re-expande a miles de filas antes del t
       resumenBase({ hotel_id: 10, categoria: "Estandar", regimen: "PC", precio_sencilla: 900000, precio_doble: 500000, precio_triple: 450000, precio_multiple: 400000, desde_adulto: 400000 }),
       resumenBase({ hotel_id: 20, hotel_nombre: "Hotel Dos", categoria: "Suite", regimen: "PAM", precio_doble: 300000, desde_adulto: 300000 }),
     ];
-    const sb = clienteFalso(tablasBase(), resumen);
-    const r = await cargarResumenTarifario(sb, "test", "flujo1", null);
+    const tablas = tablasBase({
+      hotel_temporadas: { data: [temporadaVigente(10), temporadaVigente(20)], error: null },
+      tarifa_hotel: { data: [tarifaVigente(10, "Estandar", "PC"), tarifaVigente(20, "Suite", "PAM")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
     assert.equal(r.ok, true);
     if (!r.ok) return;
     assert.equal(r.datos.filasVisibles.length, 2, "2 filas de resumen entran → 2 filas salen, nunca 8 (2×4 acomodaciones)");
@@ -319,6 +323,21 @@ function resumenBase(overrides: Partial<FilaResumen>): FilaResumen {
   };
 }
 
+// Fixture mínimo de vigencia "siempre vigente" (mismo patrón ya validado en
+// pruebas/tarifarioVigencia.test.ts) — rango de fechas 2020-2030 cubre
+// cualquier fecha que use este archivo (MANIANA/AYER), así que una fila de
+// hotel con este par temporada+tarifa SIEMPRE liquida (neto>0), sin importar
+// la fecha de la fila. Se usa para poder pasar un admin REAL (no null) en las
+// pruebas que no están probando vigencia en sí — necesario desde la ronda 6
+// (ítem 3): `cargarResumenTarifario()` ahora falla cerrado si hay filas de
+// hotel verificables y no hay admin.
+function temporadaVigente(hotelId: number) {
+  return { hotel_id: hotelId, nombre: "ALTA", fecha_inicio: "2020-01-01", fecha_fin: "2030-12-31", prioridad: 1, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null, rangos: null, blackouts: null, min_noches: null, regimen_restringido: null };
+}
+function tarifaVigente(hotelId: number, categoria: string, regimen: string) {
+  return { hotel_id: hotelId, tipo_habitacion: categoria, alimentacion: regimen, temporada: "ALTA", neto_sencilla: 100000, neto_doble: 90000, neto_triple: 80000, neto_multiple: 70000 };
+}
+
 function tablasBase(overrides: Record<string, Fila> = {}): Record<string, Fila> {
   return {
     cupos_por_bloqueo: { data: [], error: null },
@@ -340,8 +359,12 @@ function tablasBase(overrides: Record<string, Fila> = {}): Record<string, Fila> 
 describe("cargarResumenTarifario() — consulta la vista de resumen, entrega FilaResumen[] SIN expandir", () => {
   test("caso feliz: consulta tarifario_resumen, entrega exactamente esas filas (magnitud del RESUMEN, no de una expansión)", async () => {
     const resumen = [resumenBase({}), resumenBase({ hotel_id: 20, hotel_nombre: "Hotel Dos", desde_adulto: 300000, precio_doble: 300000 })];
-    const sb = clienteFalso(tablasBase(), resumen);
-    const r = await cargarResumenTarifario(sb, "test", "flujo1", null);
+    const tablas = tablasBase({
+      hotel_temporadas: { data: [temporadaVigente(10), temporadaVigente(20)], error: null },
+      tarifa_hotel: { data: [tarifaVigente(10, "Estandar", "PC"), tarifaVigente(20, "Estandar", "PC")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
     assert.equal(r.ok, true);
     if (!r.ok) return;
     assert.equal(r.datos.filasVisibles.length, 2, "2 filas de resumen entran → 2 filas de resumen salen");
@@ -369,10 +392,18 @@ describe("cargarResumenTarifario() — consulta la vista de resumen, entrega Fil
     assert.doesNotMatch(r.error, /conexión perdida/, "el error crudo de Supabase nunca debe llegar al mensaje público");
   });
 
-  test("bloqueo con fecha_ida de AYER: se oculta (mismo criterio que cargarDatosTarifario, aplicado al resumen)", async () => {
-    const resumen = [resumenBase({ modulo: "bloqueo", fecha_ida: AYER })];
-    const sb = clienteFalso(tablasBase(), resumen);
-    const r = await cargarResumenTarifario(sb, "test", "flujo1", null);
+  test("bloqueo con fecha_ida de AYER: se oculta (mismo criterio que cargarDatosTarifario, aplicado al resumen) — con vigencia REAL vigente, para aislar específicamente el filtro de fecha pasada", async () => {
+    const resumen = [resumenBase({ modulo: "bloqueo", hotel_id: 10, fecha_ida: AYER })];
+    // Vigencia de compra VÁLIDA (2020-2030, cubre AYER) — así la fila se
+    // oculta ÚNICAMENTE por el filtro explícito de "salida ya pasada", no
+    // porque además le faltara vigencia (que la escondería igual, pero por
+    // otra razón, sin probar lo que este caso dice probar).
+    const tablas = tablasBase({
+      hotel_temporadas: { data: [temporadaVigente(10)], error: null },
+      tarifa_hotel: { data: [tarifaVigente(10, "Estandar", "PC")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
     assert.equal(r.ok, true);
     if (!r.ok) return;
     assert.equal(r.datos.filasVisibles.length, 0, "una salida de bloqueo vencida debe ocultarse igual que en el catálogo completo");
@@ -401,17 +432,214 @@ describe("cargarResumenTarifario() — consulta la vista de resumen, entrega Fil
     assert.equal(r.datos.filasVisibles[0].desde_general, 90000);
   });
 
-  test("⚠️ falla cerrada de verdad: un error TÉCNICO de vigencia se registra como error (no se disfraza de 'sin disponibilidad') — las filas afectadas quedan ocultas igual, pero el estado es error", async () => {
+  test("⚠️ ronda 6, ítem 3 — REPRODUCCIÓN del defecto (antes de esta ronda daba ok:true): un error TÉCNICO de vigencia ahora hace fallar TODA la función, no solo oculta la fila afectada", async () => {
     const resumen = [resumenBase({ hotel_id: 12 })];
     const tablas = tablasBase({ hotel_temporadas: { data: null, error: { message: "timeout" } } });
     const sb = clienteFalso(tablas, resumen);
     const admin = sb;
     const r = await cargarResumenTarifario(sb, "test", "flujo1", admin);
-    // La página sigue mostrando el resto del tarifario (comportamiento
-    // establecido, ver lib/tarifario/datos.ts) — pero la fila de hotel
-    // afectada por el error técnico de vigencia queda oculta (fail-closed).
+    // Antes de esta ronda: `ok:true` con `filasVisibles.length === 0` — un
+    // catálogo parcial (vacío) disfrazado de "esto es todo lo disponible".
+    // Ahora: la función entera falla cerrada — nunca entrega catálogo
+    // parcial como disponibilidad válida.
+    assert.equal(r.ok, false, "un error técnico de vigencia debe fallar TODA la carga, no solo ocultar la fila afectada");
+    if (r.ok) return;
+    assert.match(r.error, /No fue posible cargar el tarifario/);
+  });
+
+  test("⚠️ ronda 6, ítem 3 — REPRODUCCIÓN del defecto: falta SUPABASE_SERVICE_ROLE_KEY (admin=null) con filas de hotel verificables presentes — antes daba ok:true con catálogo parcial, ahora falla cerrado", async () => {
+    const resumen = [resumenBase({ modulo: "bloqueo", hotel_id: 10 })]; // bloqueo + hotel_id + fecha_ida ⇒ esFilaHotelVerificable() = true
+    const sb = clienteFalso(tablasBase(), resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", null);
+    assert.equal(r.ok, false, "sin service-role y con filas de hotel verificables, la carga entera debe fallar — nunca publicar un catálogo sin poder confirmar su vigencia");
+    if (r.ok) return;
+    assert.match(r.error, /No fue posible cargar el tarifario/);
+  });
+
+  test("admin=null es válido cuando NO hay ninguna fila de hotel verificable (solo servicios) — ok:true", async () => {
+    const resumen = [resumenBase({ modulo: "servicios", hotel_id: null, servicio_id: 7, servicio_nombre: "Tour", categoria: null, regimen: null, desde_general: 90000, paquete_id: 9 })];
+    // Sin admin, `aplicarFiltrosPostCarga` no puede resolver `armado_paquetes`
+    // (necesita admin) — por eso el módulo `servicios` con `admin=null` no se
+    // publica (mismo criterio ya existente, no relacionado con este ítem):
+    // `filasVisibles` se filtra en el bloque `if (admin && ...)`.
+    const sb = clienteFalso(tablasBase(), resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", null);
+    assert.equal(r.ok, true, "sin filas de hotel verificables, admin=null no debe hacer fallar la carga");
+  });
+
+  test("admin presente + hotel-verificable presente: sigue funcionando igual que antes de esta ronda (caso feliz no afectado)", async () => {
+    const resumen = [resumenBase({ hotel_id: 15 })];
+    const tablas = tablasBase({
+      hotel_temporadas: { data: [temporadaVigente(15)], error: null },
+      tarifa_hotel: { data: [tarifaVigente(15, "Estandar", "PC")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
     assert.equal(r.ok, true);
     if (!r.ok) return;
-    assert.equal(r.datos.filasVisibles.length, 0, "fail-closed: sin poder verificar vigencia, la fila de hotel no se publica");
+    assert.equal(r.datos.filasVisibles.length, 1);
+  });
+});
+
+// ── Ronda 6, Item 1 — paginación robusta de `cargarFilasResumenPaginado()` ──
+//
+// Defecto reportado: la versión anterior terminaba con `page.length < PAGE`
+// y avanzaba `from` por `PAGE` fijo. PostgREST puede recortar la respuesta a
+// MENOS filas de las pedidas por `.range()` (límite "Max Rows" del proyecto)
+// aunque queden más filas después — ese recorte no significa "no hay más".
+// Corrección: orden TOTAL determinista (todas las columnas del `group by` de
+// la migración 161 salvo `paquete_activo`, siempre `true`), avance por la
+// cantidad REAL de filas recibidas, término SOLO con página vacía, y una
+// guardia explícita de páginas máximas contra falta de progreso.
+describe("Ronda 6, Item 1 — paginación robusta ante recorte de PostgREST (Max Rows) y orden total determinista", () => {
+  // 12 filas en 3 grupos de 4: cada grupo comparte destino_nombre/
+  // bloqueo_label/hotel_nombre/categoria/regimen (EMPATAN bajo el orden
+  // ANTERIOR de 5 columnas) pero difieren en hotel_id/paquete_id/fecha_ida
+  // (se DESAMBIGUAN bajo el orden nuevo de 19 columnas).
+  function fixtureConEmpates(): FilaResumen[] {
+    const filas: FilaResumen[] = [];
+    let hotelId = 1;
+    for (const grupo of ["Cartagena", "San Andres", "Santa Marta"]) {
+      for (let i = 0; i < 4; i++) {
+        filas.push(resumenBase({
+          hotel_id: hotelId, paquete_id: hotelId, hotel_nombre: "Hotel Igual",
+          destino_nombre: grupo, bloqueo_label: "L1", categoria: "Est", regimen: "PC",
+          fecha_ida: fechaEnBogota(i + 1), desde_adulto: 400000 + hotelId,
+        }));
+        hotelId++;
+      }
+    }
+    return filas;
+  }
+
+  const ORDEN_VIEJO = ["destino_nombre", "bloqueo_label", "hotel_nombre", "categoria", "regimen"] as const;
+  const ORDEN_NUEVO = [
+    "modulo", "paquete_id", "paquete_nombre", "bloqueo_id", "bloqueo_label",
+    "empaquetado_id", "salida_id", "hotel_id", "hotel_nombre", "servicio_id",
+    "servicio_nombre", "destino_id", "destino_nombre", "categoria", "regimen",
+    "fecha_ida", "fecha_regreso", "noches", "moneda",
+  ] as const;
+
+  function claveOrden(f: FilaResumen, cols: readonly string[]): string {
+    return cols.map((c) => String((f as unknown as Record<string, unknown>)[c] ?? "∅")).join("|||");
+  }
+
+  test("el orden ANTERIOR (5 columnas) deja empates reales en este catálogo — no era un orden total", () => {
+    const claves = fixtureConEmpates().map((f) => claveOrden(f, ORDEN_VIEJO));
+    assert.ok(new Set(claves).size < claves.length, "debe haber al menos una clave repetida bajo el orden anterior de 5 columnas");
+  });
+
+  test("el orden NUEVO (19 columnas — todo el group by de la migración 161 salvo paquete_activo) desambigua TODAS las filas del mismo catálogo", () => {
+    const claves = fixtureConEmpates().map((f) => claveOrden(f, ORDEN_NUEVO));
+    assert.equal(new Set(claves).size, claves.length, "cada fila debe tener una clave única bajo el orden total nuevo");
+  });
+
+  type FakeBuilder = {
+    select(cols: string): FakeBuilder;
+    order(col: string): FakeBuilder;
+    range(from: number, to: number): Promise<{ data: FilaResumen[] | null; error: unknown }>;
+  };
+
+  // Servidor simulado: ordena por las columnas realmente pedidas (`.order`) y
+  // SIEMPRE recorta la respuesta a un máximo fijo de filas, sin importar
+  // cuántas se pidieron por `.range()` — reproduce el límite "Max Rows" de un
+  // proyecto Supabase real (Settings → API), que trunca la respuesta sin error.
+  function servidorSimuladoMaxRows(dataset: FilaResumen[], maxFilasPorPagina: number) {
+    function builder(tabla: string) {
+      const ordenCols: string[] = [];
+      let rangeArgs: [number, number] = [0, 999];
+      const b = {
+        select() { return this; },
+        order(col: string) { ordenCols.push(col); return this; },
+        range(from: number, to: number) { rangeArgs = [from, to]; return this; },
+        then(resolve: (v: { data: unknown; error: unknown }) => void) {
+          if (tabla !== "tarifario_resumen") { resolve({ data: [], error: null }); return; }
+          const ordenado = [...dataset].sort((a, b2) => {
+            for (const col of ordenCols) {
+              const av = (a as unknown as Record<string, unknown>)[col];
+              const bv = (b2 as unknown as Record<string, unknown>)[col];
+              if (av === bv) continue;
+              if (av == null) return -1;
+              if (bv == null) return 1;
+              if (av < bv) return -1;
+              if (av > bv) return 1;
+            }
+            return 0;
+          });
+          const [from, to] = rangeArgs;
+          const pedida = ordenado.slice(from, to + 1);
+          // El recorte tipo "Max Rows": nunca más de `maxFilasPorPagina`,
+          // aunque `to - from + 1` (lo pedido) sea mucho mayor.
+          resolve({ data: pedida.slice(0, maxFilasPorPagina), error: null });
+        },
+      };
+      return b;
+    }
+    return { from: builder } as unknown as SupabaseClient<Database>;
+  }
+
+  // Reimplementación LOCAL de la versión ANTERIOR (con el defecto reportado)
+  // de `cargarFilasResumenPaginado` — orden de 5 columnas, termina con
+  // `page.length < PAGE`, avanza `from` por `PAGE` fijo — usada SOLO para
+  // demostrar el defecto como control negativo (la función real ya no existe
+  // en este código; el código de producción actual es el corregido de arriba).
+  async function paginarViejoBuggy(sb: SupabaseClient<Database>): Promise<FilaResumen[]> {
+    const PAGE_VIEJO = 1000;
+    const filas: FilaResumen[] = [];
+    for (let from = 0; ; from += PAGE_VIEJO) {
+      let q = (sb.from("tarifario_resumen") as unknown as FakeBuilder).select("*");
+      for (const col of ORDEN_VIEJO) q = q.order(col);
+      const { data: page } = await q.range(from, from + PAGE_VIEJO - 1);
+      if (!page || page.length === 0) break;
+      filas.push(...page);
+      if (page.length < PAGE_VIEJO) break;
+    }
+    return filas;
+  }
+
+  test("⚠️ REPRODUCCIÓN del defecto: contra un servidor que recorta a máximo 2 filas por pedido, el algoritmo ANTERIOR pierde la mayoría del catálogo (termina en la primera página)", async () => {
+    const dataset = fixtureConEmpates();
+    const sb = servidorSimuladoMaxRows(dataset, 2);
+    const recibidas = await paginarViejoBuggy(sb);
+    assert.ok(recibidas.length < dataset.length, `el algoritmo anterior debe truncar (recibió ${recibidas.length} de ${dataset.length} filas)`);
+    assert.equal(recibidas.length, 2, "termina exactamente en la primera página recortada por el servidor (2 < PAGE=1000 dispara el `break` viejo)");
+  });
+
+  test("cargarFilasResumenPaginado() corregido: contra el MISMO servidor recortado a 2 filas por pedido, recupera TODO el catálogo — más de 3 páginas, sin perder, duplicar ni cortar filas", async () => {
+    const dataset = fixtureConEmpates();
+    const sb = servidorSimuladoMaxRows(dataset, 2);
+    const pag = await cargarFilasResumenPaginado(sb);
+    assert.equal(pag.ok, true);
+    if (!pag.ok) return;
+    assert.equal(pag.filas.length, dataset.length, "debe recuperar las 12 filas completas, no solo la primera página recortada");
+    assert.ok(pag.paginasConsultadas > 3, `debe haber necesitado más de 3 páginas (12 filas / 2 por página = 6) — hubo ${pag.paginasConsultadas}`);
+    const idsRecibidos = pag.filas.map((f) => f.hotel_id as number);
+    assert.equal(new Set(idsRecibidos).size, dataset.length, "ningún hotel_id debe repetirse — sin duplicados");
+    assert.deepEqual(
+      [...idsRecibidos].sort((a, b) => a - b),
+      dataset.map((f) => f.hotel_id as number).sort((a, b) => a - b),
+      "el conjunto de hoteles recuperados debe ser EXACTAMENTE el del catálogo completo — sin faltantes"
+    );
+  });
+
+  test("guardia explícita contra falta de progreso: un servidor que nunca entrega una página vacía falla cerrado (ok:false), no hace un loop sin fin", async () => {
+    // Servidor patológico: SIEMPRE devuelve 1 fila, nunca una página vacía —
+    // simula un backend roto/mal configurado que jamás señala "fin".
+    function builder() {
+      return {
+        select() { return this; },
+        order() { return this; },
+        range() { return this; },
+        then(resolve: (v: { data: unknown; error: unknown }) => void) {
+          resolve({ data: [resumenBase({ hotel_id: 1 })], error: null });
+        },
+      };
+    }
+    const sb = { from: builder } as unknown as SupabaseClient<Database>;
+    const pag = await cargarFilasResumenPaginado(sb);
+    assert.equal(pag.ok, false, "debe fallar cerrado en vez de continuar indefinidamente");
+    if (pag.ok) return;
+    const msg = pag.error instanceof Error ? pag.error.message : String(pag.error);
+    assert.match(msg, /límite de \d+ páginas/, "el error debe explicar que se alcanzó el límite de páginas, no un error de red genérico");
   });
 });

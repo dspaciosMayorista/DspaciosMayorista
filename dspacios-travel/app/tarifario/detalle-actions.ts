@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { aplicarFiltrosPostCarga } from "@/lib/tarifario/filtrosPostCarga";
 import { esFilaHotelVerificable } from "@/lib/tarifario/vigencia";
 import { validarEntradaDetalleHotel, validarEntradaDetalleSalida, validarEntradaDetallePaquete } from "@/lib/tarifario/detalleValidacion";
+import { filtrarPorCombos, type ComboIdentidad } from "@/lib/tarifario/comboKey";
 import type { FilaTarifario } from "./TarifarioPublic";
 import { generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico } from "@/lib/observabilidad/medicion";
 
@@ -35,11 +36,24 @@ import { generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecn
 //   · Cada acción hace 1 sola consulta a `tarifario_resultado` (más, cuando
 //     aplica, las mismas verificaciones internas ya usadas por el resumen) —
 //     nunca N+1 por fila.
-//   · `obtenerDetalleHotel({modulo:"bloqueo", ...})` EXIGE `bloqueoIds`: el
-//     alcance actualmente visible bajo el filtro de origen/destino/salida de
-//     VistaBooking (revisión posterior, defecto "no preserva el alcance
-//     activo al abrir un hotel") — nunca vuelve "todo el hotel" como si no
-//     hubiera filtro. Ver lib/tarifario/detalleValidacion.ts.
+//   · ⚠️ Ronda 6, ítem 2 — las 3 acciones que acotan por un id estructural
+//     (`obtenerDetalleHotel`/`obtenerDetalleSalida`/`obtenerDetallePaquete`)
+//     EXIGEN además `combos: ComboIdentidad[]` — el alcance de COMBOS
+//     (módulo/paquete/bloqueo/salida/hotel/categoría/régimen/fechas/moneda,
+//     ver lib/tarifario/comboKey.ts) actualmente visible bajo CUALQUIER
+//     filtro activo del cliente (búsqueda de texto, categoría, régimen,
+//     origen/destino/una salida puntual). La ronda anterior solo exigía
+//     `bloqueoIds` (ids estructurales) para `obtenerDetalleHotel({modulo:
+//     "bloqueo"})` — cubría origen/destino/salida, pero NO categoría/
+//     régimen/búsqueda, ni el módulo `porcion_terrestre`, ni Vista tabla
+//     (Salidas/Paquetes). Ahora las 3 acciones post-filtran las filas que
+//     trajeron de `tarifario_resultado` contra ese alcance ANTES de
+//     devolverlas (`filtrarPorCombos`, abajo) — el alcance declarado por el
+//     cliente es la fuente AUTORITATIVA de qué combos son válidos, no solo
+//     un hint de optimización del `.in(...)` de la consulta. `combos` puede
+//     ser un array vacío (alcance vacío: "sin opciones", nunca "todo el
+//     hotel/salida/paquete" como fallback). Ver
+//     lib/tarifario/detalleValidacion.ts.
 //   · Falla cerrada de VERDAD (revisión posterior, defecto "convierte un
 //     error técnico en 'sin disponibilidad'"): si `aplicarFiltrosPostCarga()`
 //     devuelve `errorVigencia`/`errorEmpaquetado`, o si hace falta
@@ -61,10 +75,25 @@ function admin() {
 }
 
 /**
+ * "Sin opciones bajo el alcance actual" — respuesta compartida por las 3
+ * acciones acotadas por combos cuando el cliente declara `combos: []` (el
+ * filtro activo no deja ningún combo visible). Nunca cae a "todo el
+ * hotel/salida/paquete" como fallback — ver la nota larga de arriba.
+ */
+function alcanceVacio(etapa: string): ResultadoDetalle {
+  const flujoId = generarFlujoId();
+  registrarEtapa(FLUJO, flujoId, "detalle_tarifas", 0, "ok");
+  registrarDatoPagina(FLUJO, flujoId, "detalle_tarifas", `alcance=${etapa} filas_detalle=0 motivo=alcance_vacio`);
+  return { ok: true, filas: [] };
+}
+
+/**
  * Ejecuta la consulta acotada dada, aplica los mismos filtros de vigencia/
- * empaquetados que ya aplicó el resumen (Tier 1) y devuelve el resultado
- * saneado. Punto único para las 4 acciones de abajo — evita repetir el
- * manejo de error/instrumentación 4 veces.
+ * empaquetados que ya aplicó el resumen (Tier 1), post-filtra por el alcance
+ * de `combos` (cuando se pasa — ronda 6, ítem 2: el allow-list del cliente
+ * es la fuente AUTORITATIVA, no solo un hint de la consulta SQL) y devuelve
+ * el resultado saneado. Punto único para las 4 acciones de abajo — evita
+ * repetir el manejo de error/instrumentación 4 veces.
  */
 async function cargarDetalleAcotado(
   etapa: string,
@@ -72,7 +101,8 @@ async function cargarDetalleAcotado(
   // (`sb.from(...).select(...).eq(...)`) son "thenables" pero no Promise
   // reales (no implementan `catch`/`finally`) — mismo motivo documentado en
   // `Medidor` (lib/observabilidad/medicion.ts).
-  ejecutar: (sb: Awaited<ReturnType<typeof createClient>>) => PromiseLike<{ data: unknown; error: unknown }>
+  ejecutar: (sb: Awaited<ReturnType<typeof createClient>>) => PromiseLike<{ data: unknown; error: unknown }>,
+  combos?: ComboIdentidad[]
 ): Promise<ResultadoDetalle> {
   const flujoId = generarFlujoId();
   const t0 = performance.now();
@@ -107,76 +137,104 @@ async function cargarDetalleAcotado(
     registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
     return { ok: false, error: MSG_ERROR_DETALLE };
   }
+  const filasFinal = combos ? filtrarPorCombos(res.filas, combos) : res.filas;
   registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "ok");
-  registrarDatoPagina(FLUJO, flujoId, "detalle_tarifas", `alcance=${etapa} filas_detalle=${res.filas.length}`);
-  return { ok: true, filas: res.filas };
+  registrarDatoPagina(
+    FLUJO, flujoId, "detalle_tarifas",
+    `alcance=${etapa} filas_detalle=${filasFinal.length}${combos ? ` filas_antes_de_combos=${res.filas.length} combos_permitidos=${combos.length}` : ""}`
+  );
+  return { ok: true, filas: filasFinal };
 }
 
 /**
- * "Ver opciones" de un hotel en Vista Booking — acotado por (módulo, hotel)
- * y, para `modulo:"bloqueo"`, por el ALCANCE de bloqueos actualmente visible
- * bajo el filtro de origen/destino/salida (`bloqueoIds`, obligatorio — ver
- * `validarEntradaDetalleHotel`). Un hotel puede tener varias salidas dentro
- * de ese alcance; el modal las elige TODAS de una sola vez (así evita
- * re-consultar al cambiar de salida dentro del mismo modal ya abierto).
+ * "Ver opciones" de un hotel en Vista Booking — acotado por (módulo, hotel) y
+ * por el ALCANCE de `combos` actualmente visible bajo CUALQUIER filtro activo
+ * (búsqueda, categoría, régimen, y para `modulo:"bloqueo"` también origen/
+ * destino/salida — obligatorio para AMBOS módulos, ver
+ * `validarEntradaDetalleHotel`). `bloqueoIds`/`paqueteIds` se derivan de
+ * `combos` SOLO como hint de la consulta SQL (reduce cuánto trae Supabase);
+ * la corrección real la da `filtrarPorCombos` dentro de
+ * `cargarDetalleAcotado`, que post-filtra contra el alcance declarado.
  */
 export async function obtenerDetalleHotel(inputRaw: unknown): Promise<ResultadoDetalle> {
   const v = validarEntradaDetalleHotel(inputRaw);
   if (!v) return { ok: false, error: MSG_ERROR_DETALLE };
 
+  // Alcance vacío: el filtro activo no deja ningún combo visible para este
+  // hotel — el resultado correcto es "sin opciones", nunca "todo el hotel"
+  // como fallback (eso rompería el alcance que el usuario ve).
+  if (v.combos.length === 0) return alcanceVacio("hotel");
+
   if (v.modulo === "bloqueo") {
-    if (v.bloqueoIds.length === 0) {
-      // Alcance vacío: el filtro activo no deja ninguna salida visible para
-      // este hotel — el resultado correcto es "sin opciones", nunca "todo el
-      // hotel" como fallback (eso rompería el alcance que el usuario ve).
-      // Se instrumenta igual que un resultado ok normal (0 filas, sin error).
-      const flujoId = generarFlujoId();
-      registrarEtapa(FLUJO, flujoId, "detalle_tarifas", 0, "ok");
-      registrarDatoPagina(FLUJO, flujoId, "detalle_tarifas", "alcance=hotel filas_detalle=0 motivo=alcance_vacio");
-      return { ok: true, filas: [] };
-    }
-    return cargarDetalleAcotado("hotel", (sb) =>
-      sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
-        .eq("paquete_activo", true).eq("modulo", "bloqueo").eq("hotel_id", v.hotelId).in("bloqueo_id", v.bloqueoIds)
+    const bloqueoIds = [...new Set(v.combos.map((c) => c.bloqueo_id).filter((x): x is number => x != null))];
+    return cargarDetalleAcotado(
+      "hotel",
+      (sb) => {
+        let q = sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+          .eq("paquete_activo", true).eq("modulo", "bloqueo").eq("hotel_id", v.hotelId);
+        if (bloqueoIds.length) q = q.in("bloqueo_id", bloqueoIds);
+        return q;
+      },
+      v.combos
     );
   }
-  return cargarDetalleAcotado("hotel", (sb) =>
-    sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
-      .eq("paquete_activo", true).eq("modulo", "porcion_terrestre").eq("hotel_id", v.hotelId)
+  const paqueteIds = [...new Set(v.combos.map((c) => c.paquete_id).filter((x): x is number => x != null))];
+  return cargarDetalleAcotado(
+    "hotel",
+    (sb) => {
+      let q = sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+        .eq("paquete_activo", true).eq("modulo", "porcion_terrestre").eq("hotel_id", v.hotelId);
+      if (paqueteIds.length) q = q.in("paquete_id", paqueteIds);
+      return q;
+    },
+    v.combos
   );
 }
 
 /**
  * Vista tabla → pestaña Paquetes/Salidas dinámicas: al elegir UNA salida
- * concreta (record de bloqueo o salida dinámica), trae su matriz completa
- * (todos los hoteles de esa salida). Ya viene acotada a un único id exacto —
- * es, por definición, el alcance completo visible (el usuario eligió esa
- * salida puntual entre las pastillas).
+ * concreta (record de bloqueo o salida dinámica), trae su matriz completa —
+ * pero acotada por `combos` (obligatorio): el id estructural identifica QUÉ
+ * salida abrir, `combos` acota además a qué hoteles/categorías/regímenes
+ * dentro de esa salida el filtro activo (búsqueda/categoría/régimen) deja
+ * visibles.
  */
 export async function obtenerDetalleSalida(inputRaw: unknown): Promise<ResultadoDetalle> {
   const v = validarEntradaDetalleSalida(inputRaw);
   if (!v) return { ok: false, error: MSG_ERROR_DETALLE };
+  if (v.combos.length === 0) return alcanceVacio("salida");
 
   if (v.modulo === "bloqueo") {
-    return cargarDetalleAcotado("salida_bloqueo", (sb) =>
-      sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
-        .eq("paquete_activo", true).eq("modulo", "bloqueo").eq("bloqueo_id", v.bloqueoId)
+    return cargarDetalleAcotado(
+      "salida_bloqueo",
+      (sb) => sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+        .eq("paquete_activo", true).eq("modulo", "bloqueo").eq("bloqueo_id", v.bloqueoId),
+      v.combos
     );
   }
-  return cargarDetalleAcotado("salida_dinamica", (sb) =>
-    sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
-      .eq("paquete_activo", true).eq("modulo", "dinamico").eq("salida_id", v.salidaId)
+  return cargarDetalleAcotado(
+    "salida_dinamica",
+    (sb) => sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+      .eq("paquete_activo", true).eq("modulo", "dinamico").eq("salida_id", v.salidaId),
+    v.combos
   );
 }
 
-/** Vista tabla → pestaña Porción terrestre: al elegir UN paquete concreto. */
+/**
+ * Vista tabla → pestaña Porción terrestre: al elegir UN paquete concreto,
+ * acotado además por `combos` (obligatorio) — mismo criterio que
+ * `obtenerDetalleSalida`.
+ */
 export async function obtenerDetallePaquete(inputRaw: unknown): Promise<ResultadoDetalle> {
   const v = validarEntradaDetallePaquete(inputRaw);
   if (!v) return { ok: false, error: MSG_ERROR_DETALLE };
+  if (v.combos.length === 0) return alcanceVacio("paquete");
 
-  return cargarDetalleAcotado("paquete_porcion", (sb) =>
-    sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
-      .eq("paquete_activo", true).eq("modulo", "porcion_terrestre").eq("paquete_id", v.paqueteId)
+  return cargarDetalleAcotado(
+    "paquete_porcion",
+    (sb) => sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+      .eq("paquete_activo", true).eq("modulo", "porcion_terrestre").eq("paquete_id", v.paqueteId),
+    v.combos
   );
 }
 

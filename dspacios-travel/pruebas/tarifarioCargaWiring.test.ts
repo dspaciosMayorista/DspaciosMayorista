@@ -103,13 +103,56 @@ describe("/dashboard/tarifario — usa orquestarCargaInterna(); NO usa cargarDat
   });
 
   test("reutiliza filtrarTarifarioVencidas de lib/tarifario/vigencia (compartido, no reimplementado) — aplicado sobre las filas de RESUMEN (mismo grano hotel+categoría+régimen que antes)", () => {
-    assert.match(src, /import\s*\{\s*filtrarTarifarioVencidas\s*\}\s*from\s*"@\/lib\/tarifario\/vigencia"/);
+    assert.match(src, /import\s*\{\s*filtrarTarifarioVencidas,\s*esFilaHotelVerificable\s*\}\s*from\s*"@\/lib\/tarifario\/vigencia"/);
   });
 
   test("un fallo del resumen (`!pag.ok`) aborta con mensaje público fijo — nunca dice 'aún no hay tarifas'", () => {
     assert.match(src, /if \(!pag\.ok\)/);
     assert.match(src, /MSG_ERROR_CARGAR_TARIFARIO/);
     assert.match(src, /registrarErrorTecnico\(FLUJO, flujoId, "resumen_inicial"/);
+  });
+
+  // ── Ronda 6, ítem 3 — política de fallo cerrado de esta vista interna ────
+  // Auditada explícitamente: diverge de /tarifario y /dashboard/reservar en
+  // UN solo punto (best-effort ante un error TÉCNICO transitorio de
+  // vigencia), pero NO en el caso de falta de service-role con filas de
+  // hotel verificables — ahí cierra igual que el público. Ver el comentario
+  // largo en el propio page.tsx para la justificación completa.
+  test("importa esFilaHotelVerificable de lib/tarifario/vigencia (misma condición que usa el camino público)", () => {
+    assert.match(src, /import\s*\{\s*filtrarTarifarioVencidas,\s*esFilaHotelVerificable\s*\}\s*from\s*"@\/lib\/tarifario\/vigencia"/);
+  });
+
+  test("falta de SUPABASE_SERVICE_ROLE_KEY CON filas de hotel verificables: falla TODA la carga (ok:false) — misma política que el camino público, NO es best-effort aquí", () => {
+    const idx = src.indexOf("!process.env.SUPABASE_SERVICE_ROLE_KEY && pag.filas.some(esFilaHotelVerificable)");
+    assert.ok(idx > -1, "no se encontró el chequeo explícito de falta de service-role con filas verificables");
+    const RETORNO = "return { ok: false as const };";
+    const idxRetorno = src.indexOf(RETORNO, idx);
+    assert.ok(idxRetorno > -1, "el chequeo debe terminar con `return { ok: false as const };`");
+    const bloque = src.slice(idx, idxRetorno + RETORNO.length);
+    assert.match(bloque, /registrarErrorTecnico\(\s*FLUJO, flujoId, "filtro_vigencia", "error_falta_service_role_con_filas_hotel_verificables"/);
+  });
+
+  test("el chequeo de falta de service-role va ANTES del bloque best-effort (no después) — no puede ejecutarse `filtrarTarifarioVencidas` bajo la premisa falsa de tenerlo disponible", () => {
+    const idxChequeo = src.indexOf("!process.env.SUPABASE_SERVICE_ROLE_KEY && pag.filas.some(esFilaHotelVerificable)");
+    const idxBestEffort = src.indexOf("if (process.env.SUPABASE_SERVICE_ROLE_KEY) {", idxChequeo);
+    assert.ok(idxChequeo > -1 && idxBestEffort > idxChequeo, "el chequeo de falta de service-role debe preceder al bloque best-effort");
+  });
+
+  test("un error TÉCNICO transitorio de filtrarTarifarioVencidas (con service-role presente) NO aborta la página — sigue devolviendo ok:true (divergencia deliberada, documentada)", () => {
+    const idxBestEffort = src.indexOf("if (process.env.SUPABASE_SERVICE_ROLE_KEY) {");
+    const idxRetorno = src.indexOf("return { ok: true as const, filas: filasFiltradas };", idxBestEffort);
+    assert.ok(idxRetorno > -1, "debe seguir retornando ok:true con filasFiltradas después del bloque de vigencia");
+    const bloque = src.slice(idxBestEffort, idxRetorno);
+    assert.doesNotMatch(bloque, /if\s*\(\s*resVig\.error\s*\)\s*\{[^}]*return/, "un resVig.error no debe disparar un `return` — el error se registra pero la carga sigue (best-effort)");
+  });
+
+  test("no queda el comentario CONTRADICTORIO anterior ('nunca se publican sin poder verificar su vigencia' sin el chequeo que lo garantizaba)", () => {
+    assert.doesNotMatch(
+      src,
+      /Best-effort: un error aquí NO aborta la página\s*\n\s*\/\/ completa \(el resto del tarifario sigue mostrándose\), pero/,
+      "el comentario viejo afirmaba 'nunca se publican sin poder verificar su vigencia' sin que el código lo garantizara cuando faltaba SUPABASE_SERVICE_ROLE_KEY — debe haber sido reemplazado por la auditoría de política explícita"
+    );
+    assert.match(src, /Auditoría de política de fallo cerrado \(ronda 6, ítem 3\)/, "debe quedar la nota de auditoría explícita de esta ronda");
   });
 });
 

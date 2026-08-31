@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import Link from "next/link";
 import { TarifarioPublic } from "@/app/tarifario/TarifarioPublic";
 import { getProgramasResumen } from "@/lib/programas";
-import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
+import { filtrarTarifarioVencidas, esFilaHotelVerificable } from "@/lib/tarifario/vigencia";
 import { cargarFilasResumenPaginado } from "@/lib/tarifario/resumen";
 import { orquestarCargaInterna } from "@/lib/tarifario/orquestacion";
 import {
@@ -58,16 +58,48 @@ export default async function TarifarioInternoPage() {
       // `filas_resumen_db`: lo que la vista devolvió CRUDO (antes de vigencia).
       registrarDatoPagina(FLUJO, flujoId, "resumen_inicial", `filas_resumen_db=${pag.filas.length} paginas=${pag.paginasConsultadas} consultas_iniciales=${pag.paginasConsultadas}`);
 
-      // Oculta tarifas de hotel con vigencia de compra vencida (igual que el
-      // público: lo vencido no aparece). El histórico se consulta en el
-      // detalle del hotel. Best-effort: un error aquí NO aborta la página
-      // completa (el resto del tarifario sigue mostrándose), pero
-      // `filtrarTarifarioVencidas` FALLA CERRADO ante un error técnico — las
-      // filas de hotel verificables (bloqueo/porción con fecha) se OCULTAN
-      // por completo, nunca se dejan "sin el filtro" ni se publican sin
-      // poder verificar su vigencia — y queda registrado como
-      // resultado=error, nunca "ok".
+      // ⚠️ Auditoría de política de fallo cerrado (ronda 6, ítem 3) — esta
+      // vista SÍ diverge deliberadamente de `/tarifario` y
+      // `/dashboard/reservar` (que ahora fallan TODA la carga ante
+      // cualquier error técnico de vigencia, incluida la falta de
+      // service-role — ver `cargarResumenTarifario()` en
+      // lib/tarifario/resumen.ts), pero SOLO en un punto puntual:
+      //
+      //   1. Falta `SUPABASE_SERVICE_ROLE_KEY` CON filas de hotel
+      //      verificables en el resumen: esto NO es una divergencia — es el
+      //      mismo defecto que corrigió el ítem 3 en el camino público (antes,
+      //      el `if (process.env.SUPABASE_SERVICE_ROLE_KEY)` de abajo
+      //      simplemente SALTABA la verificación y publicaba `filasFiltradas
+      //      = pag.filas` SIN vigencia, contradiciendo el comentario que
+      //      decía "nunca se publican sin poder verificar su vigencia"). Se
+      //      cierra igual aquí: falla TODA la carga (`ok:false`).
+      //   2. Un error TÉCNICO transitorio de `filtrarTarifarioVencidas`
+      //      (service-role SÍ presente, pero la consulta a
+      //      `hotel_temporadas`/`tarifa_hotel` falla) — AQUÍ SÍ se mantiene
+      //      "best-effort": la página entera NO se cae, se sigue mostrando
+      //      el resto del catálogo. Es una divergencia INTENCIONAL frente al
+      //      público, justificada porque esta vista es de solo lectura para
+      //      personal interno (nunca pública, nunca genera una reserva por sí
+      //      sola — Reservar tiene su propia carga, ya fail-closed) y sirve
+      //      también como herramienta de diagnóstico: tumbarla por completo
+      //      ante un hipo transitorio de una sola consulta le quitaría a
+      //      operaciones/gerencia justo la visibilidad que necesitarían para
+      //      investigar qué está pasando. La garantía de negocio se mantiene
+      //      intacta en ambos casos: `filtrarTarifarioVencidas` sigue
+      //      fallando cerrado A NIVEL DE FILA ante ese error (oculta las
+      //      filas de hotel verificables afectadas, nunca las publica sin
+      //      poder confirmar vigencia) — lo único que cambia es si el resto
+      //      de un catálogo YA VERIFICADO sigue visible o no. Cubierto por
+      //      pruebas/tarifarioCargaWiring.test.ts.
       const _cronoVig = iniciarCronometro();
+      if (!process.env.SUPABASE_SERVICE_ROLE_KEY && pag.filas.some(esFilaHotelVerificable)) {
+        registrarErrorTecnico(
+          FLUJO, flujoId, "filtro_vigencia", "error_falta_service_role_con_filas_hotel_verificables",
+          new Error("SUPABASE_SERVICE_ROLE_KEY no configurada y el resumen trae filas de hotel verificables — no se puede confirmar su vigencia de compra.")
+        );
+        registrarEtapa(FLUJO, flujoId, "filtro_vigencia", _cronoVig(), "error");
+        return { ok: false as const };
+      }
       let huboVigencia = false;
       let filasFiltradas = pag.filas;
       let huboErrorVigencia = false;

@@ -9,7 +9,7 @@ import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 import { obtenerDetalleSalida, obtenerDetallePaquete, obtenerDetalleServicios } from "./detalle-actions";
-import { conCacheDetalle, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
+import { conCacheDetalle, claveDetalleSalida, claveDetallePaquete, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
@@ -480,18 +480,34 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
 
   // Detalle bajo demanda (Tier 2) de la salida elegida — `selFila` viene del
   // resumen (sin niño/niño2/infante); la tabla pivotada necesita la matriz
-  // completa de ESA salida puntual (nunca de todas). Acotado por
-  // `bloqueo_id`/`salida_id` (más preciso que la clave compuesta usada solo
-  // para agrupar las pastillas de "Salidas").
+  // completa de ESA salida puntual, pero SOLO de los combos que el filtro
+  // activo (búsqueda/categoría/régimen de TarifarioPublic — ya aplicado
+  // sobre `filas`, la prop de este componente) sigue dejando visibles.
+  //
+  // ⚠️ Ronda 6, ítem 2: la versión anterior acotaba SOLO por
+  // `bloqueo_id`/`salida_id` — un id estructural exacto, pero sin ningún
+  // filtro adicional — así que abrir una salida devolvía TODOS sus hoteles/
+  // categorías/regímenes aunque el usuario ya hubiera buscado por texto o
+  // elegido una categoría/régimen puntual. `combosSalida` (derivado de
+  // `filasConCupo`, que YA es exactamente el conjunto de combos visibles
+  // para el módulo bloqueo/dinámico bajo el filtro activo) se declara como
+  // alcance obligatorio — la Server Action lo usa como allow-list
+  // autoritativo (post-filtra, no solo un hint de consulta).
   const moduloSel = selFila?.modulo as "bloqueo" | "dinamico" | undefined;
+  const combosSalida = useMemo(() => {
+    if (!selFila) return [];
+    return moduloSel === "bloqueo"
+      ? filasConCupo.filter((f) => f.bloqueo_id === selFila.bloqueo_id)
+      : filasConCupo.filter((f) => f.salida_id === selFila.salida_id);
+  }, [filasConCupo, moduloSel, selFila]);
   const claveDetalle =
-    moduloSel === "bloqueo" && selFila?.bloqueo_id != null ? `salida:bloqueo:${selFila.bloqueo_id}`
-      : moduloSel === "dinamico" && selFila?.salida_id != null ? `salida:dinamico:${selFila.salida_id}`
+    moduloSel === "bloqueo" && selFila?.bloqueo_id != null ? claveDetalleSalida("bloqueo", selFila.bloqueo_id, combosSalida)
+      : moduloSel === "dinamico" && selFila?.salida_id != null ? claveDetalleSalida("dinamico", selFila.salida_id, combosSalida)
       : null;
   const [detalle, reintentarDetalle] = useDetalleTabla(claveDetalle, () =>
     moduloSel === "bloqueo"
-      ? obtenerDetalleSalida({ modulo: "bloqueo", bloqueoId: selFila!.bloqueo_id })
-      : obtenerDetalleSalida({ modulo: "dinamico", salidaId: selFila!.salida_id })
+      ? obtenerDetalleSalida({ modulo: "bloqueo", bloqueoId: selFila!.bloqueo_id, combos: combosSalida })
+      : obtenerDetalleSalida({ modulo: "dinamico", salidaId: selFila!.salida_id, combos: combosSalida })
   );
   const rows = useMemo(() => pivotar(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
 
@@ -560,11 +576,20 @@ function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, 
   const [sel, setSel] = useState(paquetes[0]?.key ?? "");
   const selFila = paquetes.find((p) => p.key === sel)?.f;
 
-  // Detalle bajo demanda (Tier 2), acotado por `paquete_id` — mismo criterio
-  // que `PorSalida`.
-  const claveDetalle = selFila?.paquete_id != null ? `paquete:${selFila.paquete_id}` : null;
+  // Detalle bajo demanda (Tier 2), acotado por `paquete_id` + el alcance de
+  // combos visible bajo el filtro activo (búsqueda/categoría/régimen) —
+  // mismo criterio y mismo defecto corregido que `PorSalida` (ronda 6, ítem
+  // 2): la versión anterior solo acotaba por `paquete_id`, así que abrir un
+  // paquete devolvía TODAS sus categorías/regímenes sin importar el filtro.
+  // `filas` (la prop de este componente) ya es exactamente el conjunto de
+  // combos porción-terrestre visibles bajo ese filtro.
+  const combosPaquete = useMemo(
+    () => (selFila?.paquete_id != null ? filas.filter((f) => f.paquete_id === selFila.paquete_id) : []),
+    [filas, selFila]
+  );
+  const claveDetalle = selFila?.paquete_id != null ? claveDetallePaquete(selFila.paquete_id, combosPaquete) : null;
   const [detalle, reintentarDetalle] = useDetalleTabla(claveDetalle, () =>
-    obtenerDetallePaquete({ paqueteId: selFila!.paquete_id })
+    obtenerDetallePaquete({ paqueteId: selFila!.paquete_id, combos: combosPaquete })
   );
   const rows = useMemo(() => pivotar(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
 

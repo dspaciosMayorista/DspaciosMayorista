@@ -2,6 +2,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
   idPositivo, moduloDe, idsPositivosLimitados, MAX_IDS_ALCANCE, MODULOS_HOTEL, MODULOS_SALIDA,
+  validarComboIdentidad, validarCombosPermitidos, MAX_COMBOS_ALCANCE,
   validarEntradaDetalleHotel, validarEntradaDetalleSalida, validarEntradaDetallePaquete,
 } from "../lib/tarifario/detalleValidacion.ts";
 
@@ -57,32 +58,138 @@ describe("idsPositivosLimitados() — array de ids con límite explícito (alcan
   });
 });
 
-describe("validarEntradaDetalleHotel() — {modulo, hotelId, bloqueoIds?}", () => {
-  test("bloqueo: acepta forma válida con bloqueoIds", () =>
-    assert.deepEqual(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: [5, 6] }), { modulo: "bloqueo", hotelId: 10, bloqueoIds: [5, 6] }));
-  test("bloqueo: acepta bloqueoIds vacío (alcance filtrado a cero salidas)", () =>
-    assert.deepEqual(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: [] }), { modulo: "bloqueo", hotelId: 10, bloqueoIds: [] }));
-  test("bloqueo: RECHAZA si falta bloqueoIds — ya no se puede pedir 'todo el hotel' sin declarar el alcance", () =>
+// ── Ronda 6, ítem 2 — validación del combo estructural compartido ──────────
+function comboValido() {
+  return {
+    modulo: "bloqueo", paquete_id: 1, bloqueo_id: 10, salida_id: null, hotel_id: 7,
+    categoria: "Estandar", regimen: "PC", fecha_ida: "2026-12-01", fecha_regreso: "2026-12-04", moneda: "COP",
+  };
+}
+
+describe("validarComboIdentidad() — combo estructural (modulo/paquete/bloqueo/salida/hotel/categoría/régimen/fechas/moneda)", () => {
+  test("acepta un combo completo válido", () => assert.deepEqual(validarComboIdentidad(comboValido()), comboValido()));
+  test("acepta TODOS los campos en null salvo modulo (combo mínimo)", () => {
+    const c = { modulo: "servicios", paquete_id: null, bloqueo_id: null, salida_id: null, hotel_id: null, categoria: null, regimen: null, fecha_ida: null, fecha_regreso: null, moneda: null };
+    assert.deepEqual(validarComboIdentidad(c), c);
+  });
+  test("acepta campos ausentes (undefined) tratados como null", () => {
+    const r = validarComboIdentidad({ modulo: "bloqueo" });
+    assert.deepEqual(r, { modulo: "bloqueo", paquete_id: null, bloqueo_id: null, salida_id: null, hotel_id: null, categoria: null, regimen: null, fecha_ida: null, fecha_regreso: null, moneda: null });
+  });
+  test("rechaza modulo inválido/ausente", () => {
+    assert.equal(validarComboIdentidad({ ...comboValido(), modulo: "invalido" }), null);
+    assert.equal(validarComboIdentidad({ ...comboValido(), modulo: undefined }), null);
+    assert.equal(validarComboIdentidad({ ...comboValido(), modulo: 1 }), null);
+  });
+  test("acepta los 4 módulos válidos", () => {
+    for (const m of ["bloqueo", "porcion_terrestre", "servicios", "dinamico"]) {
+      assert.ok(validarComboIdentidad({ ...comboValido(), modulo: m }) != null, m);
+    }
+  });
+  for (const campo of ["paquete_id", "bloqueo_id", "salida_id", "hotel_id"] as const) {
+    test(`rechaza ${campo} inválido (0/-1/decimal/string) — todo o nada`, () => {
+      for (const v of [0, -1, 1.5, "10", NaN, true, [], {}]) {
+        assert.equal(validarComboIdentidad({ ...comboValido(), [campo]: v }), null, JSON.stringify(v));
+      }
+    });
+    test(`acepta ${campo} en null`, () => {
+      assert.equal(validarComboIdentidad({ ...comboValido(), [campo]: null })?.[campo], null);
+    });
+  }
+  for (const campo of ["categoria", "regimen"] as const) {
+    test(`rechaza ${campo} no-string / vacío / demasiado largo`, () => {
+      assert.equal(validarComboIdentidad({ ...comboValido(), [campo]: 5 }), null);
+      assert.equal(validarComboIdentidad({ ...comboValido(), [campo]: "" }), null);
+      assert.equal(validarComboIdentidad({ ...comboValido(), [campo]: "x".repeat(121) }), null);
+    });
+    test(`acepta ${campo} justo en el límite de 120 caracteres`, () => {
+      assert.ok(validarComboIdentidad({ ...comboValido(), [campo]: "x".repeat(120) }) != null);
+    });
+  }
+  test("rechaza moneda no-string / vacía / demasiado larga (límite 10)", () => {
+    assert.equal(validarComboIdentidad({ ...comboValido(), moneda: 5 }), null);
+    assert.equal(validarComboIdentidad({ ...comboValido(), moneda: "" }), null);
+    assert.equal(validarComboIdentidad({ ...comboValido(), moneda: "x".repeat(11) }), null);
+    assert.ok(validarComboIdentidad({ ...comboValido(), moneda: "x".repeat(10) }) != null);
+  });
+  for (const campo of ["fecha_ida", "fecha_regreso"] as const) {
+    test(`rechaza ${campo} con formato inválido`, () => {
+      for (const v of ["2026/12/01", "01-12-2026", "2026-12-1", 20261201, true]) {
+        assert.equal(validarComboIdentidad({ ...comboValido(), [campo]: v }), null, JSON.stringify(v));
+      }
+    });
+    test(`rechaza ${campo} que no es un día real del calendario (reusa validarFechaConsulta)`, () => {
+      assert.equal(validarComboIdentidad({ ...comboValido(), [campo]: "2026-13-01" }), null);
+      assert.equal(validarComboIdentidad({ ...comboValido(), [campo]: "2026-02-30" }), null);
+    });
+    test(`acepta ${campo} en null`, () => {
+      assert.equal(validarComboIdentidad({ ...comboValido(), [campo]: null })?.[campo], null);
+    });
+  }
+  test("rechaza forma no-objeto/null/array", () => {
+    for (const v of [null, undefined, "x", 5, true, [comboValido()]]) assert.equal(validarComboIdentidad(v), null);
+  });
+});
+
+describe("validarCombosPermitidos() — array de combos, acotado y deduplicado", () => {
+  test("acepta array vacío (alcance vacío es válido)", () => assert.deepEqual(validarCombosPermitidos([]), []));
+  test("acepta un array de combos válidos", () => {
+    const r = validarCombosPermitidos([comboValido(), { ...comboValido(), hotel_id: 8 }]);
+    assert.equal(r?.length, 2);
+  });
+  test("rechaza si no es array", () => {
+    for (const v of [null, undefined, "x", {}, 5]) assert.equal(validarCombosPermitidos(v), null);
+  });
+  test("rechaza si CUALQUIER elemento no es un combo válido (todo o nada)", () => {
+    assert.equal(validarCombosPermitidos([comboValido(), { modulo: "invalido" }]), null);
+  });
+  test("⚠️ deduplica por claveCombo — combos idénticos (misma clave estructural) colapsan a uno solo", () => {
+    const r = validarCombosPermitidos([comboValido(), { ...comboValido() }, { ...comboValido() }]);
+    assert.equal(r?.length, 1);
+  });
+  test("no deduplica combos con AL MENOS un campo distinto", () => {
+    const r = validarCombosPermitidos([comboValido(), { ...comboValido(), categoria: "Suite" }]);
+    assert.equal(r?.length, 2);
+  });
+  test("acepta exactamente el límite (MAX_COMBOS_ALCANCE elementos únicos)", () => {
+    const arr = Array.from({ length: MAX_COMBOS_ALCANCE }, (_, i) => ({ ...comboValido(), hotel_id: i + 1 }));
+    assert.equal(validarCombosPermitidos(arr)?.length, MAX_COMBOS_ALCANCE);
+  });
+  test("rechaza un array por encima del límite explícito (antes de deduplicar)", () => {
+    const arr = Array.from({ length: MAX_COMBOS_ALCANCE + 1 }, (_, i) => ({ ...comboValido(), hotel_id: i + 1 }));
+    assert.equal(validarCombosPermitidos(arr), null);
+  });
+  test("respeta un límite `max` custom pasado por el caller", () => {
+    assert.equal(validarCombosPermitidos([comboValido(), { ...comboValido(), hotel_id: 8 }], 2)?.length, 2);
+    assert.equal(validarCombosPermitidos([comboValido(), { ...comboValido(), hotel_id: 8 }, { ...comboValido(), hotel_id: 9 }], 2), null);
+  });
+});
+
+describe("validarEntradaDetalleHotel() — {modulo, hotelId, combos}", () => {
+  test("bloqueo: acepta forma válida con combos", () =>
+    assert.deepEqual(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, combos: [comboValido()] }), { modulo: "bloqueo", hotelId: 10, combos: [comboValido()] }));
+  test("bloqueo: acepta combos vacío (alcance filtrado a cero combos)", () =>
+    assert.deepEqual(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, combos: [] }), { modulo: "bloqueo", hotelId: 10, combos: [] }));
+  test("bloqueo: RECHAZA si falta combos — ya no se puede pedir 'todo el hotel' sin declarar el alcance", () =>
     assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10 }), null));
-  test("bloqueo: rechaza bloqueoIds no-array", () =>
-    assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: "5,6" }), null));
-  test("bloqueo: rechaza bloqueoIds con un elemento inválido", () =>
-    assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: [5, -1] }), null));
-  test("bloqueo: rechaza bloqueoIds por encima del límite explícito", () => {
-    const bloqueoIds = Array.from({ length: MAX_IDS_ALCANCE + 1 }, (_, i) => i + 1);
-    assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds }), null);
+  test("bloqueo: rechaza combos no-array", () =>
+    assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, combos: "x" }), null));
+  test("bloqueo: rechaza combos con un elemento inválido", () =>
+    assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, combos: [comboValido(), { modulo: "invalido" }] }), null));
+  test("⚠️ ronda 6 — porcion_terrestre: AHORA TAMBIÉN exige combos (la revisión anterior no exigía ningún alcance para este módulo)", () => {
+    assert.equal(validarEntradaDetalleHotel({ modulo: "porcion_terrestre", hotelId: 1 }), null);
+    assert.deepEqual(
+      validarEntradaDetalleHotel({ modulo: "porcion_terrestre", hotelId: 1, combos: [{ ...comboValido(), modulo: "porcion_terrestre", bloqueo_id: null }] }),
+      { modulo: "porcion_terrestre", hotelId: 1, combos: [{ ...comboValido(), modulo: "porcion_terrestre", bloqueo_id: null }] }
+    );
   });
-  test("porcion_terrestre: acepta SIN bloqueoIds (no tiene concepto de alcance)", () =>
-    assert.deepEqual(validarEntradaDetalleHotel({ modulo: "porcion_terrestre", hotelId: 1 }), { modulo: "porcion_terrestre", hotelId: 1 }));
-  test("porcion_terrestre: ignora un bloqueoIds sobrante (no forma parte de su contrato)", () => {
-    const r = validarEntradaDetalleHotel({ modulo: "porcion_terrestre", hotelId: 1, bloqueoIds: [1, 2] });
-    assert.deepEqual(r, { modulo: "porcion_terrestre", hotelId: 1 });
-  });
-  test("rechaza modulo=servicios (Vista Booking nunca abre un hotel de servicios)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "servicios", hotelId: 10, bloqueoIds: [] }), null));
-  test("rechaza modulo=dinamico (no aplica a 'Ver opciones' de hotel)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "dinamico", hotelId: 10, bloqueoIds: [] }), null));
-  test("rechaza hotelId negativo", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: -5, bloqueoIds: [] }), null));
-  test("rechaza hotelId decimal", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 1.5, bloqueoIds: [] }), null));
-  test("rechaza hotelId string (inyección de SQL/operadores como texto)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: "10 OR 1=1", bloqueoIds: [] }), null));
+  test("porcion_terrestre: acepta combos vacío también", () =>
+    assert.deepEqual(validarEntradaDetalleHotel({ modulo: "porcion_terrestre", hotelId: 1, combos: [] }), { modulo: "porcion_terrestre", hotelId: 1, combos: [] }));
+  test("rechaza modulo=servicios (Vista Booking nunca abre un hotel de servicios)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "servicios", hotelId: 10, combos: [] }), null));
+  test("rechaza modulo=dinamico (no aplica a 'Ver opciones' de hotel)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "dinamico", hotelId: 10, combos: [] }), null));
+  test("rechaza hotelId negativo", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: -5, combos: [] }), null));
+  test("rechaza hotelId decimal", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 1.5, combos: [] }), null));
+  test("rechaza hotelId string (inyección de SQL/operadores como texto)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: "10 OR 1=1", combos: [] }), null));
   test("rechaza null", () => assert.equal(validarEntradaDetalleHotel(null), null));
   test("rechaza undefined", () => assert.equal(validarEntradaDetalleHotel(undefined), null));
   test("rechaza un array", () => assert.equal(validarEntradaDetalleHotel([{ modulo: "bloqueo", hotelId: 10 }]), null));
@@ -92,25 +199,31 @@ describe("validarEntradaDetalleHotel() — {modulo, hotelId, bloqueoIds?}", () =
   test("rechaza campo faltante (solo modulo)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo" }), null));
   test("rechaza campo faltante (solo hotelId)", () => assert.equal(validarEntradaDetalleHotel({ hotelId: 10 }), null));
   test("tolera campos extra sin usarlos (no filtra por allowlist estricta de claves, pero tampoco los propaga)", () => {
-    const r = validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: [5], extra: "algo" });
-    assert.deepEqual(r, { modulo: "bloqueo", hotelId: 10, bloqueoIds: [5] });
+    const r = validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, combos: [comboValido()], extra: "algo" });
+    assert.deepEqual(r, { modulo: "bloqueo", hotelId: 10, combos: [comboValido()] });
   });
 });
 
-describe("validarEntradaDetalleSalida() — discriminado por módulo (bloqueoId vs salidaId)", () => {
-  test("bloqueo: acepta bloqueoId", () => assert.deepEqual(validarEntradaDetalleSalida({ modulo: "bloqueo", bloqueoId: 5 }), { modulo: "bloqueo", bloqueoId: 5 }));
-  test("dinamico: acepta salidaId", () => assert.deepEqual(validarEntradaDetalleSalida({ modulo: "dinamico", salidaId: 7 }), { modulo: "dinamico", salidaId: 7 }));
-  test("bloqueo: rechaza si viene salidaId en vez de bloqueoId", () => assert.equal(validarEntradaDetalleSalida({ modulo: "bloqueo", salidaId: 7 }), null));
-  test("dinamico: rechaza si viene bloqueoId en vez de salidaId", () => assert.equal(validarEntradaDetalleSalida({ modulo: "dinamico", bloqueoId: 7 }), null));
-  test("rechaza modulo=porcion_terrestre (Vista tabla de salidas no aplica a porción)", () => assert.equal(validarEntradaDetalleSalida({ modulo: "porcion_terrestre", bloqueoId: 5 }), null));
-  test("rechaza modulo=servicios", () => assert.equal(validarEntradaDetalleSalida({ modulo: "servicios", bloqueoId: 5 }), null));
+describe("validarEntradaDetalleSalida() — discriminado por módulo (bloqueoId vs salidaId) + combos", () => {
+  test("bloqueo: acepta bloqueoId + combos", () => assert.deepEqual(validarEntradaDetalleSalida({ modulo: "bloqueo", bloqueoId: 5, combos: [] }), { modulo: "bloqueo", bloqueoId: 5, combos: [] }));
+  test("dinamico: acepta salidaId + combos", () => assert.deepEqual(validarEntradaDetalleSalida({ modulo: "dinamico", salidaId: 7, combos: [] }), { modulo: "dinamico", salidaId: 7, combos: [] }));
+  test("⚠️ ronda 6 — RECHAZA si falta combos (antes no se exigía ningún alcance)", () => {
+    assert.equal(validarEntradaDetalleSalida({ modulo: "bloqueo", bloqueoId: 5 }), null);
+    assert.equal(validarEntradaDetalleSalida({ modulo: "dinamico", salidaId: 7 }), null);
+  });
+  test("bloqueo: rechaza si viene salidaId en vez de bloqueoId", () => assert.equal(validarEntradaDetalleSalida({ modulo: "bloqueo", salidaId: 7, combos: [] }), null));
+  test("dinamico: rechaza si viene bloqueoId en vez de salidaId", () => assert.equal(validarEntradaDetalleSalida({ modulo: "dinamico", bloqueoId: 7, combos: [] }), null));
+  test("rechaza modulo=porcion_terrestre (Vista tabla de salidas no aplica a porción)", () => assert.equal(validarEntradaDetalleSalida({ modulo: "porcion_terrestre", bloqueoId: 5, combos: [] }), null));
+  test("rechaza modulo=servicios", () => assert.equal(validarEntradaDetalleSalida({ modulo: "servicios", bloqueoId: 5, combos: [] }), null));
   test("rechaza forma no-objeto", () => assert.equal(validarEntradaDetalleSalida("x"), null));
   test("rechaza null", () => assert.equal(validarEntradaDetalleSalida(null), null));
 });
 
-describe("validarEntradaDetallePaquete() — {paqueteId}", () => {
-  test("acepta forma válida", () => assert.deepEqual(validarEntradaDetallePaquete({ paqueteId: 3 }), { paqueteId: 3 }));
-  test("rechaza paqueteId=0", () => assert.equal(validarEntradaDetallePaquete({ paqueteId: 0 }), null));
-  test("rechaza sin paqueteId", () => assert.equal(validarEntradaDetallePaquete({}), null));
+describe("validarEntradaDetallePaquete() — {paqueteId, combos}", () => {
+  test("acepta forma válida", () => assert.deepEqual(validarEntradaDetallePaquete({ paqueteId: 3, combos: [] }), { paqueteId: 3, combos: [] }));
+  test("⚠️ ronda 6 — RECHAZA si falta combos (antes no se exigía ningún alcance)", () => assert.equal(validarEntradaDetallePaquete({ paqueteId: 3 }), null));
+  test("rechaza paqueteId=0", () => assert.equal(validarEntradaDetallePaquete({ paqueteId: 0, combos: [] }), null));
+  test("rechaza sin paqueteId", () => assert.equal(validarEntradaDetallePaquete({ combos: [] }), null));
   test("rechaza array", () => assert.equal(validarEntradaDetallePaquete([3]), null));
+  test("rechaza combos inválido (todo o nada, incluso con paqueteId válido)", () => assert.equal(validarEntradaDetallePaquete({ paqueteId: 3, combos: "x" }), null));
 });

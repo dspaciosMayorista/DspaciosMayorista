@@ -299,24 +299,35 @@ export function VistaBooking({
   // hotel/módulo/ALCANCE ya está en vuelo y reutiliza un detalle ya resuelto
   // durante esta visita, sin volver a pedirlo.
   //
-  // ⚠️ Alcance activo (revisión posterior, defecto "no preserva el alcance
-  // activo al abrir un hotel"): en el submódulo Bloqueo, `salidasFiltradas`
-  // ya refleja el filtro de origen/destino/salida elegido en el buscador —
-  // los `bloqueoIds` de esa lista son EXACTAMENTE las salidas que el usuario
-  // está viendo ahora mismo. Se pasan como alcance obligatorio a
-  // `obtenerDetalleHotel` (que los cruza con `hotel_id` en el servidor —
-  // nunca "todo el hotel") y forman parte de la CLAVE de caché
-  // (`claveDetalleHotel`): cambiar el filtro y volver a abrir el MISMO hotel
-  // nunca reutiliza el detalle cacheado del alcance anterior, porque la
-  // clave cambia con él.
+  // ⚠️ Alcance activo (ronda 6, ítem 2 — endurece la revisión anterior, que
+  // solo usaba `salidasFiltradas.map(s => s.id)` como `bloqueoIds`): eso
+  // dejaba fuera `salidaSel` (`salidasFiltradas` solo aplica origen/destino,
+  // no la salida puntual elegida en el tercer selector — ver más arriba) y
+  // no cubría categoría/régimen/búsqueda ni el submódulo Porción terrestre
+  // (que no tenía NINGÚN alcance). `h.filas` (las filas de resumen de ESTA
+  // tarjeta, ya armadas por el `useMemo` de `hoteles` de arriba) es la
+  // fuente correcta: ya refleja TODOS los filtros activos en cascada — los
+  // de TarifarioPublic.tsx (búsqueda/categoría/régimen, aplicados ANTES de
+  // que `filas` llegue como prop a este componente) Y los propios de esta
+  // vista (submódulo/cupos/origen/destino/salidaSel, aplicados al construir
+  // `conHotel`/`hoteles`). Cada `FilaResumen` de `h.filas` ya trae los 10
+  // campos de `ComboIdentidad` (módulo/paquete/bloqueo/salida/hotel/
+  // categoría/régimen/fechas/moneda) — se pasa TAL CUAL como alcance, sin
+  // transformar. Los combos entran en la CLAVE de caché (`claveDetalleHotel`)
+  // Y como allow-list autoritativo en el servidor (`obtenerDetalleHotel`,
+  // post-filtra ahí, no solo usa el alcance como hint de consulta): cambiar
+  // CUALQUIER filtro y volver a abrir el MISMO hotel nunca reutiliza el
+  // detalle cacheado de un alcance distinto, y el servidor nunca devuelve un
+  // combo que el usuario ya no tiene visible.
   function abrirHotel(h: HotelCard) {
     setAbierto(h);
     setDetalleHotel({ estado: "cargando" });
     const esBloqueo = sub === "bloqueo";
-    const bloqueoIds = esBloqueo ? salidasFiltradas.map((s) => s.id) : undefined;
-    const clave = esBloqueo ? claveDetalleHotel("bloqueo", h.hotelId, bloqueoIds) : claveDetalleHotel("porcion_terrestre", h.hotelId);
+    const clave = claveDetalleHotel(esBloqueo ? "bloqueo" : "porcion_terrestre", h.hotelId, h.filas);
     claveAbiertaRef.current = clave;
-    const args = esBloqueo ? { modulo: "bloqueo" as const, hotelId: h.hotelId, bloqueoIds: bloqueoIds ?? [] } : { modulo: "porcion_terrestre" as const, hotelId: h.hotelId };
+    const args = esBloqueo
+      ? { modulo: "bloqueo" as const, hotelId: h.hotelId, combos: h.filas }
+      : { modulo: "porcion_terrestre" as const, hotelId: h.hotelId, combos: h.filas };
     conCacheDetalle(clave, () => obtenerDetalleHotel(args))
       .then((r) => {
         if (claveAbiertaRef.current !== clave) return; // otro hotel/alcance se abrió mientras tanto
