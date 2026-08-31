@@ -6,7 +6,6 @@ import { getProgramasResumen } from "@/lib/programas";
 import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
 import { cargarFilasTarifarioPaginado } from "@/lib/tarifario/paginacion";
 import { orquestarCargaInterna } from "@/lib/tarifario/orquestacion";
-import { compactarFilasTarifario } from "@/lib/tarifario/compacto";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
   siguienteInvocacionProceso, medirPayloadSiHabilitado, textoEstimacionPayload, iniciarCronometro,
@@ -148,9 +147,8 @@ export default async function TarifarioInternoPage() {
           Aún no hay tarifas publicadas. Arma un paquete y dale <b>Generar tarifario</b>.
         </p>
       ) : (
-        <TarifarioPublic filas={compactarFilasTarifario(filas)} programas={programas} />
+        <TarifarioPublic filas={filas} programas={programas} />
       )}
     </div>
   );
 }
-
