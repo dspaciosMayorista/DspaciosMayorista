@@ -55,6 +55,43 @@ calcularNetoPrograma({tarifa, modo:'pct'|'impuesto'|'ninguno', valor, pctComisio
 Solo lo usa la UI "calculadora" (`producto/programas/calculadora/`) para ayudar a calcular qué
 `neto` tipear en la matriz — no calcula PVP por sí misma.
 
+**"Tarifa comisionable del proveedor" por salida (migración 151, modo `salida`).** Además de la
+calculadora suelta de arriba, `programa_salidas` tiene columnas propias
+`tarifa_sencilla/doble/triple/multiple` (la tarifa BRUTA del proveedor por esa salida y
+acomodación) junto a los `neto_*` de siempre — y el programa tiene una regla a nivel de
+CABECERA (`regla_comisionable, regla_comisionable_modo/valor/pct_comision`) que dice cómo pasar
+de tarifa → neto para TODAS sus salidas. `SalidasEditor` (`ProgramaEditor.tsx`) recalcula `neto_*`
+en vivo con `calcularNetoPrograma`/`recalcularNetosPorTarifa` cada vez que cambia una tarifa o la
+regla; el guardado es atómico vía el RPC `guardar_programa_salidas(programa_id, p_regla,
+p_salidas)` (UPDATE regla + DELETE + INSERT salidas en una sola transacción Postgres, sin
+`security definer`). `validarReglaComisionable` (mismo archivo) es la ÚNICA validación —
+navegador y servidor la llaman igual — y es **incondicional** para el campo `modo`/`valor`/
+`pctComision` solo cuando `activa=true`; desactivar la regla conserva los valores tal cual (no
+los borra), para poder reactivar sin volver a tipear nada.
+
+**Modalidad de MK sobre la tarifa comisionable (migración 161).** El `neto` de arriba
+(`tarifa - comision`) siempre se marca con el MK del programa vía `pvpPrograma`, pero el dueño
+pidió una SEGUNDA forma de hacerlo, seleccionable por programa
+(`programas.regla_comisionable_modalidad_mk`, `'historica'` default | `'base_neta_impuestos_al_
+final'`, CHECK en Postgres):
+```
+'historica' (de siempre):                  Venta = (base_neta + impuestos) / divisorMK
+'base_neta_impuestos_al_final' (nueva):     Venta = (base_neta / divisorMK) + impuestos
+```
+donde `base_neta = base_comisionable - comision` e `impuestos` (generalizado a los 3 modos) =
+`tarifa - base_comisionable` (siempre ≥ 0). La modalidad nueva NUNCA aplica el MK sobre
+`impuestos` — se suma DESPUÉS de dividir por el divisor de MK, ANTES del fee bancario (que sí
+sigue aplicando sobre el total). **No se persiste como un neto distinto**: se recalcula EN
+CALIENTE en cada uno de los 4 puntos de consumo (editor en vivo, validación cliente, validación
+servidor, `getProgramaDetalle` al generar/leer el tarifario real) a partir de los mismos
+`tarifa_*` + la regla del programa, siempre con el `pct_mk` VIGENTE — así evita que cambiar el
+%MK más adelante deje netos horneados desactualizados. Única función que decide el reparto:
+`calcularNetoProgramaConModalidad(input, modalidadMk)` en `lib/calc/programaPrecio.ts` — envuelve
+`calcularNetoPrograma` (nunca reimplementa su fórmula) y devuelve `{netoParaMarkup,
+montoSinMarkup}`, el par que consume el 3er parámetro (opcional, default 0 = no-op) que
+`pvpPrograma` ganó para esto — con modalidad `'historica'` o sin pasarlo, el comportamiento de
+`pvpPrograma` es byte a byte idéntico al de antes de la 161.
+
 ### 1.3 Modelo de datos
 
 `programas` (cabecera): `id, proveedor_id (FK), nombre, subtitulo, dias, noches, moneda (default

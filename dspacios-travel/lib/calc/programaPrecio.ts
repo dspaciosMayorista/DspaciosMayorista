@@ -67,6 +67,82 @@ export type NetosRecalculados = {
   multiple: number | null;
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// Modalidad de MK (migración 161) — el dueño pidió una SEGUNDA forma de
+// aplicar el markup del programa (`pct_mk`) sobre lo que sale de la
+// calculadora de arriba:
+//
+//   'historica'                    (default, SIN CAMBIOS de comportamiento):
+//     Venta = (base_neta + montoNoComisionable) / divisorMK
+//           = neto / divisorMK               ← neto YA incluye ambos, como
+//                                                siempre calculó `calcularNetoPrograma`.
+//   'base_neta_impuestos_al_final' (nueva):
+//     Venta = (base_neta / divisorMK) + montoNoComisionable
+//           ← el MK NUNCA se aplica sobre `montoNoComisionable` (el monto que
+//             la regla resta de la tarifa para llegar a la base comisionable
+//             — "impuestos" en el modo 'impuesto', o el equivalente en pesos
+//             del % restado en modo 'pct'; 0 en modo 'ninguno'). Se suma
+//             DESPUÉS de dividir por el MK, antes del fee bancario (ver
+//             `pvpPrograma`, lib/programas.ts — el fee SÍ sigue aplicando
+//             sobre el total: es un costo de procesamiento de pago
+//             proporcional al precio final, no al costo interno).
+//
+// `netoParaMarkup`/`montoSinMarkup` son los dos números que de verdad
+// consume `pvpPrograma()` — separar la decisión de "qué modalidad" de "cómo
+// se marca" en un solo lugar es lo que permite que el editor en vivo, la
+// validación (cliente y servidor) y la generación real del tarifario usen
+// SIEMPRE la misma función, nunca una fórmula reescrita en cada sitio.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type ModalidadMk = "historica" | "base_neta_impuestos_al_final";
+
+export const MODALIDADES_MK: readonly ModalidadMk[] = ["historica", "base_neta_impuestos_al_final"];
+
+export function esModalidadMkValida(v: unknown): v is ModalidadMk {
+  return v === "historica" || v === "base_neta_impuestos_al_final";
+}
+
+export type CalcProgramaConModalidadResult = CalcProgramaResult & {
+  /** baseComisionable − comision. El "costo real" del proveedor después de la comisión. */
+  baseNeta: number;
+  /**
+   * Tarifa − baseComisionable (= neto − baseNeta). El monto que la regla NO
+   * considera comisionable — "impuestos" en el modo del mismo nombre,
+   * generalizado a los 3 modos (siempre ≥ 0, por construcción: `valor`≥0 en
+   * modo 'impuesto', `valor` en [0,100] en modo 'pct' sobre una `tarifa`≥0,
+   * y 0 en modo 'ninguno' — ver `validarReglaComisionable`/los CHECK de la
+   * migración 151, que ya garantizan estos rangos).
+   */
+  montoNoComisionable: number;
+  /** Lo que `pvpPrograma` debe marcar con MK/fee (1er argumento). */
+  netoParaMarkup: number;
+  /** Lo que `pvpPrograma` debe sumar DESPUÉS del MK, antes del fee (3er argumento). 0 en modalidad histórica. */
+  montoSinMarkup: number;
+};
+
+/**
+ * Única función que decide, según la modalidad, cómo repartir el resultado
+ * de `calcularNetoPrograma()` entre "lo que se marca con MK" y "lo que se
+ * suma sin marcar". NUNCA duplica la fórmula de arriba — siempre parte de
+ * `calcularNetoPrograma(input)` y solo reacomoda sus 3 salidas.
+ */
+export function calcularNetoProgramaConModalidad(
+  input: CalcProgramaInput,
+  modalidadMk: ModalidadMk
+): CalcProgramaConModalidadResult {
+  const base = calcularNetoPrograma(input);
+  const baseNeta = r2(base.baseComisionable - base.comision);
+  const montoNoComisionable = r2(base.neto - baseNeta);
+  const esNueva = modalidadMk === "base_neta_impuestos_al_final";
+  return {
+    ...base,
+    baseNeta,
+    montoNoComisionable,
+    netoParaMarkup: esNueva ? baseNeta : base.neto,
+    montoSinMarkup: esNueva ? montoNoComisionable : 0,
+  };
+}
+
 export function recalcularNetosPorTarifa(
   tarifas: TarifasProveedorSalida,
   regla: { modo: ModoBaseComisionable; valor: number; pctComision: number }
@@ -109,6 +185,10 @@ export type ReglaComisionableEstado = {
   modo: ModoBaseComisionable;
   valor: number | null;
   pctComision: number | null;
+  // Migración 161 — igual criterio que `modo`: se valida INCONDICIONALMENTE
+  // (mismo CHECK de Postgres, que no mira `regla_comisionable`), nunca solo
+  // cuando la regla está activa.
+  modalidadMk: ModalidadMk;
 };
 
 export type ValidacionRegla = { ok: true } | { ok: false; error: string };
@@ -116,6 +196,9 @@ export type ValidacionRegla = { ok: true } | { ok: false; error: string };
 const enRango = (n: number, min: number, max: number) => Number.isFinite(n) && n >= min && n <= max;
 
 export function validarReglaComisionable(regla: ReglaComisionableEstado): ValidacionRegla {
+  if (!esModalidadMkValida(regla.modalidadMk)) {
+    return { ok: false, error: "La modalidad de MK no es válida." };
+  }
   if (!regla.activa) return { ok: true };
 
   if (regla.pctComision == null || !enRango(regla.pctComision, 0, 100)) {

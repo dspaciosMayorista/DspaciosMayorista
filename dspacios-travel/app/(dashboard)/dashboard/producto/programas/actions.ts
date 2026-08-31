@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
 import { salidaTieneContenido, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
-import { validarReglaComisionable } from "@/lib/calc/programaPrecio";
+import { validarReglaComisionable, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -293,6 +293,10 @@ export type ReglaComisionableInput = {
   modo: "pct" | "impuesto" | "ninguno";
   valor: number | null;
   pctComision: number | null;
+  // Migración 161 — qué fórmula aplica el markup del programa sobre el
+  // resultado de la calculadora (ver lib/calc/programaPrecio.ts). Vive a
+  // nivel de programa, igual que modo/valor/pctComision de arriba.
+  modalidadMk: ModalidadMk;
 };
 
 // Guarda la regla comisionable del programa y reemplaza sus salidas en una
@@ -306,6 +310,16 @@ export async function guardarSalidas(
   salidas: SalidaInput[],
   regla: ReglaComisionableInput
 ): Promise<Result> {
+  // Frontera `unknown`: `regla` llega de una Server Action invocable desde el
+  // navegador con cualquier body — `modalidadMk` puede traer CUALQUIER cosa
+  // (undefined, un string arbitrario, un número, etc.). Se rechaza ANTES de
+  // pasarla a `validarReglaComisionable` (que asume el tipo ya angosto) — un
+  // valor manipulado nunca debe llegar a la RPC con la esperanza de que el
+  // CHECK de BD lo atrape solo; el mensaje de error acá es legible, el de BD no.
+  const modalidadMkRaw: unknown = (regla as { modalidadMk?: unknown })?.modalidadMk;
+  if (!esModalidadMkValida(modalidadMkRaw)) {
+    return { ok: false, error: "La modalidad de MK no es válida." };
+  }
   // Repite la validación del navegador: no depender solo de él. `num()` ya
   // convierte "" / no-numérico a null, igual que `parseNumOrNull` del lado
   // cliente — los dos deben llegar exactamente a los mismos null/número.
@@ -316,6 +330,7 @@ export async function guardarSalidas(
     modo: regla.modo,
     valor: valorNum,
     pctComision: pctComisionNum,
+    modalidadMk: modalidadMkRaw,
   });
   if (!validacion.ok) return { ok: false, error: validacion.error };
 
@@ -355,6 +370,7 @@ export async function guardarSalidas(
       modo: regla.modo,
       valor: valorNum,
       pctComision: pctComisionNum,
+      modalidadMk: modalidadMkRaw,
     },
     p_salidas: filas,
   });

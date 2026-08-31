@@ -28,10 +28,13 @@ import { parsearPrograma } from "@/lib/programasImport";
 import { pvpPrograma, type PvpOpciones } from "@/lib/programas";
 import {
   calcularNetoPrograma,
+  calcularNetoProgramaConModalidad,
   recalcularNetosPorTarifa,
   validarReglaComisionable,
   parseNumOrNull,
+  esModalidadMkValida,
   type ModoBaseComisionable,
+  type ModalidadMk,
 } from "@/lib/calc/programaPrecio";
 import { formatMoneda } from "@/lib/utils";
 import { ComboCiudad } from "@/components/ComboCiudad";
@@ -111,6 +114,14 @@ export function ProgramaEditor(props: {
   const [cComision, setCComision] = useState(
     programa.regla_comisionable_pct_comision != null ? String(programa.regla_comisionable_pct_comision) : "10"
   );
+  // Modalidad de MK (migración 161) — mismo criterio de "vive en ProgramaEditor,
+  // no en SalidasEditor" que el resto de la regla, y mismo default de
+  // seguridad que el CHECK de Postgres: si el valor guardado no es uno de los
+  // 2 válidos (no debería pasar, pero nunca se confía ciegamente en lo que
+  // vino de BD), cae en 'historica' — el comportamiento de SIEMPRE.
+  const [modalidadMk, setModalidadMk] = useState<ModalidadMk>(
+    esModalidadMkValida(programa.regla_comisionable_modalidad_mk) ? programa.regla_comisionable_modalidad_mk : "historica"
+  );
 
   // Al DESACTIVAR el check, se descarta cualquier borrador (válido o no) y se
   // vuelve a la última configuración YA GUARDADA en BD (`programa.regla_
@@ -121,11 +132,14 @@ export function ProgramaEditor(props: {
   // `valor` en BD sí, y como los controles quedan ocultos con el check apagado,
   // el usuario no tenía forma de corregirlo. Activar de nuevo el check sigue
   // funcionando igual: reabre con la última config guardada, no con "3"/"10".
+  // Mismo criterio aplica a `modalidadMk` (§ requisito 7 — desactivar/reactivar
+  // conserva la modalidad guardada, no un cambio a medio hacer).
   const setReglaOn = (v: boolean) => {
     if (!v) {
       setCModo((programa.regla_comisionable_modo as ModoBaseComisionable) || "pct");
       setCValor(programa.regla_comisionable_valor != null ? String(programa.regla_comisionable_valor) : "3");
       setCComision(programa.regla_comisionable_pct_comision != null ? String(programa.regla_comisionable_pct_comision) : "10");
+      setModalidadMk(esModalidadMkValida(programa.regla_comisionable_modalidad_mk) ? programa.regla_comisionable_modalidad_mk : "historica");
     }
     setReglaOnRaw(v);
   };
@@ -244,6 +258,7 @@ export function ProgramaEditor(props: {
             cModo={cModo} setCModo={setCModo}
             cValor={cValor} setCValor={setCValor}
             cComision={cComision} setCComision={setCComision}
+            modalidadMk={modalidadMk} setModalidadMk={setModalidadMk}
             pvpOpt={{
               pctMk: programa.pct_mk,
               asistenciaDia: programa.asistencia_medica_dia,
@@ -551,6 +566,7 @@ function SalidasEditor({
   cModo, setCModo,
   cValor, setCValor,
   cComision, setCComision,
+  modalidadMk, setModalidadMk,
 }: {
   programaId: number;
   salidas: SalidaRow[];
@@ -562,6 +578,7 @@ function SalidasEditor({
   cModo: ModoBaseComisionable; setCModo: (v: ModoBaseComisionable) => void;
   cValor: string; setCValor: (v: string) => void;
   cComision: string; setCComision: (v: string) => void;
+  modalidadMk: ModalidadMk; setModalidadMk: (v: ModalidadMk) => void;
 }) {
   const toState = (s: SalidaRow): SalidaState => ({
     etiqueta: s.etiqueta ?? "",
@@ -602,7 +619,7 @@ function SalidasEditor({
   const reglaActualValida = (): { modo: ModoBaseComisionable; valor: number; pctComision: number } | null => {
     const valorNum = parseNumOrNull(cValor);
     const pctNum = parseNumOrNull(cComision);
-    if (!validarReglaComisionable({ activa: true, modo: cModo, valor: valorNum, pctComision: pctNum }).ok) return null;
+    if (!validarReglaComisionable({ activa: true, modo: cModo, valor: valorNum, pctComision: pctNum, modalidadMk }).ok) return null;
     return { modo: cModo, valor: valorNum ?? 0, pctComision: pctNum ?? 0 };
   };
 
@@ -659,7 +676,7 @@ function SalidasEditor({
   const intentarRecalcular = (modo: ModoBaseComisionable, valorStr: string, pctStr: string) => {
     const valorNum = parseNumOrNull(valorStr);
     const pctNum = parseNumOrNull(pctStr);
-    if (!validarReglaComisionable({ activa: true, modo, valor: valorNum, pctComision: pctNum }).ok) return;
+    if (!validarReglaComisionable({ activa: true, modo, valor: valorNum, pctComision: pctNum, modalidadMk }).ok) return;
     aplicarReglaATodasLasFilas({ modo, valor: valorNum ?? 0, pctComision: pctNum ?? 0 });
   };
   const onCModoChange = (v: ModoBaseComisionable) => {
@@ -676,9 +693,29 @@ function SalidasEditor({
   };
 
   // PVP en vivo: usa las noches de la salida para la asistencia médica.
-  const pvpDe = (r: SalidaState, neto: string) => {
+  //
+  // Modalidad 'base_neta_impuestos_al_final' (migración 161): el neto guardado
+  // en pantalla (`r[k]`) SIGUE siendo el histórico (tarifa − comisión, calculado
+  // por `desgloseTarifa`/`aplicarTarifaAcom` de arriba — eso no cambia, es el
+  // "costo real" y se guarda igual sin importar la modalidad de MK). Lo que
+  // cambia es CÓMO se reparte ese costo entre "se marca con MK" y "se suma
+  // después" — recalculado aquí, en vivo, con `calcularNetoProgramaConModalidad`
+  // sobre la TARIFA + regla actuales (nunca se reconstruye desde el neto ya
+  // redondeado: la regla puede tener más precisión que el neto mostrado).
+  // `tarifaKey` es null para Niño (no tiene concepto de tarifa comisionable) →
+  // siempre usa el camino histórico, sea cual sea la modalidad elegida.
+  const pvpDe = (r: SalidaState, neto: string, tarifaKey: (keyof SalidaState) | null) => {
     if (r.bs || !(Number(neto) > 0)) return null;
     const dias = r.noches !== "" ? Number(r.noches) : pvpOpt.dias;
+    if (reglaOn && tarifaKey && modalidadMk === "base_neta_impuestos_al_final") {
+      const regla = reglaActualValida();
+      const tarifaStr = r[tarifaKey] as string;
+      const tarifa = Number(tarifaStr);
+      if (regla && tarifaStr !== "" && Number.isFinite(tarifa) && tarifa > 0) {
+        const c = calcularNetoProgramaConModalidad({ tarifa, ...regla }, modalidadMk);
+        return pvpPrograma(c.netoParaMarkup, { ...pvpOpt, dias }, c.montoSinMarkup);
+      }
+    }
     return pvpPrograma(Number(neto), { ...pvpOpt, dias });
   };
 
@@ -710,13 +747,14 @@ function SalidasEditor({
     modo: cModo,
     valor: parseNumOrNull(cValor),
     pctComision: parseNumOrNull(cComision),
+    modalidadMk,
   };
   // Con la regla PRENDIDA, no se permite guardar una configuración inválida
   // (campo vacío, fuera de rango, etc.) — se corta ANTES de llamar al
   // servidor, que igual repite esta misma validación (no depende del navegador).
   const reglaInvalidaError = reglaOn
     ? (() => {
-        const v = validarReglaComisionable({ activa: true, modo: cModo, valor: reglaPayload.valor, pctComision: reglaPayload.pctComision });
+        const v = validarReglaComisionable({ activa: true, modo: cModo, valor: reglaPayload.valor, pctComision: reglaPayload.pctComision, modalidadMk: reglaPayload.modalidadMk });
         return v.ok ? null : v.error;
       })()
     : null;
@@ -765,7 +803,18 @@ function SalidasEditor({
               <div className={lbl}>% comisión</div>
               <Input type="number" value={cComision} onChange={(e) => onCComisionChange(e.target.value)} className="w-24" />
             </div>
-            <p className="text-xs text-gray-400">Abajo aparece un campo de <b>tarifa del proveedor</b> junto a Sencilla/Doble/Triple/Múltiple — cada una calcula su propio neto por separado. Niño se ajusta directo.</p>
+            <div>
+              <div className={lbl}>Modalidad de MK</div>
+              <select
+                value={modalidadMk}
+                onChange={(e) => setModalidadMk(e.target.value as ModalidadMk)}
+                className={sel + " w-72"}
+              >
+                <option value="historica">Histórica: MK sobre el neto completo (incl. impuestos)</option>
+                <option value="base_neta_impuestos_al_final">MK sobre base neta; impuestos al final</option>
+              </select>
+            </div>
+            <p className="w-full text-xs text-gray-400">Abajo aparece un campo de <b>tarifa del proveedor</b> junto a Sencilla/Doble/Triple/Múltiple — cada una calcula su propio neto por separado. Niño se ajusta directo.</p>
             {reglaInvalidaError && (
               <p className="w-full text-xs font-medium text-red-600">{reglaInvalidaError} No se recalcula ni se puede guardar hasta corregirlo.</p>
             )}
@@ -812,9 +861,9 @@ function SalidasEditor({
                       </>
                     )}
                     <Input type="number" value={r[k] as string} onChange={(e) => upd(i, k, e.target.value)} placeholder="neto" disabled={r.bs} />
-                    {pvpDe(r, r[k] as string) != null && (
+                    {pvpDe(r, r[k] as string, tarifaKey) != null && (
                       <div className="mt-1 text-xs font-medium" style={{ color: "var(--brand-primary)" }}>
-                        PVP {formatMoneda(pvpDe(r, r[k] as string)!, moneda)}
+                        PVP {formatMoneda(pvpDe(r, r[k] as string, tarifaKey)!, moneda)}
                       </div>
                     )}
                   </div>

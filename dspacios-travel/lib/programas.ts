@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import type { ProgramaResumen } from "@/app/tarifario/TarifarioPublic";
+import { calcularNetoProgramaConModalidad, type ModoBaseComisionable, type ModalidadMk } from "@/lib/calc/programaPrecio";
 
 type SB = SupabaseClient<Database>;
 type ProgramaRow = Database["public"]["Tables"]["programas"]["Row"];
@@ -28,7 +29,8 @@ function redondearPvp(valor: number, moneda: string | null | undefined): number 
  * PVP de venta de un programa por persona, a partir del neto del proveedor:
  *   1) costo total:   base = neto + asistencia_dia × días
  *   2) markup:        sub  = base / (1 - mk)
- *   3) fee bancario:  pvp  = sub  / (1 - fee)
+ *   3) monto sin MK:  sub += montoSinMarkup   (0 salvo modalidad nueva, migración 161)
+ *   4) fee bancario:  pvp  = sub  / (1 - fee)
  *
  * La asistencia médica es un COSTO NETO más (lo que se le paga al proveedor de
  * la asistencia), así que entra ANTES del markup y se marca igual que el resto.
@@ -39,8 +41,17 @@ function redondearPvp(valor: number, moneda: string | null | undefined): number 
  * es decir, se le trasladaba al cliente a precio de costo y no dejaba margen.
  * El PVP de los programas con asistencia SUBE con este cambio: la diferencia es
  * exactamente el margen que antes no se cobraba sobre ella.
+ *
+ * `montoSinMarkup` (migración 161, § modalidad de MK de la tarifa comisionable
+ * del proveedor — lib/calc/programaPrecio.ts, `calcularNetoProgramaConModalidad`):
+ * un monto que se suma DESPUÉS del paso 2 (nunca recibe markup) pero ANTES del
+ * fee bancario (el fee SÍ sigue aplicando sobre el total — es proporcional al
+ * precio final de venta, no al costo interno). Con el valor por defecto (0), el
+ * paso 3 es un no-op y la fórmula queda IDÉNTICA a la de siempre — todo caller
+ * que no lo pase (todos, salvo el nuevo camino de "tarifa comisionable" en
+ * modalidad nueva) conserva el comportamiento histórico byte a byte.
  */
-export function pvpPrograma(neto: number, opt: PvpOpciones): number {
+export function pvpPrograma(neto: number, opt: PvpOpciones, montoSinMarkup = 0): number {
   // Sin neto de hotel (0 o negativo) NO hay precio: devolver 0 evita fabricar un
   // PVP que sería solo la asistencia médica + fee sobre nada (columna fantasma).
   if (!(Number(neto) > 0)) return 0;
@@ -48,10 +59,12 @@ export function pvpPrograma(neto: number, opt: PvpOpciones): number {
   const fee = Number(opt.pctFee) || 0;
   const asis = Number(opt.asistenciaDia) || 0;
   const dias = Math.max(0, Number(opt.dias) || 0);
+  const extra = Number(montoSinMarkup) || 0;
 
   // La asistencia se suma al neto ANTES de marcar: es un costo, no un recargo.
   let sub = neto + asis * dias;
   if (mk > 0 && mk < 1) sub = sub / (1 - mk);
+  sub += extra;
   if (fee > 0 && fee < 1) sub = sub / (1 - fee);
   return redondearPvp(sub, opt.moneda);
 }
@@ -197,7 +210,7 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
       sb.from("programa_categorias").select("id, nombre, orden").eq("programa_id", id).order("orden"),
       sb.from("programa_categoria_hoteles").select("categoria_id, ciudad, hotel, orden").order("orden"),
       sb.from("programa_precios").select("categoria_id, acomodacion, neto, bajo_solicitud"),
-      sb.from("programa_salidas").select("id, etiqueta, fecha_desde, fecha_hasta, noches, columna, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud").eq("programa_id", id).order("orden"),
+      sb.from("programa_salidas").select("id, etiqueta, fecha_desde, fecha_hasta, noches, columna, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple").eq("programa_id", id).order("orden"),
       sb.from("programa_inclusiones").select("ciudad, tipo, texto").eq("programa_id", id).order("orden"),
       sb.from("programa_tours").select("ciudad, nombre, precio, min_pax, dias_operacion, descripcion").eq("programa_id", id).order("orden"),
       sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad").eq("programa_id", id).order("fecha_inicio"),
@@ -227,14 +240,56 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
 
   // Salidas (modo de precio por fecha). El PVP usa las noches de la salida
   // (variables) para el componente de asistencia médica; si no hay, cae a la
-  // cabecera. Niño = nino.
-  const ACOM_SALIDA: [string, "neto_sencilla" | "neto_doble" | "neto_triple" | "neto_multiple" | "neto_nino"][] = [
-    ["sencilla", "neto_sencilla"],
-    ["doble", "neto_doble"],
-    ["triple", "neto_triple"],
-    ["multiple", "neto_multiple"],
-    ["nino", "neto_nino"],
+  // cabecera. Niño = nino (sin tarifa de proveedor — migración 151, se ajusta
+  // directo, nunca pasa por la calculadora de modalidad).
+  //
+  // ⚠️ Modalidad de MK (migración 161): con `regla_comisionable` activa Y
+  // modalidad 'base_neta_impuestos_al_final' Y una TARIFA de proveedor
+  // cargada para esa acomodación puntual (no toda salida/acomodación la
+  // tiene — "una acomodación sin tarifa del proveedor no se toca", mismo
+  // criterio de la 151), se RECALCULA en caliente con
+  // `calcularNetoProgramaConModalidad()` (la MISMA función pura que usa el
+  // editor en vivo y la validación) en vez de leer `neto_x` tal cual — así el
+  // %MK vigente del programa siempre se aplica correctamente, sin depender de
+  // que `neto_x` (persistido, semántica histórica) se haya recalculado. Sin
+  // tarifa cargada, o con la regla apagada, o en modalidad histórica: el
+  // camino es EXACTAMENTE el de siempre (`pvpPrograma(neto, optSalida)`, sin
+  // el 3er argumento) — cero cambio de comportamiento.
+  const reglaActiva = prow.regla_comisionable === true;
+  const modalidadMk: ModalidadMk = prow.regla_comisionable_modalidad_mk === "base_neta_impuestos_al_final" ? "base_neta_impuestos_al_final" : "historica";
+  const reglaModo = (prow.regla_comisionable_modo as ModoBaseComisionable) || "pct";
+  const reglaValor = Number(prow.regla_comisionable_valor) || 0;
+  const reglaPctComision = Number(prow.regla_comisionable_pct_comision) || 0;
+
+  const ACOM_SALIDA: [
+    string,
+    "neto_sencilla" | "neto_doble" | "neto_triple" | "neto_multiple" | "neto_nino",
+    ("tarifa_sencilla" | "tarifa_doble" | "tarifa_triple" | "tarifa_multiple") | null,
+  ][] = [
+    ["sencilla", "neto_sencilla", "tarifa_sencilla"],
+    ["doble", "neto_doble", "tarifa_doble"],
+    ["triple", "neto_triple", "tarifa_triple"],
+    ["multiple", "neto_multiple", "tarifa_multiple"],
+    ["nino", "neto_nino", null],
   ];
+  const pvpDeSalida = (
+    s: NonNullable<typeof salidasRaw>[number],
+    neto: number,
+    optSalida: PvpOpciones,
+    tarifaCol: ("tarifa_sencilla" | "tarifa_doble" | "tarifa_triple" | "tarifa_multiple") | null
+  ): number => {
+    if (reglaActiva && modalidadMk === "base_neta_impuestos_al_final" && tarifaCol) {
+      const tarifa = s[tarifaCol] as number | null;
+      if (tarifa != null && Number.isFinite(tarifa) && tarifa > 0) {
+        const calc = calcularNetoProgramaConModalidad(
+          { tarifa, modo: reglaModo, valor: reglaValor, pctComision: reglaPctComision },
+          modalidadMk
+        );
+        return pvpPrograma(calc.netoParaMarkup, optSalida, calc.montoSinMarkup);
+      }
+    }
+    return pvpPrograma(neto, optSalida);
+  };
   const salidas = (salidasRaw ?? []).map((s) => {
     const optSalida: PvpOpciones = { ...pvpOpt, dias: s.noches != null ? s.noches : prow.dias };
     return {
@@ -245,12 +300,12 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
       noches: s.noches,
       columna: s.columna,
       bajo_solicitud: s.bajo_solicitud,
-      precios: ACOM_SALIDA.map(([acom, col]) => {
+      precios: ACOM_SALIDA.map(([acom, col, tarifaCol]) => {
         const neto = s[col] as number | null;
         return {
           acomodacion: acom,
           neto,
-          pvp: neto != null && neto > 0 && !s.bajo_solicitud ? pvpPrograma(neto, optSalida) : null,
+          pvp: neto != null && neto > 0 && !s.bajo_solicitud ? pvpDeSalida(s, neto, optSalida, tarifaCol) : null,
         };
       }).filter((p) => p.neto != null && p.neto > 0),
     };
