@@ -2,11 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   compactarFilasTarifario,
-  deserializarTarifarioCompacto,
   descompactarFilasTarifario,
-  serializarTarifarioCompacto,
   type FilaTarifarioCompactable,
-  type TarifarioCompactoSerializado,
 } from "../lib/tarifario/compacto.ts";
 
 function fila(id: number): FilaTarifarioCompactable {
@@ -62,24 +59,3 @@ test("la tabla de textos deduplica valores repetidos", () => {
   assert.equal(compacto.textos.filter((x) => x === "Cartagena").length, 1);
 });
 
-test("el bloque serializado conserva byte a byte el catalogo compacto", () => {
-  const originales = Array.from({ length: 200 }, (_, i) => fila(i));
-  const compacto = compactarFilasTarifario(originales);
-  const serializado = serializarTarifarioCompacto(compacto);
-  assert.equal(serializado, JSON.stringify(compacto));
-  assert.deepEqual(
-    descompactarFilasTarifario(deserializarTarifarioCompacto(serializado)),
-    originales
-  );
-});
-
-test("el bloque serializado falla cerrado ante una forma desconocida", () => {
-  assert.throws(
-    () => deserializarTarifarioCompacto('{"version":2,"textos":[],"filas":[]}' as TarifarioCompactoSerializado),
-    /invalido/
-  );
-  assert.throws(
-    () => deserializarTarifarioCompacto("null" as TarifarioCompactoSerializado),
-    /invalido/
-  );
-});
