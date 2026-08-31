@@ -4,7 +4,7 @@ import { CartDrawer } from "./CartDrawer";
 import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
-import { cargarDatosTarifario } from "@/lib/tarifario/datos";
+import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
@@ -28,15 +28,17 @@ export const revalidate = 120; // revalida cada 2 min (hoy sin efecto — ver no
 
 const FLUJO = "pagina_tarifario_publico";
 
-// Mensaje público FIJO — nunca "Tarifario en preparación" cuando en realidad
-// falló la consulta (revisión posterior, defecto "PAGINACIÓN IGNORA ERRORES").
-const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este momento. Intenta nuevamente en unos segundos.";
+// El mensaje público FIJO (nunca "Tarifario en preparación" cuando en
+// realidad falló la consulta — defecto "PAGINACIÓN IGNORA ERRORES") vive en
+// `lib/tarifario/resumen.ts` (`MSG_ERROR_CARGAR_TARIFARIO`, importado arriba)
+// — una sola fuente, para no arriesgar que este archivo y el de detalle bajo
+// demanda terminen mostrando textos distintos ante el mismo tipo de fallo.
 
 // Diagnóstico del incidente de ~13s: la sesión (auth.getUser + consulta de
 // perfil) se resuelve PRIMERO — de ahí sale `esAgencia`/`puedeReservar`, que
 // solo se USAN para el render, nunca para decidir QUÉ datos pedir (el
 // tarifario/programas/config_sitio son los mismos para cualquiera). Después
-// arrancan CONCURRENTEMENTE las 3 fuentes independientes: cargarDatosTarifario,
+// arrancan CONCURRENTEMENTE las 3 fuentes independientes: cargarResumenTarifario,
 // getProgramasResumen y config_sitio. La secuencia real (nunca se invoca
 // ninguna de las 3 hasta que la sesión resolvió) la garantiza
 // `orquestarCargaPublica()` (lib/tarifario/orquestacion.ts, función PURA
@@ -88,7 +90,7 @@ export default async function TarifarioPublicoPage() {
       registrarEtapa(FLUJO, flujoId, "autenticacion_perfil", ms, huboError ? "error" : "ok");
       return { user, esAgencia, puedeReservar, huboError, ms };
     },
-    cargarTarifario: () => cargarDatosTarifario(sb, FLUJO, flujoId),
+    cargarTarifario: () => cargarResumenTarifario(sb, FLUJO, flujoId),
     cargarProgramas: () => getProgramasResumen(sb, true), // público: SOLO publicados
     cargarConfigSitio: async () => sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle(),
   });
@@ -102,7 +104,7 @@ export default async function TarifarioPublicoPage() {
   if (!resDatos.ok) {
     // Nunca "Tarifario en preparación" cuando en realidad la consulta
     // falló — eso afirmaría algo falso. El detalle técnico ya quedó
-    // saneado en el log dentro de cargarDatosTarifario() (registrarErrorTecnico).
+    // saneado en el log dentro de cargarResumenTarifario() (registrarErrorTecnico).
     return (
       <div className="app-bg min-h-screen bg-gray-50">
         <main className="mx-auto max-w-[1700px] px-4 py-20 md:px-6">

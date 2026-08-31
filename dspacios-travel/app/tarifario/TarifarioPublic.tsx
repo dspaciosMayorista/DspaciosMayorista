@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Star, Plane, Bus } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -8,6 +8,8 @@ import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
+import { obtenerDetalleSalida, obtenerDetallePaquete, obtenerDetalleServicios } from "./detalle-actions";
+import { conCacheDetalle, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
 
@@ -185,6 +187,73 @@ function coincideFiltro(f: FilaTarifario, q: string, fCat: string, fReg: string)
   return true;
 }
 
+const MSG_ERROR_DETALLE_TABLA = "No fue posible cargar el detalle en este momento. Intenta nuevamente en unos segundos.";
+
+/**
+ * Detalle bajo demanda (Tier 2) para Vista tabla: `filas` (prop de
+ * `TarifarioPublic`, viene del resumen — sin niño/niño2/infante/escalas) solo
+ * alcanza para las listas de salidas/paquetes; la tabla pivotada de cada uno
+ * necesita la matriz completa. `clave` identifica QUÉ detalle corresponde
+ * (null = nada seleccionado todavía); cambia el detalle cuando cambia la
+ * clave, dedupe/cachea con `conCacheDetalle` (mismo módulo que usa
+ * VistaBooking.tsx para "Ver opciones"), y descarta una respuesta que ya no
+ * corresponde a la clave vigente (misma guarda contra carreras).
+ */
+function useDetalleTabla(
+  clave: string | null,
+  cargar: () => Promise<{ ok: true; filas: FilaTarifario[] } | { ok: false; error: string }>
+): [EstadoDetalle<FilaTarifario> | null, () => void] {
+  const [estado, setEstado] = useState<EstadoDetalle<FilaTarifario> | null>(null);
+  // `intento` fuerza un reintento manual aunque la clave no haya cambiado —
+  // `conCacheDetalle` nunca cachea un fallo (se puede reintentar de verdad),
+  // pero el efecto solo vuelve a correr si alguna de sus dependencias cambia.
+  const [intento, setIntento] = useState(0);
+  const claveRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!clave) {
+      claveRef.current = null;
+      return;
+    }
+    claveRef.current = clave;
+    setEstado({ estado: "cargando" });
+    conCacheDetalle(clave, cargar)
+      .then((r) => {
+        if (claveRef.current !== clave) return;
+        setEstado(r.ok ? { estado: "ok", filas: r.filas } : { estado: "error", mensaje: r.error });
+      })
+      .catch(() => {
+        if (claveRef.current !== clave) return;
+        setEstado({ estado: "error", mensaje: MSG_ERROR_DETALLE_TABLA });
+      });
+    // Solo re-ejecuta cuando cambia la CLAVE (o el contador de reintento
+    // manual) — no cuando `cargar` cambia de identidad entre renders, mismo
+    // patrón ya usado en este archivo para `filasConCupo` (ver `PorSalida`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clave, intento]);
+  // Sin clave (nada seleccionado todavía) el resultado es siempre null — se
+  // DERIVA en el render en vez de resetear `estado` con un `setState`
+  // síncrono dentro del efecto (ese `setState` no sincronizaba con nada
+  // externo, justo el antipatrón que señala la regla `set-state-in-effect`).
+  return [clave ? estado : null, () => setIntento((n) => n + 1)];
+}
+
+function EstadoCargaTabla({ detalle, onReintentar }: { detalle: EstadoDetalle<FilaTarifario> | null; onReintentar: () => void }) {
+  if (detalle === null || detalle.estado === "cargando") {
+    return <p className="py-8 text-center text-sm text-gray-400">Cargando tarifas…</p>;
+  }
+  if (detalle.estado === "error") {
+    return (
+      <div className="py-8 text-center">
+        <p className="text-sm text-red-500">{detalle.mensaje}</p>
+        <button type="button" onClick={onReintentar} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+          Reintentar
+        </button>
+      </div>
+    );
+  }
+  return null;
+}
+
 export function TarifarioPublic({
   filas,
   programas = [],
@@ -339,7 +408,7 @@ export function TarifarioPublic({
           ) : modulo === "porcion_terrestre" ? (
             <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : (
-            <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
+            <PorServicios q={q.trim()} fCat={fCat} fReg={fReg} puedeReservar={puedeReservar} />
           )}
         </>
       )}
@@ -372,13 +441,23 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
 
   const [sel, setSel] = useState(salidas[0]?.key ?? "");
   const selFila = salidas.find((s) => s.key === sel)?.f;
-  const rows = useMemo(
-    () =>
-      pivotar(
-        filasConCupo.filter((f) => `${f.destino_nombre}|||${f.bloqueo_label}|||${f.fecha_ida}` === sel)
-      ),
-    [filasConCupo, sel]
+
+  // Detalle bajo demanda (Tier 2) de la salida elegida — `selFila` viene del
+  // resumen (sin niño/niño2/infante); la tabla pivotada necesita la matriz
+  // completa de ESA salida puntual (nunca de todas). Acotado por
+  // `bloqueo_id`/`salida_id` (más preciso que la clave compuesta usada solo
+  // para agrupar las pastillas de "Salidas").
+  const moduloSel = selFila?.modulo as "bloqueo" | "dinamico" | undefined;
+  const claveDetalle =
+    moduloSel === "bloqueo" && selFila?.bloqueo_id != null ? `salida:bloqueo:${selFila.bloqueo_id}`
+      : moduloSel === "dinamico" && selFila?.salida_id != null ? `salida:dinamico:${selFila.salida_id}`
+      : null;
+  const [detalle, reintentarDetalle] = useDetalleTabla(claveDetalle, () =>
+    moduloSel === "bloqueo"
+      ? obtenerDetalleSalida({ modulo: "bloqueo", bloqueoId: selFila!.bloqueo_id })
+      : obtenerDetalleSalida({ modulo: "dinamico", salidaId: selFila!.salida_id })
   );
+  const rows = useMemo(() => pivotar(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
 
   return (
     <div className="space-y-4">
@@ -421,7 +500,11 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
             {fmtFecha(selFila.fecha_ida)} → {fmtFecha(selFila.fecha_regreso)} ({selFila.noches} noches)
           </p>
         )}
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+        {detalle?.estado === "ok" ? (
+          <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+        ) : (
+          <EstadoCargaTabla detalle={detalle} onReintentar={reintentarDetalle} />
+        )}
       </div>
     </div>
   );
@@ -439,7 +522,15 @@ function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, 
   }, [filas]);
 
   const [sel, setSel] = useState(paquetes[0]?.key ?? "");
-  const rows = useMemo(() => pivotar(filas.filter((f) => `${f.paquete_nombre}` === sel)), [filas, sel]);
+  const selFila = paquetes.find((p) => p.key === sel)?.f;
+
+  // Detalle bajo demanda (Tier 2), acotado por `paquete_id` — mismo criterio
+  // que `PorSalida`.
+  const claveDetalle = selFila?.paquete_id != null ? `paquete:${selFila.paquete_id}` : null;
+  const [detalle, reintentarDetalle] = useDetalleTabla(claveDetalle, () =>
+    obtenerDetallePaquete({ paqueteId: selFila!.paquete_id })
+  );
+  const rows = useMemo(() => pivotar(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
 
   return (
     <div className="space-y-4">
@@ -465,14 +556,29 @@ function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, 
         </div>
       </div>
       <div className="min-w-0">
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+        {detalle?.estado === "ok" ? (
+          <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+        ) : (
+          <EstadoCargaTabla detalle={detalle} onReintentar={reintentarDetalle} />
+        )}
       </div>
     </div>
   );
 }
 
 // ── Módulo SERVICIOS ───────────────────────────────────────────────────────
-function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]; puedeReservar?: boolean }) {
+// Detalle bajo demanda (Tier 2): el resumen no trae escalas por rango de pax
+// ni descripción/recargo por fila — se pide la matriz completa de servicios
+// UNA vez al entrar a esta pestaña (acotada por módulo=servicios, nunca junto
+// a la matriz de hoteles). `q`/`fCat`/`fReg` se aplican aquí, sobre las filas
+// YA completas — igual que antes se aplicaban sobre `filas` (el prop, ya
+// filtrado) antes de llegarle a este componente.
+function PorServicios({ q, fCat, fReg, puedeReservar = false }: { q: string; fCat: string; fReg: string; puedeReservar?: boolean }) {
+  const [detalle, reintentarDetalle] = useDetalleTabla("servicios", () => obtenerDetalleServicios());
+  if (detalle === null || detalle.estado === "cargando" || detalle.estado === "error") {
+    return <EstadoCargaTabla detalle={detalle} onReintentar={reintentarDetalle} />;
+  }
+  const filas = detalle.filas.filter((f) => coincideFiltro(f, q, fCat, fReg));
   if (!filas.length) return <p className="py-12 text-center text-sm text-gray-400">No hay servicios publicados.</p>;
   // Agrupa por paquete → servicio
   const porPaquete = new Map<number, FilaTarifario[]>();

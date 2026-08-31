@@ -47,11 +47,11 @@ describe("/dashboard/reservar — usa orquestarCargaReservar() (liberarVencidas 
     assert.match(src, /registrarEtapa\(\s*FLUJO, flujoId, "tarifario_y_programas"/);
   });
 
-  test("cargarDatosTarifario() y getProgramasResumen() se pasan como cierres `cargarTarifario`/`cargarProgramas` al MISMO orquestador (arrancan concurrentes una vez liberarVencidas termina)", () => {
+  test("cargarResumenTarifario() (carga en dos niveles) y getProgramasResumen() se pasan como cierres `cargarTarifario`/`cargarProgramas` al MISMO orquestador (arrancan concurrentes una vez liberarVencidas termina)", () => {
     const idxOrq = src.indexOf("orquestarCargaReservar({");
     const idxCierre = src.indexOf("});", idxOrq);
     const bloque = src.slice(idxOrq, idxCierre);
-    assert.match(bloque, /cargarTarifario:\s*\(\)\s*=>\s*cargarDatosTarifario\(sb, FLUJO, flujoId\)/);
+    assert.match(bloque, /cargarTarifario:\s*\(\)\s*=>\s*cargarResumenTarifario\(sb, FLUJO, flujoId\)/);
     assert.match(bloque, /cargarProgramas:\s*\(\)\s*=>\s*getProgramasResumen\(sb, false\)/, "interno: activos aunque no publicados — el argumento false debe preservarse");
   });
 
@@ -60,29 +60,31 @@ describe("/dashboard/reservar — usa orquestarCargaReservar() (liberarVencidas 
   });
 });
 
-describe("/dashboard/tarifario — usa orquestarCargaInterna(); NO usa cargarDatosTarifario() (evita el payload/consultas extra de Vista Booking)", () => {
+describe("/dashboard/tarifario — usa orquestarCargaInterna(); NO usa cargarDatosTarifario()/cargarResumenTarifario() (evita el payload/consultas extra de Vista Booking)", () => {
   const src = leer(TARIFARIO_INTERNO);
 
   test("importa orquestarCargaInterna de lib/tarifario/orquestacion", () => {
     assert.match(src, /import\s*\{\s*orquestarCargaInterna\s*\}\s*from\s*"@\/lib\/tarifario\/orquestacion"/);
   });
 
-  test("no importa ni invoca cargarDatosTarifario (solo se menciona en comentarios explicando la decisión)", () => {
+  test("no importa ni invoca cargarDatosTarifario/cargarResumenTarifario (usa su propio camino liviano — solo el resumen, sin el enriquecimiento completo)", () => {
     assert.doesNotMatch(src, /import\s*\{[^}]*cargarDatosTarifario/, "no debe importar cargarDatosTarifario");
     assert.doesNotMatch(src, /cargarDatosTarifario\(sb/, "no debe invocar cargarDatosTarifario(sb, ...)");
+    assert.doesNotMatch(src, /cargarResumenTarifario\(sb/, "no debe invocar cargarResumenTarifario(sb, ...) — traería enriquecimiento que esta vista no usa");
   });
 
-  test("usa el cargador liviano compartido cargarFilasTarifarioPaginado con su propio set de columnas", () => {
-    assert.match(src, /import\s*\{\s*cargarFilasTarifarioPaginado\s*\}\s*from\s*"@\/lib\/tarifario\/paginacion"/);
-    assert.match(src, /cargarFilasTarifarioPaginado[^(]*\(sb, COLUMNAS_LIVIANAS\)/);
+  test("usa el cargador de RESUMEN compartido (carga en dos niveles) — cargarFilasResumenPaginado + expandirResumenAFilas", () => {
+    assert.match(src, /import\s*\{\s*cargarFilasResumenPaginado,\s*expandirResumenAFilas\s*\}\s*from\s*"@\/lib\/tarifario\/resumen"/);
+    assert.match(src, /cargarFilasResumenPaginado\(sb\)/);
+    assert.match(src, /expandirResumenAFilas\(filasFiltradas\)/);
   });
 
-  test("carga_paginada + filtro_vigencia (cierre `cargarTarifario`) y getProgramasResumen (cierre `cargarProgramas`) se pasan al MISMO orquestador", () => {
+  test("resumen_inicial + filtro_vigencia (cierre `cargarTarifario`) y getProgramasResumen (cierre `cargarProgramas`) se pasan al MISMO orquestador", () => {
     const idxOrq = src.indexOf("orquestarCargaInterna({");
     assert.ok(idxOrq > -1, "no se encontró la llamada a orquestarCargaInterna");
     const idxCierre = src.indexOf("});", idxOrq);
     const bloque = src.slice(idxOrq, idxCierre);
-    assert.match(bloque, /cargarFilasTarifarioPaginado/);
+    assert.match(bloque, /cargarFilasResumenPaginado/);
     assert.match(bloque, /filtrarTarifarioVencidas/);
     assert.match(bloque, /cargarProgramas:\s*\(\)\s*=>\s*getProgramasResumen\(sb, false\)/, "interno: activos aunque no publicados");
   });
@@ -93,14 +95,14 @@ describe("/dashboard/tarifario — usa orquestarCargaInterna(); NO usa cargarDat
     assert.doesNotMatch(bloqueJsx, /puedeReservar/);
   });
 
-  test("reutiliza filtrarTarifarioVencidas de lib/tarifario/vigencia (compartido, no reimplementado)", () => {
+  test("reutiliza filtrarTarifarioVencidas de lib/tarifario/vigencia (compartido, no reimplementado) — aplicado sobre las filas de RESUMEN (mismo grano hotel+categoría+régimen que antes)", () => {
     assert.match(src, /import\s*\{\s*filtrarTarifarioVencidas\s*\}\s*from\s*"@\/lib\/tarifario\/vigencia"/);
   });
 
-  test("un fallo de paginación (`!pag.ok`) aborta con mensaje público fijo — nunca dice 'aún no hay tarifas'", () => {
+  test("un fallo del resumen (`!pag.ok`) aborta con mensaje público fijo — nunca dice 'aún no hay tarifas'", () => {
     assert.match(src, /if \(!pag\.ok\)/);
     assert.match(src, /MSG_ERROR_CARGAR_TARIFARIO/);
-    assert.match(src, /registrarErrorTecnico\(FLUJO, flujoId, "carga_paginada"/);
+    assert.match(src, /registrarErrorTecnico\(FLUJO, flujoId, "resumen_inicial"/);
   });
 });
 
@@ -139,11 +141,11 @@ describe("/tarifario (público) — usa orquestarCargaPublica() (sesión SECUENC
     );
   });
 
-  test("cargarDatosTarifario, getProgramasResumen(sb, true) y config_sitio se pasan como cierres al MISMO orquestador (arrancan concurrentes una vez la sesión resuelve)", () => {
+  test("cargarResumenTarifario (carga en dos niveles), getProgramasResumen(sb, true) y config_sitio se pasan como cierres al MISMO orquestador (arrancan concurrentes una vez la sesión resuelve)", () => {
     const idxOrq = src.indexOf("orquestarCargaPublica({");
     const idxCierre = src.indexOf("});", idxOrq);
     const bloque = src.slice(idxOrq, idxCierre);
-    assert.match(bloque, /cargarTarifario:\s*\(\)\s*=>\s*cargarDatosTarifario\(sb, FLUJO, flujoId\)/);
+    assert.match(bloque, /cargarTarifario:\s*\(\)\s*=>\s*cargarResumenTarifario\(sb, FLUJO, flujoId\)/);
     assert.match(bloque, /cargarProgramas:\s*\(\)\s*=>\s*getProgramasResumen\(sb, true\)/, "público: SOLO publicados — el argumento true debe preservarse");
     assert.match(bloque, /cargarConfigSitio:[\s\S]*?config_sitio/);
   });

@@ -2748,6 +2748,44 @@ export type Database = {
         Row: { numero_contrato: string; total_pagado: number };
         Relationships: [];
       };
+      // Migración 161: resumen agregado de `tarifario_resultado` (una fila
+      // por combinación módulo/paquete/bloqueo/hotel/servicio, magnitud
+      // cercana a hoteles/salidas, no a tarifas) — carga inicial liviana del
+      // tarifario en dos niveles. Ver lib/tarifario/resumen.ts.
+      tarifario_resumen: {
+        Row: {
+          modulo: Database["public"]["Enums"]["tarifario_modulo"];
+          paquete_id: number;
+          paquete_nombre: string | null;
+          paquete_activo: boolean;
+          bloqueo_id: number | null;
+          bloqueo_label: string | null;
+          empaquetado_id: number | null;
+          salida_id: number | null;
+          hotel_id: number | null;
+          hotel_nombre: string | null;
+          servicio_id: number | null;
+          servicio_nombre: string | null;
+          destino_id: number | null;
+          destino_nombre: string | null;
+          categoria: string | null;
+          regimen: string | null;
+          fecha_ida: string | null;
+          fecha_regreso: string | null;
+          noches: number | null;
+          moneda: string;
+          precio_sencilla: number | null;
+          precio_doble: number | null;
+          precio_triple: number | null;
+          precio_multiple: number | null;
+          desde_adulto: number | null;
+          desde_general: number | null;
+          descripcion: string | null;
+          recargo_individual: number | null;
+          tipo_tarifa: string | null;
+        };
+        Relationships: [];
+      };
       // Migración 148: `contrato_vuelos` SIN el record/PNR ajeno. El rol
       // `venta` ya no lee la tabla base — con el record se puede modificar o
       // anular la reserva en el sitio de la aerolínea.

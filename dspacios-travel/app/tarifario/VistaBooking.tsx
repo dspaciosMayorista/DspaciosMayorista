@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import Image from "next/image";
 import { Star, Check } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -17,6 +17,8 @@ import {
   verificarTarifasMenoresDisponibles,
 } from "@/lib/reservar/edadesMenores";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
+import { obtenerDetalleHotel } from "./detalle-actions";
+import { conCacheDetalle, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking } from "./BuscadorBooking";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
@@ -269,7 +271,45 @@ export function VistaBooking({
   }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
+  const [detalleHotel, setDetalleHotel] = useState<EstadoDetalle<FilaTarifario> | null>(null);
   const [receptivoAbierto, setReceptivoAbierto] = useState<ReceptivoModalInfo | null>(null);
+  // Clave del hotel/módulo actualmente abierto — se lee dentro del `.then()`
+  // para descartar una respuesta que ya no corresponde a lo que el usuario
+  // tiene abierto AHORA (carrera: abrir el hotel A, cerrarlo y abrir el hotel
+  // B antes de que la respuesta de A llegue). Un `ref` (no el estado
+  // `abierto`) porque el cierre del `.then` capturaría el valor de `abierto`
+  // en el momento en que se llamó `abrirHotel`, no en el momento en que la
+  // respuesta realmente llega.
+  const claveAbiertaRef = useRef<string | null>(null);
+
+  // Abrir un hotel dispara el detalle bajo demanda (Tier 2) — la tarjeta y el
+  // resto de la grilla YA están pintadas (vienen del resumen); un error acá
+  // NUNCA las borra ni las altera, solo afecta lo que se ve DENTRO del modal
+  // (ver `HotelModal` más abajo). `conCacheDetalle` deduplica si el mismo
+  // hotel/módulo ya está en vuelo y reutiliza un detalle ya resuelto durante
+  // esta visita, sin volver a pedirlo.
+  function abrirHotel(h: HotelCard) {
+    setAbierto(h);
+    setDetalleHotel({ estado: "cargando" });
+    const modulo = sub === "receptivos" ? "bloqueo" : sub;
+    const clave = `hotel:${modulo}:${h.hotelId}`;
+    claveAbiertaRef.current = clave;
+    conCacheDetalle(clave, () => obtenerDetalleHotel({ modulo, hotelId: h.hotelId }))
+      .then((r) => {
+        if (claveAbiertaRef.current !== clave) return; // otro hotel se abrió mientras tanto
+        setDetalleHotel(r.ok ? { estado: "ok", filas: r.filas } : { estado: "error", mensaje: r.error });
+      })
+      .catch(() => {
+        if (claveAbiertaRef.current !== clave) return;
+        setDetalleHotel({ estado: "error", mensaje: "No fue posible cargar el detalle en este momento. Intenta nuevamente en unos segundos." });
+      });
+  }
+
+  function cerrarHotel() {
+    claveAbiertaRef.current = null;
+    setAbierto(null);
+    setDetalleHotel(null);
+  }
 
   // Receptivos (servicios) para su submódulo: agrupados por nombre con su
   // "desde", y luego por destino (una sección por destino) para no mezclarlos.
@@ -489,7 +529,7 @@ export function VistaBooking({
           <button
             key={h.hotelId}
             type="button"
-            onClick={() => setAbierto(h)}
+            onClick={() => abrirHotel(h)}
             className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
           >
             <div className="relative aspect-[16/10] w-full bg-gray-100">
@@ -540,7 +580,7 @@ export function VistaBooking({
       )}
 
       {abierto && (
-        <HotelModal hotel={abierto} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} incluidosPorPaquete={incluidosPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={() => setAbierto(null)} />
+        <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} incluidosPorPaquete={incluidosPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
       )}
 
       {receptivoAbierto && (
@@ -587,9 +627,15 @@ function ReceptivoModal({ receptivo, onClose }: { receptivo: ReceptivoModalInfo;
 // ── Modal de detalle: elige opción (salida/paquete), categoría/régimen y
 //    habitaciones; calcula el precio y agrega al carrito ─────────────────────
 function HotelModal({
-  hotel, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, incluidosPorPaquete, addonsPorPaquete, onClose,
+  hotel, detalle, onReintentar, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, incluidosPorPaquete, addonsPorPaquete, onClose,
 }: {
-  hotel: HotelCard; cuposPorBloqueo: Record<number, number>; origenPorBloqueo: Record<number, string>; puedeReservar: boolean;
+  hotel: HotelCard;
+  // Detalle bajo demanda (Tier 2) — mientras no llegue en "ok", el modal ya
+  // está ABIERTO (mismo diseño de siempre) pero sin opciones para elegir
+  // todavía. Un error acá nunca toca la tarjeta/grilla de fuera.
+  detalle: EstadoDetalle<FilaTarifario> | null;
+  onReintentar: () => void;
+  cuposPorBloqueo: Record<number, number>; origenPorBloqueo: Record<number, string>; puedeReservar: boolean;
   ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
   incluidosPorPaquete: Record<number, string[]>; addonsPorPaquete: Map<number, Receptivo[]>;
@@ -599,8 +645,9 @@ function HotelModal({
   const [addonAbierto, setAddonAbierto] = useState<ReceptivoModalInfo | null>(null);
 
   const opciones = useMemo<Opcion[]>(() => {
+    const filasDetalle = detalle?.estado === "ok" ? detalle.filas : [];
     const map = new Map<string, Opcion>();
-    for (const f of hotel.filas) {
+    for (const f of filasDetalle) {
       // Bloqueo sin cupos → no se ofrece.
       if (f.modulo === "bloqueo" && f.bloqueo_id != null) {
         const c = cuposPorBloqueo[f.bloqueo_id];
@@ -629,7 +676,7 @@ function HotelModal({
     }
     // De la salida más cercana a la más lejana; sin fecha, al final.
     return [...map.values()].sort((a, b) => (a.fechaIda ?? "9999-99-99").localeCompare(b.fechaIda ?? "9999-99-99"));
-  }, [hotel, cuposPorBloqueo, origenPorBloqueo]);
+  }, [detalle, cuposPorBloqueo, origenPorBloqueo]);
 
   const [opKey, setOpKey] = useState(opciones[0]?.key ?? "");
   const opcion = opciones.find((o) => o.key === opKey) ?? opciones[0];
@@ -699,7 +746,16 @@ function HotelModal({
             </div>
           )}
 
-          {!opcion ? (
+          {detalle === null || detalle.estado === "cargando" ? (
+            <p className="py-4 text-center text-sm text-gray-400">Cargando opciones…</p>
+          ) : detalle.estado === "error" ? (
+            <div className="py-4 text-center">
+              <p className="text-sm text-red-500">{detalle.mensaje}</p>
+              <button type="button" onClick={onReintentar} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+                Reintentar
+              </button>
+            </div>
+          ) : !opcion ? (
             <p className="text-sm text-gray-400">Sin disponibilidad publicada.</p>
           ) : (
             <>

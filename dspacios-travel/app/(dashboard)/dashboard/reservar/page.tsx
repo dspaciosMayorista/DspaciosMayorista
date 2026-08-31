@@ -3,7 +3,7 @@ import { TarifarioPublic } from "@/app/tarifario/TarifarioPublic";
 import { CartDrawer } from "@/app/tarifario/CartDrawer";
 import { CartProvider } from "@/lib/cart/CartContext";
 import { getProgramasResumen } from "@/lib/programas";
-import { cargarDatosTarifario } from "@/lib/tarifario/datos";
+import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
 import { orquestarCargaReservar } from "@/lib/tarifario/orquestacion";
 import { liberarVencidas } from "./actions";
 import {
@@ -15,9 +15,9 @@ export const dynamic = "force-dynamic";
 
 const FLUJO = "pagina_reservar";
 
-// Mensaje público FIJO — nunca "no hay tarifas" cuando en realidad falló la
-// consulta (revisión posterior, defecto "PAGINACIÓN IGNORA ERRORES").
-const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este momento. Intenta nuevamente en unos segundos.";
+// El mensaje público FIJO (nunca "no hay tarifas" cuando en realidad falló
+// la consulta — defecto "PAGINACIÓN IGNORA ERRORES") vive en
+// `lib/tarifario/resumen.ts` (importado arriba) — una sola fuente.
 
 // Diagnóstico del incidente de ~13s en /dashboard/reservar, /dashboard/
 // tarifario y /tarifario (las tres comparten las mismas fuentes pesadas,
@@ -25,7 +25,7 @@ const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este m
 // en los logs, con el mismo formato ya usado por crearContrato()/
 // reservarPrograma() (lib/observabilidad/medicion.ts), el tiempo de:
 //  - `liberar_vencidas` — SECUENCIAL antes de lo demás a propósito: libera
-//    sillas vencidas (cambia `sillas`), y `cargarDatosTarifario()` lee cupos
+//    sillas vencidas (cambia `sillas`), y `cargarResumenTarifario()` lee cupos
 //    calculados a partir de esas mismas sillas — paralelizarlo arriesgaría
 //    leer cupos ANTES de liberar, mostrando menos disponibilidad de la real.
 //    La secuencia real (nunca se invoca cargarTarifario/cargarProgramas
@@ -34,12 +34,12 @@ const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este m
 //    PURA probada con promesas diferidas en
 //    pruebas/tarifarioOrquestacion.test.ts) — no un comentario ni el orden
 //    visual del código.
-//  - `tarifario_y_programas` — cargarDatosTarifario() y getProgramasResumen()
+//  - `tarifario_y_programas` — cargarResumenTarifario() y getProgramasResumen()
 //    NO dependen una de la otra (ninguna lee lo que la otra escribe ni usa su
 //    resultado), así que arrancan CONCURRENTEMENTE (mismo orquestador). Sus
 //    propias etapas internas (carga_paginada/filtro_vigencia/datos_
 //    auxiliares para la primera) se miden aparte dentro de
-//    `cargarDatosTarifario()`.
+//    `cargarResumenTarifario()`.
 //  - `preparacion_servidor` — el Server Component hasta el `return` del JSX.
 //    NO incluye serialización RSC real, transmisión, hidratación ni pintado
 //    del navegador (revisión posterior, defecto "MEDICIÓN 'TOTAL'
@@ -74,7 +74,7 @@ export default async function ReservarPage() {
       registrarDatoPagina(FLUJO, flujoId, "liberar_vencidas", `liberadas=${r.liberadas}`);
       return { ...r, ms };
     },
-    cargarTarifario: () => cargarDatosTarifario(sb, FLUJO, flujoId),
+    cargarTarifario: () => cargarResumenTarifario(sb, FLUJO, flujoId),
     // interno: activos aunque no publicados (igual que /dashboard/tarifario)
     cargarProgramas: () => getProgramasResumen(sb, false),
   });
@@ -87,7 +87,7 @@ export default async function ReservarPage() {
   if (!resDatos.ok) {
     // Nunca "no hay tarifas publicadas" cuando en realidad la consulta
     // falló — eso afirmaría algo falso. El detalle técnico ya quedó
-    // saneado en el log dentro de cargarDatosTarifario() (registrarErrorTecnico).
+    // saneado en el log dentro de cargarResumenTarifario() (registrarErrorTecnico).
     return (
       <CartProvider>
         <div className="mx-auto max-w-6xl p-4 md:p-8">

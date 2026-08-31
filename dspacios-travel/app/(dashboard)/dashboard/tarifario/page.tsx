@@ -1,10 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import Link from "next/link";
-import { TarifarioPublic, type FilaTarifario } from "@/app/tarifario/TarifarioPublic";
+import { TarifarioPublic } from "@/app/tarifario/TarifarioPublic";
 import { getProgramasResumen } from "@/lib/programas";
 import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
-import { cargarFilasTarifarioPaginado } from "@/lib/tarifario/paginacion";
+import { cargarFilasResumenPaginado, expandirResumenAFilas } from "@/lib/tarifario/resumen";
 import { orquestarCargaInterna } from "@/lib/tarifario/orquestacion";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
@@ -15,14 +15,17 @@ export const dynamic = "force-dynamic";
 
 const FLUJO = "pagina_tarifario_interno";
 
-// Columnas LIVIANAS — a propósito, más chicas que las de cargarDatosTarifario()
-// (lib/tarifario/datos.ts): esta vista solo necesita mostrar la tabla, no
-// arma el enriquecimiento completo de Vista Booking (cupos, fotos, hoteles,
-// capacidades, planes, ventana, "incluye") que sí necesita Reservar/público.
-// Reusar cargarDatosTarifario() aquí aumentaría consultas y payload sin
-// necesidad — ver auditoría de duplicación en el PR.
-const COLUMNAS_LIVIANAS =
-  "modulo, bloqueo_label, bloqueo_id, paquete_id, hotel_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, fecha_ida, fecha_regreso, noches, destino_nombre, paquete_nombre, hotel_nombre, categoria, regimen, acomodacion, precio_pvp, moneda";
+// Carga en dos niveles (ver lib/tarifario/resumen.ts): esta vista solo
+// necesita mostrar la tabla, no arma el enriquecimiento completo de Vista
+// Booking (cupos, fotos, hoteles, capacidades, planes, ventana, "incluye")
+// que sí necesita Reservar/público — reusar `cargarResumenTarifario()`
+// (que SÍ arma ese enriquecimiento) aquí aumentaría consultas y payload sin
+// necesidad, así que esta página sigue con su propio camino liviano: solo
+// pide el resumen (`cargarFilasResumenPaginado`) y aplica la MISMA vigencia
+// de siempre — sin el filtro de "salidas ya pasadas" ni el de "empaquetados
+// vencidos" que sí aplican `/tarifario` y `/dashboard/reservar` (esta vista
+// nunca los tuvo; no es una equivalencia rota, es la interfaz actual de esta
+// página, que no se toca).
 
 // Mensaje público FIJO — nunca "no hay tarifas" cuando en realidad falló la
 // consulta (revisión posterior, defecto "PAGINACIÓN IGNORA ERRORES").
@@ -45,14 +48,14 @@ export default async function TarifarioInternoPage() {
   const { tarifario: resTarifario, programas: resProgramas } = await orquestarCargaInterna({
     cargarTarifario: async () => {
       const _cronoPag = iniciarCronometro();
-      const pag = await cargarFilasTarifarioPaginado<FilaTarifario>(sb, COLUMNAS_LIVIANAS);
+      const pag = await cargarFilasResumenPaginado(sb);
       if (!pag.ok) {
-        registrarEtapa(FLUJO, flujoId, "carga_paginada", _cronoPag(), "error");
-        registrarErrorTecnico(FLUJO, flujoId, "carga_paginada", "error_paginacion_tarifario_resultado", pag.error);
+        registrarEtapa(FLUJO, flujoId, "resumen_inicial", _cronoPag(), "error");
+        registrarErrorTecnico(FLUJO, flujoId, "resumen_inicial", "error_carga_tarifario_resumen", pag.error);
         return { ok: false as const };
       }
-      registrarEtapa(FLUJO, flujoId, "carga_paginada", _cronoPag(), "ok");
-      registrarDatoPagina(FLUJO, flujoId, "carga_paginada", `filas=${pag.filas.length} paginas=${pag.paginasConsultadas} consultas=${pag.paginasConsultadas}`);
+      registrarEtapa(FLUJO, flujoId, "resumen_inicial", _cronoPag(), "ok");
+      registrarDatoPagina(FLUJO, flujoId, "resumen_inicial", `filas_resumen=${pag.filas.length} paginas=${pag.paginasConsultadas} consultas_iniciales=${pag.paginasConsultadas}`);
 
       // Oculta tarifas de hotel con vigencia de compra vencida (igual que el
       // público: lo vencido no aparece). El histórico se consulta en el
@@ -78,7 +81,7 @@ export default async function TarifarioInternoPage() {
       }
       registrarEtapa(FLUJO, flujoId, "filtro_vigencia", _cronoVig(), huboErrorVigencia ? "error" : "ok");
       registrarDatoPagina(FLUJO, flujoId, "filtro_vigencia", `filas=${filasFiltradas.length} consultas=${huboVigencia ? 2 : 0}`);
-      return { ok: true as const, filas: filasFiltradas };
+      return { ok: true as const, filas: expandirResumenAFilas(filasFiltradas) };
     },
     // Programas (interno: muestra activos aunque no estén publicados).
     cargarProgramas: () => getProgramasResumen(sb, false),
