@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  idPositivo, moduloDe, MODULOS_HOTEL, MODULOS_SALIDA,
+  idPositivo, moduloDe, idsPositivosLimitados, MAX_IDS_ALCANCE, MODULOS_HOTEL, MODULOS_SALIDA,
   validarEntradaDetalleHotel, validarEntradaDetalleSalida, validarEntradaDetallePaquete,
 } from "../lib/tarifario/detalleValidacion.ts";
 
@@ -29,14 +29,60 @@ describe("moduloDe() — solo strings dentro del set permitido", () => {
   }
 });
 
-describe("validarEntradaDetalleHotel() — {modulo, hotelId}", () => {
-  test("acepta forma válida", () => assert.deepEqual(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10 }), { modulo: "bloqueo", hotelId: 10 }));
-  test("acepta porcion_terrestre", () => assert.deepEqual(validarEntradaDetalleHotel({ modulo: "porcion_terrestre", hotelId: 1 }), { modulo: "porcion_terrestre", hotelId: 1 }));
-  test("rechaza modulo=servicios (Vista Booking nunca abre un hotel de servicios)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "servicios", hotelId: 10 }), null));
-  test("rechaza modulo=dinamico (no aplica a 'Ver opciones' de hotel)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "dinamico", hotelId: 10 }), null));
-  test("rechaza hotelId negativo", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: -5 }), null));
-  test("rechaza hotelId decimal", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 1.5 }), null));
-  test("rechaza hotelId string (inyección de SQL/operadores como texto)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: "10 OR 1=1" }), null));
+describe("idsPositivosLimitados() — array de ids con límite explícito (alcance de detalle bajo demanda)", () => {
+  test("acepta array vacío (alcance vacío es válido: 'ninguna salida visible')", () => assert.deepEqual(idsPositivosLimitados([]), []));
+  test("acepta array de enteros positivos", () => assert.deepEqual(idsPositivosLimitados([3, 1, 2]), [3, 1, 2]));
+  test("rechaza si no es array", () => {
+    for (const v of [null, undefined, "1,2,3", {}, 5, true]) assert.equal(idsPositivosLimitados(v), null, JSON.stringify(v));
+  });
+  test("rechaza si CUALQUIER elemento no es entero positivo válido (todo o nada)", () => {
+    assert.equal(idsPositivosLimitados([1, 2, -3]), null);
+    assert.equal(idsPositivosLimitados([1, "2", 3]), null);
+    assert.equal(idsPositivosLimitados([1, 0, 3]), null);
+    assert.equal(idsPositivosLimitados([1, 1.5, 3]), null);
+    assert.equal(idsPositivosLimitados([1, null, 3]), null);
+    assert.equal(idsPositivosLimitados([1, NaN, 3]), null);
+  });
+  test("acepta exactamente el límite (MAX_IDS_ALCANCE elementos)", () => {
+    const arr = Array.from({ length: MAX_IDS_ALCANCE }, (_, i) => i + 1);
+    assert.deepEqual(idsPositivosLimitados(arr), arr);
+  });
+  test("rechaza un elemento por encima del límite explícito", () => {
+    const arr = Array.from({ length: MAX_IDS_ALCANCE + 1 }, (_, i) => i + 1);
+    assert.equal(idsPositivosLimitados(arr), null);
+  });
+  test("respeta un límite `max` custom pasado por el caller", () => {
+    assert.deepEqual(idsPositivosLimitados([1, 2], 2), [1, 2]);
+    assert.equal(idsPositivosLimitados([1, 2, 3], 2), null);
+  });
+});
+
+describe("validarEntradaDetalleHotel() — {modulo, hotelId, bloqueoIds?}", () => {
+  test("bloqueo: acepta forma válida con bloqueoIds", () =>
+    assert.deepEqual(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: [5, 6] }), { modulo: "bloqueo", hotelId: 10, bloqueoIds: [5, 6] }));
+  test("bloqueo: acepta bloqueoIds vacío (alcance filtrado a cero salidas)", () =>
+    assert.deepEqual(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: [] }), { modulo: "bloqueo", hotelId: 10, bloqueoIds: [] }));
+  test("bloqueo: RECHAZA si falta bloqueoIds — ya no se puede pedir 'todo el hotel' sin declarar el alcance", () =>
+    assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10 }), null));
+  test("bloqueo: rechaza bloqueoIds no-array", () =>
+    assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: "5,6" }), null));
+  test("bloqueo: rechaza bloqueoIds con un elemento inválido", () =>
+    assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: [5, -1] }), null));
+  test("bloqueo: rechaza bloqueoIds por encima del límite explícito", () => {
+    const bloqueoIds = Array.from({ length: MAX_IDS_ALCANCE + 1 }, (_, i) => i + 1);
+    assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds }), null);
+  });
+  test("porcion_terrestre: acepta SIN bloqueoIds (no tiene concepto de alcance)", () =>
+    assert.deepEqual(validarEntradaDetalleHotel({ modulo: "porcion_terrestre", hotelId: 1 }), { modulo: "porcion_terrestre", hotelId: 1 }));
+  test("porcion_terrestre: ignora un bloqueoIds sobrante (no forma parte de su contrato)", () => {
+    const r = validarEntradaDetalleHotel({ modulo: "porcion_terrestre", hotelId: 1, bloqueoIds: [1, 2] });
+    assert.deepEqual(r, { modulo: "porcion_terrestre", hotelId: 1 });
+  });
+  test("rechaza modulo=servicios (Vista Booking nunca abre un hotel de servicios)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "servicios", hotelId: 10, bloqueoIds: [] }), null));
+  test("rechaza modulo=dinamico (no aplica a 'Ver opciones' de hotel)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "dinamico", hotelId: 10, bloqueoIds: [] }), null));
+  test("rechaza hotelId negativo", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: -5, bloqueoIds: [] }), null));
+  test("rechaza hotelId decimal", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 1.5, bloqueoIds: [] }), null));
+  test("rechaza hotelId string (inyección de SQL/operadores como texto)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: "10 OR 1=1", bloqueoIds: [] }), null));
   test("rechaza null", () => assert.equal(validarEntradaDetalleHotel(null), null));
   test("rechaza undefined", () => assert.equal(validarEntradaDetalleHotel(undefined), null));
   test("rechaza un array", () => assert.equal(validarEntradaDetalleHotel([{ modulo: "bloqueo", hotelId: 10 }]), null));
@@ -46,8 +92,8 @@ describe("validarEntradaDetalleHotel() — {modulo, hotelId}", () => {
   test("rechaza campo faltante (solo modulo)", () => assert.equal(validarEntradaDetalleHotel({ modulo: "bloqueo" }), null));
   test("rechaza campo faltante (solo hotelId)", () => assert.equal(validarEntradaDetalleHotel({ hotelId: 10 }), null));
   test("tolera campos extra sin usarlos (no filtra por allowlist estricta de claves, pero tampoco los propaga)", () => {
-    const r = validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, extra: "algo" });
-    assert.deepEqual(r, { modulo: "bloqueo", hotelId: 10 });
+    const r = validarEntradaDetalleHotel({ modulo: "bloqueo", hotelId: 10, bloqueoIds: [5], extra: "algo" });
+    assert.deepEqual(r, { modulo: "bloqueo", hotelId: 10, bloqueoIds: [5] });
   });
 });
 

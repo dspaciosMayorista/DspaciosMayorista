@@ -75,15 +75,65 @@ describe("detalle-actions.ts — seguridad de la lectura pública", () => {
     assert.match(detalleActions, /import \{ aplicarFiltrosPostCarga \} from "@\/lib\/tarifario\/filtrosPostCarga"/);
     assert.match(resumen, /import \{ aplicarFiltrosPostCarga \} from "\.\/filtrosPostCarga\.ts"/);
   });
+
+  test("⚠️ item 2 — bloqueoIds es obligatorio para modulo:'bloqueo' (nunca 'todo el hotel' sin alcance)", () => {
+    assert.match(detalleActions, /import \{ validarEntradaDetalleHotel, validarEntradaDetalleSalida, validarEntradaDetallePaquete \} from "@\/lib\/tarifario\/detalleValidacion"/);
+    assert.match(detalleActions, /\.eq\("hotel_id", v\.hotelId\)\.in\("bloqueo_id", v\.bloqueoIds\)/, "el filtro de hotel en modulo bloqueo debe cruzar hotel_id CON el alcance de bloqueoIds");
+  });
+
+  test("⚠️ item 2 — alcance vacío devuelve 'sin opciones' (ok:true, filas:[]) SIN consultar Supabase — nunca cae a traer todo el hotel", () => {
+    const cuerpo = detalleActions.slice(detalleActions.indexOf("export async function obtenerDetalleHotel"), detalleActions.indexOf("export async function obtenerDetalleSalida"));
+    assert.match(cuerpo, /v\.bloqueoIds\.length === 0/);
+    assert.match(cuerpo, /return \{ ok: true, filas: \[\] \};/);
+  });
+
+  test("⚠️ item 4 — falla cerrada de verdad: errorVigencia/errorEmpaquetado hacen que la Server Action devuelva ok:false (nunca ok:true con filas parciales/vacías disfrazadas de 'sin disponibilidad')", () => {
+    const cuerpo = detalleActions.slice(detalleActions.indexOf("async function cargarDetalleAcotado"), detalleActions.indexOf("export async function obtenerDetalleHotel"));
+    const idxIf = cuerpo.indexOf("if (res.errorVigencia || res.errorEmpaquetado)");
+    assert.ok(idxIf > -1, "cargarDetalleAcotado debe revisar errorVigencia/errorEmpaquetado");
+    const idxSiguienteReturn = cuerpo.indexOf("return {", idxIf);
+    const finBloque = cuerpo.indexOf(";", idxSiguienteReturn) + 1;
+    const bloqueIf = cuerpo.slice(idxIf, finBloque);
+    assert.match(bloqueIf, /return \{ ok: false, error: MSG_ERROR_DETALLE \};/, `el primer return tras detectar el error de filtros debe ser ok:false — encontrado: ${bloqueIf.slice(-80)}`);
+  });
+
+  test("⚠️ item 4 — registra resultado=error (nunca 'ok') cuando falla vigencia/empaquetados o falta service-role", () => {
+    const cuerpo = detalleActions.slice(detalleActions.indexOf("async function cargarDetalleAcotado"), detalleActions.indexOf("export async function obtenerDetalleHotel"));
+    // Debe haber un registrarEtapa(..., "error") DESPUÉS de detectar el error de filtros — no un "ok" suelto que lo contradiga.
+    const idxErrorFiltros = cuerpo.indexOf("if (res.errorVigencia || res.errorEmpaquetado)");
+    const idxEtapaError = cuerpo.indexOf('registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error")', idxErrorFiltros);
+    const idxReturnFalse = cuerpo.indexOf("return { ok: false, error: MSG_ERROR_DETALLE };", idxErrorFiltros);
+    assert.ok(idxErrorFiltros > -1);
+    assert.ok(idxEtapaError > idxErrorFiltros, "debe registrar la etapa como 'error' después de detectar el fallo de filtros");
+    assert.ok(idxReturnFalse > idxEtapaError, "el return ok:false debe venir después de registrar el error — nunca 'ok' seguido de 'error' sin retornar");
+    // Config faltante (service-role indispensable): mismo criterio.
+    const idxConfig = cuerpo.indexOf("ad == null && crudas.some(esFilaHotelVerificable)");
+    const idxEtapaErrorConfig = cuerpo.indexOf('registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error")', idxConfig);
+    assert.ok(idxConfig > -1 && idxEtapaErrorConfig > idxConfig, "la rama de config faltante también debe registrar resultado=error");
+  });
+
+  test("⚠️ item 4 — vigencia INDISPENSABLE: si falta service-role y hay filas de hotel verificables, error de configuración (ok:false), nunca se salta la validación en silencio", () => {
+    assert.match(detalleActions, /import \{ esFilaHotelVerificable \} from "@\/lib\/tarifario\/vigencia"/);
+    const cuerpo = detalleActions.slice(detalleActions.indexOf("async function cargarDetalleAcotado"), detalleActions.indexOf("export async function obtenerDetalleHotel"));
+    assert.match(cuerpo, /ad == null && crudas\.some\(esFilaHotelVerificable\)/);
+    assert.match(cuerpo, /error_config_service_role_faltante_/);
+  });
 });
 
 describe("VistaBooking.tsx — 'Ver opciones' dispara el detalle bajo demanda con dedup/caché y guarda contra carreras", () => {
   test("abrirHotel usa conCacheDetalle + obtenerDetalleHotel (no llama a Supabase directo)", () => {
     assert.match(vistaBooking, /import \{ obtenerDetalleHotel \} from "\.\/detalle-actions"/);
-    assert.match(vistaBooking, /import \{ conCacheDetalle, type EstadoDetalle \} from "@\/lib\/tarifario\/detalleCliente"/);
+    assert.match(vistaBooking, /import \{ conCacheDetalle, claveDetalleHotel, type EstadoDetalle \} from "@\/lib\/tarifario\/detalleCliente"/);
     const cuerpo = vistaBooking.slice(vistaBooking.indexOf("function abrirHotel"), vistaBooking.indexOf("function cerrarHotel"));
     assert.match(cuerpo, /conCacheDetalle\(/);
     assert.match(cuerpo, /obtenerDetalleHotel\(/);
+  });
+
+  test("⚠️ item 2 — preserva el alcance activo: abrirHotel calcula bloqueoIds de salidasFiltradas (el filtro origen/destino/salida vigente), no 'todo el hotel'", () => {
+    const cuerpo = vistaBooking.slice(vistaBooking.indexOf("function abrirHotel"), vistaBooking.indexOf("function cerrarHotel"));
+    assert.match(cuerpo, /salidasFiltradas\.map\(\(s\) => s\.id\)/, "el alcance debe salir de las salidas YA filtradas por origen/destino/salida, no del catálogo completo");
+    assert.match(cuerpo, /claveDetalleHotel\(/, "la clave de caché debe construirse con el helper que normaliza el alcance");
+    assert.match(cuerpo, /bloqueoIds:\s*bloqueoIds/, "bloqueoIds debe viajar como argumento a obtenerDetalleHotel — nunca solo {modulo, hotelId}");
   });
 
   test("el botón 'Ver opciones' llama abrirHotel (no setAbierto directo, que saltaría el detalle)", () => {
@@ -132,9 +182,30 @@ describe("TarifarioPublic.tsx — Vista tabla (PorSalida/PorPaquete/PorServicios
     assert.match(cuerpo, /obtenerDetalleServicios\(\)/);
   });
 
-  test("useDetalleTabla descarta una respuesta que ya no corresponde a la clave vigente (misma guarda que VistaBooking)", () => {
+  test("useDetalleTabla descarta una respuesta que ya no corresponde a la SOLICITUD vigente (clave+intento — misma guarda que VistaBooking, ahora también a prueba de reintentos)", () => {
     const cuerpo = tarifarioPublic.slice(tarifarioPublic.indexOf("function useDetalleTabla"), tarifarioPublic.indexOf("function EstadoCargaTabla"));
-    assert.match(cuerpo, /claveRef\.current\s*!==\s*clave/);
+    assert.match(cuerpo, /solicitudRef\.current\s*!==\s*solicitud/);
+  });
+
+  test("⚠️ item 8 — useDetalleTabla NO llama setState síncrono ANTES de la llamada async (dentro del cuerpo directo del efecto): 'cargando' se DERIVA comparando la solicitud vigente contra la del último resultado guardado", () => {
+    const cuerpo = tarifarioPublic.slice(tarifarioPublic.indexOf("function useDetalleTabla"), tarifarioPublic.indexOf("function EstadoCargaTabla"));
+    const idxEfecto = cuerpo.indexOf("useEffect(() => {");
+    const idxCargar = cuerpo.indexOf("conCacheDetalle(clave, cargar)", idxEfecto);
+    assert.ok(idxEfecto > -1 && idxCargar > idxEfecto);
+    // Entre el inicio del efecto y el disparo de la llamada async no puede
+    // haber ningún setResultado(...) — ese era exactamente el
+    // `setEstado({estado:"cargando"})` síncrono que disparaba la regla.
+    const antesDeLlamar = cuerpo.slice(idxEfecto, idxCargar);
+    assert.doesNotMatch(antesDeLlamar, /setResultado\(/, "no debe haber un setState síncrono ANTES de iniciar la carga — eso es lo que señala react-hooks/set-state-in-effect");
+    // Los dos únicos setResultado(...) del archivo deben vivir DENTRO de los
+    // callbacks .then()/.catch() (después de idxCargar) — nunca en el cuerpo
+    // directo del efecto.
+    const despuesDeLlamar = cuerpo.slice(idxCargar);
+    const usos = [...despuesDeLlamar.matchAll(/setResultado\(/g)];
+    assert.equal(usos.length, 2, "setResultado solo debe llamarse desde .then() y .catch()");
+    assert.doesNotMatch(cuerpo, /eslint-disable[^\n]*set-state-in-effect/, "no se suprime la regla — se corrige de verdad");
+    assert.match(cuerpo, /resultado\.solicitud === solicitudActual/, "el estado 'ok'/'error' solo se usa si coincide con la solicitud vigente");
+    assert.match(cuerpo, /return \[\{ estado: "cargando" \}/, "cargando se DERIVA como valor de retorno, no como setState");
   });
 });
 

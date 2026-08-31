@@ -4,7 +4,7 @@ import Link from "next/link";
 import { TarifarioPublic } from "@/app/tarifario/TarifarioPublic";
 import { getProgramasResumen } from "@/lib/programas";
 import { filtrarTarifarioVencidas } from "@/lib/tarifario/vigencia";
-import { cargarFilasResumenPaginado, expandirResumenAFilas } from "@/lib/tarifario/resumen";
+import { cargarFilasResumenPaginado } from "@/lib/tarifario/resumen";
 import { orquestarCargaInterna } from "@/lib/tarifario/orquestacion";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
@@ -55,7 +55,8 @@ export default async function TarifarioInternoPage() {
         return { ok: false as const };
       }
       registrarEtapa(FLUJO, flujoId, "resumen_inicial", _cronoPag(), "ok");
-      registrarDatoPagina(FLUJO, flujoId, "resumen_inicial", `filas_resumen=${pag.filas.length} paginas=${pag.paginasConsultadas} consultas_iniciales=${pag.paginasConsultadas}`);
+      // `filas_resumen_db`: lo que la vista devolvió CRUDO (antes de vigencia).
+      registrarDatoPagina(FLUJO, flujoId, "resumen_inicial", `filas_resumen_db=${pag.filas.length} paginas=${pag.paginasConsultadas} consultas_iniciales=${pag.paginasConsultadas}`);
 
       // Oculta tarifas de hotel con vigencia de compra vencida (igual que el
       // público: lo vencido no aparece). El histórico se consulta en el
@@ -81,7 +82,14 @@ export default async function TarifarioInternoPage() {
       }
       registrarEtapa(FLUJO, flujoId, "filtro_vigencia", _cronoVig(), huboErrorVigencia ? "error" : "ok");
       registrarDatoPagina(FLUJO, flujoId, "filtro_vigencia", `filas=${filasFiltradas.length} consultas=${huboVigencia ? 2 : 0}`);
-      return { ok: true as const, filas: expandirResumenAFilas(filasFiltradas) };
+      // Esta página ya NO expande el resumen a filas sintéticas
+      // (`expandirResumenAFilas()` se eliminó del transporte inicial) —
+      // `filasFiltradas` viaja TAL CUAL a `TarifarioPublic` como prop.
+      // `filas_entregadas_cliente`/`payload_inicial` se registran una sola
+      // vez, más abajo, reutilizando `estFilas` (nunca dos serializaciones
+      // de las mismas filas — ver "Costo de la propia instrumentación" en
+      // lib/observabilidad/medicion.ts).
+      return { ok: true as const, filas: filasFiltradas };
     },
     // Programas (interno: muestra activos aunque no estén publicados).
     cargarProgramas: () => getProgramasResumen(sb, false),
@@ -116,6 +124,9 @@ export default async function TarifarioInternoPage() {
   const estFilas = medirPayloadSiHabilitado(filas);
   const estProgramas = medirPayloadSiHabilitado(programas);
   registrarDatoPagina(FLUJO, flujoId, "programas_resumen", `programas=${programas.length} ${textoEstimacionPayload(estProgramas)}`);
+  // `payload_inicial` (bytes): reutiliza `estFilas`, ya calculado arriba —
+  // nunca una segunda serialización de las mismas filas.
+  registrarDatoPagina(FLUJO, flujoId, "payload_inicial", `filas_entregadas_cliente=${filas.length} ${textoEstimacionPayload(estFilas)}`);
 
   // ⚠️ "preparacion_servidor" (revisión posterior, defecto "MEDICIÓN 'TOTAL'
   // INCORRECTA"): esta etapa termina ANTES del `return` de JSX — NO incluye

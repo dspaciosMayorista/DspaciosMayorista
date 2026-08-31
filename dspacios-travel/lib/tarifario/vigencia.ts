@@ -95,7 +95,7 @@ type FilaConVigencia = {
 // `hotelFilas` abajo. Extraída para poder reusarla como filtro de exclusión
 // en el camino de fallo cerrado (ver `error` más abajo) sin recorrer el
 // array dos veces con criterios que puedan divergir.
-function esFilaHotelVerificable<T extends FilaConVigencia>(f: T): boolean {
+export function esFilaHotelVerificable<T extends FilaConVigencia>(f: T): boolean {
   return (f.modulo === "bloqueo" || f.modulo === "porcion_terrestre") && f.hotel_id != null && !!f.fecha_ida;
 }
 

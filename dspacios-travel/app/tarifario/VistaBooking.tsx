@@ -18,16 +18,26 @@ import {
 } from "@/lib/reservar/edadesMenores";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import { obtenerDetalleHotel } from "./detalle-actions";
-import { conCacheDetalle, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
+import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking } from "./BuscadorBooking";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
+import type { FilaResumen } from "@/lib/tarifario/resumen";
+import { minRoomPvpResumen, tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
+const MSG_ERROR_DETALLE_HOTEL = "No fue posible cargar el detalle en este momento. Intenta nuevamente en unos segundos.";
+
 // ── Modelo de la vista dinámica: tarjetas por hotel, detalle con opciones ────
+// `filas` de cada tarjeta son de RESUMEN (Tier 1, `FilaResumen[]`) — traen el
+// precio por acomodación ya agregado (sencilla/doble/triple/multiple/nino/
+// nino2), suficiente para "desde" y para el filtro de acomodación de la
+// grilla. La matriz completa (con niño/niño2/infante fila por fila,
+// descripción, recargo) solo llega al abrir el modal ("Ver opciones"), vía
+// `obtenerDetalleHotel()` (Tier 2) — ver `abrirHotel`/`HotelModal` abajo.
 type HotelCard = {
   hotelId: number;
   hotelNombre: string;
@@ -42,7 +52,7 @@ type HotelCard = {
   ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null;
   adultsOnly: boolean;
   petFriendly: boolean;
-  filas: FilaTarifario[];
+  filas: FilaResumen[];
   moneda?: string | null;
 };
 
@@ -134,15 +144,11 @@ function calcNoches(ida: string, regreso: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
-function minRoomPvp(filas: FilaTarifario[]): number | null {
-  // Solo acomodaciones de adulto (sencilla/doble/triple/multiple) — nino/nino2/
-  // infante quedan afuera del "desde" (si no, la tarifa de infante, casi
-  // siempre la más baja de todas, terminaba mostrándose como el precio).
-  const precios = filas
-    .filter((f) => ACOM_ROOMS.includes(f.acomodacion as AcomRoom) && f.precio_pvp > 0)
-    .map((f) => f.precio_pvp);
-  return precios.length ? Math.min(...precios) : null;
-}
+// `minRoomPvp`: alias local de `minRoomPvpResumen` (lib/tarifario/
+// resumenCliente.ts) — factorizada ahí (junto con `tieneAcomodacionResumen`)
+// para poder testearla con ejecución real, sin depender de importar este
+// componente cliente (React/Next) bajo `node --test`.
+const minRoomPvp = minRoomPvpResumen;
 
 export function VistaBooking({
   filas,
@@ -159,7 +165,7 @@ export function VistaBooking({
   incluidosPorPaquete = {},
   filasAddon = [],
 }: {
-  filas: FilaTarifario[];
+  filas: FilaResumen[];
   fotosPorHotel?: Record<number, string>;
   fotosPorServicio?: Record<number, string>;
   cuposPorBloqueo?: Record<number, number>;
@@ -177,7 +183,7 @@ export function VistaBooking({
   // Add-ons (modulo="servicios") de TODOS los paquetes de hotel, sin el
   // recorte que aplica `filas` para la vitrina plana de Servicios — de acá
   // sale `addonsPorPaquete`, scoped al hotel que se está viendo.
-  filasAddon?: FilaTarifario[];
+  filasAddon?: FilaResumen[];
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
@@ -262,8 +268,12 @@ export function VistaBooking({
     }
     let arr = [...map.values()];
     // Filtro de acomodación (de la barra superior): el hotel se muestra solo si
-    // tiene tarifa para esa acomodación.
-    if (soloAcom) arr = arr.filter((c) => c.filas.some((f) => f.acomodacion === soloAcom && f.precio_pvp > 0));
+    // tiene tarifa para esa acomodación. Incluye Chd1/Chd2 (revisión
+    // posterior, defecto "los filtros Chd1/Chd2 no devolvían los mismos
+    // hoteles que antes" — el resumen ahora trae precio_nino/precio_nino2
+    // por combo, así que este filtro ya no depende de una expansión
+    // sintética que nunca incluía niños).
+    if (soloAcom) arr = arr.filter((c) => c.filas.some((f) => tieneAcomodacionResumen(f, soloAcom)));
     if (soloPetFriendly) arr = arr.filter((c) => c.petFriendly);
     if (soloAdultsOnly) arr = arr.filter((c) => c.adultsOnly);
     for (const c of arr) c.desde = minRoomPvp(c.filas);
@@ -286,22 +296,35 @@ export function VistaBooking({
   // resto de la grilla YA están pintadas (vienen del resumen); un error acá
   // NUNCA las borra ni las altera, solo afecta lo que se ve DENTRO del modal
   // (ver `HotelModal` más abajo). `conCacheDetalle` deduplica si el mismo
-  // hotel/módulo ya está en vuelo y reutiliza un detalle ya resuelto durante
-  // esta visita, sin volver a pedirlo.
+  // hotel/módulo/ALCANCE ya está en vuelo y reutiliza un detalle ya resuelto
+  // durante esta visita, sin volver a pedirlo.
+  //
+  // ⚠️ Alcance activo (revisión posterior, defecto "no preserva el alcance
+  // activo al abrir un hotel"): en el submódulo Bloqueo, `salidasFiltradas`
+  // ya refleja el filtro de origen/destino/salida elegido en el buscador —
+  // los `bloqueoIds` de esa lista son EXACTAMENTE las salidas que el usuario
+  // está viendo ahora mismo. Se pasan como alcance obligatorio a
+  // `obtenerDetalleHotel` (que los cruza con `hotel_id` en el servidor —
+  // nunca "todo el hotel") y forman parte de la CLAVE de caché
+  // (`claveDetalleHotel`): cambiar el filtro y volver a abrir el MISMO hotel
+  // nunca reutiliza el detalle cacheado del alcance anterior, porque la
+  // clave cambia con él.
   function abrirHotel(h: HotelCard) {
     setAbierto(h);
     setDetalleHotel({ estado: "cargando" });
-    const modulo = sub === "receptivos" ? "bloqueo" : sub;
-    const clave = `hotel:${modulo}:${h.hotelId}`;
+    const esBloqueo = sub === "bloqueo";
+    const bloqueoIds = esBloqueo ? salidasFiltradas.map((s) => s.id) : undefined;
+    const clave = esBloqueo ? claveDetalleHotel("bloqueo", h.hotelId, bloqueoIds) : claveDetalleHotel("porcion_terrestre", h.hotelId);
     claveAbiertaRef.current = clave;
-    conCacheDetalle(clave, () => obtenerDetalleHotel({ modulo, hotelId: h.hotelId }))
+    const args = esBloqueo ? { modulo: "bloqueo" as const, hotelId: h.hotelId, bloqueoIds: bloqueoIds ?? [] } : { modulo: "porcion_terrestre" as const, hotelId: h.hotelId };
+    conCacheDetalle(clave, () => obtenerDetalleHotel(args))
       .then((r) => {
-        if (claveAbiertaRef.current !== clave) return; // otro hotel se abrió mientras tanto
+        if (claveAbiertaRef.current !== clave) return; // otro hotel/alcance se abrió mientras tanto
         setDetalleHotel(r.ok ? { estado: "ok", filas: r.filas } : { estado: "error", mensaje: r.error });
       })
       .catch(() => {
         if (claveAbiertaRef.current !== clave) return;
-        setDetalleHotel({ estado: "error", mensaje: "No fue posible cargar el detalle en este momento. Intenta nuevamente en unos segundos." });
+        setDetalleHotel({ estado: "error", mensaje: MSG_ERROR_DETALLE_HOTEL });
       });
   }
 
@@ -319,7 +342,10 @@ export function VistaBooking({
     for (const f of filas.filter((f) => f.modulo === "servicios" && f.servicio_nombre)) {
       const k = `${f.servicio_nombre}|${f.destino_nombre ?? ""}`;
       const prev = map.get(k);
-      const p = f.precio_pvp ?? 0;
+      // `desde_general` = ya es el mínimo agregado de ese servicio (sin
+      // acomodación, calculado en SQL) — el resumen NO trae `precio_pvp` por
+      // fila (esa columna solo existe en el detalle completo, bajo demanda).
+      const p = Number(f.desde_general) || 0;
       if (!prev) {
         map.set(k, {
           servicioId: f.servicio_id ?? null, paqueteId: f.paquete_id ?? null, nombre: f.servicio_nombre as string, destino: f.destino_nombre,
@@ -351,7 +377,7 @@ export function VistaBooking({
       let porNombre = map.get(f.paquete_id);
       if (!porNombre) { porNombre = new Map(); map.set(f.paquete_id, porNombre); }
       const prev = porNombre.get(f.servicio_nombre);
-      const p = f.precio_pvp ?? 0;
+      const p = Number(f.desde_general) || 0;
       if (!prev) {
         porNombre.set(f.servicio_nombre, {
           servicioId: f.servicio_id ?? null, paqueteId: f.paquete_id, nombre: f.servicio_nombre, destino: f.destino_nombre,
@@ -678,8 +704,20 @@ function HotelModal({
     return [...map.values()].sort((a, b) => (a.fechaIda ?? "9999-99-99").localeCompare(b.fechaIda ?? "9999-99-99"));
   }, [detalle, cuposPorBloqueo, origenPorBloqueo]);
 
-  const [opKey, setOpKey] = useState(opciones[0]?.key ?? "");
-  const opcion = opciones.find((o) => o.key === opKey) ?? opciones[0];
+  // ⚠️ Estado asincrónico (revisión posterior, defecto "la primera opción no
+  // se veía seleccionada"): `opciones` llega vacía en el primer render
+  // (`detalle` todavía no resolvió) y se puebla asíncronamente cuando el
+  // Tier 2 responde. Un `useState(opciones[0]?.key ?? "")` solo evalúa su
+  // inicializador UNA vez — al llegar las opciones reales, `opKey` se
+  // quedaba en `""` para siempre (nunca coincidía con ningún `o.key`), así
+  // que la primera opción nunca se veía resaltada aunque `opcion` sí cayera
+  // bien en ella por el `?? opciones[0]` de abajo. `opKeyEfectivo` se DERIVA
+  // en cada render: si la clave elegida ya no existe en las opciones
+  // actuales (llegaron opciones nuevas, o todavía no hay ninguna), cae a la
+  // primera — sin depender de un efecto ni de cuándo se montó el componente.
+  const [opKey, setOpKey] = useState("");
+  const opKeyEfectivo = opciones.some((o) => o.key === opKey) ? opKey : (opciones[0]?.key ?? "");
+  const opcion = opciones.find((o) => o.key === opKeyEfectivo);
 
   // "Incluye": nada de esto se escribe a mano — se arma solo de lo que ya
   // está configurado en el paquete (aéreo solo si la opción es de bloqueo;
@@ -770,7 +808,7 @@ function HotelModal({
                         type="button"
                         onClick={() => setOpKey(o.key)}
                         className="rounded-lg border px-3 py-2 text-left text-sm transition-colors"
-                        style={opKey === o.key
+                        style={opKeyEfectivo === o.key
                           ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
                           : { borderColor: "#e5e7eb", backgroundColor: "white" }}
                       >

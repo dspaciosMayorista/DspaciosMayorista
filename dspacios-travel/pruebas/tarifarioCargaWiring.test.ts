@@ -73,10 +73,17 @@ describe("/dashboard/tarifario — usa orquestarCargaInterna(); NO usa cargarDat
     assert.doesNotMatch(src, /cargarResumenTarifario\(sb/, "no debe invocar cargarResumenTarifario(sb, ...) — traería enriquecimiento que esta vista no usa");
   });
 
-  test("usa el cargador de RESUMEN compartido (carga en dos niveles) — cargarFilasResumenPaginado + expandirResumenAFilas", () => {
-    assert.match(src, /import\s*\{\s*cargarFilasResumenPaginado,\s*expandirResumenAFilas\s*\}\s*from\s*"@\/lib\/tarifario\/resumen"/);
+  test("usa el cargador de RESUMEN compartido (carga en dos niveles) — cargarFilasResumenPaginado, SIN LLAMAR expandirResumenAFilas (revisión posterior: ya no se re-expande el resumen antes del transporte; puede quedar mencionada en un comentario histórico)", () => {
+    assert.match(src, /import\s*\{\s*cargarFilasResumenPaginado\s*\}\s*from\s*"@\/lib\/tarifario\/resumen"/);
     assert.match(src, /cargarFilasResumenPaginado\(sb\)/);
-    assert.match(src, /expandirResumenAFilas\(filasFiltradas\)/);
+    assert.doesNotMatch(src, /expandirResumenAFilas\(filasFiltradas\)/, "el resumen ya no se re-expande a filas sintéticas antes de pasarlo como prop (no debe quedar la llamada real, solo puede mencionarse en un comentario)");
+    assert.match(src, /filas:\s*filasFiltradas/, "las filas de resumen viajan TAL CUAL (sin transformar) como prop de la página");
+  });
+
+  test("instrumenta filas_resumen_db (Tier 1) por separado de filas_entregadas_cliente/payload_inicial", () => {
+    assert.match(src, /filas_resumen_db=/);
+    assert.match(src, /registrarDatoPagina\(FLUJO, flujoId, "payload_inicial"/);
+    assert.match(src, /filas_entregadas_cliente=/);
   });
 
   test("resumen_inicial + filtro_vigencia (cierre `cargarTarifario`) y getProgramasResumen (cierre `cargarProgramas`) se pasan al MISMO orquestador", () => {
@@ -233,6 +240,28 @@ describe("Costo de la propia instrumentación — cada valor se estima UNA sola 
       assert.ok(llamadas.length <= 2, `${ruta}: medirPayloadSiHabilitado() se llamó ${llamadas.length} veces — cada valor debe estimarse una sola vez y reutilizarse`);
     });
   }
+});
+
+describe("lib/tarifario/resumen.ts — instrumenta filas_resumen_db, filas_entregadas_cliente y payload_inicial por separado, sin expandirResumenAFilas", () => {
+  const src = leer("lib/tarifario/resumen.ts");
+
+  test("no exporta ni define expandirResumenAFilas (eliminada del transporte inicial — puede quedar mencionada en un comentario histórico)", () => {
+    assert.doesNotMatch(src, /export function expandirResumenAFilas/);
+    assert.doesNotMatch(src, /expandirResumenAFilas\(filas/, "no debe quedar ninguna LLAMADA real a la función eliminada");
+  });
+
+  test("registra filas_resumen_db en la etapa resumen_inicial (magnitud CRUDA de la vista, antes de vigencia)", () => {
+    assert.match(src, /registrarDatoPagina\(flujo, flujoId, "resumen_inicial", `filas_resumen_db=/);
+  });
+
+  test("registra filas_entregadas_cliente + payload_inicial en su propia etapa, separada de resumen_inicial/datos_auxiliares", () => {
+    assert.match(src, /registrarDatoPagina\(flujo, flujoId, "payload_inicial", `filas_entregadas_cliente=/);
+  });
+
+  test("DatosResumenTarifario.filasVisibles/filasAddon son FilaResumen[] (no FilaTarifario[] expandida)", () => {
+    assert.match(src, /filasVisibles:\s*FilaResumen\[\]/);
+    assert.match(src, /filasAddon:\s*FilaResumen\[\]/);
+  });
 });
 
 describe("loading.tsx — las dos rutas internas tienen su loading state (route segment nuevo, sin convención previa en el repo)", () => {

@@ -26,6 +26,20 @@ type ResultadoAccion<T> = { ok: true; filas: T[] } | { ok: false; error: string 
 
 const enVuelo = new Map<string, Promise<ResultadoAccion<unknown>>>();
 
+/**
+ * Clave de caché para "Ver opciones" de un hotel — incluye el ALCANCE
+ * activo (`bloqueoIds` visibles bajo el filtro de origen/destino/salida de
+ * VistaBooking), normalizado (orden estable, sin duplicados), para que
+ * cambiar de filtro NUNCA reutilice el detalle cacheado de un alcance
+ * distinto (revisión posterior, defecto "no preserva el alcance activo").
+ * Pura y testeable con ejecución real.
+ */
+export function claveDetalleHotel(modulo: "bloqueo" | "porcion_terrestre", hotelId: number, bloqueoIds?: number[]): string {
+  if (modulo !== "bloqueo") return `hotel:${modulo}:${hotelId}`;
+  const normalizados = [...new Set(bloqueoIds ?? [])].sort((a, b) => a - b);
+  return `hotel:${modulo}:${hotelId}:${normalizados.join(",")}`;
+}
+
 export function conCacheDetalle<T>(clave: string, cargar: () => Promise<ResultadoAccion<T>>): Promise<ResultadoAccion<T>> {
   const existente = enVuelo.get(clave);
   if (existente) return existente as Promise<ResultadoAccion<T>>;

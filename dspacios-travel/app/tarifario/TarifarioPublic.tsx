@@ -10,6 +10,7 @@ import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 import { obtenerDetalleSalida, obtenerDetallePaquete, obtenerDetalleServicios } from "./detalle-actions";
 import { conCacheDetalle, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
+import type { FilaResumen } from "@/lib/tarifario/resumen";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
 
@@ -177,7 +178,19 @@ function PetFriendlyBadge({ info }: { info?: { petFriendly?: boolean } }) {
 // Acomodaciones para el filtro (mismas claves que COLS).
 const ACOM_OPCIONES = COLS;
 
-function coincideFiltro(f: FilaTarifario, q: string, fCat: string, fReg: string): boolean {
+// Estructura mínima que necesitan los filtros de texto/categoría/régimen —
+// tanto `FilaResumen` (carga inicial) como `FilaTarifario` (detalle bajo
+// demanda) la cumplen, así que `coincideFiltro` sirve para las dos sin
+// duplicar la función.
+type FilaFiltrableTexto = {
+  hotel_nombre: string | null;
+  paquete_nombre: string | null;
+  servicio_nombre?: string | null;
+  categoria: string | null;
+  regimen: string | null;
+};
+
+function coincideFiltro(f: FilaFiltrableTexto, q: string, fCat: string, fReg: string): boolean {
   if (q) {
     const hay = `${f.hotel_nombre ?? ""} ${f.paquete_nombre ?? ""} ${f.servicio_nombre ?? ""}`.toLowerCase();
     if (!hay.includes(q.toLowerCase())) return false;
@@ -199,42 +212,61 @@ const MSG_ERROR_DETALLE_TABLA = "No fue posible cargar el detalle en este moment
  * VistaBooking.tsx para "Ver opciones"), y descarta una respuesta que ya no
  * corresponde a la clave vigente (misma guarda contra carreras).
  */
+// ⚠️ Estado asincrónico (revisión posterior, defecto "react-hooks/set-state-
+// in-effect" — la ronda anterior toleraba este aviso porque eliminarlo con
+// el patrón oficial de React ["ajustar estado durante el render" con una
+// ref] introducía un error PEOR, `react-hooks/refs`. Esta ronda lo corrige
+// de verdad con un enfoque distinto, sin suprimir la regla): en vez de un
+// `setEstado({estado:"cargando"})` síncrono dentro del efecto (un side
+// effect que no sincroniza con nada externo — exactamente el antipatrón que
+// señala la regla), el resultado se guarda ASOCIADO a la "solicitud" que lo
+// produjo (`clave` + `intento`, la combinación exacta que identifica ESE
+// pedido concreto — dos reintentos de la misma clave son solicitudes
+// distintas). "Cargando" se DERIVA en cada render: si la solicitud vigente
+// (`clave` + `intento` actuales) no coincide con la solicitud del último
+// resultado guardado, todavía no hay nada que mostrar → cargando. El único
+// `setState` real queda donde pertenece: dentro de los callbacks async
+// (`.then()`/`.catch()`), disparados por un evento externo genuino (la
+// respuesta del servidor) — eso nunca dispara la regla.
+type ResultadoPorSolicitud<T> = { solicitud: string; estado: EstadoDetalle<T> };
+
 function useDetalleTabla(
   clave: string | null,
   cargar: () => Promise<{ ok: true; filas: FilaTarifario[] } | { ok: false; error: string }>
 ): [EstadoDetalle<FilaTarifario> | null, () => void] {
-  const [estado, setEstado] = useState<EstadoDetalle<FilaTarifario> | null>(null);
   // `intento` fuerza un reintento manual aunque la clave no haya cambiado —
   // `conCacheDetalle` nunca cachea un fallo (se puede reintentar de verdad),
   // pero el efecto solo vuelve a correr si alguna de sus dependencias cambia.
   const [intento, setIntento] = useState(0);
-  const claveRef = useRef<string | null>(null);
+  const [resultado, setResultado] = useState<ResultadoPorSolicitud<FilaTarifario> | null>(null);
+  const solicitudRef = useRef<string | null>(null);
+  const solicitudActual = clave ? `${clave}#${intento}` : null;
+
   useEffect(() => {
     if (!clave) {
-      claveRef.current = null;
+      solicitudRef.current = null;
       return;
     }
-    claveRef.current = clave;
-    setEstado({ estado: "cargando" });
+    const solicitud = `${clave}#${intento}`;
+    solicitudRef.current = solicitud;
     conCacheDetalle(clave, cargar)
       .then((r) => {
-        if (claveRef.current !== clave) return;
-        setEstado(r.ok ? { estado: "ok", filas: r.filas } : { estado: "error", mensaje: r.error });
+        if (solicitudRef.current !== solicitud) return; // otra clave/reintento se disparó mientras tanto
+        setResultado({ solicitud, estado: r.ok ? { estado: "ok", filas: r.filas } : { estado: "error", mensaje: r.error } });
       })
       .catch(() => {
-        if (claveRef.current !== clave) return;
-        setEstado({ estado: "error", mensaje: MSG_ERROR_DETALLE_TABLA });
+        if (solicitudRef.current !== solicitud) return;
+        setResultado({ solicitud, estado: { estado: "error", mensaje: MSG_ERROR_DETALLE_TABLA } });
       });
     // Solo re-ejecuta cuando cambia la CLAVE (o el contador de reintento
     // manual) — no cuando `cargar` cambia de identidad entre renders, mismo
     // patrón ya usado en este archivo para `filasConCupo` (ver `PorSalida`).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clave, intento]);
-  // Sin clave (nada seleccionado todavía) el resultado es siempre null — se
-  // DERIVA en el render en vez de resetear `estado` con un `setState`
-  // síncrono dentro del efecto (ese `setState` no sincronizaba con nada
-  // externo, justo el antipatrón que señala la regla `set-state-in-effect`).
-  return [clave ? estado : null, () => setIntento((n) => n + 1)];
+
+  if (!solicitudActual) return [null, () => setIntento((n) => n + 1)];
+  if (resultado && resultado.solicitud === solicitudActual) return [resultado.estado, () => setIntento((n) => n + 1)];
+  return [{ estado: "cargando" }, () => setIntento((n) => n + 1)];
 }
 
 function EstadoCargaTabla({ detalle, onReintentar }: { detalle: EstadoDetalle<FilaTarifario> | null; onReintentar: () => void }) {
@@ -269,7 +301,11 @@ export function TarifarioPublic({
   incluidosPorPaquete = {},
   filasAddon = [],
 }: {
-  filas: FilaTarifario[];
+  // Carga inicial (Tier 1) — resumen, SIN expansión sintética (ver
+  // lib/tarifario/resumen.ts). `FilaTarifario` (matriz completa por
+  // acomodación) solo existe como resultado de una consulta de detalle bajo
+  // demanda (Tier 2, app/tarifario/detalle-actions.ts).
+  filas: FilaResumen[];
   programas?: ProgramaResumen[];
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
@@ -284,7 +320,7 @@ export function TarifarioPublic({
   // Add-ons de paquetes de hotel (bloqueo/porción), SIN el recorte que oculta
   // esas filas de la vitrina plana de Servicios — solo para ofrecerlos scoped
   // dentro del modal de su propio hotel en Vista Booking (ver VistaBooking.tsx).
-  filasAddon?: FilaTarifario[];
+  filasAddon?: FilaResumen[];
 }) {
   const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
   const [q, setQ] = useState("");
@@ -421,9 +457,9 @@ export function TarifarioPublic({
 }
 
 // ── Módulo BLOQUEOS: elige una salida (ciclo aéreo) y ve los hoteles ───────
-function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number>; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
+function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaResumen[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number>; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
   // Cupos de una salida (un bloqueo). undefined = desconocido (no ocultar).
-  const cuposDe = (f: FilaTarifario): number | undefined =>
+  const cuposDe = (f: FilaResumen): number | undefined =>
     f.bloqueo_id != null ? cuposPorBloqueo[f.bloqueo_id] : undefined;
   // Oculta salidas sin cupos disponibles (obs 4): solo si se conoce y es 0.
   const filasConCupo = useMemo(
@@ -431,7 +467,7 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
     [filas] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const salidas = useMemo(() => {
-    const map = new Map<string, FilaTarifario>();
+    const map = new Map<string, FilaResumen>();
     for (const f of filasConCupo) {
       const key = `${f.destino_nombre}|||${f.bloqueo_label}|||${f.fecha_ida}`;
       if (!map.has(key)) map.set(key, f);
@@ -511,9 +547,9 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
 }
 
 // ── Módulo PORCIÓN TERRESTRE: elige un paquete ─────────────────────────────
-function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
+function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaResumen[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
   const paquetes = useMemo(() => {
-    const map = new Map<string, FilaTarifario>();
+    const map = new Map<string, FilaResumen>();
     for (const f of filas) {
       const key = `${f.paquete_nombre}`;
       if (!map.has(key)) map.set(key, f);

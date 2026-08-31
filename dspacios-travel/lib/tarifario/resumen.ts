@@ -1,29 +1,43 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import type { FilaTarifario } from "@/app/tarifario/TarifarioPublic";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import { createAdminClient } from "../supabase/admin.ts";
 import { aplicarFiltrosPostCarga } from "./filtrosPostCarga.ts";
-import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico } from "../observabilidad/medicion.ts";
+import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico, medirPayloadSiHabilitado, textoEstimacionPayload } from "../observabilidad/medicion.ts";
 import type { InfoHotelDato, CapHotelDato } from "./datos.ts";
 
 // ── Resumen del tarifario: carga inicial LIVIANA (dos niveles) ─────────────
 //
 // Rondas anteriores (compresión de payload, luego paginación con rediseño
-// visual) fueron rechazadas por el dueño — ninguna atacaba la causa real:
-// `cargarDatosTarifario()` (lib/tarifario/datos.ts) trae SIEMPRE la matriz
-// completa hotel × categoría × régimen × acomodación (~17.197 filas, ~15.876
-// vigentes) para pintar ~58 tarjetas de hotel que solo necesitan un precio
-// "desde". Este módulo carga en su lugar `tarifario_resumen` (migración 161,
-// vista agregada — colapsa ÚNICAMENTE la dimensión acomodación, ver el
-// comentario largo en esa migración sobre por qué no colapsa también
-// categoría/régimen: la vigencia de compra se verifica por hotel+categoría+
-// régimen y esa lógica vive en TypeScript, no en SQL).
+// visual, luego esta MISMA vista pero re-expandida a filas sintéticas antes
+// de transportarla) fueron rechazadas por el dueño — ninguna atacaba la
+// causa real: `cargarDatosTarifario()` (lib/tarifario/datos.ts) trae SIEMPRE
+// la matriz completa hotel × categoría × régimen × acomodación (~17.197
+// filas, ~15.876 vigentes) para pintar ~58 tarjetas de hotel que solo
+// necesitan un precio "desde".
 //
-// La matriz COMPLETA (con niño/niño2/infante, descripción, recargo, escalas)
-// solo se consulta bajo demanda — ver app/tarifario/detalle-actions.ts,
-// llamado al abrir un hotel (VistaBooking "Ver opciones"), al elegir una
-// salida en Vista tabla, o al entrar a la pestaña Servicios.
+// ⚠️ Corrección de esta ronda: la versión anterior de este archivo llamaba
+// `expandirResumenAFilas()` ANTES de devolver `filasVisibles`/`filasAddon` —
+// es decir, volvía a MULTIPLICAR cada fila de resumen en hasta 4 filas
+// sintéticas (una por acomodación de adulto con precio) antes de que el
+// Server Component las pasara como prop al cliente. Eso deshacía el
+// beneficio real de la vista: el payload transportado seguía creciendo con
+// la cardinalidad de acomodación, no con la de hoteles/salidas. AHORA este
+// módulo transporta el DTO de resumen (`FilaResumen[]`) TAL CUAL — sin
+// expandir — y son `TarifarioPublic.tsx`/`VistaBooking.tsx` quienes
+// construyen tarjetas/filtros/salidas directamente sobre `FilaResumen`
+// (tienen exactamente los campos que necesitan: modulo/categoria/regimen/
+// hotel_nombre/paquete_nombre/servicio_nombre para filtros y tabs, y
+// precio_sencilla/doble/triple/multiple/nino/nino2/infante/desde_adulto/
+// desde_general para las tarjetas — nunca la matriz expandida).
+//
+// La matriz COMPLETA (con descripción/recargo/escalas, y con cada fila real
+// de `tarifario_resultado`, incluidas niño/niño2/infante) solo se consulta
+// bajo demanda — ver app/tarifario/detalle-actions.ts, llamado al abrir un
+// hotel (VistaBooking "Ver opciones"), al elegir una salida en Vista tabla,
+// o al entrar a la pestaña Servicios. Un `FilaTarifario` (el tipo de fila
+// completa, definido en TarifarioPublic.tsx) solo puede existir en la app
+// como resultado de una de esas 4 Server Actions — nunca sintetizado aquí.
 //
 // ⚠️ Este archivo REPITE deliberadamente el bloque de enriquecimiento
 // (fotos/info/capacidades de hotel, fotos/planes, ventana de viaje,
@@ -40,7 +54,7 @@ import type { InfoHotelDato, CapHotelDato } from "./datos.ts";
 // próximo que toque esto debería evaluar extraerlo a un helper compartido.
 
 const COLUMNAS_RESUMEN =
-  "modulo, paquete_id, paquete_nombre, bloqueo_id, bloqueo_label, empaquetado_id, salida_id, hotel_id, hotel_nombre, servicio_id, servicio_nombre, destino_id, destino_nombre, categoria, regimen, fecha_ida, fecha_regreso, noches, moneda, precio_sencilla, precio_doble, precio_triple, precio_multiple, desde_adulto, desde_general, descripcion, recargo_individual, tipo_tarifa";
+  "modulo, paquete_id, paquete_nombre, bloqueo_id, bloqueo_label, empaquetado_id, salida_id, hotel_id, hotel_nombre, servicio_id, servicio_nombre, destino_id, destino_nombre, categoria, regimen, fecha_ida, fecha_regreso, noches, moneda, precio_sencilla, precio_doble, precio_triple, precio_multiple, precio_nino, precio_nino2, precio_infante, desde_adulto, desde_general, descripcion, recargo_individual, tipo_tarifa";
 
 export type FilaResumen = {
   modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
@@ -66,6 +80,15 @@ export type FilaResumen = {
   precio_doble: number | null;
   precio_triple: number | null;
   precio_multiple: number | null;
+  // Chd1/Chd2/infante — nunca entran al "desde" (ver desde_adulto), pero SÍ
+  // deben viajar en el resumen: los filtros de acomodación Chd1/Chd2 de
+  // VistaBooking/TarifarioPublic dependen de saber, YA en la carga inicial,
+  // qué hoteles ofrecen niño/niño2 (sin esto, ese filtro no puede funcionar
+  // sin pedir el detalle completo de cada hotel — exactamente lo que la
+  // carga en dos niveles busca evitar).
+  precio_nino: number | null;
+  precio_nino2: number | null;
+  precio_infante: number | null;
   desde_adulto: number | null;
   desde_general: number | null;
   descripcion: string | null;
@@ -109,113 +132,9 @@ export async function cargarFilasResumenPaginado(
   return { ok: true, filas, paginasConsultadas };
 }
 
-// Acomodaciones de adulto (mismo orden que ACOM_ROOMS en lib/acomodaciones.ts).
-const PRECIO_ACOM: [string, keyof FilaResumen][] = [
-  ["sencilla", "precio_sencilla"],
-  ["doble", "precio_doble"],
-  ["triple", "precio_triple"],
-  ["multiple", "precio_multiple"],
-];
-
-/**
- * Expande el resumen a filas `FilaTarifario` SINTÉTICAS — para que
- * `VistaBooking.tsx`/`TarifarioPublic.tsx` (sin ningún cambio en su lógica
- * interna) sigan operando sobre el mismo tipo `FilaTarifario[]` de siempre.
- * Función PURA, sin I/O — testeable con fixtures.
- *
- * Por cada fila de resumen (una combinación módulo/paquete/bloqueo/hotel/
- * servicio/categoría/régimen), emite:
- *   - Módulos con hotel: una fila por acomodación de adulto que SÍ tenga
- *     precio (hasta 4) — nunca niño/niño2/infante (esos solo viven en el
- *     detalle bajo demanda, igual que hoy los ignora `minRoomPvp()`). Si
- *     NINGUNA acomodación de adulto tiene precio, emite 1 fila con
- *     `acomodacion: null, precio_pvp: 0` para que el hotel SIGA generando su
- *     tarjeta (mismo caso de hoy: sin precio de adulto, la tarjeta muestra
- *     "Consultar" en vez de desaparecer).
- *   - `servicios`: una sola fila con `precio_pvp: desde_general` (ya es el
- *     mínimo entre todas las escalas/acomodaciones de ese servicio — un
- *     `min()` de mínimos es matemáticamente el mismo mínimo que agrupar de
- *     una).
- */
-export function expandirResumenAFilas(resumen: FilaResumen[]): FilaTarifario[] {
-  const out: FilaTarifario[] = [];
-  for (const r of resumen) {
-    const base = {
-      modulo: r.modulo,
-      bloqueo_label: r.bloqueo_label,
-      bloqueo_id: r.bloqueo_id,
-      empaquetado_id: r.empaquetado_id,
-      salida_id: r.salida_id,
-      paquete_id: r.paquete_id,
-      hotel_id: r.hotel_id,
-      fecha_ida: r.fecha_ida,
-      fecha_regreso: r.fecha_regreso,
-      noches: r.noches,
-      destino_nombre: r.destino_nombre,
-      paquete_nombre: r.paquete_nombre,
-      hotel_nombre: r.hotel_nombre,
-      moneda: r.moneda,
-    };
-    if (r.modulo === "servicios") {
-      out.push({
-        ...base,
-        servicio_id: r.servicio_id,
-        servicio_nombre: r.servicio_nombre,
-        tipo_tarifa: r.tipo_tarifa,
-        pax_desde: null,
-        pax_hasta: null,
-        categoria: null,
-        regimen: null,
-        acomodacion: null,
-        precio_pvp: Number(r.desde_general) || 0,
-        descripcion: r.descripcion,
-        recargo_individual: r.recargo_individual,
-      });
-      continue;
-    }
-    let emitida = false;
-    for (const [acom, campo] of PRECIO_ACOM) {
-      const v = r[campo];
-      if (v == null || Number(v) <= 0) continue;
-      out.push({
-        ...base,
-        servicio_id: null,
-        servicio_nombre: null,
-        tipo_tarifa: null,
-        pax_desde: null,
-        pax_hasta: null,
-        categoria: r.categoria,
-        regimen: r.regimen,
-        acomodacion: acom,
-        precio_pvp: Number(v),
-        descripcion: null,
-        recargo_individual: null,
-      });
-      emitida = true;
-    }
-    if (!emitida) {
-      out.push({
-        ...base,
-        servicio_id: null,
-        servicio_nombre: null,
-        tipo_tarifa: null,
-        pax_desde: null,
-        pax_hasta: null,
-        categoria: r.categoria,
-        regimen: r.regimen,
-        acomodacion: null,
-        precio_pvp: 0,
-        descripcion: null,
-        recargo_individual: null,
-      });
-    }
-  }
-  return out;
-}
-
 export type DatosResumenTarifario = {
-  filasVisibles: FilaTarifario[];
-  filasAddon: FilaTarifario[];
+  filasVisibles: FilaResumen[];
+  filasAddon: FilaResumen[];
   cuposPorBloqueo: Record<number, number>;
   origenPorBloqueo: Record<number, string>;
   fotosPorHotel: Record<number, string>;
@@ -225,8 +144,6 @@ export type DatosResumenTarifario = {
   planesInfo: Record<string, { nombre: string | null; descripcion: string | null; nota_especial: string | null }>;
   ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>;
   incluidosPorPaquete: Record<number, string[]>;
-  /** Cuántas filas trajo el resumen (magnitud "hoteles/salidas", NO "tarifas") — instrumentación. */
-  filasResumen: number;
 };
 
 export const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este momento. Intenta nuevamente en unos segundos.";
@@ -240,9 +157,10 @@ export type ResultadoResumenTarifario =
  * partiendo de `tarifario_resumen` en vez de `tarifario_resultado` paginado
  * completo. Misma vigencia, mismos cupos/orígenes, mismo enriquecimiento de
  * Vista Booking — la única diferencia es CUÁNTAS filas viajan del servidor
- * al cliente en la carga inicial. Devuelve `FilaTarifario[]` (vía
- * `expandirResumenAFilas`) para que las páginas y componentes existentes NO
- * necesiten cambiar de forma.
+ * al cliente en la carga inicial. Devuelve `FilaResumen[]` SIN expandir (ver
+ * nota larga arriba) — las páginas y componentes existentes leen
+ * directamente sobre esas filas de resumen; la matriz completa por
+ * acomodación solo llega vía `app/tarifario/detalle-actions.ts`.
  */
 export async function cargarResumenTarifario(
   sb: SupabaseClient<Database>, flujo: string, flujoId: string,
@@ -257,8 +175,10 @@ export async function cargarResumenTarifario(
   }
   let filas = pag.filas;
   registrarEtapa(flujo, flujoId, "resumen_inicial", Math.round(performance.now() - _tResumen0), "ok");
-  registrarDatoPagina(flujo, flujoId, "resumen_inicial", `filas_resumen=${filas.length} paginas=${pag.paginasConsultadas} consultas_iniciales=${pag.paginasConsultadas}`);
-  const filasResumen = filas.length;
+  // `filas_resumen_db`: lo que la vista devolvió CRUDO (antes de vigencia/
+  // hoy-fecha/empaquetados) — la magnitud que debe acercarse a
+  // "hoteles/salidas", nunca a las ~17.197 filas de `tarifario_resultado`.
+  registrarDatoPagina(flujo, flujoId, "resumen_inicial", `filas_resumen_db=${filas.length} paginas=${pag.paginasConsultadas} consultas_iniciales=${pag.paginasConsultadas}`);
 
   const _tAux0 = performance.now();
   let _huboErrorAux = false;
@@ -306,6 +226,14 @@ export async function cargarResumenTarifario(
   }
 
   filas = resFiltros.filas;
+  // ⚠️ Falla cerrada de verdad (revisión posterior): un error TÉCNICO al
+  // verificar vigencia/empaquetados NUNCA debe quedar registrado como
+  // "sin disponibilidad" — se marca `resultado=error` explícitamente en la
+  // etapa, nunca "ok" ni "sin filas". `filtrarTarifarioVencidas`/
+  // `aplicarFiltrosPostCarga` ya OCULTAN las filas que no pudieron
+  // verificarse (fail-closed de negocio, correcto) — lo que corrige esta
+  // ronda es que el LOG deje de disfrazar ese fallo técnico como "ok".
+  const huboErrorFiltros = !!(resFiltros.errorVigencia || resFiltros.errorEmpaquetado);
   if (resFiltros.errorVigencia) {
     registrarErrorTecnico(flujo, flujoId, "filtro_vigencia", "error_hotel_temporadas_o_tarifa_hotel", resFiltros.errorVigencia);
   }
@@ -313,7 +241,7 @@ export async function cargarResumenTarifario(
     _huboErrorAux = true;
     registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_consulta_empaquetados_vigencia", resFiltros.errorEmpaquetado);
   }
-  registrarEtapa(flujo, flujoId, "filtro_vigencia", Math.round(performance.now() - _tAux0), resFiltros.errorVigencia ? "error" : "ok");
+  registrarEtapa(flujo, flujoId, "filtro_vigencia", Math.round(performance.now() - _tAux0), huboErrorFiltros ? "error" : "ok");
   registrarDatoPagina(flujo, flujoId, "filtro_vigencia", `filas=${filas.length} consultas=${huboVigencia ? 2 : 0}`);
 
   let filasVisibles = filas;
@@ -465,16 +393,21 @@ export async function cargarResumenTarifario(
   registrarEtapa(flujo, flujoId, "datos_auxiliares", Math.round(msAux), _huboErrorAux ? "error" : "ok");
   registrarDatoPagina(flujo, flujoId, "datos_auxiliares", `filas_visibles=${filasVisibles.length} filas_addon=${filasAddon.length}`);
 
-  const filasVisiblesExpandidas = expandirResumenAFilas(filasVisibles);
-  const filasAddonExpandidas = expandirResumenAFilas(filasAddon);
+  // `filas_entregadas_cliente` + `payload_inicial`: lo que de verdad viaja en
+  // las props del Server Component — SIN expansión sintética (ver nota larga
+  // arriba). El tamaño en bytes queda detrás de `DIAGNOSTICO_MEDIR_PAYLOAD=1`
+  // (mismo criterio que el resto de la instrumentación de payload — nunca
+  // paga el costo de serializar en producción por defecto).
+  const filasEntregadasCliente = filasVisibles.length + filasAddon.length;
+  const estPayload = medirPayloadSiHabilitado({ filasVisibles, filasAddon });
+  registrarDatoPagina(flujo, flujoId, "payload_inicial", `filas_entregadas_cliente=${filasEntregadasCliente} ${textoEstimacionPayload(estPayload)}`);
 
   return {
     ok: true,
     datos: {
-      filasVisibles: filasVisiblesExpandidas, filasAddon: filasAddonExpandidas,
+      filasVisibles, filasAddon,
       cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
       infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, incluidosPorPaquete,
-      filasResumen,
     },
   };
 }

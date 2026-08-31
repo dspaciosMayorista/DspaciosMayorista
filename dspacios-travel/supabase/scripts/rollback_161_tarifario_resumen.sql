@@ -7,7 +7,13 @@
 -- versión anterior a esta ronda, la que ya usaba `cargarDatosTarifario()` con
 -- el catálogo completo).
 --
--- Se pega en el editor SQL de Supabase. Es idempotente.
+-- Se pega en el editor SQL de Supabase. Idempotente y transaccional (mismo
+-- criterio que la migración: si algo falla a mitad de camino, no queda un
+-- estado intermedio).
 -- ───────────────────────────────────────────────────────────────────────────
 
+begin;
+
 drop view if exists public.tarifario_resumen;
+
+commit;

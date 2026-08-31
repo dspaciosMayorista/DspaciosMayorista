@@ -2778,6 +2778,9 @@ export type Database = {
           precio_doble: number | null;
           precio_triple: number | null;
           precio_multiple: number | null;
+          precio_nino: number | null;
+          precio_nino2: number | null;
+          precio_infante: number | null;
           desde_adulto: number | null;
           desde_general: number | null;
           descripcion: string | null;
