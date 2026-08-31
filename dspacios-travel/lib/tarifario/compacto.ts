@@ -35,7 +35,6 @@ type FilaCompacta = [
 ];
 
 export type TarifarioCompacto = { version: 1; textos: string[]; filas: FilaCompacta[] };
-export type TarifarioCompactoSerializado = string & { readonly __tarifarioCompacto: unique symbol };
 
 const MODULOS = ["bloqueo", "porcion_terrestre", "servicios", "dinamico"] as const;
 const numero = (valor: number | null | undefined): Numero => valor == null ? null : valor;
@@ -85,30 +84,3 @@ export function descompactarFilasTarifario<T extends FilaTarifarioCompactable>(
   } as T));
 }
 
-/**
- * Flight/RSC procesa cada elemento de arrays y objetos recibidos como props.
- * El catalogo tiene cientos de miles de valores escalares, aunque su JSON sea
- * relativamente pequeno. Entregarlo como un solo string aplaza ese trabajo a
- * un JSON.parse lineal y evita que el decodificador de React reconstruya cada
- * celda del tarifario por separado durante la navegacion.
- */
-export function serializarTarifarioCompacto(
-  paquete: TarifarioCompacto
-): TarifarioCompactoSerializado {
-  return JSON.stringify(paquete) as TarifarioCompactoSerializado;
-}
-
-export function deserializarTarifarioCompacto(
-  valor: TarifarioCompactoSerializado
-): TarifarioCompacto {
-  const paquete: unknown = JSON.parse(valor);
-  if (
-    paquete == null || typeof paquete !== "object" ||
-    (paquete as { version?: unknown }).version !== 1 ||
-    !Array.isArray((paquete as { textos?: unknown }).textos) ||
-    !Array.isArray((paquete as { filas?: unknown }).filas)
-  ) {
-    throw new Error("Tarifario compacto serializado invalido");
-  }
-  return paquete as TarifarioCompacto;
-}
