@@ -43,6 +43,7 @@ export function SidebarNav({ items, collapsed }: { items: NavItem[]; collapsed?:
             <Link
               key={it.href}
               href={it.href}
+              prefetch={false}
               aria-current={active ? "page" : undefined}
               title={it.label}
               className="mx-auto grid h-10 w-10 place-items-center rounded-lg transition-colors hover:bg-gray-50"
@@ -86,6 +87,7 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
       <div className="flex items-center">
         <Link
           href={item.href}
+          prefetch={false}
           aria-current={active ? "page" : undefined}
           className="flex flex-1 items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-gray-50"
           style={
@@ -117,6 +119,7 @@ function Group({ item, pathname }: { item: NavItem; pathname: string }) {
               <Link
                 key={c.href}
                 href={c.href}
+                prefetch={false}
                 aria-current={cActive ? "page" : undefined}
                 className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-gray-50"
                 style={cActive ? { color: "var(--brand-accent)", fontWeight: 600 } : { color: "var(--nav-subfg, #6b7280)" }}

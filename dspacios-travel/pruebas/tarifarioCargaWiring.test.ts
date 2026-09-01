@@ -318,3 +318,23 @@ describe("loading.tsx — las dos rutas internas tienen su loading state (route 
     assert.match(src, /export default function/);
   });
 });
+
+describe("Navegación del dashboard — no precarga rutas pesadas en segundo plano", () => {
+  test("todos los Next Link del sidebar desactivan prefetch", () => {
+    const src = leer("app/(dashboard)/SidebarNav.tsx");
+    const links = [...src.matchAll(/<Link\b[\s\S]*?>/g)].map((m) => m[0]);
+    assert.equal(links.length, 3, "el test debe cubrir los tres tipos de enlace del sidebar");
+    for (const link of links) {
+      assert.match(link, /prefetch=\{false\}/);
+    }
+  });
+
+  test("mapa, módulos y alertas del inicio desactivan prefetch", () => {
+    const src = leer("app/(dashboard)/dashboard/page.tsx");
+    assert.equal(
+      [...src.matchAll(/prefetch=\{false\}/g)].length,
+      3,
+      "los tres generadores de accesos directos deben evitar solicitudes anticipadas"
+    );
+  });
+});
