@@ -69,7 +69,10 @@ do $$
 declare
   _valida boolean;
 begin
+  -- Re-ejecución limpia: se eliminan SIEMPRE las dos tablas temporales del
+  -- script (la de conteos y la de reporte) antes de recalcular.
   execute 'drop table if exists pg_temp.preflight_162_conteos';
+  execute 'drop table if exists pg_temp.preflight_162_reporte';
 
   select
       to_regclass('public.tarifario_resultado') is not null
@@ -124,10 +127,12 @@ begin
 end $$;
 
 -- ───────────────────────────────────────────────────────────────────────────
--- ÚNICO REPORTE CONSOLIDADO (último statement del script; nada después).
+-- REPORTE CONSOLIDADO, materializado en pg_temp.preflight_162_reporte.
 -- Los chequeos 1-4 son SELECT puros sobre catálogos (nunca abortan); los
--- conteos (5-7) leen la tabla temporal de arriba.
+-- conteos (5-7) leen la tabla temporal de arriba. El veredicto_final se
+-- deriva de ESTAS MISMAS filas (bool_or(bloqueante) sobre el propio reporte).
 -- ───────────────────────────────────────────────────────────────────────────
+create table pg_temp.preflight_162_reporte as
 with
 
 estructura as (
@@ -320,4 +325,9 @@ select
     else 'OK — puede aplicarse la migración 162'
   end as veredicto_final
 from checks
+order by orden;
+
+-- ÚLTIMA sentencia: lectura del reporte ya materializado (nada después).
+select orden, chequeo, resultado, bloqueante, veredicto_final
+from pg_temp.preflight_162_reporte
 order by orden;

@@ -1,6 +1,6 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- Prueba LOCAL del PREFLIGHT de la migración 162 (`preflight_162_tarifario_
--- resumen.sql`) y del POSTCHECK (`verificar_162_tarifario_resumen.sql`).
+-- Prueba LOCAL del PREFLIGHT (`preflight_162_tarifario_resumen.sql`) y del
+-- POSTCHECK (`verificar_162_tarifario_resumen.sql`) de la migración 162.
 --
 -- ⚠️ SOLO contra una base de verificación LOCAL (ver
 -- supabase/scripts/pruebas/local-desde-cero.sh), NUNCA contra producción.
@@ -11,22 +11,29 @@
 --   local-desde-cero.sh dspacios_local 55432 161
 --   psql -p 55432 -d dspacios_local -f supabase/scripts/pruebas/test_162_preflight_bloqueos.sql
 --
--- Cobertura (cada escenario corre el script REAL vía `\i` y además aserción
--- programática del MISMO predicado que el preflight/postcheck usa, no solo de
--- que "el objeto de prueba existe"):
---   1) limpio                      → preflight OK
---   2) colisión exacta en public   → preflight BLOQUEADO (sin abortar)
---   3) homónimo en otro schema     → preflight OK + aviso informativo
---   4) tabla base AUSENTE          → preflight BLOQUEADO SIN error SQL
---   5) columna NO del GROUP BY ausente → preflight BLOQUEADO (sin abortar)
---   6) columna DEL GROUP BY ausente    → preflight BLOQUEADO SIN error SQL
---   7) orden de columnas invertido en la vista → postcheck detecta FAILED
+-- Cómo funciona: cada escenario es UNA transacción `begin; ... rollback;` que
+-- (1) monta el estado, (2) corre el script REAL vía `\i`, y (3) aserta sobre
+-- el REPORTE YA MATERIALIZADO (pg_temp.preflight_162_reporte para el preflight
+-- y pg_temp.postcheck_162_reporte para el verificar) — NO se re-escriben los
+-- predicados bajo prueba, se inspecciona el resultado real del script. Si el
+-- veredicto real no coincide con el esperado, se lanza `raise exception` y,
+-- con `\set ON_ERROR_STOP 1`, la prueba FALLA automáticamente en ese punto.
 --
--- Toda la DDL de prueba vive en una transacción con ROLLBACK garantizado: cada
--- escenario es `begin; ... rollback;`, así ningún objeto ni fila persiste (ni
--- siquiera si algo falla a mitad de un escenario). Los únicos cambios son DDL/
--- DML transitorios sobre objetos/registros de PRUEBA; ninguna fila real de
--- tarifario_resultado/programas se modifica.
+-- Cobertura:
+--   1) limpio                    → preflight OK (+ conteos calculados: base válida)
+--   2) colisión exacta en public → preflight BLOQUEADO (fila 1 bloqueante)
+--   3) homónimo en otro schema   → preflight OK, informativo (temp table), sin
+--      asumir que el total de homónimos externos es exactamente 1
+--   4) tabla base AUSENTE (rename) → preflight BLOQUEADO SIN error SQL, conteos NULL
+--   5) columna NO del GROUP BY ausente → preflight BLOQUEADO (fila 4), conteos NULL
+--   6) columna DEL GROUP BY ausente → preflight BLOQUEADO SIN error SQL, conteos NULL
+--   7) orden de columnas invertido en la vista → postcheck detecta FAILED (fila A)
+--
+-- Toda la DDL/DML de prueba vive en transacciones con ROLLBACK garantizado:
+-- ningún objeto ni fila persiste. Los cambios son DDL/DML transitorios sobre
+-- objetos/registros de PRUEBA; ninguna fila real de negocio se modifica. En
+-- el escenario 4 la tabla base se RENOMBRA (no se borra) y el rollback la
+-- restaura.
 --
 -- ⚠️ IMPORTANTE: este archivo NO ha sido ejecutado contra una base PostgreSQL
 -- real en esta sesión (el entorno no dispone de `psql` ni de un daemon de
@@ -38,56 +45,66 @@
 \pset pager off
 
 -- ───────────────────────────────────────────────────────────────────────────
--- Precondiciones de ENTORNO (para que cada escenario represente de verdad el
--- caso): la 161 aplicada, la tabla base y sus 25 columnas presentes, y la 162
--- NO aplicada. Si alguna falla, la prueba entera no es representativa — se
--- detiene (ON_ERROR_STOP) para que no se lean resultados engañosos.
+-- Precondiciones de ENTORNO: si no se cumplen, la prueba no es representativa
+-- → RAISE (falla en seco) para no leer resultados engañosos.
 -- ───────────────────────────────────────────────────────────────────────────
-\echo '════════ PRECONDICIONES DE ENTORNO (1→161 aplicadas, 162 NO) ───────────'
-select
-  (select count(*) = 1 from information_schema.columns
-     where table_schema = 'public' and table_name = 'programas'
-       and column_name = 'regla_comisionable_modalidad_mk'
-       and data_type = 'text' and is_nullable = 'NO'
-       and column_default = '''historica''::text') as precond_mig161_aplicada,
-  (to_regclass('public.tarifario_resultado') is not null
-     and exists (
-       select 1 from pg_catalog.pg_class c
-       join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-       where n.nspname = 'public' and c.relname = 'tarifario_resultado'
-         and c.relkind in ('r','p')
-     )) as precond_tabla_base,
-  (to_regclass('public.tarifario_resumen') is null) as precond_162_no_aplicada;
-
--- ═════════════════════════════════════════════════════════════════════════
--- ESCENARIO 1 — LIMPIO: sin colisiones ni faltantes. El preflight debe dar OK.
--- ═════════════════════════════════════════════════════════════════════════
-\echo '════════ ESCENARIO 1 — limpio → el preflight debe dar OK ───────────────'
-begin;
-
-\i supabase/scripts/preflight_162_tarifario_resumen.sql
-
--- Mismo predicado que el preflight (checks 1-4): el veredicto es OK si y solo
--- si NINGUNA condición bloqueante se cumple. Reproduce la expresión exacta.
-select
-  not exists (
-    select 1 from pg_catalog.pg_class c
-    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public' and c.relname = 'tarifario_resumen'
-  )                                                                      as ok1_limpio_veredicto_ok,
-  not (to_regclass('public.tarifario_resultado') is not null
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'programas'
+      and column_name = 'regla_comisionable_modalidad_mk'
+      and data_type = 'text' and is_nullable = 'NO'
+      and column_default = '''historica''::text'
+  ) then
+    raise exception 'PRECONDICIÓN: la migración 161 (Programas) no está aplicada con el marcador esperado';
+  end if;
+  if not (
+    to_regclass('public.tarifario_resultado') is not null
     and exists (
       select 1 from pg_catalog.pg_class c
       join pg_catalog.pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and c.relname = 'tarifario_resultado'
         and c.relkind in ('r','p')
-    ))                                                                    as ok2_limpio_tabla_base_ok;
+    )
+  ) then
+    raise exception 'PRECONDICIÓN: public.tarifario_resultado no existe como tabla ordinaria/particionada';
+  end if;
+  if to_regclass('public.tarifario_resumen') is not null then
+    raise exception 'PRECONDICIÓN: la migración 162 ya está aplicada (tarifario_resumen existe) — la prueba exige que NO';
+  end if;
+end $$;
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- ESCENARIO 1 — LIMPIO: sin colisiones ni faltantes → preflight OK y conteos
+-- calculados (la base válida debe producir conteos reales, no NULL).
+-- ═════════════════════════════════════════════════════════════════════════
+\echo '════════ ESCENARIO 1 — limpio → preflight OK ───────────────────────────'
+begin;
+
+\i supabase/scripts/preflight_162_tarifario_resumen.sql
+
+do $$
+begin
+  if (select count(*) from pg_temp.preflight_162_reporte) = 0
+    or (select veredicto_final from pg_temp.preflight_162_reporte limit 1) not like 'OK%' then
+    raise exception 'ESC1 LIMPIO: veredicto esperado OK (got %)',
+      coalesce((select veredicto_final from pg_temp.preflight_162_reporte limit 1), '(sin reporte)');
+  end if;
+  if exists (select 1 from pg_temp.preflight_162_reporte where bloqueante) then
+    raise exception 'ESC1 LIMPIO: hay una fila bloqueante inesperada';
+  end if;
+  -- La base válida debe haberse tratado como tal: conteos calculados (no NULL).
+  if (select filas_totales is null from pg_temp.preflight_162_conteos) then
+    raise exception 'ESC1 LIMPIO: conteos no calculados — la base se consideró inválida';
+  end if;
+end $$;
 
 rollback;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- ESCENARIO 2 — COLISIÓN EXACTA en public: el preflight debe BLOQUEAR sin
--- abortar (la colisión es el check 1; los checks 3-4 siguen evaluándose).
+-- ESCENARIO 2 — COLISIÓN EXACTA en public: preflight BLOQUEADO; la fila 1
+-- (colisión) debe marcar bloqueante. Sin abortar (el `\i` llega hasta aquí).
 -- ═════════════════════════════════════════════════════════════════════════
 \echo '════════ ESCENARIO 2 — colisión public.tarifario_resumen → BLOQUEADO ──'
 begin;
@@ -97,73 +114,82 @@ insert into public.tarifario_resumen values (1);
 
 \i supabase/scripts/preflight_162_tarifario_resumen.sql
 
--- Predicado del check 1 del preflight (bloqueante de colisión en public).
-select
-  exists (
-    select 1 from pg_catalog.pg_class c
-    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public' and c.relname = 'tarifario_resumen'
-  ) as ok3_colision_public_bloquea;
+do $$
+begin
+  if (select veredicto_final from pg_temp.preflight_162_reporte limit 1) not like 'BLOQUEADO%' then
+    raise exception 'ESC2 COLISIÓN: veredicto esperado BLOQUEADO (got %)',
+      (select veredicto_final from pg_temp.preflight_162_reporte limit 1);
+  end if;
+  if not exists (select 1 from pg_temp.preflight_162_reporte where orden = 1 and bloqueante) then
+    raise exception 'ESC2 COLISIÓN: la fila 1 (colisión en public) debe marcar bloqueante';
+  end if;
+end $$;
 
 rollback;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- ESCENARIO 3 — HOMÓNIMO en OTRO schema: el preflight debe dar OK (informativo,
--- no bloquea; solo public.tarifario_resumen bloquea).
+-- ESCENARIO 3 — HOMÓNIMO en otro schema (temp table): preflight OK. NO se
+-- asume que el total de homónimos externos sea exactamente 1 — solo se exige
+-- que NO bloquee y que la fila 1 lo reporte como aviso informativo.
 -- ═════════════════════════════════════════════════════════════════════════
 \echo '════════ ESCENARIO 3 — homónimo en otro schema → OK (informativo) ─────'
 begin;
 
-create schema if not exists preflight_test;
-create table preflight_test.tarifario_resumen (x integer);
+create temp table tarifario_resumen (x integer);
 
 \i supabase/scripts/preflight_162_tarifario_resumen.sql
 
--- Mismo predicado que el check 1: bloquea solo si existe EN public.
-select
-  (not exists (
-    select 1 from pg_catalog.pg_class c
-    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public' and c.relname = 'tarifario_resumen'
-  )) as ok4_homonimo_no_bloquea,
-  (select count(*) from pg_catalog.pg_class c
-    join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-    where c.relname = 'tarifario_resumen' and n.nspname <> 'public') = 1 as ok5_homonimo_contado;
+do $$
+begin
+  if (select veredicto_final from pg_temp.preflight_162_reporte limit 1) not like 'OK%' then
+    raise exception 'ESC3 HOMÓNIMO: veredicto esperado OK (got %)',
+      (select veredicto_final from pg_temp.preflight_162_reporte limit 1);
+  end if;
+  if exists (select 1 from pg_temp.preflight_162_reporte where bloqueante) then
+    raise exception 'ESC3 HOMÓNIMO: un homónimo en otro schema NO debe bloquear';
+  end if;
+  -- Debe haberlo anotado como informativo (sin afirmar el total exacto).
+  if not exists (
+    select 1 from pg_temp.preflight_162_reporte where orden = 1 and resultado like '%homónimo%'
+  ) then
+    raise exception 'ESC3 HOMÓNIMO: la fila 1 no reportó el homónimo como aviso informativo';
+  end if;
+end $$;
 
 rollback;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- ESCENARIO 4 — TABLA BASE AUSENTE: el preflight debe BLOQUEAR SIN error SQL.
--- Esto es lo que valida el diseño del `do $$ ... execute` condicional: la
--- lectura de conteos NO se ejecuta (estructura inválida), así que no hay
--- "relation does not exist" en tiempo de parseo. Se prueba que el script
--- termina (el `\i` llega hasta el final) y que el veredicto es BLOQUEADO.
+-- ESCENARIO 4 — TABLA BASE AUSENTE (RENAME dentro de la transacción, no DROP):
+-- preflight BLOQUEADO SIN error SQL y conteos NULL (entró por el else del do).
+-- El `\i` llega hasta aquí → no hubo "relation does not exist".
 -- ═════════════════════════════════════════════════════════════════════════
-\echo '════════ ESCENARIO 4 — tabla base ausente → BLOQUEADO SIN error SQL ──'
+\echo '════════ ESCENARIO 4 — tabla base ausente (rename) → BLOQUEADO sin error SQL ──'
 begin;
 
-drop table public.tarifario_resultado;
+alter table public.tarifario_resultado rename to tarifario_resultado_scratch;
 
 \i supabase/scripts/preflight_162_tarifario_resumen.sql
 
--- Predicado del check 3: tabla base debe existir con relkind r/p. Sin la
--- tabla, esto es false → bloqueante. Además, los conteos deben quedar NULL
--- (el DO entró por el else, NO abortó) — prueba de que no hubo error SQL.
-select
-  not (to_regclass('public.tarifario_resultado') is not null
-    and exists (
-      select 1 from pg_catalog.pg_class c
-      join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-      where n.nspname = 'public' and c.relname = 'tarifario_resultado'
-        and c.relkind in ('r','p')
-    )) as ok6_tabla_ausente_bloquea,
-  (select filas_totales is null from pg_temp.preflight_162_conteos) as ok7_conteos_no_abortaron;
+do $$
+begin
+  if (select veredicto_final from pg_temp.preflight_162_reporte limit 1) not like 'BLOQUEADO%' then
+    raise exception 'ESC4 TABLA AUSENTE: veredicto esperado BLOQUEADO (got %)',
+      (select veredicto_final from pg_temp.preflight_162_reporte limit 1);
+  end if;
+  if not exists (select 1 from pg_temp.preflight_162_reporte where orden = 3 and bloqueante) then
+    raise exception 'ESC4 TABLA AUSENTE: la fila 3 (tabla base) debe marcar bloqueante';
+  end if;
+  -- Conteos NULL ⇒ el do tomó el else ⇒ no abortó en el execute.
+  if (select filas_totales is not null from pg_temp.preflight_162_conteos) then
+    raise exception 'ESC4 TABLA AUSENTE: conteos calculados pese a tabla ausente (¿abortó o fue parcial?)';
+  end if;
+end $$;
 
 rollback;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- ESCENARIO 5 — COLUMNA NO del GROUP BY ausente (ej. descripcion): el preflight
--- debe BLOQUEAR (check 4) sin abortar.
+-- ESCENARIO 5 — COLUMNA NO del GROUP BY ausente (descripcion): preflight
+-- BLOQUEADO; la fila 4 (columnas) debe marcar bloqueante; conteos NULL.
 -- ═════════════════════════════════════════════════════════════════════════
 \echo '════════ ESCENARIO 5 — columna no-GROUP-BY ausente → BLOQUEADO ────────'
 begin;
@@ -172,64 +198,55 @@ alter table public.tarifario_resultado rename column descripcion to descripcion_
 
 \i supabase/scripts/preflight_162_tarifario_resumen.sql
 
--- Predicado del check 4: bloquea si falta cualquiera de las 25 columnas.
-select
-  exists (
-    select 1 from (values
-      ('modulo'),('paquete_id'),('paquete_nombre'),('paquete_activo'),('bloqueo_id'),
-      ('bloqueo_label'),('empaquetado_id'),('salida_id'),('hotel_id'),('hotel_nombre'),
-      ('servicio_id'),('servicio_nombre'),('destino_id'),('destino_nombre'),('categoria'),
-      ('regimen'),('fecha_ida'),('fecha_regreso'),('noches'),('moneda'),('acomodacion'),
-      ('precio_pvp'),('descripcion'),('recargo_individual'),('tipo_tarifa')
-    ) r(columna)
-    where not exists (
-      select 1 from information_schema.columns c
-      where c.table_schema = 'public' and c.table_name = 'tarifario_resultado'
-        and c.column_name = r.columna
-    )
-  ) as ok8_columna_falta_bloquea,
-  (select filas_totales is null from pg_temp.preflight_162_conteos) as ok9_no_aborto;
+do $$
+begin
+  if (select veredicto_final from pg_temp.preflight_162_reporte limit 1) not like 'BLOQUEADO%' then
+    raise exception 'ESC5 COLUMNA FALTA: veredicto esperado BLOQUEADO (got %)',
+      (select veredicto_final from pg_temp.preflight_162_reporte limit 1);
+  end if;
+  if not exists (select 1 from pg_temp.preflight_162_reporte where orden = 4 and bloqueante) then
+    raise exception 'ESC5 COLUMNA FALTA: la fila 4 (columnas) debe marcar bloqueante';
+  end if;
+  if (select filas_totales is not null from pg_temp.preflight_162_conteos) then
+    raise exception 'ESC5 COLUMNA FALTA: conteos calculados pese a columna ausente';
+  end if;
+end $$;
 
 rollback;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- ESCENARIO 6 — COLUMNA DEL GROUP BY ausente (ej. moneda): el caso más difícil.
--- Sin el `execute` condicional, la lectura `select ... group by moneda` en el
--- preflight abortaría el script en tiempo de parseo. Con él, BLOQUEA sin error.
+-- ESCENARIO 6 — COLUMNA DEL GROUP BY ausente (moneda): el caso que exige el
+-- `execute` condicional. Sin él, la lectura `group by moneda` abortaría en
+-- parseo. Con él: BLOQUEADO SIN error SQL (el `\i` llega hasta el DO).
 -- ═════════════════════════════════════════════════════════════════════════
-\echo '════════ ESCENARIO 6 — columna DEL GROUP BY ausente → BLOQUEADO SIN error SQL ──'
+\echo '════════ ESCENARIO 6 — columna DEL GROUP BY ausente → BLOQUEADO sin error SQL ──'
 begin;
 
 alter table public.tarifario_resultado rename column moneda to moneda_scratch;
 
 \i supabase/scripts/preflight_162_tarifario_resumen.sql
 
--- Mismo predicado del check 4: moneda está entre las 25 → falta → bloquea.
-select
-  exists (
-    select 1 from (values
-      ('modulo'),('paquete_id'),('paquete_nombre'),('paquete_activo'),('bloqueo_id'),
-      ('bloqueo_label'),('empaquetado_id'),('salida_id'),('hotel_id'),('hotel_nombre'),
-      ('servicio_id'),('servicio_nombre'),('destino_id'),('destino_nombre'),('categoria'),
-      ('regimen'),('fecha_ida'),('fecha_regreso'),('noches'),('moneda'),('acomodacion'),
-      ('precio_pvp'),('descripcion'),('recargo_individual'),('tipo_tarifa')
-    ) r(columna)
-    where not exists (
-      select 1 from information_schema.columns c
-      where c.table_schema = 'public' and c.table_name = 'tarifario_resultado'
-        and c.column_name = r.columna
-    )
-  ) as ok10_groupby_columna_falta_bloquea,
-  (select filas_totales is null from pg_temp.preflight_162_conteos) as ok11_no_aborto;
+do $$
+begin
+  if (select veredicto_final from pg_temp.preflight_162_reporte limit 1) not like 'BLOQUEADO%' then
+    raise exception 'ESC6 GROUPBY FALTA: veredicto esperado BLOQUEADO (got %)',
+      (select veredicto_final from pg_temp.preflight_162_reporte limit 1);
+  end if;
+  if not exists (select 1 from pg_temp.preflight_162_reporte where orden = 4 and bloqueante) then
+    raise exception 'ESC6 GROUPBY FALTA: la fila 4 (columnas) debe marcar bloqueante';
+  end if;
+  if (select filas_totales is not null from pg_temp.preflight_162_conteos) then
+    raise exception 'ESC6 GROUPBY FALTA: conteos calculados pese a columna del group by ausente';
+  end if;
+end $$;
 
 rollback;
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- ESCENARIO 7 — POSTCHECK: orden de columnas invertido en la vista creada. El
--- verificar debe detectar FAILED en su check A (nombre + posición ordinal).
--- Se crea la vista de prueba con dos columnas intercambiadas (recargo_individual
--- y descripcion), se corre el verificar real vía `\i` y se aserta sobre el
--- mismo predicado que su check A.
+-- verificar debe materializar pg_temp.postcheck_162_reporte con la fila A
+-- (definición/orden) en pass=false y veredicto FAILED. Se crea la vista con
+-- descripcion/recargo_individual intercambiadas de POSICIÓN.
 -- ═════════════════════════════════════════════════════════════════════════
 \echo '════════ ESCENARIO 7 — postcheck: orden invertido → FAILED ────────────'
 begin;
@@ -250,13 +267,12 @@ as
     min(precio_pvp) filter (where acomodacion = 'infante') as precio_infante,
     min(precio_pvp) filter (where acomodacion in ('sencilla','doble','triple','multiple') and precio_pvp > 0) as desde_adulto,
     min(precio_pvp) filter (where precio_pvp > 0) as desde_general,
-    -- ⚠️ AQUÍ ESTÁ EL DEFECTO A DETECTAR: descripcion y recargo_individual
-    -- intercambiadas de POSICIÓN respecto al orden correcto (descripcion=30,
-    -- recargo=31). El postcheck verifica nombre Y ordinal_position, así que
-    -- detecta que la col 30 se llama recargo_individual (esperaba descripcion).
-    min(tipo_tarifa)          as recargo_individual,   -- posición 30 (esperada: descripcion)
-    min(recargo_individual)   as descripcion,          -- posición 31 (esperada: recargo_individual)
-    min(descripcion)          as tipo_tarifa           -- posición 32
+    -- ⚠️ DEFECTO A DETECTAR: posiciones 30 y 31 intercambiadas (la 30 debe ser
+    -- descripcion, la 31 recargo_individual). El postcheck verifica nombre Y
+    -- ordinal_position.
+    min(tipo_tarifa)        as recargo_individual,   -- posición 30 (esperada: descripcion)
+    min(recargo_individual) as descripcion,          -- posición 31 (esperada: recargo_individual)
+    min(descripcion)        as tipo_tarifa           -- posición 32
   from public.tarifario_resultado
   where paquete_activo = true
   group by
@@ -268,28 +284,21 @@ grant select on public.tarifario_resumen to anon, authenticated;
 
 \i supabase/scripts/verificar_162_tarifario_resumen.sql
 
--- Mismo predicado del check A del postcheck: algún par (posición, columna)
--- esperado no coincide → el veredicto debe ser FAILED.
-select
-  (select count(*) from (values
-    (1,'modulo'),(2,'paquete_id'),(3,'paquete_nombre'),(4,'paquete_activo'),(5,'bloqueo_id'),
-    (6,'bloqueo_label'),(7,'empaquetado_id'),(8,'salida_id'),(9,'hotel_id'),(10,'hotel_nombre'),
-    (11,'servicio_id'),(12,'servicio_nombre'),(13,'destino_id'),(14,'destino_nombre'),(15,'categoria'),
-    (16,'regimen'),(17,'fecha_ida'),(18,'fecha_regreso'),(19,'noches'),(20,'moneda'),
-    (21,'precio_sencilla'),(22,'precio_doble'),(23,'precio_triple'),(24,'precio_multiple'),
-    (25,'precio_nino'),(26,'precio_nino2'),(27,'precio_infante'),(28,'desde_adulto'),
-    (29,'desde_general'),(30,'descripcion'),(31,'recargo_individual'),(32,'tipo_tarifa')
-  ) as v(posicion, columna)
-  where not exists (
-    select 1 from information_schema.columns c
-    where c.table_schema = 'public' and c.table_name = 'tarifario_resumen'
-      and c.column_name = v.columna and c.ordinal_position = v.posicion
-  )) > 0 as ok12_postcheck_detecta_orden;
+do $$
+begin
+  if not exists (select 1 from pg_temp.postcheck_162_reporte where orden = 1 and not pass) then
+    raise exception 'ESC7 POSTCHECK: la fila A (definición/orden) debe marcar pass=false';
+  end if;
+  if (select veredicto_final from pg_temp.postcheck_162_reporte limit 1) not like 'FAILED%' then
+    raise exception 'ESC7 POSTCHECK: veredicto esperado FAILED (got %)',
+      (select veredicto_final from pg_temp.postcheck_162_reporte limit 1);
+  end if;
+end $$;
 
 rollback;
 
-\echo '════════ FIN test_162_preflight_bloqueos.sql ═══════════════════════════'
-\echo '   Cada okN_* debe ser true y el veredicto mostrado por cada `\i` debe'
-\echo '   coincidir con lo esperado (E1 OK / E2 BLOQUEADO / E3 OK / E4 BLOQUEADO /'
+\echo '════════ FIN test_162_preflight_bloqueos.sql — todos los escenarios pasaron ════════'
+\echo '   Si la prueba llegó hasta aquí sin excepción, cada veredicto coincidió'
+\echo '   con lo esperado (E1 OK / E2 BLOQUEADO / E3 OK / E4 BLOQUEADO /'
 \echo '   E5 BLOQUEADO / E6 BLOQUEADO / E7 FAILED). Ningún objeto ni fila de'
 \echo '   prueba debe quedar (todas las transacciones hacen rollback).'
