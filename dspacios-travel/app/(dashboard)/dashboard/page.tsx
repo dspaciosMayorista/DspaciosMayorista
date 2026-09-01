@@ -98,7 +98,7 @@ export default async function DashboardPage() {
             <div className="flex flex-wrap items-stretch gap-y-3">
               {FLUJO.map((m, i) => (
                 <div key={m.href} className="flex items-center">
-                  <Link href={m.href} className="group flex w-[104px] flex-col items-center gap-1.5 rounded-md border border-gray-200 px-2 py-3 text-center transition-colors hover:border-[color:var(--brand-primary)] hover:bg-gray-50">
+                  <Link href={m.href} prefetch={false} className="group flex w-[104px] flex-col items-center gap-1.5 rounded-md border border-gray-200 px-2 py-3 text-center transition-colors hover:border-[color:var(--brand-primary)] hover:bg-gray-50">
                     <span className="grid h-9 w-9 place-items-center rounded-md border" style={{ borderColor: "color-mix(in srgb, var(--brand-primary) 30%, white)", backgroundColor: tint("var(--brand-primary)"), color: "var(--brand-primary)" }}>
                       <m.icon size={17} strokeWidth={2} />
                     </span>
@@ -140,7 +140,7 @@ function ModulosGrid({ modulos }: { modulos: typeof MODULOS }) {
   return (
     <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
       {modulos.map((m) => (
-        <Link key={m.href} href={m.href} className="group flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3.5 transition-colors hover:border-[color:var(--brand-primary)] hover:bg-gray-50/70">
+        <Link key={m.href} href={m.href} prefetch={false} className="group flex items-center gap-3 rounded-lg border border-gray-200 bg-white p-3.5 transition-colors hover:border-[color:var(--brand-primary)] hover:bg-gray-50/70">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md border" style={{ borderColor: "color-mix(in srgb, " + m.color + " 28%, white)", backgroundColor: tint(m.color), color: m.color }}>
             <m.icon size={18} strokeWidth={2} />
           </span>
@@ -203,7 +203,7 @@ function Alerta({ icon: Icon, label, n, href, tone }: { icon: LucideIcon; label:
   const t = TONOS[tone];
   const apagada = n === 0;
   return (
-    <Link href={href} className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium transition-colors"
+    <Link href={href} prefetch={false} className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium transition-colors"
       style={apagada ? { borderColor: "#E4E7EF", color: "#98A2B3", backgroundColor: "white" } : { borderColor: t.bd, color: t.fg, backgroundColor: t.bg }}>
       <Icon size={15} />
       <span>{label}</span>

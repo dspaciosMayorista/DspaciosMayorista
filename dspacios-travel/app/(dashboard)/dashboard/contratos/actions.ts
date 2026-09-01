@@ -46,7 +46,7 @@ const MARKUP_MIN = 0.20;
 // directo al navegador — un mensaje de Postgres puede revelar tablas,
 // constraints, policies o valores de fila. Estos dos mensajes son literales
 // fijos, nunca derivados del error real (que se registra aparte, server-side,
-// vía `registrarErrorTecnico()`). Diferenciados solo para que el asesor sepa
+// vía el helper `registrarErrorTecnico`). Diferenciados solo para que el asesor sepa
 // si falló la VERIFICACIÓN (nada se guardó) o el GUARDADO (pudo quedar a
 // medias) — ninguno de los dos incluye detalle técnico.
 const MSG_ERROR_VALIDACION_CONTRATO = "No fue posible verificar la información del contrato. Intenta nuevamente o contacta a soporte.";
@@ -479,8 +479,8 @@ async function crearContratoInterno(
   // `_errorHijas`: registra la etapa como "error" (nunca "ok" por omisión —
   // antes, un retorno anticipado dentro de este grupo no dejaba NINGÚN log,
   // lo cual se podía confundir con una ejecución exitosa) y manda el detalle
-  // técnico SOLO a `registrarErrorTecnico()` (server-side, saneado), nunca al
-  // navegador — el `return` devuelve el mensaje público FIJO
+  // técnico SOLO al helper `registrarErrorTecnico` (server-side, saneado),
+  // nunca al navegador — el `return` devuelve el mensaje público FIJO
   // `MSG_ERROR_GUARDAR_CONTRATO` (revisión posterior — ronda 3), no
   // `error.message` crudo de Supabase/Postgres.
   const _tHijas0 = performance.now();

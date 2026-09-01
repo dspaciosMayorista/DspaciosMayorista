@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Star, Plane, Bus } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -8,6 +8,9 @@ import { VistaBooking } from "./VistaBooking";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
+import { obtenerDetalleSalida, obtenerDetallePaquete, obtenerDetalleServicios } from "./detalle-actions";
+import { conCacheDetalle, claveDetalleSalida, claveDetallePaquete, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
+import type { FilaResumen } from "@/lib/tarifario/resumen";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
 
@@ -175,7 +178,19 @@ function PetFriendlyBadge({ info }: { info?: { petFriendly?: boolean } }) {
 // Acomodaciones para el filtro (mismas claves que COLS).
 const ACOM_OPCIONES = COLS;
 
-function coincideFiltro(f: FilaTarifario, q: string, fCat: string, fReg: string): boolean {
+// Estructura mínima que necesitan los filtros de texto/categoría/régimen —
+// tanto `FilaResumen` (carga inicial) como `FilaTarifario` (detalle bajo
+// demanda) la cumplen, así que `coincideFiltro` sirve para las dos sin
+// duplicar la función.
+type FilaFiltrableTexto = {
+  hotel_nombre: string | null;
+  paquete_nombre: string | null;
+  servicio_nombre?: string | null;
+  categoria: string | null;
+  regimen: string | null;
+};
+
+function coincideFiltro(f: FilaFiltrableTexto, q: string, fCat: string, fReg: string): boolean {
   if (q) {
     const hay = `${f.hotel_nombre ?? ""} ${f.paquete_nombre ?? ""} ${f.servicio_nombre ?? ""}`.toLowerCase();
     if (!hay.includes(q.toLowerCase())) return false;
@@ -183,6 +198,92 @@ function coincideFiltro(f: FilaTarifario, q: string, fCat: string, fReg: string)
   if (fCat && (f.categoria ?? "") !== fCat) return false;
   if (fReg && (f.regimen ?? "") !== fReg) return false;
   return true;
+}
+
+const MSG_ERROR_DETALLE_TABLA = "No fue posible cargar el detalle en este momento. Intenta nuevamente en unos segundos.";
+
+/**
+ * Detalle bajo demanda (Tier 2) para Vista tabla: `filas` (prop de
+ * `TarifarioPublic`, viene del resumen — sin niño/niño2/infante/escalas) solo
+ * alcanza para las listas de salidas/paquetes; la tabla pivotada de cada uno
+ * necesita la matriz completa. `clave` identifica QUÉ detalle corresponde
+ * (null = nada seleccionado todavía); cambia el detalle cuando cambia la
+ * clave, dedupe/cachea con `conCacheDetalle` (mismo módulo que usa
+ * VistaBooking.tsx para "Ver opciones"), y descarta una respuesta que ya no
+ * corresponde a la clave vigente (misma guarda contra carreras).
+ */
+// ⚠️ Estado asincrónico (revisión posterior, defecto "react-hooks/set-state-
+// in-effect" — la ronda anterior toleraba este aviso porque eliminarlo con
+// el patrón oficial de React ["ajustar estado durante el render" con una
+// ref] introducía un error PEOR, `react-hooks/refs`. Esta ronda lo corrige
+// de verdad con un enfoque distinto, sin suprimir la regla): en vez de un
+// `setEstado({estado:"cargando"})` síncrono dentro del efecto (un side
+// effect que no sincroniza con nada externo — exactamente el antipatrón que
+// señala la regla), el resultado se guarda ASOCIADO a la "solicitud" que lo
+// produjo (`clave` + `intento`, la combinación exacta que identifica ESE
+// pedido concreto — dos reintentos de la misma clave son solicitudes
+// distintas). "Cargando" se DERIVA en cada render: si la solicitud vigente
+// (`clave` + `intento` actuales) no coincide con la solicitud del último
+// resultado guardado, todavía no hay nada que mostrar → cargando. El único
+// `setState` real queda donde pertenece: dentro de los callbacks async
+// (`.then()`/`.catch()`), disparados por un evento externo genuino (la
+// respuesta del servidor) — eso nunca dispara la regla.
+type ResultadoPorSolicitud<T> = { solicitud: string; estado: EstadoDetalle<T> };
+
+function useDetalleTabla(
+  clave: string | null,
+  cargar: () => Promise<{ ok: true; filas: FilaTarifario[] } | { ok: false; error: string }>
+): [EstadoDetalle<FilaTarifario> | null, () => void] {
+  // `intento` fuerza un reintento manual aunque la clave no haya cambiado —
+  // `conCacheDetalle` nunca cachea un fallo (se puede reintentar de verdad),
+  // pero el efecto solo vuelve a correr si alguna de sus dependencias cambia.
+  const [intento, setIntento] = useState(0);
+  const [resultado, setResultado] = useState<ResultadoPorSolicitud<FilaTarifario> | null>(null);
+  const solicitudRef = useRef<string | null>(null);
+  const solicitudActual = clave ? `${clave}#${intento}` : null;
+
+  useEffect(() => {
+    if (!clave) {
+      solicitudRef.current = null;
+      return;
+    }
+    const solicitud = `${clave}#${intento}`;
+    solicitudRef.current = solicitud;
+    conCacheDetalle(clave, cargar)
+      .then((r) => {
+        if (solicitudRef.current !== solicitud) return; // otra clave/reintento se disparó mientras tanto
+        setResultado({ solicitud, estado: r.ok ? { estado: "ok", filas: r.filas } : { estado: "error", mensaje: r.error } });
+      })
+      .catch(() => {
+        if (solicitudRef.current !== solicitud) return;
+        setResultado({ solicitud, estado: { estado: "error", mensaje: MSG_ERROR_DETALLE_TABLA } });
+      });
+    // Solo re-ejecuta cuando cambia la CLAVE (o el contador de reintento
+    // manual) — no cuando `cargar` cambia de identidad entre renders, mismo
+    // patrón ya usado en este archivo para `filasConCupo` (ver `PorSalida`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clave, intento]);
+
+  if (!solicitudActual) return [null, () => setIntento((n) => n + 1)];
+  if (resultado && resultado.solicitud === solicitudActual) return [resultado.estado, () => setIntento((n) => n + 1)];
+  return [{ estado: "cargando" }, () => setIntento((n) => n + 1)];
+}
+
+function EstadoCargaTabla({ detalle, onReintentar }: { detalle: EstadoDetalle<FilaTarifario> | null; onReintentar: () => void }) {
+  if (detalle === null || detalle.estado === "cargando") {
+    return <p className="py-8 text-center text-sm text-gray-400">Cargando tarifas…</p>;
+  }
+  if (detalle.estado === "error") {
+    return (
+      <div className="py-8 text-center">
+        <p className="text-sm text-red-500">{detalle.mensaje}</p>
+        <button type="button" onClick={onReintentar} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>
+          Reintentar
+        </button>
+      </div>
+    );
+  }
+  return null;
 }
 
 export function TarifarioPublic({
@@ -200,7 +301,11 @@ export function TarifarioPublic({
   incluidosPorPaquete = {},
   filasAddon = [],
 }: {
-  filas: FilaTarifario[];
+  // Carga inicial (Tier 1) — resumen, SIN expansión sintética (ver
+  // lib/tarifario/resumen.ts). `FilaTarifario` (matriz completa por
+  // acomodación) solo existe como resultado de una consulta de detalle bajo
+  // demanda (Tier 2, app/tarifario/detalle-actions.ts).
+  filas: FilaResumen[];
   programas?: ProgramaResumen[];
   puedeReservar?: boolean;
   cuposPorBloqueo?: Record<number, number>;
@@ -215,7 +320,7 @@ export function TarifarioPublic({
   // Add-ons de paquetes de hotel (bloqueo/porción), SIN el recorte que oculta
   // esas filas de la vitrina plana de Servicios — solo para ofrecerlos scoped
   // dentro del modal de su propio hotel en Vista Booking (ver VistaBooking.tsx).
-  filasAddon?: FilaTarifario[];
+  filasAddon?: FilaResumen[];
 }) {
   const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
   const [q, setQ] = useState("");
@@ -339,7 +444,7 @@ export function TarifarioPublic({
           ) : modulo === "porcion_terrestre" ? (
             <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : (
-            <PorServicios filas={filasFiltradas.filter((f) => f.modulo === "servicios")} puedeReservar={puedeReservar} />
+            <PorServicios q={q.trim()} fCat={fCat} fReg={fReg} puedeReservar={puedeReservar} />
           )}
         </>
       )}
@@ -352,9 +457,9 @@ export function TarifarioPublic({
 }
 
 // ── Módulo BLOQUEOS: elige una salida (ciclo aéreo) y ve los hoteles ───────
-function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number>; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
+function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaResumen[]; puedeReservar: boolean; cuposPorBloqueo?: Record<number, number>; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
   // Cupos de una salida (un bloqueo). undefined = desconocido (no ocultar).
-  const cuposDe = (f: FilaTarifario): number | undefined =>
+  const cuposDe = (f: FilaResumen): number | undefined =>
     f.bloqueo_id != null ? cuposPorBloqueo[f.bloqueo_id] : undefined;
   // Oculta salidas sin cupos disponibles (obs 4): solo si se conoce y es 0.
   const filasConCupo = useMemo(
@@ -362,7 +467,7 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
     [filas] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const salidas = useMemo(() => {
-    const map = new Map<string, FilaTarifario>();
+    const map = new Map<string, FilaResumen>();
     for (const f of filasConCupo) {
       const key = `${f.destino_nombre}|||${f.bloqueo_label}|||${f.fecha_ida}`;
       if (!map.has(key)) map.set(key, f);
@@ -372,13 +477,39 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
 
   const [sel, setSel] = useState(salidas[0]?.key ?? "");
   const selFila = salidas.find((s) => s.key === sel)?.f;
-  const rows = useMemo(
-    () =>
-      pivotar(
-        filasConCupo.filter((f) => `${f.destino_nombre}|||${f.bloqueo_label}|||${f.fecha_ida}` === sel)
-      ),
-    [filasConCupo, sel]
+
+  // Detalle bajo demanda (Tier 2) de la salida elegida — `selFila` viene del
+  // resumen (sin niño/niño2/infante); la tabla pivotada necesita la matriz
+  // completa de ESA salida puntual, pero SOLO de los combos que el filtro
+  // activo (búsqueda/categoría/régimen de TarifarioPublic — ya aplicado
+  // sobre `filas`, la prop de este componente) sigue dejando visibles.
+  //
+  // ⚠️ Ronda 6, ítem 2: la versión anterior acotaba SOLO por
+  // `bloqueo_id`/`salida_id` — un id estructural exacto, pero sin ningún
+  // filtro adicional — así que abrir una salida devolvía TODOS sus hoteles/
+  // categorías/regímenes aunque el usuario ya hubiera buscado por texto o
+  // elegido una categoría/régimen puntual. `combosSalida` (derivado de
+  // `filasConCupo`, que YA es exactamente el conjunto de combos visibles
+  // para el módulo bloqueo/dinámico bajo el filtro activo) se declara como
+  // alcance obligatorio — la Server Action lo usa como allow-list
+  // autoritativo (post-filtra, no solo un hint de consulta).
+  const moduloSel = selFila?.modulo as "bloqueo" | "dinamico" | undefined;
+  const combosSalida = useMemo(() => {
+    if (!selFila) return [];
+    return moduloSel === "bloqueo"
+      ? filasConCupo.filter((f) => f.bloqueo_id === selFila.bloqueo_id)
+      : filasConCupo.filter((f) => f.salida_id === selFila.salida_id);
+  }, [filasConCupo, moduloSel, selFila]);
+  const claveDetalle =
+    moduloSel === "bloqueo" && selFila?.bloqueo_id != null ? claveDetalleSalida("bloqueo", selFila.bloqueo_id, combosSalida)
+      : moduloSel === "dinamico" && selFila?.salida_id != null ? claveDetalleSalida("dinamico", selFila.salida_id, combosSalida)
+      : null;
+  const [detalle, reintentarDetalle] = useDetalleTabla(claveDetalle, () =>
+    moduloSel === "bloqueo"
+      ? obtenerDetalleSalida({ modulo: "bloqueo", bloqueoId: selFila!.bloqueo_id, combos: combosSalida })
+      : obtenerDetalleSalida({ modulo: "dinamico", salidaId: selFila!.salida_id, combos: combosSalida })
   );
+  const rows = useMemo(() => pivotar(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
 
   return (
     <div className="space-y-4">
@@ -421,16 +552,20 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
             {fmtFecha(selFila.fecha_ida)} → {fmtFecha(selFila.fecha_regreso)} ({selFila.noches} noches)
           </p>
         )}
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+        {detalle?.estado === "ok" ? (
+          <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+        ) : (
+          <EstadoCargaTabla detalle={detalle} onReintentar={reintentarDetalle} />
+        )}
       </div>
     </div>
   );
 }
 
 // ── Módulo PORCIÓN TERRESTRE: elige un paquete ─────────────────────────────
-function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaTarifario[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
+function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaResumen[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
   const paquetes = useMemo(() => {
-    const map = new Map<string, FilaTarifario>();
+    const map = new Map<string, FilaResumen>();
     for (const f of filas) {
       const key = `${f.paquete_nombre}`;
       if (!map.has(key)) map.set(key, f);
@@ -439,7 +574,24 @@ function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, 
   }, [filas]);
 
   const [sel, setSel] = useState(paquetes[0]?.key ?? "");
-  const rows = useMemo(() => pivotar(filas.filter((f) => `${f.paquete_nombre}` === sel)), [filas, sel]);
+  const selFila = paquetes.find((p) => p.key === sel)?.f;
+
+  // Detalle bajo demanda (Tier 2), acotado por `paquete_id` + el alcance de
+  // combos visible bajo el filtro activo (búsqueda/categoría/régimen) —
+  // mismo criterio y mismo defecto corregido que `PorSalida` (ronda 6, ítem
+  // 2): la versión anterior solo acotaba por `paquete_id`, así que abrir un
+  // paquete devolvía TODAS sus categorías/regímenes sin importar el filtro.
+  // `filas` (la prop de este componente) ya es exactamente el conjunto de
+  // combos porción-terrestre visibles bajo ese filtro.
+  const combosPaquete = useMemo(
+    () => (selFila?.paquete_id != null ? filas.filter((f) => f.paquete_id === selFila.paquete_id) : []),
+    [filas, selFila]
+  );
+  const claveDetalle = selFila?.paquete_id != null ? claveDetallePaquete(selFila.paquete_id, combosPaquete) : null;
+  const [detalle, reintentarDetalle] = useDetalleTabla(claveDetalle, () =>
+    obtenerDetallePaquete({ paqueteId: selFila!.paquete_id, combos: combosPaquete })
+  );
+  const rows = useMemo(() => pivotar(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
 
   return (
     <div className="space-y-4">
@@ -465,14 +617,29 @@ function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, 
         </div>
       </div>
       <div className="min-w-0">
-        <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+        {detalle?.estado === "ok" ? (
+          <TablaHorizontal rows={rows} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+        ) : (
+          <EstadoCargaTabla detalle={detalle} onReintentar={reintentarDetalle} />
+        )}
       </div>
     </div>
   );
 }
 
 // ── Módulo SERVICIOS ───────────────────────────────────────────────────────
-function PorServicios({ filas, puedeReservar = false }: { filas: FilaTarifario[]; puedeReservar?: boolean }) {
+// Detalle bajo demanda (Tier 2): el resumen no trae escalas por rango de pax
+// ni descripción/recargo por fila — se pide la matriz completa de servicios
+// UNA vez al entrar a esta pestaña (acotada por módulo=servicios, nunca junto
+// a la matriz de hoteles). `q`/`fCat`/`fReg` se aplican aquí, sobre las filas
+// YA completas — igual que antes se aplicaban sobre `filas` (el prop, ya
+// filtrado) antes de llegarle a este componente.
+function PorServicios({ q, fCat, fReg, puedeReservar = false }: { q: string; fCat: string; fReg: string; puedeReservar?: boolean }) {
+  const [detalle, reintentarDetalle] = useDetalleTabla("servicios", () => obtenerDetalleServicios());
+  if (detalle === null || detalle.estado === "cargando" || detalle.estado === "error") {
+    return <EstadoCargaTabla detalle={detalle} onReintentar={reintentarDetalle} />;
+  }
+  const filas = detalle.filas.filter((f) => coincideFiltro(f, q, fCat, fReg));
   if (!filas.length) return <p className="py-12 text-center text-sm text-gray-400">No hay servicios publicados.</p>;
   // Agrupa por paquete → servicio
   const porPaquete = new Map<number, FilaTarifario[]>();

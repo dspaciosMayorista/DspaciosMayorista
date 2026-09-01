@@ -565,7 +565,7 @@ test("wiring: la Server Action SIEMPRE manda modalidadMk explícito en p_regla (
 });
 
 test("wiring (ronda 2): la generación real del tarifario (getProgramaDetalle/pvpDeSalida) delega en calcularPvpAcomodacionSalida", () => {
-  assert.match(programasSrc, /import\s*\{[^}]*calcularPvpAcomodacionSalida[^}]*\}\s*from\s*"@\/lib\/calc\/programaPrecio"/, "lib/programas.ts no importa la función compartida");
+  assert.match(programasSrc, /import\s*\{[^}]*calcularPvpAcomodacionSalida[^}]*\}\s*from\s*"(?:\.\/calc\/programaPrecio\.ts|@\/lib\/calc\/programaPrecio)"/, "lib/programas.ts no importa la función compartida");
   const inicio = programasSrc.indexOf("const pvpDeSalida = ");
   const fin = programasSrc.indexOf("const salidas = (salidasRaw");
   const bloque = programasSrc.slice(inicio, fin);
@@ -643,7 +643,7 @@ test("wiring: calcularNetoProgramaConModalidad NUNCA reimplementa calcularNetoPr
 });
 
 test("wiring: lib/programas.ts re-exporta pvpPrograma/PvpOpciones de lib/calc/programaPrecio.ts, no los reimplementa", () => {
-  assert.match(programasSrc, /export\s*\{\s*pvpPrograma,\s*type PvpOpciones\s*\}\s*from\s*"@\/lib\/calc\/programaPrecio"/, "lib/programas.ts no re-exporta pvpPrograma/PvpOpciones desde el módulo compartido");
+  assert.match(programasSrc, /export\s*\{\s*pvpPrograma,\s*type PvpOpciones\s*\}\s*from\s*"(?:\.\/calc\/programaPrecio\.ts|@\/lib\/calc\/programaPrecio)"/, "lib/programas.ts no re-exporta pvpPrograma/PvpOpciones desde el módulo compartido");
   assert.doesNotMatch(programasSrc, /export function pvpPrograma\(/, "lib/programas.ts volvió a definir pvpPrograma localmente — riesgo de fórmula duplicada, y el runner de pruebas no podría importarla");
 });
 

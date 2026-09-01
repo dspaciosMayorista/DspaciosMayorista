@@ -163,3 +163,122 @@ export function elevarEstadoFlujo(estado: EstadoFlujo, nivel: "error" | "parcial
 export function resultadoTotal(estado: EstadoFlujo, ok: boolean): ResultadoEtapa {
   return estado.peor ?? (ok ? "ok" : "rechazado");
 }
+
+// ── Diagnóstico de carga de página (incidente de ~13s en /dashboard/reservar,
+// /dashboard/tarifario y /tarifario) ────────────────────────────────────────
+// `registrarEtapa()` deja un número (duración) + una clasificación fija
+// (ok/error/...). El diagnóstico de estas tres rutas también necesita datos
+// estructurales SIN duración asociada — filas/páginas recibidas, cantidad de
+// consultas a Supabase hechas en una etapa, tamaño aproximado del payload
+// serializado — que no encajan en el contrato de `registrarEtapa`. En vez de
+// forzarlos dentro de `resultado` (rompería el formato limpio que ya
+// consumen los otros flujos), este helper deja una línea hermana con el
+// mismo `flujo`/`flujo_id` para poder correlacionarla en los mismos logs.
+// Igual que el resto de este módulo: nunca recibe PII/payload de negocio,
+// solo hechos numéricos/estructurales — `detalle` es un string armado por el
+// caller con pares `campo=valor` (ej. `filas=842 paginas=1`).
+export function registrarDatoPagina(flujo: string, flujoId: string, etapa: string, detalle: string): void {
+  console.log(`[medicion-pagina] flujo=${flujo} flujo_id=${flujoId} etapa=${etapa} ${detalle}`);
+}
+
+// Contador por PROCESO (instancia de función serverless/isolate de Next.js),
+// no por navegador ni por usuario: sirve como proxy aproximado de "cold
+// start" (invocacion=1 en un proceso recién arrancado) vs. reutilización del
+// mismo proceso en pedidos posteriores — Next.js/Vercel pueden reutilizar el
+// mismo isolate entre requests de usuarios distintos, así que esto NO
+// distingue "primera visita de ESTE usuario" de "primera vez que este
+// proceso concreto atiende la ruta". Se documenta así de manera explícita
+// para no sobre-interpretar el número en los logs.
+const invocacionesPorFlujo = new Map<string, number>();
+export function siguienteInvocacionProceso(flujo: string): number {
+  const n = (invocacionesPorFlujo.get(flujo) ?? 0) + 1;
+  invocacionesPorFlujo.set(flujo, n);
+  return n;
+}
+
+// Cronómetro para Server Components (revisión posterior: `react-hooks/purity`
+// —parte del linter de React Compiler que trae `eslint-config-next/core-web-
+// vitals` en Next 16— marca CUALQUIER llamada directa a `performance.now()`/
+// `Math.round()` dentro del cuerpo de una función que retorna JSX como
+// "impura durante el render", sin distinguir un Server Component (async, sin
+// interactividad, sin re-render del lado del cliente) de un Client Component
+// real. La regla analiza el cuerpo de la función-componente misma, no las
+// funciones que esta LLAMA — así que envolver ambas llamadas (marca de
+// inicio + cálculo del elapsed) en un helper de este módulo (no es un
+// componente: no retorna JSX, nombre en minúscula) saca el problema del
+// alcance de la regla sin desactivarla. Mismo resultado que antes
+// (`Math.round(performance.now() - _t0)`), solo que la resta y el redondeo
+// quedan aquí en vez de en el cuerpo de cada page.tsx.
+export function iniciarCronometro(): () => number {
+  const inicio = performance.now();
+  return () => Math.round(performance.now() - inicio);
+}
+
+// ⚠️ ESTIMACIÓN SOLO DE PROPS, NO DEL PAYLOAD RSC REAL (revisión posterior,
+// defecto "TAMAÑO RSC" confirmado): esta función serializa el objeto de
+// props con JSON.stringify y mide esos bytes — es una aproximación del
+// tamaño de los DATOS, útil para comparar entre rutas/despliegues, pero NO
+// es el tamaño real de lo que React Server Components transmite al
+// navegador. El wire format de RSC (Flight) no es JSON: usa su propio
+// formato con referencias, streaming por chunks y deduplicación de
+// estructuras repetidas — puede ser bastante más chico (o más grande, si
+// hay overhead de framing) que el JSON.stringify equivalente. Cualquier
+// reporte que use este número debe decir "estimación JSON de props", nunca
+// "tamaño de la respuesta"/"tamaño RSC". Nunca se registra el contenido,
+// solo el conteo de bytes.
+export function tamanoAproximadoBytes(valor: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(valor) ?? "", "utf8");
+  } catch {
+    return -1;
+  }
+}
+
+// ── Costo de la propia instrumentación (revisión posterior — defecto
+// "COSTO DE LA PROPIA INSTRUMENTACIÓN" confirmado) ──────────────────────────
+// `tamanoAproximadoBytes()` serializa con JSON.stringify — para el objeto
+// `datos` de Vista Booking (puede traer >1000 filas + varios diccionarios
+// auxiliares) esa serialización NO es gratis, y antes de esta corrección
+// varias páginas la invocaban dos veces para el MISMO valor (una vez para
+// loguearlo agrupado con "programas", otra vez sola) — el doble costo
+// ocurría en CADA request, permanentemente, solo para diagnosticar. Reglas
+// desde esta ronda:
+//   1) cada valor se serializa COMO MÁXIMO UNA VEZ por request — el caller
+//      guarda el resultado en una constante y la reutiliza en todas las
+//      líneas de log que la necesiten (nunca volver a llamar esta función
+//      con el mismo valor);
+//   2) la propia estimación queda DETRÁS de una variable de entorno de
+//      diagnóstico (`DIAGNOSTICO_MEDIR_PAYLOAD=1`) — sin ella, no se
+//      serializa nada y el costo es cero; encenderla es una decisión
+//      explícita para una sesión de diagnóstico puntual, no el default;
+//   3) se mide también cuánto tarda la propia estimación (`msEstimacion`),
+//      para poder ver en los logs si la "ayuda" de diagnóstico se volvió
+//      parte del problema.
+// `performance.now()` es seguro aquí: este módulo no es un Server Component
+// (no retorna JSX), así que `react-hooks/purity` no lo marca como impuro.
+const DIAGNOSTICO_MEDIR_PAYLOAD = process.env.DIAGNOSTICO_MEDIR_PAYLOAD === "1";
+
+export type EstimacionPayload = { bytes: number; msEstimacion: number };
+
+/**
+ * Estima el tamaño (bytes UTF-8, ver advertencia de `tamanoAproximadoBytes`)
+ * de `valor` SOLO si `DIAGNOSTICO_MEDIR_PAYLOAD=1` está activo en el
+ * entorno — de lo contrario devuelve `null` sin tocar `valor` en absoluto
+ * (ni siquiera intenta serializarlo). Llamar UNA vez por valor distinto y
+ * reutilizar el resultado.
+ */
+export function medirPayloadSiHabilitado(valor: unknown): EstimacionPayload | null {
+  if (!DIAGNOSTICO_MEDIR_PAYLOAD) return null;
+  const inicio = performance.now();
+  const bytes = tamanoAproximadoBytes(valor);
+  const msEstimacion = Math.round(performance.now() - inicio);
+  return { bytes, msEstimacion };
+}
+
+// Texto listo para insertar en el `detalle` de `registrarDatoPagina()` —
+// evita que cada page.tsx repita el mismo `?? "omitido"`/formato.
+export function textoEstimacionPayload(estimacion: EstimacionPayload | null): string {
+  return estimacion
+    ? `payload_bytes_estimado=${estimacion.bytes} estimacion_ms=${estimacion.msEstimacion}`
+    : "payload_bytes_estimado=omitido(DIAGNOSTICO_MEDIR_PAYLOAD no activo)";
+}
