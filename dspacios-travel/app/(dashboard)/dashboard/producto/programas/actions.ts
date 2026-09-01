@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
 import { salidaTieneContenido, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
-import { validarReglaComisionable } from "@/lib/calc/programaPrecio";
+import { validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -293,6 +293,10 @@ export type ReglaComisionableInput = {
   modo: "pct" | "impuesto" | "ninguno";
   valor: number | null;
   pctComision: number | null;
+  // Migración 161 — qué fórmula aplica el markup del programa sobre el
+  // resultado de la calculadora (ver lib/calc/programaPrecio.ts). Vive a
+  // nivel de programa, igual que modo/valor/pctComision de arriba.
+  modalidadMk: ModalidadMk;
 };
 
 // Guarda la regla comisionable del programa y reemplaza sus salidas en una
@@ -306,6 +310,16 @@ export async function guardarSalidas(
   salidas: SalidaInput[],
   regla: ReglaComisionableInput
 ): Promise<Result> {
+  // Frontera `unknown`: `regla` llega de una Server Action invocable desde el
+  // navegador con cualquier body — `modalidadMk` puede traer CUALQUIER cosa
+  // (undefined, un string arbitrario, un número, etc.). Se rechaza ANTES de
+  // pasarla a `validarReglaComisionable` (que asume el tipo ya angosto) — un
+  // valor manipulado nunca debe llegar a la RPC con la esperanza de que el
+  // CHECK de BD lo atrape solo; el mensaje de error acá es legible, el de BD no.
+  const modalidadMkRaw: unknown = (regla as { modalidadMk?: unknown })?.modalidadMk;
+  if (!esModalidadMkValida(modalidadMkRaw)) {
+    return { ok: false, error: "La modalidad de MK no es válida." };
+  }
   // Repite la validación del navegador: no depender solo de él. `num()` ya
   // convierte "" / no-numérico a null, igual que `parseNumOrNull` del lado
   // cliente — los dos deben llegar exactamente a los mismos null/número.
@@ -316,6 +330,7 @@ export async function guardarSalidas(
     modo: regla.modo,
     valor: valorNum,
     pctComision: pctComisionNum,
+    modalidadMk: modalidadMkRaw,
   });
   if (!validacion.ok) return { ok: false, error: validacion.error };
 
@@ -348,6 +363,26 @@ export async function guardarSalidas(
     return { ok: false, error: "Las tarifas del proveedor no pueden ser negativas." };
   }
 
+  // (Revisión PR #277, defecto 3) Con la regla ACTIVA, cada tarifa cargada se
+  // valida individualmente contra la modalidad de MK: `validarTarifaModalidad`
+  // es un no-op (ok:true) salvo con la modalidad NUEVA, así que los datos/
+  // programas en modalidad histórica JAMÁS quedan bloqueados por esta regla —
+  // solo aplica a `'base_neta_impuestos_al_final'`, donde una base neta
+  // negativa es una configuración inválida (ver el comentario del archivo
+  // fuente) que debe rechazarse ANTES del RPC, no convertirse en un PVP
+  // fabricado en 0. Con la regla apagada no se valida nada (mismo criterio
+  // que `validarReglaComisionable`: inactiva no impone restricciones).
+  if (regla.activa) {
+    const reglaNum = { modo: regla.modo, valor: valorNum ?? 0, pctComision: pctComisionNum ?? 0 };
+    for (const f of filas) {
+      for (const tarifa of [f.tarifa_sencilla, f.tarifa_doble, f.tarifa_triple, f.tarifa_multiple]) {
+        if (tarifa == null) continue;
+        const v = validarTarifaModalidad(tarifa, reglaNum, modalidadMkRaw);
+        if (!v.ok) return { ok: false, error: v.error };
+      }
+    }
+  }
+
   const { error } = await sb.rpc("guardar_programa_salidas", {
     p_programa_id: programaId,
     p_regla: {
@@ -355,6 +390,7 @@ export async function guardarSalidas(
       modo: regla.modo,
       valor: valorNum,
       pctComision: pctComisionNum,
+      modalidadMk: modalidadMkRaw,
     },
     p_salidas: filas,
   });
