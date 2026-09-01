@@ -143,6 +143,131 @@ export function calcularNetoProgramaConModalidad(
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// PVP a partir del neto — MOVIDO desde lib/programas.ts (revisión de PR #277,
+// defecto 5): las pruebas numéricas necesitan ejecutar el MOTOR REAL, no una
+// copia textual mantenida a mano. `lib/programas.ts` importa `@/types/
+// database` (alias de tsconfig que el runner de pruebas, `node --test
+// --experimental-strip-types`, no resuelve), así que la parte puramente
+// matemática se traslada a ESTE archivo — que ya no tiene ningún import y ya
+// se probaba directo — y `lib/programas.ts` re-exporta desde acá (ningún
+// call-site del resto del código cambia: siguen importando `pvpPrograma`/
+// `PvpOpciones` de "@/lib/programas" como siempre).
+// ─────────────────────────────────────────────────────────────────────────
+
+export type PvpOpciones = {
+  pctMk: number;            // markup del proveedor (ej. 0.25)
+  asistenciaDia?: number;   // asistencia médica por pax y por día
+  dias?: number | null;     // días del programa
+  pctFee?: number;          // fee bancario / TDC (ej. 0.03)
+  moneda?: string | null;   // COP (default) redondea al mil por encima; USD, al dólar por encima
+};
+
+/** Redondeo del PVP hacia arriba: en COP al millar, en USD al entero. */
+export function redondearPvp(valor: number, moneda: string | null | undefined): number {
+  return moneda === "USD" ? Math.ceil(valor) : Math.ceil(valor / 1000) * 1000;
+}
+
+/**
+ * PVP de venta de un programa por persona, a partir del neto del proveedor:
+ *   1) costo total:   base = neto + asistencia_dia × días
+ *   2) markup:        sub  = base / (1 - mk)
+ *   3) monto sin MK:  sub += montoSinMarkup   (0 salvo modalidad nueva, migración 161)
+ *   4) fee bancario:  pvp  = sub  / (1 - fee)
+ *
+ * La asistencia médica es un COSTO NETO más (lo que se le paga al proveedor de
+ * la asistencia), así que entra ANTES del markup y se marca igual que el resto.
+ *
+ * ⚠️ Cambio de criterio (ago-2026, pedido del dueño). Antes la asistencia se
+ * sumaba DESPUÉS del markup:
+ *     sub = neto/(1-mk);  sub += asis × días;  pvp = sub/(1-fee)
+ * es decir, se le trasladaba al cliente a precio de costo y no dejaba margen.
+ * El PVP de los programas con asistencia SUBE con este cambio: la diferencia es
+ * exactamente el margen que antes no se cobraba sobre ella.
+ *
+ * `montoSinMarkup` (migración 161, § modalidad de MK de la tarifa comisionable
+ * del proveedor, `calcularNetoProgramaConModalidad` arriba en este archivo):
+ * un monto que se suma DESPUÉS del paso 2 (nunca recibe markup) pero ANTES del
+ * fee bancario (el fee SÍ sigue aplicando sobre el total — es proporcional al
+ * precio final de venta, no al costo interno). Con el valor por defecto (0), el
+ * paso 3 es un no-op y la fórmula queda IDÉNTICA a la de siempre — todo caller
+ * que no lo pase (todos, salvo el nuevo camino de "tarifa comisionable" en
+ * modalidad nueva) conserva el comportamiento histórico byte a byte.
+ *
+ * ⚠️ Guarda de `neto <= 0` (revisión PR #277, defecto 3). El guard original
+ * devolvía 0 para CUALQUIER `neto` no positivo, sin mirar `montoSinMarkup` —
+ * eso estaba bien mientras `montoSinMarkup` siempre era 0 (nada que "salvar"),
+ * pero con la modalidad nueva `netoParaMarkup` puede ser EXACTAMENTE 0 con un
+ * `montoSinMarkup` (impuestos) positivo — ej. modo 'pct' con valor=100%: toda
+ * la tarifa es "impuesto", nada es comisionable, `baseNeta=0`. La fórmula
+ * confirmada por el dueño (`Venta = baseNeta/divisorMK + impuestos`) para ese
+ * caso da `Venta = impuestos` — un precio real, no cero. El guard viejo
+ * devolvía 0 y SE COMÍA el impuesto en silencio. Ahora: `neto < 0` (config
+ * corrupta — debió rechazarse ANTES de llegar acá, ver `validarTarifaModalidad`
+ * abajo) sigue devolviendo 0 sin fabricar un precio con un componente negativo;
+ * `neto === 0` con `montoSinMarkup === 0` (todo caller histórico) sigue
+ * devolviendo 0 byte a byte, igual que siempre (columna fantasma sin costo ni
+ * impuesto = sin precio); solo `neto === 0` CON `montoSinMarkup > 0` deja de
+ * devolver 0 y calcula la fórmula completa.
+ */
+export function pvpPrograma(neto: number, opt: PvpOpciones, montoSinMarkup = 0): number {
+  const n = Number(neto);
+  const extra = Number(montoSinMarkup) || 0;
+  if (!Number.isFinite(n) || n < 0) return 0;
+  if (n === 0 && extra <= 0) return 0;
+
+  const mk = Number(opt.pctMk) || 0;
+  const fee = Number(opt.pctFee) || 0;
+  const asis = Number(opt.asistenciaDia) || 0;
+  const dias = Math.max(0, Number(opt.dias) || 0);
+
+  // La asistencia se suma al neto ANTES de marcar: es un costo, no un recargo.
+  let sub = n + asis * dias;
+  if (mk > 0 && mk < 1) sub = sub / (1 - mk);
+  sub += extra;
+  if (fee > 0 && fee < 1) sub = sub / (1 - fee);
+  return redondearPvp(sub, opt.moneda);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Validación de UNA tarifa de proveedor contra la modalidad de MK (revisión
+// PR #277, defecto 3). `baseNeta < 0` es matemáticamente posible (ej. modo
+// 'impuesto' con un impuesto mayor a la tarifa y % de comisión < 100) y, para
+// la modalidad NUEVA, produciría un `netoParaMarkup` negativo — la fórmula
+// confirmada (`Venta = baseNeta/divisorMK + impuestos`) no tiene un resultado
+// sensato ahí (una base "negativa" dividida por el divisor de MK no es un
+// costo real). Es una CONFIGURACIÓN INVÁLIDA, no un caso a tolerar con un PVP
+// fabricado en 0 — se rechaza ANTES de guardar, en las 3 fronteras (navegador,
+// Server Action, RPC).
+//
+// ⚠️ Solo aplica a la modalidad 'base_neta_impuestos_al_final'. La modalidad
+// 'historica' NUNCA usó `baseNeta` (usa `neto = tarifa - comision` directo, que
+// no tiene este problema — `neto` nunca fue negativo mientras `pctComision`
+// esté en [0,100], que ya lo garantiza `validarReglaComisionable`) — datos/
+// programas históricos jamás pasan por esta regla nueva, ni se bloquean por
+// ella retroactivamente.
+// ─────────────────────────────────────────────────────────────────────────
+
+export function validarTarifaModalidad(
+  tarifa: number,
+  regla: { modo: ModoBaseComisionable; valor: number; pctComision: number },
+  modalidadMk: ModalidadMk
+): ValidacionRegla {
+  if (modalidadMk !== "base_neta_impuestos_al_final") return { ok: true };
+  const t = Number(tarifa);
+  // Sin tarifa (o <= 0) no hay nada que validar — mismo criterio que el resto
+  // del módulo: "una acomodación sin tarifa del proveedor no se toca".
+  if (!Number.isFinite(t) || t <= 0) return { ok: true };
+  const c = calcularNetoProgramaConModalidad({ tarifa: t, modo: regla.modo, valor: regla.valor, pctComision: regla.pctComision }, modalidadMk);
+  if (c.baseNeta < 0) {
+    return {
+      ok: false,
+      error: `La tarifa ${t} produce una base neta negativa (${c.baseNeta}) en la modalidad "MK sobre base neta; impuestos al final" — revisa el % de comisión, el % a restar o el impuesto configurado.`,
+    };
+  }
+  return { ok: true };
+}
+
 export function recalcularNetosPorTarifa(
   tarifas: TarifasProveedorSalida,
   regla: { modo: ModoBaseComisionable; valor: number; pctComision: number }

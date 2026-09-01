@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
 import { salidaTieneContenido, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
-import { validarReglaComisionable, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
+import { validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -361,6 +361,26 @@ export async function guardarSalidas(
   // de propagar el texto crudo de la violación del constraint.
   if (tieneTarifaNegativa(filas)) {
     return { ok: false, error: "Las tarifas del proveedor no pueden ser negativas." };
+  }
+
+  // (Revisión PR #277, defecto 3) Con la regla ACTIVA, cada tarifa cargada se
+  // valida individualmente contra la modalidad de MK: `validarTarifaModalidad`
+  // es un no-op (ok:true) salvo con la modalidad NUEVA, así que los datos/
+  // programas en modalidad histórica JAMÁS quedan bloqueados por esta regla —
+  // solo aplica a `'base_neta_impuestos_al_final'`, donde una base neta
+  // negativa es una configuración inválida (ver el comentario del archivo
+  // fuente) que debe rechazarse ANTES del RPC, no convertirse en un PVP
+  // fabricado en 0. Con la regla apagada no se valida nada (mismo criterio
+  // que `validarReglaComisionable`: inactiva no impone restricciones).
+  if (regla.activa) {
+    const reglaNum = { modo: regla.modo, valor: valorNum ?? 0, pctComision: pctComisionNum ?? 0 };
+    for (const f of filas) {
+      for (const tarifa of [f.tarifa_sencilla, f.tarifa_doble, f.tarifa_triple, f.tarifa_multiple]) {
+        if (tarifa == null) continue;
+        const v = validarTarifaModalidad(tarifa, reglaNum, modalidadMkRaw);
+        if (!v.ok) return { ok: false, error: v.error };
+      }
+    }
   }
 
   const { error } = await sb.rpc("guardar_programa_salidas", {

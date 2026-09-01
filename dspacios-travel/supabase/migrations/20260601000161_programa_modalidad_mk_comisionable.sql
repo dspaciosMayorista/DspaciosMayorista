@@ -81,11 +81,66 @@
 --   mismo ANTES del UPDATE (mensaje claro, `raise exception`) — el CHECK
 --   queda como respaldo si algún día se llama la tabla/función directo con un
 --   valor manipulado.
+--
+-- ⚠️ REVISIÓN PR #277 (defectos 1/3/4) — 4 correcciones sobre la primera
+-- versión de esta migración, NUNCA ejecutada en producción:
+--   1) `guardar_programa_salidas()` ya NO cae a 'historica' cuando el
+--      payload no trae `modalidadMk` — eso permitía que un cliente VIEJO
+--      (desplegado antes de esta migración) PISARA en silencio la modalidad
+--      nueva de un programa ya configurado. Ahora: clave AUSENTE → conserva
+--      la modalidad YA GUARDADA (select antes del update); clave PRESENTE
+--      (incl. `""`/`null` explícitos) → se valida SIEMPRE, fail-closed —
+--      nunca se ensancha una cadena vacía a 'historica'. Solo un programa
+--      NUEVO (insertado sin pasar por esta función) recibe 'historica', vía
+--      el DEFAULT de la columna.
+--   2) Antes de la (misma transacción del) UPDATE+DELETE+INSERT, valida CADA
+--      tarifa de `p_salidas` contra `base_neta >= 0` cuando la regla está
+--      activa Y la modalidad es la nueva — misma fórmula que
+--      `calcularNetoProgramaConModalidad()` (nunca reimplementada distinto).
+--      Nunca toca/bloquea datos en modalidad histórica.
+--   3) ACL: además de `revoke ... from public`, revoke explícito `from anon`
+--      (defensa en profundidad, verificado con `has_function_privilege`).
+--   4) El chequeo de existencia del CHECK ahora filtra por
+--      `conrelid = 'public.programas'::regclass` (no solo `conname`), y la
+--      columna se AUDITA (tipo/nullable/default) antes del `add column if
+--      not exists` — si ya existe con una definición distinta, la migración
+--      ABORTA con un mensaje claro en vez de aceptarla en silencio.
 -- ───────────────────────────────────────────────────────────────────────────
 
 begin;
 
 -- ── 1. Programa: discriminante de modalidad de MK ───────────────────────────
+-- Auditoría de la columna (revisión PR #277, defecto 4): `add column if not
+-- exists` es silencioso si la columna YA existe con OTRA definición (deploy
+-- parcial anterior, o alguien la creó a mano) — seguiría sin el tipo/default/
+-- nullability correctos sin que nada lo notara. Se audita ANTES de tocarla:
+-- si existe pero no coincide EXACTO, aborta con mensaje claro — nunca la
+-- sobreescribe en automático.
+do $$
+declare
+  v_data_type text;
+  v_is_nullable text;
+  v_column_default text;
+begin
+  select data_type, is_nullable, column_default
+    into v_data_type, v_is_nullable, v_column_default
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'programas' and column_name = 'regla_comisionable_modalidad_mk';
+
+  if found then
+    if v_data_type is distinct from 'text'
+       or v_is_nullable is distinct from 'NO'
+       or v_column_default is distinct from '''historica''::text' then
+      raise exception
+        'ABORTADO: public.programas.regla_comisionable_modalidad_mk ya existe pero con un '
+        'tipo/nullability/default distinto al esperado (tipo=%, nullable=%, default=%). '
+        'Revisa manualmente antes de continuar — esta migración nunca sobreescribe una '
+        'columna preexistente en automático.',
+        v_data_type, v_is_nullable, v_column_default;
+    end if;
+  end if;
+end $$;
+
 alter table public.programas
   add column if not exists regla_comisionable_modalidad_mk text not null default 'historica';
 
@@ -94,6 +149,7 @@ begin
   if not exists (
     select 1 from pg_constraint
      where conname = 'programas_regla_comisionable_modalidad_mk_check'
+       and conrelid = 'public.programas'::regclass
   ) then
     alter table public.programas
       add constraint programas_regla_comisionable_modalidad_mk_check
@@ -108,7 +164,8 @@ comment on column public.programas.regla_comisionable_modalidad_mk is
   'calcularNetoProgramaConModalidad() en lib/calc/programaPrecio.ts. Migración 161.';
 
 -- ── 2. Guardado atómico — misma función, misma firma, ahora también lee/
---    persiste la modalidad dentro de la MISMA transacción ──────────────────
+--    persiste la modalidad y valida cada tarifa dentro de la MISMA
+--    transacción ──────────────────────────────────────────────────────────
 create or replace function public.guardar_programa_salidas(
   p_programa_id bigint,
   p_regla       jsonb,
@@ -123,6 +180,9 @@ declare
   v_valor         numeric;
   v_pct_comision  numeric;
   v_modalidad_mk  text;
+  v_base          numeric;
+  v_base_neta     numeric;
+  r               record;
 begin
   if not exists (select 1 from public.programas where id = p_programa_id) then
     raise exception 'El programa % no existe.', p_programa_id;
@@ -132,12 +192,27 @@ begin
   v_modo         := coalesce(p_regla->>'modo', 'pct');
   v_valor        := nullif(p_regla->>'valor', '')::numeric;
   v_pct_comision := nullif(p_regla->>'pctComision', '')::numeric;
-  -- Default explícito 'historica' cuando el llamador no manda el campo (ej.
-  -- un cliente desplegado ANTES de esta migración, durante el rollout) — el
-  -- comportamiento no cambia para nadie que todavía no conozca el campo
-  -- nuevo. Nunca se acepta un valor fuera del enum: se valida ANTES del
-  -- UPDATE, igual criterio que el resto de esta función.
-  v_modalidad_mk := coalesce(nullif(p_regla->>'modalidadMk', ''), 'historica');
+
+  -- Modalidad de MK (revisión PR #277, defecto 1). Clave AUSENTE del payload
+  -- (`p_regla ? 'modalidadMk'` = false — un cliente desplegado ANTES de esta
+  -- migración nunca la manda) → conserva la modalidad YA GUARDADA del
+  -- programa, nunca la pisa con 'historica': el default 'historica' es SOLO
+  -- para un programa NUEVO (columna recién creada por el `alter table` de
+  -- arriba), no para pisar en silencio un programa ya configurado en la
+  -- modalidad nueva. Clave PRESENTE → se valida SIEMPRE, fail-closed: una
+  -- cadena vacía o un `null` explícitos NUNCA se ensanchan a 'historica' —
+  -- son una señal de bug/payload manipulado, no "no dijo nada", y caen en el
+  -- mismo `raise exception` que cualquier otro valor fuera del enum.
+  if p_regla ? 'modalidadMk' then
+    v_modalidad_mk := p_regla->>'modalidadMk';
+  else
+    select regla_comisionable_modalidad_mk into v_modalidad_mk
+      from public.programas where id = p_programa_id;
+  end if;
+
+  if v_modalidad_mk is null or v_modalidad_mk not in ('historica', 'base_neta_impuestos_al_final') then
+    raise exception 'La modalidad de MK debe ser "historica" o "base_neta_impuestos_al_final".';
+  end if;
 
   -- Misma regla que `validarReglaComisionable` (lib/calc/programaPrecio.ts),
   -- repetida acá para que quien llame la función DIRECTO (sin pasar por
@@ -161,12 +236,54 @@ begin
     -- modo 'ninguno': el valor no participa del cálculo, no se exige.
   end if;
 
-  -- La modalidad de MK se valida SIEMPRE (incondicional, igual que el CHECK
-  -- de abajo) — nunca depende de si la regla está activa: un valor fuera del
-  -- enum es inválido esté prendida o apagada la regla, mismo criterio que
-  -- `regla_comisionable_modo`.
-  if v_modalidad_mk not in ('historica', 'base_neta_impuestos_al_final') then
-    raise exception 'La modalidad de MK debe ser "historica" o "base_neta_impuestos_al_final".';
+  -- (Revisión PR #277, defecto 3) Con la regla ACTIVA y la modalidad NUEVA,
+  -- cada tarifa de proveedor cargada en `p_salidas` debe producir una base
+  -- neta >= 0. `base_neta = base_comisionable * (1 - pct_comision/100)` —
+  -- álgebra idéntica a `baseComisionable - comision` (donde
+  -- `comision = baseComisionable * pct_comision/100`), MISMA fórmula que
+  -- `calcularNetoProgramaConModalidad()` (lib/calc/programaPrecio.ts), nunca
+  -- reimplementada distinto. Una base neta negativa es una CONFIGURACIÓN
+  -- INVÁLIDA (ej. un impuesto mayor a la tarifa con % de comisión bajo): se
+  -- rechaza ANTES del DELETE/INSERT (última barrera — navegador y Server
+  -- Action ya la repiten antes de llegar acá). Con la regla apagada o en
+  -- modalidad histórica NO se valida nada acá: los datos/programas en
+  -- modalidad histórica jamás quedan bloqueados por esta regla nueva.
+  if v_activa and v_modalidad_mk = 'base_neta_impuestos_al_final' then
+    for r in
+      select x.orden, x.tarifa_sencilla, x.tarifa_doble, x.tarifa_triple, x.tarifa_multiple
+      from jsonb_to_recordset(coalesce(p_salidas, '[]'::jsonb)) as x(
+        orden int, tarifa_sencilla numeric, tarifa_doble numeric, tarifa_triple numeric, tarifa_multiple numeric
+      )
+    loop
+      if r.tarifa_sencilla is not null and r.tarifa_sencilla > 0 then
+        v_base := case v_modo when 'pct' then r.tarifa_sencilla * (1 - v_valor/100) when 'impuesto' then r.tarifa_sencilla - v_valor else r.tarifa_sencilla end;
+        v_base_neta := v_base * (1 - v_pct_comision/100);
+        if v_base_neta < 0 then
+          raise exception 'La tarifa sencilla (%) de la salida (orden %) produce una base neta negativa en la modalidad "MK sobre base neta; impuestos al final".', r.tarifa_sencilla, r.orden;
+        end if;
+      end if;
+      if r.tarifa_doble is not null and r.tarifa_doble > 0 then
+        v_base := case v_modo when 'pct' then r.tarifa_doble * (1 - v_valor/100) when 'impuesto' then r.tarifa_doble - v_valor else r.tarifa_doble end;
+        v_base_neta := v_base * (1 - v_pct_comision/100);
+        if v_base_neta < 0 then
+          raise exception 'La tarifa doble (%) de la salida (orden %) produce una base neta negativa en la modalidad "MK sobre base neta; impuestos al final".', r.tarifa_doble, r.orden;
+        end if;
+      end if;
+      if r.tarifa_triple is not null and r.tarifa_triple > 0 then
+        v_base := case v_modo when 'pct' then r.tarifa_triple * (1 - v_valor/100) when 'impuesto' then r.tarifa_triple - v_valor else r.tarifa_triple end;
+        v_base_neta := v_base * (1 - v_pct_comision/100);
+        if v_base_neta < 0 then
+          raise exception 'La tarifa triple (%) de la salida (orden %) produce una base neta negativa en la modalidad "MK sobre base neta; impuestos al final".', r.tarifa_triple, r.orden;
+        end if;
+      end if;
+      if r.tarifa_multiple is not null and r.tarifa_multiple > 0 then
+        v_base := case v_modo when 'pct' then r.tarifa_multiple * (1 - v_valor/100) when 'impuesto' then r.tarifa_multiple - v_valor else r.tarifa_multiple end;
+        v_base_neta := v_base * (1 - v_pct_comision/100);
+        if v_base_neta < 0 then
+          raise exception 'La tarifa múltiple (%) de la salida (orden %) produce una base neta negativa en la modalidad "MK sobre base neta; impuestos al final".', r.tarifa_multiple, r.orden;
+        end if;
+      end if;
+    end loop;
   end if;
 
   update public.programas
@@ -220,10 +337,19 @@ $$;
 comment on function public.guardar_programa_salidas(bigint, jsonb, jsonb) is
   'Reemplaza la regla comisionable (incl. modalidad de MK, migración 161) de un programa y '
   'sus salidas en una sola transacción (UPDATE + DELETE + INSERT) — si el INSERT falla, el '
-  'DELETE también se revierte y el programa no queda sin salidas. SIN security definer: corre '
+  'DELETE también se revierte y el programa no queda sin salidas. Clave `modalidadMk` AUSENTE '
+  'en p_regla conserva la modalidad ya guardada (nunca la pisa con el default); presente pero '
+  'vacía/nula/inválida se rechaza (fail-closed). Con la regla activa y la modalidad nueva, '
+  'valida cada tarifa contra base_neta >= 0 antes de escribir. SIN security definer: corre '
   'con el rol del que llama, sujeto a las mismas policies de programas/programa_salidas.';
 
+-- ACL (revisión PR #277, defecto 4): `revoke ... from public` ya revoca lo
+-- que PUBLIC concede a TODOS los roles (incl. `anon`), pero se agrega el
+-- revoke explícito a `anon` como defensa en profundidad — verificado con
+-- `has_function_privilege` en el script de pruebas (anon=false, PUBLIC=false,
+-- authenticated=true).
 revoke all on function public.guardar_programa_salidas(bigint, jsonb, jsonb) from public;
+revoke all on function public.guardar_programa_salidas(bigint, jsonb, jsonb) from anon;
 grant execute on function public.guardar_programa_salidas(bigint, jsonb, jsonb) to authenticated;
 
 commit;

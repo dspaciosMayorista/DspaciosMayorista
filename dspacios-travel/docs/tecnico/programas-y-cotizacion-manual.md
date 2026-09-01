@@ -90,7 +90,41 @@ servidor, `getProgramaDetalle` al generar/leer el tarifario real) a partir de lo
 `calcularNetoPrograma` (nunca reimplementa su fórmula) y devuelve `{netoParaMarkup,
 montoSinMarkup}`, el par que consume el 3er parámetro (opcional, default 0 = no-op) que
 `pvpPrograma` ganó para esto — con modalidad `'historica'` o sin pasarlo, el comportamiento de
-`pvpPrograma` es byte a byte idéntico al de antes de la 161.
+`pvpPrograma` es byte a byte idéntico al de antes de la 161. `pvpPrograma`/`PvpOpciones` viven en
+`lib/calc/programaPrecio.ts` (módulo sin imports con alias `@/`, para que `node:test` pueda
+ejecutarlo directo); `lib/programas.ts` los re-exporta, así que ningún call-site del resto de la
+app cambia.
+
+**Revisión PR #277 (defectos 1/2/3/4, antes de fusionar; la 161 nunca se corrió en producción).**
+- **Payload sin `modalidadMk` ya NO pisa la modalidad.** `guardar_programa_salidas()`: si
+  `p_regla` no trae la clave, CONSERVA la modalidad ya guardada del programa (select antes del
+  update) — antes caía a `'historica'` en silencio, lo que un cliente desplegado antes de la
+  161 podía usar para revertir sin querer un programa ya configurado en la modalidad nueva. Con
+  la clave PRESENTE (incl. `""`/`null` explícitos) se valida SIEMPRE, fail-closed. Solo un
+  programa NUEVO recibe `'historica'`, vía el DEFAULT de la columna.
+- **`getProgramasResumen` (tarjeta "Desde" del tarifario) ahora es consciente de la modalidad.**
+  Antes leía el `neto` mínimo persistido sin mirar la regla/modalidad — podía mostrar un precio
+  distinto al de `getProgramaDetalle` para la misma salida. Ahora selecciona
+  `regla_comisionable*`/`tarifa_*` y, por candidato (fila de `programa_precios` o
+  salida×acomodación), calcula su PVP con `calcularNetoProgramaConModalidad` cuando aplica —
+  tomando el mínimo sobre los PVP resultantes, no sobre los netos crudos (`montoSinMarkup` varía
+  por tarifa). Las filas que no califican (modo categoría siempre; sin tarifa, regla apagada, o
+  modalidad histórica) usan EXACTAMENTE el camino de siempre — matemáticamente equivalente byte
+  a byte gracias a que `pvpPrograma` es monótona no-decreciente en `neto` para un `opt` fijo.
+- **Base neta negativa/cero.** `pvpPrograma` ya no devuelve 0 cuando `neto === 0` con
+  `montoSinMarkup > 0` (ej. modo `'pct'` con `valor=100%`: toda la tarifa es "impuesto",
+  `baseNeta=0` → `Venta = impuestos`, no 0 — el guard viejo se comía el impuesto). Una `baseNeta`
+  NEGATIVA es una configuración inválida: nueva función pura `validarTarifaModalidad(tarifa,
+  regla, modalidadMk)` (no-op fuera de la modalidad nueva — los datos históricos JAMÁS quedan
+  bloqueados) la rechaza en las 3 fronteras — `SalidasEditor` (bloquea el guardado),
+  `guardarSalidas` (Server Action, solo si `regla.activa`), y el propio RPC (antes del
+  DELETE/INSERT, misma fórmula `base_neta = base_comisionable * (1 - pct_comision/100)`).
+- **ACL/CHECK endurecidos.** `revoke ... from anon` explícito (además de `from public`) sobre
+  `guardar_programa_salidas`, verificado con `has_function_privilege`. El chequeo de existencia
+  del CHECK de la columna ahora filtra por `conrelid = 'public.programas'::regclass` (no solo
+  `conname`). La columna se AUDITA (tipo/nullable/default vía `information_schema.columns`)
+  antes del `add column if not exists` — aborta con mensaje claro si ya existiera con una
+  definición distinta, en vez de aceptarla en silencio.
 
 ### 1.3 Modelo de datos
 

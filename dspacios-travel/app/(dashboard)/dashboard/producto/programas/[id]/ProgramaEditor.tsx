@@ -31,6 +31,7 @@ import {
   calcularNetoProgramaConModalidad,
   recalcularNetosPorTarifa,
   validarReglaComisionable,
+  validarTarifaModalidad,
   parseNumOrNull,
   esModalidadMkValida,
   type ModoBaseComisionable,
@@ -759,6 +760,31 @@ function SalidasEditor({
       })()
     : null;
 
+  // (Revisión PR #277, defecto 3) Con la regla activa y la modalidad NUEVA,
+  // cada tarifa cargada (de CUALQUIER fila/acomodación) debe producir una
+  // base neta >= 0 — `validarTarifaModalidad` es un no-op en modalidad
+  // histórica o con la regla apagada, así que esto nunca bloquea datos
+  // preexistentes. Solo corre si `reglaInvalidaError` ya pasó (una regla
+  // inválida se corrige primero, antes de poder evaluar tarifas puntuales).
+  const tarifaInvalidaError =
+    reglaOn && !reglaInvalidaError
+      ? (() => {
+          const regla = reglaActualValida();
+          if (!regla) return null;
+          for (const r of rows) {
+            for (const tarifaKey of ["tarifaSencilla", "tarifaDoble", "tarifaTriple", "tarifaMultiple"] as const) {
+              const tarifaStr = r[tarifaKey];
+              if (tarifaStr === "") continue;
+              const tarifa = Number(tarifaStr);
+              if (!Number.isFinite(tarifa) || tarifa <= 0) continue;
+              const v = validarTarifaModalidad(tarifa, regla, modalidadMk);
+              if (!v.ok) return v.error;
+            }
+          }
+          return null;
+        })()
+      : null;
+
   // Tercer elemento = campo de tarifa comisionable de esa acomodación (null = no aplica, ej. Niño).
   const COLS: [keyof SalidaState, string, (keyof SalidaState) | null][] = [
     ["netoSencilla", "Sencilla", "tarifaSencilla"],
@@ -817,6 +843,9 @@ function SalidasEditor({
             <p className="w-full text-xs text-gray-400">Abajo aparece un campo de <b>tarifa del proveedor</b> junto a Sencilla/Doble/Triple/Múltiple — cada una calcula su propio neto por separado. Niño se ajusta directo.</p>
             {reglaInvalidaError && (
               <p className="w-full text-xs font-medium text-red-600">{reglaInvalidaError} No se recalcula ni se puede guardar hasta corregirlo.</p>
+            )}
+            {tarifaInvalidaError && (
+              <p className="w-full text-xs font-medium text-red-600">{tarifaInvalidaError} No se puede guardar hasta corregirlo.</p>
             )}
           </div>
         )}
@@ -896,7 +925,9 @@ function SalidasEditor({
         onSave={() =>
           reglaInvalidaError
             ? Promise.resolve({ ok: false, error: reglaInvalidaError })
-            : guardarSalidas(programaId, payload, reglaPayload)
+            : tarifaInvalidaError
+              ? Promise.resolve({ ok: false, error: tarifaInvalidaError })
+              : guardarSalidas(programaId, payload, reglaPayload)
         }
       />
     </div>
