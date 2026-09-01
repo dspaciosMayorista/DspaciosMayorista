@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import type { ProgramaResumen } from "@/app/tarifario/TarifarioPublic";
 import {
-  calcularNetoProgramaConModalidad,
+  calcularPvpAcomodacionSalida,
   type ModoBaseComisionable,
   type ModalidadMk,
 } from "@/lib/calc/programaPrecio";
@@ -152,19 +152,27 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
 
     for (const [netoCol, tarifaCol] of ACOM_RESUMEN) {
       const neto = s[netoCol] as number | null;
-      if (neto == null || !(Number(neto) > 0)) continue;
-      if (reglaActiva && modalidadMk === "base_neta_impuestos_al_final" && tarifaCol) {
-        const tarifa = s[tarifaCol] as number | null;
-        if (tarifa != null && Number.isFinite(tarifa) && tarifa > 0) {
-          const calc = calcularNetoProgramaConModalidad(
-            { tarifa, modo: reglaModo, valor: reglaValor, pctComision: reglaPctComision },
-            modalidadMk
-          );
-          setMinPvp(s.programa_id, pvpPrograma(calc.netoParaMarkup, optNueva, calc.montoSinMarkup));
-          continue;
-        }
-      }
-      setMinPvp(s.programa_id, pvpPrograma(Number(neto), optVieja));
+      const tarifa = tarifaCol ? (s[tarifaCol] as number | null) : null;
+      // La FÓRMULA (¿histórica o modalidad nueva?) la decide ÚNICAMENTE
+      // `calcularPvpAcomodacionSalida` — lo único que se resuelve acá es
+      // CUÁL `opt` (con qué `dias`) pasarle, porque este resumen usa un
+      // fallback de días distinto entre el camino histórico y el nuevo (ver
+      // comentario de la función arriba). Se repite la MISMA condición de
+      // calificación que usa la función pura internamente — no es la
+      // fórmula, es solo "cuál de los dos `opt` corresponde".
+      const calificaNueva =
+        reglaActiva && modalidadMk === "base_neta_impuestos_al_final" && tarifa != null && Number.isFinite(Number(tarifa)) && Number(tarifa) > 0;
+      const pvp = calcularPvpAcomodacionSalida({
+        neto,
+        tarifa,
+        reglaActiva,
+        reglaModo,
+        reglaValor,
+        reglaPctComision,
+        modalidadMk,
+        opt: calificaNueva ? optNueva : optVieja,
+      });
+      if (pvp != null) setMinPvp(s.programa_id, pvp);
     }
   }
 
@@ -305,19 +313,20 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
     neto: number,
     optSalida: PvpOpciones,
     tarifaCol: ("tarifa_sencilla" | "tarifa_doble" | "tarifa_triple" | "tarifa_multiple") | null
-  ): number => {
-    if (reglaActiva && modalidadMk === "base_neta_impuestos_al_final" && tarifaCol) {
-      const tarifa = s[tarifaCol] as number | null;
-      if (tarifa != null && Number.isFinite(tarifa) && tarifa > 0) {
-        const calc = calcularNetoProgramaConModalidad(
-          { tarifa, modo: reglaModo, valor: reglaValor, pctComision: reglaPctComision },
-          modalidadMk
-        );
-        return pvpPrograma(calc.netoParaMarkup, optSalida, calc.montoSinMarkup);
-      }
-    }
-    return pvpPrograma(neto, optSalida);
-  };
+  ): number =>
+    // `neto` ya viene validado > 0 por el único call-site (más abajo), así
+    // que `calcularPvpAcomodacionSalida` nunca devuelve null acá — el `?? 0`
+    // es defensivo, no un camino real.
+    calcularPvpAcomodacionSalida({
+      neto,
+      tarifa: tarifaCol ? (s[tarifaCol] as number | null) : null,
+      reglaActiva,
+      reglaModo,
+      reglaValor,
+      reglaPctComision,
+      modalidadMk,
+      opt: optSalida,
+    }) ?? 0;
   const salidas = (salidasRaw ?? []).map((s) => {
     const optSalida: PvpOpciones = { ...pvpOpt, dias: s.noches != null ? s.noches : prow.dias };
     return {

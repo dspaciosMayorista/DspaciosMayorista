@@ -28,7 +28,7 @@ import { parsearPrograma } from "@/lib/programasImport";
 import { pvpPrograma, type PvpOpciones } from "@/lib/programas";
 import {
   calcularNetoPrograma,
-  calcularNetoProgramaConModalidad,
+  calcularPvpAcomodacionSalida,
   recalcularNetosPorTarifa,
   validarReglaComisionable,
   validarTarifaModalidad,
@@ -700,24 +700,33 @@ function SalidasEditor({
   // por `desgloseTarifa`/`aplicarTarifaAcom` de arriba — eso no cambia, es el
   // "costo real" y se guarda igual sin importar la modalidad de MK). Lo que
   // cambia es CÓMO se reparte ese costo entre "se marca con MK" y "se suma
-  // después" — recalculado aquí, en vivo, con `calcularNetoProgramaConModalidad`
-  // sobre la TARIFA + regla actuales (nunca se reconstruye desde el neto ya
-  // redondeado: la regla puede tener más precisión que el neto mostrado).
-  // `tarifaKey` es null para Niño (no tiene concepto de tarifa comisionable) →
-  // siempre usa el camino histórico, sea cual sea la modalidad elegida.
+  // después" — decidido por `calcularPvpAcomodacionSalida` (lib/calc/
+  // programaPrecio.ts), la MISMA función pura que usan `getProgramasResumen`
+  // y `getProgramaDetalle`/`pvpDeSalida` (revisión PR #277, ronda 2 — antes
+  // esta decisión estaba reescrita a mano en los 3 lugares). `tarifaKey` es
+  // null para Niño (no tiene concepto de tarifa comisionable) → la función
+  // compartida siempre usa el camino histórico para esa acomodación.
+  //
+  // `reglaActiva` que se le pasa NO es `reglaOn` a secas: solo cuenta como
+  // "activa" si además la regla actual (modo/valor/%comisión) es VÁLIDA
+  // (`reglaActualValida()`) — mientras el usuario escribe un valor a medio
+  // corregir, se muestra el último PVP histórico en vez de calcular con
+  // datos incompletos (mismo comportamiento de siempre, ahora expresado como
+  // el flag `reglaActiva` que entiende la función compartida).
   const pvpDe = (r: SalidaState, neto: string, tarifaKey: (keyof SalidaState) | null) => {
-    if (r.bs || !(Number(neto) > 0)) return null;
+    if (r.bs) return null;
     const dias = r.noches !== "" ? Number(r.noches) : pvpOpt.dias;
-    if (reglaOn && tarifaKey && modalidadMk === "base_neta_impuestos_al_final") {
-      const regla = reglaActualValida();
-      const tarifaStr = r[tarifaKey] as string;
-      const tarifa = Number(tarifaStr);
-      if (regla && tarifaStr !== "" && Number.isFinite(tarifa) && tarifa > 0) {
-        const c = calcularNetoProgramaConModalidad({ tarifa, ...regla }, modalidadMk);
-        return pvpPrograma(c.netoParaMarkup, { ...pvpOpt, dias }, c.montoSinMarkup);
-      }
-    }
-    return pvpPrograma(Number(neto), { ...pvpOpt, dias });
+    const regla = reglaOn ? reglaActualValida() : null;
+    return calcularPvpAcomodacionSalida({
+      neto: neto === "" ? null : Number(neto),
+      tarifa: tarifaKey ? (r[tarifaKey] === "" ? null : Number(r[tarifaKey] as string)) : null,
+      reglaActiva: regla != null,
+      reglaModo: regla?.modo ?? "pct",
+      reglaValor: regla?.valor ?? 0,
+      reglaPctComision: regla?.pctComision ?? 0,
+      modalidadMk,
+      opt: { ...pvpOpt, dias },
+    });
   };
 
   const payload: SalidaInput[] = rows.map((r) => ({

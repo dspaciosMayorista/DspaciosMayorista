@@ -105,6 +105,38 @@
 --      columna se AUDITA (tipo/nullable/default) antes del `add column if
 --      not exists` — si ya existe con una definición distinta, la migración
 --      ABORTA con un mensaje claro en vez de aceptarla en silencio.
+--
+-- ⚠️ REVISIÓN PR #277, RONDA 2 — 3 correcciones más sobre la versión de la
+-- ronda 1 (`da875e3d`/`2defd814`), NUNCA ejecutada en producción:
+--   5) CONCURRENCIA: `guardar_programa_salidas()` ahora toma
+--      `SELECT ... FOR UPDATE` sobre la fila de `programas` como PRIMER paso
+--      (antes de leer/validar/escribir nada) — sin esto, dos guardados
+--      concurrentes del mismo programa podían intercalar su UPDATE+DELETE+
+--      INSERT y dejar una mezcla de regla de un guardado con salidas del
+--      otro. La lectura de la modalidad cuando `modalidadMk` está AUSENTE del
+--      payload ahora se hace de la fila YA BLOQUEADA (nunca con un SELECT
+--      aparte antes de esperar el lock) — así un guardado con payload viejo
+--      que gana el lock DESPUÉS de otro hereda la modalidad que ese otro
+--      dejó (o la que ya había, si el otro hizo ROLLBACK), nunca una lectura
+--      obsoleta. El lock es por FILA: programas distintos no se bloquean
+--      entre sí. Prueba real con dos conexiones psql:
+--      `supabase/scripts/pruebas/test_concurrencia_modalidad_mk.sh`.
+--   6) PARIDAD NUMÉRICA JS↔Postgres: el RPC YA calculaba `base_neta` con
+--      aritmética `numeric` EXACTA (Postgres nunca redondea internamente
+--      estos pasos) — el desajuste estaba del lado JS, donde
+--      `validarTarifaModalidad()` comparaba contra el `baseNeta` YA
+--      REDONDEADO a 2 decimales de `calcularNetoProgramaConModalidad()`. Una
+--      base apenas negativa (ej. -0,0036) podía redondear a `-0` (que en JS
+--      no es `< 0`) y pasar el navegador/Server Action mientras este RPC, con
+--      la MISMA tarifa, la rechazaba. Corregido del lado JS
+--      (`baseNetaExacta()`, lib/calc/programaPrecio.ts) — este RPC no cambió
+--      su aritmética porque ya era la exacta.
+--   7) El chequeo del CHECK (punto 4) ahora también compara
+--      `pg_get_constraintdef()` contra la expresión esperada cuando el
+--      constraint YA existe (mismo `conname`+`conrelid`) — antes, si existía
+--      pero con OTRA expresión (ej. de un intento de deploy manual previo),
+--      se omitía la creación en silencio sin comprobar que la definición
+--      coincidiera. Ahora aborta con mensaje claro si difiere.
 -- ───────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -144,16 +176,38 @@ end $$;
 alter table public.programas
   add column if not exists regla_comisionable_modalidad_mk text not null default 'historica';
 
+-- Auditoría del CHECK (revisión PR #277, ronda 2, punto 7): antes, si un
+-- constraint con el mismo nombre YA existía atado a public.programas, se
+-- omitía la creación sin comprobar que su EXPRESIÓN fuera la esperada — un
+-- constraint homónimo con otra definición (ej. un intento de deploy manual
+-- previo con una lista distinta) hubiera pasado desapercibido, dejando la
+-- columna sin la validación real que el resto de esta migración asume. Se
+-- compara `pg_get_constraintdef()` contra el texto EXACTO que Postgres
+-- normaliza para `check (col in ('a','b'))` (reescribe `IN` como `= ANY
+-- (ARRAY[...])`, verificado empíricamente — no es un texto inventado) y
+-- aborta si difiere, en vez de aceptarlo en silencio.
 do $$
+declare
+  v_def text;
+  v_esperado constant text :=
+    'CHECK ((regla_comisionable_modalidad_mk = ANY (ARRAY[''historica''::text, ''base_neta_impuestos_al_final''::text])))';
 begin
-  if not exists (
-    select 1 from pg_constraint
-     where conname = 'programas_regla_comisionable_modalidad_mk_check'
-       and conrelid = 'public.programas'::regclass
-  ) then
+  select pg_get_constraintdef(oid) into v_def
+    from pg_constraint
+   where conname = 'programas_regla_comisionable_modalidad_mk_check'
+     and conrelid = 'public.programas'::regclass;
+
+  if not found then
     alter table public.programas
       add constraint programas_regla_comisionable_modalidad_mk_check
       check (regla_comisionable_modalidad_mk in ('historica', 'base_neta_impuestos_al_final'));
+  elsif v_def is distinct from v_esperado then
+    raise exception
+      'ABORTADO: ya existe un CHECK "programas_regla_comisionable_modalidad_mk_check" en '
+      'public.programas pero con una definición distinta a la esperada. '
+      'Encontrado: %. Esperado: %. Revisa manualmente antes de continuar — esta migración '
+      'nunca reemplaza un CHECK preexistente en automático.',
+      v_def, v_esperado;
   end if;
 end $$;
 
@@ -182,9 +236,23 @@ declare
   v_modalidad_mk  text;
   v_base          numeric;
   v_base_neta     numeric;
+  v_programa      record;
   r               record;
 begin
-  if not exists (select 1 from public.programas where id = p_programa_id) then
+  -- Bloqueo de fila (revisión PR #277, defecto de concurrencia). Sin esto,
+  -- dos guardados concurrentes del MISMO programa podían intercalar su
+  -- UPDATE + DELETE + INSERT — cada sentencia individual es atómica, pero la
+  -- SECUENCIA de las tres no lo era entre transacciones: el UPDATE de una
+  -- podía quedar seguido del DELETE+INSERT de la otra, mezclando la regla de
+  -- un guardado con las salidas del otro. `SELECT ... FOR UPDATE` toma el
+  -- lock de la fila de `programas` ANTES de leer/validar/escribir nada —
+  -- cualquier otra invocación de esta función sobre el MISMO `p_programa_id`
+  -- espera hasta que esta transacción termine (commit o rollback); sobre un
+  -- `p_programa_id` DISTINTO no se bloquean entre sí (el lock es por fila).
+  -- La comprobación de existencia usa el mismo SELECT (FOUND la resuelve),
+  -- no una consulta aparte sin lock.
+  select * into v_programa from public.programas where id = p_programa_id for update;
+  if not found then
     raise exception 'El programa % no existe.', p_programa_id;
   end if;
 
@@ -203,11 +271,16 @@ begin
   -- cadena vacía o un `null` explícitos NUNCA se ensanchan a 'historica' —
   -- son una señal de bug/payload manipulado, no "no dijo nada", y caen en el
   -- mismo `raise exception` que cualquier otro valor fuera del enum.
+  --
+  -- ⚠️ Se lee de `v_programa` (la fila YA BLOQUEADA arriba), NUNCA con un
+  -- SELECT aparte: si dos guardados con payload viejo compiten por el mismo
+  -- programa, el que espera el lock debe heredar la modalidad que el OTRO
+  -- dejó al terminar (commit) — o la que ya había si el otro hizo rollback
+  -- — nunca una lectura tomada ANTES de esperar el lock (obsoleta).
   if p_regla ? 'modalidadMk' then
     v_modalidad_mk := p_regla->>'modalidadMk';
   else
-    select regla_comisionable_modalidad_mk into v_modalidad_mk
-      from public.programas where id = p_programa_id;
+    v_modalidad_mk := v_programa.regla_comisionable_modalidad_mk;
   end if;
 
   if v_modalidad_mk is null or v_modalidad_mk not in ('historica', 'base_neta_impuestos_al_final') then

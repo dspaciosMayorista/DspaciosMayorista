@@ -48,10 +48,19 @@
 --      regla nueva nunca bloquea datos/programas en modalidad histórica.
 --   10. ACL: `anon` y `PUBLIC` NO tienen EXECUTE sobre la función;
 --      `authenticated` SÍ (`has_function_privilege`).
---   11. Apply→rollback→reapply: se prueba en un script aparte (ver
+--   11. (Revisión PR #277, ronda 2) Paridad numérica JS↔Postgres: tarifa=100,
+--      impuesto=100.004, comisión=10% → base neta EXACTA -0,0036 (negativa) —
+--      el RPC la rechaza porque calcula con aritmética `numeric` exacta, sin
+--      redondear ningún paso intermedio (el mismo caso que antes podía
+--      "pasar" del lado JS si se comparaba contra el baseNeta ya redondeado a
+--      2 decimales — ver `baseNetaExacta()` en lib/calc/programaPrecio.ts).
+--   12. Apply→rollback→reapply: se prueba en un script aparte (ver
 --      supabase/scripts/pruebas — no se repite acá porque exige DROP/CREATE
 --      de objetos reales, incompatible con "de solo lectura, termina en
---      ROLLBACK" de este archivo).
+--      ROLLBACK" de este archivo). La CONCURRENCIA (SELECT ... FOR UPDATE)
+--      se prueba con dos conexiones psql reales en
+--      supabase/scripts/pruebas/test_concurrencia_modalidad_mk.sh — tampoco
+--      cabe acá (este archivo corre en UNA sola sesión/transacción).
 -- ─────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -341,6 +350,47 @@ begin
   );
 end $$;
 
+-- ── Caso 11 (revisión PR #277, ronda 2): paridad numérica JS↔Postgres —
+-- tarifa=100, impuesto=100.004, comisión=10%. Con aritmética REDONDEADA a 2
+-- decimales antes de comparar (el bug que corrigió `baseNetaExacta` del lado
+-- JS), esto pasaba como "no negativo". Postgres SIEMPRE calculó exacto (sin
+-- redondear ningún paso) — este caso confirma que el RPC rechaza esta
+-- combinación, coincidiendo con lo que ahora también rechaza
+-- `validarTarifaModalidad` (lib/calc/programaPrecio.ts) del lado JS. ───────
+do $$
+declare
+  v_lanzo boolean := false;
+  v_msg text;
+begin
+  begin
+    perform public.guardar_programa_salidas(
+      9201::bigint,
+      '{"activa": true, "modo": "impuesto", "valor": 100.004, "pctComision": 10, "modalidadMk": "base_neta_impuestos_al_final"}'::jsonb,
+      '[{"orden":0,"etiqueta":"S paridad numerica","tarifa_sencilla":100}]'::jsonb
+    );
+  exception
+    when others then
+      v_lanzo := true;
+      get stacked diagnostics v_msg = message_text;
+      if sqlstate is distinct from 'P0001' or v_msg !~ 'base neta negativa' then
+        raise exception 'ASSERT FALLÓ (caso 11): error inesperado sqlstate=% mensaje=%', sqlstate, v_msg;
+      end if;
+  end;
+  if not v_lanzo then
+    raise exception 'ASSERT FALLÓ (caso 11): tarifa 100 con impuesto 100.004 (base neta exacta -0,0036) debía rechazarse — si esto pasa, el RPC dejó de usar aritmética exacta';
+  end if;
+end $$;
+do $$
+begin
+  -- El intento fallido no debió alterar la salida del caso 9 (tarifa_sencilla=100,
+  -- que casualmente coincide en valor con la tarifa de este caso, pero es la
+  -- MISMA fila sobreviviente — se confirma que sigue en modalidad historica).
+  perform pg_temp.assert_eq(
+    (select regla_comisionable_modalidad_mk from public.programas where id = 9201),
+    'historica', 'caso 11: el programa no debía cambiar tras el intento rechazado'
+  );
+end $$;
+
 reset role;
 select set_config('request.jwt.claims', null, true);
 
@@ -363,7 +413,7 @@ end $$;
 
 do $$
 begin
-  raise notice 'TODAS LAS PRUEBAS PASARON: test_programa_modalidad_mk.sql (10 casos + ACL, migración 161)';
+  raise notice 'TODAS LAS PRUEBAS PASARON: test_programa_modalidad_mk.sql (11 casos + ACL, migración 161)';
 end $$;
 
 rollback;

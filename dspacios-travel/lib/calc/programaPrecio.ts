@@ -230,6 +230,58 @@ export function pvpPrograma(neto: number, opt: PvpOpciones, montoSinMarkup = 0):
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// PVP de UNA acomodación de UNA salida — función pura compartida (revisión
+// PR #277, ronda 2, punto 3). Antes, la decisión "¿esta acomodación puntual
+// usa la modalidad nueva, o el camino histórico?" estaba DUPLICADA en 3
+// lugares (`getProgramaDetalle`/`pvpDeSalida`, `getProgramasResumen`, y
+// `SalidasEditor.pvpDe` del editor en vivo) — cada uno con su propio
+// `if (reglaActiva && modalidadMk === '...' && tarifa) {...} else {...}`
+// escrito por separado. Un cambio en la condición (ej. un nuevo requisito de
+// validación) tenía que replicarse a mano en los 3, con el riesgo real de
+// que alguno quedara desincronizado — que fue exactamente el defecto 2 de la
+// primera ronda de revisión (getProgramasResumen no aplicaba la modalidad).
+//
+// Esta función es la ÚNICA que decide esa rama, para los 3 consumidores. NO
+// decide el `dias` a usar (`opt.dias` llega YA RESUELTO por el llamador) —
+// `getProgramaDetalle` y `getProgramasResumen` usan fallbacks de `dias`
+// distintos entre sí para el camino histórico (una asimetría PREEXISTENTE a
+// este PR, documentada en `getProgramasResumen`, que no se toca acá para no
+// cambiar en silencio los números ya mostrados de "Desde") — eso sigue
+// siendo responsabilidad de cada llamador, exactamente como antes.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type CalcPvpAcomodacionInput = {
+  /** Neto persistido de esta acomodación (camino histórico). null/no positivo = nada que mostrar. */
+  neto: number | null;
+  /** Tarifa de proveedor de ESTA acomodación puntual, si el proveedor la cargó. null = no aplica/no cargada. */
+  tarifa: number | null;
+  reglaActiva: boolean;
+  reglaModo: ModoBaseComisionable;
+  reglaValor: number;
+  reglaPctComision: number;
+  modalidadMk: ModalidadMk;
+  /** Opciones de pvpPrograma YA resueltas por el llamador (incl. `dias`). */
+  opt: PvpOpciones;
+};
+
+export function calcularPvpAcomodacionSalida(input: CalcPvpAcomodacionInput): number | null {
+  const neto = input.neto;
+  if (neto == null || !(Number(neto) > 0)) return null;
+
+  if (input.reglaActiva && input.modalidadMk === "base_neta_impuestos_al_final" && input.tarifa != null) {
+    const tarifa = Number(input.tarifa);
+    if (Number.isFinite(tarifa) && tarifa > 0) {
+      const calc = calcularNetoProgramaConModalidad(
+        { tarifa, modo: input.reglaModo, valor: input.reglaValor, pctComision: input.reglaPctComision },
+        input.modalidadMk
+      );
+      return pvpPrograma(calc.netoParaMarkup, input.opt, calc.montoSinMarkup);
+    }
+  }
+  return pvpPrograma(Number(neto), input.opt);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Validación de UNA tarifa de proveedor contra la modalidad de MK (revisión
 // PR #277, defecto 3). `baseNeta < 0` es matemáticamente posible (ej. modo
 // 'impuesto' con un impuesto mayor a la tarifa y % de comisión < 100) y, para
@@ -246,7 +298,48 @@ export function pvpPrograma(neto: number, opt: PvpOpciones, montoSinMarkup = 0):
 // esté en [0,100], que ya lo garantiza `validarReglaComisionable`) — datos/
 // programas históricos jamás pasan por esta regla nueva, ni se bloquean por
 // ella retroactivamente.
+//
+// ⚠️ Paridad numérica JS↔Postgres (revisión PR #277, ronda 2). El RPC
+// (`guardar_programa_salidas`, migración 161) calcula
+// `base_neta = base_comisionable * (1 - pct_comision/100)` con aritmética
+// `numeric` EXACTA — nunca redondea antes de comparar contra 0. En cambio
+// `calcularNetoProgramaConModalidad()` redondea `baseNeta` a 2 decimales
+// (`r2`, pensado para el PVP MOSTRADO, no para decidir válido/inválido) —
+// una base apenas negativa (ej. -0,0036) podía redondear a `-0` (que en JS
+// NO es `< 0`) y pasar el chequeo del navegador/Server Action mientras el
+// RPC, con el mismo dato, la rechazaba: los tres puntos daban veredictos
+// distintos para la MISMA tarifa. `baseNetaExacta()` recalcula la base SIN
+// redondear ningún paso intermedio — exactamente la misma secuencia de
+// operaciones que el RPC — y es la que usa `validarTarifaModalidad` para la
+// comparación `< 0`. El redondeo a 2 decimales (`r2`) se conserva SOLO para
+// los valores monetarios que sí se muestran/persisten
+// (`calcularNetoProgramaConModalidad`, sin cambios) — nunca para decidir si
+// una configuración es válida. No se introduce ninguna tolerancia/margen: la
+// frontera sigue siendo `< 0` exacto en los tres lugares.
 // ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Base neta SIN redondear ningún paso intermedio — misma secuencia exacta de
+ * operaciones que el RPC en Postgres (`numeric`, sin pérdida de precisión
+ * para estos valores). Uso EXCLUSIVO: la comparación `< 0` de
+ * `validarTarifaModalidad`. Para el valor mostrado/persistido, usar
+ * `calcularNetoProgramaConModalidad` (que sí redondea a 2 decimales).
+ */
+export function baseNetaExacta(
+  tarifa: number,
+  regla: { modo: ModoBaseComisionable; valor: number; pctComision: number }
+): number {
+  const t = Number(tarifa) || 0;
+  const valor = Number(regla.valor) || 0;
+  const pctCom = Number(regla.pctComision) || 0;
+
+  let base = t;
+  if (regla.modo === "pct") base = t * (1 - valor / 100);
+  else if (regla.modo === "impuesto") base = t - valor;
+  // 'ninguno' → base = tarifa, igual que calcularNetoPrograma.
+
+  return base * (1 - pctCom / 100);
+}
 
 export function validarTarifaModalidad(
   tarifa: number,
@@ -258,11 +351,14 @@ export function validarTarifaModalidad(
   // Sin tarifa (o <= 0) no hay nada que validar — mismo criterio que el resto
   // del módulo: "una acomodación sin tarifa del proveedor no se toca".
   if (!Number.isFinite(t) || t <= 0) return { ok: true };
-  const c = calcularNetoProgramaConModalidad({ tarifa: t, modo: regla.modo, valor: regla.valor, pctComision: regla.pctComision }, modalidadMk);
-  if (c.baseNeta < 0) {
+  const exacta = baseNetaExacta(t, regla);
+  if (exacta < 0) {
+    // El valor MOSTRADO en el mensaje sí se redondea (legibilidad) — la
+    // DECISIÓN ya se tomó arriba con `exacta`, sin redondear.
+    const mostrado = Math.round(exacta * 100) / 100;
     return {
       ok: false,
-      error: `La tarifa ${t} produce una base neta negativa (${c.baseNeta}) en la modalidad "MK sobre base neta; impuestos al final" — revisa el % de comisión, el % a restar o el impuesto configurado.`,
+      error: `La tarifa ${t} produce una base neta negativa (${mostrado}) en la modalidad "MK sobre base neta; impuestos al final" — revisa el % de comisión, el % a restar o el impuesto configurado.`,
     };
   }
   return { ok: true };

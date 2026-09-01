@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 import {
   calcularNetoPrograma,
   calcularNetoProgramaConModalidad,
+  calcularPvpAcomodacionSalida,
+  baseNetaExacta,
   validarReglaComisionable,
   validarTarifaModalidad,
   esModalidadMkValida,
@@ -315,6 +317,194 @@ test("la comisión sigue siendo SIEMPRE porcentual (pctComision) en los 3 modos,
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+// § Paridad numérica JS↔Postgres (revisión PR #277, ronda 2, defecto 2).
+// `baseNetaExacta` es la que decide `validarTarifaModalidad` — sin redondear
+// ningún paso intermedio, igual que el RPC (aritmética `numeric` exacta).
+// ───────────────────────────────────────────────────────────────────────────
+
+test("baseNetaExacta: caso discriminador (tarifa=100, impuesto=100.004, comisión=10%) — antes divergía entre JS (redondeado) y Postgres (exacto)", () => {
+  const regla = { modo: "impuesto" as const, valor: 100.004, pctComision: 10 };
+  // Con r2 (redondeo a 2 decimales) ANTES de comparar: baseComisionable =
+  // r2(100 - 100.004) = r2(-0.004) = -0 (JS: Math.round(-0.4)/100 = -0);
+  // comision = r2(-0 * 0.1) = -0; baseNeta = r2(-0 - (-0)) = 0 → NO es < 0,
+  // pasaba el chequeo viejo. Con la aritmética EXACTA: baseComisionable =
+  // -0.004 (sin redondear); baseNeta = -0.004 * (1-0.10) = -0.0036 → SÍ es
+  // < 0 — coincide con lo que calcula Postgres (`numeric`, exacto).
+  const exacta = baseNetaExacta(100, regla);
+  assert.ok(exacta < 0, `baseNetaExacta debía ser negativa (obtenido: ${exacta})`);
+  assert.ok(Math.abs(exacta - -0.0036) < 1e-9, `baseNetaExacta debía ser -0.0036 (obtenido: ${exacta})`);
+
+  // La versión REDONDEADA (calcularNetoProgramaConModalidad, para el VALOR
+  // MOSTRADO, no para decidir) efectivamente da 0 o -0 — demuestra por qué
+  // compararla directo habría sido el bug.
+  const c = calcularNetoProgramaConModalidad({ tarifa: 100, ...regla }, "base_neta_impuestos_al_final");
+  assert.ok(!(c.baseNeta < 0), "el baseNeta REDONDEADO no debía ser negativo en este caso — confirma la discrepancia que baseNetaExacta corrige");
+
+  // validarTarifaModalidad (que usa baseNetaExacta) SÍ rechaza — igual
+  // veredicto que el RPC (que usa aritmética exacta), navegador y Server
+  // Action (que llaman a la MISMA validarTarifaModalidad).
+  const v = validarTarifaModalidad(100, regla, "base_neta_impuestos_al_final");
+  assert.equal(v.ok, false, "validarTarifaModalidad debía rechazar la tarifa 100 con impuesto 100.004 — los tres puntos (navegador, Server Action, RPC) deben coincidir");
+});
+
+test("baseNetaExacta: base exacta = 0 sigue permitida (frontera, no estrictamente negativa)", () => {
+  const regla = { modo: "pct" as const, valor: 100, pctComision: 10 };
+  const exacta = baseNetaExacta(500, regla);
+  assert.equal(exacta, 0);
+  assert.equal(validarTarifaModalidad(500, regla, "base_neta_impuestos_al_final").ok, true);
+});
+
+test("baseNetaExacta: la modalidad histórica permanece intacta — nunca se evalúa, ni con la MISMA combinación discriminadora", () => {
+  const regla = { modo: "impuesto" as const, valor: 100.004, pctComision: 10 };
+  assert.equal(validarTarifaModalidad(100, regla, "historica").ok, true);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// § calcularPvpAcomodacionSalida — pruebas de EJECUCIÓN REAL (revisión PR
+// #277, ronda 2, defecto 3). Es la función que ahora comparten
+// getProgramasResumen, getProgramaDetalle/pvpDeSalida y el editor en vivo —
+// se prueba directamente (no por texto) cubriendo cada rama.
+// ───────────────────────────────────────────────────────────────────────────
+
+const OPT_BASE: PvpOpciones = { pctMk: 0.2, pctFee: 0, asistenciaDia: 0, dias: 0, moneda: "USD" };
+
+test("calcularPvpAcomodacionSalida — histórica: ignora la tarifa aunque esté presente, usa el neto tal cual", () => {
+  const pvp = calcularPvpAcomodacionSalida({
+    neto: 910_000,
+    tarifa: 1_000_000, // presente, pero la modalidad es histórica → se ignora
+    reglaActiva: true,
+    reglaModo: "impuesto",
+    reglaValor: 100_000,
+    reglaPctComision: 10,
+    modalidadMk: "historica",
+    opt: OPT_BASE,
+  });
+  assert.equal(pvp, pvpPrograma(910_000, OPT_BASE)); // = 1.137.500, camino de siempre
+  assert.equal(pvp, 1_137_500);
+});
+
+test("calcularPvpAcomodacionSalida — modalidad nueva: reproduce el ejemplo exacto del dueño (1.112.500)", () => {
+  const pvp = calcularPvpAcomodacionSalida({
+    neto: 910_000, // ignorado en este camino — se recalcula desde la tarifa
+    tarifa: 1_000_000,
+    reglaActiva: true,
+    reglaModo: "impuesto",
+    reglaValor: 100_000,
+    reglaPctComision: 10,
+    modalidadMk: "base_neta_impuestos_al_final",
+    opt: OPT_BASE,
+  });
+  assert.equal(pvp, 1_112_500);
+});
+
+test("calcularPvpAcomodacionSalida — sin tarifa cargada (null): cae al camino histórico aunque la modalidad sea la nueva", () => {
+  const pvp = calcularPvpAcomodacionSalida({
+    neto: 910_000,
+    tarifa: null,
+    reglaActiva: true,
+    reglaModo: "impuesto",
+    reglaValor: 100_000,
+    reglaPctComision: 10,
+    modalidadMk: "base_neta_impuestos_al_final",
+    opt: OPT_BASE,
+  });
+  assert.equal(pvp, pvpPrograma(910_000, OPT_BASE));
+});
+
+test("calcularPvpAcomodacionSalida — regla apagada (reglaActiva=false): cae al camino histórico aunque haya tarifa y modalidad nueva", () => {
+  const pvp = calcularPvpAcomodacionSalida({
+    neto: 910_000,
+    tarifa: 1_000_000,
+    reglaActiva: false,
+    reglaModo: "impuesto",
+    reglaValor: 100_000,
+    reglaPctComision: 10,
+    modalidadMk: "base_neta_impuestos_al_final",
+    opt: OPT_BASE,
+  });
+  assert.equal(pvp, pvpPrograma(910_000, OPT_BASE));
+});
+
+test("calcularPvpAcomodacionSalida — base cero con impuesto (modo pct, valor=100%): el impuesto NO desaparece", () => {
+  const pvp = calcularPvpAcomodacionSalida({
+    neto: 999, // irrelevante en este camino
+    tarifa: 500,
+    reglaActiva: true,
+    reglaModo: "pct",
+    reglaValor: 100,
+    reglaPctComision: 10,
+    modalidadMk: "base_neta_impuestos_al_final",
+    opt: OPT_BASE,
+  });
+  assert.equal(pvp, 500); // baseNeta=0 → Venta = 0/divisorMK + 500 = 500
+});
+
+test("calcularPvpAcomodacionSalida — sin neto (null o <= 0): devuelve null, nunca fabrica un PVP", () => {
+  assert.equal(calcularPvpAcomodacionSalida({ neto: null, tarifa: null, reglaActiva: false, reglaModo: "pct", reglaValor: 0, reglaPctComision: 0, modalidadMk: "historica", opt: OPT_BASE }), null);
+  assert.equal(calcularPvpAcomodacionSalida({ neto: 0, tarifa: null, reglaActiva: false, reglaModo: "pct", reglaValor: 0, reglaPctComision: 0, modalidadMk: "historica", opt: OPT_BASE }), null);
+  assert.equal(calcularPvpAcomodacionSalida({ neto: -5, tarifa: null, reglaActiva: false, reglaModo: "pct", reglaValor: 0, reglaPctComision: 0, modalidadMk: "historica", opt: OPT_BASE }), null);
+});
+
+test("calcularPvpAcomodacionSalida — asistencia médica y noches de la salida se aplican vía opt.dias/asistenciaDia (delegado a pvpPrograma)", () => {
+  const opt: PvpOpciones = { pctMk: 0.2, pctFee: 0, asistenciaDia: 15_000, dias: 5, moneda: "USD" };
+  const pvpHistorica = calcularPvpAcomodacionSalida({
+    neto: 100_000, tarifa: null, reglaActiva: false, reglaModo: "pct", reglaValor: 0, reglaPctComision: 0, modalidadMk: "historica", opt,
+  });
+  // (100.000 + 15.000×5) / 0,8 = 175.000/0,8 = 218.750
+  assert.equal(pvpHistorica, 218_750);
+
+  const pvpNueva = calcularPvpAcomodacionSalida({
+    neto: 910_000, tarifa: 1_000_000, reglaActiva: true, reglaModo: "impuesto", reglaValor: 100_000, reglaPctComision: 10, modalidadMk: "base_neta_impuestos_al_final", opt,
+  });
+  // (810.000 + 15.000×5) / 0,8 + 100.000 = 885.000/0,8 + 100.000 = 1.106.250 + 100.000 = 1.206.250
+  assert.equal(pvpNueva, 1_206_250);
+});
+
+test("calcularPvpAcomodacionSalida — redondeo COP vs USD: misma entrada, resultado distinto según moneda", () => {
+  const base = { neto: 910_000, tarifa: 1_000_000, reglaActiva: true, reglaModo: "impuesto" as const, reglaValor: 100_000, reglaPctComision: 10, modalidadMk: "base_neta_impuestos_al_final" as const };
+  const pvpUsd = calcularPvpAcomodacionSalida({ ...base, opt: { pctMk: 0.2, moneda: "USD" } });
+  const pvpCop = calcularPvpAcomodacionSalida({ ...base, opt: { pctMk: 0.2, moneda: "COP" } });
+  assert.equal(pvpUsd, 1_112_500);
+  assert.equal(pvpCop, 1_113_000); // ceil(1.112.500/1000)*1000
+});
+
+test("calcularPvpAcomodacionSalida — múltiples candidatos: el MÍNIMO por PVP NO siempre coincide con el candidato de menor neto histórico", () => {
+  // Candidato A: tarifa 1.010, impuesto 10, comisión 0% → netoParaMarkup=1.000,
+  // montoSinMarkup=10, neto histórico=1.010. PVP (mk 20%, USD) = 1.000/0,8+10 = 1.260.
+  // Candidato B: tarifa 1.050, impuesto 950, comisión 0% → netoParaMarkup=100,
+  // montoSinMarkup=950, neto histórico=1.050. PVP = 100/0,8+950 = 1.075.
+  //
+  // Neto histórico: A (1.010) < B (1.050) — si se eligiera el candidato de
+  // MENOR NETO primero y se calculara solo SU pvp, se obtendría 1.260.
+  // El PVP real más bajo entre los dos es el de B: 1.075. Confirma por qué
+  // el mínimo debe tomarse sobre los PVP YA CALCULADOS de cada candidato,
+  // nunca sobre los netos crudos (motivo del defecto 2 original).
+  const opt: PvpOpciones = { pctMk: 0.2, moneda: "USD" };
+  const candidatoA = { neto: 1010, tarifa: 1010, reglaActiva: true, reglaModo: "impuesto" as const, reglaValor: 10, reglaPctComision: 0, modalidadMk: "base_neta_impuestos_al_final" as const, opt };
+  const candidatoB = { neto: 1050, tarifa: 1050, reglaActiva: true, reglaModo: "impuesto" as const, reglaValor: 950, reglaPctComision: 0, modalidadMk: "base_neta_impuestos_al_final" as const, opt };
+
+  const pvpA = calcularPvpAcomodacionSalida(candidatoA)!;
+  const pvpB = calcularPvpAcomodacionSalida(candidatoB)!;
+  assert.equal(pvpA, 1260);
+  assert.equal(pvpB, 1075);
+
+  assert.ok(candidatoA.neto < candidatoB.neto, "el candidato A debe tener el neto histórico menor (para que el escenario sea real)");
+  assert.ok(pvpA > pvpB, "pero el PVP de A debe ser MAYOR que el de B — la ordenación por neto y por PVP DIVERGEN");
+
+  // Simula lo que getProgramasResumen hace ahora (correcto): calcular el PVP
+  // de CADA candidato y tomar el mínimo de los PVP.
+  const minPvpCorrecto = Math.min(pvpA, pvpB);
+  assert.equal(minPvpCorrecto, 1075);
+
+  // Y lo que el bug original hacía (incorrecto): elegir el candidato de
+  // MENOR NETO primero, calcular SOLO su PVP.
+  const candidatoMenorNeto = candidatoA.neto < candidatoB.neto ? candidatoA : candidatoB;
+  const pvpDelBugOriginal = calcularPvpAcomodacionSalida(candidatoMenorNeto)!;
+  assert.equal(pvpDelBugOriginal, 1260);
+  assert.notEqual(pvpDelBugOriginal, minPvpCorrecto, "el bug original y el cálculo correcto deben dar resultados DISTINTOS en este escenario");
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 // § Wiring — misma función pura en los 4 puntos de consumo (requisito 8):
 // editor en vivo, validación cliente, validación servidor, generación real.
 // ───────────────────────────────────────────────────────────────────────────
@@ -326,12 +516,13 @@ const programasSrc = readFileSync(join(raiz, "lib/programas.ts"), "utf8");
 const precioSrc = readFileSync(join(raiz, "lib/calc/programaPrecio.ts"), "utf8");
 const migracion161Src = readFileSync(join(raiz, "supabase/migrations/20260601000161_programa_modalidad_mk_comisionable.sql"), "utf8");
 
-test("wiring: el editor en vivo (SalidasEditor.pvpDe) llama a calcularNetoProgramaConModalidad", () => {
+test("wiring (ronda 2): el editor en vivo (SalidasEditor.pvpDe) delega en calcularPvpAcomodacionSalida — la MISMA función que getProgramasResumen/getProgramaDetalle", () => {
   const inicio = editorSrc.indexOf("const pvpDe = (r: SalidaState");
   const fin = editorSrc.indexOf("const payload: SalidaInput[]");
   const bloque = editorSrc.slice(inicio, fin);
-  assert.match(bloque, /calcularNetoProgramaConModalidad\(/, "pvpDe no llama a la función compartida");
-  assert.match(bloque, /pvpPrograma\(c\.netoParaMarkup,\s*\{\s*\.\.\.pvpOpt,\s*dias\s*\},\s*c\.montoSinMarkup\)/, "pvpDe no pasa netoParaMarkup/montoSinMarkup a pvpPrograma");
+  assert.match(bloque, /calcularPvpAcomodacionSalida\(\{/, "pvpDe no llama a la función compartida");
+  assert.doesNotMatch(bloque, /calcularNetoProgramaConModalidad\(/, "pvpDe reimplementa la decisión en vez de delegar todo en calcularPvpAcomodacionSalida");
+  assert.match(bloque, /reglaActiva:\s*regla\s*!=\s*null/, "pvpDe no gatea reglaActiva a que la regla actual sea válida (mientras se escribe un valor a medio corregir)");
 });
 
 test("wiring: reglaPayload/validación cliente incluyen modalidadMk (no se pierde en el borrador)", () => {
@@ -373,21 +564,22 @@ test("wiring: la Server Action SIEMPRE manda modalidadMk explícito en p_regla (
   assert.match(bloque, /modalidadMk:\s*modalidadMkRaw/, "p_regla no manda modalidadMk siempre — el RPC depende de esto para no confundir un cliente actualizado con uno viejo");
 });
 
-test("wiring: la generación real del tarifario (getProgramaDetalle) llama a calcularNetoProgramaConModalidad, no reimplementa la fórmula", () => {
-  assert.match(programasSrc, /import\s*\{[^}]*calcularNetoProgramaConModalidad[^}]*\}\s*from\s*"@\/lib\/calc\/programaPrecio"/, "lib/programas.ts no importa la función compartida");
+test("wiring (ronda 2): la generación real del tarifario (getProgramaDetalle/pvpDeSalida) delega en calcularPvpAcomodacionSalida", () => {
+  assert.match(programasSrc, /import\s*\{[^}]*calcularPvpAcomodacionSalida[^}]*\}\s*from\s*"@\/lib\/calc\/programaPrecio"/, "lib/programas.ts no importa la función compartida");
   const inicio = programasSrc.indexOf("const pvpDeSalida = ");
   const fin = programasSrc.indexOf("const salidas = (salidasRaw");
   const bloque = programasSrc.slice(inicio, fin);
-  assert.match(bloque, /calcularNetoProgramaConModalidad\(/, "pvpDeSalida no llama a la función compartida");
-  assert.match(bloque, /pvpPrograma\(calc\.netoParaMarkup,\s*optSalida,\s*calc\.montoSinMarkup\)/, "pvpDeSalida no pasa netoParaMarkup/montoSinMarkup a pvpPrograma");
+  assert.match(bloque, /calcularPvpAcomodacionSalida\(\{/, "pvpDeSalida no llama a la función compartida");
+  assert.doesNotMatch(bloque, /calcularNetoProgramaConModalidad\(/, "pvpDeSalida reimplementa la decisión en vez de delegar todo en calcularPvpAcomodacionSalida");
 });
 
-test("wiring (defecto 2): getProgramasResumen también llama a calcularNetoProgramaConModalidad y toma el mínimo sobre PVP, no sobre netos", () => {
+test("wiring (defecto 2 + ronda 2): getProgramasResumen también delega en calcularPvpAcomodacionSalida y toma el mínimo sobre PVP, no sobre netos", () => {
   const inicio = programasSrc.indexOf("export async function getProgramasResumen");
   const fin = programasSrc.indexOf("export type ProgramaDetalle");
   const bloque = programasSrc.slice(inicio, fin);
-  assert.match(bloque, /calcularNetoProgramaConModalidad\(/, "getProgramasResumen no llama a la función compartida");
-  assert.match(bloque, /setMinPvp\(s\.programa_id,\s*pvpPrograma\(calc\.netoParaMarkup,\s*optNueva,\s*calc\.montoSinMarkup\)\)/, "getProgramasResumen no toma el mínimo sobre el PVP calculado con la modalidad nueva");
+  assert.match(bloque, /calcularPvpAcomodacionSalida\(\{/, "getProgramasResumen no llama a la función compartida");
+  assert.doesNotMatch(bloque, /calcularNetoProgramaConModalidad\(/, "getProgramasResumen reimplementa la decisión en vez de delegar todo en calcularPvpAcomodacionSalida");
+  assert.match(bloque, /if\s*\(pvp\s*!=\s*null\)\s*setMinPvp\(s\.programa_id,\s*pvp\)/, "getProgramasResumen no toma el mínimo sobre el PVP devuelto por la función compartida");
   assert.match(bloque, /const\s+minPvp\s*=\s*new Map/, "getProgramasResumen ya no debe rastrear un mínimo de netos crudos");
   assert.doesNotMatch(bloque, /const\s+minNeto\s*=\s*new Map/, "getProgramasResumen no debe volver al mínimo de netos crudos (bug original)");
 });
@@ -468,8 +660,25 @@ test("wiring (defecto 1): el RPC conserva la modalidad ya guardada cuando el pay
   const finFn = migracion161Src.indexOf("if v_activa then", inicioFn);
   const bloque = migracion161Src.slice(inicioFn, finFn);
   assert.match(bloque, /if p_regla \? 'modalidadMk' then/, "el RPC no distingue clave presente vs. ausente");
-  assert.match(bloque, /select regla_comisionable_modalidad_mk into v_modalidad_mk\s*\n\s*from public\.programas where id = p_programa_id;/, "el RPC no conserva la modalidad ya guardada cuando la clave está ausente");
+  assert.match(bloque, /v_modalidad_mk := v_programa\.regla_comisionable_modalidad_mk;/, "el RPC no conserva la modalidad ya guardada cuando la clave está ausente (debe leerla de la fila ya bloqueada, no con un SELECT aparte)");
   assert.doesNotMatch(bloque, /coalesce\(nullif\(p_regla->>'modalidadMk', ''\), 'historica'\)/, "volvió el default silencioso a 'historica' que pisaba la modalidad ya guardada");
+});
+
+test("wiring (ronda 2, defecto de concurrencia): el RPC toma SELECT ... FOR UPDATE como PRIMER paso, antes de leer/validar cualquier cosa", () => {
+  const inicioFn = migracion161Src.indexOf("create or replace function public.guardar_programa_salidas");
+  const finFn = migracion161Src.indexOf("v_activa       := coalesce", inicioFn);
+  const bloque = migracion161Src.slice(inicioFn, finFn);
+  assert.match(bloque, /select \* into v_programa from public\.programas where id = p_programa_id for update;/, "el RPC no toma el lock de fila con SELECT ... FOR UPDATE");
+  assert.match(bloque, /if not found then/, "el RPC no usa FOUND (de la misma SELECT ... FOR UPDATE) para la comprobación de existencia — volvió a una consulta aparte sin lock");
+  assert.doesNotMatch(bloque, /if not exists \(select 1 from public\.programas where id = p_programa_id\) then/, "volvió al chequeo de existencia SIN lock (select 1 ... exists), reabriendo la ventana de carrera");
+});
+
+test("wiring (ronda 2, defecto de paridad numérica): validarTarifaModalidad compara la base neta EXACTA (baseNetaExacta), no la redondeada de calcularNetoProgramaConModalidad", () => {
+  const inicio = precioSrc.indexOf("export function validarTarifaModalidad");
+  const fin = precioSrc.indexOf("export function recalcularNetosPorTarifa");
+  const bloque = precioSrc.slice(inicio, fin);
+  assert.match(bloque, /baseNetaExacta\(t, regla\)/, "validarTarifaModalidad no usa baseNetaExacta para decidir");
+  assert.doesNotMatch(bloque, /calcularNetoProgramaConModalidad\(/, "validarTarifaModalidad sigue comparando contra el baseNeta REDONDEADO — puede divergir del RPC (que usa aritmética exacta)");
 });
 
 test("wiring (defecto 4): ACL explícita — revoke from anon además de public", () => {

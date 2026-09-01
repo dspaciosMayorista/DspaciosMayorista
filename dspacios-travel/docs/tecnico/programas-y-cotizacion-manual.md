@@ -126,6 +126,33 @@ app cambia.
   antes del `add column if not exists` — aborta con mensaje claro si ya existiera con una
   definición distinta, en vez de aceptarla en silencio.
 
+**Revisión PR #277, ronda 2 (3 correcciones más, la 161 sigue sin correr en producción).**
+- **Concurrencia.** `guardar_programa_salidas()` ahora abre con `SELECT ... FOR UPDATE` sobre la
+  fila de `programas` — antes, dos guardados simultáneos del MISMO programa podían intercalar su
+  UPDATE+DELETE+INSERT y mezclar la regla de uno con las salidas del otro. La lectura de la
+  modalidad cuando `modalidadMk` está AUSENTE del payload se hace de la fila YA BLOQUEADA (nunca
+  con un SELECT aparte antes de esperar el lock) — así un guardado con payload viejo que gana el
+  lock DESPUÉS de otro hereda la modalidad que ese otro dejó (o la que ya había, si hizo
+  ROLLBACK). El lock es por FILA: programas distintos no se bloquean entre sí. Prueba real con
+  dos conexiones psql: `supabase/scripts/pruebas/test_concurrencia_modalidad_mk.sh`.
+- **Paridad numérica JS↔Postgres.** El RPC siempre calculó `base_neta` con aritmética `numeric`
+  exacta (nunca redondeaba). El desajuste estaba del lado JS: `validarTarifaModalidad()`
+  comparaba contra el `baseNeta` YA REDONDEADO a 2 decimales de `calcularNetoProgramaConModalidad`
+  — una base apenas negativa (ej. -0,0036) podía redondear a `-0` (que en JS no es `< 0`) y pasar
+  el navegador/Server Action mientras el RPC, con la MISMA tarifa, la rechazaba. Nueva
+  `baseNetaExacta()` (sin redondear ningún paso intermedio, misma secuencia que el RPC) es la que
+  usa `validarTarifaModalidad` para la comparación — el redondeo a 2 decimales se conserva SOLO
+  para el valor mostrado/persistido.
+- **Función compartida `calcularPvpAcomodacionSalida()`.** La decisión "¿esta acomodación usa la
+  modalidad nueva o el camino histórico?" estaba reescrita 3 veces (`getProgramaDetalle`/
+  `pvpDeSalida`, `getProgramasResumen`, el editor en vivo). Ahora es una sola función pura (lib/calc/
+  programaPrecio.ts) que los 3 consumidores llaman — recibe `neto`/`tarifa`/regla/modalidad/`opt`
+  (con `dias` YA resuelto por el llamador: `getProgramasResumen` usa un fallback de días distinto
+  entre el camino histórico y el nuevo, una asimetría preexistente a este PR que no se toca para
+  no cambiar en silencio los números de "Desde" ya mostrados). El CHECK de la migración (punto
+  anterior) también se endureció para comparar `pg_get_constraintdef()` contra la expresión
+  esperada cuando el constraint YA existe, no solo detectarlo por nombre+tabla.
+
 ### 1.3 Modelo de datos
 
 `programas` (cabecera): `id, proveedor_id (FK), nombre, subtitulo, dias, noches, moneda (default
