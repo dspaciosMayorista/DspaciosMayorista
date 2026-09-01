@@ -40,7 +40,7 @@ function coincideFiltroLocal(f: FilaRaw, q: string, fCat: string, fReg: string):
   return true;
 }
 
-// Réplica de la vista `tarifario_resumen` (migración 161): agrupa por el
+// Réplica de la vista `tarifario_resumen` (migración 162): agrupa por el
 // combo (los 10 campos de ComboIdentidad) — para esta prueba de identidad no
 // hace falta reproducir el MIN(precio_pvp) real, solo qué combos EXISTEN.
 function agregarResumenLocal(filas: FilaRaw[]): ComboIdentidad[] {

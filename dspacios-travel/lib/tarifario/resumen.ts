@@ -111,7 +111,7 @@ const PAGE = 1000;
 const MAX_PAGINAS = 500;
 
 // Orden total y determinista: TODAS las columnas no-constantes del `group by`
-// de la vista (migración 161), salvo `paquete_activo` (siempre `true` por el
+// de la vista (migración 162), salvo `paquete_activo` (siempre `true` por el
 // `where` de la vista — no discrimina nada, así que no aporta al orden). Con
 // esto cada fila tiene una posición única e inequívoca en el orden — condición
 // necesaria para paginar con `.range()` sin perder ni duplicar filas por

@@ -1,15 +1,15 @@
 -- ───────────────────────────────────────────────────────────────────────────
--- Prueba NEGATIVA de la migración 161 (`tarifario_resumen`): colisión de
+-- Prueba NEGATIVA de la migración 162 (`tarifario_resumen`): colisión de
 -- nombre + atomicidad. Correr SOLO contra una base de verificación LOCAL
 -- (ver supabase/scripts/pruebas/local-desde-cero.sh), NUNCA contra
 -- producción — este script crea y borra una tabla de prueba.
 --
--- Requiere: migraciones aplicadas hasta la 160 (la 161 TODAVÍA NO aplicada).
+-- Requiere: migraciones aplicadas hasta la 160 (la 162 TODAVÍA NO aplicada).
 -- Ej.: local-desde-cero.sh dspacios_local 55432 160
 --
 -- Uso:
 --   psql -p 55432 -d dspacios_local -v ON_ERROR_STOP=0 \
---     -f supabase/scripts/pruebas/test_161_atomicidad_colision.sql
+--     -f supabase/scripts/pruebas/test_162_atomicidad_colision.sql
 --
 -- (ON_ERROR_STOP=0 porque el PASO 1 espera que un statement falle a
 -- propósito — el script maneja sus propios `\if`/asserts alrededor de eso.)
@@ -22,13 +22,13 @@
 select to_regclass('public.tarifario_resumen') is null as ok_paso0_no_existe_antes;
 
 -- ── PASO 1 — COLISIÓN: crear una tabla con el mismo nombre, luego intentar
---    aplicar la migración 161 tal cual — debe ABORTAR (raise exception) sin
+--    aplicar la migración 162 tal cual — debe ABORTAR (raise exception) sin
 --    dejar rastro, y la tabla original debe seguir intacta. ────────────────
 create table public.tarifario_resumen (x integer);
 insert into public.tarifario_resumen values (1), (2), (3);
 
-\echo '--- intentando aplicar 161 sobre una colisión (se espera un error) ---'
-\i supabase/migrations/20260601000161_tarifario_resumen.sql
+\echo '--- intentando aplicar 162 sobre una colisión (se espera un error) ---'
+\i supabase/migrations/20260601000162_tarifario_resumen.sql
 \echo '--- fin del intento (arriba debe verse ERROR: La relación public.tarifario_resumen ya existe...) ---'
 
 -- La colisión debe seguir siendo la TABLA original, sin tocar — nunca una
@@ -54,7 +54,7 @@ drop table public.tarifario_resumen;
 \set ON_ERROR_STOP 1
 
 -- ── PASO 2 — SIN colisión: la migración real debe aplicar limpio ───────────
-\i supabase/migrations/20260601000161_tarifario_resumen.sql
+\i supabase/migrations/20260601000162_tarifario_resumen.sql
 
 select
   c.relkind = 'v' as ok_paso2_es_vista,
@@ -97,14 +97,14 @@ from information_schema.role_table_grants
 where table_schema = 'public' and table_name = 'tarifario_resumen' and grantee = 'PUBLIC';
 -- Se espera 0.
 
--- ── PASO 3 — reintentar aplicar la 161 sobre SU PROPIA vista ya creada
+-- ── PASO 3 — reintentar aplicar la 162 sobre SU PROPIA vista ya creada
 --    también debe abortar (mismo abort de colisión, no un `create or
 --    replace` silencioso) — una migración no se re-corre dos veces en este
 --    repo, pero si alguien lo intenta por error, debe fallar cerrado, no
 --    pisar la vista existente sin avisar. ─────────────────────────────────
 \set ON_ERROR_STOP 0
-\echo '--- reintentando aplicar 161 sobre la vista ya creada (se espera un error) ---'
-\i supabase/migrations/20260601000161_tarifario_resumen.sql
+\echo '--- reintentando aplicar 162 sobre la vista ya creada (se espera un error) ---'
+\i supabase/migrations/20260601000162_tarifario_resumen.sql
 \echo '--- fin del reintento ---'
 \set ON_ERROR_STOP 1
 
@@ -113,4 +113,4 @@ from pg_catalog.pg_class c
 join pg_catalog.pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public' and c.relname = 'tarifario_resumen';
 
-\echo '=== FIN test_161_atomicidad_colision.sql — revisar que todas las columnas ok_* dieron true y los grants los conteos esperados ==='
+\echo '=== FIN test_162_atomicidad_colision.sql — revisar que todas las columnas ok_* dieron true y los grants los conteos esperados ==='

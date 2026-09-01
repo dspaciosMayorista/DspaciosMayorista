@@ -13,7 +13,7 @@
 //
 // La solución: un "combo" es la combinación exacta de las columnas que YA
 // identifican unívocamente una fila del resumen (mismo grano que agrupa la
-// vista `tarifario_resumen`, migración 161 — ver `lib/tarifario/resumen.ts`),
+// vista `tarifario_resumen`, migración 162 — ver `lib/tarifario/resumen.ts`),
 // MENOS la acomodación (que el resumen ya colapsa, y que el detalle sigue
 // desglosando fila por fila — el filtro de acomodación sigue actuando
 // DESPUÉS, sobre las filas ya traídas, exactamente como antes). Tanto

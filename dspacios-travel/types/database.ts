@@ -2185,6 +2185,7 @@ export type Database = {
           regla_comisionable_modo: string;
           regla_comisionable_valor: number | null;
           regla_comisionable_pct_comision: number | null;
+          regla_comisionable_modalidad_mk: string;
           created_at: string;
           updated_at: string;
         };
@@ -2228,6 +2229,7 @@ export type Database = {
           regla_comisionable_modo?: string;
           regla_comisionable_valor?: number | null;
           regla_comisionable_pct_comision?: number | null;
+          regla_comisionable_modalidad_mk?: string;
           created_at?: string;
           updated_at?: string;
         };
@@ -2748,7 +2750,7 @@ export type Database = {
         Row: { numero_contrato: string; total_pagado: number };
         Relationships: [];
       };
-      // Migración 161: resumen agregado de `tarifario_resultado` (una fila
+      // Migración 162: resumen agregado de `tarifario_resultado` (una fila
       // por combinación módulo/paquete/bloqueo/hotel/servicio, magnitud
       // cercana a hoteles/salidas, no a tarifas) — carga inicial liviana del
       // tarifario en dos niveles. Ver lib/tarifario/resumen.ts.
@@ -2911,7 +2913,9 @@ export type Database = {
       // salidas en una sola transacción (UPDATE + DELETE + INSERT) — evita
       // que un DELETE exitoso seguido de un INSERT fallido deje el programa
       // sin salidas. p_regla y p_salidas se pasan como jsonb; el shape real
-      // lo define SalidaInput/ReglaComisionableInput en actions.ts.
+      // lo define SalidaInput/ReglaComisionableInput en actions.ts. Desde la
+      // migración 161, p_regla también acepta `modalidadMk` ('historica' |
+      // 'base_neta_impuestos_al_final'); por defecto 'historica' si se omite.
       guardar_programa_salidas: {
         Args: { p_programa_id: number; p_regla: Json; p_salidas: Json };
         Returns: undefined;

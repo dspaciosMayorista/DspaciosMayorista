@@ -190,61 +190,61 @@ test("tieneTarifaNegativa no marca null ni cero como negativos", () => {
 // ───────────────────────────────────────────────────────────────────────────
 
 test("regla inactiva: siempre ok, sin importar qué basura traigan los campos", () => {
-  assert.equal(validarReglaComisionable({ activa: false, modo: "pct", valor: null, pctComision: null }).ok, true);
-  assert.equal(validarReglaComisionable({ activa: false, modo: "pct", valor: -50, pctComision: 500 }).ok, true);
-  assert.equal(validarReglaComisionable({ activa: false, modo: "impuesto", valor: -1, pctComision: -1 }).ok, true);
+  assert.equal(validarReglaComisionable({ activa: false, modo: "pct", valor: null, pctComision: null, modalidadMk: "historica" }).ok, true);
+  assert.equal(validarReglaComisionable({ activa: false, modo: "pct", valor: -50, pctComision: 500, modalidadMk: "historica" }).ok, true);
+  assert.equal(validarReglaComisionable({ activa: false, modo: "impuesto", valor: -1, pctComision: -1, modalidadMk: "historica" }).ok, true);
 });
 
 test("borrar temporalmente la comisión (pctComision null) con la regla activa: inválido", () => {
-  const r = validarReglaComisionable({ activa: true, modo: "pct", valor: 3, pctComision: null });
+  const r = validarReglaComisionable({ activa: true, modo: "pct", valor: 3, pctComision: null, modalidadMk: "historica" });
   assert.equal(r.ok, false);
 });
 
 test("borrar temporalmente el valor (modo pct) con la regla activa: inválido", () => {
-  const r = validarReglaComisionable({ activa: true, modo: "pct", valor: null, pctComision: 10 });
+  const r = validarReglaComisionable({ activa: true, modo: "pct", valor: null, pctComision: 10, modalidadMk: "historica" });
   assert.equal(r.ok, false);
 });
 
 test("borrar temporalmente el valor (modo impuesto) con la regla activa: inválido", () => {
-  const r = validarReglaComisionable({ activa: true, modo: "impuesto", valor: null, pctComision: 10 });
+  const r = validarReglaComisionable({ activa: true, modo: "impuesto", valor: null, pctComision: 10, modalidadMk: "historica" });
   assert.equal(r.ok, false);
 });
 
 test("porcentaje de comisión negativo: inválido", () => {
-  const r = validarReglaComisionable({ activa: true, modo: "pct", valor: 3, pctComision: -1 });
+  const r = validarReglaComisionable({ activa: true, modo: "pct", valor: 3, pctComision: -1, modalidadMk: "historica" });
   assert.equal(r.ok, false);
 });
 
 test("porcentaje de comisión mayor a 100: inválido", () => {
-  const r = validarReglaComisionable({ activa: true, modo: "pct", valor: 3, pctComision: 101 });
+  const r = validarReglaComisionable({ activa: true, modo: "pct", valor: 3, pctComision: 101, modalidadMk: "historica" });
   assert.equal(r.ok, false);
 });
 
 test("modo 'pct': valor negativo o mayor a 100 es inválido", () => {
-  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: -1, pctComision: 10 }).ok, false);
-  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: 101, pctComision: 10 }).ok, false);
-  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: 0, pctComision: 10 }).ok, true);
-  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: 100, pctComision: 10 }).ok, true);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: -1, pctComision: 10, modalidadMk: "historica" }).ok, false);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: 101, pctComision: 10, modalidadMk: "historica" }).ok, false);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: 0, pctComision: 10, modalidadMk: "historica" }).ok, true);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: 100, pctComision: 10, modalidadMk: "historica" }).ok, true);
 });
 
 test("modo 'impuesto' negativo: inválido; sin tope superior (es un monto, no un %)", () => {
-  const r = validarReglaComisionable({ activa: true, modo: "impuesto", valor: -100, pctComision: 10 });
+  const r = validarReglaComisionable({ activa: true, modo: "impuesto", valor: -100, pctComision: 10, modalidadMk: "historica" });
   assert.equal(r.ok, false);
-  assert.equal(validarReglaComisionable({ activa: true, modo: "impuesto", valor: 500000, pctComision: 10 }).ok, true);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "impuesto", valor: 500000, pctComision: 10, modalidadMk: "historica" }).ok, true);
 });
 
 test("modo 'ninguno': el valor no se valida (puede traer cualquier resto de otro modo)", () => {
-  assert.equal(validarReglaComisionable({ activa: true, modo: "ninguno", valor: null, pctComision: 10 }).ok, true);
-  assert.equal(validarReglaComisionable({ activa: true, modo: "ninguno", valor: -999, pctComision: 10 }).ok, true);
-  assert.equal(validarReglaComisionable({ activa: true, modo: "ninguno", valor: 500000, pctComision: 10 }).ok, true);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "ninguno", valor: null, pctComision: 10, modalidadMk: "historica" }).ok, true);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "ninguno", valor: -999, pctComision: 10, modalidadMk: "historica" }).ok, true);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "ninguno", valor: 500000, pctComision: 10, modalidadMk: "historica" }).ok, true);
   // pctComision SIGUE siendo obligatorio incluso en modo 'ninguno'.
-  assert.equal(validarReglaComisionable({ activa: true, modo: "ninguno", valor: 5, pctComision: null }).ok, false);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "ninguno", valor: 5, pctComision: null, modalidadMk: "historica" }).ok, false);
 });
 
 test("NaN/Infinity nunca pasan, ni en valor ni en pctComision", () => {
-  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: NaN, pctComision: 10 }).ok, false);
-  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: 3, pctComision: NaN }).ok, false);
-  assert.equal(validarReglaComisionable({ activa: true, modo: "impuesto", valor: Infinity, pctComision: 10 }).ok, false);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: NaN, pctComision: 10, modalidadMk: "historica" }).ok, false);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "pct", valor: 3, pctComision: NaN, modalidadMk: "historica" }).ok, false);
+  assert.equal(validarReglaComisionable({ activa: true, modo: "impuesto", valor: Infinity, pctComision: 10, modalidadMk: "historica" }).ok, false);
 });
 
 test("parseNumOrNull: vacío/espacios/no-numérico → null, nunca 0", () => {

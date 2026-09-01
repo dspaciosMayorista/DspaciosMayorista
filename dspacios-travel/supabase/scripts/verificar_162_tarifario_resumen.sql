@@ -1,5 +1,5 @@
 -- ───────────────────────────────────────────────────────────────────────────
--- Consulta PREVENTIVA de solo lectura para la migración 161
+-- Consulta PREVENTIVA de solo lectura para la migración 162
 -- (vista `tarifario_resumen`) — correr ANTES de aplicar la migración, sobre
 -- el catálogo REAL, para confirmar que el resumen de verdad reduce la
 -- magnitud del payload inicial (y no esconde un caso donde termina siendo
@@ -12,7 +12,7 @@
 -- ⚠️ Revisión posterior (defecto confirmado y corregido): la versión anterior
 -- de este script agrupaba por SOLO 7 columnas (modulo, paquete_id, bloqueo_id,
 -- hotel_id, servicio_id, fecha_ida, fecha_regreso) — MENOS columnas que el
--- `group by` real de la vista 161 (20 columnas: incluye categoria, regimen,
+-- `group by` real de la vista 162 (20 columnas: incluye categoria, regimen,
 -- noches, moneda, paquete_nombre, paquete_activo, bloqueo_label,
 -- empaquetado_id, salida_id, hotel_nombre, servicio_nombre, destino_id,
 -- destino_nombre). Agrupar por menos columnas SIEMPRE produce un conteo
@@ -21,7 +21,7 @@
 -- realmente entrega, sin que nadie lo notara antes de aplicar la migración.
 -- La consulta 1 de abajo usa AHORA exactamente las mismas 20 columnas y el
 -- mismo `group by` que `create view public.tarifario_resumen` (migración
--- 161) — si alguna vez se edita el `group by` de la vista, este script debe
+-- 162) — si alguna vez se edita el `group by` de la vista, este script debe
 -- actualizarse en el mismo commit para no volver a desincronizarse.
 -- ───────────────────────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ from (
     destino_id, destino_nombre, categoria, regimen, fecha_ida, fecha_regreso, noches, moneda
 ) t;
 
--- 1.bis) CONTROL DE SINCRONÍA (correr DESPUÉS de aplicar la migración 161 en
+-- 1.bis) CONTROL DE SINCRONÍA (correr DESPUÉS de aplicar la migración 162 en
 --    el mismo entorno — local/staging, nunca antes de la autorización del
 --    dueño en producción): compara el conteo calculado arriba a mano contra
 --    el count(*) REAL de la vista ya creada. Deben coincidir EXACTAMENTE. Si
@@ -81,7 +81,7 @@ limit 50;
 
 -- 3) Colisión de nombre: confirma que `tarifario_resumen` no existe ya como
 --    tabla/vista/función antes de crearlo (debe devolver 0 filas). La
---    migración 161 ya aborta sola si esto no es cierto (`to_regclass`), esta
+--    migración 162 ya aborta sola si esto no es cierto (`to_regclass`), esta
 --    consulta es solo para inspeccionar a mano antes de decidir aplicar.
 select c.relname, c.relkind
 from pg_catalog.pg_class c

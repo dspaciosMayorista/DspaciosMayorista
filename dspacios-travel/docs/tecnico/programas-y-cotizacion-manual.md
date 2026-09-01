@@ -55,6 +55,104 @@ calcularNetoPrograma({tarifa, modo:'pct'|'impuesto'|'ninguno', valor, pctComisio
 Solo lo usa la UI "calculadora" (`producto/programas/calculadora/`) para ayudar a calcular qué
 `neto` tipear en la matriz — no calcula PVP por sí misma.
 
+**"Tarifa comisionable del proveedor" por salida (migración 151, modo `salida`).** Además de la
+calculadora suelta de arriba, `programa_salidas` tiene columnas propias
+`tarifa_sencilla/doble/triple/multiple` (la tarifa BRUTA del proveedor por esa salida y
+acomodación) junto a los `neto_*` de siempre — y el programa tiene una regla a nivel de
+CABECERA (`regla_comisionable, regla_comisionable_modo/valor/pct_comision`) que dice cómo pasar
+de tarifa → neto para TODAS sus salidas. `SalidasEditor` (`ProgramaEditor.tsx`) recalcula `neto_*`
+en vivo con `calcularNetoPrograma`/`recalcularNetosPorTarifa` cada vez que cambia una tarifa o la
+regla; el guardado es atómico vía el RPC `guardar_programa_salidas(programa_id, p_regla,
+p_salidas)` (UPDATE regla + DELETE + INSERT salidas en una sola transacción Postgres, sin
+`security definer`). `validarReglaComisionable` (mismo archivo) es la ÚNICA validación —
+navegador y servidor la llaman igual — y es **incondicional** para el campo `modo`/`valor`/
+`pctComision` solo cuando `activa=true`; desactivar la regla conserva los valores tal cual (no
+los borra), para poder reactivar sin volver a tipear nada.
+
+**Modalidad de MK sobre la tarifa comisionable (migración 161).** El `neto` de arriba
+(`tarifa - comision`) siempre se marca con el MK del programa vía `pvpPrograma`, pero el dueño
+pidió una SEGUNDA forma de hacerlo, seleccionable por programa
+(`programas.regla_comisionable_modalidad_mk`, `'historica'` default | `'base_neta_impuestos_al_
+final'`, CHECK en Postgres):
+```
+'historica' (de siempre):                  Venta = (base_neta + impuestos) / divisorMK
+'base_neta_impuestos_al_final' (nueva):     Venta = (base_neta / divisorMK) + impuestos
+```
+donde `base_neta = base_comisionable - comision` e `impuestos` (generalizado a los 3 modos) =
+`tarifa - base_comisionable` (siempre ≥ 0). La modalidad nueva NUNCA aplica el MK sobre
+`impuestos` — se suma DESPUÉS de dividir por el divisor de MK, ANTES del fee bancario (que sí
+sigue aplicando sobre el total). **No se persiste como un neto distinto**: se recalcula EN
+CALIENTE en cada uno de los 4 puntos de consumo (editor en vivo, validación cliente, validación
+servidor, `getProgramaDetalle` al generar/leer el tarifario real) a partir de los mismos
+`tarifa_*` + la regla del programa, siempre con el `pct_mk` VIGENTE — así evita que cambiar el
+%MK más adelante deje netos horneados desactualizados. Única función que decide el reparto:
+`calcularNetoProgramaConModalidad(input, modalidadMk)` en `lib/calc/programaPrecio.ts` — envuelve
+`calcularNetoPrograma` (nunca reimplementa su fórmula) y devuelve `{netoParaMarkup,
+montoSinMarkup}`, el par que consume el 3er parámetro (opcional, default 0 = no-op) que
+`pvpPrograma` ganó para esto — con modalidad `'historica'` o sin pasarlo, el comportamiento de
+`pvpPrograma` es byte a byte idéntico al de antes de la 161. `pvpPrograma`/`PvpOpciones` viven en
+`lib/calc/programaPrecio.ts` (módulo sin imports con alias `@/`, para que `node:test` pueda
+ejecutarlo directo); `lib/programas.ts` los re-exporta, así que ningún call-site del resto de la
+app cambia.
+
+**Revisión PR #277 (defectos 1/2/3/4, antes de fusionar; la 161 nunca se corrió en producción).**
+- **Payload sin `modalidadMk` ya NO pisa la modalidad.** `guardar_programa_salidas()`: si
+  `p_regla` no trae la clave, CONSERVA la modalidad ya guardada del programa (select antes del
+  update) — antes caía a `'historica'` en silencio, lo que un cliente desplegado antes de la
+  161 podía usar para revertir sin querer un programa ya configurado en la modalidad nueva. Con
+  la clave PRESENTE (incl. `""`/`null` explícitos) se valida SIEMPRE, fail-closed. Solo un
+  programa NUEVO recibe `'historica'`, vía el DEFAULT de la columna.
+- **`getProgramasResumen` (tarjeta "Desde" del tarifario) ahora es consciente de la modalidad.**
+  Antes leía el `neto` mínimo persistido sin mirar la regla/modalidad — podía mostrar un precio
+  distinto al de `getProgramaDetalle` para la misma salida. Ahora selecciona
+  `regla_comisionable*`/`tarifa_*` y, por candidato (fila de `programa_precios` o
+  salida×acomodación), calcula su PVP con `calcularNetoProgramaConModalidad` cuando aplica —
+  tomando el mínimo sobre los PVP resultantes, no sobre los netos crudos (`montoSinMarkup` varía
+  por tarifa). Las filas que no califican (modo categoría siempre; sin tarifa, regla apagada, o
+  modalidad histórica) usan EXACTAMENTE el camino de siempre — matemáticamente equivalente byte
+  a byte gracias a que `pvpPrograma` es monótona no-decreciente en `neto` para un `opt` fijo.
+- **Base neta negativa/cero.** `pvpPrograma` ya no devuelve 0 cuando `neto === 0` con
+  `montoSinMarkup > 0` (ej. modo `'pct'` con `valor=100%`: toda la tarifa es "impuesto",
+  `baseNeta=0` → `Venta = impuestos`, no 0 — el guard viejo se comía el impuesto). Una `baseNeta`
+  NEGATIVA es una configuración inválida: nueva función pura `validarTarifaModalidad(tarifa,
+  regla, modalidadMk)` (no-op fuera de la modalidad nueva — los datos históricos JAMÁS quedan
+  bloqueados) la rechaza en las 3 fronteras — `SalidasEditor` (bloquea el guardado),
+  `guardarSalidas` (Server Action, solo si `regla.activa`), y el propio RPC (antes del
+  DELETE/INSERT, misma fórmula `base_neta = base_comisionable * (1 - pct_comision/100)`).
+- **ACL/CHECK endurecidos.** `revoke ... from anon` explícito (además de `from public`) sobre
+  `guardar_programa_salidas`, verificado con `has_function_privilege`. El chequeo de existencia
+  del CHECK de la columna ahora filtra por `conrelid = 'public.programas'::regclass` (no solo
+  `conname`). La columna se AUDITA (tipo/nullable/default vía `information_schema.columns`)
+  antes del `add column if not exists` — aborta con mensaje claro si ya existiera con una
+  definición distinta, en vez de aceptarla en silencio.
+
+**Revisión PR #277, ronda 2 (3 correcciones más, la 161 sigue sin correr en producción).**
+- **Concurrencia.** `guardar_programa_salidas()` ahora abre con `SELECT ... FOR UPDATE` sobre la
+  fila de `programas` — antes, dos guardados simultáneos del MISMO programa podían intercalar su
+  UPDATE+DELETE+INSERT y mezclar la regla de uno con las salidas del otro. La lectura de la
+  modalidad cuando `modalidadMk` está AUSENTE del payload se hace de la fila YA BLOQUEADA (nunca
+  con un SELECT aparte antes de esperar el lock) — así un guardado con payload viejo que gana el
+  lock DESPUÉS de otro hereda la modalidad que ese otro dejó (o la que ya había, si hizo
+  ROLLBACK). El lock es por FILA: programas distintos no se bloquean entre sí. Prueba real con
+  dos conexiones psql: `supabase/scripts/pruebas/test_concurrencia_modalidad_mk.sh`.
+- **Paridad numérica JS↔Postgres.** El RPC siempre calculó `base_neta` con aritmética `numeric`
+  exacta (nunca redondeaba). El desajuste estaba del lado JS: `validarTarifaModalidad()`
+  comparaba contra el `baseNeta` YA REDONDEADO a 2 decimales de `calcularNetoProgramaConModalidad`
+  — una base apenas negativa (ej. -0,0036) podía redondear a `-0` (que en JS no es `< 0`) y pasar
+  el navegador/Server Action mientras el RPC, con la MISMA tarifa, la rechazaba. Nueva
+  `baseNetaExacta()` (sin redondear ningún paso intermedio, misma secuencia que el RPC) es la que
+  usa `validarTarifaModalidad` para la comparación — el redondeo a 2 decimales se conserva SOLO
+  para el valor mostrado/persistido.
+- **Función compartida `calcularPvpAcomodacionSalida()`.** La decisión "¿esta acomodación usa la
+  modalidad nueva o el camino histórico?" estaba reescrita 3 veces (`getProgramaDetalle`/
+  `pvpDeSalida`, `getProgramasResumen`, el editor en vivo). Ahora es una sola función pura (lib/calc/
+  programaPrecio.ts) que los 3 consumidores llaman — recibe `neto`/`tarifa`/regla/modalidad/`opt`
+  (con `dias` YA resuelto por el llamador: `getProgramasResumen` usa un fallback de días distinto
+  entre el camino histórico y el nuevo, una asimetría preexistente a este PR que no se toca para
+  no cambiar en silencio los números de "Desde" ya mostrados). El CHECK de la migración (punto
+  anterior) también se endureció para comparar `pg_get_constraintdef()` contra la expresión
+  esperada cuando el constraint YA existe, no solo detectarlo por nombre+tabla.
+
 ### 1.3 Modelo de datos
 
 `programas` (cabecera): `id, proveedor_id (FK), nombre, subtitulo, dias, noches, moneda (default

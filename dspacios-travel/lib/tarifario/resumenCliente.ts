@@ -8,7 +8,7 @@ import type { FilaResumen } from "./resumen.ts";
 /**
  * "Desde" de un hotel a partir de sus filas de RESUMEN: cada fila ya trae
  * `desde_adulto` (el mínimo de sencilla/doble/triple/multiple de ESE combo
- * hotel+categoría+régimen, calculado en SQL — ver migración 161). Tomar el
+ * hotel+categoría+régimen, calculado en SQL — ver migración 162). Tomar el
  * mínimo de esos mínimos por combo es matemáticamente el mismo mínimo que
  * tomarlo directo sobre todas las filas de habitación individuales
  * (equivalencia probada en pruebas/tarifarioResumen.test.ts). Nunca incluye

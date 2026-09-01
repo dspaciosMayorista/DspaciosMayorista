@@ -1,5 +1,5 @@
 -- ───────────────────────────────────────────────────────────────────────────
--- ROLLBACK de la migración 161 (vista `tarifario_resumen`)
+-- ROLLBACK de la migración 162 (vista `tarifario_resumen`)
 --
 -- Es aditiva pura: no toca ninguna tabla, columna, policy ni función
 -- existente. Revertirla es simplemente borrar la vista — nada más depende de

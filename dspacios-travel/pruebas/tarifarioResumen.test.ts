@@ -27,7 +27,7 @@ function minRoomPvpRaw(filas: { acomodacion: string | null; precio_pvp: number }
 // vista SQL: (modulo, paquete, bloqueo, hotel, servicio, categoria, regimen,
 // fecha_ida, fecha_regreso, noches) → min por acomodación. Réplica en JS de
 // la sentencia `group by` + `filter (where acomodacion = 'x')` de la
-// migración 161 (incluida la nueva versión sin filtro de precio>0 para
+// migración 162 (incluida la nueva versión sin filtro de precio>0 para
 // nino/nino2/infante) — sirve para construir fixtures de resumen sin tener
 // que escribirlos ya agregados a mano (fácil de desalinear con el código real).
 function agregarComoVistaSQL(raw: FilaTarifario[]): FilaResumen[] {
@@ -44,7 +44,7 @@ function agregarComoVistaSQL(raw: FilaTarifario[]): FilaResumen[] {
       return vals.length ? Math.min(...vals) : null;
     };
     // Chd1/Chd2/infante: SIN el filtro precio_pvp>0 (0 es un precio válido,
-    // "gratis") — mismo criterio que la migración 161.
+    // "gratis") — mismo criterio que la migración 162.
     const porAcomSinFiltroPrecio = (a: string) => {
       const vals = filas.filter((f) => f.acomodacion === a).map((f) => f.precio_pvp);
       return vals.length ? Math.min(...vals) : null;
@@ -108,7 +108,7 @@ describe("Item 1 — el resumen ya NO se re-expande a miles de filas antes del t
     // El "combo count" real (grupos distintos hotel×categoría×régimen) —
     // sigue siendo mucho menor que 17.197 (colapsa la dimensión acomodación,
     // hasta 7×), pero NO llega a la magnitud de 58 hoteles (tradeoff
-    // documentado en la migración 161).
+    // documentado en la migración 162).
     assert.ok(resumen.length < TOTAL_RAW / 4, `el resumen (${resumen.length}) debe ser MENOS de 1/4 de las filas raw (${TOTAL_RAW})`);
     assert.ok(resumen.length < 3000, `el resumen (${resumen.length}) debe estar muy lejos de la magnitud de 10.000–17.000`);
 
@@ -488,7 +488,7 @@ describe("cargarResumenTarifario() — consulta la vista de resumen, entrega Fil
 // MENOS filas de las pedidas por `.range()` (límite "Max Rows" del proyecto)
 // aunque queden más filas después — ese recorte no significa "no hay más".
 // Corrección: orden TOTAL determinista (todas las columnas del `group by` de
-// la migración 161 salvo `paquete_activo`, siempre `true`), avance por la
+// la migración 162 salvo `paquete_activo`, siempre `true`), avance por la
 // cantidad REAL de filas recibidas, término SOLO con página vacía, y una
 // guardia explícita de páginas máximas contra falta de progreso.
 describe("Ronda 6, Item 1 — paginación robusta ante recorte de PostgREST (Max Rows) y orden total determinista", () => {
@@ -529,7 +529,7 @@ describe("Ronda 6, Item 1 — paginación robusta ante recorte de PostgREST (Max
     assert.ok(new Set(claves).size < claves.length, "debe haber al menos una clave repetida bajo el orden anterior de 5 columnas");
   });
 
-  test("el orden NUEVO (19 columnas — todo el group by de la migración 161 salvo paquete_activo) desambigua TODAS las filas del mismo catálogo", () => {
+  test("el orden NUEVO (19 columnas — todo el group by de la migración 162 salvo paquete_activo) desambigua TODAS las filas del mismo catálogo", () => {
     const claves = fixtureConEmpates().map((f) => claveOrden(f, ORDEN_NUEVO));
     assert.equal(new Set(claves).size, claves.length, "cada fila debe tener una clave única bajo el orden total nuevo");
   });

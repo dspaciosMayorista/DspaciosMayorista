@@ -1,8 +1,8 @@
 -- ───────────────────────────────────────────────────────────────────────────
--- 161 · TARIFARIO — vista de resumen para carga en dos niveles
+-- 162 · TARIFARIO — vista de resumen para carga en dos niveles
 --
 --  ⚠️ NO EJECUTADA EN PRODUCCIÓN TODAVÍA — aditiva, reversible (ver
---  supabase/scripts/rollback_161_tarifario_resumen.sql). Ejecutar SOLO cuando
+--  supabase/scripts/rollback_162_tarifario_resumen.sql). Ejecutar SOLO cuando
 --  el dueño lo autorice explícitamente.
 --
 --  Incidente: /tarifario, /dashboard/tarifario y /dashboard/reservar cargan
@@ -109,7 +109,7 @@
 --      a continuación.
 --  Pruebas negativas de colisión/atomicidad (no se ejecutan solas, se corren
 --  a mano contra una base de verificación local — nunca contra producción):
---  supabase/scripts/pruebas/test_161_atomicidad_colision.sql.
+--  supabase/scripts/pruebas/test_162_atomicidad_colision.sql.
 -- ───────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -118,7 +118,7 @@ do $$
 begin
   if to_regclass('public.tarifario_resumen') is not null then
     raise exception
-      'La relación public.tarifario_resumen ya existe (tabla, vista u otro objeto) — abortando la migración 161 para no pisarla. Revisar manualmente qué es antes de reintentar.';
+      'La relación public.tarifario_resumen ya existe (tabla, vista u otro objeto) — abortando la migración 162 para no pisarla. Revisar manualmente qué es antes de reintentar.';
   end if;
 end $$;
 
