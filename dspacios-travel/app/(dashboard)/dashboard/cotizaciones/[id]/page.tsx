@@ -1,5 +1,4 @@
 import { createClient } from "@/lib/supabase/server";
-import { createClient164 } from "@/lib/supabase/server164";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { notFound } from "next/navigation";
 import Link from "next/link";
@@ -15,6 +14,8 @@ import { TitularEditor } from "./TitularEditor";
 import { IncluyeEditor } from "./IncluyeEditor";
 import { RecobroNinosEditor } from "./RecobroNinosEditor";
 import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
+import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
+import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/PagosPreviosPanel";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -66,10 +67,9 @@ export default async function CotizacionDetallePage({
 
   // Condiciones de pago por componente YA congeladas (migración 164). El panel
   // se enciende cuando existen filas (commit 4/5 las escribe al congelar); si
-  // aún no hay snapshot, no renderiza nada. Se lee con el cliente 164 porque la
-  // tabla es nueva y no está en el tipo base.
-  const sb164 = await createClient164();
-  const { data: condRows } = await sb164
+  // aún no hay snapshot, no renderiza nada. La tabla vive en el tipo base
+  // (`types/database.ts`), así que se lee con el mismo cliente `sb`.
+  const { data: condRows } = await sb
     .from("cotizacion_condiciones")
     .select("orden, tipo_componente, referencia_externa, valor_componente, condicion_pago_tipo, condicion_pago_pct_aplicable, condicion_pago_dias_saldo, monto_exigido, restriccion_comercial")
     .eq("cotizacion_id", c.id)
@@ -79,6 +79,28 @@ export default async function CotizacionDetallePage({
   const { data: { user } } = await sb.auth.getUser();
   const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre").eq("id", user.id).single() : { data: null };
   const esSuperadmin = perfil?.rol === "superadmin";
+  // El panel de pagos previos (migración 164) lo ve/opera solo el rol
+  // autorizado — la MISMA lista que `_autorizado_pago_previo` en SQL.
+  const esPagoAutorizado =
+    !!perfil?.rol && (ROLES_CONTRATO_COMPLETO as readonly string[]).includes(perfil.rol);
+
+  // Snapshot congelado (164) + pagos previos: solo se leen para el rol
+  // autorizado en una cotización ABIERTA (RLS de `cotizacion_pagos_previos`).
+  const lecturaPagos = esPagoAutorizado && c.estado === "abierta";
+  const { data: congeladoCot } = lecturaPagos
+    ? await sb
+        .from("cotizaciones")
+        .select("condicion_pago_congelada_en, trm_autoritativa, monto_exigido_total, monto_exigido_total_cop")
+        .eq("id", c.id)
+        .maybeSingle()
+    : { data: null };
+  const { data: pagosPrevios } = lecturaPagos
+    ? await sb
+        .from("cotizacion_pagos_previos")
+        .select("id, monto_cop, trm, fecha_pago, forma_pago, referencia, estado")
+        .eq("cotizacion_id", c.id)
+        .order("id", { ascending: false })
+    : { data: null };
   // Los asesores internos son los usuarios con rol 'venta'.
   const { data: asesores } = await sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre");
   // % por defecto del recobro para el aliado en B2B (editor de niños/recobro).
@@ -248,6 +270,22 @@ export default async function CotizacionDetallePage({
             }}
           />
         </div>
+      )}
+
+      {/* Pagos previos + congelado de condiciones (migración 164, Commit 4).
+          Solo cotización manual ABIERTA y rol autorizado; las demás tipos
+          (single/carrito) llegan con la conversión a contrato único. */}
+      {lecturaPagos && c.tipo === "manual" && (
+        <PagosPreviosPanel
+          cotizacionId={c.id}
+          moneda={moneda}
+          congelado={!!congeladoCot?.condicion_pago_congelada_en}
+          montoExigidoMoneda={congeladoCot?.monto_exigido_total ?? null}
+          montoExigidoCop={congeladoCot?.monto_exigido_total_cop ?? null}
+          precioTotalMoneda={Number(c.precio_venta) || 0}
+          trmAutoritativa={congeladoCot?.trm_autoritativa ?? null}
+          pagos={(pagosPrevios ?? []) as PagoPrevioUI[]}
+        />
       )}
 
       <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">

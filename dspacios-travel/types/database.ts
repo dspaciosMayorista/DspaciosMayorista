@@ -2481,6 +2481,18 @@ export type Database = {
           // Nullable durante la fase aditiva (migración 153); la 154 la
           // cierra a NOT NULL. Todo INSERT nuevo debe estamparla igual.
           tenant: string | null;
+          // ── Condiciones de pago por componente (migración 164) ──
+          // Se estampan al CONGELAR la cotización (1er pago previo): el snapshot
+          // congelado del monto mínimo exigido y la moneda/TRM/precio del
+          // momento. `condicion_pago_congelada_en` es el candado: el trigger 164
+          // bloquea alterar `cotizacion_condiciones` una vez estampado.
+          condicion_pago_congelada_en: string | null; // timestamptz
+          moneda_congelada: string | null;
+          trm_autoritativa: number | null; // numeric, default 1
+          precio_total_congelado: number | null;
+          monto_exigido_total: number | null;
+          monto_exigido_total_cop: number | null;
+          pct_efectivo_informativo: number | null; // solo informativo (0..100)
         };
         Insert: {
           id?: number;
@@ -2508,6 +2520,13 @@ export type Database = {
           creado_por?: string | null;
           numero_contrato?: string | null;
           tenant?: string | null;
+          condicion_pago_congelada_en?: string | null;
+          moneda_congelada?: string | null;
+          trm_autoritativa?: number | null;
+          precio_total_congelado?: number | null;
+          monto_exigido_total?: number | null;
+          monto_exigido_total_cop?: number | null;
+          pct_efectivo_informativo?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["cotizaciones"]["Insert"]>;
         Relationships: [];
@@ -2544,6 +2563,89 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["cotizacion_servicios"]["Insert"]>;
+        Relationships: [];
+      };
+      // ── Condiciones de pago por componente (migración 164) ──────────────
+      cotizacion_condiciones: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          orden: number;
+          tipo_componente: string; // 'hotel' | 'vuelo_bloqueo' | 'aereo_empaquetado' | 'servicio' | 'programa' | 'paquete'
+          referencia_externa: string | null;
+          paquete_id: number | null;
+          programa_id: number | null;
+          hotel_temporada_id: number | null;
+          valor_componente: number;
+          condicion_pago_tipo: string; // 'sin_condicion' | 'normal' | 'pago_total' | 'anticipo_saldo'
+          condicion_pago_pct_aplicable: number | null;
+          condicion_pago_dias_saldo: number | null;
+          condicion_pago_fecha_limite: string | null;
+          monto_exigido: number;
+          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable' | 'no_reembolsable_no_endosable'
+          congelado: boolean;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: number;
+          cotizacion_id: number;
+          orden: number;
+          tipo_componente: string;
+          referencia_externa?: string | null;
+          paquete_id?: number | null;
+          programa_id?: number | null;
+          hotel_temporada_id?: number | null;
+          valor_componente: number;
+          condicion_pago_tipo: string;
+          condicion_pago_pct_aplicable?: number | null;
+          condicion_pago_dias_saldo?: number | null;
+          condicion_pago_fecha_limite?: string | null;
+          monto_exigido: number;
+          restriccion_comercial: string;
+          congelado?: boolean;
+          created_at?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["cotizacion_condiciones"]["Insert"]>;
+        Relationships: [];
+      };
+      cotizacion_pagos_previos: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          tenant: string;
+          monto_cop: number;
+          moneda: string;
+          trm: number | null;
+          forma_pago: string;
+          referencia: string | null;
+          fecha_pago: string | null;
+          registrado_por_id: string;
+          registrado_por_email: string | null;
+          estado: string; // 'activo' | 'aplicado' | 'anulado'
+          abono_id: number | null;
+          idempotency_key: string | null;
+          motivo_anulacion: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: number;
+          cotizacion_id: number;
+          tenant?: string;
+          monto_cop: number;
+          moneda?: string;
+          trm?: number | null;
+          forma_pago: string;
+          referencia?: string | null;
+          fecha_pago?: string | null;
+          registrado_por_id: string;
+          registrado_por_email?: string | null;
+          estado?: string;
+          abono_id?: number | null;
+          idempotency_key?: string | null;
+          motivo_anulacion?: string | null;
+          created_at?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["cotizacion_pagos_previos"]["Insert"]>;
         Relationships: [];
       };
       hotel_fotos: {
@@ -2904,6 +3006,31 @@ export type Database = {
       fn_fusionar_destino: {
         Args: { p_origen: number; p_destino: number };
         Returns: undefined;
+      };
+      // Migración 164. RPC de dinero de los pagos previos de una cotización.
+      // Solo otorgados a `service_role`; vuelven a validar rol/tenant/estado con
+      // FOR UPDATE. Devuelven 'OK' o 'OK|<id>' / un mensaje de error en texto.
+      registrar_pago_previo: {
+        Args: {
+          p_cotizacion_id: number;
+          p_monto_cop: number;
+          p_moneda: string;
+          p_trm: number;
+          p_forma_pago: string;
+          p_referencia: string;
+          p_fecha_pago: string;
+          p_usuario_id: string;
+          p_idempotency_key?: string;
+        };
+        Returns: string;
+      };
+      anular_pago_previo: {
+        Args: { p_pago_id: number; p_motivo?: string | null; p_usuario_id: string };
+        Returns: string;
+      };
+      transferir_pagos_previos_a_abonos: {
+        Args: { p_cotizacion_id: number; p_numero_contrato: string; p_usuario_id: string };
+        Returns: string;
       };
       siguiente_numero_contrato: {
         Args: Record<PropertyKey, never>;
