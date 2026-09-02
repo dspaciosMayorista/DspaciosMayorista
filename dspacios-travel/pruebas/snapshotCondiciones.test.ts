@@ -17,6 +17,7 @@ import {
   vigenciaCubreFecha,
   condicionHotelEstadia,
   construirSnapshot,
+  type CondicionCompuesta,
 } from "../lib/cotizacion/snapshotCondiciones.ts";
 
 const sinC = { tipo: "sin_condicion" as const, pctInicial: null, diasSaldo: null };
@@ -24,7 +25,7 @@ const pagoTotal = { tipo: "pago_total" as const, pctInicial: null, diasSaldo: nu
 const anticipo60 = { tipo: "anticipo_saldo" as const, pctInicial: 0.6, diasSaldo: 30 };
 const F = "2026-08-01"; // fechaPago fija
 
-function vg(cond: typeof sinC, inicio: string, fin: string, nombre = "T", id: number | null = null) {
+function vg(cond: CondicionCompuesta, inicio: string, fin: string, nombre = "T", id: number | null = null) {
   return { ...cond, hotelTemporadaId: id, nombre, fechaInicio: inicio, fechaFin: fin };
 }
 

@@ -35,7 +35,7 @@ import {
 } from "../lib/cotizacion/condicionPago.ts";
 
 const FECHA_PAGO = "2026-08-01"; // "hoy" fijo para determinismo
-const sinCond = { tipo: "sin_condicion", pctInicial: null, diasSaldo: null };
+const sinCond = { tipo: "sin_condicion" as const, pctInicial: null, diasSaldo: null };
 
 describe("pctAplicable — una condición aislada", () => {
   test("neutra (sin_condicion) → % normal configurable (0.30)", () => {
@@ -156,11 +156,13 @@ describe("fórmulaPagoMinimo — desglose por componente y ejemplo del dueño", 
     const a = r.desglose.find((l) => l.id === "hotA");
     const b = r.desglose.find((l) => l.id === "hotB");
     const aereo = r.desglose.find((l) => l.id === "aereoEmp");
+    const pctEf = r.pctEfectivoInformativo;
+    assert.ok(a && b && aereo && pctEf !== null);
     assert.equal(a.montoExigidoMoneda, 2_500_000);
     assert.equal(b.montoExigidoMoneda, 1_500_000);
     assert.equal(aereo.montoExigidoMoneda, 1_500_000);
     assert.equal(r.montoExigidoTotalMoneda, 5_800_000);
-    assert.ok(Math.abs(r.pctEfectivoInformativo - 58) < 0.1);
+    assert.ok(Math.abs(pctEf - 58) < 0.1);
     assert.equal(r.montoExigidoTotalCop, 5_800_000);
   });
 
@@ -174,6 +176,7 @@ describe("fórmulaPagoMinimo — desglose por componente y ejemplo del dueño", 
     );
     const aereo = r.desglose.find((l) => l.id === "aereo");
     const hot = r.desglose.find((l) => l.id === "hot");
+    assert.ok(aereo && hot);
     assert.equal(aereo.pct, 1);
     assert.equal(aereo.montoExigidoMoneda, 500_000);
     assert.ok(Math.abs(hot.pct - 0.3) < 1e-9); // el hotel normal NO se obliga por el aéreo
