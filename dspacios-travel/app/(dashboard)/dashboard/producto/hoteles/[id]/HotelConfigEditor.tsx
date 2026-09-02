@@ -10,14 +10,16 @@ import { actualizarHotelConfig } from "../actions";
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
 export function HotelConfigEditor({
-  hotelId, rangos, inicial, destinos = [],
+  hotelId, rangos, inicial, destinos = [], proveedores = [],
 }: {
   hotelId: number;
   rangos: RangoEdad[];
   destinos?: { id: number; nombre: string }[];
+  proveedores?: { id: number; nombre: string }[];
   inicial: {
     nombre: string;
     destinoId: number | null;
+    proveedorId: number | null;
     zona: string;
     edadInfanteMin: number; edadInfanteMax: number;
     edadNinoMin: number; edadNinoMax: number;
@@ -42,6 +44,7 @@ export function HotelConfigEditor({
   const [open, setOpen] = useState(false);
   const [nombre, setNombre] = useState(inicial.nombre);
   const [destinoId, setDestinoId] = useState<number | "">(inicial.destinoId ?? "");
+  const [proveedorId, setProveedorId] = useState<number | "">(inicial.proveedorId ?? "");
   const [zona, setZona] = useState(inicial.zona);
   const [moneda, setMoneda] = useState<"COP" | "USD">(inicial.moneda === "USD" ? "USD" : "COP");
   const [contactoTel, setContactoTel] = useState(inicial.contactoTelefono);
@@ -71,6 +74,7 @@ export function HotelConfigEditor({
       const r = await actualizarHotelConfig(hotelId, {
         nombre,
         destinoId: destinoId === "" ? null : Number(destinoId),
+        proveedorId: proveedorId === "" ? null : Number(proveedorId),
         zona,
         edadInfanteMin: Number(infMin) || 0, edadInfanteMax: Number(infMax) || 0,
         edadNinoMin: Number(ninoMin) || 0, edadNinoMax: Number(ninoMax) || 0,
@@ -99,12 +103,19 @@ export function HotelConfigEditor({
             <label className={lbl}>Nombre del hotel <span className="font-normal text-gray-400">(si te equivocaste, corrígelo aquí)</span></label>
             <Input value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre del hotel" />
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className={lbl}>Destino <span className="font-normal text-gray-400">(si lo asignaste mal, cámbialo aquí)</span></label>
               <select value={destinoId} onChange={(e) => setDestinoId(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
                 <option value="">— Elige un destino —</option>
                 {destinos.map((d) => <option key={d.id} value={d.id}>{d.nombre?.toUpperCase()}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Proveedor hotelero</label>
+              <select value={proveedorId} onChange={(e) => setProveedorId(e.target.value === "" ? "" : Number(e.target.value))} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">- Sin asignar -</option>
+                {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
               </select>
             </div>
             <div><label className={lbl}>Zona</label><Input value={zona} onChange={(e) => setZona(e.target.value)} /></div>
