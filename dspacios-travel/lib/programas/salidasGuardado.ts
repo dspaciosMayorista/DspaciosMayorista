@@ -30,6 +30,10 @@ export type SalidaContenido = {
   tarifaDoble: number | null;
   tarifaTriple: number | null;
   tarifaMultiple: number | null;
+  impuestoSencilla?: number | null;
+  impuestoDoble?: number | null;
+  impuestoTriple?: number | null;
+  impuestoMultiple?: number | null;
 };
 
 // Un campo de texto solo cuenta como contenido si tiene algo además de
@@ -40,7 +44,7 @@ const textoConContenido = (s: string) => s.trim() !== "";
 // el usuario escribió a propósito (ej. "Niño gratis"), no lo mismo que
 // dejarlo en blanco. `num()`/`nOrNull()` en actions.ts ya convierten "" → null
 // antes de llegar aquí, así que null es inequívocamente "no se tocó".
-const numeroConContenido = (n: number | null) => n != null;
+const numeroConContenido = (n: number | null | undefined) => n != null;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Tarifas negativas — última barrera del lado app antes del CHECK de BD
@@ -54,11 +58,21 @@ export type TarifasFilaDb = {
   tarifa_doble: number | null;
   tarifa_triple: number | null;
   tarifa_multiple: number | null;
+  impuesto_sencilla?: number | null;
+  impuesto_doble?: number | null;
+  impuesto_triple?: number | null;
+  impuesto_multiple?: number | null;
 };
 
 export function tieneTarifaNegativa(filas: TarifasFilaDb[]): boolean {
   return filas.some((f) =>
     [f.tarifa_sencilla, f.tarifa_doble, f.tarifa_triple, f.tarifa_multiple].some((n) => n != null && n < 0)
+  );
+}
+
+export function tieneImpuestoAcomodacionNegativo(filas: TarifasFilaDb[]): boolean {
+  return filas.some((f) =>
+    [f.impuesto_sencilla, f.impuesto_doble, f.impuesto_triple, f.impuesto_multiple].some((n) => n != null && n < 0)
   );
 }
 
@@ -78,6 +92,10 @@ export function salidaTieneContenido(s: SalidaContenido): boolean {
     numeroConContenido(s.tarifaDoble) ||
     numeroConContenido(s.tarifaTriple) ||
     numeroConContenido(s.tarifaMultiple) ||
+    numeroConContenido(s.impuestoSencilla) ||
+    numeroConContenido(s.impuestoDoble) ||
+    numeroConContenido(s.impuestoTriple) ||
+    numeroConContenido(s.impuestoMultiple) ||
     // Un booleano en su valor por defecto (false) no es "contenido" — solo
     // marcarlo true (a solicitud, sin precio) lo es.
     s.bajoSolicitud === true

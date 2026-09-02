@@ -3,8 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
-import { salidaTieneContenido, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
-import { validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
+import { salidaTieneContenido, tieneImpuestoAcomodacionNegativo, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
+import { resolverValorReglaAcomodacion, validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -283,6 +283,10 @@ export type SalidaInput = {
   tarifaDoble: number | null;
   tarifaTriple: number | null;
   tarifaMultiple: number | null;
+  impuestoSencilla: number | null;
+  impuestoDoble: number | null;
+  impuestoTriple: number | null;
+  impuestoMultiple: number | null;
 };
 
 // Configuración de la regla "el proveedor da tarifa comisionable" — vive a
@@ -297,6 +301,7 @@ export type ReglaComisionableInput = {
   // resultado de la calculadora (ver lib/calc/programaPrecio.ts). Vive a
   // nivel de programa, igual que modo/valor/pctComision de arriba.
   modalidadMk: ModalidadMk;
+  impuestoPorAcomodacion: boolean;
 };
 
 // Guarda la regla comisionable del programa y reemplaza sus salidas en una
@@ -319,6 +324,13 @@ export async function guardarSalidas(
   const modalidadMkRaw: unknown = (regla as { modalidadMk?: unknown })?.modalidadMk;
   if (!esModalidadMkValida(modalidadMkRaw)) {
     return { ok: false, error: "La modalidad de MK no es válida." };
+  }
+  const impuestoPorAcomodacionRaw: unknown = (regla as { impuestoPorAcomodacion?: unknown })?.impuestoPorAcomodacion;
+  if (typeof impuestoPorAcomodacionRaw !== "boolean") {
+    return { ok: false, error: "La modalidad del impuesto no es valida." };
+  }
+  if (impuestoPorAcomodacionRaw && regla.modo !== "impuesto") {
+    return { ok: false, error: "El impuesto por acomodacion solo aplica a Tarifa - impuesto." };
   }
   // Repite la validación del navegador: no depender solo de él. `num()` ya
   // convierte "" / no-numérico a null, igual que `parseNumOrNull` del lado
@@ -354,6 +366,10 @@ export async function guardarSalidas(
       tarifa_doble: num(s.tarifaDoble),
       tarifa_triple: num(s.tarifaTriple),
       tarifa_multiple: num(s.tarifaMultiple),
+      impuesto_sencilla: num(s.impuestoSencilla),
+      impuesto_doble: num(s.impuestoDoble),
+      impuesto_triple: num(s.impuestoTriple),
+      impuesto_multiple: num(s.impuestoMultiple),
     }));
 
   // Última barrera del lado app antes del CHECK de BD
@@ -361,6 +377,9 @@ export async function guardarSalidas(
   // de propagar el texto crudo de la violación del constraint.
   if (tieneTarifaNegativa(filas)) {
     return { ok: false, error: "Las tarifas del proveedor no pueden ser negativas." };
+  }
+  if (tieneImpuestoAcomodacionNegativo(filas)) {
+    return { ok: false, error: "Los impuestos por acomodacion no pueden ser negativos." };
   }
 
   // (Revisión PR #277, defecto 3) Con la regla ACTIVA, cada tarifa cargada se
@@ -375,10 +394,34 @@ export async function guardarSalidas(
   if (regla.activa) {
     const reglaNum = { modo: regla.modo, valor: valorNum ?? 0, pctComision: pctComisionNum ?? 0 };
     for (const f of filas) {
-      for (const tarifa of [f.tarifa_sencilla, f.tarifa_doble, f.tarifa_triple, f.tarifa_multiple]) {
+      const pares = [
+        [f.tarifa_sencilla, f.impuesto_sencilla, "sencilla"],
+        [f.tarifa_doble, f.impuesto_doble, "doble"],
+        [f.tarifa_triple, f.impuesto_triple, "triple"],
+        [f.tarifa_multiple, f.impuesto_multiple, "multiple"],
+      ] as const;
+      for (const [tarifa, impuestoAcomodacion, nombre] of pares) {
         if (tarifa == null) continue;
-        const v = validarTarifaModalidad(tarifa, reglaNum, modalidadMkRaw);
-        if (!v.ok) return { ok: false, error: v.error };
+        // Igual criterio que el editor (`tarifa > 0` guarda ambos chequeos) y
+        // que el RPC (`v_tarifa > 0`): una tarifa <= 0 no es una acomodación
+        // ofrecida por el proveedor, así que no exige su impuesto ni se
+        // resuelve un valor para ella — antes de este fix, esta segunda
+        // rama sí lo exigía incondicionalmente y podía rechazar un guardado
+        // válido (tarifa 0 sin impuesto) que el editor y el RPC aceptaban.
+        if (tarifa > 0) {
+          if (impuestoPorAcomodacionRaw && impuestoAcomodacion == null) {
+            return { ok: false, error: `Falta el impuesto de la acomodacion ${nombre}.` };
+          }
+          const valor = resolverValorReglaAcomodacion({
+            modo: regla.modo,
+            valorGeneral: reglaNum.valor,
+            impuestoPorAcomodacion: impuestoPorAcomodacionRaw,
+            impuestoAcomodacion,
+          });
+          if (valor == null) return { ok: false, error: `El impuesto de la acomodacion ${nombre} no es valido.` };
+          const v = validarTarifaModalidad(tarifa, { ...reglaNum, valor }, modalidadMkRaw);
+          if (!v.ok) return { ok: false, error: v.error };
+        }
       }
     }
   }
@@ -391,6 +434,7 @@ export async function guardarSalidas(
       valor: valorNum,
       pctComision: pctComisionNum,
       modalidadMk: modalidadMkRaw,
+      impuestoPorAcomodacion: impuestoPorAcomodacionRaw,
     },
     p_salidas: filas,
   });

@@ -264,6 +264,26 @@ export type CalcPvpAcomodacionInput = {
   opt: PvpOpciones;
 };
 
+export type ImpuestosPorAcomodacion = {
+  sencilla: number | null;
+  doble: number | null;
+  triple: number | null;
+  multiple: number | null;
+};
+
+/** Resuelve el valor que participa en `Tarifa - impuesto` para una acomodacion. */
+export function resolverValorReglaAcomodacion(input: {
+  modo: ModoBaseComisionable;
+  valorGeneral: number;
+  impuestoPorAcomodacion: boolean;
+  impuestoAcomodacion: number | null;
+}): number | null {
+  if (input.modo !== "impuesto" || !input.impuestoPorAcomodacion) return input.valorGeneral;
+  if (input.impuestoAcomodacion == null) return null;
+  const valor = Number(input.impuestoAcomodacion);
+  return Number.isFinite(valor) && valor >= 0 ? valor : null;
+}
+
 export function calcularPvpAcomodacionSalida(input: CalcPvpAcomodacionInput): number | null {
   const neto = input.neto;
   if (neto == null || !(Number(neto) > 0)) return null;
@@ -366,17 +386,25 @@ export function validarTarifaModalidad(
 
 export function recalcularNetosPorTarifa(
   tarifas: TarifasProveedorSalida,
-  regla: { modo: ModoBaseComisionable; valor: number; pctComision: number }
+  regla: { modo: ModoBaseComisionable; valor: number; pctComision: number },
+  opciones?: { impuestoPorAcomodacion: boolean; impuestos: ImpuestosPorAcomodacion }
 ): NetosRecalculados {
-  const calc = (tarifa: number | null): number | null => {
+  const calc = (tarifa: number | null, impuestoAcomodacion: number | null): number | null => {
     if (tarifa == null || !Number.isFinite(tarifa) || tarifa <= 0) return null;
-    return calcularNetoPrograma({ tarifa, modo: regla.modo, valor: regla.valor, pctComision: regla.pctComision }).neto;
+    const valor = resolverValorReglaAcomodacion({
+      modo: regla.modo,
+      valorGeneral: regla.valor,
+      impuestoPorAcomodacion: opciones?.impuestoPorAcomodacion === true,
+      impuestoAcomodacion,
+    });
+    if (valor == null) return null;
+    return calcularNetoPrograma({ tarifa, modo: regla.modo, valor, pctComision: regla.pctComision }).neto;
   };
   return {
-    sencilla: calc(tarifas.sencilla),
-    doble: calc(tarifas.doble),
-    triple: calc(tarifas.triple),
-    multiple: calc(tarifas.multiple),
+    sencilla: calc(tarifas.sencilla, opciones?.impuestos.sencilla ?? null),
+    doble: calc(tarifas.doble, opciones?.impuestos.doble ?? null),
+    triple: calc(tarifas.triple, opciones?.impuestos.triple ?? null),
+    multiple: calc(tarifas.multiple, opciones?.impuestos.multiple ?? null),
   };
 }
 
