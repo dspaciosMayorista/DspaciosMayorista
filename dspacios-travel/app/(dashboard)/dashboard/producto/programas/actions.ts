@@ -402,18 +402,26 @@ export async function guardarSalidas(
       ] as const;
       for (const [tarifa, impuestoAcomodacion, nombre] of pares) {
         if (tarifa == null) continue;
-        if (impuestoPorAcomodacionRaw && tarifa > 0 && impuestoAcomodacion == null) {
-          return { ok: false, error: `Falta el impuesto de la acomodacion ${nombre}.` };
+        // Igual criterio que el editor (`tarifa > 0` guarda ambos chequeos) y
+        // que el RPC (`v_tarifa > 0`): una tarifa <= 0 no es una acomodación
+        // ofrecida por el proveedor, así que no exige su impuesto ni se
+        // resuelve un valor para ella — antes de este fix, esta segunda
+        // rama sí lo exigía incondicionalmente y podía rechazar un guardado
+        // válido (tarifa 0 sin impuesto) que el editor y el RPC aceptaban.
+        if (tarifa > 0) {
+          if (impuestoPorAcomodacionRaw && impuestoAcomodacion == null) {
+            return { ok: false, error: `Falta el impuesto de la acomodacion ${nombre}.` };
+          }
+          const valor = resolverValorReglaAcomodacion({
+            modo: regla.modo,
+            valorGeneral: reglaNum.valor,
+            impuestoPorAcomodacion: impuestoPorAcomodacionRaw,
+            impuestoAcomodacion,
+          });
+          if (valor == null) return { ok: false, error: `El impuesto de la acomodacion ${nombre} no es valido.` };
+          const v = validarTarifaModalidad(tarifa, { ...reglaNum, valor }, modalidadMkRaw);
+          if (!v.ok) return { ok: false, error: v.error };
         }
-        const valor = resolverValorReglaAcomodacion({
-          modo: regla.modo,
-          valorGeneral: reglaNum.valor,
-          impuestoPorAcomodacion: impuestoPorAcomodacionRaw,
-          impuestoAcomodacion,
-        });
-        if (valor == null) return { ok: false, error: `El impuesto de la acomodacion ${nombre} no es valido.` };
-        const v = validarTarifaModalidad(tarifa, { ...reglaNum, valor }, modalidadMkRaw);
-        if (!v.ok) return { ok: false, error: v.error };
       }
     }
   }

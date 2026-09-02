@@ -87,8 +87,8 @@ test("wiring: editor, frontera publica, resumen y detalle transportan los cuatro
 
 test("migracion 163 mantiene firma, lock, ACL y compatibilidad de payload", () => {
   const sql = readFileSync(join(process.cwd(), "supabase/migrations/20260601000163_programa_impuesto_por_acomodacion.sql"), "utf8");
-  assert.match(sql, /guardar_programa_salidas\s*\(\s*p_programa_id bigint,\s*p_regla jsonb,\s*p_salidas jsonb/s);
-  assert.match(sql, /where id = p_programa_id\s+for update/s);
+  assert.match(sql, /guardar_programa_salidas\s*\(\s*p_programa_id bigint,\s*p_regla jsonb,\s*p_salidas jsonb/);
+  assert.match(sql, /where id = p_programa_id\s+for update/);
   assert.match(sql, /if p_regla \? 'impuestoPorAcomodacion'/);
   assert.match(sql, /v_programa\.regla_comisionable_impuesto_por_acomodacion/);
   assert.match(sql, /revoke all on function public\.guardar_programa_salidas\(bigint, jsonb, jsonb\) from anon/);
