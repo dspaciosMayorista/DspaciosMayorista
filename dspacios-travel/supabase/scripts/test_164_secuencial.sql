@@ -64,19 +64,104 @@ begin
   raise exception 'r1=% r2=% n_pay=% n_asi=% n_snap=%', r1, r2, n_pay, n_asi, n_snap;
 end $$;
 
--- ── T2: MISMA clave + identidad distinta → rechazo cerrado.
-create or replace function public.t2_clave_identidad_distinta() returns void language plpgsql as $$
+-- ── T2 (B1): la MISMA idempotency_key con CUALQUIER dato material distinto →
+--    rechazo cerrado. Cada prueba cambia UN SOLO eje (no se mezclan monto y
+--    referencia simultáneamente). La identidad la decide la BD por huella
+--    canónica (`_huella_pago_previo`), nunca el navegador.
+
+-- 2a) referencia distinta (todo lo demás idéntico) → rechazo.
+create or replace function public.t2a_ref_rechazo() returns void language plpgsql as $$
 declare msg text; ok boolean := false;
 begin
   perform public._reset_cot(101,'COP',3000000);
-  perform public.registrar_pago_previo(101, 1000000, 'COP', 1, 'Transferencia', 'REF-1', current_date,
-        '00000000-0000-0000-0000-000000000001', 'K-2', public._snap(), 1066000, 35.53);
+  perform public.registrar_pago_previo(101, 1000000, 'COP', 1, 'Transferencia', 'REF-A', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2A', public._snap(), 1066000, 35.53);
   begin
-    perform public.registrar_pago_previo(101, 999999, 'COP', 1, 'Transferencia', 'REF-X', current_date,
-        '00000000-0000-0000-0000-000000000001', 'K-2');
-  exception when others then msg := sqlerrm; ok := (msg like '%no se reutiliza%'); end;
-  if ok then return; end if;
-  raise exception 'Se esperaba rechazo por identidad distinta (msg=%)', msg;
+    perform public.registrar_pago_previo(101, 1000000, 'COP', 1, 'Transferencia', 'REF-B', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2A');
+  exception when others then msg := sqlerrm; ok := (msg like '%datos distintos%'); end;
+  if ok and (select count(*) from cotizacion_pagos_previos where cotizacion_id=101)=1 then return; end if;
+  raise exception 'referencia distinta debió rechazarse (msg=%)', msg;
+end $$;
+
+-- 2b) fecha_pago distinta (todo lo demás idéntico) → rechazo.
+create or replace function public.t2b_fecha_rechazo() returns void language plpgsql as $$
+declare msg text; ok boolean := false;
+begin
+  perform public._reset_cot(101,'COP',3000000);
+  perform public.registrar_pago_previo(101, 1000000, 'COP', 1, 'Transferencia', 'REF-F', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2B', public._snap(), 1066000, 35.53);
+  begin
+    perform public.registrar_pago_previo(101, 1000000, 'COP', 1, 'Transferencia', 'REF-F', current_date - 1,
+        '00000000-0000-0000-0000-000000000001', 'K2B');
+  exception when others then msg := sqlerrm; ok := (msg like '%datos distintos%'); end;
+  if ok and (select count(*) from cotizacion_pagos_previos where cotizacion_id=101)=1 then return; end if;
+  raise exception 'fecha distinta debió rechazarse (msg=%)', msg;
+end $$;
+
+-- 2c) referencia NULL frente a vacía = UNA sola semántica → NO rechaza (recupera
+--     el original, un solo pago/asiento). Forma Efectivo (permite ref nula).
+create or replace function public.t2c_ref_null_vacia_ok() returns void language plpgsql as $$
+declare r1 text; r2 text;
+begin
+  perform public._reset_cot(101,'COP',3000000);
+  r1 := public.registrar_pago_previo(101, 500000, 'COP', 1, 'Efectivo', null, current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2C', public._snap(), 1066000, 35.53);
+  r2 := public.registrar_pago_previo(101, 500000, 'COP', 1, 'Efectivo', '', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2C');
+  if r1 = r2 and r1 like 'OK|%'
+     and (select count(*) from cotizacion_pagos_previos where cotizacion_id=101)=1
+     and (select count(*) from asientos_contables where origen='pago_previo')=1 then return; end if;
+  raise exception 'NULL vs vacía no se trataron igual: r1=% r2=%', r1, r2;
+end $$;
+
+-- 2d) cuenta/banco (destino financiero) distinto → rechazo. La cuenta NO es un
+--     argumento independiente: se deriva de (forma_pago, moneda) vía
+--     `_cuenta_disponible` (Transferencia→111005 vs Efectivo→110505).
+create or replace function public.t2d_destino_rechazo() returns void language plpgsql as $$
+declare msg text; ok boolean := false;
+begin
+  perform public._reset_cot(101,'COP',3000000);
+  perform public.registrar_pago_previo(101, 500000, 'COP', 1, 'Transferencia', 'REF-D', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2D', public._snap(), 1066000, 35.53);
+  begin
+    perform public.registrar_pago_previo(101, 500000, 'COP', 1, 'Efectivo', 'REF-D', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2D');
+  exception when others then msg := sqlerrm; ok := (msg like '%datos distintos%'); end;
+  if ok and (select count(*) from cotizacion_pagos_previos where cotizacion_id=101)=1 then return; end if;
+  raise exception 'destino financiero distinto debió rechazarse (msg=%)', msg;
+end $$;
+
+-- 2e) monto distinto SOLO (todo lo demás idéntico) → rechazo.
+create or replace function public.t2e_monto_rechazo() returns void language plpgsql as $$
+declare msg text; ok boolean := false;
+begin
+  perform public._reset_cot(101,'COP',3000000);
+  perform public.registrar_pago_previo(101, 1000000, 'COP', 1, 'Transferencia', 'REF-E', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2E', public._snap(), 1066000, 35.53);
+  begin
+    perform public.registrar_pago_previo(101, 999999, 'COP', 1, 'Transferencia', 'REF-E', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2E');
+  exception when others then msg := sqlerrm; ok := (msg like '%datos distintos%'); end;
+  if ok and (select count(*) from cotizacion_pagos_previos where cotizacion_id=101)=1 then return; end if;
+  raise exception 'monto distinto debió rechazarse (msg=%)', msg;
+end $$;
+
+-- 2f) cotización distinta (mismo payload) → rechazo (la cotización es parte de
+--     la identidad; la huella incluye cotizacion_id).
+create or replace function public.t2f_cotizacion_rechazo() returns void language plpgsql as $$
+declare msg text; ok boolean := false;
+begin
+  perform public._reset_cot(101,'COP',3000000);
+  perform public._reset_cot(102,'COP',3000000);
+  perform public.registrar_pago_previo(101, 1000000, 'COP', 1, 'Transferencia', 'REF-F', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2F', public._snap(), 1066000, 35.53);
+  begin
+    perform public.registrar_pago_previo(102, 1000000, 'COP', 1, 'Transferencia', 'REF-F', current_date,
+        '00000000-0000-0000-0000-000000000001', 'K2F');
+  exception when others then msg := sqlerrm; ok := (msg like '%datos distintos%'); end;
+  if ok and (select count(*) from cotizacion_pagos_previos where cotizacion_id=102)=0 then return; end if;
+  raise exception 'cotización distinta debió rechazarse (msg=%)', msg;
 end $$;
 
 -- ── T5: fallo en cualquier punto del RPC → CERO snapshot/pago/asiento.
@@ -185,7 +270,12 @@ end $$;
 
 -- ── Ejecutar ───────────────────────────────────────────────────────────────
 select public._t('T1  idempotencia (misma clave, un pago/asiento)', 't1_repeticion_clave');
-select public._t('T2  idempotencia (misma clave, identidad distinta → rechazo)', 't2_clave_identidad_distinta');
+select public._t('B1-1  idempotencia (referencia distinta → rechazo)', 't2a_ref_rechazo');
+select public._t('B1-2  idempotencia (fecha_pago distinta → rechazo)', 't2b_fecha_rechazo');
+select public._t('B1-3  idempotencia (referencia NULL vs vacía = misma semántica)', 't2c_ref_null_vacia_ok');
+select public._t('B1-4  idempotencia (cuenta/banco destino distinto → rechazo)', 't2d_destino_rechazo');
+select public._t('B1-5  idempotencia (monto distinto → rechazo)', 't2e_monto_rechazo');
+select public._t('B1-6  idempotencia (cotización distinta → rechazo)', 't2f_cotizacion_rechazo');
 select public._t('T5  atomicidad (fallo revierte snapshot+pago+asiento)', 't5_fallo_atomico');
 select public._t('T6  pago posterior reutiliza snapshot/TRM congelado', 't6_reutiliza_congelado');
 select public._t('T7a descarte bloqueado con pago activo (UPDATE directo)', 't7a_no_descarta_con_activo');

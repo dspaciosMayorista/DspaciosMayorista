@@ -2625,6 +2625,7 @@ export type Database = {
           estado: string; // 'activo' | 'aplicado' | 'anulado'
           abono_id: number | null;
           idempotency_key: string | null;
+          huella_solicitud: string | null;
           motivo_anulacion: string | null;
           created_at: string | null;
         };
@@ -2644,6 +2645,7 @@ export type Database = {
           estado?: string;
           abono_id?: number | null;
           idempotency_key?: string | null;
+          huella_solicitud?: string | null;
           motivo_anulacion?: string | null;
           created_at?: string | null;
         };

@@ -284,6 +284,9 @@ create table if not exists public.cotizacion_pagos_previos (
   estado text not null default 'activo',          -- activo | aplicado | anulado
   abono_id bigint,                                 -- cuando se transfirió a un abono del contrato
   idempotency_key text,
+  huella_solicitud text,                            -- huella CANÓNICA de la solicitud (corrección B1): identidad
+                                                    --   idempotente COMPLETA calculada en PostgreSQL. Reutilizar la misma
+                                                    --   idempotency_key con cualquier dato material distinto → rechazo cerrado.
   motivo_anulacion text,
   created_at timestamptz not null default now(),
   constraint cotizacion_pagos_previos_estado_check
@@ -507,14 +510,53 @@ begin
 end;
 $$;
 
+-- Huella CANÓNICA de la solicitud de pago previo (corrección B1 de la auditoría
+-- de idempotencia). La identidad idempotente NO son solo cotización+moneda+monto+
+-- forma: cualquier dato material distinto con la MISMA idempotency_key debe
+-- rechazarse. Se calcula y se compara en PostgreSQL (autoritativa), nunca una
+-- huella enviada por el navegador.
+--
+-- La cuenta/banco de DESTINO financiero NO es un argumento independiente del
+-- RPC: se deriva de (forma_pago, moneda) vía `_cuenta_disponible`, así que queda
+-- capturada por esos dos ejes.
+--
+-- Normalización (igual al guardar que al comparar):
+--   · textos: trim;
+--   · referencia: NULL y vacío comparten una sola semántica ('');
+--   · forma_pago y moneda: casing canónico (mayúsculas);
+--   · monto: precisión numérica exacta a 2 decimales (sin ceros a la derecha);
+--   · fecha: fecha efectiva exacta (YYYY-MM-DD), misma que se persiste.
+create or replace function public._huella_pago_previo(
+  p_cotizacion_id bigint,
+  p_valor numeric,
+  p_moneda text,
+  p_forma_pago text,
+  p_referencia text,
+  p_fecha_pago date
+) returns text language sql immutable as $$
+  select md5(
+    jsonb_build_array(
+      p_cotizacion_id,
+      to_char(round(coalesce(p_valor,0), 2), 'FM999999999999999999990.99'),
+      upper(coalesce(nullif(trim(p_moneda),''), '')),
+      upper(coalesce(nullif(trim(p_forma_pago),''), '')),
+      coalesce(nullif(trim(p_referencia),''), ''),
+      coalesce(p_fecha_pago, current_date)::text
+    )::text
+  );
+$$;
+
 -- Registrar un pago previo a una cotización. UNA TRANSACCIÓN atómica e
 -- idempotente (A1+A2 de la auditoría):
 --   1) FOR UPDATE de la cotización (serializa primeros pagos concurrentes y
 --      descartes) y RE-lectura del estado y de `condicion_pago_congelada_en`.
 --   2) Valida autorización (rol+activo+tenant), payload y que esté 'abierta'.
---   3) IDEMPOTENCIA: si `p_idempotency_key` ya se registró, devuelve el resultado
---      ORIGINAL (mismo pago/asiento) sin insertar nada; si la misma clave llega
---      con identidad distinta (cotización/moneda/monto/forma) → rechazo cerrado.
+--   3) IDEMPOTENCIA (B1): si `p_idempotency_key` ya se registró, devuelve el
+--      resultado ORIGINAL (mismo pago/asiento) sin insertar nada; se compara la
+--      huella CANÓNICA de la solicitud (cotización, monto, moneda, forma/banco
+--      destino, referencia, fecha) y, si cualquiera difiere → rechazo cerrado.
+--      La huella se calcula en PostgreSQL (`_huella_pago_previo`), nunca en el
+--      navegador.
 --   4) PRIMER pago: crea/reemplaza UNA VEZ `cotizacion_condiciones` (snapshot
 --      que trae el Server Action como jsonb) + escribe resumen exigido y
 --      congela moneda/TRM/precio. Todo esto DENTRO de la misma transacción.
@@ -547,11 +589,9 @@ declare
   v_moneda_congelada text;
   v_precio_congelado numeric;
   v_key text := nullif(trim(coalesce(p_idempotency_key,'')),'');
+  v_huella text := public._huella_pago_previo(p_cotizacion_id, p_valor, p_moneda, p_forma_pago, p_referencia, p_fecha_pago);
   v_ex_id bigint;
-  v_ex_cot bigint;
-  v_ex_moneda text;
-  v_ex_monto numeric;
-  v_ex_forma text;
+  v_ex_huella text;
   v_suma numeric;
   v_tot_cop numeric;
   v_monto_cop numeric;
@@ -586,16 +626,16 @@ begin
     raise exception 'La moneda del pago (%) no coincide con la de la cotización (%).', p_moneda, v_moneda_cot;
   end if;
 
-  -- 3) IDEMPOTENCIA: misma clave ya usada → recuperar el resultado original.
-  select id, cotizacion_id, moneda, monto_moneda, lower(coalesce(forma_pago,''))
-    into v_ex_id, v_ex_cot, v_ex_moneda, v_ex_monto, v_ex_forma
+  -- 3) IDEMPOTENCIA (B1): misma clave ya usada → recuperar el resultado original
+  --    SI la huella canónica de esta solicitud es idéntica a la registrada. Si
+  --    CUALQUIER dato material difiere (cotización, monto, moneda, forma/banco
+  --    destino, referencia, fecha), la clave se rechaza (fail-closed).
+  select id, huella_solicitud
+    into v_ex_id, v_ex_huella
   from public.cotizacion_pagos_previos where idempotency_key = v_key for update;
   if v_ex_id is not null then
-    if v_ex_cot <> p_cotizacion_id
-       or upper(coalesce(v_ex_moneda,'')) <> upper(coalesce(p_moneda,''))
-       or v_ex_monto <> p_valor
-       or v_ex_forma <> lower(coalesce(p_forma_pago,'')) then
-      raise exception 'La clave de idempotencia ya se usó para otro pago: no se reutiliza.';
+    if v_ex_huella is distinct from v_huella then
+      raise exception 'La clave de idempotencia ya se usó para un pago con datos distintos: no se reutiliza. Reintenta con una clave nueva o verifica si el pago ya se confirmó.';
     end if;
     return 'OK|' || v_ex_id;
   end if;
@@ -662,11 +702,12 @@ begin
 
   insert into public.cotizacion_pagos_previos
     (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, trm, forma_pago,
-     referencia, fecha_pago, registrado_por_id, registrado_por_email, idempotency_key)
+     referencia, fecha_pago, registrado_por_id, registrado_por_email,
+     idempotency_key, huella_solicitud)
   values
     (p_cotizacion_id, v_tenant, v_monto_cop, p_valor, upper(p_moneda), v_trm_congelada,
      p_forma_pago, nullif(trim(coalesce(p_referencia,'')),''),
-     coalesce(p_fecha_pago, current_date), p_usuario_id, v_email, v_key)
+     coalesce(p_fecha_pago, current_date), p_usuario_id, v_email, v_key, v_huella)
   returning id into v_pago_id;
 
   v_numero := public._siguiente_numero_asiento(v_tenant);

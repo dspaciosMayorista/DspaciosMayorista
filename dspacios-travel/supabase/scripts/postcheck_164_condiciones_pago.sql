@@ -32,9 +32,9 @@ insert into pg_temp.postcheck_164_reporte
 select 'cols', c.tabla || '.' || c.col,
   case when exists (select 1 from information_schema.columns x
          where x.table_schema='public' and x.table_name=c.tabla and x.column_name=c.col
-           and coalesce(x.column_default,'') = coalesce(c.default,'')
+           and coalesce(x.column_default,'') = coalesce(c.valor_default,'')
            and (x.is_nullable='NO') = c.not_null) then 'OK' else 'BLOCKED' end,
-  'default esperado: ' || coalesce(c.default,'(null)') || ' · not null: ' || c.not_null
+  'default esperado: ' || coalesce(c.valor_default,'(null)') || ' · not null: ' || c.not_null
 from (values
   ('hotel_temporadas','condicion_pago_tipo','''sin_condicion''::text',true),
   ('hotel_temporadas','condicion_pago_pct_inicial',null,false),
@@ -55,7 +55,7 @@ from (values
   ('cotizaciones','monto_exigido_total_cop',null,false),
   ('cotizaciones','pct_efectivo_informativo',null,false),
   ('ventas','cotizacion_id',null,false)
-) as c(tabla, col, default, not_null);
+) as c(tabla, col, valor_default, not_null);
 
 -- 2) Tablas nuevas presentes + RLS activa.
 insert into pg_temp.postcheck_164_reporte
@@ -124,6 +124,20 @@ select 'funciones', 'cotizaciones_no_descartar_con_pagos',
   case when exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
          where n.nspname='public' and p.proname='cotizaciones_no_descartar_con_pagos') then 'OK' else 'BLOCKED' end,
   'Función del candado A3 (raise exception si hay dinero previo vivo).';
+
+-- 5ter) Huella canónica de idempotencia (corrección B1): columna + helper.
+insert into pg_temp.postcheck_164_reporte
+select 'cols', 'cotizacion_pagos_previos.huella_solicitud',
+  case when exists (select 1 from information_schema.columns x
+         where x.table_schema='public' and x.table_name='cotizacion_pagos_previos'
+           and x.column_name='huella_solicitud')
+    then 'OK' else 'BLOCKED' end,
+  'Huella canónica de la solicitud (identidad idempotente completa, B1)';
+insert into pg_temp.postcheck_164_reporte
+select 'funciones', '_huella_pago_previo',
+  case when exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+         where n.nspname='public' and p.proname='_huella_pago_previo') then 'OK' else 'BLOCKED' end,
+  'Helper de huella canónica calculado en PostgreSQL (B1), nunca en el navegador.';
 
 -- 6) ACL de las 3 funciones de dinero: SOLO service_role ejecuta.
 --    aclexplode da el oid del grantee; PUBLIC es oid 0; anon/authenticated/

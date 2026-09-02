@@ -76,6 +76,7 @@ drop function if exists public.registrar_pago_previo(bigint, numeric, text, nume
 drop function if exists public.anular_pago_previo(bigint, uuid, text);
 drop function if exists public.transferir_pagos_previos_a_abonos(bigint, text, uuid);
 drop function if exists public._autorizado_pago_previo(uuid);
+drop function if exists public._huella_pago_previo(bigint, numeric, text, text, text, date);
 drop function if exists public._siguiente_numero_asiento(text);
 drop function if exists public._cuenta_disponible(text, text);
 drop function if exists public._puc_id(text, text);
