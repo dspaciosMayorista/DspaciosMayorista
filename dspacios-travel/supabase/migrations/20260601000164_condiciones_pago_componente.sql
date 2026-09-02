@@ -205,7 +205,10 @@ create table if not exists public.cotizacion_condiciones (
     check (restriccion_comercial in ('normal','promocional_no_reembolsable'))
 );
 
-create index if not exists idx_cotizacion_condiciones_cotizacion
+-- Unicidad estructural del snapshot: a lo sumo UNA fila por (cotización, orden).
+-- El primer pago escribe el snapshot con la cotización bloqueada (FOR UPDATE),
+-- así que esta restricción es el respaldo duro contra filas duplicadas/mezcladas.
+create unique index if not exists uq_cotizacion_condiciones_cotizacion_orden
   on public.cotizacion_condiciones(cotizacion_id, orden);
 
 alter table public.cotizacion_condiciones enable row level security;
@@ -259,7 +262,7 @@ alter table public.cotizaciones
   add column if not exists precio_total_congelado numeric(15,2),       -- precio de venta en la moneda congelada
   add column if not exists monto_exigido_total numeric(15,2),          -- Σ monto_exigido (moneda de la cotización) al congelar
   add column if not exists monto_exigido_total_cop numeric(15,2),      -- mismo, en COP (para comparar contra pagos)
-  add column if not exists pct_efectivo_informativo numeric(5,4);      -- solo informativo (monto_exigido / precio)
+  add column if not exists pct_efectivo_informativo numeric(6,2);      -- solo informativo en % (0..100), p. ej. 53.33
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- E) cotizacion_pagos_previos — pagos previos registrados a mano por empleado autorizado
@@ -269,8 +272,9 @@ create table if not exists public.cotizacion_pagos_previos (
   id bigserial primary key,
   cotizacion_id bigint not null references public.cotizaciones(id),
   tenant text not null default 'mayorista',       -- snapshot para RLS por tenant (y para el abono)
-  monto_cop numeric(15,2) not null,
-  moneda text not null default 'COP',             -- moneda del pago (para cuentaDisponible en el asiento)
+  monto_cop numeric(15,2) not null,          -- monto en COP (monto_moneda × TRM congelada)
+  monto_moneda numeric(15,2) not null,        -- monto en la MONEDA de la cotización (identidad/idempotencia, sin redondeo por TRM)
+  moneda text not null default 'COP',         -- moneda del pago (para cuentaDisponible en el asiento)
   trm numeric(15,4) not null default 1,
   forma_pago text not null,
   referencia text,                                 -- NULL si efectivo (ver guard de doble clic)
@@ -301,10 +305,9 @@ create unique index if not exists uq_pagos_previos_cotizacion_referencia
 create unique index if not exists uq_pagos_previos_idempotencia
   on public.cotizacion_pagos_previos(idempotency_key)
   where idempotency_key is not null;
--- Guard de doble clic efectivo (misma cotización+mismo operador+mismo monto en
--- la ventana de 30s): no se puede indexar sobre now(), lo hace la función.
-create index if not exists idx_pagos_previos_activos
-  on public.cotizacion_pagos_previos(cotizacion_id, estado, created_at);
+-- (El guard de doble clic por ventana de 30s se eliminó: el doble clic ahora lo
+-- absorbe la CLAVE DE IDEMPOTENCIA, que además sobrevive a timeouts/pérdidas de
+-- respuesta y no da falsos positivos en pagos legítimos cercanos en el tiempo.)
 
 alter table public.cotizacion_pagos_previos enable row level security;
 -- Solo los roles que REGISTRAN/anulan leen y escriben (excluye venta y externos).
@@ -323,6 +326,35 @@ create policy "pagos_previos: acceso autorizado"
     and public.puede_ver_tenant(tenant)
     and public.puede_ver_cotizacion(cotizacion_id)
   );
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- E.2) Candado BD contra DESCARTE con pagos previos ACTIVOS/APLICADOS (A3).
+--   Autoritativo: cualquier UPDATE que lleve la cotización a 'descartada' con
+--   dinero previo vivo lanza aquí (API autenticado, service_role o SQL directo).
+--   Un pago ANULADO (reversa contable formal) ya no bloquea. No se borran
+--   eventos financieros: solo se libera el descarte tras la anulación formal.
+-- ───────────────────────────────────────────────────────────────────────────
+
+create or replace function public.cotizaciones_no_descartar_con_pagos()
+returns trigger language plpgsql as $$
+declare v_con_pagos boolean;
+begin
+  select exists(
+    select 1
+    from public.cotizacion_pagos_previos
+    where cotizacion_id = new.id and estado in ('activo','aplicado')
+  ) into v_con_pagos;
+  if v_con_pagos then
+    raise exception 'No se puede descartar la cotización %: tiene pagos previos activos/aplicados. Debe anular cada pago previo (reversa contable formal) antes de descartarla.', new.id;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_cotizaciones_no_descartar_con_pagos on public.cotizaciones;
+create trigger trg_cotizaciones_no_descartar_con_pagos
+  before update on public.cotizaciones
+  for each row when (new.estado = 'descartada' and old.estado is distinct from 'descartada')
+  execute function public.cotizaciones_no_descartar_con_pagos();
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- F) ventas.cotizacion_id UNIQUE (nullable) — UN SOLO CONTRATO por cotización
@@ -475,102 +507,168 @@ begin
 end;
 $$;
 
--- Registrar un pago previo a una cotización (una transacción):
---   · FOR UPDATE de la cotización (concurrencia) — nunca confía en montos del
---     cliente para decidir la suficiencia, solo para el monto del abono.
---   · El PRIMER pago congela moneda/TRM/precio (los exigidos los pasa el motor
---     TS del Server Action, que ya los calculó con la fecha real).
---   · Rechaza sobrepago (Σ activos+aplicados + nuevo > precio_total_cop).
---   · Guard de doble clic efectivo (mismo operador + monto en 30s).
---   · Postea el asiento: Debe cuentaDisponible / Haber 280510 (anticipo sin
---     identificar), origen 'pago_previo'.
+-- Registrar un pago previo a una cotización. UNA TRANSACCIÓN atómica e
+-- idempotente (A1+A2 de la auditoría):
+--   1) FOR UPDATE de la cotización (serializa primeros pagos concurrentes y
+--      descartes) y RE-lectura del estado y de `condicion_pago_congelada_en`.
+--   2) Valida autorización (rol+activo+tenant), payload y que esté 'abierta'.
+--   3) IDEMPOTENCIA: si `p_idempotency_key` ya se registró, devuelve el resultado
+--      ORIGINAL (mismo pago/asiento) sin insertar nada; si la misma clave llega
+--      con identidad distinta (cotización/moneda/monto/forma) → rechazo cerrado.
+--   4) PRIMER pago: crea/reemplaza UNA VEZ `cotizacion_condiciones` (snapshot
+--      que trae el Server Action como jsonb) + escribe resumen exigido y
+--      congela moneda/TRM/precio. Todo esto DENTRO de la misma transacción.
+--   5) Pagos posteriores REUTILIZAN exactamente el snapshot/TRM/precio congelados
+--      (nunca se vuelve a congelar; `monto_cop` = monto_moneda × TRM congelada).
+--   6) Rechaza sobrepago (Σ activos+aplicados + nuevo > precio_congelado·TRM).
+--   7) Inserta el pago y postea el asiento Debe cuentaDisponible / Haber 280510.
+--   Cualquier fallo → PostgreSQL revierte TODO (no hay compensaciones TS).
 create or replace function public.registrar_pago_previo(
   p_cotizacion_id bigint,
-  p_monto_cop numeric,
+  p_valor numeric,
   p_moneda text,
   p_trm numeric,
   p_forma_pago text,
   p_referencia text,
   p_fecha_pago date,
   p_usuario_id uuid,
-  p_idempotency_key text default null
+  p_idempotency_key text,
+  p_snapshot jsonb default null,
+  p_exigido_total_moneda numeric default null,
+  p_pct_efectivo numeric default null
 ) returns text language plpgsql as $$
 declare
   v_rol text := public._autorizado_pago_previo(p_usuario_id);
   v_tenant text;
-  v_moneda text;
-  v_precio_congelado numeric;
+  v_moneda_cot text;
+  v_precio_venta numeric;
+  v_congelada timestamptz;
   v_trm_congelada numeric;
+  v_moneda_congelada text;
+  v_precio_congelado numeric;
+  v_key text := nullif(trim(coalesce(p_idempotency_key,'')),'');
+  v_ex_id bigint;
+  v_ex_cot bigint;
+  v_ex_moneda text;
+  v_ex_monto numeric;
+  v_ex_forma text;
   v_suma numeric;
+  v_tot_cop numeric;
+  v_monto_cop numeric;
   v_email text;
   v_pago_id bigint;
   v_numero bigint;
   v_caja text := public._cuenta_disponible(p_forma_pago, p_moneda);
   v_anticipo bigint;
-  v_tot_cop numeric;
 begin
-  select tenant, moneda, precio_venta into v_tenant, v_moneda, v_precio_congelado
+  if v_key is null then
+    raise exception 'Se requiere una clave de idempotencia para registrar un pago previo.';
+  end if;
+  if not (coalesce(p_valor,0) > 0) then
+    raise exception 'El valor del pago debe ser mayor a cero.';
+  end if;
+  if nullif(trim(coalesce(p_forma_pago,'')),'') is null then
+    raise exception 'Indica la forma de pago.';
+  end if;
+
+  -- 1) Lock + releer estado/congelado.
+  select tenant, moneda, precio_venta, condicion_pago_congelada_en
+    into v_tenant, v_moneda_cot, v_precio_venta, v_congelada
   from public.cotizaciones where id = p_cotizacion_id for update;
   if v_tenant is null then
     raise exception 'La cotización % no existe.', p_cotizacion_id;
   end if;
-
-  -- estado abierta?
+  -- 2) estado + moneda.
   if exists (select 1 from public.cotizaciones where id = p_cotizacion_id and estado <> 'abierta') then
     raise exception 'La cotización % no está abierta (no se puede registrar un pago previo).', p_cotizacion_id;
   end if;
-
-  -- CONGELADO en el primer pago: moneda/TRM/precio.
-  if not exists (select 1 from public.cotizaciones where id = p_cotizacion_id and condicion_pago_congelada_en is not null) then
-    v_trm_congelada := case when upper(coalesce(p_moneda,'COP')) = 'COP' then 1 else coalesce(p_trm, 1) end;
-    update public.cotizaciones set
-      condicion_pago_congelada_en = now(),
-      moneda_congelada = p_moneda,
-      trm_autoritativa = v_trm_congelada,
-      precio_total_congelado = v_precio_congelado
-    where id = p_cotizacion_id;
-  else
-    select trm_autoritativa, moneda_congelada into v_trm_congelada, v_moneda
-    from public.cotizaciones where id = p_cotizacion_id;
-    if upper(coalesce(p_moneda,'COP')) <> upper(coalesce(v_moneda,'COP')) then
-      raise exception 'Moneda del pago % no coincide con la congelada % de la cotización.', p_moneda, v_moneda;
-    end if;
+  if upper(coalesce(p_moneda,'')) <> upper(coalesce(v_moneda_cot,'COP')) then
+    raise exception 'La moneda del pago (%) no coincide con la de la cotización (%).', p_moneda, v_moneda_cot;
   end if;
 
-  -- Sobrepego: Σ activos+aplicados + nuevo <= precio_total_congelado * trm.
+  -- 3) IDEMPOTENCIA: misma clave ya usada → recuperar el resultado original.
+  select id, cotizacion_id, moneda, monto_moneda, lower(coalesce(forma_pago,''))
+    into v_ex_id, v_ex_cot, v_ex_moneda, v_ex_monto, v_ex_forma
+  from public.cotizacion_pagos_previos where idempotency_key = v_key for update;
+  if v_ex_id is not null then
+    if v_ex_cot <> p_cotizacion_id
+       or upper(coalesce(v_ex_moneda,'')) <> upper(coalesce(p_moneda,''))
+       or v_ex_monto <> p_valor
+       or v_ex_forma <> lower(coalesce(p_forma_pago,'')) then
+      raise exception 'La clave de idempotencia ya se usó para otro pago: no se reutiliza.';
+    end if;
+    return 'OK|' || v_ex_id;
+  end if;
+
+  -- 4) PRIMER pago: escribir snapshot + resumen y congelar (todo en una tx).
+  if v_congelada is null then
+    v_trm_congelada := case when upper(coalesce(p_moneda,'')) = 'COP' then 1 else coalesce(nullif(p_trm,0),1) end;
+    if p_snapshot is null or p_exigido_total_moneda is null then
+      raise exception 'Primer pago: falta el snapshot de condiciones para congelar la cotización.';
+    end if;
+    delete from public.cotizacion_condiciones where cotizacion_id = p_cotizacion_id;
+    insert into public.cotizacion_condiciones
+      (cotizacion_id, orden, tipo_componente, referencia_externa, valor_componente,
+       condicion_pago_tipo, condicion_pago_pct_aplicable, condicion_pago_dias_saldo,
+       condicion_pago_fecha_limite, monto_exigido, restriccion_comercial,
+       hotel_temporada_id, paquete_id, programa_id, congelado)
+    select p_cotizacion_id,
+           coalesce((r->>'orden')::int, 0),
+           r->>'tipo_componente',
+           nullif(r->>'referencia_externa',''),
+           coalesce((r->>'valor_componente')::numeric, 0),
+           coalesce(r->>'condicion_pago_tipo','sin_condicion'),
+           nullif(r->>'condicion_pago_pct_aplicable','')::numeric,
+           nullif(r->>'condicion_pago_dias_saldo','')::int,
+           nullif(r->>'condicion_pago_fecha_limite','')::date,
+           coalesce((r->>'monto_exigido')::numeric, 0),
+           coalesce(r->>'restriccion_comercial','normal'),
+           nullif(r->>'hotel_temporada_id','')::bigint,
+           nullif(r->>'paquete_id','')::bigint,
+           nullif(r->>'programa_id','')::bigint,
+           true
+    from jsonb_array_elements(p_snapshot) r;
+    update public.cotizaciones set
+      condicion_pago_congelada_en = now(),
+      moneda_congelada = upper(p_moneda),
+      trm_autoritativa = v_trm_congelada,
+      precio_total_congelado = v_precio_venta,
+      monto_exigido_total = p_exigido_total_moneda,
+      monto_exigido_total_cop = round(p_exigido_total_moneda * v_trm_congelada, 2),
+      pct_efectivo_informativo = p_pct_efectivo
+    where id = p_cotizacion_id;
+  end if;
+
+  -- 5) Ya congelada (o recién): reutilizar EXACTAMENTE snapshot/TRM/precio.
+  select trm_autoritativa, moneda_congelada, precio_total_congelado
+    into v_trm_congelada, v_moneda_congelada, v_precio_congelado
+  from public.cotizaciones where id = p_cotizacion_id;
+  if upper(coalesce(p_moneda,'')) <> upper(coalesce(v_moneda_congelada,'')) then
+    raise exception 'Moneda del pago % no coincide con la congelada % de la cotización.', p_moneda, v_moneda_congelada;
+  end if;
+  v_monto_cop := round(p_valor * v_trm_congelada, 2);
+
+  -- 6) Sobrepago (COP vs COP con la TRM congelada).
   select coalesce(sum(monto_cop),0) into v_suma
   from public.cotizacion_pagos_previos
   where cotizacion_id = p_cotizacion_id and estado in ('activo','aplicado');
   v_tot_cop := round(coalesce(v_precio_congelado,0) * v_trm_congelada, 2);
-  if v_suma + coalesce(p_monto_cop,0) > v_tot_cop + 0.005 then
-    raise exception 'Sobrepago rechazado: ya hay % pagados y % excede el total % de la cotización.', v_suma, p_monto_cop, v_tot_cop;
+  if v_suma + v_monto_cop > v_tot_cop + 0.005 then
+    raise exception 'Sobrepago rechazado: ya hay % pagados y % excede el total % de la cotización.', v_suma, v_monto_cop, v_tot_cop;
   end if;
 
-  -- Guard de doble clic EFECTIVO: mismo operador + mismo monto en la última
-  -- ventana de 30s (efectivo no lleva referencia con la que deduplicar).
-  if p_referencia is null and lower(coalesce(p_forma_pago,'')) like '%efectivo%' then
-    if exists (
-      select 1 from public.cotizacion_pagos_previos
-      where cotizacion_id = p_cotizacion_id and registrado_por_id = p_usuario_id
-        and monto_cop = coalesce(p_monto_cop,0) and estado = 'activo'
-        and created_at > now() - interval '30 seconds'
-    ) then
-      raise exception 'Posible doble registro de un pago en efectivo: se rechaza (repítelo si no fue duplicado).';
-    end if;
-  end if;
-
+  -- 7) Insertar el pago + asiento.
   select email into v_email from public.usuarios where id = p_usuario_id;
 
   insert into public.cotizacion_pagos_previos
-    (cotizacion_id, tenant, monto_cop, moneda, trm, forma_pago, referencia, fecha_pago,
-     registrado_por_id, registrado_por_email, idempotency_key)
+    (cotizacion_id, tenant, monto_cop, monto_moneda, moneda, trm, forma_pago,
+     referencia, fecha_pago, registrado_por_id, registrado_por_email, idempotency_key)
   values
-    (p_cotizacion_id, v_tenant, p_monto_cop, p_moneda, coalesce(p_trm,1), p_forma_pago,
-     nullif(trim(coalesce(p_referencia,'')), ''), coalesce(p_fecha_pago, current_date),
-     p_usuario_id, v_email, nullif(trim(coalesce(p_idempotency_key,'')), ''))
+    (p_cotizacion_id, v_tenant, v_monto_cop, p_valor, upper(p_moneda), v_trm_congelada,
+     p_forma_pago, nullif(trim(coalesce(p_referencia,'')),''),
+     coalesce(p_fecha_pago, current_date), p_usuario_id, v_email, v_key)
   returning id into v_pago_id;
 
-  -- Asiento: Debe cuentaDisponible / Haber 280510.
   v_numero := public._siguiente_numero_asiento(v_tenant);
   v_anticipo := public._puc_id(v_tenant, '280510');
   insert into public.asientos_contables (tenant, numero, fecha, descripcion, origen, referencia, usuario_email)
@@ -580,13 +678,13 @@ begin
   insert into public.asiento_lineas (tenant, asiento_id, cuenta_id, tercero, descripcion, debe, haber)
   values
     (v_tenant, (select max(id) from public.asientos_contables where tenant=v_tenant and numero=v_numero),
-     public._puc_id(v_tenant, v_caja), 'cotizacion:' || p_cotizacion_id, 'Pago previo recibido', coalesce(p_monto_cop,0), 0),
+     public._puc_id(v_tenant, v_caja), 'cotizacion:' || p_cotizacion_id, 'Pago previo recibido', v_monto_cop, 0),
     (v_tenant, (select max(id) from public.asientos_contables where tenant=v_tenant and numero=v_numero),
-     v_anticipo, 'cotizacion:' || p_cotizacion_id, 'Anticipo sin identificar', 0, coalesce(p_monto_cop,0));
+     v_anticipo, 'cotizacion:' || p_cotizacion_id, 'Anticipo sin identificar', 0, v_monto_cop);
 
   return 'OK|' || v_pago_id;
 exception when unique_violation then
-  raise exception 'Pago previo duplicado (referencia o clave de idempotencia ya usada) o congelado concurrente — reintenta con otro.' using errcode = '23505';
+  raise exception 'Clave de idempotencia ya registrada (intento duplicado o colisión): no se duplicó el pago. Reintenta o verifica si ya se confirmó.' using errcode = '23505';
 end;
 $$;
 
@@ -728,8 +826,8 @@ end;
 $$;
 
 -- ACL de las funciones de dinero: solo service_role.
-revoke all on function public.registrar_pago_previo(bigint, numeric, text, numeric, text, text, date, uuid, text) from public, anon, authenticated;
-grant execute on function public.registrar_pago_previo(bigint, numeric, text, numeric, text, text, date, uuid, text) to service_role;
+revoke all on function public.registrar_pago_previo(bigint, numeric, text, numeric, text, text, date, uuid, text, jsonb, numeric, numeric) from public, anon, authenticated;
+grant execute on function public.registrar_pago_previo(bigint, numeric, text, numeric, text, text, date, uuid, text, jsonb, numeric, numeric) to service_role;
 
 revoke all on function public.anular_pago_previo(bigint, uuid, text) from public, anon, authenticated;
 grant execute on function public.anular_pago_previo(bigint, uuid, text) to service_role;

@@ -1221,10 +1221,39 @@ export async function descartarCotizacion(id: number): Promise<{ ok: boolean; er
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
   const sb = await createClient();
+
+  // A3 (auditoría 164): una cotización con pagos previos ACTIVOS/APLICADOS no se
+  // puede descartar — el candado AUTORITATIVO es el trigger de BD
+  // `cotizaciones_no_descartar_con_pagos` (aplica también a service_role/SQL
+  // directo). Aquí hay una pre-comprobación de solo lectura para dar un mensaje
+  // limpio ANTES de intentar el update; el trigger sigue siendo el respaldo si un
+  // pago cae en la carrera entre la pre-comprobación y el update.
+  const admin = createAdminClient();
+  const { count: activos } = await admin
+    .from("cotizacion_pagos_previos")
+    .select("id", { count: "exact", head: true })
+    .eq("cotizacion_id", id)
+    .in("estado", ["activo", "aplicado"]);
+  if (Number(activos) > 0) {
+    return {
+      ok: false,
+      error: "No se puede descartar esta cotización: tiene pagos previos activos/aplicados. Debe anular cada pago previo (reversa contable formal) antes de descartarla.",
+    };
+  }
+
   let q = sb.from("cotizaciones").update({ estado: "descartada" }).eq("id", id).eq("estado", "abierta");
   if (!ctx.superadmin) q = q.eq("tenant", ctx.tenant);
   const { data, error } = await q.select("id");
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    // El trigger pudo haber detenido el descarte (pago concurrente) → mensaje limpio.
+    if (/pagos previos activos|no_descartar_con_pagos/i.test(String(error.message))) {
+      return {
+        ok: false,
+        error: "No se puede descartar esta cotización: tiene pagos previos activos/aplicados. Debe anular cada pago previo (reversa contable formal) antes de descartarla.",
+      };
+    }
+    return { ok: false, error: "No se pudo descartar la cotización. Inténtalo de nuevo." };
+  }
   if (!data?.length) return { ok: false, error: "Cotización no encontrada o sin acceso." };
   revalidatePath("/dashboard/cotizaciones");
   revalidatePath(`/dashboard/cotizaciones/${id}`);

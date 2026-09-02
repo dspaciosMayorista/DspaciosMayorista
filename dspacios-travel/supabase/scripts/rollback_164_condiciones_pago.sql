@@ -68,7 +68,10 @@ drop policy if exists "restriccion_overrides: acceso" on public.restriccion_over
 drop policy if exists "config_cobros_componente: lectura" on public.config_cobros_componente;
 drop policy if exists "config_cobros_componente: escritura" on public.config_cobros_componente;
 
--- ── 3) Funciones de dinero + helpers. ───────────────────────────────────────
+-- ── 3) Funciones de dinero + helpers (firma 12-arg de la 164 CORREGIDA). ───
+--     Se suelta también la firma 9-arg por si en algún entorno quedó la versión
+--     previa a la corrección (no-op si no existe).
+drop function if exists public.registrar_pago_previo(bigint, numeric, text, numeric, text, text, date, uuid, text, jsonb, numeric, numeric);
 drop function if exists public.registrar_pago_previo(bigint, numeric, text, numeric, text, text, date, uuid, text);
 drop function if exists public.anular_pago_previo(bigint, uuid, text);
 drop function if exists public.transferir_pagos_previos_a_abonos(bigint, text, uuid);
@@ -76,6 +79,10 @@ drop function if exists public._autorizado_pago_previo(uuid);
 drop function if exists public._siguiente_numero_asiento(text);
 drop function if exists public._cuenta_disponible(text, text);
 drop function if exists public._puc_id(text, text);
+
+-- ── 3bis) Candado BD contra descarte con pagos activos (A3, sección E.2). ───
+drop trigger if exists trg_cotizaciones_no_descartar_con_pagos on public.cotizaciones;
+drop function if exists public.cotizaciones_no_descartar_con_pagos();
 
 -- ── 4) Tablas nuevas. ───────────────────────────────────────────────────────
 drop table if exists public.restriccion_overrides;

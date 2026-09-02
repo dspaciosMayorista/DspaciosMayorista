@@ -13,7 +13,7 @@
 // y para un rol con permiso; aquí no hay lógica de autorización.
 // ─────────────────────────────────────────────────────────────────────────
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { Loader2, Banknote, RotateCcw } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { registrarPagoPrevio, anularPagoPrevio } from "@/app/(dashboard)/dashboard/cotizaciones/pagos-actions";
@@ -57,22 +57,52 @@ export default function PagosPreviosPanel({
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
+  // ── Idempotencia (A1): una clave de intento por INTENTO lógico de pago. ──
+  // Se genera al iniciar, se CONSERVA ante resultado ambiguo (timeout/pérdida de
+  // respuesta/reintento) y se ROTA solo tras éxito confirmado o cuando el usuario
+  // inicia conscientemente otro pago (su `signature` — el conjunto de campos que
+  // definen la identidad del pago — cambió). La `signature` compara los campos
+  // REALES que se mandan, así que tocar el monto tras un rechazo es un pago nuevo.
+  const intentRef = useRef<{ key: string; sig: string } | null>(null);
+  function firmaDeIntento(opts: { monto: number; trm: number | null; forma: string; ref: string; fecha: string }) {
+    return JSON.stringify([moneda, opts.monto, opts.trm, opts.forma.toLowerCase().trim(), opts.ref.trim(), opts.fecha]);
+  }
+
   async function registrar(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     const monto = Number(valor);
     if (!(monto > 0)) return setError("Indica el valor del pago.");
     if (esUSD && !(Number(trm) > 0)) return setError("Indica la TRM del día (cotización en USD).");
+    const forma = formaPago.trim() || "Efectivo";
+    const ref = referencia.trim();
+    const trmNum = esUSD ? Number(trm) : null;
+    const sig = firmaDeIntento({ monto, trm: trmNum, forma, ref, fecha });
+    // ¿Misma intención que el intento pendiente? Reutiliza la clave (recupera el
+    // pago original si ya se confirmó). ¿Cambió? Es OTRO pago → clave nueva.
+    const intento = intentRef.current && intentRef.current.sig === sig ? intentRef.current : null;
+    const key = intento?.key ?? (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    intentRef.current = { key, sig };
     start(async () => {
-      const r = await registrarPagoPrevio(cotizacionId, {
-        valor: monto,
-        moneda,
-        trm: esUSD ? Number(trm) : undefined,
-        formaPago: formaPago.trim() || "Efectivo",
-        referencia: referencia.trim() || undefined,
-        fechaPago: fecha,
-      });
-      if (!r.ok) return setError(r.error ?? "No se pudo registrar el pago.");
+      const r = await registrarPagoPrevio(
+        cotizacionId,
+        {
+          valor: monto,
+          moneda,
+          trm: esUSD ? trmNum ?? undefined : undefined,
+          formaPago: forma,
+          referencia: ref || undefined,
+          fechaPago: fecha,
+        },
+        key,
+      );
+      if (!r.ok) {
+        // Mantener la clave: un error ambiguo puede ocultar un pago ya registrado;
+        // reintentar con la misma clave recupera el resultado sin duplicar. Si el
+        // usuario cambia el monto y reintenta, `sig` cambia y nace una clave nueva.
+        return setError(r.error ?? "No se pudo registrar el pago.");
+      }
+      intentRef.current = null; // éxito confirmado → la próxima es una intención nueva
       setValor(""); setReferencia("");
       router.refresh();
     });

@@ -2614,6 +2614,7 @@ export type Database = {
           cotizacion_id: number;
           tenant: string;
           monto_cop: number;
+          monto_moneda: number;
           moneda: string;
           trm: number | null;
           forma_pago: string;
@@ -2632,6 +2633,7 @@ export type Database = {
           cotizacion_id: number;
           tenant?: string;
           monto_cop: number;
+          monto_moneda: number;
           moneda?: string;
           trm?: number | null;
           forma_pago: string;
@@ -3013,14 +3015,17 @@ export type Database = {
       registrar_pago_previo: {
         Args: {
           p_cotizacion_id: number;
-          p_monto_cop: number;
+          p_valor: number;
           p_moneda: string;
           p_trm: number;
           p_forma_pago: string;
           p_referencia: string;
           p_fecha_pago: string;
           p_usuario_id: string;
-          p_idempotency_key?: string;
+          p_idempotency_key: string;
+          p_snapshot?: Json;
+          p_exigido_total_moneda?: number;
+          p_pct_efectivo?: number;
         };
         Returns: string;
       };

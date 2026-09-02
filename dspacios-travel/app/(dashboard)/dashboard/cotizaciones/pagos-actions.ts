@@ -1,7 +1,8 @@
 "use server";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Pagos previos de una cotización (migración 164) — Commit 4.
+// Pagos previos de una cotización (migración 164) — corrección del Commit 4
+// (auditoría A1/A2/A3).
 //
 // Un "pago previo" es un pre-pago MANUAL que un rol autorizado
 // (superadmin/administracion/gerencia/operaciones — NUNCA venta ni externos)
@@ -10,28 +11,30 @@
 // y aquí solo se deja la constancia contable + la congelación del snapshot de
 // condiciones en el PRIMER pago.
 //
-// Congelado (solo en el primer pago): se deriva el snapshot de condiciones por
-// componente (`cotizacion_condiciones`) y el resumen agregado (`monto_exigido_
-// total(_cop)`/`pct_efectivo_informativo`) en `cotizaciones`. El ORDEN importa:
-// el trigger 164 bloquea alterar las filas congeladas una vez que la cotización
-// estampa `condicion_pago_congelada_en`, así que primero se escriben filas +
-// resumen (con `congelada_en` todavía NULL) y DESPUÉS se llama al RPC de dinero
-// `registrar_pago_previo`, que es quien estampa `condicion_pago_congelada_en`.
+// ⚠️ Diseño (A2): TODO el trabajo con estado — escribir `cotizacion_condiciones`,
+// guardar el resumen exigido, estampar `condicion_pago_congelada_en`/TRM/precio,
+// insertar el pago y postear el asiento 280510 — ocurre en UN solo RPC /
+// transacción PostgreSQL (`registrar_pago_previo`), que hace `FOR UPDATE` de la
+// cotización y RE-lee estado/congelado antes de decidir. Aquí NO hay secuencias
+// REST parciales ni compensaciones best-effort: o todo se persiste, o PostgreSQL
+// revierte todo. Esta Server Action solo autoriza (rol/tenant/estado), calcula el
+// snapshot por componente (lectura pura) cuando la cotización aún NO está
+// congelada, y entrega ese snapshot como `jsonb` al RPC.
 //
-// Los tres RPC de dinero (registrar/anular/transferir) solo están otorgados a
-// `service_role` y vuelven a validar rol + tenant + estado + FOR UPDATE (defensa
-// en profundidad). Aquí la Server Action autoriza en TS contra la MISMA lista
-// (`ROLES_CONTRATO_COMPLETO`) y verifica el tenant antes de tocar nada.
+// ⚠️ Diseño (A1): la idempotencia la decide una CLAVE DE INTENTO generada en el
+// cliente al iniciar el pago. El cliente la CONSERVA ante un resultado ambiguo
+// (timeout/pérdida de respuesta/reintento) y la ROTA solo tras éxito confirmado
+// o al iniciar conscientemente OTRO pago (su `signature` cambia). El RPC, ante
+// una clave ya usada con idéntica identidad (cotización+moneda+monto+forma),
+// devuelve el resultado ORIGINAL sin insertar ni pago ni asiento; con identidad
+// distinta → rechazo cerrado.
 //
 // ⚠️ Alcance del Commit 4: el congelado por componente solo está resuelto para
-// cotizaciones MANUALES (sus valores por servicio están guardados de forma
-// limpia). Las de tarifario/single y carrito guardan un PVP fundido (sin split
-// hotel/vuelo) y llegan con la conversión a contrato único (Commit 5) — este
-// commit las RECHAZA en vez de congelar un desglose equivocado.
+// cotizaciones MANUALES. Las de tarifario/single y carrito llegan con la
+// conversión a contrato único (Commit 5) — este commit las RECHAZA.
 //
-// ⚠️ Tipado: opera las tablas de la 164 vía el cliente tipado BASE
-// (`createAdminClient`) — la superficie de la migración 164 vive en
-// `types/database.ts` (columnas aditivas + tablas + RPC), no en un tipo aparte.
+// ⚠️ Tipado: opera vía el cliente tipado BASE (`createAdminClient`); la
+// superficie de la migración 164 vive en `types/database.ts`.
 // ─────────────────────────────────────────────────────────────────────────
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -39,11 +42,11 @@ import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 import { construirSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 import { componentesDeManual } from "@/lib/cotizacion/componentesManual";
 import type { ServicioManualCondicionable } from "@/lib/cotizacion/componentesManual";
+import type { Json } from "@/types/database";
 import { revalidatePath } from "next/cache";
 
 // La misma lista que `_autorizado_pago_previo` en la migración 164:
-// ('superadmin','administracion','gerencia','operaciones'). Reutilizamos
-// ROLES_CONTRATO_COMPLETO (es exactamente ese set) como única fuente en código.
+// ('superadmin','administracion','gerencia','operaciones').
 const ROLES_PAGO = new Set<string>(ROLES_CONTRATO_COMPLETO as string[]);
 
 /** Sesión de un rol autorizado, con su tenant real (o null si no autorizado). */
@@ -65,6 +68,24 @@ async function sesionPagoAutorizada(): Promise<{
   return { userId: user.id, email: user.email ?? null, rol: perfil.rol, tenant: perfil.tenant ?? "mayorista" };
 }
 
+/** Redondeo monetario de 2 decimales. */
+const redondear2 = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+
+/**
+ * Mensajes de error "seguros" para el navegador: nunca fugan detalles internos
+ * de PostgreSQL (SQLSTATE, nombres de constraint, nombre de relación, etc.).
+ * Los `raise exception` de nuestra propia función son frases en español limpias
+ * y pasan tal cual; solo se enmascara lo que parezca error crudo de la BD.
+ */
+function mensajeSeguro(msg: string): string {
+  const m = String(msg ?? "").trim();
+  if (!m) return "No se pudo registrar el pago. Inténtalo de nuevo.";
+  if (/(duplicate key|violates (foreign key|not-null|check) constraint|constraint "|relation "|pg_|sqlstate|serialization failure|contradice la política|new row violates)/i.test(m)) {
+    return "No se pudo registrar el pago por un conflicto de datos. Reintenta; si persiste, verifica que no ya esté registrado.";
+  }
+  return m;
+}
+
 export interface RegistrarPagoPrevioInput {
   /** Monto pagado en la MONEDA de la cotización (COP para COP; USD para USD). */
   valor: number;
@@ -77,17 +98,30 @@ export interface RegistrarPagoPrevioInput {
   fechaPago?: string;
 }
 
+/**
+ * Registra un pago previo. `idempotencyKey` entra como `unknown` y se valida en
+ * el límite (ver A1): la clave la genera el cliente y este servidor solo la
+ * acepta como string no vacía. Reenviar la MISMA clave tras un resultado
+ * ambiguo recupera el pago original; con identidad distinta el RPC la rechaza.
+ */
 export async function registrarPagoPrevio(
   cotizacionId: number,
   input: RegistrarPagoPrevioInput,
+  idempotencyKey: unknown,
 ): Promise<{ ok: boolean; error?: string; pagoId?: number }> {
   const sesion = await sesionPagoAutorizada();
   if (!sesion) {
     return { ok: false, error: "No autorizado: los pagos previos requieren superadmin/administración/gerencia/operaciones." };
   }
 
+  // ── clave de idempotencia: validación estricta en el límite ──
+  const key = typeof idempotencyKey === "string" && idempotencyKey.trim().length > 0 ? idempotencyKey.trim() : null;
+  if (!key) {
+    return { ok: false, error: "Falta la clave de idempotencia del pago. Recarga la página e inténtalo de nuevo." };
+  }
+
   // ── validación estricta de entrada (nunca confiar en el navegador) ──
-  const valor = Math.round((Number(input?.valor) || 0) * 100) / 100;
+  const valor = redondear2(Number(input?.valor) || 0);
   if (!(valor > 0)) return { ok: false, error: "El valor del pago debe ser mayor a cero." };
   const formaPago = String(input?.formaPago ?? "").trim();
   if (!formaPago) return { ok: false, error: "Indica la forma de pago." };
@@ -111,12 +145,11 @@ export async function registrarPagoPrevio(
   if (input?.moneda && input.moneda !== moneda) {
     return { ok: false, error: "La moneda del pago no coincide con la de la cotización." };
   }
-  // El monto que paga la función es en COP; para USD se convierte con la TRM.
+  // La TRM del día solo congela si es el PRIMER pago; después manda la congelada.
   const trm = moneda === "COP" ? 1 : Number(input?.trm);
   if (moneda !== "COP" && !(trm > 0)) {
     return { ok: false, error: "Indica la TRM del día para el pago (cotización en USD)." };
   }
-  const montoCop = Math.round((moneda === "COP" ? valor : valor * trm) * 100) / 100;
 
   // ── alcance del Commit 4: solo cotizaciones manuales ──
   if ((cot.tipo as string) !== "manual") {
@@ -126,15 +159,16 @@ export async function registrarPagoPrevio(
     };
   }
 
-  // ── congelado del snapshot en el PRIMER pago ──
-  // (solo cuando aún no está congelada la cotización; si ya lo está, los
-  // montos exigidos ya quedaron escritos y no se vuelven a calcular).
-  if (!cot.condicion_pago_congelada_en) {
-    // Idempotencia: si un intento anterior dejó filas/resumen sin llegar al RPC
-    // (fallo a mitad), se re-emite desde cero — la cotización sigue sin congelar.
-    await admin.from("cotizacion_condiciones").delete().eq("cotizacion_id", cotizacionId);
+  // ── snapshot del PRIMER pago: se calcula (lectura pura) SOLO si aún no está
+  //    congelada. El RPC lo persiste de forma atómica; si ya está congelada, se
+  //    reutiliza el snapshot/TRM guardados (no se envía nada).
+  const yaCongelada = Boolean(cot.condicion_pago_congelada_en);
+  let snapshotJson: Json | undefined;
+  let exigidoTotalMoneda: number | undefined;
+  let pctEfectivo: number | undefined;
 
-    const precioTotalMoneda = Math.round((Number(cot.precio_venta) || 0) * 100) / 100;
+  if (!yaCongelada) {
+    const precioTotalMoneda = redondear2(Number(cot.precio_venta) || 0);
     const { data: servicios } = await admin
       .from("cotizacion_servicios")
       .select("id, tipo_servicio, valor, nombre_servicio")
@@ -145,66 +179,42 @@ export async function registrarPagoPrevio(
       cot.fecha_salida as string | null,
     );
     const snapshot = construirSnapshot(componentes, { fechaPago, precioTotalMoneda, trm });
-
-    // Se escriben las filas ANTES de que el RPC estampe `condicion_pago_congelada_en`
-    // (el trigger 164 las bloquearía después). Los campos string del snapshot son
-    // subtipos de los `string` del Row base → asignación directa, sin cast.
+    // Objeto JSON plano (solo valores JSON) — claves que el RPC 164 espera.
     const filas = snapshot.filas.map((f) => ({
-      cotizacion_id: cotizacionId,
       orden: f.orden,
       tipo_componente: f.tipo_componente,
-      referencia_externa: f.referencia_externa,
-      paquete_id: null,
-      programa_id: null,
-      hotel_temporada_id: f.hotel_temporada_id,
+      referencia_externa: f.referencia_externa ?? null,
       valor_componente: f.valor_componente,
       condicion_pago_tipo: f.condicion_pago_tipo,
-      condicion_pago_pct_aplicable: f.condicion_pago_pct_aplicable,
-      condicion_pago_dias_saldo: f.condicion_pago_dias_saldo,
-      condicion_pago_fecha_limite: f.condicion_pago_fecha_limite,
+      condicion_pago_pct_aplicable: f.condicion_pago_pct_aplicable ?? null,
+      condicion_pago_dias_saldo: f.condicion_pago_dias_saldo ?? null,
+      condicion_pago_fecha_limite: f.condicion_pago_fecha_limite ?? null,
       monto_exigido: f.monto_exigido,
       restriccion_comercial: f.restriccion_comercial,
-      congelado: true,
+      hotel_temporada_id: f.hotel_temporada_id ?? null,
     }));
-    if (filas.length) {
-      const { error: errFilas } = await admin.from("cotizacion_condiciones").insert(filas);
-      if (errFilas) {
-        await admin.from("cotizacion_condiciones").delete().eq("cotizacion_id", cotizacionId);
-        return { ok: false, error: `No se pudo congelar el desglose: ${errFilas.message}` };
-      }
-    }
-    const { error: errResumen } = await admin
-      .from("cotizaciones")
-      .update({
-        monto_exigido_total: snapshot.resumen.monto_exigido_total,
-        monto_exigido_total_cop: snapshot.resumen.monto_exigido_total_cop,
-        pct_efectivo_informativo: snapshot.resumen.pct_efectivo_informativo,
-      })
-      .eq("id", cotizacionId);
-    if (errResumen) {
-      // rollback del snapshot parcial: no dejar exigidos sin su congelación
-      await admin.from("cotizacion_condiciones").delete().eq("cotizacion_id", cotizacionId);
-      await admin
-        .from("cotizaciones")
-        .update({ monto_exigido_total: null, monto_exigido_total_cop: null, pct_efectivo_informativo: null })
-        .eq("id", cotizacionId);
-      return { ok: false, error: `No se pudo escribir el resumen exigido: ${errResumen.message}` };
-    }
+    snapshotJson = filas as unknown as Json;
+    exigidoTotalMoneda = redondear2(snapshot.resumen.monto_exigido_total);
+    pctEfectivo = snapshot.resumen.pct_efectivo_informativo ?? undefined;
   }
 
-  // ── RPC de dinero: registra el pago y (si era el primero) estampa el congelado ──
+  // ── RPC de dinero ÚNICO y atómico: persiste snapshot/resumen/congelado/pago/asiento ──
   const rpc = await admin.rpc("registrar_pago_previo", {
     p_cotizacion_id: cotizacionId,
-    p_monto_cop: montoCop,
+    p_valor: valor,
     p_moneda: moneda,
     p_trm: trm,
     p_forma_pago: formaPago,
     p_referencia: referencia,
     p_fecha_pago: fechaPago,
     p_usuario_id: sesion.userId,
+    p_idempotency_key: key,
+    ...(snapshotJson !== undefined
+      ? { p_snapshot: snapshotJson, p_exigido_total_moneda: exigidoTotalMoneda, p_pct_efectivo: pctEfectivo }
+      : {}),
   });
   if (rpc.error) {
-    return { ok: false, error: rpc.error.message };
+    return { ok: false, error: mensajeSeguro(rpc.error.message) };
   }
   const txt = String(rpc.data ?? "");
   const pagoId = txt.startsWith("OK|") ? Number(txt.slice(3)) : undefined;
@@ -245,7 +255,7 @@ export async function anularPagoPrevio(
     p_motivo: String(motivo ?? "").trim() || null,
     p_usuario_id: sesion.userId,
   });
-  if (rpc.error) return { ok: false, error: rpc.error.message };
+  if (rpc.error) return { ok: false, error: mensajeSeguro(rpc.error.message) };
 
   revalidatePath(`/dashboard/cotizaciones/${pago.cotizacion_id}`);
   revalidatePath("/dashboard/cotizaciones");

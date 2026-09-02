@@ -111,6 +111,20 @@ select 'funciones', '_autorizado_pago_previo',
          where n.nspname='public' and p.proname='_autorizado_pago_previo') then 'OK' else 'BLOCKED' end,
   'Helper de doble autorización de pagos previos (rol interno autorizado + activo).';
 
+-- 5bis) Candado BD contra descarte con pagos activos (A3, sección E.2).
+insert into pg_temp.postcheck_164_reporte
+select 'trigger', 'trg_cotizaciones_no_descartar_con_pagos',
+  case when exists (select 1 from pg_trigger t join pg_class rel on rel.oid=t.tgrelid
+         join pg_namespace n on n.oid=rel.relnamespace
+         where n.nspname='public' and rel.relname='cotizaciones' and t.tgname='trg_cotizaciones_no_descartar_con_pagos')
+    then 'OK' else 'BLOCKED' end,
+  'Impide descartar una cotización con pagos previos activos/aplicados (autoritativo, A3).';
+insert into pg_temp.postcheck_164_reporte
+select 'funciones', 'cotizaciones_no_descartar_con_pagos',
+  case when exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+         where n.nspname='public' and p.proname='cotizaciones_no_descartar_con_pagos') then 'OK' else 'BLOCKED' end,
+  'Función del candado A3 (raise exception si hay dinero previo vivo).';
+
 -- 6) ACL de las 3 funciones de dinero: SOLO service_role ejecuta.
 --    aclexplode da el oid del grantee; PUBLIC es oid 0; anon/authenticated/
 --    service_role se resuelven por nombre en pg_roles. La migración hace
