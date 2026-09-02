@@ -3,6 +3,7 @@ import type { Database } from "@/types/database";
 import type { ProgramaResumen } from "@/app/tarifario/TarifarioPublic";
 import {
   calcularPvpAcomodacionSalida,
+  resolverValorReglaAcomodacion,
   type ModoBaseComisionable,
   type ModalidadMk,
 } from "./calc/programaPrecio.ts";
@@ -77,7 +78,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
   let q = sb
     .from("programas")
     .select(
-      "id, nombre, subtitulo, dias, noches, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, publicado, desde_precio, incluye_aereo, tipo_transporte, portada_url, regla_comisionable, regla_comisionable_modalidad_mk, regla_comisionable_modo, regla_comisionable_valor, regla_comisionable_pct_comision"
+      "id, nombre, subtitulo, dias, noches, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, publicado, desde_precio, incluye_aereo, tipo_transporte, portada_url, regla_comisionable, regla_comisionable_modalidad_mk, regla_comisionable_modo, regla_comisionable_valor, regla_comisionable_pct_comision, regla_comisionable_impuesto_por_acomodacion"
     )
     .eq("activo", true);
   if (soloPublicados) q = q.eq("publicado", true);
@@ -100,7 +101,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
   ] = await Promise.all([
     sb.from("programa_categorias").select("id, programa_id").in("programa_id", ids),
     sb.from("programa_ciudades").select("programa_id, nombre, orden").in("programa_id", ids).order("orden"),
-    sb.from("programa_salidas").select("programa_id, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple").in("programa_id", ids),
+    sb.from("programa_salidas").select("programa_id, noches, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple").in("programa_id", ids),
   ]);
 
   const catToProg = new Map<number, number>();
@@ -151,12 +152,13 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
   const ACOM_RESUMEN: [
     "neto_sencilla" | "neto_doble" | "neto_triple" | "neto_multiple" | "neto_nino",
     ("tarifa_sencilla" | "tarifa_doble" | "tarifa_triple" | "tarifa_multiple") | null,
+    ("impuesto_sencilla" | "impuesto_doble" | "impuesto_triple" | "impuesto_multiple") | null,
   ][] = [
-    ["neto_doble", "tarifa_doble"],
-    ["neto_triple", "tarifa_triple"],
-    ["neto_multiple", "tarifa_multiple"],
-    ["neto_sencilla", "tarifa_sencilla"],
-    ["neto_nino", null],
+    ["neto_doble", "tarifa_doble", "impuesto_doble"],
+    ["neto_triple", "tarifa_triple", "impuesto_triple"],
+    ["neto_multiple", "tarifa_multiple", "impuesto_multiple"],
+    ["neto_sencilla", "tarifa_sencilla", "impuesto_sencilla"],
+    ["neto_nino", null, null],
   ];
   for (const s of salidas ?? []) {
     if (s.bajo_solicitud) continue;
@@ -167,6 +169,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
     const reglaModo = (p.regla_comisionable_modo as ModoBaseComisionable) || "pct";
     const reglaValor = Number(p.regla_comisionable_valor) || 0;
     const reglaPctComision = Number(p.regla_comisionable_pct_comision) || 0;
+    const impuestoPorAcomodacion = p.regla_comisionable_impuesto_por_acomodacion === true;
     // Camino viejo: SIEMPRE `dias` de cabecera (nunca las noches de la salida
     // puntual) — así calculaba este resumen desde antes de la 161, se
     // conserva byte a byte para todo lo que no califica para la modalidad
@@ -175,9 +178,19 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
     const optVieja: PvpOpciones = { pctMk: p.pct_mk, asistenciaDia: p.asistencia_medica_dia, dias: p.dias, pctFee: p.pct_fee_tarjeta, moneda: p.moneda };
     const optNueva: PvpOpciones = { ...optVieja, dias: s.noches != null ? s.noches : p.dias };
 
-    for (const [netoCol, tarifaCol] of ACOM_RESUMEN) {
+    for (const [netoCol, tarifaCol, impuestoCol] of ACOM_RESUMEN) {
       const neto = s[netoCol] as number | null;
       const tarifa = tarifaCol ? (s[tarifaCol] as number | null) : null;
+      const usaTarifaProveedor = tarifa != null && Number.isFinite(Number(tarifa)) && Number(tarifa) > 0;
+      const reglaValorAcomodacion = usaTarifaProveedor
+        ? resolverValorReglaAcomodacion({
+            modo: reglaModo,
+            valorGeneral: reglaValor,
+            impuestoPorAcomodacion,
+            impuestoAcomodacion: impuestoCol ? (s[impuestoCol] as number | null) : null,
+          })
+        : reglaValor;
+      if (reglaValorAcomodacion == null) continue;
       // La FÓRMULA (¿histórica o modalidad nueva?) la decide ÚNICAMENTE
       // `calcularPvpAcomodacionSalida` — lo único que se resuelve acá es
       // CUÁL `opt` (con qué `dias`) pasarle, porque este resumen usa un
@@ -192,7 +205,7 @@ export async function getProgramasResumen(sb: SB, soloPublicados = true): Promis
         tarifa,
         reglaActiva,
         reglaModo,
-        reglaValor,
+        reglaValor: reglaValorAcomodacion,
         reglaPctComision,
         modalidadMk,
         opt: calificaNueva ? optNueva : optVieja,
@@ -273,7 +286,7 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
       sb.from("programa_categorias").select("id, nombre, orden").eq("programa_id", id).order("orden"),
       sb.from("programa_categoria_hoteles").select("categoria_id, ciudad, hotel, orden").order("orden"),
       sb.from("programa_precios").select("categoria_id, acomodacion, neto, bajo_solicitud"),
-      sb.from("programa_salidas").select("id, etiqueta, fecha_desde, fecha_hasta, noches, columna, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple").eq("programa_id", id).order("orden"),
+      sb.from("programa_salidas").select("id, etiqueta, fecha_desde, fecha_hasta, noches, columna, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, bajo_solicitud, tarifa_sencilla, tarifa_doble, tarifa_triple, tarifa_multiple, impuesto_sencilla, impuesto_doble, impuesto_triple, impuesto_multiple").eq("programa_id", id).order("orden"),
       sb.from("programa_inclusiones").select("ciudad, tipo, texto").eq("programa_id", id).order("orden"),
       sb.from("programa_tours").select("ciudad, nombre, precio, min_pax, dias_operacion, descripcion").eq("programa_id", id).order("orden"),
       sb.from("programa_blackouts").select("fecha_inicio, fecha_fin, motivo, ciudad").eq("programa_id", id).order("fecha_inicio"),
@@ -323,37 +336,52 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
   const reglaModo = (prow.regla_comisionable_modo as ModoBaseComisionable) || "pct";
   const reglaValor = Number(prow.regla_comisionable_valor) || 0;
   const reglaPctComision = Number(prow.regla_comisionable_pct_comision) || 0;
+  const impuestoPorAcomodacion = prow.regla_comisionable_impuesto_por_acomodacion === true;
 
   const ACOM_SALIDA: [
     string,
     "neto_sencilla" | "neto_doble" | "neto_triple" | "neto_multiple" | "neto_nino",
     ("tarifa_sencilla" | "tarifa_doble" | "tarifa_triple" | "tarifa_multiple") | null,
+    ("impuesto_sencilla" | "impuesto_doble" | "impuesto_triple" | "impuesto_multiple") | null,
   ][] = [
-    ["sencilla", "neto_sencilla", "tarifa_sencilla"],
-    ["doble", "neto_doble", "tarifa_doble"],
-    ["triple", "neto_triple", "tarifa_triple"],
-    ["multiple", "neto_multiple", "tarifa_multiple"],
-    ["nino", "neto_nino", null],
+    ["sencilla", "neto_sencilla", "tarifa_sencilla", "impuesto_sencilla"],
+    ["doble", "neto_doble", "tarifa_doble", "impuesto_doble"],
+    ["triple", "neto_triple", "tarifa_triple", "impuesto_triple"],
+    ["multiple", "neto_multiple", "tarifa_multiple", "impuesto_multiple"],
+    ["nino", "neto_nino", null, null],
   ];
   const pvpDeSalida = (
     s: NonNullable<typeof salidasRaw>[number],
     neto: number,
     optSalida: PvpOpciones,
-    tarifaCol: ("tarifa_sencilla" | "tarifa_doble" | "tarifa_triple" | "tarifa_multiple") | null
-  ): number =>
+    tarifaCol: ("tarifa_sencilla" | "tarifa_doble" | "tarifa_triple" | "tarifa_multiple") | null,
+    impuestoCol: ("impuesto_sencilla" | "impuesto_doble" | "impuesto_triple" | "impuesto_multiple") | null
+  ): number | null => {
     // `neto` ya viene validado > 0 por el único call-site (más abajo), así
     // que `calcularPvpAcomodacionSalida` nunca devuelve null acá — el `?? 0`
     // es defensivo, no un camino real.
-    calcularPvpAcomodacionSalida({
+    const tarifa = tarifaCol ? (s[tarifaCol] as number | null) : null;
+    const usaTarifaProveedor = tarifa != null && Number.isFinite(Number(tarifa)) && Number(tarifa) > 0;
+    const reglaValorAcomodacion = usaTarifaProveedor
+      ? resolverValorReglaAcomodacion({
+          modo: reglaModo,
+          valorGeneral: reglaValor,
+          impuestoPorAcomodacion,
+          impuestoAcomodacion: impuestoCol ? (s[impuestoCol] as number | null) : null,
+        })
+      : reglaValor;
+    if (reglaValorAcomodacion == null) return null;
+    return calcularPvpAcomodacionSalida({
       neto,
-      tarifa: tarifaCol ? (s[tarifaCol] as number | null) : null,
+      tarifa,
       reglaActiva,
       reglaModo,
-      reglaValor,
+      reglaValor: reglaValorAcomodacion,
       reglaPctComision,
       modalidadMk,
       opt: optSalida,
-    }) ?? 0;
+    });
+  };
   const salidas = (salidasRaw ?? []).map((s) => {
     const optSalida: PvpOpciones = { ...pvpOpt, dias: s.noches != null ? s.noches : prow.dias };
     return {
@@ -364,12 +392,12 @@ export async function getProgramaDetalle(sb: SB, id: number): Promise<ProgramaDe
       noches: s.noches,
       columna: s.columna,
       bajo_solicitud: s.bajo_solicitud,
-      precios: ACOM_SALIDA.map(([acom, col, tarifaCol]) => {
+      precios: ACOM_SALIDA.map(([acom, col, tarifaCol, impuestoCol]) => {
         const neto = s[col] as number | null;
         return {
           acomodacion: acom,
           neto,
-          pvp: neto != null && neto > 0 && !s.bajo_solicitud ? pvpDeSalida(s, neto, optSalida, tarifaCol) : null,
+          pvp: neto != null && neto > 0 && !s.bajo_solicitud ? pvpDeSalida(s, neto, optSalida, tarifaCol, impuestoCol) : null,
         };
       }).filter((p) => p.neto != null && p.neto > 0),
     };

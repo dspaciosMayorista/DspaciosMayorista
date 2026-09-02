@@ -2186,6 +2186,7 @@ export type Database = {
           regla_comisionable_valor: number | null;
           regla_comisionable_pct_comision: number | null;
           regla_comisionable_modalidad_mk: string;
+          regla_comisionable_impuesto_por_acomodacion: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -2230,6 +2231,7 @@ export type Database = {
           regla_comisionable_valor?: number | null;
           regla_comisionable_pct_comision?: number | null;
           regla_comisionable_modalidad_mk?: string;
+          regla_comisionable_impuesto_por_acomodacion?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -2256,6 +2258,10 @@ export type Database = {
           tarifa_doble: number | null;
           tarifa_triple: number | null;
           tarifa_multiple: number | null;
+          impuesto_sencilla: number | null;
+          impuesto_doble: number | null;
+          impuesto_triple: number | null;
+          impuesto_multiple: number | null;
         };
         Insert: {
           id?: number;
@@ -2276,6 +2282,10 @@ export type Database = {
           tarifa_doble?: number | null;
           tarifa_triple?: number | null;
           tarifa_multiple?: number | null;
+          impuesto_sencilla?: number | null;
+          impuesto_doble?: number | null;
+          impuesto_triple?: number | null;
+          impuesto_multiple?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["programa_salidas"]["Insert"]>;
         Relationships: [];
@@ -2915,7 +2925,8 @@ export type Database = {
       // sin salidas. p_regla y p_salidas se pasan como jsonb; el shape real
       // lo define SalidaInput/ReglaComisionableInput en actions.ts. Desde la
       // migración 161, p_regla también acepta `modalidadMk` ('historica' |
-      // 'base_neta_impuestos_al_final'); por defecto 'historica' si se omite.
+      // 'base_neta_impuestos_al_final'). Desde la 163 acepta además
+      // `impuestoPorAcomodacion`; ambas claves ausentes conservan lo guardado.
       guardar_programa_salidas: {
         Args: { p_programa_id: number; p_regla: Json; p_salidas: Json };
         Returns: undefined;

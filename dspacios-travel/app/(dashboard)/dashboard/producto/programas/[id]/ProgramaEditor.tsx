@@ -30,6 +30,7 @@ import {
   calcularNetoPrograma,
   calcularPvpAcomodacionSalida,
   recalcularNetosPorTarifa,
+  resolverValorReglaAcomodacion,
   validarReglaComisionable,
   validarTarifaModalidad,
   parseNumOrNull,
@@ -53,6 +54,7 @@ type SalidaRow = {
   // Tarifa ORIGINAL del proveedor por acomodación (migración 151) — dato de
   // origen del neto de arriba, se persiste aparte y nunca se reconstruye.
   tarifa_sencilla: number | null; tarifa_doble: number | null; tarifa_triple: number | null; tarifa_multiple: number | null;
+  impuesto_sencilla: number | null; impuesto_doble: number | null; impuesto_triple: number | null; impuesto_multiple: number | null;
 };
 type Inclusion = { ciudad: string | null; tipo: string; texto: string };
 type Tour = { ciudad: string | null; nombre: string; precio: number | null; min_pax: number; dias_operacion: string | null; descripcion: string | null };
@@ -123,6 +125,9 @@ export function ProgramaEditor(props: {
   const [modalidadMk, setModalidadMk] = useState<ModalidadMk>(
     esModalidadMkValida(programa.regla_comisionable_modalidad_mk) ? programa.regla_comisionable_modalidad_mk : "historica"
   );
+  const [impuestoPorAcomodacion, setImpuestoPorAcomodacion] = useState(
+    programa.regla_comisionable_impuesto_por_acomodacion === true
+  );
 
   // Al DESACTIVAR el check, se descarta cualquier borrador (válido o no) y se
   // vuelve a la última configuración YA GUARDADA en BD (`programa.regla_
@@ -141,6 +146,7 @@ export function ProgramaEditor(props: {
       setCValor(programa.regla_comisionable_valor != null ? String(programa.regla_comisionable_valor) : "3");
       setCComision(programa.regla_comisionable_pct_comision != null ? String(programa.regla_comisionable_pct_comision) : "10");
       setModalidadMk(esModalidadMkValida(programa.regla_comisionable_modalidad_mk) ? programa.regla_comisionable_modalidad_mk : "historica");
+      setImpuestoPorAcomodacion(programa.regla_comisionable_impuesto_por_acomodacion === true);
     }
     setReglaOnRaw(v);
   };
@@ -260,6 +266,7 @@ export function ProgramaEditor(props: {
             cValor={cValor} setCValor={setCValor}
             cComision={cComision} setCComision={setCComision}
             modalidadMk={modalidadMk} setModalidadMk={setModalidadMk}
+            impuestoPorAcomodacion={impuestoPorAcomodacion} setImpuestoPorAcomodacion={setImpuestoPorAcomodacion}
             pvpOpt={{
               pctMk: programa.pct_mk,
               asistenciaDia: programa.asistencia_medica_dia,
@@ -556,6 +563,7 @@ type SalidaState = {
   // Tarifa del proveedor por acomodación (§ "tarifa comisionable", migración
   // 151) — produce el neto de arriba y se persiste aparte, separada de él.
   tarifaSencilla: string; tarifaDoble: string; tarifaTriple: string; tarifaMultiple: string;
+  impuestoSencilla: string; impuestoDoble: string; impuestoTriple: string; impuestoMultiple: string;
 };
 
 function SalidasEditor({
@@ -568,6 +576,7 @@ function SalidasEditor({
   cValor, setCValor,
   cComision, setCComision,
   modalidadMk, setModalidadMk,
+  impuestoPorAcomodacion, setImpuestoPorAcomodacion,
 }: {
   programaId: number;
   salidas: SalidaRow[];
@@ -580,6 +589,7 @@ function SalidasEditor({
   cValor: string; setCValor: (v: string) => void;
   cComision: string; setCComision: (v: string) => void;
   modalidadMk: ModalidadMk; setModalidadMk: (v: ModalidadMk) => void;
+  impuestoPorAcomodacion: boolean; setImpuestoPorAcomodacion: (v: boolean) => void;
 }) {
   const toState = (s: SalidaRow): SalidaState => ({
     etiqueta: s.etiqueta ?? "",
@@ -599,6 +609,10 @@ function SalidasEditor({
     tarifaDoble: s.tarifa_doble != null ? String(s.tarifa_doble) : "",
     tarifaTriple: s.tarifa_triple != null ? String(s.tarifa_triple) : "",
     tarifaMultiple: s.tarifa_multiple != null ? String(s.tarifa_multiple) : "",
+    impuestoSencilla: s.impuesto_sencilla != null ? String(s.impuesto_sencilla) : "",
+    impuestoDoble: s.impuesto_doble != null ? String(s.impuesto_doble) : "",
+    impuestoTriple: s.impuesto_triple != null ? String(s.impuesto_triple) : "",
+    impuestoMultiple: s.impuesto_multiple != null ? String(s.impuesto_multiple) : "",
   });
   const [rows, setRows] = useState<SalidaState[]>(salidas.map(toState));
   const upd = (i: number, k: keyof SalidaState, v: unknown) => setRows((p) => p.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
@@ -624,19 +638,40 @@ function SalidasEditor({
     return { modo: cModo, valor: valorNum ?? 0, pctComision: pctNum ?? 0 };
   };
 
-  const desgloseTarifa = (tarifaStr: string) => {
+  const reglaParaAcomodacion = (impuestoStr: string) => {
+    const regla = reglaActualValida();
+    if (!regla) return null;
+    const impuesto = parseNumOrNull(impuestoStr);
+    if (cModo === "impuesto" && impuestoPorAcomodacion && impuesto == null) return null;
+    const valor = resolverValorReglaAcomodacion({
+      modo: regla.modo,
+      valorGeneral: regla.valor,
+      impuestoPorAcomodacion,
+      impuestoAcomodacion: impuesto,
+    });
+    if (valor == null) return null;
+    return {
+      ...regla,
+      valor,
+    };
+  };
+  const desgloseTarifa = (tarifaStr: string, impuestoStr = "") => {
     const tarifa = Number(tarifaStr);
     if (tarifaStr === "" || !Number.isFinite(tarifa) || tarifa <= 0) return null;
-    const regla = reglaActualValida();
+    const regla = reglaParaAcomodacion(impuestoStr);
     if (!regla) return null;
     return calcularNetoPrograma({ tarifa, ...regla });
   };
   // Escribe SOLO el neto de esa acomodación puntual (nunca cruza sencilla/doble/triple/múltiple).
   // Si la regla está incompleta/inválida, `desgloseTarifa` devuelve null y el
   // neto queda en blanco — nunca en un número calculado con 0.
-  const aplicarTarifaAcom = (i: number, tarifaKey: keyof SalidaState, netoKey: keyof SalidaState, tarifaStr: string) => {
-    const d = desgloseTarifa(tarifaStr);
+  const aplicarTarifaAcom = (i: number, tarifaKey: keyof SalidaState, netoKey: keyof SalidaState, impuestoKey: keyof SalidaState, tarifaStr: string) => {
+    const d = desgloseTarifa(tarifaStr, rows[i][impuestoKey] as string);
     setRows((p) => p.map((r, j) => (j === i ? { ...r, [tarifaKey]: tarifaStr, [netoKey]: d ? String(d.neto) : "" } : r)));
+  };
+  const aplicarImpuestoAcom = (i: number, impuestoKey: keyof SalidaState, tarifaKey: keyof SalidaState, netoKey: keyof SalidaState, impuestoStr: string) => {
+    const d = desgloseTarifa(rows[i][tarifaKey] as string, impuestoStr);
+    setRows((p) => p.map((r, j) => (j === i ? { ...r, [impuestoKey]: impuestoStr, [netoKey]: d ? String(d.neto) : "" } : r)));
   };
 
   // Si cambia la REGLA (modo/valor/% comisión) en vez de una tarifa puntual,
@@ -657,7 +692,16 @@ function SalidasEditor({
             triple: r.tarifaTriple === "" ? null : Number(r.tarifaTriple),
             multiple: r.tarifaMultiple === "" ? null : Number(r.tarifaMultiple),
           },
-          regla
+          regla,
+          {
+            impuestoPorAcomodacion,
+            impuestos: {
+              sencilla: parseNumOrNull(r.impuestoSencilla),
+              doble: parseNumOrNull(r.impuestoDoble),
+              triple: parseNumOrNull(r.impuestoTriple),
+              multiple: parseNumOrNull(r.impuestoMultiple),
+            },
+          }
         );
         return {
           ...r,
@@ -682,6 +726,7 @@ function SalidasEditor({
   };
   const onCModoChange = (v: ModoBaseComisionable) => {
     setCModo(v);
+    if (v !== "impuesto") setImpuestoPorAcomodacion(false);
     intentarRecalcular(v, cValor, cComision);
   };
   const onCValorChange = (v: string) => {
@@ -691,6 +736,45 @@ function SalidasEditor({
   const onCComisionChange = (v: string) => {
     setCComision(v);
     intentarRecalcular(cModo, cValor, v);
+  };
+  const onImpuestoPorAcomodacionChange = (activo: boolean) => {
+    setImpuestoPorAcomodacion(activo);
+    if (!activo) {
+      intentarRecalcular(cModo, cValor, cComision);
+      return;
+    }
+    setRows((prev) => prev.map((r) => {
+      const impuestoGeneral = parseNumOrNull(cValor);
+      const impuestos = {
+        sencilla: parseNumOrNull(r.impuestoSencilla) ?? impuestoGeneral,
+        doble: parseNumOrNull(r.impuestoDoble) ?? impuestoGeneral,
+        triple: parseNumOrNull(r.impuestoTriple) ?? impuestoGeneral,
+        multiple: parseNumOrNull(r.impuestoMultiple) ?? impuestoGeneral,
+      };
+      const regla = reglaActualValida();
+      if (!regla) return r;
+      const netos = recalcularNetosPorTarifa(
+        {
+          sencilla: parseNumOrNull(r.tarifaSencilla),
+          doble: parseNumOrNull(r.tarifaDoble),
+          triple: parseNumOrNull(r.tarifaTriple),
+          multiple: parseNumOrNull(r.tarifaMultiple),
+        },
+        regla,
+        { impuestoPorAcomodacion: true, impuestos }
+      );
+      return {
+        ...r,
+        impuestoSencilla: impuestos.sencilla != null ? String(impuestos.sencilla) : "",
+        impuestoDoble: impuestos.doble != null ? String(impuestos.doble) : "",
+        impuestoTriple: impuestos.triple != null ? String(impuestos.triple) : "",
+        impuestoMultiple: impuestos.multiple != null ? String(impuestos.multiple) : "",
+        netoSencilla: netos.sencilla != null ? String(netos.sencilla) : r.netoSencilla,
+        netoDoble: netos.doble != null ? String(netos.doble) : r.netoDoble,
+        netoTriple: netos.triple != null ? String(netos.triple) : r.netoTriple,
+        netoMultiple: netos.multiple != null ? String(netos.multiple) : r.netoMultiple,
+      };
+    }));
   };
 
   // PVP en vivo: usa las noches de la salida para la asistencia médica.
@@ -713,10 +797,10 @@ function SalidasEditor({
   // corregir, se muestra el último PVP histórico en vez de calcular con
   // datos incompletos (mismo comportamiento de siempre, ahora expresado como
   // el flag `reglaActiva` que entiende la función compartida).
-  const pvpDe = (r: SalidaState, neto: string, tarifaKey: (keyof SalidaState) | null) => {
+  const pvpDe = (r: SalidaState, neto: string, tarifaKey: (keyof SalidaState) | null, impuestoKey: (keyof SalidaState) | null) => {
     if (r.bs) return null;
     const dias = r.noches !== "" ? Number(r.noches) : pvpOpt.dias;
-    const regla = reglaOn ? reglaActualValida() : null;
+    const regla = reglaOn ? reglaParaAcomodacion(impuestoKey ? (r[impuestoKey] as string) : "") : null;
     return calcularPvpAcomodacionSalida({
       neto: neto === "" ? null : Number(neto),
       tarifa: tarifaKey ? (r[tarifaKey] === "" ? null : Number(r[tarifaKey] as string)) : null,
@@ -745,6 +829,10 @@ function SalidasEditor({
     tarifaDoble: nOrNull(r.tarifaDoble),
     tarifaTriple: nOrNull(r.tarifaTriple),
     tarifaMultiple: nOrNull(r.tarifaMultiple),
+    impuestoSencilla: nOrNull(r.impuestoSencilla),
+    impuestoDoble: nOrNull(r.impuestoDoble),
+    impuestoTriple: nOrNull(r.impuestoTriple),
+    impuestoMultiple: nOrNull(r.impuestoMultiple),
   }));
 
   // Se guarda SIEMPRE con la configuración actual, esté prendida o no: apagar
@@ -758,6 +846,7 @@ function SalidasEditor({
     valor: parseNumOrNull(cValor),
     pctComision: parseNumOrNull(cComision),
     modalidadMk,
+    impuestoPorAcomodacion: cModo === "impuesto" && impuestoPorAcomodacion,
   };
   // Con la regla PRENDIDA, no se permite guardar una configuración inválida
   // (campo vacío, fuera de rango, etc.) — se corta ANTES de llamar al
@@ -781,12 +870,22 @@ function SalidasEditor({
           const regla = reglaActualValida();
           if (!regla) return null;
           for (const r of rows) {
-            for (const tarifaKey of ["tarifaSencilla", "tarifaDoble", "tarifaTriple", "tarifaMultiple"] as const) {
+            const pares = [
+              ["tarifaSencilla", "impuestoSencilla", "sencilla"],
+              ["tarifaDoble", "impuestoDoble", "doble"],
+              ["tarifaTriple", "impuestoTriple", "triple"],
+              ["tarifaMultiple", "impuestoMultiple", "multiple"],
+            ] as const;
+            for (const [tarifaKey, impuestoKey, nombre] of pares) {
               const tarifaStr = r[tarifaKey];
               if (tarifaStr === "") continue;
               const tarifa = Number(tarifaStr);
               if (!Number.isFinite(tarifa) || tarifa <= 0) continue;
-              const v = validarTarifaModalidad(tarifa, regla, modalidadMk);
+              const impuesto = parseNumOrNull(r[impuestoKey]);
+              if (impuestoPorAcomodacion && cModo === "impuesto" && impuesto == null) return `Falta el impuesto de la acomodacion ${nombre}.`;
+              const valor = resolverValorReglaAcomodacion({ modo: regla.modo, valorGeneral: regla.valor, impuestoPorAcomodacion, impuestoAcomodacion: impuesto });
+              if (valor == null) return `El impuesto de la acomodacion ${nombre} no es valido.`;
+              const v = validarTarifaModalidad(tarifa, { ...regla, valor }, modalidadMk);
               if (!v.ok) return v.error;
             }
           }
@@ -795,12 +894,12 @@ function SalidasEditor({
       : null;
 
   // Tercer elemento = campo de tarifa comisionable de esa acomodación (null = no aplica, ej. Niño).
-  const COLS: [keyof SalidaState, string, (keyof SalidaState) | null][] = [
-    ["netoSencilla", "Sencilla", "tarifaSencilla"],
-    ["netoDoble", "Doble", "tarifaDoble"],
-    ["netoTriple", "Triple", "tarifaTriple"],
-    ["netoMultiple", "Múltiple", "tarifaMultiple"],
-    ["netoNino", "Niño", null],
+  const COLS: [keyof SalidaState, string, (keyof SalidaState) | null, (keyof SalidaState) | null][] = [
+    ["netoSencilla", "Sencilla", "tarifaSencilla", "impuestoSencilla"],
+    ["netoDoble", "Doble", "tarifaDoble", "impuestoDoble"],
+    ["netoTriple", "Triple", "tarifaTriple", "impuestoTriple"],
+    ["netoMultiple", "Múltiple", "tarifaMultiple", "impuestoMultiple"],
+    ["netoNino", "Niño", null, null],
   ];
 
   return (
@@ -828,11 +927,21 @@ function SalidasEditor({
                 <option value="ninguno">Tarifa (nada)</option>
               </select>
             </div>
-            {cModo !== "ninguno" && (
+            {cModo !== "ninguno" && !(cModo === "impuesto" && impuestoPorAcomodacion) && (
               <div>
                 <div className={lbl}>{cModo === "pct" ? "% a restar" : `Impuesto (${moneda})`}</div>
                 <Input type="number" value={cValor} onChange={(e) => onCValorChange(e.target.value)} className="w-28" />
               </div>
+            )}
+            {cModo === "impuesto" && (
+              <label className="flex items-center gap-2 rounded border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={impuestoPorAcomodacion}
+                  onChange={(e) => onImpuestoPorAcomodacionChange(e.target.checked)}
+                />
+                Impuesto distinto por acomodacion
+              </label>
             )}
             <div>
               <div className={lbl}>% comisión</div>
@@ -876,8 +985,8 @@ function SalidasEditor({
               <DelBtn onClick={() => setRows((p) => p.filter((_, j) => j !== i))} />
             </div>
             <div className="flex flex-wrap gap-3">
-              {COLS.map(([k, label, tarifaKey]) => {
-                const d = reglaOn && tarifaKey ? desgloseTarifa(r[tarifaKey] as string) : null;
+              {COLS.map(([k, label, tarifaKey, impuestoKey]) => {
+                const d = reglaOn && tarifaKey ? desgloseTarifa(r[tarifaKey] as string, impuestoKey ? (r[impuestoKey] as string) : "") : null;
                 return (
                   <div key={k} className="w-32">
                     <div className="mb-1 text-xs text-gray-500">{label}</div>
@@ -886,11 +995,21 @@ function SalidasEditor({
                         <Input
                           type="number"
                           value={r[tarifaKey] as string}
-                          onChange={(e) => aplicarTarifaAcom(i, tarifaKey, k, e.target.value)}
+                          onChange={(e) => aplicarTarifaAcom(i, tarifaKey, k, impuestoKey!, e.target.value)}
                           placeholder="tarifa prov."
                           disabled={r.bs}
                           className="mb-1 border-[#1D7C9A]/40"
                         />
+                        {impuestoPorAcomodacion && cModo === "impuesto" && impuestoKey && (
+                          <Input
+                            type="number"
+                            value={r[impuestoKey] as string}
+                            onChange={(e) => aplicarImpuestoAcom(i, impuestoKey, tarifaKey, k, e.target.value)}
+                            placeholder={`impuesto ${moneda}`}
+                            disabled={r.bs}
+                            className="mb-1 border-amber-400/60"
+                          />
+                        )}
                         {d && (
                           <div className="mb-1 text-[10px] leading-tight text-gray-400">
                             Base {formatMoneda(d.baseComisionable, moneda)} · Com {formatMoneda(d.comision, moneda)}
@@ -899,9 +1018,9 @@ function SalidasEditor({
                       </>
                     )}
                     <Input type="number" value={r[k] as string} onChange={(e) => upd(i, k, e.target.value)} placeholder="neto" disabled={r.bs} />
-                    {pvpDe(r, r[k] as string, tarifaKey) != null && (
+                    {pvpDe(r, r[k] as string, tarifaKey, impuestoKey) != null && (
                       <div className="mt-1 text-xs font-medium" style={{ color: "var(--brand-primary)" }}>
-                        PVP {formatMoneda(pvpDe(r, r[k] as string, tarifaKey)!, moneda)}
+                        PVP {formatMoneda(pvpDe(r, r[k] as string, tarifaKey, impuestoKey)!, moneda)}
                       </div>
                     )}
                   </div>
@@ -923,6 +1042,7 @@ function SalidasEditor({
                 etiqueta: "", fechaDesde: "", fechaHasta: "", noches: "", columna: "",
                 netoSencilla: "", netoDoble: "", netoTriple: "", netoMultiple: "", netoNino: "", bs: false,
                 tarifaSencilla: "", tarifaDoble: "", tarifaTriple: "", tarifaMultiple: "",
+                impuestoSencilla: "", impuestoDoble: "", impuestoTriple: "", impuestoMultiple: "",
               },
             ])
           }
