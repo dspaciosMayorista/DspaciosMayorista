@@ -6,6 +6,7 @@ import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
 import { generarTarifas, type DubaiParams, type MixtaParams, type CorporativaParams } from "@/lib/calc/calculadoras";
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
 import type { Json } from "@/types/database";
+import { normalizarProveedorHotelId } from "@/lib/hoteles/proveedor";
 
 type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -103,6 +104,7 @@ export async function actualizarHotelConfig(
   input: {
     nombre?: string;
     destinoId?: number | null;
+    proveedorId?: unknown;
     zona: string;
     edadInfanteMin: number;
     edadInfanteMax: number;
@@ -126,11 +128,24 @@ export async function actualizarHotelConfig(
   }
 ): Promise<Result> {
   const sb = await createClient();
+  const proveedor = normalizarProveedorHotelId(input.proveedorId);
+  if (!proveedor.ok) return proveedor;
+  if (proveedor.proveedorId != null) {
+    const { data: proveedorHotel, error: proveedorError } = await sb
+      .from("proveedores")
+      .select("id")
+      .eq("id", proveedor.proveedorId)
+      .eq("tipo", "hotelero")
+      .maybeSingle();
+    if (proveedorError) return { ok: false, error: "No fue posible validar el proveedor seleccionado." };
+    if (!proveedorHotel) return { ok: false, error: "El proveedor seleccionado no es un proveedor hotelero valido." };
+  }
   const { error } = await sb
     .from("hoteles")
     .update({
       ...(input.nombre && input.nombre.trim() ? { nombre: input.nombre.trim() } : {}),
       ...(input.destinoId != null ? { destino_id: input.destinoId } : {}),
+      ...(proveedor.proveedorId !== undefined ? { proveedor_id: proveedor.proveedorId } : {}),
       zona: oNull(input.zona),
       ...(input.moneda ? { moneda: input.moneda === "USD" ? "USD" : "COP" } : {}),
       edad_infante_min: input.edadInfanteMin,
