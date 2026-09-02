@@ -51,6 +51,8 @@ export interface VigenciaHotelCondicion extends CondicionCompuesta {
   nombre: string;
   fechaInicio: string; // 'YYYY-MM-DD' (checkin mínimo)
   fechaFin: string; // 'YYYY-MM-DD' (checkout máximo; la noche entra si fecha < fechaFin)
+  /** restricción comercial de ESTA temporada (mig 164, `hotel_temporadas.restriccion_comercial`). */
+  restriccionComercial?: RestriccionComercial;
 }
 
 /** Componente ya resuelto que se va a condicionar. Reutiliza el motor puro. */
@@ -60,6 +62,59 @@ export type ComponenteSnapshot = ComponenteACondicionar & {
   /** restricción comercial del componente origen (hotel/temporada/programa/paquete). */
   restriccionComercial?: RestriccionComercial;
 };
+
+// ── Auto-etiqueta del hotel "contiene restricciones en algunas fechas" ─────
+// Corrección del dueño: en el listado/detalle de un hotel la app debe mostrar
+// un aviso si el hotel tiene TEMPORADAS RESTRINGIDAS dentro del rango que se
+// está cotizando — derivado de las vigencias reales (con su rango de fechas),
+// en UNA pasada plana, SIN consultas N+1 (no pedir una por noche/fecha).
+
+/** Resultado de barrer una estadía contra las vigencias restringidas del hotel. */
+export interface BarridoRestriccionEstadia {
+  /** True si ALGUNA noche de la estadía cae en una vigencia restringida. */
+  tocaRestriccion: boolean;
+  /** Etiquetas de las temporadas restringidas que tocan la estadía (sin duplicar). */
+  temporadasRestringidas: string[];
+  /** Lista de fechas 'YYYY-MM-DD' de entrada (noches) restringidas. */
+  fechasRestringidas: string[];
+}
+
+/**
+ * Dado el rango de la estadía [fechaIda, fechaRegreso) y la lista PLANTA de
+ * vigencias del hotel (cada una con su `restriccionComercial` y rango), deriva
+ * en una sola pasada por noches cuáles caen en una temporada restringida.
+ *
+ * `esRestringida` se pasa para no acoplar este módulo a la semántica exacta de
+ * `RestriccionComercial` (la etiqueta `normal` = sin restricción).
+ */
+export function barridoRestriccionEstadia(
+  estadia: { fechaIda: string; fechaRegreso: string },
+  vigencias: VigenciaHotelCondicion[],
+  esRestringida: (r: RestriccionComercial | undefined) => boolean = (r) =>
+    r !== undefined && r !== "normal",
+): BarridoRestriccionEstadia {
+  const restringidas = vigencias.filter((v) => esRestringida(v.restriccionComercial));
+  if (!estadia.fechaIda || !estadia.fechaRegreso || restringidas.length === 0) {
+    return { tocaRestriccion: false, temporadasRestringidas: [], fechasRestringidas: [] };
+  }
+  const noches = nochesEntre(estadia.fechaIda, estadia.fechaRegreso);
+  const fechas = noches.length ? noches : [estadia.fechaIda];
+  const fechasRestringidas: string[] = [];
+  const temporadas = new Set<string>();
+  for (const noche of fechas) {
+    for (const v of restringidas) {
+      if (vigenciaCubreFecha(v, noche)) {
+        if (!fechasRestringidas.includes(noche)) fechasRestringidas.push(noche);
+        temporadas.add(v.nombre);
+      }
+    }
+  }
+  return {
+    tocaRestriccion: fechasRestringidas.length > 0,
+    temporadasRestringidas: [...temporadas],
+    fechasRestringidas,
+  };
+}
 
 // ── Resolución del HOTEL que cruza vigencias por noches ────────────────────
 //

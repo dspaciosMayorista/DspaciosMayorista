@@ -30,7 +30,25 @@
 export type CondicionTipoHotel = "sin_condicion" | "pago_total" | "anticipo_saldo";
 export type CondicionTipoProducto = "normal" | "pago_total" | "anticipo_saldo";
 export type CondicionTipo = CondicionTipoHotel | CondicionTipoProducto;
-export type RestriccionComercial = "normal" | "promocional_no_reembolsable";
+
+/** Restricción comercial de una componente (se origina en el componente y viaja
+ *  congelada a `cotizacion_condiciones`/`contrato_condiciones`; corrección #12:
+ *  un componente restringido NO es reembolsable ni endosable — la fuente es la
+ *  fila de condición, NUNCA un boolean global).
+ *   · `normal`                        — sin restricción.
+ *   · `promocional_no_reembolsable`   — tarifa promocional: no reembolsable.
+ *   · `no_reembolsable_no_endosable`  — restricción plena: no reembolsable y
+ *                                        además NO endosable/transferible.
+ *  (espejo exacto del CHECK de la columna 164, que además lista estos tres.) */
+export type RestriccionComercial =
+  | "normal"
+  | "promocional_no_reembolsable"
+  | "no_reembolsable_no_endosable";
+
+/** True si el valor restringe el componente (no es `normal`). */
+export function esRestriccionComercial(r: RestriccionComercial): boolean {
+  return r === "promocional_no_reembolsable" || r === "no_reembolsable_no_endosable";
+}
 
 export type TipoComponente =
   | "hotel"

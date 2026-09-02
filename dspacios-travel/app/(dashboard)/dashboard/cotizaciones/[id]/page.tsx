@@ -1,9 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
+import { createClient164 } from "@/lib/supabase/server164";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import CondicionesPanel from "@/components/cotizacion/CondicionesPanel";
+import { condicionesParaUI, type FilaCondicionRowUI } from "@/lib/cotizacion/condicionesParaUI";
 import { CotizacionAcciones } from "./CotizacionAcciones";
 import { VigenciaCotizacion } from "./VigenciaCotizacion";
 import { DescartarBtn } from "./DescartarBtn";
@@ -60,6 +63,18 @@ export default async function CotizacionDetallePage({
   const { data: serviciosManual } = esManual
     ? await sb.from("cotizacion_servicios").select("*").eq("cotizacion_id", c.id).order("orden")
     : { data: null };
+
+  // Condiciones de pago por componente YA congeladas (migración 164). El panel
+  // se enciende cuando existen filas (commit 4/5 las escribe al congelar); si
+  // aún no hay snapshot, no renderiza nada. Se lee con el cliente 164 porque la
+  // tabla es nueva y no está en el tipo base.
+  const sb164 = await createClient164();
+  const { data: condRows } = await sb164
+    .from("cotizacion_condiciones")
+    .select("orden, tipo_componente, referencia_externa, valor_componente, condicion_pago_tipo, condicion_pago_pct_aplicable, condicion_pago_dias_saldo, monto_exigido, restriccion_comercial")
+    .eq("cotizacion_id", c.id)
+    .order("orden");
+  const condicionesUI = condicionesParaUI((condRows ?? []) as FilaCondicionRowUI[]);
 
   const { data: { user } } = await sb.auth.getUser();
   const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre").eq("id", user.id).single() : { data: null };
@@ -148,6 +163,8 @@ export default async function CotizacionDetallePage({
         <Dato label="Fechas" value={`${formatFechaLarga(c.fecha_salida)} → ${formatFechaLarga(c.fecha_regreso)}`} />
         <Dato label="Asesor" value={c.asesor ?? "—"} />
       </div>
+
+      <CondicionesPanel ui={condicionesUI} moneda={moneda} />
 
       {esManual && (
         <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">
