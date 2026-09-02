@@ -20,7 +20,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre, politica_reservas)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
@@ -36,6 +36,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     sb.from("hotel_fotos").select("id, path, url, orden, es_portada").eq("hotel_id", hotelId).order("orden"),
     sb.from("hotel_blackouts").select("id, fecha_inicio, fecha_fin, total, acomodaciones, categorias, motivo").eq("hotel_id", hotelId).order("fecha_inicio"),
     sb.from("destinos").select("id, nombre").order("nombre"),
+    sb.from("proveedores").select("id, nombre").eq("tipo", "hotelero").order("nombre"),
   ]);
 
   if (!hotel) notFound();
@@ -48,6 +49,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null;
     video_url: string | null;
     destino_id: number | null;
+    proveedor_id: number | null;
     nino_nota: string | null;
     adults_only: boolean | null;
     pet_friendly: boolean | null;
@@ -101,9 +103,11 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           hotelId={hotelId}
           rangos={rangos ?? []}
           destinos={destinos ?? []}
+          proveedores={proveedores ?? []}
           inicial={{
             nombre: h.nombre ?? "",
             destinoId: h.destino_id ?? null,
+            proveedorId: h.proveedor_id ?? null,
             zona: h.zona ?? "",
             edadInfanteMin: h.edad_infante_min, edadInfanteMax: h.edad_infante_max,
             edadNinoMin: h.edad_nino_min, edadNinoMax: h.edad_nino_max,
