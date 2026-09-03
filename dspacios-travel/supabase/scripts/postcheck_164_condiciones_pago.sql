@@ -225,10 +225,17 @@ insert into pg_temp.postcheck_164_reporte
 select 'constraints', c.con || ': sin el valor provisional eliminado',
   case when not exists (
     select 1 from pg_constraint where conname=c.con
-      -- ancla la coma/paréntesis de cierre para no confundir la subcadena
-      -- 'promocional_no_reembolsable' con el prefijo del valor final vigente.
-      and (pg_get_constraintdef(oid) like '%''promocional_no_reembolsable'',%'
-        or pg_get_constraintdef(oid) like '%''promocional_no_reembolsable'')%')
+      -- ancla el cierre de comilla + cast `::text`, que es exactamente cómo
+      -- pg_get_constraintdef() renderiza CADA literal de un `= ANY (ARRAY[...])`
+      -- (ej. 'promocional_no_reembolsable'::text) — nunca comilla+coma ni
+      -- comilla+paréntesis directos, así que anclar en `',`/`')` nunca
+      -- coincide con la salida real y el chequeo anterior daba falso OK
+      -- siempre (verificado empíricamente). Este ancla NO confunde la
+      -- subcadena 'promocional_no_reembolsable' con el prefijo del valor
+      -- final vigente 'promocional_no_reembolsable_no_endosable', porque a
+      -- este último le sigue '_no_endosable' antes de la comilla de cierre,
+      -- nunca '::text' inmediatamente después de 'promocional_no_reembolsable'.
+      and pg_get_constraintdef(oid) like '%''promocional_no_reembolsable''::text%'
   ) then 'OK' else 'BLOCKED' end,
   'El CHECK NO debe admitir el valor provisional eliminado promocional_no_reembolsable (sin _no_endosable)'
 from (values
