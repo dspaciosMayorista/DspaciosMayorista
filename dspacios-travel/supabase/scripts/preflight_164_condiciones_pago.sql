@@ -154,10 +154,13 @@ begin
   select count(*) into v_total from pg_temp.preflight_164_reporte;
   select count(*) into v_bad from pg_temp.preflight_164_reporte where estado='BLOCKED';
   if v_bad = 0 then
-    raise notice 'PREFLIGHT 164: %/OK (0 BLOCKED) — la migración 164 se puede aplicar.', v_total;
+    raise notice 'PREFLIGHT 164: %/% chequeos OK (0 BLOCKED) — la migración 164 se puede aplicar.', v_total, v_total;
   else
     raise notice 'PREFLIGHT 164: % chequeos, % BLOCKED — revisar antes de aplicar.', v_total, v_bad;
   end if;
+  -- Veredicto único, literal y greppable (contrato del runner/CI): exactamente
+  -- una de estas dos líneas, sin variantes de texto alrededor del token.
+  raise notice 'VEREDICTO PREFLIGHT 164: %', (case when v_bad = 0 then 'OK' else 'BLOQUEADO' end);
 end $$;
 
 select seccion, nombre, estado, detalle from pg_temp.preflight_164_reporte order by estado desc, seccion, nombre;

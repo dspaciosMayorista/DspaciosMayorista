@@ -282,10 +282,13 @@ begin
   select count(*) into v_total from pg_temp.postcheck_164_reporte;
   select count(*) into v_bad from pg_temp.postcheck_164_reporte where estado='BLOCKED';
   if v_bad = 0 then
-    raise notice 'POSTCHECK 164: %/OK (0 BLOCKED) — la 164 quedó aplicada correctamente.', v_total;
+    raise notice 'POSTCHECK 164: %/% chequeos OK (0 BLOCKED) — la 164 quedó aplicada correctamente.', v_total, v_total;
   else
     raise notice 'POSTCHECK 164: % chequeos, % BLOCKED — revisar.', v_total, v_bad;
   end if;
+  -- Veredicto único, literal y greppable (contrato del runner/CI): exactamente
+  -- una de estas dos líneas, sin variantes de texto alrededor del token.
+  raise notice 'VEREDICTO POSTCHECK 164: %', (case when v_bad = 0 then 'PASSED' else 'FAILED' end);
 end $$;
 
 select seccion, nombre, estado, detalle from pg_temp.postcheck_164_reporte order by estado desc, seccion, nombre;
