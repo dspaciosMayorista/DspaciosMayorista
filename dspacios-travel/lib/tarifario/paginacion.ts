@@ -91,3 +91,65 @@ export async function cargarFilasTarifarioPaginado<T>(
   }
   return { ok: true, filas, paginasConsultadas };
 }
+
+// ── Paginador robusto GENÉRICO para cualquier consulta a `tarifario_resultado`
+// que no encaje en el set de columnas fijo de arriba (ej. `buscarHoteles`/
+// `buscarReceptivos` en lib/reservar/cotizar.ts, `obtenerDetalleServicios` en
+// app/tarifario/detalle-actions.ts) — todas comparten el mismo defecto real
+// confirmado en el incidente de "RECEPTIVOS ADZ": hacían UN solo `.select()`
+// sin `.range()` sobre `tarifario_resultado` filtrado solo por
+// `modulo`/`paquete_activo`/`destino_nombre` (o ni eso) — con ~16.000 filas
+// reales en el catálogo, el límite "Max Rows" del proyecto (Settings → API)
+// puede truncar la respuesta EN SILENCIO (sin `error`) igual que ya se
+// documentó para `tarifario_resumen`/`cargarFilasTarifarioPaginado` arriba —
+// un paquete/servicio recién creado (sus filas suelen quedar al final del
+// orden físico) podía simplemente no aparecer, sin que nada lo reportara como
+// fallo.
+//
+// Mismo algoritmo robusto que `cargarFilasResumenPaginado`
+// (lib/tarifario/resumen.ts): (1) orden TOTAL y determinista — acá basta
+// `.order("id")`, porque a diferencia de `tarifario_resumen` (una vista
+// agregada sin columna propia) cada fila de `tarifario_resultado` SÍ tiene su
+// propio `id bigserial primary key` (migración 018), así que ordenar solo por
+// `id` ya es un orden único sin empates, sin necesitar una lista de columnas
+// compuesta; (2) `from` avanza por la cantidad REAL de filas recibidas, nunca
+// por `PAGE` fijo; (3) la única condición de término es una página vacía —
+// un recorte de Max Rows a media página simplemente pide una página más, en
+// vez de perder o duplicar filas; (4) cada página revisa su propio `error`
+// — nunca se sigue con `?? []` sobre una página que falló; (5) límite
+// defensivo de páginas contra un backend que nunca entregue vacío.
+//
+// `construirPagina(from, hasta)` recibe el rango ya calculado — el llamador
+// arma su propio `.select(...).eq(...)...order("id").range(from, hasta)` y
+// nada más; este helper no conoce columnas ni filtros, solo orquesta el
+// bucle. Devuelve la MISMA forma `{ data, error }` que un `await` normal de
+// Supabase (acumulando todas las páginas en `data`), así puede reemplazar un
+// `await q` de una sola página sin cambiar el resto del código que ya
+// revisaba `error`/`data` — incluye poder usarse como el `ejecutar` de
+// `cargarDetalleAcotado` (app/tarifario/detalle-actions.ts) sin tocar su firma.
+const MAX_PAGINAS_RESULTADO = 500;
+
+export async function ejecutarConsultaPaginada<T>(
+  construirPagina: (from: number, hasta: number) => PromiseLike<{ data: T[] | null; error: unknown }>
+): Promise<{ data: T[] | null; error: unknown }> {
+  const filas: T[] = [];
+  let from = 0;
+  let paginasConsultadas = 0;
+  for (;;) {
+    if (paginasConsultadas >= MAX_PAGINAS_RESULTADO) {
+      return {
+        data: null,
+        error: new Error(
+          `ejecutarConsultaPaginada: se alcanzó el límite de ${MAX_PAGINAS_RESULTADO} páginas sin recibir una página vacía — posible falta de progreso (backend que nunca termina) en vez de un catálogo real de ese tamaño.`
+        ),
+      };
+    }
+    const { data: page, error } = await construirPagina(from, from + PAGE - 1);
+    paginasConsultadas++;
+    if (error) return { data: null, error };
+    if (!page || page.length === 0) break;
+    filas.push(...page);
+    from += page.length;
+  }
+  return { data: filas, error: null };
+}
