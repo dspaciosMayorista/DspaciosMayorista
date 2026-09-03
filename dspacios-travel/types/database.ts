@@ -317,6 +317,9 @@ export type Database = {
           recobro_total: number | null;
           recobro_empresa: number | null;
           recobro_aliado: number | null;
+          // Migración 164: back-link UNIQUE nullable — UN SOLO contrato por
+          // cotización convertida (los pagos previos a abonos la llenan).
+          cotizacion_id: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -380,6 +383,7 @@ export type Database = {
           recobro_total?: number | null;
           recobro_empresa?: number | null;
           recobro_aliado?: number | null;
+          cotizacion_id?: number | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -2652,6 +2656,74 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["cotizacion_pagos_previos"]["Insert"]>;
         Relationships: [];
       };
+      // Copia congelada de `cotizacion_condiciones` sobre el CONTRATO convertido
+      // (migración 164). La escribe el RPC `convertir_cotizacion_a_contrato` al
+      // convertir; guarda la moneda/TRM congeladas del snapshot.
+      contrato_condiciones: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          tipo_componente: string; // 'hotel' | 'vuelo_bloqueo' | 'aereo_empaquetado' | 'servicio' | 'programa' | 'paquete'
+          referencia_externa: string | null;
+          orden: number;
+          valor_componente: number;
+          condicion_pago_tipo: string; // 'sin_condicion' | 'normal' | 'pago_total' | 'anticipo_saldo'
+          condicion_pago_pct_aplicable: number | null;
+          condicion_pago_dias_saldo: number | null;
+          condicion_pago_fecha_limite: string | null;
+          monto_exigido: number;
+          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable'
+          moneda: string | null;
+          trm: number | null;
+          creado_en: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          tipo_componente: string;
+          referencia_externa?: string | null;
+          orden?: number;
+          valor_componente?: number;
+          condicion_pago_tipo?: string;
+          condicion_pago_pct_aplicable?: number | null;
+          condicion_pago_dias_saldo?: number | null;
+          condicion_pago_fecha_limite?: string | null;
+          monto_exigido?: number;
+          restriccion_comercial?: string;
+          moneda?: string | null;
+          trm?: number | null;
+          creado_en?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_condiciones"]["Insert"]>;
+        Relationships: [];
+      };
+      // Log de excepciones a restricciones de condiciones sobre un contrato
+      // convertido (migración 164): quién, qué tabla/acción y POR QUÉ (motivo
+      // obligatorio). La escribe la UI que autoriza la excepción.
+      restriccion_overrides: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          tabla_afectada: string;
+          accion: string;
+          motivo: string;
+          usuario_id: string;
+          usuario_email: string | null;
+          creado_en: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          tabla_afectada: string;
+          accion: string;
+          motivo: string;
+          usuario_id: string;
+          usuario_email?: string | null;
+          creado_en?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["restriccion_overrides"]["Insert"]>;
+        Relationships: [];
+      };
       hotel_fotos: {
         Row: {
           id: number;
@@ -3037,6 +3109,17 @@ export type Database = {
       };
       transferir_pagos_previos_a_abonos: {
         Args: { p_cotizacion_id: number; p_numero_contrato: string; p_usuario_id: string };
+        Returns: string;
+      };
+      // Migración 164 (Commit 5). Conversión atómica de UNA cotización manual a
+      // UN SOLO contrato en una única transacción: valida mínimo congelado →
+      // genera número (función real) → crea venta + hijas + condiciones → transfiere
+      // pagos previos a abonos → reclasifica 280510→280505 → crea CxP + asientos
+      // de costo/proveedor → enlaza cotizacion_id → cambia estado. Idempotente
+      // (replay devuelve la venta existente). INVOKER, solo `service_role`.
+      // Devuelve el `numero_contrato` (o "ERROR: ..." en texto).
+      convertir_cotizacion_a_contrato: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string };
         Returns: string;
       };
       siguiente_numero_contrato: {

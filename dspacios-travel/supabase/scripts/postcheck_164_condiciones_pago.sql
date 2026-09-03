@@ -139,7 +139,27 @@ select 'funciones', '_huella_pago_previo',
          where n.nspname='public' and p.proname='_huella_pago_previo') then 'OK' else 'BLOCKED' end,
   'Helper de huella canónica calculado en PostgreSQL (B1), nunca en el navegador.';
 
--- 6) ACL de las 3 funciones de dinero: SOLO service_role ejecuta.
+-- 5quater) Commit 5 — conversión atómica: RPC + helpers presentes y UNIQUE
+--   parcial de transferencia (un abono no puede quedar vinculado desde dos pagos).
+insert into pg_temp.postcheck_164_reporte
+select 'funciones', f.nombre,
+  case when exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+         where n.nspname='public' and p.proname=f.nombre) then 'OK' else 'BLOCKED' end,
+  'Función Commit 5 esperada tras aplicar la 164'
+from (values
+  ('convertir_cotizacion_a_contrato'),('_tipo_cotizacion_convertible'),
+  ('_monto_cop_pagado'),('_tipo_proveedor_cxp'),('_cuentas_cxp')
+) as f(nombre);
+insert into pg_temp.postcheck_164_reporte
+select 'constraints', 'uq_pagos_previos_abono_id',
+  case when exists (select 1 from pg_index i join pg_class rel on rel.oid=i.indexrelid
+         join pg_namespace n on n.oid=rel.relnamespace
+         where n.nspname='public' and rel.relname='uq_pagos_previos_abono_id'
+           and i.indisunique and i.indispartial)
+    then 'OK' else 'BLOCKED' end,
+  'UNIQUE PARCIAL abono_id (transferencia exactamente-una-vez; respaldo duro del Commit 5).';
+
+-- 6) ACL de las funciones de dinero + conversión: SOLO service_role ejecuta.
 --    aclexplode da el oid del grantee; PUBLIC es oid 0; anon/authenticated/
 --    service_role se resuelven por nombre en pg_roles. La migración hace
 --    `revoke all from public, anon, authenticated` + `grant ... to service_role`,
@@ -164,7 +184,9 @@ select 'acl-funciones', p.proname,
     then 'OK' else 'BLOCKED' end,
   'EXECUTE solo para service_role; anon/authenticated/PUBLIC sin acceso (cierra la llamada directa con sesión).'
 from (values
-  ('registrar_pago_previo'),('anular_pago_previo'),('transferir_pagos_previos_a_abonos')
+  ('registrar_pago_previo'),('anular_pago_previo'),('transferir_pagos_previos_a_abonos'),
+  ('convertir_cotizacion_a_contrato'),('_tipo_cotizacion_convertible'),
+  ('_monto_cop_pagado'),('_tipo_proveedor_cxp'),('_cuentas_cxp')
 ) as p(proname);
 
 -- Veredicto general.

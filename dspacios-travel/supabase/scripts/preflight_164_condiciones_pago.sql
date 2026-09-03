@@ -53,6 +53,22 @@ from (
   ) t
 ) q;
 
+-- 1bis) Commit 5 (conversión atómica) es PARTE de la 164: si el RPC o sus helpers
+--   ya existen, la 164 (o una versión parcial) está aplicada → detectarlo también
+--   a nivel de función, no solo de columna/tabla.
+insert into pg_temp.preflight_164_reporte
+select '164-no-aplicada', 'funciones Commit 5 (convertir_cotizacion_a_contrato + helpers)',
+  case when choca = 0 then 'OK' else 'BLOCKED' end,
+  case when choca = 0 then 'Ninguna función de conversión presente' else choca || ' función(es) Commit 5 YA existen — la 164 parece aplicada o hay colisión; revisar antes.' end
+from (
+  select count(*)::int as choca from (
+    select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.proname in
+      ('convertir_cotizacion_a_contrato','_tipo_cotizacion_convertible','_monto_cop_pagado',
+       '_tipo_proveedor_cxp','_cuentas_cxp')
+  ) t
+) q;
+
 -- 2) Tablas de origen que la 164 toca deben existir.
 insert into pg_temp.preflight_164_reporte
 select 'origen', t.tabla,

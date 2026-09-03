@@ -75,6 +75,14 @@ drop function if exists public.registrar_pago_previo(bigint, numeric, text, nume
 drop function if exists public.registrar_pago_previo(bigint, numeric, text, numeric, text, text, date, uuid, text);
 drop function if exists public.anular_pago_previo(bigint, uuid, text);
 drop function if exists public.transferir_pagos_previos_a_abonos(bigint, text, uuid);
+-- ── 3ter) Conversión atómica Commit 5: se sueltan ANTES de los helpers
+--     compartidos (_autorizado/_puc_id/_siguiente_numero_asiento) porque el RPC
+--     depende de ellos; PostgreSQL abortaría el drop si quedara viva la dependencia.
+drop function if exists public.convertir_cotizacion_a_contrato(bigint, uuid);
+drop function if exists public._tipo_cotizacion_convertible(text);
+drop function if exists public._monto_cop_pagado(bigint);
+drop function if exists public._tipo_proveedor_cxp(text);
+drop function if exists public._cuentas_cxp(text);
 drop function if exists public._autorizado_pago_previo(uuid);
 drop function if exists public._huella_pago_previo(bigint, numeric, text, text, text, date);
 drop function if exists public._siguiente_numero_asiento(text);
@@ -90,6 +98,7 @@ drop table if exists public.restriccion_overrides;
 drop table if exists public.contrato_condiciones;
 drop table if exists public.cotizacion_pagos_previos;
 drop table if exists public.cotizacion_condiciones;
+-- (el índice UNIQUE parcial uq_pagos_previos_abono_id se suelta con la tabla)
 drop table if exists public.config_cobros_componente;
 
 -- ── 5) Columnas aditivas + constraints. ─────────────────────────────────────

@@ -866,6 +866,494 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════════
+-- COMMIT 5 · Conversión ATÓMICA de una cotización 'manual' a UN solo contrato
+--
+-- Un solo RPC, INVOKER bajo service_role (igual que registrar_pago_previo), que
+-- hace TODO en UNA transacción:
+--   1) autoriza actor (rol interno + activo);
+--   2) FOR UPDATE de la cotización y RE-lectura;
+--   2bis) tenant AUTORITATIVO (superadmin exento, excepción global documentada);
+--   3) idempotencia: si ventas.cotizacion_id ya apunta → devuelve la venta (UNIQUE);
+--   4) frontera reutilizable: solo tipo='manual';
+--   5) estado 'abierta' + congelado obligatorio (snapshot/moneda/TRM/precio/
+--      monto exigido COP);
+--   5bis) titular completo;
+--   6) mínimo: Σ monto_cop de pagos válidos (activo+aplicado) ≥ exigido congelado
+--      (anulados NO cuentan). Se bloquean las filas de pago contadas (anular_pago_
+--      previo bloquea el pago, NO la cotización → hay que serializar aquí);
+--   7) número UNA sola vez (siguiente_numero_contrato_para_tenant, nextval) — tras
+--      la idempotencia, para que un replay no consuma otro consecutivo;
+--   8) crea la VENTA (reproducción fiel del builder manual) + `cotizacion_id`;
+--   9) hijas: contrato_items, contrato_pasajeros, aliados_b2b (si B2B y recobro);
+--   10) copia condiciones a contrato_condiciones (snapshot congelado);
+--   11) transfiere cada pago ACTIVO a ABONO + reclasifica 280510→280505 + marca
+--       'aplicado' con ref durable abono_id (espejo de transferir_pagos_previos_);
+--   12) CxP de proveedor + asiento Debe Costo / Haber Proveedores (equivalencia de
+--       postearAsientoCxP). NO se captura: si algo falla, revierte TODA la
+--       conversión (fallo atómico, pedido del dueño — el builder TS hacía
+--       try/catch "no bloquear").
+--   13) enlaza estado 'convertida' + numero_contrato + detalle.venta.numero_contrato.
+--
+-- NUNCA es SECURITY DEFINER: service_role bypasea RLS, así que toda la
+-- autorización es explícita en el cuerpo. `revoke`/`grant` solo a service_role.
+-- Cualquier raise → PostgreSQL revierte todo (venta, hijas, abonos, asientos,
+-- CxP, cambio de estado) en un solo rollback.
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- Frontera reutilizable: hoy solo las cotizaciones manuales convierten.
+create or replace function public._tipo_cotizacion_convertible(p_tipo text)
+returns void language plpgsql as $$
+begin
+  if coalesce(p_tipo, '') <> 'manual' then
+    raise exception 'Solo las cotizaciones manuales se convierten en esta etapa (recibida tipo %); tarifario/carrito/single llegan en un commit posterior.',
+      coalesce(nullif(trim(coalesce(p_tipo,'')), ''), '(vacío)');
+  end if;
+end;
+$$;
+
+-- Σ monto_cop de los pagos previos VÁLIDOS (activo/aplicado). Anulados NO cuentan.
+create or replace function public._monto_cop_pagado(p_cotizacion_id bigint)
+returns numeric language sql stable as $$
+  select coalesce(sum(monto_cop), 0)
+  from public.cotizacion_pagos_previos
+  where cotizacion_id = p_cotizacion_id and estado in ('activo','aplicado');
+$$;
+
+-- tipo_servicio → tipo_proveedor de la CxP (espejo SQL de TIPO_PROVEEDOR en
+-- manual-actions.ts: aereo→aereo, hotel→hotel, traslado→receptivo,
+-- asistencia→asistencia, otro→otro, default 'otro').
+create or replace function public._tipo_proveedor_cxp(p_tipo_servicio text)
+returns text language sql immutable as $$
+  select case lower(btrim(coalesce(p_tipo_servicio,'')))
+    when 'aereo'     then 'aereo'
+    when 'hotel'     then 'hotel'
+    when 'traslado'  then 'receptivo'
+    when 'asistencia' then 'asistencia'
+    when 'otro'      then 'otro'
+    else 'otro' end;
+$$;
+
+-- tipo_proveedor → [subcuenta Proveedores, subcuenta Costo] (espejo SQL de
+-- PROVEEDOR_CUENTA + PROVEEDOR_CUENTA_DEFAULT en lib/contabilidad/asientos.ts).
+-- Ambos códigos existen en las semillas 126 para mayorista y minorista.
+create or replace function public._cuentas_cxp(p_tipo_proveedor text)
+returns text[] language sql immutable as $$
+  select case lower(btrim(coalesce(p_tipo_proveedor,'')))
+    when 'hotel'      then array['220505','613505']
+    when 'aereo'      then array['220510','613510']
+    when 'receptivo'  then array['220515','613515']
+    when 'asistencia' then array['220520','613520']
+    else array['220595','613595'] end;
+$$;
+
+-- UNICO parcial: un ABONO no puede quedar vinculado desde dos pagos (cada pago
+-- apunta a a lo sumo un abono y cada abono a lo sumo un pago) — ref durable de
+-- la transferencia exactamente-una-vez.
+create unique index if not exists uq_pagos_previos_abono_id
+  on public.cotizacion_pagos_previos (abono_id) where abono_id is not null;
+
+create or replace function public.convertir_cotizacion_a_contrato(
+  p_cotizacion_id bigint,
+  p_usuario_id uuid
+) returns text language plpgsql as $$
+declare
+  -- actor
+  v_rol            text;
+  v_actor_tenant   text;
+  v_actor_email    text;
+  -- cotización (re-lectura bajo lock)
+  v_tenant         text;
+  v_estado         text;
+  v_tipo           text;
+  v_congelada      timestamptz;
+  v_moneda_cong    text;
+  v_trm_cong       numeric;
+  v_precio_cong    numeric;
+  v_exigido_cop    numeric;
+  v_cliente        text;
+  v_cliente_doc    text;
+  v_destino        text;
+  v_fsalida        date;
+  v_fregreso       date;
+  v_pax            int;
+  v_precio         numeric;
+  v_moneda         text;
+  v_asesor         text;
+  v_payload        jsonb;
+  v_detalle        jsonb;
+  -- idempotencia
+  v_existente      text;
+  -- derivados
+  v_tipo_asesor    text;
+  v_agencia_nombre text;
+  v_freelance_nombre text;
+  v_observ         text;
+  v_nombre_cliente text;
+  v_t_doc          text;
+  v_t_numero       text;
+  v_t_nacimiento   text;
+  v_nNinos         int;
+  v_valorNino      numeric;
+  v_totalNinos     numeric;
+  v_recN           numeric;
+  v_recEmp         numeric;
+  v_recAli         numeric;
+  v_esB2B          boolean;
+  v_plan_nombre    text;
+  v_tours          text;
+  v_asist_med      boolean;
+  v_costo_aereo    numeric;
+  v_costo_hotel    numeric;
+  v_costo_recept   numeric;
+  v_costo_asist    numeric;
+  v_costo_otro     numeric;
+  v_hotel_venta    text;
+  -- mín / número / item
+  v_pagado         numeric;
+  v_numero         text;
+  v_pax_ad         int;
+  v_adultSubtotal  numeric;
+  v_tarifaAd       numeric;
+  v_item_desc      text;
+  v_dest_u         text;
+  v_aliado_nombre  text;
+  -- bucles
+  r_pago           record;
+  r_serv           record;
+  -- CxP / asiento
+  v_cxp_id         bigint;
+  v_tipo_prov      text;
+  v_proveedor      text;
+  v_etiqueta       text;
+  v_servicio       text;
+  v_ret_aplica     boolean;
+  v_ret_pct        numeric;
+  v_hoy            date;
+  v_codigos        text[];
+  v_cuenta_cost    bigint;
+  v_cuenta_prov    bigint;
+  v_num_asiento    bigint;
+  -- pago→abono
+  v_abono_id       bigint;
+  v_anticipo_sin   bigint;
+  v_anticipo_con   bigint;
+begin
+  -- 1) Autorización (rol interno + activo) y datos del actor.
+  v_rol := public._autorizado_pago_previo(p_usuario_id);
+  select tenant, email into v_actor_tenant, v_actor_email
+  from public.usuarios where id = p_usuario_id;
+
+  -- 2) Lock de la cotización + RE-lectura (serializa pagos/conversiones).
+  select tenant, estado, tipo, condicion_pago_congelada_en, moneda_congelada,
+         trm_autoritativa, precio_total_congelado, monto_exigido_total_cop,
+         cliente, cliente_documento, destino, fecha_salida, fecha_regreso,
+         pax, precio_venta, moneda, asesor, payload, detalle
+    into v_tenant, v_estado, v_tipo, v_congelada, v_moneda_cong,
+         v_trm_cong, v_precio_cong, v_exigido_cop,
+         v_cliente, v_cliente_doc, v_destino, v_fsalida, v_fregreso,
+         v_pax, v_precio, v_moneda, v_asesor, v_payload, v_detalle
+  from public.cotizaciones where id = p_cotizacion_id for update;
+  if v_tenant is null then
+    raise exception 'La cotización % no existe.', p_cotizacion_id;
+  end if;
+  v_payload := coalesce(v_payload, '{}'::jsonb);
+  v_detalle := coalesce(v_detalle, '{}'::jsonb);
+
+  -- 2bis) Tenant AUTORITATIVO, ANTES de la idempotencia y de escribir.
+  -- superadmin = excepción global documentada (puede_ver_tenant lo incluye).
+  if v_rol <> 'superadmin' and v_actor_tenant is distinct from v_tenant then
+    raise exception 'No tienes acceso a la agencia (tenant %) de esta cotización.', v_tenant;
+  end if;
+
+  -- 3) Idempotencia: si ya se convirtió a UN contrato, devolverlo (replay / ya
+  --    convertida). Ocurre bajo el lock y tras el cheque de tenant, así que un
+  --    replay desde tenant ajeno se rechaza antes de tocar la venta existente.
+  select numero_contrato into v_existente
+  from public.ventas where cotizacion_id = p_cotizacion_id;
+  if v_existente is not null then
+    return v_existente;
+  end if;
+
+  -- 4) Frontera reutilizable: solo manual (raise si no).
+  perform public._tipo_cotizacion_convertible(v_tipo);
+
+  -- 5) Estado admitido + congelado OBLIGATORIO (fail-closed). El mínimo de abajo
+  --    se mide contra el monto exigido CONGELADO en COP.
+  if v_estado <> 'abierta' then
+    raise exception 'La cotización % no está abierta (estado: %) — no se puede convertir.', p_cotizacion_id, v_estado;
+  end if;
+  if v_congelada is null or v_moneda_cong is null or v_trm_cong is null
+     or v_precio_cong is null or v_exigido_cop is null then
+    raise exception 'La cotización % no está congelada (falta snapshot/moneda/TRM/precio o monto exigido). Registra el pago previo que congela la condición antes de convertir.', p_cotizacion_id;
+  end if;
+
+  -- 5bis) Titular OBLIGATORIO (va como pasajero del contrato).
+  v_nombre_cliente := btrim(coalesce(v_payload#>>'{cliente,nombres}','') || ' ' || coalesce(v_payload#>>'{cliente,apellidos}',''));
+  v_t_doc        := btrim(coalesce(v_payload#>>'{cliente,tipoDoc}',''));
+  v_t_numero     := btrim(coalesce(v_payload#>>'{cliente,numeroDoc}',''));
+  v_t_nacimiento := btrim(coalesce(v_payload#>>'{cliente,nacimiento}',''));
+  if v_nombre_cliente = '' or v_t_doc = '' or v_t_numero = '' or v_t_nacimiento = '' then
+    raise exception 'Completa los datos del titular antes de generar el contrato: nombre, tipo de documento, número de documento y fecha de nacimiento.';
+  end if;
+
+  -- 6) Mínimo: Σ monto_cop de pagos válidos ≥ exigido congelado (anulados NO).
+  --    Bloqueamos las filas de pago CONTADAS para serializar con un anular
+  --    concurrente (anular_pago_previo bloquea el pago, no la cotización).
+  for r_pago in
+    select id from public.cotizacion_pagos_previos
+    where cotizacion_id = p_cotizacion_id and estado in ('activo','aplicado')
+    order by id for update
+  loop
+    null; -- lock adquirido
+  end loop;
+  v_pagado := public._monto_cop_pagado(p_cotizacion_id);
+  if v_pagado < v_exigido_cop then
+    raise exception 'La cotización % no alcanza el mínimo exigido: pagado % COP < exigido % COP (los pagos anulados no cuentan).',
+      p_cotizacion_id, v_pagado, v_exigido_cop;
+  end if;
+
+  -- 7) Número UNA sola vez (función real con nextval), tras la idempotencia.
+  v_numero := public.siguiente_numero_contrato_para_tenant(v_tenant);
+
+  -- Derivados equivalentes al builder manual.
+  v_tipo_asesor      := coalesce(v_payload->>'tipoAsesor', 'interno');
+  v_agencia_nombre   := v_payload->>'agenciaNombre';
+  v_freelance_nombre := v_payload->>'freelanceNombre';
+  v_observ           := nullif(v_payload->>'observaciones', '');
+  v_pax              := coalesce(v_pax, 0);
+  v_precio           := coalesce(v_precio, 0);
+  v_moneda           := coalesce(v_moneda, 'COP');
+
+  -- Niños y recobro (mismo cálculo que crear/editar; el recobro va oculto en la
+  -- tarifa de adulto). totalNinos = cantidad × tarifa; recobro repartido B2B.
+  v_nNinos     := greatest(floor(coalesce((v_payload->>'ninos')::numeric, 0)), 0)::int;
+  v_valorNino  := greatest(coalesce((v_payload->>'tarifaNino')::numeric, 0), 0);
+  v_totalNinos := v_nNinos * v_valorNino;
+  v_recN       := greatest(coalesce((v_payload->>'recobro')::numeric, 0), 0);
+  v_esB2B      := v_tipo_asesor <> 'interno';
+  v_recAli     := case when v_esB2B then least(greatest(coalesce((v_payload->>'recobroAliado')::numeric, 0), 0), v_recN) else 0 end;
+  v_recEmp     := v_recN - v_recAli;
+
+  -- Cajas "Hoteles y Servicios" + costos netos por tipo (cotizacion_servicios).
+  select coalesce(string_agg(btrim(coalesce(s.nombre_servicio,'')), ', ' order by s.orden), null)
+    into v_plan_nombre
+  from public.cotizacion_servicios s
+  where s.cotizacion_id = p_cotizacion_id and s.tipo_servicio = 'hotel'
+    and btrim(coalesce(s.nombre_servicio,'')) <> '';
+  select coalesce(string_agg(btrim(coalesce(s.nombre_servicio,'')), ', ' order by s.orden), null)
+    into v_tours
+  from public.cotizacion_servicios s
+  where s.cotizacion_id = p_cotizacion_id and s.tipo_servicio = 'traslado'
+    and btrim(coalesce(s.nombre_servicio,'')) <> '';
+  select exists(select 1 from public.cotizacion_servicios s
+                where s.cotizacion_id = p_cotizacion_id and s.tipo_servicio = 'asistencia')
+    into v_asist_med;
+  select
+      coalesce(sum(s.costo_neto) filter (where s.tipo_servicio='aereo'), 0),
+      coalesce(sum(s.costo_neto) filter (where s.tipo_servicio='hotel'), 0),
+      coalesce(sum(s.costo_neto) filter (where s.tipo_servicio='traslado'), 0),
+      coalesce(sum(s.costo_neto) filter (where s.tipo_servicio='asistencia'), 0),
+      coalesce(sum(s.costo_neto) filter (where s.tipo_servicio='otro'), 0)
+    into v_costo_aereo, v_costo_hotel, v_costo_recept, v_costo_asist, v_costo_otro
+  from public.cotizacion_servicios s where s.cotizacion_id = p_cotizacion_id;
+
+  -- Hotel/Aerolínea del snapshot (igual que el builder: plan_nombre manda sobre
+  -- detalle.venta.hotel; aerolinea solo desde detalle.venta).
+  v_hotel_venta := coalesce(nullif(v_plan_nombre,''), nullif(v_detalle->'venta'->>'hotel',''));
+
+  -- 8) Crear la VENTA (reproducción fiel del builder manual + cotizacion_id).
+  insert into public.ventas (
+    numero_contrato, tenant, cliente, cliente_documento, cliente_telefono, destino,
+    tipo_paquete, fecha_salida, fecha_regreso, pax, precio_venta, moneda, asesor,
+    canal, tipo_cliente, hotel, aerolinea, plan_nombre, tours_traslados,
+    asistencia_medica, costo_aereo, costo_hotel, costo_receptivo, costo_asistencia,
+    otros_costos, recobro_total, recobro_empresa, recobro_aliado, comision_b2b,
+    comision_estado, estado, observaciones, cotizacion_id
+  ) values (
+    v_numero, v_tenant, coalesce(v_cliente,''), nullif(v_cliente_doc,''),
+    nullif(v_payload#>>'{cliente,telefono}',''), nullif(v_destino,''),
+    'dinamico', v_fsalida, v_fregreso, nullif(v_pax,0), nullif(v_precio,0), v_moneda,
+    nullif(v_asesor,''),
+    case when v_tipo_asesor = 'interno' then 'B2C' else 'B2B' end,
+    nullif(v_tipo_asesor,''), nullif(v_hotel_venta,''),
+    nullif(v_detalle->'venta'->>'aerolinea',''), nullif(v_plan_nombre,''),
+    nullif(v_tours,''), coalesce(v_asist_med,false),
+    v_costo_aereo, v_costo_hotel, v_costo_recept, v_costo_asist, v_costo_otro,
+    v_recN, v_recEmp, v_recAli,
+    case when v_recAli > 0 then v_recAli else null end,
+    case when v_recAli > 0 then 'pendiente' else null end,
+    'pendiente', v_observ, p_cotizacion_id
+  );
+
+  -- 9) Ítem del paquete: adultos + niños. tarifa_adulto incluye el recobro (oculto).
+  v_pax_ad        := greatest(v_pax, 1);
+  v_adultSubtotal := v_precio - v_totalNinos;
+  v_tarifaAd      := round(v_adultSubtotal / v_pax_ad);
+  v_dest_u        := upper(btrim(coalesce(v_destino,'')));
+  v_dest_u        := case when v_dest_u = '' then 'DESTINO' else v_dest_u end;
+  v_item_desc     := 'PAQUETE TURÍSTICO A ' || v_dest_u || ' DEL '
+                     || coalesce(to_char(v_fsalida,'DD/MM/YYYY'),'—') || ' AL '
+                     || coalesce(to_char(v_fregreso,'DD/MM/YYYY'),'—');
+  insert into public.contrato_items
+    (numero_contrato, descripcion, adultos, ninos, tarifa_adulto, tarifa_nino, orden)
+  values
+    (v_numero, v_item_desc, v_pax_ad, v_nNinos, v_tarifaAd, v_valorNino, 0);
+
+  -- Titular como pasajero del contrato.
+  insert into public.contrato_pasajeros
+    (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
+  values
+    (v_numero, v_nombre_cliente, coalesce(nullif(v_t_doc,''),'CC'), nullif(v_t_numero,''),
+     nullif(v_t_nacimiento,'')::date, false, 0);
+
+  -- Comisión del aliado B2B por el recobro (entra al módulo de comisiones).
+  if v_esB2B and v_recAli > 0 then
+    v_aliado_nombre := coalesce(nullif(case when v_tipo_asesor='agencia' then v_agencia_nombre else v_freelance_nombre end,''),
+                                nullif(coalesce(v_asesor,''),''), 'Aliado');
+    insert into public.aliados_b2b
+      (numero_contrato, tenant, aliado, tipo_aliado, precio_venta, base_comision,
+       recobro_total, pct_recobro_aliado, estado)
+    values
+      (v_numero, v_tenant, v_aliado_nombre, v_tipo_asesor, v_precio, v_recAli,
+       v_recN, case when v_recN > 0 then v_recAli / v_recN else 0 end, 'pendiente');
+  end if;
+
+  -- 10) Copiar condiciones congeladas → contrato_condiciones (snapshot por fila).
+  insert into public.contrato_condiciones (
+    numero_contrato, tipo_componente, referencia_externa, orden, valor_componente,
+    condicion_pago_tipo, condicion_pago_pct_aplicable, condicion_pago_dias_saldo,
+    condicion_pago_fecha_limite, monto_exigido, restriccion_comercial, moneda, trm
+  )
+  select v_numero, c.tipo_componente, c.referencia_externa, c.orden, c.valor_componente,
+         c.condicion_pago_tipo, c.condicion_pago_pct_aplicable, c.condicion_pago_dias_saldo,
+         c.condicion_pago_fecha_limite, c.monto_exigido, c.restriccion_comercial,
+         v_moneda_cong, v_trm_cong
+  from public.cotizacion_condiciones c
+  where c.cotizacion_id = p_cotizacion_id;
+
+  -- 11) Transferir pagos ACTIVOS → ABONOS + reclasificar 280510→280505 + marcar.
+  v_anticipo_sin := public._puc_id(v_tenant, '280510');
+  v_anticipo_con := public._puc_id(v_tenant, '280505');
+  for r_pago in
+    select * from public.cotizacion_pagos_previos
+    where cotizacion_id = p_cotizacion_id and estado = 'activo'
+    order by id for update
+  loop
+    insert into public.abonos
+      (numero_contrato, cliente, fecha_abono, valor_abono, forma_pago, referencia,
+       recibido_por, trm, monto_cop, tenant)
+    values
+      (v_numero, coalesce(v_cliente,''), r_pago.fecha_pago, r_pago.monto_cop,
+       r_pago.forma_pago, r_pago.referencia, v_actor_email, r_pago.trm,
+       r_pago.monto_cop, v_tenant)
+    returning id into v_abono_id;
+
+    v_num_asiento := public._siguiente_numero_asiento(v_tenant);
+    insert into public.asientos_contables (tenant, numero, fecha, descripcion, origen, referencia, usuario_email)
+    values (v_tenant, v_num_asiento, current_date,
+      'Aplicación pago previo a contrato ' || v_numero,
+      'pago_previo_aplicacion', 'pago_previo:' || r_pago.id || ':abono:' || v_abono_id, v_actor_email);
+    insert into public.asiento_lineas (tenant, asiento_id, cuenta_id, tercero, descripcion, debe, haber)
+    values
+      (v_tenant, (select max(id) from public.asientos_contables where tenant=v_tenant and numero=v_num_asiento),
+       v_anticipo_sin, v_numero, 'Anticipo sin identificar aplicado', coalesce(r_pago.monto_cop,0), 0),
+      (v_tenant, (select max(id) from public.asientos_contables where tenant=v_tenant and numero=v_num_asiento),
+       v_anticipo_con, v_numero, 'Anticipo de cliente del contrato', 0, coalesce(r_pago.monto_cop,0));
+
+    update public.cotizacion_pagos_previos
+    set estado = 'aplicado', abono_id = v_abono_id
+    where id = r_pago.id;
+  end loop;
+
+  -- 12) CxP de proveedor + asientos Debe Costo / Haber Proveedores. Equivalencia
+  --     de postearAsientoCxP. FALLO ATÓMICO (sin try/catch): cualquier cuenta
+  --     ausente revierte toda la conversión. Proveedor = (proveedor o plataforma);
+  --     retención por match de nombre en el catálogo (que NO lleva tenant).
+  v_hoy := current_date;
+  for r_serv in
+    select * from public.cotizacion_servicios
+    where cotizacion_id = p_cotizacion_id and (coalesce(costo_neto,0)) > 0
+    order by orden
+  loop
+    v_tipo_prov := public._tipo_proveedor_cxp(r_serv.tipo_servicio);
+    v_proveedor := coalesce(nullif(btrim(coalesce(r_serv.proveedor,'')), ''),
+                            nullif(btrim(coalesce(r_serv.plataforma,'')), ''));
+    v_etiqueta  := case coalesce(r_serv.tipo_servicio,'')
+      when 'aereo' then 'Aéreo'
+      when 'hotel' then 'Hotel'
+      when 'traslado' then 'Traslado'
+      when 'asistencia' then 'Asistencia médica'
+      when 'otro' then 'Otro'
+      else 'Servicio' end;
+    v_servicio  := btrim(coalesce(v_etiqueta,'') || case when btrim(coalesce(r_serv.nombre_servicio,'')) <> '' then ' ' || btrim(r_serv.nombre_servicio) else '' end);
+
+    -- Retención del catálogo por nombre (coincidencia exacta trim+lower).
+    v_ret_aplica := false;
+    v_ret_pct    := 0;
+    if v_proveedor is not null then
+      select coalesce(p.aplica_retencion,false), coalesce(p.pct_retencion,0)
+        into v_ret_aplica, v_ret_pct
+      from public.proveedores p
+      where lower(btrim(p.nombre)) = lower(btrim(v_proveedor))
+      order by p.id limit 1;
+    end if;
+
+    insert into public.cuentas_por_pagar
+      (numero_contrato, tenant, proveedor, tipo_proveedor, servicio, valor_total,
+       moneda, fecha_obligacion, fecha_vencimiento, aplica_retencion, pct_retencion,
+       observaciones)
+    values
+      (v_numero, v_tenant, v_proveedor, v_tipo_prov, v_servicio,
+       greatest(0, coalesce(r_serv.costo_neto,0)), v_moneda, v_hoy, v_fsalida,
+       v_ret_aplica, v_ret_pct, 'Generado automáticamente desde cotización dinámica')
+    returning id into v_cxp_id;
+
+    -- Asiento de la CxP (reemplazar es no-op en una conversión fresca, se deja
+    -- por fidelidad a postearAsientoCxP): Debe Costo / Haber Proveedores.
+    v_codigos     := public._cuentas_cxp(v_tipo_prov);  -- [1]=Proveedores, [2]=Costo
+    v_cuenta_prov := public._puc_id(v_tenant, v_codigos[1]);
+    v_cuenta_cost := public._puc_id(v_tenant, v_codigos[2]);
+    v_num_asiento := public._siguiente_numero_asiento(v_tenant);
+    delete from public.asientos_contables
+    where tenant = v_tenant and origen = 'cxp' and referencia = 'cxp:' || v_cxp_id;
+    insert into public.asientos_contables (tenant, numero, fecha, descripcion, origen, referencia, usuario_email)
+    values (v_tenant, v_num_asiento, v_hoy,
+      coalesce(nullif(v_servicio,''),'Costo') || ' — ' || coalesce(v_proveedor,'Sin especificar') || ' (' || v_numero || ')',
+      'cxp', 'cxp:' || v_cxp_id, v_actor_email);
+    insert into public.asiento_lineas (tenant, asiento_id, cuenta_id, tercero, descripcion, debe, haber)
+    values
+      (v_tenant, (select max(id) from public.asientos_contables where tenant=v_tenant and numero=v_num_asiento),
+       v_cuenta_cost, v_numero, v_servicio, greatest(0, coalesce(r_serv.costo_neto,0)), 0),
+      (v_tenant, (select max(id) from public.asientos_contables where tenant=v_tenant and numero=v_num_asiento),
+       v_cuenta_prov, v_proveedor, v_servicio, 0, greatest(0, coalesce(r_serv.costo_neto,0)));
+  end loop;
+
+  -- 13) Enlazar + estado + número en el detalle (snapshot del documento).
+  v_detalle := jsonb_set(v_detalle, '{venta,numero_contrato}', to_jsonb(v_numero));
+  update public.cotizaciones
+  set estado = 'convertida',
+      numero_contrato = v_numero,
+      condicion_pago_congelada_en = coalesce(v_congelada, now()),
+      detalle = v_detalle
+  where id = p_cotizacion_id;
+
+  return v_numero;
+end;
+$$;
+
+-- ACL de las funciones nuevas del Commit 5: solo service_role.
+revoke all on function public._tipo_cotizacion_convertible(text) from public, anon, authenticated;
+grant execute on function public._tipo_cotizacion_convertible(text) to service_role;
+revoke all on function public._monto_cop_pagado(bigint) from public, anon, authenticated;
+grant execute on function public._monto_cop_pagado(bigint) to service_role;
+revoke all on function public._tipo_proveedor_cxp(text) from public, anon, authenticated;
+grant execute on function public._tipo_proveedor_cxp(text) to service_role;
+revoke all on function public._cuentas_cxp(text) from public, anon, authenticated;
+grant execute on function public._cuentas_cxp(text) to service_role;
+revoke all on function public.convertir_cotizacion_a_contrato(bigint, uuid) from public, anon, authenticated;
+grant execute on function public.convertir_cotizacion_a_contrato(bigint, uuid) to service_role;
+
 -- ACL de las funciones de dinero: solo service_role.
 revoke all on function public.registrar_pago_previo(bigint, numeric, text, numeric, text, text, date, uuid, text, jsonb, numeric, numeric) from public, anon, authenticated;
 grant execute on function public.registrar_pago_previo(bigint, numeric, text, numeric, text, text, date, uuid, text, jsonb, numeric, numeric) to service_role;
