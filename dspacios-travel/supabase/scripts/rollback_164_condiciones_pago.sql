@@ -55,6 +55,19 @@ begin
 end $$;
 
 -- ── 2) Suelta dependencias (objetos que dependen de columnas/tablas a borrar). ──
+-- Commit 6 primero: candados de inmutabilidad + RPC/helper de overrides +
+-- policies nuevas — se sueltan antes de que sus tablas se borren más abajo.
+drop trigger if exists trg_contrato_condiciones_inmutable on public.contrato_condiciones;
+drop function if exists public.contrato_condiciones_inmutable();
+drop trigger if exists trg_ventas_cotizacion_id_inmutable on public.ventas;
+drop function if exists public.ventas_cotizacion_id_inmutable();
+drop trigger if exists trg_restriccion_overrides_guardas on public.restriccion_overrides;
+drop function if exists public.restriccion_overrides_guardas();
+drop function if exists public.registrar_override_restriccion(text, bigint, text, text, uuid);
+drop function if exists public._autorizado_override(uuid);
+drop policy if exists "restriccion_overrides: lectura" on public.restriccion_overrides;
+drop policy if exists "restriccion_overrides: insertar" on public.restriccion_overrides;
+
 drop trigger if exists trg_cotizacion_condiciones_bloquear_congeladas on public.cotizacion_condiciones;
 drop function if exists public.cotizacion_condiciones_bloquear_congeladas();
 drop policy if exists "cotizacion_condiciones: lectura" on public.cotizacion_condiciones;

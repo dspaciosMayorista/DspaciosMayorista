@@ -2672,7 +2672,7 @@ export type Database = {
           condicion_pago_dias_saldo: number | null;
           condicion_pago_fecha_limite: string | null;
           monto_exigido: number;
-          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable'
+          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable' | 'no_reembolsable_no_endosable'
           moneda: string | null;
           trm: number | null;
           creado_en: string;
@@ -2699,13 +2699,20 @@ export type Database = {
       };
       // Log de excepciones a restricciones de condiciones sobre un contrato
       // convertido (migración 164): quién, qué tabla/acción y POR QUÉ (motivo
-      // obligatorio). La escribe la UI que autoriza la excepción.
+      // obligatorio). Solo-append (candado en BD, Commit 6): ninguna fila se
+      // edita ni se borra. Solo la escribe el RPC `registrar_override_restriccion`
+      // (solo superadmin); `contrato_condicion_id`/`restriccion_afectada` dan
+      // el alcance explícito cuando el override es sobre una condición de pago
+      // puntual del contrato (el resto de columnas quedan para el uso general
+      // de la tabla: otras acciones restringidas fuera de este commit).
       restriccion_overrides: {
         Row: {
           id: number;
           numero_contrato: string;
           tabla_afectada: string;
           accion: string;
+          contrato_condicion_id: number | null;
+          restriccion_afectada: string | null;
           motivo: string;
           usuario_id: string;
           usuario_email: string | null;
@@ -2716,6 +2723,8 @@ export type Database = {
           numero_contrato: string;
           tabla_afectada: string;
           accion: string;
+          contrato_condicion_id?: number | null;
+          restriccion_afectada?: string | null;
           motivo: string;
           usuario_id: string;
           usuario_email?: string | null;
@@ -3121,6 +3130,22 @@ export type Database = {
       convertir_cotizacion_a_contrato: {
         Args: { p_cotizacion_id: number; p_usuario_id: string };
         Returns: string;
+      };
+      // Migración 164 (Commit 6). Único RPC de escritura de `restriccion_overrides`
+      // para excepciones a restricciones de condiciones de pago del contrato.
+      // INVOKER, solo `service_role`; re-verifica rol=superadmin+activo, tenant
+      // del actor vs. tenant del contrato y que la condición pertenezca al
+      // contrato. Nunca toca `contrato_condiciones` (candado de inmutabilidad
+      // aparte, vía trigger). Devuelve el id del override creado.
+      registrar_override_restriccion: {
+        Args: {
+          p_numero_contrato: string;
+          p_contrato_condicion_id: number | null;
+          p_restriccion_afectada: string;
+          p_motivo: string;
+          p_usuario_id: string;
+        };
+        Returns: number;
       };
       siguiente_numero_contrato: {
         Args: Record<PropertyKey, never>;

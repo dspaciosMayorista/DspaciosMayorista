@@ -69,6 +69,27 @@ from (
   ) t
 ) q;
 
+-- 1ter) Commit 6 (condiciones permanentes/candados/overrides) es PARTE de la
+--   164: si sus funciones/columnas ya existen, esa porción (o toda la 164) ya
+--   se aplicó → detectarlo antes de reintentar.
+insert into pg_temp.preflight_164_reporte
+select '164-no-aplicada', 'Commit 6 (registrar_override_restriccion + candados + columnas de alcance)',
+  case when choca = 0 then 'OK' else 'BLOCKED' end,
+  case when choca = 0 then 'Ninguna pieza del Commit 6 presente' else choca || ' pieza(s) del Commit 6 YA existen — revisar antes.' end
+from (
+  select count(*)::int as choca from (
+    select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+      where n.nspname='public' and p.proname in ('registrar_override_restriccion','_autorizado_override')
+    union
+    select 1 from information_schema.columns where table_schema='public' and table_name='restriccion_overrides'
+      and column_name in ('contrato_condicion_id','restriccion_afectada')
+    union
+    select 1 from pg_trigger tg join pg_class rel on rel.oid=tg.tgrelid join pg_namespace n on n.oid=rel.relnamespace
+      where n.nspname='public' and tg.tgname in
+        ('trg_contrato_condiciones_inmutable','trg_ventas_cotizacion_id_inmutable','trg_restriccion_overrides_guardas')
+  ) t
+) q;
+
 -- 2) Tablas de origen que la 164 toca deben existir.
 insert into pg_temp.preflight_164_reporte
 select 'origen', t.tabla,

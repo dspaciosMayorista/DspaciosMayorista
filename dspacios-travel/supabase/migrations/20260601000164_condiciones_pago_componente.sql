@@ -1375,4 +1375,240 @@ grant execute on function public._cuenta_disponible(text, text) to service_role;
 revoke all on function public._puc_id(text, text) from public, anon, authenticated;
 grant execute on function public._puc_id(text, text) to service_role;
 
+-- ═════════════════════════════════════════════════════════════════════════════
+-- COMMIT 6 · Condiciones PERMANENTES del contrato, PDF y candados.
+--
+-- `contrato_condiciones` es, desde el Commit 5, la copia congelada al convertir
+-- — pero hasta aquí nada le impedía a un UPDATE/DELETE alterarla después (la
+-- ausencia de policy de update/delete solo cierra el paso a un cliente con
+-- sesión; `service_role` BYPASEA la RLS por completo, así que la única forma
+-- de que la inmutabilidad sea AUTORITATIVA — ni siquiera un bug futuro del
+-- propio backend, ni una llamada directa con la llave de servicio, puede
+-- alterarla — es un trigger, que se ejecuta SIEMPRE, RLS aparte).
+--
+-- Contenido:
+--   J) Restricción comercial: se completa el CHECK a los TRES valores del
+--      motor TS (`no_reembolsable_no_endosable` faltaba; hoy no lo escribe
+--      ningún flujo real —`componentesManual.ts` siempre manda 'normal'— pero
+--      el tipo/las pruebas/las etiquetas ya lo asumen, así que dejarlo fuera
+--      del CHECK es una bomba de tiempo para el día en que un origen real
+--      —hotel/programa/paquete— sí lo produzca).
+--   K) Candado de inmutabilidad de `contrato_condiciones` (trigger, no policy).
+--   L) Candado de `ventas.cotizacion_id`: ninguna UPDATE puede tocarlo jamás
+--      (el único camino legítimo, `convertir_cotizacion_a_contrato`, lo fija
+--      con INSERT, nunca con UPDATE).
+--   M) `restriccion_overrides` se ajusta (migración 164 aún sin desplegar, se
+--      permite ALTERAR en vez de crear una 165): alcance explícito
+--      (`contrato_condicion_id` + `restriccion_afectada`), motivo/afectada no
+--      vacíos, candado de solo-append (trigger) y ESCRITURA restringida a
+--      SOLO superadmin (antes admitía también gerencia; el documento de
+--      arquitectura de este commit lo exige superadmin-únicamente). La
+--      LECTURA sigue el mismo criterio que `contrato_condiciones`
+--      (`puede_ver_contrato`): es información comercial del contrato — quien
+--      puede ver el contrato debe poder distinguir una condición original de
+--      una excepción autorizada, no solo superadmin.
+--   N) `registrar_override_restriccion`: único RPC de escritura, INVOKER bajo
+--      service_role (mismo patrón que el resto de la 164) — re-verifica
+--      rol=superadmin+activo, tenant del actor vs. tenant del contrato,
+--      pertenencia de la condición al contrato, y motivo no vacío. NUNCA
+--      toca `contrato_condiciones` (el override es un registro aparte: la
+--      condición original jamás se reescribe).
+-- ═════════════════════════════════════════════════════════════════════════════
+
+-- J) Completa el CHECK de restricción comercial a los 3 valores del motor TS
+--    (`lib/cotizacion/condicionPago.ts::RestriccionComercial`).
+alter table public.cotizacion_condiciones drop constraint if exists cotizacion_condiciones_restriccion_check;
+alter table public.cotizacion_condiciones add constraint cotizacion_condiciones_restriccion_check
+  check (restriccion_comercial in ('normal','promocional_no_reembolsable','no_reembolsable_no_endosable'));
+alter table public.contrato_condiciones drop constraint if exists contrato_condiciones_restriccion_check;
+alter table public.contrato_condiciones add constraint contrato_condiciones_restriccion_check
+  check (restriccion_comercial in ('normal','promocional_no_reembolsable','no_reembolsable_no_endosable'));
+
+-- K) contrato_condiciones — INMUTABLE tras la creación. Ninguna sesión, ni
+--    siquiera service_role (que bypasea RLS), puede alterarla o borrarla.
+create or replace function public.contrato_condiciones_inmutable()
+returns trigger language plpgsql as $$
+begin
+  raise exception 'contrato_condiciones es permanente: no se puede modificar ni eliminar una condición ya congelada en el contrato %.',
+    coalesce(old.numero_contrato, new.numero_contrato);
+end;
+$$;
+drop trigger if exists trg_contrato_condiciones_inmutable on public.contrato_condiciones;
+create trigger trg_contrato_condiciones_inmutable
+  before update or delete on public.contrato_condiciones
+  for each row execute function public.contrato_condiciones_inmutable();
+
+-- L) ventas.cotizacion_id — INMUTABLE tras fijarse (y no puede fijarse por
+--    UPDATE en absoluto: el único escritor legítimo, convertir_cotizacion_a_
+--    contrato, lo hace con INSERT). Cierra tanto "cambiar de cotización" como
+--    "vaciar el enlace" (NULL) en una sola regla: cualquier UPDATE que TOQUE
+--    la columna se rechaza, sin importar el valor de origen o destino.
+create or replace function public.ventas_cotizacion_id_inmutable()
+returns trigger language plpgsql as $$
+begin
+  if new.cotizacion_id is distinct from old.cotizacion_id then
+    raise exception 'ventas.cotizacion_id no se puede modificar tras la conversión (contrato %).', old.numero_contrato;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_ventas_cotizacion_id_inmutable on public.ventas;
+create trigger trg_ventas_cotizacion_id_inmutable
+  before update on public.ventas
+  for each row execute function public.ventas_cotizacion_id_inmutable();
+
+-- M) restriccion_overrides — alcance explícito + candado de solo-append +
+--    RLS restringida a superadmin.
+alter table public.restriccion_overrides
+  add column if not exists contrato_condicion_id bigint references public.contrato_condiciones(id),
+  add column if not exists restriccion_afectada text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'restriccion_overrides_restriccion_afectada_check'
+  ) then
+    alter table public.restriccion_overrides add constraint restriccion_overrides_restriccion_afectada_check
+      check (restriccion_afectada is null or length(trim(restriccion_afectada)) > 0);
+  end if;
+end $$;
+
+-- Verifica, en un trigger (no un CHECK: necesita consultar otra fila), que
+-- `contrato_condicion_id` —cuando viene— pertenezca de verdad al MISMO
+-- `numero_contrato` del override (alcance explícito, corrección de la
+-- auditoría de arquitectura: un override nunca puede apuntar a la condición
+-- de OTRO contrato). También bloquea update/delete: solo-append.
+create or replace function public.restriccion_overrides_guardas()
+returns trigger language plpgsql as $$
+declare v_numero text;
+begin
+  if tg_op in ('UPDATE','DELETE') then
+    raise exception 'restriccion_overrides es un registro de auditoría de solo-append: no se puede modificar ni eliminar un override ya creado.';
+  end if;
+  -- tg_op = INSERT
+  if new.contrato_condicion_id is not null then
+    select numero_contrato into v_numero
+    from public.contrato_condiciones where id = new.contrato_condicion_id;
+    if v_numero is null then
+      raise exception 'La condición % no existe.', new.contrato_condicion_id;
+    end if;
+    if v_numero <> new.numero_contrato then
+      raise exception 'La condición % pertenece al contrato %, no a %.', new.contrato_condicion_id, v_numero, new.numero_contrato;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_restriccion_overrides_guardas on public.restriccion_overrides;
+create trigger trg_restriccion_overrides_guardas
+  before insert or update or delete on public.restriccion_overrides
+  for each row execute function public.restriccion_overrides_guardas();
+
+-- RLS: LECTURA la comparte quien puede ver el contrato (mismo criterio que
+-- `contrato_condiciones` — la UI necesita distinguir "condición original" de
+-- "excepción autorizada" para TODO el que consulta el contrato, no solo
+-- superadmin: es información comercial del contrato, no un dato privilegiado).
+-- ESCRITURA la restringe a SOLO superadmin (antes admitía también gerencia —
+-- corrección de este commit; el documento de arquitectura del Commit 6 lo
+-- exige superadmin-únicamente). Sin policy de update/delete (el trigger de
+-- arriba ya lo bloquea también para service_role; esto cierra el paso además
+-- a cualquier sesión con RLS).
+drop policy if exists "restriccion_overrides: acceso" on public.restriccion_overrides;
+drop policy if exists "restriccion_overrides: lectura" on public.restriccion_overrides;
+create policy "restriccion_overrides: lectura"
+  on public.restriccion_overrides for select
+  using (public.puede_ver_contrato(numero_contrato));
+drop policy if exists "restriccion_overrides: insertar" on public.restriccion_overrides;
+create policy "restriccion_overrides: insertar"
+  on public.restriccion_overrides for insert
+  with check (public.mi_rol() = 'superadmin');
+
+-- N) RPC único de escritura — INVOKER bajo service_role, re-verifica todo
+--    server-side (nunca confía en actor/tenant/contrato que mande el cliente).
+create or replace function public._autorizado_override(p_usuario_id uuid)
+returns text language plpgsql as $$
+declare v_rol text; v_activo boolean;
+begin
+  if p_usuario_id is null then
+    raise exception 'Se requiere un usuario interno autorizado.';
+  end if;
+  select rol, activo into v_rol, v_activo from public.usuarios where id = p_usuario_id;
+  if v_rol is null then
+    raise exception 'El usuario % no existe en el sistema.', p_usuario_id;
+  end if;
+  if not coalesce(v_activo, false) then
+    raise exception 'El usuario está desactivado.';
+  end if;
+  if v_rol <> 'superadmin' then
+    raise exception 'Solo superadmin puede autorizar una excepción a una restricción comercial.';
+  end if;
+  return v_rol;
+end;
+$$;
+
+create or replace function public.registrar_override_restriccion(
+  p_numero_contrato text,
+  p_contrato_condicion_id bigint,
+  p_restriccion_afectada text,
+  p_motivo text,
+  p_usuario_id uuid
+) returns bigint language plpgsql as $$
+declare
+  v_rol           text := public._autorizado_override(p_usuario_id);
+  v_actor_tenant  text;
+  v_actor_email   text;
+  v_tenant_venta  text;
+  v_numero_cond   text;
+  v_motivo        text := nullif(trim(coalesce(p_motivo,'')), '');
+  v_afectada      text := nullif(trim(coalesce(p_restriccion_afectada,'')), '');
+  v_id            bigint;
+begin
+  select tenant, email into v_actor_tenant, v_actor_email from public.usuarios where id = p_usuario_id;
+
+  if v_motivo is null then
+    raise exception 'El motivo de la excepción es obligatorio.';
+  end if;
+  if v_afectada is null then
+    raise exception 'Indica qué restricción se está exceptuando.';
+  end if;
+
+  -- El contrato debe existir. Sin cheque de tenant: `_autorizado_override` ya
+  -- exige rol=superadmin arriba (v_rol siempre es 'superadmin' en este punto),
+  -- y superadmin es EXENTO de tenant en todo el resto de la 164 (mismo
+  -- criterio documentado en `convertir_cotizacion_a_contrato` — "excepción
+  -- global"). Si algún día se abre este RPC a otro rol, aquí es donde debe
+  -- agregarse el cheque `v_actor_tenant is distinct from v_tenant_venta`.
+  select tenant into v_tenant_venta from public.ventas where numero_contrato = p_numero_contrato;
+  if v_tenant_venta is null then
+    raise exception 'El contrato % no existe.', p_numero_contrato;
+  end if;
+
+  -- La condición (si viene) debe pertenecer a ESTE contrato — el trigger de
+  -- la tabla ya lo re-verifica; se comprueba aquí también para dar un
+  -- mensaje claro antes de intentar el insert.
+  if p_contrato_condicion_id is not null then
+    select numero_contrato into v_numero_cond
+    from public.contrato_condiciones where id = p_contrato_condicion_id;
+    if v_numero_cond is null or v_numero_cond <> p_numero_contrato then
+      raise exception 'La condición indicada no pertenece al contrato %.', p_numero_contrato;
+    end if;
+  end if;
+
+  insert into public.restriccion_overrides
+    (numero_contrato, tabla_afectada, accion, contrato_condicion_id, restriccion_afectada,
+     motivo, usuario_id, usuario_email)
+  values
+    (p_numero_contrato, 'contrato_condiciones', 'override_restriccion_pago', p_contrato_condicion_id,
+     v_afectada, v_motivo, p_usuario_id, v_actor_email)
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+revoke all on function public._autorizado_override(uuid) from public, anon, authenticated;
+grant execute on function public._autorizado_override(uuid) to service_role;
+revoke all on function public.registrar_override_restriccion(text, bigint, text, text, uuid) from public, anon, authenticated;
+grant execute on function public.registrar_override_restriccion(text, bigint, text, text, uuid) to service_role;
+
 commit;

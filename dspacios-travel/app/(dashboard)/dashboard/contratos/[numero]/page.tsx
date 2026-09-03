@@ -18,6 +18,9 @@ import { ContenidoContratoEditor } from "./ContenidoContratoEditor";
 import { Eye } from "lucide-react";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
+import CondicionesContratoPanel from "@/components/contrato/CondicionesContratoPanel";
+import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
+import { OverrideRestriccionForm } from "./OverrideRestriccionForm";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +73,8 @@ export default async function ContratoDetallePage({
     { data: destinos },
     { data: proveedoresCatalogo },
     { data: aliadosCatalogo },
+    { data: contratoCondiciones },
+    { data: overridesCondiciones },
   ] = await Promise.all([
     // Migración 144: quien NO tiene acceso financiero lee la vista sin
     // columnas de costo. El rol `venta` ya no puede leer la tabla base — ese
@@ -97,6 +102,12 @@ export default async function ContratoDetallePage({
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("nombre").order("nombre"),
     sb.from("aliados").select("id, nombre, nit, tipo, pct_comision, aplica_retencion, pct_retencion").order("nombre"),
+    // Condiciones PERMANENTES del contrato (migración 164, Commit 6) — mismo
+    // criterio de visibilidad que el resto del contrato (`puede_ver_contrato`).
+    // Ausente en contratos históricos previos a esta migración: llega vacío,
+    // el panel/PDF simplemente no muestran sección (nunca inventan restricción).
+    sb.from("contrato_condiciones").select("*").eq("numero_contrato", numero).order("orden"),
+    sb.from("restriccion_overrides").select("*").eq("numero_contrato", numero).order("creado_en"),
   ]);
 
   // Contenido del contrato (hoteles/vuelos/ítems/servicios) para el editor de
@@ -204,6 +215,15 @@ export default async function ContratoDetallePage({
     : Number(resumenAbonos?.total_pagado ?? 0);
   const saldo = Math.max(venta.precio_venta - totalPagado, 0);
 
+  // Condiciones PERMANENTES del contrato — mismo resolver que usa el PDF
+  // (ContratoDocumento.tsx), así que lo que ve el asesor aquí es exactamente
+  // lo que trae el documento descargable.
+  const condicionesResueltas = resolverCondicionesContrato(
+    (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
+    (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
+    { monedaContrato: (venta.moneda as string) ?? "COP", precioVenta: venta.precio_venta, fechaViaje: venta.fecha_salida },
+  );
+
   // Buscar el % de comisión del asesor (por email o por nombre de firma)
   const asesorNombre = venta.asesor_firma_nombre ?? venta.asesor ?? "";
   const asesorRow = (asesores ?? []).find(
@@ -279,6 +299,18 @@ export default async function ContratoDetallePage({
           <div className="text-xl font-bold text-gray-800">{formatMoneda(saldo, venta.moneda)}</div>
         </div>
       </div>
+
+      <CondicionesContratoPanel
+        resuelto={condicionesResueltas}
+        puedeAutorizarExcepcion={esSuperadmin}
+        overrideForm={(linea) => (
+          <OverrideRestriccionForm
+            numeroContrato={numero}
+            contratoCondicionId={linea.id}
+            restriccion={linea.restriccion}
+          />
+        )}
+      />
 
       {/* Editar datos del contrato. Solo para quien de verdad puede: la policy
           de UPDATE sobre `ventas` excluye al rol `venta`, así que mostrarle el

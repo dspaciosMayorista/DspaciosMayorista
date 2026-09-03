@@ -189,6 +189,92 @@ from (values
   ('_monto_cop_pagado'),('_tipo_proveedor_cxp'),('_cuentas_cxp')
 ) as p(proname);
 
+-- 7) Commit 6 — CHECK ampliado a los 3 valores del motor TS.
+insert into pg_temp.postcheck_164_reporte
+select 'constraints', c.con,
+  case when exists (
+    select 1 from pg_constraint where conname=c.con
+      and pg_get_constraintdef(oid) like '%no_reembolsable_no_endosable%'
+  ) then 'OK' else 'BLOCKED' end,
+  'CHECK debe admitir los 3 valores de RestriccionComercial (Commit 6)'
+from (values
+  ('cotizacion_condiciones_restriccion_check'),
+  ('contrato_condiciones_restriccion_check')
+) as c(con);
+
+-- 8) Commit 6 — candados de inmutabilidad (triggers) sobre contrato_condiciones
+--    y ventas.cotizacion_id.
+insert into pg_temp.postcheck_164_reporte
+select 'trigger', t.nombre,
+  case when exists (select 1 from pg_trigger tg join pg_class rel on rel.oid=tg.tgrelid
+         join pg_namespace n on n.oid=rel.relnamespace
+         where n.nspname='public' and rel.relname=t.tabla and tg.tgname=t.nombre)
+    then 'OK' else 'BLOCKED' end,
+  'Candado de inmutabilidad Commit 6 (BEFORE UPDATE/DELETE, autoritativo incluso para service_role)'
+from (values
+  ('trg_contrato_condiciones_inmutable','contrato_condiciones'),
+  ('trg_ventas_cotizacion_id_inmutable','ventas'),
+  ('trg_restriccion_overrides_guardas','restriccion_overrides')
+) as t(nombre, tabla);
+
+-- 9) Commit 6 — alcance explícito de restriccion_overrides (columnas nuevas)
+--    y RPC de escritura únicos.
+insert into pg_temp.postcheck_164_reporte
+select 'cols', 'restriccion_overrides.' || c.col,
+  case when exists (select 1 from information_schema.columns x
+         where x.table_schema='public' and x.table_name='restriccion_overrides' and x.column_name=c.col)
+    then 'OK' else 'BLOCKED' end,
+  'Alcance explícito del override (Commit 6): contrato_condicion_id + restriccion_afectada'
+from (values ('contrato_condicion_id'), ('restriccion_afectada')) as c(col);
+insert into pg_temp.postcheck_164_reporte
+select 'funciones', f.nombre,
+  case when exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+         where n.nspname='public' and p.proname=f.nombre) then 'OK' else 'BLOCKED' end,
+  'Función Commit 6 esperada tras aplicar la 164'
+from (values ('registrar_override_restriccion'), ('_autorizado_override')) as f(nombre);
+insert into pg_temp.postcheck_164_reporte
+select 'acl-funciones', p.proname,
+  case when
+    exists (
+      select 1 from pg_proc pp join pg_namespace nn on nn.oid=pp.pronamespace
+      cross join lateral aclexplode(coalesce(pp.proacl, acldefault('f', pp.proowner))) e
+      left join pg_roles r on r.oid = e.grantee
+      where nn.nspname='public' and pp.proname=p.proname and e.privilege_type='EXECUTE'
+        and r.rolname = 'service_role')
+    and not exists (
+      select 1 from pg_proc pp join pg_namespace nn on nn.oid=pp.pronamespace
+      cross join lateral aclexplode(coalesce(pp.proacl, acldefault('f', pp.proowner))) e
+      left join pg_roles r on r.oid = e.grantee
+      where nn.nspname='public' and pp.proname=p.proname and e.privilege_type='EXECUTE'
+        and (e.grantee = 0 or r.rolname in ('anon','authenticated')))
+    then 'OK' else 'BLOCKED' end,
+  'EXECUTE solo para service_role (Commit 6); anon/authenticated/PUBLIC sin acceso.'
+from (values ('registrar_override_restriccion'), ('_autorizado_override')) as p(proname);
+
+-- 10) Commit 6 — RLS de restriccion_overrides: lectura por puede_ver_contrato,
+--     escritura (insert) solo superadmin, SIN policy de update/delete.
+insert into pg_temp.postcheck_164_reporte
+select 'rls-policies', 'restriccion_overrides: lectura',
+  case when exists (
+    select 1 from pg_policies where schemaname='public' and tablename='restriccion_overrides'
+      and cmd='SELECT' and qual like '%puede_ver_contrato%'
+  ) then 'OK' else 'BLOCKED' end,
+  'Lectura por puede_ver_contrato (mismo criterio que contrato_condiciones), no restringida a superadmin.';
+insert into pg_temp.postcheck_164_reporte
+select 'rls-policies', 'restriccion_overrides: insertar',
+  case when exists (
+    select 1 from pg_policies where schemaname='public' and tablename='restriccion_overrides'
+      and cmd='INSERT' and with_check like '%superadmin%'
+  ) then 'OK' else 'BLOCKED' end,
+  'INSERT restringido a superadmin (Commit 6: antes admitía también gerencia).';
+insert into pg_temp.postcheck_164_reporte
+select 'rls-policies', 'restriccion_overrides: sin update/delete',
+  case when not exists (
+    select 1 from pg_policies where schemaname='public' and tablename='restriccion_overrides'
+      and cmd in ('UPDATE','DELETE')
+  ) then 'OK' else 'BLOCKED' end,
+  'Ninguna policy de UPDATE/DELETE (solo-append; el trigger es el candado real, esto es defensa adicional).';
+
 -- Veredicto general.
 do $$
 declare v_bad int; v_total int;

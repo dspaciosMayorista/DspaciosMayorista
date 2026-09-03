@@ -6,6 +6,7 @@ import { adjuntarNotaRegimen } from "@/lib/contrato/regimenNotas";
 import { agenciaDe } from "@/lib/tenant.server";
 import type { Tenant } from "@/lib/tenant";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
+import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,8 @@ export default async function ContratoPublicoPage({
     { data: items },
     { data: abonos },
     { data: planes },
+    { data: contratoCondiciones },
+    { data: overridesCondiciones },
   ] = await Promise.all([
     sb.from("contrato_pasajeros").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("contrato_hoteles").select("*").eq("numero_contrato", numero).order("orden"),
@@ -63,6 +66,8 @@ export default async function ContratoPublicoPage({
     sb.from("contrato_items").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("abonos").select("valor_abono").eq("numero_contrato", numero),
     sb.from("planes_alimentacion").select("codigo, nombre, nota_especial"),
+    sb.from("contrato_condiciones").select("*").eq("numero_contrato", numero).order("orden"),
+    sb.from("restriccion_overrides").select("*").eq("numero_contrato", numero).order("creado_en"),
   ]);
 
   const totalPagado = (abonos ?? []).reduce(
@@ -70,6 +75,11 @@ export default async function ContratoPublicoPage({
     0
   );
   const hotelesConNota = adjuntarNotaRegimen(hoteles ?? [], planes ?? []);
+  const condicionesResueltas = resolverCondicionesContrato(
+    (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
+    (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
+    { monedaContrato: (venta.moneda as string) ?? "COP", precioVenta: venta.precio_venta, fechaViaje: venta.fecha_salida },
+  );
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">
@@ -87,6 +97,7 @@ export default async function ContratoPublicoPage({
             items={items ?? []}
             totalPagado={totalPagado}
             agencia={agencia}
+            condiciones={condicionesResueltas}
           />
         </div>
       </div>
