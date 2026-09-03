@@ -22,6 +22,55 @@ import { dirname, join } from "node:path";
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
 const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
 
+// Extrae el cuerpo de una función TS top-level (declarada como
+// `export (async )?function NOMBRE(` ... balanceando llaves) para no
+// depender de una ventana de caracteres fija — un candado agregado más
+// adelante en la función (ej. el pre-chequeo A3 de pagos previos activos,
+// migración 164) desplaza todo lo que viene después, y una ventana fija
+// puede dejar afuera código que sigue intacto. Mismo patrón ya usado en
+// pruebas/numeracionOrdenWiring.test.ts y pruebas/contratoContexto.test.ts —
+// duplicado aquí a propósito (cada archivo de wiring es independiente).
+function cuerpoDeFuncion(src: string, nombre: string): string {
+  const re = new RegExp(`(?:export\\s+)?(?:async\\s+)?function\\s+${nombre}\\s*\\(`);
+  const m = re.exec(src);
+  assert.ok(m, `no se encontró la función ${nombre}`);
+
+  // 1) Cierra la lista de parámetros balanceando paréntesis.
+  let i = src.indexOf("(", m!.index);
+  let profParen = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === "(") profParen++;
+    else if (src[i] === ")") {
+      profParen--;
+      if (profParen === 0) { i++; break; }
+    }
+  }
+  assert.ok(profParen === 0, `no se pudo balancear los paréntesis de ${nombre}`);
+
+  // 2) El tipo de retorno puede traer sus propias llaves dentro de `<...>`;
+  //    se ignoran mientras la profundidad de `<>` sea > 0. La `{` real del
+  //    cuerpo es la primera que aparece con profundidad de `<>` en 0.
+  let profAngulo = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === "<") profAngulo++;
+    else if (src[i] === ">") profAngulo--;
+    else if (src[i] === "{" && profAngulo === 0) break;
+  }
+  assert.ok(src[i] === "{", `no se encontró la '{' del cuerpo de ${nombre}`);
+
+  // 3) Balancea llaves desde ahí para obtener el cuerpo completo.
+  let depth = 0;
+  const inicio = i;
+  for (; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") {
+      depth--;
+      if (depth === 0) return src.slice(inicio, i + 1);
+    }
+  }
+  throw new Error(`no se pudo balancear las llaves de ${nombre}`);
+}
+
 test("el checkout público estampa tenant='mayorista' fijo, nunca desde el cliente", () => {
   const src = leer("app/tarifario/checkout/actions.ts");
   assert.match(
@@ -112,11 +161,30 @@ test("reservar/actions.ts: las filas derivadas (aliados_b2b, CxP, asientos) here
 test("reservar/actions.ts: actualizarVigenciaCotizacion y descartarCotizacion filtran por tenant salvo superadmin", () => {
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
   for (const fnName of ["actualizarVigenciaCotizacion", "descartarCotizacion"]) {
-    const start = src.indexOf(`export async function ${fnName}`);
-    const fn = src.slice(start, start + 1200);
+    // Extracción robusta (balanceo de llaves), no una ventana de caracteres
+    // fija: el candado A3 de descartarCotizacion (pagos previos activos,
+    // migración 164) agregó ~180 caracteres ANTES del filtro de tenant, y
+    // una ventana fija de 1200 dejaba ese filtro afuera aunque el código
+    // siguiera intacto (falso negativo).
+    const fn = cuerpoDeFuncion(src, fnName);
     assert.match(fn, /contextoCotizacion\(\)/, `${fnName} no usa contextoCotizacion()`);
+    // superadmin omite el filtro; el resto de roles lo aplica.
     assert.match(fn, /if\s*\(!ctx\.superadmin\)\s*q\s*=\s*q\.eq\("tenant",\s*ctx\.tenant\)/, `${fnName} no filtra por tenant salvo superadmin`);
   }
+
+  // El candado de pagos previos activos/aplicados (A3, migración 164) vive
+  // DENTRO de descartarCotizacion, antes del filtro de tenant. Verifica que
+  // uno no reemplazó al otro: ambos deben coexistir, con el candado primero
+  // y el filtro de tenant después, en el mismo cuerpo de función.
+  const fnDescartar = cuerpoDeFuncion(src, "descartarCotizacion");
+  const idxCandado = fnDescartar.indexOf("cotizacion_pagos_previos");
+  assert.ok(idxCandado > -1, "descartarCotizacion perdió el candado de pagos previos activos (A3)");
+  const idxTenant = fnDescartar.search(/if\s*\(!ctx\.superadmin\)\s*q\s*=\s*q\.eq\("tenant",\s*ctx\.tenant\)/);
+  assert.ok(idxTenant > -1, "descartarCotizacion perdió el filtro de tenant");
+  assert.ok(
+    idxTenant > idxCandado,
+    "el candado de pagos activos (A3) no debe eliminar el filtro de tenant: debe seguir apareciendo DESPUÉS del candado en la misma función"
+  );
 });
 
 test("manual-actions.ts: crearCotizacionManual falla cerrado con contextoCotizacion(), y las conversiones/ediciones exigen acceso al tenant", () => {
@@ -139,18 +207,152 @@ test("manual-actions.ts: crearCotizacionManual falla cerrado con contextoCotizac
     assert.match(fn, /autorizaTenant\(ctx,\s*cot\.tenant\)/, `${fnName} no valida el acceso al tenant antes de editar`);
   }
 
-  const convertir = src.slice(src.indexOf("export async function convertirCotizacionManualAContrato"));
-  assert.match(convertir, /if\s*\(!cot\.tenant\)/, "convertirCotizacionManualAContrato no rechaza una cotización sin tenant");
-  assert.match(convertir, /autorizaTenant\(ctx,\s*cot\.tenant\)/, "convertirCotizacionManualAContrato no valida el acceso al tenant");
-  assert.match(convertir, /tenant:\s*tenantCotizacion/, "convertirCotizacionManualAContrato no propaga el tenant al insert de ventas");
+  // convertirCotizacionManualAContrato: desde el Commit 5, la conversión es
+  // ATÓMICA dentro del RPC `convertir_cotizacion_a_contrato` (migración 164) —
+  // esta Server Action YA NO valida tenant en TS ni construye la venta: solo
+  // autentica al actor y delega. La cobertura de "rechaza cotización sin
+  // tenant" / "valida acceso al tenant" / "propaga el tenant a ventas" migró
+  // con la lógica al RPC de SQL — ver el test siguiente, que audita el
+  // CUERPO DE ESA FUNCIÓN SQL en la migración real.
+  const convertir = cuerpoDeFuncion(src, "convertirCotizacionManualAContrato");
+  assert.match(convertir, /const\s+sesion\s*=\s*await\s+sesionConversionAutorizada\(\)/, "convertirCotizacionManualAContrato no autentica con sesionConversionAutorizada()");
+  assert.match(convertir, /if\s*\(!sesion\)\s*\{/, "convertirCotizacionManualAContrato no falla cerrado sin sesión autorizada");
+  assert.match(
+    convertir,
+    /admin\.rpc\(\s*"convertir_cotizacion_a_contrato",\s*\{\s*\n\s*p_cotizacion_id:\s*cotizacionId,\s*\n\s*p_usuario_id:\s*sesion\.userId,/,
+    "convertirCotizacionManualAContrato no delega en el RPC atómico con el usuario de la sesión validada"
+  );
+  // Guarda de no-regresión: si el builder TS viejo reapareciera (insertar
+  // directamente en ventas/aliados_b2b/cuentas_por_pagar desde esta Server
+  // Action), la conversión dejaría de ser atómica — esa lógica debe vivir
+  // ÚNICAMENTE dentro del RPC de SQL.
+  assert.doesNotMatch(convertir, /\.from\(\s*"ventas"\s*\)\s*\.insert/, "convertirCotizacionManualAContrato volvió a insertar en ventas desde TS — la conversión debe ser atómica en el RPC, no repartida");
+  assert.doesNotMatch(convertir, /\.from\(\s*"aliados_b2b"\s*\)\s*\.insert/, "convertirCotizacionManualAContrato volvió a insertar en aliados_b2b desde TS");
+  assert.doesNotMatch(convertir, /\.from\(\s*"cuentas_por_pagar"\s*\)\s*\.insert/, "convertirCotizacionManualAContrato volvió a insertar en cuentas_por_pagar desde TS");
 });
 
-test("manual-actions.ts: aliados_b2b y las CxP de convertirCotizacionManualAContrato heredan el tenant validado", () => {
-  const src = leer("app/(dashboard)/dashboard/cotizaciones/manual-actions.ts");
-  const convertir = src.slice(src.indexOf("export async function convertirCotizacionManualAContrato"));
-  assert.match(convertir, /aliados_b2b"\)\.insert\(\{\s*\n\s*numero_contrato:\s*numero,\s*\n\s*tenant:\s*tenantCotizacion,/, "el insert de aliados_b2b no estampa tenant");
-  assert.match(convertir, /numero_contrato:\s*numero,\s*\n\s*tenant:\s*tenantCotizacion,\s*\n\s*proveedor,/, "las filas de cuentas_por_pagar (CxP) no estampan tenant");
-  assert.match(convertir, /postearAsientoCxP\(\{[\s\S]{0,300}tenant:\s*tenantCotizacion/, "el asiento automático de CxP no recibe el tenant explícito");
+// Extrae el cuerpo de una función SQL `language plpgsql` definida como
+// `create or replace function public.NOMBRE(...) ... as $$ ... $$;` — el
+// delimitador de dólar ($$) es el que usa PostgreSQL mismo para marcar el
+// cuerpo de la función, así que es un límite estructural estable (no un
+// número de caracteres arbitrario). Ancla en la sentencia DDL completa
+// (`create or replace function public.<nombre>(`) para no confundirse con
+// una simple mención del nombre en un comentario u otra función.
+//
+// Asume que la función no contiene un segundo par de `$$` anidado (SQL
+// dinámico con `execute format($$...$$)`, etc.) — cierto para las funciones
+// de este archivo (`convertir_cotizacion_a_contrato` no usa SQL dinámico);
+// si eso cambiara, este extractor necesitaría revisarse.
+function cuerpoDeFuncionSql(src: string, nombre: string): string {
+  const marcaDDL = `create or replace function public.${nombre}(`;
+  const inicioDDL = src.indexOf(marcaDDL);
+  assert.ok(inicioDDL > -1, `no se encontró "${marcaDDL}" en la migración`);
+  const abre = src.indexOf("$$", inicioDDL);
+  assert.ok(abre > -1, `no se encontró el delimitador $$ de apertura de ${nombre}`);
+  const cierra = src.indexOf("$$", abre + 2);
+  assert.ok(cierra > -1, `no se encontró el delimitador $$ de cierre de ${nombre}`);
+  return src.slice(abre, cierra + 2);
+}
+
+// Todas las posiciones (una por marcador) deben aparecer, en ese orden,
+// antes del marcador final indicado. Mismo criterio que
+// `assertOrdenAntesDeGenerar` de pruebas/numeracionOrdenWiring.test.ts,
+// aplicado aquí al cuerpo SQL en vez de a un archivo TS.
+function assertOrdenSqlAntesDe(cuerpo: string, marcadores: string[], antesDe: string, etiqueta: string) {
+  const idxFinal = cuerpo.indexOf(antesDe);
+  assert.ok(idxFinal > -1, `${etiqueta}: no se encontró el marcador final "${antesDe}"`);
+  let ultimo = -1;
+  for (const marcador of marcadores) {
+    const idx = cuerpo.indexOf(marcador);
+    assert.ok(idx > -1, `${etiqueta}: no se encontró el marcador "${marcador}"`);
+    assert.ok(idx > ultimo, `${etiqueta}: el marcador "${marcador}" está fuera de orden`);
+    assert.ok(idx < idxFinal, `${etiqueta}: el marcador "${marcador}" aparece DESPUÉS de "${antesDe}"`);
+    ultimo = idx;
+  }
+}
+
+test("migración 164: el RPC convertir_cotizacion_a_contrato valida actor y tenant ANTES de devolver una venta existente (idempotencia)", () => {
+  const migracion = leer("supabase/migrations/20260601000164_condiciones_pago_componente.sql");
+  const rpc = cuerpoDeFuncionSql(migracion, "convertir_cotizacion_a_contrato");
+
+  // Autorización del actor (rol interno + activo) y tenant AUTORITATIVO,
+  // ambos ANTES de la rama de idempotencia que devolvería una venta ya
+  // convertida — así un replay desde un tenant ajeno se rechaza antes de
+  // poder "asomarse" al número de contrato existente.
+  assertOrdenSqlAntesDe(
+    rpc,
+    [
+      "v_rol := public._autorizado_pago_previo(p_usuario_id);",
+      "if v_rol <> 'superadmin' and v_actor_tenant is distinct from v_tenant then",
+    ],
+    "return v_existente;",
+    "convertir_cotizacion_a_contrato"
+  );
+
+  // Tras la idempotencia (y tras el chequeo de tenant, ya probado arriba),
+  // el resto de validaciones —tipo, estado, congelado, mínimo— también
+  // ocurren ANTES de consumir el consecutivo.
+  assertOrdenSqlAntesDe(
+    rpc,
+    [
+      "return v_existente;",
+      "perform public._tipo_cotizacion_convertible(v_tipo);",
+      "if v_estado <> 'abierta' then",
+      "no está congelada",
+      "no alcanza el mínimo exigido",
+    ],
+    "v_numero := public.siguiente_numero_contrato_para_tenant(v_tenant);",
+    "convertir_cotizacion_a_contrato"
+  );
+
+  // La numeración usa la MISMA función real por tenant (nextval, sin
+  // reaplicar prefijo DTM/MIN a mano) — exactamente una vez en todo el RPC.
+  const llamadasNumeracion = [...rpc.matchAll(/siguiente_numero_contrato_para_tenant\(/g)];
+  assert.equal(llamadasNumeracion.length, 1, "convertir_cotizacion_a_contrato debe llamar a siguiente_numero_contrato_para_tenant EXACTAMENTE una vez");
+  assert.doesNotMatch(rpc, /'DTM-'\s*\|\|/, "convertir_cotizacion_a_contrato no debe re-anteponer 'DTM-' al número — eso ya lo hace la función de numeración");
+  assert.doesNotMatch(rpc, /'MIN-'\s*\|\|/, "convertir_cotizacion_a_contrato no debe re-anteponer 'MIN-' al número — eso ya lo hace la función de numeración");
+});
+
+test("migración 164: aliados_b2b y cuentas_por_pagar heredan v_tenant (el validado bajo lock), no un valor independiente", () => {
+  const migracion = leer("supabase/migrations/20260601000164_condiciones_pago_componente.sql");
+  const rpc = cuerpoDeFuncionSql(migracion, "convertir_cotizacion_a_contrato");
+
+  assert.match(
+    rpc,
+    /insert into public\.aliados_b2b\s*\n\s*\(numero_contrato,\s*tenant,/,
+    "el insert de aliados_b2b dejó de declarar la columna tenant"
+  );
+  assert.match(
+    rpc,
+    /\(v_numero,\s*v_tenant,\s*v_aliado_nombre,/,
+    "el insert de aliados_b2b no estampa v_tenant (el tenant validado bajo lock)"
+  );
+
+  assert.match(
+    rpc,
+    /insert into public\.cuentas_por_pagar\s*\n\s*\(numero_contrato,\s*tenant,/,
+    "el insert de cuentas_por_pagar (CxP) dejó de declarar la columna tenant"
+  );
+  assert.match(
+    rpc,
+    /\(v_numero,\s*v_tenant,\s*v_proveedor,/,
+    "el insert de cuentas_por_pagar no estampa v_tenant (el tenant validado bajo lock)"
+  );
+});
+
+test("migración 154: cotizaciones.tenant sigue siendo NOT NULL — el candado de esquema que hace redundante el chequeo TS eliminado", () => {
+  // `convertirCotizacionManualAContrato` (TS) ya no rechaza "una cotización
+  // sin tenant" a mano: el Commit 5 delegó esa validación al RPC de SQL, que
+  // a su vez puede confiar en que `cotizaciones.tenant` NUNCA es NULL porque
+  // el esquema mismo lo impide desde la migración 154. Si esta migración
+  // alguna vez se revirtiera o esa columna volviera a admitir NULL, este
+  // test debe fallar para que alguien reintroduzca el chequeo explícito.
+  const migracion154 = leer("supabase/migrations/20260601000154_cotizaciones_tenant_cierre.sql");
+  assert.match(
+    migracion154,
+    /alter table public\.cotizaciones alter column tenant set not null;/,
+    "la migración 154 dejó de forzar cotizaciones.tenant NOT NULL"
+  );
 });
 
 test("las páginas de cotización por id exigen acceso al tenant (cierre de la vía enumerable V2)", () => {
