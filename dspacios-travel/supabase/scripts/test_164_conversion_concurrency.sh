@@ -176,14 +176,10 @@ else
 fi
 
 echo "   3) postcheck_164_condiciones_pago.sql (debe dar todo OK / 0 fugas)"
-# El postcheck referencia `i.indispartial` (válido en el Supabase real). En
-# algunas imágenes postgres locales esa columna no existe y se verifica el mismo
-# predicado con `(i.indpred is not null)` — intercambio de SOLO LECTURA equivalente,
-# exclusivo del entorno de prueba local (NO se edita el postcheck versionado).
-sed 's/\bi\.indispartial\b/(i.indpred is not null)/g' "$POSTCHECK" > /tmp/postcheck_164_env.sql
-# Se pasa por stdin (`-f -`), igual que rollback/reapply: psql corre DENTRO del
-# contenedor, donde no existe el /tmp del host.
-if OPSQL -f - < /tmp/postcheck_164_env.sql >/tmp/cat10_postcheck.log 2>&1; then
+# El postcheck real se ejecuta TAL CUAL, sin ninguna transformación previa
+# (la detección del índice parcial ya usa `i.indpred is not null`, correcto
+# en pg_index para cualquier versión de PostgreSQL).
+if OPSQL -f - < "$POSTCHECK" >/tmp/cat10_postcheck.log 2>&1; then
   ok "postcheck tras reapply ejecutado sin error (ver /tmp/cat10_postcheck.log para el desglose)"
 else
   fail "postcheck tras reapply falló"; cat /tmp/cat10_postcheck.log

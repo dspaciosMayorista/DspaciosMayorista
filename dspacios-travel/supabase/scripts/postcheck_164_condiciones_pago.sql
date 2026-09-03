@@ -155,7 +155,7 @@ select 'constraints', 'uq_pagos_previos_abono_id',
   case when exists (select 1 from pg_index i join pg_class rel on rel.oid=i.indexrelid
          join pg_namespace n on n.oid=rel.relnamespace
          where n.nspname='public' and rel.relname='uq_pagos_previos_abono_id'
-           and i.indisunique and i.indispartial)
+           and i.indisunique and i.indpred is not null)
     then 'OK' else 'BLOCKED' end,
   'UNIQUE PARCIAL abono_id (transferencia exactamente-una-vez; respaldo duro del Commit 5).';
 
