@@ -202,6 +202,42 @@ from (values
   ('contrato_condiciones_restriccion_check')
 ) as c(con);
 
+-- 7bis) Decisión del dueño: toda restricción comercial es SIEMPRE no
+--       reembolsable Y no endosable — el CHECK debe admitir exactamente los
+--       TRES valores finales (`normal`, `promocional_no_reembolsable_no_endosable`,
+--       `no_reembolsable_no_endosable`) y el valor provisional eliminado
+--       `promocional_no_reembolsable` (sin `_no_endosable`) NO debe aparecer
+--       en ninguna definición de CHECK.
+insert into pg_temp.postcheck_164_reporte
+select 'constraints', c.con || ': admite promocional_no_reembolsable_no_endosable',
+  case when exists (
+    select 1 from pg_constraint where conname=c.con
+      and pg_get_constraintdef(oid) like '%promocional_no_reembolsable_no_endosable%'
+  ) then 'OK' else 'BLOCKED' end,
+  'CHECK debe admitir el valor final promocional_no_reembolsable_no_endosable'
+from (values
+  ('cotizacion_condiciones_restriccion_check'),
+  ('contrato_condiciones_restriccion_check'),
+  ('armado_paquetes_restriccion_check'),
+  ('programas_restriccion_check')
+) as c(con);
+insert into pg_temp.postcheck_164_reporte
+select 'constraints', c.con || ': sin el valor provisional eliminado',
+  case when not exists (
+    select 1 from pg_constraint where conname=c.con
+      -- ancla la coma/paréntesis de cierre para no confundir la subcadena
+      -- 'promocional_no_reembolsable' con el prefijo del valor final vigente.
+      and (pg_get_constraintdef(oid) like '%''promocional_no_reembolsable'',%'
+        or pg_get_constraintdef(oid) like '%''promocional_no_reembolsable'')%')
+  ) then 'OK' else 'BLOCKED' end,
+  'El CHECK NO debe admitir el valor provisional eliminado promocional_no_reembolsable (sin _no_endosable)'
+from (values
+  ('cotizacion_condiciones_restriccion_check'),
+  ('contrato_condiciones_restriccion_check'),
+  ('armado_paquetes_restriccion_check'),
+  ('programas_restriccion_check')
+) as c(con);
+
 -- 8) Commit 6 — candados de inmutabilidad (triggers) sobre contrato_condiciones
 --    y ventas.cotizacion_id.
 insert into pg_temp.postcheck_164_reporte

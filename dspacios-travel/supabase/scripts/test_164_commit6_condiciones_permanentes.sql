@@ -236,6 +236,40 @@ begin
   perform _t164.expect(v_ok, 'T13: el CHECK debe aceptar no_reembolsable_no_endosable en contrato_condiciones');
 end $$;
 
+-- ── T13b: el CHECK acepta el valor final promocional_no_reembolsable_no_endosable
+--    (decisión del dueño: toda restricción es SIEMPRE no reembolsable Y no
+--    endosable a la vez; `promocional_*` solo identifica el ORIGEN). ───────
+do $$
+declare v_ok boolean := true;
+begin
+  begin
+    insert into public.contrato_condiciones
+      (numero_contrato, tipo_componente, orden, valor_componente, condicion_pago_tipo,
+       monto_exigido, restriccion_comercial, moneda, trm)
+    values ('MIN-9992','servicio', 6, 100, 'normal', 30, 'promocional_no_reembolsable_no_endosable', 'COP', 1);
+  exception when others then
+    v_ok := false;
+  end;
+  perform _t164.expect(v_ok, 'T13b: el CHECK debe aceptar promocional_no_reembolsable_no_endosable en contrato_condiciones');
+end $$;
+
+-- ── T13c: el valor PROVISIONAL eliminado ('promocional_no_reembolsable', sin
+--    '_no_endosable') debe ser RECHAZADO por el CHECK — nunca existió un
+--    estado "no reembolsable pero endosable". ─────────────────────────────
+do $$
+declare v_rechazado boolean := false;
+begin
+  begin
+    insert into public.contrato_condiciones
+      (numero_contrato, tipo_componente, orden, valor_componente, condicion_pago_tipo,
+       monto_exigido, restriccion_comercial, moneda, trm)
+    values ('MIN-9992','servicio', 7, 100, 'normal', 30, 'promocional_no_reembolsable', 'COP', 1);
+  exception when others then
+    v_rechazado := true;
+  end;
+  perform _t164.expect(v_rechazado, 'T13c: el CHECK debe RECHAZAR el valor provisional eliminado promocional_no_reembolsable');
+end $$;
+
 -- ── Limpieza final (la prueba no deja datos). TRUNCATE, no DELETE — ver la
 --    nota de arriba: el candado de inmutabilidad del Commit 6 bloquea
 --    cualquier DELETE de fila sobre estas dos tablas, sin excepción. ───────

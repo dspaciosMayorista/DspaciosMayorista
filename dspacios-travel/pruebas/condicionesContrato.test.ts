@@ -135,11 +135,11 @@ describe("resolverCondicionesContrato — contrato PERMANENTE (Commit 6)", () =>
 
   test("dos overrides para la misma fila: gana el MÁS RECIENTE por fecha", () => {
     const filas: FilaCondicionContratoRow[] = [
-      fila({ id: 9, restriccion_comercial: "promocional_no_reembolsable", monto_exigido: 100 }),
+      fila({ id: 9, restriccion_comercial: "promocional_no_reembolsable_no_endosable", monto_exigido: 100 }),
     ];
     const overrides: OverrideContratoRow[] = [
-      { contrato_condicion_id: 9, restriccion_afectada: "promocional_no_reembolsable", motivo: "primero", usuario_email: "a@x.com", creado_en: "2026-01-01T00:00:00Z" },
-      { contrato_condicion_id: 9, restriccion_afectada: "promocional_no_reembolsable", motivo: "segundo (más reciente)", usuario_email: "b@x.com", creado_en: "2026-02-01T00:00:00Z" },
+      { contrato_condicion_id: 9, restriccion_afectada: "promocional_no_reembolsable_no_endosable", motivo: "primero", usuario_email: "a@x.com", creado_en: "2026-01-01T00:00:00Z" },
+      { contrato_condicion_id: 9, restriccion_afectada: "promocional_no_reembolsable_no_endosable", motivo: "segundo (más reciente)", usuario_email: "b@x.com", creado_en: "2026-02-01T00:00:00Z" },
     ];
     const r = resolverCondicionesContrato(filas, overrides, { monedaContrato: "COP" });
     assert.equal(r.filas[0].override?.motivo, "segundo (más reciente)");
@@ -174,5 +174,50 @@ describe("resolverCondicionesContrato — contrato PERMANENTE (Commit 6)", () =>
     assert.equal(r.filas[0].tipoComponente, "servicio");
     assert.equal(r.filas[0].restriccion, "normal");
     assert.equal(r.filas[0].esRestringidaOriginal, false);
+  });
+});
+
+// ── Decisión del dueño: toda restricción es SIEMPRE no reembolsable Y no
+//    endosable a la vez (nunca una sola). `promocional_*` solo identifica el
+//    ORIGEN — el efecto y las etiquetas son idénticas a `no_reembolsable_no_endosable`. ──
+describe("resolverCondicionesContrato — restriccionEtiquetas (mismo resolver que la ficha y el PDF)", () => {
+  test("normal → sin etiquetas", () => {
+    const r = resolverCondicionesContrato([fila({ restriccion_comercial: "normal", monto_exigido: 100 })], [], { monedaContrato: "COP" });
+    assert.deepEqual(r.filas[0].restriccionEtiquetas, []);
+  });
+
+  test("promoción restringida → ambas etiquetas, valor exacto preservado (snapshot congelado)", () => {
+    const r = resolverCondicionesContrato(
+      [fila({ restriccion_comercial: "promocional_no_reembolsable_no_endosable", monto_exigido: 100 })],
+      [], { monedaContrato: "COP" },
+    );
+    assert.equal(r.filas[0].restriccion, "promocional_no_reembolsable_no_endosable");
+    assert.deepEqual(r.filas[0].restriccionEtiquetas.slice().sort(), ["No endosable", "No reembolsable"]);
+  });
+
+  test("tarifa normal restringida → ambas etiquetas, mismo efecto que la promocional", () => {
+    const r = resolverCondicionesContrato(
+      [fila({ restriccion_comercial: "no_reembolsable_no_endosable", monto_exigido: 100 })],
+      [], { monedaContrato: "COP" },
+    );
+    assert.equal(r.filas[0].restriccion, "no_reembolsable_no_endosable");
+    assert.deepEqual(r.filas[0].restriccionEtiquetas.slice().sort(), ["No endosable", "No reembolsable"]);
+  });
+
+  test("contrato mixto: solo los componentes restringidos llevan ambas etiquetas, el resto ninguna", () => {
+    const r = resolverCondicionesContrato(
+      [
+        fila({ id: 1, orden: 0, tipo_componente: "hotel", restriccion_comercial: "no_reembolsable_no_endosable", monto_exigido: 5_000_000 }),
+        fila({ id: 2, orden: 1, tipo_componente: "hotel", referencia_externa: "Hotel B", restriccion_comercial: "normal", monto_exigido: 1_500_000 }),
+        fila({ id: 3, orden: 2, tipo_componente: "servicio", restriccion_comercial: "promocional_no_reembolsable_no_endosable", monto_exigido: 300_000 }),
+      ],
+      [], { monedaContrato: "COP" },
+    );
+    assert.equal(r.filas.length, 3);
+    assert.equal(r.filas[0].restriccionEtiquetas.length, 2);
+    assert.deepEqual(r.filas[1].restriccionEtiquetas, []);
+    assert.equal(r.filas[2].restriccionEtiquetas.length, 2);
+    // El alcance es por componente, nunca una etiqueta global del contrato.
+    assert.equal(r.restringidas.length, 2);
   });
 });

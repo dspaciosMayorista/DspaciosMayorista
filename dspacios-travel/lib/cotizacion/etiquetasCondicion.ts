@@ -82,10 +82,15 @@ export function fraseCondicion(
 }
 
 // ── Restricción comercial → frase para el documento ───────────────────────
+// Decisión del dueño: toda restricción comercial es SIEMPRE no reembolsable Y
+// no endosable a la vez (nunca una sola de las dos). `promocional_*` solo
+// identifica el ORIGEN comercial (tarifa promocional — el caso más frecuente
+// de esta restricción); el efecto sobre el componente es idéntico al de
+// `no_reembolsable_no_endosable`.
 const FRASE_RESTRICCION: Record<RestriccionComercial, { titulo: string; texto: string }> = {
   normal: { titulo: "Sin restricción", texto: "Componente reembolsable y endosable según las condiciones generales." },
-  promocional_no_reembolsable: {
-    titulo: "Tarifa promocional — no reembolsable",
+  promocional_no_reembolsable_no_endosable: {
+    titulo: "Tarifa promocional — no reembolsable y no endosable",
     texto: "Este componente es de tarifa promocional: una vez pagado NO es reembolsable y NO es endosable a otra fecha o pasajero.",
   },
   no_reembolsable_no_endosable: {
@@ -107,4 +112,14 @@ export function tituloRestriccion(r: RestriccionComercial): string {
 /** Párrafo de restricción (para el cuerpo del documento/panel). */
 export function textoRestriccion(r: RestriccionComercial): string {
   return FRASE_RESTRICCION[r]?.texto ?? FRASE_RESTRICCION.normal.texto;
+}
+
+/**
+ * Etiquetas INDIVIDUALES de restricción, una por cada restricción que aplica
+ * (para pintar dos chips/badges separados: "No reembolsable" + "No
+ * endosable"). `normal` no produce ninguna etiqueta; cualquier otro valor
+ * produce SIEMPRE ambas — nunca una sola, por decisión del dueño.
+ */
+export function etiquetasRestriccion(r: RestriccionComercial): string[] {
+  return esRestriccionComercial(r) ? ["No reembolsable", "No endosable"] : [];
 }

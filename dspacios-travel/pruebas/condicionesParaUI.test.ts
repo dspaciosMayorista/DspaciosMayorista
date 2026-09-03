@@ -68,6 +68,33 @@ describe("condicionesParaUI — a la forma de la UI", () => {
     const r = condicionesParaUI([fila({ restriccion_comercial: "no-se", monto_exigido: 100 })]);
     assert.equal(r.filas[0].esRestringida, false);
     assert.equal(r.filas[0].restriccionTitulo, "Sin restricción");
+    assert.deepEqual(r.filas[0].restriccionEtiquetas, []);
+  });
+
+  test("promoción restringida → ambas etiquetas (No reembolsable + No endosable)", () => {
+    const r = condicionesParaUI([
+      fila({ restriccion_comercial: "promocional_no_reembolsable_no_endosable", monto_exigido: 100 }),
+    ]);
+    assert.deepEqual(r.filas[0].restriccionEtiquetas.slice().sort(), ["No endosable", "No reembolsable"]);
+  });
+
+  test("tarifa normal restringida → ambas etiquetas también (mismo efecto)", () => {
+    const r = condicionesParaUI([
+      fila({ restriccion_comercial: "no_reembolsable_no_endosable", monto_exigido: 100 }),
+    ]);
+    assert.deepEqual(r.filas[0].restriccionEtiquetas.slice().sort(), ["No endosable", "No reembolsable"]);
+  });
+
+  test("contrato mixto: solo los componentes restringidos llevan etiquetas, los demás ninguna", () => {
+    const r = condicionesParaUI([
+      fila({ orden: 0, tipo_componente: "hotel", restriccion_comercial: "no_reembolsable_no_endosable", monto_exigido: 100 }),
+      fila({ orden: 1, tipo_componente: "servicio", restriccion_comercial: "normal", monto_exigido: 50 }),
+      fila({ orden: 2, tipo_componente: "programa", restriccion_comercial: "promocional_no_reembolsable_no_endosable", monto_exigido: 30 }),
+    ]);
+    assert.equal(r.filas.length, 3);
+    assert.equal(r.filas[0].restriccionEtiquetas.length, 2); // hotel: restringido
+    assert.deepEqual(r.filas[1].restriccionEtiquetas, []);   // servicio: normal, sin restricción
+    assert.equal(r.filas[2].restriccionEtiquetas.length, 2); // programa: promo restringida
   });
 
   test("varias filas: suma el total en moneda y ordena por clave", () => {

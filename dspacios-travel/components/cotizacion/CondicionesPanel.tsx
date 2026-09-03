@@ -15,17 +15,23 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { formatMoneda } from "@/lib/utils";
 import type { CondicionesParaUI, LineaCondicionUI } from "@/lib/cotizacion/condicionesParaUI";
-import { esNoReembolsable } from "@/lib/cotizacion/etiquetasCondicion";
 
-function RestriccionChip({ linea }: { linea: LineaCondicionUI }) {
-  if (!esNoReembolsable(linea.restriccion)) return null;
+// Toda restricción comercial es SIEMPRE no reembolsable Y no endosable a la
+// vez (decisión del dueño) — se muestran las DOS etiquetas por separado, no
+// una frase combinada, para que ninguna quede implícita.
+function RestriccionChips({ linea }: { linea: LineaCondicionUI }) {
+  if (!linea.restriccionEtiquetas.length) return null;
   return (
-    <span
-      className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"
-      title={linea.restriccionTitulo}
-    >
-      {linea.restriccionTitulo}
-    </span>
+    <div className="flex flex-wrap gap-1" title={linea.restriccionTitulo}>
+      {linea.restriccionEtiquetas.map((etiqueta) => (
+        <span
+          key={etiqueta}
+          className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"
+        >
+          {etiqueta}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -60,7 +66,7 @@ export default function CondicionesPanel({
                   <div className="text-gray-800">{l.referencia ?? l.nombreComponente}</div>
                   <div className="text-[11px] text-gray-400">{l.nombreComponente}</div>
                   <div className="mt-1">
-                    <RestriccionChip linea={l} />
+                    <RestriccionChips linea={l} />
                   </div>
                 </td>
                 <td className="px-4 py-2 text-gray-600">

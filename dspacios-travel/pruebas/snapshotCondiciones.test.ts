@@ -122,12 +122,12 @@ describe("construirSnapshot — filas + agregados", () => {
   test("restricción comercial viaja a la fila; default normal", () => {
     const r = construirSnapshot(
       [
-        { id: "p1", tipo: "programa", valor: 100, condicion: pagoTotal, restriccionComercial: "promocional_no_reembolsable" },
+        { id: "p1", tipo: "programa", valor: 100, condicion: pagoTotal, restriccionComercial: "promocional_no_reembolsable_no_endosable" },
         { id: "p2", tipo: "programa", valor: 100, condicion: null },
       ],
       { fechaPago: F, precioTotalMoneda: 200, trm: 1 },
     );
-    assert.equal(r.filas[0].restriccion_comercial, "promocional_no_reembolsable");
+    assert.equal(r.filas[0].restriccion_comercial, "promocional_no_reembolsable_no_endosable");
     assert.equal(r.filas[1].restriccion_comercial, "normal");
   });
 

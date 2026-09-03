@@ -2586,7 +2586,7 @@ export type Database = {
           condicion_pago_dias_saldo: number | null;
           condicion_pago_fecha_limite: string | null;
           monto_exigido: number;
-          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable' | 'no_reembolsable_no_endosable'
+          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable_no_endosable' | 'no_reembolsable_no_endosable'
           congelado: boolean;
           created_at: string | null;
         };
@@ -2672,7 +2672,7 @@ export type Database = {
           condicion_pago_dias_saldo: number | null;
           condicion_pago_fecha_limite: string | null;
           monto_exigido: number;
-          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable' | 'no_reembolsable_no_endosable'
+          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable_no_endosable' | 'no_reembolsable_no_endosable'
           moneda: string | null;
           trm: number | null;
           creado_en: string;

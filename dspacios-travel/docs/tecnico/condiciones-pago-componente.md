@@ -143,11 +143,30 @@ MISMA transacción de conversión — nunca en un paso aparte que pueda quedar a
 batería `test_164_conversion_battery.sql` (categoría C7) verifica tipo de proveedor,
 retención y cuenta contable exacta por cada CxP generada.
 
-## Restricciones no-reembolsable / no-endosable
+## Restricciones no-reembolsable y no-endosable (SIEMPRE juntas)
 
-`restriccion_comercial` viaja del catálogo → snapshot (`cotizacion_condiciones`) → contrato
-(`contrato_condiciones`), congelada igual que el resto — cambiar la restricción en el catálogo
-después no altera contratos ya congelados.
+Decisión del dueño: toda restricción comercial es **siempre** no reembolsable **y** no
+endosable a la vez — no existe un estado intermedio (nunca "no reembolsable pero sí
+endosable", ni al revés). Los tres valores válidos de `restriccion_comercial` son:
+
+- `normal` — sin restricción.
+- `promocional_no_reembolsable_no_endosable` — tarifa promocional (el caso más frecuente de
+  esta restricción). El prefijo `promocional_` identifica únicamente el ORIGEN comercial —
+  nunca un subconjunto distinto de restricciones.
+- `no_reembolsable_no_endosable` — tarifa normal restringida. Mismo efecto exacto que la
+  anterior; solo cambia el origen.
+
+Ambos valores no-`normal` producen las MISMAS dos etiquetas ("No reembolsable" + "No
+endosable", `etiquetasRestriccion()` en `lib/cotizacion/etiquetasCondicion.ts`) y el mismo
+efecto (`esRestriccionComercial()` los trata igual). `restriccion_comercial` viaja del
+catálogo → snapshot (`cotizacion_condiciones`) → contrato (`contrato_condiciones`), congelada
+igual que el resto — cambiar la restricción en el catálogo después no altera contratos ya
+congelados.
+
+⚠️ El valor `promocional_no_reembolsable` (sin `_no_endosable`) fue un nombre PROVISIONAL,
+eliminado antes de que la migración 164 se aplicara en cualquier entorno real — sugería que
+una tarifa promocional pudiera ser no-reembolsable sin ser también no-endosable, lo cual nunca
+fue una regla de negocio válida. No debe reaparecer en código nuevo.
 
 ## Overrides (excepción a una restricción) — append-only
 

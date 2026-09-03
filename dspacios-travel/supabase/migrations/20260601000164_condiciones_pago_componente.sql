@@ -24,6 +24,17 @@
 -- salvo las políticas/triggers/funciones, que se crean con `drop … if exists`
 -- para poder re-correr la migración sin duplicar.
 --
+-- ⚠️ Decisión del dueño sobre `restriccion_comercial` (corrección posterior,
+-- 164 aún sin desplegar en ningún entorno real — se editó este archivo en
+-- lugar de crear una 165): toda restricción comercial es SIEMPRE no
+-- reembolsable Y no endosable a la vez, sin estado intermedio. El valor
+-- provisional `promocional_no_reembolsable` (que sugería que una tarifa
+-- promocional pudiera ser no-reembolsable SIN ser también no-endosable) se
+-- eliminó antes de aplicarse en ningún entorno; el nombre correcto es
+-- `promocional_no_reembolsable_no_endosable` — mismo efecto que
+-- `no_reembolsable_no_endosable`, solo distingue el ORIGEN (tarifa
+-- promocional, el caso más frecuente, vs. tarifa normal restringida).
+--
 -- Contenido:
 --   A) Columnas de condición sobre las fuentes:
 --        hotel_temporadas  +3   (condicion_pago_*; la restricción comercial se
@@ -115,7 +126,7 @@ begin
   end if;
   if not exists (select 1 from pg_constraint where conname = 'armado_paquetes_restriccion_check') then
     alter table public.armado_paquetes add constraint armado_paquetes_restriccion_check
-      check (restriccion_comercial in ('normal','promocional_no_reembolsable'));
+      check (restriccion_comercial in ('normal','promocional_no_reembolsable_no_endosable'));
   end if;
   if not exists (select 1 from pg_constraint where conname = 'armado_paquetes_anticipo_coherencia_check') then
     alter table public.armado_paquetes add constraint armado_paquetes_anticipo_coherencia_check
@@ -139,7 +150,7 @@ begin
   end if;
   if not exists (select 1 from pg_constraint where conname = 'programas_restriccion_check') then
     alter table public.programas add constraint programas_restriccion_check
-      check (restriccion_comercial in ('normal','promocional_no_reembolsable'));
+      check (restriccion_comercial in ('normal','promocional_no_reembolsable_no_endosable'));
   end if;
   if not exists (select 1 from pg_constraint where conname = 'programas_anticipo_coherencia_check') then
     alter table public.programas add constraint programas_anticipo_coherencia_check
@@ -202,7 +213,7 @@ create table if not exists public.cotizacion_condiciones (
   constraint cotizacion_condiciones_condicion_tipo_check
     check (condicion_pago_tipo in ('sin_condicion','normal','pago_total','anticipo_saldo')),
   constraint cotizacion_condiciones_restriccion_check
-    check (restriccion_comercial in ('normal','promocional_no_reembolsable'))
+    check (restriccion_comercial in ('normal','promocional_no_reembolsable_no_endosable'))
 );
 
 -- Unicidad estructural del snapshot: a lo sumo UNA fila por (cotización, orden).
@@ -402,7 +413,7 @@ create table if not exists public.contrato_condiciones (
   constraint contrato_condiciones_condicion_tipo_check
     check (condicion_pago_tipo in ('sin_condicion','normal','pago_total','anticipo_saldo')),
   constraint contrato_condiciones_restriccion_check
-    check (restriccion_comercial in ('normal','promocional_no_reembolsable'))
+    check (restriccion_comercial in ('normal','promocional_no_reembolsable_no_endosable'))
 );
 
 create index if not exists idx_contrato_condiciones_contrato
@@ -1419,10 +1430,10 @@ grant execute on function public._puc_id(text, text) to service_role;
 --    (`lib/cotizacion/condicionPago.ts::RestriccionComercial`).
 alter table public.cotizacion_condiciones drop constraint if exists cotizacion_condiciones_restriccion_check;
 alter table public.cotizacion_condiciones add constraint cotizacion_condiciones_restriccion_check
-  check (restriccion_comercial in ('normal','promocional_no_reembolsable','no_reembolsable_no_endosable'));
+  check (restriccion_comercial in ('normal','promocional_no_reembolsable_no_endosable','no_reembolsable_no_endosable'));
 alter table public.contrato_condiciones drop constraint if exists contrato_condiciones_restriccion_check;
 alter table public.contrato_condiciones add constraint contrato_condiciones_restriccion_check
-  check (restriccion_comercial in ('normal','promocional_no_reembolsable','no_reembolsable_no_endosable'));
+  check (restriccion_comercial in ('normal','promocional_no_reembolsable_no_endosable','no_reembolsable_no_endosable'));
 
 -- K) contrato_condiciones — INMUTABLE tras la creación. Ninguna sesión, ni
 --    siquiera service_role (que bypasea RLS), puede alterarla o borrarla.

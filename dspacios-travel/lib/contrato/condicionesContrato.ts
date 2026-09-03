@@ -16,9 +16,12 @@
 // Reglas de negocio que materializa (arquitectura del Commit 6):
 //   · el monto mínimo exigido y el % informativo YA quedaron congelados por
 //     componente — aquí solo se SUMAN/leen, nunca se recalculan.
-//   · un componente restringido = no reembolsable Y no endosable (una sola
-//     categoría de restricción a efectos de negocio; el motor ya distingue
-//     dos variantes textualmente, `esRestriccionComercial` las trata igual).
+//   · un componente restringido = no reembolsable Y no endosable, SIEMPRE
+//     las dos a la vez (decisión del dueño: no existe un estado intermedio).
+//     `promocional_no_reembolsable_no_endosable` y `no_reembolsable_no_endosable`
+//     solo distinguen el ORIGEN (tarifa promocional vs. tarifa normal
+//     restringida); el efecto sobre el componente es idéntico —
+//     `esRestriccionComercial` las trata igual.
 //   · mezclar componentes con y sin restricción NUNCA fuerza el 100% del
 //     contrato: cada fila lleva su propia condición/monto: un contrato con
 //     hotel A al 100% + hotel B al 30% normal se presenta como DOS líneas,
@@ -45,6 +48,7 @@ import {
   nombreTipoComponente,
   tituloRestriccion,
   textoRestriccion,
+  etiquetasRestriccion,
 } from "../cotizacion/etiquetasCondicion.ts";
 
 /** Subconjunto plano de una fila de `contrato_condiciones` (permanente). */
@@ -109,6 +113,8 @@ export interface LineaCondicionContrato {
   restriccion: RestriccionComercial;
   restriccionTitulo: string;
   restriccionTexto: string;
+  /** Etiquetas individuales ("No reembolsable", "No endosable") — vacío si `normal`. */
+  restriccionEtiquetas: string[];
   /** ¿La fila nació restringida? (antes de cualquier override). */
   esRestringidaOriginal: boolean;
   /** Override vigente sobre esta fila, si superadmin autorizó uno. */
@@ -154,7 +160,7 @@ const CONDICIONES_VALIDAS: ReadonlySet<string> = new Set([
   "sin_condicion", "normal", "pago_total", "anticipo_saldo",
 ]);
 const RESTRICCIONES_VALIDAS: ReadonlySet<string> = new Set([
-  "normal", "promocional_no_reembolsable", "no_reembolsable_no_endosable",
+  "normal", "promocional_no_reembolsable_no_endosable", "no_reembolsable_no_endosable",
 ]);
 
 function aTipoComponente(s: string): TipoComponente {
@@ -246,10 +252,11 @@ export function resolverCondicionesContrato(
         restriccion,
         restriccionTitulo: tituloRestriccion(restriccion),
         restriccionTexto: textoRestriccion(restriccion),
+        restriccionEtiquetas: etiquetasRestriccion(restriccion),
         esRestringidaOriginal,
         override,
         // Override vigente → deja de mostrarse como restringida, aunque la
-        // fila original (nunca tocada) siga marcada `no_reembolsable_*`.
+        // fila original (nunca tocada) siga con su restricción congelada.
         esRestringidaEfectiva: esRestringidaOriginal && !override,
       };
     })

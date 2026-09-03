@@ -15,16 +15,23 @@ import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import type { CondicionesContratoResueltas, LineaCondicionContrato } from "@/lib/contrato/condicionesContrato";
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 
+// Toda restricción comercial es SIEMPRE no reembolsable Y no endosable a la
+// vez (decisión del dueño) — se muestran las DOS etiquetas por separado, no
+// una frase combinada, para que ninguna quede implícita.
 function RestriccionChip({ linea }: { linea: LineaCondicionContrato }) {
   if (linea.esRestringidaEfectiva) {
     return (
-      <span
-        className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"
-        title={linea.restriccionTexto}
-      >
-        <ShieldAlert className="h-3 w-3" />
-        {linea.restriccionTitulo}
-      </span>
+      <div className="flex flex-wrap gap-1" title={linea.restriccionTexto}>
+        {linea.restriccionEtiquetas.map((etiqueta) => (
+          <span
+            key={etiqueta}
+            className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700"
+          >
+            <ShieldAlert className="h-3 w-3" />
+            {etiqueta}
+          </span>
+        ))}
+      </div>
     );
   }
   if (linea.override) {

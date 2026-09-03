@@ -16,6 +16,7 @@ import {
   fraseCondicion,
   nombreTipoComponente,
   tituloRestriccion,
+  etiquetasRestriccion,
 } from "./etiquetasCondicion.ts";
 import { esRestriccionComercial, type CondicionTipo, type RestriccionComercial, type TipoComponente } from "./condicionPago.ts";
 
@@ -42,6 +43,8 @@ export interface LineaCondicionUI {
   condicionDetalle: string | null;
   restriccion: RestriccionComercial;
   restriccionTitulo: string;
+  /** Etiquetas individuales ("No reembolsable", "No endosable") — vacío si `normal`. */
+  restriccionEtiquetas: string[];
   esRestringida: boolean;
   /** Valor del componente (moneda de la cotización). */
   valor: number;
@@ -63,7 +66,7 @@ const CONDICIONES_VALIDAS: ReadonlySet<string> = new Set([
   "sin_condicion", "normal", "pago_total", "anticipo_saldo",
 ]);
 const RESTRICCIONES_VALIDAS: ReadonlySet<string> = new Set([
-  "normal", "promocional_no_reembolsable", "no_reembolsable_no_endosable",
+  "normal", "promocional_no_reembolsable_no_endosable", "no_reembolsable_no_endosable",
 ]);
 
 function aTipoComponente(s: string): TipoComponente {
@@ -96,6 +99,7 @@ export function condicionesParaUI(rows: FilaCondicionRowUI[]): CondicionesParaUI
         condicionDetalle: frase.detalle,
         restriccion,
         restriccionTitulo: tituloRestriccion(restriccion),
+        restriccionEtiquetas: etiquetasRestriccion(restriccion),
         esRestringida: esRestriccionComercial(restriccion),
         valor: Number(r.valor_componente) || 0,
         exigido: Number(r.monto_exigido) || 0,

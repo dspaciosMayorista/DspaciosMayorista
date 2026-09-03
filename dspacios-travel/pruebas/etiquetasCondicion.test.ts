@@ -7,7 +7,7 @@
 // Cubre (Commit 3):
 //   · fraseCondicion: pago_total / anticipo_saldo (+detalle de días) / neutra
 //     con y sin pctBase;
-//   · restricción: los 3 niveles (normal / promocional_no_reembolsable /
+//   · restricción: los 3 niveles (normal / promocional_no_reembolsable_no_endosable /
 //     no_reembolsable_no_endosable) → títulos/parrafos; esNoReembolsable;
 //   · nombreTipoComponente;
 //   · barrido de "restricciones en algunas fechas": estadía que toca y que no
@@ -21,6 +21,7 @@ import {
   tituloRestriccion,
   textoRestriccion,
   esNoReembolsable,
+  etiquetasRestriccion,
 } from "../lib/cotizacion/etiquetasCondicion.ts";
 import {
   barridoRestriccionEstadia,
@@ -78,10 +79,10 @@ describe("restricción comercial — los 3 niveles", () => {
     assert.equal(tituloRestriccion("normal"), "Sin restricción");
   });
 
-  test("promocional_no_reembolsable → no reembolsable, menciona tarifa promocional", () => {
-    assert.equal(esNoReembolsable("promocional_no_reembolsable"), true);
-    assert.match(tituloRestriccion("promocional_no_reembolsable"), /promocional/i);
-    assert.match(textoRestriccion("promocional_no_reembolsable"), /no es reembolsable/i);
+  test("promocional_no_reembolsable_no_endosable → no reembolsable, menciona tarifa promocional", () => {
+    assert.equal(esNoReembolsable("promocional_no_reembolsable_no_endosable"), true);
+    assert.match(tituloRestriccion("promocional_no_reembolsable_no_endosable"), /promocional/i);
+    assert.match(textoRestriccion("promocional_no_reembolsable_no_endosable"), /no es reembolsable/i);
   });
 
   test("no_reembolsable_no_endosable → no reembolsable y no endosable", () => {
@@ -89,6 +90,35 @@ describe("restricción comercial — los 3 niveles", () => {
     assert.match(tituloRestriccion("no_reembolsable_no_endosable"), /no endosable/i);
     assert.match(textoRestriccion("no_reembolsable_no_endosable"), /no es reembolsable/i);
     assert.match(textoRestriccion("no_reembolsable_no_endosable"), /no es endosable/i);
+  });
+});
+
+// ── Etiquetas individuales (decisión del dueño: SIEMPRE ambas restricciones
+//    a la vez, nunca una sola — "promocional" solo identifica el origen). ──
+describe("etiquetasRestriccion — SIEMPRE ambas etiquetas juntas, nunca una sola", () => {
+  test("normal → ninguna etiqueta", () => {
+    assert.deepEqual(etiquetasRestriccion("normal"), []);
+  });
+
+  test("promoción restringida (promocional_no_reembolsable_no_endosable) → ambas etiquetas", () => {
+    const et = etiquetasRestriccion("promocional_no_reembolsable_no_endosable");
+    assert.equal(et.length, 2);
+    assert.ok(et.includes("No reembolsable"));
+    assert.ok(et.includes("No endosable"));
+  });
+
+  test("tarifa normal restringida (no_reembolsable_no_endosable) → ambas etiquetas", () => {
+    const et = etiquetasRestriccion("no_reembolsable_no_endosable");
+    assert.equal(et.length, 2);
+    assert.ok(et.includes("No reembolsable"));
+    assert.ok(et.includes("No endosable"));
+  });
+
+  test("las dos restricciones producen EXACTAMENTE las mismas etiquetas (mismo efecto, distinto origen)", () => {
+    assert.deepEqual(
+      etiquetasRestriccion("promocional_no_reembolsable_no_endosable"),
+      etiquetasRestriccion("no_reembolsable_no_endosable"),
+    );
   });
 });
 
