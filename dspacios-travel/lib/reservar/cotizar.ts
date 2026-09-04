@@ -28,6 +28,7 @@ import {
   type ClasificacionMenores,
 } from "@/lib/reservar/edadesMenores";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
+import { ejecutarConsultaPaginada } from "@/lib/tarifario/paginacion";
 import {
   construirContextoServicios, calcularResultadoServicio, resolverLiquidacionServicioPuntual,
   respuestaPublicaServicioPuntual, formatearLogLiquidacionServicioPuntual, fallaErrorConsulta,
@@ -476,15 +477,25 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
   if (!vPaxTotal.ok) return { ok: false, error: vPaxTotal.error };
 
   const admin = createAdminClient();
-  let q = admin
-    .from("tarifario_resultado")
-    .select("paquete_id, hotel_id, destino_nombre")
-    .eq("modulo", "porcion_terrestre")
-    .eq("paquete_activo", true);
-  if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
-  const { data: filas, error: filasErr } = await q;
+  // Paginado robusto (ronda posterior — incidente "RECEPTIVOS ADZ"): esta
+  // consulta no acota por paquete/hotel puntual, solo por módulo/destino —
+  // con el catálogo real (~16.000 filas en tarifario_resultado) puede
+  // superar el límite "Max Rows" del proyecto, y un `.select()` sin
+  // `.range()` lo trunca EN SILENCIO (sin `error`). Ver
+  // lib/tarifario/paginacion.ts (`ejecutarConsultaPaginada`).
+  const { data: filas, error: filasErr } = await ejecutarConsultaPaginada<{
+    paquete_id: number; hotel_id: number | null; destino_nombre: string | null;
+  }>((from, hasta) => {
+    let q = admin
+      .from("tarifario_resultado")
+      .select("paquete_id, hotel_id, destino_nombre")
+      .eq("modulo", "porcion_terrestre")
+      .eq("paquete_activo", true);
+    if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
+    return q.order("id").range(from, hasta);
+  });
   if (filasErr) {
-    console.error(`[buscarHoteles] etapa=tarifario_resultado detalle=${filasErr.message}`);
+    console.error(`[buscarHoteles] etapa=tarifario_resultado detalle=${filasErr instanceof Error ? filasErr.message : JSON.stringify(filasErr)}`);
     return { ok: false, error: MENSAJE_BUSQUEDA_HOTELES_NO_DISPONIBLE };
   }
   const pares = new Map<string, { paquete: number; hotel: number }>();
@@ -719,16 +730,25 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
   const pax = input.pax;
 
   const admin = createAdminClient();
-  let q = admin
-    .from("tarifario_resultado")
-    .select("paquete_id, servicio_id, servicio_nombre, destino_nombre, descripcion")
-    .eq("modulo", "servicios")
-    .eq("paquete_activo", true)
-    .not("servicio_id", "is", null);
-  if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
-  const { data: filas, error: filasErr } = await q;
+  // Paginado robusto (ronda posterior — incidente "RECEPTIVOS ADZ", causa
+  // raíz confirmada del segundo síntoma): un servicio recién publicado podía
+  // quedar fuera de una respuesta truncada en silencio por el límite "Max
+  // Rows" del proyecto. Mismo helper que buscarHoteles (arriba) — ver
+  // lib/tarifario/paginacion.ts (`ejecutarConsultaPaginada`).
+  const { data: filas, error: filasErr } = await ejecutarConsultaPaginada<{
+    paquete_id: number; servicio_id: number; servicio_nombre: string | null; destino_nombre: string | null; descripcion: string | null;
+  }>((from, hasta) => {
+    let q = admin
+      .from("tarifario_resultado")
+      .select("paquete_id, servicio_id, servicio_nombre, destino_nombre, descripcion")
+      .eq("modulo", "servicios")
+      .eq("paquete_activo", true)
+      .not("servicio_id", "is", null);
+    if (input.destino?.trim()) q = q.eq("destino_nombre", input.destino.trim());
+    return q.order("id").range(from, hasta);
+  });
   if (filasErr) {
-    console.error(`[buscarReceptivos] etapa=tarifario_resultado detalle=${filasErr.message}`);
+    console.error(`[buscarReceptivos] etapa=tarifario_resultado detalle=${filasErr instanceof Error ? filasErr.message : JSON.stringify(filasErr)}`);
     return { ok: false, error: MENSAJE_BUSQUEDA_RECEPTIVOS_NO_DISPONIBLE };
   }
   const pares = new Map<string, DatosServicioPar>();

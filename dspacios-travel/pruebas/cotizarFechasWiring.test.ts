@@ -155,8 +155,16 @@ describe("3. buscarHoteles — misma frontera saneada + carga cada par UNA sola 
     const idxFinReturn = cuerpo.indexOf(";", idxReturn);
     assert.doesNotMatch(cuerpo.slice(idxReturn, idxFinReturn), /service-role/i);
   });
-  test("la consulta inicial a tarifario_resultado revisa su error antes de construir `pares`", () => {
-    assert.match(cuerpo, /const \{ data: filas, error: filasErr \} = await q;/);
+  test("la consulta inicial a tarifario_resultado está paginada robustamente (ejecutarConsultaPaginada) y revisa su error antes de construir `pares`", () => {
+    // Ronda posterior — incidente "RECEPTIVOS ADZ": un `.select()` sin
+    // `.range()` sobre `tarifario_resultado` (catálogo real ~16.000 filas)
+    // podía truncarse en silencio por el límite "Max Rows" del proyecto. Se
+    // reemplazó por `ejecutarConsultaPaginada` (lib/tarifario/paginacion.ts,
+    // mismo algoritmo robusto que ya usa el resumen del tarifario público) —
+    // este wiring test ahora confirma ESE cambio, conservando la garantía
+    // original: el error se revisa antes de construir `pares`.
+    assert.match(cuerpo, /const \{ data: filas, error: filasErr \} = await ejecutarConsultaPaginada</);
+    assert.match(cuerpo, /\.order\("id"\)\.range\(from, hasta\)/);
     const idxIf = cuerpo.indexOf("if (filasErr)");
     const idxPares = cuerpo.indexOf("const pares = new Map");
     assert.ok(idxIf > -1 && idxPares > idxIf);
