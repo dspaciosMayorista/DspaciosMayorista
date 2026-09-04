@@ -3171,6 +3171,22 @@ export type Database = {
         };
         Returns: number;
       };
+      // Migración 165. Congela el snapshot de condiciones de pago (ya calculado
+      // en TypeScript con los módulos puros de la 164) para un contrato que NO
+      // nace de una cotización manual — tarifario/reservar/programas/carrito.
+      // INVOKER, solo `service_role`; re-valida rol/tenant/contrato y hace
+      // no-op seguro si el contrato ya tiene condiciones congeladas (nunca
+      // duplica). Devuelve el `numero_contrato` (o levanta excepción).
+      congelar_condiciones_contrato: {
+        Args: {
+          p_numero_contrato: string;
+          p_snapshot: Json;
+          p_moneda: string;
+          p_trm: number;
+          p_usuario_id: string;
+        };
+        Returns: string;
+      };
       siguiente_numero_contrato: {
         Args: Record<PropertyKey, never>;
         Returns: string;
