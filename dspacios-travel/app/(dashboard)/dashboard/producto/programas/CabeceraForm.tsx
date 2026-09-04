@@ -55,6 +55,12 @@ export function CabeceraForm({
     asistenciaMedicaDia: initial?.asistenciaMedicaDia ?? null,
     modoPrecio: initial?.modoPrecio ?? "categoria",
     videoUrl: initial?.videoUrl ?? "",
+    // Condición de pago (migración 164) — inicializar SIEMPRE con lo guardado,
+    // nunca con un default que lo sobrescriba silenciosamente.
+    condicionPagoTipo: (initial?.condicionPagoTipo as string | undefined) ?? "normal",
+    condicionPagoPctInicial: initial?.condicionPagoPctInicial ?? "",
+    condicionPagoDiasSaldo: initial?.condicionPagoDiasSaldo ?? "",
+    restriccionComercial: (initial?.restriccionComercial as string | undefined) ?? "normal",
   });
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState(false);
@@ -282,6 +288,63 @@ export function CabeceraForm({
           <textarea value={f.textoPagos} onChange={(e) => set("textoPagos", e.target.value)} rows={4} className={sel} />
         </div>
       </div>
+      {/* Condición de pago (migración 164) */}
+      <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Condición de pago</p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div>
+            <label className={lbl}>Condición</label>
+            <select
+              value={String(f.condicionPagoTipo ?? "normal")}
+              onChange={(e) => set("condicionPagoTipo", e.target.value)}
+              className={sel}
+            >
+              <option value="normal">Normal</option>
+              <option value="pago_total">Requiere pago total</option>
+              <option value="anticipo_saldo">Anticipo y saldo</option>
+            </select>
+          </div>
+          {f.condicionPagoTipo === "anticipo_saldo" && (
+            <>
+              <div>
+                <label className={lbl}>Anticipo inicial (%)</label>
+                <Input
+                  type="number" min={1} max={99}
+                  value={f.condicionPagoPctInicial == null ? "" : String(f.condicionPagoPctInicial)}
+                  onChange={(e) => set("condicionPagoPctInicial", e.target.value)}
+                  placeholder="50"
+                />
+              </div>
+              <div>
+                <label className={lbl}>Días antes del viaje para el saldo</label>
+                <Input
+                  type="number" min={0}
+                  value={f.condicionPagoDiasSaldo == null ? "" : String(f.condicionPagoDiasSaldo)}
+                  onChange={(e) => set("condicionPagoDiasSaldo", e.target.value)}
+                  placeholder="30"
+                />
+              </div>
+            </>
+          )}
+          <div>
+            <label className={lbl}>Restricción comercial</label>
+            <select
+              value={String(f.restriccionComercial ?? "normal")}
+              onChange={(e) => set("restriccionComercial", e.target.value)}
+              className={sel}
+            >
+              <option value="normal">Sin restricción</option>
+              <option value="promocional_no_reembolsable_no_endosable">Promocional — no reembolsable / no endosable</option>
+            </select>
+          </div>
+        </div>
+        {f.restriccionComercial !== "normal" && (
+          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+            Esta tarifa promocional queda marcada <b>No reembolsable</b> y <b>No endosable</b>.
+          </p>
+        )}
+      </div>
+
       <div>
         <label className={lbl}>Highlights del programa <span className="font-normal text-gray-400">(uno por línea — salen como chips en la portada)</span></label>
         <textarea

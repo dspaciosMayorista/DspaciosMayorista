@@ -7,6 +7,7 @@ import { generarTarifas, type DubaiParams, type MixtaParams, type CorporativaPar
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
 import type { Json } from "@/types/database";
 import { normalizarProveedorHotelId } from "@/lib/hoteles/proveedor";
+import { validarCondicionPago, type CondicionPagoEntrada } from "@/lib/cotizacion/condicionPagoCatalogo";
 
 type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
@@ -245,6 +246,12 @@ export type TemporadaInput = {
   regimenRestringido?: string | null; // null = aplica a todos los régimen
   rangos?: RangoFechasInput[];   // múltiples rangos de cobertura (Fase 4)
   blackouts?: RangoFechasInput[]; // fechas excluidas
+  // Condición de pago (migración 164) — la restricción comercial NO es
+  // seleccionable aquí: se deriva 100% implícita de condicionPagoTipo (ver
+  // lib/cotizacion/condicionPagoCatalogo.ts).
+  condicionPagoTipo?: unknown;
+  condicionPagoPctInicial?: unknown; // 1–99, no fracción
+  condicionPagoDiasSaldo?: unknown;
 };
 
 // Valida y normaliza una lista de rangos (fin >= inicio). Devuelve [] si no hay.
@@ -261,7 +268,12 @@ function limpiarRangos(rs?: RangoFechasInput[]): { ok: true; rangos: RangoFechas
   return { ok: true, rangos: out };
 }
 
-function payloadTemporada(input: TemporadaInput, rangos: RangoFechasInput[], blackouts: RangoFechasInput[]) {
+function payloadTemporada(
+  input: TemporadaInput,
+  rangos: RangoFechasInput[],
+  blackouts: RangoFechasInput[],
+  condicion: { condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null },
+) {
   const tipo = input.tipo ?? "tarifa";
   // fecha_inicio/fin = primer rango (compatibilidad y diagnóstico); el motor usa 'rangos' si hay.
   const principal = rangos[0] ?? { fecha_inicio: input.inicio, fecha_fin: input.fin };
@@ -278,10 +290,18 @@ function payloadTemporada(input: TemporadaInput, rangos: RangoFechasInput[], bla
     regimen_restringido: oNull(input.regimenRestringido ?? ""),
     rangos: rangos as unknown as Json,
     blackouts: blackouts as unknown as Json,
+    condicion_pago_tipo: condicion.condicion_pago_tipo,
+    condicion_pago_pct_inicial: condicion.condicion_pago_pct_inicial,
+    condicion_pago_dias_saldo: condicion.condicion_pago_dias_saldo,
   };
 }
 
-function validarTemporada(input: TemporadaInput): { ok: true; rangos: RangoFechasInput[]; blackouts: RangoFechasInput[] } | { ok: false; error: string } {
+function validarTemporada(input: TemporadaInput): {
+  ok: true;
+  rangos: RangoFechasInput[];
+  blackouts: RangoFechasInput[];
+  condicion: { condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null };
+} | { ok: false; error: string } {
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   // El rango principal (inicio/fin) se suma a la lista de rangos.
   const todos = [{ fecha_inicio: input.inicio, fecha_fin: input.fin }, ...(input.rangos ?? [])];
@@ -305,7 +325,16 @@ function validarTemporada(input: TemporadaInput): { ok: true; rangos: RangoFecha
   if (input.compraInicio && input.compraFin && input.compraFin < input.compraInicio) {
     return { ok: false, error: "La vigencia de compra: la fecha final no puede ser menor que la inicial." };
   }
-  return { ok: true, rangos: rr.rangos, blackouts: bb.rangos };
+  const cp = validarCondicionPago(
+    {
+      tipo: input.condicionPagoTipo ?? "sin_condicion",
+      pctInicial: input.condicionPagoPctInicial,
+      diasSaldo: input.condicionPagoDiasSaldo,
+    } satisfies CondicionPagoEntrada,
+    "hotel",
+  );
+  if (!cp.ok) return { ok: false, error: cp.error };
+  return { ok: true, rangos: rr.rangos, blackouts: bb.rangos, condicion: cp.value };
 }
 
 export async function crearTemporada(input: TemporadaInput): Promise<Result> {
@@ -314,7 +343,7 @@ export async function crearTemporada(input: TemporadaInput): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("hotel_temporadas").insert({
     hotel_id: input.hotelId,
-    ...payloadTemporada(input, v.rangos, v.blackouts),
+    ...payloadTemporada(input, v.rangos, v.blackouts, v.condicion),
   });
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
@@ -340,9 +369,14 @@ export async function copiarTemporadasDesdeHotel(
 ): Promise<{ ok: true; copiadas: number } | { ok: false; error: string }> {
   if (!hotelOrigen || hotelDestino === hotelOrigen) return { ok: false, error: "Elige un hotel de origen distinto." };
   const sb = await createClient();
+  // Se copian TODOS los campos de la vigencia, incluida su condición de pago
+  // (migración 164) — una cadena con la misma política de anticipo/pago total
+  // en varios hoteles no debería tener que re-configurarla a mano en cada uno.
   const { data: origen, error: e1 } = await sb
     .from("hotel_temporadas")
-    .select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden, min_noches, regimen_restringido")
+    .select(
+      "nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo"
+    )
     .eq("hotel_id", hotelOrigen);
   if (e1) return { ok: false, error: e1.message };
   if (!origen?.length) return { ok: false, error: "El hotel de origen no tiene temporadas para copiar." };
@@ -412,7 +446,7 @@ export async function actualizarTemporada(id: number, input: TemporadaInput): Pr
   const { data: actual } = await sb.from("hotel_temporadas").select("nombre").eq("id", id).maybeSingle();
   const nombreViejo = actual?.nombre?.trim() ?? "";
   const { error } = await sb.from("hotel_temporadas")
-    .update(payloadTemporada(input, v.rangos, v.blackouts))
+    .update(payloadTemporada(input, v.rangos, v.blackouts, v.condicion))
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
 

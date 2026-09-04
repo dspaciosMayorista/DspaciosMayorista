@@ -181,6 +181,10 @@ export function ProgramaEditor(props: {
     asistenciaMedicaDia: programa.asistencia_medica_dia,
     modoPrecio: programa.modo_precio,
     videoUrl: programa.video_url ?? "",
+    condicionPagoTipo: programa.condicion_pago_tipo ?? "normal",
+    condicionPagoPctInicial: programa.condicion_pago_pct_inicial != null ? Math.round(Number(programa.condicion_pago_pct_inicial) * 100) : "",
+    condicionPagoDiasSaldo: programa.condicion_pago_dias_saldo ?? "",
+    restriccionComercial: programa.restriccion_comercial ?? "normal",
   };
 
   return (

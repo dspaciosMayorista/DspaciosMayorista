@@ -9,6 +9,8 @@ import {
   crearTemporada, actualizarTemporada, eliminarTemporada, copiarTemporadasDesdeHotel,
   crearTarifa, actualizarTarifa, eliminarTarifa,
 } from "../actions";
+import { pctInicialParaFormulario, restriccionImplicitaHotel } from "@/lib/cotizacion/condicionPagoCatalogo";
+import { etiquetasRestriccion } from "@/lib/cotizacion/etiquetasCondicion";
 
 type RangoFechas = { fecha_inicio: string; fecha_fin: string };
 type Temporada = {
@@ -16,7 +18,14 @@ type Temporada = {
   prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null;
   tipo?: string | null; descuento_valor?: number | null; min_noches?: number;
   rangos?: unknown; blackouts?: unknown; regimen_restringido?: string | null;
+  condicion_pago_tipo?: string | null; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null;
 };
+
+const CONDICIONES_PAGO_HOTEL: { value: string; label: string }[] = [
+  { value: "sin_condicion", label: "Sin condición especial" },
+  { value: "pago_total", label: "Requiere pago total" },
+  { value: "anticipo_saldo", label: "Anticipo y saldo" },
+];
 
 // jsonb → lista de rangos válidos.
 function asRangos(v: unknown): RangoFechas[] {
@@ -79,6 +88,9 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
   const [regimenRestringido, setRegimenRestringido] = useState("");
   const [rangosExtra, setRangosExtra] = useState<RangoFechas[]>([]);
   const [blackouts, setBlackouts] = useState<RangoFechas[]>([]);
+  const [condicionPagoTipo, setCondicionPagoTipo] = useState("sin_condicion");
+  const [condicionPagoPct, setCondicionPagoPct] = useState("");
+  const [condicionPagoDias, setCondicionPagoDias] = useState("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [aviso, setAviso] = useState("");
@@ -86,12 +98,14 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
   const esPromo = tipo !== "tarifa";
   const esDescuento = tipo === "descuento_pct" || tipo === "descuento_monto";
   const esNocheGratis = tipo === "promo_noche_gratis";
+  const esAnticipoSaldo = condicionPagoTipo === "anticipo_saldo";
   const editando = editId != null;
 
   function reset() {
     setEditId(null); setNombre(""); setIni(""); setFin(""); setPrioridad("1"); setMinNoches("1");
     setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento(""); setRegimenRestringido("");
-    setRangosExtra([]); setBlackouts([]); setErr("");
+    setRangosExtra([]); setBlackouts([]); setCondicionPagoTipo("sin_condicion"); setCondicionPagoPct(""); setCondicionPagoDias("");
+    setErr("");
   }
 
   function editar(t: Temporada) {
@@ -110,6 +124,10 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
     setTipo(t.tipo ?? "tarifa");
     setDescuento(t.descuento_valor != null ? String(t.descuento_valor) : "");
     setRegimenRestringido(t.regimen_restringido ?? "");
+    // Inicializar SIEMPRE con lo guardado — nunca con el default "sin_condicion".
+    setCondicionPagoTipo(t.condicion_pago_tipo ?? "sin_condicion");
+    setCondicionPagoPct(pctInicialParaFormulario(t.condicion_pago_pct_inicial));
+    setCondicionPagoDias(t.condicion_pago_dias_saldo != null ? String(t.condicion_pago_dias_saldo) : "");
     setErr("");
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -125,6 +143,9 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
       tipo, descuentoValor: esDescuento ? Number(descuento) || 0 : null,
       regimenRestringido: regimenRestringido || null,
       rangos: rangosExtra, blackouts,
+      condicionPagoTipo,
+      condicionPagoPctInicial: condicionPagoPct === "" ? null : Number(condicionPagoPct),
+      condicionPagoDiasSaldo: condicionPagoDias === "" ? null : Number(condicionPagoDias),
     };
     start(async () => {
       const r = editId == null ? await crearTemporada(payload) : await actualizarTemporada(editId, payload);
@@ -157,6 +178,17 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
           {t.regimen_restringido && (
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">solo {t.regimen_restringido}</span>
           )}
+          {t.condicion_pago_tipo === "pago_total" && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Pago total</span>
+          )}
+          {t.condicion_pago_tipo === "anticipo_saldo" && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+              Anticipo {Math.round((t.condicion_pago_pct_inicial ?? 0) * 100)}% · saldo {t.condicion_pago_dias_saldo ?? 0}d antes
+            </span>
+          )}
+          {etiquetasRestriccion(restriccionImplicitaHotel(t.condicion_pago_tipo ?? "sin_condicion")).map((e) => (
+            <span key={e} className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-600">{e}</span>
+          ))}
           <span className="text-gray-400">· {formatFechaLarga(t.fecha_inicio)} → {formatFechaLarga(t.fecha_fin)}</span>
           {asRangos(t.rangos).length > 1 && (
             <span className="text-[11px] text-gray-400">· +{asRangos(t.rangos).length - 1} rango(s)</span>
@@ -218,7 +250,31 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes }: { 
               {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
+          <div className="col-span-2 sm:col-span-1">
+            <label className={lbl}>Condición de pago</label>
+            <select value={condicionPagoTipo} onChange={(e) => setCondicionPagoTipo(e.target.value)} className={`${sel} w-full`}>
+              {CONDICIONES_PAGO_HOTEL.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </div>
+          {esAnticipoSaldo && (
+            <>
+              <div>
+                <label className={lbl}>Anticipo inicial (%)</label>
+                <Input type="number" min={1} max={99} value={condicionPagoPct} onChange={(e) => setCondicionPagoPct(e.target.value)} placeholder="50" />
+              </div>
+              <div>
+                <label className={lbl}>Días antes del viaje para el saldo</label>
+                <Input type="number" min={0} value={condicionPagoDias} onChange={(e) => setCondicionPagoDias(e.target.value)} placeholder="30" />
+              </div>
+            </>
+          )}
         </div>
+        {condicionPagoTipo !== "sin_condicion" && (
+          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+            Esta vigencia queda automáticamente <b>No reembolsable</b> y <b>No endosable</b> (toda condición distinta de
+            &quot;Sin condición especial&quot; lo es, sin selector aparte).
+          </p>
+        )}
         {esNocheGratis && (
           <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
             Se regala SIEMPRE exactamente 1 noche (nunca escala con más noches): una estadía de {Math.max(1, Number(minNoches) || 1)}

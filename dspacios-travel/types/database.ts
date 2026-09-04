@@ -1830,8 +1830,10 @@ export type Database = {
         Relationships: [];
       };
       hotel_temporadas: {
-        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number; regimen_restringido: string | null };
-        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number; regimen_restringido?: string | null };
+        // condicion_pago_* = migración 164. hotel_temporadas NO tiene columna de
+        // restricción comercial: se deriva 100% implícita (ver lib/cotizacion/condicionPagoCatalogo.ts).
+        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number; regimen_restringido: string | null; condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null };
+        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number; regimen_restringido?: string | null; condicion_pago_tipo?: string; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null };
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
         Relationships: [];
       };
@@ -2037,6 +2039,13 @@ export type Database = {
           notas: string | null;
           created_at: string;
           updated_at: string;
+          // condicion_pago_* / restriccion_comercial = migración 164. El CHECK
+          // real de esta tabla (armado_paquetes_restriccion_check) solo admite
+          // 'normal' | 'promocional_no_reembolsable_no_endosable'.
+          condicion_pago_tipo: string;
+          condicion_pago_pct_inicial: number | null;
+          condicion_pago_dias_saldo: number | null;
+          restriccion_comercial: string;
         };
         Insert: {
           id?: number;
@@ -2057,6 +2066,10 @@ export type Database = {
           notas?: string | null;
           created_at?: string;
           updated_at?: string;
+          condicion_pago_tipo?: string;
+          condicion_pago_pct_inicial?: number | null;
+          condicion_pago_dias_saldo?: number | null;
+          restriccion_comercial?: string;
         };
         Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
         Relationships: [];
@@ -2193,6 +2206,13 @@ export type Database = {
           regla_comisionable_impuesto_por_acomodacion: boolean;
           created_at: string;
           updated_at: string;
+          // condicion_pago_* / restriccion_comercial = migración 164. El CHECK
+          // real de esta tabla (programas_restriccion_check) solo admite
+          // 'normal' | 'promocional_no_reembolsable_no_endosable'.
+          condicion_pago_tipo: string;
+          condicion_pago_pct_inicial: number | null;
+          condicion_pago_dias_saldo: number | null;
+          restriccion_comercial: string;
         };
         Insert: {
           id?: number;
@@ -2238,6 +2258,10 @@ export type Database = {
           regla_comisionable_impuesto_por_acomodacion?: boolean;
           created_at?: string;
           updated_at?: string;
+          condicion_pago_tipo?: string;
+          condicion_pago_pct_inicial?: number | null;
+          condicion_pago_dias_saldo?: number | null;
+          restriccion_comercial?: string;
         };
         Update: Partial<Database["public"]["Tables"]["programas"]["Insert"]>;
         Relationships: [];
