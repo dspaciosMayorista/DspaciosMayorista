@@ -6,6 +6,7 @@ import { aplicarFiltrosPostCarga } from "@/lib/tarifario/filtrosPostCarga";
 import { esFilaHotelVerificable } from "@/lib/tarifario/vigencia";
 import { validarEntradaDetalleHotel, validarEntradaDetalleSalida, validarEntradaDetallePaquete } from "@/lib/tarifario/detalleValidacion";
 import { filtrarPorCombos, type ComboIdentidad } from "@/lib/tarifario/comboKey";
+import { ejecutarConsultaPaginada } from "@/lib/tarifario/paginacion";
 import type { FilaTarifario } from "./TarifarioPublic";
 import { generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico } from "@/lib/observabilidad/medicion";
 
@@ -250,8 +251,20 @@ export async function obtenerDetalleServicios(): Promise<ResultadoDetalle> {
   const t0 = performance.now();
   const ad = admin();
   const sb = await createClient();
-  const { data, error } = await sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
-    .eq("paquete_activo", true).eq("modulo", "servicios");
+  // Paginado robusto (ronda posterior — incidente "RECEPTIVOS ADZ", causa
+  // raíz confirmada del segundo síntoma): a diferencia de las otras 3
+  // acciones de este archivo, esta NO acota por hotel/bloqueo/salida/paquete
+  // puntual — trae el catálogo COMPLETO de `modulo='servicios'`, así que con
+  // el catálogo real (~16.000 filas en tarifario_resultado) puede superar el
+  // límite "Max Rows" del proyecto. Un `.select()` sin `.range()` lo trunca
+  // EN SILENCIO (sin `error`) — un servicio recién publicado podía quedar
+  // fuera de la pestaña "Servicios" del tarifario público sin ningún aviso.
+  // Ver lib/tarifario/paginacion.ts (`ejecutarConsultaPaginada`).
+  const { data, error } = await ejecutarConsultaPaginada<FilaTarifario>((from, hasta) =>
+    sb.from("tarifario_resultado").select(COLUMNAS_DETALLE)
+      .eq("paquete_activo", true).eq("modulo", "servicios")
+      .order("id").range(from, hasta)
+  );
   if (error) {
     registrarEtapa(FLUJO, flujoId, "detalle_tarifas", Math.round(performance.now() - t0), "error");
     registrarErrorTecnico(FLUJO, flujoId, "detalle_tarifas", "error_consulta_servicios", error);
