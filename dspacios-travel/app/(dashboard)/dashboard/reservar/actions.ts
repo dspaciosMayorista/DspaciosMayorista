@@ -35,6 +35,14 @@ import {
   type ComputoReserva,
 } from "@/lib/reservar/computo";
 import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
+import {
+  componenteHotelReal,
+  componentePaqueteReal,
+  trmReferenciaAproximada,
+  congelarCondicionesContratoBestEffort,
+} from "@/lib/contrato/congelarCondicionesContrato";
+import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
+import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -306,6 +314,50 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       fecha_salida: meta.fecha_regreso,
       orden: 0,
     });
+  }
+
+  // 6bis) Congelar condiciones de pago (Rama B, migración 165) — best-effort,
+  // nunca bloquea la reserva. Con hotel: el componente "hotel" lleva TODO el
+  // precio_venta, condicionado por las vigencias REALES del hotel
+  // (hotel_temporadas). Sin hotel (paquete tipo servicios): el componente
+  // "paquete" lleva el precio_venta, condicionado por armado_paquetes. Ver
+  // cabecera de lib/contrato/congelarCondicionesContrato.ts para el porqué de
+  // esta asignación mutuamente excluyente.
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const adminCond = createAdminClient();
+    const { data: { user: usuarioCond } } = await sb.auth.getUser();
+    if (usuarioCond) {
+      const fechaPagoCond = new Date().toISOString().slice(0, 10);
+      let componente: ComponenteSnapshot | null = null;
+      if (!esServicios && meta.fecha_ida && meta.fecha_regreso) {
+        componente = await componenteHotelReal(adminCond, {
+          hotelId: input.hotelId,
+          id: `hotel-${input.hotelId}`,
+          valor: precioFinal,
+          referencia: meta.hotel_nombre ?? null,
+          fechaIda: meta.fecha_ida,
+          fechaRegreso: meta.fecha_regreso,
+          fechaPago: fechaPagoCond,
+        });
+      } else if (esServicios) {
+        componente = await componentePaqueteReal(adminCond, {
+          paqueteId: input.paqueteId,
+          id: `paquete-${input.paqueteId}`,
+          valor: precioFinal,
+          fechaViaje: meta.fecha_ida ?? null,
+        });
+      }
+      const trmCond = await trmReferenciaAproximada(adminCond, monedaReserva);
+      await congelarCondicionesContratoBestEffort(adminCond, {
+        numeroContrato: numero,
+        componentes: componente ? [componente] : [],
+        moneda: monedaReserva,
+        trm: trmCond,
+        precioTotalMoneda: precioFinal,
+        fechaPago: fechaPagoCond,
+        usuarioId: usuarioCond.id,
+      });
+    }
   }
 
   // 7) Vuelo del contrato (bloqueo, empaquetado o salida dinámica) — 1 fila
@@ -1007,6 +1059,13 @@ export async function convertirCotizacionCarrito(
   const OBS_AUTO = "Generado automáticamente desde el carrito (tarifario)";
   const numeros: string[] = [];
 
+  // Congelar condiciones de pago (Rama B, migración 165) — best-effort, nunca
+  // bloquea la conversión. Resuelto UNA vez para todos los grupos (mismo
+  // usuario que ejecuta toda la conversión).
+  const { data: { user: usuarioCond } } = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? await sb.auth.getUser()
+    : { data: { user: null } };
+
   for (const { grupo, validados } of gruposValidados) {
     const numRes = await siguienteNumeroContrato(tenantCotizacion);
     if (!numRes.ok) return { ok: false, error: numRes.error };
@@ -1076,6 +1135,11 @@ export async function convertirCotizacionCarrito(
     };
 
     let costoAereoTotal = 0, costoHotelTotal = 0;
+    // Componentes de condición de pago (Rama B) — uno por hotel del grupo,
+    // condicionado por las vigencias REALES de CADA hotel (nunca por el
+    // ganador del motor de precios). Se congelan todos juntos al final del
+    // grupo, en UN solo contrato (igual que el resto de este flujo).
+    const componentesCondicion: ComponenteSnapshot[] = [];
 
     for (let hIdx = 0; hIdx < validados.length; hIdx++) {
       const { item: it, comp } = validados[hIdx];
@@ -1097,6 +1161,23 @@ export async function convertirCotizacionCarrito(
         acomodacion: it.categoria, detalle_acomodacion: partes.join(", "),
         fecha_ingreso: meta.fecha_ida, fecha_salida: meta.fecha_regreso, orden: hIdx,
       });
+
+      if (usuarioCond && meta.fecha_ida && meta.fecha_regreso) {
+        // componenteHotelReal puede devolver null si la consulta de vigencias
+        // falló (finding F1, revisión de PR #282) — no se agrega nada al
+        // snapshot en ese caso: mejor no congelar este hotel que congelar una
+        // condición neutra incorrecta y permanente.
+        const componenteHotel = await componenteHotelReal(admin, {
+          hotelId: it.hotelId,
+          id: `hotel-${it.hotelId}-${hIdx}`,
+          valor: comp.precioVenta,
+          referencia: meta.hotel_nombre ?? it.hotelNombre ?? null,
+          fechaIda: meta.fecha_ida,
+          fechaRegreso: meta.fecha_regreso,
+          fechaPago: hoyISO,
+        });
+        if (componenteHotel) componentesCondicion.push(componenteHotel);
+      }
 
       if (it.modulo === "bloqueo" && it.bloqueoId) {
         const { data: bq } = await admin
@@ -1169,6 +1250,37 @@ export async function convertirCotizacionCarrito(
         adultos: 1, ninos: 0, tarifa_adulto: t.precio, tarifa_nino: 0, orden: 9000 + i,
       }));
       await sb.from("contrato_items").insert(itemsTours);
+      // Sin fuente de condición propia (servicios_adicionales no la tiene) —
+      // neutro (% normal configurable), mismo criterio que traslado/
+      // asistencia/otro en componentesManual.ts.
+      if (usuarioCond) {
+        for (let i = 0; i < grupo.tours.length; i++) {
+          const t = grupo.tours[i];
+          if (!(t.precio > 0)) continue;
+          componentesCondicion.push({
+            id: `tour-${i}`,
+            tipo: "servicio",
+            valor: t.precio,
+            condicion: null,
+            fechaViaje: null,
+            referencia: t.nombre,
+            restriccionComercial: "normal",
+          });
+        }
+      }
+    }
+
+    if (usuarioCond) {
+      const trmCond = await trmReferenciaAproximada(admin, monedaGrupo);
+      await congelarCondicionesContratoBestEffort(admin, {
+        numeroContrato: numero,
+        componentes: componentesCondicion,
+        moneda: monedaGrupo,
+        trm: trmCond,
+        precioTotalMoneda: precioTotal,
+        fechaPago: hoyISO,
+        usuarioId: usuarioCond.id,
+      });
     }
 
     if (costoAereoTotal > 0 || costoHotelTotal > 0) {
@@ -1522,7 +1634,7 @@ async function reservarProgramaInterno(
   // 1) Programa + precios (autoritativo). proveedores/neto se leen aquí.
   const { data: prog, error: progError } = await sb
     .from("programas")
-    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, proveedores(nombre, aplica_retencion, pct_retencion)")
+    .select("id, nombre, subtitulo, moneda, pct_mk, pct_fee_tarjeta, asistencia_medica_dia, modo_precio, dias, noches, proveedor_id, vigencia_desde, vigencia_hasta, edad_nino_min, edad_nino_max, edad_infante_max, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, restriccion_comercial, proveedores(nombre, aplica_retencion, pct_retencion)")
     .eq("id", input.programaId)
     .maybeSingle();
   if (progError) return _errorValidacionPrograma("error_consulta_programa", progError);
@@ -1735,6 +1847,34 @@ async function reservarProgramaInterno(
     elevarEstadoFlujo(estado, "error");
     registrarErrorTecnico("reservar_programa", flujoId, "insert_venta", "error_insert_venta", ve);
     return { ok: false, error: MSG_ERROR_GUARDAR_RESERVA };
+  }
+
+  // 5bis) Congelar condiciones de pago (Rama B, migración 165) — best-effort,
+  // nunca bloquea la reserva. Un programa es UN SOLO componente ("programa")
+  // por precio_venta completo, condicionado por su propia fila real de
+  // `programas` (ya traída arriba, sin re-consultar).
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const adminCond = createAdminClient();
+    const { data: { user: usuarioCond } } = await sb.auth.getUser();
+    if (usuarioCond) {
+      const fechaPagoCond = new Date().toISOString().slice(0, 10);
+      const componente = componenteDePrograma(prog, {
+        id: `programa-${input.programaId}`,
+        valor: precioVenta,
+        referencia: prog.nombre,
+        fechaViaje: input.fechaIda,
+      });
+      const trmCond = await trmReferenciaAproximada(adminCond, prog.moneda);
+      await congelarCondicionesContratoBestEffort(adminCond, {
+        numeroContrato: numero,
+        componentes: [componente],
+        moneda: prog.moneda,
+        trm: trmCond,
+        precioTotalMoneda: precioVenta,
+        fechaPago: fechaPagoCond,
+        usuarioId: usuarioCond.id,
+      });
+    }
   }
 
   // 6-8) Tablas hijas — pasajeros/items/hoteles, medidas como un solo grupo
