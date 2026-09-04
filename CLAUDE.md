@@ -1264,6 +1264,42 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   pregunta a qué destino moverlos → `fn_fusionar_destino`, migr. **112**, re-apunta toda
 >   FK y borra). **Editar nombre y destino del hotel** desde su configuración.
 > - Etiqueta **"Porción terrestre"** en vez de "Solo terrestre" (config/vitrina/doc/tarifario).
+> - **Condiciones de pago por componente (ago/sep-2026) — PR #280 (migración 164) + PR #282
+>   "Rama B" (migraciones 165/166), ambos fusionados a `main` y desplegados; las 3 migraciones
+>   ya aplicadas en Supabase real:** hasta ahora una cotización/contrato solo tenía UNA condición
+>   de pago global para todo el paquete (ej. "50% anticipo, saldo a 30 días") aunque el hotel y el
+>   vuelo negociado pudieran exigir cosas distintas (el hotel 100% de anticipo, el vuelo nada).
+>   **PR #280** (migración 164, único archivo — Commits 1-6) construyó el mecanismo completo:
+>   condición de pago por componente en el catálogo (hotel/paquete/programa), snapshot congelado
+>   por cotización al primer pago (`cotizacion_condiciones`, nunca se regenera aunque el catálogo
+>   cambie después), pagos previos idempotentes antes de que exista contrato
+>   (`registrar_pago_previo`, clave de intento única), conversión atómica de UNA cotización manual
+>   a UN contrato (`ventas.cotizacion_id` UNIQUE), restricciones `no_reembolsable`/`no_endosable`
+>   (siempre juntas, nunca un estado intermedio) con excepciones append-only
+>   (`registrar_override_restriccion`, solo superadmin), y candados de inmutabilidad autoritativos
+>   en BD (bloquean UPDATE/DELETE incluso para `service_role`/superusuario SQL directo). Su
+>   alcance original era **solo la cotización manual** (`/dashboard/cotizaciones`). **PR #282**
+>   ("Rama B", migraciones **165** `congelar_condiciones_contrato` y **166** bypass de
+>   `eliminar_contrato()` — dos migraciones nuevas *function-only*, no se tocó la 164 porque ya
+>   estaba en producción) cerró ese pendiente: los 3 caminos que crean un contrato DIRECTO, sin
+>   pasar por cotización manual (`reservarDesdeTarifarioInterno` con hotel o con paquete tipo
+>   `servicios`, `reservarProgramaInterno`, `convertirCotizacionCarrito`), ahora también congelan
+>   condiciones de pago REALES del catálogo al crear el contrato. La 166 corrigió de paso un
+>   blocker encontrado en revisión estricta: sin ella, `eliminar_contrato()` quedaba roto para
+>   cualquier contrato con condiciones ya congeladas (el DELETE en cascada a
+>   `contrato_condiciones` chocaba contra su propio trigger de inmutabilidad) — el bypass es un
+>   flag de sesión transaccional (`set local`), nunca sobrevive fuera de esa llamada RPC, y no
+>   relaja la inmutabilidad para nada más (UPDATE sigue bloqueado siempre; DELETE directo fuera de
+>   `eliminar_contrato()` sigue bloqueado). Riesgos residuales aceptados a propósito (no bugs):
+>   TRM aproximada (`trm_referencia`) en reservas directas en vez de una TRM capturada al momento
+>   como en cotización manual; el componente "hotel" toma TODO el `precio_venta` del contrato
+>   (el motor de precios funde hotel+vuelo+servicios en un solo PVP, no se puede separar sin
+>   tocar ese motor); la condición propia de `armado_paquetes` solo aplica cuando el paquete no
+>   tiene hotel (`esServicios`); `regimen_restringido` no está cableado en el congelado (no
+>   observado en el catálogo actual); y la cotización manual de texto libre sigue desacoplada del
+>   catálogo (nunca tuvo FK, es un mecanismo aparte). Detalle completo, checklist de smoke test
+>   para la primera reserva real por cada camino, y los 3 puntos de wiring en
+>   `docs/tecnico/condiciones-pago-componente.md`.
 
 > **Novedades rama `claude/laughing-goodall-e59PS`:**
 > - **CxP automáticas:** al reservar desde el tarifario se crean solas las cuentas
