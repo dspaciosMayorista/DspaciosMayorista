@@ -51,14 +51,17 @@ function RestriccionChip({ linea }: { linea: LineaCondicionContrato }) {
 export default function CondicionesContratoPanel({
   resuelto,
   puedeAutorizarExcepcion = false,
-  overrideForm,
+  overridesPorLinea,
 }: {
   resuelto: CondicionesContratoResueltas;
   /** true solo para superadmin: muestra el formulario de excepción por fila. */
   puedeAutorizarExcepcion?: boolean;
-  /** Render prop: el llamador pasa el formulario ya armado por fila (necesita
-   *  Server Action + numero_contrato, que este panel no conoce). */
-  overrideForm?: (linea: LineaCondicionContrato) => React.ReactNode;
+  /** Formulario de excepción YA ARMADO por fila (elemento React, no función):
+   *  el llamador (Server Component) lo arma con `numero_contrato` + la Server
+   *  Action, que este panel no conoce, y lo indexa por `contrato_condiciones.id`.
+   *  Nunca una función — React/Next no permite pasar funciones de un Server
+   *  Component a un Client Component salvo que sean Server Actions. */
+  overridesPorLinea?: Record<number, React.ReactNode>;
 }) {
   if (!resuelto.hayCondiciones || !resuelto.filas.length) return null;
 
@@ -100,7 +103,7 @@ export default function CondicionesContratoPanel({
                 </td>
                 <td className="px-4 py-2">
                   <RestriccionChip linea={l} />
-                  {l.esRestringidaEfectiva && puedeAutorizarExcepcion && overrideForm?.(l)}
+                  {l.esRestringidaEfectiva && puedeAutorizarExcepcion && overridesPorLinea?.[l.id]}
                 </td>
               </tr>
             ))}
