@@ -1163,17 +1163,20 @@ export async function convertirCotizacionCarrito(
       });
 
       if (usuarioCond && meta.fecha_ida && meta.fecha_regreso) {
-        componentesCondicion.push(
-          await componenteHotelReal(admin, {
-            hotelId: it.hotelId,
-            id: `hotel-${it.hotelId}-${hIdx}`,
-            valor: comp.precioVenta,
-            referencia: meta.hotel_nombre ?? it.hotelNombre ?? null,
-            fechaIda: meta.fecha_ida,
-            fechaRegreso: meta.fecha_regreso,
-            fechaPago: hoyISO,
-          })
-        );
+        // componenteHotelReal puede devolver null si la consulta de vigencias
+        // falló (finding F1, revisión de PR #282) — no se agrega nada al
+        // snapshot en ese caso: mejor no congelar este hotel que congelar una
+        // condición neutra incorrecta y permanente.
+        const componenteHotel = await componenteHotelReal(admin, {
+          hotelId: it.hotelId,
+          id: `hotel-${it.hotelId}-${hIdx}`,
+          valor: comp.precioVenta,
+          referencia: meta.hotel_nombre ?? it.hotelNombre ?? null,
+          fechaIda: meta.fecha_ida,
+          fechaRegreso: meta.fecha_regreso,
+          fechaPago: hoyISO,
+        });
+        if (componenteHotel) componentesCondicion.push(componenteHotel);
       }
 
       if (it.modulo === "bloqueo" && it.bloqueoId) {

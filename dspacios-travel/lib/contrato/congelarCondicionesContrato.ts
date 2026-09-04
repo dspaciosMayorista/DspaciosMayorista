@@ -100,16 +100,32 @@ function mensajeSeguro(msg: string): string {
   return m;
 }
 
-/** Lee TODAS las vigencias reales de un hotel (con su condición de pago 164). */
+/**
+ * Lee TODAS las vigencias reales de un hotel (con su condición de pago 164).
+ *
+ * Devuelve `null` — nunca `[]` — cuando la consulta a Supabase FALLÓ (error
+ * técnico real: red, RLS, columna inexistente, etc.). Es una distinción
+ * deliberada (revisión estricta de PR #282, finding F1): `[]` solo debe
+ * significar "el hotel legítimamente no tiene vigencias configuradas" (caso
+ * de negocio válido → condición neutra, documentado en `snapshotCondiciones.ts`),
+ * nunca "no sabemos qué condición tiene este hotel". Antes de esta
+ * corrección, un error de consulta se trataba igual que "sin vigencias" y
+ * terminaba congelando una fila PERMANENTE e INMUTABLE con
+ * `restriccion_comercial: 'normal'` cuando la condición real podía ser
+ * `pago_total`/`no_reembolsable_no_endosable` — un dato incorrecto y para
+ * siempre, en vez de simplemente no congelar nada (que es seguro: el
+ * contrato queda como cualquier contrato histórico sin snapshot).
+ */
 export async function vigenciasCondicionDeHotel(
   admin: Admin,
   hotelId: number,
-): Promise<VigenciaHotelCondicion[]> {
+): Promise<VigenciaHotelCondicion[] | null> {
   const { data, error } = await admin
     .from("hotel_temporadas")
     .select("id, nombre, fecha_inicio, fecha_fin, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo")
     .eq("hotel_id", hotelId);
-  if (error || !data) return [];
+  if (error) return null;
+  if (!data) return [];
   // Una vigencia sin rango de fechas no puede cubrir ninguna noche — se
   // descarta antes de traducir (HotelTemporadaCatalogo exige fechas no nulas).
   const conFechas = data.filter(
@@ -123,6 +139,12 @@ export async function vigenciasCondicionDeHotel(
  * Arma el `ComponenteSnapshot` tipo "hotel" de UNA estadía real, resolviendo
  * su condición contra TODAS las vigencias reales del hotel (nunca contra el
  * ganador del motor de precios — ver cabecera del módulo).
+ *
+ * Devuelve `null` si la consulta de vigencias falló (ver
+ * `vigenciasCondicionDeHotel`) — el llamador debe tratarlo igual que
+ * `componentePaqueteReal`/`componenteProgramaReal` devolviendo `null`: no
+ * agregar el componente al snapshot (mejor no congelar nada que congelar un
+ * dato incorrecto y permanente).
  */
 export async function componenteHotelReal(
   admin: Admin,
@@ -135,8 +157,9 @@ export async function componenteHotelReal(
     fechaRegreso: string;
     fechaPago: string;
   },
-): Promise<ComponenteSnapshot> {
+): Promise<ComponenteSnapshot | null> {
   const vigencias = await vigenciasCondicionDeHotel(admin, p.hotelId);
+  if (vigencias === null) return null;
   const estadia = { fechaIda: p.fechaIda, fechaRegreso: p.fechaRegreso };
   const exigencia = condicionHotelEstadia(estadia, vigencias, { fechaPago: p.fechaPago });
   const barrido = barridoRestriccionEstadia(estadia, vigencias);

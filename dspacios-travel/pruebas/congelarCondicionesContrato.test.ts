@@ -67,14 +67,21 @@ describe("vigenciasCondicionDeHotel", () => {
       },
     });
     const vigencias = await vigenciasCondicionDeHotel(admin, 99);
-    assert.equal(vigencias.length, 1);
-    assert.equal(vigencias[0].hotelTemporadaId, 1);
-    assert.equal(vigencias[0].tipo, "pago_total");
-    assert.equal(vigencias[0].restriccionComercial, "no_reembolsable_no_endosable");
+    assert.ok(vigencias);
+    assert.equal(vigencias!.length, 1);
+    assert.equal(vigencias![0].hotelTemporadaId, 1);
+    assert.equal(vigencias![0].tipo, "pago_total");
+    assert.equal(vigencias![0].restriccionComercial, "no_reembolsable_no_endosable");
   });
 
-  test("error de Supabase → arreglo vacío (nunca lanza)", async () => {
+  test("error de Supabase → null (NUNCA [], para no confundirse con 'sin vigencias legítimo' — finding F1, revisión PR #282)", async () => {
     const { admin } = clienteFalso({ tablas: { hotel_temporadas: { data: null, error: { message: "boom" } } } });
+    const vigencias = await vigenciasCondicionDeHotel(admin, 1);
+    assert.equal(vigencias, null);
+  });
+
+  test("data null sin error (0 filas reales) → [] (caso legítimo, distinto de un error)", async () => {
+    const { admin } = clienteFalso({ tablas: { hotel_temporadas: { data: null, error: null } } });
     const vigencias = await vigenciasCondicionDeHotel(admin, 1);
     assert.deepEqual(vigencias, []);
   });
@@ -103,10 +110,11 @@ describe("componenteHotelReal — usa TODAS las vigencias reales, nunca el ganad
       fechaRegreso: "2026-12-06",
       fechaPago: "2026-01-01",
     });
-    assert.equal(comp.tipo, "hotel");
-    assert.equal(comp.condicion?.tipo, "pago_total"); // la más exigente, no la neutra
-    assert.equal(comp.restriccionComercial, "no_reembolsable_no_endosable");
-    assert.equal(comp.valor, 1_000_000);
+    assert.ok(comp);
+    assert.equal(comp!.tipo, "hotel");
+    assert.equal(comp!.condicion?.tipo, "pago_total"); // la más exigente, no la neutra
+    assert.equal(comp!.restriccionComercial, "no_reembolsable_no_endosable");
+    assert.equal(comp!.valor, 1_000_000);
   });
 
   test("hotel sin ninguna vigencia restringida → restriccionComercial normal", async () => {
@@ -120,8 +128,17 @@ describe("componenteHotelReal — usa TODAS las vigencias reales, nunca el ganad
     const comp = await componenteHotelReal(admin, {
       hotelId: 10, id: "h1", valor: 500_000, fechaIda: "2026-06-01", fechaRegreso: "2026-06-03", fechaPago: "2026-01-01",
     });
-    assert.equal(comp.restriccionComercial, "normal");
-    assert.equal(comp.condicion?.tipo, "sin_condicion");
+    assert.ok(comp);
+    assert.equal(comp!.restriccionComercial, "normal");
+    assert.equal(comp!.condicion?.tipo, "sin_condicion");
+  });
+
+  test("F1 (revisión PR #282): error real de consulta → componenteHotelReal devuelve null, NUNCA congela una condición neutra incorrecta", async () => {
+    const { admin } = clienteFalso({ tablas: { hotel_temporadas: { data: null, error: { message: "conexión perdida" } } } });
+    const comp = await componenteHotelReal(admin, {
+      hotelId: 10, id: "h1", valor: 500_000, fechaIda: "2026-06-01", fechaRegreso: "2026-06-03", fechaPago: "2026-01-01",
+    });
+    assert.equal(comp, null);
   });
 });
 
