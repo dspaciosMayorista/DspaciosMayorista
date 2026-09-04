@@ -6,6 +6,7 @@ import { Hotel, MapPin, ShoppingCart, X } from "lucide-react";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem, type HotelCartItem } from "@/lib/cart/CartContext";
+import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 
 function resumenHabitaciones(it: HotelCartItem): string {
   const partes = Object.entries(it.habitaciones)
@@ -93,6 +94,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                               {it.destino ?? ""}{it.categoria ? ` · ${it.categoria}` : ""}{it.regimen ? ` / ${it.regimen}` : ""}
                             </div>
                             <div className="truncate text-xs text-gray-400">{resumenHabitaciones(it)}</div>
+                            <div className="mt-1"><CondicionHotelBadges condicion={it.condicion} /></div>
                           </>
                         ) : (
                           <>

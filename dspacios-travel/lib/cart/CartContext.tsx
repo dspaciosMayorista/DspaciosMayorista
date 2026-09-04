@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from "react";
+import { type CondicionTipo } from "@/lib/cotizacion/condicionPago";
 
 // Ítem de HOTEL del carrito (bloqueo/porción). Los campos mapean a la cotización
 // (ReservaInput) para que el checkout genere la cotización sin fricción.
@@ -30,6 +31,17 @@ export type HotelCartItem = {
   // ver lib/reservar/edadesMenores.ts. Opcional: ítems del carrito
   // guardados en localStorage ANTES de este cambio no lo traen.
   edadesMenores?: number[];
+  // Condición de pago/restricción comercial del hotel para estas fechas
+  // (migración 164/165, `lib/reservar/liquidacionHotel.ts::condicionHotelFechas`)
+  // — SOLO para mostrar el badge en el carrito, nunca se usa para calcular
+  // `precio`. Opcional/`null`: ítems guardados antes de este cambio, o un
+  // hotel sin condición configurada, simplemente no muestran badge.
+  condicion?: {
+    condicionPagoTipo: CondicionTipo;
+    pctInicial: number | null;
+    diasSaldo: number | null;
+    restringido: boolean;
+  } | null;
 };
 
 // Ítem de SERVICIO/TOUR (add-on de un paquete, agregado desde Receptivos —

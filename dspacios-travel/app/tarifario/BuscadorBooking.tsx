@@ -6,6 +6,7 @@ import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones"
 import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
 import { buscarHoteles } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type BusquedaResultado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
+import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 import { EDAD_MENOR_MAX, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseEdadMenor } from "@/lib/reservar/edadesMenores";
 
 export function BuscadorBooking({
@@ -283,7 +284,7 @@ function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | nul
     hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: foto,
     categoria: combo.categoria, regimen: combo.regimen, fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso, noches: r.noches,
     habitaciones: r.habitaciones, ninos: combo.menores.nino, ninos2: combo.menores.nino2, infantes: combo.menores.infantes,
-    pax: combo.pax, precio: combo.total, edadesMenores: r.edadesMenores,
+    pax: combo.pax, precio: combo.total, edadesMenores: r.edadesMenores, condicion: r.condicion,
   };
   // El estado del botón se deriva del carrito real: si se quita del carrito,
   // vuelve a estar disponible para agregar.
@@ -312,6 +313,7 @@ function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | nul
             <span className="rounded-full bg-[var(--brand-success)]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand-success)]" title="Este hotel acepta mascotas">Pet friendly</span>
           )}
         </div>
+        <div className="mt-1"><CondicionHotelBadges condicion={r.condicion} /></div>
         <div className="text-xs text-gray-500">{r.destino ?? ""} · {r.noches}N</div>
         {info?.descripcion?.trim() && (
           <p className="mt-1 line-clamp-2 text-xs text-gray-400">{info.descripcion}</p>

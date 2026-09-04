@@ -35,9 +35,9 @@ import {
   type DatosServicioPar, type ResultadoServicio, type RespuestaPublicaServicioPuntual,
 } from "@/lib/reservar/liquidacionServicio";
 import {
-  evaluarHotelPorFechas, generarSugerenciasFechas, consolidarSugerenciasGlobales,
+  evaluarHotelPorFechas, generarSugerenciasFechas, consolidarSugerenciasGlobales, condicionHotelFechas,
   type ComboCotizado, type DatosHotelPaquete, type FilaTemporadaHotelRaw, type FilaTarifaHotelRaw,
-  type FilaBlackoutHotelRaw, type SugerenciaFecha, type ComposicionSugerencia,
+  type FilaBlackoutHotelRaw, type SugerenciaFecha, type ComposicionSugerencia, type CondicionHotelFechas,
 } from "@/lib/reservar/liquidacionHotel";
 
 export type { ComboCotizado, SugerenciaFecha };
@@ -108,7 +108,7 @@ async function cargarDatosHotelPaquete(
     { data: blackouts, error: blackoutsErr },
   ] = await Promise.all([
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", hotelId),
+    admin.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
@@ -195,7 +195,10 @@ export async function liquidarHotelPaquete(
 }
 
 export type CotizarResult =
-  | { ok: true; combos: ComboCotizado[]; noches: number; moneda: string }
+  // `condicion` = badge SOLO informativo (migración 164/165, ver
+  // `condicionHotelFechas`) — `undefined`/`null` si el hotel no tiene
+  // vigencias con condición configurada; nunca afecta `combos`/`moneda`.
+  | { ok: true; combos: ComboCotizado[]; noches: number; moneda: string; condicion?: CondicionHotelFechas | null }
   | { ok: false; error: string; sugerencias: SugerenciaFecha[] };
 
 /**
@@ -285,7 +288,8 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
   }
   // Se devuelve al cliente SIN `netos` (el costo interno no sale del servidor).
   const combosPublicos = res.combos.map((c) => ({ categoria: c.categoria, regimen: c.regimen, precios: c.precios }));
-  return { ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda };
+  const condicion = condicionHotelFechas(datos.temporadas, { fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso });
+  return { ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda, condicion };
 }
 
 // ── Mini-motor de búsqueda (público): liquida TODOS los hoteles de porción para
@@ -325,6 +329,10 @@ export type BusquedaResultado = {
   // Todos los combos válidos (categoría × régimen) para esta composición, con su
   // precio. El top-level categoria/regimen/total es el más barato (predeterminado).
   combos: { categoria: string; regimen: string; total: number; pax: number; menores: ClasificacionMenores }[];
+  // Badge SOLO informativo (migración 164/165, ver `condicionHotelFechas` en
+  // liquidacionHotel.ts) — `null`/ausente si el hotel no tiene vigencias con
+  // condición configurada. Nunca afecta `total`/`combos`.
+  condicion?: CondicionHotelFechas | null;
 };
 
 // Máximo de hoteles/paquetes cuyo `DatosHotelPaquete` (ya cargado durante la
@@ -618,12 +626,13 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
     if (combosValidos.length) {
       combosValidos.sort((a, b) => a.total - b.total); // más barato primero (predeterminado)
       const mejor = combosValidos[0];
+      const condicion = condicionHotelFechas(datos.temporadas, { fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso });
       resultados.push({
         hotelId: hotel, hotelNombre: res.hotelNombre, destino: res.destinoNombre,
         paqueteId: paquete, categoria: mejor.categoria, regimen: mejor.regimen,
         total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso,
         habitaciones: habitacionesOut, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
-        combos: combosValidos,
+        combos: combosValidos, condicion,
       });
     } else {
       registrarRechazo("Ninguna categoría/régimen de este hotel tiene tarifa configurada para esa composición.");
