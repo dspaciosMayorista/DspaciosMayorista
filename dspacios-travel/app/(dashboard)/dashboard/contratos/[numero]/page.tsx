@@ -224,6 +224,29 @@ export default async function ContratoDetallePage({
     { monedaContrato: (venta.moneda as string) ?? "COP", precioVenta: venta.precio_venta, fechaViaje: venta.fecha_salida },
   );
 
+  // Formulario de excepción por fila restringida, YA ARMADO aquí (Server
+  // Component, con `numero_contrato` + la Server Action) — se le pasa a
+  // `CondicionesContratoPanel` (Client) como elementos indexados por id, NUNCA
+  // como función: React/Next no permite pasar funciones de un Server Component
+  // a un Client Component salvo que sean Server Actions ("Functions cannot be
+  // passed directly to Client Components..."), y eso rompía la ficha del
+  // contrato para TODOS los contratos, siempre (no solo los que tienen una
+  // fila restringida) porque la prop se serializaba en cada render.
+  const overridesPorLinea: Record<number, React.ReactNode> = {};
+  if (esSuperadmin) {
+    for (const l of condicionesResueltas.filas) {
+      if (l.esRestringidaEfectiva) {
+        overridesPorLinea[l.id] = (
+          <OverrideRestriccionForm
+            numeroContrato={numero}
+            contratoCondicionId={l.id}
+            restriccion={l.restriccion}
+          />
+        );
+      }
+    }
+  }
+
   // Buscar el % de comisión del asesor (por email o por nombre de firma)
   const asesorNombre = venta.asesor_firma_nombre ?? venta.asesor ?? "";
   const asesorRow = (asesores ?? []).find(
@@ -303,13 +326,7 @@ export default async function ContratoDetallePage({
       <CondicionesContratoPanel
         resuelto={condicionesResueltas}
         puedeAutorizarExcepcion={esSuperadmin}
-        overrideForm={(linea) => (
-          <OverrideRestriccionForm
-            numeroContrato={numero}
-            contratoCondicionId={linea.id}
-            restriccion={linea.restriccion}
-          />
-        )}
+        overridesPorLinea={overridesPorLinea}
       />
 
       {/* Editar datos del contrato. Solo para quien de verdad puede: la policy
