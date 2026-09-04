@@ -8,6 +8,7 @@ import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type 
 import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
+import { CondicionHotelBadges, type CondicionHotelBadgeData } from "@/components/cotizacion/CondicionHotelBadges";
 import {
   EDAD_MENOR_MAX,
   MAX_MENORES_POR_CONSULTA,
@@ -1227,6 +1228,12 @@ function SelectorPorFechas({
   const [fReg, setFReg] = useState("");
   const [combos, setCombos] = useState<ComboCotizado[] | null>(null);
   const [nochesCot, setNochesCot] = useState<number | null>(null);
+  // Badge de condición de pago/restricción (migración 164/165) — resuelto por
+  // el servidor en `cotizarPorFechas`, a nivel de HOTEL+fechas (no por
+  // categoría/régimen — ver limitación de `regimen_restringido` documentada
+  // en `condicionHotelFechas`, lib/reservar/liquidacionHotel.ts). Solo
+  // informativo: nunca participa en `pvp`/`precio`.
+  const [condicion, setCondicion] = useState<CondicionHotelBadgeData>(null);
   const [err, setErr] = useState("");
   const [pending, start] = useTransition();
   const [cat, setCat] = useState("");
@@ -1250,11 +1257,11 @@ function SelectorPorFechas({
     start(async () => {
       const r = await cotizarPorFechas({ paqueteId: opcion.paqueteId, hotelId: hotel.hotelId, fechaIda: idaUsada, fechaRegreso: regresoUsada });
       if (r.ok) {
-        setCombos(r.combos); setNochesCot(r.noches);
+        setCombos(r.combos); setNochesCot(r.noches); setCondicion(r.condicion ?? null);
         setCat(r.combos[0]?.categoria ?? ""); setReg(r.combos[0]?.regimen ?? "");
         setSugerencias([]); setViaSugerencia(desdeSugerencia);
       } else {
-        setCombos(null); setErr(r.error); setSugerencias(r.sugerencias); setViaSugerencia(false);
+        setCombos(null); setCondicion(null); setErr(r.error); setSugerencias(r.sugerencias); setViaSugerencia(false);
       }
       setSugerenciaAplicando(null);
     });
@@ -1286,7 +1293,7 @@ function SelectorPorFechas({
       hotelNombre: hotel.hotelNombre, destino: hotel.destino, fotoUrl: hotel.foto,
       categoria: catEff, regimen: regEff,
       fechaIda: fIda, fechaRegreso: fReg, noches: nochesCot ?? calcNoches(fIda, fReg),
-      habitaciones, ninos, ninos2, infantes, pax, precio, edadesMenores,
+      habitaciones, ninos, ninos2, infantes, pax, precio, edadesMenores, condicion,
     });
 
   return (
@@ -1303,14 +1310,14 @@ function SelectorPorFechas({
                 // Sin auto-relleno de regreso: si deja de ser posterior a la
                 // nueva ida, se limpia (el usuario elige la fecha real).
                 if (nueva && fReg && fReg <= nueva) setFReg("");
-                setCombos(null); setSugerencias([]); setViaSugerencia(false);
+                setCombos(null); setCondicion(null); setSugerencias([]); setViaSugerencia(false);
               }}
               className={dateCls} />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-600">Regreso</label>
             <input type="date" value={fReg} min={fIda || minIda} max={ventana.max ?? undefined}
-              onChange={(e) => { setFReg(e.target.value); setCombos(null); setSugerencias([]); setViaSugerencia(false); }}
+              onChange={(e) => { setFReg(e.target.value); setCombos(null); setCondicion(null); setSugerencias([]); setViaSugerencia(false); }}
               className={dateCls} />
           </div>
           <button type="button" onClick={() => cotizar()} disabled={pending || !fIda || !fReg}
@@ -1367,6 +1374,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
+          <div className="mt-1"><CondicionHotelBadges condicion={condicion} /></div>
           <EditorPax pvp={pvp} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem} />
         </>
       )}

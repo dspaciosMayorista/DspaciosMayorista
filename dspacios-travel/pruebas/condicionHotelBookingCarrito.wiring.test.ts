@@ -38,6 +38,14 @@ test("BuscadorBooking.tsx: el resultado muestra el badge Y lo propaga al ítem d
   assert.match(src, /condicion: r\.condicion/, "el ítem armado para el carrito no incluye la condición del resultado");
 });
 
+test("VistaBooking.tsx (SelectorPorFechas — modal de selección por fechas): resuelve, renderiza y propaga el badge", () => {
+  const src = leer("app/tarifario/VistaBooking.tsx");
+  assert.match(src, /import \{ CondicionHotelBadges, type CondicionHotelBadgeData \} from "@\/components\/cotizacion\/CondicionHotelBadges"/, "no importa el componente de badge");
+  assert.match(src, /setCondicion\(r\.condicion \?\? null\)/, "no guarda la condición devuelta por cotizarPorFechas");
+  assert.match(src, /<CondicionHotelBadges condicion=\{condicion\} \/>/, "el modal de selección por fechas no renderiza el badge");
+  assert.match(src, /habitaciones, ninos, ninos2, infantes, pax, precio, edadesMenores, condicion,/, "el ítem armado para el carrito desde este modal no incluye la condición");
+});
+
 test("CartContext.tsx: HotelCartItem tiene el campo condicion (opcional, no afecta el total)", () => {
   const src = leer("lib/cart/CartContext.tsx");
   assert.match(src, /condicion\?: \{/, "HotelCartItem no declara el campo condicion");

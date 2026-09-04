@@ -225,6 +225,21 @@ export type CondicionHotelFechas = {
  * `condicionHotelEstadia`. Se expone explícito para que las pruebas nunca
  * dependan de la fecha real del sistema (mismo criterio que el resto de
  * `pruebas/liquidacionHotel.test.ts`).
+ *
+ * ⚠️ LIMITACIÓN CONOCIDA — `regimen_restringido` (heredada de Rama B/PR #282,
+ * no nueva de este cambio): el motor de PRECIO (`entradasNoche` en
+ * `lib/calc/paquetes.ts`) sí filtra las vigencias de una noche por régimen
+ * (`t.regimen_restringido == null || t.regimen_restringido === regimen`) —
+ * un hotel puede tener una vigencia "PC" y otra "PAM" solapadas en las mismas
+ * fechas, cada una con su propia condición de pago. Esta función NO recibe
+ * régimen/categoría y evalúa TODAS las vigencias que cubran el rango de
+ * fechas sin filtrar por régimen, así que puede devolver la condición de una
+ * vigencia restringida a un régimen distinto al que el usuario está
+ * cotizando (caso reportado: vigencia restringida a PC aparece como badge al
+ * generar PAM). Corregirlo de raíz requeriría pasar régimen/categoría hasta
+ * acá y decidir el criterio de "más exigente" por combo, no por hotel+fechas
+ * — se deja fuera de alcance de este cambio (ver "Pendiente" en el PR); el
+ * badge hereda la misma imprecisión que ya tiene el congelado del contrato.
  */
 export function condicionHotelFechas(
   temporadas: FilaTemporadaHotelRaw[],
