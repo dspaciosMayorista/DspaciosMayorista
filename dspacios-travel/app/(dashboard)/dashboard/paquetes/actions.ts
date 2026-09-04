@@ -16,6 +16,11 @@ import {
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
+import {
+  validarCondicionPago,
+  validarRestriccionComercialCatalogo,
+  type CondicionPagoEntrada,
+} from "@/lib/cotizacion/condicionPagoCatalogo";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
@@ -49,9 +54,35 @@ export interface PaqueteConfig {
   impuestoFijo: number;
   activo: boolean;
   notas: string;
+  // Condición de pago (migración 164) — aplica a los 4 tipos de paquete por
+  // igual (bloqueo/porción terrestre/servicios/dinámico): es un atributo de
+  // `armado_paquetes`, no del tipo. `restriccionComercial` solo admite
+  // 'normal'|'promocional_no_reembolsable_no_endosable' (CHECK real de la
+  // tabla; 'no_reembolsable_no_endosable' NO es válido aquí).
+  condicionPagoTipo?: unknown;
+  condicionPagoPctInicial?: unknown; // 1–99, no fracción
+  condicionPagoDiasSaldo?: unknown;
+  restriccionComercial?: unknown;
 }
 
-function configToRow(c: PaqueteConfig) {
+function validarCondicionYRestriccionPaquete(
+  c: PaqueteConfig,
+): { ok: true; condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null; restriccion_comercial: string } | { ok: false; error: string } {
+  const cp = validarCondicionPago(
+    {
+      tipo: c.condicionPagoTipo ?? "normal",
+      pctInicial: c.condicionPagoPctInicial,
+      diasSaldo: c.condicionPagoDiasSaldo,
+    } satisfies CondicionPagoEntrada,
+    "producto",
+  );
+  if (!cp.ok) return { ok: false, error: cp.error };
+  const rc = validarRestriccionComercialCatalogo(c.restriccionComercial ?? "normal");
+  if (!rc.ok) return { ok: false, error: rc.error };
+  return { ok: true, ...cp.value, restriccion_comercial: rc.value };
+}
+
+function configToRow(c: PaqueteConfig, condicion: { condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null; restriccion_comercial: string }) {
   return {
     nombre: c.nombre.trim(),
     tipo: c.tipo,
@@ -66,15 +97,26 @@ function configToRow(c: PaqueteConfig) {
     impuesto_fijo: Number(c.impuestoFijo) || 0,
     activo: c.activo,
     notas: oNull(c.notas),
+    condicion_pago_tipo: condicion.condicion_pago_tipo,
+    condicion_pago_pct_inicial: condicion.condicion_pago_pct_inicial,
+    condicion_pago_dias_saldo: condicion.condicion_pago_dias_saldo,
+    restriccion_comercial: condicion.restriccion_comercial,
   };
 }
 
+// No regenera el tarifario: la configuración inicial (incluida la condición de
+// pago) no participa del cálculo de precio del motor (`lib/calc/paquetes.ts`
+// no lee estas columnas) — solo viaja al desglose de exigencia de pago. Igual
+// que el resto de esta pantalla (nombre/fechas/mk no regeneran por sí solos),
+// el botón explícito "Generar tarifario" sigue siendo quien dispara el cálculo.
 export async function crearPaquete(c: PaqueteConfig): Promise<Result> {
   if (!c.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const v = validarCondicionYRestriccionPaquete(c);
+  if (!v.ok) return v;
   const sb = await createClient();
   const { data, error } = await sb
     .from("armado_paquetes")
-    .insert(configToRow(c))
+    .insert(configToRow(c, v))
     .select("id")
     .single();
   if (error) return { ok: false, error: error.message };
@@ -84,10 +126,12 @@ export async function crearPaquete(c: PaqueteConfig): Promise<Result> {
 
 export async function actualizarPaquete(id: number, c: PaqueteConfig): Promise<Result> {
   if (!c.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const v = validarCondicionYRestriccionPaquete(c);
+  if (!v.ok) return v;
   const sb = await createClient();
   const { error } = await sb
     .from("armado_paquetes")
-    .update({ ...configToRow(c), updated_at: new Date().toISOString() })
+    .update({ ...configToRow(c, v), updated_at: new Date().toISOString() })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/paquetes/${id}`);

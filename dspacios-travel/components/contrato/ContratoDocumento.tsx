@@ -18,6 +18,7 @@ import type {
   ContratoItem,
   Agencia,
 } from "@/types/database";
+import type { CondicionesContratoResueltas } from "@/lib/contrato/condicionesContrato";
 
 type HotelConNota = ContratoHotel & { nota_regimen?: string | null; foto_url?: string | null };
 
@@ -39,6 +40,11 @@ type Props = {
   // una fila por tenant). Si no se pasa (páginas viejas sin actualizar),
   // cae a la EMPRESA fija (mayorista) — ver abajo.
   agencia?: Agencia | null;
+  // Condiciones PERMANENTES del contrato (migración 164, Commit 6), YA
+  // resueltas por `lib/contrato/condicionesContrato.ts` — el MISMO resolver
+  // que usa la ficha del dashboard, para que UI y PDF nunca diverjan. null/
+  // undefined = no se consultó (modo cotización, o contrato sin snapshot).
+  condiciones?: CondicionesContratoResueltas | null;
 };
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
@@ -72,6 +78,7 @@ export function ContratoDocumento({
   codigo,
   vigenciaHasta,
   agencia,
+  condiciones,
 }: Props) {
   const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
   const total = items.reduce(
@@ -497,6 +504,68 @@ export function ContratoDocumento({
             </div>
           )}
         </section>
+
+        {/* ── Condiciones de pago y restricciones ───────────────── */}
+        {/* Sección construida por `condiciones` (mismo resolver que la ficha
+            del dashboard). Si no hay snapshot (contrato histórico o modo
+            cotización) no se renderiza NADA: no se inventa una cláusula de
+            restricción que la fuente de verdad no dice. Nunca se muestra una
+            etiqueta global tipo "100% no reembolsable" si solo ALGUNOS
+            componentes están restringidos — cada componente lleva su propio
+            aviso, y el resumen agregado siempre va acompañado del desglose. */}
+        {condiciones?.hayCondiciones && condiciones.filas.length > 0 && (
+          <section className="break-inside-avoid">
+            <h2 className="mb-2 text-sm font-semibold" style={{ color: TITULO }}>
+              Condiciones de pago
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[520px] border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-50 text-left text-gray-500">
+                    <th className="border border-gray-200 px-2 py-1">Componente</th>
+                    <th className="border border-gray-200 px-2 py-1">Condición</th>
+                    <th className="border border-gray-200 px-2 py-1">Pago mínimo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {condiciones.filas.map((l) => (
+                    <tr key={l.key} className="break-inside-avoid">
+                      <td className="border border-gray-200 px-2 py-1">
+                        {l.referencia ?? l.nombreComponente}
+                        <div className="text-[10px] text-gray-400">{l.nombreComponente}</div>
+                      </td>
+                      <td className="border border-gray-200 px-2 py-1">
+                        {l.condicionTexto}
+                        {l.condicionDetalle && <div className="text-[10px] text-gray-400">{l.condicionDetalle}</div>}
+                        {l.fechaLimite && (
+                          <div className="text-[10px] text-gray-400">Saldo antes del {formatFechaLarga(l.fechaLimite)}</div>
+                        )}
+                      </td>
+                      <td className="border border-gray-200 px-2 py-1 font-medium">
+                        {formatMoneda(l.exigido, l.moneda)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {condiciones.resumen && (
+              <p className="mt-2 text-[11px] font-semibold text-gray-700">{condiciones.resumen.texto}</p>
+            )}
+            {/* Restricciones: SOLO se enumeran los componentes que de verdad
+                están restringidos EN LA PRESENTACIÓN (tras overrides). Ningún
+                texto de restricción aparece si `restringidas` está vacío. */}
+            {condiciones.restringidas.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {condiciones.restringidas.map((l) => (
+                  <p key={l.key} className="break-inside-avoid rounded bg-red-50 px-2 py-1 text-[11px] text-red-700">
+                    <span className="font-semibold">{l.referencia ?? l.nombreComponente}:</span> {l.restriccionTexto}
+                  </p>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* ── Cláusulas ────────────────────────────────────────── */}
         <section className="break-before-page">

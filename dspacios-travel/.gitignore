@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# supabase CLI local state — contiene secretos locales del stack; NUNCA versionar
+supabase/.temp/
+supabase/.branches/

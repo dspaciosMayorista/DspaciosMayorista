@@ -5,6 +5,12 @@ import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
 import { salidaTieneContenido, tieneImpuestoAcomodacionNegativo, tieneTarifaNegativa } from "@/lib/programas/salidasGuardado";
 import { resolverValorReglaAcomodacion, validarReglaComisionable, validarTarifaModalidad, esModalidadMkValida, type ModalidadMk } from "@/lib/calc/programaPrecio";
+import {
+  validarCondicionPago,
+  validarRestriccionComercialCatalogo,
+  type CondicionPagoEntrada,
+  type CondicionPagoPersistible,
+} from "@/lib/cotizacion/condicionPagoCatalogo";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -55,7 +61,32 @@ export type CabeceraInput = {
   asistenciaMedicaDia: number | null;
   modoPrecio: string;
   videoUrl: string;
+  // Condición de pago (migración 164). `condicionPagoTipo` es 'normal'|'pago_total'|
+  // 'anticipo_saldo'; `restriccionComercial` solo admite 'normal'|
+  // 'promocional_no_reembolsable_no_endosable' (el CHECK real de `programas` NO
+  // admite 'no_reembolsable_no_endosable', a diferencia de cotizacion/contrato).
+  condicionPagoTipo?: unknown;
+  condicionPagoPctInicial?: unknown; // 1–99, no fracción
+  condicionPagoDiasSaldo?: unknown;
+  restriccionComercial?: unknown;
 };
+
+function validarCondicionYRestriccionPrograma(
+  input: CabeceraInput,
+): { ok: true; condicion: CondicionPagoPersistible; restriccion: string } | { ok: false; error: string } {
+  const cp = validarCondicionPago(
+    {
+      tipo: input.condicionPagoTipo ?? "normal",
+      pctInicial: input.condicionPagoPctInicial,
+      diasSaldo: input.condicionPagoDiasSaldo,
+    } satisfies CondicionPagoEntrada,
+    "producto",
+  );
+  if (!cp.ok) return { ok: false, error: cp.error };
+  const rc = validarRestriccionComercialCatalogo(input.restriccionComercial ?? "normal");
+  if (!rc.ok) return { ok: false, error: rc.error };
+  return { ok: true, condicion: cp.value, restriccion: rc.value };
+}
 
 // "uno por línea" (o separado por '|') → array limpio para text[].
 function parseHighlights(s: string): string[] {
@@ -65,7 +96,7 @@ function parseHighlights(s: string): string[] {
     .filter(Boolean);
 }
 
-function cabeceraRow(input: CabeceraInput) {
+function cabeceraRow(input: CabeceraInput, condicion: CondicionPagoPersistible, restriccion: string) {
   return {
     nombre: input.nombre.trim(),
     proveedor_id: input.proveedorId,
@@ -97,15 +128,21 @@ function cabeceraRow(input: CabeceraInput) {
     asistencia_medica_dia: input.asistenciaMedicaDia ?? 0,
     modo_precio: input.modoPrecio === "salida" ? "salida" : "categoria",
     video_url: oNull(input.videoUrl),
+    condicion_pago_tipo: condicion.condicion_pago_tipo,
+    condicion_pago_pct_inicial: condicion.condicion_pago_pct_inicial,
+    condicion_pago_dias_saldo: condicion.condicion_pago_dias_saldo,
+    restriccion_comercial: restriccion,
   };
 }
 
 export async function crearPrograma(input: CabeceraInput): Promise<Result> {
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const v = validarCondicionYRestriccionPrograma(input);
+  if (!v.ok) return v;
   const sb = await createClient();
   const { data, error } = await sb
     .from("programas")
-    .insert(cabeceraRow(input))
+    .insert(cabeceraRow(input, v.condicion, v.restriccion))
     .select("id")
     .single();
   if (error) return { ok: false, error: error.message };
@@ -115,10 +152,12 @@ export async function crearPrograma(input: CabeceraInput): Promise<Result> {
 
 export async function guardarCabecera(id: number, input: CabeceraInput): Promise<Result> {
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
+  const v = validarCondicionYRestriccionPrograma(input);
+  if (!v.ok) return v;
   const sb = await createClient();
   const { error } = await sb
     .from("programas")
-    .update({ ...cabeceraRow(input), updated_at: new Date().toISOString() })
+    .update({ ...cabeceraRow(input, v.condicion, v.restriccion), updated_at: new Date().toISOString() })
     .eq("id", id);
   if (error) return { ok: false, error: error.message };
   rev(id);

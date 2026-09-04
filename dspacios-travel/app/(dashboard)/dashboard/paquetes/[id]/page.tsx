@@ -142,6 +142,10 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
           impuestoTipo: pq.impuesto_tipo,
           impuestoFijo: pq.impuesto_fijo,
           notas: pq.notas ?? "",
+          condicionPagoTipo: pq.condicion_pago_tipo ?? "normal",
+          condicionPagoPctInicial: pq.condicion_pago_pct_inicial ?? null,
+          condicionPagoDiasSaldo: pq.condicion_pago_dias_saldo ?? null,
+          restriccionComercial: pq.restriccion_comercial ?? "normal",
         }}
         tieneDestino={!!destinoId}
         vuelosDisp={vuelosDisp ?? []}

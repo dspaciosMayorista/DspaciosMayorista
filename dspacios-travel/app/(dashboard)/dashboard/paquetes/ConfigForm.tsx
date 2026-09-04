@@ -24,6 +24,10 @@ type Initial = Partial<{
   impuestoTipo: "tiquete" | "fijo";
   impuestoFijo: number;
   notas: string;
+  condicionPagoTipo: string;
+  condicionPagoPctInicial: number | null;
+  condicionPagoDiasSaldo: number | null;
+  restriccionComercial: string;
 }>;
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -52,6 +56,15 @@ export function ConfigForm({
   const [impTipo, setImpTipo] = useState<"tiquete" | "fijo">(initial?.impuestoTipo ?? "tiquete");
   const [impFijo, setImpFijo] = useState(initial?.impuestoFijo != null ? String(initial.impuestoFijo) : "");
   const [notas, setNotas] = useState(initial?.notas ?? "");
+  // Condición de pago (migración 164) — inicializar SIEMPRE con lo guardado.
+  const [condicionPagoTipo, setCondicionPagoTipo] = useState(initial?.condicionPagoTipo ?? "normal");
+  const [condicionPagoPct, setCondicionPagoPct] = useState(
+    initial?.condicionPagoPctInicial != null ? String(Math.round(initial.condicionPagoPctInicial * 100)) : ""
+  );
+  const [condicionPagoDias, setCondicionPagoDias] = useState(
+    initial?.condicionPagoDiasSaldo != null ? String(initial.condicionPagoDiasSaldo) : ""
+  );
+  const [restriccionComercial, setRestriccionComercial] = useState(initial?.restriccionComercial ?? "normal");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
@@ -75,6 +88,10 @@ export function ConfigForm({
       impuestoFijo: Number(impFijo) || 0,
       activo,
       notas,
+      condicionPagoTipo,
+      condicionPagoPctInicial: condicionPagoPct === "" ? null : Number(condicionPagoPct),
+      condicionPagoDiasSaldo: condicionPagoDias === "" ? null : Number(condicionPagoDias),
+      restriccionComercial,
     };
     start(async () => {
       const r = id ? await actualizarPaquete(id, cfg) : await crearPaquete(cfg);
@@ -165,6 +182,44 @@ export function ConfigForm({
             <Input type="number" min={0} value={impFijo} onChange={(e) => setImpFijo(e.target.value)} placeholder="599000" />
           </div>
         )}
+
+        <div className="md:col-span-2 rounded-lg border border-gray-100 bg-gray-50 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Condición de pago</p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div>
+              <label className={lbl}>Condición</label>
+              <select value={condicionPagoTipo} onChange={(e) => setCondicionPagoTipo(e.target.value)} className={sel}>
+                <option value="normal">Normal</option>
+                <option value="pago_total">Requiere pago total</option>
+                <option value="anticipo_saldo">Anticipo y saldo</option>
+              </select>
+            </div>
+            {condicionPagoTipo === "anticipo_saldo" && (
+              <>
+                <div>
+                  <label className={lbl}>Anticipo inicial (%)</label>
+                  <Input type="number" min={1} max={99} value={condicionPagoPct} onChange={(e) => setCondicionPagoPct(e.target.value)} placeholder="50" />
+                </div>
+                <div>
+                  <label className={lbl}>Días antes del viaje para el saldo</label>
+                  <Input type="number" min={0} value={condicionPagoDias} onChange={(e) => setCondicionPagoDias(e.target.value)} placeholder="30" />
+                </div>
+              </>
+            )}
+            <div>
+              <label className={lbl}>Restricción comercial</label>
+              <select value={restriccionComercial} onChange={(e) => setRestriccionComercial(e.target.value)} className={sel}>
+                <option value="normal">Sin restricción</option>
+                <option value="promocional_no_reembolsable_no_endosable">Promocional — no reembolsable / no endosable</option>
+              </select>
+            </div>
+          </div>
+          {restriccionComercial !== "normal" && (
+            <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+              Este paquete queda marcado <b>No reembolsable</b> y <b>No endosable</b>.
+            </p>
+          )}
+        </div>
 
         <div className="md:col-span-2">
           <label className={lbl}>Notas (opcional)</label>

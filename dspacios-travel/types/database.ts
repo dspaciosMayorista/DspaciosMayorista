@@ -317,6 +317,9 @@ export type Database = {
           recobro_total: number | null;
           recobro_empresa: number | null;
           recobro_aliado: number | null;
+          // Migración 164: back-link UNIQUE nullable — UN SOLO contrato por
+          // cotización convertida (los pagos previos a abonos la llenan).
+          cotizacion_id: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -380,6 +383,7 @@ export type Database = {
           recobro_total?: number | null;
           recobro_empresa?: number | null;
           recobro_aliado?: number | null;
+          cotizacion_id?: number | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1826,8 +1830,10 @@ export type Database = {
         Relationships: [];
       };
       hotel_temporadas: {
-        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number; regimen_restringido: string | null };
-        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number; regimen_restringido?: string | null };
+        // condicion_pago_* = migración 164. hotel_temporadas NO tiene columna de
+        // restricción comercial: se deriva 100% implícita (ver lib/cotizacion/condicionPagoCatalogo.ts).
+        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number; regimen_restringido: string | null; condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null };
+        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number; regimen_restringido?: string | null; condicion_pago_tipo?: string; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null };
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
         Relationships: [];
       };
@@ -2033,6 +2039,13 @@ export type Database = {
           notas: string | null;
           created_at: string;
           updated_at: string;
+          // condicion_pago_* / restriccion_comercial = migración 164. El CHECK
+          // real de esta tabla (armado_paquetes_restriccion_check) solo admite
+          // 'normal' | 'promocional_no_reembolsable_no_endosable'.
+          condicion_pago_tipo: string;
+          condicion_pago_pct_inicial: number | null;
+          condicion_pago_dias_saldo: number | null;
+          restriccion_comercial: string;
         };
         Insert: {
           id?: number;
@@ -2053,6 +2066,10 @@ export type Database = {
           notas?: string | null;
           created_at?: string;
           updated_at?: string;
+          condicion_pago_tipo?: string;
+          condicion_pago_pct_inicial?: number | null;
+          condicion_pago_dias_saldo?: number | null;
+          restriccion_comercial?: string;
         };
         Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
         Relationships: [];
@@ -2189,6 +2206,13 @@ export type Database = {
           regla_comisionable_impuesto_por_acomodacion: boolean;
           created_at: string;
           updated_at: string;
+          // condicion_pago_* / restriccion_comercial = migración 164. El CHECK
+          // real de esta tabla (programas_restriccion_check) solo admite
+          // 'normal' | 'promocional_no_reembolsable_no_endosable'.
+          condicion_pago_tipo: string;
+          condicion_pago_pct_inicial: number | null;
+          condicion_pago_dias_saldo: number | null;
+          restriccion_comercial: string;
         };
         Insert: {
           id?: number;
@@ -2234,6 +2258,10 @@ export type Database = {
           regla_comisionable_impuesto_por_acomodacion?: boolean;
           created_at?: string;
           updated_at?: string;
+          condicion_pago_tipo?: string;
+          condicion_pago_pct_inicial?: number | null;
+          condicion_pago_dias_saldo?: number | null;
+          restriccion_comercial?: string;
         };
         Update: Partial<Database["public"]["Tables"]["programas"]["Insert"]>;
         Relationships: [];
@@ -2481,6 +2509,18 @@ export type Database = {
           // Nullable durante la fase aditiva (migración 153); la 154 la
           // cierra a NOT NULL. Todo INSERT nuevo debe estamparla igual.
           tenant: string | null;
+          // ── Condiciones de pago por componente (migración 164) ──
+          // Se estampan al CONGELAR la cotización (1er pago previo): el snapshot
+          // congelado del monto mínimo exigido y la moneda/TRM/precio del
+          // momento. `condicion_pago_congelada_en` es el candado: el trigger 164
+          // bloquea alterar `cotizacion_condiciones` una vez estampado.
+          condicion_pago_congelada_en: string | null; // timestamptz
+          moneda_congelada: string | null;
+          trm_autoritativa: number | null; // numeric, default 1
+          precio_total_congelado: number | null;
+          monto_exigido_total: number | null;
+          monto_exigido_total_cop: number | null;
+          pct_efectivo_informativo: number | null; // solo informativo (0..100)
         };
         Insert: {
           id?: number;
@@ -2508,6 +2548,13 @@ export type Database = {
           creado_por?: string | null;
           numero_contrato?: string | null;
           tenant?: string | null;
+          condicion_pago_congelada_en?: string | null;
+          moneda_congelada?: string | null;
+          trm_autoritativa?: number | null;
+          precio_total_congelado?: number | null;
+          monto_exigido_total?: number | null;
+          monto_exigido_total_cop?: number | null;
+          pct_efectivo_informativo?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["cotizaciones"]["Insert"]>;
         Relationships: [];
@@ -2544,6 +2591,170 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["cotizacion_servicios"]["Insert"]>;
+        Relationships: [];
+      };
+      // ── Condiciones de pago por componente (migración 164) ──────────────
+      cotizacion_condiciones: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          orden: number;
+          tipo_componente: string; // 'hotel' | 'vuelo_bloqueo' | 'aereo_empaquetado' | 'servicio' | 'programa' | 'paquete'
+          referencia_externa: string | null;
+          paquete_id: number | null;
+          programa_id: number | null;
+          hotel_temporada_id: number | null;
+          valor_componente: number;
+          condicion_pago_tipo: string; // 'sin_condicion' | 'normal' | 'pago_total' | 'anticipo_saldo'
+          condicion_pago_pct_aplicable: number | null;
+          condicion_pago_dias_saldo: number | null;
+          condicion_pago_fecha_limite: string | null;
+          monto_exigido: number;
+          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable_no_endosable' | 'no_reembolsable_no_endosable'
+          congelado: boolean;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: number;
+          cotizacion_id: number;
+          orden: number;
+          tipo_componente: string;
+          referencia_externa?: string | null;
+          paquete_id?: number | null;
+          programa_id?: number | null;
+          hotel_temporada_id?: number | null;
+          valor_componente: number;
+          condicion_pago_tipo: string;
+          condicion_pago_pct_aplicable?: number | null;
+          condicion_pago_dias_saldo?: number | null;
+          condicion_pago_fecha_limite?: string | null;
+          monto_exigido: number;
+          restriccion_comercial: string;
+          congelado?: boolean;
+          created_at?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["cotizacion_condiciones"]["Insert"]>;
+        Relationships: [];
+      };
+      cotizacion_pagos_previos: {
+        Row: {
+          id: number;
+          cotizacion_id: number;
+          tenant: string;
+          monto_cop: number;
+          monto_moneda: number;
+          moneda: string;
+          trm: number | null;
+          forma_pago: string;
+          referencia: string | null;
+          fecha_pago: string | null;
+          registrado_por_id: string;
+          registrado_por_email: string | null;
+          estado: string; // 'activo' | 'aplicado' | 'anulado'
+          abono_id: number | null;
+          idempotency_key: string | null;
+          huella_solicitud: string | null;
+          motivo_anulacion: string | null;
+          created_at: string | null;
+        };
+        Insert: {
+          id?: number;
+          cotizacion_id: number;
+          tenant?: string;
+          monto_cop: number;
+          monto_moneda: number;
+          moneda?: string;
+          trm?: number | null;
+          forma_pago: string;
+          referencia?: string | null;
+          fecha_pago?: string | null;
+          registrado_por_id: string;
+          registrado_por_email?: string | null;
+          estado?: string;
+          abono_id?: number | null;
+          idempotency_key?: string | null;
+          huella_solicitud?: string | null;
+          motivo_anulacion?: string | null;
+          created_at?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["cotizacion_pagos_previos"]["Insert"]>;
+        Relationships: [];
+      };
+      // Copia congelada de `cotizacion_condiciones` sobre el CONTRATO convertido
+      // (migración 164). La escribe el RPC `convertir_cotizacion_a_contrato` al
+      // convertir; guarda la moneda/TRM congeladas del snapshot.
+      contrato_condiciones: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          tipo_componente: string; // 'hotel' | 'vuelo_bloqueo' | 'aereo_empaquetado' | 'servicio' | 'programa' | 'paquete'
+          referencia_externa: string | null;
+          orden: number;
+          valor_componente: number;
+          condicion_pago_tipo: string; // 'sin_condicion' | 'normal' | 'pago_total' | 'anticipo_saldo'
+          condicion_pago_pct_aplicable: number | null;
+          condicion_pago_dias_saldo: number | null;
+          condicion_pago_fecha_limite: string | null;
+          monto_exigido: number;
+          restriccion_comercial: string; // 'normal' | 'promocional_no_reembolsable_no_endosable' | 'no_reembolsable_no_endosable'
+          moneda: string | null;
+          trm: number | null;
+          creado_en: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          tipo_componente: string;
+          referencia_externa?: string | null;
+          orden?: number;
+          valor_componente?: number;
+          condicion_pago_tipo?: string;
+          condicion_pago_pct_aplicable?: number | null;
+          condicion_pago_dias_saldo?: number | null;
+          condicion_pago_fecha_limite?: string | null;
+          monto_exigido?: number;
+          restriccion_comercial?: string;
+          moneda?: string | null;
+          trm?: number | null;
+          creado_en?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_condiciones"]["Insert"]>;
+        Relationships: [];
+      };
+      // Log de excepciones a restricciones de condiciones sobre un contrato
+      // convertido (migración 164): quién, qué tabla/acción y POR QUÉ (motivo
+      // obligatorio). Solo-append (candado en BD, Commit 6): ninguna fila se
+      // edita ni se borra. Solo la escribe el RPC `registrar_override_restriccion`
+      // (solo superadmin); `contrato_condicion_id`/`restriccion_afectada` dan
+      // el alcance explícito cuando el override es sobre una condición de pago
+      // puntual del contrato (el resto de columnas quedan para el uso general
+      // de la tabla: otras acciones restringidas fuera de este commit).
+      restriccion_overrides: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          tabla_afectada: string;
+          accion: string;
+          contrato_condicion_id: number | null;
+          restriccion_afectada: string | null;
+          motivo: string;
+          usuario_id: string;
+          usuario_email: string | null;
+          creado_en: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          tabla_afectada: string;
+          accion: string;
+          contrato_condicion_id?: number | null;
+          restriccion_afectada?: string | null;
+          motivo: string;
+          usuario_id: string;
+          usuario_email?: string | null;
+          creado_en?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["restriccion_overrides"]["Insert"]>;
         Relationships: [];
       };
       hotel_fotos: {
@@ -2904,6 +3115,61 @@ export type Database = {
       fn_fusionar_destino: {
         Args: { p_origen: number; p_destino: number };
         Returns: undefined;
+      };
+      // Migración 164. RPC de dinero de los pagos previos de una cotización.
+      // Solo otorgados a `service_role`; vuelven a validar rol/tenant/estado con
+      // FOR UPDATE. Devuelven 'OK' o 'OK|<id>' / un mensaje de error en texto.
+      registrar_pago_previo: {
+        Args: {
+          p_cotizacion_id: number;
+          p_valor: number;
+          p_moneda: string;
+          p_trm: number;
+          p_forma_pago: string;
+          p_referencia: string;
+          p_fecha_pago: string;
+          p_usuario_id: string;
+          p_idempotency_key: string;
+          p_snapshot?: Json;
+          p_exigido_total_moneda?: number;
+          p_pct_efectivo?: number;
+        };
+        Returns: string;
+      };
+      anular_pago_previo: {
+        Args: { p_pago_id: number; p_motivo?: string | null; p_usuario_id: string };
+        Returns: string;
+      };
+      transferir_pagos_previos_a_abonos: {
+        Args: { p_cotizacion_id: number; p_numero_contrato: string; p_usuario_id: string };
+        Returns: string;
+      };
+      // Migración 164 (Commit 5). Conversión atómica de UNA cotización manual a
+      // UN SOLO contrato en una única transacción: valida mínimo congelado →
+      // genera número (función real) → crea venta + hijas + condiciones → transfiere
+      // pagos previos a abonos → reclasifica 280510→280505 → crea CxP + asientos
+      // de costo/proveedor → enlaza cotizacion_id → cambia estado. Idempotente
+      // (replay devuelve la venta existente). INVOKER, solo `service_role`.
+      // Devuelve el `numero_contrato` (o "ERROR: ..." en texto).
+      convertir_cotizacion_a_contrato: {
+        Args: { p_cotizacion_id: number; p_usuario_id: string };
+        Returns: string;
+      };
+      // Migración 164 (Commit 6). Único RPC de escritura de `restriccion_overrides`
+      // para excepciones a restricciones de condiciones de pago del contrato.
+      // INVOKER, solo `service_role`; re-verifica rol=superadmin+activo, tenant
+      // del actor vs. tenant del contrato y que la condición pertenezca al
+      // contrato. Nunca toca `contrato_condiciones` (candado de inmutabilidad
+      // aparte, vía trigger). Devuelve el id del override creado.
+      registrar_override_restriccion: {
+        Args: {
+          p_numero_contrato: string;
+          p_contrato_condicion_id: number | null;
+          p_restriccion_afectada: string;
+          p_motivo: string;
+          p_usuario_id: string;
+        };
+        Returns: number;
       };
       siguiente_numero_contrato: {
         Args: Record<PropertyKey, never>;

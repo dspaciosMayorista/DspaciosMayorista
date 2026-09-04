@@ -6,14 +6,7 @@ import { revalidatePath } from "next/cache";
 import { marcar } from "@/lib/calc/paquetes";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
-import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
-import type { Tenant } from "@/lib/tenant";
-import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
-
-// Tipo de servicio de la cotización dinámica → tipo de proveedor de la CxP.
-const TIPO_PROVEEDOR: Record<string, string> = {
-  aereo: "aereo", hotel: "hotel", traslado: "receptivo", asistencia: "asistencia", otro: "otro",
-};
+import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 
 export type ServicioManual = {
   tipo: string;          // aereo / hotel / traslado / asistencia / otro
@@ -49,10 +42,6 @@ export type CotizacionManualInput = {
   servicios: ServicioManual[];
 };
 
-const TIPO_LABEL: Record<string, string> = {
-  aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
-};
-
 // Fecha YYYY-MM-DD → DD/MM/YYYY (para el nombre del ítem de paquete).
 function fmtDMY(iso?: string | null): string {
   const m = String(iso ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -82,17 +71,6 @@ function calcularRecobroNinos(input: {
   const recobroAliadoN = esB2B ? Math.min(Math.max(Number(input.recobroAliado) || 0, 0), recobroN) : 0;
   const recobroEmpresaN = recobroN - recobroAliadoN;
   return { nNinos, valorNino, totalNinos, recobroN, recobroAliadoN, recobroEmpresaN, esB2B };
-}
-
-// Recuadros "Hoteles y Servicios" del contrato, según los servicios elegidos:
-// hotel → Servicio/Plan, traslado → Tours y traslados, asistencia → Sí.
-function cajasDesdeServicios(servs: { tipo_servicio: string; nombre_servicio: string | null }[]) {
-  const nombres = (t: string) => servs.filter((s) => s.tipo_servicio === t).map((s) => (s.nombre_servicio || "").trim()).filter(Boolean);
-  return {
-    asistencia_medica: servs.some((s) => s.tipo_servicio === "asistencia"),
-    plan_nombre: nombres("hotel").join(", ") || null,
-    tours_traslados: nombres("traslado").join(", ") || null,
-  };
 }
 
 // Valor de venta de un servicio:
@@ -399,224 +377,74 @@ export async function actualizarRecobroNinosCotizacionManual(
   return { ok: true };
 }
 
-// ── Convertir cotización dinámica a contrato ───────────────────────────────
-// Genera numero_contrato, crea la venta y los contrato_items. La cotización
-// queda en estado 'convertida' enlazada al nuevo contrato.
+// La misma lista que `_autorizado_pago_previo` en la migración 164 (Commit 5):
+// la conversión a contrato es una operación de dinero — solo roles que firman
+// contrato completo.
+const ROLES_CONVERSION = new Set<string>(ROLES_CONTRATO_COMPLETO as string[]);
+
+/** Sesión de un rol autorizado y activo (o null si no autorizado). */
+async function sesionConversionAutorizada(): Promise<{ userId: string; rol: string } | null> {
+  const sb = await createClient();
+  const { data: { user } } = await sb.auth.getUser();
+  if (!user) return null;
+  const { data: perfil } = await sb
+    .from("usuarios")
+    .select("rol, activo")
+    .eq("id", user.id)
+    .maybeSingle();
+  // El RPC vuelve a validar rol + activo de forma autoritativa; este cheque solo
+  // da un mensaje amable antes de delegar (defensa en profundidad, no la frontera).
+  if (!perfil || !perfil.rol || perfil.activo === false) return null;
+  if (!ROLES_CONVERSION.has(perfil.rol)) return null;
+  return { userId: user.id, rol: perfil.rol };
+}
+
+/**
+ * Mensajes de error "seguros" para el navegador: nunca fugan detalles internos
+ * de PostgreSQL. Los `raise exception` de la migración 164 son frases en español
+ * limpias y pasan tal cual; solo se enmascara lo que parezca error crudo de la BD.
+ */
+function mensajeSeguro(msg: string): string {
+  const m = String(msg ?? "").trim();
+  if (!m) return "No se pudo convertir la cotización a contrato. Inténtalo de nuevo.";
+  if (/(duplicate key|violates (foreign key|not-null|check) constraint|constraint "|relation "|pg_|sqlstate|serialization failure|contradice la política|new row violates)/i.test(m)) {
+    return "No se pudo convertir por un conflicto de datos. Reintenta; si persiste, revisa que los pagos previos y las condiciones estén correctos.";
+  }
+  return m;
+}
+
+// ── Convertir cotización dinámica (manual) a contrato ────────────────────────
+// Commit 5: la conversión es ATÓMICA en la BD. El RPC `convertir_cotizacion_a_contrato`
+// (migración 164, INVOKER solo service_role) valida rol/activo/tenant/estado/
+// congelado/mínimo, genera el número con la función real del tenant, crea la venta
+// y sus hijas (items, pasajero, aliados_b2b), copia las condiciones congeladas a
+// `contrato_condiciones`, transfiere cada pago previo a abono, reclasifica
+// 280510→280505, crea la CxP de proveedor + sus asientos de costo/proveedor, enlaza
+// `ventas.cotizacion_id` y marca la cotización 'convertida' — o revierte TODO en un
+// solo rollback. Idempotente: un replay o una conversión concurrente devuelve la
+// misma venta sin duplicar nada ni consumir otro consecutivo de la numeración.
+// Esta Server Action solo autentica al actor (rol autorizado + activo) y delega;
+// no hay secuencias REST parciales ni builders duplicados (una sola ruta).
 export async function convertirCotizacionManualAContrato(
   cotizacionId: number
 ): Promise<{ ok: true; numero: string } | { ok: false; error: string }> {
-  const sb = await createClient();
-
-  const { data: cot } = await sb
-    .from("cotizaciones")
-    .select("*")
-    .eq("id", cotizacionId)
-    .eq("tipo", "manual")
-    .eq("estado", "abierta")
-    .maybeSingle();
-  if (!cot) return { ok: false, error: "Cotización no encontrada o ya fue procesada." };
-
-  // Sin tenant asignado no se convierte (ver migración 153 — nunca se asume
-  // un tenant por defecto), y el caller debe tener acceso a esa agencia.
-  if (!cot.tenant) return { ok: false, error: "Esta cotización no tiene agencia (tenant) asignada; no se puede convertir. Contacta a un administrador." };
-  const ctx = await contextoCotizacion();
-  if (!autorizaTenant(ctx, cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
-  const tenantCotizacion = cot.tenant as Tenant;
-
-  const { data: servicios } = await sb
-    .from("cotizacion_servicios")
-    .select("*")
-    .eq("cotizacion_id", cotizacionId)
-    .order("orden");
-
-  const payload = (cot.payload ?? {}) as CotizacionManualInput;
-  const detalle = (cot.detalle ?? {}) as Record<string, unknown>;
-
-  // Datos del titular OBLIGATORIOS para pasar de cotización a contrato.
-  const cl = payload.cliente ?? ({} as CotizacionManualInput["cliente"]);
-  const faltan: string[] = [];
-  if (!`${cl.nombres ?? ""}${cl.apellidos ?? ""}`.trim()) faltan.push("nombre");
-  if (!(cl.tipoDoc ?? "").trim()) faltan.push("tipo de documento");
-  if (!(cl.numeroDoc ?? "").trim()) faltan.push("número de documento");
-  if (!(cl.nacimiento ?? "").trim()) faltan.push("fecha de nacimiento");
-  if (faltan.length) return { ok: false, error: `Completa los datos del titular antes de generar el contrato: ${faltan.join(", ")}.` };
-
-  const ss = servicios ?? [];
-
-  // Número de contrato — ya completo (DTM-#### / MIN-00-####). Corrige el
-  // defecto de antes: este camino podía guardar el número crudo sin prefijo
-  // si tenantCotizacion era minorista (la función nueva siempre lo aplica).
-  const numRes = await siguienteNumeroContrato(tenantCotizacion);
-  if (!numRes.ok) return { ok: false, error: numRes.error };
-  const numero = numRes.numero;
-
-  // Costos netos por tipo, cada uno EN SU LUGAR (rentabilidad / flujo de caja):
-  // aéreo, hotel, receptivo (traslados), asistencia y otros.
-  const sumTipo = (pred: (t: string) => boolean) => ss.filter((s) => pred(s.tipo_servicio)).reduce((a, s) => a + (s.costo_neto ?? 0), 0);
-  const costoAereo      = sumTipo((t) => t === "aereo");
-  const costoHotel      = sumTipo((t) => t === "hotel");
-  const costoReceptivo  = sumTipo((t) => t === "traslado");
-  const costoAsistencia = sumTipo((t) => t === "asistencia");
-  const costoOtros      = sumTipo((t) => t === "otro");
-  const cajas = cajasDesdeServicios(ss);
-
-  const canal = payload.tipoAsesor === "interno" ? "B2C" : "B2B";
-  const ventaSnap = (detalle.venta ?? {}) as Record<string, unknown>;
-
-  // Niños y recobro (mismo cálculo que en la creación; el recobro va oculto
-  // dentro de la tarifa de adulto). El total ya está en cot.precio_venta.
-  const rec = calcularRecobroNinos({
-    pax: Number(cot.pax) || 1, ninos: payload.ninos, tarifaNino: payload.tarifaNino,
-    recobro: payload.recobro, recobroAliado: payload.recobroAliado, tipoAsesor: payload.tipoAsesor,
-  });
-
-  const { error: ve } = await sb.from("ventas").insert({
-    numero_contrato: numero,
-    // Conserva EXACTAMENTE el tenant de la cotización de origen (validado
-    // arriba: no nulo, y el caller tiene acceso a él).
-    tenant: tenantCotizacion,
-    cliente: cot.cliente ?? "",
-    cliente_documento: cot.cliente_documento ?? undefined,
-    cliente_telefono: payload.cliente?.telefono || undefined,
-    destino: cot.destino ?? undefined,
-    tipo_paquete: "dinamico",
-    fecha_salida: cot.fecha_salida ?? undefined,
-    fecha_regreso: cot.fecha_regreso ?? undefined,
-    pax: cot.pax ?? undefined,
-    precio_venta: cot.precio_venta ?? undefined,
-    moneda: cot.moneda ?? "COP",
-    asesor: cot.asesor ?? undefined,
-    canal,
-    tipo_cliente: payload.tipoAsesor ?? undefined,
-    hotel: cajas.plan_nombre ?? (typeof ventaSnap.hotel === "string" ? ventaSnap.hotel : undefined),
-    aerolinea: typeof ventaSnap.aerolinea === "string" ? ventaSnap.aerolinea : undefined,
-    // Recuadros "Hoteles y Servicios" del contrato según la selección.
-    plan_nombre: cajas.plan_nombre ?? undefined,
-    tours_traslados: cajas.tours_traslados ?? undefined,
-    asistencia_medica: cajas.asistencia_medica,
-    costo_aereo: costoAereo,
-    costo_hotel: costoHotel,
-    costo_receptivo: costoReceptivo,
-    costo_asistencia: costoAsistencia,
-    otros_costos: costoOtros,
-    // Recobro (oculto al cliente): total + reparto empresa/aliado.
-    recobro_total: rec.recobroN,
-    recobro_empresa: rec.recobroEmpresaN,
-    recobro_aliado: rec.recobroAliadoN,
-    comision_b2b: rec.recobroAliadoN > 0 ? rec.recobroAliadoN : undefined,
-    comision_estado: rec.recobroAliadoN > 0 ? "pendiente" : undefined,
-    estado: "pendiente",
-    observaciones: payload.observaciones || undefined,
-  });
-  if (ve) return { ok: false, error: ve.message };
-
-  // Ítem del paquete: adultos + niños. tarifa_adulto incluye el recobro (oculto);
-  // tarifa_nino = valor por niño. El doc multiplica cantidad × tarifa.
-  {
-    const pax = Math.max(Number(cot.pax) || 1, 1);
-    const total = Number(cot.precio_venta) || 0;
-    const adultSubtotal = total - rec.totalNinos;           // servicios + recobro
-    const { error: ie } = await sb.from("contrato_items").insert([{
-      numero_contrato: numero,
-      descripcion: nombrePaqueteItem(cot.destino, cot.fecha_salida, cot.fecha_regreso),
-      adultos: pax,
-      ninos: rec.nNinos,
-      tarifa_adulto: Math.round(adultSubtotal / pax),
-      tarifa_nino: rec.valorNino,
-      orden: 0,
-    }]);
-    if (ie) return { ok: false, error: ie.message };
+  if (!(Number(cotizacionId) > 0)) return { ok: false, error: "Cotización inválida." };
+  const sesion = await sesionConversionAutorizada();
+  if (!sesion) {
+    return { ok: false, error: "No autorizado: convertir a contrato requiere superadmin, administración, gerencia u operaciones." };
   }
 
-  // Comisión del aliado B2B por el recobro (entra al módulo de comisiones).
-  if (rec.esB2B && rec.recobroAliadoN > 0) {
-    const aliado = (payload.tipoAsesor === "agencia" ? payload.agenciaNombre : payload.freelanceNombre) || cot.asesor || "Aliado";
-    await sb.from("aliados_b2b").insert({
-      numero_contrato: numero,
-      tenant: tenantCotizacion,
-      aliado,
-      tipo_aliado: payload.tipoAsesor,
-      precio_venta: Number(cot.precio_venta) || 0,
-      base_comision: rec.recobroAliadoN,
-      recobro_total: rec.recobroN,
-      pct_recobro_aliado: rec.recobroN > 0 ? rec.recobroAliadoN / rec.recobroN : 0,
-      estado: "pendiente",
-    });
-  }
-
-  // Titular como pasajero del contrato (datos validados arriba).
-  await sb.from("contrato_pasajeros").insert({
-    numero_contrato: numero,
-    nombre: `${cl.nombres ?? ""} ${cl.apellidos ?? ""}`.trim(),
-    tipo_id: cl.tipoDoc || "CC",
-    identificacion: cl.numeroDoc || null,
-    fecha_nacimiento: cl.nacimiento || null,
-    es_infante: false,
-    orden: 0,
+  const admin = createAdminClient();
+  const rpc = await admin.rpc("convertir_cotizacion_a_contrato", {
+    p_cotizacion_id: cotizacionId,
+    p_usuario_id: sesion.userId,
   });
+  if (rpc.error) return { ok: false, error: mensajeSeguro(rpc.error.message) };
 
-  // Cuentas por pagar (CxP) de la cotización DINÁMICA. A diferencia del tarifario
-  // (proveedor negociado del catálogo), aquí el servicio se cotizó en una
-  // plataforma (JetSMART, agregadores, OTAs…). Por eso el proveedor de la CxP es,
-  // por defecto, el nombre de la PLATAFORMA (o el proveedor si el asesor lo
-  // escribió). Así la compra queda registrada y se ve en flujo de caja y costos.
-  if (ss.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    try {
-      const admin = createAdminClient();
-      const { data: provs } = await admin.from("proveedores").select("nombre, aplica_retencion, pct_retencion");
-      const retDe = (nombre: string | null) => {
-        const p = (provs ?? []).find((x) => x.nombre && nombre && x.nombre.trim().toLowerCase() === nombre.trim().toLowerCase());
-        return { aplica_retencion: p?.aplica_retencion ?? false, pct_retencion: Number(p?.pct_retencion) || 0 };
-      };
-      const hoyISO = new Date().toISOString().slice(0, 10);
-      const moneda = (cot.moneda as string | null) ?? "COP";
-      const vence = (cot.fecha_salida as string | null) ?? null;
-      const cxp = ss
-        .filter((s) => (Number(s.costo_neto) || 0) > 0)
-        .map((s) => {
-          // Proveedor por defecto = plataforma; si el asesor escribió un proveedor, ese manda.
-          const proveedor = (s.proveedor || "").trim() || (s.plataforma || "").trim() || null;
-          const r = retDe(proveedor);
-          const tipo = TIPO_PROVEEDOR[s.tipo_servicio] ?? "otro";
-          const etiqueta = TIPO_LABEL[s.tipo_servicio] ?? "Servicio";
-          return {
-            numero_contrato: numero,
-            tenant: tenantCotizacion,
-            proveedor,
-            tipo_proveedor: tipo,
-            servicio: `${etiqueta}${s.nombre_servicio ? ` ${s.nombre_servicio}` : ""}`.trim(),
-            valor_total: Math.max(0, Number(s.costo_neto) || 0),
-            moneda,
-            fecha_obligacion: hoyISO,
-            fecha_vencimiento: vence,
-            aplica_retencion: r.aplica_retencion,
-            pct_retencion: r.pct_retencion,
-            observaciones: "Generado automáticamente desde cotización dinámica",
-          };
-        });
-      if (cxp.length) {
-        const { data: creadas } = await admin.from("cuentas_por_pagar").insert(cxp).select("id, tipo_proveedor, proveedor, servicio, valor_total");
-        for (const c of creadas ?? []) {
-          await postearAsientoCxP({
-            cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-            servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO, tenant: tenantCotizacion,
-          });
-        }
-      }
-    } catch {
-      // No bloquear la conversión si falla la creación automática de CxP.
-    }
+  const numero = String(rpc.data ?? "").trim();
+  if (!numero || numero.toUpperCase().startsWith("ERROR")) {
+    return { ok: false, error: numero || "No se pudo convertir la cotización a contrato." };
   }
-
-  // Actualiza cotización: estado convertida + numero_contrato en el detalle
-  const detalleActualizado = {
-    ...detalle,
-    venta: { ...ventaSnap, numero_contrato: numero },
-  };
-  await sb
-    .from("cotizaciones")
-    .update({ estado: "convertida", numero_contrato: numero, detalle: detalleActualizado })
-    .eq("id", cotizacionId);
 
   revalidatePath("/dashboard/cotizaciones");
   revalidatePath(`/dashboard/cotizaciones/${cotizacionId}`);
