@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { quitarPasajero, truncarPasajeros, recalcularVinculosPorEdad } from "../lib/reservar/pasajerosFilas.ts";
+import { quitarPasajero, truncarPasajeros, recalcularVinculosPorEdad, normalizarResponsablesPorGrupo } from "../lib/reservar/pasajerosFilas.ts";
 
 type Fila = { nombre: string; fechaNacimiento: string; responsableIndex?: number | null };
 
@@ -163,5 +163,66 @@ describe("recalcularVinculosPorEdad — B8 #4 y #5 (transiciones de categoría/e
     const filas: Fila[] = [{ nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 0 }];
     const resultado = recalcularVinculosPorEdad(filas, HOY);
     assert.equal(resultado[0].responsableIndex, null);
+  });
+});
+
+describe("normalizarResponsablesPorGrupo — B10 (ronda 3): discrepancia temporal entre la UI (fecha conservadora) y la fecha REAL de cada grupo/contrato", () => {
+  // Cumple 2 años exactamente el 2026-04-01 (nace 2024-03-01, referencia
+  // 2026-01-01 -> 1 año, infante; referencia 2026-06-01 -> 2 años, CHD).
+  const F_CRUZA_INFANTE_A_NINO = "2024-03-01";
+  const GRUPO_TEMPRANO = "2026-01-01"; // aquí SIGUE siendo infante
+  const GRUPO_TARDIO = "2026-06-01"; // aquí YA es niño (CHD), no infante
+
+  test("#1 INF hoy (fecha conservadora) pero CHD a la fecha REAL del viaje: limpia el responsableIndex para ESE grupo", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Bebé que ya no es tan bebé", fechaNacimiento: F_CRUZA_INFANTE_A_NINO, responsableIndex: 0 },
+    ];
+    // La UI (referencia conservadora, GRUPO_TEMPRANO) lo marcó como infante
+    // y capturó el vínculo — correcto para GRUPO_TEMPRANO...
+    const paraGrupoTemprano = normalizarResponsablesPorGrupo(filas, GRUPO_TEMPRANO);
+    assert.equal(paraGrupoTemprano[1].responsableIndex, 0, "sigue siendo infante en el grupo temprano: el vínculo se conserva");
+    // ...pero para un grupo con fecha real MÁS TARDÍA, ya no es infante: el
+    // vínculo "sobrante" no debe llegar al RPC de ese grupo.
+    const paraGrupoTardio = normalizarResponsablesPorGrupo(filas, GRUPO_TARDIO);
+    assert.equal(paraGrupoTardio[1].responsableIndex, null, "ya no es infante en el grupo tardío: el responsable sobrante debe limpiarse");
+  });
+
+  test("#3 el mismo pasajero puede ser INF en un grupo y CHD en otro (carrito multi-destino, 'por_destino'): cada grupo se normaliza de forma independiente", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Pasajero frontera", fechaNacimiento: F_CRUZA_INFANTE_A_NINO, responsableIndex: 0 },
+    ];
+    const grupoA = normalizarResponsablesPorGrupo(filas, GRUPO_TEMPRANO); // destino con fecha temprana
+    const grupoB = normalizarResponsablesPorGrupo(filas, GRUPO_TARDIO); // destino con fecha tardía
+    assert.equal(grupoA[1].responsableIndex, 0, "grupo con fecha temprana: sigue infante, conserva el vínculo");
+    assert.equal(grupoB[1].responsableIndex, null, "grupo con fecha tardía: ya no es infante, el vínculo no debe llegar a este grupo");
+    // Ninguna llamada modifica la otra (arreglos independientes, sin estado compartido).
+    assert.equal(filas[1].responsableIndex, 0, "la fila original no se muta");
+  });
+
+  test("un responsable que SIGUE siendo válido para el grupo (pasajero sigue infante) nunca se limpia por error", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 0 },
+    ];
+    const resultado = normalizarResponsablesPorGrupo(filas, HOY);
+    assert.equal(resultado[1].responsableIndex, 0);
+    assert.equal(resultado[1], filas[1], "no debe recrear el objeto si el vínculo sigue siendo válido");
+  });
+
+  test("un pasajero sin responsable (null) permanece sin responsable — nunca se le inventa uno para ningún grupo", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante sin vincular todavía", fechaNacimiento: F_INFANTE, responsableIndex: null },
+    ];
+    const resultado = normalizarResponsablesPorGrupo(filas, GRUPO_TARDIO);
+    assert.equal(resultado[1].responsableIndex, null);
+  });
+
+  test("filas sin ningún responsableIndex no se tocan (misma referencia de objeto)", () => {
+    const filas: Fila[] = [{ nombre: "Adulto", fechaNacimiento: F_ADULTO }];
+    const resultado = normalizarResponsablesPorGrupo(filas, GRUPO_TARDIO);
+    assert.equal(resultado[0], filas[0]);
   });
 });

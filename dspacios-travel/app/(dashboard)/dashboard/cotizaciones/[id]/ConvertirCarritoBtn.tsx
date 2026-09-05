@@ -11,6 +11,7 @@ import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 
 type ClientePrefill = { nombres: string; apellidos: string; numeroDoc: string };
+type ItemCarritoUI = { hotelNombre: string; destino: string | null; pax: number; fechaIda: string | null };
 
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
@@ -18,9 +19,9 @@ const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 // pasajeros (igual que CotizacionAcciones) y, si el carrito trae 2+ destinos
 // distintos, deja elegir 1 contrato para todo o 1 contrato por destino.
 export function ConvertirCarritoBtn({
-  id, pax, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta,
+  id, pax, items, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta,
 }: {
-  id: number; pax: number; destinos: string[]; cliente: ClientePrefill; esSuperadmin: boolean;
+  id: number; pax: number; items: ItemCarritoUI[]; destinos: string[]; cliente: ClientePrefill; esSuperadmin: boolean;
   asesores: { nombre: string; email: string | null }[];
   miNombre: string; miRolVenta: boolean;
 }) {
@@ -45,33 +46,76 @@ export function ConvertirCarritoBtn({
     }))
   );
 
+  // Fecha de referencia para clasificar edades en esta pantalla — revisión
+  // de alto riesgo, ronda 3 (B10): antes se usaba `null` (hoy), pero el
+  // servidor SIEMPRE recalcula contra la fecha real de CADA grupo/contrato
+  // (`fechasIda[0]` de ESE grupo, que puede ser distinta entre destinos si
+  // se elige "1 contrato por destino"). Usar "hoy" podía: (a) mostrar como
+  // Infante a alguien que ya será Niño para la fecha real del viaje —
+  // capturar un vínculo que el servidor luego rechazaría con "solo un
+  // infante puede tener responsable" (por eso, además, el servidor
+  // normaliza esto de nuevo por grupo antes de generar — ver
+  // `normalizarResponsablesPorGrupo` en `convertirCotizacionCarrito`); o
+  // (b) descartar como candidato a un adulto que hoy es menor pero para el
+  // viaje ya será mayor de edad.
+  //
+  // Como TODOS los pasajeros de este arreglo se insertan en TODOS los
+  // contratos que se generen (el carrito no reparte personas por grupo —
+  // ver convertirCotizacionCarrito), la fecha más temprana de TODO el
+  // carrito es la única referencia SEGURA para esta pantalla única: es
+  // monótona — si alguien YA NO es infante contra la fecha más temprana,
+  // tampoco lo será contra ninguna fecha real posterior (la edad solo
+  // avanza); y si alguien YA es mayor de edad contra la fecha más temprana,
+  // seguirá siendo mayor de edad contra cualquier fecha real posterior. La
+  // dirección que queda conservadora (nunca insegura, solo más estricta de
+  // lo necesario) es: alguien que hoy es menor pero será mayor DESPUÉS de
+  // la fecha más temprana del carrito no aparece todavía como candidato a
+  // responsable en esta pantalla — se resuelve editando pasajeros del
+  // contrato ya generado, igual que cualquier otro caso límite de INF/CHD.
+  const fechaMasTemprana = items.map((i) => i.fechaIda).filter((f): f is string => !!f).sort()[0] ?? null;
+
   const setRow = (i: number, k: keyof PasajeroReserva, v: string) =>
     setPaxRows((rows) => {
       const next = rows.map((r, n) => (n === i ? { ...r, [k]: v } : r));
-      // Cambio de fecha de nacimiento (revisión de alto riesgo, ronda 3 —
-      // B8): recalcula si la fila sigue calificando como infante o como
-      // responsable de otra — sin fecha de salida conocida aquí (el carrito
-      // puede agrupar destinos/fechas distintas), se usa `null` (hoy) como
-      // referencia — el servidor SIEMPRE recalcula contra la fecha real del
-      // grupo (fechasIda[0], migración 167), esto es solo para no dejar en
-      // pantalla un vínculo que el servidor ya rechazaría.
-      return k === "fechaNacimiento" ? recalcularVinculosPorEdad(next, null) : next;
+      return k === "fechaNacimiento" ? recalcularVinculosPorEdad(next, fechaMasTemprana) : next;
     });
   const setResponsable = (i: number, responsableIndex: number | null) =>
     setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, responsableIndex } : r)));
+
+  // Asignación EXPLÍCITA de pasajeros por ítem — revisión de alto riesgo,
+  // ronda 3 (B11): el carrito (lib/cart/CartContext.tsx) agrega cada ítem de
+  // forma independiente, con su propio `pax` — dos ítems pueden representar
+  // grupos de viajeros distintos o parcialmente distintos, nunca se puede
+  // asumir que comparten el mismo prefijo de la lista de pasajeros. El
+  // default (los primeros `item.pax` pasajeros marcados) cubre el caso más
+  // común (todos viajan en todos los ítems) sin fricción, pero queda
+  // SIEMPRE visible y editable — nunca es un supuesto silencioso.
+  const [asignaciones, setAsignaciones] = useState<boolean[][]>(() =>
+    items.map((it) => Array.from({ length: total }, (_, i) => i < it.pax))
+  );
+  const toggleAsignacion = (itemIdx: number, paxIdx: number) =>
+    setAsignaciones((prev) => prev.map((fila, i) => (i === itemIdx ? fila.map((v, j) => (j === paxIdx ? !v : v)) : fila)));
 
   function generar() {
     const falta = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
     if (falta >= 0) { setErr(`Pasajero ${falta + 1}: nombres y apellidos son obligatorios.`); return; }
     const menorConCC = paxRows.findIndex((p) => {
-      const edad = calcularEdad(p.fechaNacimiento, null);
+      const edad = calcularEdad(p.fechaNacimiento, fechaMasTemprana);
       return edad != null && edad < 18 && p.tipoDoc === "CC";
     });
     if (menorConCC >= 0) { setErr(`Pasajero ${menorConCC + 1}: un menor de edad no puede tener CC; usa RC o TI.`); return; }
     if (!asesorSel && !esSuperadmin) { setErr("Elige el asesor interno que gestiona esta reserva."); return; }
+    for (let i = 0; i < items.length; i++) {
+      const marcados = asignaciones[i].filter(Boolean).length;
+      if (marcados !== items[i].pax) {
+        setErr(`${items[i].hotelNombre}: marca exactamente ${items[i].pax} pasajero(s) para este ítem (tienes ${marcados}).`);
+        return;
+      }
+    }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel });
+      const asignacionesRpc = asignaciones.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
+      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel, asignaciones: asignacionesRpc });
       if (r.ok) router.push(`/dashboard/contratos/${r.numeros[0]}`);
       else setErr(r.error);
     });
@@ -120,15 +164,13 @@ export function ConvertirCarritoBtn({
             <p className="text-xs text-gray-400">Ya tienes al titular; completa el resto. Sin pasajeros no pasa a contrato.</p>
           </div>
           {(() => {
-            // Edad REAL por fecha de nacimiento (hoy como referencia — el
-            // carrito puede agrupar destinos/fechas distintas, así que no
-            // hay una única fecha de salida conocida en pantalla; el
-            // servidor SIEMPRE recalcula contra la fecha real del grupo al
-            // generar). Ya no hay un checkbox "Infante" editable (revisión
-            // de alto riesgo, ronda 3 — B9): el servidor SIEMPRE lo ignoró y
+            // Edad REAL por fecha de nacimiento contra la fecha más temprana
+            // del carrito (ver comentario de `fechaMasTemprana` arriba). Ya
+            // no hay un checkbox "Infante" editable (revisión de alto
+            // riesgo, ronda 3 — B9): el servidor SIEMPRE lo ignoró y
             // recalculó por fecha — solo queda el criterio derivado, real.
-            const edadesReales = paxRows.map((p) => calcularEdad(p.fechaNacimiento, null));
-            const esInfanteRealRow = paxRows.map((p) => esInfantePorEdad(p.fechaNacimiento, null));
+            const edadesReales = paxRows.map((p) => calcularEdad(p.fechaNacimiento, fechaMasTemprana));
+            const esInfanteRealRow = paxRows.map((p) => esInfantePorEdad(p.fechaNacimiento, fechaMasTemprana));
             return paxRows.map((p, i) => (
               <div key={i} className="rounded-lg bg-gray-50 p-2">
                 <div className="flex flex-wrap items-end gap-2">
@@ -170,6 +212,39 @@ export function ConvertirCarritoBtn({
               </div>
             ));
           })()}
+
+          {items.length > 1 && (
+            <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="text-sm font-medium text-gray-700">¿Quién viaja en cada ítem?</p>
+              <p className="text-xs text-gray-500">
+                Este carrito tiene {items.length} ítems agregados por separado — marca exactamente quiénes viajan en cada uno (no se asume que son los mismos).
+              </p>
+              {items.map((it, itemIdx) => {
+                const marcados = asignaciones[itemIdx]?.filter(Boolean).length ?? 0;
+                return (
+                  <div key={itemIdx} className="rounded-lg bg-white p-2">
+                    <p className="text-xs font-semibold text-gray-700">
+                      {it.hotelNombre}{it.destino ? ` — ${it.destino}` : ""} · requiere {it.pax} pasajero(s)
+                      {marcados !== it.pax && <span className="ml-1 text-red-500">(marcados: {marcados})</span>}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {paxRows.map((p, paxIdx) => (
+                        <label key={paxIdx} className="flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600">
+                          <input
+                            type="checkbox"
+                            checked={asignaciones[itemIdx]?.[paxIdx] ?? false}
+                            onChange={() => toggleAsignacion(itemIdx, paxIdx)}
+                          />
+                          {`${p.nombres} ${p.apellidos}`.trim() || `Pasajero ${paxIdx + 1}`}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <Button onClick={generar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Generando…" : "Generar contrato(s)"}
           </Button>

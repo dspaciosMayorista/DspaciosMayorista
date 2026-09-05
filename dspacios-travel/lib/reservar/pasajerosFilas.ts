@@ -115,3 +115,42 @@ export function recalcularVinculosPorEdad<T extends FilaConFechaYResponsable>(
     return siguiente === actual ? f : { ...f, responsableIndex: siguiente };
   });
 }
+
+/**
+ * Normaliza `responsableIndex` contra la fecha REAL de UN grupo/contrato
+ * específico — revisión de alto riesgo, ronda 3 (B10): a diferencia de
+ * `recalcularVinculosPorEdad` (pensada para la UI, reactiva a cambios del
+ * formulario), esta función es la que corre en el SERVIDOR, justo antes de
+ * enviar el payload de cada grupo al RPC, en flujos donde la UI no puede
+ * conocer de antemano la fecha real de cada contrato (`convertirCotizacion
+ * Carrito`: un carrito puede agrupar destinos/fechas distintas, y la UI solo
+ * puede mostrar una tabla ÚNICA de pasajeros usando una fecha de referencia
+ * conservadora — ver `fechaMasTemprana` en ConvertirCarritoBtn.tsx).
+ *
+ * Como la edad de un pasajero solo AVANZA con una fecha de referencia mayor
+ * (nunca retrocede), un pasajero que la UI marcó como infante contra una
+ * fecha temprana puede haber dejado de serlo para la fecha real, MÁS
+ * TARDÍA, de un grupo en particular — nunca al revés (si la UI ya lo
+ * consideró NO infante contra la fecha más temprana posible, tampoco lo será
+ * contra ninguna fecha real posterior). Por eso esta función solo tiene una
+ * dirección posible: LIMPIAR un `responsableIndex` que dejó de tener sentido
+ * para este grupo — nunca necesita agregar uno nuevo (si el pasajero SIGUE
+ * siendo infante para este grupo y no trae vínculo, el RPC lo rechaza con su
+ * propio mensaje claro, igual que rechazaría la falta de vínculo en
+ * cualquier otro flujo de creación).
+ *
+ * Por el mismo motivo — la edad de un RESPONSABLE (validado como ≥18 contra
+ * la fecha más temprana posible) nunca puede retroceder por debajo de 18
+ * contra una fecha real posterior — un vínculo cuyo responsable ya calificó
+ * en la UI sigue calificando para cualquier grupo real; no hace falta
+ * volver a validar esa mitad aquí.
+ */
+export function normalizarResponsablesPorGrupo<T extends FilaConFechaYResponsable>(
+  filas: readonly T[],
+  fechaReferenciaGrupo: string | null
+): T[] {
+  return filas.map((f) => {
+    if (f.responsableIndex == null) return f;
+    return esInfantePorEdad(f.fechaNacimiento, fechaReferenciaGrupo) ? f : { ...f, responsableIndex: null };
+  });
+}

@@ -1280,6 +1280,7 @@ declare
   v_holders_min     integer;
   v_pos_elem        jsonb;
   v_pos             integer;
+  v_pos_vistos      bigint[];
   v_holders_reales  integer;
 begin
   if p_usuario_id is null then
@@ -1381,8 +1382,14 @@ begin
     -- Posiciones (1-based, misma convención que responsableOrden): cuenta
     -- cuántas de ellas NO son infante en el resultado YA escrito arriba —
     -- ese conteo, junto con holdersMin, define cuántas sillas de ESTE
-    -- bloqueo reservar (nunca menos que ninguno de los dos).
+    -- bloqueo reservar (nunca menos que ninguno de los dos). Se rechaza una
+    -- posición REPETIDA dentro de la MISMA reserva de bloqueo (contaría dos
+    -- sillas para la misma persona en el mismo ítem) — repetirse ENTRE
+    -- reservas de bloqueo DISTINTAS sigue siendo válido: el mismo grupo
+    -- puede volar más de un tramo/record (revisión de alto riesgo, ronda 3
+    -- — B11).
     v_holders_reales := 0;
+    v_pos_vistos := '{}';
     for v_pos_elem in select * from jsonb_array_elements(v_elem->'posiciones')
     loop
       if jsonb_typeof(v_pos_elem) <> 'number' then
@@ -1396,6 +1403,10 @@ begin
       if v_pos < 1 or v_pos > v_n_pasajeros then
         raise exception 'Una posición de pasajero está fuera de rango.';
       end if;
+      if v_pos = any(v_pos_vistos) then
+        raise exception 'La posición % aparece repetida dentro de la misma reserva de sillas.', v_pos;
+      end if;
+      v_pos_vistos := array_append(v_pos_vistos, v_pos);
       if not (v_filas[v_pos]).es_infante then
         v_holders_reales := v_holders_reales + 1;
       end if;
@@ -1441,7 +1452,9 @@ comment on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uu
   'bloqueo (records de vuelo distintos). p_reservas_sillas: '
   '[{bloqueoId, holdersMin?, posiciones}], posiciones 1-based dentro de '
   'p_pasajeros (misma convención que responsableOrden) — puede repetirse '
-  'entre entradas (un mismo grupo puede volar más de un tramo/record). '
+  'entre entradas (un mismo grupo puede volar más de un tramo/record), '
+  'pero se rechaza si se repite DENTRO de la misma entrada (contaría dos '
+  'sillas para la misma persona en el mismo bloqueo). '
   'Todo en UNA sola transacción: si cualquier bloqueo no tiene cupo, o el '
   'payload de pasajeros es inválido, o falta un responsable de infante, '
   'Postgres revierte TODO (pasajeros, vínculos y sillas de TODOS los '

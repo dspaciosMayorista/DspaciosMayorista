@@ -124,7 +124,7 @@ export default async function CotizacionDetallePage({
   // Datos propios del carrito: pax máximo (para dimensionar la captura de
   // pasajeros) y destinos distintos (para ofrecer "1 contrato por destino").
   const payloadCarrito = (c.payload ?? {}) as {
-    items?: { destino: string | null; pax: number }[];
+    items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string }[];
     tours?: { destino: string | null; pax: number }[];
     cliente?: { nombres?: string; apellidos?: string; numeroDoc?: string };
   };
@@ -320,6 +320,7 @@ export default async function CotizacionDetallePage({
               <ConvertirCarritoBtn
                 id={c.id}
                 pax={paxCarrito}
+                items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null }))}
                 destinos={destinosCarrito}
                 cliente={clienteCarritoPre}
                 esSuperadmin={esSuperadmin}

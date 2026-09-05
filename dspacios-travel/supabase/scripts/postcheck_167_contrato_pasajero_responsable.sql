@@ -664,6 +664,31 @@ begin
     end;
     insert into pg_temp.postcheck_167_reporte
       values ('multi', 'bloqueoId repetido en el mismo payload: rechazado', case when v_ok then 'OK' else 'FALLA' end, '');
+
+    -- 28) B11 (ronda 3): posición REPETIDA dentro de la MISMA reserva de
+    --     bloqueo: rechazada (contaría dos sillas para la misma persona en
+    --     el mismo ítem). Repetirse ENTRE reservas de bloqueo DISTINTAS
+    --     sigue siendo válido — ya probado en la prueba 24 (mismas
+    --     posiciones en v_bloqueo_id y v_bloqueo2_id).
+    update public.sillas set estado = 'disponible', numero_contrato = null where bloqueo_id in (v_bloqueo_id, v_bloqueo2_id);
+    begin
+      perform 1 from public.crear_pasajeros_contrato_multi(
+        v_num6,
+        jsonb_build_array(
+          jsonb_build_object('id', v_id_multi_adt, 'nombre','Adulto Multi','tipoId','CC','identificacion','1000167801','fechaNacimiento',(current_date - interval '30 years')::date::text),
+          jsonb_build_object('id', v_id_multi_inf, 'nombre','Infante Multi','tipoId','RC','identificacion','1000167802','fechaNacimiento',(current_date - interval '1 years')::date::text,'responsableOrden',1)
+        ),
+        jsonb_build_array(
+          jsonb_build_object('bloqueoId', v_bloqueo_id, 'posiciones', jsonb_build_array(1, 1))
+        ),
+        v_uid
+      );
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    insert into pg_temp.postcheck_167_reporte
+      values ('multi', '#B11 posición repetida DENTRO de la misma reserva de bloqueo: rechazada', case when v_ok then 'OK' else 'FALLA' end, '');
   end;
 
   raise notice 'postcheck 167: fixtures creados bajo %/%/%/%/% (se revierten con ROLLBACK)', v_num, v_num2, v_num3, v_num4, v_num5;

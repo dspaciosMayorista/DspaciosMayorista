@@ -37,6 +37,7 @@ import {
 import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
 import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
+import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
 import {
   componenteHotelReal,
   componentePaqueteReal,
@@ -1011,9 +1012,30 @@ export type TourCarritoPayload = {
   pax: number; precio: number; moneda: string;
 };
 
+// Un ítem del carrito con su asignación EXPLÍCITA de pasajeros — revisión de
+// alto riesgo, ronda 3 (B11). Antes, cada ítem usaba SIEMPRE las posiciones
+// 1..item.pax de `opts.pasajeros` (un prefijo) — una suposición nunca
+// demostrada: el carrito (`lib/cart/CartContext.tsx`) es una lista de ítems
+// AGREGADOS DE FORMA INDEPENDIENTE (cada uno con su propio `pax`, capturado
+// en el momento de agregarlo desde Vista Booking/Receptivos, sin ningún
+// vínculo entre sí) — dos ítems pueden representar grupos de viajeros
+// DISTINTOS o parcialmente distintos, no necesariamente el mismo prefijo de
+// la lista total. Ahora el llamador (la UI, que sabe qué persona marcó para
+// cada ítem) declara explícitamente qué POSICIONES (1-based, dentro de
+// `opts.pasajeros` — misma convención que `responsableOrden`) corresponden a
+// cada ítem — nunca se adivina por posición/conteo.
+type ItemCarritoConAsignacion = ItemCarritoPayload & { __posiciones: number[] };
+
 export async function convertirCotizacionCarrito(
   id: number,
-  opts: { agrupar: "todo" | "por_destino"; pasajeros: PasajeroReserva[]; asesorInterno?: string }
+  opts: {
+    agrupar: "todo" | "por_destino";
+    pasajeros: PasajeroReserva[];
+    asesorInterno?: string;
+    // Una entrada por ítem, en el MISMO orden que `cotizaciones.payload.items`
+    // (nunca por conteo/prefijo — ver `ItemCarritoConAsignacion` arriba).
+    asignaciones: number[][];
+  }
 ): Promise<{ ok: true; numeros: string[] } | { ok: false; error: string }> {
   const sb = await createClient();
   const { data: cot } = await sb
@@ -1037,18 +1059,50 @@ export async function convertirCotizacionCarrito(
     items?: ItemCarritoPayload[]; tours?: TourCarritoPayload[];
     cliente?: { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
   };
-  const items = payload.items ?? [];
+  const itemsCrudos = payload.items ?? [];
   const tours = payload.tours ?? [];
   const cliente = payload.cliente ?? { nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" };
-  if (!items.length && !tours.length) return { ok: false, error: "La cotización no tiene ítems." };
+  if (!itemsCrudos.length && !tours.length) return { ok: false, error: "La cotización no tiene ítems." };
   if (!opts.pasajeros.length) return { ok: false, error: "Captura los pasajeros antes de generar el contrato." };
 
-  type Grupo = { destino: string | null; items: ItemCarritoPayload[]; tours: TourCarritoPayload[] };
+  // ── Validar `opts.asignaciones` (B11): una entrada por ítem, posiciones
+  // 1-based dentro de `opts.pasajeros`, sin duplicados DENTRO del mismo
+  // ítem (duplicados ENTRE ítems distintos sí son válidos — el mismo grupo
+  // de personas puede viajar en más de un ítem/bloqueo), y el conteo debe
+  // coincidir con `it.pax` (la composición de habitaciones/tarifa de ese
+  // ítem se calculó para ese número exacto de personas). ──────────────────
+  if (!Array.isArray(opts.asignaciones) || opts.asignaciones.length !== itemsCrudos.length) {
+    return { ok: false, error: "La asignación de pasajeros no coincide con los ítems del carrito. Vuelve a cargar la página e inténtalo de nuevo." };
+  }
+  const items: ItemCarritoConAsignacion[] = [];
+  for (let i = 0; i < itemsCrudos.length; i++) {
+    const it = itemsCrudos[i];
+    const posiciones = opts.asignaciones[i];
+    if (!Array.isArray(posiciones) || posiciones.length === 0) {
+      return { ok: false, error: `${it.hotelNombre}: selecciona qué pasajeros viajan en este ítem.` };
+    }
+    if (it.pax > 0 && posiciones.length !== it.pax) {
+      return { ok: false, error: `${it.hotelNombre}: la cantidad de pasajeros asignados (${posiciones.length}) no coincide con la cantidad esperada (${it.pax}).` };
+    }
+    const vistos = new Set<number>();
+    for (const pos of posiciones) {
+      if (!Number.isInteger(pos) || pos < 1 || pos > opts.pasajeros.length) {
+        return { ok: false, error: `${it.hotelNombre}: una posición de pasajero asignada es inválida.` };
+      }
+      if (vistos.has(pos)) {
+        return { ok: false, error: `${it.hotelNombre}: un mismo pasajero está asignado dos veces al mismo ítem.` };
+      }
+      vistos.add(pos);
+    }
+    items.push({ ...it, __posiciones: posiciones });
+  }
+
+  type Grupo = { destino: string | null; items: ItemCarritoConAsignacion[]; tours: TourCarritoPayload[] };
   let grupos: Grupo[];
   if (opts.agrupar === "todo" || items.length <= 1) {
     grupos = [{ destino: null, items, tours }];
   } else {
-    const porDestino = new Map<string, ItemCarritoPayload[]>();
+    const porDestino = new Map<string, ItemCarritoConAsignacion[]>();
     for (const it of items) {
       const k = it.destino ?? "—";
       porDestino.set(k, [...(porDestino.get(k) ?? []), it]);
@@ -1063,9 +1117,9 @@ export async function convertirCotizacionCarrito(
   const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
 
   // ── Paso 1: validar TODO (precio autoritativo + cupos) antes de insertar ──
-  const gruposValidados: { grupo: Grupo; validados: { item: ItemCarritoPayload; comp: ComputoReserva }[] }[] = [];
+  const gruposValidados: { grupo: Grupo; validados: { item: ItemCarritoConAsignacion; comp: ComputoReserva }[] }[] = [];
   for (const grupo of grupos) {
-    const validados: { item: ItemCarritoPayload; comp: ComputoReserva }[] = [];
+    const validados: { item: ItemCarritoConAsignacion; comp: ComputoReserva }[] = [];
     for (const it of grupo.items) {
       const reserva: ReservaInput = {
         paqueteId: it.paqueteId, bloqueoId: it.bloqueoId, modulo: it.modulo, hotelId: it.hotelId,
@@ -1075,11 +1129,12 @@ export async function convertirCotizacionCarrito(
         ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes || 0,
         cliente: { nombres: cliente.nombres, apellidos: cliente.apellidos, tipoDoc: "CC", numeroDoc: cliente.numeroDoc, telefono: cliente.telefono, email: cliente.email },
         tipoAsesor: "interno", asesorInterno: opts.asesorInterno || "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
-        // Cada ítem valida SOLO con "sus" pasajeros (los primeros `it.pax` de la
-        // lista total) — pasar la lista completa del carrito rompería la
-        // validación de edades/acomodación de un ítem con menos pax que el
-        // máximo del carrito (ej. un hotel de 2 pax junto a otro de 4).
-        aliadoId: null, plazo: "", pasajeros: opts.pasajeros.slice(0, it.pax || opts.pasajeros.length), servicios: [],
+        // Cada ítem valida EXACTAMENTE con SUS pasajeros asignados (B11,
+        // ronda 3) — nunca un prefijo adivinado por conteo: el carrito
+        // (lib/cart/CartContext.tsx) agrega ítems de forma independiente,
+        // cada uno con su propio `pax`, sin ninguna garantía de que
+        // compartan el mismo subconjunto de `opts.pasajeros`.
+        aliadoId: null, plazo: "", pasajeros: it.__posiciones.map((pos) => opts.pasajeros[pos - 1]), servicios: [],
       };
       const comp = await computarReserva(sb, reserva);
       if (!comp.ok) return { ok: false, error: `${it.hotelNombre}: ${comp.error}` };
@@ -1127,6 +1182,10 @@ export async function convertirCotizacionCarrito(
     const destinos = [...new Set(validados.map((v) => v.comp.meta.destino_nombre ?? v.item.destino).filter((d): d is string => !!d))];
     const fechasIda = validados.map((v) => v.comp.meta.fecha_ida).filter((f): f is string => !!f).sort();
     const fechasReg = validados.map((v) => v.comp.meta.fecha_regreso).filter((f): f is string => !!f).sort();
+    // Fecha de referencia REAL de este grupo — la misma que se guarda como
+    // `ventas.fecha_salida` abajo, y contra la que el RPC recalcula
+    // es_infante server-side (B10, ronda 3).
+    const fechaRefGrupo = fechasIda[0] ?? null;
     const precioTotal = validados.reduce((s, v) => s + v.comp.precioVenta, 0) + grupo.tours.reduce((s, t) => s + t.precio, 0);
     const paxTotal = validados.reduce((s, v) => s + (v.comp.totalPax || v.comp.paxConSilla), 0) || (grupo.tours[0]?.pax ?? 1);
     const monedaGrupo = validados[0]?.comp.monedaReserva ?? "COP";
@@ -1180,18 +1239,35 @@ export async function convertirCotizacionCarrito(
     // la 167) — si cualquier bloqueo no tiene cupo o falta un vínculo,
     // Postgres revierte TODO el grupo (pasajeros, vínculos y sillas de
     // TODOS sus bloqueos juntos), nunca un estado parcial entre bloqueos.
+    // B11 (ronda 3): las posiciones de cada bloqueo son las asignadas
+    // EXPLÍCITAMENTE al ítem (`__posiciones`), nunca un prefijo derivado de
+    // `it.pax` — ver el comentario de `ItemCarritoConAsignacion` arriba.
     const reservasSillas = validados
       .filter((v): v is typeof v & { item: { bloqueoId: number } } => v.item.modulo === "bloqueo" && v.item.bloqueoId != null)
       .map((v) => ({
         bloqueoId: v.item.bloqueoId,
         holdersMin: v.comp.paxConSilla,
-        posiciones: Array.from(
-          { length: Math.min(v.item.pax || opts.pasajeros.length, opts.pasajeros.length) },
-          (_, i) => i + 1
-        ),
+        posiciones: v.item.__posiciones,
       }));
+    // B10 (ronda 3): la fecha de referencia que usó la UI para decidir
+    // quién es infante y capturar su responsable es SIEMPRE conservadora
+    // (la más temprana de TODO el carrito — la UI no puede conocer de
+    // antemano en qué grupo/contrato terminará cada pasajero). La fecha
+    // REAL de ESTE grupo (`fechaRefGrupo`) puede ser posterior — y la edad
+    // de un pasajero solo AVANZA con una fecha posterior, nunca retrocede
+    // — así que un `responsableIndex` que la UI capturó para alguien que
+    // YA DEJÓ de ser infante para la fecha real de este grupo en particular
+    // quedaría "sobrante": el propio trigger de la migración 167 lo
+    // rechazaría ("solo un infante puede tener responsable"), tumbando la
+    // creación de ESTE grupo con un error que no describe el problema real.
+    // `normalizarResponsablesPorGrupo` limpia ese sobrante ANTES de armar el
+    // payload de este grupo — nunca hace falta AGREGAR uno nuevo aquí (si
+    // alguien SIGUE siendo infante para este grupo y no trae vínculo, el
+    // propio RPC lo rechaza con su mensaje real, igual que en cualquier
+    // otro flujo de creación).
+    const pasajerosNormalizadosGrupo = normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefGrupo);
     const payloadPasajerosMulti = payloadGuardarPasajeros(
-      opts.pasajeros.map((p) => ({
+      pasajerosNormalizadosGrupo.map((p) => ({
         nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
         tipoId: oNull(p.tipoDoc) ?? "CC",
         identificacion: oNull(p.numeroDoc) ?? "",
@@ -1306,9 +1382,12 @@ export async function convertirCotizacionCarrito(
           // best-effort que los otros 3 flujos de creación, paso "9-bis"):
           // un fallo aquí nunca re-lanza la condición de carrera del
           // inventario, que ya se resolvió de forma atómica arriba.
-          const holders = opts.pasajeros
-            .slice(0, it.pax || opts.pasajeros.length)
-            .filter((_, idx) => pasajeroConsumeSilla(esInfanteRealGrupo[idx]));
+          // B11 (ronda 3): usa las posiciones EXPLÍCITAS asignadas a este
+          // ítem (nunca un prefijo por conteo) para el snapshot cosmético —
+          // mismo criterio que la reserva atómica de sillas de arriba.
+          const holders = it.__posiciones
+            .filter((pos) => pasajeroConsumeSilla(esInfanteRealGrupo[pos - 1]))
+            .map((pos) => opts.pasajeros[pos - 1]);
           try {
             const { data: asignadas } = await admin.from("sillas").select("id")
               .eq("numero_contrato", numero).eq("bloqueo_id", it.bloqueoId)

@@ -164,6 +164,70 @@ test("reservar/actions.ts: convertirCotizacionCarrito crea pasajeros+responsable
   assert.ok(idxGuardia > 0 && idxLoopGrupos > idxGuardia, "la guardia de usuario real debe ir ANTES del loop de creación de contratos");
 });
 
+test("reservar/actions.ts: convertirCotizacionCarrito normaliza responsableIndex por GRUPO antes de armar el payload (B10, ronda 3)", () => {
+  // La UI (ConvertirCarritoBtn.tsx) usa una fecha de referencia conservadora
+  // (la más temprana de TODO el carrito) para decidir quién es infante y
+  // capturar su responsable — la fecha REAL de un grupo/contrato específico
+  // puede ser posterior, y la edad de un pasajero solo AVANZA con una fecha
+  // posterior. Un `responsableIndex` capturado para alguien que YA DEJÓ de
+  // ser infante para la fecha real de ESTE grupo quedaría "sobrante" — el
+  // propio trigger de la 167 lo rechazaría con un mensaje que no describe
+  // el problema real. `normalizarResponsablesPorGrupo` debe limpiarlo ANTES
+  // de construir el payload de cada grupo.
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  assert.match(
+    src,
+    /import\s*\{[^}]*normalizarResponsablesPorGrupo[^}]*\}\s*from\s*["']@\/lib\/reservar\/pasajerosFilas["']/,
+    "no importa normalizarResponsablesPorGrupo desde el módulo puro compartido"
+  );
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  const idxFechaRef = bloque.indexOf("fechaRefGrupo");
+  const idxNormaliza = bloque.indexOf("normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefGrupo)");
+  const idxPayload = bloque.indexOf("payloadGuardarPasajeros(");
+  const idxRpcMulti = bloque.indexOf('admin.rpc("crear_pasajeros_contrato_multi"');
+  assert.ok(idxFechaRef > 0, "no calcula fechaRefGrupo (la fecha real de este grupo)");
+  assert.ok(idxNormaliza > 0, "no llama normalizarResponsablesPorGrupo con la fecha real de este grupo");
+  assert.ok(idxNormaliza < idxPayload && idxPayload < idxRpcMulti, "la normalización debe ocurrir ANTES de armar el payload y ANTES de llamar al RPC");
+});
+
+test("reservar/actions.ts: convertirCotizacionCarrito valida `opts.asignaciones` explícita por ítem — nunca adivina por posición/conteo (B11, ronda 3)", () => {
+  // El carrito (lib/cart/CartContext.tsx) agrega cada ítem de forma
+  // INDEPENDIENTE, cada uno con su propio `pax` — dos ítems pueden
+  // representar grupos de viajeros distintos. Antes, cada ítem usaba
+  // SIEMPRE el prefijo 1..item.pax de `opts.pasajeros` — una suposición
+  // nunca demostrada. Ahora el llamador declara explícitamente qué
+  // posiciones corresponden a cada ítem.
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  assert.doesNotMatch(
+    src,
+    /pasajeros:\s*opts\.pasajeros\.slice\(0,\s*it\.pax/,
+    "sigue usando un prefijo adivinado por conteo (opts.pasajeros.slice(0, it.pax)) en vez de la asignación explícita"
+  );
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  assert.match(bloque, /asignaciones:\s*number\[\]\[\]/, "opts ya no declara `asignaciones` (una entrada por ítem)");
+  assert.match(bloque, /opts\.asignaciones\.length\s*!==\s*itemsCrudos\.length/, "no valida que asignaciones tenga una entrada por ítem");
+  assert.match(bloque, /__posiciones/, "no propaga las posiciones asignadas por ítem (__posiciones)");
+  assert.match(
+    bloque,
+    /pasajeros:\s*it\.__posiciones\.map\(\(pos\)\s*=>\s*opts\.pasajeros\[pos\s*-\s*1\]\)/,
+    "computarReserva por ítem debe usar EXACTAMENTE las posiciones asignadas, no un prefijo"
+  );
+  // Sin duplicados DENTRO del mismo ítem (asignar la misma persona dos veces
+  // a un solo ítem contaría dos sillas para ella).
+  assert.match(bloque, /un mismo pasajero está asignado dos veces al mismo ítem/, "no rechaza posiciones repetidas dentro del mismo ítem");
+});
+
+test("migración 167: crear_pasajeros_contrato_multi rechaza una posición repetida DENTRO de la misma reserva de bloqueo (B11, ronda 3)", () => {
+  const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  assert.match(
+    src,
+    /if v_pos = any\(v_pos_vistos\) then\s*\n\s*raise exception 'La posición % aparece repetida dentro de la misma reserva de sillas\.'/,
+    "no rechaza una posición repetida dentro de la misma entrada de p_reservas_sillas"
+  );
+});
+
 test("reservar/actions.ts no vuelve a confiar en el esInfante posicional del cliente para holders", () => {
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
   // El patrón viejo (input.pasajeros.filter((p) => !p.esInfante)) filtraba
