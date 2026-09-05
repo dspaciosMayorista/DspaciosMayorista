@@ -143,69 +143,102 @@ export type ReservaSillasPorBloqueo = { bloqueoId: number; holdersMin: number; p
 
 /**
  * Consolida las reservas de sillas de un grupo por `bloqueoId` — B14 (ronda
- * 5). `CartContext.add` permite agregar libremente varios ítems con el
- * mismo `bloqueoId` (ej. dos paquetes de hotel distintos que comparten el
- * mismo vuelo negociado); antes de esta función cada ítem generaba su
- * PROPIA entrada en `p_reservas_sillas`, y el RPC (migración 167) rechaza
- * un `bloqueoId` repetido dentro del mismo payload — la conversión fallaba
- * siempre que el carrito tuviera 2+ ítems sobre el mismo bloqueo.
+ * 5), con el piso corregido por B15 (ronda 6). `CartContext.add` permite
+ * agregar libremente varios ítems con el mismo `bloqueoId` (ej. dos paquetes
+ * de hotel distintos que comparten el mismo vuelo negociado); antes de esta
+ * función cada ítem generaba su PROPIA entrada en `p_reservas_sillas`, y el
+ * RPC (migración 167) rechaza un `bloqueoId` repetido dentro del mismo
+ * payload — la conversión fallaba siempre que el carrito tuviera 2+ ítems
+ * sobre el mismo bloqueo.
  *
- * - `posiciones` se une (nunca se duplica: dos ítems con el mismo viajero
- *   en el mismo bloqueo reservan UNA sola silla para esa persona, nunca dos).
- * - `holdersMin` se SUMA entre ítems que comparten bloqueo: cada ítem
- *   declaró su propio piso de sillas a partir de SU composición de
- *   habitaciones (una reserva de hotel independiente), y esa necesidad no
- *   desaparece porque otro ítem comparta el mismo vuelo — sumar nunca
- *   sub-reserva (el peor caso, solapamiento total, sobre-reserva el piso
- *   declarado, pero el conteo REAL de personas — `posiciones`, sin
- *   duplicados — sigue siendo la fuente de verdad que aplica el RPC vía
- *   `greatest(holdersMin, holders_reales)`).
+ * El piso de sillas (`holdersMin`) se define como el número de PERSONAS
+ * ÚNICAS QUE OCUPAN SILLA en el bloqueo — la unión de las posiciones con
+ * silla de todos los ítems que lo comparten (`posicionesConSilla`), nunca la
+ * SUMA de los pisos por ítem (B15): sumar duplicaba a cualquier viajero que
+ * apareciera en 2+ ítems del mismo bloqueo (dos ítems [1,2]+[1,2] daban
+ * `holdersMin=4` para 2 personas, y como el RPC aplica `greatest(holdersMin,
+ * holders_reales)` reservaba 4 sillas). El MÁXIMO tampoco sirve: sub-reserva
+ * grupos disjuntos ([1,2]+[3,4] daría 2 en vez de 4). La unión da el piso
+ * correcto en los cuatro casos:
+ *   1. mismos pasajeros [1,2]+[1,2] → {1,2} → 2 sillas;
+ *   2. solapamiento     [1,2]+[2,3] → {1,2,3} → 3 sillas;
+ *   3. disjuntos        [1,2]+[3,4] → {1,2,3,4} → 4 sillas;
+ *   4. si un INF está en las posiciones, NO va en `posicionesConSilla`, así
+ *      que no cuenta para el piso (el infante no ocupa silla).
+ * Como el caller clasifica `posicionesConSilla` con la MISMA fecha real del
+ * grupo (`ventas.fecha_salida`) que usa el RPC para recalcular es_infante,
+ * este piso coincide EXACTAMENTE con `holders_reales` del RPC — `greatest`
+ * nunca lo infla.
  *
- * Cada entrada de `itemsBloqueo` ya debe traer sus posiciones en el sistema
- * de referencia que se vaya a enviar al RPC (local o global, según llame el
- * caller) — esta función es agnóstica a eso.
+ * `posiciones` es la unión de TODAS las posiciones (con o sin silla) — el RPC
+ * las necesita para recalcular él mismo `holders_reales` (autoridad final).
+ * Cada entrada ya debe traer sus posiciones en el sistema de referencia que
+ * se vaya a enviar al RPC (local o global, según llame el caller) — esta
+ * función es agnóstica a eso.
  */
 export function consolidarReservasSillasPorBloqueo(
-  itemsBloqueo: readonly { bloqueoId: number; holdersMin: number; posiciones: readonly number[] }[]
+  itemsBloqueo: readonly { bloqueoId: number; posiciones: readonly number[]; posicionesConSilla: readonly number[] }[]
 ): ReservaSillasPorBloqueo[] {
-  const porBloqueo = new Map<number, { holdersMin: number; posiciones: Set<number> }>();
+  const porBloqueo = new Map<number, { posiciones: Set<number>; conSilla: Set<number> }>();
   for (const it of itemsBloqueo) {
-    const entrada = porBloqueo.get(it.bloqueoId) ?? { holdersMin: 0, posiciones: new Set<number>() };
-    entrada.holdersMin += it.holdersMin;
+    const entrada = porBloqueo.get(it.bloqueoId) ?? { posiciones: new Set<number>(), conSilla: new Set<number>() };
     for (const pos of it.posiciones) entrada.posiciones.add(pos);
+    for (const pos of it.posicionesConSilla) entrada.conSilla.add(pos);
     porBloqueo.set(it.bloqueoId, entrada);
   }
   return [...porBloqueo.entries()].map(([bloqueoId, v]) => ({
     bloqueoId,
-    holdersMin: v.holdersMin,
+    holdersMin: v.conSilla.size,
     posiciones: [...v.posiciones].sort((a, b) => a - b),
   }));
 }
 
 /**
  * Fecha de referencia para clasificar la edad de UN pasajero en la UI —
- * revisión de B10 bajo el modelo de B13 (ronda 5): antes se usaba la fecha
- * más temprana de TODO el carrito, una aproximación conservadora necesaria
- * porque todos los pasajeros se insertaban en TODOS los contratos. Con B13
- * cada contrato solo recibe la unión de SUS ítems — así que la referencia
- * correcta para un pasajero es la fecha más temprana ENTRE LOS ÍTEMS A LOS
- * QUE ESTÁ REALMENTE ASIGNADO (nunca un ítem donde no viaja, que podría
- * bloquear injustamente una clasificación válida). Sin ninguna asignación
- * todavía (edición a mitad de camino), cae al `fallback` (fecha más
- * temprana global) — solo para no romper la UI antes de que la asignación
- * esté completa; la validación real exige que todo pasajero esté asignado.
+ * revisión de B16 (ronda 6), que corrige la de B13 (ronda 5). El servidor
+ * (`convertirCotizacionCarrito`) escribe `ventas.fecha_salida = fechasIda[0]`
+ * = la fecha más temprana de TODAS las unidades (hoteles/bloqueos/tours) del
+ * GRUPO/contrato, y el RPC recalcula es_infante de TODOS los pasajeros contra
+ * ESA única fecha contractual. La ronda 5 clasificaba en la UI contra la
+ * fecha más temprana de los ÍTEMS ASIGNADOS al pasajero — que puede ser
+ * POSTERIOR a la del contrato cuando el pasajero no viaja en la unidad más
+ * temprana del grupo (ej. contrato con ítem A en enero e ítem B en diciembre,
+ * pasajero solo en B: la UI usaba diciembre, el servidor enero) → la UI y
+ * PostgreSQL llegaban a clasificaciones DISTINTAS.
+ *
+ * Autoridad única: la fecha del CONTRATO. Cada pasajero se evalúa contra la
+ * fecha más temprana de los grupos/contratos en los que realmente queda
+ * (`gruposIndicesUnidades` según el modo de agrupación vigente). Un pasajero
+ * en varios contratos usa la MÁS TEMPRANA de ellos — la más conservadora
+ * (edad mínima): si es infante contra esa, lo será en el contrato más
+ * temprano y la UI captura su responsable; para los contratos posteriores
+ * donde ya no lo sea, la normalización por grupo del servidor limpia el
+ * vínculo sobrante. Nunca usa una fecha de ítem individual, porque el RPC no
+ * modela edad por servicio: una sola `fecha_salida` por contrato.
+ *
+ * Sin ninguna asignación todavía (edición a mitad de camino) cae al
+ * `fallback` (fecha más temprana global del carrito) — solo para no romper la
+ * UI antes de que la asignación esté completa; la validación real exige que
+ * todo pasajero quede asignado a alguna unidad.
  */
-export function fechaReferenciaPorPasajero(
+export function fechaContratoDePasajero(
   posicion: number,
-  asignacionesPorItem: readonly (readonly number[])[],
-  fechasItems: readonly (string | null)[],
+  gruposIndicesUnidades: readonly (readonly number[])[],
+  asignacionesPorUnidad: readonly (readonly number[])[],
+  fechasUnidades: readonly (string | null)[],
   fallback: string | null
 ): string | null {
-  const fechas = asignacionesPorItem
-    .map((posiciones, idx) => (posiciones.includes(posicion) ? fechasItems[idx] : null))
-    .filter((f): f is string => !!f)
-    .sort();
-  return fechas[0] ?? fallback;
+  const fechasContrato: string[] = [];
+  for (const grupo of gruposIndicesUnidades) {
+    const enGrupo = grupo.some((u) => (asignacionesPorUnidad[u] ?? []).includes(posicion));
+    if (!enGrupo) continue;
+    // Fecha del contrato = la más temprana de TODAS las unidades del grupo
+    // (no solo las del pasajero) — idéntico a `fechasIda[0]` del servidor.
+    const fechasGrupo = grupo.map((u) => fechasUnidades[u]).filter((f): f is string => !!f).sort();
+    if (fechasGrupo.length) fechasContrato.push(fechasGrupo[0]);
+  }
+  fechasContrato.sort();
+  return fechasContrato[0] ?? fallback;
 }
 
 /**

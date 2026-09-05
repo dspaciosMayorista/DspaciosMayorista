@@ -152,8 +152,13 @@ test("reservar/actions.ts: convertirCotizacionCarrito crea pasajeros+responsable
   // El payload de reservas de sillas debe declarar cada bloqueoId EXPLÍCITO
   // (nunca descubrirlo) — mismo criterio que el resto de la migración 167.
   assert.match(bloque, /bloqueoId:\s*v\.item\.bloqueoId/, "no arma bloqueoId explícito por ítem de bloqueo");
-  assert.match(bloque, /holdersMin:\s*v\.comp\.paxConSilla/, "no arma el piso de sillas (holdersMin) desde la composición ya validada");
   assert.match(bloque, /posiciones:/, "no arma las posiciones (1-based) de cada reserva de sillas");
+  // B15 (ronda 6): el piso de sillas ya NO es la suma de `paxConSilla` por
+  // ítem — se deriva de `posicionesConSilla` (personas únicas con silla) y la
+  // consolidación toma la unión. `paxConSilla` como piso escalar por ítem no
+  // debe volver a colarse.
+  assert.match(bloque, /posicionesConSilla:/, "no arma `posicionesConSilla` (personas que ocupan silla) para el piso consolidado de B15");
+  assert.doesNotMatch(bloque, /holdersMin:\s*v\.comp\.paxConSilla/, "volvió a usar la suma de paxConSilla como piso — sobre-reserva cuando 2+ ítems comparten bloqueo (B15)");
 
   // Sin usuario real y activo, la creación debe fallar ANTES de crear
   // ningún contrato — mismo candado que crear_pasajeros_contrato de un
@@ -217,6 +222,43 @@ test("reservar/actions.ts: convertirCotizacionCarrito valida `opts.asignaciones`
   // Sin duplicados DENTRO del mismo ítem (asignar la misma persona dos veces
   // a un solo ítem contaría dos sillas para ella).
   assert.match(bloque, /un mismo pasajero está asignado dos veces al mismo ítem/, "no rechaza posiciones repetidas dentro del mismo ítem");
+});
+
+test("reservar/actions.ts: convertirCotizacionCarrito clasifica la edad contra la fecha del CONTRATO (fechasIda incluye tours), no por ítem (B16, ronda 6)", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  // `fechasIda` (que define `fechaRefGrupo` = ventas.fecha_salida, la única
+  // referencia del RPC) debe unir las fechas de hoteles Y tours del grupo —
+  // antes solo miraba `validados` (hoteles). La UI usa `fechaContratoDePasajero`
+  // para clasificar contra esa MISMA fecha de contrato.
+  assert.match(bloque, /grupo\.tours\.map\(\(t\)\s*=>\s*t\.fechaIda\)/, "fechasIda del grupo no incluye las fechas de los tours (B16)");
+  const ui = leer("app/(dashboard)/dashboard/cotizaciones/[id]/ConvertirCarritoBtn.tsx");
+  assert.match(
+    ui,
+    /import\s*\{[^}]*fechaContratoDePasajero[^}]*\}\s*from\s*["']@\/lib\/reservar\/carritoAsignaciones["']/,
+    "la UI no usa fechaContratoDePasajero (sigue clasificando por ítem, divergiendo del servidor)"
+  );
+  assert.doesNotMatch(ui, /fechaReferenciaPorPasajero/, "la UI volvió a la fecha por-ítem (B13) que diverge de ventas.fecha_salida (B16)");
+});
+
+test("reservar/actions.ts: convertirCotizacionCarrito exige asignación EXPLÍCITA de tours (B17, ronda 6)", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  // `opts` declara `asignacionesTours` (una entrada por tour) y se valida
+  // (una entrada por tour, conteo = tour.pax) — los tours ya no heredan en
+  // silencio el grupo del hotel ni todo el universo.
+  assert.match(bloque, /asignacionesTours:\s*number\[\]\[\]/, "opts no declara `asignacionesTours` (una entrada por tour)");
+  assert.match(bloque, /opts\.asignacionesTours\.length\s*!==\s*tours\.length/, "no valida que asignacionesTours tenga una entrada por tour");
+  // El universo del grupo y `posicionesSinAsignar` cubren ítems Y tours: un
+  // pasajero que solo viaja en un tour ni queda sin asignar ni fuera del
+  // contrato.
+  assert.match(bloque, /posicionesGrupoUnidades/, "el universo del grupo no une ítems y tours (un pasajero de solo-tour quedaría fuera de ventas.pax/contrato_pasajeros)");
+  assert.match(bloque, /ninguna unidad del carrito/, "no valida que ningún pasajero quede sin viajar en ninguna unidad (ítem o tour)");
+  // La UI envía `asignacionesTours` al servidor.
+  const ui = leer("app/(dashboard)/dashboard/cotizaciones/[id]/ConvertirCarritoBtn.tsx");
+  assert.match(ui, /asignacionesTours:\s*asignacionesPorTourPos/, "la UI no envía la asignación explícita de tours al servidor");
 });
 
 test("migración 167: crear_pasajeros_contrato_multi rechaza una posición repetida DENTRO de la misma reserva de bloqueo (B11, ronda 3)", () => {

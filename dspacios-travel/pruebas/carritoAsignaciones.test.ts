@@ -13,7 +13,7 @@ import {
   posicionesSinAsignar,
   reindexarGrupoLocal,
   consolidarReservasSillasPorBloqueo,
-  fechaReferenciaPorPasajero,
+  fechaContratoDePasajero,
   comparteGrupo,
   agregarPosicionAUniverso,
   quitarPosicionDeUniverso,
@@ -134,41 +134,64 @@ describe("reindexarGrupoLocal — B13 #4 #5 (reindexado local y responsable fuer
   });
 });
 
-describe("consolidarReservasSillasPorBloqueo — B14 #7 #8 #9 (mismo bloqueo en varios ítems)", () => {
-  test("#7 dos ítems con el MISMO bloqueo y los MISMOS pasajeros: una sola reserva, sin duplicar sillas por persona", () => {
+describe("consolidarReservasSillasPorBloqueo — B14 + B15 (piso = personas únicas con silla, nunca la suma)", () => {
+  test("B15 #1 dos ítems con el MISMO bloqueo y los MISMOS pasajeros con silla: piso = 2 (no 4, que era la suma)", () => {
     const r = consolidarReservasSillasPorBloqueo([
-      { bloqueoId: 10, holdersMin: 2, posiciones: [1, 2] },
-      { bloqueoId: 10, holdersMin: 2, posiciones: [1, 2] },
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
     ]);
-    assert.equal(r.length, 1, "debe consolidarse en UNA sola entrada, no dos (el RPC rechaza bloqueoId repetido)");
+    assert.equal(r.length, 1, "debe consolidarse en UNA sola entrada (el RPC rechaza bloqueoId repetido)");
     assert.equal(r[0].bloqueoId, 10);
     assert.deepEqual(r[0].posiciones, [1, 2], "nunca duplica una posición aunque aparezca en los dos ítems");
-    assert.equal(r[0].holdersMin, 4, "el piso se SUMA entre ítems que comparten bloqueo (cada ítem declaró su propia necesidad)");
+    assert.equal(r[0].holdersMin, 2, "piso = |unión de posicionesConSilla| = 2 personas, NUNCA la suma (4) que sobre-reservaba");
   });
 
-  test("#8 mismo bloqueo con subconjuntos PARCIALMENTE distintos: unión correcta de posiciones", () => {
+  test("B15 #2 solapamiento parcial [1,2]+[2,3] con silla: piso = 3 (la posición compartida no se duplica)", () => {
     const r = consolidarReservasSillasPorBloqueo([
-      { bloqueoId: 10, holdersMin: 2, posiciones: [1, 2] },
-      { bloqueoId: 10, holdersMin: 1, posiciones: [2, 3] },
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
+      { bloqueoId: 10, posiciones: [2, 3], posicionesConSilla: [2, 3] },
     ]);
     assert.equal(r.length, 1);
     assert.deepEqual(r[0].posiciones, [1, 2, 3], "la posición 2 (compartida) no debe duplicarse en la unión");
-    assert.equal(r[0].holdersMin, 3);
+    assert.equal(r[0].holdersMin, 3, "|{1,2,3}| = 3");
   });
 
-  test("#9 dos bloqueos DISTINTOS con pasajeros compartidos: cada uno conserva su propia entrada (nunca se fusionan entre sí)", () => {
+  test("B15 #3 grupos DISJUNTOS [1,2]+[3,4] con silla: piso = 4 (el máximo sub-reservaría a 2)", () => {
     const r = consolidarReservasSillasPorBloqueo([
-      { bloqueoId: 10, holdersMin: 2, posiciones: [1, 2] },
-      { bloqueoId: 20, holdersMin: 2, posiciones: [1, 2] }, // misma gente, bloqueo DISTINTO — válido
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
+      { bloqueoId: 10, posiciones: [3, 4], posicionesConSilla: [3, 4] },
+    ]);
+    assert.equal(r.length, 1);
+    assert.deepEqual(r[0].posiciones, [1, 2, 3, 4]);
+    assert.equal(r[0].holdersMin, 4, "|{1,2,3,4}| = 4 — ni el máximo (2) ni algún otro atajo que sub-reserve");
+  });
+
+  test("B15 #4 un INF no va en posicionesConSilla: no cuenta para el piso, pero sí aparece en posiciones", () => {
+    // posición 2 = infante (no ocupa silla) en los dos ítems del mismo bloqueo.
+    const r = consolidarReservasSillasPorBloqueo([
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1] },
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1] },
+    ]);
+    assert.equal(r.length, 1);
+    assert.deepEqual(r[0].posiciones, [1, 2], "el infante sigue en posiciones (el RPC recalcula él mismo su es_infante)");
+    assert.equal(r[0].holdersMin, 1, "solo el adulto ocupa silla → piso = 1");
+  });
+
+  test("#9 dos bloqueos DISTINTOS con pasajeros compartidos: cada uno conserva su propia entrada (nunca se fusionan)", () => {
+    const r = consolidarReservasSillasPorBloqueo([
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
+      { bloqueoId: 20, posiciones: [1, 2], posicionesConSilla: [1, 2] }, // misma gente, bloqueo DISTINTO — válido
     ]);
     assert.equal(r.length, 2, "bloqueos distintos nunca deben consolidarse entre sí");
     const porId = new Map(r.map((x) => [x.bloqueoId, x]));
     assert.deepEqual(porId.get(10)?.posiciones, [1, 2]);
     assert.deepEqual(porId.get(20)?.posiciones, [1, 2]);
+    assert.equal(porId.get(10)?.holdersMin, 2);
+    assert.equal(porId.get(20)?.holdersMin, 2);
   });
 
   test("una sola entrada por bloqueo se conserva tal cual (caso normal, sin repetición)", () => {
-    const r = consolidarReservasSillasPorBloqueo([{ bloqueoId: 10, holdersMin: 2, posiciones: [1, 2] }]);
+    const r = consolidarReservasSillasPorBloqueo([{ bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] }]);
     assert.deepEqual(r, [{ bloqueoId: 10, holdersMin: 2, posiciones: [1, 2] }]);
   });
 
@@ -177,29 +200,40 @@ describe("consolidarReservasSillasPorBloqueo — B14 #7 #8 #9 (mismo bloqueo en 
   });
 });
 
-describe("fechaReferenciaPorPasajero — B13 revisita B10, #11 (caso temporal)", () => {
-  test("#11 usa SOLO la fecha de los ítems a los que el pasajero está asignado, nunca la de un ítem ajeno", () => {
-    const asignaciones = [
-      [1], // ítem 0 (fecha temprana) — solo el pasajero 1
-      [2], // ítem 1 (fecha tardía) — solo el pasajero 2
-    ];
-    const fechas = ["2026-01-01", "2026-12-01"];
-    // El pasajero 2 SOLO está en el ítem con fecha tardía — no debe
-    // clasificarse contra la fecha temprana del ítem 0, donde no viaja.
-    assert.equal(fechaReferenciaPorPasajero(2, asignaciones, fechas, null), "2026-12-01");
-    assert.equal(fechaReferenciaPorPasajero(1, asignaciones, fechas, null), "2026-01-01");
+describe("fechaContratoDePasajero — B16 (fecha del CONTRATO, no del ítem del pasajero)", () => {
+  // Grupo (modo "todo") con dos unidades: A en enero, B en diciembre.
+  const grupoTodo = [[0, 1]];
+  const asigTodo = [[1], [2]]; // pax1 -> unidad A ; pax2 -> SOLO unidad B
+  const fechas = ["2027-01-01", "2027-12-01"];
+
+  test("un pasajero SOLO en la unidad tardía usa la fecha del CONTRATO (la más temprana del grupo), no la de su unidad", () => {
+    // El servidor pone ventas.fecha_salida = min(enero, diciembre) = enero para
+    // TODO el contrato, y clasifica a pax2 contra enero. La UI debe coincidir.
+    assert.equal(fechaContratoDePasajero(2, grupoTodo, asigTodo, fechas, null), "2027-01-01");
+    assert.equal(fechaContratoDePasajero(1, grupoTodo, asigTodo, fechas, null), "2027-01-01");
   });
 
-  test("un pasajero asignado a varios ítems usa la fecha MÁS TEMPRANA entre esos ítems (nunca de otros)", () => {
-    const asignaciones = [[1], [1], [2]];
-    const fechas = ["2026-06-01", "2026-01-01", "2026-01-01"];
-    // El pasajero 1 está en los ítems 0 y 1 (no en el 2) -> min(jun, ene) = ene.
-    assert.equal(fechaReferenciaPorPasajero(1, asignaciones, fechas, null), "2026-01-01");
+  test("por_destino: cada pasajero usa la fecha de SU contrato (destino), la más temprana de las unidades de ese destino", () => {
+    // Unidad 0 y 1 = destino A (enero, marzo) ; unidad 2 = destino B (diciembre).
+    const grupos = [[0, 1], [2]];
+    const asig = [[1], [2], [3]]; // pax1->A(ene), pax2->A(mar), pax3->B(dic)
+    const fechasPd = ["2027-01-01", "2027-03-01", "2027-12-01"];
+    // pax2 solo viaja en la unidad de marzo, pero su contrato (destino A) sale
+    // en enero → se clasifica contra enero, igual que el servidor.
+    assert.equal(fechaContratoDePasajero(2, grupos, asig, fechasPd, null), "2027-01-01");
+    assert.equal(fechaContratoDePasajero(1, grupos, asig, fechasPd, null), "2027-01-01");
+    assert.equal(fechaContratoDePasajero(3, grupos, asig, fechasPd, null), "2027-12-01");
   });
 
-  test("sin ninguna asignación todavía, cae al fallback (no rompe la UI a mitad de edición)", () => {
-    const asignaciones = [[2], [3]];
-    assert.equal(fechaReferenciaPorPasajero(1, asignaciones, ["2026-01-01", "2026-02-01"], "2025-01-01"), "2025-01-01");
+  test("un pasajero en DOS contratos usa la fecha MÁS TEMPRANA de ellos (conservadora: captura responsable si algún contrato lo exige)", () => {
+    const grupos = [[0], [1]]; // dos destinos/contratos
+    const asig = [[1], [1]]; // pax1 viaja en AMBOS contratos
+    const fechasDos = ["2027-12-01", "2027-01-01"];
+    assert.equal(fechaContratoDePasajero(1, grupos, asig, fechasDos, null), "2027-01-01");
+  });
+
+  test("sin ninguna asignación todavía cae al fallback (no rompe la UI a mitad de edición)", () => {
+    assert.equal(fechaContratoDePasajero(1, [[0, 1]], [[2], [3]], ["2026-01-01", "2026-02-01"], "2025-01-01"), "2025-01-01");
   });
 });
 

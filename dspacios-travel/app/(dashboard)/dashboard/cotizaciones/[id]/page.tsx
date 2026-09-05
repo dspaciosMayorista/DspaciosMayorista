@@ -125,12 +125,15 @@ export default async function CotizacionDetallePage({
   // pasajeros) y destinos distintos (para ofrecer "1 contrato por destino").
   const payloadCarrito = (c.payload ?? {}) as {
     items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string }[];
-    tours?: { destino: string | null; pax: number }[];
+    tours?: { nombre?: string; destino: string | null; pax: number; fechaIda?: string | null }[];
     cliente?: { nombres?: string; apellidos?: string; numeroDoc?: string };
   };
   const itemsCarrito = payloadCarrito.items ?? [];
   const toursCarrito = payloadCarrito.tours ?? [];
-  const destinosCarrito = [...new Set(itemsCarrito.map((i) => i.destino).filter((d): d is string => !!d))];
+  const destinosCarrito = [...new Set([
+    ...itemsCarrito.map((i) => i.destino),
+    ...toursCarrito.map((t) => t.destino),
+  ].filter((d): d is string => !!d))];
   const paxCarrito = Math.max(1, ...itemsCarrito.map((i) => i.pax || 0), ...toursCarrito.map((t) => t.pax || 0));
   const clienteCarritoPre = {
     nombres: payloadCarrito.cliente?.nombres ?? "",
@@ -321,6 +324,7 @@ export default async function CotizacionDetallePage({
                 id={c.id}
                 pax={paxCarrito}
                 items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null }))}
+                tours={toursCarrito.map((t) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null }))}
                 destinos={destinosCarrito}
                 cliente={clienteCarritoPre}
                 esSuperadmin={esSuperadmin}

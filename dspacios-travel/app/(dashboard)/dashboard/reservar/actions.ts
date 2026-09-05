@@ -1026,6 +1026,12 @@ export type TourCarritoPayload = {
 // `opts.pasajeros` — misma convención que `responsableOrden`) corresponden a
 // cada ítem — nunca se adivina por posición/conteo.
 type ItemCarritoConAsignacion = ItemCarritoPayload & { __posiciones: number[] };
+// Un tour del carrito con su asignación EXPLÍCITA de pasajeros — B17 (ronda
+// 6). Igual que los hoteles/bloqueos, los tours se agregan de forma
+// INDEPENDIENTE (cada uno con su propio `pax`), así que quién viaja en cada
+// tour NO puede deducirse del grupo del hotel ni de todo el universo: se
+// declara explícitamente, con la misma convención de posiciones 1-based.
+type TourCarritoConAsignacion = TourCarritoPayload & { __posiciones: number[] };
 
 export async function convertirCotizacionCarrito(
   id: number,
@@ -1036,6 +1042,10 @@ export async function convertirCotizacionCarrito(
     // Una entrada por ítem, en el MISMO orden que `cotizaciones.payload.items`
     // (nunca por conteo/prefijo — ver `ItemCarritoConAsignacion` arriba).
     asignaciones: number[][];
+    // Una entrada por tour, en el MISMO orden que `cotizaciones.payload.tours`
+    // — B17 (ronda 6): los tours también participan en la asignación
+    // explícita, nunca heredan en silencio los pasajeros del hotel ni todos.
+    asignacionesTours: number[][];
   }
 ): Promise<{ ok: true; numeros: string[] } | { ok: false; error: string }> {
   const sb = await createClient();
@@ -1098,35 +1108,68 @@ export async function convertirCotizacionCarrito(
     items.push({ ...it, __posiciones: posiciones });
   }
 
-  // Ningún pasajero del universo declarado puede quedar sin viajar en NINGÚN
-  // ítem (B12, ronda 5) — si alguien no participa en nada, o el universo se
-  // dimensionó mal (persona de más), o simplemente se olvidó marcarlo en
-  // algún ítem; ninguno de los dos casos es correcto guardarlo en silencio.
-  // Excepción real (no un descuido): un carrito de SOLO tours no tiene
-  // ítems contra los cuales chequear — el concepto "asignado a un ítem" no
-  // aplica cuando no hay ítems en absoluto.
-  if (items.length) {
-    const sinAsignar = posicionesSinAsignar(items.map((it) => it.__posiciones), opts.pasajeros.length);
-    if (sinAsignar.length) {
-      return { ok: false, error: `El pasajero ${sinAsignar[0]} no está asignado a ningún ítem del carrito. Marca en qué ítem(s) viaja o quítalo del listado.` };
+  // ── Validar `opts.asignacionesTours` (B17, ronda 6): misma forma que los
+  // ítems — una entrada por tour, posiciones 1-based, sin duplicados dentro
+  // del mismo tour, conteo = `tour.pax`. Los tours NO reservan silla, así
+  // que no participan en la consolidación de sillas (B14/B15) — pero SÍ en
+  // el universo del contrato y en `ventas.pax` (un pasajero puede viajar solo
+  // en un tour). ─────────────────────────────────────────────────────────
+  if (!Array.isArray(opts.asignacionesTours) || opts.asignacionesTours.length !== tours.length) {
+    return { ok: false, error: "La asignación de pasajeros de los tours no coincide con el carrito. Vuelve a cargar la página e inténtalo de nuevo." };
+  }
+  const toursAsign: TourCarritoConAsignacion[] = [];
+  for (let i = 0; i < tours.length; i++) {
+    const t = tours[i];
+    const posiciones = opts.asignacionesTours[i];
+    if (!Array.isArray(posiciones) || posiciones.length === 0) {
+      return { ok: false, error: `${t.nombre}: selecciona qué pasajeros viajan en este tour.` };
     }
+    if (t.pax > 0 && posiciones.length !== t.pax) {
+      return { ok: false, error: `${t.nombre}: la cantidad de pasajeros asignados (${posiciones.length}) no coincide con la cantidad esperada (${t.pax}).` };
+    }
+    const vistos = new Set<number>();
+    for (const pos of posiciones) {
+      if (!Number.isInteger(pos) || pos < 1 || pos > opts.pasajeros.length) {
+        return { ok: false, error: `${t.nombre}: una posición de pasajero asignada es inválida.` };
+      }
+      if (vistos.has(pos)) {
+        return { ok: false, error: `${t.nombre}: un mismo pasajero está asignado dos veces al mismo tour.` };
+      }
+      vistos.add(pos);
+    }
+    toursAsign.push({ ...t, __posiciones: posiciones });
   }
 
-  type Grupo = { destino: string | null; items: ItemCarritoConAsignacion[]; tours: TourCarritoPayload[] };
+  // Ningún pasajero del universo declarado puede quedar sin viajar en NINGUNA
+  // unidad —ítem (hotel/bloqueo) o tour— del carrito (B12 + B17, ronda 6): si
+  // alguien no participa en nada, o el universo se dimensionó mal (persona de
+  // más), o se olvidó marcarlo; ninguno es correcto guardarlo en silencio.
+  // Ya no hay excepción por "solo tours": los tours ahora también llevan
+  // asignación explícita, así que SIEMPRE hay unidades contra las cuales
+  // validar (el carrito exige ≥1 ítem o tour, chequeado arriba).
+  const posicionesTodasUnidades = [...items.map((it) => it.__posiciones), ...toursAsign.map((t) => t.__posiciones)];
+  const sinAsignar = posicionesSinAsignar(posicionesTodasUnidades, opts.pasajeros.length);
+  if (sinAsignar.length) {
+    return { ok: false, error: `El pasajero ${sinAsignar[0]} no está asignado a ninguna unidad del carrito (ni hotel ni tour). Márcalo en al menos una o quítalo del listado.` };
+  }
+
+  type Grupo = { destino: string | null; items: ItemCarritoConAsignacion[]; tours: TourCarritoConAsignacion[] };
   let grupos: Grupo[];
-  if (opts.agrupar === "todo" || items.length <= 1) {
-    grupos = [{ destino: null, items, tours }];
+  if (opts.agrupar === "todo") {
+    grupos = [{ destino: null, items, tours: toursAsign }];
   } else {
-    const porDestino = new Map<string, ItemCarritoConAsignacion[]>();
-    for (const it of items) {
-      const k = it.destino ?? "—";
-      porDestino.set(k, [...(porDestino.get(k) ?? []), it]);
-    }
-    grupos = [...porDestino.entries()].map(([destino, its]) => ({ destino: destino === "—" ? null : destino, items: its, tours: [] as TourCarritoPayload[] }));
-    for (const t of tours) {
-      const g = grupos.find((g) => g.destino && t.destino && g.destino === t.destino) ?? grupos[0];
-      g.tours.push(t);
-    }
+    // por_destino: agrupa por destino TANTO hoteles como tours — un destino
+    // que solo tenga tours forma su propio contrato (B17), nunca se cuelga
+    // en silencio del grupo del primer hotel.
+    const porDestino = new Map<string, { items: ItemCarritoConAsignacion[]; tours: TourCarritoConAsignacion[] }>();
+    const grupoDe = (k: string) => {
+      const g = porDestino.get(k) ?? { items: [], tours: [] };
+      porDestino.set(k, g);
+      return g;
+    };
+    for (const it of items) grupoDe(it.destino ?? "—").items.push(it);
+    for (const t of toursAsign) grupoDe(t.destino ?? "—").tours.push(t);
+    grupos = [...porDestino.entries()].map(([destino, g]) => ({ destino: destino === "—" ? null : destino, items: g.items, tours: g.tours }));
   }
 
   const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
@@ -1194,28 +1237,46 @@ export async function convertirCotizacionCarrito(
     const numero = numRes.numero;
 
     const clienteNombre = `${cliente.nombres} ${cliente.apellidos}`.trim();
-    const destinos = [...new Set(validados.map((v) => v.comp.meta.destino_nombre ?? v.item.destino).filter((d): d is string => !!d))];
-    const fechasIda = validados.map((v) => v.comp.meta.fecha_ida).filter((f): f is string => !!f).sort();
-    const fechasReg = validados.map((v) => v.comp.meta.fecha_regreso).filter((f): f is string => !!f).sort();
+    const destinos = [...new Set([
+      ...validados.map((v) => v.comp.meta.destino_nombre ?? v.item.destino),
+      ...grupo.tours.map((t) => t.destino),
+    ].filter((d): d is string => !!d))];
+    // Fechas del CONTRATO: la más temprana/tardía de TODAS las unidades del
+    // grupo —hoteles/bloqueos Y tours— (B16, ronda 6). Antes solo miraba los
+    // hoteles, así que un grupo con un tour más temprano que el hotel escribía
+    // una `ventas.fecha_salida` que no reflejaba la salida real, y un grupo de
+    // SOLO tours quedaba sin fecha. `fecha_salida` es la referencia única
+    // contra la que el RPC recalcula es_infante de TODOS los pasajeros — la UI
+    // clasifica contra esta MISMA fecha (ver `fechaContratoDePasajero`).
+    const fechasIda = [
+      ...validados.map((v) => v.comp.meta.fecha_ida),
+      ...grupo.tours.map((t) => t.fechaIda),
+    ].filter((f): f is string => !!f).sort();
+    const fechasReg = [
+      ...validados.map((v) => v.comp.meta.fecha_regreso),
+      ...grupo.tours.map((t) => t.fechaRegreso),
+    ].filter((f): f is string => !!f).sort();
     // Fecha de referencia REAL de este grupo — la misma que se guarda como
     // `ventas.fecha_salida` abajo, y contra la que el RPC recalcula
-    // es_infante server-side (B10, ronda 3).
+    // es_infante server-side (B10, ronda 3; B16, ronda 6).
     const fechaRefGrupo = fechasIda[0] ?? null;
     const precioTotal = validados.reduce((s, v) => s + v.comp.precioVenta, 0) + grupo.tours.reduce((s, t) => s + t.precio, 0);
     const monedaGrupo = validados[0]?.comp.monedaReserva ?? "COP";
 
-    // ── Universo LOCAL de este contrato (B13, ronda 5) ───────────────────
-    // ÚNICAMENTE la unión de posiciones asignadas a los ítems DE ESTE
-    // GRUPO — nunca el universo completo del carrito, que puede incluir
-    // personas que no viajan en este contrato en absoluto (otro destino,
-    // en modo "por destino"). Excepción documentada: un grupo sin ítems
-    // (todo el carrito son tours — `grupo.items` solo puede quedar vacío
-    // cuando ES el único grupo, ver comentario de `posicionesSinAsignar`
-    // más arriba) usa el universo GLOBAL completo, porque en ese caso el
-    // único grupo ES el carrito entero.
+    // ── Universo LOCAL de este contrato (B13, ronda 5; B17, ronda 6) ─────
+    // ÚNICAMENTE la unión de posiciones asignadas a las UNIDADES DE ESTE
+    // GRUPO —hoteles/bloqueos Y tours— nunca el universo completo del
+    // carrito, que puede incluir personas que no viajan en este contrato en
+    // absoluto (otro destino, en modo "por destino"). Incluir los tours (B17)
+    // hace que `ventas.pax` y `contrato_pasajeros` contengan a un pasajero que
+    // viaja SOLO en un tour de este grupo, y sólo a los de este grupo. Como el
+    // carrito exige ≥1 unidad y todo pasajero quedó asignado a alguna (validado
+    // arriba), este universo nunca queda vacío — el fallback al universo global
+    // sólo protege un caso imposible.
+    const posicionesGrupoUnidades = [...grupo.items.map((it) => it.__posiciones), ...grupo.tours.map((t) => t.__posiciones)];
     const posicionesGrupoItems = posicionesUnicasDeGrupo(
-      grupo.items.map((it) => it.__posiciones),
-      grupo.items.map((_, i) => i)
+      posicionesGrupoUnidades,
+      posicionesGrupoUnidades.map((_, i) => i)
     );
     const universoGrupo = posicionesGrupoItems.length ? posicionesGrupoItems : opts.pasajeros.map((_, i) => i + 1);
     // Normaliza edades GLOBALMENTE contra la fecha REAL de este grupo (B10)
@@ -1256,7 +1317,9 @@ export async function convertirCotizacionCarrito(
       fecha_salida: fechasIda[0] ?? null,
       fecha_regreso: fechasReg.length ? fechasReg[fechasReg.length - 1] : null,
       pax: paxTotal,
-      hotel: validados.length === 1 ? (validados[0].comp.meta.hotel_nombre ?? validados[0].item.hotelNombre) : `${validados.length} hoteles`,
+      hotel: validados.length === 1
+        ? (validados[0].comp.meta.hotel_nombre ?? validados[0].item.hotelNombre)
+        : validados.length === 0 ? null : `${validados.length} hoteles`,
       precio_venta: precioTotal,
       estado: "pendiente",
       canal: "B2C",
@@ -1264,7 +1327,9 @@ export async function convertirCotizacionCarrito(
       plazo: null,
       asesor_firma_nombre: oNull(opts.asesorInterno ?? null),
       asesor: oNull(opts.asesorInterno ?? null),
-      plan_nombre: validados.length === 1 ? `${validados[0].item.categoria} · ${validados[0].item.regimen}` : `${validados.length} hoteles`,
+      plan_nombre: validados.length === 1
+        ? `${validados[0].item.categoria} · ${validados[0].item.regimen}`
+        : validados.length === 0 ? (grupo.tours.length === 1 ? grupo.tours[0].nombre : `${grupo.tours.length} tours`) : `${validados.length} hoteles`,
       tours_traslados: grupo.tours.length ? grupo.tours.map((t) => t.nombre).join(", ") : null,
     });
     if (ve) return { ok: false, error: ve.message };
@@ -1302,12 +1367,21 @@ export async function convertirCotizacionCarrito(
     // el mismo payload. Todo `posGlobal` de `v.item.__posiciones` pertenece
     // a `universoGrupo` (por construcción: viene de `grupo.items`, la misma
     // fuente de `posicionesGrupoItems`), así que siempre está en el mapa.
+    // B15 (ronda 6): el piso de sillas consolidado es el número de PERSONAS
+    // ÚNICAS que ocupan silla — la unión de `posicionesConSilla` de los ítems
+    // que comparten bloqueo, nunca la SUMA de sus pisos (que duplicaba a un
+    // viajero presente en 2+ ítems del mismo bloqueo y sobre-reservaba). Se
+    // clasifica cada posición con `pasajerosNormalizadosGlobal` + `fechaRefGrupo`
+    // = la MISMA fecha `ventas.fecha_salida` con la que el RPC recalcula
+    // es_infante, así que este piso coincide exacto con su `holders_reales`.
     const itemsBloqueoLocal = validados
       .filter((v): v is typeof v & { item: { bloqueoId: number } } => v.item.modulo === "bloqueo" && v.item.bloqueoId != null)
       .map((v) => ({
         bloqueoId: v.item.bloqueoId,
-        holdersMin: v.comp.paxConSilla,
         posiciones: v.item.__posiciones.map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
+        posicionesConSilla: v.item.__posiciones
+          .filter((posGlobal) => pasajeroConsumeSilla(esInfantePorEdad(pasajerosNormalizadosGlobal[posGlobal - 1].fechaNacimiento, fechaRefGrupo)))
+          .map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
       }));
     const reservasSillas = consolidarReservasSillasPorBloqueo(itemsBloqueoLocal);
     // B10 (ronda 3): la fecha de referencia que usó la UI para decidir

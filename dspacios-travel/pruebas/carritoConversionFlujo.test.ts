@@ -27,10 +27,13 @@ import {
   consolidarReservasSillasPorBloqueo,
 } from "../lib/reservar/carritoAsignaciones.ts";
 import { normalizarResponsablesPorGrupo } from "../lib/reservar/pasajerosFilas.ts";
+import { esInfantePorEdad, pasajeroConsumeSilla } from "../lib/reservar/pasajeros.ts";
 
 type Pax = { nombre: string; fechaNacimiento: string; responsableIndex?: number | null };
 
 const ADULTO = (nombre: string): Pax => ({ nombre, fechaNacimiento: "1990-01-01" });
+// Nace hace ~1 año respecto a la fecha de referencia de los tests (2027) → infante.
+const INFANTE = (nombre: string): Pax => ({ nombre, fechaNacimiento: "2026-06-01" });
 
 /**
  * Reproduce el cuerpo del `for` de `convertirCotizacionCarrito` para UN
@@ -40,20 +43,30 @@ const ADULTO = (nombre: string): Pax => ({ nombre, fechaNacimiento: "1990-01-01"
  */
 function simularGrupo(
   pasajerosGlobales: readonly Pax[],
-  itemsDelGrupo: readonly { bloqueoId: number; holdersMin: number; posicionesGlobal: number[] }[],
-  fechaRefGrupo: string | null
+  itemsDelGrupo: readonly { bloqueoId: number; posicionesGlobal: number[] }[],
+  fechaRefGrupo: string | null,
+  // B17 (ronda 6): los tours del grupo también aportan pasajeros al universo
+  // local (y a ventas.pax / contrato_pasajeros), pero NO reservan silla.
+  toursDelGrupo: readonly { posicionesGlobal: number[] }[] = []
 ) {
+  const posicionesGrupoUnidades = [...itemsDelGrupo.map((it) => it.posicionesGlobal), ...toursDelGrupo.map((t) => t.posicionesGlobal)];
   const posicionesGrupoItems = posicionesUnicasDeGrupo(
-    itemsDelGrupo.map((it) => it.posicionesGlobal),
-    itemsDelGrupo.map((_, i) => i)
+    posicionesGrupoUnidades,
+    posicionesGrupoUnidades.map((_, i) => i)
   );
   const universoGrupo = posicionesGrupoItems.length ? posicionesGrupoItems : pasajerosGlobales.map((_, i) => i + 1);
   const pasajerosNormalizadosGlobal = normalizarResponsablesPorGrupo(pasajerosGlobales, fechaRefGrupo);
   const { pasajerosLocal, posicionesInvalidas, mapaGlobalALocal } = reindexarGrupoLocal(pasajerosNormalizadosGlobal, universoGrupo);
+  // Mismo cálculo del servidor (B15): `posicionesConSilla` se deriva
+  // clasificando cada posición con la MISMA fecha real del grupo que usa el
+  // RPC, y la consolidación toma el piso como la unión de esas posiciones —
+  // nunca la suma de pisos por ítem.
   const itemsBloqueoLocal = itemsDelGrupo.map((it) => ({
     bloqueoId: it.bloqueoId,
-    holdersMin: it.holdersMin,
     posiciones: it.posicionesGlobal.map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
+    posicionesConSilla: it.posicionesGlobal
+      .filter((posGlobal) => pasajeroConsumeSilla(esInfantePorEdad(pasajerosGlobales[posGlobal - 1].fechaNacimiento, fechaRefGrupo)))
+      .map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
   }));
   const reservasSillas = consolidarReservasSillasPorBloqueo(itemsBloqueoLocal);
   return { pasajerosLocal, posicionesInvalidas, reservasSillas, paxTotal: pasajerosLocal.length };
@@ -66,8 +79,8 @@ describe("B12/B13 #1 — dos ítems pax=2, cuatro viajeros COMPLETAMENTE distint
     const r = simularGrupo(
       pasajeros,
       [
-        { bloqueoId: 10, holdersMin: 2, posicionesGlobal: [1, 2] },
-        { bloqueoId: 20, holdersMin: 2, posicionesGlobal: [3, 4] },
+        { bloqueoId: 10, posicionesGlobal: [1, 2] },
+        { bloqueoId: 20, posicionesGlobal: [3, 4] },
       ],
       "2027-01-01"
     );
@@ -85,15 +98,40 @@ describe("B12/B13 #2 — dos ítems pax=2 con SOLAPAMIENTO PARCIAL ([1,2] y [2,3
     const r = simularGrupo(
       pasajeros,
       [
-        { bloqueoId: 10, holdersMin: 2, posicionesGlobal: [1, 2] },
-        { bloqueoId: 10, holdersMin: 2, posicionesGlobal: [2, 3] }, // mismo bloqueo -> debe consolidar (B14)
+        { bloqueoId: 10, posicionesGlobal: [1, 2] },
+        { bloqueoId: 10, posicionesGlobal: [2, 3] }, // mismo bloqueo -> debe consolidar (B14)
       ],
       "2027-01-01"
     );
     assert.equal(r.paxTotal, 3, "P2 no debe contarse dos veces en el universo local del grupo");
     assert.equal(r.reservasSillas.length, 1, "mismo bloqueoId en los dos ítems -> UNA sola reserva consolidada (B14)");
     assert.deepEqual(r.reservasSillas[0].posiciones, [1, 2, 3], "la unión de posiciones locales debe cubrir a las 3 personas, sin duplicar a P2");
-    assert.equal(r.reservasSillas[0].holdersMin, 4, "holdersMin se SUMA (2+2) — el núcleo SQL aplica greatest() contra el conteo real si hiciera falta");
+    assert.equal(r.reservasSillas[0].holdersMin, 3, "B15: piso = personas ÚNICAS con silla = |{1,2,3}| = 3 (NUNCA la suma 2+2=4, que sobre-reservaba)");
+  });
+});
+
+describe("B15 — piso consolidado en el pipeline real: personas únicas con silla, nunca la suma", () => {
+  test("mismo bloqueo + MISMOS pasajeros en 2 ítems: piso = 2 (no 4)", () => {
+    const pasajeros: Pax[] = [ADULTO("A1"), ADULTO("A2")];
+    const r = simularGrupo(pasajeros, [
+      { bloqueoId: 10, posicionesGlobal: [1, 2] },
+      { bloqueoId: 10, posicionesGlobal: [1, 2] },
+    ], "2027-01-01");
+    assert.equal(r.reservasSillas.length, 1);
+    assert.equal(r.reservasSillas[0].holdersMin, 2, "2 personas, no 4");
+    assert.deepEqual(r.reservasSillas[0].posiciones, [1, 2]);
+  });
+
+  test("mismo bloqueo con un INFANTE compartido: el infante no cuenta para el piso pero sí va en posiciones", () => {
+    // pos 1 y 3 adultos, pos 2 infante — dos ítems [1,2] y [2,3] sobre el mismo bloqueo.
+    const pasajeros: Pax[] = [ADULTO("A1"), INFANTE("Bebé"), ADULTO("A3")];
+    const r = simularGrupo(pasajeros, [
+      { bloqueoId: 10, posicionesGlobal: [1, 2] },
+      { bloqueoId: 10, posicionesGlobal: [2, 3] },
+    ], "2027-01-01");
+    assert.equal(r.reservasSillas.length, 1);
+    assert.deepEqual(r.reservasSillas[0].posiciones, [1, 2, 3], "el infante sigue en posiciones (el RPC recalcula su es_infante)");
+    assert.equal(r.reservasSillas[0].holdersMin, 2, "solo los 2 adultos ocupan silla (el infante en pos 2 no cuenta)");
   });
 });
 
@@ -106,10 +144,10 @@ describe("B13 #3 — 'por_destino': cada contrato recibe SOLO la unión de SUS p
 
     const pasajeros: Pax[] = [ADULTO("Familia A - P1"), ADULTO("Familia A - P2"), ADULTO("Familia B - P1"), ADULTO("Familia B - P2")];
     const itemsTodos = [
-      { bloqueoId: 10, holdersMin: 1, posicionesGlobal: [1] }, // CTG item 0
-      { bloqueoId: 11, holdersMin: 1, posicionesGlobal: [2] }, // CTG item 1
-      { bloqueoId: 20, holdersMin: 1, posicionesGlobal: [3] }, // SMR item 0
-      { bloqueoId: 21, holdersMin: 1, posicionesGlobal: [4] }, // SMR item 1
+      { bloqueoId: 10, posicionesGlobal: [1] }, // CTG item 0
+      { bloqueoId: 11, posicionesGlobal: [2] }, // CTG item 1
+      { bloqueoId: 20, posicionesGlobal: [3] }, // SMR item 0
+      { bloqueoId: 21, posicionesGlobal: [4] }, // SMR item 1
     ];
 
     const grupoCtg = simularGrupo(pasajeros, grupos[0].map((i) => itemsTodos[i]), "2027-01-01");
@@ -128,9 +166,9 @@ describe("B13 #10 — ventas.pax (paxTotal) nunca duplica viajeros compartidos e
     const r = simularGrupo(
       pasajeros,
       [
-        { bloqueoId: 10, holdersMin: 1, posicionesGlobal: [1] },
-        { bloqueoId: 20, holdersMin: 1, posicionesGlobal: [1] },
-        { bloqueoId: 30, holdersMin: 1, posicionesGlobal: [1] },
+        { bloqueoId: 10, posicionesGlobal: [1] },
+        { bloqueoId: 20, posicionesGlobal: [1] },
+        { bloqueoId: 30, posicionesGlobal: [1] },
       ],
       "2027-01-01"
     );
@@ -148,7 +186,7 @@ describe("B13 #4/#5 — reindexado de responsable al cambiar de posición local 
       { nombre: "Adulto", fechaNacimiento: "1990-01-01" },
       { nombre: "Infante", fechaNacimiento: "2026-06-01", responsableIndex: 1 }, // apunta al Adulto (índice GLOBAL 1)
     ];
-    const r = simularGrupo(pasajeros, [{ bloqueoId: 10, holdersMin: 2, posicionesGlobal: [2, 3] }], "2027-01-01");
+    const r = simularGrupo(pasajeros, [{ bloqueoId: 10, posicionesGlobal: [2, 3] }], "2027-01-01");
     assert.equal(r.posicionesInvalidas.length, 0);
     assert.deepEqual(r.pasajerosLocal.map((p) => p.nombre), ["Adulto", "Infante"]);
     assert.equal(r.pasajerosLocal[1].responsableIndex, 0, "el Infante (ahora índice local 1) debe apuntar al Adulto en su nueva posición LOCAL 0, no en la global 1");
@@ -160,7 +198,7 @@ describe("B13 #4/#5 — reindexado de responsable al cambiar de posición local 
       { nombre: "Infante", fechaNacimiento: "2026-06-01", responsableIndex: 0 },
     ];
     // El grupo solo incluye al Infante (posición 2) — su responsable (posición 1) no viaja en este grupo.
-    const r = simularGrupo(pasajeros, [{ bloqueoId: 10, holdersMin: 1, posicionesGlobal: [2] }], "2027-01-01");
+    const r = simularGrupo(pasajeros, [{ bloqueoId: 10, posicionesGlobal: [2] }], "2027-01-01");
     assert.deepEqual(r.posicionesInvalidas, [2], "debe señalar la posición GLOBAL del infante cuyo responsable quedó fuera del grupo");
   });
 });
@@ -171,13 +209,66 @@ describe("B14 #9 — dos bloqueos DISTINTOS con un pasajero compartido: válido,
     const r = simularGrupo(
       pasajeros,
       [
-        { bloqueoId: 10, holdersMin: 1, posicionesGlobal: [1] },
-        { bloqueoId: 20, holdersMin: 1, posicionesGlobal: [1] },
+        { bloqueoId: 10, posicionesGlobal: [1] },
+        { bloqueoId: 20, posicionesGlobal: [1] },
       ],
       "2027-01-01"
     );
     assert.equal(r.reservasSillas.length, 2, "bloqueos distintos nunca se consolidan entre sí, aunque compartan pasajero");
     assert.deepEqual(r.reservasSillas.find((x) => x.bloqueoId === 10)?.posiciones, [1]);
     assert.deepEqual(r.reservasSillas.find((x) => x.bloqueoId === 20)?.posiciones, [1]);
+  });
+});
+
+describe("B17 — tours participan en el universo/ventas.pax del contrato (nunca reservan silla)", () => {
+  test("#2 hotel + tour con los MISMOS pasajeros: universo = 2, una sola reserva de silla (del hotel/bloqueo)", () => {
+    const pasajeros: Pax[] = [ADULTO("P1"), ADULTO("P2")];
+    const r = simularGrupo(
+      pasajeros,
+      [{ bloqueoId: 10, posicionesGlobal: [1, 2] }],
+      "2027-01-01",
+      [{ posicionesGlobal: [1, 2] }] // tour con los mismos pasajeros
+    );
+    assert.equal(r.paxTotal, 2, "no se duplica: hotel y tour comparten los 2 pasajeros");
+    assert.equal(r.reservasSillas.length, 1, "solo el bloqueo reserva silla; el tour no");
+    assert.equal(r.reservasSillas[0].holdersMin, 2);
+  });
+
+  test("#3 hotel + tour con subconjuntos DISTINTOS: el universo es la unión (nunca el grupo del hotel ni todo)", () => {
+    const pasajeros: Pax[] = [ADULTO("Solo hotel"), ADULTO("Ambos"), ADULTO("Solo tour")];
+    const r = simularGrupo(
+      pasajeros,
+      [{ bloqueoId: 10, posicionesGlobal: [1, 2] }], // hotel: pax 1,2
+      "2027-01-01",
+      [{ posicionesGlobal: [2, 3] }] // tour: pax 2,3
+    );
+    assert.equal(r.paxTotal, 3, "ventas.pax = unión {1,2,3}, no solo los del hotel (2) ni un supuesto global");
+    assert.deepEqual(r.pasajerosLocal.map((p) => p.nombre), ["Solo hotel", "Ambos", "Solo tour"]);
+    assert.equal(r.reservasSillas[0].holdersMin, 2, "el bloqueo solo reserva por sus propios pasajeros con silla (1 y 2)");
+  });
+
+  test("#5 pasajero que participa ÚNICAMENTE en un tour: queda en el contrato, sin reservar silla", () => {
+    const pasajeros: Pax[] = [ADULTO("Solo hotel"), ADULTO("Solo tour")];
+    const r = simularGrupo(
+      pasajeros,
+      [{ bloqueoId: 10, posicionesGlobal: [1] }],
+      "2027-01-01",
+      [{ posicionesGlobal: [2] }]
+    );
+    assert.equal(r.paxTotal, 2, "el pasajero de solo-tour SÍ entra al contrato (antes lo rechazaba posicionesSinAsignar)");
+    assert.deepEqual(r.pasajerosLocal.map((p) => p.nombre), ["Solo hotel", "Solo tour"]);
+    assert.equal(r.reservasSillas[0].posiciones.length, 1, "solo el pasajero del hotel ocupa silla");
+  });
+
+  test("#1 carrito de SOLO tours: el universo son los pasajeros del tour, sin reserva de sillas", () => {
+    const pasajeros: Pax[] = [ADULTO("T1"), ADULTO("T2")];
+    const r = simularGrupo(
+      pasajeros,
+      [], // sin hoteles/bloqueos
+      "2027-01-01",
+      [{ posicionesGlobal: [1, 2] }]
+    );
+    assert.equal(r.paxTotal, 2);
+    assert.equal(r.reservasSillas.length, 0, "un carrito de solo tours nunca reserva sillas");
   });
 });

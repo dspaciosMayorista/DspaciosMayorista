@@ -14,12 +14,13 @@ import {
   agregarPosicionAUniverso,
   quitarPosicionDeUniverso,
   posicionesSinAsignar,
-  fechaReferenciaPorPasajero,
+  fechaContratoDePasajero,
   comparteGrupo,
 } from "@/lib/reservar/carritoAsignaciones";
 
 type ClientePrefill = { nombres: string; apellidos: string; numeroDoc: string };
 type ItemCarritoUI = { hotelNombre: string; destino: string | null; pax: number; fechaIda: string | null };
+type TourCarritoUI = { nombre: string; destino: string | null; pax: number; fechaIda: string | null };
 
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
@@ -27,9 +28,9 @@ const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 // pasajeros (igual que CotizacionAcciones) y, si el carrito trae 2+ destinos
 // distintos, deja elegir 1 contrato para todo o 1 contrato por destino.
 export function ConvertirCarritoBtn({
-  id, pax, items, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta,
+  id, pax, items, tours, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta,
 }: {
-  id: number; pax: number; items: ItemCarritoUI[]; destinos: string[]; cliente: ClientePrefill; esSuperadmin: boolean;
+  id: number; pax: number; items: ItemCarritoUI[]; tours: TourCarritoUI[]; destinos: string[]; cliente: ClientePrefill; esSuperadmin: boolean;
   asesores: { nombre: string; email: string | null }[];
   miNombre: string; miRolVenta: boolean;
 }) {
@@ -63,44 +64,60 @@ export function ConvertirCarritoBtn({
     }))
   );
 
-  // Asignación EXPLÍCITA de pasajeros por ítem — revisión de alto riesgo,
-  // ronda 3 (B11): el carrito (lib/cart/CartContext.tsx) agrega cada ítem de
-  // forma independiente, con su propio `pax` — dos ítems pueden representar
-  // grupos de viajeros distintos o parcialmente distintos, nunca se puede
-  // asumir que comparten el mismo prefijo de la lista de pasajeros. El
-  // default (los primeros `item.pax` pasajeros marcados) cubre el caso más
-  // común (todos viajan en todos los ítems) sin fricción, pero queda
-  // SIEMPRE visible y editable — nunca es un supuesto silencioso.
+  // Asignación EXPLÍCITA de pasajeros por UNIDAD (ítem hotel/bloqueo o tour) —
+  // B11 (ronda 3) + B17 (ronda 6): el carrito (lib/cart/CartContext.tsx)
+  // agrega cada unidad de forma independiente, con su propio `pax` — dos
+  // unidades pueden representar grupos de viajeros distintos o parcialmente
+  // distintos, nunca se puede asumir que comparten el mismo prefijo. Los
+  // tours ya NO heredan en silencio los pasajeros del hotel: llevan su propia
+  // matriz. El default (los primeros `pax` marcados) cubre el caso común sin
+  // fricción, pero queda SIEMPRE visible y editable.
   const [asignaciones, setAsignaciones] = useState<boolean[][]>(() =>
     items.map((it) => Array.from({ length: totalInicial }, (_, i) => i < it.pax))
   );
-
-  // Fallback de fecha cuando un pasajero todavía no está asignado a ningún
-  // ítem (a mitad de edición) o el carrito es solo de tours (sin ítems
-  // contra los cuales resolver una fecha por-pasajero) — la más temprana de
-  // TODO el carrito, igual que la única referencia que existía antes de B13.
-  const fechaMasTemprana = items.map((i) => i.fechaIda).filter((f): f is string => !!f).sort()[0] ?? null;
-
-  // Agrupación de ÍTEMS (no de tours, que no participan en `asignaciones`)
-  // según el modo vigente — mismo criterio EXACTO que usa el servidor para
-  // repartir en contratos (`convertirCotizacionCarrito`). Se usa para saber
-  // qué pasajeros van a terminar en el MISMO contrato (`comparteGrupo`) y
-  // para acotar la fecha de referencia de cada uno a sus propios ítems.
-  const gruposIndicesItems = agruparIndicesPorDestino(items.map((it) => it.destino), agrupar);
-  // Posiciones (1-based) asignadas a cada ítem — mismo formato que
-  // `opts.asignaciones` del servidor.
-  const asignacionesPorItemPos = asignaciones.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
-  // Fecha de referencia POR PASAJERO — revisión de B10 bajo el modelo de
-  // B13 (ronda 5): antes se usaba `fechaMasTemprana` para TODOS, una
-  // aproximación conservadora necesaria porque cada pasajero se insertaba
-  // en TODOS los contratos. Desde B13, cada contrato solo recibe la unión
-  // de SUS ítems — así que la referencia correcta para cada pasajero es la
-  // fecha más temprana ENTRE LOS ÍTEMS A LOS QUE ESTÁ REALMENTE ASIGNADO
-  // (nunca un ítem donde no viaja, que podría bloquear injustamente una
-  // clasificación válida).
-  const fechasReferenciaPorFila = paxRows.map((_, i) =>
-    fechaReferenciaPorPasajero(i + 1, asignacionesPorItemPos, items.map((it) => it.fechaIda), fechaMasTemprana)
+  const [asignacionesTours, setAsignacionesTours] = useState<boolean[][]>(() =>
+    tours.map((t) => Array.from({ length: totalInicial }, (_, i) => i < t.pax))
   );
+
+  // Fallback de fecha cuando un pasajero todavía no está asignado a ninguna
+  // unidad (a mitad de edición) — la más temprana de TODO el carrito
+  // (hoteles + tours).
+  const fechaMasTemprana = [...items.map((i) => i.fechaIda), ...tours.map((t) => t.fechaIda)].filter((f): f is string => !!f).sort()[0] ?? null;
+
+  // UNIDADES = ítems (hoteles/bloqueos) seguidos de tours — el ORDEN importa:
+  // los índices de `gruposIndicesUnidades` y las filas de
+  // `asignacionesUnidadesPos` van ítems primero, luego tours (mismo criterio
+  // con el que el servidor arma los grupos). Agrupar por destino tanto
+  // hoteles como tours (B17) hace que `comparteGrupo` y la fecha de contrato
+  // por pasajero coincidan EXACTO con cómo el servidor reparte en contratos.
+  const unidadesDestinos = [...items.map((it) => it.destino), ...tours.map((t) => t.destino)];
+  const unidadesFechas = [...items.map((it) => it.fechaIda), ...tours.map((t) => t.fechaIda)];
+  const gruposIndicesUnidades = agruparIndicesPorDestino(unidadesDestinos, agrupar);
+  // Posiciones (1-based) asignadas a cada unidad — ítems y tours por separado
+  // (así se envían al servidor) y combinadas (para grupos/fechas/candidatos).
+  const asignacionesPorItemPos = asignaciones.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
+  const asignacionesPorTourPos = asignacionesTours.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
+  const asignacionesUnidadesPos = [...asignacionesPorItemPos, ...asignacionesPorTourPos];
+  // Fecha de referencia POR PASAJERO = la fecha del CONTRATO en que queda —
+  // B16 (ronda 6), que corrige la de B13. El RPC clasifica es_infante de
+  // TODOS los pasajeros contra `ventas.fecha_salida` (la más temprana de
+  // TODAS las unidades del grupo), no contra los ítems puntuales del
+  // pasajero. La UI debe usar esa MISMA fecha para no divergir de PostgreSQL.
+  const fechasReferenciaPorFila = paxRows.map((_, i) =>
+    fechaContratoDePasajero(i + 1, gruposIndicesUnidades, asignacionesUnidadesPos, unidadesFechas, fechaMasTemprana)
+  );
+
+  // Recalcula los vínculos INF→responsable con matrices dadas — cambiar
+  // dónde viaja un pasajero cambia SU fecha de contrato (B16) y puede
+  // invalidar un vínculo. Solo LIMPIA (nunca inventa) — ver
+  // `recalcularVinculosPorEdadPorFila`.
+  const recomputarVinculos = (asigItems: boolean[][], asigTours: boolean[][]) => {
+    const itemsPos = asigItems.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
+    const toursPos = asigTours.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
+    const unidadesPos = [...itemsPos, ...toursPos];
+    const fechas = paxRows.map((_, i) => fechaContratoDePasajero(i + 1, gruposIndicesUnidades, unidadesPos, unidadesFechas, fechaMasTemprana));
+    setPaxRows((rows) => recalcularVinculosPorEdadPorFila(rows, fechas));
+  };
 
   const agregarPasajero = () => {
     const { filas, asignacionesPorItem } = agregarPosicionAUniverso<PasajeroReserva>(paxRows, asignaciones, {
@@ -108,12 +125,14 @@ export function ConvertirCarritoBtn({
     });
     setPaxRows(filas);
     setAsignaciones(asignacionesPorItem);
+    setAsignacionesTours((prev) => prev.map((fila) => [...fila, false]));
   };
   const quitarPasajero = (idx: number) => {
     if (paxRows.length <= 1) return;
     const { filas, asignacionesPorItem } = quitarPosicionDeUniverso(paxRows, asignaciones, idx);
     setPaxRows(filas);
     setAsignaciones(asignacionesPorItem);
+    setAsignacionesTours((prev) => prev.map((fila) => fila.filter((_, i) => i !== idx)));
   };
 
   const setRow = (i: number, k: keyof PasajeroReserva, v: string) =>
@@ -125,16 +144,14 @@ export function ConvertirCarritoBtn({
     setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, responsableIndex } : r)));
 
   const toggleAsignacion = (itemIdx: number, paxIdx: number) => {
-    const nextAsignaciones = asignaciones.map((fila, i) => (i === itemIdx ? fila.map((v, j) => (j === paxIdx ? !v : v)) : fila));
-    setAsignaciones(nextAsignaciones);
-    // Cambiar a qué ítem(s) queda expuesto un pasajero puede cambiar SU
-    // fecha de referencia (B13 revisita B10) — se recalcula con la
-    // asignación NUEVA para no dejar vivo un vínculo que ya no aplica (o
-    // para no perder uno que ahora sí aplica, aunque esta función solo
-    // limpia, nunca agrega — ver `recalcularVinculosPorEdadPorFila`).
-    const posPorItemNueva = nextAsignaciones.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
-    const fechasRefNuevas = paxRows.map((_, i) => fechaReferenciaPorPasajero(i + 1, posPorItemNueva, items.map((it) => it.fechaIda), fechaMasTemprana));
-    setPaxRows((rows) => recalcularVinculosPorEdadPorFila(rows, fechasRefNuevas));
+    const next = asignaciones.map((fila, i) => (i === itemIdx ? fila.map((v, j) => (j === paxIdx ? !v : v)) : fila));
+    setAsignaciones(next);
+    recomputarVinculos(next, asignacionesTours);
+  };
+  const toggleAsignacionTour = (tourIdx: number, paxIdx: number) => {
+    const next = asignacionesTours.map((fila, i) => (i === tourIdx ? fila.map((v, j) => (j === paxIdx ? !v : v)) : fila));
+    setAsignacionesTours(next);
+    recomputarVinculos(asignaciones, next);
   };
 
   function generar() {
@@ -153,21 +170,26 @@ export function ConvertirCarritoBtn({
         return;
       }
     }
-    // Ningún pasajero del universo declarado puede quedar sin viajar en
-    // NINGÚN ítem (B12) — mismo chequeo que hace el servidor, adelantado
-    // aquí solo para dar un mensaje inmediato; el servidor sigue siendo la
-    // autoridad real. Un carrito de solo tours no tiene ítems contra los
-    // cuales validar esto.
-    if (items.length) {
-      const sinAsignar = posicionesSinAsignar(asignacionesPorItemPos, paxRows.length);
-      if (sinAsignar.length) {
-        setErr(`El pasajero ${sinAsignar[0]} no está asignado a ningún ítem. Márcalo en al menos uno o quítalo del listado.`);
+    for (let i = 0; i < tours.length; i++) {
+      const marcados = asignacionesTours[i].filter(Boolean).length;
+      if (marcados !== tours[i].pax) {
+        setErr(`${tours[i].nombre}: marca exactamente ${tours[i].pax} pasajero(s) para este tour (tienes ${marcados}).`);
         return;
       }
     }
+    // Ningún pasajero del universo declarado puede quedar sin viajar en
+    // NINGUNA unidad —ítem o tour— (B12 + B17) — mismo chequeo que hace el
+    // servidor, adelantado aquí solo para un mensaje inmediato; el servidor
+    // sigue siendo la autoridad real. Siempre hay ≥1 unidad (el carrito lo
+    // exige), así que ya no hay excepción por "solo tours".
+    const sinAsignar = posicionesSinAsignar(asignacionesUnidadesPos, paxRows.length);
+    if (sinAsignar.length) {
+      setErr(`El pasajero ${sinAsignar[0]} no está asignado a ninguna unidad (ni hotel ni tour). Márcalo en al menos una o quítalo del listado.`);
+      return;
+    }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel, asignaciones: asignacionesPorItemPos });
+      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel, asignaciones: asignacionesPorItemPos, asignacionesTours: asignacionesPorTourPos });
       if (r.ok) router.push(`/dashboard/contratos/${r.numeros[0]}`);
       else setErr(r.error);
     });
@@ -271,12 +293,12 @@ export function ConvertirCarritoBtn({
                         if (edadOtro == null || edadOtro < 18) return null;
                         // El responsable debe terminar en el MISMO
                         // contrato/grupo que el infante (B13 punto 5) — no
-                        // necesariamente el mismo ítem/bloqueo (ver
+                        // necesariamente la misma unidad (ver
                         // `reindexarGrupoLocal` en carritoAsignaciones.ts).
-                        // Sin ítems (carrito de solo tours) no hay grupos
-                        // que comparar — todo el mundo termina en el único
-                        // contrato, así que no se filtra.
-                        if (items.length && !comparteGrupo(i + 1, j + 1, gruposIndicesItems, asignacionesPorItemPos)) return null;
+                        // Se evalúa sobre TODAS las unidades (hoteles + tours,
+                        // B17): un pasajero que solo viaja en un tour también
+                        // define su contrato.
+                        if (!comparteGrupo(i + 1, j + 1, gruposIndicesUnidades, asignacionesUnidadesPos)) return null;
                         const nombre = `${otro.nombres} ${otro.apellidos}`.trim() || `Pasajero ${j + 1}`;
                         return <option key={j} value={j}>{nombre}</option>;
                       })}
@@ -288,16 +310,16 @@ export function ConvertirCarritoBtn({
             ));
           })()}
 
-          {items.length > 1 && (
+          {items.length + tours.length > 1 && (
             <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-              <p className="text-sm font-medium text-gray-700">¿Quién viaja en cada ítem?</p>
+              <p className="text-sm font-medium text-gray-700">¿Quién viaja en cada unidad?</p>
               <p className="text-xs text-gray-500">
-                Este carrito tiene {items.length} ítems agregados por separado — marca exactamente quiénes viajan en cada uno (no se asume que son los mismos).
+                Este carrito tiene {items.length} hotel(es) y {tours.length} tour(s) agregados por separado — marca exactamente quiénes viajan en cada uno (no se asume que son los mismos). Un pasajero puede viajar solo en un tour.
               </p>
               {items.map((it, itemIdx) => {
                 const marcados = asignaciones[itemIdx]?.filter(Boolean).length ?? 0;
                 return (
-                  <div key={itemIdx} className="rounded-lg bg-white p-2">
+                  <div key={`item-${itemIdx}`} className="rounded-lg bg-white p-2">
                     <p className="text-xs font-semibold text-gray-700">
                       {it.hotelNombre}{it.destino ? ` — ${it.destino}` : ""} · requiere {it.pax} pasajero(s)
                       {marcados !== it.pax && <span className="ml-1 text-red-500">(marcados: {marcados})</span>}
@@ -309,6 +331,29 @@ export function ConvertirCarritoBtn({
                             type="checkbox"
                             checked={asignaciones[itemIdx]?.[paxIdx] ?? false}
                             onChange={() => toggleAsignacion(itemIdx, paxIdx)}
+                          />
+                          {`${p.nombres} ${p.apellidos}`.trim() || `Pasajero ${paxIdx + 1}`}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {tours.map((t, tourIdx) => {
+                const marcados = asignacionesTours[tourIdx]?.filter(Boolean).length ?? 0;
+                return (
+                  <div key={`tour-${tourIdx}`} className="rounded-lg bg-white p-2">
+                    <p className="text-xs font-semibold text-gray-700">
+                      Tour: {t.nombre}{t.destino ? ` — ${t.destino}` : ""} · requiere {t.pax} pasajero(s)
+                      {marcados !== t.pax && <span className="ml-1 text-red-500">(marcados: {marcados})</span>}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {paxRows.map((p, paxIdx) => (
+                        <label key={paxIdx} className="flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600">
+                          <input
+                            type="checkbox"
+                            checked={asignacionesTours[tourIdx]?.[paxIdx] ?? false}
+                            onChange={() => toggleAsignacionTour(tourIdx, paxIdx)}
                           />
                           {`${p.nombres} ${p.apellidos}`.trim() || `Pasajero ${paxIdx + 1}`}
                         </label>
