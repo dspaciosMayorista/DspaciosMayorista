@@ -1572,6 +1572,7 @@ export type Database = {
           nacionalidad: string | null;
           es_infante: boolean;
           orden: number;
+          responsable_id: number | null;
         };
         Insert: {
           id?: number;
@@ -1583,6 +1584,7 @@ export type Database = {
           nacionalidad?: string | null;
           es_infante?: boolean;
           orden?: number;
+          responsable_id?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_pasajeros"]["Insert"]>;
         Relationships: [];
@@ -3260,6 +3262,18 @@ export type Database = {
           p_nota: string | null;
         };
         Returns: undefined;
+      };
+      // Migración 167. Reconcilia atómicamente cuántas sillas de un bloqueo
+      // tiene asignadas un contrato con `p_holders_nuevo` (pasajeros que
+      // consumen silla — nunca infantes). Retorna el total resultante; 0 si
+      // el contrato no usa sillas propias (porción terrestre/empaquetado/
+      // dinámico).
+      ajustar_sillas_por_pasajeros: {
+        Args: {
+          p_numero_contrato: string;
+          p_holders_nuevo: number;
+        };
+        Returns: number;
       };
     };
     Enums: {

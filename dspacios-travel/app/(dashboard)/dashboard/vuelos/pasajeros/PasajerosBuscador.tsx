@@ -5,9 +5,11 @@ import Link from "next/link";
 import { formatFechaLarga } from "@/lib/utils";
 
 export type PasajeroFila = {
-  sillaId: number;
+  id: string; // clave de fila estable — puede no venir de una silla (infantes)
+  sillaId: number | null; // null para un infante: no ocupa silla (ver lib/reservar/pasajeros.ts)
   numeroSilla: number | null;
   estado: string;
+  esInfante?: boolean;
   nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string;
   contrato: string; asesor: string; agencia: string; hotel: string; acomodacion: string;
   bloqueoId: number | null;
@@ -85,8 +87,15 @@ export function PasajerosBuscador({ filas }: { filas: PasajeroFila[] }) {
             {vis.length === 0 ? (
               <tr><td colSpan={10} className="px-3 py-10 text-center text-gray-400">Sin pasajeros para esta búsqueda.</td></tr>
             ) : vis.map((p) => (
-              <tr key={p.sillaId} className="border-t border-gray-50">
-                <td className="px-3 py-2 font-medium text-gray-800">{`${p.nombres} ${p.apellidos}`.trim()}</td>
+              <tr key={p.id} className="border-t border-gray-50">
+                <td className="px-3 py-2 font-medium text-gray-800">
+                  {`${p.nombres} ${p.apellidos}`.trim()}
+                  {p.esInfante && (
+                    <span className="ml-1.5 rounded-full bg-[var(--brand-accent)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--brand-accent)]">
+                      Infante
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-gray-600">{p.tipoDoc} {p.numeroDoc}</td>
                 <td className="px-3 py-2 text-gray-600">{p.contrato || "—"}</td>
                 <td className="px-3 py-2">
@@ -97,7 +106,9 @@ export function PasajerosBuscador({ filas }: { filas: PasajeroFila[] }) {
                 <td className="px-3 py-2 text-gray-600">{p.ruta || "—"}</td>
                 <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(p.fechaIda)}{p.vueloIda ? ` · ${p.vueloIda}` : ""}</td>
                 <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(p.fechaRegreso)}{p.vueloRegreso ? ` · ${p.vueloRegreso}` : ""}</td>
-                <td className="px-3 py-2 text-xs text-gray-600">{ESTADO_LABEL[p.estado] ?? p.estado}</td>
+                <td className="px-3 py-2 text-xs text-gray-600">
+                  {p.esInfante ? "No ocupa silla" : (ESTADO_LABEL[p.estado] ?? p.estado)}
+                </td>
                 <td className="px-3 py-2 text-gray-600">{p.hotel || "—"}</td>
                 <td className="px-3 py-2 text-gray-600">{p.asesor || "—"}</td>
               </tr>

@@ -50,6 +50,22 @@ export function EditarAsesorPasajeros({
 
   const setRow = (i: number, patch: Partial<PasajeroEdit>) => setFilas((f) => f.map((r, n) => (n === i ? { ...r, ...patch } : r)));
 
+  // Quitar una fila desplaza los índices de todas las que van después — un
+  // `responsableIndex` guardado en otra fila apuntando a esa posición (o a
+  // una posterior) quedaría apuntando a la persona equivocada si no se
+  // corrige. Nunca se deja un vínculo potencialmente incorrecto: se limpia
+  // el que apuntaba exactamente a la fila quitada, y se reindexan los demás.
+  const quitarFila = (i: number) => setFilas((f) =>
+    f
+      .filter((_, n) => n !== i)
+      .map((r) => {
+        if (r.responsableIndex == null) return r;
+        if (r.responsableIndex === i) return { ...r, responsableIndex: null };
+        if (r.responsableIndex > i) return { ...r, responsableIndex: r.responsableIndex - 1 };
+        return r;
+      })
+  );
+
   function guardarAsesor() {
     setMsgA("");
     start(async () => { const r = await actualizarAsesorContrato(numero, asesor); setMsgA(r.ok ? "✓ Guardado" : r.error); if (r.ok) router.refresh(); });
@@ -130,10 +146,33 @@ export function EditarAsesorPasajeros({
               {(() => {
                 const edad = calcularEdad(p.fechaNacimiento, fechaSalida);
                 if (edad == null) return <span className="pb-2 text-[11px] text-gray-300">—</span>;
-                const cat = edad < 2 ? "Infante" : edad < 12 ? "Niño" : "Adulto";
-                return <span className={`pb-2 text-[11px] ${edad < 2 ? "font-medium text-[var(--brand-accent)]" : "text-gray-400"}`}>{cat} · {edad}a</span>;
+                const esInfante = edad < 2;
+                const cat = esInfante ? "Infante" : edad < 12 ? "Niño" : "Adulto";
+                return (
+                  <>
+                    <span className={`pb-2 text-[11px] ${esInfante ? "font-medium text-[var(--brand-accent)]" : "text-gray-400"}`}>{cat} · {edad}a</span>
+                    {esInfante && (
+                      <div className="w-48">
+                        <label className="text-[11px] text-gray-500">Adulto responsable</label>
+                        <select
+                          value={p.responsableIndex ?? ""}
+                          onChange={(e) => setRow(i, { responsableIndex: e.target.value === "" ? null : Number(e.target.value) })}
+                          className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
+                        >
+                          <option value="">— Sin vincular —</option>
+                          {filas.map((otro, j) => {
+                            if (j === i) return null;
+                            const edadOtro = calcularEdad(otro.fechaNacimiento, fechaSalida);
+                            if (edadOtro != null && edadOtro < 2) return null; // otro infante: no puede ser responsable
+                            return <option key={j} value={j}>{otro.nombre || `Pasajero ${j + 1}`}</option>;
+                          })}
+                        </select>
+                      </div>
+                    )}
+                  </>
+                );
               })()}
-              <button type="button" onClick={() => setFilas((f) => f.filter((_, n) => n !== i))} className="pb-2 text-xs text-gray-400 hover:text-red-500">Quitar</button>
+              <button type="button" onClick={() => quitarFila(i)} className="pb-2 text-xs text-gray-400 hover:text-red-500">Quitar</button>
             </div>
           ))}
         </div>

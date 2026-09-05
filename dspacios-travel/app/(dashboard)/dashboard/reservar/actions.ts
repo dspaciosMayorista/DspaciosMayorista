@@ -35,6 +35,7 @@ import {
   type ComputoReserva,
 } from "@/lib/reservar/computo";
 import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
+import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import {
   componenteHotelReal,
   componentePaqueteReal,
@@ -265,7 +266,13 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     }
   }
 
-  // 5) Pasajeros
+  // 5) Pasajeros — `es_infante` se recalcula SIEMPRE server-side desde la
+  // fecha de nacimiento contra `meta.fecha_ida` (la misma fecha que se
+  // acaba de guardar como `ventas.fecha_salida`, arriba) — nunca se confía
+  // en el `esInfante` que manda el cliente (posicional en el formulario,
+  // ver lib/reservar/pasajeros.ts). El mismo arreglo se reutiliza más abajo
+  // para decidir qué pasajeros ocupan silla — una sola fuente de verdad.
+  const esInfanteReal = input.pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, meta.fecha_ida));
   if (input.pasajeros.length) {
     const { error } = await sb.from("contrato_pasajeros").insert(
       input.pasajeros.map((p, i) => ({
@@ -275,7 +282,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
         identificacion: oNull(p.numeroDoc),
         fecha_nacimiento: oNull(p.fechaNacimiento),
         nacionalidad: oNull(p.nacionalidad),
-        es_infante: p.esInfante,
+        es_infante: esInfanteReal[i],
         orden: i,
       }))
     );
@@ -538,8 +545,10 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
         .limit(paxConSilla);
       if (libres && libres.length) {
         // Copia los datos del pasajero a cada silla (una silla por pasajero con
-        // silla; los infantes no ocupan silla).
-        const holders = input.pasajeros.filter((p) => !p.esInfante);
+        // silla; los infantes no ocupan silla) — usa el MISMO `esInfanteReal`
+        // ya recalculado y guardado en contrato_pasajeros arriba, nunca el
+        // flag del cliente (ver lib/reservar/pasajeros.ts::pasajeroConsumeSilla).
+        const holders = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
         await Promise.all(
           libres.map((s, i) => {
             const p = holders[i];
@@ -1107,6 +1116,12 @@ export async function convertirCotizacionCarrito(
     });
     if (ve) return { ok: false, error: ve.message };
 
+    // `es_infante` se recalcula server-side contra `fechasIda[0]` — la MISMA
+    // fecha que se acaba de guardar como `ventas.fecha_salida` — nunca se
+    // confía en el `esInfante` que manda el cliente. Se reutiliza para
+    // decidir qué pasajeros ocupan silla más abajo (una sola fuente de verdad).
+    const fechaRefGrupo = fechasIda[0] ?? null;
+    const esInfanteRealGrupo = opts.pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, fechaRefGrupo));
     if (opts.pasajeros.length) {
       const { error: pe } = await sb.from("contrato_pasajeros").insert(
         opts.pasajeros.map((p, i) => ({
@@ -1116,7 +1131,7 @@ export async function convertirCotizacionCarrito(
           identificacion: oNull(p.numeroDoc),
           fecha_nacimiento: oNull(p.fechaNacimiento),
           nacionalidad: oNull(p.nacionalidad),
-          es_infante: p.esInfante,
+          es_infante: esInfanteRealGrupo[i],
           orden: i,
         }))
       );
@@ -1210,7 +1225,12 @@ export async function convertirCotizacionCarrito(
             .eq("bloqueo_id", it.bloqueoId).in("estado", ["disponible", "cambio_entrante"])
             .order("numero_silla").limit(paxConSilla);
           if (libres && libres.length) {
-            const holders = opts.pasajeros.slice(0, it.pax || opts.pasajeros.length).filter((p) => !p.esInfante);
+            // Mismo `esInfanteRealGrupo` ya recalculado arriba — el slice
+            // conserva los índices originales (0..n-1), así que se puede
+            // indexar directo (ver lib/reservar/pasajeros.ts::pasajeroConsumeSilla).
+            const holders = opts.pasajeros
+              .slice(0, it.pax || opts.pasajeros.length)
+              .filter((_, idx) => pasajeroConsumeSilla(esInfanteRealGrupo[idx]));
             await Promise.all(libres.map((s, i) => {
               const p = holders[i];
               return admin.from("sillas").update({

@@ -9,6 +9,7 @@ import { formatMoneda } from "@/lib/utils";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
+import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import {
   generarFlujoId, crearMedidor, registrarEtapa, registrarErrorTecnico,
   crearEstadoFlujo, elevarEstadoFlujo, resultadoTotal,
@@ -490,6 +491,12 @@ async function crearContratoInterno(
     elevarEstadoFlujo(estado, "error");
     return { ok: false as const, error: MSG_ERROR_GUARDAR_CONTRATO };
   };
+  // `es_infante` se recalcula SIEMPRE server-side desde la fecha de
+  // nacimiento contra `input.fechaSalida` (la misma fecha ya guardada como
+  // `ventas.fecha_salida`) — nunca se confía en el checkbox "Es infante"
+  // que manda el cliente (ver lib/reservar/pasajeros.ts). El mismo arreglo
+  // se reutiliza más abajo para decidir qué pasajeros ocupan silla.
+  const esInfanteReal = input.pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, input.fechaSalida));
   if (input.pasajeros.length) {
     const { error } = await sb.from("contrato_pasajeros").insert(
       input.pasajeros.map((p, i) => ({
@@ -498,7 +505,7 @@ async function crearContratoInterno(
         tipo_id: oNull(p.tipoId) ?? "CC",
         identificacion: oNull(p.identificacion),
         fecha_nacimiento: oNull(p.fechaNacimiento),
-        es_infante: p.esInfante,
+        es_infante: esInfanteReal[i],
         orden: i,
       }))
     );
@@ -708,9 +715,11 @@ async function crearContratoInterno(
           }
         }
 
-        // 2) Descontar cupos del record (asignar N sillas disponibles)
+        // 2) Descontar cupos del record (asignar N sillas disponibles) —
+        // mismo `esInfanteReal` ya recalculado arriba, nunca el flag del
+        // cliente (ver lib/reservar/pasajeros.ts::pasajeroConsumeSilla).
         if (input.tipoPaquete === "bloqueo" && input.bloqueoId) {
-          const holders = input.pasajeros.filter((p) => !p.esInfante);
+          const holders = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
           const adultos = holders.length || pax;
           const { data: libres, error: libresError } = await admin
             .from("sillas")
