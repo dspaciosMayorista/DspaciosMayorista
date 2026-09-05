@@ -4,11 +4,22 @@
 -- migración anterior. Verificado únicamente contra una base local desechable.
 -- ───────────────────────────────────────────────────────────────────────────
 
+revoke execute on function public.guardar_pasajeros_contrato(text, jsonb) from authenticated;
+drop function if exists public.guardar_pasajeros_contrato(text, jsonb);
+
+revoke execute on function public.asignar_sillas_creacion(text, integer, uuid) from service_role;
+drop function if exists public.asignar_sillas_creacion(text, integer, uuid);
+
 revoke execute on function public.ajustar_sillas_por_pasajeros(text, integer) from authenticated;
 drop function if exists public.ajustar_sillas_por_pasajeros(text, integer);
 
+drop function if exists public._ajustar_sillas_nucleo(text, integer);
+
 drop trigger if exists trg_validar_responsable_infante on public.contrato_pasajeros;
 drop function if exists public.fn_validar_responsable_infante();
+
+drop function if exists public.es_infante_por_edad(date, date);
+drop function if exists public.edad_anios(date, date);
 
 drop index if exists public.idx_contrato_pasajeros_responsable;
 

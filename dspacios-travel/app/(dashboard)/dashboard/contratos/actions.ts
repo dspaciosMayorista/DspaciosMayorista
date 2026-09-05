@@ -443,6 +443,14 @@ async function crearContratoInterno(
         }
       : {}),
     tipo_paquete: input.tipoPaquete,
+    // Vínculo DURABLE contrato→bloqueo (columna `bloqueo_ref_id`, migración
+    // 022 — ya existía y ya la estampa `reservarDesdeTarifarioInterno`, pero
+    // este flujo manual nunca la había llenado). Sin esto, una vez que las
+    // sillas del contrato se liberan por completo (0 pax con silla), no hay
+    // forma de volver a descubrir a qué bloqueo pertenecía para reasignarle
+    // sillas de nuevo — `sillas.numero_contrato` queda null en todas y
+    // `ajustar_sillas_por_pasajeros` no tiene de dónde leer el bloqueo_id.
+    bloqueo_ref_id: input.tipoPaquete === "bloqueo" ? input.bloqueoId ?? null : null,
     asesor: oNull(input.asesorNombre),
     canal,
     tipo_asesor: tipoVenta,
@@ -718,41 +726,56 @@ async function crearContratoInterno(
         // 2) Descontar cupos del record (asignar N sillas disponibles) —
         // mismo `esInfanteReal` ya recalculado arriba, nunca el flag del
         // cliente (ver lib/reservar/pasajeros.ts::pasajeroConsumeSilla).
+        // La cuenta de "cuántos ocupan silla" solo cae a `pax` (total con
+        // niños/infantes incluidos, ver comentario en su definición más
+        // arriba) cuando NO se capturaron pasajeros nombrados — si SÍ los
+        // hay, `holders.length` manda siempre, aunque sea 0 (todos
+        // infantes): antes, `holders.length || pax` mezclaba ambos
+        // criterios y podía pedir de más (revisión de alto riesgo — B5).
         if (input.tipoPaquete === "bloqueo" && input.bloqueoId) {
           const holders = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
-          const adultos = holders.length || pax;
-          const { data: libres, error: libresError } = await admin
-            .from("sillas")
-            .select("id")
-            .eq("bloqueo_id", input.bloqueoId)
-            .in("estado", ["disponible", "cambio_entrante"])
-            .order("numero_silla")
-            .limit(adultos);
-          if (libresError) {
+          const adultos = input.pasajeros.length ? holders.length : pax;
+          // Asignación ATÓMICA (candado sobre el pool completo del bloqueo,
+          // migración 167) en vez de select+update en paralelo sin candado:
+          // dos contratos creándose a la vez sobre el MISMO bloqueo ya no
+          // pueden tomar la misma silla "libre" antes de que ninguno
+          // confirme. `service_role` porque este flujo puede correr para
+          // ventas de agencia/freelance (canal B2B), que no tienen el rol
+          // interno que exige el wrapper de edición.
+          const { data: usuarioActor } = await ctx.sb.auth.getUser();
+          if (!usuarioActor.user) {
             _resultadoAdmin = "parcial";
-            registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_consulta_sillas", libresError);
-          }
-          if (libres && libres.length) {
-            const resultadosSillas = await Promise.all(
-              libres.map((s, i) => {
-                const p = holders[i];
-                return admin.from("sillas").update({
-                  estado: "en_plazo",
-                  numero_contrato: numero,
-                  asesor: oNull(input.asesorNombre),
-                  hotel: input.hoteles[0]?.nombre ?? null,
-                  acomodacion: input.hoteles[0]?.acomodacion ?? null,
-                  pasajero_nombres: oNull(p?.nombres),
-                  pasajero_apellidos: oNull(p?.apellidos),
-                  tipo_doc: oNull(p?.tipoId),
-                  numero_doc: oNull(p?.identificacion),
-                  nacimiento: oNull(p?.fechaNacimiento),
-                }).eq("id", s.id);
-              })
-            );
-            if (resultadosSillas.some((r) => r.error)) {
+            registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "sin_usuario_para_sillas", null);
+          } else {
+            const { data: sillasRes, error: sillasError } = await admin.rpc("asignar_sillas_creacion", {
+              p_numero_contrato: numero,
+              p_holders_nuevo: adultos,
+              p_usuario_id: usuarioActor.user.id,
+            });
+            if (sillasError) {
               _resultadoAdmin = "parcial";
-              registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_update_sillas", resultadosSillas.find((r) => r.error)?.error);
+              registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_asignar_sillas", sillasError);
+            } else {
+              const sillaIds = (sillasRes?.[0]?.silla_ids ?? []) as number[];
+              const resultadosSillas = await Promise.all(
+                sillaIds.map((sillaId, i) => {
+                  const p = holders[i];
+                  return admin.from("sillas").update({
+                    asesor: oNull(input.asesorNombre),
+                    hotel: input.hoteles[0]?.nombre ?? null,
+                    acomodacion: input.hoteles[0]?.acomodacion ?? null,
+                    pasajero_nombres: oNull(p?.nombres),
+                    pasajero_apellidos: oNull(p?.apellidos),
+                    tipo_doc: oNull(p?.tipoId),
+                    numero_doc: oNull(p?.identificacion),
+                    nacimiento: oNull(p?.fechaNacimiento),
+                  }).eq("id", sillaId);
+                })
+              );
+              if (resultadosSillas.some((r) => r.error)) {
+                _resultadoAdmin = "parcial";
+                registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_update_sillas", resultadosSillas.find((r) => r.error)?.error);
+              }
             }
           }
         }

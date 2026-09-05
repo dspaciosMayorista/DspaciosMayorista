@@ -273,6 +273,36 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // ver lib/reservar/pasajeros.ts). El mismo arreglo se reutiliza más abajo
   // para decidir qué pasajeros ocupan silla — una sola fuente de verdad.
   const esInfanteReal = input.pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, meta.fecha_ida));
+
+  // 5-bis) Sillas del BLOQUEO negociado — ANTES de crear contrato_pasajeros:
+  // si el bloqueo se quedó sin cupo suficiente (condición de carrera con
+  // otra reserva concurrente sobre el MISMO bloqueo, entre el chequeo
+  // rápido del paso 2c y este punto), la reserva se detiene aquí y nunca
+  // llega a guardar pasajeros con el inventario incompleto (revisión de alto
+  // riesgo — B5). `asignar_sillas_creacion` (migración 167) hace el
+  // conteo/candado/asignación de forma ATÓMICA (bloquea el pool completo de
+  // sillas del bloqueo con `for update`) usando el conteo REAL de pasajeros
+  // que ocupan silla (`holders.length`, por edad real) — nunca `paxConSilla`
+  // (agregado de la configuración de habitaciones, que puede divergir si un
+  // pasajero nombrado resulta infante y la habitación no lo reflejaba).
+  // `service_role` porque la reserva puede venir de un usuario B2B externo
+  // (agencia/freelance), que nunca pasaría el candado de rol interno del
+  // wrapper de edición — el RPC exige en cambio un usuario real y activo.
+  const holdersCreacion = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
+  let sillaIdsAsignadas: number[] = [];
+  if (origen.tipo === "bloqueo" && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const { data: { user: actorSillas } } = await sb.auth.getUser();
+    if (!actorSillas) return { ok: false, error: "Sesión inválida: no se pudo confirmar el usuario para asignar sillas." };
+    const admin = createAdminClient();
+    const { data: sillasRes, error: sillasErr } = await admin.rpc("asignar_sillas_creacion", {
+      p_numero_contrato: numero,
+      p_holders_nuevo: holdersCreacion.length,
+      p_usuario_id: actorSillas.id,
+    });
+    if (sillasErr) return { ok: false, error: sillasErr.message };
+    sillaIdsAsignadas = (sillasRes?.[0]?.silla_ids ?? []) as number[];
+  }
+
   if (input.pasajeros.length) {
     const { error } = await sb.from("contrato_pasajeros").insert(
       input.pasajeros.map((p, i) => ({
@@ -529,49 +559,35 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     pushCxP("aereo", `Aéreo ${datosVuelo.aerolinea ?? ""}`.trim(), costoAereo, datosVuelo.proveedor, datosVuelo.aerolinea);
   }
 
-  // 9-bis) Sillas del BLOQUEO negociado — únicas, solo cuando `origen.tipo
-  // === "bloqueo"`. Un empaquetado o una salida dinámica NUNCA tocan
-  // `sillas`: no representan cupo negociado ni garantizado (defecto 1/§9 de
-  // la revisión: "Empaquetados no afecta sillas de bloqueos negociados").
-  if (origen.tipo === "bloqueo" && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // 9-bis) Snapshot cosmético de nombre/documento sobre las sillas YA
+  // asignadas atómicamente en el paso 5-bis (`sillaIdsAsignadas`) — esto es
+  // solo para que `sillas.pasajero_*` (usado en los listados operativos de
+  // vuelos) muestre el nombre real; el inventario en sí ya quedó reservado
+  // de forma atómica antes de crear los pasajeros, así que un fallo AQUÍ es
+  // best-effort (no re-lanza la condición de carrera del inventario, que ya
+  // se resolvió arriba) — nunca deja el inventario a medias, solo el
+  // nombre en pantalla desactualizado hasta la próxima edición.
+  if (sillaIdsAsignadas.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
-      const { data: libres } = await admin
-        .from("sillas")
-        .select("id")
-        .eq("bloqueo_id", origen.id)
-        .in("estado", ["disponible", "cambio_entrante"])
-        .order("numero_silla")
-        .limit(paxConSilla);
-      if (libres && libres.length) {
-        // Copia los datos del pasajero a cada silla (una silla por pasajero con
-        // silla; los infantes no ocupan silla) — usa el MISMO `esInfanteReal`
-        // ya recalculado y guardado en contrato_pasajeros arriba, nunca el
-        // flag del cliente (ver lib/reservar/pasajeros.ts::pasajeroConsumeSilla).
-        const holders = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
-        await Promise.all(
-          libres.map((s, i) => {
-            const p = holders[i];
-            return admin.from("sillas").update({
-              estado: "en_plazo",
-              numero_contrato: numero,
-              asesor: oNull(asesorNombre),
-              hotel: meta.hotel_nombre,
-              acomodacion: input.categoria,
-              plazo: oNull(input.plazo),
-              pasajero_nombres: oNull(p?.nombres),
-              pasajero_apellidos: oNull(p?.apellidos),
-              tipo_doc: oNull(p?.tipoDoc),
-              numero_doc: oNull(p?.numeroDoc),
-              nacimiento: oNull(p?.fechaNacimiento),
-            }).eq("id", s.id);
-          })
-        );
-      }
+      await Promise.all(
+        sillaIdsAsignadas.map((sillaId, i) => {
+          const p = holdersCreacion[i];
+          return admin.from("sillas").update({
+            asesor: oNull(asesorNombre),
+            hotel: meta.hotel_nombre,
+            acomodacion: input.categoria,
+            plazo: oNull(input.plazo),
+            pasajero_nombres: oNull(p?.nombres),
+            pasajero_apellidos: oNull(p?.apellidos),
+            tipo_doc: oNull(p?.tipoDoc),
+            numero_doc: oNull(p?.numeroDoc),
+            nacimiento: oNull(p?.fechaNacimiento),
+          }).eq("id", sillaId);
+        })
+      );
     } catch {
-      // No bloquear la reserva si falla el paso administrativo de asignar
-      // silla — la disponibilidad ya se validó en el paso 2c; un fallo aquí
-      // es una condición de carrera de última hora, no un origen inválido.
+      // Best-effort — ver comentario arriba.
     }
   }
 
@@ -1221,16 +1237,28 @@ export async function convertirCotizacionCarrito(
           costoAereoTotal += costoAereo;
           pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea);
 
+          // Mismo `esInfanteRealGrupo` ya recalculado arriba — el slice
+          // conserva los índices originales (0..n-1), así que se puede
+          // indexar directo (ver lib/reservar/pasajeros.ts::pasajeroConsumeSilla).
+          // `holders.length` (conteo real por edad) manda sobre `paxConSilla`
+          // (agregado de la configuración de habitaciones, que puede divergir
+          // si un pasajero nombrado resulta infante y la habitación no lo
+          // reflejaba — revisión de alto riesgo, B5). ⚠️ Residual conocido: a
+          // diferencia de reservarDesdeTarifarioInterno/crearContratoInterno,
+          // este camino (conversión de carrito con VARIOS ítems, cada uno con
+          // su propio bloqueoId bajo un mismo numero_contrato) NO se migró al
+          // RPC atómico `asignar_sillas_creacion` — un solo `numero_contrato`
+          // no puede representar más de un `bloqueo_ref_id`, así que el
+          // mecanismo de reconciliación por conteo no generaliza limpio a
+          // "varios bloqueos, un contrato". Sigue usando select+update en
+          // paralelo sin candado (mismo riesgo de carrera que ya existía).
+          const holders = opts.pasajeros
+            .slice(0, it.pax || opts.pasajeros.length)
+            .filter((_, idx) => pasajeroConsumeSilla(esInfanteRealGrupo[idx]));
           const { data: libres } = await admin.from("sillas").select("id")
             .eq("bloqueo_id", it.bloqueoId).in("estado", ["disponible", "cambio_entrante"])
-            .order("numero_silla").limit(paxConSilla);
+            .order("numero_silla").limit(holders.length);
           if (libres && libres.length) {
-            // Mismo `esInfanteRealGrupo` ya recalculado arriba — el slice
-            // conserva los índices originales (0..n-1), así que se puede
-            // indexar directo (ver lib/reservar/pasajeros.ts::pasajeroConsumeSilla).
-            const holders = opts.pasajeros
-              .slice(0, it.pax || opts.pasajeros.length)
-              .filter((_, idx) => pasajeroConsumeSilla(esInfanteRealGrupo[idx]));
             await Promise.all(libres.map((s, i) => {
               const p = holders[i];
               return admin.from("sillas").update({

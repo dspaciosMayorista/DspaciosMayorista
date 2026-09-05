@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
 import { actualizarAsesorContrato, actualizarPasajerosContrato, type PasajeroEdit } from "./editar-contrato-actions";
+import { filasIniciales } from "@/lib/reservar/pasajerosEdicion";
 
-export type PasajeroRow = { id: number; nombre: string; tipo_id: string | null; identificacion: string | null; fecha_nacimiento: string | null; es_infante: boolean };
+export type PasajeroRow = { id: number; nombre: string; tipo_id: string | null; identificacion: string | null; fecha_nacimiento: string | null; es_infante: boolean; responsable_id?: number | null };
 
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
@@ -35,7 +36,11 @@ export function EditarAsesorPasajeros({
   // vacías con el primer puesto pre-llenado con el titular.
   const [filas, setFilas] = useState<PasajeroEdit[]>(() => {
     if (pasajeros.length) {
-      return pasajeros.map((p) => ({ nombre: p.nombre, tipoId: p.tipo_id ?? "CC", identificacion: p.identificacion ?? "", fechaNacimiento: p.fecha_nacimiento ?? "", esInfante: p.es_infante }));
+      // `filasIniciales` traduce `responsable_id` (id real, persistido) a
+      // `responsableIndex` (posición en este mismo arreglo) — sin esto, el
+      // formulario cargaba SIEMPRE sin vínculo y el primer guardado, aunque
+      // no tocara pasajeros, borraba en silencio el vínculo ya guardado.
+      return filasIniciales(pasajeros);
     }
     const vacios: PasajeroEdit[] = Array.from({ length: Math.max(maxPax, 1) }, (_, i) => ({
       nombre: i === 0 ? (titularNombre ?? "") : "",
@@ -162,8 +167,13 @@ export function EditarAsesorPasajeros({
                           <option value="">— Sin vincular —</option>
                           {filas.map((otro, j) => {
                             if (j === i) return null;
+                            // Servidor (trigger de la migración 167) exige mayoría de
+                            // edad real (≥18), no solo "no ser infante" — un niño
+                            // (CHD) tampoco puede ser responsable. Se filtra aquí
+                            // igual, solo para no ofrecer una opción que el servidor
+                            // va a rechazar de todos modos.
                             const edadOtro = calcularEdad(otro.fechaNacimiento, fechaSalida);
-                            if (edadOtro != null && edadOtro < 2) return null; // otro infante: no puede ser responsable
+                            if (edadOtro == null || edadOtro < 18) return null;
                             return <option key={j} value={j}>{otro.nombre || `Pasajero ${j + 1}`}</option>;
                           })}
                         </select>

@@ -3265,15 +3265,57 @@ export type Database = {
       };
       // Migración 167. Reconcilia atómicamente cuántas sillas de un bloqueo
       // tiene asignadas un contrato con `p_holders_nuevo` (pasajeros que
-      // consumen silla — nunca infantes). Retorna el total resultante; 0 si
-      // el contrato no usa sillas propias (porción terrestre/empaquetado/
-      // dinámico).
+      // consumen silla — nunca infantes, ver lib/reservar/pasajeros.ts::
+      // pasajeroConsumeSilla). `holders_total` es el resultado final; 0 si el
+      // contrato no usa sillas propias (porción terrestre/empaquetado/
+      // dinámico). `silla_ids` son las sillas activas del contrato tras el
+      // ajuste — los flujos de CREACIÓN los usan para escribir el snapshot
+      // cosmético de nombre/documento sobre esas sillas exactas.
       ajustar_sillas_por_pasajeros: {
         Args: {
           p_numero_contrato: string;
           p_holders_nuevo: number;
         };
-        Returns: number;
+        Returns: { holders_total: number; silla_ids: number[] }[];
+      };
+      // Migración 167. Reemplazo transaccional de los pasajeros de un
+      // contrato ya creado: recalcula es_infante server-side, exige
+      // responsable_id para infantes NUEVOS (con excepción de abuelo para
+      // históricos sin vínculo previo), conserva el id de las filas que ya
+      // existían (upsert por id, nunca borra-y-reinserta-todo), y reconcilia
+      // el inventario de sillas llamando internamente a
+      // ajustar_sillas_por_pasajeros — todo en una sola transacción.
+      // `p_pasajeros` es un arreglo de objetos con claves
+      // id?/nombre/tipoId/identificacion/fechaNacimiento/responsableOrden
+      // (responsableOrden es 1-based, posición dentro de este mismo arreglo).
+      guardar_pasajeros_contrato: {
+        Args: {
+          p_numero_contrato: string;
+          p_pasajeros: Json;
+        };
+        Returns: {
+          id: number;
+          nombre: string;
+          tipo_id: string;
+          identificacion: string | null;
+          fecha_nacimiento: string | null;
+          es_infante: boolean;
+          responsable_id: number | null;
+          orden: number;
+        }[];
+      };
+      // Migración 167. Wrapper de _ajustar_sillas_nucleo para la CREACIÓN de
+      // un contrato nuevo — solo `service_role` (la reserva puede venir de
+      // un usuario B2B externo, que nunca pasaría el candado de rol interno
+      // de ajustar_sillas_por_pasajeros). Exige un p_usuario_id real y
+      // activo — mismo patrón que congelar_condiciones_contrato (migración 165).
+      asignar_sillas_creacion: {
+        Args: {
+          p_numero_contrato: string;
+          p_holders_nuevo: number;
+          p_usuario_id: string;
+        };
+        Returns: { holders_total: number; silla_ids: number[] }[];
       };
     };
     Enums: {

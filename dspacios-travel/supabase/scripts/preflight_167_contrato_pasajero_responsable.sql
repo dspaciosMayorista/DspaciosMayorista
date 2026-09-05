@@ -21,16 +21,17 @@ select '167-no-aplicada', 'contrato_pasajeros.responsable_id',
     else 'No existe todavía' end;
 
 insert into pg_temp.preflight_167_reporte
-select '167-no-aplicada', 'ajustar_sillas_por_pasajeros()',
+select '167-no-aplicada', f.nombre,
   case when exists (
     select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname = 'ajustar_sillas_por_pasajeros'
+    where n.nspname = 'public' and p.proname = f.nombre
   ) then 'BLOCKED' else 'OK' end,
   case when exists (
     select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname = 'ajustar_sillas_por_pasajeros'
+    where n.nspname = 'public' and p.proname = f.nombre
   ) then 'YA existe — la 167 parece aplicada; revisar antes de reintentar.'
-    else 'No existe todavía' end;
+    else 'No existe todavía' end
+from (values ('ajustar_sillas_por_pasajeros'), ('guardar_pasajeros_contrato'), ('edad_anios'), ('es_infante_por_edad'), ('_ajustar_sillas_nucleo'), ('asignar_sillas_creacion')) as f(nombre);
 
 -- 2) Dependencias que la 167 necesita ya existentes.
 insert into pg_temp.preflight_167_reporte
@@ -48,6 +49,22 @@ select '167-dependencias', f.nombre,
   case when exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
          where n.nspname = 'public' and p.proname = f.nombre) then 'Presente' else 'FALTA' end
 from (values ('mi_rol'), ('puede_ver_contrato'), ('soy_asesor_del_contrato')) as f(nombre);
+
+insert into pg_temp.preflight_167_reporte
+select '167-dependencias', 'ventas.bloqueo_ref_id',
+  case when exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'ventas' and column_name = 'bloqueo_ref_id'
+  ) then 'OK' else 'BLOCKED' end,
+  'ajustar_sillas_por_pasajeros lee ventas.bloqueo_ref_id (migración 022) como fuente PRIMARIA del bloqueo — sin ella, no hay forma de redescubrirlo tras liberar todas las sillas de un contrato.';
+
+insert into pg_temp.preflight_167_reporte
+select '167-dependencias', 'ventas.fecha_salida',
+  case when exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'ventas' and column_name = 'fecha_salida'
+  ) then 'OK' else 'BLOCKED' end,
+  'guardar_pasajeros_contrato y fn_validar_responsable_infante usan ventas.fecha_salida como referencia de edad.';
 
 insert into pg_temp.preflight_167_reporte
 select '167-dependencias', 'contrato_pasajeros.es_infante',
