@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { quitarPasajero, truncarPasajeros, recalcularVinculosPorEdad, normalizarResponsablesPorGrupo } from "../lib/reservar/pasajerosFilas.ts";
+import { quitarPasajero, truncarPasajeros, recalcularVinculosPorEdad, normalizarResponsablesPorGrupo, recalcularVinculosPorEdadPorFila } from "../lib/reservar/pasajerosFilas.ts";
 
 type Fila = { nombre: string; fechaNacimiento: string; responsableIndex?: number | null };
 
@@ -224,5 +224,52 @@ describe("normalizarResponsablesPorGrupo — B10 (ronda 3): discrepancia tempora
     const filas: Fila[] = [{ nombre: "Adulto", fechaNacimiento: F_ADULTO }];
     const resultado = normalizarResponsablesPorGrupo(filas, GRUPO_TARDIO);
     assert.equal(resultado[0], filas[0]);
+  });
+});
+
+describe("recalcularVinculosPorEdadPorFila — B13 revisita B10 (ronda 5): fecha de referencia POR PASAJERO, no una única fecha para todo el carrito", () => {
+  const F_CRUZA_INFANTE_A_NINO = "2024-03-01";
+  const REF_TEMPRANA = "2026-01-01"; // aquí sigue siendo infante
+  const REF_TARDIA = "2026-06-01"; // aquí ya es niño (CHD)
+
+  test("un pasajero clasificado con SU PROPIA fecha (no la del carrito completo): infante en su ítem, limpia el vínculo si en la fecha de OTRO pasajero ya no lo sería", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Bebé frontera", fechaNacimiento: F_CRUZA_INFANTE_A_NINO, responsableIndex: 0 },
+    ];
+    // El pasajero 1 (bebé) viaja en un ítem con fecha temprana -> sigue
+    // siendo infante -> el vínculo se conserva. El adulto (posición 0) usa
+    // su propia fecha (tardía) solo para SU clasificación, no para la del
+    // infante.
+    const resultado = recalcularVinculosPorEdadPorFila(filas, [REF_TARDIA, REF_TEMPRANA]);
+    assert.equal(resultado[1].responsableIndex, 0, "el bebé se clasifica con SU fecha (temprana), no con la del adulto");
+  });
+
+  test("el mismo pasajero limpia su vínculo cuando SU fecha de referencia (no la del carrito) ya lo hace CHD", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Bebé frontera", fechaNacimiento: F_CRUZA_INFANTE_A_NINO, responsableIndex: 0 },
+    ];
+    const resultado = recalcularVinculosPorEdadPorFila(filas, [REF_TEMPRANA, REF_TARDIA]);
+    assert.equal(resultado[1].responsableIndex, null, "con su propia fecha tardía ya es CHD: el vínculo sobra");
+  });
+
+  test("un vínculo válido se conserva con la MISMA referencia de objeto cuando ninguna fecha cambia su clasificación", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 0 },
+    ];
+    const resultado = recalcularVinculosPorEdadPorFila(filas, [HOY, HOY]);
+    assert.equal(resultado[1], filas[1], "un vínculo que sigue siendo válido no debe generar un objeto nuevo");
+  });
+
+  test("responsable que deja de ser adulto SEGÚN SU PROPIA fecha invalida el vínculo del infante que lo señala", () => {
+    const filas: Fila[] = [
+      { nombre: "Resultó ser un niño", fechaNacimiento: F_NINO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 0 },
+    ];
+    // Ambos con la misma fecha (HOY): el "responsable" es menor de edad hoy.
+    const resultado = recalcularVinculosPorEdadPorFila(filas, [HOY, HOY]);
+    assert.equal(resultado[1].responsableIndex, null);
   });
 });

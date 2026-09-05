@@ -691,6 +691,82 @@ begin
       values ('multi', '#B11 posición repetida DENTRO de la misma reserva de bloqueo: rechazada', case when v_ok then 'OK' else 'FALLA' end, '');
   end;
 
+  -- ═════════════════════════════════════════════════════════════════════════
+  -- R5 — B14: consolidación de `reservasSillas` por `bloqueoId` en
+  -- `convertirCotizacionCarrito` (lib/reservar/carritoAsignaciones.ts,
+  -- `consolidarReservasSillasPorBloqueo`). El carrito permite agregar 2+
+  -- ítems sobre el MISMO bloqueo (ej. dos hoteles distintos que comparten el
+  -- mismo vuelo negociado) — antes de B14 cada ítem generaba su PROPIA
+  -- entrada de `p_reservas_sillas`, y la prueba "multi" de arriba
+  -- ("bloqueoId repetido en el mismo payload: rechazado") ya demuestra que
+  -- el RPC rechaza ese caso sin consolidar. Estas dos pruebas verifican el
+  -- resultado REAL, contra el RPC de verdad, de la entrada YA CONSOLIDADA
+  -- que produce `consolidarReservasSillasPorBloqueo` (unión de posiciones,
+  -- suma de holdersMin) — exactamente lo que TypeScript arma antes de
+  -- llamar. El caso de bloqueos DISTINTOS con un pasajero compartido (#9 de
+  -- la ronda 5) ya lo cubre la prueba "#6" de arriba (misma persona en
+  -- posición 1 de v_bloqueo_id Y v_bloqueo2_id, una silla en cada uno).
+  -- ═════════════════════════════════════════════════════════════════════════
+  declare
+    v_num8 text := 'DTM-3'||to_char(clock_timestamp(),'HH24MISSMS');
+    v_num9 text := 'DTM-2'||to_char(clock_timestamp(),'HH24MISSMS')||'9';
+  begin
+    update public.sillas set estado = 'disponible', numero_contrato = null where bloqueo_id = v_bloqueo_id;
+
+    -- 29) B14 #7 — dos ítems (conceptuales) sobre el MISMO bloqueo, con los
+    --     MISMOS 2 pasajeros: la unión de posiciones es [1,2] (no [1,2,1,2])
+    --     y holdersMin se SUMA (1+1=2, coincide con el conteo real) — la
+    --     entrada consolidada debe reservar EXACTAMENTE 2 sillas, nunca 4
+    --     (una por persona, no una por persona-por-ítem).
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num8, 'Cliente R5 B14 Mismos Pasajeros', current_date + 30, 2, 100000, 'pendiente', 'mayorista');
+    perform 1 from public.crear_pasajeros_contrato_multi(
+      v_num8,
+      jsonb_build_array(
+        jsonb_build_object('nombre','B14 Adulto 1','tipoId','CC','identificacion','100016781001','fechaNacimiento',(current_date - interval '30 years')::date::text),
+        jsonb_build_object('nombre','B14 Adulto 2','tipoId','CC','identificacion','100016781002','fechaNacimiento',(current_date - interval '30 years')::date::text)
+      ),
+      jsonb_build_array(
+        jsonb_build_object('bloqueoId', v_bloqueo_id, 'holdersMin', 2, 'posiciones', jsonb_build_array(1,2))
+      ),
+      v_uid
+    );
+    insert into pg_temp.postcheck_167_reporte
+      values ('multi', 'B14 #7: mismo bloqueo + mismos pasajeros de 2 ítems consolidados en 1 sola entrada -> exactamente 1 silla por persona (nunca duplicada)', case when (
+        select count(*) from public.sillas where numero_contrato = v_num8 and bloqueo_id = v_bloqueo_id and estado = 'en_plazo'
+      ) = 2 then 'OK' else 'FALLA' end, '');
+
+    -- 30) B14 #8 — dos ítems sobre el MISMO bloqueo con subconjuntos
+    --     PARCIALMENTE distintos: ítem A=[1,2], ítem B=[2,3] -> unión=[1,2,3]
+    --     (3 personas reales, la posición 2 se comparte y NO se duplica).
+    --     holdersMin sumado (1+1=2) queda por DEBAJO del conteo real (3) —
+    --     el propio `greatest(holdersMin, holders_reales)` del núcleo (ver
+    --     prueba de esquema "p_holders_min es un PISO") debe hacer valer el
+    --     conteo real: exactamente 3 sillas, nunca 2.
+    update public.sillas set estado = 'disponible', numero_contrato = null where bloqueo_id = v_bloqueo_id;
+    -- v_bloqueo_id nació con 2 cupos (fixture inicial) — esta unión real
+    -- necesita 3 sillas distintas, así que se agrega una tercera aquí.
+    insert into public.sillas (bloqueo_id, numero_silla, estado) values (v_bloqueo_id, 3, 'disponible');
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num9, 'Cliente R5 B14 Solapamiento Parcial', current_date + 30, 3, 100000, 'pendiente', 'mayorista');
+    perform 1 from public.crear_pasajeros_contrato_multi(
+      v_num9,
+      jsonb_build_array(
+        jsonb_build_object('nombre','B14 Solap 1','tipoId','CC','identificacion','100016782001','fechaNacimiento',(current_date - interval '30 years')::date::text),
+        jsonb_build_object('nombre','B14 Solap 2','tipoId','CC','identificacion','100016782002','fechaNacimiento',(current_date - interval '30 years')::date::text),
+        jsonb_build_object('nombre','B14 Solap 3','tipoId','CC','identificacion','100016782003','fechaNacimiento',(current_date - interval '30 years')::date::text)
+      ),
+      jsonb_build_array(
+        jsonb_build_object('bloqueoId', v_bloqueo_id, 'holdersMin', 2, 'posiciones', jsonb_build_array(1,2,3))
+      ),
+      v_uid
+    );
+    insert into pg_temp.postcheck_167_reporte
+      values ('multi', 'B14 #8: mismo bloqueo con subconjuntos parcialmente distintos ([1,2]+[2,3]) consolidados en la unión [1,2,3] -> exactamente 3 sillas (el piso real gana sobre la suma de holdersMin)', case when (
+        select count(*) from public.sillas where numero_contrato = v_num9 and bloqueo_id = v_bloqueo_id and estado = 'en_plazo'
+      ) = 3 then 'OK' else 'FALLA' end, '');
+  end;
+
   raise notice 'postcheck 167: fixtures creados bajo %/%/%/%/% (se revierten con ROLLBACK)', v_num, v_num2, v_num3, v_num4, v_num5;
 end $$;
 

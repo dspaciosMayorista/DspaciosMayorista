@@ -117,6 +117,40 @@ export function recalcularVinculosPorEdad<T extends FilaConFechaYResponsable>(
 }
 
 /**
+ * Igual que `recalcularVinculosPorEdad`, pero con una fecha de referencia
+ * DISTINTA por fila — revisión de B10 bajo el modelo de B13 (ronda 5):
+ * `ConvertirCarritoBtn.tsx` ya no puede usar una única fecha conservadora
+ * para todo el carrito (`fechaMasTemprana`), porque desde B13 cada pasajero
+ * solo termina de verdad en el/los contrato(s) de los ítems a los que está
+ * asignado — la fecha correcta para clasificarlo es la más temprana ENTRE
+ * ESOS ítems (`fechaReferenciaPorPasajero` en `carritoAsignaciones.ts`), no
+ * la del carrito completo (que podía bloquear un vínculo válido por un ítem
+ * en el que la persona ni siquiera viaja). El responsable de un infante se
+ * evalúa con SU PROPIA fecha de referencia — en la práctica coincide con la
+ * del infante (ambos deben compartir grupo, ver `comparteGrupo`), pero se
+ * usa la suya por si difiere momentáneamente mientras la asignación por
+ * ítem todavía se está editando.
+ */
+export function recalcularVinculosPorEdadPorFila<T extends FilaConFechaYResponsable>(
+  filas: readonly T[],
+  fechasReferenciaPorFila: readonly (string | null)[]
+): T[] {
+  const esInfanteArr = filas.map((f, i) => esInfantePorEdad(f.fechaNacimiento, fechasReferenciaPorFila[i] ?? null));
+  return filas.map((f, i) => {
+    const actual = f.responsableIndex ?? null;
+    let siguiente = actual;
+    if (!esInfanteArr[i]) {
+      siguiente = null;
+    } else if (actual != null) {
+      const filaResp = filas[actual] as T | undefined;
+      const edadResp = filaResp ? calcularEdad(filaResp.fechaNacimiento, fechasReferenciaPorFila[actual] ?? null) : null;
+      if (actual === i || edadResp == null || edadResp < EDAD_ADULTO_RESPONSABLE) siguiente = null;
+    }
+    return siguiente === actual ? f : { ...f, responsableIndex: siguiente };
+  });
+}
+
+/**
  * Normaliza `responsableIndex` contra la fecha REAL de UN grupo/contrato
  * específico — revisión de alto riesgo, ronda 3 (B10): a diferencia de
  * `recalcularVinculosPorEdad` (pensada para la UI, reactiva a cambios del

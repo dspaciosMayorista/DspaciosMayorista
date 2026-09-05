@@ -38,6 +38,7 @@ import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaqu
 import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
+import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
 import {
   componenteHotelReal,
   componentePaqueteReal,
@@ -1097,6 +1098,20 @@ export async function convertirCotizacionCarrito(
     items.push({ ...it, __posiciones: posiciones });
   }
 
+  // Ningún pasajero del universo declarado puede quedar sin viajar en NINGÚN
+  // ítem (B12, ronda 5) — si alguien no participa en nada, o el universo se
+  // dimensionó mal (persona de más), o simplemente se olvidó marcarlo en
+  // algún ítem; ninguno de los dos casos es correcto guardarlo en silencio.
+  // Excepción real (no un descuido): un carrito de SOLO tours no tiene
+  // ítems contra los cuales chequear — el concepto "asignado a un ítem" no
+  // aplica cuando no hay ítems en absoluto.
+  if (items.length) {
+    const sinAsignar = posicionesSinAsignar(items.map((it) => it.__posiciones), opts.pasajeros.length);
+    if (sinAsignar.length) {
+      return { ok: false, error: `El pasajero ${sinAsignar[0]} no está asignado a ningún ítem del carrito. Marca en qué ítem(s) viaja o quítalo del listado.` };
+    }
+  }
+
   type Grupo = { destino: string | null; items: ItemCarritoConAsignacion[]; tours: TourCarritoPayload[] };
   let grupos: Grupo[];
   if (opts.agrupar === "todo" || items.length <= 1) {
@@ -1187,8 +1202,44 @@ export async function convertirCotizacionCarrito(
     // es_infante server-side (B10, ronda 3).
     const fechaRefGrupo = fechasIda[0] ?? null;
     const precioTotal = validados.reduce((s, v) => s + v.comp.precioVenta, 0) + grupo.tours.reduce((s, t) => s + t.precio, 0);
-    const paxTotal = validados.reduce((s, v) => s + (v.comp.totalPax || v.comp.paxConSilla), 0) || (grupo.tours[0]?.pax ?? 1);
     const monedaGrupo = validados[0]?.comp.monedaReserva ?? "COP";
+
+    // ── Universo LOCAL de este contrato (B13, ronda 5) ───────────────────
+    // ÚNICAMENTE la unión de posiciones asignadas a los ítems DE ESTE
+    // GRUPO — nunca el universo completo del carrito, que puede incluir
+    // personas que no viajan en este contrato en absoluto (otro destino,
+    // en modo "por destino"). Excepción documentada: un grupo sin ítems
+    // (todo el carrito son tours — `grupo.items` solo puede quedar vacío
+    // cuando ES el único grupo, ver comentario de `posicionesSinAsignar`
+    // más arriba) usa el universo GLOBAL completo, porque en ese caso el
+    // único grupo ES el carrito entero.
+    const posicionesGrupoItems = posicionesUnicasDeGrupo(
+      grupo.items.map((it) => it.__posiciones),
+      grupo.items.map((_, i) => i)
+    );
+    const universoGrupo = posicionesGrupoItems.length ? posicionesGrupoItems : opts.pasajeros.map((_, i) => i + 1);
+    // Normaliza edades GLOBALMENTE contra la fecha REAL de este grupo (B10)
+    // ANTES de reindexar a local — en ese orden, `posicionesInvalidas` de
+    // abajo solo puede señalar un INFANTE REAL de este grupo cuyo
+    // responsable no viaja en él (nunca un falso positivo de alguien cuyo
+    // responsableIndex quedó "vivo" solo porque en OTRO grupo sí era
+    // infante — ese caso ya lo limpió la normalización).
+    const pasajerosNormalizadosGlobal = normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefGrupo);
+    const { pasajerosLocal, posicionesInvalidas, mapaGlobalALocal } = reindexarGrupoLocal(pasajerosNormalizadosGlobal, universoGrupo);
+    if (posicionesInvalidas.length) {
+      // Decisión de diseño investigada (B13 punto 5, ver comentario de
+      // `reindexarGrupoLocal`): el responsable de un infante debe
+      // pertenecer al MISMO CONTRATO (lo exige la FK responsable_id de la
+      // migración 167) — no necesariamente al mismo ítem/bloqueo. Aquí el
+      // infante en esta posición GLOBAL quedó en este grupo, pero su
+      // responsable elegido en la UI terminó en un contrato DISTINTO.
+      return { ok: false, error: `El adulto responsable del pasajero ${posicionesInvalidas[0]} debe viajar en el mismo contrato que él (mismo destino/grupo) — elige otro responsable o revisa la asignación.` };
+    }
+    // `ventas.pax` = personas ÚNICAS de este contrato (B13 punto 7) —
+    // nunca la suma de `it.pax`/`comp.paxConSilla` de sus ítems, que
+    // duplicaba a cualquier viajero compartido entre 2+ ítems del mismo
+    // grupo.
+    const paxTotal = pasajerosLocal.length;
 
     const { error: ve } = await sb.from("ventas").insert({
       numero_contrato: numero,
@@ -1242,13 +1293,23 @@ export async function convertirCotizacionCarrito(
     // B11 (ronda 3): las posiciones de cada bloqueo son las asignadas
     // EXPLÍCITAMENTE al ítem (`__posiciones`), nunca un prefijo derivado de
     // `it.pax` — ver el comentario de `ItemCarritoConAsignacion` arriba.
-    const reservasSillas = validados
+    // B14 (ronda 5): `__posiciones` está en el sistema GLOBAL del carrito —
+    // se traduce a LOCAL (vía `mapaGlobalALocal`, coherente con el payload
+    // `pasajerosLocal` que se envía al RPC más abajo) y se consolida por
+    // `bloqueoId`, porque `CartContext.add` permite 2+ ítems sobre el mismo
+    // bloqueo (ej. dos hoteles distintos que comparten el mismo vuelo
+    // negociado) y el RPC (migración 167) rechaza un bloqueoId repetido en
+    // el mismo payload. Todo `posGlobal` de `v.item.__posiciones` pertenece
+    // a `universoGrupo` (por construcción: viene de `grupo.items`, la misma
+    // fuente de `posicionesGrupoItems`), así que siempre está en el mapa.
+    const itemsBloqueoLocal = validados
       .filter((v): v is typeof v & { item: { bloqueoId: number } } => v.item.modulo === "bloqueo" && v.item.bloqueoId != null)
       .map((v) => ({
         bloqueoId: v.item.bloqueoId,
         holdersMin: v.comp.paxConSilla,
-        posiciones: v.item.__posiciones,
+        posiciones: v.item.__posiciones.map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
       }));
+    const reservasSillas = consolidarReservasSillasPorBloqueo(itemsBloqueoLocal);
     // B10 (ronda 3): la fecha de referencia que usó la UI para decidir
     // quién es infante y capturar su responsable es SIEMPRE conservadora
     // (la más temprana de TODO el carrito — la UI no puede conocer de
@@ -1260,14 +1321,17 @@ export async function convertirCotizacionCarrito(
     // quedaría "sobrante": el propio trigger de la migración 167 lo
     // rechazaría ("solo un infante puede tener responsable"), tumbando la
     // creación de ESTE grupo con un error que no describe el problema real.
-    // `normalizarResponsablesPorGrupo` limpia ese sobrante ANTES de armar el
-    // payload de este grupo — nunca hace falta AGREGAR uno nuevo aquí (si
-    // alguien SIGUE siendo infante para este grupo y no trae vínculo, el
-    // propio RPC lo rechaza con su mensaje real, igual que en cualquier
-    // otro flujo de creación).
-    const pasajerosNormalizadosGrupo = normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefGrupo);
+    // `normalizarResponsablesPorGrupo` ya limpió ese sobrante GLOBALMENTE
+    // arriba (antes de reindexar a local, ver comentario de
+    // `pasajerosNormalizadosGlobal`) — nunca hace falta AGREGAR uno nuevo
+    // aquí (si alguien SIGUE siendo infante para este grupo y no trae
+    // vínculo, el propio RPC lo rechaza con su mensaje real, igual que en
+    // cualquier otro flujo de creación).
+    // B13 (ronda 5): el payload es `pasajerosLocal` — ÚNICAMENTE la unión de
+    // posiciones de este grupo, ya reindexada (posiciones globales de
+    // `opts.pasajeros` NUNCA se envían completas a cada contrato).
     const payloadPasajerosMulti = payloadGuardarPasajeros(
-      pasajerosNormalizadosGrupo.map((p) => ({
+      pasajerosLocal.map((p) => ({
         nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
         tipoId: oNull(p.tipoDoc) ?? "CC",
         identificacion: oNull(p.numeroDoc) ?? "",
@@ -1385,8 +1449,16 @@ export async function convertirCotizacionCarrito(
           // B11 (ronda 3): usa las posiciones EXPLÍCITAS asignadas a este
           // ítem (nunca un prefijo por conteo) para el snapshot cosmético —
           // mismo criterio que la reserva atómica de sillas de arriba.
+          // B13 (ronda 5): `esInfanteRealGrupo` está indexado por posición
+          // LOCAL (el `orden` que devuelve el RPC sigue el orden de
+          // `pasajerosLocal`, no el de `opts.pasajeros`) — `pos` aquí sigue
+          // siendo GLOBAL (viene de `it.__posiciones`), así que se traduce
+          // vía `mapaGlobalALocal` antes de indexar. El nombre/documento a
+          // mostrar sí se toma de `opts.pasajeros[pos - 1]` (GLOBAL): son
+          // los mismos datos de la persona, la reindexación solo afecta la
+          // posición dentro del contrato, no su identidad.
           const holders = it.__posiciones
-            .filter((pos) => pasajeroConsumeSilla(esInfanteRealGrupo[pos - 1]))
+            .filter((pos) => pasajeroConsumeSilla(esInfanteRealGrupo[mapaGlobalALocal.get(pos)!]))
             .map((pos) => opts.pasajeros[pos - 1]);
           try {
             const { data: asignadas } = await admin.from("sillas").select("id")
