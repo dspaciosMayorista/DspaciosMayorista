@@ -33,6 +33,11 @@ import {
   clasificarMenoresPorEdad, verificarTarifasMenoresDisponibles, type ClasificacionMenores,
 } from "./edadesMenores.ts";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "./distribucionHabitaciones.ts";
+import {
+  condicionHotelEstadia, barridoRestriccionEstadia, type VigenciaHotelCondicion,
+} from "../cotizacion/snapshotCondiciones.ts";
+import { condicionDeVigenciaHotel, type HotelTemporadaCatalogo } from "../cotizacion/condicionDesdeCatalogo.ts";
+import { type CondicionTipo } from "../cotizacion/condicionPago.ts";
 
 const MS_DIA = 86_400_000;
 
@@ -63,11 +68,19 @@ export type FilaArmadoHotel = {
   hotel_moneda: string | null;
 } | null; // null = no hay fila armado_hoteles para este par (mismo comportamiento que antes: sin filtro, moneda COP)
 export type FilaTemporadaHotelRaw = {
+  // `id`/`condicion_pago_*` = migración 164 (condiciones de pago por
+  // componente). Opcionales porque no todos los llamadores de este tipo los
+  // seleccionan todavía — solo los necesita `condicionHotelFechas` más abajo,
+  // nunca la liquidación de precio (que sigue igual, byte a byte).
+  id?: number | null;
   nombre: string; fecha_inicio: string | null; fecha_fin: string | null;
   prioridad?: number | null; compra_inicio?: string | null; compra_fin?: string | null;
   tipo?: string | null; descuento_valor?: number | null;
   rangos?: unknown; blackouts?: unknown; min_noches?: number | null;
   regimen_restringido?: string | null;
+  condicion_pago_tipo?: string | null;
+  condicion_pago_pct_inicial?: number | null;
+  condicion_pago_dias_saldo?: number | null;
 };
 export type FilaTarifaHotelRaw = Record<string, unknown>; // tipo_habitacion, alimentacion, temporada, neto_*
 export type FilaServicioIncluidoRaw = { incluido: boolean; precio_persona: number | null; liquidacion: string | null };
@@ -171,6 +184,91 @@ export function evaluarHotelPorFechas(
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2" && a !== "infante"));
   return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel };
+}
+
+// ── Condición de pago del hotel para un rango de fechas (badge, solo lectura) ──
+//
+// Deliberadamente SEPARADA de `evaluarHotelPorFechas`: esa función es el
+// motor de PRECIO (probado exhaustivamente, byte a byte igual desde el
+// refactor) y no se toca para agregar esto. La condición de pago de una
+// temporada es intrínseca al RANGO DE FECHAS de la vigencia (no varía por
+// categoría/régimen — la tarifa neta sí, la condición comercial no), así que
+// se resuelve UNA sola vez por hotel+estadía, no por combo.
+export type CondicionHotelFechas = {
+  condicionPagoTipo: CondicionTipo;
+  pctInicial: number | null;
+  diasSaldo: number | null;
+  /** true = no reembolsable Y no endosable (siempre las dos juntas, ver `restriccionImplicitaHotel`). */
+  restringido: boolean;
+};
+
+/**
+ * Condición de pago comercial vigente para un hotel en `[fechaIda, fechaRegreso)`
+ * — SOLO para mostrarla al usuario (badge en booking/carrito), NUNCA para
+ * calcular precio. Reutiliza el MISMO motor puro que congela la condición en
+ * el contrato al reservar (`lib/contrato/congelarCondicionesContrato.ts`,
+ * Rama B / PR #282: `condicionHotelEstadia` + `barridoRestriccionEstadia`),
+ * así que el badge que ve el usuario ANTES de reservar es exactamente la
+ * misma condición que queda congelada en el contrato después — una sola
+ * fórmula, nunca dos criterios distintos que puedan divergir.
+ *
+ * Devuelve `null` — nunca una condición neutra inventada — si ninguna
+ * temporada de este hotel trae `id`/fechas/`condicion_pago_tipo` completos
+ * (dato incompleto: mismo criterio que `vigenciasCondicionDeHotel`). Si SÍ
+ * hay vigencias pero ninguna cubre las noches pedidas (huecos/temporadas
+ * futuras), resuelve a la condición neutra real (`sin_condicion`, sin
+ * restricción) — es la respuesta correcta, no un dato faltante.
+ *
+ * `fechaPago` (default: hoy real) solo afecta el bump de cierre de
+ * `anticipo_saldo` (dentro de los últimos `diasSaldo` días antes del viaje ya
+ * no se acepta saldo, se exige el 100%) — igual mecánica que
+ * `condicionHotelEstadia`. Se expone explícito para que las pruebas nunca
+ * dependan de la fecha real del sistema (mismo criterio que el resto de
+ * `pruebas/liquidacionHotel.test.ts`).
+ *
+ * ⚠️ LIMITACIÓN CONOCIDA — `regimen_restringido` (heredada de Rama B/PR #282,
+ * no nueva de este cambio): el motor de PRECIO (`entradasNoche` en
+ * `lib/calc/paquetes.ts`) sí filtra las vigencias de una noche por régimen
+ * (`t.regimen_restringido == null || t.regimen_restringido === regimen`) —
+ * un hotel puede tener una vigencia "PC" y otra "PAM" solapadas en las mismas
+ * fechas, cada una con su propia condición de pago. Esta función NO recibe
+ * régimen/categoría y evalúa TODAS las vigencias que cubran el rango de
+ * fechas sin filtrar por régimen, así que puede devolver la condición de una
+ * vigencia restringida a un régimen distinto al que el usuario está
+ * cotizando (caso reportado: vigencia restringida a PC aparece como badge al
+ * generar PAM). Corregirlo de raíz requeriría pasar régimen/categoría hasta
+ * acá y decidir el criterio de "más exigente" por combo, no por hotel+fechas
+ * — se deja fuera de alcance de este cambio (ver "Pendiente" en el PR); el
+ * badge hereda la misma imprecisión que ya tiene el congelado del contrato.
+ */
+export function condicionHotelFechas(
+  temporadas: FilaTemporadaHotelRaw[],
+  estadia: { fechaIda: string; fechaRegreso: string },
+  fechaPago?: string,
+): CondicionHotelFechas | null {
+  const vigencias: VigenciaHotelCondicion[] = [];
+  for (const t of temporadas) {
+    if (t.id == null || t.fecha_inicio == null || t.fecha_fin == null || t.condicion_pago_tipo == null) continue;
+    const fila: HotelTemporadaCatalogo = {
+      id: t.id,
+      nombre: t.nombre,
+      fecha_inicio: t.fecha_inicio,
+      fecha_fin: t.fecha_fin,
+      condicion_pago_tipo: t.condicion_pago_tipo,
+      condicion_pago_pct_inicial: t.condicion_pago_pct_inicial ?? null,
+      condicion_pago_dias_saldo: t.condicion_pago_dias_saldo ?? null,
+    };
+    vigencias.push(condicionDeVigenciaHotel(fila));
+  }
+  if (!vigencias.length) return null;
+  const exigencia = condicionHotelEstadia(estadia, vigencias, { fechaPago });
+  const barrido = barridoRestriccionEstadia(estadia, vigencias);
+  return {
+    condicionPagoTipo: exigencia.tipo,
+    pctInicial: exigencia.pctInicial,
+    diasSaldo: exigencia.diasSaldo,
+    restringido: barrido.tocaRestriccion,
+  };
 }
 
 // ── Sugerencias de fecha ────────────────────────────────────────────────
