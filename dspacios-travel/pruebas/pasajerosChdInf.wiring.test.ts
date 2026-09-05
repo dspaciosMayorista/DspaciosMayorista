@@ -58,10 +58,14 @@ for (const archivo of ARCHIVOS_ESCRITURA) {
     );
   });
 
-  test(`${archivo} recalcula es_infante con esInfantePorEdad antes de insertar`, () => {
+  test(`${archivo} recalcula es_infante con esInfantePorEdad y lo pasa al RPC de creación`, () => {
     const src = leer(archivo);
     assert.match(src, /esInfantePorEdad\(/, "no llama esInfantePorEdad");
-    assert.match(src, /es_infante:\s*esInfante/, "el insert de contrato_pasajeros no usa el resultado recalculado");
+    // Segunda revisión de alto riesgo (B1/B5): la creación YA NO inserta
+    // contrato_pasajeros directamente (eso era, precisamente, el hueco que
+    // dejaba colar infantes sin responsable) — pasa por crear_pasajeros_
+    // contrato, que recalcula es_infante server-side en SQL.
+    assert.match(src, /admin\.rpc\(\s*["']crear_pasajeros_contrato["']/, "no llama al RPC atómico crear_pasajeros_contrato");
   });
 
   test(`${archivo} decide sillas con pasajeroConsumeSilla, no con !esInfante/!p.esInfante inline`, () => {
@@ -75,7 +79,60 @@ for (const archivo of ARCHIVOS_ESCRITURA) {
       "volvió el filtro `!p.esInfante` sin pasar por pasajeroConsumeSilla"
     );
   });
+
+  test(`${archivo} construye el payload de creación con payloadGuardarPasajeros (incluye responsableIndex)`, () => {
+    const src = leer(archivo);
+    assert.match(
+      src,
+      /import\s*\{[^}]*payloadGuardarPasajeros[^}]*\}\s*from\s*["']@\/lib\/reservar\/pasajerosEdicion["']/,
+      "no importa payloadGuardarPasajeros para construir el payload de creación"
+    );
+    assert.match(src, /responsableIndex:\s*p\.responsableIndex\s*\?\?\s*null/, "no propaga responsableIndex al payload del RPC");
+  });
 }
+
+test("reservar/actions.ts: reservarDesdeTarifarioInterno y reservarProgramaInterno ya NO insertan contrato_pasajeros directo (solo crear_pasajeros_contrato)", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicioReservar = src.indexOf("async function reservarDesdeTarifarioInterno");
+  const finReservar = src.indexOf("export async function crearCotizacion");
+  const bloqueReservar = src.slice(inicioReservar, finReservar);
+  assert.ok(inicioReservar > 0 && finReservar > inicioReservar, "no delimitó reservarDesdeTarifarioInterno");
+  assert.doesNotMatch(
+    bloqueReservar,
+    /await sb\.from\(\s*["']contrato_pasajeros["']\s*\)\s*\.insert\(/,
+    "reservarDesdeTarifarioInterno volvió a insertar contrato_pasajeros directo — se salta la autoridad SQL del vínculo responsable"
+  );
+
+  const inicioPrograma = src.indexOf("async function reservarProgramaInterno");
+  const finPrograma = src.length;
+  const bloquePrograma = src.slice(inicioPrograma, finPrograma);
+  assert.ok(inicioPrograma > 0, "no delimitó reservarProgramaInterno");
+  assert.doesNotMatch(
+    bloquePrograma,
+    /await (sb|admin)\.from\(\s*["']contrato_pasajeros["']\s*\)\s*\.insert\(/,
+    "reservarProgramaInterno volvió a insertar contrato_pasajeros directo — se salta la autoridad SQL del vínculo responsable"
+  );
+
+  // Residual documentado (fuera de alcance): convertirCotizacionCarrito SÍ
+  // sigue insertando contrato_pasajeros directo (un solo numero_contrato no
+  // puede representar más de un bloqueo_ref_id) — pero rechaza infantes con
+  // mensaje claro ANTES de insertar (ver prueba dedicada más abajo).
+});
+
+test("reservar/actions.ts: convertirCotizacionCarrito rechaza infantes con mensaje claro (no los inserta sin vínculo, no migrado al RPC atómico)", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  assert.ok(inicio > 0, "no delimitó convertirCotizacionCarrito");
+  assert.match(
+    bloque,
+    /if \(esInfanteRealGrupo\.some\(Boolean\)\)\s*\{\s*\n\s*return \{ ok: false, error:/,
+    "no rechaza explícitamente cuando hay algún infante real en el grupo"
+  );
+  const idxRechazo = bloque.indexOf("esInfanteRealGrupo.some(Boolean)");
+  const idxInsert = bloque.indexOf('await sb.from("contrato_pasajeros").insert(');
+  assert.ok(idxRechazo > 0 && idxInsert > idxRechazo, "el rechazo de infantes debe ocurrir ANTES del insert directo");
+});
 
 test("reservar/actions.ts no vuelve a confiar en el esInfante posicional del cliente para holders", () => {
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
@@ -157,14 +214,96 @@ test("migración 167: ajustar_sillas_por_pasajeros no repite la lista de roles y
   );
 });
 
-test("migración 167: la creación usa un wrapper service_role separado (asignar_sillas_creacion) que exige un actor real, no un rol interno", () => {
+test("migración 167 (segunda revisión de alto riesgo): la creación usa crear_pasajeros_contrato (service_role) que exige un actor real, no un rol interno", () => {
   const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
-  assert.match(src, /create or replace function public\.asignar_sillas_creacion/, "no existe el wrapper de creación");
-  assert.match(src, /grant execute on function public\.asignar_sillas_creacion\([^)]*\)\s*to\s*service_role;/, "asignar_sillas_creacion no está limitado a service_role");
+  assert.match(src, /create or replace function public\.crear_pasajeros_contrato/, "no existe el wrapper de creación");
+  assert.match(src, /grant execute on function public\.crear_pasajeros_contrato\([^)]*\)\s*to\s*service_role;/, "crear_pasajeros_contrato no está limitado a service_role");
   assert.doesNotMatch(
     src,
-    /grant execute on function public\.asignar_sillas_creacion\([^)]*\)\s*to\s*authenticated;/,
-    "asignar_sillas_creacion no debe ser invocable directo por una sesión autenticada normal"
+    /grant execute on function public\.crear_pasajeros_contrato\([^)]*\)\s*to\s*authenticated;/,
+    "crear_pasajeros_contrato no debe ser invocable directo por una sesión autenticada normal"
+  );
+  // El viejo asignar_sillas_creacion (solo sillas) queda absorbido: ahora un
+  // solo RPC hace pasajeros+responsables+sillas juntos (cierra B5).
+  assert.doesNotMatch(src, /public\.asignar_sillas_creacion/, "quedó un rastro del wrapper viejo (solo sillas), ya reemplazado por crear_pasajeros_contrato");
+});
+
+test("migración 167 (segunda revisión de alto riesgo — B1): fn_validar_responsable_infante rechaza SIEMPRE un infante nuevo sin responsable, salvo un id congelado en _pasajeros_exentos_167", () => {
+  const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  assert.match(
+    src,
+    /if coalesce\(new\.es_infante, false\) and new\.responsable_id is null then/,
+    "el trigger no distingue el caso infante+sin responsable como el que debe rechazar"
+  );
+  assert.match(
+    src,
+    /select exists\(\s*\n\s*select 1 from public\._pasajeros_exentos_167 e where e\.pasajero_id = new\.id\s*\n\s*\) into v_exento;/,
+    "el trigger no consulta la foto congelada de exención"
+  );
+  assert.match(src, /raise exception 'Todo infante debe tener un adulto responsable vinculado\.';/, "el trigger no rechaza con un mensaje claro");
+});
+
+test("migración 167 (B1): _pasajeros_exentos_167 es una foto INMUTABLE — sin GRANT de escritura para ningún rol de aplicación", () => {
+  const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  assert.match(src, /create table if not exists public\._pasajeros_exentos_167/, "no existe la tabla de exención histórica");
+  assert.match(
+    src,
+    /revoke all on public\._pasajeros_exentos_167 from public, anon, authenticated, service_role;/,
+    "la foto de exención sigue teniendo GRANT para algún rol de aplicación — un INSERT nuevo podría auto-exentarse"
+  );
+  // Se llena UNA sola vez, a partir de lo que YA existía al aplicar la
+  // migración — nunca desde un valor que decida la aplicación en caliente.
+  assert.match(
+    src,
+    /insert into public\._pasajeros_exentos_167 \(pasajero_id\)\s*\nselect id from public\.contrato_pasajeros\s*\n where coalesce\(es_infante, false\) and responsable_id is null/,
+    "el snapshot no se llena desde el estado real de contrato_pasajeros al aplicar la migración"
+  );
+});
+
+test("migración 167 (B1): guardar_pasajeros_contrato/crear_pasajeros_contrato comparten un solo núcleo transaccional (_guardar_pasajeros_nucleo) — nunca reimplementan la validación dos veces", () => {
+  const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  assert.match(src, /create or replace function public\._guardar_pasajeros_nucleo/, "no existe el núcleo compartido");
+  assert.match(
+    src,
+    /return query select \* from public\._guardar_pasajeros_nucleo\(p_numero_contrato, p_pasajeros, 0, 1, null\);/,
+    "guardar_pasajeros_contrato (edición) no delega en el núcleo compartido"
+  );
+  assert.match(
+    src,
+    /return query select \* from public\._guardar_pasajeros_nucleo\(p_numero_contrato, p_pasajeros, p_holders_min, 0, p_usuario_id\);/,
+    "crear_pasajeros_contrato (creación) no delega en el núcleo compartido"
+  );
+  assert.match(src, /revoke all on function public\._guardar_pasajeros_nucleo/, "el núcleo compartido debe estar bloqueado para toda sesión externa");
+});
+
+test("migración 167 (B1/B3): el reemplazo de pasajeros hace DOS PASADAS (no-infantes primero, luego infantes con responsable_id ya resuelto) — nunca un null transitorio con blanket-clear", () => {
+  const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  // El diseño anterior limpiaba responsable_id de TODAS las filas antes de
+  // borrar/insertar — eso obligaba al trigger a aceptar null sin condición
+  // (el propio hueco de B1). Ya no debe existir ese paso.
+  assert.doesNotMatch(
+    src,
+    /update public\.contrato_pasajeros set responsable_id = null where numero_contrato = p_numero_contrato;/,
+    "volvió el blanket-clear de responsable_id — reintroduce la necesidad de que el trigger acepte null sin condición"
+  );
+  assert.match(src, /if v_es_infante\[v_i\] then continue; end if;/, "no existe la pasada de no-infantes (salta infantes)");
+  assert.match(src, /if not v_es_infante\[v_i\] then continue; end if;/, "no existe la pasada de infantes (salta no-infantes)");
+  // El DELETE va al final y excluye por `v_orden_a_id` (ids FINALES, ya
+  // incluyendo los recién insertados) — nunca por `v_ids_mantener` (solo los
+  // que ya existían), que borraría las filas recién creadas en el mismo guardado.
+  assert.match(
+    src,
+    /delete from public\.contrato_pasajeros\s*\n\s*where contrato_pasajeros\.numero_contrato = p_numero_contrato\s*\n\s*and not \(contrato_pasajeros\.id = any\(v_orden_a_id\)\);/,
+    "el DELETE final no excluye por v_orden_a_id (los ids ya resueltos, incluidos los nuevos)"
+  );
+});
+
+test("migración 167 (B5): p_holders_min es un PISO — nunca reserva menos que la composición declarada, ni menos que los pasajeros reales no-infante del payload", () => {
+  const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  assert.match(
+    src,
+    /v_holders_final := greatest\(coalesce\(p_holders_min, 0\), v_holders_reales\);/,
+    "el piso de sillas ya no es GREATEST(p_holders_min, holders reales) — puede volver a sub-reservar"
   );
 });
 
@@ -225,60 +364,83 @@ test("vuelos/[id]/page.tsx NO inyecta infantes dentro de la tabla de sillas (evi
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// Revisión de alto riesgo — B5: auditoría de CREACIÓN. Los dos flujos que
-// asignan sillas al crear un contrato usaban un conteo agregado
-// (`paxConSilla`, de la configuración de habitaciones, o `pax`, el total
-// CON infantes — ver comentario en contratos/actions.ts) para decidir
-// cuántas sillas tomar, en vez del conteo REAL de pasajeros nombrados que sí
-// ocupan silla (`holders.length`, por edad real) — podían divergir si un
-// pasajero nombrado resultaba infante y la configuración no lo reflejaba.
-// Además, la asignación era un `select` + `update` en paralelo SIN candado:
-// dos reservas concurrentes contra el MISMO bloqueo podían tomar la misma
-// silla "libre" antes de que ninguna confirmara, y los errores se ignoraban
-// o solo se registraban sin bloquear el contrato. Se corrige reservando por
-// el RPC atómico `asignar_sillas_creacion` (migración 167, candado
-// `for update` sobre el pool completo del bloqueo) con el conteo real.
+// Segunda revisión de alto riesgo — B5 (creación solo parcialmente atómica):
+// `reservarDesdeTarifarioInterno` asignaba sillas y LUEGO insertaba
+// contrato_pasajeros en una llamada Supabase aparte; `crearContratoInterno`
+// insertaba pasajeros y solo DESPUÉS intentaba las sillas (best-effort: un
+// fallo de capacidad quedaba "parcial" pero la función igual devolvía
+// `ok: true`). Ahora pasajeros + responsables + sillas son UNA sola llamada
+// a `crear_pasajeros_contrato` (una sola transacción Postgres): un fallo de
+// capacidad revierte TODO y BLOQUEA la Server Action completa.
 // ───────────────────────────────────────────────────────────────────────────
-test("reservar/actions.ts: la reserva de sillas en creación usa el RPC atómico asignar_sillas_creacion, con holders.length real (nunca paxConSilla)", () => {
+test("reservar/actions.ts: pasajeros+sillas en creación es UNA sola llamada atómica a crear_pasajeros_contrato, con p_holders_min = paxConSilla (piso, nunca menos)", () => {
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
-  assert.match(src, /admin\.rpc\(\s*["']asignar_sillas_creacion["']/, "no llama al RPC atómico asignar_sillas_creacion");
-  assert.match(src, /p_holders_nuevo:\s*holdersCreacion\.length/, "no usa el conteo real (holdersCreacion.length) para reservar sillas");
-  // El defecto original exacto: `.limit(paxConSilla)` para la asignación de
-  // sillas de la reserva individual (fuera del alcance: el motor de
-  // COSTO aéreo sí puede seguir usando paxConSilla, eso es otro cálculo).
+  const inicio = src.indexOf("async function reservarDesdeTarifarioInterno");
+  const bloque = src.slice(inicio, src.indexOf("export async function crearCotizacion"));
+  assert.match(bloque, /admin\.rpc\(\s*["']crear_pasajeros_contrato["']/, "no llama al RPC atómico crear_pasajeros_contrato");
+  assert.match(bloque, /p_holders_min:\s*paxConSilla,/, "no usa paxConSilla como piso de sillas (necesario cuando la lista de pasajeros viene vacía)");
+  assert.match(bloque, /p_usuario_id:\s*actorPasajeros\.id,/, "no pasa un usuario real y activo al RPC");
+  // El defecto original exacto: pedir sillas con un `select`+`update` en
+  // paralelo sin candado, separado del insert de pasajeros.
+  assert.doesNotMatch(bloque, /admin\.rpc\(\s*["']asignar_sillas_creacion["']/, "volvió a usar el wrapper viejo, solo-sillas");
+});
+
+test("reservar/actions.ts: un fallo de crear_pasajeros_contrato detiene la reserva ENTERA (return temprano, nunca continúa a insertar hoteles/vuelos)", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("async function reservarDesdeTarifarioInterno");
+  const bloque = src.slice(inicio, src.indexOf("export async function crearCotizacion"));
+  const idxLlamada = bloque.indexOf('admin.rpc("crear_pasajeros_contrato"');
+  const idxReturn = bloque.indexOf("if (pasajerosErr) return { ok: false, error: pasajerosErr.message };");
+  assert.ok(idxLlamada > 0 && idxReturn > idxLlamada, "no detiene la reserva con un return inmediato si crear_pasajeros_contrato falla");
+});
+
+test("contratos/actions.ts: pasajeros+sillas en creación es UNA sola llamada atómica a crear_pasajeros_contrato — ya NO es best-effort dentro de negociado_admin", () => {
+  const src = leer("app/(dashboard)/dashboard/contratos/actions.ts");
+  assert.match(src, /admin\.rpc\(\s*["']crear_pasajeros_contrato["']/, "no llama al RPC atómico crear_pasajeros_contrato");
+  assert.doesNotMatch(src, /admin\.rpc\(\s*["']asignar_sillas_creacion["']/, "volvió a usar el wrapper viejo, solo-sillas");
+  // El defecto original exacto (B5): un fallo de sillas quedaba "parcial"
+  // dentro del bloque best-effort `negociado_admin` (try/catch que nunca
+  // bloquea) y la función terminaba devolviendo `ok: true` de todas formas.
   assert.doesNotMatch(
     src,
-    /\.order\(\s*["']numero_silla["']\s*\)\s*\n?\s*\.limit\(paxConSilla\)/,
-    "volvió a usar paxConSilla como límite de sillas a asignar en la reserva individual"
+    /const \{ data: sillasRes, error: sillasError \} = await admin\.rpc\("asignar_sillas_creacion"/,
+    "volvió a meter la asignación de sillas dentro del bloque try/catch best-effort"
+  );
+  assert.match(
+    src,
+    /if \(pasajerosErr\) return _errorHijas\("pasajeros_y_sillas", pasajerosErr\);/,
+    "un fallo de pasajeros+sillas ya no bloquea la creación con _errorHijas (ok:false)"
   );
 });
 
-test("reservar/actions.ts: la reserva de sillas en creación ocurre ANTES de insertar contrato_pasajeros (evita pasajeros guardados con inventario incompleto)", () => {
-  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
-  const idxSillas = src.indexOf("admin.rpc(\"asignar_sillas_creacion\"");
-  const idxPasajeros = src.indexOf('await sb.from("contrato_pasajeros").insert(');
-  assert.ok(idxSillas > 0, "no encontró la llamada a asignar_sillas_creacion");
-  assert.ok(idxPasajeros > 0, "no encontró el insert de contrato_pasajeros");
-  assert.ok(idxSillas < idxPasajeros, "la reserva de sillas debe ocurrir ANTES de insertar los pasajeros, para que un fallo de cupo no deje pasajeros guardados con inventario incompleto");
-});
-
-test("contratos/actions.ts: la asignación de sillas en creación usa el RPC atómico, y 'adultos' solo cae a pax cuando NO hay pasajeros nombrados", () => {
+test("contratos/actions.ts: holdersMinPiso solo cae a `pax` (total) cuando NO hay pasajeros nombrados — nunca `holders.length || pax`", () => {
   const src = leer("app/(dashboard)/dashboard/contratos/actions.ts");
-  assert.match(src, /admin\.rpc\(\s*["']asignar_sillas_creacion["']/, "no llama al RPC atómico asignar_sillas_creacion");
-  assert.match(src, /const adultos = input\.pasajeros\.length \? holders\.length : pax;/, "no corrigió la caída semánticamente incorrecta a `pax` (total CON infantes)");
+  assert.match(
+    src,
+    /holdersMinPiso = input\.pasajeros\.length \? holdersPiso\.length : pax;/,
+    "no corrigió la caída semánticamente incorrecta a `pax` (total CON infantes)"
+  );
   // El defecto original exacto (B5): `holders.length || pax` caía a `pax`
   // (total con infantes) cada vez que holders.length era 0 — incluso con
   // pasajeros nombrados donde TODOS resultaban infantes.
   assert.doesNotMatch(
     src,
-    /const adultos = holders\.length \|\| pax;/,
+    /holdersMinPiso = holdersPiso\.length \|\| pax;/,
     "volvió `holders.length || pax` — infla sillas a pedir cuando todos los pasajeros nombrados son infantes"
   );
 });
 
-test("migración 167: asignar_sillas_creacion valida un usuario real y activo (nunca confía ciegamente en service_role)", () => {
+test("reservar/actions.ts: reservarProgramaInterno también pasa por crear_pasajeros_contrato (nunca confía en p.esInfante del cliente)", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("async function reservarProgramaInterno");
+  const bloque = src.slice(inicio);
+  assert.match(bloque, /admin\.rpc\(\s*["']crear_pasajeros_contrato["']/, "reservarProgramaInterno no llama a crear_pasajeros_contrato");
+  assert.match(bloque, /p_holders_min:\s*0,/, "un programa no usa sillas propias — debe pasar 0, no inventar un piso");
+});
+
+test("migración 167: crear_pasajeros_contrato valida un usuario real y activo (nunca confía ciegamente en service_role)", () => {
   const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
-  assert.match(src, /select activo into v_activo from public\.usuarios where id = p_usuario_id;/, "no valida que el usuario exista");
+  assert.match(src, /select activo into v_activo from public\.usuarios where usuarios\.id = p_usuario_id;/, "no valida que el usuario exista");
   assert.match(src, /if not v_activo then\s*\n\s*raise exception 'El usuario está desactivado\.';/, "no rechaza un usuario desactivado");
 });
 

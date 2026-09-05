@@ -379,14 +379,16 @@ test("reservar/actions.ts: el tramo del contrato (paso 7) y la CxP aérea (paso 
   assert.match(paso9, /if \(datosVuelo\) \{/);
   assert.doesNotMatch(paso9, /input\.bloqueoId|input\.empaquetadoId|input\.salidaId/, "el paso de CxP ya no debe leer los campos crudos");
 
-  // La asignación de sillas (antes en el paso 9-bis) se movió al paso 5-bis
-  // — ANTES de crear contrato_pasajeros — para que un bloqueo sin cupo
-  // detenga la reserva antes de guardar pasajeros con inventario incompleto
-  // (revisión de alto riesgo, B5). Sigue gateada por `origen.tipo ===
-  // "bloqueo"`, nunca por los campos crudos.
-  const paso5bis = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 5-bis) Sillas del BLOQUEO"), reservarActionsSrc.indexOf("if (input.pasajeros.length) {"));
-  assert.match(paso5bis, /if \(origen\.tipo === "bloqueo" && process\.env\.SUPABASE_SERVICE_ROLE_KEY\) \{/, "sillas SOLO para origen.tipo==='bloqueo'");
-  assert.doesNotMatch(paso5bis, /input\.bloqueoId|input\.empaquetadoId|input\.salidaId/, "el paso de sillas ya no debe leer los campos crudos");
+  // La asignación de sillas + creación de pasajeros (segunda revisión de
+  // alto riesgo, B5) ahora es UNA sola llamada atómica a
+  // crear_pasajeros_contrato en el paso 5-bis — ANTES del paso 7 — para que
+  // un bloqueo sin cupo detenga la reserva ENTERA (pasajeros + sillas
+  // juntos) antes de guardar nada a medias. Ya no hay un gate separado por
+  // `origen.tipo === "bloqueo"` para las sillas (el núcleo Postgres decide
+  // por sí solo si hay bloqueo que reconciliar, vía ventas.bloqueo_ref_id).
+  const paso5bis = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 5-bis) Pasajeros"), reservarActionsSrc.indexOf("// 6) Hotel del contrato"));
+  assert.match(paso5bis, /admin\.rpc\("crear_pasajeros_contrato"/, "debe llamar al RPC atómico de creación");
+  assert.doesNotMatch(paso5bis, /input\.bloqueoId|input\.empaquetadoId|input\.salidaId/, "el paso de pasajeros+sillas ya no debe leer los campos crudos");
 });
 
 test("reservar/actions.ts: empaquetado_ref_id se estampa desde `origen` (nunca desde input.empaquetadoId), excluyente con bloqueo_ref_id", () => {

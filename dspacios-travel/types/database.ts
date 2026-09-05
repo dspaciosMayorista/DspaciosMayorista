@@ -3278,14 +3278,18 @@ export type Database = {
         };
         Returns: { holders_total: number; silla_ids: number[] }[];
       };
-      // Migración 167. Reemplazo transaccional de los pasajeros de un
-      // contrato ya creado: recalcula es_infante server-side, exige
-      // responsable_id para infantes NUEVOS (con excepción de abuelo para
-      // históricos sin vínculo previo), conserva el id de las filas que ya
-      // existían (upsert por id, nunca borra-y-reinserta-todo), y reconcilia
-      // el inventario de sillas llamando internamente a
-      // ajustar_sillas_por_pasajeros — todo en una sola transacción.
-      // `p_pasajeros` es un arreglo de objetos con claves
+      // Migración 167 (segunda revisión de alto riesgo). Reemplazo
+      // transaccional de los pasajeros de un contrato YA CREADO (EDICIÓN,
+      // exige sesión de usuario interno real): recalcula es_infante
+      // server-side, exige responsable_id para todo infante NUEVO — la
+      // autoridad real es el trigger de la tabla, con la ÚNICA excepción de
+      // un id congelado en `_pasajeros_exentos_167` (infantes que ya
+      // existían sin vínculo al aplicar la migración) —, conserva el id de
+      // las filas que ya existían (upsert en dos pasadas: no-infantes
+      // primero, luego infantes con su responsable_id ya resuelto — nunca
+      // borra-y-reinserta-todo ni deja un estado intermedio inválido), y
+      // reconcilia el inventario de sillas del bloqueo en la MISMA
+      // transacción. `p_pasajeros` es un arreglo de objetos con claves
       // id?/nombre/tipoId/identificacion/fechaNacimiento/responsableOrden
       // (responsableOrden es 1-based, posición dentro de este mismo arreglo).
       guardar_pasajeros_contrato: {
@@ -3304,18 +3308,36 @@ export type Database = {
           orden: number;
         }[];
       };
-      // Migración 167. Wrapper de _ajustar_sillas_nucleo para la CREACIÓN de
-      // un contrato nuevo — solo `service_role` (la reserva puede venir de
-      // un usuario B2B externo, que nunca pasaría el candado de rol interno
-      // de ajustar_sillas_por_pasajeros). Exige un p_usuario_id real y
-      // activo — mismo patrón que congelar_condiciones_contrato (migración 165).
-      asignar_sillas_creacion: {
+      // Migración 167 (segunda revisión de alto riesgo). Mismo mecanismo que
+      // guardar_pasajeros_contrato, para la CREACIÓN de un contrato nuevo —
+      // solo `service_role` (la reserva puede venir de un usuario B2B
+      // externo, que nunca pasaría el candado de rol interno de
+      // guardar_pasajeros_contrato). Exige un p_usuario_id real y activo —
+      // mismo patrón que congelar_condiciones_contrato (migración 165).
+      // `p_holders_min`: piso de sillas a reservar (composición de
+      // habitaciones) — nunca menos que eso, ni menos que los pasajeros
+      // reales (no infante) de este payload; permite crear con la lista de
+      // pasajeros vacía (convertirCotizacion con override de superadmin) sin
+      // sub-reservar sillas. Pasajeros + responsables + sillas se confirman
+      // o revierten JUNTOS: un fallo de capacidad nunca deja ni pasajeros ni
+      // sillas a medias (cierra B5).
+      crear_pasajeros_contrato: {
         Args: {
           p_numero_contrato: string;
-          p_holders_nuevo: number;
+          p_pasajeros: Json;
+          p_holders_min: number;
           p_usuario_id: string;
         };
-        Returns: { holders_total: number; silla_ids: number[] }[];
+        Returns: {
+          id: number;
+          nombre: string;
+          tipo_id: string;
+          identificacion: string | null;
+          fecha_nacimiento: string | null;
+          es_infante: boolean;
+          responsable_id: number | null;
+          orden: number;
+        }[];
       };
     };
     Enums: {

@@ -1,8 +1,8 @@
 -- ───────────────────────────────────────────────────────────────────────────
--- POSTCHECK 167 · vínculo INF→adulto + guardar_pasajeros_contrato + sillas
--- Solo lectura + una transacción de PRUEBA REAL que termina en ROLLBACK
--- (no deja datos ficticios). Pensada para correr contra una base LOCAL
--- desechable — nunca contra Supabase real.
+-- POSTCHECK 167 · vínculo INF→adulto (autoridad SQL) + creación/edición
+-- transaccional de pasajeros + sillas. Solo lectura + una transacción de
+-- PRUEBA REAL que termina en ROLLBACK (no deja datos ficticios). Pensada
+-- para correr contra una base LOCAL desechable — nunca contra Supabase real.
 -- ───────────────────────────────────────────────────────────────────────────
 
 begin;
@@ -11,6 +11,20 @@ create temp table if not exists pg_temp.postcheck_167_reporte (
   seccion text, nombre text, estado text, detalle text
 );
 truncate pg_temp.postcheck_167_reporte;
+
+-- `local-desde-cero.sh` (harness LOCAL, no Supabase real) hace, como último
+-- paso DESPUÉS de aplicar TODAS las migraciones, un `grant all on all
+-- tables in schema public to anon, authenticated, service_role` — a
+-- diferencia de Supabase real, donde ese grant nace de `ALTER DEFAULT
+-- PRIVILEGES` (se aplica automáticamente AL CREAR cada tabla, así que el
+-- `revoke` explícito de la propia migración 167, que corre justo después
+-- del `create table`, sí queda como última palabra). Ese único paso del
+-- harness le vuelve a otorgar acceso a `_pasajeros_exentos_167` DESPUÉS de
+-- que la migración ya revocó todo — es una limitación conocida del arnés
+-- de pruebas local, no de la migración. Se re-revoca aquí, una sola vez,
+-- para poder probar la propiedad real (nadie de aplicación puede escribir
+-- la foto congelada) tal como se comportaría en Supabase real.
+revoke all on public._pasajeros_exentos_167 from anon, authenticated, service_role;
 
 insert into pg_temp.postcheck_167_reporte
 select 'esquema', 'contrato_pasajeros.responsable_id existe',
@@ -39,18 +53,20 @@ select 'esquema', 'trigger trg_validar_responsable_infante',
   ) then 'OK' else 'FALLA' end, '';
 
 insert into pg_temp.postcheck_167_reporte
-select 'esquema', 'ajustar_sillas_por_pasajeros() existe (returns table)',
-  case when exists (
-    select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-    where n.nspname='public' and p.proname='ajustar_sillas_por_pasajeros'
+select 'esquema', '_pasajeros_exentos_167: sin GRANT para ningún rol de aplicación',
+  case when not exists (
+    select 1 from information_schema.role_table_grants
+    where table_schema='public' and table_name='_pasajeros_exentos_167'
+      and grantee in ('anon','authenticated','service_role','public')
   ) then 'OK' else 'FALLA' end, '';
 
 insert into pg_temp.postcheck_167_reporte
-select 'esquema', 'guardar_pasajeros_contrato() existe',
+select 'esquema', f.nombre||'() existe',
   case when exists (
     select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-    where n.nspname='public' and p.proname='guardar_pasajeros_contrato'
-  ) then 'OK' else 'FALLA' end, '';
+    where n.nspname='public' and p.proname=f.nombre
+  ) then 'OK' else 'FALLA' end, ''
+from (values ('ajustar_sillas_por_pasajeros'), ('guardar_pasajeros_contrato'), ('crear_pasajeros_contrato'), ('_guardar_pasajeros_nucleo')) as f(nombre);
 
 -- ── Pruebas de ejecución real, aisladas en una transacción con ROLLBACK ────
 do $$
@@ -61,8 +77,9 @@ declare
   v_num          text := 'DTM-9'||to_char(clock_timestamp(),'HH24MISSMS');
   v_num2         text := 'DTM-8'||to_char(clock_timestamp(),'HH24MISSMS');
   v_num3         text := 'DTM-7'||to_char(clock_timestamp(),'HH24MISSMS');
+  v_num4         text := 'DTM-6'||to_char(clock_timestamp(),'HH24MISSMS');
+  v_num5         text := 'DTM-5'||to_char(clock_timestamp(),'HH24MISSMS');
   v_bloqueo_id   bigint;
-  v_bloqueo2_id  bigint;
   v_p_adulto     bigint;
   v_p_infante    bigint;
   v_p_otro       bigint;
@@ -95,22 +112,36 @@ begin
   insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant, bloqueo_ref_id)
     values (v_num, 'Cliente Postcheck 167', current_date + 30, 2, 100000, 'pendiente', 'mayorista', v_bloqueo_id);
 
+  -- ═══════════════════════════════════════════════════════════════════════
+  -- 0) LA AUTORIDAD ES EL TRIGGER, no una función en particular: un INSERT
+  --    DIRECTO (sin pasar por NINGÚN RPC) de un infante NUEVO sin
+  --    responsable debe rechazarse siempre. Este es el hallazgo B1 #1/#2 de
+  --    la segunda revisión de alto riesgo, probado de la forma más directa
+  --    posible.
+  -- ═══════════════════════════════════════════════════════════════════════
+  begin
+    insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
+      values (v_num, 'Infante Colado Por Insert Directo', 'RC', '1000167099', (current_date - interval '1 years')::date, true, 9);
+    v_ok := false;
+  exception when others then
+    v_ok := true;
+  end;
+  insert into pg_temp.postcheck_167_reporte
+    values ('trigger', 'INSERT directo de INF NUEVO sin responsable (sin pasar por ningún RPC): rechazado por la autoridad SQL', case when v_ok then 'OK' else 'FALLA' end, '');
+
+  -- Fixture normal: el infante SOLO puede nacer YA vinculado (insertarlo sin
+  -- responsable_id, aunque sea en la misma sentencia que el resto de sus
+  -- datos, ya no es posible — se prueba arriba). Se crea el par
+  -- adulto+infante vinculado directamente para las pruebas de integridad
+  -- del vínculo (2-5) que siguen.
   insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
     values (v_num, 'Adulto Uno', 'CC', '1000167001', (current_date - interval '30 years')::date, false, 0)
     returning id into v_p_adulto;
-  insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
-    values (v_num, 'Infante Uno', 'RC', '1000167002', (current_date - interval '1 years')::date, true, 1)
+  insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden, responsable_id)
+    values (v_num, 'Infante Uno', 'RC', '1000167002', (current_date - interval '1 years')::date, true, 1, v_p_adulto)
     returning id into v_p_infante;
-
-  -- 1) Vincular infante -> adulto del MISMO contrato: debe aceptarse.
-  begin
-    update public.contrato_pasajeros set responsable_id = v_p_adulto where id = v_p_infante;
-    v_ok := true;
-  exception when others then
-    v_ok := false;
-  end;
   insert into pg_temp.postcheck_167_reporte
-    values ('trigger', 'infante -> adulto mismo contrato: aceptado', case when v_ok then 'OK' else 'FALLA' end, '');
+    values ('trigger', 'INSERT directo de INF nuevo CON responsable válido: aceptado', case when v_p_infante is not null then 'OK' else 'FALLA' end, '');
 
   -- 2) Auto-referencia: debe rechazarse.
   begin
@@ -168,37 +199,58 @@ begin
   insert into pg_temp.postcheck_167_reporte
     values ('trigger', 'responsable inexistente: rechazado', case when v_ok then 'OK' else 'FALLA' end, '');
 
-  -- 5-bis) asignar_sillas_creacion (wrapper de CREACIÓN, service_role):
-  --    debe ACEPTAR con un usuario real y activo aunque su rol sea externo
+  -- 5-bis) Nadie de aplicación puede auto-otorgarse la exención histórica:
+  --    ni `authenticated` ni `service_role` tienen GRANT sobre
+  --    `_pasajeros_exentos_167` — solo el dueño del esquema (esta migración).
+  set role service_role;
+  begin
+    insert into public._pasajeros_exentos_167 (pasajero_id) values (v_p_infante);
+    v_ok := false;
+  exception when others then
+    v_ok := true;
+  end;
+  reset role;
+  insert into pg_temp.postcheck_167_reporte
+    values ('trigger', '_pasajeros_exentos_167: service_role NO puede escribir (sin GRANT)', case when v_ok then 'OK' else 'FALLA' end, '');
+
+  -- 6) crear_pasajeros_contrato (wrapper de CREACIÓN, service_role): debe
+  --    ACEPTAR con un usuario real y activo aunque su rol sea externo
   --    (agencia/freelance) — la reserva B2B usa este camino, nunca el de
-  --    ajustar_sillas_por_pasajeros (que exige rol interno).
+  --    guardar_pasajeros_contrato (que exige rol interno).
   declare
     v_uid_b2b uuid := gen_random_uuid();
-    v_ret2 integer;
   begin
     insert into auth.users (id, email, raw_user_meta_data)
       values (v_uid_b2b, 'postcheck167-b2b@test.local', jsonb_build_object('rol', 'agencia', 'nombre', 'Postcheck B2B'));
-    -- v_num todavía no tiene sillas asignadas en este punto del script (0
-    -- holders reales) — pedir 1 ejercita la asignación de verdad, no un no-op.
-    select holders_total into v_ret2 from public.asignar_sillas_creacion(v_num, 1, v_uid_b2b);
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num5, 'Cliente Postcheck 167 B2B', current_date + 30, 1, 70000, 'pendiente', 'mayorista');
+    perform 1 from public.crear_pasajeros_contrato(v_num5, jsonb_build_array(
+      jsonb_build_object('nombre','Cliente B2B','tipoId','CC','identificacion','1000167501','fechaNacimiento',(current_date - interval '28 years')::date::text)
+    ), 0, v_uid_b2b);
     insert into pg_temp.postcheck_167_reporte
-      values ('rpc', 'asignar_sillas_creacion: usuario externo (agencia) activo -> aceptado', case when v_ret2 = 1 then 'OK' else 'FALLA' end, 'retorno='||v_ret2);
-    perform public.asignar_sillas_creacion(v_num, 0, v_uid_b2b); -- deja limpio para los pasos siguientes
+      values ('rpc', 'crear_pasajeros_contrato: usuario externo (agencia) activo -> aceptado', case when exists (
+        select 1 from public.contrato_pasajeros where numero_contrato = v_num5 and identificacion = '1000167501'
+      ) then 'OK' else 'FALLA' end, '');
   end;
 
-  -- 5-ter) asignar_sillas_creacion con usuario inexistente: debe rechazarse.
+  -- 7) crear_pasajeros_contrato con usuario inexistente: debe rechazarse (y
+  --    no debe dejar NADA insertado del intento).
   begin
-    perform public.asignar_sillas_creacion(v_num, 1, gen_random_uuid());
+    perform 1 from public.crear_pasajeros_contrato(v_num5, jsonb_build_array(
+      jsonb_build_object('nombre','Intento Colado','tipoId','CC','identificacion','1000167502','fechaNacimiento',(current_date - interval '30 years')::date::text)
+    ), 0, gen_random_uuid());
     v_ok := false;
   exception when others then
     v_ok := true;
   end;
   insert into pg_temp.postcheck_167_reporte
-    values ('rpc', 'asignar_sillas_creacion: usuario inexistente -> rechazado', case when v_ok then 'OK' else 'FALLA' end, '');
+    values ('rpc', 'crear_pasajeros_contrato: usuario inexistente -> rechazado, sin dejar rastro', case when v_ok and not exists (
+      select 1 from public.contrato_pasajeros where identificacion = '1000167502'
+    ) then 'OK' else 'FALLA' end, '');
 
-  -- 5-quater) ajustar_sillas_por_pasajeros (wrapper de EDICIÓN) rechaza una
-  --    llamada SIN sesión de usuario interno real (mismo escenario que
-  --    intentaría un B2B externo si llamara por el camino equivocado).
+  -- 8) guardar_pasajeros_contrato (wrapper de EDICIÓN) rechaza una llamada
+  --    SIN sesión de usuario interno real (mismo escenario que intentaría un
+  --    B2B externo si llamara por el camino equivocado).
   perform set_config('request.jwt.claims', null, true); -- limpia el claim: sin sesión
   begin
     perform public.ajustar_sillas_por_pasajeros(v_num, 1);
@@ -210,24 +262,24 @@ begin
   insert into pg_temp.postcheck_167_reporte
     values ('rpc', 'ajustar_sillas_por_pasajeros: sin sesión interna -> rechazado', case when v_ok then 'OK' else 'FALLA' end, '');
 
-  -- 6) ajustar_sillas_por_pasajeros: contrato existente pero SIN sillas
+  -- 9) ajustar_sillas_por_pasajeros: contrato existente pero SIN sillas
   --    propias (v_num2 — nunca se le asignó bloqueo) -> no-op (0).
   select holders_total into v_ret from public.ajustar_sillas_por_pasajeros(v_num2, 3);
   insert into pg_temp.postcheck_167_reporte
     values ('rpc', 'sin sillas propias -> no-op', case when v_ret = 0 then 'OK' else 'FALLA' end, 'retorno='||v_ret);
 
-  -- 7) Simular sillas ya asignadas a v_num (1 en_plazo) y pedir subir a 2.
+  -- 10) Simular sillas ya asignadas a v_num (1 en_plazo) y pedir subir a 2.
   update public.sillas set estado = 'en_plazo', numero_contrato = v_num where bloqueo_id = v_bloqueo_id and numero_silla = 1;
   select holders_total, silla_ids into v_ret, v_ids from public.ajustar_sillas_por_pasajeros(v_num, 2);
   insert into pg_temp.postcheck_167_reporte
     values ('rpc', 'aumentar 1->2 con 1 disponible: asigna la segunda', case when v_ret = 2 and array_length(v_ids,1) = 2 then 'OK' else 'FALLA' end, 'retorno='||v_ret||' ids='||v_ids::text);
 
-  -- 8) Pedir bajar a 1 -> libera una silla.
+  -- 11) Pedir bajar a 1 -> libera una silla.
   select holders_total into v_ret from public.ajustar_sillas_por_pasajeros(v_num, 1);
   insert into pg_temp.postcheck_167_reporte
     values ('rpc', 'bajar 2->1: libera una silla', case when v_ret = 1 then 'OK' else 'FALLA' end, 'retorno='||v_ret);
 
-  -- 9) Pedir más de las que hay disponibles en el bloqueo (agotado): debe
+  -- 12) Pedir más de las que hay disponibles en el bloqueo (agotado): debe
   --    fallar ENTERO, sin modificar pasajeros NI inventario.
   update public.sillas set estado='no_vendida' where bloqueo_id = v_bloqueo_id and numero_contrato is null;
   declare
@@ -251,7 +303,7 @@ begin
   insert into pg_temp.postcheck_167_reporte
     values ('rpc', 'capacidad agotada: falla entero sin cambios parciales (pasajeros NI sillas tocados)', case when v_ok then 'OK' else 'FALLA' end, '');
 
-  -- 10) 1 -> 0 -> 1 conservando el bloqueo (redescubierto vía ventas.bloqueo_ref_id).
+  -- 13) 1 -> 0 -> 1 conservando el bloqueo (redescubierto vía ventas.bloqueo_ref_id).
   update public.sillas set estado = 'disponible' where bloqueo_id = v_bloqueo_id; -- reset
   update public.sillas set estado = 'en_plazo', numero_contrato = v_num where bloqueo_id = v_bloqueo_id and numero_silla = 1;
   perform public.ajustar_sillas_por_pasajeros(v_num, 0); -- libera TODO (numero_contrato queda null en todas)
@@ -261,10 +313,12 @@ begin
   perform public.ajustar_sillas_por_pasajeros(v_num, 0); -- deja limpio para lo que sigue
 
   -- ═════════════════════════════════════════════════════════════════════════
-  -- guardar_pasajeros_contrato: pruebas de extremo a extremo
+  -- guardar_pasajeros_contrato: pruebas de extremo a extremo (EDICIÓN)
   -- ═════════════════════════════════════════════════════════════════════════
 
-  -- 11) Infante NUEVO sin responsable_orden -> rechazado (obligatorio).
+  -- 14) Infante NUEVO sin responsable_orden -> rechazado (obligatorio),
+  --     y NO deja rastro (ni el adulto que lo acompañaba queda guardado:
+  --     todo el guardado se revierte junto).
   begin
     perform * from public.guardar_pasajeros_contrato(v_num, jsonb_build_array(
       jsonb_build_object('nombre','Adulto Nuevo','tipoId','CC','identificacion','1000167201','fechaNacimiento',(current_date - interval '25 years')::date::text),
@@ -275,9 +329,11 @@ begin
     v_ok := true;
   end;
   insert into pg_temp.postcheck_167_reporte
-    values ('guardar', 'infante NUEVO sin responsable: rechazado', case when v_ok then 'OK' else 'FALLA' end, '');
+    values ('guardar', 'infante NUEVO sin responsable: rechazado, sin dejar ni al adulto acompañante', case when v_ok and not exists (
+      select 1 from public.contrato_pasajeros where identificacion in ('1000167201','1000167202')
+    ) then 'OK' else 'FALLA' end, '');
 
-  -- 12) Guardado válido: 1 adulto + 1 infante vinculado -> acepta, holders=1.
+  -- 15) Guardado válido: 1 adulto + 1 infante vinculado -> acepta, holders=1.
   update public.sillas set estado = 'disponible', numero_contrato = null where bloqueo_id = v_bloqueo_id;
   perform 1 from public.guardar_pasajeros_contrato(v_num, jsonb_build_array(
     jsonb_build_object('nombre','Adulto Uno','tipoId','CC','identificacion','1000167001','fechaNacimiento',(current_date - interval '30 years')::date::text),
@@ -292,7 +348,7 @@ begin
       select 1 from public.sillas where numero_contrato = v_num and estado = 'en_plazo'
     ) then 'OK' else 'FALLA' end, '');
 
-  -- 13) Round-trip: "recarga" (usa los ids reales ya persistidos) y vuelve a
+  -- 16) Round-trip: "recarga" (usa los ids reales ya persistidos) y vuelve a
   --     guardar sin tocar nada -> el vínculo debe seguir exactamente igual.
   perform 1 from public.guardar_pasajeros_contrato(v_num, jsonb_build_array(
     jsonb_build_object('id',v_id_adulto,'nombre','Adulto Uno','tipoId','CC','identificacion','1000167001','fechaNacimiento',(current_date - interval '30 years')::date::text),
@@ -303,7 +359,7 @@ begin
       select 1 from public.contrato_pasajeros where id = v_id_infante and responsable_id = v_id_adulto
     ) then 'OK' else 'FALLA' end, '');
 
-  -- 14) Segunda edición: cambia un dato ajeno (nombre del adulto) manteniendo
+  -- 17) Segunda edición: cambia un dato ajeno (nombre del adulto) manteniendo
   --     el mismo vínculo -> el vínculo debe seguir intacto (no es frágil a
   --     ediciones no relacionadas).
   perform 1 from public.guardar_pasajeros_contrato(v_num, jsonb_build_array(
@@ -317,9 +373,14 @@ begin
       select 1 from public.contrato_pasajeros where id = v_id_adulto and nombre = 'Adulto Uno Editado'
     ) then 'OK' else 'FALLA' end, '');
 
-  -- 15) Grandfather: infante HISTÓRICO sin vínculo (insertado directo, sin
-  --     pasar por el RPC) se vuelve a guardar SIN responsableOrden -> debe
-  --     ACEPTARSE (no se migra/inventa un vínculo histórico).
+  -- 18) Grandfather REAL: se simula un infante que YA EXISTÍA (con
+  --     responsable_id=null) ANTES de que existiera esta regla —
+  --     desactivando el trigger un instante y congelando su id en
+  --     `_pasajeros_exentos_167` exactamente como lo hace el `INSERT ...
+  --     SELECT` de la propia migración al aplicarse sobre datos ya
+  --     existentes (nunca "regalando" la exención por otro medio). Guardarlo
+  --     de nuevo SIN responsableOrden debe ACEPTARSE (no se migra/inventa un
+  --     vínculo histórico).
   insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
     values (v_num3, 'Cliente Postcheck 167 C', current_date + 30, 2, 60000, 'pendiente', 'mayorista');
   declare
@@ -328,9 +389,13 @@ begin
     insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
       values (v_num3, 'Adulto Historico', 'CC', '1000167301', (current_date - interval '35 years')::date, false, 0)
       returning id into v_id_hist_adulto;
+
+    alter table public.contrato_pasajeros disable trigger trg_validar_responsable_infante;
     insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
       values (v_num3, 'Infante Historico', 'RC', '1000167302', (current_date - interval '1 years')::date, true, 1)
       returning id into v_id_hist_infante;
+    alter table public.contrato_pasajeros enable trigger trg_validar_responsable_infante;
+    insert into public._pasajeros_exentos_167 (pasajero_id) values (v_id_hist_infante); -- foto congelada, como la migración
 
     begin
       perform 1 from public.guardar_pasajeros_contrato(v_num3, jsonb_build_array(
@@ -343,9 +408,48 @@ begin
     end;
   end;
   insert into pg_temp.postcheck_167_reporte
-    values ('guardar', 'grandfather: infante histórico sin vínculo se sigue guardando sin forzar uno', case when v_ok then 'OK' else 'FALLA' end, '');
+    values ('guardar', 'grandfather REAL (id congelado en _pasajeros_exentos_167): infante histórico sigue guardándose sin forzar vínculo', case when v_ok then 'OK' else 'FALLA' end, '');
 
-  -- 16) Eliminar el INF (quitarlo del guardado) no debe afectar la silla del
+  -- 19) UN INFANTE CREADO DESPUÉS DE LA 167 NUNCA PUEDE ACOGERSE AL
+  --     GRANDFATHERING: se crea con crear_pasajeros_contrato (post-167, con
+  --     responsable real desde el nacimiento de la fila) y LUEGO se intenta
+  --     "soltar" el vínculo (omitir responsableOrden) en una edición
+  --     posterior — a diferencia del infante histórico de la prueba 18, su
+  --     id JAMÁS estuvo en `_pasajeros_exentos_167`, así que debe
+  --     rechazarse SIEMPRE, sin importar cuántas ediciones pasen.
+  insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+    values (v_num4, 'Cliente Postcheck 167 D', current_date + 30, 2, 80000, 'pendiente', 'mayorista');
+  declare
+    v_id_nuevo_adulto bigint; v_id_nuevo_infante bigint; v_uid_creador uuid := gen_random_uuid();
+  begin
+    insert into auth.users (id, email, raw_user_meta_data)
+      values (v_uid_creador, 'postcheck167-creador@test.local', jsonb_build_object('rol', 'venta', 'nombre', 'Postcheck Creador'));
+    perform 1 from public.crear_pasajeros_contrato(v_num4, jsonb_build_array(
+      jsonb_build_object('nombre','Adulto Nuevo Post167','tipoId','CC','identificacion','1000167601','fechaNacimiento',(current_date - interval '33 years')::date::text),
+      jsonb_build_object('nombre','Infante Nuevo Post167','tipoId','RC','identificacion','1000167602','fechaNacimiento',(current_date - interval '1 years')::date::text,'responsableOrden',1)
+    ), 0, v_uid_creador);
+    select id into v_id_nuevo_adulto from public.contrato_pasajeros where numero_contrato = v_num4 and orden = 0;
+    select id into v_id_nuevo_infante from public.contrato_pasajeros where numero_contrato = v_num4 and orden = 1;
+
+    begin
+      perform 1 from public.guardar_pasajeros_contrato(v_num4, jsonb_build_array(
+        jsonb_build_object('id',v_id_nuevo_adulto,'nombre','Adulto Nuevo Post167','tipoId','CC','identificacion','1000167601','fechaNacimiento',(current_date - interval '33 years')::date::text),
+        jsonb_build_object('id',v_id_nuevo_infante,'nombre','Infante Nuevo Post167','tipoId','RC','identificacion','1000167602','fechaNacimiento',(current_date - interval '1 years')::date::text)
+      ));
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    -- El vínculo real (puesto al nacer la fila) debe seguir intacto tras el
+    -- intento fallido de soltarlo.
+    v_ok := v_ok and exists (
+      select 1 from public.contrato_pasajeros where id = v_id_nuevo_infante and responsable_id = v_id_nuevo_adulto
+    );
+  end;
+  insert into pg_temp.postcheck_167_reporte
+    values ('guardar', 'INF creado DESPUÉS de 167 (vía crear_pasajeros_contrato) no puede acogerse al grandfather ni perder su vínculo real después', case when v_ok then 'OK' else 'FALLA' end, '');
+
+  -- 20) Eliminar el INF (quitarlo del guardado) no debe afectar la silla del
   --     ADT restante (INF nunca ocupó silla) — reutiliza v_num (adulto+infante).
   select holders_total into v_ret from public.ajustar_sillas_por_pasajeros(v_num, 1); -- confirma 1 silla activa (ADT)
   perform 1 from public.guardar_pasajeros_contrato(v_num, jsonb_build_array(
@@ -356,7 +460,7 @@ begin
       select 1 from public.sillas where numero_contrato = v_num and estado = 'en_plazo'
     ) then 'OK' else 'FALLA' end, '');
 
-  -- 17) Eliminar el ADT (dejando solo servicios sin pax con silla) SÍ libera su silla.
+  -- 21) Eliminar el ADT (dejando solo servicios sin pax con silla) SÍ libera su silla.
   perform 1 from public.guardar_pasajeros_contrato(v_num, jsonb_build_array(
     jsonb_build_object('nombre','Solo Terrestre','tipoId','CC','identificacion','1000167401','fechaNacimiento',(current_date - interval '50 years')::date::text)
   ));
@@ -365,7 +469,61 @@ begin
       select count(*) from public.sillas where numero_contrato = v_num and estado = 'en_plazo'
     ) = 1 then 'OK' else 'FALLA' end, '');
 
-  raise notice 'postcheck 167: fixtures creados bajo %/%/% (se revierten con ROLLBACK)', v_num, v_num2, v_num3;
+  -- ═════════════════════════════════════════════════════════════════════════
+  -- crear_pasajeros_contrato: CREACIÓN atómica (pasajeros + responsables +
+  -- sillas en UNA sola transacción — cierra B5)
+  -- ═════════════════════════════════════════════════════════════════════════
+
+  -- 22) Falta de sillas en la creación: debe fallar ENTERO — no deja NI el
+  --     pasajero nombrado NI ninguna silla tomada (nunca ok:true con estado
+  --     parcial). Se agota el bloqueo explícitamente aquí (las pruebas 13/15
+  --     ya devolvieron sillas libres al pool, así que no se puede asumir el
+  --     estado que dejó la prueba 12).
+  update public.sillas set estado = 'no_vendida'
+   where bloqueo_id = v_bloqueo_id and estado in ('disponible', 'cambio_entrante');
+  insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant, bloqueo_ref_id)
+    values ('DTM-4'||to_char(clock_timestamp(),'HH24MISSMS'), 'Cliente Postcheck 167 Sin Cupo', current_date + 30, 1, 40000, 'pendiente', 'mayorista', v_bloqueo_id);
+  declare
+    v_num_sincupo text; v_pax_antes int; v_pax_despues int; v_sillas_estado_antes text; v_sillas_estado_despues text;
+  begin
+    select numero_contrato into v_num_sincupo from public.ventas where cliente = 'Cliente Postcheck 167 Sin Cupo';
+    select count(*) into v_pax_antes from public.contrato_pasajeros where numero_contrato = v_num_sincupo;
+    select string_agg(estado||':'||coalesce(numero_contrato,''), ',' order by numero_silla) into v_sillas_estado_antes
+      from public.sillas where bloqueo_id = v_bloqueo_id;
+    begin
+      perform 1 from public.crear_pasajeros_contrato(v_num_sincupo, jsonb_build_array(
+        jsonb_build_object('nombre','Pasajero Sin Cupo','tipoId','CC','identificacion','1000167701','fechaNacimiento',(current_date - interval '30 years')::date::text)
+      ), 0, v_uid);
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    select count(*) into v_pax_despues from public.contrato_pasajeros where numero_contrato = v_num_sincupo;
+    select string_agg(estado||':'||coalesce(numero_contrato,''), ',' order by numero_silla) into v_sillas_estado_despues
+      from public.sillas where bloqueo_id = v_bloqueo_id;
+    v_ok := v_ok and v_pax_antes = 0 and v_pax_despues = 0 and v_sillas_estado_antes = v_sillas_estado_despues;
+  end;
+  insert into pg_temp.postcheck_167_reporte
+    values ('crear', 'falta de sillas en creación: nunca ok, sin pasajero ni silla parcial', case when v_ok then 'OK' else 'FALLA' end, '');
+
+  -- 23) p_holders_min: creación SIN pasajeros nombrados (convertirCotizacion
+  --     con override) todavía debe reservar las sillas que declara la
+  --     composición de habitaciones (nunca sub-reservar por lista vacía).
+  update public.sillas set estado = 'disponible', numero_contrato = null where bloqueo_id = v_bloqueo_id;
+  declare
+    v_num_vacio text := 'DTM-3'||to_char(clock_timestamp(),'HH24MISSMS');
+  begin
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant, bloqueo_ref_id)
+      values (v_num_vacio, 'Cliente Postcheck 167 Vacio', current_date + 30, 2, 90000, 'pendiente', 'mayorista', v_bloqueo_id);
+    perform 1 from public.crear_pasajeros_contrato(v_num_vacio, '[]'::jsonb, 2, v_uid);
+    select count(*) into v_ret from public.sillas where numero_contrato = v_num_vacio and estado = 'en_plazo';
+    insert into pg_temp.postcheck_167_reporte
+      values ('crear', 'p_holders_min: pasajeros vacíos igual reserva el piso declarado (composición de habitaciones)', case when v_ret = 2 and not exists (
+        select 1 from public.contrato_pasajeros where numero_contrato = v_num_vacio
+      ) then 'OK' else 'FALLA' end, 'sillas_en_plazo='||v_ret);
+  end;
+
+  raise notice 'postcheck 167: fixtures creados bajo %/%/%/%/% (se revierten con ROLLBACK)', v_num, v_num2, v_num3, v_num4, v_num5;
 end $$;
 
 -- ── Concurrencia real (dos conexiones) — ver test_167_concurrencia.sh ──────

@@ -81,6 +81,66 @@ PSQL -v ON_ERROR_STOP=1 -c "
 delete from sillas where bloqueo_id = $BLOQUEO_ID;
 delete from ventas where numero_contrato in ('$CONTRATO_A', '$CONTRATO_B');
 delete from bloqueos_vuelo where id = $BLOQUEO_ID;
+" >/dev/null
+# auth.users ($UID_TEST) se conserva: la segunda carrera (creación) lo
+# necesita también — se borra al final del script, no aquí.
+
+echo
+echo "== Segunda carrera: CREACIÓN atómica (crear_pasajeros_contrato) — dos"
+echo "   contratos NUEVOS, cada uno crea 1 pasajero + pide 1 silla a la vez,"
+echo "   sobre un bloqueo con 1 sola disponible (cierra B5 para creación,"
+echo "   no solo para la edición ya probada arriba)."
+DIGITOS2="$(date +%s%N | tail -c 9)"
+CONTRATO_C="DTM-92${DIGITOS2}"
+CONTRATO_D="DTM-93${DIGITOS2}"
+
+BLOQUEO2_ID=$(PSQL -v ON_ERROR_STOP=1 -c "
+insert into bloqueos_vuelo (record, aerolinea, ruta, fecha_ida, cupos_total)
+values ('CONC167B-$RUN_ID', 'Avianca', 'BOG-CTG', '2027-02-01', 1)
+returning id;
+")
+PSQL -v ON_ERROR_STOP=1 -c "insert into sillas (bloqueo_id, numero_silla, estado) values ($BLOQUEO2_ID, 1, 'disponible');" >/dev/null
+PSQL -v ON_ERROR_STOP=1 -c "
+insert into ventas (numero_contrato, tenant, cliente, fecha_salida, pax, precio_venta, estado, canal, tipo_paquete, bloqueo_ref_id)
+values ('$CONTRATO_C', 'mayorista', 'Cliente Conc C', '2027-02-01', 1, 100000, 'pendiente', 'B2C', 'bloqueo', $BLOQUEO2_ID);
+" >/dev/null
+PSQL -v ON_ERROR_STOP=1 -c "
+insert into ventas (numero_contrato, tenant, cliente, fecha_salida, pax, precio_venta, estado, canal, tipo_paquete, bloqueo_ref_id)
+values ('$CONTRATO_D', 'mayorista', 'Cliente Conc D', '2027-02-01', 1, 100000, 'pendiente', 'B2C', 'bloqueo', $BLOQUEO2_ID);
+" >/dev/null
+
+PAYLOAD_C="jsonb_build_array(jsonb_build_object('nombre','Pasajero C','tipoId','CC','identificacion','${DIGITOS2}01','fechaNacimiento','1990-01-01'))"
+PAYLOAD_D="jsonb_build_array(jsonb_build_object('nombre','Pasajero D','tipoId','CC','identificacion','${DIGITOS2}02','fechaNacimiento','1990-01-01'))"
+PSQL -c "select * from crear_pasajeros_contrato('$CONTRATO_C', $PAYLOAD_C, 0, '$UID_TEST');" >/tmp/conc167c.out 2>&1 &
+PSQL -c "select * from crear_pasajeros_contrato('$CONTRATO_D', $PAYLOAD_D, 0, '$UID_TEST');" >/tmp/conc167d.out 2>&1 &
+wait
+
+echo "  conexión C -> $(cat /tmp/conc167c.out)"
+echo "  conexión D -> $(cat /tmp/conc167d.out)"
+
+PAX_C=$(PSQL -c "select count(*) from contrato_pasajeros where numero_contrato = '$CONTRATO_C';")
+PAX_D=$(PSQL -c "select count(*) from contrato_pasajeros where numero_contrato = '$CONTRATO_D';")
+HOLD_C=$(PSQL -c "select count(*) from sillas where numero_contrato = '$CONTRATO_C' and estado in ('en_plazo','confirmada');")
+HOLD_D=$(PSQL -c "select count(*) from sillas where numero_contrato = '$CONTRATO_D' and estado in ('en_plazo','confirmada');")
+
+echo "  pax C=$PAX_C pax D=$PAX_D | holders C=$HOLD_C holders D=$HOLD_D"
+
+# El ganador debe tener EXACTAMENTE su pasajero Y su silla (ambos juntos,
+# nunca uno sin el otro); el perdedor NO debe tener ni pasajero ni silla
+# (la creación completa se revierte junta — el propio hallazgo de B5).
+if { [ "$PAX_C" = "1" ] && [ "$HOLD_C" = "1" ] && [ "$PAX_D" = "0" ] && [ "$HOLD_D" = "0" ]; } || \
+   { [ "$PAX_D" = "1" ] && [ "$HOLD_D" = "1" ] && [ "$PAX_C" = "0" ] && [ "$HOLD_C" = "0" ]; }; then
+  echo "  PASS  exactamente una creación ganó (pasajero + silla juntos); la otra no dejó ni pasajero ni silla"
+else
+  echo "  FAIL  creación concurrente — se esperaba un ganador completo (1 pax + 1 silla) y un perdedor completo (0 y 0)"
+  fail=1
+fi
+
+PSQL -v ON_ERROR_STOP=1 -c "
+delete from contrato_pasajeros where numero_contrato in ('$CONTRATO_C', '$CONTRATO_D');
+delete from sillas where bloqueo_id = $BLOQUEO2_ID;
+delete from ventas where numero_contrato in ('$CONTRATO_C', '$CONTRATO_D');
+delete from bloqueos_vuelo where id = $BLOQUEO2_ID;
 delete from auth.users where id = '$UID_TEST';
 " >/dev/null
 

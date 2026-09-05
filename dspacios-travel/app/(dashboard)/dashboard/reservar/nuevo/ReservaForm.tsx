@@ -9,6 +9,7 @@ import { crearCotizacion, cotizarPorFechas } from "../actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
+import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 
 // Suma N noches a una fecha YYYY-MM-DD y devuelve YYYY-MM-DD.
 const addDiasStr = (d: string, n: number) => {
@@ -208,6 +209,18 @@ export function ReservaForm({
       const next = [...prev];
       while (next.length <= i) next.push(emptyPax());
       next[i] = { ...next[i], [k]: v };
+      return next;
+    });
+  }
+  // Adulto responsable de un infante (posición 0-based dentro de `pax`) —
+  // obligatorio para todo infante NUEVO (revisión de alto riesgo, B1): el
+  // RPC de creación lo exige, con mensaje claro, en vez de guardarlo sin
+  // vínculo en silencio.
+  function setPaxResponsable(i: number, responsableIndex: number | null) {
+    setPax((prev) => {
+      const next = [...prev];
+      while (next.length <= i) next.push(emptyPax());
+      next[i] = { ...next[i], responsableIndex };
       return next;
     });
   }
@@ -502,36 +515,65 @@ export function ReservaForm({
           <p className="text-sm text-gray-400">Indica habitaciones arriba para capturar pasajeros.</p>
         ) : (
           <div className="space-y-3">
-            {paxRows.map((p, i) => {
-              const esInfante = i >= paxConSilla;
-              return (
-                <div key={i} className="rounded-lg border border-gray-100 p-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-medium text-gray-500">
-                      Pasajero {i + 1}{esInfante ? " · Infante" : ""}
-                    </span>
-                    {i === 0 && (
-                      <button type="button" onClick={() => copiarCliente(0)} className="text-xs" style={{ color: "var(--brand-accent)" }}>
-                        Copiar datos del cliente
-                      </button>
+            {(() => {
+              // Edad REAL por fecha de nacimiento (no la posicional de
+              // arriba) — es el mismo criterio que usa el servidor para
+              // decidir si un pasajero es infante y exige un adulto
+              // responsable vinculado (revisión de alto riesgo — B1).
+              const edadesReales = paxRows.map((p) => calcularEdad(p.fechaNacimiento, refFecha));
+              const esInfanteRealRow = paxRows.map((p) => esInfantePorEdad(p.fechaNacimiento, refFecha));
+              return paxRows.map((p, i) => {
+                const esInfante = i >= paxConSilla;
+                const esInfanteReal = esInfanteRealRow[i];
+                return (
+                  <div key={i} className="rounded-lg border border-gray-100 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-medium text-gray-500">
+                        Pasajero {i + 1}{esInfante ? " · Infante" : ""}
+                      </span>
+                      {i === 0 && (
+                        <button type="button" onClick={() => copiarCliente(0)} className="text-xs" style={{ color: "var(--brand-accent)" }}>
+                          Copiar datos del cliente
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <div><label className={lbl}>Nombres *</label><Input value={p.nombres} onChange={(e) => setPaxField(i, "nombres", e.target.value)} /></div>
+                      <div><label className={lbl}>Apellidos *</label><Input value={p.apellidos} onChange={(e) => setPaxField(i, "apellidos", e.target.value)} /></div>
+                      <div>
+                        <label className={lbl}>Tipo doc</label>
+                        <select value={p.tipoDoc} onChange={(e) => setPaxField(i, "tipoDoc", e.target.value)} className={inp}>
+                          <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option><option value="RC">RC</option>
+                        </select>
+                      </div>
+                      <div><label className={lbl}>Número doc</label><Input value={p.numeroDoc} onChange={(e) => setPaxField(i, "numeroDoc", e.target.value)} /></div>
+                      <div><label className={lbl}>Fecha nacimiento</label><Input type="date" value={p.fechaNacimiento} onChange={(e) => setPaxField(i, "fechaNacimiento", e.target.value)} /></div>
+                      <div><label className={lbl}>Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setPaxField(i, "nacionalidad", e.target.value)} /></div>
+                    </div>
+                    {esInfanteReal && (
+                      <div className="mt-2">
+                        <label className={lbl}>Adulto responsable *</label>
+                        <select
+                          value={p.responsableIndex ?? ""}
+                          onChange={(e) => setPaxResponsable(i, e.target.value === "" ? null : Number(e.target.value))}
+                          className={inp}
+                        >
+                          <option value="">Sin vincular (se rechazará al generar)</option>
+                          {paxRows.map((otro, j) => {
+                            if (j === i) return null;
+                            const edadOtro = edadesReales[j];
+                            if (edadOtro == null || edadOtro < 18) return null;
+                            const nombre = `${otro.nombres} ${otro.apellidos}`.trim() || `Pasajero ${j + 1}`;
+                            return <option key={j} value={j}>{nombre}</option>;
+                          })}
+                        </select>
+                        <p className="mt-1 text-xs text-gray-400">Todo infante debe quedar vinculado a un adulto (18+ años) del mismo contrato.</p>
+                      </div>
                     )}
                   </div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <div><label className={lbl}>Nombres *</label><Input value={p.nombres} onChange={(e) => setPaxField(i, "nombres", e.target.value)} /></div>
-                    <div><label className={lbl}>Apellidos *</label><Input value={p.apellidos} onChange={(e) => setPaxField(i, "apellidos", e.target.value)} /></div>
-                    <div>
-                      <label className={lbl}>Tipo doc</label>
-                      <select value={p.tipoDoc} onChange={(e) => setPaxField(i, "tipoDoc", e.target.value)} className={inp}>
-                        <option value="CC">CC</option><option value="CE">CE</option><option value="PAS">Pasaporte</option><option value="TI">TI</option><option value="RC">RC</option>
-                      </select>
-                    </div>
-                    <div><label className={lbl}>Número doc</label><Input value={p.numeroDoc} onChange={(e) => setPaxField(i, "numeroDoc", e.target.value)} /></div>
-                    <div><label className={lbl}>Fecha nacimiento</label><Input type="date" value={p.fechaNacimiento} onChange={(e) => setPaxField(i, "fechaNacimiento", e.target.value)} /></div>
-                    <div><label className={lbl}>Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setPaxField(i, "nacionalidad", e.target.value)} /></div>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              });
+            })()}
           </div>
         )}
       </section>

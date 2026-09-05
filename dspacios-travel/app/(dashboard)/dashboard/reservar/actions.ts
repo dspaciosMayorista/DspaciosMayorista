@@ -36,6 +36,7 @@ import {
 } from "@/lib/reservar/computo";
 import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
 import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
+import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import {
   componenteHotelReal,
   componentePaqueteReal,
@@ -274,49 +275,65 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // para decidir qué pasajeros ocupan silla — una sola fuente de verdad.
   const esInfanteReal = input.pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, meta.fecha_ida));
 
-  // 5-bis) Sillas del BLOQUEO negociado — ANTES de crear contrato_pasajeros:
-  // si el bloqueo se quedó sin cupo suficiente (condición de carrera con
-  // otra reserva concurrente sobre el MISMO bloqueo, entre el chequeo
-  // rápido del paso 2c y este punto), la reserva se detiene aquí y nunca
-  // llega a guardar pasajeros con el inventario incompleto (revisión de alto
-  // riesgo — B5). `asignar_sillas_creacion` (migración 167) hace el
-  // conteo/candado/asignación de forma ATÓMICA (bloquea el pool completo de
-  // sillas del bloqueo con `for update`) usando el conteo REAL de pasajeros
-  // que ocupan silla (`holders.length`, por edad real) — nunca `paxConSilla`
-  // (agregado de la configuración de habitaciones, que puede divergir si un
-  // pasajero nombrado resulta infante y la habitación no lo reflejaba).
+  // 5-bis) Pasajeros + responsables + sillas del BLOQUEO negociado, TODOS EN
+  // UNA SOLA LLAMADA — segunda revisión de alto riesgo (B5): antes, las
+  // sillas se reservaban aquí y los pasajeros se insertaban DESPUÉS en una
+  // llamada Supabase aparte (o al revés, en contratos/actions.ts) — un fallo
+  // a mitad de camino dejaba sillas tomadas sin pasajero, o un pasajero
+  // guardado con el inventario incompleto. `crear_pasajeros_contrato`
+  // (migración 167) hace TODO en una sola transacción Postgres: valida el
+  // payload, exige responsable_id para todo infante NUEVO (autoridad real:
+  // el trigger de la tabla — B1), y reconcilia las sillas del bloqueo con
+  // `for update` (B5) — si cualquier parte falla (payload inválido, falta
+  // de cupo, vínculo faltante), Postgres revierte TODO: nunca queda una
+  // silla tomada sin pasajero ni un pasajero guardado sin su silla, y esta
+  // función nunca sigue de largo como si hubiera tenido éxito.
+  // `p_holders_min = paxConSilla` (agregado de la composición de
+  // habitaciones, ANTES de nombrar pasajeros): la reserva puede crearse
+  // legítimamente con la lista de pasajeros vacía (`convertirCotizacion` con
+  // override de superadmin, "captura los pasajeros después"); el núcleo
+  // reserva como mínimo ese piso, y nunca menos que los pasajeros reales
+  // (no infante, por edad real) que sí vengan nombrados en este payload — así
+  // nunca se sub-reserva ni por lista vacía ni por una edad real distinta a
+  // la declarada. Si el origen no es un bloqueo, `_ajustar_sillas_nucleo`
+  // resuelve `ventas.bloqueo_ref_id` en null y no hace nada (no-op).
   // `service_role` porque la reserva puede venir de un usuario B2B externo
   // (agencia/freelance), que nunca pasaría el candado de rol interno del
   // wrapper de edición — el RPC exige en cambio un usuario real y activo.
   const holdersCreacion = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
   let sillaIdsAsignadas: number[] = [];
-  if (origen.tipo === "bloqueo" && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const { data: { user: actorSillas } } = await sb.auth.getUser();
-    if (!actorSillas) return { ok: false, error: "Sesión inválida: no se pudo confirmar el usuario para asignar sillas." };
-    const admin = createAdminClient();
-    const { data: sillasRes, error: sillasErr } = await admin.rpc("asignar_sillas_creacion", {
-      p_numero_contrato: numero,
-      p_holders_nuevo: holdersCreacion.length,
-      p_usuario_id: actorSillas.id,
-    });
-    if (sillasErr) return { ok: false, error: sillasErr.message };
-    sillaIdsAsignadas = (sillasRes?.[0]?.silla_ids ?? []) as number[];
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "No se pudo crear la reserva (configuración del servidor incompleta)." };
   }
-
-  if (input.pasajeros.length) {
-    const { error } = await sb.from("contrato_pasajeros").insert(
+  {
+    const { data: { user: actorPasajeros } } = await sb.auth.getUser();
+    if (!actorPasajeros) return { ok: false, error: "Sesión inválida: no se pudo confirmar el usuario para crear la reserva." };
+    const admin = createAdminClient();
+    const payloadPasajeros = payloadGuardarPasajeros(
       input.pasajeros.map((p, i) => ({
-        numero_contrato: numero,
         nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
-        tipo_id: oNull(p.tipoDoc) ?? "CC",
-        identificacion: oNull(p.numeroDoc),
-        fecha_nacimiento: oNull(p.fechaNacimiento),
-        nacionalidad: oNull(p.nacionalidad),
-        es_infante: esInfanteReal[i],
-        orden: i,
+        tipoId: oNull(p.tipoDoc) ?? "CC",
+        identificacion: oNull(p.numeroDoc) ?? "",
+        fechaNacimiento: p.fechaNacimiento ?? "",
+        esInfante: esInfanteReal[i] ?? false,
+        responsableIndex: p.responsableIndex ?? null,
       }))
     );
-    if (error) return { ok: false, error: error.message };
+    const { error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato", {
+      p_numero_contrato: numero,
+      p_pasajeros: payloadPasajeros as unknown as Json,
+      p_holders_min: paxConSilla,
+      p_usuario_id: actorPasajeros.id,
+    });
+    if (pasajerosErr) return { ok: false, error: pasajerosErr.message };
+
+    if (origen.tipo === "bloqueo") {
+      const { data: sillasAsignadas } = await admin
+        .from("sillas").select("id")
+        .eq("numero_contrato", numero).in("estado", ["en_plazo", "confirmada"])
+        .order("numero_silla");
+      sillaIdsAsignadas = (sillasAsignadas ?? []).map((s) => s.id);
+    }
   }
 
   // 6) Hotel del contrato (no aplica en paquete tipo servicios)
@@ -1138,6 +1155,21 @@ export async function convertirCotizacionCarrito(
     // decidir qué pasajeros ocupan silla más abajo (una sola fuente de verdad).
     const fechaRefGrupo = fechasIda[0] ?? null;
     const esInfanteRealGrupo = opts.pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, fechaRefGrupo));
+    // ⚠️ Este flujo (checkout de carrito, varios ítems/bloqueos bajo un mismo
+    // numero_contrato) todavía NO tiene selector de adulto responsable — a
+    // diferencia de reservarDesdeTarifarioInterno/crearContratoInterno/
+    // reservarProgramaInterno, no se migró a crear_pasajeros_contrato (un
+    // solo numero_contrato no puede representar más de un bloqueo_ref_id,
+    // residual documentado más abajo). Con el trigger de la migración 167 ya
+    // endurecido, un INSERT directo de un infante sin responsable_id se
+    // rechazaría de todas formas (autoridad real) — se corta ANTES, con un
+    // mensaje claro, en vez de dejar pasar un error crudo de Postgres al
+    // navegador (revisión de alto riesgo — B1: "impedir crear INF por ese
+    // flujo con un mensaje claro; no puede guardarlo silenciosamente sin
+    // vínculo").
+    if (esInfanteRealGrupo.some(Boolean)) {
+      return { ok: false, error: "Este checkout de carrito todavía no admite pasajeros infantes. Genera el contrato sin el infante y agrégalo después, vinculado a su adulto responsable, desde la edición de pasajeros del contrato." };
+    }
     if (opts.pasajeros.length) {
       const { error: pe } = await sb.from("contrato_pasajeros").insert(
         opts.pasajeros.map((p, i) => ({
@@ -1244,14 +1276,17 @@ export async function convertirCotizacionCarrito(
           // (agregado de la configuración de habitaciones, que puede divergir
           // si un pasajero nombrado resulta infante y la habitación no lo
           // reflejaba — revisión de alto riesgo, B5). ⚠️ Residual conocido: a
-          // diferencia de reservarDesdeTarifarioInterno/crearContratoInterno,
-          // este camino (conversión de carrito con VARIOS ítems, cada uno con
-          // su propio bloqueoId bajo un mismo numero_contrato) NO se migró al
-          // RPC atómico `asignar_sillas_creacion` — un solo `numero_contrato`
-          // no puede representar más de un `bloqueo_ref_id`, así que el
-          // mecanismo de reconciliación por conteo no generaliza limpio a
-          // "varios bloqueos, un contrato". Sigue usando select+update en
-          // paralelo sin candado (mismo riesgo de carrera que ya existía).
+          // diferencia de reservarDesdeTarifarioInterno/crearContratoInterno/
+          // reservarProgramaInterno, este camino (conversión de carrito con
+          // VARIOS ítems, cada uno con su propio bloqueoId bajo un mismo
+          // numero_contrato) NO se migró al RPC atómico `crear_pasajeros_
+          // contrato` — un solo `numero_contrato` no puede representar más de
+          // un `bloqueo_ref_id` (ni más de una llamada de creación de
+          // pasajeros), así que el mecanismo no generaliza limpio a "varios
+          // bloqueos, un contrato". Sigue usando select+update en paralelo
+          // sin candado (mismo riesgo de carrera que ya existía) — y por eso
+          // tampoco admite infantes todavía (rechazado más arriba, con
+          // mensaje claro, antes de insertar nada).
           const holders = opts.pasajeros
             .slice(0, it.pax || opts.pasajeros.length)
             .filter((_, idx) => pasajeroConsumeSilla(esInfanteRealGrupo[idx]));
@@ -1942,20 +1977,35 @@ async function reservarProgramaInterno(
   };
   let _resultadoHijas: ResultadoEtapa = "ok";
 
-  // 6) Pasajeros
+  // 6) Pasajeros + responsable — vía crear_pasajeros_contrato (migración
+  // 167): un programa no usa sillas/bloqueos propios (p_holders_min = 0,
+  // no-op en _ajustar_sillas_nucleo), pero SÍ debe pasar por el mismo
+  // mecanismo transaccional para que `es_infante` se recalcule SIEMPRE
+  // server-side (antes se confiaba en `p.esInfante`, el flag que manda el
+  // cliente) y para que todo infante nuevo exija un adulto responsable
+  // vinculado (revisión de alto riesgo — B1), con un mensaje claro si el
+  // formulario no lo capturó, en vez de guardarlo en silencio sin vínculo.
   if (input.pasajeros.length) {
-    const { error } = await sb.from("contrato_pasajeros").insert(
-      input.pasajeros.map((p, i) => ({
-        numero_contrato: numero,
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return _errorHijas("sin_service_role_para_pasajeros", null);
+    const { data: { user: actorPasajeros } } = await sb.auth.getUser();
+    if (!actorPasajeros) return _errorHijas("sin_usuario_para_pasajeros", null);
+    const admin = createAdminClient();
+    const payloadPasajeros = payloadGuardarPasajeros(
+      input.pasajeros.map((p) => ({
         nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
-        tipo_id: oNull(p.tipoDoc) ?? "CC",
-        identificacion: oNull(p.numeroDoc),
-        fecha_nacimiento: oNull(p.fechaNacimiento),
-        nacionalidad: oNull(p.nacionalidad),
-        es_infante: p.esInfante,
-        orden: i,
+        tipoId: oNull(p.tipoDoc) ?? "CC",
+        identificacion: oNull(p.numeroDoc) ?? "",
+        fechaNacimiento: p.fechaNacimiento ?? "",
+        esInfante: false,
+        responsableIndex: p.responsableIndex ?? null,
       }))
     );
+    const { error } = await admin.rpc("crear_pasajeros_contrato", {
+      p_numero_contrato: numero,
+      p_pasajeros: payloadPasajeros as unknown as Json,
+      p_holders_min: 0,
+      p_usuario_id: actorPasajeros.id,
+    });
     if (error) return _errorHijas("pasajeros", error);
   }
 
