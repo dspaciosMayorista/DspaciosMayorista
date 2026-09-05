@@ -40,10 +40,29 @@ test("BuscadorBooking.tsx: el resultado muestra el badge Y lo propaga al ítem d
 
 test("VistaBooking.tsx (SelectorPorFechas — modal de selección por fechas): resuelve, renderiza y propaga el badge", () => {
   const src = leer("app/tarifario/VistaBooking.tsx");
-  assert.match(src, /import \{ CondicionHotelBadges, type CondicionHotelBadgeData \} from "@\/components\/cotizacion\/CondicionHotelBadges"/, "no importa el componente de badge");
+  assert.match(src, /import \{ CondicionHotelBadges, CondicionCompacta, type CondicionHotelBadgeData \} from "@\/components\/cotizacion\/CondicionHotelBadges"/, "no importa el componente de badge");
   assert.match(src, /setCondicion\(r\.condicion \?\? null\)/, "no guarda la condición devuelta por cotizarPorFechas");
   assert.match(src, /<CondicionHotelBadges condicion=\{condicion\} \/>/, "el modal de selección por fechas no renderiza el badge");
   assert.match(src, /habitaciones, ninos, ninos2, infantes, pax, precio, edadesMenores, condicion,/, "el ítem armado para el carrito desde este modal no incluye la condición");
+});
+
+test("VistaBooking.tsx (tarjeta de exploración — 'O explora todos los alojamientos'/'Hoteles disponibles'): muestra el badge compacto 'Con condiciones'", () => {
+  const src = leer("app/tarifario/VistaBooking.tsx");
+  assert.match(src, /tieneCondicion: boolean;/, "HotelCard no declara tieneCondicion");
+  assert.match(src, /tieneCondicion: info\?\.tieneCondicion \?\? false,/, "el useMemo de hoteles no toma tieneCondicion de infoPorHotel");
+  assert.match(src, /<CondicionCompacta activo=\{h\.tieneCondicion\} \/>/, "la tarjeta de exploración no renderiza el badge compacto");
+});
+
+test("lib/tarifario/resumen.ts: calcula tieneCondicion por hotel reutilizando condicionHotelFechas (mismo resolver de PR #286)", () => {
+  const src = leer("lib/tarifario/resumen.ts");
+  assert.match(src, /import \{ condicionHotelFechas, type FilaTemporadaHotelRaw \} from "\.\.\/reservar\/liquidacionHotel\.ts"/, "no importa el resolver de condición");
+  assert.match(src, /hotel_temporadas.*condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo/, "no selecciona las columnas de condición de hotel_temporadas");
+  assert.match(src, /slot\.tieneCondicion = true;/, "no marca tieneCondicion en infoPorHotel");
+});
+
+test("lib/tarifario/datos.ts: InfoHotelDato declara tieneCondicion como opcional", () => {
+  const src = leer("lib/tarifario/datos.ts");
+  assert.match(src, /tieneCondicion\?: boolean;/, "InfoHotelDato no declara tieneCondicion");
 });
 
 test("CartContext.tsx: HotelCartItem tiene el campo condicion (opcional, no afecta el total)", () => {
