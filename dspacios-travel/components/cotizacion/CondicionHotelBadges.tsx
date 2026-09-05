@@ -48,3 +48,26 @@ export function CondicionHotelBadges({ condicion }: { condicion: CondicionHotelB
     </div>
   );
 }
+
+// ── Versión compacta — tarjeta de exploración (Vista Booking) ──────────────
+//
+// Un solo resumen ("Con condiciones"), sin desglosar tipo/%/restricción — a
+// diferencia de `CondicionHotelBadges` (detalle completo: modal, resultado y
+// carrito), esta tarjeta es la vitrina general de "explorar alojamientos"
+// (antes de elegir fechas/abrir el hotel), donde solo cabe un aviso corto.
+// El detalle completo sigue viviendo exclusivamente en modal/resultado/carrito.
+//
+// Recibe un booleano YA resuelto (`InfoHotelDato.tieneCondicion`,
+// `lib/tarifario/resumen.ts`) — no vuelve a evaluar nada, así que no hereda
+// tipo/porcentaje: es deliberadamente ciego a esos detalles.
+export function CondicionCompacta({ activo }: { activo?: boolean }) {
+  if (!activo) return null;
+  return (
+    <span
+      className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700"
+      title="Este alojamiento tiene condiciones o restricciones de pago para algunas fechas — ver detalle al elegir tus fechas"
+    >
+      Con condiciones
+    </span>
+  );
+}

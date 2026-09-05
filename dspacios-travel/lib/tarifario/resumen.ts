@@ -6,6 +6,8 @@ import { aplicarFiltrosPostCarga } from "./filtrosPostCarga.ts";
 import { esFilaHotelVerificable } from "./vigencia.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico, medirPayloadSiHabilitado, textoEstimacionPayload } from "../observabilidad/medicion.ts";
 import type { InfoHotelDato, CapHotelDato } from "./datos.ts";
+import { condicionHotelFechas, type FilaTemporadaHotelRaw } from "../reservar/liquidacionHotel.ts";
+import { esNeutra } from "../cotizacion/condicionPago.ts";
 
 // ── Resumen del tarifario: carga inicial LIVIANA (dos niveles) ─────────────
 //
@@ -353,7 +355,7 @@ export async function cargarResumenTarifario(
   const incluidosPorPaquete: Record<number, string[]> = {};
 
   const [
-    resFotosHotel, resHoteles, resAcomInfante, resFotosServicio, resPlanes, resVentana, resIncluidos,
+    resFotosHotel, resHoteles, resAcomInfante, resFotosServicio, resPlanes, resVentana, resIncluidos, resCondicionHotel,
   ] = await Promise.all([
     hotelIds.length
       ? sb.from("hotel_fotos").select("hotel_id, url, es_portada, orden").in("hotel_id", hotelIds).order("orden")
@@ -379,6 +381,14 @@ export async function cargarResumenTarifario(
       : null,
     paqIdsConHotel.length && admin
       ? admin.from("armado_servicios").select("paquete_id, incluido, servicios_adicionales(nombre)").eq("incluido", true).in("paquete_id", paqIdsConHotel)
+      : null,
+    // Badge compacto "Con condiciones" de la tarjeta de exploración (migración
+    // 164/165) — hotel_temporadas exige rol interno por RLS (migración 016),
+    // de ahí `admin`. Puramente decorativo/informativo: un error acá NUNCA
+    // bloquea el tarifario (mismo criterio que fotos/planes/ventana arriba),
+    // solo deja el hotel sin el badge.
+    hotelIds.length && admin
+      ? admin.from("hotel_temporadas").select("hotel_id, id, nombre, fecha_inicio, fecha_fin, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").in("hotel_id", hotelIds)
       : null,
   ]);
 
@@ -425,6 +435,61 @@ export async function cargarResumenTarifario(
         if (!slot) continue;
         if ((Number(r.neto_infante) || 0) > 0) slot.infanteCargo = true;
         if (r.nota_infante && !slot.infanteNota) slot.infanteNota = r.nota_infante;
+      }
+    }
+  }
+
+  // Badge compacto "Con condiciones" de la tarjeta de exploración (VistaBooking,
+  // "O explora todos los alojamientos"/"Hoteles disponibles") — reutiliza EL
+  // MISMO resolver puro que ya alimenta el badge de resultado/modal/carrito
+  // (`condicionHotelFechas`, PR #286), nunca un criterio nuevo. Puramente
+  // informativo: un error acá solo deja el hotel sin el badge, nunca bloquea
+  // el tarifario (mismo criterio que fotos/planes/ventana).
+  //
+  // Fechas: por hotel, se prueban TODOS los rangos [fecha_ida, fecha_regreso)
+  // que ya traen las `FilaResumen` visibles de ese hotel — para bloqueo son
+  // las salidas reales; para porción terrestre es el inicio/fin de la ventana
+  // de viaje del paquete (el MISMO dato que esta tarjeta ya usa para calcular
+  // el precio "desde") — nunca una fecha inventada. Si CUALQUIERA de esos
+  // rangos resuelve a una condición no neutra o restringida, el hotel se
+  // marca con el badge (no distingue categoría/régimen — misma limitación ya
+  // documentada en `condicionHotelFechas`, lib/reservar/liquidacionHotel.ts).
+  if (resCondicionHotel) {
+    if (resCondicionHotel.error) {
+      _huboErrorAux = true;
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_hotel_temporadas_condicion", resCondicionHotel.error);
+    } else {
+      const temporadasPorHotel = new Map<number, FilaTemporadaHotelRaw[]>();
+      for (const t of resCondicionHotel.data ?? []) {
+        const arr = temporadasPorHotel.get(t.hotel_id) ?? [];
+        arr.push({
+          id: t.id, nombre: t.nombre, fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin,
+          condicion_pago_tipo: t.condicion_pago_tipo,
+          condicion_pago_pct_inicial: t.condicion_pago_pct_inicial,
+          condicion_pago_dias_saldo: t.condicion_pago_dias_saldo,
+        });
+        temporadasPorHotel.set(t.hotel_id, arr);
+      }
+      const fechasPorHotel = new Map<number, Set<string>>();
+      for (const f of filasVisibles) {
+        if (f.hotel_id == null || !f.fecha_ida || !f.fecha_regreso) continue;
+        const set = fechasPorHotel.get(f.hotel_id) ?? new Set<string>();
+        set.add(`${f.fecha_ida}|${f.fecha_regreso}`);
+        fechasPorHotel.set(f.hotel_id, set);
+      }
+      for (const [hotelId, temporadas] of temporadasPorHotel) {
+        const slot = infoPorHotel[hotelId];
+        if (!slot) continue;
+        const rangos = fechasPorHotel.get(hotelId);
+        if (!rangos) continue;
+        for (const rango of rangos) {
+          const [fechaIda, fechaRegreso] = rango.split("|");
+          const cond = condicionHotelFechas(temporadas, { fechaIda, fechaRegreso });
+          if (cond && (!esNeutra(cond.condicionPagoTipo) || cond.restringido)) {
+            slot.tieneCondicion = true;
+            break;
+          }
+        }
       }
     }
   }

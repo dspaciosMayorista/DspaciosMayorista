@@ -25,6 +25,11 @@ export type InfoHotelDato = {
   video_url: string | null; ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null;
   infanteCargo: boolean; infanteNota: string | null; ninoNota: string | null; adultsOnly: boolean;
   petFriendly: boolean; petCargo: boolean; petCostoDesc: string | null; petNota: string | null;
+  // Badge compacto "Con condiciones" de la tarjeta de exploración (Vista
+  // Booking) — solo `lib/tarifario/resumen.ts` lo calcula (reutiliza
+  // `condicionHotelFechas`, PR #286); opcional para no exigirlo en
+  // `cargarDatosTarifario()` (esta misma carga completa no lo necesita hoy).
+  tieneCondicion?: boolean;
 };
 export type CapHotelDato = { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
 

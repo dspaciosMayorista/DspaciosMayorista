@@ -8,7 +8,7 @@ import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type 
 import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
-import { CondicionHotelBadges, type CondicionHotelBadgeData } from "@/components/cotizacion/CondicionHotelBadges";
+import { CondicionHotelBadges, CondicionCompacta, type CondicionHotelBadgeData } from "@/components/cotizacion/CondicionHotelBadges";
 import {
   EDAD_MENOR_MAX,
   MAX_MENORES_POR_CONSULTA,
@@ -53,6 +53,10 @@ type HotelCard = {
   ninoMin: number | null; ninoMax: number | null; infMin: number | null; infMax: number | null;
   adultsOnly: boolean;
   petFriendly: boolean;
+  // Badge compacto "Con condiciones" (lib/tarifario/resumen.ts) — solo para
+  // esta tarjeta de exploración; el detalle completo vive en modal/resultado/
+  // carrito (ver CondicionCompacta).
+  tieneCondicion: boolean;
   filas: FilaResumen[];
   moneda?: string | null;
 };
@@ -173,7 +177,7 @@ export function VistaBooking({
   origenPorBloqueo?: Record<number, string>;
   puedeReservar?: boolean;
   ventanaPorPaquete?: Record<number, { min: string | null; max: string | null }>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; adultsOnly?: boolean; petFriendly?: boolean }>;
+  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; ubicacion: string | null; video_url?: string | null; ninoMin?: number | null; ninoMax?: number | null; infMin?: number | null; infMax?: number | null; adultsOnly?: boolean; petFriendly?: boolean; tieneCondicion?: boolean }>;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
   soloAcom?: string | null;
@@ -261,6 +265,7 @@ export function VistaBooking({
           ubicacion: info?.ubicacion ?? null, video_url: info?.video_url ?? null,
           ninoMin: info?.ninoMin ?? null, ninoMax: info?.ninoMax ?? null, infMin: info?.infMin ?? null, infMax: info?.infMax ?? null,
           adultsOnly: info?.adultsOnly ?? false, petFriendly: info?.petFriendly ?? false,
+          tieneCondicion: info?.tieneCondicion ?? false,
           filas: [], moneda: f.moneda ?? "COP",
         };
         map.set(id, c);
@@ -593,6 +598,7 @@ export function VistaBooking({
                 <span className="font-semibold text-gray-800">{h.hotelNombre}</span>
                 <Categoria estrellas={h.estrellas} clasificacion={h.clasificacion} className="text-sm" />
                 <EtiquetasHotel adultsOnly={h.adultsOnly} petFriendly={h.petFriendly} />
+                <CondicionCompacta activo={h.tieneCondicion} />
               </div>
               <div className="mt-0.5 text-xs text-gray-500">{h.destino ?? ""}</div>
               {h.descripcion?.trim() && (

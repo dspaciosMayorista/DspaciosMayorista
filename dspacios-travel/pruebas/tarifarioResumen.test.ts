@@ -481,6 +481,91 @@ describe("cargarResumenTarifario() — consulta la vista de resumen, entrega Fil
   });
 });
 
+// ── Badge compacto "Con condiciones" de la tarjeta de exploración (Vista
+// Booking, "O explora todos los alojamientos"/"Hoteles disponibles") —
+// `infoPorHotel[id].tieneCondicion`. Reutiliza el MISMO resolver puro que ya
+// alimenta el badge de resultado/modal/carrito (`condicionHotelFechas`, PR
+// #286) sobre las fechas que ya trae `FilaResumen` (salida real para bloqueo,
+// ventana de viaje del paquete para porción terrestre — el mismo dato que
+// esta tarjeta ya usa para el precio "desde"), nunca una fecha inventada.
+describe("Badge compacto 'Con condiciones' de la tarjeta de exploración — infoPorHotel[id].tieneCondicion", () => {
+  function hotelFixture(id: number) {
+    return {
+      id, estrellas: null, clasificacion: null, descripcion: null, ubicacion: null, video_url: null,
+      pax_min: null, pax_max: null, edad_nino_min: null, edad_nino_max: null, edad_infante_min: null, edad_infante_max: null,
+      nino_nota: null, adults_only: false, pet_friendly: false, pet_costo_neto: null, pet_costo_desc: null, pet_nota: null,
+    };
+  }
+  // Parte de la MISMA vigencia real (`temporadaVigente`, ya vigente para el
+  // filtro de vigencia/tarifa) y le agrega las columnas de condición de la
+  // migración 164 — igual que en producción, es UNA sola tabla/fila, no dos.
+  function temporadaConCondicion(hotelId: number, condicionPagoTipo: string, extra: Partial<{ condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null }> = {}) {
+    return {
+      ...temporadaVigente(hotelId), id: hotelId * 100 + 1,
+      condicion_pago_tipo: condicionPagoTipo, condicion_pago_pct_inicial: null, condicion_pago_dias_saldo: null,
+      ...extra,
+    };
+  }
+
+  test("hotel con vigencia 'pago_total' cubriendo la fecha del resumen → tieneCondicion=true", async () => {
+    const resumen = [resumenBase({ hotel_id: 10, fecha_ida: MANIANA, fecha_regreso: fechaEnBogota(3) })];
+    const tablas = tablasBase({
+      hoteles: { data: [hotelFixture(10)], error: null },
+      hotel_temporadas: { data: [temporadaConCondicion(10, "pago_total")], error: null },
+      tarifa_hotel: { data: [tarifaVigente(10, "Estandar", "PC")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.datos.infoPorHotel[10]?.tieneCondicion, true, "una vigencia pago_total vigente para la fecha del resumen debe encender el badge");
+  });
+
+  test("hotel con vigencia 'sin_condicion' explícita → el badge NO se enciende (nunca se inventa)", async () => {
+    const resumen = [resumenBase({ hotel_id: 20, hotel_nombre: "Hotel Dos", fecha_ida: MANIANA, fecha_regreso: fechaEnBogota(3) })];
+    const tablas = tablasBase({
+      hoteles: { data: [hotelFixture(20)], error: null },
+      hotel_temporadas: { data: [temporadaConCondicion(20, "sin_condicion")], error: null },
+      tarifa_hotel: { data: [tarifaVigente(20, "Estandar", "PC")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.ok(!r.datos.infoPorHotel[20]?.tieneCondicion, "sin_condicion es neutra y sin restricción — no debe encender el badge");
+  });
+
+  test("dos hoteles del mismo resumen: solo el que tiene condición real la enciende — nunca contamina al otro", async () => {
+    const resumen = [
+      resumenBase({ hotel_id: 30, fecha_ida: MANIANA, fecha_regreso: fechaEnBogota(3) }),
+      resumenBase({ hotel_id: 31, hotel_nombre: "Hotel Sin Catálogo de Condición", fecha_ida: MANIANA, fecha_regreso: fechaEnBogota(3) }),
+    ];
+    const tablas = tablasBase({
+      hoteles: { data: [hotelFixture(30), hotelFixture(31)], error: null },
+      // Hotel 31 solo trae la vigencia BÁSICA (sin las columnas de condición
+      // de la migración 164) — representa un hotel real que aún no las tiene
+      // configuradas; `condicionHotelFechas` debe descartar esa fila (nunca
+      // inventar una condición) en vez de fallar.
+      hotel_temporadas: { data: [temporadaConCondicion(30, "anticipo_saldo", { condicion_pago_pct_inicial: 0.5, condicion_pago_dias_saldo: 30 }), temporadaVigente(31)], error: null },
+      tarifa_hotel: { data: [tarifaVigente(30, "Estandar", "PC"), tarifaVigente(31, "Estandar", "PC")], error: null },
+    });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.datos.infoPorHotel[30]?.tieneCondicion, true);
+    assert.ok(!r.datos.infoPorHotel[31]?.tieneCondicion, "hotel sin columnas de condición configuradas no debe heredar el badge del otro hotel");
+  });
+
+  test("error técnico en hotel_temporadas: sigue fallando cerrado — el badge no abre una ruta de error nueva ni distinta a la ya existente (filtro de vigencia)", async () => {
+    const resumen = [resumenBase({ hotel_id: 12 })];
+    const tablas = tablasBase({ hotel_temporadas: { data: null, error: { message: "timeout" } } });
+    const sb = clienteFalso(tablas, resumen);
+    const r = await cargarResumenTarifario(sb, "test", "flujo1", sb);
+    assert.equal(r.ok, false, "hotel_temporadas también alimenta el filtro de vigencia real — su error ya fallaba cerrado antes de este cambio, y sigue igual");
+  });
+});
+
 // ── Ronda 6, Item 1 — paginación robusta de `cargarFilasResumenPaginado()` ──
 //
 // Defecto reportado: la versión anterior terminaba con `page.length < PAGE`
