@@ -10,6 +10,7 @@ import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
+import { recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 
 // Suma N noches a una fecha YYYY-MM-DD y devuelve YYYY-MM-DD.
 const addDiasStr = (d: string, n: number) => {
@@ -209,7 +210,13 @@ export function ReservaForm({
       const next = [...prev];
       while (next.length <= i) next.push(emptyPax());
       next[i] = { ...next[i], [k]: v };
-      return next;
+      // Un cambio de fecha de nacimiento puede mover a este pasajero fuera
+      // de la categoría infante, o hacer que deje de calificar como
+      // responsable de otro (revisión de alto riesgo, ronda 3 — B8): sin
+      // este recálculo, `responsableIndex` quedaba "vivo" en el estado
+      // apuntando a un vínculo que el servidor ya no aceptaría, invisible
+      // en la UI (el selector desaparece) hasta que el guardado se rechazaba.
+      return k === "fechaNacimiento" ? recalcularVinculosPorEdad(next, refFecha) : next;
     });
   }
   // Adulto responsable de un infante (posición 0-based dentro de `pax`) —
@@ -223,6 +230,13 @@ export function ReservaForm({
       next[i] = { ...next[i], responsableIndex };
       return next;
     });
+  }
+  // Cambiar la fecha de ida (fecha de REFERENCIA para calcular edades en el
+  // motor por fechas) también puede mover pasajeros entre categorías —
+  // mismo recálculo que un cambio de fecha de nacimiento (B8, ronda 3).
+  function cambiarFIda(v: string) {
+    setFIda(v);
+    setPax((prev) => recalcularVinculosPorEdad(prev, v || null));
   }
   function copiarCliente(i: number) {
     setPax((prev) => {
@@ -301,7 +315,7 @@ export function ReservaForm({
             <p className="mb-3 text-xs text-gray-400">Ventana permitida del paquete: {meta.fechaIda} → {meta.fechaRegreso} (no es la duración de la estadía).</p>
           )}
           <div className="flex flex-wrap items-end gap-3">
-            <div><label className={lbl}>Fecha de ida</label><Input type="date" value={fIda} min={meta.fechaIda ?? undefined} max={meta.fechaRegreso ?? undefined} onChange={(e) => setFIda(e.target.value)} /></div>
+            <div><label className={lbl}>Fecha de ida</label><Input type="date" value={fIda} min={meta.fechaIda ?? undefined} max={meta.fechaRegreso ?? undefined} onChange={(e) => cambiarFIda(e.target.value)} /></div>
             <div><label className={lbl}>Fecha de regreso</label><Input type="date" value={fReg} min={fIda || (meta.fechaIda ?? undefined)} max={meta.fechaRegreso ?? undefined} onChange={(e) => setFReg(e.target.value)} /></div>
             <Button type="button" onClick={cotizar} disabled={cotPend || !fIda || !fReg} style={{ backgroundColor: "var(--brand-accent)" }}>
               {cotPend ? "Cotizando…" : "Ver tarifas para estas fechas"}

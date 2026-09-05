@@ -3339,6 +3339,24 @@ export type Database = {
           orden: number;
         }[];
       };
+      crear_pasajeros_contrato_multi: {
+        Args: {
+          p_numero_contrato: string;
+          p_pasajeros: Json;
+          p_reservas_sillas: Json;
+          p_usuario_id: string;
+        };
+        Returns: {
+          id: number;
+          nombre: string;
+          tipo_id: string;
+          identificacion: string | null;
+          fecha_nacimiento: string | null;
+          es_infante: boolean;
+          responsable_id: number | null;
+          orden: number;
+        }[];
+      };
     };
     Enums: {
       rol_usuario:

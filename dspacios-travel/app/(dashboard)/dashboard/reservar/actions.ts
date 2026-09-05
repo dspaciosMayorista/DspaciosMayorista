@@ -1101,12 +1101,22 @@ export async function convertirCotizacionCarrito(
   const OBS_AUTO = "Generado automáticamente desde el carrito (tarifario)";
   const numeros: string[] = [];
 
-  // Congelar condiciones de pago (Rama B, migración 165) — best-effort, nunca
-  // bloquea la conversión. Resuelto UNA vez para todos los grupos (mismo
-  // usuario que ejecuta toda la conversión).
+  // Usuario real de la sesión — resuelto UNA vez para todos los grupos.
+  // Antes solo alimentaba el congelado de condiciones (best-effort); ahora
+  // TAMBIÉN es el actor exigido por `crear_pasajeros_contrato_multi`
+  // (revisión de alto riesgo, ronda 3 — B6): a diferencia del congelado de
+  // condiciones, sin usuario real y activo NO se puede crear el contrato en
+  // absoluto (mismo candado que crear_pasajeros_contrato de un solo
+  // bloqueo) — la creación de pasajeros nunca puede quedar "sin autor".
   const { data: { user: usuarioCond } } = process.env.SUPABASE_SERVICE_ROLE_KEY
     ? await sb.auth.getUser()
     : { data: { user: null } };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "No se pudo crear la reserva (configuración del servidor incompleta)." };
+  }
+  if (!usuarioCond) {
+    return { ok: false, error: "Sesión inválida: no se pudo confirmar el usuario para crear el contrato." };
+  }
 
   for (const { grupo, validados } of gruposValidados) {
     const numRes = await siguienteNumeroContrato(tenantCotizacion);
@@ -1149,42 +1159,62 @@ export async function convertirCotizacionCarrito(
     });
     if (ve) return { ok: false, error: ve.message };
 
-    // `es_infante` se recalcula server-side contra `fechasIda[0]` — la MISMA
-    // fecha que se acaba de guardar como `ventas.fecha_salida` — nunca se
-    // confía en el `esInfante` que manda el cliente. Se reutiliza para
-    // decidir qué pasajeros ocupan silla más abajo (una sola fuente de verdad).
-    const fechaRefGrupo = fechasIda[0] ?? null;
-    const esInfanteRealGrupo = opts.pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, fechaRefGrupo));
-    // ⚠️ Este flujo (checkout de carrito, varios ítems/bloqueos bajo un mismo
-    // numero_contrato) todavía NO tiene selector de adulto responsable — a
-    // diferencia de reservarDesdeTarifarioInterno/crearContratoInterno/
-    // reservarProgramaInterno, no se migró a crear_pasajeros_contrato (un
-    // solo numero_contrato no puede representar más de un bloqueo_ref_id,
-    // residual documentado más abajo). Con el trigger de la migración 167 ya
-    // endurecido, un INSERT directo de un infante sin responsable_id se
-    // rechazaría de todas formas (autoridad real) — se corta ANTES, con un
-    // mensaje claro, en vez de dejar pasar un error crudo de Postgres al
-    // navegador (revisión de alto riesgo — B1: "impedir crear INF por ese
-    // flujo con un mensaje claro; no puede guardarlo silenciosamente sin
-    // vínculo").
-    if (esInfanteRealGrupo.some(Boolean)) {
-      return { ok: false, error: "Este checkout de carrito todavía no admite pasajeros infantes. Genera el contrato sin el infante y agrégalo después, vinculado a su adulto responsable, desde la edición de pasajeros del contrato." };
-    }
-    if (opts.pasajeros.length) {
-      const { error: pe } = await sb.from("contrato_pasajeros").insert(
-        opts.pasajeros.map((p, i) => ({
-          numero_contrato: numero,
-          nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
-          tipo_id: oNull(p.tipoDoc) ?? "CC",
-          identificacion: oNull(p.numeroDoc),
-          fecha_nacimiento: oNull(p.fechaNacimiento),
-          nacionalidad: oNull(p.nacionalidad),
-          es_infante: esInfanteRealGrupo[i],
-          orden: i,
-        }))
-      );
-      if (pe) return { ok: false, error: pe.message };
-    }
+    // Pasajeros + responsables + sillas de TODOS los bloqueos del grupo, en
+    // UNA sola llamada atómica (revisión de alto riesgo, ronda 3 — B6):
+    // antes, este flujo insertaba `contrato_pasajeros` directo (sin
+    // recalcular es_infante por RPC) y LUEGO reservaba las sillas de cada
+    // ítem con select+update aparte, sin candado ni reversión conjunta — la
+    // misma falla de atomicidad que B5 ya cerró para los otros 3 flujos de
+    // creación, y encima rechazaba cualquier infante con un mensaje "no
+    // admitido todavía" (correcto como corte de emergencia, pero una
+    // regresión real frente a los demás flujos). `crear_pasajeros_contrato_
+    // multi` (migración 167) generaliza el mismo núcleo atómico de un solo
+    // bloqueo a VARIOS: recibe cada `bloqueoId` de este grupo de forma
+    // EXPLÍCITA (nunca lo descubre — un numero_contrato con más de un
+    // bloqueo no puede representarse en la columna `ventas.bloqueo_ref_id`,
+    // que sigue sin tocarse) junto con las POSICIONES (1-based, dentro de
+    // `opts.pasajeros` — misma convención que responsableOrden) que ocupan
+    // silla en él; recalcula es_infante server-side contra
+    // `ventas.fecha_salida` (= fechasIda[0], ya guardado arriba) y exige
+    // responsable_id para todo infante nuevo (autoridad real: el trigger de
+    // la 167) — si cualquier bloqueo no tiene cupo o falta un vínculo,
+    // Postgres revierte TODO el grupo (pasajeros, vínculos y sillas de
+    // TODOS sus bloqueos juntos), nunca un estado parcial entre bloqueos.
+    const reservasSillas = validados
+      .filter((v): v is typeof v & { item: { bloqueoId: number } } => v.item.modulo === "bloqueo" && v.item.bloqueoId != null)
+      .map((v) => ({
+        bloqueoId: v.item.bloqueoId,
+        holdersMin: v.comp.paxConSilla,
+        posiciones: Array.from(
+          { length: Math.min(v.item.pax || opts.pasajeros.length, opts.pasajeros.length) },
+          (_, i) => i + 1
+        ),
+      }));
+    const payloadPasajerosMulti = payloadGuardarPasajeros(
+      opts.pasajeros.map((p) => ({
+        nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
+        tipoId: oNull(p.tipoDoc) ?? "CC",
+        identificacion: oNull(p.numeroDoc) ?? "",
+        fechaNacimiento: p.fechaNacimiento ?? "",
+        esInfante: false, // ignorado por el servidor — lo recalcula por fecha (ver payloadGuardarPasajeros).
+        responsableIndex: p.responsableIndex ?? null,
+      }))
+    );
+    const { data: filasPasajerosMulti, error: peMulti } = await admin.rpc("crear_pasajeros_contrato_multi", {
+      p_numero_contrato: numero,
+      p_pasajeros: payloadPasajerosMulti as unknown as Json,
+      p_reservas_sillas: reservasSillas as unknown as Json,
+      p_usuario_id: usuarioCond.id,
+    });
+    if (peMulti) return { ok: false, error: peMulti.message };
+    // Es_infante REAL, ya recalculado por el servidor (nunca por
+    // `esInfantePorEdad` en este archivo) — se usa más abajo para el
+    // backfill cosmético de nombre/documento sobre las sillas de cada
+    // bloqueo (best-effort, igual que en los otros 3 flujos de creación).
+    const esInfanteRealGrupo = (filasPasajerosMulti ?? [])
+      .slice()
+      .sort((a, b) => a.orden - b.orden)
+      .map((f) => f.es_infante);
 
     type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
     const cxp: { numero_contrato: string; tenant: Tenant; proveedor: string | null; tipo_proveedor: string; servicio: string; valor_total: number; fecha_obligacion: string; aplica_retencion: boolean; pct_retencion: number; observaciones: string }[] = [];
@@ -1269,40 +1299,33 @@ export async function convertirCotizacionCarrito(
           costoAereoTotal += costoAereo;
           pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea);
 
-          // Mismo `esInfanteRealGrupo` ya recalculado arriba — el slice
-          // conserva los índices originales (0..n-1), así que se puede
-          // indexar directo (ver lib/reservar/pasajeros.ts::pasajeroConsumeSilla).
-          // `holders.length` (conteo real por edad) manda sobre `paxConSilla`
-          // (agregado de la configuración de habitaciones, que puede divergir
-          // si un pasajero nombrado resulta infante y la habitación no lo
-          // reflejaba — revisión de alto riesgo, B5). ⚠️ Residual conocido: a
-          // diferencia de reservarDesdeTarifarioInterno/crearContratoInterno/
-          // reservarProgramaInterno, este camino (conversión de carrito con
-          // VARIOS ítems, cada uno con su propio bloqueoId bajo un mismo
-          // numero_contrato) NO se migró al RPC atómico `crear_pasajeros_
-          // contrato` — un solo `numero_contrato` no puede representar más de
-          // un `bloqueo_ref_id` (ni más de una llamada de creación de
-          // pasajeros), así que el mecanismo no generaliza limpio a "varios
-          // bloqueos, un contrato". Sigue usando select+update en paralelo
-          // sin candado (mismo riesgo de carrera que ya existía) — y por eso
-          // tampoco admite infantes todavía (rechazado más arriba, con
-          // mensaje claro, antes de insertar nada).
+          // Las sillas de ESTE bloqueo ya quedaron reservadas atómicamente
+          // arriba (crear_pasajeros_contrato_multi, junto con pasajeros y
+          // vínculos, en la MISMA transacción) — aquí solo queda el snapshot
+          // COSMÉTICO de nombre/documento sobre esas sillas (igual patrón
+          // best-effort que los otros 3 flujos de creación, paso "9-bis"):
+          // un fallo aquí nunca re-lanza la condición de carrera del
+          // inventario, que ya se resolvió de forma atómica arriba.
           const holders = opts.pasajeros
             .slice(0, it.pax || opts.pasajeros.length)
             .filter((_, idx) => pasajeroConsumeSilla(esInfanteRealGrupo[idx]));
-          const { data: libres } = await admin.from("sillas").select("id")
-            .eq("bloqueo_id", it.bloqueoId).in("estado", ["disponible", "cambio_entrante"])
-            .order("numero_silla").limit(holders.length);
-          if (libres && libres.length) {
-            await Promise.all(libres.map((s, i) => {
-              const p = holders[i];
-              return admin.from("sillas").update({
-                estado: "en_plazo", numero_contrato: numero, asesor: oNull(opts.asesorInterno ?? null),
-                hotel: meta.hotel_nombre, acomodacion: it.categoria, plazo: null,
-                pasajero_nombres: oNull(p?.nombres), pasajero_apellidos: oNull(p?.apellidos),
-                tipo_doc: oNull(p?.tipoDoc), numero_doc: oNull(p?.numeroDoc), nacimiento: oNull(p?.fechaNacimiento),
-              }).eq("id", s.id);
-            }));
+          try {
+            const { data: asignadas } = await admin.from("sillas").select("id")
+              .eq("numero_contrato", numero).eq("bloqueo_id", it.bloqueoId)
+              .in("estado", ["en_plazo", "confirmada"]).order("numero_silla");
+            if (asignadas && asignadas.length) {
+              await Promise.all(asignadas.map((s, i) => {
+                const p = holders[i];
+                return admin.from("sillas").update({
+                  asesor: oNull(opts.asesorInterno ?? null),
+                  hotel: meta.hotel_nombre, acomodacion: it.categoria, plazo: null,
+                  pasajero_nombres: oNull(p?.nombres), pasajero_apellidos: oNull(p?.apellidos),
+                  tipo_doc: oNull(p?.tipoDoc), numero_doc: oNull(p?.numeroDoc), nacimiento: oNull(p?.fechaNacimiento),
+                }).eq("id", s.id);
+              }));
+            }
+          } catch {
+            // Best-effort — ver comentario arriba.
           }
         }
       }

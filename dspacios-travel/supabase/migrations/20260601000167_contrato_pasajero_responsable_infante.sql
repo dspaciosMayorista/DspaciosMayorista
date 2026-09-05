@@ -328,6 +328,138 @@ revoke all on function public.fn_validar_responsable_infante() from anon;
 -- futuras); el reemplazo de pasajeros (parte D) llama al núcleo directo.
 -- ═════════════════════════════════════════════════════════════════════════
 
+create or replace function public._ajustar_sillas_bloqueo_nucleo(
+  p_numero_contrato text,
+  p_bloqueo_id       bigint,
+  p_holders_nuevo    integer
+)
+returns table(holders_total integer, silla_ids bigint[])
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_estado_muestra  public.estado_silla;
+  v_holders_actual  integer;
+  v_delta           integer;
+  v_disponibles     integer;
+  v_ids             bigint[];
+begin
+  if p_numero_contrato is null or length(p_numero_contrato) = 0 or length(p_numero_contrato) > 30 then
+    raise exception 'Número de contrato inválido.';
+  end if;
+  if p_bloqueo_id is null or p_bloqueo_id <= 0 then
+    raise exception 'Bloqueo inválido.';
+  end if;
+  if p_holders_nuevo is null or p_holders_nuevo < 0 or p_holders_nuevo > 100 then
+    raise exception 'Cantidad de pasajeros con silla inválida.';
+  end if;
+
+  -- Bloquea la fila padre (mismo orden/candado que actualizar_estado_emision_contrato,
+  -- migración 157) para serializar con cualquier otra operación sobre ESTE contrato.
+  perform 1 from public.ventas where ventas.numero_contrato = p_numero_contrato for update;
+
+  -- Bloquea TODO el pool de sillas de ESTE bloqueo (asignadas al contrato +
+  -- libres) — necesario para que dos reservas/ediciones concurrentes del
+  -- MISMO bloqueo nunca sub-cuenten la disponibilidad real. A diferencia de
+  -- la versión original (migración 167), `p_bloqueo_id` es un parámetro
+  -- EXPLÍCITO del llamador — nunca se descubre aquí (ver
+  -- `_ajustar_sillas_nucleo` más abajo, que sigue descubriéndolo para el
+  -- caso de un solo bloqueo). Esto es lo que permite que un mismo contrato
+  -- reconcilie VARIOS bloqueos distintos, uno por llamada, dentro de la
+  -- MISMA transacción (revisión de alto riesgo, ronda 3 — B6; ver
+  -- `crear_pasajeros_contrato_multi`, parte E) sin necesitar una columna
+  -- `bloqueo_ref_id` que solo admite un valor por contrato.
+  perform 1 from public.sillas where bloqueo_id = p_bloqueo_id for update;
+
+  -- Todo scoped por `bloqueo_id` ADEMÁS de `numero_contrato` — con un solo
+  -- bloqueo por contrato (caso original) es redundante; con varios bloqueos
+  -- bajo el mismo contrato (B6) es lo que evita que reconciliar el bloqueo A
+  -- cuente o libere sillas que en realidad pertenecen al bloqueo B.
+  select count(*) into v_holders_actual
+    from public.sillas
+   where numero_contrato = p_numero_contrato
+     and bloqueo_id = p_bloqueo_id
+     and estado in ('en_plazo', 'confirmada');
+
+  v_delta := p_holders_nuevo - v_holders_actual;
+
+  if v_delta > 0 then
+    select count(*) into v_disponibles
+      from public.sillas
+     where bloqueo_id = p_bloqueo_id
+       and estado in ('disponible', 'cambio_entrante');
+
+    if v_disponibles < v_delta then
+      raise exception 'No hay suficientes sillas disponibles en el bloqueo (% disponibles, % requeridas).', v_disponibles, v_delta;
+    end if;
+
+    -- El estado de las sillas NUEVAS hereda el de las que el contrato YA
+    -- tenía en ESTE bloqueo (en_plazo o confirmada) — nunca un estado
+    -- inventado; si el contrato no tenía ninguna silla previa de este
+    -- bloqueo (holders_actual = 0, primera vez que gana pasajeros con
+    -- silla aquí), nace en_plazo.
+    select estado into v_estado_muestra
+      from public.sillas
+     where numero_contrato = p_numero_contrato
+       and bloqueo_id = p_bloqueo_id
+       and estado in ('en_plazo', 'confirmada')
+     limit 1;
+    v_estado_muestra := coalesce(v_estado_muestra, 'en_plazo');
+
+    update public.sillas
+       set estado = v_estado_muestra, numero_contrato = p_numero_contrato
+     where id in (
+       select id from public.sillas
+        where bloqueo_id = p_bloqueo_id
+          and estado in ('disponible', 'cambio_entrante')
+        order by numero_silla
+        limit v_delta
+     );
+  elsif v_delta < 0 then
+    update public.sillas
+       set estado = 'disponible', numero_contrato = null,
+           pasajero_nombres = null, pasajero_apellidos = null, tipo_doc = null,
+           numero_doc = null, nacimiento = null, asesor = null, hotel = null,
+           acomodacion = null, plazo = null
+     where id in (
+       select id from public.sillas
+        where numero_contrato = p_numero_contrato
+          and bloqueo_id = p_bloqueo_id
+          and estado in ('en_plazo', 'confirmada')
+        order by numero_silla desc
+        limit (-v_delta)
+     );
+  end if;
+
+  select array_agg(id order by numero_silla) into v_ids
+    from public.sillas
+   where numero_contrato = p_numero_contrato
+     and bloqueo_id = p_bloqueo_id
+     and estado in ('en_plazo', 'confirmada');
+
+  return query select p_holders_nuevo, coalesce(v_ids, array[]::bigint[]);
+end;
+$$;
+
+comment on function public._ajustar_sillas_bloqueo_nucleo(text, bigint, integer) is
+  'Mecanismo puro (SIN candado de acceso propio) de reconciliación atómica '
+  'de sillas de UN bloqueo específico (parámetro explícito, nunca '
+  'descubierto) dentro de un contrato — candado del pool + conteo + '
+  'capacidad + asignar/liberar, todo scoped por bloqueo_id además de '
+  'numero_contrato. Es el núcleo real; `_ajustar_sillas_nucleo` (un solo '
+  'bloqueo, lo descubre) y `crear_pasajeros_contrato_multi` (varios '
+  'bloqueos explícitos, uno por llamada) delegan aquí. Migración 167 '
+  '(revisión de alto riesgo, ronda 3 — B6).';
+
+revoke all on function public._ajustar_sillas_bloqueo_nucleo(text, bigint, integer) from public, anon, authenticated, service_role;
+
+-- ── Compatibilidad: un solo bloqueo, DESCUBIERTO (nunca recibido como
+--    parámetro) — mismo comportamiento externo exacto que la versión
+--    original de esta función; ahora es un wrapper delgado sobre el núcleo
+--    parametrizado de arriba. La usan `ajustar_sillas_por_pasajeros`
+--    (utilidad general, authenticated) y `_guardar_pasajeros_nucleo`
+--    (reemplazo de pasajeros de UN bloqueo, edición y creación). ──────────
 create or replace function public._ajustar_sillas_nucleo(
   p_numero_contrato text,
   p_holders_nuevo    integer
@@ -338,12 +470,7 @@ security definer
 set search_path = public
 as $$
 declare
-  v_bloqueo_id      bigint;
-  v_estado_muestra  public.estado_silla;
-  v_holders_actual  integer;
-  v_delta           integer;
-  v_disponibles     integer;
-  v_ids             bigint[];
+  v_bloqueo_id bigint;
 begin
   if p_numero_contrato is null or length(p_numero_contrato) = 0 or length(p_numero_contrato) > 30 then
     raise exception 'Número de contrato inválido.';
@@ -352,18 +479,20 @@ begin
     raise exception 'Cantidad de pasajeros con silla inválida.';
   end if;
 
-  -- Bloquea la fila padre (mismo orden/candado que actualizar_estado_emision_contrato,
-  -- migración 157) para serializar con cualquier otra operación sobre ESTE contrato.
+  -- Mismo candado que el núcleo parametrizado (reentrante dentro de la
+  -- misma transacción: no bloquea contra sí mismo).
   perform 1 from public.ventas where ventas.numero_contrato = p_numero_contrato for update;
 
   -- Fuente PRIMARIA del bloqueo: `ventas.bloqueo_ref_id` (migración 022) —
   -- durable, estampado por los flujos de creación, y NUNCA se limpia al
   -- liberar sillas (a diferencia de `sillas.numero_contrato`, que sí se
   -- limpia). Respaldo: contratos que nunca tuvieron `bloqueo_ref_id`
-  -- estampado (anteriores a este fix, o el camino de conversión de carrito
-  -- con varios ítems/bloqueos por contrato, fuera de alcance de este cambio)
-  -- siguen descubriendo el bloqueo por una silla ya asignada — igual que
-  -- antes, no se inventa nada para ellos.
+  -- estampado (anteriores a este fix) siguen descubriendo el bloqueo por
+  -- una silla ya asignada — igual que antes, no se inventa nada para
+  -- ellos. Un contrato con VARIOS bloqueos (conversión de carrito con más
+  -- de un ítem tipo bloqueo) no pasa por aquí: usa
+  -- `crear_pasajeros_contrato_multi`, que recibe cada bloqueo_id explícito
+  -- y nunca necesita descubrirlo (B6).
   select v.bloqueo_ref_id into v_bloqueo_id from public.ventas v where v.numero_contrato = p_numero_contrato;
   if v_bloqueo_id is null then
     select s.bloqueo_id into v_bloqueo_id
@@ -379,79 +508,19 @@ begin
     return;
   end if;
 
-  -- Bloquea TODO el pool de sillas de este bloqueo (asignadas al contrato +
-  -- libres) — necesario para que dos reservas/ediciones concurrentes del
-  -- MISMO bloqueo nunca sub-cuenten la disponibilidad real.
-  perform 1 from public.sillas where bloqueo_id = v_bloqueo_id for update;
-
-  select count(*) into v_holders_actual
-    from public.sillas
-   where numero_contrato = p_numero_contrato
-     and estado in ('en_plazo', 'confirmada');
-
-  v_delta := p_holders_nuevo - v_holders_actual;
-
-  if v_delta > 0 then
-    select count(*) into v_disponibles
-      from public.sillas
-     where bloqueo_id = v_bloqueo_id
-       and estado in ('disponible', 'cambio_entrante');
-
-    if v_disponibles < v_delta then
-      raise exception 'No hay suficientes sillas disponibles en el bloqueo (% disponibles, % requeridas).', v_disponibles, v_delta;
-    end if;
-
-    -- El estado de las sillas NUEVAS hereda el de las que el contrato YA
-    -- tenía (en_plazo o confirmada) — nunca un estado inventado; si el
-    -- contrato no tenía ninguna silla previa (holders_actual = 0, primera
-    -- vez que gana pasajeros con silla), nace en_plazo.
-    select estado into v_estado_muestra
-      from public.sillas
-     where numero_contrato = p_numero_contrato
-       and estado in ('en_plazo', 'confirmada')
-     limit 1;
-    v_estado_muestra := coalesce(v_estado_muestra, 'en_plazo');
-
-    update public.sillas
-       set estado = v_estado_muestra, numero_contrato = p_numero_contrato
-     where id in (
-       select id from public.sillas
-        where bloqueo_id = v_bloqueo_id
-          and estado in ('disponible', 'cambio_entrante')
-        order by numero_silla
-        limit v_delta
-     );
-  elsif v_delta < 0 then
-    update public.sillas
-       set estado = 'disponible', numero_contrato = null,
-           pasajero_nombres = null, pasajero_apellidos = null, tipo_doc = null,
-           numero_doc = null, nacimiento = null, asesor = null, hotel = null,
-           acomodacion = null, plazo = null
-     where id in (
-       select id from public.sillas
-        where numero_contrato = p_numero_contrato
-          and estado in ('en_plazo', 'confirmada')
-        order by numero_silla desc
-        limit (-v_delta)
-     );
-  end if;
-
-  select array_agg(id order by numero_silla) into v_ids
-    from public.sillas
-   where numero_contrato = p_numero_contrato
-     and estado in ('en_plazo', 'confirmada');
-
-  return query select p_holders_nuevo, coalesce(v_ids, array[]::bigint[]);
+  return query select * from public._ajustar_sillas_bloqueo_nucleo(p_numero_contrato, v_bloqueo_id, p_holders_nuevo);
 end;
 $$;
 
 comment on function public._ajustar_sillas_nucleo(text, integer) is
-  'Mecanismo puro (SIN candado de acceso propio) de reconciliación atómica '
-  'de sillas — candado del pool + conteo + capacidad + asignar/liberar. '
-  'Privada: la llaman ajustar_sillas_por_pasajeros (utilidad general, '
-  'authenticated) y _guardar_pasajeros_nucleo (reemplazo de pasajeros, '
-  'edición y creación), cada una con su propio candado de acceso ANTES de '
-  'delegar aquí. Migración 167.';
+  'Wrapper de _ajustar_sillas_bloqueo_nucleo para el caso de UN solo '
+  'bloqueo, descubierto (nunca recibido como parámetro) desde '
+  'ventas.bloqueo_ref_id o, en su defecto, una silla ya asignada. Privada: '
+  'la llaman ajustar_sillas_por_pasajeros (utilidad general, authenticated) '
+  'y _guardar_pasajeros_nucleo (reemplazo de pasajeros, edición y '
+  'creación), cada una con su propio candado de acceso ANTES de delegar '
+  'aquí. Un contrato con VARIOS bloqueos usa crear_pasajeros_contrato_multi '
+  'en su lugar (B6). Migración 167.';
 
 revoke all on function public._ajustar_sillas_nucleo(text, integer) from public, anon, authenticated;
 
@@ -547,10 +616,30 @@ comment on function public._autorizado_escribir_pasajeros(text, uuid) is
 
 revoke all on function public._autorizado_escribir_pasajeros(text, uuid) from public, anon, authenticated, service_role;
 
-create or replace function public._guardar_pasajeros_nucleo(
+-- ═════════════════════════════════════════════════════════════════════════
+-- Tipo compuesto para el resultado de `_reemplazar_pasajeros_nucleo` — B6
+-- (ronda 3): permite materializar su resultado en un arreglo PL/pgSQL
+-- (`_fila_pasajero_167[]`) para reutilizarlo varias veces dentro de la MISMA
+-- invocación (contar holders reales por bloqueo Y devolver el resultado
+-- final) SIN volver a llamar la función (que ESCRIBE — llamarla dos veces
+-- duplicaría pasajeros nuevos) y SIN una tabla temporal.
+-- ═════════════════════════════════════════════════════════════════════════
+do $$ begin
+  create type public._fila_pasajero_167 as (
+    id                bigint,
+    nombre            text,
+    tipo_id           text,
+    identificacion    text,
+    fecha_nacimiento  date,
+    es_infante        boolean,
+    responsable_id    bigint,
+    orden             integer
+  );
+exception when duplicate_object then null; end $$;
+
+create or replace function public._reemplazar_pasajeros_nucleo(
   p_numero_contrato   text,
   p_pasajeros          jsonb,
-  p_holders_min        integer,
   p_min_pasajeros      integer,
   p_usuario_creacion   uuid
 )
@@ -595,8 +684,6 @@ declare
   v_prev_found     boolean;
   v_ajenos         integer;
   v_encontrados    integer;
-  v_holders_reales integer;
-  v_holders_final  integer;
   v_new_id         bigint;
 begin
   if p_numero_contrato is null or length(p_numero_contrato) = 0 or length(p_numero_contrato) > 30 then
@@ -922,18 +1009,13 @@ begin
    where contrato_pasajeros.numero_contrato = p_numero_contrato
      and not (contrato_pasajeros.id = any(v_orden_a_id));
 
-  -- Reconciliación de sillas (no-op si el contrato no usa sillas propias).
-  -- `p_holders_min` es el PISO declarado por el llamador (composición de
-  -- habitaciones en creación; 0 en edición, donde el payload SIEMPRE trae
-  -- la lista completa y autoritativa) — nunca se reserva MENOS que eso, ni
-  -- menos que los pasajeros reales (no-infante) de este payload.
-  v_holders_reales := 0;
-  for v_i in 1..v_n loop
-    if not v_es_infante[v_i] then v_holders_reales := v_holders_reales + 1; end if;
-  end loop;
-  v_holders_final := greatest(coalesce(p_holders_min, 0), v_holders_reales);
-  perform * from public._ajustar_sillas_nucleo(p_numero_contrato, v_holders_final);
-
+  -- La reconciliación de sillas (_ajustar_sillas_nucleo / _ajustar_sillas_
+  -- bloqueo_nucleo) ya NO vive aquí (B6, ronda 3): un contrato puede abarcar
+  -- VARIOS bloqueos, y este núcleo solo sabe ESCRIBIR pasajeros — cuántas
+  -- sillas reconciliar, y en cuál/cuáles bloqueos, lo decide el LLAMADOR
+  -- (`_guardar_pasajeros_nucleo` para un solo bloqueo descubierto;
+  -- `crear_pasajeros_contrato_multi` para varios bloqueos explícitos), a
+  -- partir de este mismo resultado (columna `es_infante` por posición).
   return query
     select cp.id, cp.nombre, cp.tipo_id, cp.identificacion, cp.fecha_nacimiento,
            cp.es_infante, cp.responsable_id, cp.orden
@@ -943,19 +1025,92 @@ begin
 end;
 $$;
 
-comment on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid) is
+comment on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid) is
   'Reemplazo transaccional y atómico de los pasajeros de un contrato (edición '
   'o creación): valida el payload completo (unknown en el límite), recalcula '
   'es_infante server-side, exige responsable_id para infantes nuevos (única '
   'excepción: un id congelado en _pasajeros_exentos_167), conserva el id de '
   'las filas que ya existían (upsert en DOS PASADAS — no-infantes primero, '
   'luego infantes con su responsable_id ya resuelto — nunca un estado '
-  'intermedio inválido), y reconcilia el inventario de sillas del bloqueo '
-  '(_ajustar_sillas_nucleo) con al menos p_holders_min sillas — todo en una '
-  'sola transacción implícita: si cualquier paso falla, Postgres revierte '
-  'TODO (pasajeros, vínculos y sillas juntos). Sin candado de acceso propio '
+  'intermedio inválido). NO reconcilia sillas (eso lo hace el llamador — ver '
+  '_guardar_pasajeros_nucleo y crear_pasajeros_contrato_multi, B6 ronda 3): '
+  'un contrato puede abarcar más de un bloqueo, y esta función no tiene '
+  'forma de saber cuántos ni cuáles. Llamarla escribe SIEMPRE — nunca '
+  'invocarla dos veces para el mismo guardado (duplicaría pasajeros nuevos, '
+  'que no traen id en el payload). Sin candado de acceso propio — lo '
+  'aplican guardar_pasajeros_contrato/crear_pasajeros_contrato/'
+  'crear_pasajeros_contrato_multi vía _autorizado_escribir_pasajeros. '
+  'Migración 167.';
+
+revoke all on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid) from public, anon, authenticated, service_role;
+
+-- ── Wrapper de UN bloqueo (edición o creación de un solo contrato/bloqueo):
+--    escribe pasajeros vía _reemplazar_pasajeros_nucleo y reconcilia SUS
+--    sillas vía _ajustar_sillas_nucleo (que descubre el bloqueo, nunca lo
+--    recibe) — mismo comportamiento externo exacto que la función original
+--    de esta migración, ahora separada en dos piezas reutilizables. ───────
+create or replace function public._guardar_pasajeros_nucleo(
+  p_numero_contrato   text,
+  p_pasajeros          jsonb,
+  p_holders_min        integer,
+  p_min_pasajeros      integer,
+  p_usuario_creacion   uuid
+)
+returns table (
+  id                bigint,
+  nombre            text,
+  tipo_id           text,
+  identificacion    text,
+  fecha_nacimiento  date,
+  es_infante        boolean,
+  responsable_id    bigint,
+  orden             integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_reg            record;
+  v_filas          public._fila_pasajero_167[] := '{}';
+  v_holders_reales integer := 0;
+  v_holders_final  integer;
+begin
+  -- Se llama UNA sola vez y se materializa en un arreglo (ver el tipo
+  -- _fila_pasajero_167 arriba) — nunca dos: escribe, no solo lee.
+  for v_reg in
+    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, p_min_pasajeros, p_usuario_creacion)
+  loop
+    v_filas := array_append(
+      v_filas,
+      row(v_reg.id, v_reg.nombre, v_reg.tipo_id, v_reg.identificacion, v_reg.fecha_nacimiento, v_reg.es_infante, v_reg.responsable_id, v_reg.orden)::public._fila_pasajero_167
+    );
+    if not v_reg.es_infante then v_holders_reales := v_holders_reales + 1; end if;
+  end loop;
+
+  -- `p_holders_min` es el PISO declarado por el llamador (composición de
+  -- habitaciones en creación; 0 en edición, donde el payload SIEMPRE trae
+  -- la lista completa y autoritativa) — nunca se reserva MENOS que eso, ni
+  -- menos que los pasajeros reales (no-infante) de este payload.
+  v_holders_final := greatest(coalesce(p_holders_min, 0), v_holders_reales);
+  perform * from public._ajustar_sillas_nucleo(p_numero_contrato, v_holders_final);
+
+  return query
+    select (f).id, (f).nombre, (f).tipo_id, (f).identificacion, (f).fecha_nacimiento, (f).es_infante, (f).responsable_id, (f).orden
+      from unnest(v_filas) as f;
+end;
+$$;
+
+comment on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid) is
+  'Wrapper de UN bloqueo sobre _reemplazar_pasajeros_nucleo (escribe '
+  'pasajeros) + _ajustar_sillas_nucleo (reconcilia SUS sillas, descubriendo '
+  'el bloqueo — nunca lo recibe): mismo comportamiento externo que la '
+  'función original de esta migración antes de separarse en dos piezas '
+  '(B6, ronda 3). Un contrato con VARIOS bloqueos usa '
+  'crear_pasajeros_contrato_multi en su lugar. Sin candado de acceso propio '
   '— lo aplican guardar_pasajeros_contrato/crear_pasajeros_contrato vía '
-  '_autorizado_escribir_pasajeros. Migración 167.';
+  '_autorizado_escribir_pasajeros (dentro de _reemplazar_pasajeros_nucleo). '
+  'Migración 167.';
 
 revoke all on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid) from public, anon, authenticated, service_role;
 
@@ -1060,5 +1215,244 @@ comment on function public.crear_pasajeros_contrato(text, jsonb, integer, uuid) 
 
 revoke all on function public.crear_pasajeros_contrato(text, jsonb, integer, uuid) from public, anon, authenticated;
 grant execute on function public.crear_pasajeros_contrato(text, jsonb, integer, uuid) to service_role;
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- E) Creación con VARIOS bloqueos bajo un mismo contrato — revisión de alto
+--    riesgo, ronda 3 (B6). `convertirCotizacionCarrito` puede agrupar varios
+--    ítems tipo `bloqueo` (records de vuelo DISTINTOS) bajo un mismo
+--    `numero_contrato` — un caso que `crear_pasajeros_contrato` no puede
+--    cubrir: `ventas.bloqueo_ref_id` es una sola columna, y
+--    `_ajustar_sillas_nucleo` DESCUBRE un único bloqueo por contrato (nunca
+--    lo recibe). Antes de esta pieza, ese camino (a) NO pasaba por el RPC
+--    atómico (sillas por un lado, `insert` de pasajeros aparte — la misma
+--    falla de atomicidad que B5 ya cerró para los otros 3 flujos), y (b)
+--    rechazaba cualquier infante con un mensaje claro en vez de dejarlo sin
+--    vínculo — correcto como corte de emergencia, pero una regresión real
+--    frente a los demás flujos, que sí admiten infantes con responsable.
+--
+--    NO se fuerza `bloqueo_ref_id` a admitir varios valores, ni se inventa
+--    ninguna relación nueva entre `ventas` y `bloqueos_vuelo`: en su lugar,
+--    el llamador (TypeScript, que YA sabe qué ítem del carrito usa qué
+--    `bloqueoId` y qué porción de `opts.pasajeros` le corresponde — ver
+--    `convertirCotizacionCarrito`) declara EXPLÍCITAMENTE, por cada
+--    bloqueo, cuál es su `bloqueoId` y qué POSICIONES (1-based, dentro del
+--    mismo arreglo de pasajeros — misma convención que `responsableOrden`)
+--    ocupan silla en él. Una posición puede aparecer en más de una entrada
+--    (ej. un mismo grupo de personas vuela dos tramos con records
+--    distintos, ambos bajo el mismo contrato) — no es un error, es el caso
+--    esperado de un viaje multi-ciudad.
+-- ═════════════════════════════════════════════════════════════════════════
+
+create or replace function public.crear_pasajeros_contrato_multi(
+  p_numero_contrato   text,
+  p_pasajeros          jsonb,
+  p_reservas_sillas    jsonb,
+  p_usuario_id         uuid
+)
+returns table (
+  id                bigint,
+  nombre            text,
+  tipo_id           text,
+  identificacion    text,
+  fecha_nacimiento  date,
+  es_infante        boolean,
+  responsable_id    bigint,
+  orden             integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_activo          boolean;
+  v_max_reservas    constant int := 20;
+  v_claves_validas  constant text[] := array['bloqueoId', 'holdersMin', 'posiciones'];
+  v_reg             record;
+  v_filas           public._fila_pasajero_167[] := '{}';
+  v_n_pasajeros     integer := 0;
+  v_res_bloqueo_id  bigint[] := '{}';
+  v_res_holders_min integer[] := '{}';
+  v_res_holders_real integer[] := '{}';
+  v_n_reservas      integer;
+  v_elem            jsonb;
+  v_clave           text;
+  v_bloqueo_id      bigint;
+  v_holders_min     integer;
+  v_pos_elem        jsonb;
+  v_pos             integer;
+  v_holders_reales  integer;
+begin
+  if p_usuario_id is null then
+    raise exception 'Se requiere un usuario autenticado.';
+  end if;
+  select activo into v_activo from public.usuarios where usuarios.id = p_usuario_id;
+  if v_activo is null then
+    raise exception 'El usuario % no existe en el sistema.', p_usuario_id;
+  end if;
+  if not v_activo then
+    raise exception 'El usuario está desactivado.';
+  end if;
+
+  -- Escribe pasajeros + responsables — UNA sola vez (nunca dos: este núcleo
+  -- ESCRIBE; invocarlo de nuevo duplicaría pasajeros nuevos, que no traen
+  -- id en el payload) — materializado en un arreglo del tipo compuesto
+  -- `_fila_pasajero_167` (parte D) para poder recorrerlo varias veces
+  -- (contar holders reales por cada bloqueo) sin volver a llamar la función
+  -- ni depender de una tabla temporal. Creación: la lista puede venir VACÍA
+  -- (mismo criterio que crear_pasajeros_contrato — override de superadmin,
+  -- "captura los pasajeros después"), por eso `p_min_pasajeros = 0`.
+  for v_reg in
+    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, 0, p_usuario_id)
+  loop
+    v_filas := array_append(
+      v_filas,
+      row(v_reg.id, v_reg.nombre, v_reg.tipo_id, v_reg.identificacion, v_reg.fecha_nacimiento, v_reg.es_infante, v_reg.responsable_id, v_reg.orden)::public._fila_pasajero_167
+    );
+    v_n_pasajeros := v_n_pasajeros + 1;
+  end loop;
+
+  -- ═══════════════════════════════════════════════════════════════════════
+  -- Validar `p_reservas_sillas` (unknown hasta comprobarlo): arreglo de
+  -- objetos `{ bloqueoId, holdersMin?, posiciones }`. `holdersMin` es el
+  -- PISO por bloqueo (composición de habitaciones de ESE ítem, ANTES de
+  -- nombrar pasajeros) — mismo criterio que `p_holders_min` en el caso de
+  -- un solo bloqueo, ahora uno por entrada.
+  -- ═══════════════════════════════════════════════════════════════════════
+  if p_reservas_sillas is null or jsonb_typeof(p_reservas_sillas) <> 'array' then
+    raise exception 'Las reservas de sillas por bloqueo deben ser un arreglo.';
+  end if;
+  v_n_reservas := jsonb_array_length(p_reservas_sillas);
+  if v_n_reservas > v_max_reservas then
+    raise exception 'No se pueden reservar sillas de más de % bloqueos en un solo contrato.', v_max_reservas;
+  end if;
+
+  for v_elem in select t.value from jsonb_array_elements(p_reservas_sillas) with ordinality as t(value, ord) order by t.ord
+  loop
+    if jsonb_typeof(v_elem) <> 'object' then
+      raise exception 'Cada reserva de sillas debe ser un objeto.';
+    end if;
+
+    for v_clave in select jsonb_object_keys(v_elem)
+    loop
+      if not (v_clave = any(v_claves_validas)) then
+        raise exception 'Campo no reconocido en una reserva de sillas: %.', v_clave;
+      end if;
+    end loop;
+
+    if not (v_elem ?& array['bloqueoId', 'posiciones']) then
+      raise exception 'Cada reserva de sillas requiere bloqueoId y posiciones.';
+    end if;
+
+    if jsonb_typeof(v_elem->'bloqueoId') <> 'number' then
+      raise exception 'El bloqueoId de una reserva de sillas es inválido.';
+    end if;
+    begin
+      v_bloqueo_id := (v_elem->>'bloqueoId')::bigint;
+    exception when others then
+      raise exception 'El bloqueoId de una reserva de sillas es inválido.';
+    end;
+    if v_bloqueo_id is null or v_bloqueo_id <= 0 then
+      raise exception 'El bloqueoId de una reserva de sillas debe ser un entero positivo.';
+    end if;
+    if v_bloqueo_id = any(v_res_bloqueo_id) then
+      raise exception 'El bloqueo % aparece repetido en las reservas de sillas.', v_bloqueo_id;
+    end if;
+
+    if v_elem ? 'holdersMin' and jsonb_typeof(v_elem->'holdersMin') <> 'null' then
+      if jsonb_typeof(v_elem->'holdersMin') <> 'number' then
+        raise exception 'El holdersMin de una reserva de sillas es inválido.';
+      end if;
+      begin
+        v_holders_min := (v_elem->>'holdersMin')::integer;
+      exception when others then
+        raise exception 'El holdersMin de una reserva de sillas es inválido.';
+      end;
+      if v_holders_min < 0 or v_holders_min > 100 then
+        raise exception 'El holdersMin de una reserva de sillas es inválido.';
+      end if;
+    else
+      v_holders_min := 0;
+    end if;
+
+    if jsonb_typeof(v_elem->'posiciones') <> 'array' then
+      raise exception 'Las posiciones de una reserva de sillas deben ser un arreglo.';
+    end if;
+
+    -- Posiciones (1-based, misma convención que responsableOrden): cuenta
+    -- cuántas de ellas NO son infante en el resultado YA escrito arriba —
+    -- ese conteo, junto con holdersMin, define cuántas sillas de ESTE
+    -- bloqueo reservar (nunca menos que ninguno de los dos).
+    v_holders_reales := 0;
+    for v_pos_elem in select * from jsonb_array_elements(v_elem->'posiciones')
+    loop
+      if jsonb_typeof(v_pos_elem) <> 'number' then
+        raise exception 'Una posición de pasajero es inválida.';
+      end if;
+      begin
+        v_pos := (v_pos_elem::text)::integer;
+      exception when others then
+        raise exception 'Una posición de pasajero es inválida.';
+      end;
+      if v_pos < 1 or v_pos > v_n_pasajeros then
+        raise exception 'Una posición de pasajero está fuera de rango.';
+      end if;
+      if not (v_filas[v_pos]).es_infante then
+        v_holders_reales := v_holders_reales + 1;
+      end if;
+    end loop;
+
+    v_res_bloqueo_id := array_append(v_res_bloqueo_id, v_bloqueo_id);
+    v_res_holders_min := array_append(v_res_holders_min, v_holders_min);
+    v_res_holders_real := array_append(v_res_holders_real, v_holders_reales);
+  end loop;
+
+  -- ═══════════════════════════════════════════════════════════════════════
+  -- Reconciliar sillas en orden ASCENDENTE de bloqueo_id — NUNCA en el
+  -- orden en que llegó el payload. `_ajustar_sillas_bloqueo_nucleo` bloquea
+  -- (`for update`) el pool de sillas de cada bloqueo que toca; si dos
+  -- conversiones concurrentes comparten dos o más de los mismos bloqueos
+  -- pero los recorren en orden distinto, pueden bloquearse en un ciclo
+  -- (A bloquea 10 y espera 20; B bloquea 20 y espera 10) — un deadlock que
+  -- Postgres resuelve abortando una de las dos transacciones. Recorrerlos
+  -- siempre en el MISMO orden relativo (ascendente por id) entre cualquier
+  -- llamada concurrente elimina esa espera circular de raíz, sin necesitar
+  -- ningún candado adicional a nivel de aplicación.
+  -- ═══════════════════════════════════════════════════════════════════════
+  for v_reg in
+    select bid, hmin, hreal
+      from unnest(v_res_bloqueo_id, v_res_holders_min, v_res_holders_real) as t(bid, hmin, hreal)
+     order by bid asc
+  loop
+    perform * from public._ajustar_sillas_bloqueo_nucleo(p_numero_contrato, v_reg.bid, greatest(v_reg.hmin, v_reg.hreal));
+  end loop;
+
+  return query
+    select (f).id, (f).nombre, (f).tipo_id, (f).identificacion, (f).fecha_nacimiento, (f).es_infante, (f).responsable_id, (f).orden
+      from unnest(v_filas) as f;
+end;
+$$;
+
+comment on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid) is
+  'Wrapper de _reemplazar_pasajeros_nucleo (escribe pasajeros/responsables '
+  'UNA vez) + _ajustar_sillas_bloqueo_nucleo (una llamada POR bloqueo '
+  'explícito en p_reservas_sillas, en orden ascendente de bloqueo_id para '
+  'evitar deadlocks cruzados entre llamadas concurrentes) — usado por '
+  'convertirCotizacionCarrito cuando un contrato agrupa VARIOS ítems tipo '
+  'bloqueo (records de vuelo distintos). p_reservas_sillas: '
+  '[{bloqueoId, holdersMin?, posiciones}], posiciones 1-based dentro de '
+  'p_pasajeros (misma convención que responsableOrden) — puede repetirse '
+  'entre entradas (un mismo grupo puede volar más de un tramo/record). '
+  'Todo en UNA sola transacción: si cualquier bloqueo no tiene cupo, o el '
+  'payload de pasajeros es inválido, o falta un responsable de infante, '
+  'Postgres revierte TODO (pasajeros, vínculos y sillas de TODOS los '
+  'bloqueos juntos) — nunca dos bloqueos con inventario a medias. No '
+  'fuerza ventas.bloqueo_ref_id a admitir varios valores ni inventa '
+  'ninguna relación nueva: cada bloqueo se reconcilia por su id explícito, '
+  'nunca descubierto. Migración 167 (revisión de alto riesgo, ronda 3 — '
+  'B6). Exige un p_usuario_id real y activo (mismo candado que '
+  'crear_pasajeros_contrato).';
+
+revoke all on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid) from public, anon, authenticated;
+grant execute on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid) to service_role;
 
 notify pgrst, 'reload schema';

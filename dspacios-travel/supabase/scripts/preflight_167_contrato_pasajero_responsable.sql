@@ -31,7 +31,7 @@ select '167-no-aplicada', f.nombre,
     where n.nspname = 'public' and p.proname = f.nombre
   ) then 'YA existe — la 167 parece aplicada; revisar antes de reintentar.'
     else 'No existe todavía' end
-from (values ('ajustar_sillas_por_pasajeros'), ('guardar_pasajeros_contrato'), ('crear_pasajeros_contrato'), ('edad_anios'), ('es_infante_por_edad'), ('_ajustar_sillas_nucleo'), ('_guardar_pasajeros_nucleo'), ('_autorizado_escribir_pasajeros')) as f(nombre);
+from (values ('ajustar_sillas_por_pasajeros'), ('guardar_pasajeros_contrato'), ('crear_pasajeros_contrato'), ('crear_pasajeros_contrato_multi'), ('edad_anios'), ('es_infante_por_edad'), ('_ajustar_sillas_nucleo'), ('_ajustar_sillas_bloqueo_nucleo'), ('_guardar_pasajeros_nucleo'), ('_reemplazar_pasajeros_nucleo'), ('_autorizado_escribir_pasajeros')) as f(nombre);
 
 insert into pg_temp.preflight_167_reporte
 select '167-no-aplicada', '_pasajeros_exentos_167',

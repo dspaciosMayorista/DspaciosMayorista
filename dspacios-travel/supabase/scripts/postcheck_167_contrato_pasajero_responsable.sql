@@ -66,7 +66,7 @@ select 'esquema', f.nombre||'() existe',
     select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
     where n.nspname='public' and p.proname=f.nombre
   ) then 'OK' else 'FALLA' end, ''
-from (values ('ajustar_sillas_por_pasajeros'), ('guardar_pasajeros_contrato'), ('crear_pasajeros_contrato'), ('_guardar_pasajeros_nucleo')) as f(nombre);
+from (values ('ajustar_sillas_por_pasajeros'), ('guardar_pasajeros_contrato'), ('crear_pasajeros_contrato'), ('crear_pasajeros_contrato_multi'), ('_guardar_pasajeros_nucleo'), ('_reemplazar_pasajeros_nucleo'), ('_ajustar_sillas_bloqueo_nucleo')) as f(nombre);
 
 -- ── Pruebas de ejecución real, aisladas en una transacción con ROLLBACK ────
 do $$
@@ -521,6 +521,149 @@ begin
       values ('crear', 'p_holders_min: pasajeros vacíos igual reserva el piso declarado (composición de habitaciones)', case when v_ret = 2 and not exists (
         select 1 from public.contrato_pasajeros where numero_contrato = v_num_vacio
       ) then 'OK' else 'FALLA' end, 'sillas_en_plazo='||v_ret);
+  end;
+
+  -- ═════════════════════════════════════════════════════════════════════════
+  -- crear_pasajeros_contrato_multi: CREACIÓN atómica con VARIOS bloqueos
+  -- bajo un mismo contrato (revisión de alto riesgo, ronda 3 — B6). Cubre
+  -- los escenarios #6 y #7 exigidos: "carrito con INF y adulto responsable
+  -- funciona" y "carrito con INF sin responsable falla antes de dejar datos
+  -- parciales". El escenario #8 (concurrencia real, dos conexiones) está en
+  -- test_167_concurrencia.sh — no se puede simular con dos conexiones
+  -- reales dentro de esta única transacción/sesión psql.
+  -- ═════════════════════════════════════════════════════════════════════════
+  declare
+    v_num6          text := 'DTM-2'||to_char(clock_timestamp(),'HH24MISSMS');
+    v_num7          text := 'DTM-1'||to_char(clock_timestamp(),'HH24MISSMS');
+    v_bloqueo2_id   bigint;
+    v_id_multi_adt  bigint;
+    v_id_multi_inf  bigint;
+  begin
+    -- La prueba 23 (arriba) agotó las sillas de v_bloqueo_id (2 cupos, los 2
+    -- tomados por v_num_vacio) — se libera aquí antes de reutilizarlo, igual
+    -- que hacen las pruebas 15/18 más arriba.
+    update public.sillas set estado = 'disponible', numero_contrato = null where bloqueo_id = v_bloqueo_id;
+
+    -- Segundo bloqueo, DISTINTO del de arriba — el caso real de
+    -- convertirCotizacionCarrito (varios ítems tipo bloqueo, un mismo
+    -- contrato, cada uno con su propio record de vuelo).
+    insert into public.bloqueos_vuelo (record, aerolinea, ruta, fecha_ida, cupos_total)
+      values ('PC167TEST2', 'TEST', 'CTG-SMR', current_date + 30, 2)
+      returning id into v_bloqueo2_id;
+    insert into public.sillas (bloqueo_id, numero_silla, estado)
+      values (v_bloqueo2_id, 1, 'disponible'), (v_bloqueo2_id, 2, 'disponible');
+    -- Sin bloqueo_ref_id: un contrato de carrito con varios bloqueos no
+    -- estampa uno solo (sería arbitrario cuál) — exactamente el caso que
+    -- crear_pasajeros_contrato_multi resuelve sin inventar esa relación.
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num6, 'Cliente Postcheck 167 Multi', current_date + 30, 2, 120000, 'pendiente', 'mayorista');
+
+    -- 24) #6 — 1 adulto + 1 infante VINCULADO, volando en los DOS bloqueos
+    --     (mismo grupo, dos tramos/records) -> acepta, reserva 1 silla del
+    --     adulto en CADA bloqueo (el infante nunca ocupa silla), y el
+    --     vínculo queda persistido igual que en el camino de un solo
+    --     bloqueo.
+    perform 1 from public.crear_pasajeros_contrato_multi(
+      v_num6,
+      jsonb_build_array(
+        jsonb_build_object('nombre','Adulto Multi','tipoId','CC','identificacion','1000167801','fechaNacimiento',(current_date - interval '30 years')::date::text),
+        jsonb_build_object('nombre','Infante Multi','tipoId','RC','identificacion','1000167802','fechaNacimiento',(current_date - interval '1 years')::date::text,'responsableOrden',1)
+      ),
+      jsonb_build_array(
+        jsonb_build_object('bloqueoId', v_bloqueo_id, 'holdersMin', 1, 'posiciones', jsonb_build_array(1,2)),
+        jsonb_build_object('bloqueoId', v_bloqueo2_id, 'holdersMin', 1, 'posiciones', jsonb_build_array(1,2))
+      ),
+      v_uid
+    );
+    select id into v_id_multi_adt from public.contrato_pasajeros where numero_contrato = v_num6 and orden = 0;
+    select id into v_id_multi_inf from public.contrato_pasajeros where numero_contrato = v_num6 and orden = 1;
+    insert into pg_temp.postcheck_167_reporte
+      values ('multi', '#6 carrito con INF y adulto responsable: acepta y reserva 1 silla del adulto en CADA bloqueo (nunca el infante)', case when exists (
+        select 1 from public.contrato_pasajeros where id = v_id_multi_inf and responsable_id = v_id_multi_adt
+      ) and (
+        select count(*) from public.sillas where numero_contrato = v_num6 and bloqueo_id = v_bloqueo_id and estado = 'en_plazo'
+      ) = 1 and (
+        select count(*) from public.sillas where numero_contrato = v_num6 and bloqueo_id = v_bloqueo2_id and estado = 'en_plazo'
+      ) = 1 then 'OK' else 'FALLA' end, '');
+
+    -- 25) #7 — infante SIN responsable en un carrito multi-bloqueo: falla
+    --     ENTERO (autoridad real: el trigger, igual que en el caso de un
+    --     solo bloqueo) y no deja NI el pasajero NI ninguna silla tomada en
+    --     NINGUNO de los dos bloqueos — nunca un estado parcial (ej. las
+    --     sillas del primer bloqueo procesado quedando tomadas mientras el
+    --     segundo o la escritura de pasajeros falla).
+    update public.sillas set estado = 'disponible', numero_contrato = null where bloqueo_id in (v_bloqueo_id, v_bloqueo2_id);
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num7, 'Cliente Postcheck 167 Multi Sin Resp', current_date + 30, 2, 130000, 'pendiente', 'mayorista');
+    begin
+      perform 1 from public.crear_pasajeros_contrato_multi(
+        v_num7,
+        jsonb_build_array(
+          jsonb_build_object('nombre','Adulto Multi Sin Resp','tipoId','CC','identificacion','1000167901','fechaNacimiento',(current_date - interval '30 years')::date::text),
+          jsonb_build_object('nombre','Infante Multi Sin Resp','tipoId','RC','identificacion','1000167902','fechaNacimiento',(current_date - interval '1 years')::date::text)
+        ),
+        jsonb_build_array(
+          jsonb_build_object('bloqueoId', v_bloqueo_id, 'holdersMin', 1, 'posiciones', jsonb_build_array(1,2)),
+          jsonb_build_object('bloqueoId', v_bloqueo2_id, 'holdersMin', 1, 'posiciones', jsonb_build_array(1,2))
+        ),
+        v_uid
+      );
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    v_ok := v_ok
+      and not exists (select 1 from public.contrato_pasajeros where identificacion in ('1000167901','1000167902'))
+      and not exists (select 1 from public.sillas where numero_contrato = v_num7);
+    insert into pg_temp.postcheck_167_reporte
+      values ('multi', '#7 carrito con INF sin responsable: falla ENTERO, sin dejar pasajero ni silla en ningún bloqueo', case when v_ok then 'OK' else 'FALLA' end, '');
+
+    -- 26) Deadlock avoidance (parte determinista, sin concurrencia real —
+    --     la parte real con dos conexiones está en test_167_concurrencia.sh,
+    --     tercera carrera): las entradas de p_reservas_sillas en orden
+    --     DESCENDENTE (al revés de bloqueo_id) deben reconciliarse
+    --     exactamente igual que en orden ascendente — confirma que el orden
+    --     del PAYLOAD nunca decide el orden real de los candados.
+    update public.sillas set estado = 'disponible', numero_contrato = null where bloqueo_id in (v_bloqueo_id, v_bloqueo2_id);
+    perform 1 from public.crear_pasajeros_contrato_multi(
+      v_num6,
+      jsonb_build_array(
+        jsonb_build_object('id', v_id_multi_adt, 'nombre','Adulto Multi','tipoId','CC','identificacion','1000167801','fechaNacimiento',(current_date - interval '30 years')::date::text),
+        jsonb_build_object('id', v_id_multi_inf, 'nombre','Infante Multi','tipoId','RC','identificacion','1000167802','fechaNacimiento',(current_date - interval '1 years')::date::text,'responsableOrden',1)
+      ),
+      -- Orden DESCENDENTE a propósito (el mayor bloqueo_id primero).
+      jsonb_build_array(
+        jsonb_build_object('bloqueoId', greatest(v_bloqueo_id, v_bloqueo2_id), 'holdersMin', 1, 'posiciones', jsonb_build_array(1,2)),
+        jsonb_build_object('bloqueoId', least(v_bloqueo_id, v_bloqueo2_id), 'holdersMin', 1, 'posiciones', jsonb_build_array(1,2))
+      ),
+      v_uid
+    );
+    insert into pg_temp.postcheck_167_reporte
+      values ('multi', 'el orden del payload de p_reservas_sillas no cambia el resultado (se reconcilia en orden ascendente siempre)', case when (
+        select count(*) from public.sillas where numero_contrato = v_num6 and bloqueo_id = v_bloqueo_id and estado = 'en_plazo'
+      ) = 1 and (
+        select count(*) from public.sillas where numero_contrato = v_num6 and bloqueo_id = v_bloqueo2_id and estado = 'en_plazo'
+      ) = 1 then 'OK' else 'FALLA' end, '');
+
+    -- 27) bloqueoId repetido dentro del mismo payload: rechazado (ambigüedad
+    --     real — no tiene sentido reconciliar el mismo bloqueo dos veces en
+    --     una sola llamada).
+    begin
+      perform 1 from public.crear_pasajeros_contrato_multi(
+        v_num6,
+        jsonb_build_array(jsonb_build_object('nombre','X','tipoId','CC','identificacion','1000167999','fechaNacimiento',(current_date - interval '30 years')::date::text)),
+        jsonb_build_array(
+          jsonb_build_object('bloqueoId', v_bloqueo_id, 'posiciones', jsonb_build_array(1)),
+          jsonb_build_object('bloqueoId', v_bloqueo_id, 'posiciones', jsonb_build_array(1))
+        ),
+        v_uid
+      );
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    insert into pg_temp.postcheck_167_reporte
+      values ('multi', 'bloqueoId repetido en el mismo payload: rechazado', case when v_ok then 'OK' else 'FALLA' end, '');
   end;
 
   raise notice 'postcheck 167: fixtures creados bajo %/%/%/%/% (se revierten con ROLLBACK)', v_num, v_num2, v_num3, v_num4, v_num5;

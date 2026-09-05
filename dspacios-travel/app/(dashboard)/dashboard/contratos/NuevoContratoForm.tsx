@@ -9,6 +9,7 @@ import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
 import { ciudadIata } from "@/lib/iata";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
+import { quitarPasajero, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 import {
   crearContrato,
   type PasajeroInput,
@@ -168,7 +169,15 @@ export function NuevoContratoForm({
     setItems((arr) => arr.map((it, j) => (j === i ? { ...it, ...patch } : it)));
   }
   function setPasajero(i: number, patch: Partial<PasajeroInput>) {
-    setPasajeros((arr) => arr.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+    setPasajeros((arr) => {
+      const next = arr.map((p, j) => (j === i ? { ...p, ...patch } : p));
+      // Un cambio de fecha de nacimiento puede mover al pasajero entre
+      // categorías (INF/CHD/ADT) o dejar de calificar como responsable de
+      // otro — revisión de alto riesgo, ronda 3 (B8): sin este recálculo, un
+      // `responsableIndex` quedaba "vivo" apuntando a una fila que el
+      // servidor ya no aceptaría.
+      return "fechaNacimiento" in patch ? recalcularVinculosPorEdad(next, fechaSalida || null) : next;
+    });
   }
   function setHotel(i: number, patch: Partial<HotelInput>) {
     setHoteles((arr) => arr.map((h, j) => (j === i ? { ...h, ...patch } : h)));
@@ -467,7 +476,15 @@ export function NuevoContratoForm({
           </div>
           <div>
             <label className={labelCls}>Fecha de salida (viaje)</label>
-            <Input type="date" value={fechaSalida} onChange={(e) => setFechaSalida(e.target.value)} />
+            <Input type="date" value={fechaSalida} onChange={(e) => {
+              const nueva = e.target.value;
+              setFechaSalida(nueva);
+              // La fecha de salida es la referencia de edad de TODOS los
+              // pasajeros — cambiarla puede mover a cualquiera entre
+              // categorías (INF/CHD/ADT) o invalidar un vínculo de
+              // responsable ya elegido (revisión de alto riesgo, ronda 3 — B8).
+              setPasajeros((arr) => recalcularVinculosPorEdad(arr, nueva || null));
+            }} />
           </div>
           <div>
             <label className={labelCls}>Fecha de regreso</label>
@@ -745,11 +762,12 @@ export function NuevoContratoForm({
           </button>
         </div>
         {(() => {
-          // Edad REAL por fecha de nacimiento contra la fecha de salida —
-          // mismo criterio que usará el servidor al crear el contrato
-          // (nunca el checkbox "Infante", que es solo informativo aquí).
-          // Todo infante real exige un adulto responsable vinculado
-          // (revisión de alto riesgo — B1).
+          // Edad REAL por fecha de nacimiento contra la fecha de salida — el
+          // único criterio que usa el servidor al crear el contrato. Ya no
+          // hay un checkbox "Infante" editable (revisión de alto riesgo,
+          // ronda 3 — B9): coexistían dos criterios visibles (el checkbox
+          // manual, que el servidor SIEMPRE ignoraba y recalculaba, y esta
+          // misma clasificación por fecha) — solo queda el derivado, real.
           const refFecha = fechaSalida || null;
           const edadesReales = pasajeros.map((p) => calcularEdad(p.fechaNacimiento, refFecha));
           const esInfanteRealRow = pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, refFecha));
@@ -762,11 +780,12 @@ export function NuevoContratoForm({
                 <Input placeholder="Identificación" value={p.identificacion} onChange={(e) => setPasajero(i, { identificacion: e.target.value })} />
                 <Input type="date" value={p.fechaNacimiento} onChange={(e) => setPasajero(i, { fechaNacimiento: e.target.value })} />
                 <div className="flex items-center justify-between gap-2">
-                  <label className="flex cursor-pointer items-center gap-1 text-xs text-gray-600">
-                    <input type="checkbox" checked={p.esInfante} onChange={(e) => setPasajero(i, { esInfante: e.target.checked })} />
-                    Infante
-                  </label>
-                  <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setPasajeros((a) => a.filter((_, j) => j !== i))}>
+                  <span className="text-xs text-gray-500">
+                    {edadesReales[i] == null
+                      ? "—"
+                      : `${esInfanteRealRow[i] ? "Infante" : edadesReales[i]! < 12 ? "Niño" : "Adulto"} · ${edadesReales[i]}a`}
+                  </span>
+                  <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setPasajeros((a) => quitarPasajero(a, i))}>
                     Quitar
                   </button>
                 </div>

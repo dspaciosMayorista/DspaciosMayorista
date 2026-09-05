@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
 import { convertirCotizacionCarrito } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
+import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
+import { recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 
 type ClientePrefill = { nombres: string; apellidos: string; numeroDoc: string };
 
@@ -44,7 +46,19 @@ export function ConvertirCarritoBtn({
   );
 
   const setRow = (i: number, k: keyof PasajeroReserva, v: string) =>
-    setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, [k]: v } : r)));
+    setPaxRows((rows) => {
+      const next = rows.map((r, n) => (n === i ? { ...r, [k]: v } : r));
+      // Cambio de fecha de nacimiento (revisión de alto riesgo, ronda 3 —
+      // B8): recalcula si la fila sigue calificando como infante o como
+      // responsable de otra — sin fecha de salida conocida aquí (el carrito
+      // puede agrupar destinos/fechas distintas), se usa `null` (hoy) como
+      // referencia — el servidor SIEMPRE recalcula contra la fecha real del
+      // grupo (fechasIda[0], migración 167), esto es solo para no dejar en
+      // pantalla un vínculo que el servidor ya rechazaría.
+      return k === "fechaNacimiento" ? recalcularVinculosPorEdad(next, null) : next;
+    });
+  const setResponsable = (i: number, responsableIndex: number | null) =>
+    setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, responsableIndex } : r)));
 
   function generar() {
     const falta = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
@@ -105,25 +119,57 @@ export function ConvertirCarritoBtn({
             <p className="text-sm font-medium text-gray-700">Datos de los pasajeros ({total})</p>
             <p className="text-xs text-gray-400">Ya tienes al titular; completa el resto. Sin pasajeros no pasa a contrato.</p>
           </div>
-          {paxRows.map((p, i) => (
-            <div key={i} className="flex flex-wrap items-end gap-2">
-              <div className="w-32"><label className="text-[11px] text-gray-500">Nombres</label><Input value={p.nombres} onChange={(e) => setRow(i, "nombres", e.target.value)} /></div>
-              <div className="w-32"><label className="text-[11px] text-gray-500">Apellidos</label><Input value={p.apellidos} onChange={(e) => setRow(i, "apellidos", e.target.value)} /></div>
-              <div className="w-24">
-                <label className="text-[11px] text-gray-500">Tipo doc</label>
-                <select value={p.tipoDoc} onChange={(e) => setRow(i, "tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
-                  {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
+          {(() => {
+            // Edad REAL por fecha de nacimiento (hoy como referencia — el
+            // carrito puede agrupar destinos/fechas distintas, así que no
+            // hay una única fecha de salida conocida en pantalla; el
+            // servidor SIEMPRE recalcula contra la fecha real del grupo al
+            // generar). Ya no hay un checkbox "Infante" editable (revisión
+            // de alto riesgo, ronda 3 — B9): el servidor SIEMPRE lo ignoró y
+            // recalculó por fecha — solo queda el criterio derivado, real.
+            const edadesReales = paxRows.map((p) => calcularEdad(p.fechaNacimiento, null));
+            const esInfanteRealRow = paxRows.map((p) => esInfantePorEdad(p.fechaNacimiento, null));
+            return paxRows.map((p, i) => (
+              <div key={i} className="rounded-lg bg-gray-50 p-2">
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="w-32"><label className="text-[11px] text-gray-500">Nombres</label><Input value={p.nombres} onChange={(e) => setRow(i, "nombres", e.target.value)} /></div>
+                  <div className="w-32"><label className="text-[11px] text-gray-500">Apellidos</label><Input value={p.apellidos} onChange={(e) => setRow(i, "apellidos", e.target.value)} /></div>
+                  <div className="w-24">
+                    <label className="text-[11px] text-gray-500">Tipo doc</label>
+                    <select value={p.tipoDoc} onChange={(e) => setRow(i, "tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
+                      {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div className="w-28"><label className="text-[11px] text-gray-500">N° doc</label><Input value={p.numeroDoc} onChange={(e) => setRow(i, "numeroDoc", e.target.value)} /></div>
+                  <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><Input type="date" className="w-full" value={p.fechaNacimiento} onChange={(e) => setRow(i, "fechaNacimiento", e.target.value)} /></div>
+                  <div className="w-32"><label className="text-[11px] text-gray-500">Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setRow(i, "nacionalidad", e.target.value)} /></div>
+                  <span className="pb-2 text-[11px] text-gray-400">
+                    {edadesReales[i] == null ? "—" : `${esInfanteRealRow[i] ? "Infante" : edadesReales[i]! < 12 ? "Niño" : "Adulto"} · ${edadesReales[i]}a`}
+                  </span>
+                </div>
+                {esInfanteRealRow[i] && (
+                  <div className="mt-2 max-w-xs">
+                    <label className="text-[11px] text-gray-500">Adulto responsable *</label>
+                    <select
+                      value={p.responsableIndex ?? ""}
+                      onChange={(e) => setResponsable(i, e.target.value === "" ? null : Number(e.target.value))}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
+                    >
+                      <option value="">Sin vincular (se rechazará al generar)</option>
+                      {paxRows.map((otro, j) => {
+                        if (j === i) return null;
+                        const edadOtro = edadesReales[j];
+                        if (edadOtro == null || edadOtro < 18) return null;
+                        const nombre = `${otro.nombres} ${otro.apellidos}`.trim() || `Pasajero ${j + 1}`;
+                        return <option key={j} value={j}>{nombre}</option>;
+                      })}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-400">Todo infante debe quedar vinculado a un adulto (18+ años) del mismo contrato.</p>
+                  </div>
+                )}
               </div>
-              <div className="w-28"><label className="text-[11px] text-gray-500">N° doc</label><Input value={p.numeroDoc} onChange={(e) => setRow(i, "numeroDoc", e.target.value)} /></div>
-              <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><Input type="date" className="w-full" value={p.fechaNacimiento} onChange={(e) => setRow(i, "fechaNacimiento", e.target.value)} /></div>
-              <div className="w-32"><label className="text-[11px] text-gray-500">Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setRow(i, "nacionalidad", e.target.value)} /></div>
-              <label className="mb-2 flex items-center gap-1 text-[11px] text-gray-500">
-                <input type="checkbox" checked={p.esInfante} onChange={(e) => setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, esInfante: e.target.checked } : r)))} />
-                Infante
-              </label>
-            </div>
-          ))}
+            ));
+          })()}
           <Button onClick={generar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Generando…" : "Generar contrato(s)"}
           </Button>

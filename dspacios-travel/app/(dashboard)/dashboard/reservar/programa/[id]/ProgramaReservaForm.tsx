@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { formatMoneda, calcularEdad } from "@/lib/utils";
 import { paxDeAcomodacion, textoEdadesHotel } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
+import { truncarPasajeros, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 import { reservarPrograma } from "../../actions";
 
 // Pax que cubre 1 habitación (Doble=2, Triple=3, Cuádruple=4, Sencilla=1).
@@ -106,8 +107,11 @@ export function ProgramaReservaForm({
     setPasajeros((prev) => {
       const arr = [...prev];
       while (arr.length < n) arr.push(pasajeroVacio());
-      arr.length = n;
-      return arr;
+      // `truncarPasajeros` (compartida, B7 #3): al reducir `n` no solo
+      // recorta el arreglo, también limpia cualquier `responsableIndex` que
+      // quedara apuntando a una fila recortada — nunca lo reasigna en
+      // silencio a quien quede en esa posición.
+      return truncarPasajeros(arr, n);
     });
   };
   // Mantener el número de pasajeros sincronizado al cambiar pax.
@@ -115,9 +119,21 @@ export function ProgramaReservaForm({
 
   const updHab = (acom: string, v: string) => setHabs((p) => ({ ...p, [acom]: Number(v) || 0 }));
   const updPasajero = (i: number, k: keyof Pasajero, v: string) =>
-    setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
+    setPasajeros((p) => {
+      const next = p.map((x, j) => (j === i ? { ...x, [k]: v } : x));
+      // Cambio de fecha de nacimiento (B8, ronda 3): recalcula si sigue
+      // calificando como infante o como responsable de otro.
+      return k === "fechaNacimiento" ? recalcularVinculosPorEdad(next, fechaIda || null) : next;
+    });
   const setPasajeroResponsable = (i: number, responsableIndex: number | null) =>
     setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, responsableIndex } : x)));
+  // Cambiar la fecha de salida (fecha de REFERENCIA para calcular edades)
+  // también puede mover pasajeros entre categorías — mismo recálculo que un
+  // cambio de fecha de nacimiento (B8, ronda 3).
+  const cambiarFechaIda = (v: string) => {
+    setFechaIda(v);
+    setPasajeros((p) => recalcularVinculosPorEdad(p, v || null));
+  };
   const copiarCliente = (i: number) =>
     setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, nombres: cliente.nombres, apellidos: cliente.apellidos, tipoDoc: cliente.tipoDoc, numeroDoc: cliente.numeroDoc } : x)));
 
@@ -178,7 +194,7 @@ export function ProgramaReservaForm({
               const id = Number(e.target.value);
               setCategoriaId(id);
               const c = categorias.find((x) => x.id === id);
-              setFechaIda(c?.fechaSugerida ?? "");
+              cambiarFechaIda(c?.fechaSugerida ?? "");
             }}
             className={sel}
           >
@@ -200,7 +216,7 @@ export function ProgramaReservaForm({
           </div>
           <div>
             <label className={lbl}>Fecha de salida</label>
-            <Input type="date" value={fechaIda} min={vigenciaDesde ?? undefined} max={vigenciaHasta ?? undefined} onChange={(e) => setFechaIda(e.target.value)} />
+            <Input type="date" value={fechaIda} min={vigenciaDesde ?? undefined} max={vigenciaHasta ?? undefined} onChange={(e) => cambiarFechaIda(e.target.value)} />
             {dias ? (
               <p className="mt-1 text-xs text-gray-400">Regreso estimado a {dias} días de la salida.</p>
             ) : null}

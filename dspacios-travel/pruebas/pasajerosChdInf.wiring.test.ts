@@ -119,19 +119,49 @@ test("reservar/actions.ts: reservarDesdeTarifarioInterno y reservarProgramaInter
   // mensaje claro ANTES de insertar (ver prueba dedicada más abajo).
 });
 
-test("reservar/actions.ts: convertirCotizacionCarrito rechaza infantes con mensaje claro (no los inserta sin vínculo, no migrado al RPC atómico)", () => {
+test("reservar/actions.ts: convertirCotizacionCarrito crea pasajeros+responsables+sillas de TODOS los bloqueos del grupo en UNA sola llamada atómica (B6, ronda 3)", () => {
+  // Ronda 3 (B6): el hard-block "este checkout todavía no admite infantes"
+  // era una regresión real frente a los otros 3 flujos de creación (todos
+  // migrados a un RPC atómico en la ronda anterior) — este carrito puede
+  // agrupar VARIOS ítems tipo bloqueo (records de vuelo distintos) bajo un
+  // mismo numero_contrato, algo que `crear_pasajeros_contrato` (un solo
+  // bloqueo) no podía cubrir. `crear_pasajeros_contrato_multi` generaliza
+  // el mismo núcleo a varios bloqueos EXPLÍCITOS (nunca los descubre) — ver
+  // supabase/migrations/20260601000167_contrato_pasajero_responsable_
+  // infante.sql, sección E.
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
   const inicio = src.indexOf("export async function convertirCotizacionCarrito");
   const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
   assert.ok(inicio > 0, "no delimitó convertirCotizacionCarrito");
+
+  assert.doesNotMatch(
+    bloque,
+    /todavía no admite pasajeros infantes/,
+    "el hard-block que rechazaba cualquier infante sigue presente — regresión frente a los otros 3 flujos de creación"
+  );
+  assert.doesNotMatch(
+    bloque,
+    /await sb\.from\("contrato_pasajeros"\)\.insert\(/,
+    "sigue insertando contrato_pasajeros directo en vez de por el RPC atómico"
+  );
   assert.match(
     bloque,
-    /if \(esInfanteRealGrupo\.some\(Boolean\)\)\s*\{\s*\n\s*return \{ ok: false, error:/,
-    "no rechaza explícitamente cuando hay algún infante real en el grupo"
+    /admin\.rpc\(\s*["']crear_pasajeros_contrato_multi["']/,
+    "no llama al RPC atómico multi-bloqueo crear_pasajeros_contrato_multi"
   );
-  const idxRechazo = bloque.indexOf("esInfanteRealGrupo.some(Boolean)");
-  const idxInsert = bloque.indexOf('await sb.from("contrato_pasajeros").insert(');
-  assert.ok(idxRechazo > 0 && idxInsert > idxRechazo, "el rechazo de infantes debe ocurrir ANTES del insert directo");
+  // El payload de reservas de sillas debe declarar cada bloqueoId EXPLÍCITO
+  // (nunca descubrirlo) — mismo criterio que el resto de la migración 167.
+  assert.match(bloque, /bloqueoId:\s*v\.item\.bloqueoId/, "no arma bloqueoId explícito por ítem de bloqueo");
+  assert.match(bloque, /holdersMin:\s*v\.comp\.paxConSilla/, "no arma el piso de sillas (holdersMin) desde la composición ya validada");
+  assert.match(bloque, /posiciones:/, "no arma las posiciones (1-based) de cada reserva de sillas");
+
+  // Sin usuario real y activo, la creación debe fallar ANTES de crear
+  // ningún contrato — mismo candado que crear_pasajeros_contrato de un
+  // solo bloqueo (nunca queda una creación "sin autor").
+  const idxGuardia = bloque.indexOf("usuarioCond");
+  const idxLoopGrupos = bloque.indexOf("for (const { grupo, validados } of gruposValidados)");
+  assert.match(bloque, /if\s*\(!usuarioCond\)\s*\{\s*\n\s*return \{ ok: false, error:/, "no exige un usuario real antes de crear los contratos");
+  assert.ok(idxGuardia > 0 && idxLoopGrupos > idxGuardia, "la guardia de usuario real debe ir ANTES del loop de creación de contratos");
 });
 
 test("reservar/actions.ts no vuelve a confiar en el esInfante posicional del cliente para holders", () => {
@@ -307,19 +337,23 @@ test("migración 167 (B5): p_holders_min es un PISO — nunca reserva menos que 
   );
 });
 
-test("EditarAsesorPasajeros.tsx reindexa responsableIndex al quitar una fila (nunca deja un vínculo apuntando a la persona equivocada)", () => {
+test("EditarAsesorPasajeros.tsx reindexa responsableIndex al quitar una fila (usa la operación pura compartida, no lógica inline duplicada)", () => {
+  // Ronda 3 (B7): la reindexación/limpieza de vínculos se centralizó en
+  // `lib/reservar/pasajerosFilas.ts` (con pruebas de ejecución real propias
+  // en `pruebas/pasajerosFilas.test.ts`) para que los 4 formularios que
+  // capturan pasajeros compartan la MISMA lógica en vez de reimplementarla
+  // cada uno (el bug original de B7 era justo eso: `NuevoContratoForm.tsx`
+  // ni siquiera tenía la lógica). Esta prueba de wiring solo verifica que
+  // el componente delega en la función compartida — el comportamiento en
+  // sí (reindexar, limpiar el vínculo del quitado, nunca reasignar) ya se
+  // prueba con datos reales en `pasajerosFilas.test.ts`.
   const src = leer("app/(dashboard)/dashboard/contratos/[numero]/EditarAsesorPasajeros.tsx");
-  assert.match(src, /const\s+quitarFila\s*=/, "no existe el handler quitarFila");
   assert.match(
     src,
-    /r\.responsableIndex\s*===\s*i\s*\)\s*return\s*\{\s*\.\.\.r,\s*responsableIndex:\s*null\s*\}/,
-    "no limpia el vínculo de quien apuntaba exactamente a la fila quitada"
+    /import\s*\{[^}]*quitarPasajero[^}]*\}\s*from\s*["']@\/lib\/reservar\/pasajerosFilas["']/,
+    "no importa quitarPasajero desde el módulo puro compartido"
   );
-  assert.match(
-    src,
-    /r\.responsableIndex\s*>\s*i\s*\)\s*return\s*\{\s*\.\.\.r,\s*responsableIndex:\s*r\.responsableIndex\s*-\s*1\s*\}/,
-    "no reindexa los vínculos posteriores a la fila quitada"
-  );
+  assert.match(src, /const\s+quitarFila\s*=[\s\S]{0,80}quitarPasajero\(/, "quitarFila ya no delega en quitarPasajero");
 });
 
 test("lib/reservar/pasajeros.ts es la única fuente de la constante de edad de infante (EDAD_INFANTE_MAX_VUELO)", () => {

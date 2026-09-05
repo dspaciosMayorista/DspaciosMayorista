@@ -141,6 +141,85 @@ delete from contrato_pasajeros where numero_contrato in ('$CONTRATO_C', '$CONTRA
 delete from sillas where bloqueo_id = $BLOQUEO2_ID;
 delete from ventas where numero_contrato in ('$CONTRATO_C', '$CONTRATO_D');
 delete from bloqueos_vuelo where id = $BLOQUEO2_ID;
+" >/dev/null
+# auth.users ($UID_TEST) se conserva: la tercera carrera (multi-bloqueo, B6)
+# lo necesita también — se borra al final del script, no aquí.
+
+echo
+echo "== Tercera carrera: MULTI-BLOQUEO (crear_pasajeros_contrato_multi, B6"
+echo "   ronda 3) — dos contratos NUEVOS, cada uno pide 1 silla en el bloqueo"
+echo "   E Y 1 silla en el bloqueo F (ambos con 1 sola disponible), en"
+echo "   ÓRDENES CRUZADOS dentro del payload (contrato E-primero pide [E,F];"
+echo "   contrato F-primero pide [F,E]) — si el núcleo respetara el orden del"
+echo "   payload en vez de ordenar SIEMPRE ascendente por bloqueo_id antes de"
+echo "   bloquear, esto sería la receta clásica de un deadlock cruzado."
+echo "   Con el orden ascendente forzado, nunca hay deadlock: exactamente UN"
+echo "   contrato gana los DOS bloqueos completos; el otro pierde los DOS"
+echo "   (nunca un reparto 1 bloqueo cada uno, ni ambos perdiendo)."
+DIGITOS3="$(date +%s%N | tail -c 9)"
+CONTRATO_G="DTM-94${DIGITOS3}"
+CONTRATO_H="DTM-95${DIGITOS3}"
+
+BLOQUEO_E_ID=$(PSQL -v ON_ERROR_STOP=1 -c "
+insert into bloqueos_vuelo (record, aerolinea, ruta, fecha_ida, cupos_total)
+values ('CONC167E-$RUN_ID', 'Avianca', 'BOG-MDE', '2027-02-01', 1)
+returning id;
+")
+BLOQUEO_F_ID=$(PSQL -v ON_ERROR_STOP=1 -c "
+insert into bloqueos_vuelo (record, aerolinea, ruta, fecha_ida, cupos_total)
+values ('CONC167F-$RUN_ID', 'Avianca', 'MDE-CTG', '2027-02-01', 1)
+returning id;
+")
+PSQL -v ON_ERROR_STOP=1 -c "insert into sillas (bloqueo_id, numero_silla, estado) values ($BLOQUEO_E_ID, 1, 'disponible'), ($BLOQUEO_F_ID, 1, 'disponible');" >/dev/null
+PSQL -v ON_ERROR_STOP=1 -c "
+insert into ventas (numero_contrato, tenant, cliente, fecha_salida, pax, precio_venta, estado, canal, tipo_paquete)
+values ('$CONTRATO_G', 'mayorista', 'Cliente Conc G', '2027-02-01', 1, 100000, 'pendiente', 'B2C', 'carrito');
+" >/dev/null
+PSQL -v ON_ERROR_STOP=1 -c "
+insert into ventas (numero_contrato, tenant, cliente, fecha_salida, pax, precio_venta, estado, canal, tipo_paquete)
+values ('$CONTRATO_H', 'mayorista', 'Cliente Conc H', '2027-02-01', 1, 100000, 'pendiente', 'B2C', 'carrito');
+" >/dev/null
+
+# Nótese: sin bloqueo_ref_id (un contrato de carrito con varios bloqueos no
+# estampa uno solo — ver comentario de _ajustar_sillas_nucleo en la
+# migración) — crear_pasajeros_contrato_multi recibe cada bloqueo_id
+# explícito, nunca lo descubre.
+PAYLOAD_G="jsonb_build_array(jsonb_build_object('nombre','Pasajero G','tipoId','CC','identificacion','${DIGITOS3}01','fechaNacimiento','1990-01-01'))"
+PAYLOAD_H="jsonb_build_array(jsonb_build_object('nombre','Pasajero H','tipoId','CC','identificacion','${DIGITOS3}02','fechaNacimiento','1990-01-01'))"
+RESERVAS_G="jsonb_build_array(jsonb_build_object('bloqueoId',$BLOQUEO_E_ID,'holdersMin',1,'posiciones',jsonb_build_array(1)), jsonb_build_object('bloqueoId',$BLOQUEO_F_ID,'holdersMin',1,'posiciones',jsonb_build_array(1)))"
+RESERVAS_H="jsonb_build_array(jsonb_build_object('bloqueoId',$BLOQUEO_F_ID,'holdersMin',1,'posiciones',jsonb_build_array(1)), jsonb_build_object('bloqueoId',$BLOQUEO_E_ID,'holdersMin',1,'posiciones',jsonb_build_array(1)))"
+PSQL -c "select * from crear_pasajeros_contrato_multi('$CONTRATO_G', $PAYLOAD_G, $RESERVAS_G, '$UID_TEST');" >/tmp/conc167g.out 2>&1 &
+PSQL -c "select * from crear_pasajeros_contrato_multi('$CONTRATO_H', $PAYLOAD_H, $RESERVAS_H, '$UID_TEST');" >/tmp/conc167h.out 2>&1 &
+wait
+
+echo "  conexión G ([E,F]) -> $(cat /tmp/conc167g.out)"
+echo "  conexión H ([F,E]) -> $(cat /tmp/conc167h.out)"
+
+PAX_G=$(PSQL -c "select count(*) from contrato_pasajeros where numero_contrato = '$CONTRATO_G';")
+PAX_H=$(PSQL -c "select count(*) from contrato_pasajeros where numero_contrato = '$CONTRATO_H';")
+HOLD_G=$(PSQL -c "select count(*) from sillas where numero_contrato = '$CONTRATO_G' and estado in ('en_plazo','confirmada');")
+HOLD_H=$(PSQL -c "select count(*) from sillas where numero_contrato = '$CONTRATO_H' and estado in ('en_plazo','confirmada');")
+
+echo "  pax G=$PAX_G pax H=$PAX_H | holders G=$HOLD_G holders H=$HOLD_H (cada uno pedía 2 sillas, una por bloqueo)"
+
+# El ganador debe quedarse con AMBOS bloqueos (1 pax + 2 sillas); el
+# perdedor no debe quedar con NINGUNO de los dos (0 pax + 0 sillas) — nunca
+# un reparto 1 silla cada uno (eso sería sobreventa: solo hay 1 por
+# bloqueo), y nunca ambos en 0 (sería un deadlock detectado y abortado por
+# Postgres en vez de una serialización limpia).
+if { [ "$PAX_G" = "1" ] && [ "$HOLD_G" = "2" ] && [ "$PAX_H" = "0" ] && [ "$HOLD_H" = "0" ]; } || \
+   { [ "$PAX_H" = "1" ] && [ "$HOLD_H" = "2" ] && [ "$PAX_G" = "0" ] && [ "$HOLD_G" = "0" ]; }; then
+  echo "  PASS  exactamente una creación multi-bloqueo ganó los DOS bloqueos completos; la otra no dejó ni pasajero ni silla en ninguno"
+else
+  echo "  FAIL  multi-bloqueo concurrente — se esperaba un ganador completo (1 pax + 2 sillas) y un perdedor completo (0 y 0); un reparto 1/1 sería sobreventa, y 0/0 en ambos sería un deadlock sin resolver"
+  fail=1
+fi
+
+PSQL -v ON_ERROR_STOP=1 -c "
+delete from contrato_pasajeros where numero_contrato in ('$CONTRATO_G', '$CONTRATO_H');
+delete from sillas where bloqueo_id in ($BLOQUEO_E_ID, $BLOQUEO_F_ID);
+delete from ventas where numero_contrato in ('$CONTRATO_G', '$CONTRATO_H');
+delete from bloqueos_vuelo where id in ($BLOQUEO_E_ID, $BLOQUEO_F_ID);
 delete from auth.users where id = '$UID_TEST';
 " >/dev/null
 

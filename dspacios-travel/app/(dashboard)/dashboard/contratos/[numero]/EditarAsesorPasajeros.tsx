@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
 import { actualizarAsesorContrato, actualizarPasajerosContrato, type PasajeroEdit } from "./editar-contrato-actions";
 import { filasIniciales } from "@/lib/reservar/pasajerosEdicion";
+import { quitarPasajero, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 
 export type PasajeroRow = { id: number; nombre: string; tipo_id: string | null; identificacion: string | null; fecha_nacimiento: string | null; es_infante: boolean; responsable_id?: number | null };
 
@@ -53,23 +54,24 @@ export function EditarAsesorPasajeros({
   });
   const [msgP, setMsgP] = useState("");
 
-  const setRow = (i: number, patch: Partial<PasajeroEdit>) => setFilas((f) => f.map((r, n) => (n === i ? { ...r, ...patch } : r)));
+  const setRow = (i: number, patch: Partial<PasajeroEdit>) => setFilas((f) => {
+    const next = f.map((r, n) => (n === i ? { ...r, ...patch } : r));
+    // Un cambio de fecha de nacimiento puede mover a este pasajero entre
+    // categorías (INF/CHD/ADT) o dejar de calificar como responsable de
+    // alguien más — revisión de alto riesgo, ronda 3 (B8): sin este
+    // recálculo, un `responsableIndex` quedaba "vivo" en el estado apuntando
+    // a una fila que el servidor ya no aceptaría (infante que dejó de serlo,
+    // o responsable que dejó de ser mayor de edad), invisible en la UI
+    // (el selector desaparece) hasta que el guardado se rechazaba sin que el
+    // usuario pudiera limpiarlo.
+    return "fechaNacimiento" in patch ? recalcularVinculosPorEdad(next, fechaSalida) : next;
+  });
 
-  // Quitar una fila desplaza los índices de todas las que van después — un
-  // `responsableIndex` guardado en otra fila apuntando a esa posición (o a
-  // una posterior) quedaría apuntando a la persona equivocada si no se
-  // corrige. Nunca se deja un vínculo potencialmente incorrecto: se limpia
-  // el que apuntaba exactamente a la fila quitada, y se reindexan los demás.
-  const quitarFila = (i: number) => setFilas((f) =>
-    f
-      .filter((_, n) => n !== i)
-      .map((r) => {
-        if (r.responsableIndex == null) return r;
-        if (r.responsableIndex === i) return { ...r, responsableIndex: null };
-        if (r.responsableIndex > i) return { ...r, responsableIndex: r.responsableIndex - 1 };
-        return r;
-      })
-  );
+  // Quitar una fila (botón "Quitar") — `quitarPasajero` (lib/reservar/
+  // pasajerosFilas.ts, compartida con los 3 formularios de creación)
+  // reindexa los vínculos posteriores y limpia el que apuntaba exactamente
+  // a la fila quitada; nunca deja un vínculo potencialmente incorrecto.
+  const quitarFila = (i: number) => setFilas((f) => quitarPasajero(f, i));
 
   function guardarAsesor() {
     setMsgA("");
