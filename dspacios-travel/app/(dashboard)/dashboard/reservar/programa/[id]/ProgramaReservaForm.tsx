@@ -4,8 +4,10 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatMoneda } from "@/lib/utils";
+import { formatMoneda, calcularEdad } from "@/lib/utils";
 import { paxDeAcomodacion, textoEdadesHotel } from "@/lib/acomodaciones";
+import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
+import { truncarPasajeros, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 import { reservarPrograma } from "../../actions";
 
 // Pax que cubre 1 habitación (Doble=2, Triple=3, Cuádruple=4, Sencilla=1).
@@ -23,7 +25,13 @@ const ACOM_LABEL: Record<string, string> = { sencilla: "Sencilla", doble: "Doble
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-type Pasajero = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; fechaNacimiento: string; nacionalidad: string };
+type Pasajero = {
+  nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; fechaNacimiento: string; nacionalidad: string;
+  // Posición (0-based) del adulto responsable — solo aplica si este
+  // pasajero resulta infante por fecha de nacimiento real (revisión de
+  // alto riesgo — B1).
+  responsableIndex?: number | null;
+};
 const pasajeroVacio = (): Pasajero => ({ nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", fechaNacimiento: "", nacionalidad: "Colombiana" });
 
 export function ProgramaReservaForm({
@@ -99,8 +107,11 @@ export function ProgramaReservaForm({
     setPasajeros((prev) => {
       const arr = [...prev];
       while (arr.length < n) arr.push(pasajeroVacio());
-      arr.length = n;
-      return arr;
+      // `truncarPasajeros` (compartida, B7 #3): al reducir `n` no solo
+      // recorta el arreglo, también limpia cualquier `responsableIndex` que
+      // quedara apuntando a una fila recortada — nunca lo reasigna en
+      // silencio a quien quede en esa posición.
+      return truncarPasajeros(arr, n);
     });
   };
   // Mantener el número de pasajeros sincronizado al cambiar pax.
@@ -108,7 +119,21 @@ export function ProgramaReservaForm({
 
   const updHab = (acom: string, v: string) => setHabs((p) => ({ ...p, [acom]: Number(v) || 0 }));
   const updPasajero = (i: number, k: keyof Pasajero, v: string) =>
-    setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
+    setPasajeros((p) => {
+      const next = p.map((x, j) => (j === i ? { ...x, [k]: v } : x));
+      // Cambio de fecha de nacimiento (B8, ronda 3): recalcula si sigue
+      // calificando como infante o como responsable de otro.
+      return k === "fechaNacimiento" ? recalcularVinculosPorEdad(next, fechaIda || null) : next;
+    });
+  const setPasajeroResponsable = (i: number, responsableIndex: number | null) =>
+    setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, responsableIndex } : x)));
+  // Cambiar la fecha de salida (fecha de REFERENCIA para calcular edades)
+  // también puede mover pasajeros entre categorías — mismo recálculo que un
+  // cambio de fecha de nacimiento (B8, ronda 3).
+  const cambiarFechaIda = (v: string) => {
+    setFechaIda(v);
+    setPasajeros((p) => recalcularVinculosPorEdad(p, v || null));
+  };
   const copiarCliente = (i: number) =>
     setPasajeros((p) => p.map((x, j) => (j === i ? { ...x, nombres: cliente.nombres, apellidos: cliente.apellidos, tipoDoc: cliente.tipoDoc, numeroDoc: cliente.numeroDoc } : x)));
 
@@ -144,8 +169,12 @@ export function ProgramaReservaForm({
           numeroDoc: p.numeroDoc,
           fechaNacimiento: p.fechaNacimiento,
           nacionalidad: p.nacionalidad,
-          // Los últimos N pasajeros corresponden a los infantes declarados.
+          // Los últimos N pasajeros corresponden a los infantes declarados
+          // (clasificación por composición, solo informativa aquí) — el
+          // servidor SIEMPRE recalcula por fecha de nacimiento real contra
+          // fechaIda (crear_pasajeros_contrato, migración 167).
           esInfante: i >= paxConSilla,
+          responsableIndex: p.responsableIndex ?? null,
         })),
       });
       if (!res.ok) return setError(res.error);
@@ -165,7 +194,7 @@ export function ProgramaReservaForm({
               const id = Number(e.target.value);
               setCategoriaId(id);
               const c = categorias.find((x) => x.id === id);
-              setFechaIda(c?.fechaSugerida ?? "");
+              cambiarFechaIda(c?.fechaSugerida ?? "");
             }}
             className={sel}
           >
@@ -187,7 +216,7 @@ export function ProgramaReservaForm({
           </div>
           <div>
             <label className={lbl}>Fecha de salida</label>
-            <Input type="date" value={fechaIda} min={vigenciaDesde ?? undefined} max={vigenciaHasta ?? undefined} onChange={(e) => setFechaIda(e.target.value)} />
+            <Input type="date" value={fechaIda} min={vigenciaDesde ?? undefined} max={vigenciaHasta ?? undefined} onChange={(e) => cambiarFechaIda(e.target.value)} />
             {dias ? (
               <p className="mt-1 text-xs text-gray-400">Regreso estimado a {dias} días de la salida.</p>
             ) : null}
@@ -260,24 +289,52 @@ export function ProgramaReservaForm({
         <fieldset className="rounded-xl border border-gray-200 p-4">
           <legend className="px-1 text-sm font-semibold text-gray-700">Pasajeros ({pasajeros.length})</legend>
           <div className="space-y-3">
-            {pasajeros.map((p, i) => (
-              <div key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-medium text-gray-500">Pasajero {i + 1}</span>
-                  <button type="button" onClick={() => copiarCliente(i)} className="text-xs text-[#1D7C9A] hover:underline">Copiar del cliente</button>
+            {(() => {
+              // Edad REAL contra fechaIda — mismo criterio que usará el
+              // servidor (crear_pasajeros_contrato) para exigir un adulto
+              // responsable vinculado a todo infante nuevo (B1).
+              const refFecha = fechaIda || null;
+              const edadesReales = pasajeros.map((p) => calcularEdad(p.fechaNacimiento, refFecha));
+              const esInfanteRealRow = pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, refFecha));
+              return pasajeros.map((p, i) => (
+                <div key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-xs font-medium text-gray-500">Pasajero {i + 1}</span>
+                    <button type="button" onClick={() => copiarCliente(i)} className="text-xs text-[#1D7C9A] hover:underline">Copiar del cliente</button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <Input value={p.nombres} onChange={(e) => updPasajero(i, "nombres", e.target.value)} placeholder="Nombres" />
+                    <Input value={p.apellidos} onChange={(e) => updPasajero(i, "apellidos", e.target.value)} placeholder="Apellidos" />
+                    <select value={p.tipoDoc} onChange={(e) => updPasajero(i, "tipoDoc", e.target.value)} className={sel}>
+                      <option>CC</option><option>CE</option><option>PASAPORTE</option><option>TI</option>
+                    </select>
+                    <Input value={p.numeroDoc} onChange={(e) => updPasajero(i, "numeroDoc", e.target.value)} placeholder="Documento" />
+                    <Input type="date" value={p.fechaNacimiento} onChange={(e) => updPasajero(i, "fechaNacimiento", e.target.value)} />
+                    <Input value={p.nacionalidad} onChange={(e) => updPasajero(i, "nacionalidad", e.target.value)} placeholder="Nacionalidad" />
+                  </div>
+                  {esInfanteRealRow[i] && (
+                    <div className="mt-2">
+                      <label className={lbl}>Adulto responsable *</label>
+                      <select
+                        value={p.responsableIndex ?? ""}
+                        onChange={(e) => setPasajeroResponsable(i, e.target.value === "" ? null : Number(e.target.value))}
+                        className={sel}
+                      >
+                        <option value="">Sin vincular (se rechazará al generar)</option>
+                        {pasajeros.map((otro, j) => {
+                          if (j === i) return null;
+                          const edadOtro = edadesReales[j];
+                          if (edadOtro == null || edadOtro < 18) return null;
+                          const nombre = `${otro.nombres} ${otro.apellidos}`.trim() || `Pasajero ${j + 1}`;
+                          return <option key={j} value={j}>{nombre}</option>;
+                        })}
+                      </select>
+                      <p className="mt-1 text-xs text-gray-400">Todo infante debe quedar vinculado a un adulto (18+ años) del mismo contrato.</p>
+                    </div>
+                  )}
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <Input value={p.nombres} onChange={(e) => updPasajero(i, "nombres", e.target.value)} placeholder="Nombres" />
-                  <Input value={p.apellidos} onChange={(e) => updPasajero(i, "apellidos", e.target.value)} placeholder="Apellidos" />
-                  <select value={p.tipoDoc} onChange={(e) => updPasajero(i, "tipoDoc", e.target.value)} className={sel}>
-                    <option>CC</option><option>CE</option><option>PASAPORTE</option><option>TI</option>
-                  </select>
-                  <Input value={p.numeroDoc} onChange={(e) => updPasajero(i, "numeroDoc", e.target.value)} placeholder="Documento" />
-                  <Input type="date" value={p.fechaNacimiento} onChange={(e) => updPasajero(i, "fechaNacimiento", e.target.value)} />
-                  <Input value={p.nacionalidad} onChange={(e) => updPasajero(i, "nacionalidad", e.target.value)} placeholder="Nacionalidad" />
-                </div>
-              </div>
-            ))}
+              ));
+            })()}
           </div>
         </fieldset>
       )}

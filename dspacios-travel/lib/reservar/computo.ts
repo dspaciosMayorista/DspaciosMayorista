@@ -41,6 +41,15 @@ export type PasajeroReserva = {
   fechaNacimiento: string;
   nacionalidad: string;
   esInfante: boolean;
+  // Posición (0-based, índice dentro de este mismo arreglo) del pasajero
+  // ADULTO responsable de este infante — solo aplica si, por fecha de
+  // nacimiento real, este pasajero resulta infante. Se traduce a
+  // `responsableOrden` (1-based) al construir el payload de
+  // crear_pasajeros_contrato (revisión de alto riesgo — B1: la autoridad
+  // real es el trigger de la migración 167, esto solo permite capturarlo
+  // desde la UI de creación en vez de que el RPC rechace todo infante sin
+  // vínculo con un mensaje genérico).
+  responsableIndex?: number | null;
 };
 
 export type ReservaInput = {

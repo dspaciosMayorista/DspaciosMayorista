@@ -7,8 +7,22 @@ import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
 import { convertirCotizacionCarrito } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
+import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
+import { recalcularVinculosPorEdadPorFila } from "@/lib/reservar/pasajerosFilas";
+import {
+  agruparIndicesPorDestino,
+  agregarPosicionAUniverso,
+  quitarPosicionDeUniverso,
+  posicionesSinAsignar,
+  fechaContratoDePasajero,
+  gruposInfanteDePasajero,
+  esResponsableValidoEnTodos,
+  limpiarResponsablesInvalidosPorContrato,
+} from "@/lib/reservar/carritoAsignaciones";
 
 type ClientePrefill = { nombres: string; apellidos: string; numeroDoc: string };
+type ItemCarritoUI = { hotelNombre: string; destino: string | null; pax: number; fechaIda: string | null };
+type TourCarritoUI = { nombre: string; destino: string | null; pax: number; fechaIda: string | null };
 
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
@@ -16,9 +30,9 @@ const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 // pasajeros (igual que CotizacionAcciones) y, si el carrito trae 2+ destinos
 // distintos, deja elegir 1 contrato para todo o 1 contrato por destino.
 export function ConvertirCarritoBtn({
-  id, pax, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta,
+  id, pax, items, tours, destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta,
 }: {
-  id: number; pax: number; destinos: string[]; cliente: ClientePrefill; esSuperadmin: boolean;
+  id: number; pax: number; items: ItemCarritoUI[]; tours: TourCarritoUI[]; destinos: string[]; cliente: ClientePrefill; esSuperadmin: boolean;
   asesores: { nombre: string; email: string | null }[];
   miNombre: string; miRolVenta: boolean;
 }) {
@@ -30,9 +44,18 @@ export function ConvertirCarritoBtn({
   const [asesorSel, setAsesorSel] = useState(miRolVenta ? miNombre : "");
   const asesorBloqueado = miRolVenta && !esSuperadmin;
 
-  const total = Math.max(1, pax || 1);
+  // Universo de pasajeros del carrito — B12 (ronda 5). Antes se derivaba
+  // como `Math.max(...item.pax)` (prop `pax`, calculado en page.tsx), que NO
+  // puede representar subconjuntos independientes (ítem A pax=2 + ítem B
+  // pax=2 con 4 viajeros distintos necesita 4 filas, no 2) ni solapamientos
+  // parciales. Ahora es solo el punto de partida: el número real de filas es
+  // `paxRows.length`, y queda editable con los botones +/- de abajo — NUNCA
+  // se sustituye el máximo por la suma como supuesto silencioso, ambos
+  // serían adivinar; lo correcto es que quien convierte declare el universo
+  // real.
+  const totalInicial = Math.max(1, pax || 1);
   const [paxRows, setPaxRows] = useState<PasajeroReserva[]>(() =>
-    Array.from({ length: total }, (_, i) => ({
+    Array.from({ length: totalInicial }, (_, i) => ({
       nombres: i === 0 ? cliente.nombres : "",
       apellidos: i === 0 ? cliente.apellidos : "",
       tipoDoc: "CC",
@@ -43,21 +66,149 @@ export function ConvertirCarritoBtn({
     }))
   );
 
+  // Asignación EXPLÍCITA de pasajeros por UNIDAD (ítem hotel/bloqueo o tour) —
+  // B11 (ronda 3) + B17 (ronda 6): el carrito (lib/cart/CartContext.tsx)
+  // agrega cada unidad de forma independiente, con su propio `pax` — dos
+  // unidades pueden representar grupos de viajeros distintos o parcialmente
+  // distintos, nunca se puede asumir que comparten el mismo prefijo. Los
+  // tours ya NO heredan en silencio los pasajeros del hotel: llevan su propia
+  // matriz. El default (los primeros `pax` marcados) cubre el caso común sin
+  // fricción, pero queda SIEMPRE visible y editable.
+  const [asignaciones, setAsignaciones] = useState<boolean[][]>(() =>
+    items.map((it) => Array.from({ length: totalInicial }, (_, i) => i < it.pax))
+  );
+  const [asignacionesTours, setAsignacionesTours] = useState<boolean[][]>(() =>
+    tours.map((t) => Array.from({ length: totalInicial }, (_, i) => i < t.pax))
+  );
+
+  // Fallback de fecha cuando un pasajero todavía no está asignado a ninguna
+  // unidad (a mitad de edición) — la más temprana de TODO el carrito
+  // (hoteles + tours).
+  const fechaMasTemprana = [...items.map((i) => i.fechaIda), ...tours.map((t) => t.fechaIda)].filter((f): f is string => !!f).sort()[0] ?? null;
+
+  // UNIDADES = ítems (hoteles/bloqueos) seguidos de tours — el ORDEN importa:
+  // los índices de `gruposIndicesUnidades` y las filas de
+  // `asignacionesUnidadesPos` van ítems primero, luego tours (mismo criterio
+  // con el que el servidor arma los grupos). Agrupar por destino tanto
+  // hoteles como tours (B17) hace que `comparteGrupo` y la fecha de contrato
+  // por pasajero coincidan EXACTO con cómo el servidor reparte en contratos.
+  const unidadesDestinos = [...items.map((it) => it.destino), ...tours.map((t) => t.destino)];
+  const unidadesFechas = [...items.map((it) => it.fechaIda), ...tours.map((t) => t.fechaIda)];
+  const gruposIndicesUnidades = agruparIndicesPorDestino(unidadesDestinos, agrupar);
+  // Posiciones (1-based) asignadas a cada unidad — ítems y tours por separado
+  // (así se envían al servidor) y combinadas (para grupos/fechas/candidatos).
+  const asignacionesPorItemPos = asignaciones.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
+  const asignacionesPorTourPos = asignacionesTours.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
+  const asignacionesUnidadesPos = [...asignacionesPorItemPos, ...asignacionesPorTourPos];
+  // Fecha de contrato POR GRUPO — la más temprana de sus unidades, igual que
+  // `ventas.fecha_salida` en el servidor. Se usa para saber en qué contratos
+  // un pasajero es infante (B18) y para clasificar edad (B16).
+  const fechasContratoPorGrupo = gruposIndicesUnidades.map((grupo) =>
+    grupo.map((u) => unidadesFechas[u]).filter((f): f is string => !!f).sort()[0] ?? fechaMasTemprana
+  );
+  // Fecha de referencia POR PASAJERO = la fecha del CONTRATO en que queda —
+  // B16 (ronda 6), que corrige la de B13. El RPC clasifica es_infante de
+  // TODOS los pasajeros contra `ventas.fecha_salida` (la más temprana de
+  // TODAS las unidades del grupo), no contra los ítems puntuales del
+  // pasajero. La UI debe usar esa MISMA fecha para no divergir de PostgreSQL.
+  const fechasReferenciaPorFila = paxRows.map((_, i) =>
+    fechaContratoDePasajero(i + 1, gruposIndicesUnidades, asignacionesUnidadesPos, unidadesFechas, fechaMasTemprana)
+  );
+
+  // Recalcula los vínculos INF→responsable con matrices y AGRUPACIÓN dadas —
+  // cambiar dónde viaja un pasajero, o el modo de agrupación, cambia SU fecha
+  // de contrato (B16) y puede dejar al responsable en OTRO contrato (B18). Dos
+  // pasadas, ambas solo LIMPIAN (nunca inventan): por edad
+  // (`recalcularVinculosPorEdadPorFila`) y por pertenencia al contrato
+  // (`limpiarResponsablesInvalidosPorContrato`).
+  const recomputarVinculosCon = (asigItems: boolean[][], asigTours: boolean[][], grupos: readonly (readonly number[])[]) => {
+    const itemsPos = asigItems.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
+    const toursPos = asigTours.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
+    const unidadesPos = [...itemsPos, ...toursPos];
+    const fechasGrupo = grupos.map((g) => g.map((u) => unidadesFechas[u]).filter((f): f is string => !!f).sort()[0] ?? fechaMasTemprana);
+    const fechas = paxRows.map((_, i) => fechaContratoDePasajero(i + 1, grupos, unidadesPos, unidadesFechas, fechaMasTemprana));
+    setPaxRows((rows) => limpiarResponsablesInvalidosPorContrato(recalcularVinculosPorEdadPorFila(rows, fechas), grupos, unidadesPos, fechasGrupo));
+  };
+  const recomputarVinculos = (asigItems: boolean[][], asigTours: boolean[][]) => recomputarVinculosCon(asigItems, asigTours, gruposIndicesUnidades);
+  // Cambiar todo↔por_destino recalcula/limpia vínculos con la NUEVA agrupación
+  // (B18): un responsable válido en "todo" (un solo contrato) puede caer en
+  // otro contrato al separar por destino.
+  const cambiarAgrupar = (v: "todo" | "por_destino") => {
+    setAgrupar(v);
+    recomputarVinculosCon(asignaciones, asignacionesTours, agruparIndicesPorDestino(unidadesDestinos, v));
+  };
+
+  const agregarPasajero = () => {
+    const { filas, asignacionesPorItem } = agregarPosicionAUniverso<PasajeroReserva>(paxRows, asignaciones, {
+      nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", fechaNacimiento: "", nacionalidad: "Colombiana", esInfante: false,
+    });
+    setPaxRows(filas);
+    setAsignaciones(asignacionesPorItem);
+    setAsignacionesTours((prev) => prev.map((fila) => [...fila, false]));
+  };
+  const quitarPasajero = (idx: number) => {
+    if (paxRows.length <= 1) return;
+    const { filas, asignacionesPorItem } = quitarPosicionDeUniverso(paxRows, asignaciones, idx);
+    setPaxRows(filas);
+    setAsignaciones(asignacionesPorItem);
+    setAsignacionesTours((prev) => prev.map((fila) => fila.filter((_, i) => i !== idx)));
+  };
+
   const setRow = (i: number, k: keyof PasajeroReserva, v: string) =>
-    setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, [k]: v } : r)));
+    setPaxRows((rows) => {
+      const next = rows.map((r, n) => (n === i ? { ...r, [k]: v } : r));
+      return k === "fechaNacimiento" ? recalcularVinculosPorEdadPorFila(next, fechasReferenciaPorFila) : next;
+    });
+  const setResponsable = (i: number, responsableIndex: number | null) =>
+    setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, responsableIndex } : r)));
+
+  const toggleAsignacion = (itemIdx: number, paxIdx: number) => {
+    const next = asignaciones.map((fila, i) => (i === itemIdx ? fila.map((v, j) => (j === paxIdx ? !v : v)) : fila));
+    setAsignaciones(next);
+    recomputarVinculos(next, asignacionesTours);
+  };
+  const toggleAsignacionTour = (tourIdx: number, paxIdx: number) => {
+    const next = asignacionesTours.map((fila, i) => (i === tourIdx ? fila.map((v, j) => (j === paxIdx ? !v : v)) : fila));
+    setAsignacionesTours(next);
+    recomputarVinculos(asignaciones, next);
+  };
 
   function generar() {
     const falta = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
     if (falta >= 0) { setErr(`Pasajero ${falta + 1}: nombres y apellidos son obligatorios.`); return; }
-    const menorConCC = paxRows.findIndex((p) => {
-      const edad = calcularEdad(p.fechaNacimiento, null);
+    const menorConCC = paxRows.findIndex((p, i) => {
+      const edad = calcularEdad(p.fechaNacimiento, fechasReferenciaPorFila[i]);
       return edad != null && edad < 18 && p.tipoDoc === "CC";
     });
     if (menorConCC >= 0) { setErr(`Pasajero ${menorConCC + 1}: un menor de edad no puede tener CC; usa RC o TI.`); return; }
     if (!asesorSel && !esSuperadmin) { setErr("Elige el asesor interno que gestiona esta reserva."); return; }
+    for (let i = 0; i < items.length; i++) {
+      const marcados = asignaciones[i].filter(Boolean).length;
+      if (marcados !== items[i].pax) {
+        setErr(`${items[i].hotelNombre}: marca exactamente ${items[i].pax} pasajero(s) para este ítem (tienes ${marcados}).`);
+        return;
+      }
+    }
+    for (let i = 0; i < tours.length; i++) {
+      const marcados = asignacionesTours[i].filter(Boolean).length;
+      if (marcados !== tours[i].pax) {
+        setErr(`${tours[i].nombre}: marca exactamente ${tours[i].pax} pasajero(s) para este tour (tienes ${marcados}).`);
+        return;
+      }
+    }
+    // Ningún pasajero del universo declarado puede quedar sin viajar en
+    // NINGUNA unidad —ítem o tour— (B12 + B17) — mismo chequeo que hace el
+    // servidor, adelantado aquí solo para un mensaje inmediato; el servidor
+    // sigue siendo la autoridad real. Siempre hay ≥1 unidad (el carrito lo
+    // exige), así que ya no hay excepción por "solo tours".
+    const sinAsignar = posicionesSinAsignar(asignacionesUnidadesPos, paxRows.length);
+    if (sinAsignar.length) {
+      setErr(`El pasajero ${sinAsignar[0]} no está asignado a ninguna unidad (ni hotel ni tour). Márcalo en al menos una o quítalo del listado.`);
+      return;
+    }
     setErr("");
     start(async () => {
-      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel });
+      const r = await convertirCotizacionCarrito(id, { agrupar, pasajeros: paxRows, asesorInterno: asesorSel, asignaciones: asignacionesPorItemPos, asignacionesTours: asignacionesPorTourPos });
       if (r.ok) router.push(`/dashboard/contratos/${r.numeros[0]}`);
       else setErr(r.error);
     });
@@ -78,7 +229,7 @@ export function ConvertirCarritoBtn({
               <p className="mb-1 text-sm font-medium text-gray-700">Este carrito tiene {destinos.length} destinos ({destinos.join(", ")}).</p>
               <div className="flex flex-wrap gap-2">
                 {([["todo", "1 solo contrato con todo"], ["por_destino", "1 contrato por destino"]] as const).map(([v, l]) => (
-                  <button key={v} type="button" onClick={() => setAgrupar(v)}
+                  <button key={v} type="button" onClick={() => cambiarAgrupar(v)}
                     className="rounded-lg border px-3 py-2 text-sm font-medium transition-all"
                     style={agrupar === v
                       ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
@@ -101,29 +252,144 @@ export function ConvertirCarritoBtn({
             {asesorBloqueado && <p className="mt-0.5 text-[10px] text-gray-400">Te asigna automáticamente; solo un superadmin puede cambiarlo.</p>}
           </div>
 
-          <div>
-            <p className="text-sm font-medium text-gray-700">Datos de los pasajeros ({total})</p>
-            <p className="text-xs text-gray-400">Ya tienes al titular; completa el resto. Sin pasajeros no pasa a contrato.</p>
-          </div>
-          {paxRows.map((p, i) => (
-            <div key={i} className="flex flex-wrap items-end gap-2">
-              <div className="w-32"><label className="text-[11px] text-gray-500">Nombres</label><Input value={p.nombres} onChange={(e) => setRow(i, "nombres", e.target.value)} /></div>
-              <div className="w-32"><label className="text-[11px] text-gray-500">Apellidos</label><Input value={p.apellidos} onChange={(e) => setRow(i, "apellidos", e.target.value)} /></div>
-              <div className="w-24">
-                <label className="text-[11px] text-gray-500">Tipo doc</label>
-                <select value={p.tipoDoc} onChange={(e) => setRow(i, "tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
-                  {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div className="w-28"><label className="text-[11px] text-gray-500">N° doc</label><Input value={p.numeroDoc} onChange={(e) => setRow(i, "numeroDoc", e.target.value)} /></div>
-              <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><Input type="date" className="w-full" value={p.fechaNacimiento} onChange={(e) => setRow(i, "fechaNacimiento", e.target.value)} /></div>
-              <div className="w-32"><label className="text-[11px] text-gray-500">Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setRow(i, "nacionalidad", e.target.value)} /></div>
-              <label className="mb-2 flex items-center gap-1 text-[11px] text-gray-500">
-                <input type="checkbox" checked={p.esInfante} onChange={(e) => setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, esInfante: e.target.checked } : r)))} />
-                Infante
-              </label>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Datos de los pasajeros ({paxRows.length})</p>
+              <p className="text-xs text-gray-400">
+                Ya tienes al titular; completa el resto. Sin pasajeros no pasa a contrato. Ajusta el total si el
+                carrito tiene viajeros que no comparten todos los ítems (B12): agrega o quita filas — no se asume
+                que el total es el máximo ni la suma de los ítems.
+              </p>
             </div>
-          ))}
+            <Button type="button" onClick={agregarPasajero} disabled={pending} className="shrink-0" style={{ backgroundColor: "var(--brand-accent)" }}>
+              + Agregar pasajero
+            </Button>
+          </div>
+          {(() => {
+            // Edad REAL por fecha de nacimiento — cada fila contra SU PROPIA
+            // fecha de referencia (`fechasReferenciaPorFila`, B13 revisita
+            // B10: la fecha más temprana ENTRE LOS ÍTEMS a los que esa
+            // persona está realmente asignada, nunca la del carrito
+            // completo). Ya no hay un checkbox "Infante" editable (revisión
+            // de alto riesgo, ronda 3 — B9): el servidor SIEMPRE lo ignoró y
+            // recalculó por fecha — solo queda el criterio derivado, real.
+            const edadesReales = paxRows.map((p, i) => calcularEdad(p.fechaNacimiento, fechasReferenciaPorFila[i]));
+            const esInfanteRealRow = paxRows.map((p, i) => esInfantePorEdad(p.fechaNacimiento, fechasReferenciaPorFila[i]));
+            return paxRows.map((p, i) => (
+              <div key={i} className="rounded-lg bg-gray-50 p-2">
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="w-32"><label className="text-[11px] text-gray-500">Nombres</label><Input value={p.nombres} onChange={(e) => setRow(i, "nombres", e.target.value)} /></div>
+                  <div className="w-32"><label className="text-[11px] text-gray-500">Apellidos</label><Input value={p.apellidos} onChange={(e) => setRow(i, "apellidos", e.target.value)} /></div>
+                  <div className="w-24">
+                    <label className="text-[11px] text-gray-500">Tipo doc</label>
+                    <select value={p.tipoDoc} onChange={(e) => setRow(i, "tipoDoc", e.target.value)} className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
+                      {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div className="w-28"><label className="text-[11px] text-gray-500">N° doc</label><Input value={p.numeroDoc} onChange={(e) => setRow(i, "numeroDoc", e.target.value)} /></div>
+                  <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><Input type="date" className="w-full" value={p.fechaNacimiento} onChange={(e) => setRow(i, "fechaNacimiento", e.target.value)} /></div>
+                  <div className="w-32"><label className="text-[11px] text-gray-500">Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setRow(i, "nacionalidad", e.target.value)} /></div>
+                  <span className="pb-2 text-[11px] text-gray-400">
+                    {edadesReales[i] == null ? "—" : `${esInfanteRealRow[i] ? "Infante" : edadesReales[i]! < 12 ? "Niño" : "Adulto"} · ${edadesReales[i]}a`}
+                  </span>
+                  <button type="button" onClick={() => quitarPasajero(i)} disabled={paxRows.length <= 1}
+                    className="pb-2 text-[11px] font-medium text-red-500 disabled:cursor-not-allowed disabled:text-gray-300">
+                    Quitar
+                  </button>
+                </div>
+                {esInfanteRealRow[i] && (() => {
+                  // Contratos donde ESTE pasajero es infante (B18) — su único
+                  // responsable debe viajar en TODOS ellos.
+                  const gruposInf = gruposInfanteDePasajero(i + 1, p.fechaNacimiento, gruposIndicesUnidades, asignacionesUnidadesPos, fechasContratoPorGrupo);
+                  // Candidatos: adultos (18+ a su fecha de contrato) que
+                  // pertenecen a TODOS los contratos-infante — nunca ofrecer
+                  // uno que el servidor rechazará (B18).
+                  const candidatos = paxRows
+                    .map((otro, j) => ({ otro, j }))
+                    .filter(({ j }) => j !== i && (edadesReales[j] ?? 0) >= 18 && esResponsableValidoEnTodos(j + 1, gruposInf, gruposIndicesUnidades, asignacionesUnidadesPos));
+                  return (
+                    <div className="mt-2 max-w-sm">
+                      <label className="text-[11px] text-gray-500">Adulto responsable *</label>
+                      {candidatos.length === 0 ? (
+                        <p className="mt-0.5 rounded bg-amber-100 px-2 py-1 text-xs text-amber-800">
+                          Ningún adulto viaja en {gruposInf.length > 1 ? "todos los contratos" : "el contrato"} donde este infante es menor de 2 años. Asigna un adulto (18+) a {gruposInf.length > 1 ? "cada uno de esos contratos" : "ese contrato"} o reagrupa el carrito.
+                        </p>
+                      ) : (
+                        <select
+                          value={p.responsableIndex ?? ""}
+                          onChange={(e) => setResponsable(i, e.target.value === "" ? null : Number(e.target.value))}
+                          className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
+                        >
+                          <option value="">Sin vincular (se rechazará al generar)</option>
+                          {candidatos.map(({ otro, j }) => {
+                            const nombre = `${otro.nombres} ${otro.apellidos}`.trim() || `Pasajero ${j + 1}`;
+                            return <option key={j} value={j}>{nombre}</option>;
+                          })}
+                        </select>
+                      )}
+                      <p className="mt-1 text-xs text-gray-400">Todo infante debe quedar vinculado a un adulto (18+ años) que viaje en cada contrato donde el infante es menor de 2 años.</p>
+                    </div>
+                  );
+                })()}
+              </div>
+            ));
+          })()}
+
+          {items.length + tours.length > 1 && (
+            <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="text-sm font-medium text-gray-700">¿Quién viaja en cada unidad?</p>
+              <p className="text-xs text-gray-500">
+                Este carrito tiene {items.length} hotel(es) y {tours.length} tour(s) agregados por separado — marca exactamente quiénes viajan en cada uno (no se asume que son los mismos). Un pasajero puede viajar solo en un tour.
+              </p>
+              {items.map((it, itemIdx) => {
+                const marcados = asignaciones[itemIdx]?.filter(Boolean).length ?? 0;
+                return (
+                  <div key={`item-${itemIdx}`} className="rounded-lg bg-white p-2">
+                    <p className="text-xs font-semibold text-gray-700">
+                      {it.hotelNombre}{it.destino ? ` — ${it.destino}` : ""} · requiere {it.pax} pasajero(s)
+                      {marcados !== it.pax && <span className="ml-1 text-red-500">(marcados: {marcados})</span>}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {paxRows.map((p, paxIdx) => (
+                        <label key={paxIdx} className="flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600">
+                          <input
+                            type="checkbox"
+                            checked={asignaciones[itemIdx]?.[paxIdx] ?? false}
+                            onChange={() => toggleAsignacion(itemIdx, paxIdx)}
+                          />
+                          {`${p.nombres} ${p.apellidos}`.trim() || `Pasajero ${paxIdx + 1}`}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {tours.map((t, tourIdx) => {
+                const marcados = asignacionesTours[tourIdx]?.filter(Boolean).length ?? 0;
+                return (
+                  <div key={`tour-${tourIdx}`} className="rounded-lg bg-white p-2">
+                    <p className="text-xs font-semibold text-gray-700">
+                      Tour: {t.nombre}{t.destino ? ` — ${t.destino}` : ""} · requiere {t.pax} pasajero(s)
+                      {marcados !== t.pax && <span className="ml-1 text-red-500">(marcados: {marcados})</span>}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {paxRows.map((p, paxIdx) => (
+                        <label key={paxIdx} className="flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600">
+                          <input
+                            type="checkbox"
+                            checked={asignacionesTours[tourIdx]?.[paxIdx] ?? false}
+                            onChange={() => toggleAsignacionTour(tourIdx, paxIdx)}
+                          />
+                          {`${p.nombres} ${p.apellidos}`.trim() || `Pasajero ${paxIdx + 1}`}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <Button onClick={generar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Generando…" : "Generar contrato(s)"}
           </Button>
