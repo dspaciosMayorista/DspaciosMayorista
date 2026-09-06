@@ -584,3 +584,51 @@ test("migración 167: crear_pasajeros_contrato valida un usuario real y activo (
   assert.match(src, /if not v_activo then\s*\n\s*raise exception 'El usuario está desactivado\.';/, "no rechaza un usuario desactivado");
 });
 
+
+test("B19 (ronda 7): la silla se decide por la fecha REAL de cada bloqueo, no por ventas.fecha_salida", () => {
+  // RPC: cuenta holders por bloqueo mirando bloqueos_vuelo.fecha_ida, no el
+  // es_infante del registro.
+  const sql = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  assert.match(sql, /select bv\.fecha_ida into v_bloqueo_fecha from public\.bloqueos_vuelo bv where bv\.id = v_bloqueo_id/, "el RPC no resuelve la fecha real del bloqueo");
+  assert.match(sql, /if not public\.es_infante_por_edad\(\(v_filas\[v_pos\]\)\.fecha_nacimiento, v_bloqueo_fecha\) then/, "el RPC sigue contando la silla por el es_infante del registro, no por la fecha del bloqueo");
+  // El es_infante del REGISTRO se conserva como la edad al inicio del contrato
+  // (nada cambia esa semántica: sigue recalculándose contra ventas.fecha_salida
+  // en _reemplazar_pasajeros_nucleo).
+  assert.match(sql, /v_es_infante\[v_i\] := public\.es_infante_por_edad\(v_fecha_nac_arr\[v_i\], coalesce\(v_ref_fecha, current_date\)\)/, "el es_infante del registro dejó de calcularse contra la fecha de salida del contrato");
+  // TS: posicionesConSilla usa la fecha real de cada bloqueo (meta.fecha_ida).
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  assert.match(bloque, /const fechaBloqueo = v\.comp\.meta\.fecha_ida \?\? fechaRefGrupo;/, "el TS no clasifica posicionesConSilla por la fecha real del bloqueo");
+  assert.match(bloque, /esInfantePorEdad\(pasajerosNormalizadosGlobal\[posGlobal - 1\]\.fechaNacimiento, fechaBloqueo\)/, "el TS sigue usando fechaRefGrupo para la silla en vez de la fecha del bloqueo");
+});
+
+test("B18 (ronda 7): pre-validación de TODOS los grupos ANTES de crear el primer contrato (sin contratos parciales)", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  // Existe un bucle de pre-validación que corre reindexarGrupoLocal por grupo y
+  // retorna ANTES del bucle de creación (que hace ventas.insert).
+  const idxPre = bloque.indexOf("PRE-VALIDACIÓN de TODOS los grupos");
+  const idxLoopCreacion = bloque.indexOf("for (const { grupo, validados } of gruposValidados) {", idxPre);
+  const idxVentasInsert = bloque.indexOf('await sb.from("ventas").insert(', idxPre);
+  assert.ok(idxPre > 0, "no existe la pre-validación de grupos");
+  assert.ok(idxLoopCreacion > idxPre, "la pre-validación no va ANTES del bucle de creación");
+  assert.ok(idxVentasInsert > idxLoopCreacion, "el ventas.insert debe ocurrir DESPUÉS de la pre-validación de todos los grupos");
+  assert.match(bloque, /No se creó ningún contrato\./, "el error de responsable inválido no aclara que no se creó ningún contrato");
+});
+
+test("B18 (ronda 7): la UI ofrece SOLO responsables válidos en todos los contratos-infante y limpia vínculos al reagrupar", () => {
+  const ui = leer("app/(dashboard)/dashboard/cotizaciones/[id]/ConvertirCarritoBtn.tsx");
+  assert.match(
+    ui,
+    /import\s*\{[^}]*esResponsableValidoEnTodos[^}]*\}\s*from\s*["']@\/lib\/reservar\/carritoAsignaciones["']/,
+    "la UI no usa esResponsableValidoEnTodos para filtrar candidatos (seguiría ofreciendo adultos que el servidor rechaza)"
+  );
+  assert.match(ui, /gruposInfanteDePasajero\(/, "la UI no calcula en qué contratos el pasajero es infante");
+  assert.match(ui, /esResponsableValidoEnTodos\(j \+ 1, gruposInf/, "la UI no restringe los candidatos a los válidos en TODOS los contratos-infante");
+  assert.doesNotMatch(ui, /comparteGrupo\(/, "la UI volvió a comparteGrupo (comparte UN grupo), que ofrece candidatos que el contrato B rechaza");
+  // Cambiar todo↔por_destino recalcula/limpia vínculos.
+  assert.match(ui, /onClick=\{\(\) => cambiarAgrupar\(v\)\}/, "el botón de agrupación no recalcula/limpia vínculos al cambiar de modo");
+  assert.match(ui, /limpiarResponsablesInvalidosPorContrato\(/, "la UI no limpia los vínculos que quedan en otro contrato tras reagrupar/reasignar");
+});

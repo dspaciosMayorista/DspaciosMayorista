@@ -767,6 +767,78 @@ begin
       ) = 3 then 'OK' else 'FALLA' end, '');
   end;
 
+  -- ═════════════════════════════════════════════════════════════════════════
+  -- R7 — B19: la silla se decide por la fecha REAL de CADA bloqueo, no por la
+  -- única `ventas.fecha_salida`. Un pasajero infante en el vuelo temprano
+  -- puede ya tener 2 años (y ocupar silla) en un vuelo posterior. El
+  -- `es_infante` del REGISTRO sigue siendo la edad al INICIO del contrato.
+  -- ═════════════════════════════════════════════════════════════════════════
+  declare
+    v_num_b19    text := 'DTM-7'||to_char(clock_timestamp(),'HH24MISSMS');
+    v_num_b19b   text := 'DTM-6'||to_char(clock_timestamp(),'HH24MISSMS')||'9';
+    v_bq_ene     bigint;
+    v_bq_dic     bigint;
+    v_es_inf_reg boolean;
+  begin
+    insert into public.bloqueos_vuelo (record, aerolinea, ruta, fecha_ida, cupos_total)
+      values ('PC167-B19E-'||to_char(clock_timestamp(),'USMS'), 'TEST', 'BOG-SMR', date '2027-01-15', 3) returning id into v_bq_ene;
+    insert into public.bloqueos_vuelo (record, aerolinea, ruta, fecha_ida, cupos_total)
+      values ('PC167-B19D-'||to_char(clock_timestamp(),'USMS'), 'TEST', 'BOG-CTG', date '2027-12-15', 3) returning id into v_bq_dic;
+    insert into public.sillas (bloqueo_id, numero_silla, estado) select v_bq_ene, g, 'disponible' from generate_series(1,3) g;
+    insert into public.sillas (bloqueo_id, numero_silla, estado) select v_bq_dic, g, 'disponible' from generate_series(1,3) g;
+
+    -- 32) B19 #5 — el MISMO pasajero (nace 2025-11-01: INF a enero, CHD a
+    --     diciembre) toma AMBOS vuelos: 0 sillas en el vuelo de enero, 1 en el
+    --     de diciembre. El adulto responsable no ocupa silla propia aquí (no va
+    --     en las reservas) — así el conteo aísla al pasajero frontera. El
+    --     `es_infante` del registro queda `true` (edad al inicio = enero).
+    --     fecha_salida = enero.
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num_b19, 'Cliente B19 Frontera', date '2027-01-15', 2, 100000, 'pendiente', 'mayorista');
+    perform 1 from public.crear_pasajeros_contrato_multi(
+      v_num_b19,
+      jsonb_build_array(
+        jsonb_build_object('nombre','Adulto B19','tipoId','CC','identificacion','1000199001','fechaNacimiento',(date '1990-01-01')::text),
+        jsonb_build_object('nombre','Frontera B19','tipoId','RC','identificacion','1000199002','fechaNacimiento',(date '2025-11-01')::text,'responsableOrden',1)
+      ),
+      jsonb_build_array(
+        jsonb_build_object('bloqueoId', v_bq_ene, 'posiciones', jsonb_build_array(2)),
+        jsonb_build_object('bloqueoId', v_bq_dic, 'posiciones', jsonb_build_array(2))
+      ),
+      v_uid
+    );
+    select es_infante into v_es_inf_reg from public.contrato_pasajeros where numero_contrato = v_num_b19 and identificacion = '1000199002';
+    insert into pg_temp.postcheck_167_reporte
+      values ('b19', 'B19 #5: mismo pasajero INF en el vuelo temprano (0 sillas) y CHD en el tardío (1 silla) — silla por fecha real de cada bloqueo; es_infante del registro sigue siendo la edad al inicio', case when (
+        select count(*) from public.sillas where numero_contrato = v_num_b19 and bloqueo_id = v_bq_ene and estado = 'en_plazo'
+      ) = 0 and (
+        select count(*) from public.sillas where numero_contrato = v_num_b19 and bloqueo_id = v_bq_dic and estado = 'en_plazo'
+      ) = 1 and coalesce(v_es_inf_reg, false) then 'OK' else 'FALLA' end, 'es_infante(registro)='||coalesce(v_es_inf_reg::text,'null'));
+
+    -- 33) B19 #6 — el MISMO pasajero CHD (nace 2018-01-01, ~9 años) en los DOS
+    --     bloqueos: una silla en cada uno. Sin infantes → sin responsable.
+    update public.sillas set estado = 'disponible', numero_contrato = null where bloqueo_id in (v_bq_ene, v_bq_dic);
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num_b19b, 'Cliente B19 CHD', date '2027-01-15', 1, 90000, 'pendiente', 'mayorista');
+    perform 1 from public.crear_pasajeros_contrato_multi(
+      v_num_b19b,
+      jsonb_build_array(
+        jsonb_build_object('nombre','Nino B19','tipoId','TI','identificacion','1000199010','fechaNacimiento',(date '2018-01-01')::text)
+      ),
+      jsonb_build_array(
+        jsonb_build_object('bloqueoId', v_bq_ene, 'posiciones', jsonb_build_array(1)),
+        jsonb_build_object('bloqueoId', v_bq_dic, 'posiciones', jsonb_build_array(1))
+      ),
+      v_uid
+    );
+    insert into pg_temp.postcheck_167_reporte
+      values ('b19', 'B19 #6: mismo CHD en dos bloqueos -> una silla en cada bloqueo', case when (
+        select count(*) from public.sillas where numero_contrato = v_num_b19b and bloqueo_id = v_bq_ene and estado = 'en_plazo'
+      ) = 1 and (
+        select count(*) from public.sillas where numero_contrato = v_num_b19b and bloqueo_id = v_bq_dic and estado = 'en_plazo'
+      ) = 1 then 'OK' else 'FALLA' end, '');
+  end;
+
   raise notice 'postcheck 167: fixtures creados bajo %/%/%/%/% (se revierten con ROLLBACK)', v_num, v_num2, v_num3, v_num4, v_num5;
 end $$;
 

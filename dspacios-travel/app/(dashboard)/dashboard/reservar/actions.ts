@@ -1231,6 +1231,36 @@ export async function convertirCotizacionCarrito(
     return { ok: false, error: "Sesión inválida: no se pudo confirmar el usuario para crear el contrato." };
   }
 
+  // ── PRE-VALIDACIÓN de TODOS los grupos ANTES de crear NINGÚN contrato
+  // (B18, ronda 7). Un responsable de infante que quede en OTRO contrato es un
+  // error PREVISIBLE: bajo el modelo de un solo responsable (ver
+  // `esResponsableValidoEnTodos`), el adulto debe pertenecer a TODOS los
+  // contratos donde el pasajero sea infante. Si eso no se cumple, el RPC del
+  // grupo lo rechazaría — pero si se detecta recién dentro del bucle de
+  // creación, el PRIMER contrato ya quedó escrito cuando falla el segundo. Se
+  // recalcula aquí, en seco, la MISMA fecha/universo/reindex que usará la
+  // creación (funciones puras, deterministas), y se aborta antes de escribir
+  // nada. La capacidad de sillas ya se pre-validó al armar `gruposValidados`.
+  for (const { grupo, validados } of gruposValidados) {
+    const fechasIdaPre = [
+      ...validados.map((v) => v.comp.meta.fecha_ida),
+      ...grupo.tours.map((t) => t.fechaIda),
+    ].filter((f): f is string => !!f).sort();
+    const fechaRefPre = fechasIdaPre[0] ?? null;
+    const posGrupoPre = posicionesUnicasDeGrupo(
+      [...grupo.items.map((it) => it.__posiciones), ...grupo.tours.map((t) => t.__posiciones)],
+      [...grupo.items, ...grupo.tours].map((_, i) => i)
+    );
+    const universoPre = posGrupoPre.length ? posGrupoPre : opts.pasajeros.map((_, i) => i + 1);
+    const { posicionesInvalidas: invalidasPre } = reindexarGrupoLocal(
+      normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefPre),
+      universoPre
+    );
+    if (invalidasPre.length) {
+      return { ok: false, error: `El adulto responsable del pasajero ${invalidasPre[0]} debe viajar en TODOS los contratos donde ese pasajero es infante — elige un adulto que viaje en todos, o revisa la asignación. No se creó ningún contrato.` };
+    }
+  }
+
   for (const { grupo, validados } of gruposValidados) {
     const numRes = await siguienteNumeroContrato(tenantCotizacion);
     if (!numRes.ok) return { ok: false, error: numRes.error };
@@ -1370,19 +1400,25 @@ export async function convertirCotizacionCarrito(
     // B15 (ronda 6): el piso de sillas consolidado es el número de PERSONAS
     // ÚNICAS que ocupan silla — la unión de `posicionesConSilla` de los ítems
     // que comparten bloqueo, nunca la SUMA de sus pisos (que duplicaba a un
-    // viajero presente en 2+ ítems del mismo bloqueo y sobre-reservaba). Se
-    // clasifica cada posición con `pasajerosNormalizadosGlobal` + `fechaRefGrupo`
-    // = la MISMA fecha `ventas.fecha_salida` con la que el RPC recalcula
-    // es_infante, así que este piso coincide exacto con su `holders_reales`.
+    // viajero presente en 2+ ítems del mismo bloqueo y sobre-reservaba).
+    // B19 (ronda 7): quién ocupa silla se decide con la fecha REAL de salida
+    // de ESE bloqueo (`v.comp.meta.fecha_ida`), no con la única
+    // `ventas.fecha_salida` del contrato — un pasajero infante en el vuelo más
+    // temprano puede ya tener 2 años (y ocupar silla) en un vuelo posterior.
+    // Es la MISMA fecha por bloqueo con la que el RPC recalcula `holders_reales`
+    // (mira `bloqueos_vuelo.fecha_ida`), así que el piso coincide exacto.
     const itemsBloqueoLocal = validados
       .filter((v): v is typeof v & { item: { bloqueoId: number } } => v.item.modulo === "bloqueo" && v.item.bloqueoId != null)
-      .map((v) => ({
-        bloqueoId: v.item.bloqueoId,
-        posiciones: v.item.__posiciones.map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
-        posicionesConSilla: v.item.__posiciones
-          .filter((posGlobal) => pasajeroConsumeSilla(esInfantePorEdad(pasajerosNormalizadosGlobal[posGlobal - 1].fechaNacimiento, fechaRefGrupo)))
-          .map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
-      }));
+      .map((v) => {
+        const fechaBloqueo = v.comp.meta.fecha_ida ?? fechaRefGrupo;
+        return {
+          bloqueoId: v.item.bloqueoId,
+          posiciones: v.item.__posiciones.map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
+          posicionesConSilla: v.item.__posiciones
+            .filter((posGlobal) => pasajeroConsumeSilla(esInfantePorEdad(pasajerosNormalizadosGlobal[posGlobal - 1].fechaNacimiento, fechaBloqueo)))
+            .map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
+        };
+      });
     const reservasSillas = consolidarReservasSillasPorBloqueo(itemsBloqueoLocal);
     // B10 (ronda 3): la fecha de referencia que usó la UI para decidir
     // quién es infante y capturar su responsable es SIEMPRE conservadora

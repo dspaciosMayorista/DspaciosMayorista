@@ -17,6 +17,9 @@ import {
   comparteGrupo,
   agregarPosicionAUniverso,
   quitarPosicionDeUniverso,
+  gruposInfanteDePasajero,
+  esResponsableValidoEnTodos,
+  limpiarResponsablesInvalidosPorContrato,
 } from "../lib/reservar/carritoAsignaciones.ts";
 
 describe("agruparIndicesPorDestino", () => {
@@ -295,5 +298,90 @@ describe("quitarPosicionDeUniverso — B12: universo editable, quitar", () => {
     const filas: FilaN[] = [{ n: "ADT (responsable)" }, { n: "B" }, { n: "INF", responsableIndex: 0 }];
     const r = quitarPosicionDeUniverso(filas, [[true, true, true]], 1); // quita B (índice 1)
     assert.deepEqual(r.filas, [{ n: "ADT (responsable)" }, { n: "INF", responsableIndex: 0 }]);
+  });
+});
+
+describe("B18 — responsable único válido en TODOS los contratos donde el pasajero es infante", () => {
+  // INF (pos 3) nace hace ~1 año → infante contra fechas 2027.
+  const NAC_INF = "2026-06-01";
+  // Modo por_destino: unidad 0 = destino A, unidad 1 = destino B.
+  const grupos = [[0], [1]];
+  const fechasContrato = ["2027-01-01", "2027-02-01"];
+
+  test("gruposInfanteDePasajero: lista SOLO los contratos donde el pasajero es infante", () => {
+    // INF en A y B → infante en ambos (fechas 2027, edad ~1).
+    const asig = [[1, 3], [2, 3]]; // A: adulto1+INF ; B: adulto2+INF
+    assert.deepEqual(gruposInfanteDePasajero(3, NAC_INF, grupos, asig, fechasContrato), [0, 1]);
+  });
+
+  test("gruposInfanteDePasajero: un pasajero CHD en un contrato no lo cuenta ahí (INF en A, CHD en B)", () => {
+    // Nace 2025-06-01: contra A(2027-01) tiene 1 año (INF); si B fuera muy
+    // posterior tendría 2 (CHD). Usamos B en 2027-08 -> aún <2. Para forzar
+    // CHD en B usamos una fecha B tardía.
+    const nacFrontera = "2025-06-01";
+    const fechasCHD = ["2027-01-01", "2027-07-01"]; // A: 1a (INF) · B: 2a (CHD)
+    const asig = [[1, 3], [2, 3]];
+    assert.deepEqual(gruposInfanteDePasajero(3, nacFrontera, grupos, asig, fechasCHD), [0], "solo A: en B ya cumplió 2 años");
+  });
+
+  test("esResponsableValidoEnTodos: rechaza un adulto que NO viaja en todos los contratos-infante (B18)", () => {
+    const asig = [[1, 3], [2, 3]]; // adulto1 solo en A, adulto2 solo en B, INF en ambos
+    const gruposInf = [0, 1];
+    assert.equal(esResponsableValidoEnTodos(1, gruposInf, grupos, asig), false, "adulto1 solo está en A, no en B");
+    assert.equal(esResponsableValidoEnTodos(2, gruposInf, grupos, asig), false, "adulto2 solo está en B, no en A");
+  });
+
+  test("esResponsableValidoEnTodos: acepta un adulto común a TODOS los contratos-infante", () => {
+    const asig = [[1, 3], [1, 3]]; // adulto1 (pos 1) en A Y B, INF (pos 3) en A Y B
+    assert.equal(esResponsableValidoEnTodos(1, [0, 1], grupos, asig), true);
+  });
+
+  test("esResponsableValidoEnTodos: gruposInfante vacío → false (no debería pedirse responsable)", () => {
+    assert.equal(esResponsableValidoEnTodos(1, [], grupos, [[1], [1]]), false);
+  });
+
+  test("limpiarResponsablesInvalidosPorContrato: suelta el vínculo cuando el responsable no está en todos los contratos-infante", () => {
+    type Fila = { fechaNacimiento: string; responsableIndex?: number | null };
+    // pos1 adulto1(A), pos2 adulto2(B), pos3 INF(A,B) apunta a adulto1 (idx 0).
+    const filas: Fila[] = [
+      { fechaNacimiento: "1990-01-01" },
+      { fechaNacimiento: "1991-01-01" },
+      { fechaNacimiento: NAC_INF, responsableIndex: 0 },
+    ];
+    const asig = [[1, 3], [2, 3]];
+    const r = limpiarResponsablesInvalidosPorContrato(filas, grupos, asig, fechasContrato);
+    assert.equal(r[2].responsableIndex, null, "adulto1 no viaja en B, donde el INF también es infante → vínculo inválido, se limpia");
+  });
+
+  test("limpiarResponsablesInvalidosPorContrato: conserva un vínculo válido (responsable en todos los contratos-infante)", () => {
+    type Fila = { fechaNacimiento: string; responsableIndex?: number | null };
+    const filas: Fila[] = [
+      { fechaNacimiento: "1990-01-01" },
+      { fechaNacimiento: NAC_INF, responsableIndex: 0 },
+    ];
+    const gruposTodo = [[0]]; // modo todo: un solo contrato con la unidad 0
+    const asig = [[1, 2]]; // adulto1 + INF en el único contrato
+    const r = limpiarResponsablesInvalidosPorContrato(filas, gruposTodo, asig, ["2027-01-01"]);
+    assert.equal(r[1].responsableIndex, 0, "el adulto viaja en el único contrato-infante → se conserva");
+    assert.equal(r[1], filas[1], "no recrea la fila si el vínculo sigue válido");
+  });
+
+  test("cambio de agrupación todo→por_destino invalida un vínculo que era válido en 'todo' (B18)", () => {
+    type Fila = { fechaNacimiento: string; responsableIndex?: number | null };
+    const filas: Fila[] = [
+      { fechaNacimiento: "1990-01-01" }, // adulto1 (solo destino A)
+      { fechaNacimiento: NAC_INF, responsableIndex: 0 }, // INF en A y B
+    ];
+    // En 'todo': un solo grupo con las 2 unidades → adulto1 e INF comparten
+    // contrato → válido.
+    const asigTodo = [[1, 2], [2]]; // unidad0(A): adulto1+INF ; unidad1(B): INF
+    const gruposTodo = agruparIndicesPorDestino(["A", "B"], "todo"); // [[0,1]]
+    const enTodo = limpiarResponsablesInvalidosPorContrato(filas, gruposTodo, asigTodo, ["2027-01-01"]);
+    assert.equal(enTodo[1].responsableIndex, 0, "en 'todo' el vínculo es válido");
+    // En 'por_destino': A y B son contratos distintos; el INF es infante en
+    // ambos, pero adulto1 solo viaja en A → inválido, se limpia.
+    const gruposPd = agruparIndicesPorDestino(["A", "B"], "por_destino"); // [[0],[1]]
+    const enPd = limpiarResponsablesInvalidosPorContrato(filas, gruposPd, asigTodo, ["2027-01-01", "2027-02-01"]);
+    assert.equal(enPd[1].responsableIndex, null, "al separar por destino, adulto1 no está en el contrato B → vínculo inválido");
   });
 });

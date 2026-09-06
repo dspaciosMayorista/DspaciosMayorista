@@ -14,6 +14,7 @@
 // LOCALES de ese contrato (nunca el universo completo del carrito, que
 // puede incluir personas que ni siquiera viajan en ese grupo).
 // ─────────────────────────────────────────────────────────────────────────
+import { esInfantePorEdad } from "./pasajeros.ts";
 
 /** Fila con vínculo de responsable — misma convención que pasajerosFilas.ts (0-based, GLOBAL). */
 export type FilaConResponsableGlobal = {
@@ -295,4 +296,80 @@ export function comparteGrupo(
     if (posicionesGrupo.includes(posicionA) && posicionesGrupo.includes(posicionB)) return true;
   }
   return false;
+}
+
+/**
+ * Índices de los grupos/contratos donde el pasajero `posicion` (1-based) queda
+ * asignado Y es INFANTE a la fecha de contrato de ese grupo — B18 (ronda 7).
+ * `fechasContratoPorGrupo[gi]` es la fecha de salida del contrato `gi` (la más
+ * temprana de TODAS sus unidades), la MISMA contra la que el RPC recalcula el
+ * `es_infante` del REGISTRO (`ventas.fecha_salida`). Un mismo pasajero puede
+ * ser infante en un contrato y CHD en otro (fechas distintas) — solo los
+ * primeros exigen responsable.
+ */
+export function gruposInfanteDePasajero(
+  posicion: number,
+  fechaNacimiento: string,
+  gruposIndicesUnidades: readonly (readonly number[])[],
+  asignacionesPorUnidad: readonly (readonly number[])[],
+  fechasContratoPorGrupo: readonly (string | null)[]
+): number[] {
+  const res: number[] = [];
+  gruposIndicesUnidades.forEach((grupo, gi) => {
+    const enGrupo = grupo.some((u) => (asignacionesPorUnidad[u] ?? []).includes(posicion));
+    if (!enGrupo) return;
+    if (esInfantePorEdad(fechaNacimiento, fechasContratoPorGrupo[gi] ?? null)) res.push(gi);
+  });
+  return res;
+}
+
+/**
+ * ¿El adulto `posAdulto` puede ser el ÚNICO responsable de un infante cuyos
+ * contratos-infante son `gruposInfante`? B18 (ronda 7), decisión de diseño
+ * (Opción 1): el modelo captura UN solo responsable por pasajero
+ * (`responsableIndex`) y `responsable_id` es un único adulto responsable
+ * (relación legal/documental), así que ese adulto debe pertenecer a TODOS los
+ * contratos donde el pasajero es infante — no basta con compartir UNO
+ * (`comparteGrupo`), porque el mismo `responsableIndex` se envía a cada
+ * contrato y el que no lo tenga lo rechazaría. Si ningún adulto cumple, la UI
+ * exige corregir la asignación (agregar el adulto a todos esos contratos).
+ * Nunca a sí mismo; `gruposInfante` vacío (no es infante en ninguno) → false
+ * (no debería pedirse responsable en ese caso).
+ */
+export function esResponsableValidoEnTodos(
+  posAdulto: number,
+  gruposInfante: readonly number[],
+  gruposIndicesUnidades: readonly (readonly number[])[],
+  asignacionesPorUnidad: readonly (readonly number[])[]
+): boolean {
+  if (!gruposInfante.length) return false;
+  return gruposInfante.every((gi) => {
+    const grupo = gruposIndicesUnidades[gi] ?? [];
+    return grupo.some((u) => (asignacionesPorUnidad[u] ?? []).includes(posAdulto));
+  });
+}
+
+/**
+ * Limpia el `responsableIndex` de cualquier infante cuyo responsable ya NO sea
+ * válido bajo B18 (ronda 7): o el pasajero dejó de ser infante en todo
+ * contrato, o su responsable no viaja en TODOS los contratos donde sigue
+ * siendo infante. Complementa a `recalcularVinculosPorEdadPorFila` (que solo
+ * mira EDAD): cambiar la asignación o el modo de agrupación puede dejar al
+ * responsable en un contrato distinto sin que su edad cambie, y ese vínculo
+ * hay que soltarlo antes de enviar el payload (si no, el RPC del contrato sin
+ * el responsable lo rechazaría). Pura: conserva la referencia de las filas
+ * que no cambian.
+ */
+export function limpiarResponsablesInvalidosPorContrato<T extends FilaConResponsableGlobal & { fechaNacimiento: string }>(
+  filas: readonly T[],
+  gruposIndicesUnidades: readonly (readonly number[])[],
+  asignacionesPorUnidad: readonly (readonly number[])[],
+  fechasContratoPorGrupo: readonly (string | null)[]
+): T[] {
+  return filas.map((f, i) => {
+    if (f.responsableIndex == null) return f;
+    const gruposInf = gruposInfanteDePasajero(i + 1, f.fechaNacimiento, gruposIndicesUnidades, asignacionesPorUnidad, fechasContratoPorGrupo);
+    const valido = esResponsableValidoEnTodos(f.responsableIndex + 1, gruposInf, gruposIndicesUnidades, asignacionesPorUnidad);
+    return valido ? f : { ...f, responsableIndex: null };
+  });
 }

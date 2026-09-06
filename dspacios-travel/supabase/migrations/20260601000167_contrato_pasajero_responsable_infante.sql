@@ -1282,6 +1282,11 @@ declare
   v_pos             integer;
   v_pos_vistos      bigint[];
   v_holders_reales  integer;
+  -- B19 (ronda 7): la silla se decide por la fecha REAL de CADA bloqueo, no
+  -- por la única `ventas.fecha_salida` del contrato. `v_contrato_fecha` es el
+  -- respaldo cuando un bloqueo no tiene `fecha_ida`.
+  v_bloqueo_fecha   date;
+  v_contrato_fecha  date;
 begin
   if p_usuario_id is null then
     raise exception 'Se requiere un usuario autenticado.';
@@ -1293,6 +1298,13 @@ begin
   if not v_activo then
     raise exception 'El usuario está desactivado.';
   end if;
+  -- Fecha del contrato (respaldo per-bloqueo). Es la MISMA
+  -- `ventas.fecha_salida` contra la que `_reemplazar_pasajeros_nucleo` acaba
+  -- de recalcular `es_infante` del REGISTRO — que sigue representando la edad
+  -- al INICIO del contrato (documental/responsable). El inventario de sillas,
+  -- en cambio, se resuelve por vuelo (B19), y solo cae a esta fecha si el
+  -- bloqueo no declara la suya.
+  select fecha_salida into v_contrato_fecha from public.ventas where numero_contrato = p_numero_contrato;
 
   -- Escribe pasajeros + responsables — UNA sola vez (nunca dos: este núcleo
   -- ESCRIBE; invocarlo de nuevo duplicaría pasajeros nuevos, que no traen
@@ -1359,6 +1371,13 @@ begin
       raise exception 'El bloqueo % aparece repetido en las reservas de sillas.', v_bloqueo_id;
     end if;
 
+    -- B19 (ronda 7): fecha REAL de salida de ESTE bloqueo — decide quién
+    -- ocupa silla en él (un pasajero que es infante en la salida más temprana
+    -- del contrato pero ya cumplió 2 años en la salida de un vuelo posterior
+    -- SÍ ocupa silla en ese vuelo). Respaldo: la fecha del contrato.
+    select bv.fecha_ida into v_bloqueo_fecha from public.bloqueos_vuelo bv where bv.id = v_bloqueo_id;
+    v_bloqueo_fecha := coalesce(v_bloqueo_fecha, v_contrato_fecha);
+
     if v_elem ? 'holdersMin' and jsonb_typeof(v_elem->'holdersMin') <> 'null' then
       if jsonb_typeof(v_elem->'holdersMin') <> 'number' then
         raise exception 'El holdersMin de una reserva de sillas es inválido.';
@@ -1407,7 +1426,13 @@ begin
         raise exception 'La posición % aparece repetida dentro de la misma reserva de sillas.', v_pos;
       end if;
       v_pos_vistos := array_append(v_pos_vistos, v_pos);
-      if not (v_filas[v_pos]).es_infante then
+      -- B19 (ronda 7): ocupa silla en ESTE bloqueo si NO es infante a la
+      -- fecha real de salida del bloqueo — NO al `es_infante` del registro
+      -- (que es la edad al inicio del contrato). Así un mismo pasajero puede
+      -- no ocupar silla en un vuelo temprano y sí en uno tardío del mismo
+      -- contrato. `es_infante_por_edad` es la MISMA función que usó el núcleo
+      -- para el registro, solo que contra la fecha del vuelo.
+      if not public.es_infante_por_edad((v_filas[v_pos]).fecha_nacimiento, v_bloqueo_fecha) then
         v_holders_reales := v_holders_reales + 1;
       end if;
     end loop;

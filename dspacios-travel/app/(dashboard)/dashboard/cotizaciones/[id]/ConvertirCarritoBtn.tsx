@@ -15,7 +15,9 @@ import {
   quitarPosicionDeUniverso,
   posicionesSinAsignar,
   fechaContratoDePasajero,
-  comparteGrupo,
+  gruposInfanteDePasajero,
+  esResponsableValidoEnTodos,
+  limpiarResponsablesInvalidosPorContrato,
 } from "@/lib/reservar/carritoAsignaciones";
 
 type ClientePrefill = { nombres: string; apellidos: string; numeroDoc: string };
@@ -98,6 +100,12 @@ export function ConvertirCarritoBtn({
   const asignacionesPorItemPos = asignaciones.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
   const asignacionesPorTourPos = asignacionesTours.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
   const asignacionesUnidadesPos = [...asignacionesPorItemPos, ...asignacionesPorTourPos];
+  // Fecha de contrato POR GRUPO — la más temprana de sus unidades, igual que
+  // `ventas.fecha_salida` en el servidor. Se usa para saber en qué contratos
+  // un pasajero es infante (B18) y para clasificar edad (B16).
+  const fechasContratoPorGrupo = gruposIndicesUnidades.map((grupo) =>
+    grupo.map((u) => unidadesFechas[u]).filter((f): f is string => !!f).sort()[0] ?? fechaMasTemprana
+  );
   // Fecha de referencia POR PASAJERO = la fecha del CONTRATO en que queda —
   // B16 (ronda 6), que corrige la de B13. El RPC clasifica es_infante de
   // TODOS los pasajeros contra `ventas.fecha_salida` (la más temprana de
@@ -107,16 +115,27 @@ export function ConvertirCarritoBtn({
     fechaContratoDePasajero(i + 1, gruposIndicesUnidades, asignacionesUnidadesPos, unidadesFechas, fechaMasTemprana)
   );
 
-  // Recalcula los vínculos INF→responsable con matrices dadas — cambiar
-  // dónde viaja un pasajero cambia SU fecha de contrato (B16) y puede
-  // invalidar un vínculo. Solo LIMPIA (nunca inventa) — ver
-  // `recalcularVinculosPorEdadPorFila`.
-  const recomputarVinculos = (asigItems: boolean[][], asigTours: boolean[][]) => {
+  // Recalcula los vínculos INF→responsable con matrices y AGRUPACIÓN dadas —
+  // cambiar dónde viaja un pasajero, o el modo de agrupación, cambia SU fecha
+  // de contrato (B16) y puede dejar al responsable en OTRO contrato (B18). Dos
+  // pasadas, ambas solo LIMPIAN (nunca inventan): por edad
+  // (`recalcularVinculosPorEdadPorFila`) y por pertenencia al contrato
+  // (`limpiarResponsablesInvalidosPorContrato`).
+  const recomputarVinculosCon = (asigItems: boolean[][], asigTours: boolean[][], grupos: readonly (readonly number[])[]) => {
     const itemsPos = asigItems.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
     const toursPos = asigTours.map((fila) => fila.map((v, i) => (v ? i + 1 : null)).filter((v): v is number => v != null));
     const unidadesPos = [...itemsPos, ...toursPos];
-    const fechas = paxRows.map((_, i) => fechaContratoDePasajero(i + 1, gruposIndicesUnidades, unidadesPos, unidadesFechas, fechaMasTemprana));
-    setPaxRows((rows) => recalcularVinculosPorEdadPorFila(rows, fechas));
+    const fechasGrupo = grupos.map((g) => g.map((u) => unidadesFechas[u]).filter((f): f is string => !!f).sort()[0] ?? fechaMasTemprana);
+    const fechas = paxRows.map((_, i) => fechaContratoDePasajero(i + 1, grupos, unidadesPos, unidadesFechas, fechaMasTemprana));
+    setPaxRows((rows) => limpiarResponsablesInvalidosPorContrato(recalcularVinculosPorEdadPorFila(rows, fechas), grupos, unidadesPos, fechasGrupo));
+  };
+  const recomputarVinculos = (asigItems: boolean[][], asigTours: boolean[][]) => recomputarVinculosCon(asigItems, asigTours, gruposIndicesUnidades);
+  // Cambiar todo↔por_destino recalcula/limpia vínculos con la NUEVA agrupación
+  // (B18): un responsable válido en "todo" (un solo contrato) puede caer en
+  // otro contrato al separar por destino.
+  const cambiarAgrupar = (v: "todo" | "por_destino") => {
+    setAgrupar(v);
+    recomputarVinculosCon(asignaciones, asignacionesTours, agruparIndicesPorDestino(unidadesDestinos, v));
   };
 
   const agregarPasajero = () => {
@@ -210,7 +229,7 @@ export function ConvertirCarritoBtn({
               <p className="mb-1 text-sm font-medium text-gray-700">Este carrito tiene {destinos.length} destinos ({destinos.join(", ")}).</p>
               <div className="flex flex-wrap gap-2">
                 {([["todo", "1 solo contrato con todo"], ["por_destino", "1 contrato por destino"]] as const).map(([v, l]) => (
-                  <button key={v} type="button" onClick={() => setAgrupar(v)}
+                  <button key={v} type="button" onClick={() => cambiarAgrupar(v)}
                     className="rounded-lg border px-3 py-2 text-sm font-medium transition-all"
                     style={agrupar === v
                       ? { borderColor: "var(--brand-primary)", color: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.08)" }
@@ -278,34 +297,40 @@ export function ConvertirCarritoBtn({
                     Quitar
                   </button>
                 </div>
-                {esInfanteRealRow[i] && (
-                  <div className="mt-2 max-w-xs">
-                    <label className="text-[11px] text-gray-500">Adulto responsable *</label>
-                    <select
-                      value={p.responsableIndex ?? ""}
-                      onChange={(e) => setResponsable(i, e.target.value === "" ? null : Number(e.target.value))}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
-                    >
-                      <option value="">Sin vincular (se rechazará al generar)</option>
-                      {paxRows.map((otro, j) => {
-                        if (j === i) return null;
-                        const edadOtro = edadesReales[j];
-                        if (edadOtro == null || edadOtro < 18) return null;
-                        // El responsable debe terminar en el MISMO
-                        // contrato/grupo que el infante (B13 punto 5) — no
-                        // necesariamente la misma unidad (ver
-                        // `reindexarGrupoLocal` en carritoAsignaciones.ts).
-                        // Se evalúa sobre TODAS las unidades (hoteles + tours,
-                        // B17): un pasajero que solo viaja en un tour también
-                        // define su contrato.
-                        if (!comparteGrupo(i + 1, j + 1, gruposIndicesUnidades, asignacionesUnidadesPos)) return null;
-                        const nombre = `${otro.nombres} ${otro.apellidos}`.trim() || `Pasajero ${j + 1}`;
-                        return <option key={j} value={j}>{nombre}</option>;
-                      })}
-                    </select>
-                    <p className="mt-1 text-xs text-gray-400">Todo infante debe quedar vinculado a un adulto (18+ años) del mismo contrato.</p>
-                  </div>
-                )}
+                {esInfanteRealRow[i] && (() => {
+                  // Contratos donde ESTE pasajero es infante (B18) — su único
+                  // responsable debe viajar en TODOS ellos.
+                  const gruposInf = gruposInfanteDePasajero(i + 1, p.fechaNacimiento, gruposIndicesUnidades, asignacionesUnidadesPos, fechasContratoPorGrupo);
+                  // Candidatos: adultos (18+ a su fecha de contrato) que
+                  // pertenecen a TODOS los contratos-infante — nunca ofrecer
+                  // uno que el servidor rechazará (B18).
+                  const candidatos = paxRows
+                    .map((otro, j) => ({ otro, j }))
+                    .filter(({ j }) => j !== i && (edadesReales[j] ?? 0) >= 18 && esResponsableValidoEnTodos(j + 1, gruposInf, gruposIndicesUnidades, asignacionesUnidadesPos));
+                  return (
+                    <div className="mt-2 max-w-sm">
+                      <label className="text-[11px] text-gray-500">Adulto responsable *</label>
+                      {candidatos.length === 0 ? (
+                        <p className="mt-0.5 rounded bg-amber-100 px-2 py-1 text-xs text-amber-800">
+                          Ningún adulto viaja en {gruposInf.length > 1 ? "todos los contratos" : "el contrato"} donde este infante es menor de 2 años. Asigna un adulto (18+) a {gruposInf.length > 1 ? "cada uno de esos contratos" : "ese contrato"} o reagrupa el carrito.
+                        </p>
+                      ) : (
+                        <select
+                          value={p.responsableIndex ?? ""}
+                          onChange={(e) => setResponsable(i, e.target.value === "" ? null : Number(e.target.value))}
+                          className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
+                        >
+                          <option value="">Sin vincular (se rechazará al generar)</option>
+                          {candidatos.map(({ otro, j }) => {
+                            const nombre = `${otro.nombres} ${otro.apellidos}`.trim() || `Pasajero ${j + 1}`;
+                            return <option key={j} value={j}>{nombre}</option>;
+                          })}
+                        </select>
+                      )}
+                      <p className="mt-1 text-xs text-gray-400">Todo infante debe quedar vinculado a un adulto (18+ años) que viaje en cada contrato donde el infante es menor de 2 años.</p>
+                    </div>
+                  );
+                })()}
               </div>
             ));
           })()}
