@@ -237,7 +237,10 @@ describe("convertirCotizacionCarrito (reservar/actions.ts) — cada número se g
       "autorizaTenant(ctx, cot.tenant)",
       "La cotización no tiene ítems.",
       "Captura los pasajeros antes de generar el contrato.",
-      "no hay cupos suficientes",
+      // B21 (ronda 8): la capacidad se valida CONSOLIDADA (unión por bloqueo de
+      // TODA la operación), no por ítem, y sigue ocurriendo ANTES de generar el
+      // número — ver el chequeo de faltanteDeCupos en la pre-validación.
+      "No hay cupos suficientes en el bloqueo",
     ], "convertirCotizacionCarrito");
   });
 });

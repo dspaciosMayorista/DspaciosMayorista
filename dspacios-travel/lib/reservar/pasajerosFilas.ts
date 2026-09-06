@@ -188,3 +188,77 @@ export function normalizarResponsablesPorGrupo<T extends FilaConFechaYResponsabl
     return esInfantePorEdad(f.fechaNacimiento, fechaReferenciaGrupo) ? f : { ...f, responsableIndex: null };
   });
 }
+
+/** Motivo por el que un vínculo INF→responsable de un contrato es inválido — mismo criterio que el trigger `fn_validar_responsable_infante` (migración 167). */
+export type MotivoResponsableInvalido =
+  | "infante_sin_responsable"   // es_infante true, responsable_id null (y no exento)
+  | "indice_fuera_de_rango"     // el responsable señalado no existe en el contrato
+  | "autorreferencia"           // responsable_id = id (un pasajero no es su propio responsable)
+  | "responsable_es_infante"    // el responsable es, a su vez, un infante
+  | "responsable_no_adulto";    // el responsable no es mayor de edad (≥18) a la fecha de salida (un CHD no puede responder)
+
+export type ResultadoValidacionResponsables =
+  | { ok: true }
+  | { ok: false; posicionLocal: number; responsableLocal: number | null; motivo: MotivoResponsableInvalido };
+
+/**
+ * Valida los vínculos INF→adulto responsable de UN contrato — B20 (ronda 8),
+ * réplica EXACTA (del lado servidor/aplicación) del trigger SQL
+ * `fn_validar_responsable_infante` (migración 167), que sigue siendo la
+ * AUTORIDAD real. Se usa como PRE-validación de TODOS los grupos antes de
+ * generar el primer número o escribir cualquier fila, para que un error
+ * PREVISIBLE de responsable (llamada directa, estado obsoleto, payload
+ * manipulado — NO se depende de la UI) se rechace antes de crear nada, en vez
+ * de tumbar el segundo contrato cuando el primero ya quedó escrito.
+ *
+ * `filas` son los pasajeros LOCALES de un contrato (ya reindexados a este
+ * grupo: `responsableIndex` 0-based dentro de este mismo arreglo, o null).
+ * `fechaContrato` es `ventas.fecha_salida` de ese contrato — la MISMA
+ * referencia contra la que el RPC recalcula `es_infante` del registro y contra
+ * la que el trigger mide la mayoría de edad del responsable (con respaldo a
+ * "hoy" cuando el contrato no tiene fecha, igual que `coalesce(fecha_salida,
+ * current_date)` en el trigger). Devuelve el PRIMER problema encontrado o
+ * `{ ok: true }`.
+ *
+ * Reglas (todas las que el trigger impone dentro de un mismo contrato):
+ *   - todo infante REAL a `fechaContrato` debe traer responsable;
+ *   - el índice debe ser entero, existir en el contrato y no ser el propio pasajero;
+ *   - el responsable no puede ser, a su vez, infante;
+ *   - el responsable debe ser mayor de edad (≥18) a `fechaContrato` (un CHD no sirve).
+ * La pertenencia del responsable AL MISMO contrato la resuelve el reindexado
+ * previo (`reindexarGrupoLocal`): un responsable de otro contrato llega aquí
+ * ya como `null` y se reporta como `infante_sin_responsable` — su caso
+ * específico (cross-contrato) lo detecta el reindexado antes de llamar a esta
+ * función.
+ */
+export function validarResponsablesContrato<T extends FilaConFechaYResponsable>(
+  filas: readonly T[],
+  fechaContrato: string | null
+): ResultadoValidacionResponsables {
+  // Referencia de edad del RESPONSABLE: la fecha del contrato, o "hoy" si no
+  // hay (idéntico a `coalesce(v.fecha_salida, current_date)` del trigger). Solo
+  // es alcanzable cuando hay un infante, lo que ya exige una fecha válida.
+  const refAdulto = fechaContrato ?? new Date().toISOString().slice(0, 10);
+  for (let i = 0; i < filas.length; i++) {
+    const f = filas[i];
+    // La condición de infante se mide contra `fechaContrato` tal cual (sin el
+    // respaldo a hoy): con `fechaContrato` null, `esInfantePorEdad` es false —
+    // igual que `es_infante` recalculado por el RPC sobre una fecha nula.
+    if (!esInfantePorEdad(f.fechaNacimiento, fechaContrato)) continue;
+    const r = f.responsableIndex ?? null;
+    if (r == null) return { ok: false, posicionLocal: i, responsableLocal: null, motivo: "infante_sin_responsable" };
+    if (!Number.isInteger(r) || r < 0 || r >= filas.length) {
+      return { ok: false, posicionLocal: i, responsableLocal: null, motivo: "indice_fuera_de_rango" };
+    }
+    if (r === i) return { ok: false, posicionLocal: i, responsableLocal: r, motivo: "autorreferencia" };
+    const resp = filas[r];
+    if (esInfantePorEdad(resp.fechaNacimiento, fechaContrato)) {
+      return { ok: false, posicionLocal: i, responsableLocal: r, motivo: "responsable_es_infante" };
+    }
+    const edadResp = calcularEdad(resp.fechaNacimiento, refAdulto);
+    if (edadResp == null || edadResp < EDAD_ADULTO_RESPONSABLE) {
+      return { ok: false, posicionLocal: i, responsableLocal: r, motivo: "responsable_no_adulto" };
+    }
+  }
+  return { ok: true };
+}

@@ -37,8 +37,8 @@ import {
 import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
 import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
-import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
-import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
+import { normalizarResponsablesPorGrupo, validarResponsablesContrato, type MotivoResponsableInvalido } from "@/lib/reservar/pasajerosFilas";
+import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo, demandaSillasPorBloqueo, faltanteDeCupos, type ReservaSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
 import {
   componenteHotelReal,
   componentePaqueteReal,
@@ -1033,6 +1033,56 @@ type ItemCarritoConAsignacion = ItemCarritoPayload & { __posiciones: number[] };
 // declara explícitamente, con la misma convención de posiciones 1-based.
 type TourCarritoConAsignacion = TourCarritoPayload & { __posiciones: number[] };
 
+// Reservas de sillas consolidadas de UN grupo/contrato del carrito, EXACTAMENTE
+// como las recibirá `crear_pasajeros_contrato_multi` — fuente ÚNICA usada por
+// la pre-validación de capacidad (B21) y por la creación real, para que lo que
+// se pre-valida sea idéntico byte a byte a lo que se escribe. B19: quién ocupa
+// silla en cada bloqueo se decide con la fecha REAL de salida de ESE bloqueo
+// (`comp.meta.fecha_ida`), no con la única `ventas.fecha_salida`. B15: el piso
+// consolidado es la unión de `posicionesConSilla` (personas únicas con silla),
+// nunca la suma por ítem. Todo `posGlobal` de `__posiciones` pertenece al
+// universo del grupo, así que siempre está en `mapaGlobalALocal`.
+function reservasSillasDeGrupo(
+  validados: readonly { item: ItemCarritoConAsignacion; comp: ComputoReserva }[],
+  mapaGlobalALocal: ReadonlyMap<number, number>,
+  pasajerosNormalizadosGlobal: readonly PasajeroReserva[],
+  fechaRefGrupo: string | null
+): ReservaSillasPorBloqueo[] {
+  const itemsBloqueoLocal = validados
+    .filter((v): v is typeof v & { item: { bloqueoId: number } } => v.item.modulo === "bloqueo" && v.item.bloqueoId != null)
+    .map((v) => {
+      const fechaBloqueo = v.comp.meta.fecha_ida ?? fechaRefGrupo;
+      return {
+        bloqueoId: v.item.bloqueoId,
+        posiciones: v.item.__posiciones.map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
+        posicionesConSilla: v.item.__posiciones
+          .filter((posGlobal) => pasajeroConsumeSilla(esInfantePorEdad(pasajerosNormalizadosGlobal[posGlobal - 1].fechaNacimiento, fechaBloqueo)))
+          .map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
+      };
+    });
+  return consolidarReservasSillasPorBloqueo(itemsBloqueoLocal);
+}
+
+// Mensaje al usuario para cada motivo de vínculo INF→responsable inválido
+// (B20) — `posicionGlobal`/`responsableGlobal` son 1-based dentro de
+// `opts.pasajeros` (la tabla que ve el asesor). Siempre cierra con "No se creó
+// ningún contrato" porque esto se evalúa en la PRE-validación, antes de escribir.
+function mensajeResponsableInvalido(motivo: MotivoResponsableInvalido, posicionGlobal: number, responsableGlobal: number | null): string {
+  const suf = " No se creó ningún contrato.";
+  switch (motivo) {
+    case "infante_sin_responsable":
+      return `El infante en la posición ${posicionGlobal} debe tener un adulto responsable asignado.${suf}`;
+    case "indice_fuera_de_rango":
+      return `El adulto responsable asignado al infante en la posición ${posicionGlobal} no existe en el contrato.${suf}`;
+    case "autorreferencia":
+      return `El infante en la posición ${posicionGlobal} no puede ser su propio responsable.${suf}`;
+    case "responsable_es_infante":
+      return `El responsable del infante en la posición ${posicionGlobal} (posición ${responsableGlobal}) no puede ser, a su vez, un infante.${suf}`;
+    case "responsable_no_adulto":
+      return `El responsable del infante en la posición ${posicionGlobal} (posición ${responsableGlobal}) debe ser mayor de edad (18 años) a la fecha de salida.${suf}`;
+  }
+}
+
 export async function convertirCotizacionCarrito(
   id: number,
   opts: {
@@ -1196,14 +1246,13 @@ export async function convertirCotizacionCarrito(
       };
       const comp = await computarReserva(sb, reserva);
       if (!comp.ok) return { ok: false, error: `${it.hotelNombre}: ${comp.error}` };
-      if (it.modulo === "bloqueo" && it.bloqueoId) {
-        const { count } = await admin.from("sillas").select("id", { count: "exact", head: true })
-          .eq("bloqueo_id", it.bloqueoId).in("estado", ["disponible", "cambio_entrante"]);
-        const disponibles = count ?? 0;
-        if (disponibles < comp.data.paxConSilla) {
-          return { ok: false, error: `${it.hotelNombre}: no hay cupos suficientes (disponibles: ${disponibles}, requeridos: ${comp.data.paxConSilla}).` };
-        }
-      }
+      // La capacidad de sillas ya NO se valida por ÍTEM aquí (B21, ronda 8): el
+      // RPC reserva la UNIÓN consolidada por bloqueo, no la suma por ítem, así
+      // que un chequeo por ítem daba falsos OK (ej. 3 sillas y dos ítems
+      // disjuntos de 2 personas sobre el mismo bloqueo: cada ítem pasa 2≤3,
+      // pero la demanda real consolidada es 4). Se valida la demanda
+      // consolidada de TODA la operación en la pre-validación de más abajo,
+      // antes de escribir nada.
       validados.push({ item: it, comp: comp.data });
     }
     gruposValidados.push({ grupo, validados });
@@ -1232,32 +1281,71 @@ export async function convertirCotizacionCarrito(
   }
 
   // ── PRE-VALIDACIÓN de TODOS los grupos ANTES de crear NINGÚN contrato
-  // (B18, ronda 7). Un responsable de infante que quede en OTRO contrato es un
-  // error PREVISIBLE: bajo el modelo de un solo responsable (ver
-  // `esResponsableValidoEnTodos`), el adulto debe pertenecer a TODOS los
-  // contratos donde el pasajero sea infante. Si eso no se cumple, el RPC del
-  // grupo lo rechazaría — pero si se detecta recién dentro del bucle de
-  // creación, el PRIMER contrato ya quedó escrito cuando falla el segundo. Se
-  // recalcula aquí, en seco, la MISMA fecha/universo/reindex que usará la
-  // creación (funciones puras, deterministas), y se aborta antes de escribir
-  // nada. La capacidad de sillas ya se pre-validó al armar `gruposValidados`.
-  for (const { grupo, validados } of gruposValidados) {
-    const fechasIdaPre = [
-      ...validados.map((v) => v.comp.meta.fecha_ida),
-      ...grupo.tours.map((t) => t.fechaIda),
-    ].filter((f): f is string => !!f).sort();
-    const fechaRefPre = fechasIdaPre[0] ?? null;
-    const posGrupoPre = posicionesUnicasDeGrupo(
-      [...grupo.items.map((it) => it.__posiciones), ...grupo.tours.map((t) => t.__posiciones)],
-      [...grupo.items, ...grupo.tours].map((_, i) => i)
-    );
-    const universoPre = posGrupoPre.length ? posGrupoPre : opts.pasajeros.map((_, i) => i + 1);
-    const { posicionesInvalidas: invalidasPre } = reindexarGrupoLocal(
-      normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefPre),
-      universoPre
-    );
-    if (invalidasPre.length) {
-      return { ok: false, error: `El adulto responsable del pasajero ${invalidasPre[0]} debe viajar en TODOS los contratos donde ese pasajero es infante — elige un adulto que viaje en todos, o revisa la asignación. No se creó ningún contrato.` };
+  // (B18/B20/B21). Todo lo PREVISIBLE (responsables y capacidad) se decide aquí,
+  // en seco, con las MISMAS funciones puras y datos que usará la creación
+  // (deterministas), y se aborta antes de generar el primer número o escribir
+  // una sola fila — así un error esperable no deja un primer contrato escrito
+  // cuando falla el segundo. La autoridad concurrente final sigue siendo el RPC
+  // (candado `for update`); esto solo mejora el mensaje y evita la escritura
+  // parcial. `demandaPorBloqueo` acumula la demanda consolidada de TODA la
+  // operación (B21): cada contrato reserva por separado, así que un bloqueo
+  // usado por varios grupos suma su demanda, no se valida grupo por grupo.
+  const pre: { ok: false; error: string } | { ok: true; demanda: Map<number, number> } = (() => {
+    const reservasPorGrupo: ReservaSillasPorBloqueo[][] = [];
+    for (const { grupo, validados } of gruposValidados) {
+      const fechasIdaPre = [
+        ...validados.map((v) => v.comp.meta.fecha_ida),
+        ...grupo.tours.map((t) => t.fechaIda),
+      ].filter((f): f is string => !!f).sort();
+      const fechaRefPre = fechasIdaPre[0] ?? null;
+      const posGrupoPre = posicionesUnicasDeGrupo(
+        [...grupo.items.map((it) => it.__posiciones), ...grupo.tours.map((t) => t.__posiciones)],
+        [...grupo.items, ...grupo.tours].map((_, i) => i)
+      );
+      const universoPre = posGrupoPre.length ? posGrupoPre : opts.pasajeros.map((_, i) => i + 1);
+      const pasajerosNormPre = normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefPre);
+      const { pasajerosLocal: localPre, posicionesInvalidas: invalidasPre, mapaGlobalALocal: mapaPre } =
+        reindexarGrupoLocal(pasajerosNormPre, universoPre);
+      // B18 — responsable en OTRO contrato / índice inexistente (el reindexado
+      // lo dejó como `null` y lo registró en `posicionesInvalidas`): el adulto
+      // debe viajar en TODOS los contratos donde el pasajero es infante.
+      if (invalidasPre.length) {
+        return { ok: false, error: `El adulto responsable del pasajero ${invalidasPre[0]} debe viajar en TODOS los contratos donde ese pasajero es infante — elige un adulto que viaje en todos, o revisa la asignación. No se creó ningún contrato.` };
+      }
+      // B20 — validación COMPLETA del vínculo dentro del contrato, réplica del
+      // trigger (infante sin responsable, autorreferencia, responsable
+      // CHD/infante), contra la fecha REAL de ESTE contrato. No depende de la
+      // UI: corre sobre los pasajeros ya normalizados/reindexados en el
+      // servidor, lo mismo que recibirá el RPC.
+      const vResp = validarResponsablesContrato(localPre, fechaRefPre);
+      if (!vResp.ok) {
+        const posGlobal = universoPre[vResp.posicionLocal];
+        const respGlobal = vResp.responsableLocal != null ? universoPre[vResp.responsableLocal] : null;
+        return { ok: false, error: mensajeResponsableInvalido(vResp.motivo, posGlobal, respGlobal) };
+      }
+      // B21 — mismas reservas consolidadas que recibirá el RPC de este grupo.
+      reservasPorGrupo.push(reservasSillasDeGrupo(validados, mapaPre, pasajerosNormPre, fechaRefPre));
+    }
+    return { ok: true, demanda: demandaSillasPorBloqueo(reservasPorGrupo) };
+  })();
+  if (!pre.ok) return { ok: false, error: pre.error };
+  const demandaPorBloqueo = pre.demanda;
+
+  // B21 — cupos: se consulta la disponibilidad UNA vez por bloqueo (unión de
+  // los que pide toda la operación) y se compara con la demanda consolidada
+  // ACUMULADA. Falla cerrado (un bloqueo sin fila de disponibilidad cuenta
+  // como 0). El RPC vuelve a verificarlo bajo candado por si cambia entre esta
+  // lectura y la escritura.
+  if (demandaPorBloqueo.size) {
+    const disponiblesPorBloqueo = new Map<number, number>();
+    for (const bloqueoId of demandaPorBloqueo.keys()) {
+      const { count } = await admin.from("sillas").select("id", { count: "exact", head: true })
+        .eq("bloqueo_id", bloqueoId).in("estado", ["disponible", "cambio_entrante"]);
+      disponiblesPorBloqueo.set(bloqueoId, count ?? 0);
+    }
+    const faltante = faltanteDeCupos(demandaPorBloqueo, disponiblesPorBloqueo);
+    if (faltante) {
+      return { ok: false, error: `No hay cupos suficientes en el bloqueo (disponibles: ${faltante.disponibles}, requeridos por esta operación: ${faltante.demanda}). No se creó ningún contrato.` };
     }
   }
 
@@ -1407,19 +1495,10 @@ export async function convertirCotizacionCarrito(
     // temprano puede ya tener 2 años (y ocupar silla) en un vuelo posterior.
     // Es la MISMA fecha por bloqueo con la que el RPC recalcula `holders_reales`
     // (mira `bloqueos_vuelo.fecha_ida`), así que el piso coincide exacto.
-    const itemsBloqueoLocal = validados
-      .filter((v): v is typeof v & { item: { bloqueoId: number } } => v.item.modulo === "bloqueo" && v.item.bloqueoId != null)
-      .map((v) => {
-        const fechaBloqueo = v.comp.meta.fecha_ida ?? fechaRefGrupo;
-        return {
-          bloqueoId: v.item.bloqueoId,
-          posiciones: v.item.__posiciones.map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
-          posicionesConSilla: v.item.__posiciones
-            .filter((posGlobal) => pasajeroConsumeSilla(esInfantePorEdad(pasajerosNormalizadosGlobal[posGlobal - 1].fechaNacimiento, fechaBloqueo)))
-            .map((posGlobal) => mapaGlobalALocal.get(posGlobal)! + 1),
-        };
-      });
-    const reservasSillas = consolidarReservasSillasPorBloqueo(itemsBloqueoLocal);
+    // Mismas reservas consolidadas que ya se pre-validaron por capacidad (B21):
+    // única fuente `reservasSillasDeGrupo`, así lo escrito coincide byte a byte
+    // con lo comprobado.
+    const reservasSillas = reservasSillasDeGrupo(validados, mapaGlobalALocal, pasajerosNormalizadosGlobal, fechaRefGrupo);
     // B10 (ronda 3): la fecha de referencia que usó la UI para decidir
     // quién es infante y capturar su responsable es SIEMPRE conservadora
     // (la más temprana de TODO el carrito — la UI no puede conocer de

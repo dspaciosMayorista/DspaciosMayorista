@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { quitarPasajero, truncarPasajeros, recalcularVinculosPorEdad, normalizarResponsablesPorGrupo, recalcularVinculosPorEdadPorFila } from "../lib/reservar/pasajerosFilas.ts";
+import { quitarPasajero, truncarPasajeros, recalcularVinculosPorEdad, normalizarResponsablesPorGrupo, recalcularVinculosPorEdadPorFila, validarResponsablesContrato } from "../lib/reservar/pasajerosFilas.ts";
 
 type Fila = { nombre: string; fechaNacimiento: string; responsableIndex?: number | null };
 
@@ -271,5 +271,106 @@ describe("recalcularVinculosPorEdadPorFila — B13 revisita B10 (ronda 5): fecha
     // Ambos con la misma fecha (HOY): el "responsable" es menor de edad hoy.
     const resultado = recalcularVinculosPorEdadPorFila(filas, [HOY, HOY]);
     assert.equal(resultado[1].responsableIndex, null);
+  });
+});
+
+describe("validarResponsablesContrato — B20 (ronda 8): réplica servidor del trigger fn_validar_responsable_infante, evaluada contra la fecha del contrato", () => {
+  // Ejecuta EXACTAMENTE los mismos criterios que el trigger SQL (migración 167)
+  // sobre los pasajeros LOCALES de un contrato — todo lo previsible se rechaza
+  // aquí, antes de escribir, sin depender de la UI.
+
+  test("caso válido: infante con adulto responsable existente en el contrato → ok", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 0 },
+    ];
+    assert.deepEqual(validarResponsablesContrato(filas, HOY), { ok: true });
+  });
+
+  test("B20 #1: infante REAL sin responsable → infante_sin_responsable (no lo limpia, lo RECHAZA)", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: null },
+    ];
+    const r = validarResponsablesContrato(filas, HOY);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.motivo, "infante_sin_responsable");
+    assert.equal(r.ok === false && r.posicionLocal, 1);
+  });
+
+  test("B20 #2: responsable es un CHD (no adulto) → responsable_no_adulto (un niño no puede responder)", () => {
+    const filas: Fila[] = [
+      { nombre: "Niño", fechaNacimiento: F_NINO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 0 },
+    ];
+    const r = validarResponsablesContrato(filas, HOY);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.motivo, "responsable_no_adulto");
+    assert.equal(r.ok === false && r.responsableLocal, 0);
+  });
+
+  test("B20: responsable es a su vez INFANTE → responsable_es_infante", () => {
+    // El infante-con-vínculo va PRIMERO y señala a otro infante: así se
+    // evalúa antes de que el propio infante-responsable (sin vínculo) dispare
+    // "infante_sin_responsable" — se comprueba el motivo específico.
+    const filas: Fila[] = [
+      { nombre: "Infante con vínculo", fechaNacimiento: F_INFANTE, responsableIndex: 1 },
+      { nombre: "Infante señalado", fechaNacimiento: F_INFANTE },
+    ];
+    const r = validarResponsablesContrato(filas, HOY);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.motivo, "responsable_es_infante");
+    assert.equal(r.ok === false && r.responsableLocal, 1);
+  });
+
+  test("B20 #3: autorreferencia (el infante se señala a sí mismo) → autorreferencia", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 1 },
+    ];
+    const r = validarResponsablesContrato(filas, HOY);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.motivo, "autorreferencia");
+  });
+
+  test("B20 #4: índice de responsable fuera de rango → indice_fuera_de_rango (llamada directa/estado obsoleto)", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 99 },
+    ];
+    const r = validarResponsablesContrato(filas, HOY);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.motivo, "indice_fuera_de_rango");
+  });
+
+  test("clasificación por fecha del contrato: el MISMO pasajero es infante en una fecha temprana (exige responsable) y CHD en una tardía (ya no)", () => {
+    const F_FRONTERA = "2024-03-01"; // infante a 2026-01-01, CHD a 2026-06-01
+    const sinResp: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Frontera", fechaNacimiento: F_FRONTERA, responsableIndex: null },
+    ];
+    // Fecha temprana: es infante → sin responsable es error.
+    assert.equal(validarResponsablesContrato(sinResp, "2026-01-01").ok, false);
+    // Fecha tardía: ya es CHD → no exige responsable → ok.
+    assert.deepEqual(validarResponsablesContrato(sinResp, "2026-06-01"), { ok: true });
+  });
+
+  test("fechaContrato null: nadie es infante (igual que el es_infante que recalcula el RPC sobre fecha nula) → ok aunque haya un responsableIndex heredado", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 0 },
+    ];
+    assert.deepEqual(validarResponsablesContrato(filas, null), { ok: true });
+  });
+
+  test("solo devuelve el PRIMER problema (determinista), aunque haya varios infantes mal vinculados", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante 1 sin resp", fechaNacimiento: F_INFANTE, responsableIndex: null },
+      { nombre: "Infante 2 autoref", fechaNacimiento: F_INFANTE, responsableIndex: 2 },
+    ];
+    const r = validarResponsablesContrato(filas, HOY);
+    assert.equal(r.ok === false && r.posicionLocal, 1, "reporta el primero por orden");
+    assert.equal(r.ok === false && r.motivo, "infante_sin_responsable");
   });
 });

@@ -150,15 +150,19 @@ test("reservar/actions.ts: convertirCotizacionCarrito crea pasajeros+responsable
     "no llama al RPC atómico multi-bloqueo crear_pasajeros_contrato_multi"
   );
   // El payload de reservas de sillas debe declarar cada bloqueoId EXPLÍCITO
-  // (nunca descubrirlo) — mismo criterio que el resto de la migración 167.
-  assert.match(bloque, /bloqueoId:\s*v\.item\.bloqueoId/, "no arma bloqueoId explícito por ítem de bloqueo");
-  assert.match(bloque, /posiciones:/, "no arma las posiciones (1-based) de cada reserva de sillas");
+  // (nunca descubrirlo) — mismo criterio que el resto de la migración 167. La
+  // construcción vive en el helper compartido `reservasSillasDeGrupo` (B21,
+  // ronda 8) — misma fuente para pre-validación y creación.
+  const reservasHelper = src.slice(src.indexOf("function reservasSillasDeGrupo("), inicio);
+  assert.ok(reservasHelper.length > 0, "no existe el helper reservasSillasDeGrupo antes de convertirCotizacionCarrito");
+  assert.match(reservasHelper, /bloqueoId:\s*v\.item\.bloqueoId/, "no arma bloqueoId explícito por ítem de bloqueo");
+  assert.match(reservasHelper, /posiciones:/, "no arma las posiciones (1-based) de cada reserva de sillas");
   // B15 (ronda 6): el piso de sillas ya NO es la suma de `paxConSilla` por
   // ítem — se deriva de `posicionesConSilla` (personas únicas con silla) y la
   // consolidación toma la unión. `paxConSilla` como piso escalar por ítem no
   // debe volver a colarse.
-  assert.match(bloque, /posicionesConSilla:/, "no arma `posicionesConSilla` (personas que ocupan silla) para el piso consolidado de B15");
-  assert.doesNotMatch(bloque, /holdersMin:\s*v\.comp\.paxConSilla/, "volvió a usar la suma de paxConSilla como piso — sobre-reserva cuando 2+ ítems comparten bloqueo (B15)");
+  assert.match(reservasHelper, /posicionesConSilla:/, "no arma `posicionesConSilla` (personas que ocupan silla) para el piso consolidado de B15");
+  assert.doesNotMatch(reservasHelper, /holdersMin:\s*v\.comp\.paxConSilla/, "volvió a usar la suma de paxConSilla como piso — sobre-reserva cuando 2+ ítems comparten bloqueo (B15)");
 
   // Sin usuario real y activo, la creación debe fallar ANTES de crear
   // ningún contrato — mismo candado que crear_pasajeros_contrato de un
@@ -596,11 +600,11 @@ test("B19 (ronda 7): la silla se decide por la fecha REAL de cada bloqueo, no po
   // en _reemplazar_pasajeros_nucleo).
   assert.match(sql, /v_es_infante\[v_i\] := public\.es_infante_por_edad\(v_fecha_nac_arr\[v_i\], coalesce\(v_ref_fecha, current_date\)\)/, "el es_infante del registro dejó de calcularse contra la fecha de salida del contrato");
   // TS: posicionesConSilla usa la fecha real de cada bloqueo (meta.fecha_ida).
+  // Vive en el helper compartido reservasSillasDeGrupo (B21, ronda 8).
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
-  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
-  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
-  assert.match(bloque, /const fechaBloqueo = v\.comp\.meta\.fecha_ida \?\? fechaRefGrupo;/, "el TS no clasifica posicionesConSilla por la fecha real del bloqueo");
-  assert.match(bloque, /esInfantePorEdad\(pasajerosNormalizadosGlobal\[posGlobal - 1\]\.fechaNacimiento, fechaBloqueo\)/, "el TS sigue usando fechaRefGrupo para la silla en vez de la fecha del bloqueo");
+  const helper = src.slice(src.indexOf("function reservasSillasDeGrupo("), src.indexOf("export async function convertirCotizacionCarrito"));
+  assert.match(helper, /const fechaBloqueo = v\.comp\.meta\.fecha_ida \?\? fechaRefGrupo;/, "el TS no clasifica posicionesConSilla por la fecha real del bloqueo");
+  assert.match(helper, /esInfantePorEdad\(pasajerosNormalizadosGlobal\[posGlobal - 1\]\.fechaNacimiento, fechaBloqueo\)/, "el TS sigue usando fechaRefGrupo para la silla en vez de la fecha del bloqueo");
 });
 
 test("B18 (ronda 7): pre-validación de TODOS los grupos ANTES de crear el primer contrato (sin contratos parciales)", () => {
@@ -631,4 +635,43 @@ test("B18 (ronda 7): la UI ofrece SOLO responsables válidos en todos los contra
   // Cambiar todo↔por_destino recalcula/limpia vínculos.
   assert.match(ui, /onClick=\{\(\) => cambiarAgrupar\(v\)\}/, "el botón de agrupación no recalcula/limpia vínculos al cambiar de modo");
   assert.match(ui, /limpiarResponsablesInvalidosPorContrato\(/, "la UI no limpia los vínculos que quedan en otro contrato tras reagrupar/reasignar");
+});
+
+test("B20 (ronda 8): la pre-validación llama validarResponsablesContrato para TODOS los grupos ANTES de escribir (no depende de la UI)", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  // validarResponsablesContrato se importa y se usa dentro de la pre-validación.
+  assert.match(src, /import\s*\{[^}]*validarResponsablesContrato[^}]*\}\s*from\s*["']@\/lib\/reservar\/pasajerosFilas["']/, "no se importa validarResponsablesContrato");
+  const idxPre = bloque.indexOf("PRE-VALIDACIÓN de TODOS los grupos");
+  const idxValida = bloque.indexOf("validarResponsablesContrato(localPre", idxPre);
+  const idxVentasInsert = bloque.indexOf('await sb.from("ventas").insert(', idxPre);
+  assert.ok(idxPre > 0, "no existe la pre-validación de grupos");
+  assert.ok(idxValida > idxPre, "validarResponsablesContrato no corre en la pre-validación");
+  assert.ok(idxVentasInsert > idxValida, "la validación completa de responsables debe ocurrir ANTES del ventas.insert");
+  // El mensaje mapea a posiciones GLOBALES y cierra 'No se creó ningún contrato'.
+  assert.match(bloque, /mensajeResponsableInvalido\(vResp\.motivo, posGlobal, respGlobal\)/, "el error no traduce el motivo a un mensaje con posiciones globales");
+  assert.match(src, /function mensajeResponsableInvalido\([^)]*\)/, "no existe el helper mensajeResponsableInvalido");
+});
+
+test("B21 (ronda 8): capacidad CONSOLIDADA de toda la operación antes de escribir; se eliminó el chequeo por ítem", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  // Ya NO hay chequeo de cupos por ítem contra comp.data.paxConSilla.
+  assert.doesNotMatch(bloque, /disponibles < comp\.data\.paxConSilla/, "sigue el chequeo de capacidad POR ÍTEM (falso OK ante demanda consolidada)");
+  // La demanda consolidada de la operación se construye y compara antes de escribir.
+  assert.match(src, /import\s*\{[^}]*demandaSillasPorBloqueo[^}]*faltanteDeCupos[^}]*\}\s*from\s*["']@\/lib\/reservar\/carritoAsignaciones["']/, "no se importan demandaSillasPorBloqueo/faltanteDeCupos");
+  const idxDemanda = bloque.indexOf("demandaSillasPorBloqueo(reservasPorGrupo)");
+  const idxFaltante = bloque.indexOf("faltanteDeCupos(demandaPorBloqueo");
+  const idxVentasInsert = bloque.indexOf('await sb.from("ventas").insert(');
+  assert.ok(idxDemanda > 0, "no se acumula la demanda consolidada por bloqueo");
+  assert.ok(idxFaltante > idxDemanda, "no se compara la demanda consolidada contra la disponibilidad");
+  assert.ok(idxVentasInsert > idxFaltante, "el chequeo de cupos consolidado debe ir ANTES del ventas.insert");
+  assert.match(bloque, /requeridos por esta operación/, "el error de cupos no refleja la demanda de toda la operación");
+  // La misma función construye las reservas para la pre-validación Y para la
+  // creación (single source of truth con lo que recibe el RPC).
+  assert.match(src, /function reservasSillasDeGrupo\(/, "no existe el helper compartido reservasSillasDeGrupo");
+  const usos = src.match(/reservasSillasDeGrupo\(/g) ?? [];
+  assert.ok(usos.length >= 3, "reservasSillasDeGrupo debe usarse en la definición + pre-validación + creación (mismas reservas que el RPC)");
 });

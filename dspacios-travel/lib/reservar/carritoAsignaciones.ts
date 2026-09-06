@@ -195,6 +195,57 @@ export function consolidarReservasSillasPorBloqueo(
 }
 
 /**
+ * Demanda REAL de sillas por bloqueo de TODA una operación de conversión —
+ * B21 (ronda 8). Cada grupo/contrato del carrito genera su propia lista
+ * consolidada de reservas (`consolidarReservasSillasPorBloqueo`), y el RPC de
+ * cada contrato reserva `greatest(holdersMin, holders_reales)` = `holdersMin`
+ * (el caller los hace coincidir). Como cada contrato reserva sillas por
+ * SEPARADO (dos contratos que usaran el MISMO bloqueo consumen sillas cada
+ * uno — no se deduplican entre contratos), la demanda de la operación es la
+ * SUMA de `holdersMin` de ese bloqueo A TRAVÉS DE TODOS los grupos, no la de
+ * un grupo aislado. La disponibilidad se consulta UNA vez por bloqueo y se
+ * compara contra esta suma (`faltanteDeCupos`) antes de escribir nada — así el
+ * caso "3 sillas, dos ítems disjuntos de 2 sobre el mismo bloqueo" (dentro de
+ * un grupo la unión ya da demanda 4) y el caso "el mismo bloqueo en 2 grupos"
+ * se rechazan por adelantado con un error claro, en vez de crear el primer
+ * contrato y fallar en el segundo por falta de cupo.
+ *
+ * La PRE-validación mejora el mensaje; la autoridad concurrente final sigue
+ * siendo el candado `for update` del RPC (nunca se retira).
+ */
+export function demandaSillasPorBloqueo(
+  reservasPorGrupo: readonly (readonly ReservaSillasPorBloqueo[])[]
+): Map<number, number> {
+  const demanda = new Map<number, number>();
+  for (const reservasGrupo of reservasPorGrupo) {
+    for (const r of reservasGrupo) {
+      demanda.set(r.bloqueoId, (demanda.get(r.bloqueoId) ?? 0) + r.holdersMin);
+    }
+  }
+  return demanda;
+}
+
+/**
+ * Primer bloqueo cuya demanda consolidada de la operación (`demandaSillas
+ * PorBloqueo`) excede la disponibilidad real consultada, o `null` si todos
+ * caben — B21 (ronda 8). Un bloqueo presente en la demanda pero ausente del
+ * mapa de disponibles se trata como 0 disponibles (falla cerrado: nunca se
+ * asume cupo que no se comprobó). Determinista: recorre las entradas de
+ * demanda en orden de inserción.
+ */
+export function faltanteDeCupos(
+  demandaPorBloqueo: ReadonlyMap<number, number>,
+  disponiblesPorBloqueo: ReadonlyMap<number, number>
+): { bloqueoId: number; demanda: number; disponibles: number } | null {
+  for (const [bloqueoId, demanda] of demandaPorBloqueo) {
+    if (demanda <= 0) continue;
+    const disponibles = disponiblesPorBloqueo.get(bloqueoId) ?? 0;
+    if (disponibles < demanda) return { bloqueoId, demanda, disponibles };
+  }
+  return null;
+}
+
+/**
  * Fecha de referencia para clasificar la edad de UN pasajero en la UI —
  * revisión de B16 (ronda 6), que corrige la de B13 (ronda 5). El servidor
  * (`convertirCotizacionCarrito`) escribe `ventas.fecha_salida = fechasIda[0]`

@@ -20,6 +20,8 @@ import {
   gruposInfanteDePasajero,
   esResponsableValidoEnTodos,
   limpiarResponsablesInvalidosPorContrato,
+  demandaSillasPorBloqueo,
+  faltanteDeCupos,
 } from "../lib/reservar/carritoAsignaciones.ts";
 
 describe("agruparIndicesPorDestino", () => {
@@ -383,5 +385,81 @@ describe("B18 — responsable único válido en TODOS los contratos donde el pas
     const gruposPd = agruparIndicesPorDestino(["A", "B"], "por_destino"); // [[0],[1]]
     const enPd = limpiarResponsablesInvalidosPorContrato(filas, gruposPd, asigTodo, ["2027-01-01", "2027-02-01"]);
     assert.equal(enPd[1].responsableIndex, null, "al separar por destino, adulto1 no está en el contrato B → vínculo inválido");
+  });
+});
+
+describe("demandaSillasPorBloqueo + faltanteDeCupos — B21 (ronda 8): capacidad consolidada de TODA la operación, no por ítem", () => {
+  // Se parte de la SALIDA REAL de `consolidarReservasSillasPorBloqueo` (la
+  // misma que recibe el RPC) para que la demanda medida sea la real.
+
+  test("mismo bloqueo, MISMOS pasajeros en dos ítems → demanda ÚNICA (no se duplica)", () => {
+    const reservas = consolidarReservasSillasPorBloqueo([
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
+    ]);
+    const demanda = demandaSillasPorBloqueo([reservas]);
+    assert.equal(demanda.get(10), 2, "mismos [1,2]+[1,2] en un contrato → 2, no 4");
+  });
+
+  test("mismo bloqueo, grupos DISJUNTOS en un contrato → demanda por UNIÓN", () => {
+    const reservas = consolidarReservasSillasPorBloqueo([
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
+      { bloqueoId: 10, posiciones: [3, 4], posicionesConSilla: [3, 4] },
+    ]);
+    assert.equal(demandaSillasPorBloqueo([reservas]).get(10), 4, "disjuntos [1,2]+[3,4] → 4");
+  });
+
+  test("solapamiento parcial → unión sin duplicados", () => {
+    const reservas = consolidarReservasSillasPorBloqueo([
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
+      { bloqueoId: 10, posiciones: [2, 3], posicionesConSilla: [2, 3] },
+    ]);
+    assert.equal(demandaSillasPorBloqueo([reservas]).get(10), 3, "[1,2]+[2,3] → {1,2,3} = 3");
+  });
+
+  test("INF/CHD según la clasificación ya aplicada (posicionesConSilla): un INF sin silla no suma", () => {
+    // El caller decide `posicionesConSilla` con la fecha real del bloqueo (B19);
+    // aquí basta con que la demanda no cuente a quien no ocupa silla.
+    const reservas = consolidarReservasSillasPorBloqueo([
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1] }, // 2 = infante, no ocupa
+    ]);
+    assert.equal(demandaSillasPorBloqueo([reservas]).get(10), 1);
+  });
+
+  test("el MISMO bloqueo usado por VARIOS grupos/contratos de la operación → demanda ACUMULADA (cada contrato reserva por separado)", () => {
+    const grupoA = consolidarReservasSillasPorBloqueo([{ bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] }]);
+    const grupoB = consolidarReservasSillasPorBloqueo([{ bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] }]);
+    // Dos contratos distintos sobre el mismo bloqueo: 2 + 2 = 4 sillas totales,
+    // NO 2 (no se deduplica ENTRE contratos, solo dentro de cada uno).
+    assert.equal(demandaSillasPorBloqueo([grupoA, grupoB]).get(10), 4);
+  });
+
+  test("faltanteDeCupos: ESCENARIO CONCRETO B21 — 3 sillas y dos ítems disjuntos de 2 sobre el mismo bloqueo → RECHAZA (demanda 4 > 3)", () => {
+    const reservas = consolidarReservasSillasPorBloqueo([
+      { bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] },
+      { bloqueoId: 10, posiciones: [3, 4], posicionesConSilla: [3, 4] },
+    ]);
+    const demanda = demandaSillasPorBloqueo([reservas]); // {10: 4}
+    const disponibles = new Map([[10, 3]]);
+    const faltante = faltanteDeCupos(demanda, disponibles);
+    assert.deepEqual(faltante, { bloqueoId: 10, demanda: 4, disponibles: 3 });
+  });
+
+  test("faltanteDeCupos: cabe exacto (demanda == disponibles) → null (no rechaza)", () => {
+    const demanda = new Map([[10, 3]]);
+    assert.equal(faltanteDeCupos(demanda, new Map([[10, 3]])), null);
+  });
+
+  test("faltanteDeCupos: falla CERRADO — un bloqueo con demanda pero SIN fila de disponibilidad cuenta como 0", () => {
+    const demanda = new Map([[10, 1]]);
+    assert.deepEqual(faltanteDeCupos(demanda, new Map()), { bloqueoId: 10, demanda: 1, disponibles: 0 });
+  });
+
+  test("faltanteDeCupos: acumulación entre grupos supera el cupo aunque cada grupo aislado cupiera (3 sillas, dos contratos de 2)", () => {
+    const grupoA = consolidarReservasSillasPorBloqueo([{ bloqueoId: 10, posiciones: [1, 2], posicionesConSilla: [1, 2] }]);
+    const grupoB = consolidarReservasSillasPorBloqueo([{ bloqueoId: 10, posiciones: [5, 6], posicionesConSilla: [5, 6] }]);
+    const demanda = demandaSillasPorBloqueo([grupoA, grupoB]); // {10: 4}
+    // Validar cada grupo aisladamente (2≤3) daría OK falso; acumulado 4>3 rechaza.
+    assert.deepEqual(faltanteDeCupos(demanda, new Map([[10, 3]])), { bloqueoId: 10, demanda: 4, disponibles: 3 });
   });
 });
