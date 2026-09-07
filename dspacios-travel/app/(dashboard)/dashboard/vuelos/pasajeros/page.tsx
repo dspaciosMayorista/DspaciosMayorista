@@ -5,6 +5,7 @@ import { CargaMasivaCSV, type Columna } from "@/components/CargaMasivaCSV";
 import { cargarPasajerosMasivo } from "../actions";
 import { normalizarReferenciaManual, resolverManifiestoAutorizado } from "@/lib/vuelos/contratoManual";
 import { emparejarInfantesConSilla } from "@/lib/vuelos/manifiestoInfantes";
+import { contratosQuePuedeAbrir, numeroContratoEnlazable } from "@/lib/vuelos/enlaceContrato";
 
 export const dynamic = "force-dynamic";
 
@@ -127,6 +128,20 @@ export default async function PasajerosPage() {
     }))
   );
 
+  // Acción "Editar en contrato" del renglón del infante (ver
+  // lib/vuelos/enlaceContrato.ts): se muestra SOLO si el usuario actual puede
+  // abrir ese contrato. Se resuelve EN LOTE, una sola consulta para todos los
+  // infantes del listado, leyendo `ventas` con el cliente de SESIÓN — la
+  // misma consulta que hace la ficha del contrato. La RLS devuelve
+  // exactamente los contratos que este rol/tenant puede abrir (superadmin/
+  // gerencia ambos tenants; administracion/operaciones solo el suyo;
+  // control_vuelo ninguno). El Client Component (PasajerosBuscador) nunca
+  // decide autorización: recibe un booleano ya resuelto por el servidor.
+  const numerosContratosInfantes = [...infantesPorSillaId.values()].flatMap((infs) =>
+    infs.map((inf) => inf.numeroContrato)
+  );
+  const contratosEnlazables = await contratosQuePuedeAbrir(sb, numerosContratosInfantes);
+
   const filasInfantes: PasajeroFila[] = [];
   for (const [sillaId, infs] of infantesPorSillaId) {
     const base = filasSillas.find((f) => f.sillaId === sillaId);
@@ -148,6 +163,11 @@ export default async function PasajerosPage() {
         // real) — no el de `base`, que para un contrato manual resuelto
         // seguiría mostrando "" (el contrato orgánico de esa silla, vacío).
         contrato: inf.numeroContrato,
+        // "Editar en contrato": true SOLO si el usuario actual puede abrir
+        // /dashboard/contratos/[numero] de su contrato — resuelto en el
+        // servidor (contratosEnlazables, ver arriba). El cliente renderiza
+        // el enlace únicamente cuando este flag llega true.
+        puedeEditarEnContrato: numeroContratoEnlazable(inf.numeroContrato, contratosEnlazables) !== null,
       });
     }
   }

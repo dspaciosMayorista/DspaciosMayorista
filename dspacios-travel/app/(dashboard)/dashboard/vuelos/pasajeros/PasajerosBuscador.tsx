@@ -16,6 +16,8 @@ export type PasajeroFila = {
   padreId?: string | null;
   /** Solo en filas de infante: su fecha de nacimiento, para la línea "edad / fecha de nacimiento" del renglón subordinado. */
   fechaNacimientoInfante?: string | null;
+  /** Solo en filas de infante: true cuando el usuario actual puede abrir /dashboard/contratos/[numero] de su contrato. Decidido en el SERVIDOR con la RLS de la sesión (lib/vuelos/enlaceContrato.ts) — este cliente nunca autoriza por rol. */
+  puedeEditarEnContrato?: boolean;
   nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string;
   contrato: string; asesor: string; agencia: string; hotel: string; acomodacion: string;
   bloqueoId: number | null;
@@ -151,6 +153,18 @@ export function PasajerosBuscador({
                         <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombres || "—"}</b></span>
                         <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimientoInfante ?? null, p.fechaIda)}</span>
                         <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
+                        {inf.puedeEditarEnContrato && inf.contrato && (
+                          <>
+                            <span className="text-gray-300" aria-hidden="true">·</span>
+                            <Link
+                              href={`/dashboard/contratos/${inf.contrato}`}
+                              title={`Editar el contrato ${inf.contrato} en su ficha`}
+                              className="font-medium text-[#1D7C9A] hover:underline"
+                            >
+                              Editar en contrato
+                            </Link>
+                          </>
+                        )}
                       </span>
                     </td>
                   </tr>
