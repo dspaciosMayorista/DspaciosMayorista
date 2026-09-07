@@ -15,7 +15,9 @@ import { ControlBloqueoForm } from "./ControlBloqueoForm";
 import { ControlBadges } from "@/components/vuelos/ControlBadges";
 import { normalizarReferenciaManual, resolverManifiestoAutorizado } from "@/lib/vuelos/contratoManual";
 import { emparejarInfantesConSilla, descripcionEdadInfante } from "@/lib/vuelos/manifiestoInfantes";
-import { contratosQuePuedeAbrir, numeroContratoEnlazable } from "@/lib/vuelos/enlaceContrato";
+import { contratosQuePuedeAbrir, enlaceContratoEnVuelo } from "@/lib/vuelos/enlaceContrato";
+import { EnlaceEditarContrato } from "@/components/vuelos/EnlaceEditarContrato";
+import { tenantContext } from "@/lib/tenant.server";
 
 export const dynamic = "force-dynamic";
 
@@ -144,17 +146,25 @@ export default async function BloqueoDetallePage({
   // infantes del manifiesto (nunca una por infante), leyendo `ventas` con el
   // cliente de SESIÓN — la misma consulta que hace la ficha del contrato
   // (app/(dashboard)/dashboard/contratos/[numero]/page.tsx). La RLS devuelve
-  // exactamente los contratos que este rol/tenant puede abrir: superadmin/
+  // exactamente los contratos que este rol/tenant puede abrir Y su tenant
+  // REAL (columna `ventas.tenant`, jamás el prefijo del número): superadmin/
   // gerencia ven ambos tenants, administracion/operaciones solo el suyo, y
   // control_vuelo ninguno (no pasa la policy "lectura operativa", migración
   // 116). Jamás el cliente admin — eso resuelve qué contrato ES una
-  // referencia, no quién puede abrirlo. Un número fuera de ese conjunto no
-  // genera enlace: el renglón informativo queda sin acción y no se revela la
-  // ruta de un contrato cross-tenant que este usuario no podría abrir igual.
+  // referencia, no quién puede abrirlo.
+  //
+  // El selector puro además cierra el caso cross-tenant: un contrato de la
+  // OTRA agencia solo genera enlace si quien lo mira PUEDE cambiar la agencia
+  // activa (solo superadmin, tenantContext). Si no puede cambiarla, abrir el
+  // enlace lo dejaría en la agencia equivocada — fail-closed, sin enlace, sin
+  // revelar la ruta. Quien sí puede cambiar recibe el enlace y el componente
+  // cliente (EnlaceEditarContrato) cambia la agencia ANTES de navegar, con
+  // recarga completa para que layout/sidebar usen la cookie nueva.
+  const { tenant: tenantActivo, puedeCambiar: puedeCambiarTenant } = await tenantContext();
   const numerosContratosInfantes = [...infantesPorSillaId.values()].flatMap((infs) =>
     infs.map((inf) => inf.numeroContrato)
   );
-  const contratosEnlazables = await contratosQuePuedeAbrir(sb, numerosContratosInfantes);
+  const contratosAutorizados = await contratosQuePuedeAbrir(sb, numerosContratosInfantes);
 
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
@@ -274,7 +284,12 @@ export default async function BloqueoDetallePage({
                       {/* Infante(s) a cargo de esta silla — renglón subordinado, sin
                           silla propia: sin estado, sin acciones de silla. */}
                       {(infantesPorSillaId.get(s.id) ?? []).map((inf) => {
-                        const editarEnContrato = numeroContratoEnlazable(inf.numeroContrato, contratosEnlazables);
+                        const enlace = enlaceContratoEnVuelo(
+                          inf.numeroContrato,
+                          contratosAutorizados,
+                          tenantActivo,
+                          puedeCambiarTenant
+                        );
                         return (
                           <tr key={`infante-${inf.id}`} className="border-t border-gray-50 bg-gray-50/60">
                             <td colSpan={13} className="px-3 py-1.5 pl-8 text-xs">
@@ -283,17 +298,12 @@ export default async function BloqueoDetallePage({
                                 <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombre || "—"}</b></span>
                                 <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimiento, b.fecha_ida)}</span>
                                 <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
-                                {editarEnContrato && (
-                                  <>
-                                    <span className="text-gray-300" aria-hidden="true">·</span>
-                                    <Link
-                                      href={`/dashboard/contratos/${editarEnContrato}`}
-                                      title={`Editar el contrato ${editarEnContrato} en su ficha`}
-                                      className="font-medium text-[#1D7C9A] hover:underline"
-                                    >
-                                      Editar en contrato
-                                    </Link>
-                                  </>
+                                {enlace && (
+                                  <EnlaceEditarContrato
+                                    numeroContrato={enlace.numeroContrato}
+                                    tenantContrato={enlace.tenant}
+                                    tenantActivo={tenantActivo}
+                                  />
                                 )}
                               </span>
                             </td>

@@ -5,6 +5,9 @@ import Link from "next/link";
 import { CornerDownRight, TriangleAlert } from "lucide-react";
 import { formatFechaLarga } from "@/lib/utils";
 import { descripcionEdadInfante } from "@/lib/vuelos/manifiestoInfantes";
+import { EnlaceEditarContrato } from "@/components/vuelos/EnlaceEditarContrato";
+import type { EnlaceContratoInfo } from "@/lib/vuelos/enlaceContrato";
+import type { Tenant } from "@/lib/tenant";
 
 export type PasajeroFila = {
   id: string; // clave de fila estable — puede no venir de una silla (infantes)
@@ -16,8 +19,8 @@ export type PasajeroFila = {
   padreId?: string | null;
   /** Solo en filas de infante: su fecha de nacimiento, para la línea "edad / fecha de nacimiento" del renglón subordinado. */
   fechaNacimientoInfante?: string | null;
-  /** Solo en filas de infante: true cuando el usuario actual puede abrir /dashboard/contratos/[numero] de su contrato. Decidido en el SERVIDOR con la RLS de la sesión (lib/vuelos/enlaceContrato.ts) — este cliente nunca autoriza por rol. */
-  puedeEditarEnContrato?: boolean;
+  /** Solo en filas de infante: el contrato que este usuario PUEDE abrir — número interno real + tenant REAL de la venta (`ventas.tenant`, nunca el prefijo del texto). Decidido en el SERVIDOR con la RLS de la sesión (lib/vuelos/enlaceContrato.ts) — este cliente nunca autoriza por rol: solo renderiza el enlace y, si el tenant del contrato difiere del activo, deja que EnlaceEditarContrato cambie de agencia antes de navegar. */
+  enlaceEditarContrato?: EnlaceContratoInfo;
   nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string;
   contrato: string; asesor: string; agencia: string; hotel: string; acomodacion: string;
   bloqueoId: number | null;
@@ -39,10 +42,13 @@ const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,
 export function PasajerosBuscador({
   filas,
   advertenciasInfantes = [],
+  tenantActivo,
 }: {
   filas: PasajeroFila[];
   /** Infantes cuyo responsable no se pudo ubicar en este listado (ver lib/vuelos/manifiestoInfantes.ts) — se avisan aparte, nunca se asocian a un adulto arbitrario. */
   advertenciasInfantes?: { id: number; nombre: string }[];
+  /** Agencia ACTIVA de la sesión (cookie, la misma que muestra el sidebar) — la compara EnlaceEditarContrato contra el tenant REAL del contrato del infante. */
+  tenantActivo: Tenant;
 }) {
   const [q, setQ] = useState("");
   const [fMes, setFMes] = useState("");
@@ -153,17 +159,12 @@ export function PasajerosBuscador({
                         <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombres || "—"}</b></span>
                         <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimientoInfante ?? null, p.fechaIda)}</span>
                         <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
-                        {inf.puedeEditarEnContrato && inf.contrato && (
-                          <>
-                            <span className="text-gray-300" aria-hidden="true">·</span>
-                            <Link
-                              href={`/dashboard/contratos/${inf.contrato}`}
-                              title={`Editar el contrato ${inf.contrato} en su ficha`}
-                              className="font-medium text-[#1D7C9A] hover:underline"
-                            >
-                              Editar en contrato
-                            </Link>
-                          </>
+                        {inf.enlaceEditarContrato && (
+                          <EnlaceEditarContrato
+                            numeroContrato={inf.enlaceEditarContrato.numeroContrato}
+                            tenantContrato={inf.enlaceEditarContrato.tenant}
+                            tenantActivo={tenantActivo}
+                          />
                         )}
                       </span>
                     </td>

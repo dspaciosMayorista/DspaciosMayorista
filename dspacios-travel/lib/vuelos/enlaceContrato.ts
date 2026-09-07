@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../types/database.ts";
+import { esTenant, type Tenant } from "../tenant.ts";
 
 type SB = SupabaseClient<Database>;
 
@@ -9,26 +10,39 @@ type SB = SupabaseClient<Database>;
  *
  * El enlace abre la ficha INTERNA del contrato real al que pertenece el
  * infante (`/dashboard/contratos/{numero_contrato}` — ver
- * `app/(dashboard)/dashboard/contratos/[numero]/page.tsx`). Por eso SOLO debe
- * mostrarse cuando el usuario que está mirando el vuelo puede abrir ese
- * contrato; si no puede, el renglón informativo queda sin acción y no se
- * revela la ruta de un contrato (p. ej. cross-tenant) al que ese rol/tenant
- * no tendría acceso de todos modos.
+ * `app/(dashboard)/dashboard/contratos/[numero]/page.tsx`). Dos decisiones
+ * distintas conviven acá:
  *
- * La pregunta "¿puede este usuario abrir el contrato?" NO es la misma que
- * resuelve `lib/vuelos/contratoManual.ts` (`resolverManifiestoAutorizado`):
- * allá se decide qué contrato ES una referencia manual y hace falta un
- * cliente ADMIN porque la RLS del usuario ocultaría la ambigüedad o la
- * existencia del otro tenant. Acá el número ya es el `numero_contrato` real
- * del infante (sale de `contrato_pasajeros`) y lo único que se decide es el
- * acceso de QUIEN CONSULTA — exactamente lo que responde la RLS del cliente
- * de SESIÓN leyendo `ventas` con la MISMA consulta que hace la ficha del
- * contrato:
- *   - `superadmin`/`gerencia` → ven ambos tenants (`puede_ver_tenant`),
- *   - `administracion`/`operaciones` → solo el de su tenant fijo,
- *   - `control_vuelo`/`venta` → no pasan la policy "lectura operativa"
- *     (migración 116), así que la lectura devuelve 0 filas → nunca enlace.
- * Nunca se usa aquí el cliente admin/service-role.
+ * 1) ¿Puede el usuario que mira el vuelo ABRIR ese contrato? Se responde con
+ *    la RLS del cliente de SESIÓN leyendo `ventas` — la misma consulta que
+ *    hace la ficha del contrato, así que devuelve exactamente las filas que
+ *    ese rol/tenant puede ver:
+ *      - `superadmin`/`gerencia` → ambos tenants,
+ *      - `administracion`/`operaciones` → solo el de su tenant fijo,
+ *      - `control_vuelo`/`venta` → no pasan la policy de lectura de `ventas`
+ *        → 0 filas → nunca enlace.
+ *    La consulta pide `numero_contrato, tenant`: el tenant que se usa es el
+ *    REAL de la fila de `ventas`, jamás el que se lea del texto del número.
+ *
+ * 2) Cuando el contrato pertenece a un tenant distinto del que está ACTIVO en
+ *    la sesión (cookie), el enlace no puede ser una navegación directa: la
+ *    ficha se abriría con la agencia equivocada (sidebar/datos/layout del
+ *    tenant viejo). Abrirla bien exige CAMBIAR la agencia activa primero, y
+ *    solo `superadmin` puede cambiar (`cambiarTenant`, tenant-actions.ts). Por
+ *    eso el selector puro de acá (`enlaceContratoEnVuelo`) falla cerrado ante
+ *    un contrato cross-tenant cuando quien mira NO puede cambiar de agencia:
+ *    un `gerencia` que alcanza a ver el contrato del otro tenant por RLS no
+ *    recibe el enlace (no podría abrirlo en su contexto correcto). Quien SÍ
+ *    puede cambiar (superadmin) recibe el enlace con el tenant real del
+ *    contrato, y el componente cliente
+ *    (`components/vuelos/EnlaceEditarContrato.tsx`) cambia la agencia y recién
+ *    entonces navega con recarga completa.
+ *
+ * La pregunta "¿qué contrato ES una referencia manual?" sigue viviendo en
+ * `lib/vuelos/contratoManual.ts` (`resolverManifiestoAutorizado`), que sí
+ * necesita un cliente ADMIN para ver la tabla COMPLETA y resolver la
+ * ambigüedad oculta por la RLS. Acá NUNCA se usa un cliente admin/service-role:
+ * ese camino decide otra cosa y ocultaría exactamente la frontera de acceso.
  */
 
 /** Recorta espacios; cadena vacía (o solo espacios) se trata como ausente. */
@@ -38,42 +52,77 @@ export function normalizarNumeroContrato(raw: string | null | undefined): string
 }
 
 /**
- * Pura: dado el `numero_contrato` de un infante (número interno REAL, tal
- * cual existe en `ventas` — nunca un crudo de `contrato_manual`) y el
- * conjunto de contratos que el usuario actual puede abrir, devuelve ese
- * número (para enlazarlo) o `null` (sin enlace). Fail-closed: un candidato
- * vacío, o un número que no está en el conjunto autorizado —por no ser una
- * venta o por ser de un tenant que este usuario no puede abrir— NO genera
- * enlace, y nunca se antepone un prefijo por su cuenta.
+ * Contrato que el renglón del infante puede enlazar: el `numero_contrato`
+ * interno REAL (tal cual existe en `ventas`) + el `tenant` REAL de esa venta
+ * (leído de la columna, nunca del texto `MIN-`). Se lo pasa tal cual al
+ * componente cliente, que decide si hace falta cambiar de agencia antes de
+ * navegar.
  */
-export function numeroContratoEnlazable(
+export type EnlaceContratoInfo = {
+  numeroContrato: string;
+  tenant: Tenant;
+};
+
+/**
+ * Pura: dado el `numero_contrato` de un infante y el mapa número→tenant de los
+ * contratos que la RLS de este usuario deja abrir, decide si ese renglón
+ * genera enlace "Editar en contrato" y, si genera, con qué tenant navegar.
+ * Fail-closed, en orden:
+ *   - candidato vacío → null (sin enlace);
+ *   - el número no está en el mapa (no es una venta que la sesión pueda abrir)
+ *     → null, y nunca se antepone ni se quita un prefijo por su cuenta;
+ *   - el contrato es de OTRO tenant y el usuario NO puede cambiar la agencia
+ *     activa (`puedeCambiarTenant`) → null: abrir ese enlace lo dejaría en la
+ *     agencia equivocada, así que no se ofrece.
+ * Devuelve `{ numeroContrato, tenant }` cuando sí se puede abrir en su
+ * contexto (mismo tenant activo, o cross-tenant con permiso de cambiar).
+ */
+export function enlaceContratoEnVuelo(
   candidato: string | null | undefined,
-  autorizados: ReadonlySet<string>
-): string | null {
+  autorizados: ReadonlyMap<string, Tenant>,
+  tenantActivo: Tenant,
+  puedeCambiarTenant: boolean
+): EnlaceContratoInfo | null {
   const numero = normalizarNumeroContrato(candidato);
-  return numero && autorizados.has(numero) ? numero : null;
+  if (!numero) return null;
+  const tenant = autorizados.get(numero);
+  if (!tenant) return null;
+  // Cross-tenant sin permiso de cambiar → fail-closed (ver doc de arriba).
+  if (tenant !== tenantActivo && !puedeCambiarTenant) return null;
+  return { numeroContrato: numero, tenant };
 }
 
 /**
  * IO — resuelve EN LOTE, con una sola consulta a `ventas` por página (nunca
  * una por infante ni por renglón), qué contratos del conjunto puede abrir el
- * usuario de la sesión. Devuelve el conjunto de `numero_contrato` que la RLS
- * le deja ver. Fail-closed: sin candidatos, error de red o RLS que no deje
- * ver nada → conjunto vacío (ningún enlace). Los candidatos repetidos se
+ * usuario de la sesión y a qué tenant pertenece cada uno. Pide
+ * `numero_contrato, tenant` — el tenant que alimenta la decisión cross-tenant
+ * del enlace es el REAL de la fila, nunca el que sugeriría un prefijo. La RLS
+ * del cliente de sesión hace la frontera: devuelve solo las filas que este
+ * rol/tenant puede ver. Fail-closed: sin candidatos, error de red o RLS que
+ * no deje ver nada → mapa vacío (ningún enlace). Los candidatos repetidos se
  * deduplican y los vacíos se descartan aquí, así el llamador puede pasar la
  * lista cruda de todos los infantes del manifiesto.
  */
 export async function contratosQuePuedeAbrir(
   sbSesion: SB,
   numeros: readonly (string | null | undefined)[]
-): Promise<Set<string>> {
+): Promise<Map<string, Tenant>> {
   const unicos = [...new Set(numeros.map(normalizarNumeroContrato).filter((n): n is string => !!n))];
-  if (!unicos.length) return new Set();
+  if (!unicos.length) return new Map();
   try {
-    const { data, error } = await sbSesion.from("ventas").select("numero_contrato").in("numero_contrato", unicos);
-    if (error) return new Set();
-    return new Set((data ?? []).map((v) => v.numero_contrato));
+    const { data, error } = await sbSesion
+      .from("ventas")
+      .select("numero_contrato, tenant")
+      .in("numero_contrato", unicos);
+    if (error) return new Map();
+    const autorizados = new Map<string, Tenant>();
+    for (const v of data ?? []) {
+      const tenant = esTenant(v.tenant) ? v.tenant : null;
+      if (tenant) autorizados.set(v.numero_contrato, tenant);
+    }
+    return autorizados;
   } catch {
-    return new Set();
+    return new Map();
   }
 }
