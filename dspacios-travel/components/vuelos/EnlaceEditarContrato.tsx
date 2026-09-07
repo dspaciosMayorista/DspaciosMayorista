@@ -64,8 +64,12 @@ export function EnlaceEditarContrato({
         return;
       }
       // Navegación/recarga COMPLETA para que layout, sidebar y datos usen la
-      // cookie ya cambiada (el mismo patrón de TenantSwitcher).
-      window.location.assign(href);
+      // cookie ya cambiada (el mismo patrón de TenantSwitcher). La URL se arma
+      // ABSOLUTA concatenando window.location.origin (origen real) con la ruta;
+      // la regla no-location-assign-relative-destination solo mira el prefijo
+      // estático y, al no poder resolver window.location.origin, no la trata
+      // como destino interno relativo — la recarga completa se conserva.
+      window.location.assign(window.location.origin + href);
     } catch {
       setFallo(`No se pudo abrir el contrato ${numeroContrato}. Inténtalo de nuevo.`);
       setOcupado(false);
@@ -77,6 +81,10 @@ export function EnlaceEditarContrato({
       <span className="text-gray-300" aria-hidden="true">·</span>
       <Link
         href={href}
+        // Cross-tenant: sin prefetch — precargar la ficha usaría la cookie de la
+        // agencia ANTERIOR (aún sin cambiar) y renderizaría/fallaría el contrato
+        // en el tenant equivocado. En el mismo tenant se deja el default (true).
+        prefetch={requiereCambio ? false : undefined}
         title={`Editar el contrato ${numeroContrato} en su ficha`}
         aria-disabled={ocupado}
         onClick={(e) => {

@@ -156,19 +156,27 @@ describe("EnlaceEditarContrato.tsx — el cliente reutilizable decide SOLO la me
     assert.ok(idxSinCambio < idxPrevent, "cuando no hace falta cambiar, debe devolverse ANTES de interceptar la navegación del enlace");
   });
 
+  test("el prefetch del Link queda DESACTIVADO solo cuando el contrato es cross-tenant (no precarga la ficha con la cookie de la agencia ANTERIOR); en el mismo tenant se deja el default", () => {
+    assert.match(src, /prefetch=\{requiereCambio \? false : undefined\}/, "cross-tenant → prefetch=false; mismo tenant → default de Next");
+  });
+
   test("tenant distinto → llama (y espera) a la Server Action existente cambiarTenant y navega con recarga COMPLETA solo si responde ok", () => {
     assert.match(src, /import \{ cambiarTenant \} from "@\/app\/\(dashboard\)\/tenant-actions";/, "debe reutilizar la Server Action EXISTENTE cambiarTenant (tenant-actions.ts)");
     const idxRes = src.indexOf("const res = await cambiarTenant(tenantContrato);");
-    const idxAssign = src.indexOf("window.location.assign(href);");
+    const idxAssign = src.indexOf("window.location.assign(");
     assert.ok(idxRes > -1, "debe esperar el resultado de cambiarTenant");
     assert.ok(idxAssign > -1 && idxAssign > idxRes, "debe navegar con recarga COMPLETA solo DESPUÉS de que cambiarTenant respondió");
+    assert.ok(
+      src.slice(idxAssign, idxAssign + 120).includes("window.location.origin"),
+      "la URL de navegación debe armarse ABSOLUTA con window.location.origin (evita el warning no-location-assign-relative sin perder la recarga completa)"
+    );
     assert.match(src, /if \(!res\.ok\) \{/, "debe manejar la respuesta no-ok antes de navegar");
   });
 
   test("si cambiarTenant responde ok:false o lanza, NO navega y muestra un error discreto", () => {
     assert.match(src, /No se pudo abrir/, "debe mostrar un error discreto (mensaje 'No se pudo abrir...') cuando no se puede cambiar");
     const idxNoOk = src.indexOf("if (!res.ok) {");
-    const idxAssign = src.indexOf("window.location.assign(href);");
+    const idxAssign = src.indexOf("window.location.assign(");
     assert.ok(idxNoOk > -1 && idxAssign > idxNoOk, "el camino no-ok debe terminar antes de alcanzar la navegación");
   });
 
