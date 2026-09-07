@@ -121,7 +121,11 @@ describe("PasajerosBuscador.tsx — el cliente renderiza SOLO lo que el servidor
 
   test("el enlace está CONDICIONADO a que el servidor haya autorizado el objeto enlaceEditarContrato", () => {
     const inicio = src.indexOf("No ocupa silla");
-    const bloque = src.slice(inicio, inicio + 800);
+    // Ventana ampliada (migración 168): entre el badge y el enlace ahora
+    // también se renderiza el trigger de edición del infante
+    // (InfanteVueloForm, condicionado a su propio candado) — el enlace
+    // sigue siendo el siguiente condicional después de ese bloque.
+    const bloque = src.slice(inicio, inicio + 1400);
     assert.match(bloque, /\{inf\.enlaceEditarContrato && \(/, "el enlace debe abrirse solo cuando el servidor resolvió el objeto autorizado");
   });
 

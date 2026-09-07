@@ -151,7 +151,9 @@ describe("PasajerosBuscador.tsx — renderizado subordinado (Client Component, c
     const bloque = src.slice(inicio, inicio + 900);
     assert.match(bloque, /CornerDownRight/, "debe usar un ícono conector (lucide-react) para dejar clara la relación con el responsable — nunca un emoji");
     assert.match(bloque, /No ocupa silla/, "debe indicar explícitamente que el infante no ocupa silla");
-    assert.match(bloque, /colSpan=\{10\}/, "debe ocupar el ancho completo de la tabla (10 columnas)");
+    // La tabla ganó una columna "Acciones" (migración 168, alta/edición de
+    // infante directamente desde aquí) — 10 → 11 columnas.
+    assert.match(bloque, /colSpan=\{11\}/, "debe ocupar el ancho completo de la tabla (11 columnas)");
   });
 
   test("REQUERIDO 6: advertencia compacta (no tabla) para infantes sin responsable ubicable, con ícono de alerta", () => {

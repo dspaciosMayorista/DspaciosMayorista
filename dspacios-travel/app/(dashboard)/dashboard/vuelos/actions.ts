@@ -11,6 +11,7 @@ import {
   type EstadoEmision,
   type EstadoPago,
 } from "@/lib/vuelos/control";
+import { validarInfanteVueloInput, type InfanteVueloInput } from "@/lib/vuelos/infanteVuelo";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -786,4 +787,41 @@ export async function cargarPasajerosMasivo(
   }
   revalidatePath("/dashboard/vuelos/pasajeros");
   return { ok: errores.length === 0, insertados, errores };
+}
+
+export type { InfanteVueloInput };
+
+// ── Infante SIN silla, alta/edición directa desde el detalle de un vuelo ───
+// (migración 168, RPC estrecho `guardar_infante_vuelo`). El cliente NUNCA
+// manda numero_contrato/responsable_id: manda la silla CONCRETA del adulto
+// responsable (bloqueoId + sillaResponsableId), tal cual la rindió esta
+// página — el server relee bloqueos_vuelo.fecha_ida, exige que esa silla sea
+// real en ESE bloqueo (autorización estrecha de control_vuelo incluida) y
+// resuelve el contrato/responsable desde cero. La validación de aquí solo
+// adelanta mensajes; el RPC vuelve a validar todo — ver lib/vuelos/infanteVuelo.ts.
+export async function guardarInfanteVuelo(
+  bloqueoId: number,
+  sillaResponsableId: number,
+  infanteId: number | null,
+  input: InfanteVueloInput
+): Promise<Result> {
+  const v = validarInfanteVueloInput(input);
+  if (!v.ok) return v;
+
+  const sb = await createClient();
+  const { error } = await sb.rpc("guardar_infante_vuelo", {
+    p_bloqueo_id: bloqueoId,
+    p_silla_responsable_id: sillaResponsableId,
+    p_infante_id: infanteId,
+    p_nombres: input.nombreCompleto.trim(),
+    p_apellidos: "",
+    p_tipo_doc: input.tipoDoc.trim(),
+    p_numero_doc: input.numeroDoc.trim(),
+    p_fecha_nacimiento: input.fechaNacimiento,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
+  revalidatePath("/dashboard/vuelos/pasajeros");
+  return { ok: true };
 }
