@@ -91,8 +91,12 @@ describe("vuelos/[id]/page.tsx — infante subordinado a su silla responsable", 
   });
 
   test("diseño compacto: el renglón del infante usa texto pequeño (text-xs) y ocupa todo el ancho de la tabla vía colSpan (se mantiene legible dentro del mismo contenedor overflow-x-auto ya usado para escritorio/móvil)", () => {
+    // Ventana generosa: entre el inicio del .map de infantes y su <tr> ahora
+    // cabe la resolución del enlace "Editar en contrato" (enlaceContratoEnVuelo,
+    // PR del enlace cross-tenant); colSpan/text-xs viven en el mismo renglón,
+    // más adelante en esa misma región.
     const inicio = src.indexOf("infantesPorSillaId.get(s.id)");
-    const bloque = src.slice(inicio, inicio + 500);
+    const bloque = src.slice(inicio, inicio + 2000);
     assert.match(bloque, /colSpan=\{13\}/, "debe usar colSpan para ocupar el ancho completo de la tabla (13 columnas)");
     assert.match(bloque, /text-xs/, "el renglón del infante debe usar tipografía compacta (text-xs)");
     assert.match(src, /overflow-x-auto/, "la tabla debe seguir dentro de un contenedor con scroll horizontal para pantallas angostas");

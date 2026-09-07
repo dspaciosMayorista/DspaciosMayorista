@@ -15,6 +15,9 @@ import { ControlBloqueoForm } from "./ControlBloqueoForm";
 import { ControlBadges } from "@/components/vuelos/ControlBadges";
 import { normalizarReferenciaManual, resolverManifiestoAutorizado } from "@/lib/vuelos/contratoManual";
 import { emparejarInfantesConSilla, descripcionEdadInfante } from "@/lib/vuelos/manifiestoInfantes";
+import { contratosQuePuedeAbrir, enlaceContratoEnVuelo } from "@/lib/vuelos/enlaceContrato";
+import { EnlaceEditarContrato } from "@/components/vuelos/EnlaceEditarContrato";
+import { tenantContext } from "@/lib/tenant.server";
 
 export const dynamic = "force-dynamic";
 
@@ -137,6 +140,32 @@ export default async function BloqueoDetallePage({
     }))
   );
 
+  // Acción "Editar en contrato" del renglón del infante (ver
+  // lib/vuelos/enlaceContrato.ts): se muestra SOLO si el usuario actual puede
+  // abrir ese contrato. Se resuelve EN LOTE, una sola consulta para todos los
+  // infantes del manifiesto (nunca una por infante), leyendo `ventas` con el
+  // cliente de SESIÓN — la misma consulta que hace la ficha del contrato
+  // (app/(dashboard)/dashboard/contratos/[numero]/page.tsx). La RLS devuelve
+  // exactamente los contratos que este rol/tenant puede abrir Y su tenant
+  // REAL (columna `ventas.tenant`, jamás el prefijo del número): superadmin/
+  // gerencia ven ambos tenants, administracion/operaciones solo el suyo, y
+  // control_vuelo ninguno (no pasa la policy "lectura operativa", migración
+  // 116). Jamás el cliente admin — eso resuelve qué contrato ES una
+  // referencia, no quién puede abrirlo.
+  //
+  // El selector puro además cierra el caso cross-tenant: un contrato de la
+  // OTRA agencia solo genera enlace si quien lo mira PUEDE cambiar la agencia
+  // activa (solo superadmin, tenantContext). Si no puede cambiarla, abrir el
+  // enlace lo dejaría en la agencia equivocada — fail-closed, sin enlace, sin
+  // revelar la ruta. Quien sí puede cambiar recibe el enlace y el componente
+  // cliente (EnlaceEditarContrato) cambia la agencia ANTES de navegar, con
+  // recarga completa para que layout/sidebar usen la cookie nueva.
+  const { tenant: tenantActivo, puedeCambiar: puedeCambiarTenant } = await tenantContext();
+  const numerosContratosInfantes = [...infantesPorSillaId.values()].flatMap((infs) =>
+    infs.map((inf) => inf.numeroContrato)
+  );
+  const contratosAutorizados = await contratosQuePuedeAbrir(sb, numerosContratosInfantes);
+
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
       <Link href="/dashboard/vuelos" className="text-sm text-gray-400 hover:text-gray-600">← Vuelos</Link>
@@ -254,18 +283,33 @@ export default async function BloqueoDetallePage({
                       </tr>
                       {/* Infante(s) a cargo de esta silla — renglón subordinado, sin
                           silla propia: sin estado, sin acciones de silla. */}
-                      {(infantesPorSillaId.get(s.id) ?? []).map((inf) => (
-                        <tr key={`infante-${inf.id}`} className="border-t border-gray-50 bg-gray-50/60">
-                          <td colSpan={13} className="px-3 py-1.5 pl-8 text-xs">
-                            <span className="inline-flex flex-wrap items-center gap-1.5 text-gray-600">
-                              <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-gray-300" aria-hidden="true" />
-                              <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombre || "—"}</b></span>
-                              <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimiento, b.fecha_ida)}</span>
-                              <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {(infantesPorSillaId.get(s.id) ?? []).map((inf) => {
+                        const enlace = enlaceContratoEnVuelo(
+                          inf.numeroContrato,
+                          contratosAutorizados,
+                          tenantActivo,
+                          puedeCambiarTenant
+                        );
+                        return (
+                          <tr key={`infante-${inf.id}`} className="border-t border-gray-50 bg-gray-50/60">
+                            <td colSpan={13} className="px-3 py-1.5 pl-8 text-xs">
+                              <span className="inline-flex flex-wrap items-center gap-1.5 text-gray-600">
+                                <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-gray-300" aria-hidden="true" />
+                                <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombre || "—"}</b></span>
+                                <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimiento, b.fecha_ida)}</span>
+                                <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
+                                {enlace && (
+                                  <EnlaceEditarContrato
+                                    numeroContrato={enlace.numeroContrato}
+                                    tenantContrato={enlace.tenant}
+                                    tenantActivo={tenantActivo}
+                                  />
+                                )}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </Fragment>
                   ))}
                 </tbody>

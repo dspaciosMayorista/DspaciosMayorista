@@ -5,6 +5,8 @@ import { CargaMasivaCSV, type Columna } from "@/components/CargaMasivaCSV";
 import { cargarPasajerosMasivo } from "../actions";
 import { normalizarReferenciaManual, resolverManifiestoAutorizado } from "@/lib/vuelos/contratoManual";
 import { emparejarInfantesConSilla } from "@/lib/vuelos/manifiestoInfantes";
+import { contratosQuePuedeAbrir, enlaceContratoEnVuelo } from "@/lib/vuelos/enlaceContrato";
+import { tenantContext } from "@/lib/tenant.server";
 
 export const dynamic = "force-dynamic";
 
@@ -127,11 +129,38 @@ export default async function PasajerosPage() {
     }))
   );
 
+  // Acción "Editar en contrato" del renglón del infante (ver
+  // lib/vuelos/enlaceContrato.ts): se muestra SOLO si el usuario actual puede
+  // abrir ese contrato. Se resuelve EN LOTE, una sola consulta para todos los
+  // infantes del listado, leyendo `ventas` con el cliente de SESIÓN — la
+  // misma consulta que hace la ficha del contrato. La RLS devuelve
+  // exactamente los contratos que este rol/tenant puede abrir Y su tenant
+  // REAL (columna `ventas.tenant`, jamás el prefijo del número): superadmin/
+  // gerencia ambos tenants; administracion/operaciones solo el suyo;
+  // control_vuelo ninguno. El selector puro además fail-closed contra el caso
+  // cross-tenant: un contrato de la otra agencia solo genera enlace si quien
+  // mira PUEDE cambiar la agencia activa (solo superadmin); si no puede, no se
+  // ofrece el enlace (abrirlo lo dejaría en la agencia equivocada). El flag
+  // que baja al cliente no es un booleano: es el objeto numeroContrato+tenant
+  // reales, que PasajerosBuscador pasa tal cual a EnlaceEditarContrato (que
+  // cambia la agencia ANTES de navegar cuando el tenant difiere).
+  const { tenant: tenantActivo, puedeCambiar: puedeCambiarTenant } = await tenantContext();
+  const numerosContratosInfantes = [...infantesPorSillaId.values()].flatMap((infs) =>
+    infs.map((inf) => inf.numeroContrato)
+  );
+  const contratosAutorizados = await contratosQuePuedeAbrir(sb, numerosContratosInfantes);
+
   const filasInfantes: PasajeroFila[] = [];
   for (const [sillaId, infs] of infantesPorSillaId) {
     const base = filasSillas.find((f) => f.sillaId === sillaId);
     if (!base) continue; // no debería pasar (emparejarInfantesConSilla solo recibió sillas de filasSillas) — fail-closed igual.
     for (const inf of infs) {
+      const enlace = enlaceContratoEnVuelo(
+        inf.numeroContrato,
+        contratosAutorizados,
+        tenantActivo,
+        puedeCambiarTenant
+      );
       filasInfantes.push({
         ...base,
         id: `infante-${inf.id}`,
@@ -148,6 +177,13 @@ export default async function PasajerosPage() {
         // real) — no el de `base`, que para un contrato manual resuelto
         // seguiría mostrando "" (el contrato orgánico de esa silla, vacío).
         contrato: inf.numeroContrato,
+        // "Editar en contrato": SOLO si el usuario actual puede abrir la ficha
+        // de su contrato — decidido en el servidor sobre el mapa autorizado
+        // (contratosAutorizados, ver arriba) y con el tenant REAL del contrato,
+        // que el cliente usa para saber si hay que cambiar de agencia antes de
+        // navegar. El cliente (PasajerosBuscador → EnlaceEditarContrato) no
+        // autoriza por rol: recibe el objeto ya decidido por el servidor.
+        enlaceEditarContrato: enlace ?? undefined,
       });
     }
   }
@@ -179,7 +215,7 @@ export default async function PasajerosPage() {
         />
       </div>
 
-      <PasajerosBuscador filas={filas} advertenciasInfantes={advertenciasInfantes} />
+      <PasajerosBuscador filas={filas} advertenciasInfantes={advertenciasInfantes} tenantActivo={tenantActivo} />
     </div>
   );
 }
