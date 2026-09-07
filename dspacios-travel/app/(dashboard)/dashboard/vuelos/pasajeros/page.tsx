@@ -4,6 +4,7 @@ import { PasajerosBuscador, type PasajeroFila } from "./PasajerosBuscador";
 import { CargaMasivaCSV, type Columna } from "@/components/CargaMasivaCSV";
 import { cargarPasajerosMasivo } from "../actions";
 import { normalizarReferenciaManual, resolverManifiestoAutorizado } from "@/lib/vuelos/contratoManual";
+import { emparejarInfantesConSilla } from "@/lib/vuelos/manifiestoInfantes";
 
 export const dynamic = "force-dynamic";
 
@@ -94,37 +95,65 @@ export default async function PasajerosPage() {
       };
     });
 
-  // Infantes (no ocupan silla — ver lib/reservar/pasajeros.ts — pero deben
-  // seguir apareciendo en este listado), ya resueltos por
-  // `resolverManifiestoAutorizado` (organic + contrato_manual, vía admin
-  // client, tras autorizar) — heredan el vuelo/record/hotel/asesor de la
-  // silla "base" de su mismo contrato efectivo, igual que antes. Un
-  // contrato cuyas sillas no tienen ningún pasajero con nombre (sin `base`)
-  // simplemente no produce fila — se ignora aquí, no en la consulta.
+  // Presentación: cada infante debe aparecer como renglón subordinado
+  // INMEDIATAMENTE debajo de la fila de su adulto responsable — nunca en una
+  // tabla aparte. La agrupación es exclusivamente por `responsable_id`
+  // (resuelto a su documento en resolverManifiestoAutorizado, nunca a su
+  // nombre), emparejado contra el documento+contrato EFECTIVO de las sillas
+  // CON pasajero (`filasSillas`) — ver lib/vuelos/manifiestoInfantes.ts. Se
+  // usa `filasSillas` (no todas las `sillas`) para que, si el emparejamiento
+  // encuentra una silla, esa silla exista siempre como fila renderizable
+  // (`base` más abajo nunca falla). Si el responsable no viaja en este
+  // listado (o su documento no cruza con ninguna silla nombrada), el
+  // infante no se asocia arbitrariamente: cae en `sinResponsable` para la
+  // advertencia compacta de `PasajerosBuscador`.
+  const { infantesPorSillaId, sinResponsable } = emparejarInfantesConSilla(
+    filasSillas
+      .filter((f) => f.sillaId != null)
+      .map((f) => ({
+        id: f.sillaId as number,
+        tipoDoc: f.tipoDoc || null,
+        numeroDoc: f.numeroDoc || null,
+        contratoEfectivo: contratoEfectivoPorSilla.get(f.sillaId as number) ?? null,
+      })),
+    infantes.map((i) => ({
+      id: i.id,
+      nombre: i.nombre,
+      tipoId: i.tipo_id,
+      identificacion: i.identificacion,
+      numeroContrato: i.numero_contrato,
+      fechaNacimiento: i.fecha_nacimiento,
+      responsable: i.responsable ? { id: i.responsable.id, tipoId: i.responsable.tipo_id, identificacion: i.responsable.identificacion } : null,
+    }))
+  );
+
   const filasInfantes: PasajeroFila[] = [];
-  for (const inf of infantes) {
-    const base = filasSillas.find(
-      (f) => f.sillaId != null && contratoEfectivoPorSilla.get(f.sillaId) === inf.numero_contrato
-    );
-    if (!base) continue;
-    filasInfantes.push({
-      ...base,
-      id: `infante-${inf.id}`,
-      sillaId: null,
-      esInfante: true,
-      estado: "infante",
-      nombres: inf.nombre ?? "",
-      apellidos: "",
-      tipoDoc: inf.tipo_id ?? "",
-      numeroDoc: inf.identificacion ?? "",
-      // Contrato PROPIO del infante (siempre el numero_contrato interno
-      // real) — no el de `base`, que para un contrato manual resuelto
-      // seguiría mostrando "" (el contrato orgánico de esa silla, vacío).
-      contrato: inf.numero_contrato,
-    });
+  for (const [sillaId, infs] of infantesPorSillaId) {
+    const base = filasSillas.find((f) => f.sillaId === sillaId);
+    if (!base) continue; // no debería pasar (emparejarInfantesConSilla solo recibió sillas de filasSillas) — fail-closed igual.
+    for (const inf of infs) {
+      filasInfantes.push({
+        ...base,
+        id: `infante-${inf.id}`,
+        padreId: base.id,
+        sillaId: null,
+        esInfante: true,
+        estado: "infante",
+        nombres: inf.nombre ?? "",
+        apellidos: "",
+        tipoDoc: inf.tipoId ?? "",
+        numeroDoc: inf.identificacion ?? "",
+        fechaNacimientoInfante: inf.fechaNacimiento,
+        // Contrato PROPIO del infante (siempre el numero_contrato interno
+        // real) — no el de `base`, que para un contrato manual resuelto
+        // seguiría mostrando "" (el contrato orgánico de esa silla, vacío).
+        contrato: inf.numeroContrato,
+      });
+    }
   }
 
   const filas: PasajeroFila[] = [...filasSillas, ...filasInfantes];
+  const advertenciasInfantes = sinResponsable.map((inf) => ({ id: inf.id, nombre: inf.nombre }));
 
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
@@ -150,7 +179,7 @@ export default async function PasajerosPage() {
         />
       </div>
 
-      <PasajerosBuscador filas={filas} />
+      <PasajerosBuscador filas={filas} advertenciasInfantes={advertenciasInfantes} />
     </div>
   );
 }

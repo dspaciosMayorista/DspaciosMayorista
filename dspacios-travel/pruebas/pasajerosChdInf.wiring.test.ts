@@ -604,7 +604,7 @@ test("vuelos/[id]/page.tsx (detalle de un record) también trae los infantes de 
   const src = leer("app/(dashboard)/dashboard/vuelos/[id]/page.tsx");
   assert.match(src, /resolverManifiestoAutorizado\(/, "no llama a resolverManifiestoAutorizado — sin eso, los infantes no se resuelven");
   assert.doesNotMatch(src, /from\(\s*["']contrato_pasajeros["']\s*\)/, "no debe consultar contrato_pasajeros directamente (con el cliente de sesión) — esa lectura vive en el módulo autorizado");
-  assert.match(src, /infantesBloqueo/, "no expone los infantes del bloqueo a la vista");
+  assert.match(src, /infantesPorSillaId/, "no expone los infantes del bloqueo a la vista (agrupados por silla del responsable)");
 });
 
 test("vuelos/[id]/page.tsx NO inyecta infantes dentro de la tabla de sillas (evita exponer acciones de silla sobre una fila que no tiene silla real)", () => {

@@ -13,6 +13,16 @@ export type InfantePasajero = {
   tipo_id: string | null;
   identificacion: string | null;
   numero_contrato: string;
+  fecha_nacimiento: string | null;
+  /**
+   * Adulto responsable (`contrato_pasajeros.responsable_id`, migración 167),
+   * resuelto a su documento — nunca a su nombre. `null` si el infante no
+   * tiene `responsable_id` o si esa fila ya no existe (no debería pasar, la
+   * FK es `on delete restrict`, pero se tolera para no reventar el
+   * manifiesto). Quien empareja este documento con una silla concreta del
+   * manifiesto es `lib/vuelos/manifiestoInfantes.ts`, no este módulo.
+   */
+  responsable: { id: number; tipo_id: string | null; identificacion: string | null } | null;
 };
 
 /**
@@ -179,7 +189,11 @@ export async function usuarioAutorizadoParaVuelos(sbSesion: SB): Promise<boolean
  *    siempre, la vea o no el tenant del usuario.
  * 3) Con el MISMO cliente admin, trae los infantes de TODOS los contratos
  *    (orgánicos + resueltos) — así el infante de un contrato del otro
- *    tenant también se MUESTRA, no solo se detecta que existe.
+ *    tenant también se MUESTRA, no solo se detecta que existe. Junto con
+ *    cada infante trae el DOCUMENTO de su `responsable_id` (migración 167,
+ *    otra consulta agrupada, mismo admin) — nunca su nombre — para que la
+ *    página pueda ubicarlo bajo la silla exacta de su responsable dentro
+ *    del manifiesto (ver `lib/vuelos/manifiestoInfantes.ts`).
  *
  * `crearClienteAdmin` es un punto de inyección para pruebas (por defecto,
  * `createAdminClient` real) — nunca se expone ni se usa fuera de este
@@ -219,9 +233,36 @@ export async function resolverManifiestoAutorizado(
 
   const { data } = await admin
     .from("contrato_pasajeros")
-    .select("id, nombre, tipo_id, identificacion, numero_contrato")
+    .select("id, nombre, tipo_id, identificacion, numero_contrato, fecha_nacimiento, responsable_id")
     .eq("es_infante", true)
     .in("numero_contrato", contratos);
 
-  return { infantes: data ?? [], referenciaManualPorContrato };
+  const crudos = data ?? [];
+
+  // Segunda lectura, MISMO cliente admin ya autorizado: el documento del
+  // responsable de cada infante — nunca su nombre — para que la página
+  // pueda ubicar la silla exacta (ver lib/vuelos/manifiestoInfantes.ts).
+  // Una sola consulta agrupada por todos los responsable_id distintos,
+  // igual criterio que buscarNumerosContratoExistentes (evita N consultas).
+  const responsableIds = [...new Set(crudos.map((i) => i.responsable_id).filter((id): id is number => id != null))];
+  const responsablesPorId = new Map<number, { id: number; tipo_id: string | null; identificacion: string | null }>();
+  if (responsableIds.length) {
+    const { data: responsables } = await admin
+      .from("contrato_pasajeros")
+      .select("id, tipo_id, identificacion")
+      .in("id", responsableIds);
+    for (const r of responsables ?? []) responsablesPorId.set(r.id, r);
+  }
+
+  const infantes: InfantePasajero[] = crudos.map((i) => ({
+    id: i.id,
+    nombre: i.nombre,
+    tipo_id: i.tipo_id,
+    identificacion: i.identificacion,
+    numero_contrato: i.numero_contrato,
+    fecha_nacimiento: i.fecha_nacimiento,
+    responsable: i.responsable_id != null ? responsablesPorId.get(i.responsable_id) ?? null : null,
+  }));
+
+  return { infantes, referenciaManualPorContrato };
 }

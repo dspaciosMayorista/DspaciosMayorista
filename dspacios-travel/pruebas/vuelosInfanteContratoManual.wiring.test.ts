@@ -25,7 +25,7 @@ describe("vuelos/[id]/page.tsx — infantes de contratos asociados por contrato_
   test("importa resolverManifiestoAutorizado (no la variante vulnerable ni una reimplementación inline)", () => {
     assert.match(
       src,
-      /import \{ resolverManifiestoAutorizado \} from "@\/lib\/vuelos\/contratoManual";/,
+      /import \{[^}]*\bresolverManifiestoAutorizado\b[^}]*\} from "@\/lib\/vuelos\/contratoManual";/,
       "no importa resolverManifiestoAutorizado desde el módulo compartido"
     );
     assert.doesNotMatch(
@@ -68,16 +68,30 @@ describe("vuelos/[id]/page.tsx — infantes de contratos asociados por contrato_
     );
   });
 
-  test("REQUERIDO: contratosOrganicosDelBloqueo está deduplicado (Set) y el manifiesto (infantesBloqueo) no ocupa silla al renderizarse", () => {
+  test("REQUERIDO: contratosOrganicosDelBloqueo está deduplicado (Set) y el manifiesto de infantes se resuelve con el módulo compartido de agrupación", () => {
     const inicio = src.indexOf("const contratosOrganicosDelBloqueo");
     const bloque = src.slice(inicio, inicio + 250);
     assert.match(bloque, /new Set\(/, "contratosOrganicosDelBloqueo debe deduplicarse");
-    // El manifiesto se renderiza en una tabla propia, separada de la de
-    // sillas, y nunca alimenta una operación de silla (cambiar/liberar).
-    const inicioTabla = src.indexOf("infantesBloqueo.length > 0");
-    assert.ok(inicioTabla > -1, "no renderiza el manifiesto de infantes en una sección propia");
-    const bloqueTabla = src.slice(inicioTabla, inicioTabla + 900);
-    assert.doesNotMatch(bloqueTabla, /sillaId/, "el renderizado de infantesBloqueo no debe referenciar sillaId — un infante nunca ocupa silla");
+    assert.match(
+      src,
+      /emparejarInfantesConSilla\(/,
+      "no delega el emparejamiento infante↔silla en lib/vuelos/manifiestoInfantes.ts"
+    );
+  });
+
+  test("REQUERIDO: el renglón subordinado del infante (interpolado junto a su silla) no ocupa silla ni tiene acciones de silla", () => {
+    // El renglón vive DENTRO del mismo <tbody> que las sillas (interpolado
+    // tras cada silla), nunca en una <table> propia.
+    const inicioRenglon = src.indexOf("infantesPorSillaId.get(s.id)");
+    assert.ok(inicioRenglon > -1, "no renderiza el renglón subordinado del infante junto a su silla (infantesPorSillaId.get(s.id))");
+    const bloqueRenglon = src.slice(inicioRenglon, inicioRenglon + 700);
+    assert.doesNotMatch(bloqueRenglon, /sillaId:/, "el renglón subordinado del infante no debe asignarle un sillaId — un infante nunca ocupa silla");
+    assert.doesNotMatch(bloqueRenglon, /<table/i, "el renglón subordinado no debe vivir dentro de una tabla propia");
+    assert.doesNotMatch(
+      bloqueRenglon,
+      /PasajeroAcciones|SillaEstado|SillaContrato/,
+      "el renglón del infante no debe tener acciones de silla (editar/mover/borrar) ni estado de silla"
+    );
   });
 });
 
@@ -130,21 +144,21 @@ describe("vuelos/pasajeros/page.tsx — infantes de contratos asociados por cont
     );
   });
 
-  test("el emparejamiento infante↔silla-base usa el contrato efectivo (si no, el infante nunca hereda vuelo/hotel/asesor cuando el adulto está en una silla manual)", () => {
-    const inicio = src.indexOf("for (const inf of infantes)");
-    assert.ok(inicio > -1, "no itera 'for (const inf of infantes)' sobre el resultado de resolverManifiestoAutorizado");
-    const bloque = src.slice(inicio, inicio + 400);
+  test("el emparejamiento infante↔silla usa el contrato EFECTIVO de cada silla (si no, el infante nunca hereda vuelo/hotel/asesor cuando el adulto está en una silla manual) — delegado en emparejarInfantesConSilla", () => {
+    const inicio = src.indexOf("emparejarInfantesConSilla(");
+    assert.ok(inicio > -1, "no llama a emparejarInfantesConSilla");
+    const bloque = src.slice(inicio, inicio + 500);
     assert.match(
       bloque,
-      /contratoEfectivoPorSilla\.get\(f\.sillaId\)\s*===\s*inf\.numero_contrato/,
-      "el 'find' de la silla base debe comparar contratoEfectivoPorSilla.get(f.sillaId) === inf.numero_contrato"
+      /contratoEfectivoPorSilla\.get\(f\.sillaId as number\)/,
+      "no pasa el contrato EFECTIVO de cada silla (contratoEfectivoPorSilla) al emparejamiento — el infante de una silla manual resuelta nunca encontraría a su responsable"
     );
   });
 
   test("el infante muestra su propio numero_contrato interno (no el de la silla, que para un contrato manual resuelto queda vacío)", () => {
     const inicio = src.indexOf("filasInfantes.push");
     const bloque = src.slice(inicio, inicio + 700);
-    assert.match(bloque, /contrato:\s*inf\.numero_contrato/, "no sobreescribe 'contrato' con el numero_contrato propio del infante");
+    assert.match(bloque, /contrato:\s*inf\.numeroContrato/, "no sobreescribe 'contrato' con el numero_contrato propio del infante");
   });
 
   test("NO escribe/actualiza sillas.contrato_manual en ningún punto de este archivo (solo lectura)", () => {
@@ -155,19 +169,19 @@ describe("vuelos/pasajeros/page.tsx — infantes de contratos asociados por cont
     );
   });
 
-  test("REQUERIDO: el infante nunca ocupa silla (sillaId: null) y aparece a lo sumo una vez por infante (un push por elemento de `infantes`, no por silla)", () => {
+  test("REQUERIDO: el infante nunca ocupa silla (sillaId: null) y aparece a lo sumo una vez (particionado por emparejarInfantesConSilla, nunca duplicado entre sillas)", () => {
     const inicio = src.indexOf("filasInfantes.push");
     const bloque = src.slice(inicio, inicio + 700);
     assert.match(bloque, /sillaId:\s*null/, "el infante debe seguir sin ocupar silla");
-    // La única fuente de la iteración que produce cada `filasInfantes.push`
-    // es `for (const inf of infantes)` — cada `inf` es una fila real de
-    // `contrato_pasajeros` (ya deduplicada dentro de resolverManifiestoAutorizado
-    // por numero_contrato), nunca una por silla del contrato (que sí podría
-    // repetirse si varios adultos comparten contrato). El `.find()` toma la
-    // PRIMERA silla que coincida y nunca vuelve a iterar sobre las demás para
-    // el MISMO infante.
-    const inicioLoop = src.indexOf("for (const inf of infantes)");
-    assert.ok(inicioLoop > -1 && inicioLoop < inicio, "el push de infantes debe estar dentro del for (const inf of infantes)");
+    // `infantesPorSillaId` (lib/vuelos/manifiestoInfantes.ts) particiona cada
+    // infante en, a lo sumo, UNA silla — nunca lo duplica entre varias, así
+    // que iterar sus entradas y luego sus infantes nunca repite un infante.
+    const inicioLoopExterno = src.indexOf("for (const [sillaId, infs] of infantesPorSillaId)");
+    const inicioLoopInterno = src.indexOf("for (const inf of infs)");
+    assert.ok(
+      inicioLoopExterno > -1 && inicioLoopInterno > inicioLoopExterno && inicio > inicioLoopInterno,
+      "el push de infantes debe estar anidado dentro de for (const [sillaId, infs] of infantesPorSillaId) { for (const inf of infs) { ... } }"
+    );
   });
 });
 
