@@ -413,7 +413,7 @@ test("migración 167 (B22, ronda 10): el trigger DERIVA es_infante de la fecha d
   );
 });
 
-test("migración 167 (B22): la fecha de referencia se resuelve con UNA sola función compartida, y el respaldo externo se acota a ±1 día", () => {
+test("migración 167 (B22/B23): la fecha de referencia se resuelve con UNA sola función compartida y SIN ninguna entrada externa", () => {
   const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
   // Fuente única: si la fórmula se volviera a escribir a mano en alguno de
   // los dos sitios, núcleo y trigger podrían desincronizarse otra vez.
@@ -424,25 +424,58 @@ test("migración 167 (B22): la fecha de referencia se resuelve con UNA sola func
   );
   assert.match(
     src,
-    /v_ref_efectiva := public\._fecha_referencia_efectiva\(v_ref_fecha, p_fecha_referencia_fallback\);/,
-    "el núcleo dejó de usar la resolución compartida"
+    /v_ref_efectiva := public\._fecha_referencia_efectiva\(v_ref_fecha\);/,
+    "el núcleo dejó de usar la resolución compartida (o volvió a pasarle un respaldo externo)"
   );
   assert.match(
     src,
-    /v_fecha_ref := public\._fecha_referencia_efectiva\(v_fecha_sal, public\._fecha_referencia_guc\(\)\);/,
-    "el trigger dejó de usar la resolución compartida"
+    /v_fecha_ref := public\._fecha_referencia_efectiva\(v_fecha_sal\);/,
+    "el trigger dejó de usar la resolución compartida (o volvió a pasarle un respaldo externo)"
   );
-  // El clamp es el candado: la GUC `app.*` la puede fijar cualquier rol.
+  // ⚠️ B23 — LA PROCEDENCIA. El clamp de ±1 día que existía entre B22 y B23
+  // NO bastaba: en un cumpleaños de frontera un solo día cambia si alguien es
+  // infante (y por tanto si exige responsable y si consume silla) o si un
+  // responsable ya es mayor de edad. La resolución debe ser exactamente
+  // `coalesce(fecha_salida, current_date)`, sin parámetro de respaldo.
   assert.match(
     src,
-    /if p_fallback is not null and abs\(p_fallback - v_hoy\) <= 1 then/,
-    "desapareció el clamp de ±1 día: un respaldo arbitrario (GUC o parámetro) podría reubicar la referencia y hacer pasar un infante real por no-infante"
+    /select coalesce\(p_fecha_salida, current_date\);/,
+    "la resolución dejó de ser fecha_salida→current_date: si volvió a aceptar un respaldo externo, el agujero de B23 está reabierto"
   );
-  // La lectura de la GUC no puede tumbar una escritura por basura.
+  assert.doesNotMatch(
+    src,
+    /abs\(p_fallback - v_hoy\)/,
+    "volvió el clamp de ±1 día: acotar el rango no arregla la procedencia (B23)"
+  );
+  // Ninguna función puede volver a LEER ni PUBLICAR la GUC: era el canal que
+  // el propio escritor podía fijar. (Se buscan las formas de CÓDIGO, no
+  // cualquier mención: los comentarios de la migración explican justamente
+  // por qué se eliminó y deben poder nombrarla.)
+  assert.doesNotMatch(
+    src,
+    /current_setting\(\s*'app\.fecha_referencia_efectiva'/,
+    "la migración vuelve a LEER la GUC app.fecha_referencia_efectiva — una fecha que el escritor puede fijar no puede ser autoridad"
+  );
+  assert.doesNotMatch(
+    src,
+    /set_config\(\s*'app\.fecha_referencia_efectiva'/,
+    "la migración vuelve a PUBLICAR la GUC app.fecha_referencia_efectiva: si nadie debe leerla, tampoco hay que escribirla"
+  );
+  assert.doesNotMatch(
+    src,
+    /(create or replace function|drop function)[^\n]*_fecha_referencia_guc/,
+    "reapareció _fecha_referencia_guc (el canal manipulable se eliminó en B23, no se acotó)"
+  );
+  assert.doesNotMatch(
+    src,
+    /p_fecha_referencia_fallback\s+date/,
+    "reapareció el parámetro p_fecha_referencia_fallback: la app no puede volver a imponerle su fecha a la base"
+  );
+  // El camino correcto es el inverso: la app LEE el reloj de la base.
   assert.match(
     src,
-    /create or replace function public\._fecha_referencia_guc\(/,
-    "no existe la lectura segura de la GUC"
+    /create or replace function public\.fecha_referencia_servidor\(\)/,
+    "no existe fecha_referencia_servidor(): sin ella la app no puede prevalidar con el mismo reloj que usa la escritura"
   );
 });
 
@@ -726,22 +759,43 @@ test("B20 (ronda 8) + B-fix (ronda 9): la pre-validación llama a la orquestaci�
   );
 });
 
-test("B-fix (ronda 9): la referencia de fecha para la clasificación NUNCA es null — cae a hoyISO, calculado UNA sola vez, y se manda explícita al RPC", () => {
+test("B23 (ronda 11): la referencia de fecha NUNCA es null y sale del RELOJ DE LA BASE, no del proceso de Node ni de un fallback inyectado", () => {
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
   const inicio = src.indexOf("export async function convertirCotizacionCarrito");
   const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
-  // fechaRefPre/fechaRefGrupo ya NO caen a `null` — caen a `hoyISO` (nunca
-  // `new Date()` re-calculado ad-hoc dentro del bloque de pre-validación o
-  // de creación).
-  assert.doesNotMatch(bloque, /fechasIdaPre\[0\] \?\? null/, "fechaRefPre sigue cayendo a null en vez de hoyISO");
-  assert.doesNotMatch(bloque, /fechasIda\[0\] \?\? null(?!,)/, "fechaRefGrupo sigue cayendo a null en vez de hoyISO");
-  assert.match(bloque, /const fechaRefPre = fechasIdaPre\[0\] \?\? hoyISO;/, "fechaRefPre no cae a hoyISO cuando el grupo no tiene fecha");
-  assert.match(bloque, /const fechaRefGrupo = fechasIda\[0\] \?\? hoyISO;/, "fechaRefGrupo no cae a hoyISO cuando el grupo no tiene fecha");
+  // La referencia se LEE de Postgres una sola vez, y falla cerrado si no se
+  // puede leer (caer al reloj de Node reintroduciría la divergencia).
+  assert.match(
+    bloque,
+    /\.rpc\("fecha_referencia_servidor"\)/,
+    "la Server Action ya no lee el reloj de la base: si vuelve a calcular su propio 'hoy', la prevalidación puede discrepar de la escritura"
+  );
+  assert.match(
+    bloque,
+    /const hoyServidor: string = fechaServidor;/,
+    "no se conserva la fecha del servidor de base en una única constante"
+  );
+  assert.doesNotMatch(
+    bloque,
+    /const hoyISO = new Date\(\)/,
+    "volvió el 'hoy' calculado con new Date() en este flujo — la fecha de clasificación debe venir de Postgres (B23)"
+  );
+  // fechaRefPre/fechaRefGrupo caen a la fecha del servidor de base, nunca a
+  // null ni a un new Date() ad-hoc.
+  assert.doesNotMatch(bloque, /fechasIdaPre\[0\] \?\? null/, "fechaRefPre sigue cayendo a null");
+  assert.doesNotMatch(bloque, /fechasIda\[0\] \?\? null(?!,)/, "fechaRefGrupo sigue cayendo a null");
+  assert.match(bloque, /const fechaRefPre = fechasIdaPre\[0\] \?\? hoyServidor;/, "fechaRefPre no cae a la fecha del servidor de base");
+  assert.match(bloque, /const fechaRefGrupo = fechasIda\[0\] \?\? hoyServidor;/, "fechaRefGrupo no cae a la fecha del servidor de base");
   // ventas.fecha_salida NUNCA se fabrica: sigue siendo fechasIda[0] ?? null.
   assert.match(bloque, /fecha_salida: fechasIda\[0\] \?\? null,/, "ventas.fecha_salida dejó de preservar null cuando no hay fecha real (no se debe inventar una fecha de viaje)");
-  // El RPC recibe la MISMA referencia explícita — nunca decide su propio
-  // current_date quedándose sin dato.
-  assert.match(bloque, /p_fecha_referencia_fallback:\s*hoyISO,/, "el RPC no recibe hoyISO como p_fecha_referencia_fallback");
+  // Y al RPC ya NO se le manda ninguna fecha: la resuelve él mismo. (Se busca
+  // la clave del payload, no cualquier mención: el comentario que explica la
+  // eliminación nombra el parámetro a propósito.)
+  assert.doesNotMatch(
+    bloque,
+    /p_fecha_referencia_fallback\s*:/,
+    "la Server Action vuelve a inyectarle una fecha al RPC — eso es exactamente lo que B23 eliminó"
+  );
 });
 
 test("B21 (ronda 8): capacidad CONSOLIDADA de toda la operación antes de escribir; se eliminó el chequeo por ítem", () => {

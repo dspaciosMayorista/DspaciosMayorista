@@ -246,14 +246,18 @@ export type ResultadoValidacionResponsables =
  * vía `esInfantePorEdad`, nunca por una bandera recibida), así que sigue
  * siendo un espejo fiel; se anota aquí para que la equivalencia quede
  * documentada y no se "arregle" en el futuro pasando una bandera.
- * Con B22 el respaldo de fecha además se ACOTA a ±1 día de `current_date`
- * dentro de Postgres (`_fecha_referencia_efectiva`): esa holgura existe solo
- * para absorber la diferencia de día entre el reloj del app server y el de
- * la base. Si el llamador pasara aquí una `fechaReferenciaEfectiva` más
- * lejana que eso y el contrato no tuviera `fecha_salida`, Postgres la
- * descartaría y usaría `current_date` — y esta prevalidación dejaría de
- * coincidir con la escritura real. El llamador debe seguir pasando el
- * "hoy" del servidor, no una fecha arbitraria.
+ * ⚠️ B23 (ronda 11) — DE DÓNDE SALE `fechaReferenciaEfectiva`. Entre B22 y
+ * B23 el llamador inyectaba su propio "hoy" a Postgres y este solo lo
+ * "acotaba" a ±1 día. Eso era insuficiente: en un cumpleaños de frontera un
+ * único día decide si alguien es infante (y por tanto si exige responsable y
+ * si consume silla) o si un responsable ya es mayor de edad. Se eliminó el
+ * canal entero —el parámetro del RPC y la GUC de sesión—: cuando el contrato
+ * no tiene `fecha_salida`, la referencia es el `current_date` de Postgres y
+ * nada más. Para que esta prevalidación siga coincidiendo con la escritura,
+ * el llamador debe pasar aquí **la fecha LEÍDA de la base**
+ * (`fecha_referencia_servidor()`, como hace `convertirCotizacionCarrito`),
+ * nunca un `new Date()` del proceso de Node ni una fecha arbitraria: ya no
+ * hay forma de decirle a Postgres qué día es, solo de preguntárselo.
  *
  * Reglas (todas las que el trigger impone dentro de un mismo contrato):
  *   - todo infante REAL a `fechaReferenciaEfectiva` debe traer responsable;

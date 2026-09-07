@@ -6,7 +6,7 @@
 # final del archivo (una referencia a una tabla que no existe a propósito) y
 # confirma que, tras el error, NINGUNO de los objetos que crea la migración
 # quedó a medio aplicar — columna, índice, tabla de exenciones, trigger,
-# tipo compuesto ni las 14 funciones (12 + las 2 de fecha de referencia, B22).
+# tipo compuesto ni las 14 funciones (12 + las 2 de fecha de referencia).
 #
 # Sin el `begin;`/`commit;` (autocommit, comportamiento ANTES de esta ronda),
 # esta misma prueba habría dejado la mayoría de los objetos ya creados
@@ -75,7 +75,7 @@ check_ausente() {
 check_ausente "función edad_anios" "select exists(select 1 from pg_proc where proname='edad_anios' and pronamespace='public'::regnamespace)"
 check_ausente "función es_infante_por_edad" "select exists(select 1 from pg_proc where proname='es_infante_por_edad' and pronamespace='public'::regnamespace)"
 check_ausente "función _fecha_referencia_efectiva" "select exists(select 1 from pg_proc where proname='_fecha_referencia_efectiva' and pronamespace='public'::regnamespace)"
-check_ausente "función _fecha_referencia_guc" "select exists(select 1 from pg_proc where proname='_fecha_referencia_guc' and pronamespace='public'::regnamespace)"
+check_ausente "función fecha_referencia_servidor" "select exists(select 1 from pg_proc where proname='fecha_referencia_servidor' and pronamespace='public'::regnamespace)"
 check_ausente "columna contrato_pasajeros.responsable_id" "select exists(select 1 from information_schema.columns where table_schema='public' and table_name='contrato_pasajeros' and column_name='responsable_id')"
 check_ausente "índice idx_contrato_pasajeros_responsable" "select exists(select 1 from pg_indexes where schemaname='public' and indexname='idx_contrato_pasajeros_responsable')"
 check_ausente "tabla _pasajeros_exentos_167" "select exists(select 1 from pg_tables where schemaname='public' and tablename='_pasajeros_exentos_167')"

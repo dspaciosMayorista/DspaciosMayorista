@@ -3292,6 +3292,12 @@ export type Database = {
       // transacción. `p_pasajeros` es un arreglo de objetos con claves
       // id?/nombre/tipoId/identificacion/fechaNacimiento/responsableOrden
       // (responsableOrden es 1-based, posición dentro de este mismo arreglo).
+      // B23: reloj de la base, de solo lectura — la app prevalida edades con
+      // el MISMO current_date que usará la escritura (migración 167).
+      fecha_referencia_servidor: {
+        Args: Record<string, never>;
+        Returns: string;
+      };
       guardar_pasajeros_contrato: {
         Args: {
           p_numero_contrato: string;
@@ -3345,7 +3351,10 @@ export type Database = {
           p_pasajeros: Json;
           p_reservas_sillas: Json;
           p_usuario_id: string;
-          p_fecha_referencia_fallback?: string | null;
+          // B23: se eliminó `p_fecha_referencia_fallback`. La referencia de
+          // edad la resuelve Postgres (fecha_salida o current_date); la app
+          // la LEE con `fecha_referencia_servidor` para prevalidar, nunca la
+          // impone. Si vuelve a aparecer aquí, el agujero está reabierto.
         };
         Returns: {
           id: number;

@@ -1245,7 +1245,6 @@ export async function convertirCotizacionCarrito(
   }
 
   // ── Paso 2: crear un contrato por grupo, con TODOS sus hoteles/tours ──────
-  const hoyISO = new Date().toISOString().slice(0, 10);
   const OBS_AUTO = "Generado automáticamente desde el carrito (tarifario)";
   const numeros: string[] = [];
 
@@ -1265,6 +1264,28 @@ export async function convertirCotizacionCarrito(
   if (!usuarioCond) {
     return { ok: false, error: "Sesión inválida: no se pudo confirmar el usuario para crear el contrato." };
   }
+
+  // ── B23: la referencia de edad la fija el RELOJ DE LA BASE, no el de este
+  // proceso. Antes se calculaba aquí un `hoyISO` con `new Date()` y se le
+  // inyectaba a Postgres (`p_fecha_referencia_fallback`) para que la
+  // prevalidación y la escritura decidieran igual. Ese parámetro se eliminó:
+  // una fecha que viaja desde fuera es una fecha que se puede elegir, y en un
+  // cumpleaños de frontera un solo día cambia si alguien es infante (y por
+  // tanto si exige responsable, y si consume silla). Ahora la dirección se
+  // invierte — se LEE `current_date` de Postgres UNA vez y se prevalida con
+  // él, que es exactamente el valor que usará
+  // `_fecha_referencia_efectiva` al escribir cuando el contrato quede sin
+  // `fecha_salida`.
+  //
+  // Falla CERRADO a propósito: si no se puede leer el reloj de la base, se
+  // aborta en vez de caer al reloj de Node — ese respaldo silencioso es
+  // justamente la divergencia que este cambio elimina.
+  const { data: fechaServidor, error: errFechaServidor } = await createAdminClient()
+    .rpc("fecha_referencia_servidor");
+  if (errFechaServidor || typeof fechaServidor !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(fechaServidor)) {
+    return { ok: false, error: "No se pudo resolver la fecha de referencia del servidor. Inténtalo de nuevo." };
+  }
+  const hoyServidor: string = fechaServidor;
 
   // ── PRE-VALIDACIÓN de TODOS los grupos ANTES de crear NINGÚN contrato
   // (B18/B20/B21). Todo lo PREVISIBLE (responsables y capacidad) se decide aquí,
@@ -1288,15 +1309,12 @@ export async function convertirCotizacionCarrito(
       // `ventas.fecha_salida` va a quedar en `null` (eso NO cambia — ver más
       // abajo) — pero la CLASIFICACIÓN de edad no puede quedarse sin
       // referencia ni inventar la suya por separado en cada función pura:
-      // `hoyISO` (calculado UNA sola vez, arriba, para todo este flujo) es la
-      // MISMA referencia que se manda explícita al RPC
-      // (`p_fecha_referencia_fallback`) — así la prevalidación de aquí y la
-      // escritura real deciden EXACTAMENTE lo mismo, sin depender de que el
-      // reloj del servidor de aplicación y el de Postgres coincidan por
-      // casualidad (antes, esta fecha se dejaba en `null` y cada función
-      // pura decidía "hoy" por su cuenta, o ni siquiera eso: ver el fix en
-      // `validarResponsablesContrato`).
-      const fechaRefPre = fechasIdaPre[0] ?? hoyISO;
+      // `hoyServidor` (leído UNA sola vez del reloj de Postgres, arriba) es
+      // exactamente el `current_date` con el que la base va a decidir al
+      // escribir, así que la prevalidación de aquí y la escritura real
+      // concluyen lo mismo — sin que la app le imponga ninguna fecha a la
+      // base (B23) y sin que cada función pura invente su propio "hoy".
+      const fechaRefPre = fechasIdaPre[0] ?? hoyServidor;
       const posGrupoPre = posicionesUnicasDeGrupo(
         [...grupo.items.map((it) => it.__posiciones), ...grupo.tours.map((t) => t.__posiciones)],
         [...grupo.items, ...grupo.tours].map((_, i) => i)
@@ -1374,17 +1392,15 @@ export async function convertirCotizacionCarrito(
     // Fecha de referencia REAL de este grupo — cuando existe, es la MISMA que
     // se guarda como `ventas.fecha_salida` abajo, y contra la que el RPC
     // recalcula es_infante server-side (B10, ronda 3; B16, ronda 6).
-    // ⚠️ B-fix (fecha_salida NULL, revisión de Opus ronda 9): cuando NINGUNA
-    // unidad del grupo trae fecha, `ventas.fecha_salida` se guarda en `null`
-    // TAL CUAL abajo (nunca se fabrica una fecha de viaje) — pero
-    // `fechaRefGrupo`, que solo sirve para CLASIFICAR edades en este archivo,
-    // cae a `hoyISO` (la MISMA referencia, calculada una sola vez arriba, que
-    // se manda explícita al RPC como `p_fecha_referencia_fallback`). Los dos
-    // valores DIVERGEN a propósito cuando no hay fecha: uno es un dato
-    // persistido (nunca inventado), el otro es una decisión de clasificación
-    // transitoria que Postgres necesita conocer para decidir exactamente lo
-    // mismo que ya decidió esta pre-validación.
-    const fechaRefGrupo = fechasIda[0] ?? hoyISO;
+    // ⚠️ B-fix (fecha_salida NULL, ronda 9; procedencia corregida en B23):
+    // cuando NINGUNA unidad del grupo trae fecha, `ventas.fecha_salida` se
+    // guarda en `null` TAL CUAL abajo (nunca se fabrica una fecha de viaje)
+    // — pero `fechaRefGrupo`, que solo sirve para CLASIFICAR edades en este
+    // archivo, cae a `hoyServidor`, el `current_date` LEÍDO de Postgres. Los
+    // dos valores DIVERGEN a propósito cuando no hay fecha: uno es un dato
+    // persistido (nunca inventado), el otro es la clasificación transitoria
+    // que la base va a rehacer por su cuenta con ese mismo `current_date`.
+    const fechaRefGrupo = fechasIda[0] ?? hoyServidor;
     const precioTotal = validados.reduce((s, v) => s + v.comp.precioVenta, 0) + grupo.tours.reduce((s, t) => s + t.precio, 0);
     const monedaGrupo = validados[0]?.comp.monedaReserva ?? "COP";
 
@@ -1541,14 +1557,10 @@ export async function convertirCotizacionCarrito(
       p_pasajeros: payloadPasajerosMulti as unknown as Json,
       p_reservas_sillas: reservasSillas as unknown as Json,
       p_usuario_id: usuarioCond.id,
-      // B-fix (fecha_salida NULL, revisión de Opus ronda 9): la MISMA
-      // referencia (`hoyISO`) que ya se usó arriba para clasificar es_infante
-      // en la prevalidación y en `fechaRefGrupo` — el RPC solo la usa si
-      // `ventas.fecha_salida` termina en null (coalesce), así que nunca
-      // sobreescribe una fecha real, y cuando SÍ hace falta, es la fecha
-      // EXACTA que ya validó este mismo servidor, nunca el `current_date`
-      // independiente de Postgres.
-      p_fecha_referencia_fallback: hoyISO,
+      // B23: aquí ya NO se manda ninguna referencia de fecha. El RPC la
+      // resuelve solo (`fecha_salida` o su propio `current_date`), que es el
+      // mismo valor que esta Server Action leyó en `hoyServidor` para
+      // prevalidar. Inyectarla era lo que permitía elegirla.
     });
     if (peMulti) return { ok: false, error: peMulti.message };
     // Es_infante REAL, ya recalculado por el servidor (nunca por
@@ -1566,7 +1578,7 @@ export async function convertirCotizacionCarrito(
       if (!(valor > 0)) return;
       cxp.push({
         numero_contrato: numero, tenant: tenantCotizacion, proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
-        valor_total: Math.max(0, valor), fecha_obligacion: hoyISO,
+        valor_total: Math.max(0, valor), fecha_obligacion: hoyServidor,
         aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0, observaciones: OBS_AUTO,
       });
     };
@@ -1611,7 +1623,7 @@ export async function convertirCotizacionCarrito(
           referencia: meta.hotel_nombre ?? it.hotelNombre ?? null,
           fechaIda: meta.fecha_ida,
           fechaRegreso: meta.fecha_regreso,
-          fechaPago: hoyISO,
+          fechaPago: hoyServidor,
         });
         if (componenteHotel) componentesCondicion.push(componenteHotel);
       }
@@ -1739,7 +1751,7 @@ export async function convertirCotizacionCarrito(
         moneda: monedaGrupo,
         trm: trmCond,
         precioTotalMoneda: precioTotal,
-        fechaPago: hoyISO,
+        fechaPago: hoyServidor,
         usuarioId: usuarioCond.id,
       });
     }
@@ -1752,7 +1764,7 @@ export async function convertirCotizacionCarrito(
       for (const c of creadas ?? []) {
         await postearAsientoCxP({
           cuentaId: c.id, numeroContrato: numero, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyISO, tenant: tenantCotizacion,
+          servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyServidor, tenant: tenantCotizacion,
         });
       }
     }

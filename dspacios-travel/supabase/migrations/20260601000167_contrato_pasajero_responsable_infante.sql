@@ -170,112 +170,97 @@ comment on function public.es_infante_por_edad(date, date) is
   'esInfantePorEdad. Migración 167.';
 
 -- ─────────────────────────────────────────────────────────────────────────
--- Resolución ÚNICA de la fecha de referencia efectiva (B22).
+-- Resolución ÚNICA de la fecha de referencia efectiva (B22 + B23).
 --
--- Antes esta fórmula estaba escrita DOS veces —`coalesce(fecha_salida,
--- fallback, current_date)` en `_reemplazar_pasajeros_nucleo` y
--- `coalesce(fecha_salida, GUC, current_date)` en el trigger— y por tanto
--- podía divergir. Ahora las dos llaman a ESTA función: una sola definición
--- de "contra qué fecha se decide", imposible de desincronizar.
+-- Antes esta fórmula estaba escrita DOS veces —una en
+-- `_reemplazar_pasajeros_nucleo` y otra en el trigger— y por tanto podía
+-- divergir. Las dos llaman a ESTA función: una sola definición de "contra
+-- qué fecha se decide", imposible de desincronizar.
 --
--- ⚠️ EL CLAMP DE ±1 DÍA NO ES COSMÉTICO — es el candado de B22.
--- El respaldo (`p_fallback`) llega de fuera de Postgres: del app server
--- (parámetro `p_fecha_referencia_fallback` del RPC) o de la GUC de sesión
--- `app.fecha_referencia_efectiva`. Las GUC de clase personalizada ("app.")
--- las puede fijar CUALQUIER rol con `set_config`/`SET` — se comprobó en
--- Postgres 16 con un rol de aplicación. Sin acotarlo, un escritor directo
--- podía fijar la GUC años en el futuro y hacer que un infante REAL se
--- clasificara como no-infante, esquivando la exigencia de responsable: el
--- mismo agujero de B22, solo que por otra palanca.
+-- ⚠️ B23 — LA PROCEDENCIA, NO EL RANGO. La versión anterior aceptaba un
+-- respaldo externo (parámetro del RPC, o la GUC de sesión
+-- `app.fecha_referencia_efectiva`) "acotado" a ±1 día de `current_date`,
+-- con el argumento de que un día no podía cambiar ninguna decisión. **Ese
+-- argumento era falso.** En un cumpleaños de frontera un día lo cambia
+-- todo, y se reprodujo:
+--   · un bebé que cumple 2 años MAÑANA es INF hoy; con la GUC puesta en
+--     `current_date + 1` (dentro del clamp) el trigger lo derivaba como
+--     NO infante y lo aceptaba SIN responsable;
+--   · alguien que cumple 18 MAÑANA tiene 17 hoy; con la misma GUC quedaba
+--     aceptado como adulto responsable de un infante.
+-- Además de la obligación de responsable, `es_infante` decide el consumo
+-- de silla, así que la manipulación también movía inventario.
 --
--- El respaldo existe únicamente para absorber la diferencia de DÍA entre
--- el reloj del app server y el de Postgres (husos horarios, frontera de
--- medianoche) — un desfase que por definición nunca pasa de un día. Al
--- acotarlo a ±1 día se conserva íntegro ese propósito legítimo y se
--- elimina el margen de maniobra: mover la referencia un día no convierte
--- a un infante real en no-infante salvo en el borde exacto de su segundo
--- cumpleaños, donde la exigencia de responsable es en todo caso una
--- formalidad. Fuera de ese margen se ignora el valor y se cae a
--- `current_date`, que ningún rol puede falsear.
+-- Una GUC que el propio escritor puede fijar (`set_config`/`SET` sobre una
+-- clase personalizada "app." no está restringida a ningún rol) NO PUEDE
+-- SER AUTORIDAD, ni dentro de ±1 día. Por eso la GUC desapareció junto con
+-- todo respaldo externo: cuando no hay `fecha_salida`, la referencia es
+-- `current_date` de Postgres, que ningún rol puede falsear.
 --
--- `p_fecha_salida` (el dato de negocio) NO se acota: es la autoridad
--- máxima y no la controla quien escribe la fila de pasajero.
+-- Que esto además mantiene sincronizados núcleo y trigger no es un
+-- accidente: `current_date` es ESTABLE POR TRANSACCIÓN en Postgres, y el
+-- trigger siempre dispara dentro de la misma transacción que el núcleo, así
+-- que ambos obtienen exactamente el mismo valor sin necesidad de pasarse
+-- nada. Eliminar el canal elimina el ataque: ya no hay dato que falsificar.
+--
+-- La coincidencia con la prevalidación de TypeScript se conserva por el
+-- lado contrario al de antes: en vez de que la app le imponga su reloj a la
+-- base, la app LEE el reloj de la base (`fecha_referencia_servidor()`, más
+-- abajo) y prevalida con él.
+--
+-- `p_fecha_salida` (el dato de negocio) es la autoridad máxima cuando
+-- existe: no lo controla quien escribe la fila de pasajero.
 -- ─────────────────────────────────────────────────────────────────────────
 create or replace function public._fecha_referencia_efectiva(
-  p_fecha_salida date,
-  p_fallback     date
+  p_fecha_salida date
 )
 returns date
-language plpgsql
+language sql
 stable
 set search_path = public, pg_temp
 as $$
-declare
-  v_hoy date := current_date;
-begin
-  if p_fecha_salida is not null then
-    return p_fecha_salida;
-  end if;
-  if p_fallback is not null and abs(p_fallback - v_hoy) <= 1 then
-    return p_fallback;
-  end if;
-  return v_hoy;
-end;
+  select coalesce(p_fecha_salida, current_date);
 $$;
 
-comment on function public._fecha_referencia_efectiva(date, date) is
+comment on function public._fecha_referencia_efectiva(date) is
   'Fecha contra la cual se decide si un pasajero es infante y si su '
-  'responsable es mayor de edad. Fuente única compartida por '
-  '_reemplazar_pasajeros_nucleo y fn_validar_responsable_infante (antes la '
-  'fórmula estaba duplicada y podía divergir). Orden: fecha_salida del '
-  'contrato → respaldo externo → current_date. El respaldo se ACOTA a ±1 '
-  'día de current_date: sirve para absorber la diferencia de día entre el '
-  'reloj del app server y el de Postgres, no para reubicar la referencia — '
-  'sin ese límite, cualquier rol puede fijar la GUC app.'
-  'fecha_referencia_efectiva (las GUC de clase personalizada no están '
-  'restringidas) y hacer pasar un infante real por no-infante. B22, '
-  'migración 167.';
+  'responsable es mayor de edad: fecha_salida del contrato si existe, si no '
+  'current_date. Fuente única compartida por _reemplazar_pasajeros_nucleo y '
+  'fn_validar_responsable_infante — al ser current_date estable por '
+  'transacción, los dos obtienen el mismo valor sin pasarse nada. B23: NO '
+  'acepta ningún respaldo externo (se eliminaron el parámetro del RPC y la '
+  'GUC app.fecha_referencia_efectiva) — una fecha que el escritor puede '
+  'fijar no puede ser autoridad ni siquiera "acotada" a ±1 día, porque en un '
+  'cumpleaños de frontera un solo día cambia la obligación de responsable y '
+  'el consumo de silla. Migración 167.';
 
--- Internas: solo las llaman el núcleo y el trigger, ambos SECURITY DEFINER
+-- Interna: solo la llaman el núcleo y el trigger, ambos SECURITY DEFINER
 -- (corren como el dueño del esquema, que conserva EXECUTE). Ningún rol de
--- aplicación necesita ejecutarlas — mismo criterio que
+-- aplicación necesita ejecutarla — mismo criterio que
 -- `_autorizado_escribir_pasajeros`/`_ajustar_sillas_nucleo`.
-revoke all on function public._fecha_referencia_efectiva(date, date) from public, anon, authenticated, service_role;
+revoke all on function public._fecha_referencia_efectiva(date) from public, anon, authenticated, service_role;
 
--- Lectura SEGURA de la GUC de sesión: nunca tumba una escritura por basura
--- en el valor (la puede haber fijado cualquiera). Un valor no parseable se
--- trata como ausente y la resolución cae a current_date.
-create or replace function public._fecha_referencia_guc()
+-- Reloj de la BASE, de solo lectura, para que el servidor de aplicación
+-- prevalide con la MISMA fecha que va a usar la escritura (B23). Sustituye
+-- al camino inverso —que la app inyectara su "hoy"—, que era justamente lo
+-- manipulable. No hay nada que fijar aquí: devuelve `current_date` y punto.
+create or replace function public.fecha_referencia_servidor()
 returns date
-language plpgsql
+language sql
 stable
 set search_path = public, pg_temp
 as $$
-declare
-  v_txt text;
-  v_val date;
-begin
-  v_txt := nullif(current_setting('app.fecha_referencia_efectiva', true), '');
-  if v_txt is null then
-    return null;
-  end if;
-  begin
-    v_val := v_txt::date;
-  exception when others then
-    return null;
-  end;
-  return v_val;
-end;
+  select current_date;
 $$;
 
-comment on function public._fecha_referencia_guc() is
-  'Lee la GUC de sesión app.fecha_referencia_efectiva como date, o null si '
-  'está ausente o no es parseable (la puede fijar cualquier rol, así que '
-  'jamás debe poder tumbar una escritura). Su valor todavía pasa por el '
-  'clamp de _fecha_referencia_efectiva antes de influir en una decisión. '
-  'B22, migración 167.';
+comment on function public.fecha_referencia_servidor() is
+  'current_date de Postgres, para que el servidor de aplicación prevalide '
+  'edades con el MISMO reloj que usará la escritura cuando el contrato no '
+  'tiene fecha_salida. Solo lectura y sin argumentos: no hay valor que un '
+  'escritor pueda fijar. B23, migración 167.';
 
-revoke all on function public._fecha_referencia_guc() from public, anon, authenticated, service_role;
+revoke all on function public.fecha_referencia_servidor() from public, anon;
+grant execute on function public.fecha_referencia_servidor() to authenticated, service_role;
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- B) Vínculo INF → adulto responsable
@@ -361,13 +346,18 @@ declare
 begin
   -- ── 1) La fecha de referencia se resuelve PRIMERO, antes de cualquier
   -- decisión, con la MISMA función que usa `_reemplazar_pasajeros_nucleo`
-  -- (`_fecha_referencia_efectiva`): fecha_salida del contrato → respaldo
-  -- externo acotado a ±1 día (aquí, la GUC de sesión que publicó el núcleo)
-  -- → current_date. Antes esto se resolvía TARDE (solo dentro de la rama que
-  -- validaba al responsable) y con la fórmula escrita a mano, duplicada.
+  -- (`_fecha_referencia_efectiva`): fecha_salida del contrato, o
+  -- `current_date` si el contrato no tiene fecha. Antes esto se resolvía
+  -- TARDE (solo dentro de la rama que validaba al responsable) y con la
+  -- fórmula escrita a mano, duplicada.
+  --
+  -- B23: aquí ya NO se lee ninguna GUC. El núcleo tampoco publica una. Como
+  -- `current_date` es estable por transacción y este trigger dispara dentro
+  -- de la transacción del núcleo, ambos resuelven el mismo valor sin canal
+  -- alguno — y sin canal no hay nada que un escritor directo pueda falsear.
   select v.fecha_salida into v_fecha_sal
     from public.ventas v where v.numero_contrato = new.numero_contrato;
-  v_fecha_ref := public._fecha_referencia_efectiva(v_fecha_sal, public._fecha_referencia_guc());
+  v_fecha_ref := public._fecha_referencia_efectiva(v_fecha_sal);
 
   -- ── 2) B22: la clasificación es DERIVADA, nunca la que mande el escritor.
   --
@@ -819,23 +809,17 @@ create or replace function public._reemplazar_pasajeros_nucleo(
   p_numero_contrato   text,
   p_pasajeros          jsonb,
   p_min_pasajeros      integer,
-  p_usuario_creacion   uuid,
-  -- Referencia de edad EXPLÍCITA, inyectada por el llamador — B-fix
-  -- (fecha_salida NULL, revisión de Opus sobre la ronda 8): antes, cuando el
-  -- contrato no tenía `fecha_salida` (porción terrestre/tours sin fecha),
-  -- esta función caía en silencio a `current_date` (el reloj de POSTGRES),
-  -- mientras la prevalidación TypeScript (`validarResponsablesContrato`,
-  -- `normalizarResponsablesPorGrupo`) usaba `new Date()` (el reloj del
-  -- SERVIDOR DE APLICACIÓN) o, peor, ningún respaldo en absoluto — dos
-  -- relojes/decisiones INDEPENDIENTES que podían discrepar (un pasajero
-  -- infante para uno y no infante para el otro), dejando pasar por la
-  -- prevalidación un caso que el RPC luego rechazaba con el contrato YA
-  -- escrito. Ahora el LLAMADOR decide "hoy" UNA sola vez (en TypeScript, para
-  -- `crear_pasajeros_contrato_multi`) y lo manda aquí explícito — este
-  -- núcleo nunca vuelve a inventar su propio `current_date` salvo que NADIE
-  -- (ni `ventas.fecha_salida` ni el llamador) traiga una fecha, último
-  -- respaldo defensivo para escrituras que no pasen por este parámetro.
-  p_fecha_referencia_fallback date default null
+  p_usuario_creacion   uuid
+  -- ⚠️ B23: este núcleo TENÍA un 5.º parámetro `p_fecha_referencia_fallback`
+  -- con el que el llamador inyectaba su propio "hoy" para que la
+  -- prevalidación de TypeScript y la escritura decidieran igual cuando el
+  -- contrato no tiene `fecha_salida`. Se ELIMINÓ: una fecha que viene de
+  -- fuera es una fecha que se puede elegir, y acotarla no bastaba (en un
+  -- cumpleaños de frontera un solo día cambia si alguien es infante o si un
+  -- responsable es mayor de edad). La referencia sale ahora únicamente de
+  -- `_fecha_referencia_efectiva` (fecha_salida, o `current_date`), y la
+  -- coincidencia con TypeScript se conserva al revés: la app LEE el reloj de
+  -- la base con `fecha_referencia_servidor()` y prevalida con él.
 )
 returns table (
   id                bigint,
@@ -1059,22 +1043,21 @@ begin
 
   select v.fecha_salida into v_ref_fecha from public.ventas v where v.numero_contrato = p_numero_contrato;
 
-  -- Fija la referencia EFECTIVA de esta transacción y la publica en una GUC
-  -- de sesión (`is_local => true`: vive solo hasta el COMMIT/ROLLBACK de esta
-  -- transacción, nunca se filtra a otra conexión del pool) — el trigger
-  -- `trg_validar_responsable_infante`, que deriva el es_infante de cada fila
-  -- y valida la mayoría de edad del responsable, no recibe parámetros de esta
-  -- llamada (dispara por INSERT/UPDATE de fila, no por invocación de función)
-  -- y necesita leer la MISMA referencia para no recalcular la suya por
-  -- separado.
+  -- Referencia EFECTIVA de esta transacción, resuelta con
+  -- `_fecha_referencia_efectiva` — la MISMA función que llama el trigger
+  -- `trg_validar_responsable_infante`, de modo que núcleo y trigger no
+  -- puedan desincronizarse (antes la fórmula estaba duplicada en los dos
+  -- sitios y, peor, cada uno leía su propia fuente de respaldo).
   --
-  -- B22: la resolución NO se escribe aquí a mano — la hace
-  -- `_fecha_referencia_efectiva`, la MISMA función que llama el trigger, de
-  -- modo que núcleo y trigger no puedan desincronizarse (antes la fórmula
-  -- estaba duplicada en los dos sitios). Esa función también ACOTA el
-  -- respaldo a ±1 día de `current_date`; ver su comentario para el porqué.
-  v_ref_efectiva := public._fecha_referencia_efectiva(v_ref_fecha, p_fecha_referencia_fallback);
-  perform set_config('app.fecha_referencia_efectiva', v_ref_efectiva::text, true);
+  -- B23: ya NO se publica ninguna GUC de sesión. El trigger no recibe
+  -- parámetros de esta llamada, pero tampoco los necesita: al no haber
+  -- respaldo externo, la referencia es `fecha_salida` (que el trigger relee
+  -- de la misma fila de `ventas`) o `current_date`, que es estable por
+  -- transacción — el trigger dispara DENTRO de esta transacción, así que
+  -- obtiene el mismo valor por construcción. El canal que antes los unía era
+  -- también el que un escritor directo podía falsificar; eliminarlo cierra
+  -- B23 sin perder la sincronía.
+  v_ref_efectiva := public._fecha_referencia_efectiva(v_ref_fecha);
 
   if array_length(v_ids_mantener, 1) > 0 then
     select count(*) into v_ajenos
@@ -1244,7 +1227,7 @@ begin
 end;
 $$;
 
-comment on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid, date) is
+comment on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid) is
   'Reemplazo transaccional y atómico de los pasajeros de un contrato (edición '
   'o creación): valida el payload completo (unknown en el límite), recalcula '
   'es_infante server-side, exige responsable_id para infantes nuevos (única '
@@ -1261,7 +1244,7 @@ comment on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uu
   'crear_pasajeros_contrato_multi vía _autorizado_escribir_pasajeros. '
   'Migración 167.';
 
-revoke all on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid, date) from public, anon, authenticated, service_role;
+revoke all on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid) from public, anon, authenticated, service_role;
 
 -- ── Wrapper de UN bloqueo (edición o creación de un solo contrato/bloqueo):
 --    escribe pasajeros vía _reemplazar_pasajeros_nucleo y reconcilia SUS
@@ -1273,11 +1256,9 @@ create or replace function public._guardar_pasajeros_nucleo(
   p_pasajeros          jsonb,
   p_holders_min        integer,
   p_min_pasajeros      integer,
-  p_usuario_creacion   uuid,
-  -- Reenvía el respaldo explícito a `_reemplazar_pasajeros_nucleo` (default
-  -- null: `guardar_pasajeros_contrato`/`crear_pasajeros_contrato` no lo
-  -- necesitan pasar — ver comentario del parámetro homónimo allí).
-  p_fecha_referencia_fallback date default null
+  p_usuario_creacion   uuid
+  -- B23: ya no reenvía ningún respaldo de fecha — se eliminó en toda la
+  -- cadena (ver el comentario en `_reemplazar_pasajeros_nucleo`).
 )
 returns table (
   id                bigint,
@@ -1302,7 +1283,7 @@ begin
   -- Se llama UNA sola vez y se materializa en un arreglo (ver el tipo
   -- _fila_pasajero_167 arriba) — nunca dos: escribe, no solo lee.
   for v_reg in
-    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, p_min_pasajeros, p_usuario_creacion, p_fecha_referencia_fallback)
+    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, p_min_pasajeros, p_usuario_creacion)
   loop
     v_filas := array_append(
       v_filas,
@@ -1324,7 +1305,7 @@ begin
 end;
 $$;
 
-comment on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid, date) is
+comment on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid) is
   'Wrapper de UN bloqueo sobre _reemplazar_pasajeros_nucleo (escribe '
   'pasajeros) + _ajustar_sillas_nucleo (reconcilia SUS sillas, descubriendo '
   'el bloqueo — nunca lo recibe): mismo comportamiento externo que la '
@@ -1335,7 +1316,7 @@ comment on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integ
   '_autorizado_escribir_pasajeros (dentro de _reemplazar_pasajeros_nucleo). '
   'Migración 167.';
 
-revoke all on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid, date) from public, anon, authenticated, service_role;
+revoke all on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid) from public, anon, authenticated, service_role;
 
 -- ── Wrapper para EDICIÓN (sesión real de un usuario interno) ──────────────
 create or replace function public.guardar_pasajeros_contrato(
@@ -1470,14 +1451,11 @@ create or replace function public.crear_pasajeros_contrato_multi(
   p_numero_contrato   text,
   p_pasajeros          jsonb,
   p_reservas_sillas    jsonb,
-  p_usuario_id         uuid,
-  -- Referencia de edad EXPLÍCITA para esta creación — B-fix (fecha_salida
-  -- NULL): `convertirCotizacionCarrito` (única llamadora hoy) la calcula UNA
-  -- vez en TypeScript (el mismo `hoyISO` que ya usa para el resto del
-  -- flujo) y la manda aquí SIEMPRE — nunca depende de que Postgres adivine
-  -- su propio "hoy" por separado. Ver el comentario homónimo en
-  -- `_reemplazar_pasajeros_nucleo`.
-  p_fecha_referencia_fallback date default null
+  p_usuario_id         uuid
+  -- B23: se eliminó el parámetro de referencia de edad que
+  -- `convertirCotizacionCarrito` inyectaba. La app ya no le impone su reloj a
+  -- la base; lee el de la base (`fecha_referencia_servidor()`) y prevalida
+  -- con él. Ver el comentario en `_reemplazar_pasajeros_nucleo`.
 )
 returns table (
   id                bigint,
@@ -1545,7 +1523,7 @@ begin
   -- (mismo criterio que crear_pasajeros_contrato — override de superadmin,
   -- "captura los pasajeros después"), por eso `p_min_pasajeros = 0`.
   for v_reg in
-    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, 0, p_usuario_id, p_fecha_referencia_fallback)
+    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, 0, p_usuario_id)
   loop
     v_filas := array_append(
       v_filas,
@@ -1611,7 +1589,7 @@ begin
     -- práctica un bloqueo real siempre trae `fecha_ida`, así que este último
     -- respaldo es defensivo.
     select bv.fecha_ida into v_bloqueo_fecha from public.bloqueos_vuelo bv where bv.id = v_bloqueo_id;
-    v_bloqueo_fecha := coalesce(v_bloqueo_fecha, v_contrato_fecha, p_fecha_referencia_fallback);
+    v_bloqueo_fecha := coalesce(v_bloqueo_fecha, v_contrato_fecha, current_date);
 
     if v_elem ? 'holdersMin' and jsonb_typeof(v_elem->'holdersMin') <> 'null' then
       if jsonb_typeof(v_elem->'holdersMin') <> 'number' then
@@ -1703,7 +1681,7 @@ begin
 end;
 $$;
 
-comment on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid, date) is
+comment on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid) is
   'Wrapper de _reemplazar_pasajeros_nucleo (escribe pasajeros/responsables '
   'UNA vez) + _ajustar_sillas_bloqueo_nucleo (una llamada POR bloqueo '
   'explícito en p_reservas_sillas, en orden ascendente de bloqueo_id para '
@@ -1725,8 +1703,8 @@ comment on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uu
   'B6). Exige un p_usuario_id real y activo (mismo candado que '
   'crear_pasajeros_contrato).';
 
-revoke all on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid, date) from public, anon, authenticated;
-grant execute on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid, date) to service_role;
+revoke all on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid) from public, anon, authenticated;
+grant execute on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid) to service_role;
 
 notify pgrst, 'reload schema';
 
