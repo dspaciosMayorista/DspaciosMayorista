@@ -46,6 +46,11 @@ drop function if exists public.fn_validar_responsable_infante();
 
 drop table if exists public._pasajeros_exentos_167;
 
+-- Resolución compartida de la fecha de referencia (B22). Va DESPUÉS del
+-- trigger y del núcleo, que son sus únicos llamadores.
+drop function if exists public._fecha_referencia_guc();
+drop function if exists public._fecha_referencia_efectiva(date, date);
+
 drop function if exists public.es_infante_por_edad(date, date);
 drop function if exists public.edad_anios(date, date);
 

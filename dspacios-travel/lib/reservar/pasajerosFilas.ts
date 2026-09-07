@@ -239,6 +239,22 @@ export type ResultadoValidacionResponsables =
  * que la prevalidación y la escritura real decidan EXACTAMENTE lo mismo, sin
  * depender de que dos relojes coincidan por casualidad.
  *
+ * ⚠️ B22 (revisión de Opus, ronda 10): el trigger dejó de creerle al
+ * `es_infante` que manda el escritor — ahora lo DERIVA él mismo con
+ * `es_infante_por_edad(fecha_nacimiento, referencia)` y sobrescribe la
+ * columna. Esta función ya hacía lo mismo (clasifica por `fechaNacimiento`
+ * vía `esInfantePorEdad`, nunca por una bandera recibida), así que sigue
+ * siendo un espejo fiel; se anota aquí para que la equivalencia quede
+ * documentada y no se "arregle" en el futuro pasando una bandera.
+ * Con B22 el respaldo de fecha además se ACOTA a ±1 día de `current_date`
+ * dentro de Postgres (`_fecha_referencia_efectiva`): esa holgura existe solo
+ * para absorber la diferencia de día entre el reloj del app server y el de
+ * la base. Si el llamador pasara aquí una `fechaReferenciaEfectiva` más
+ * lejana que eso y el contrato no tuviera `fecha_salida`, Postgres la
+ * descartaría y usaría `current_date` — y esta prevalidación dejaría de
+ * coincidir con la escritura real. El llamador debe seguir pasando el
+ * "hoy" del servidor, no una fecha arbitraria.
+ *
  * Reglas (todas las que el trigger impone dentro de un mismo contrato):
  *   - todo infante REAL a `fechaReferenciaEfectiva` debe traer responsable;
  *   - el índice debe ser entero, existir en el contrato y no ser el propio pasajero;

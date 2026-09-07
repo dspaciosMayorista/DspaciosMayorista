@@ -370,10 +370,14 @@ test("migración 167 (segunda revisión de alto riesgo): la creación usa crear_
 
 test("migración 167 (segunda revisión de alto riesgo — B1): fn_validar_responsable_infante rechaza SIEMPRE un infante nuevo sin responsable, salvo un id congelado en _pasajeros_exentos_167", () => {
   const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  // B22 (ronda 10): la condición ya NO puede leer `new.es_infante` — decide
+  // con `v_inf_real`, el valor DERIVADO de la fecha de nacimiento. Si alguien
+  // volviera a poner aquí `coalesce(new.es_infante, false)`, el escritor
+  // recuperaría el control de quién es infante y el agujero se reabriría.
   assert.match(
     src,
-    /if coalesce\(new\.es_infante, false\) and new\.responsable_id is null then/,
-    "el trigger no distingue el caso infante+sin responsable como el que debe rechazar"
+    /if v_inf_real and new\.responsable_id is null then/,
+    "el trigger no distingue el caso infante+sin responsable como el que debe rechazar, o volvió a decidirlo con el es_infante recibido"
   );
   assert.match(
     src,
@@ -381,6 +385,65 @@ test("migración 167 (segunda revisión de alto riesgo — B1): fn_validar_respo
     "el trigger no consulta la foto congelada de exención"
   );
   assert.match(src, /raise exception 'Todo infante debe tener un adulto responsable vinculado\.';/, "el trigger no rechaza con un mensaje claro");
+});
+
+test("migración 167 (B22, ronda 10): el trigger DERIVA es_infante de la fecha de nacimiento y sobrescribe el valor recibido — no confía en el escritor", () => {
+  const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  // La derivación usa la MISMA función que el núcleo, contra la referencia
+  // resuelta arriba, y pisa la columna: sin esta línea, una escritura directa
+  // (la RLS FOR ALL de los roles internos la permite) elegiría por su cuenta
+  // quién es infante y esquivaría la exigencia de responsable.
+  assert.match(
+    src,
+    /v_inf_real := public\.es_infante_por_edad\(new\.fecha_nacimiento, v_fecha_ref\);\s*\n\s*new\.es_infante := v_inf_real;/,
+    "el trigger dejó de derivar es_infante y/o de sobrescribir el valor que mandó el escritor"
+  );
+  // El "no-infante con responsable" también se decide con el derivado.
+  assert.match(
+    src,
+    /if not v_inf_real then\s*\n\s*raise exception 'Solo un infante puede tener un adulto responsable vinculado\.';/,
+    "el rechazo de 'no-infante con responsable' volvió a depender del es_infante recibido"
+  );
+  // Que el RESPONSABLE sea o no infante también se deriva de SU fecha de
+  // nacimiento, no de su columna es_infante (que la escribió alguien).
+  assert.match(
+    src,
+    /v_resp_inf := public\.es_infante_por_edad\(v_resp\.fecha_nacimiento, v_fecha_ref\);/,
+    "el trigger vuelve a leer la columna es_infante del responsable en vez de derivarla"
+  );
+});
+
+test("migración 167 (B22): la fecha de referencia se resuelve con UNA sola función compartida, y el respaldo externo se acota a ±1 día", () => {
+  const src = leer("supabase/migrations/20260601000167_contrato_pasajero_responsable_infante.sql");
+  // Fuente única: si la fórmula se volviera a escribir a mano en alguno de
+  // los dos sitios, núcleo y trigger podrían desincronizarse otra vez.
+  assert.match(
+    src,
+    /create or replace function public\._fecha_referencia_efectiva\(/,
+    "no existe la resolución compartida de la fecha de referencia"
+  );
+  assert.match(
+    src,
+    /v_ref_efectiva := public\._fecha_referencia_efectiva\(v_ref_fecha, p_fecha_referencia_fallback\);/,
+    "el núcleo dejó de usar la resolución compartida"
+  );
+  assert.match(
+    src,
+    /v_fecha_ref := public\._fecha_referencia_efectiva\(v_fecha_sal, public\._fecha_referencia_guc\(\)\);/,
+    "el trigger dejó de usar la resolución compartida"
+  );
+  // El clamp es el candado: la GUC `app.*` la puede fijar cualquier rol.
+  assert.match(
+    src,
+    /if p_fallback is not null and abs\(p_fallback - v_hoy\) <= 1 then/,
+    "desapareció el clamp de ±1 día: un respaldo arbitrario (GUC o parámetro) podría reubicar la referencia y hacer pasar un infante real por no-infante"
+  );
+  // La lectura de la GUC no puede tumbar una escritura por basura.
+  assert.match(
+    src,
+    /create or replace function public\._fecha_referencia_guc\(/,
+    "no existe la lectura segura de la GUC"
+  );
 });
 
 test("migración 167 (B1): _pasajeros_exentos_167 es una foto INMUTABLE — sin GRANT de escritura para ningún rol de aplicación", () => {

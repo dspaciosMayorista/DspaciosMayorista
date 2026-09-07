@@ -169,6 +169,114 @@ comment on function public.es_infante_por_edad(date, date) is
   'nunca sub-contar el inventario) que lib/reservar/pasajeros.ts::'
   'esInfantePorEdad. Migración 167.';
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- Resolución ÚNICA de la fecha de referencia efectiva (B22).
+--
+-- Antes esta fórmula estaba escrita DOS veces —`coalesce(fecha_salida,
+-- fallback, current_date)` en `_reemplazar_pasajeros_nucleo` y
+-- `coalesce(fecha_salida, GUC, current_date)` en el trigger— y por tanto
+-- podía divergir. Ahora las dos llaman a ESTA función: una sola definición
+-- de "contra qué fecha se decide", imposible de desincronizar.
+--
+-- ⚠️ EL CLAMP DE ±1 DÍA NO ES COSMÉTICO — es el candado de B22.
+-- El respaldo (`p_fallback`) llega de fuera de Postgres: del app server
+-- (parámetro `p_fecha_referencia_fallback` del RPC) o de la GUC de sesión
+-- `app.fecha_referencia_efectiva`. Las GUC de clase personalizada ("app.")
+-- las puede fijar CUALQUIER rol con `set_config`/`SET` — se comprobó en
+-- Postgres 16 con un rol de aplicación. Sin acotarlo, un escritor directo
+-- podía fijar la GUC años en el futuro y hacer que un infante REAL se
+-- clasificara como no-infante, esquivando la exigencia de responsable: el
+-- mismo agujero de B22, solo que por otra palanca.
+--
+-- El respaldo existe únicamente para absorber la diferencia de DÍA entre
+-- el reloj del app server y el de Postgres (husos horarios, frontera de
+-- medianoche) — un desfase que por definición nunca pasa de un día. Al
+-- acotarlo a ±1 día se conserva íntegro ese propósito legítimo y se
+-- elimina el margen de maniobra: mover la referencia un día no convierte
+-- a un infante real en no-infante salvo en el borde exacto de su segundo
+-- cumpleaños, donde la exigencia de responsable es en todo caso una
+-- formalidad. Fuera de ese margen se ignora el valor y se cae a
+-- `current_date`, que ningún rol puede falsear.
+--
+-- `p_fecha_salida` (el dato de negocio) NO se acota: es la autoridad
+-- máxima y no la controla quien escribe la fila de pasajero.
+-- ─────────────────────────────────────────────────────────────────────────
+create or replace function public._fecha_referencia_efectiva(
+  p_fecha_salida date,
+  p_fallback     date
+)
+returns date
+language plpgsql
+stable
+set search_path = public, pg_temp
+as $$
+declare
+  v_hoy date := current_date;
+begin
+  if p_fecha_salida is not null then
+    return p_fecha_salida;
+  end if;
+  if p_fallback is not null and abs(p_fallback - v_hoy) <= 1 then
+    return p_fallback;
+  end if;
+  return v_hoy;
+end;
+$$;
+
+comment on function public._fecha_referencia_efectiva(date, date) is
+  'Fecha contra la cual se decide si un pasajero es infante y si su '
+  'responsable es mayor de edad. Fuente única compartida por '
+  '_reemplazar_pasajeros_nucleo y fn_validar_responsable_infante (antes la '
+  'fórmula estaba duplicada y podía divergir). Orden: fecha_salida del '
+  'contrato → respaldo externo → current_date. El respaldo se ACOTA a ±1 '
+  'día de current_date: sirve para absorber la diferencia de día entre el '
+  'reloj del app server y el de Postgres, no para reubicar la referencia — '
+  'sin ese límite, cualquier rol puede fijar la GUC app.'
+  'fecha_referencia_efectiva (las GUC de clase personalizada no están '
+  'restringidas) y hacer pasar un infante real por no-infante. B22, '
+  'migración 167.';
+
+-- Internas: solo las llaman el núcleo y el trigger, ambos SECURITY DEFINER
+-- (corren como el dueño del esquema, que conserva EXECUTE). Ningún rol de
+-- aplicación necesita ejecutarlas — mismo criterio que
+-- `_autorizado_escribir_pasajeros`/`_ajustar_sillas_nucleo`.
+revoke all on function public._fecha_referencia_efectiva(date, date) from public, anon, authenticated, service_role;
+
+-- Lectura SEGURA de la GUC de sesión: nunca tumba una escritura por basura
+-- en el valor (la puede haber fijado cualquiera). Un valor no parseable se
+-- trata como ausente y la resolución cae a current_date.
+create or replace function public._fecha_referencia_guc()
+returns date
+language plpgsql
+stable
+set search_path = public, pg_temp
+as $$
+declare
+  v_txt text;
+  v_val date;
+begin
+  v_txt := nullif(current_setting('app.fecha_referencia_efectiva', true), '');
+  if v_txt is null then
+    return null;
+  end if;
+  begin
+    v_val := v_txt::date;
+  exception when others then
+    return null;
+  end;
+  return v_val;
+end;
+$$;
+
+comment on function public._fecha_referencia_guc() is
+  'Lee la GUC de sesión app.fecha_referencia_efectiva como date, o null si '
+  'está ausente o no es parseable (la puede fijar cualquier rol, así que '
+  'jamás debe poder tumbar una escritura). Su valor todavía pasa por el '
+  'clamp de _fecha_referencia_efectiva antes de influir en una decisión. '
+  'B22, migración 167.';
+
+revoke all on function public._fecha_referencia_guc() from public, anon, authenticated, service_role;
+
 -- ═════════════════════════════════════════════════════════════════════════
 -- B) Vínculo INF → adulto responsable
 -- ═════════════════════════════════════════════════════════════════════════
@@ -243,12 +351,62 @@ security definer
 set search_path = public
 as $$
 declare
-  v_resp       record;
-  v_fecha_ref  date;
-  v_edad_resp  integer;
-  v_exento     boolean;
+  v_resp        record;
+  v_fecha_sal   date;
+  v_fecha_ref   date;
+  v_edad_resp   integer;
+  v_exento      boolean;
+  v_inf_real    boolean;
+  v_resp_inf    boolean;
 begin
-  if coalesce(new.es_infante, false) and new.responsable_id is null then
+  -- ── 1) La fecha de referencia se resuelve PRIMERO, antes de cualquier
+  -- decisión, con la MISMA función que usa `_reemplazar_pasajeros_nucleo`
+  -- (`_fecha_referencia_efectiva`): fecha_salida del contrato → respaldo
+  -- externo acotado a ±1 día (aquí, la GUC de sesión que publicó el núcleo)
+  -- → current_date. Antes esto se resolvía TARDE (solo dentro de la rama que
+  -- validaba al responsable) y con la fórmula escrita a mano, duplicada.
+  select v.fecha_salida into v_fecha_sal
+    from public.ventas v where v.numero_contrato = new.numero_contrato;
+  v_fecha_ref := public._fecha_referencia_efectiva(v_fecha_sal, public._fecha_referencia_guc());
+
+  -- ── 2) B22: la clasificación es DERIVADA, nunca la que mande el escritor.
+  --
+  -- `contrato_pasajeros` conserva una policy RLS FOR ALL para los usuarios
+  -- internos, así que una escritura directa (sin pasar por ningún RPC) podía
+  -- mandar la fecha de nacimiento de un bebé de un año junto con
+  -- `es_infante = false` y `responsable_id = null`: el trigger miraba el
+  -- `es_infante` RECIBIDO, concluía "no es infante" y aceptaba la fila. Lo
+  -- mismo por UPDATE. La garantía de "todo infante tiene responsable" no
+  -- valía nada porque quien escribía elegía quién era infante.
+  --
+  -- Ahora el trigger CALCULA la condición real con `es_infante_por_edad` —la
+  -- misma función que usa el núcleo— y SOBRESCRIBE `new.es_infante` con el
+  -- valor derivado. Se eligió sobrescribir en vez de rechazar la
+  -- discrepancia por dos razones:
+  --
+  --   a) `es_infante` es un hecho DERIVADO (función de fecha_nacimiento y de
+  --      la fecha de referencia), no un dato de entrada. Con una sola
+  --      derivación, en la base, ningún escritor —RPC, SQL directo o código
+  --      futuro— puede discrepar de ella. Rechazar la mantendría como una
+  --      entrada que el escritor debe acertar, que es justo la clase de bug
+  --      que B22 reporta.
+  --   b) Rechazar produciría falsos rechazos en ediciones inocentes: cuando
+  --      el contrato no tiene `fecha_salida`, la referencia es `current_date`
+  --      y avanza sola, así que una fila guardada hace meses como infante
+  --      legítimamente ya no deriva infante hoy. Bajo "rechazar", corregir el
+  --      número de documento de ese pasajero fallaría. Sobrescribiendo, la
+  --      misma edición se auto-corrige — exactamente lo que el núcleo ya hace
+  --      al recalcular en cada guardado.
+  --
+  -- Para la seguridad las dos opciones son equivalentes: forzar
+  -- `es_infante = true` en un infante real dispara acto seguido la exigencia
+  -- de responsable de abajo. Sobrescribir cierra el hueco sin añadir modos
+  -- de fallo nuevos.
+  v_inf_real := public.es_infante_por_edad(new.fecha_nacimiento, v_fecha_ref);
+  new.es_infante := v_inf_real;
+
+  -- ── 3) A partir de aquí se decide SOLO con el valor derivado.
+  if v_inf_real and new.responsable_id is null then
     select exists(
       select 1 from public._pasajeros_exentos_167 e where e.pasajero_id = new.id
     ) into v_exento;
@@ -266,11 +424,15 @@ begin
     raise exception 'Un pasajero no puede ser su propio responsable.';
   end if;
 
-  if not coalesce(new.es_infante, false) then
+  -- Un no-infante (real) con responsable_id: o el escritor mintió sobre la
+  -- edad, o quedó un vínculo viejo colgando. En ambos casos se rechaza en
+  -- vez de limpiarlo en silencio — a diferencia de `es_infante`, aquí sí hay
+  -- un dato que el escritor puso a propósito y que ya no tiene sentido.
+  if not v_inf_real then
     raise exception 'Solo un infante puede tener un adulto responsable vinculado.';
   end if;
 
-  select id, numero_contrato, es_infante, fecha_nacimiento into v_resp
+  select id, numero_contrato, fecha_nacimiento into v_resp
     from public.contrato_pasajeros
    where id = new.responsable_id;
 
@@ -282,30 +444,19 @@ begin
     raise exception 'El adulto responsable debe pertenecer al mismo contrato.';
   end if;
 
-  if v_resp.es_infante then
+  -- Que el responsable sea o no infante también se DERIVA de su fecha de
+  -- nacimiento, por el mismo motivo: su columna `es_infante` la escribió
+  -- alguien y no puede ser la autoridad. (Es redundante con el chequeo de
+  -- mayoría de edad de abajo —todo infante es menor de 18— pero se conserva
+  -- para que el mensaje de error siga siendo el específico.)
+  v_resp_inf := public.es_infante_por_edad(v_resp.fecha_nacimiento, v_fecha_ref);
+  if v_resp_inf then
     raise exception 'El adulto responsable no puede ser, a su vez, un infante.';
   end if;
 
   -- No basta con "no ser infante" — un CHD (niño de, digamos, 8 años) tampoco
-  -- puede ser responsable. Se exige mayoría de edad real (≥18) a la fecha de
-  -- salida del contrato (o, si no tiene fecha registrada — porción terrestre
-  -- sin fecha, o dato aún no capturado — a la referencia EFECTIVA que ya usó
-  -- `_reemplazar_pasajeros_nucleo` para clasificar el es_infante de ESTA
-  -- MISMA fila, publicada en una GUC de sesión: B-fix (fecha_salida NULL,
-  -- revisión de Opus). Sin esta GUC, este trigger recalcularía su PROPIO
-  -- `current_date` de forma independiente — dentro de la MISMA transacción
-  -- coincide siempre con el de arriba (current_date es estable por
-  -- transacción en Postgres), pero solo si es la MISMA fecha que decidió el
-  -- LLAMADOR (TypeScript, para creación) la coincidencia es real y no un
-  -- accidente de que ambos relojes resultaran iguales. `current_date` al
-  -- final sigue siendo el último respaldo, solo para una escritura directa
-  -- que no pasara por el núcleo (ninguna existe hoy).
-  select v.fecha_salida into v_fecha_ref from public.ventas v where v.numero_contrato = new.numero_contrato;
-  v_fecha_ref := coalesce(
-    v_fecha_ref,
-    nullif(current_setting('app.fecha_referencia_efectiva', true), '')::date,
-    current_date
-  );
+  -- puede ser responsable. Se exige mayoría de edad real (≥18) a la misma
+  -- fecha de referencia ya resuelta en el paso 1.
   v_edad_resp := public.edad_anios(v_resp.fecha_nacimiento, v_fecha_ref);
 
   if v_edad_resp is null or v_edad_resp < 18 then
@@ -318,16 +469,21 @@ $$;
 
 comment on function public.fn_validar_responsable_infante() is
   'Trigger BEFORE INSERT/UPDATE en contrato_pasajeros — AUTORIDAD REAL (no '
-  'solo de aplicación) de "todo infante nuevo debe tener responsable": '
-  'rechaza es_infante=true con responsable_id null salvo que el id esté '
-  'congelado en _pasajeros_exentos_167. Como esa tabla nunca vuelve a '
-  'escribirse, es IMPOSIBLE que un INSERT nuevo quede exento — cierra el '
-  'hueco sin importar qué función/RPC/camino haga la escritura. También '
-  'valida responsable_id cuando SÍ viene: existe, mismo contrato, no '
-  'auto-referencia, no infante, mayor de edad real ≥18 a la fecha de '
-  'salida. Es integridad de DATOS, no de acceso — la RLS de la tabla '
-  'decide quién puede escribir la fila antes de que este trigger corra. '
-  'Migración 167.';
+  'solo de aplicación) de la clasificación de infante Y del vínculo con su '
+  'responsable. B22: NO confía en el es_infante que manda el escritor (la '
+  'RLS deja escribir esta tabla directo a los roles internos, así que ese '
+  'valor es entrada del atacante) — resuelve la fecha de referencia con '
+  '_fecha_referencia_efectiva, deriva la condición real con '
+  'es_infante_por_edad(fecha_nacimiento, referencia) y SOBRESCRIBE '
+  'new.es_infante con ella, tanto en INSERT como en UPDATE. Sobre ese valor '
+  'derivado exige responsable a todo infante real, salvo que el id esté '
+  'congelado en _pasajeros_exentos_167; como esa tabla nunca vuelve a '
+  'escribirse, es IMPOSIBLE que una fila nueva quede exenta. Valida además '
+  'el responsable_id cuando viene: existe, mismo contrato, no '
+  'auto-referencia, no infante (también derivado de SU fecha de '
+  'nacimiento), y mayor de edad real ≥18 a esa misma referencia. Es '
+  'integridad de DATOS, no de acceso — la RLS de la tabla decide quién '
+  'puede escribir la fila antes de que este trigger corra. Migración 167.';
 
 drop trigger if exists trg_validar_responsable_infante on public.contrato_pasajeros;
 create trigger trg_validar_responsable_infante
@@ -906,15 +1062,18 @@ begin
   -- Fija la referencia EFECTIVA de esta transacción y la publica en una GUC
   -- de sesión (`is_local => true`: vive solo hasta el COMMIT/ROLLBACK de esta
   -- transacción, nunca se filtra a otra conexión del pool) — el trigger
-  -- `trg_validar_responsable_infante`, que valida la mayoría de edad del
-  -- responsable, no recibe parámetros de esta llamada (dispara por
-  -- INSERT/UPDATE de fila, no por invocación de función) y necesita leer la
-  -- MISMA referencia para no recalcular su propio `current_date` por
-  -- separado. `current_date` es estable dentro de una misma transacción en
-  -- Postgres, así que este último respaldo solo importa para una escritura
-  -- que llegara a `contrato_pasajeros` SIN pasar por este núcleo (ninguna
-  -- existe hoy; es puramente defensivo).
-  v_ref_efectiva := coalesce(v_ref_fecha, p_fecha_referencia_fallback, current_date);
+  -- `trg_validar_responsable_infante`, que deriva el es_infante de cada fila
+  -- y valida la mayoría de edad del responsable, no recibe parámetros de esta
+  -- llamada (dispara por INSERT/UPDATE de fila, no por invocación de función)
+  -- y necesita leer la MISMA referencia para no recalcular la suya por
+  -- separado.
+  --
+  -- B22: la resolución NO se escribe aquí a mano — la hace
+  -- `_fecha_referencia_efectiva`, la MISMA función que llama el trigger, de
+  -- modo que núcleo y trigger no puedan desincronizarse (antes la fórmula
+  -- estaba duplicada en los dos sitios). Esa función también ACOTA el
+  -- respaldo a ±1 día de `current_date`; ver su comentario para el porqué.
+  v_ref_efectiva := public._fecha_referencia_efectiva(v_ref_fecha, p_fecha_referencia_fallback);
   perform set_config('app.fecha_referencia_efectiva', v_ref_efectiva::text, true);
 
   if array_length(v_ids_mantener, 1) > 0 then

@@ -853,8 +853,13 @@ begin
     v_num_bfix1 text := 'DTM-8'||to_char(clock_timestamp(),'HH24MISSMS');
     v_num_bfix2 text := 'DTM-8'||to_char(clock_timestamp(),'HH24MISSMS')||'1';
     v_num_bfix3 text := 'DTM-8'||to_char(clock_timestamp(),'HH24MISSMS')||'2';
-    v_fallback_temprano date := date '2026-01-01';
-    v_fallback_lejano    date := date '1990-01-01';
+    -- B22: el respaldo externo se ACOTA a ±1 día de current_date (ver
+    -- `_fecha_referencia_efectiva`), así que estas pruebas ya no pueden usar
+    -- una fecha fija lejana para demostrar que el fallback se lee. Se usa el
+    -- desfase máximo que SÍ se honra —un día— y casos construidos para que
+    -- ese único día cambie el resultado (alguien que cumple justo hoy).
+    v_fallback_ayer   date := current_date - 1;
+    v_fallback_lejano date := current_date - interval '5 years';
     v_es_inf_bfix boolean;
     v_pax_antes int; v_pax_despues int; v_ok_bfix boolean;
   begin
@@ -866,12 +871,12 @@ begin
     perform 1 from public.crear_pasajeros_contrato_multi(
       v_num_bfix1,
       jsonb_build_array(
-        jsonb_build_object('nombre','Adulto Bfix','tipoId','CE','identificacion','1000199101','fechaNacimiento',(date '1990-01-01')::text),
-        jsonb_build_object('nombre','Infante Bfix','tipoId','RC','identificacion','1000199102','fechaNacimiento',(date '2025-06-01')::text,'responsableOrden',1)
+        jsonb_build_object('nombre','Adulto Bfix','tipoId','CE','identificacion','1000199101','fechaNacimiento',(current_date - interval '30 years')::date::text),
+        jsonb_build_object('nombre','Infante Bfix','tipoId','RC','identificacion','1000199102','fechaNacimiento',(current_date - interval '1 year')::date::text,'responsableOrden',1)
       ),
       '[]'::jsonb,
       v_uid,
-      v_fallback_temprano
+      v_fallback_ayer
     );
     select es_infante into v_es_inf_bfix from public.contrato_pasajeros where numero_contrato = v_num_bfix1 and identificacion = '1000199102';
     insert into pg_temp.postcheck_167_reporte
@@ -891,11 +896,11 @@ begin
       perform 1 from public.crear_pasajeros_contrato_multi(
         v_num_bfix2,
         jsonb_build_array(
-          jsonb_build_object('nombre','Infante Huerfano Bfix','tipoId','RC','identificacion','1000199103','fechaNacimiento',(date '2025-06-01')::text)
+          jsonb_build_object('nombre','Infante Huerfano Bfix','tipoId','RC','identificacion','1000199103','fechaNacimiento',(current_date - interval '1 year')::date::text)
         ),
         '[]'::jsonb,
         v_uid,
-        v_fallback_temprano
+        v_fallback_ayer
       );
       v_ok_bfix := false; -- no debió llegar aquí: el trigger debía rechazar
     exception when others then
@@ -906,16 +911,18 @@ begin
     insert into pg_temp.postcheck_167_reporte
       values ('bfix', 'B-fix #2: grupo SIN ventas.fecha_salida + INF sin responsable + fallback -> RECHAZA (trigger); 0 pasajeros antes y después del intento', case when v_ok_bfix then 'OK' else 'FALLA' end, '');
 
-    -- B-fix #3: la mayoría de edad del RESPONSABLE, dentro del TRIGGER
-    -- (que no recibe p_fecha_referencia_fallback como parámetro — lee la GUC
-    -- de sesión que fija _reemplazar_pasajeros_nucleo), también debe usar el
-    -- fallback y no un current_date recalculado aparte. Diseño del caso:
-    -- responsable nacido 1980-01-01 -> tiene 10 años al fallback LEJANO
-    -- (1990-01-01, rechazo esperado: menor de edad) pero es un adulto de
-    -- sobra bajo cualquier fecha real de hoy (2020+). Si el trigger cayera
-    -- en `current_date` en vez de leer la GUC, este caso ACEPTARÍA
-    -- (incorrectamente) en vez de rechazar — la prueba solo pasa si la GUC
-    -- realmente se está leyendo.
+    -- B-fix #3: la mayoría de edad del RESPONSABLE, dentro del TRIGGER (que
+    -- no recibe p_fecha_referencia_fallback como parámetro — lee la GUC de
+    -- sesión que fija _reemplazar_pasajeros_nucleo), también debe usar el
+    -- fallback y no un current_date recalculado aparte.
+    --
+    -- Diseño del caso, ajustado a B22 (el fallback ya solo se honra dentro de
+    -- ±1 día): el responsable nace EXACTAMENTE hoy hace 18 años, así que
+    --   · a `current_date` tiene 18 -> es adulto, se ACEPTARÍA;
+    --   · al fallback de AYER tiene 17 -> es menor, se RECHAZA.
+    -- Un solo día separa los dos resultados, así que la prueba solo pasa si
+    -- el trigger está leyendo de verdad la GUC. Si cayera en `current_date`,
+    -- aceptaría.
     insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
       values (v_num_bfix3, 'Cliente B-fix responsable menor bajo el fallback', null, 2, 50000, 'pendiente', 'mayorista');
     select count(*) into v_pax_antes from public.contrato_pasajeros where numero_contrato = v_num_bfix3;
@@ -923,12 +930,12 @@ begin
       perform 1 from public.crear_pasajeros_contrato_multi(
         v_num_bfix3,
         jsonb_build_array(
-          jsonb_build_object('nombre','Responsable Joven Bfix','tipoId','CE','identificacion','1000199104','fechaNacimiento',(date '1980-01-01')::text),
-          jsonb_build_object('nombre','Infante Bfix Guc','tipoId','RC','identificacion','1000199105','fechaNacimiento',(date '1988-06-01')::text,'responsableOrden',1)
+          jsonb_build_object('nombre','Responsable Joven Bfix','tipoId','CE','identificacion','1000199104','fechaNacimiento',(current_date - interval '18 years')::date::text),
+          jsonb_build_object('nombre','Infante Bfix Guc','tipoId','RC','identificacion','1000199105','fechaNacimiento',(current_date - interval '1 year')::date::text,'responsableOrden',1)
         ),
         '[]'::jsonb,
         v_uid,
-        v_fallback_lejano
+        v_fallback_ayer
       );
       v_ok_bfix := false; -- no debió llegar aquí: el responsable es menor AL FALLBACK
     exception when others then
@@ -937,7 +944,245 @@ begin
     select count(*) into v_pax_despues from public.contrato_pasajeros where numero_contrato = v_num_bfix3;
     v_ok_bfix := v_ok_bfix and v_pax_antes = 0 and v_pax_despues = 0;
     insert into pg_temp.postcheck_167_reporte
-      values ('bfix', 'B-fix #3: la mayoría de edad del responsable dentro del TRIGGER usa el fallback (vía GUC de sesión), no current_date -> rechaza a un responsable menor SOLO al fallback', case when v_ok_bfix then 'OK' else 'FALLA' end, '');
+      values ('bfix', 'B-fix #3: la mayoría de edad del responsable dentro del TRIGGER usa el fallback (vía GUC de sesión), no current_date -> rechaza a un responsable que cumple 18 HOY cuando el fallback es ayer', case when v_ok_bfix then 'OK' else 'FALLA' end, '');
+
+    -- B-fix #4 (B22): control del CLAMP. El mismo caso de B-fix #3 pero con un
+    -- fallback LEJANO (5 años atrás), que `_fecha_referencia_efectiva`
+    -- descarta por estar fuera de ±1 día: la referencia cae a `current_date`,
+    -- donde el responsable ya tiene 18 -> ACEPTA. Es el contraste que prueba
+    -- que el clamp descarta de verdad un respaldo fuera de rango (y no que el
+    -- fallback se esté ignorando siempre: B-fix #3, con un día, sí se honra).
+    begin
+      perform 1 from public.crear_pasajeros_contrato_multi(
+        v_num_bfix3,
+        jsonb_build_array(
+          jsonb_build_object('nombre','Responsable Joven Bfix','tipoId','CE','identificacion','1000199104','fechaNacimiento',(current_date - interval '18 years')::date::text),
+          jsonb_build_object('nombre','Infante Bfix Guc','tipoId','RC','identificacion','1000199105','fechaNacimiento',(current_date - interval '1 year')::date::text,'responsableOrden',1)
+        ),
+        '[]'::jsonb,
+        v_uid,
+        v_fallback_lejano
+      );
+      v_ok_bfix := true;
+    exception when others then
+      v_ok_bfix := false;
+    end;
+    select count(*) into v_pax_despues from public.contrato_pasajeros where numero_contrato = v_num_bfix3;
+    v_ok_bfix := v_ok_bfix and v_pax_despues = 2;
+    insert into pg_temp.postcheck_167_reporte
+      values ('bfix', 'B-fix #4 (B22): un fallback FUERA de ±1 día se descarta y la referencia cae a current_date -> el mismo caso de #3 ahora ACEPTA (el clamp descarta el respaldo lejano, no todos)', case when v_ok_bfix then 'OK' else 'FALLA' end, 'pasajeros='||v_pax_despues);
+  end;
+
+  -- ═══════════════════════════════════════════════════════════════════════
+  -- B22 (revisión de Opus, ronda 10) — EL TRIGGER NO PUEDE CREER EN EL
+  -- es_infante QUE MANDA EL ESCRITOR.
+  --
+  -- `contrato_pasajeros` conserva una policy RLS FOR ALL para los usuarios
+  -- internos, así que existe un camino de escritura DIRECTA que no pasa por
+  -- ningún RPC. Antes de B22 el trigger decidía con `coalesce(new.es_infante,
+  -- false)`: quien escribía elegía quién era infante, y con `es_infante=false`
+  -- + `responsable_id=null` metía un bebé real sin responsable (también por
+  -- UPDATE). Todas las pruebas de abajo escriben DIRECTO contra la tabla
+  -- —sin RPC— porque ese es justamente el camino que debe quedar cerrado.
+  -- ═══════════════════════════════════════════════════════════════════════
+  declare
+    v_num_b22   text := 'DTM-7'||to_char(clock_timestamp(),'HH24MISSMS');
+    v_adulto    bigint;
+    v_id        bigint;
+    v_inf_id    bigint;
+    v_inf2_id   bigint;
+    v_val       boolean;
+    v_antes     int; v_despues int;
+    v_ok        boolean;
+  begin
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num_b22, 'Cliente B22', current_date + 30, 4, 90000, 'pendiente', 'mayorista');
+    insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
+      values (v_num_b22, 'Adulto B22', 'CC', '1000199201', (current_date - interval '30 years')::date, false, 0)
+      returning id into v_adulto;
+
+    -- A) INSERT DIRECTO de un INF real declarando es_infante=false y sin
+    --    responsable. Antes de B22 esto se guardaba tal cual.
+    select count(*) into v_antes from public.contrato_pasajeros where numero_contrato = v_num_b22;
+    begin
+      insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden, responsable_id)
+        values (v_num_b22, 'Bebe Mentira A', 'RC', '1000199202', (current_date - interval '1 year')::date, false, 1, null);
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    select count(*) into v_despues from public.contrato_pasajeros where numero_contrato = v_num_b22;
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-A: INSERT DIRECTO de INF real (1 año) con es_infante=false y responsable_id=null -> RECHAZADO por el trigger (antes se guardaba); no queda fila', case when v_ok and v_antes = v_despues then 'OK' else 'FALLA' end, 'filas '||v_antes||'->'||v_despues);
+
+    -- B) Igual que A pero con es_infante = NULL (ni siquiera declarado).
+    select count(*) into v_antes from public.contrato_pasajeros where numero_contrato = v_num_b22;
+    begin
+      insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden, responsable_id)
+        values (v_num_b22, 'Bebe Nulo B', 'RC', '1000199203', (current_date - interval '6 months')::date, null, 2, null);
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    select count(*) into v_despues from public.contrato_pasajeros where numero_contrato = v_num_b22;
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-B: INSERT DIRECTO de INF real con es_infante=NULL y sin responsable -> RECHAZADO; no queda fila', case when v_ok and v_antes = v_despues then 'OK' else 'FALLA' end, 'filas '||v_antes||'->'||v_despues);
+
+    -- C) UPDATE que convierte a un adulto ya guardado en INF por fecha de
+    --    nacimiento, intentando conservar es_infante=false y sin responsable.
+    insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
+      values (v_num_b22, 'Mutante C', 'CC', '1000199204', (current_date - interval '40 years')::date, false, 3)
+      returning id into v_id;
+    begin
+      update public.contrato_pasajeros
+         set fecha_nacimiento = (current_date - interval '1 year')::date, es_infante = false, responsable_id = null
+       where id = v_id;
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    select fecha_nacimiento = (current_date - interval '40 years')::date into v_val
+      from public.contrato_pasajeros where id = v_id;
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-C: UPDATE que vuelve INF la fecha de nacimiento conservando es_infante=false y responsable_id=null -> FALLA; la fila conserva su fecha original', case when v_ok and coalesce(v_val,false) then 'OK' else 'FALLA' end, '');
+
+    -- D) INF real CON un adulto responsable válido: se guarda, y el
+    --    es_infante persistido es el DERIVADO (true) aunque el escritor
+    --    mandara false — el dato queda correcto, no como lo envió.
+    insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden, responsable_id)
+      values (v_num_b22, 'Bebe Legitimo D', 'RC', '1000199205', (current_date - interval '1 year')::date, false, 4, v_adulto)
+      returning id into v_inf_id;
+    select es_infante into v_val from public.contrato_pasajeros where id = v_inf_id;
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-D: INF real con adulto responsable válido -> se guarda y persiste es_infante=true (DERIVADO), aunque el escritor mandó false', case when coalesce(v_val,false) then 'OK' else 'FALLA' end, 'es_infante='||coalesce(v_val::text,'null'));
+
+    -- E) ADT/CHD enviado fraudulentamente como es_infante=true. Dos caras:
+    --    sin responsable se guarda con la clasificación CORREGIDA a false
+    --    (nunca conserva la falsa); con responsable se rechaza, porque un
+    --    no-infante no puede tener uno.
+    insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden, responsable_id)
+      values (v_num_b22, 'Adulto Disfrazado E1', 'CC', '1000199206', (current_date - interval '35 years')::date, true, 5, null)
+      returning id into v_id;
+    select es_infante into v_val from public.contrato_pasajeros where id = v_id;
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-E1: ADT de 35 años enviado con es_infante=true (sin responsable) -> NO conserva la clasificación falsa; queda es_infante=false (derivado)', case when v_val is not null and v_val = false then 'OK' else 'FALLA' end, 'es_infante='||coalesce(v_val::text,'null'));
+
+    begin
+      insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden, responsable_id)
+        values (v_num_b22, 'Adulto Disfrazado E2', 'CC', '1000199207', (current_date - interval '35 years')::date, true, 6, v_adulto);
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-E2: ADT enviado con es_infante=true Y responsable adulto -> RECHAZADO (un no-infante real no puede tener responsable)', case when v_ok then 'OK' else 'FALLA' end, '');
+
+    -- F) La foto histórica `_pasajeros_exentos_167` sigue valiendo, y SOLO
+    --    para los ids congelados en ella. Se simula el estado histórico
+    --    congelando el id de un infante ya creado legítimamente (D) y
+    --    quitándole después el vínculo: debe permitirse. El control es un
+    --    segundo infante NO congelado haciendo exactamente lo mismo: debe
+    --    rechazarse — la excepción no se contagia ni se inventa.
+    insert into public._pasajeros_exentos_167 (pasajero_id) values (v_inf_id) on conflict do nothing;
+    begin
+      update public.contrato_pasajeros set responsable_id = null where id = v_inf_id;
+      v_ok := true;
+    exception when others then
+      v_ok := false;
+    end;
+    select responsable_id is null and coalesce(es_infante,false) into v_val
+      from public.contrato_pasajeros where id = v_inf_id;
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-F1: un id congelado en _pasajeros_exentos_167 SIGUE pudiendo quedar sin responsable siendo INF real (la excepción histórica se preserva bajo la clasificación derivada)', case when v_ok and coalesce(v_val,false) then 'OK' else 'FALLA' end, '');
+
+    insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden, responsable_id)
+      values (v_num_b22, 'Bebe No Exento F2', 'RC', '1000199208', (current_date - interval '1 year')::date, true, 7, v_adulto)
+      returning id into v_inf2_id;
+    begin
+      update public.contrato_pasajeros set responsable_id = null where id = v_inf2_id;
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    select responsable_id into v_id from public.contrato_pasajeros where id = v_inf2_id;
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-F2 (control): un infante NO congelado no hereda la excepción -> quitarle el responsable FALLA y conserva su vínculo', case when v_ok and v_id = v_adulto then 'OK' else 'FALLA' end, '');
+
+    -- G) Núcleo y trigger deciden con la MISMA fecha cuando hay un fallback
+    --    explícito. Caso construido para que el fallback (ayer) y
+    --    `current_date` den resultados OPUESTOS: alguien que cumple 2 años
+    --    HOY es CHD a current_date pero INF ayer.
+    --      · sin responsable -> rechaza (los dos lo ven infante);
+    --      · con responsable -> acepta y persiste es_infante=true, lo que
+    --        solo es posible si el TRIGGER también derivó "infante" con el
+    --        fallback (si hubiera usado current_date habría derivado false y
+    --        habría rechazado el vínculo por "solo un infante puede tener
+    --        responsable").
+    declare
+      -- Sufijo numérico: el CHECK de `ventas` exige ^DTM-[0-9]{4,}$.
+      v_num_g text := 'DTM-7'||to_char(clock_timestamp(),'HH24MISSMS')||'7';
+    begin
+      insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+        values (v_num_g, 'Cliente B22 G', null, 2, 40000, 'pendiente', 'mayorista');
+      select count(*) into v_antes from public.contrato_pasajeros where numero_contrato = v_num_g;
+      begin
+        perform 1 from public.crear_pasajeros_contrato_multi(
+          v_num_g,
+          jsonb_build_array(
+            jsonb_build_object('nombre','Cumple 2 Hoy','tipoId','RC','identificacion','1000199209','fechaNacimiento',(current_date - interval '2 years')::date::text)
+          ),
+          '[]'::jsonb, v_uid, current_date - 1
+        );
+        v_ok := false;
+      exception when others then
+        v_ok := true;
+      end;
+      select count(*) into v_despues from public.contrato_pasajeros where numero_contrato = v_num_g;
+      insert into pg_temp.postcheck_167_reporte
+        values ('b22', 'B22-G1: con fallback=ayer, quien cumple 2 años HOY es INF -> sin responsable el núcleo rechaza y no queda ninguna fila', case when v_ok and v_antes = 0 and v_despues = 0 then 'OK' else 'FALLA' end, 'filas '||v_antes||'->'||v_despues);
+
+      perform 1 from public.crear_pasajeros_contrato_multi(
+        v_num_g,
+        jsonb_build_array(
+          jsonb_build_object('nombre','Adulto G','tipoId','CC','identificacion','1000199210','fechaNacimiento',(current_date - interval '40 years')::date::text),
+          jsonb_build_object('nombre','Cumple 2 Hoy','tipoId','RC','identificacion','1000199209','fechaNacimiento',(current_date - interval '2 years')::date::text,'responsableOrden',1)
+        ),
+        '[]'::jsonb, v_uid, current_date - 1
+      );
+      select es_infante into v_val from public.contrato_pasajeros where numero_contrato = v_num_g and identificacion = '1000199209';
+      insert into pg_temp.postcheck_167_reporte
+        values ('b22', 'B22-G2: mismo fallback, con responsable -> acepta y persiste es_infante=true; el TRIGGER derivó con el MISMO fallback que el núcleo (con current_date habría rechazado el vínculo)', case when coalesce(v_val,false) then 'OK' else 'FALLA' end, 'es_infante='||coalesce(v_val::text,'null'));
+    end;
+
+    -- GUC) El clamp de ±1 día es lo que impide que la palanca se mueva: un
+    --      escritor directo puede fijar la GUC (las de clase "app." no están
+    --      restringidas) pero un valor lejano se descarta y la referencia cae
+    --      a current_date, así que el INF real sigue exigiendo responsable.
+    perform set_config('app.fecha_referencia_efectiva', (current_date + interval '5 years')::date::text, true);
+    begin
+      insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden, responsable_id)
+        values (v_num_b22, 'Bebe Via GUC', 'RC', '1000199211', (current_date - interval '1 year')::date, false, 8, null);
+      v_ok := false;
+    exception when others then
+      v_ok := true;
+    end;
+    perform set_config('app.fecha_referencia_efectiva', '', true);
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-GUC: fijar app.fecha_referencia_efectiva 5 años al futuro NO deja colar un INF real sin responsable (el clamp de ±1 día descarta el valor)', case when v_ok then 'OK' else 'FALLA' end, '');
+
+    -- GUC-basura) Un valor no parseable en la GUC no puede tumbar una
+    --             escritura legítima: se ignora y se cae a current_date.
+    perform set_config('app.fecha_referencia_efectiva', 'no-es-una-fecha', true);
+    begin
+      insert into public.contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
+        values (v_num_b22, 'Adulto Guc Basura', 'CC', '1000199212', (current_date - interval '30 years')::date, false, 9);
+      v_ok := true;
+    exception when others then
+      v_ok := false;
+    end;
+    perform set_config('app.fecha_referencia_efectiva', '', true);
+    insert into pg_temp.postcheck_167_reporte
+      values ('b22', 'B22-GUC-basura: un valor no parseable en la GUC se ignora (no tumba una escritura legítima)', case when v_ok then 'OK' else 'FALLA' end, '');
   end;
 
   raise notice 'postcheck 167: fixtures creados bajo %/%/%/%/% (se revierten con ROLLBACK)', v_num, v_num2, v_num3, v_num4, v_num5;
