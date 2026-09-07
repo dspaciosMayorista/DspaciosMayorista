@@ -22,6 +22,8 @@ import {
   limpiarResponsablesInvalidosPorContrato,
   demandaSillasPorBloqueo,
   faltanteDeCupos,
+  prevalidarResponsablesDeGrupo,
+  mensajePrevalidacionGrupo,
 } from "../lib/reservar/carritoAsignaciones.ts";
 
 describe("agruparIndicesPorDestino", () => {
@@ -461,5 +463,115 @@ describe("demandaSillasPorBloqueo + faltanteDeCupos — B21 (ronda 8): capacidad
     const demanda = demandaSillasPorBloqueo([grupoA, grupoB]); // {10: 4}
     // Validar cada grupo aisladamente (2≤3) daría OK falso; acumulado 4>3 rechaza.
     assert.deepEqual(faltanteDeCupos(demanda, new Map([[10, 3]])), { bloqueoId: 10, demanda: 4, disponibles: 3 });
+  });
+});
+
+describe("prevalidarResponsablesDeGrupo — B-fix (ronda 9, revisión de Opus): grupo SIN fecha, referencia efectiva inyectada", () => {
+  // EJECUCIÓN REAL de la MISMA función de orquestación que usa
+  // `convertirCotizacionCarrito` (nunca una reconstrucción manual del
+  // pipeline) — cubre exactamente el escenario reportado: un grupo/contrato
+  // sin NINGUNA unidad con fecha (porción terrestre/tours sin fecha), donde
+  // `ventas.fecha_salida` va a quedar en null y la clasificación de edad
+  // necesita una referencia EXPLÍCITA inyectada por el llamador (el mismo
+  // `hoyISO` que también se manda al RPC como `p_fecha_referencia_fallback`)
+  // — nunca decidida por la función misma.
+  type Fila = { fechaNacimiento: string; responsableIndex?: number | null };
+
+  const F_ADULTO = "1990-01-01";
+  const F_INFANTE_HOY = "2025-06-01"; // <2 años a "2026-01-01" (hoyISO simulado)
+  const F_NINO_8 = "2018-01-01"; // CHD, no puede ser responsable
+
+  test("#1 grupo sin fecha + INF hoy + responsable ADULTO válido → prevalidación coherente (ok:true), creación no bloqueada", () => {
+    const hoyISO = "2026-01-01"; // inyectado explícito por el llamador — NUNCA new Date() interno
+    const pasajeros: Fila[] = [
+      { fechaNacimiento: F_ADULTO }, // pos 1
+      { fechaNacimiento: F_INFANTE_HOY, responsableIndex: 0 }, // pos 2, responsable = pos 1
+    ];
+    const universoGrupo = [1, 2];
+    const r = prevalidarResponsablesDeGrupo(pasajeros, universoGrupo, hoyISO);
+    assert.deepEqual(r, { ok: true });
+  });
+
+  test("#2 grupo sin fecha + INF hoy SIN responsable → RECHAZO antes de cualquier escritura (motivo infante_sin_responsable)", () => {
+    const hoyISO = "2026-01-01";
+    const pasajeros: Fila[] = [
+      { fechaNacimiento: F_ADULTO },
+      { fechaNacimiento: F_INFANTE_HOY, responsableIndex: null },
+    ];
+    const universoGrupo = [1, 2];
+    const r = prevalidarResponsablesDeGrupo(pasajeros, universoGrupo, hoyISO);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.motivo, "infante_sin_responsable");
+    assert.equal(r.ok === false && r.posicionGlobal, 2);
+    // `prevalidarResponsablesDeGrupo` es una función PURA (sin I/O, sin
+    // cliente de base de datos como parámetro): estructuralmente NO PUEDE
+    // haber creado ninguna fila en `ventas`, `contrato_pasajeros` ni
+    // `sillas` — no tiene forma de tocarlas. Eso es justamente lo que
+    // permite que `convertirCotizacionCarrito` la llame ANTES de generar el
+    // primer número de contrato (ver el wiring test de orden en
+    // pasajerosChdInf.wiring.test.ts) sin dejar nunca un contrato a medias.
+    assert.equal(mensajePrevalidacionGrupo(r), "El infante en la posición 2 debe tener un adulto responsable asignado. No se creó ningún contrato.");
+  });
+
+  test("#3 grupo sin fecha + responsable declarado es un CHD de 8 años → RECHAZO (motivo responsable_no_adulto)", () => {
+    const hoyISO = "2026-01-01";
+    const pasajeros: Fila[] = [
+      { fechaNacimiento: F_NINO_8 }, // pos 1: niño de 8 años, NO puede responder
+      { fechaNacimiento: F_INFANTE_HOY, responsableIndex: 0 }, // pos 2: INF apunta al niño
+    ];
+    const universoGrupo = [1, 2];
+    const r = prevalidarResponsablesDeGrupo(pasajeros, universoGrupo, hoyISO);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.motivo, "responsable_no_adulto");
+    assert.equal(r.ok === false && r.posicionGlobal, 2);
+    assert.equal(r.ok === false && r.responsableGlobal, 1);
+  });
+
+  test("#4 el fallback inyectado decide DETERMINÍSTICAMENTE el resultado — el MISMO pasajero pasa de exigir responsable a no exigirlo según el 'hoy' que reciba", () => {
+    const pasajeros: Fila[] = [
+      { fechaNacimiento: F_ADULTO },
+      { fechaNacimiento: F_INFANTE_HOY, responsableIndex: null }, // sin responsable a propósito
+    ];
+    const universoGrupo = [1, 2];
+    // "Hoy" = poco después de nacer → sigue siendo infante (< 2 años) → exige responsable → rechaza.
+    const rTemprano = prevalidarResponsablesDeGrupo(pasajeros, universoGrupo, "2026-01-01");
+    assert.equal(rTemprano.ok, false);
+    assert.equal(rTemprano.ok === false && rTemprano.motivo, "infante_sin_responsable");
+    // "Hoy" = 3 años después → ya es CHD (≥2 años) → NO exige responsable → ok.
+    // (Esto reproduce, de forma controlada, el cambio de día/fallback: cambiar
+    // ÚNICAMENTE el 3er argumento cambia la clasificación, nunca el código.)
+    const rTardio = prevalidarResponsablesDeGrupo(pasajeros, universoGrupo, "2029-01-01");
+    assert.deepEqual(rTardio, { ok: true });
+  });
+
+  test("#5 el MISMO caso, con un ADULTO válido en vez de sin responsable, sigue siendo coherente en AMBAS fechas (no exige responsable cuando ya no es infante)", () => {
+    const conResponsable: Fila[] = [
+      { fechaNacimiento: F_ADULTO },
+      { fechaNacimiento: F_INFANTE_HOY, responsableIndex: 0 },
+    ];
+    const universoGrupo = [1, 2];
+    assert.deepEqual(prevalidarResponsablesDeGrupo(conResponsable, universoGrupo, "2026-01-01"), { ok: true }, "infante con responsable en fecha temprana: ok");
+    assert.deepEqual(prevalidarResponsablesDeGrupo(conResponsable, universoGrupo, "2029-01-01"), { ok: true }, "ya-no-infante con un responsableIndex heredado: sigue ok (no se exige, y validarResponsablesContrato no lo penaliza)");
+  });
+
+  test("#6 responsable que apunta a OTRO contrato (cruza-contrato, B18) también rechaza ANTES de escribir, con el motivo estructurado correcto", () => {
+    const hoyISO = "2026-01-01";
+    // El infante (pos 2) apunta a la posición 3 (índice 2), que NO pertenece
+    // al universo de ESTE grupo ([1,2]) — reindexarGrupoLocal lo detecta y lo
+    // deja como null, `prevalidarResponsablesDeGrupo` lo reporta como
+    // `responsable_cruza_contrato` en vez de `infante_sin_responsable` (para
+    // que el mensaje al asesor sea el correcto: el problema es la asignación
+    // entre contratos, no que falte capturar un responsable).
+    const pasajeros: Fila[] = [
+      { fechaNacimiento: F_ADULTO }, // pos 1, en OTRO contrato
+      { fechaNacimiento: F_INFANTE_HOY, responsableIndex: 2 }, // pos 2, apunta a pos 3 (0-based idx 2)
+      { fechaNacimiento: F_ADULTO }, // pos 3, en OTRO contrato
+    ];
+    const universoGrupo = [2]; // ESTE contrato solo tiene al infante
+    const r = prevalidarResponsablesDeGrupo(pasajeros, universoGrupo, hoyISO);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.motivo, "responsable_cruza_contrato");
+    assert.equal(r.ok === false && r.posicionGlobal, 2);
+    assert.match(mensajePrevalidacionGrupo(r), /debe viajar en TODOS los contratos/);
   });
 });

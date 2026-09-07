@@ -37,8 +37,8 @@ import {
 import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
 import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
-import { normalizarResponsablesPorGrupo, validarResponsablesContrato, type MotivoResponsableInvalido } from "@/lib/reservar/pasajerosFilas";
-import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo, demandaSillasPorBloqueo, faltanteDeCupos, type ReservaSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
+import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
+import { posicionesSinAsignar, posicionesUnicasDeGrupo, reindexarGrupoLocal, consolidarReservasSillasPorBloqueo, demandaSillasPorBloqueo, faltanteDeCupos, prevalidarResponsablesDeGrupo, mensajePrevalidacionGrupo, type ReservaSillasPorBloqueo } from "@/lib/reservar/carritoAsignaciones";
 import {
   componenteHotelReal,
   componentePaqueteReal,
@@ -1042,11 +1042,16 @@ type TourCarritoConAsignacion = TourCarritoPayload & { __posiciones: number[] };
 // consolidado es la unión de `posicionesConSilla` (personas únicas con silla),
 // nunca la suma por ítem. Todo `posGlobal` de `__posiciones` pertenece al
 // universo del grupo, así que siempre está en `mapaGlobalALocal`.
+// `fechaRefGrupo` es SIEMPRE una fecha concreta (nunca null) — B-fix
+// (fecha_salida NULL, revisión de Opus ronda 9): el llamador ya la resolvió
+// a `fechasIda[0] ?? hoyISO` ANTES de invocar esto (misma referencia
+// efectiva que se pasa como `p_fecha_referencia_fallback` al RPC), así que
+// esta función nunca necesita decidir "hoy" por su cuenta.
 function reservasSillasDeGrupo(
   validados: readonly { item: ItemCarritoConAsignacion; comp: ComputoReserva }[],
   mapaGlobalALocal: ReadonlyMap<number, number>,
   pasajerosNormalizadosGlobal: readonly PasajeroReserva[],
-  fechaRefGrupo: string | null
+  fechaRefGrupo: string
 ): ReservaSillasPorBloqueo[] {
   const itemsBloqueoLocal = validados
     .filter((v): v is typeof v & { item: { bloqueoId: number } } => v.item.modulo === "bloqueo" && v.item.bloqueoId != null)
@@ -1063,25 +1068,6 @@ function reservasSillasDeGrupo(
   return consolidarReservasSillasPorBloqueo(itemsBloqueoLocal);
 }
 
-// Mensaje al usuario para cada motivo de vínculo INF→responsable inválido
-// (B20) — `posicionGlobal`/`responsableGlobal` son 1-based dentro de
-// `opts.pasajeros` (la tabla que ve el asesor). Siempre cierra con "No se creó
-// ningún contrato" porque esto se evalúa en la PRE-validación, antes de escribir.
-function mensajeResponsableInvalido(motivo: MotivoResponsableInvalido, posicionGlobal: number, responsableGlobal: number | null): string {
-  const suf = " No se creó ningún contrato.";
-  switch (motivo) {
-    case "infante_sin_responsable":
-      return `El infante en la posición ${posicionGlobal} debe tener un adulto responsable asignado.${suf}`;
-    case "indice_fuera_de_rango":
-      return `El adulto responsable asignado al infante en la posición ${posicionGlobal} no existe en el contrato.${suf}`;
-    case "autorreferencia":
-      return `El infante en la posición ${posicionGlobal} no puede ser su propio responsable.${suf}`;
-    case "responsable_es_infante":
-      return `El responsable del infante en la posición ${posicionGlobal} (posición ${responsableGlobal}) no puede ser, a su vez, un infante.${suf}`;
-    case "responsable_no_adulto":
-      return `El responsable del infante en la posición ${posicionGlobal} (posición ${responsableGlobal}) debe ser mayor de edad (18 años) a la fecha de salida.${suf}`;
-  }
-}
 
 export async function convertirCotizacionCarrito(
   id: number,
@@ -1297,33 +1283,44 @@ export async function convertirCotizacionCarrito(
         ...validados.map((v) => v.comp.meta.fecha_ida),
         ...grupo.tours.map((t) => t.fechaIda),
       ].filter((f): f is string => !!f).sort();
-      const fechaRefPre = fechasIdaPre[0] ?? null;
+      // B-fix (fecha_salida NULL, revisión de Opus ronda 9): si este grupo no
+      // tiene NINGUNA unidad con fecha (porción terrestre/tours sin fecha),
+      // `ventas.fecha_salida` va a quedar en `null` (eso NO cambia — ver más
+      // abajo) — pero la CLASIFICACIÓN de edad no puede quedarse sin
+      // referencia ni inventar la suya por separado en cada función pura:
+      // `hoyISO` (calculado UNA sola vez, arriba, para todo este flujo) es la
+      // MISMA referencia que se manda explícita al RPC
+      // (`p_fecha_referencia_fallback`) — así la prevalidación de aquí y la
+      // escritura real deciden EXACTAMENTE lo mismo, sin depender de que el
+      // reloj del servidor de aplicación y el de Postgres coincidan por
+      // casualidad (antes, esta fecha se dejaba en `null` y cada función
+      // pura decidía "hoy" por su cuenta, o ni siquiera eso: ver el fix en
+      // `validarResponsablesContrato`).
+      const fechaRefPre = fechasIdaPre[0] ?? hoyISO;
       const posGrupoPre = posicionesUnicasDeGrupo(
         [...grupo.items.map((it) => it.__posiciones), ...grupo.tours.map((t) => t.__posiciones)],
         [...grupo.items, ...grupo.tours].map((_, i) => i)
       );
       const universoPre = posGrupoPre.length ? posGrupoPre : opts.pasajeros.map((_, i) => i + 1);
-      const pasajerosNormPre = normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefPre);
-      const { pasajerosLocal: localPre, posicionesInvalidas: invalidasPre, mapaGlobalALocal: mapaPre } =
-        reindexarGrupoLocal(pasajerosNormPre, universoPre);
-      // B18 — responsable en OTRO contrato / índice inexistente (el reindexado
-      // lo dejó como `null` y lo registró en `posicionesInvalidas`): el adulto
-      // debe viajar en TODOS los contratos donde el pasajero es infante.
-      if (invalidasPre.length) {
-        return { ok: false, error: `El adulto responsable del pasajero ${invalidasPre[0]} debe viajar en TODOS los contratos donde ese pasajero es infante — elige un adulto que viaje en todos, o revisa la asignación. No se creó ningún contrato.` };
-      }
-      // B20 — validación COMPLETA del vínculo dentro del contrato, réplica del
-      // trigger (infante sin responsable, autorreferencia, responsable
-      // CHD/infante), contra la fecha REAL de ESTE contrato. No depende de la
-      // UI: corre sobre los pasajeros ya normalizados/reindexados en el
-      // servidor, lo mismo que recibirá el RPC.
-      const vResp = validarResponsablesContrato(localPre, fechaRefPre);
-      if (!vResp.ok) {
-        const posGlobal = universoPre[vResp.posicionLocal];
-        const respGlobal = vResp.responsableLocal != null ? universoPre[vResp.responsableLocal] : null;
-        return { ok: false, error: mensajeResponsableInvalido(vResp.motivo, posGlobal, respGlobal) };
+      // B18/B20 — validación COMPLETA del vínculo responsable dentro de ESTE
+      // contrato (cruza-contrato, infante sin responsable, autorreferencia,
+      // responsable CHD/infante/menor de edad), vía la MISMA función de
+      // orquestación compartida que usa cualquier otra verificación de este
+      // tipo (`prevalidarResponsablesDeGrupo`, `lib/reservar/
+      // carritoAsignaciones.ts`) — no una reconstrucción inline del pipeline
+      // que pudiera divergir en silencio.
+      const respPre = prevalidarResponsablesDeGrupo(opts.pasajeros, universoPre, fechaRefPre);
+      if (!respPre.ok) {
+        return { ok: false, error: mensajePrevalidacionGrupo(respPre) };
       }
       // B21 — mismas reservas consolidadas que recibirá el RPC de este grupo.
+      // Recalcula normalización/reindexado (mismas funciones puras, mismos
+      // datos que acaba de usar `prevalidarResponsablesDeGrupo` arriba) porque
+      // esta parte necesita además `mapaGlobalALocal`/los pasajeros
+      // normalizados para armar las reservas de sillas — la validación de
+      // responsables de arriba ya garantiza que esto no puede fallar aquí.
+      const pasajerosNormPre = normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefPre);
+      const { mapaGlobalALocal: mapaPre } = reindexarGrupoLocal(pasajerosNormPre, universoPre);
       reservasPorGrupo.push(reservasSillasDeGrupo(validados, mapaPre, pasajerosNormPre, fechaRefPre));
     }
     return { ok: true, demanda: demandaSillasPorBloqueo(reservasPorGrupo) };
@@ -1374,10 +1371,20 @@ export async function convertirCotizacionCarrito(
       ...validados.map((v) => v.comp.meta.fecha_regreso),
       ...grupo.tours.map((t) => t.fechaRegreso),
     ].filter((f): f is string => !!f).sort();
-    // Fecha de referencia REAL de este grupo — la misma que se guarda como
-    // `ventas.fecha_salida` abajo, y contra la que el RPC recalcula
-    // es_infante server-side (B10, ronda 3; B16, ronda 6).
-    const fechaRefGrupo = fechasIda[0] ?? null;
+    // Fecha de referencia REAL de este grupo — cuando existe, es la MISMA que
+    // se guarda como `ventas.fecha_salida` abajo, y contra la que el RPC
+    // recalcula es_infante server-side (B10, ronda 3; B16, ronda 6).
+    // ⚠️ B-fix (fecha_salida NULL, revisión de Opus ronda 9): cuando NINGUNA
+    // unidad del grupo trae fecha, `ventas.fecha_salida` se guarda en `null`
+    // TAL CUAL abajo (nunca se fabrica una fecha de viaje) — pero
+    // `fechaRefGrupo`, que solo sirve para CLASIFICAR edades en este archivo,
+    // cae a `hoyISO` (la MISMA referencia, calculada una sola vez arriba, que
+    // se manda explícita al RPC como `p_fecha_referencia_fallback`). Los dos
+    // valores DIVERGEN a propósito cuando no hay fecha: uno es un dato
+    // persistido (nunca inventado), el otro es una decisión de clasificación
+    // transitoria que Postgres necesita conocer para decidir exactamente lo
+    // mismo que ya decidió esta pre-validación.
+    const fechaRefGrupo = fechasIda[0] ?? hoyISO;
     const precioTotal = validados.reduce((s, v) => s + v.comp.precioVenta, 0) + grupo.tours.reduce((s, t) => s + t.precio, 0);
     const monedaGrupo = validados[0]?.comp.monedaReserva ?? "COP";
 
@@ -1534,6 +1541,14 @@ export async function convertirCotizacionCarrito(
       p_pasajeros: payloadPasajerosMulti as unknown as Json,
       p_reservas_sillas: reservasSillas as unknown as Json,
       p_usuario_id: usuarioCond.id,
+      // B-fix (fecha_salida NULL, revisión de Opus ronda 9): la MISMA
+      // referencia (`hoyISO`) que ya se usó arriba para clasificar es_infante
+      // en la prevalidación y en `fechaRefGrupo` — el RPC solo la usa si
+      // `ventas.fecha_salida` termina en null (coalesce), así que nunca
+      // sobreescribe una fecha real, y cuando SÍ hace falta, es la fecha
+      // EXACTA que ya validó este mismo servidor, nunca el `current_date`
+      // independiente de Postgres.
+      p_fecha_referencia_fallback: hoyISO,
     });
     if (peMulti) return { ok: false, error: peMulti.message };
     // Es_infante REAL, ya recalculado por el servidor (nunca por

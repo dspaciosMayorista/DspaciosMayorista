@@ -355,12 +355,30 @@ describe("validarResponsablesContrato — B20 (ronda 8): réplica servidor del t
     assert.deepEqual(validarResponsablesContrato(sinResp, "2026-06-01"), { ok: true });
   });
 
-  test("fechaContrato null: nadie es infante (igual que el es_infante que recalcula el RPC sobre fecha nula) → ok aunque haya un responsableIndex heredado", () => {
+  test("B-fix (ronda 9): la función ya NO acepta fecha null — el tipo exige una referencia EFECTIVA ya resuelta por el llamador (nunca decide 'hoy' por su cuenta)", () => {
+    // TypeScript rechaza esto en compilación (ver `pruebas/pasajerosFilas.
+    // wiring` más abajo para la prueba de tipos); en ejecución, la única
+    // referencia válida es un string concreto — el mismo que el llamador
+    // (`convertirCotizacionCarrito`) ya resolvió como `fechasIda[0] ?? hoyISO`
+    // y que también manda explícito al RPC. Esta prueba fija el contrato con
+    // un valor concreto que hace las veces de "hoyISO inyectado".
     const filas: Fila[] = [
       { nombre: "Adulto", fechaNacimiento: F_ADULTO },
       { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: 0 },
     ];
-    assert.deepEqual(validarResponsablesContrato(filas, null), { ok: true });
+    const hoyInyectado = "2026-01-01"; // el llamador decide "hoy" UNA vez y lo inyecta aquí
+    assert.deepEqual(validarResponsablesContrato(filas, hoyInyectado), { ok: true });
+  });
+
+  test("B-fix (ronda 9): con la referencia inyectada, un infante SIN responsable se rechaza (ya no hay forma de que 'fecha ausente' se cuele como 'nadie es infante')", () => {
+    const filas: Fila[] = [
+      { nombre: "Adulto", fechaNacimiento: F_ADULTO },
+      { nombre: "Infante", fechaNacimiento: F_INFANTE, responsableIndex: null },
+    ];
+    const hoyInyectado = "2026-01-01";
+    const r = validarResponsablesContrato(filas, hoyInyectado);
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.motivo, "infante_sin_responsable");
   });
 
   test("solo devuelve el PRIMER problema (determinista), aunque haya varios infantes mal vinculados", () => {

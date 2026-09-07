@@ -124,6 +124,14 @@
 -- ejecutado en Supabase real.
 -- ───────────────────────────────────────────────────────────────────────────
 
+-- HIGH (revisión de Opus, ronda 9): la migración no contiene NADA
+-- incompatible con una transacción (sin CONCURRENTLY, sin ALTER TYPE ... ADD
+-- VALUE, sin VACUUM/CREATE DATABASE) — verificado antes de envolverla. Igual
+-- que 153-164, un fallo a mitad de camino ahora revierte TODO (columna, FK,
+-- índice, tabla de exenciones, trigger y las 12 funciones), en vez de dejar
+-- producción en un estado híbrido bajo autocommit.
+begin;
+
 -- ═════════════════════════════════════════════════════════════════════════
 -- A) Helpers de edad compartidos (SQL) — mismo umbral que
 --    lib/utils.ts::calcularEdad / lib/reservar/pasajeros.ts::esInfantePorEdad.
@@ -280,10 +288,24 @@ begin
 
   -- No basta con "no ser infante" — un CHD (niño de, digamos, 8 años) tampoco
   -- puede ser responsable. Se exige mayoría de edad real (≥18) a la fecha de
-  -- salida del contrato (o a hoy, si el contrato no tiene fecha de salida
-  -- registrada — porción terrestre sin fecha, o dato aún no capturado).
+  -- salida del contrato (o, si no tiene fecha registrada — porción terrestre
+  -- sin fecha, o dato aún no capturado — a la referencia EFECTIVA que ya usó
+  -- `_reemplazar_pasajeros_nucleo` para clasificar el es_infante de ESTA
+  -- MISMA fila, publicada en una GUC de sesión: B-fix (fecha_salida NULL,
+  -- revisión de Opus). Sin esta GUC, este trigger recalcularía su PROPIO
+  -- `current_date` de forma independiente — dentro de la MISMA transacción
+  -- coincide siempre con el de arriba (current_date es estable por
+  -- transacción en Postgres), pero solo si es la MISMA fecha que decidió el
+  -- LLAMADOR (TypeScript, para creación) la coincidencia es real y no un
+  -- accidente de que ambos relojes resultaran iguales. `current_date` al
+  -- final sigue siendo el último respaldo, solo para una escritura directa
+  -- que no pasara por el núcleo (ninguna existe hoy).
   select v.fecha_salida into v_fecha_ref from public.ventas v where v.numero_contrato = new.numero_contrato;
-  v_fecha_ref := coalesce(v_fecha_ref, current_date);
+  v_fecha_ref := coalesce(
+    v_fecha_ref,
+    nullif(current_setting('app.fecha_referencia_efectiva', true), '')::date,
+    current_date
+  );
   v_edad_resp := public.edad_anios(v_resp.fecha_nacimiento, v_fecha_ref);
 
   if v_edad_resp is null or v_edad_resp < 18 then
@@ -522,7 +544,7 @@ comment on function public._ajustar_sillas_nucleo(text, integer) is
   'aquí. Un contrato con VARIOS bloqueos usa crear_pasajeros_contrato_multi '
   'en su lugar (B6). Migración 167.';
 
-revoke all on function public._ajustar_sillas_nucleo(text, integer) from public, anon, authenticated;
+revoke all on function public._ajustar_sillas_nucleo(text, integer) from public, anon, authenticated, service_role;
 
 create or replace function public.ajustar_sillas_por_pasajeros(
   p_numero_contrato text,
@@ -641,7 +663,23 @@ create or replace function public._reemplazar_pasajeros_nucleo(
   p_numero_contrato   text,
   p_pasajeros          jsonb,
   p_min_pasajeros      integer,
-  p_usuario_creacion   uuid
+  p_usuario_creacion   uuid,
+  -- Referencia de edad EXPLÍCITA, inyectada por el llamador — B-fix
+  -- (fecha_salida NULL, revisión de Opus sobre la ronda 8): antes, cuando el
+  -- contrato no tenía `fecha_salida` (porción terrestre/tours sin fecha),
+  -- esta función caía en silencio a `current_date` (el reloj de POSTGRES),
+  -- mientras la prevalidación TypeScript (`validarResponsablesContrato`,
+  -- `normalizarResponsablesPorGrupo`) usaba `new Date()` (el reloj del
+  -- SERVIDOR DE APLICACIÓN) o, peor, ningún respaldo en absoluto — dos
+  -- relojes/decisiones INDEPENDIENTES que podían discrepar (un pasajero
+  -- infante para uno y no infante para el otro), dejando pasar por la
+  -- prevalidación un caso que el RPC luego rechazaba con el contrato YA
+  -- escrito. Ahora el LLAMADOR decide "hoy" UNA sola vez (en TypeScript, para
+  -- `crear_pasajeros_contrato_multi`) y lo manda aquí explícito — este
+  -- núcleo nunca vuelve a inventar su propio `current_date` salvo que NADIE
+  -- (ni `ventas.fecha_salida` ni el llamador) traiga una fecha, último
+  -- respaldo defensivo para escrituras que no pasen por este parámetro.
+  p_fecha_referencia_fallback date default null
 )
 returns table (
   id                bigint,
@@ -677,6 +715,14 @@ declare
   v_es_infante     boolean[];
   v_orden_a_id     bigint[];
   v_ref_fecha      date;
+  -- Referencia de edad EFECTIVA de esta escritura: `ventas.fecha_salida` si
+  -- existe; si no, el respaldo EXPLÍCITO del llamador; si tampoco, el último
+  -- recurso defensivo `current_date` (ver comentario del parámetro arriba).
+  -- Se fija UNA sola vez y se usa para TODA decisión de edad de este
+  -- guardado (el registro Y, vía la GUC de sesión de más abajo, el
+  -- responsable dentro del trigger) — nunca dos evaluaciones independientes
+  -- de "hoy".
+  v_ref_efectiva   date;
   v_i              integer;
   v_j              integer;
   v_prev_resp_id   bigint;
@@ -857,6 +903,20 @@ begin
 
   select v.fecha_salida into v_ref_fecha from public.ventas v where v.numero_contrato = p_numero_contrato;
 
+  -- Fija la referencia EFECTIVA de esta transacción y la publica en una GUC
+  -- de sesión (`is_local => true`: vive solo hasta el COMMIT/ROLLBACK de esta
+  -- transacción, nunca se filtra a otra conexión del pool) — el trigger
+  -- `trg_validar_responsable_infante`, que valida la mayoría de edad del
+  -- responsable, no recibe parámetros de esta llamada (dispara por
+  -- INSERT/UPDATE de fila, no por invocación de función) y necesita leer la
+  -- MISMA referencia para no recalcular su propio `current_date` por
+  -- separado. `current_date` es estable dentro de una misma transacción en
+  -- Postgres, así que este último respaldo solo importa para una escritura
+  -- que llegara a `contrato_pasajeros` SIN pasar por este núcleo (ninguna
+  -- existe hoy; es puramente defensivo).
+  v_ref_efectiva := coalesce(v_ref_fecha, p_fecha_referencia_fallback, current_date);
+  perform set_config('app.fecha_referencia_efectiva', v_ref_efectiva::text, true);
+
   if array_length(v_ids_mantener, 1) > 0 then
     select count(*) into v_ajenos
       from public.contrato_pasajeros cp
@@ -877,9 +937,9 @@ begin
   -- bloqueada — nunca se recibe ni se confía en un valor mandado por el
   -- cliente (no existe siquiera esa clave en `v_claves_validas`).
   for v_i in 1..v_n loop
-    v_es_infante[v_i] := public.es_infante_por_edad(v_fecha_nac_arr[v_i], coalesce(v_ref_fecha, current_date));
+    v_es_infante[v_i] := public.es_infante_por_edad(v_fecha_nac_arr[v_i], v_ref_efectiva);
 
-    if public.edad_anios(v_fecha_nac_arr[v_i], coalesce(v_ref_fecha, current_date)) < 18
+    if public.edad_anios(v_fecha_nac_arr[v_i], v_ref_efectiva) < 18
        and v_tipo_id_arr[v_i] = 'CC' then
       raise exception 'Pasajero %: un menor no puede tener CC (usa RC o TI).', v_i;
     end if;
@@ -1025,7 +1085,7 @@ begin
 end;
 $$;
 
-comment on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid) is
+comment on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid, date) is
   'Reemplazo transaccional y atómico de los pasajeros de un contrato (edición '
   'o creación): valida el payload completo (unknown en el límite), recalcula '
   'es_infante server-side, exige responsable_id para infantes nuevos (única '
@@ -1042,7 +1102,7 @@ comment on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uu
   'crear_pasajeros_contrato_multi vía _autorizado_escribir_pasajeros. '
   'Migración 167.';
 
-revoke all on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid) from public, anon, authenticated, service_role;
+revoke all on function public._reemplazar_pasajeros_nucleo(text, jsonb, integer, uuid, date) from public, anon, authenticated, service_role;
 
 -- ── Wrapper de UN bloqueo (edición o creación de un solo contrato/bloqueo):
 --    escribe pasajeros vía _reemplazar_pasajeros_nucleo y reconcilia SUS
@@ -1054,7 +1114,11 @@ create or replace function public._guardar_pasajeros_nucleo(
   p_pasajeros          jsonb,
   p_holders_min        integer,
   p_min_pasajeros      integer,
-  p_usuario_creacion   uuid
+  p_usuario_creacion   uuid,
+  -- Reenvía el respaldo explícito a `_reemplazar_pasajeros_nucleo` (default
+  -- null: `guardar_pasajeros_contrato`/`crear_pasajeros_contrato` no lo
+  -- necesitan pasar — ver comentario del parámetro homónimo allí).
+  p_fecha_referencia_fallback date default null
 )
 returns table (
   id                bigint,
@@ -1079,7 +1143,7 @@ begin
   -- Se llama UNA sola vez y se materializa en un arreglo (ver el tipo
   -- _fila_pasajero_167 arriba) — nunca dos: escribe, no solo lee.
   for v_reg in
-    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, p_min_pasajeros, p_usuario_creacion)
+    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, p_min_pasajeros, p_usuario_creacion, p_fecha_referencia_fallback)
   loop
     v_filas := array_append(
       v_filas,
@@ -1101,7 +1165,7 @@ begin
 end;
 $$;
 
-comment on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid) is
+comment on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid, date) is
   'Wrapper de UN bloqueo sobre _reemplazar_pasajeros_nucleo (escribe '
   'pasajeros) + _ajustar_sillas_nucleo (reconcilia SUS sillas, descubriendo '
   'el bloqueo — nunca lo recibe): mismo comportamiento externo que la '
@@ -1112,7 +1176,7 @@ comment on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integ
   '_autorizado_escribir_pasajeros (dentro de _reemplazar_pasajeros_nucleo). '
   'Migración 167.';
 
-revoke all on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid) from public, anon, authenticated, service_role;
+revoke all on function public._guardar_pasajeros_nucleo(text, jsonb, integer, integer, uuid, date) from public, anon, authenticated, service_role;
 
 -- ── Wrapper para EDICIÓN (sesión real de un usuario interno) ──────────────
 create or replace function public.guardar_pasajeros_contrato(
@@ -1247,7 +1311,14 @@ create or replace function public.crear_pasajeros_contrato_multi(
   p_numero_contrato   text,
   p_pasajeros          jsonb,
   p_reservas_sillas    jsonb,
-  p_usuario_id         uuid
+  p_usuario_id         uuid,
+  -- Referencia de edad EXPLÍCITA para esta creación — B-fix (fecha_salida
+  -- NULL): `convertirCotizacionCarrito` (única llamadora hoy) la calcula UNA
+  -- vez en TypeScript (el mismo `hoyISO` que ya usa para el resto del
+  -- flujo) y la manda aquí SIEMPRE — nunca depende de que Postgres adivine
+  -- su propio "hoy" por separado. Ver el comentario homónimo en
+  -- `_reemplazar_pasajeros_nucleo`.
+  p_fecha_referencia_fallback date default null
 )
 returns table (
   id                bigint,
@@ -1315,7 +1386,7 @@ begin
   -- (mismo criterio que crear_pasajeros_contrato — override de superadmin,
   -- "captura los pasajeros después"), por eso `p_min_pasajeros = 0`.
   for v_reg in
-    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, 0, p_usuario_id)
+    select * from public._reemplazar_pasajeros_nucleo(p_numero_contrato, p_pasajeros, 0, p_usuario_id, p_fecha_referencia_fallback)
   loop
     v_filas := array_append(
       v_filas,
@@ -1374,9 +1445,14 @@ begin
     -- B19 (ronda 7): fecha REAL de salida de ESTE bloqueo — decide quién
     -- ocupa silla en él (un pasajero que es infante en la salida más temprana
     -- del contrato pero ya cumplió 2 años en la salida de un vuelo posterior
-    -- SÍ ocupa silla en ese vuelo). Respaldo: la fecha del contrato.
+    -- SÍ ocupa silla en ese vuelo). Respaldo: la fecha del contrato y, si
+    -- tampoco hay (B-fix, fecha_salida NULL), la misma referencia EXPLÍCITA
+    -- que ya se usó para clasificar el REGISTRO de cada pasajero arriba —
+    -- nunca un `current_date` recalculado aparte para las sillas. En la
+    -- práctica un bloqueo real siempre trae `fecha_ida`, así que este último
+    -- respaldo es defensivo.
     select bv.fecha_ida into v_bloqueo_fecha from public.bloqueos_vuelo bv where bv.id = v_bloqueo_id;
-    v_bloqueo_fecha := coalesce(v_bloqueo_fecha, v_contrato_fecha);
+    v_bloqueo_fecha := coalesce(v_bloqueo_fecha, v_contrato_fecha, p_fecha_referencia_fallback);
 
     if v_elem ? 'holdersMin' and jsonb_typeof(v_elem->'holdersMin') <> 'null' then
       if jsonb_typeof(v_elem->'holdersMin') <> 'number' then
@@ -1468,7 +1544,7 @@ begin
 end;
 $$;
 
-comment on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid) is
+comment on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid, date) is
   'Wrapper de _reemplazar_pasajeros_nucleo (escribe pasajeros/responsables '
   'UNA vez) + _ajustar_sillas_bloqueo_nucleo (una llamada POR bloqueo '
   'explícito en p_reservas_sillas, en orden ascendente de bloqueo_id para '
@@ -1490,7 +1566,9 @@ comment on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uu
   'B6). Exige un p_usuario_id real y activo (mismo candado que '
   'crear_pasajeros_contrato).';
 
-revoke all on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid) from public, anon, authenticated;
-grant execute on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid) to service_role;
+revoke all on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid, date) from public, anon, authenticated;
+grant execute on function public.crear_pasajeros_contrato_multi(text, jsonb, jsonb, uuid, date) to service_role;
 
 notify pgrst, 'reload schema';
+
+commit;

@@ -15,6 +15,7 @@
 // puede incluir personas que ni siquiera viajan en ese grupo).
 // ─────────────────────────────────────────────────────────────────────────
 import { esInfantePorEdad } from "./pasajeros.ts";
+import { normalizarResponsablesPorGrupo, validarResponsablesContrato, type MotivoResponsableInvalido, type FilaConFechaYResponsable } from "./pasajerosFilas.ts";
 
 /** Fila con vínculo de responsable — misma convención que pasajerosFilas.ts (0-based, GLOBAL). */
 export type FilaConResponsableGlobal = {
@@ -423,4 +424,84 @@ export function limpiarResponsablesInvalidosPorContrato<T extends FilaConRespons
     const valido = esResponsableValidoEnTodos(f.responsableIndex + 1, gruposInf, gruposIndicesUnidades, asignacionesPorUnidad);
     return valido ? f : { ...f, responsableIndex: null };
   });
+}
+
+/** Resultado de `prevalidarResponsablesDeGrupo` — motivo estructurado (sin
+ * formatear a texto: eso lo hace el llamador con las posiciones GLOBALES que
+ * ve el usuario). `responsable_cruza_contrato` es el caso B18 (el reindexado
+ * dejó el vínculo en `null` porque el responsable terminó en OTRO contrato);
+ * los demás motivos son los de `validarResponsablesContrato` (B20). */
+export type ResultadoPrevalidacionGrupo =
+  | { ok: true }
+  | { ok: false; motivo: "responsable_cruza_contrato"; posicionGlobal: number; responsableGlobal: null }
+  | { ok: false; motivo: MotivoResponsableInvalido; posicionGlobal: number; responsableGlobal: number | null };
+
+/**
+ * Orquestación COMPARTIDA de la pre-validación de responsables de UN
+ * grupo/contrato — B-fix (fecha_salida NULL, revisión de Opus ronda 9).
+ *
+ * Extraída de `convertirCotizacionCarrito` (antes vivía inline como un IIFE)
+ * para que la MISMA función que corre en producción (normaliza → reindexa a
+ * local → valida el vínculo completo) sea la que se ejercita en las pruebas
+ * de comportamiento — nunca una reconstrucción manual del pipeline que
+ * pudiera divergir en silencio de lo que hace el servidor de verdad.
+ *
+ * `fechaReferenciaEfectiva` DEBE venir ya resuelta por el llamador (nunca
+ * `null`): la fecha REAL del grupo si existe, o si no —B-fix— la fecha
+ * inyectada explícitamente desde la frontera server-side (`hoyISO` en
+ * `convertirCotizacionCarrito`, la MISMA que se manda al RPC como
+ * `p_fecha_referencia_fallback`) — nunca decidida aquí ni dentro de
+ * `validarResponsablesContrato` con un `new Date()` escondido.
+ */
+export function prevalidarResponsablesDeGrupo<T extends FilaConFechaYResponsable>(
+  pasajerosGlobales: readonly T[],
+  universoGrupo: readonly number[],
+  fechaReferenciaEfectiva: string
+): ResultadoPrevalidacionGrupo {
+  const pasajerosNorm = normalizarResponsablesPorGrupo(pasajerosGlobales, fechaReferenciaEfectiva);
+  const { pasajerosLocal, posicionesInvalidas } = reindexarGrupoLocal(pasajerosNorm, universoGrupo);
+  // B18 — el responsable elegido terminó en OTRO contrato (el reindexado lo
+  // dejó como `null` y lo señaló en `posicionesInvalidas`, YA en posición
+  // GLOBAL — ver el contrato de `reindexarGrupoLocal`, no hace falta
+  // traducir vía `universoGrupo`).
+  if (posicionesInvalidas.length) {
+    return { ok: false, motivo: "responsable_cruza_contrato", posicionGlobal: posicionesInvalidas[0], responsableGlobal: null };
+  }
+  // B20 — validación COMPLETA del vínculo dentro de este contrato, contra la
+  // MISMA referencia efectiva que usará el RPC.
+  const vResp = validarResponsablesContrato(pasajerosLocal, fechaReferenciaEfectiva);
+  if (!vResp.ok) {
+    return {
+      ok: false,
+      motivo: vResp.motivo,
+      posicionGlobal: universoGrupo[vResp.posicionLocal],
+      responsableGlobal: vResp.responsableLocal != null ? universoGrupo[vResp.responsableLocal] : null,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Mensaje al usuario para un resultado NO-ok de `prevalidarResponsablesDeGrupo`
+ * — posiciones ya GLOBALES (1-based dentro de `opts.pasajeros`, la tabla que
+ * ve el asesor). Siempre cierra con "No se creó ningún contrato": esto se
+ * evalúa en la PRE-validación de TODOS los grupos, antes de escribir el
+ * primero.
+ */
+export function mensajePrevalidacionGrupo(r: Extract<ResultadoPrevalidacionGrupo, { ok: false }>): string {
+  const suf = " No se creó ningún contrato.";
+  switch (r.motivo) {
+    case "responsable_cruza_contrato":
+      return `El adulto responsable del pasajero ${r.posicionGlobal} debe viajar en TODOS los contratos donde ese pasajero es infante — elige un adulto que viaje en todos, o revisa la asignación.${suf}`;
+    case "infante_sin_responsable":
+      return `El infante en la posición ${r.posicionGlobal} debe tener un adulto responsable asignado.${suf}`;
+    case "indice_fuera_de_rango":
+      return `El adulto responsable asignado al infante en la posición ${r.posicionGlobal} no existe en el contrato.${suf}`;
+    case "autorreferencia":
+      return `El infante en la posición ${r.posicionGlobal} no puede ser su propio responsable.${suf}`;
+    case "responsable_es_infante":
+      return `El responsable del infante en la posición ${r.posicionGlobal} (posición ${r.responsableGlobal}) no puede ser, a su vez, un infante.${suf}`;
+    case "responsable_no_adulto":
+      return `El responsable del infante en la posición ${r.posicionGlobal} (posición ${r.responsableGlobal}) debe ser mayor de edad (18 años) a la fecha de salida.${suf}`;
+  }
 }

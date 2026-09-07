@@ -3345,6 +3345,7 @@ export type Database = {
           p_pasajeros: Json;
           p_reservas_sillas: Json;
           p_usuario_id: string;
+          p_fecha_referencia_fallback?: string | null;
         };
         Returns: {
           id: number;

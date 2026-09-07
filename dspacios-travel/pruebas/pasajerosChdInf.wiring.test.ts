@@ -596,9 +596,9 @@ test("B19 (ronda 7): la silla se decide por la fecha REAL de cada bloqueo, no po
   assert.match(sql, /select bv\.fecha_ida into v_bloqueo_fecha from public\.bloqueos_vuelo bv where bv\.id = v_bloqueo_id/, "el RPC no resuelve la fecha real del bloqueo");
   assert.match(sql, /if not public\.es_infante_por_edad\(\(v_filas\[v_pos\]\)\.fecha_nacimiento, v_bloqueo_fecha\) then/, "el RPC sigue contando la silla por el es_infante del registro, no por la fecha del bloqueo");
   // El es_infante del REGISTRO se conserva como la edad al inicio del contrato
-  // (nada cambia esa semántica: sigue recalculándose contra ventas.fecha_salida
-  // en _reemplazar_pasajeros_nucleo).
-  assert.match(sql, /v_es_infante\[v_i\] := public\.es_infante_por_edad\(v_fecha_nac_arr\[v_i\], coalesce\(v_ref_fecha, current_date\)\)/, "el es_infante del registro dejó de calcularse contra la fecha de salida del contrato");
+  // (nada cambia esa semántica: sigue recalculándose contra ventas.fecha_salida,
+  // ahora vía `v_ref_efectiva` — B-fix ronda 9, ver el siguiente describe).
+  assert.match(sql, /v_es_infante\[v_i\] := public\.es_infante_por_edad\(v_fecha_nac_arr\[v_i\], v_ref_efectiva\)/, "el es_infante del registro dejó de calcularse contra la fecha de salida del contrato");
   // TS: posicionesConSilla usa la fecha real de cada bloqueo (meta.fecha_ida).
   // Vive en el helper compartido reservasSillasDeGrupo (B21, ronda 8).
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
@@ -637,21 +637,48 @@ test("B18 (ronda 7): la UI ofrece SOLO responsables válidos en todos los contra
   assert.match(ui, /limpiarResponsablesInvalidosPorContrato\(/, "la UI no limpia los vínculos que quedan en otro contrato tras reagrupar/reasignar");
 });
 
-test("B20 (ronda 8): la pre-validación llama validarResponsablesContrato para TODOS los grupos ANTES de escribir (no depende de la UI)", () => {
+test("B20 (ronda 8) + B-fix (ronda 9): la pre-validación llama a la orquestación COMPARTIDA prevalidarResponsablesDeGrupo para TODOS los grupos ANTES de escribir (no depende de la UI, ni reconstruye el pipeline inline)", () => {
   const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
   const inicio = src.indexOf("export async function convertirCotizacionCarrito");
   const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
-  // validarResponsablesContrato se importa y se usa dentro de la pre-validación.
-  assert.match(src, /import\s*\{[^}]*validarResponsablesContrato[^}]*\}\s*from\s*["']@\/lib\/reservar\/pasajerosFilas["']/, "no se importa validarResponsablesContrato");
+  // B-fix (ronda 9): la validación de responsables ya NO se reconstruye
+  // inline (validarResponsablesContrato directo) — se delega a la MISMA
+  // función de orquestación (`prevalidarResponsablesDeGrupo`) que se ejercita
+  // en pruebas de EJECUCIÓN REAL (pruebas/carritoAsignaciones.test.ts).
+  assert.match(src, /import\s*\{[^}]*prevalidarResponsablesDeGrupo[^}]*mensajePrevalidacionGrupo[^}]*\}\s*from\s*["']@\/lib\/reservar\/carritoAsignaciones["']/, "no se importa prevalidarResponsablesDeGrupo/mensajePrevalidacionGrupo desde el módulo compartido");
+  assert.doesNotMatch(src, /const vResp = validarResponsablesContrato\(/, "la pre-validación volvió a llamar validarResponsablesContrato directo en vez de la orquestación compartida");
   const idxPre = bloque.indexOf("PRE-VALIDACIÓN de TODOS los grupos");
-  const idxValida = bloque.indexOf("validarResponsablesContrato(localPre", idxPre);
+  const idxValida = bloque.indexOf("prevalidarResponsablesDeGrupo(opts.pasajeros, universoPre, fechaRefPre)", idxPre);
   const idxVentasInsert = bloque.indexOf('await sb.from("ventas").insert(', idxPre);
   assert.ok(idxPre > 0, "no existe la pre-validación de grupos");
-  assert.ok(idxValida > idxPre, "validarResponsablesContrato no corre en la pre-validación");
+  assert.ok(idxValida > idxPre, "prevalidarResponsablesDeGrupo no corre en la pre-validación");
   assert.ok(idxVentasInsert > idxValida, "la validación completa de responsables debe ocurrir ANTES del ventas.insert");
-  // El mensaje mapea a posiciones GLOBALES y cierra 'No se creó ningún contrato'.
-  assert.match(bloque, /mensajeResponsableInvalido\(vResp\.motivo, posGlobal, respGlobal\)/, "el error no traduce el motivo a un mensaje con posiciones globales");
-  assert.match(src, /function mensajeResponsableInvalido\([^)]*\)/, "no existe el helper mensajeResponsableInvalido");
+  // El mensaje mapea a posiciones GLOBALES y cierra 'No se creó ningún contrato'
+  // (el sufijo vive ahora en mensajePrevalidacionGrupo, en el módulo compartido).
+  assert.match(bloque, /mensajePrevalidacionGrupo\(respPre\)/, "el error no delega al formateador compartido mensajePrevalidacionGrupo");
+  assert.match(
+    leer("lib/reservar/carritoAsignaciones.ts"),
+    /No se creó ningún contrato/,
+    "mensajePrevalidacionGrupo dejó de cerrar con 'No se creó ningún contrato'"
+  );
+});
+
+test("B-fix (ronda 9): la referencia de fecha para la clasificación NUNCA es null — cae a hoyISO, calculado UNA sola vez, y se manda explícita al RPC", () => {
+  const src = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const inicio = src.indexOf("export async function convertirCotizacionCarrito");
+  const bloque = src.slice(inicio, src.indexOf("export async function actualizarVigenciaCotizacion"));
+  // fechaRefPre/fechaRefGrupo ya NO caen a `null` — caen a `hoyISO` (nunca
+  // `new Date()` re-calculado ad-hoc dentro del bloque de pre-validación o
+  // de creación).
+  assert.doesNotMatch(bloque, /fechasIdaPre\[0\] \?\? null/, "fechaRefPre sigue cayendo a null en vez de hoyISO");
+  assert.doesNotMatch(bloque, /fechasIda\[0\] \?\? null(?!,)/, "fechaRefGrupo sigue cayendo a null en vez de hoyISO");
+  assert.match(bloque, /const fechaRefPre = fechasIdaPre\[0\] \?\? hoyISO;/, "fechaRefPre no cae a hoyISO cuando el grupo no tiene fecha");
+  assert.match(bloque, /const fechaRefGrupo = fechasIda\[0\] \?\? hoyISO;/, "fechaRefGrupo no cae a hoyISO cuando el grupo no tiene fecha");
+  // ventas.fecha_salida NUNCA se fabrica: sigue siendo fechasIda[0] ?? null.
+  assert.match(bloque, /fecha_salida: fechasIda\[0\] \?\? null,/, "ventas.fecha_salida dejó de preservar null cuando no hay fecha real (no se debe inventar una fecha de viaje)");
+  // El RPC recibe la MISMA referencia explícita — nunca decide su propio
+  // current_date quedándose sin dato.
+  assert.match(bloque, /p_fecha_referencia_fallback:\s*hoyISO,/, "el RPC no recibe hoyISO como p_fecha_referencia_fallback");
 });
 
 test("B21 (ronda 8): capacidad CONSOLIDADA de toda la operación antes de escribir; se eliminó el chequeo por ítem", () => {

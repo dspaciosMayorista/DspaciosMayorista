@@ -213,18 +213,37 @@ export type ResultadoValidacionResponsables =
  *
  * `filas` son los pasajeros LOCALES de un contrato (ya reindexados a este
  * grupo: `responsableIndex` 0-based dentro de este mismo arreglo, o null).
- * `fechaContrato` es `ventas.fecha_salida` de ese contrato — la MISMA
- * referencia contra la que el RPC recalcula `es_infante` del registro y contra
- * la que el trigger mide la mayoría de edad del responsable (con respaldo a
- * "hoy" cuando el contrato no tiene fecha, igual que `coalesce(fecha_salida,
- * current_date)` en el trigger). Devuelve el PRIMER problema encontrado o
- * `{ ok: true }`.
+ *
+ * `fechaReferenciaEfectiva` es la MISMA referencia de edad que va a usar
+ * Postgres para ESTE contrato — no necesariamente `ventas.fecha_salida` tal
+ * cual: cuando el contrato no tiene fecha (porción terrestre/tours sin
+ * fecha), el LLAMADOR (la orquestación server-side en
+ * `convertirCotizacionCarrito`) debe haberla resuelto YA a un valor concreto
+ * ANTES de invocar esta función — nunca al revés.
+ *
+ * ⚠️ FIX (revisión de Opus, ronda 9): esta función ANTES aceptaba
+ * `fechaContrato: string | null` y, si venía `null`, fabricaba su PROPIO
+ * respaldo con `new Date()` para la mayoría de edad del responsable —un
+ * `new Date()` ESCONDIDO dentro de una función que se pretendía pura— y
+ * para colmo usaba una referencia DISTINTA (`fechaContrato` crudo, sin
+ * respaldo) para decidir si el pasajero ES infante. Esas dos referencias
+ * podían discrepar entre sí, Y con la de Postgres (que coalescía a su PROPIO
+ * `current_date`, el reloj del SERVIDOR DE BASE DE DATOS, no el del servidor
+ * de aplicación) — tres relojes/decisiones independientes para la MISMA
+ * pregunta. Ahora esta función es TOTALMENTE determinista: no lee el reloj
+ * en ningún caso, usa `fechaReferenciaEfectiva` tal cual para AMBAS
+ * decisiones (es-infante y mayoría de edad del responsable), y es
+ * responsabilidad EXCLUSIVA del llamador resolverla a un valor no-null antes
+ * de invocar — el mismo valor que también se manda explícito al RPC (parámetro
+ * `p_fecha_referencia_fallback` de `crear_pasajeros_contrato_multi`), para
+ * que la prevalidación y la escritura real decidan EXACTAMENTE lo mismo, sin
+ * depender de que dos relojes coincidan por casualidad.
  *
  * Reglas (todas las que el trigger impone dentro de un mismo contrato):
- *   - todo infante REAL a `fechaContrato` debe traer responsable;
+ *   - todo infante REAL a `fechaReferenciaEfectiva` debe traer responsable;
  *   - el índice debe ser entero, existir en el contrato y no ser el propio pasajero;
  *   - el responsable no puede ser, a su vez, infante;
- *   - el responsable debe ser mayor de edad (≥18) a `fechaContrato` (un CHD no sirve).
+ *   - el responsable debe ser mayor de edad (≥18) a `fechaReferenciaEfectiva` (un CHD no sirve).
  * La pertenencia del responsable AL MISMO contrato la resuelve el reindexado
  * previo (`reindexarGrupoLocal`): un responsable de otro contrato llega aquí
  * ya como `null` y se reporta como `infante_sin_responsable` — su caso
@@ -233,18 +252,11 @@ export type ResultadoValidacionResponsables =
  */
 export function validarResponsablesContrato<T extends FilaConFechaYResponsable>(
   filas: readonly T[],
-  fechaContrato: string | null
+  fechaReferenciaEfectiva: string
 ): ResultadoValidacionResponsables {
-  // Referencia de edad del RESPONSABLE: la fecha del contrato, o "hoy" si no
-  // hay (idéntico a `coalesce(v.fecha_salida, current_date)` del trigger). Solo
-  // es alcanzable cuando hay un infante, lo que ya exige una fecha válida.
-  const refAdulto = fechaContrato ?? new Date().toISOString().slice(0, 10);
   for (let i = 0; i < filas.length; i++) {
     const f = filas[i];
-    // La condición de infante se mide contra `fechaContrato` tal cual (sin el
-    // respaldo a hoy): con `fechaContrato` null, `esInfantePorEdad` es false —
-    // igual que `es_infante` recalculado por el RPC sobre una fecha nula.
-    if (!esInfantePorEdad(f.fechaNacimiento, fechaContrato)) continue;
+    if (!esInfantePorEdad(f.fechaNacimiento, fechaReferenciaEfectiva)) continue;
     const r = f.responsableIndex ?? null;
     if (r == null) return { ok: false, posicionLocal: i, responsableLocal: null, motivo: "infante_sin_responsable" };
     if (!Number.isInteger(r) || r < 0 || r >= filas.length) {
@@ -252,10 +264,10 @@ export function validarResponsablesContrato<T extends FilaConFechaYResponsable>(
     }
     if (r === i) return { ok: false, posicionLocal: i, responsableLocal: r, motivo: "autorreferencia" };
     const resp = filas[r];
-    if (esInfantePorEdad(resp.fechaNacimiento, fechaContrato)) {
+    if (esInfantePorEdad(resp.fechaNacimiento, fechaReferenciaEfectiva)) {
       return { ok: false, posicionLocal: i, responsableLocal: r, motivo: "responsable_es_infante" };
     }
-    const edadResp = calcularEdad(resp.fechaNacimiento, refAdulto);
+    const edadResp = calcularEdad(resp.fechaNacimiento, fechaReferenciaEfectiva);
     if (edadResp == null || edadResp < EDAD_ADULTO_RESPONSABLE) {
       return { ok: false, posicionLocal: i, responsableLocal: r, motivo: "responsable_no_adulto" };
     }

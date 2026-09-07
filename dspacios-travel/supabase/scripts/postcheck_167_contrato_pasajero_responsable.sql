@@ -839,6 +839,107 @@ begin
       ) = 1 then 'OK' else 'FALLA' end, '');
   end;
 
+  -- ═══════════════════════════════════════════════════════════════════════
+  -- B-fix (fecha_salida NULL, revisión de Opus ronda 9) — un grupo/contrato
+  -- SIN NINGUNA unidad con fecha (porción terrestre/tours, sin bloqueo:
+  -- `p_reservas_sillas = '[]'`) deja `ventas.fecha_salida = null`. La
+  -- clasificación de edad del registro Y la mayoría de edad del responsable
+  -- (dentro del trigger) deben decidirse con `p_fecha_referencia_fallback`
+  -- —la MISMA referencia que ya usó `convertirCotizacionCarrito` para su
+  -- propia prevalidación TypeScript— NUNCA con el `current_date` de Postgres
+  -- calculado aparte.
+  -- ═══════════════════════════════════════════════════════════════════════
+  declare
+    v_num_bfix1 text := 'DTM-8'||to_char(clock_timestamp(),'HH24MISSMS');
+    v_num_bfix2 text := 'DTM-8'||to_char(clock_timestamp(),'HH24MISSMS')||'1';
+    v_num_bfix3 text := 'DTM-8'||to_char(clock_timestamp(),'HH24MISSMS')||'2';
+    v_fallback_temprano date := date '2026-01-01';
+    v_fallback_lejano    date := date '1990-01-01';
+    v_es_inf_bfix boolean;
+    v_pax_antes int; v_pax_despues int; v_ok_bfix boolean;
+  begin
+    -- B-fix #1: grupo SIN fecha + INF (a la fecha del fallback) CON
+    -- responsable adulto válido -> se crea sin error, es_infante=true del
+    -- registro contra el FALLBACK (no contra current_date real de hoy).
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num_bfix1, 'Cliente B-fix sin fecha con responsable', null, 2, 50000, 'pendiente', 'mayorista');
+    perform 1 from public.crear_pasajeros_contrato_multi(
+      v_num_bfix1,
+      jsonb_build_array(
+        jsonb_build_object('nombre','Adulto Bfix','tipoId','CE','identificacion','1000199101','fechaNacimiento',(date '1990-01-01')::text),
+        jsonb_build_object('nombre','Infante Bfix','tipoId','RC','identificacion','1000199102','fechaNacimiento',(date '2025-06-01')::text,'responsableOrden',1)
+      ),
+      '[]'::jsonb,
+      v_uid,
+      v_fallback_temprano
+    );
+    select es_infante into v_es_inf_bfix from public.contrato_pasajeros where numero_contrato = v_num_bfix1 and identificacion = '1000199102';
+    insert into pg_temp.postcheck_167_reporte
+      values ('bfix', 'B-fix #1: grupo SIN ventas.fecha_salida + INF con responsable adulto + fallback explícito -> se crea; es_infante(registro) contra el FALLBACK, no contra current_date', case when coalesce(v_es_inf_bfix, false) then 'OK' else 'FALLA' end, 'es_infante='||coalesce(v_es_inf_bfix::text,'null'));
+
+    -- B-fix #2: grupo SIN fecha + INF (a la fecha del fallback) SIN
+    -- responsable -> el trigger RECHAZA (misma clasificación, mismo
+    -- fallback) y no queda NINGÚN pasajero del intento fallido — la
+    -- prevalidación de TypeScript debe llegar a la MISMA conclusión ANTES de
+    -- invocar este RPC, así que esta prueba confirma que, si por algún motivo
+    -- se llegara a invocar igual (llamada directa, payload manipulado), la
+    -- autoridad real (el trigger) sigue rechazando.
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num_bfix2, 'Cliente B-fix sin fecha sin responsable', null, 1, 30000, 'pendiente', 'mayorista');
+    select count(*) into v_pax_antes from public.contrato_pasajeros where numero_contrato = v_num_bfix2;
+    begin
+      perform 1 from public.crear_pasajeros_contrato_multi(
+        v_num_bfix2,
+        jsonb_build_array(
+          jsonb_build_object('nombre','Infante Huerfano Bfix','tipoId','RC','identificacion','1000199103','fechaNacimiento',(date '2025-06-01')::text)
+        ),
+        '[]'::jsonb,
+        v_uid,
+        v_fallback_temprano
+      );
+      v_ok_bfix := false; -- no debió llegar aquí: el trigger debía rechazar
+    exception when others then
+      v_ok_bfix := true;
+    end;
+    select count(*) into v_pax_despues from public.contrato_pasajeros where numero_contrato = v_num_bfix2;
+    v_ok_bfix := v_ok_bfix and v_pax_antes = 0 and v_pax_despues = 0;
+    insert into pg_temp.postcheck_167_reporte
+      values ('bfix', 'B-fix #2: grupo SIN ventas.fecha_salida + INF sin responsable + fallback -> RECHAZA (trigger); 0 pasajeros antes y después del intento', case when v_ok_bfix then 'OK' else 'FALLA' end, '');
+
+    -- B-fix #3: la mayoría de edad del RESPONSABLE, dentro del TRIGGER
+    -- (que no recibe p_fecha_referencia_fallback como parámetro — lee la GUC
+    -- de sesión que fija _reemplazar_pasajeros_nucleo), también debe usar el
+    -- fallback y no un current_date recalculado aparte. Diseño del caso:
+    -- responsable nacido 1980-01-01 -> tiene 10 años al fallback LEJANO
+    -- (1990-01-01, rechazo esperado: menor de edad) pero es un adulto de
+    -- sobra bajo cualquier fecha real de hoy (2020+). Si el trigger cayera
+    -- en `current_date` en vez de leer la GUC, este caso ACEPTARÍA
+    -- (incorrectamente) en vez de rechazar — la prueba solo pasa si la GUC
+    -- realmente se está leyendo.
+    insert into public.ventas (numero_contrato, cliente, fecha_salida, pax, precio_venta, estado, tenant)
+      values (v_num_bfix3, 'Cliente B-fix responsable menor bajo el fallback', null, 2, 50000, 'pendiente', 'mayorista');
+    select count(*) into v_pax_antes from public.contrato_pasajeros where numero_contrato = v_num_bfix3;
+    begin
+      perform 1 from public.crear_pasajeros_contrato_multi(
+        v_num_bfix3,
+        jsonb_build_array(
+          jsonb_build_object('nombre','Responsable Joven Bfix','tipoId','CE','identificacion','1000199104','fechaNacimiento',(date '1980-01-01')::text),
+          jsonb_build_object('nombre','Infante Bfix Guc','tipoId','RC','identificacion','1000199105','fechaNacimiento',(date '1988-06-01')::text,'responsableOrden',1)
+        ),
+        '[]'::jsonb,
+        v_uid,
+        v_fallback_lejano
+      );
+      v_ok_bfix := false; -- no debió llegar aquí: el responsable es menor AL FALLBACK
+    exception when others then
+      v_ok_bfix := true;
+    end;
+    select count(*) into v_pax_despues from public.contrato_pasajeros where numero_contrato = v_num_bfix3;
+    v_ok_bfix := v_ok_bfix and v_pax_antes = 0 and v_pax_despues = 0;
+    insert into pg_temp.postcheck_167_reporte
+      values ('bfix', 'B-fix #3: la mayoría de edad del responsable dentro del TRIGGER usa el fallback (vía GUC de sesión), no current_date -> rechaza a un responsable menor SOLO al fallback', case when v_ok_bfix then 'OK' else 'FALLA' end, '');
+  end;
+
   raise notice 'postcheck 167: fixtures creados bajo %/%/%/%/% (se revierten con ROLLBACK)', v_num, v_num2, v_num3, v_num4, v_num5;
 end $$;
 
