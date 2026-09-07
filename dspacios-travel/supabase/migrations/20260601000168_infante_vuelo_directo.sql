@@ -68,13 +68,19 @@
 -- pedida explícitamente para esta funcionalidad. Para la enorme mayoría de
 -- contratos (un solo bloqueo, `fecha_salida` = fecha del vuelo) coinciden.
 -- Si un contrato abarca VARIOS bloqueos con fechas distintas, o su
--- `fecha_salida` quedó mal cargada, esta función puede aceptar como válido
--- un caso que el trigger igual rechace (o viceversa) — en ese caso la
--- escritura falla con el mensaje del trigger, nunca se guarda a medias
--- (todo pasa dentro de una sola transacción). No se sincronizan las dos
--- fechas aquí: eso es una limitación estructural preexistente de
--- `contrato_pasajeros` (una fila de CONTRATO, no de bloqueo) — ver el
--- comentario de `_fecha_referencia_efectiva` en la migración 167.
+-- `fecha_salida` quedó mal cargada, esta función puede clasificar como
+-- infante (contra fecha_ida) un caso que el trigger, al correr sobre el
+-- INSERT/UPDATE (BEFORE, mismas migración 167), reclasifique como NO
+-- infante (contra fecha_salida) — ese trigger sobreescribe `new.es_infante`
+-- directamente. Sin un chequeo aparte, eso dejaría guardado un pasajero SIN
+-- silla que el sistema ya no considera infante (huérfano de clasificación).
+-- Por eso el paso 8 de esta función relee la fila resultante (que ya refleja
+-- lo que el trigger BEFORE decidió, vía RETURNING) y, si `es_infante` no
+-- quedó en `true`, revierte TODA la transacción con un mensaje claro — nunca
+-- se guarda a medias. No se sincronizan las dos fechas aquí: eso sigue
+-- siendo una limitación estructural preexistente de `contrato_pasajeros`
+-- (una fila de CONTRATO, no de bloqueo) — ver el comentario de
+-- `_fecha_referencia_efectiva` en la migración 167.
 --
 -- ═════════════════════════════════════════════════════════════════════════
 -- AUTORIZACIÓN — por qué `control_vuelo` NO amplía su alcance
@@ -140,6 +146,7 @@ declare
   v_infante_actual   record;
   v_orden_nuevo      integer;
   v_resultado        record;
+  v_es_infante_final boolean;
 begin
   -- ── 0) Sesión real y activa (mi_rol() devuelve null si el usuario está
   -- desactivado — migración 140 — o no existe). El cliente NUNCA autoriza:
@@ -315,7 +322,7 @@ begin
            fecha_nacimiento = p_fecha_nacimiento,
            responsable_id   = v_responsable_id
      where cp.id = p_infante_id
-    returning cp.id, cp.nombre, cp.tipo_id, cp.identificacion, cp.fecha_nacimiento, cp.responsable_id, cp.numero_contrato
+    returning cp.id, cp.nombre, cp.tipo_id, cp.identificacion, cp.fecha_nacimiento, cp.responsable_id, cp.numero_contrato, cp.es_infante
       into v_resultado;
   else
     select coalesce(max(cp.orden), -1) + 1 into v_orden_nuevo
@@ -327,8 +334,27 @@ begin
     values
       (v_numero_contrato, v_nombre_completo, v_tipo_doc, v_numero_doc, p_fecha_nacimiento, true, v_responsable_id, v_orden_nuevo)
     returning contrato_pasajeros.id, contrato_pasajeros.nombre, contrato_pasajeros.tipo_id, contrato_pasajeros.identificacion,
-              contrato_pasajeros.fecha_nacimiento, contrato_pasajeros.responsable_id, contrato_pasajeros.numero_contrato
+              contrato_pasajeros.fecha_nacimiento, contrato_pasajeros.responsable_id, contrato_pasajeros.numero_contrato,
+              contrato_pasajeros.es_infante
       into v_resultado;
+  end if;
+
+  -- ── 8) Invariante final: el TRIGGER de la migración 167 (sin modificar,
+  -- `fn_validar_responsable_infante`, BEFORE INSERT/UPDATE) es la autoridad
+  -- que de verdad decide `es_infante`, derivándolo de `ventas.fecha_salida`
+  -- (fecha del CONTRATO) — no de `bloqueos_vuelo.fecha_ida` (fecha REAL de
+  -- ESTE bloqueo), que es lo que este RPC usó arriba para clasificar. Si
+  -- ambas fechas divergen (contrato con varios bloqueos, o fecha_salida mal
+  -- cargada), el trigger puede reescribir `es_infante` a `false` en la MISMA
+  -- fila que este RPC insertó/actualizó como infante — dejaría un pasajero
+  -- sin silla que el sistema ya no considera infante. En vez de guardarlo a
+  -- medias, se revierte TODA la transacción con un mensaje claro: la fila
+  -- vuelve exactamente al estado anterior (rollback automático de Postgres
+  -- ante una excepción), nunca queda un pasajero huérfano de silla y de
+  -- clasificación. Ver riesgo residual documentado en la cabecera. ────────
+  v_es_infante_final := coalesce(v_resultado.es_infante, false);
+  if not v_es_infante_final then
+    raise exception 'La fecha de nacimiento clasifica como infante contra la fecha del vuelo (%), pero el contrato (fecha de salida) ya no lo considera infante — revisa la fecha de salida del contrato antes de continuar. No se guardó ningún cambio.', v_fecha_ref;
   end if;
 
   return query select v_resultado.id, v_resultado.nombre, v_resultado.tipo_id, v_resultado.identificacion,
@@ -352,8 +378,9 @@ comment on function public.guardar_infante_vuelo(bigint, bigint, bigint, text, t
   'Riesgo residual documentado en la cabecera de la migración 168: clasifica '
   'contra bloqueos_vuelo.fecha_ida, mientras el trigger de la 167 valida '
   'contra ventas.fecha_salida — pueden divergir en un contrato con varios '
-  'bloqueos de fechas distintas; si divergen, la escritura falla con el '
-  'mensaje del trigger, nunca queda a medias. Migración 168.';
+  'bloqueos de fechas distintas; si divergen, esta función relee la fila '
+  'resultante y revierte TODA la transacción si el trigger reclasificó '
+  'es_infante a false, nunca queda a medias. Migración 168.';
 
 revoke all on function public.guardar_infante_vuelo(bigint, bigint, bigint, text, text, text, text, date) from public;
 revoke all on function public.guardar_infante_vuelo(bigint, bigint, bigint, text, text, text, text, date) from anon;

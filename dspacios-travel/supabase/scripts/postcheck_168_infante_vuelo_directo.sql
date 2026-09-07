@@ -279,7 +279,52 @@ begin
     'edición no duplica fila (sigue habiendo exactamente 1 con ese id)',
     case when (select count(*) from contrato_pasajeros where id = v_infante_id) = 1 then 'OK' else 'FALLA' end, '');
 
-  -- ═══ 8) Control negativo: sin sesión (mi_rol() null) → rechazado ═══
+  -- ═══════════════════════════════════════════════════════════════════
+  -- 9) DIVERGENCIA bloqueos_vuelo.fecha_ida vs ventas.fecha_salida (riesgo
+  -- residual documentado en la cabecera de la 168): dob clasifica INF contra
+  -- fecha_ida del bloqueo, pero el trigger de la 167 (sin modificar) deriva
+  -- es_infante contra ventas.fecha_salida, que aquí clasifica CHD → debe
+  -- fallar (por el trigger, o por el paso 8 de guardar_infante_vuelo si
+  -- alguna vez el trigger dejara de rechazarlo) SIN escritura parcial.
+  -- ═══════════════════════════════════════════════════════════════════
+  perform set_config('request.jwt.claims', json_build_object('sub', v_super::text)::text, true);
+
+  -- Contrato propio para esta prueba, con fecha_salida MUY posterior a
+  -- fecha_ida del bloqueo (2026-06-15) — simula el contrato multi-bloqueo /
+  -- fecha mal cargada que el riesgo residual documenta.
+  insert into ventas (numero_contrato, cliente, tenant, fecha_salida) values ('DTM-9170', 'Cliente Divergencia PC168', 'mayorista', '2027-01-01');
+  insert into sillas (bloqueo_id, numero_contrato, estado, tipo_doc, numero_doc, nacimiento) values
+    (v_bloqueo, 'DTM-9170', 'confirmada', 'CC', '168000020', '1990-01-01');
+  insert into contrato_pasajeros (numero_contrato, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, orden)
+    values ('DTM-9170', 'ADULTO DIVERGENCIA', 'CC', '168000020', '1990-01-01', false, 0);
+
+  select count(*) into v_cnt_sillas_antes from sillas;
+
+  -- dob 2024-07-01: a fecha_ida (2026-06-15) tiene 1 año (INF); a
+  -- fecha_salida (2027-01-01) tiene 2 años cumplidos (CHD, ya no infante).
+  begin
+    select s.id into v_r from sillas s where s.numero_contrato='DTM-9170' and s.numero_doc='168000020' and s.bloqueo_id = v_bloqueo;
+    perform * from guardar_infante_vuelo(v_bloqueo, v_r.id, null, 'BEBE', 'DIVERGENCIA', 'RC', '999168020', '2024-07-01');
+    v_ok := false;
+  exception when others then
+    v_ok := true;
+    get stacked diagnostics v_msg = message_text;
+  end;
+  insert into pg_temp.postcheck_168_reporte values ('9-divergencia-fechas',
+    'INF por fecha_ida pero CHD por fecha_salida del contrato: rechazado (trigger 167 o paso 8 del RPC), nunca se guarda a medias',
+    case when v_ok then 'OK' else 'FALLA' end, coalesce(v_msg,''));
+
+  insert into pg_temp.postcheck_168_reporte values ('9-divergencia-fechas',
+    'el rechazo NO dejó ninguna fila en contrato_pasajeros para ese documento',
+    case when not exists (select 1 from contrato_pasajeros where identificacion = '999168020') then 'OK' else 'FALLA' end, '');
+
+  select count(*) into v_cnt_sillas_despues from sillas;
+  insert into pg_temp.postcheck_168_reporte values ('9-divergencia-fechas',
+    'el rechazo tampoco alteró el conteo de sillas',
+    case when v_cnt_sillas_despues = v_cnt_sillas_antes then 'OK' else 'FALLA' end,
+    format('antes=%s despues=%s', v_cnt_sillas_antes, v_cnt_sillas_despues));
+
+  -- ═══ 10) Control negativo: sin sesión (mi_rol() null) → rechazado ═══
   perform set_config('request.jwt.claims', null, true);
   begin
     select s.id into v_r from sillas s where s.numero_contrato='DTM-9168' and s.numero_doc='168000001' and s.bloqueo_id = v_bloqueo;
@@ -288,7 +333,7 @@ begin
   exception when others then
     v_ok := true;
   end;
-  insert into pg_temp.postcheck_168_reporte values ('8-control-negativo',
+  insert into pg_temp.postcheck_168_reporte values ('10-control-negativo',
     'sin sesión (mi_rol() null): rechazado',
     case when v_ok then 'OK' else 'FALLA' end, '');
 

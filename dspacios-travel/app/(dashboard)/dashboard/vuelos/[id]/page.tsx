@@ -167,6 +167,18 @@ export default async function BloqueoDetallePage({
   );
   const contratosAutorizados = await contratosQuePuedeAbrir(sb, numerosContratosInfantes);
 
+  // Candidatos a "adulto responsable" para el alta manual de PasajeroAcciones
+  // (ver ese componente): cualquier silla de ESTE vuelo con documento propio
+  // y que no esté en 'cambio' — el servidor (guardar_infante_vuelo) vuelve a
+  // validar todo (documento, mayoría de edad, contrato) al guardar; esta
+  // lista solo alimenta el <select> en el cliente.
+  const candidatosResponsable = (sillas ?? [])
+    .filter((s) => s.estado !== "cambio" && s.tipo_doc && s.numero_doc)
+    .map((s) => ({
+      sillaId: s.id,
+      nombre: `${s.pasajero_nombres ?? ""} ${s.pasajero_apellidos ?? ""}`.trim() || `Silla #${s.numero_silla}`,
+    }));
+
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
       <Link href="/dashboard/vuelos" className="text-sm text-gray-400 hover:text-gray-600">← Vuelos</Link>
@@ -275,6 +287,8 @@ export default async function BloqueoDetallePage({
                               bloqueoId={bloqueoId}
                               bloqueada={s.estado === "cambio"}
                               otros={otros ?? []}
+                              fechaIdaBloqueo={b.fecha_ida}
+                              candidatosResponsable={candidatosResponsable.filter((c) => c.sillaId !== s.id)}
                               inicial={{
                                 pasajero_nombres: s.pasajero_nombres ?? "", pasajero_apellidos: s.pasajero_apellidos ?? "",
                                 tipo_doc: s.tipo_doc ?? "", numero_doc: s.numero_doc ?? "", nacimiento: s.nacimiento ?? "",
@@ -310,6 +324,7 @@ export default async function BloqueoDetallePage({
                               <span className="inline-flex flex-wrap items-center gap-1.5 text-gray-600">
                                 <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-gray-300" aria-hidden="true" />
                                 <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombre || "—"}</b></span>
+                                <span className="text-gray-400">· {inf.tipoId || "—"} {inf.identificacion || "—"}</span>
                                 <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimiento, b.fecha_ida)}</span>
                                 <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
                                 {inf.tipoId && inf.identificacion && inf.fechaNacimiento && (

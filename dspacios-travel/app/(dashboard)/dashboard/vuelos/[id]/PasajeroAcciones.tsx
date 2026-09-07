@@ -1,10 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { editarPasajeroSilla, borrarPasajeroSilla, moverPasajeroSilla, type PasajeroSillaInput } from "../actions";
+import { useMemo, useState, useTransition } from "react";
+import { editarPasajeroSilla, borrarPasajeroSilla, moverPasajeroSilla, guardarInfanteVuelo, type PasajeroSillaInput } from "../actions";
+import { esInfantePorEdad } from "@/lib/vuelos/infanteVuelo";
+import { calcularEdad } from "@/lib/utils";
 
 type Pasajero = PasajeroSillaInput;
 type RecordOpt = { id: number; record: string; fecha_ida: string | null };
+type CandidatoResponsable = { sillaId: number; nombre: string };
 
 const inp = "w-full rounded border border-gray-300 px-2 py-1 text-sm";
 
@@ -14,25 +17,64 @@ export function PasajeroAcciones({
   inicial,
   otros,
   bloqueada,
+  fechaIdaBloqueo,
+  candidatosResponsable,
 }: {
   sillaId: number;
   bloqueoId: number;
   inicial: Pasajero;
   otros: RecordOpt[];
   bloqueada: boolean; // solo 'cambio' (silla que salió a otro record): la gestiona el sistema
+  /** `bloqueos_vuelo.fecha_ida` REAL de este vuelo — para detectar en vivo si la fecha de nacimiento tecleada corresponde a un infante (mismo criterio que guardar_infante_vuelo, migración 168). */
+  fechaIdaBloqueo: string | null;
+  /** Otros pasajeros del MISMO vuelo con documento propio (candidatos a "adulto responsable" si este resulta ser un infante). El server (guardar_infante_vuelo) revalida todo — esta lista solo alimenta el <select>. */
+  candidatosResponsable: CandidatoResponsable[];
 }) {
   const [modo, setModo] = useState<null | "editar" | "mover">(null);
   const [form, setForm] = useState<Pasajero>(inicial);
   const [destino, setDestino] = useState<number | "">("");
+  const [responsableId, setResponsableId] = useState<number | "">("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
   const set = (k: keyof Pasajero, val: string) => setForm((f) => ({ ...f, [k]: val }));
 
+  // Detección EN VIVO de infante — misma fuente de verdad que el RPC
+  // guardar_infante_vuelo (lib/vuelos/infanteVuelo.ts), contra la fecha REAL
+  // del vuelo (nunca la del contrato). El servidor sigue siendo la
+  // autoridad: esto solo adelanta el cambio de flujo en el formulario.
+  const esInfante = useMemo(
+    () => (form.nacimiento ? esInfantePorEdad(form.nacimiento, fechaIdaBloqueo) : false),
+    [form.nacimiento, fechaIdaBloqueo]
+  );
+  const edadInfante = useMemo(
+    () => (form.nacimiento ? calcularEdad(form.nacimiento, fechaIdaBloqueo) : null),
+    [form.nacimiento, fechaIdaBloqueo]
+  );
+
   if (bloqueada) return <span className="text-[10px] text-gray-400">—</span>;
 
   function guardar() {
     setErr("");
+    // Si la fecha de nacimiento clasifica como infante (< 2 años a la fecha
+    // REAL del vuelo), este pasajero NO ocupa silla — nunca se escribe en
+    // ESTA silla (queda disponible/sin tocar). En vez de eso, se crea como
+    // infante subordinado al adulto responsable elegido, vía el mismo RPC
+    // estrecho que usa el trigger directo "Infante" (migración 168).
+    if (esInfante) {
+      if (responsableId === "") { setErr("Elige el adulto responsable del infante."); return; }
+      start(async () => {
+        const r = await guardarInfanteVuelo(bloqueoId, Number(responsableId), null, {
+          nombreCompleto: `${form.pasajero_nombres} ${form.pasajero_apellidos}`.trim(),
+          tipoDoc: form.tipo_doc,
+          numeroDoc: form.numero_doc,
+          fechaNacimiento: form.nacimiento,
+        });
+        if (r.ok) { setModo(null); setResponsableId(""); }
+        else setErr(r.error);
+      });
+      return;
+    }
     start(async () => {
       const r = await editarPasajeroSilla(sillaId, bloqueoId, form);
       if (r.ok) setModo(null);
@@ -87,19 +129,45 @@ export function PasajeroAcciones({
                   <label className="text-xs text-gray-500">Nacimiento
                     <input type="date" className={inp} value={form.nacimiento} onChange={(e) => set("nacimiento", e.target.value)} />
                   </label>
-                  <label className="text-xs text-gray-500">Asesor
-                    <input className={inp} value={form.asesor} onChange={(e) => set("asesor", e.target.value)} />
-                  </label>
-                  <label className="text-xs text-gray-500">Hotel
-                    <input className={inp} value={form.hotel} onChange={(e) => set("hotel", e.target.value)} />
-                  </label>
-                  <label className="text-xs text-gray-500">Acomodación
-                    <input className={inp} value={form.acomodacion} onChange={(e) => set("acomodacion", e.target.value)} />
-                  </label>
-                  <label className="text-xs text-gray-500">Plazo
-                    <input type="date" className={inp} value={form.plazo} onChange={(e) => set("plazo", e.target.value)} />
-                  </label>
+                  {!esInfante && (
+                    <>
+                      <label className="text-xs text-gray-500">Asesor
+                        <input className={inp} value={form.asesor} onChange={(e) => set("asesor", e.target.value)} />
+                      </label>
+                      <label className="text-xs text-gray-500">Hotel
+                        <input className={inp} value={form.hotel} onChange={(e) => set("hotel", e.target.value)} />
+                      </label>
+                      <label className="text-xs text-gray-500">Acomodación
+                        <input className={inp} value={form.acomodacion} onChange={(e) => set("acomodacion", e.target.value)} />
+                      </label>
+                      <label className="text-xs text-gray-500">Plazo
+                        <input type="date" className={inp} value={form.plazo} onChange={(e) => set("plazo", e.target.value)} />
+                      </label>
+                    </>
+                  )}
                 </div>
+
+                {esInfante && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs text-amber-800">
+                      Con {edadInfante ?? "?"} años a la fecha del vuelo, este pasajero es <b>infante</b>: no ocupa silla
+                      (esta silla queda sin usar) — se guarda a cargo de un adulto responsable.
+                    </p>
+                    <label className="mt-2 block text-xs text-gray-500">Adulto responsable
+                      <select
+                        className={inp}
+                        value={responsableId}
+                        onChange={(e) => setResponsableId(e.target.value === "" ? "" : Number(e.target.value))}
+                      >
+                        <option value="">Elige el adulto responsable…</option>
+                        {candidatosResponsable.map((c) => (
+                          <option key={c.sillaId} value={c.sillaId}>{c.nombre}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
+
                 {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
                 <div className="mt-4 flex justify-end gap-2">
                   <button type="button" onClick={() => setModo(null)} className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100">Cancelar</button>

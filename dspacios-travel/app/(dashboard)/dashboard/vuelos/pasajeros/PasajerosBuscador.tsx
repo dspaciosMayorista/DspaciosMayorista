@@ -171,6 +171,7 @@ export function PasajerosBuscador({
                       <span className="inline-flex flex-wrap items-center gap-1.5 text-gray-600">
                         <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-gray-300" aria-hidden="true" />
                         <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombres || "—"}</b></span>
+                        <span className="text-gray-400">· {inf.tipoDoc || "—"} {inf.numeroDoc || "—"}</span>
                         <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimientoInfante ?? null, p.fechaIda)}</span>
                         <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
                         {inf.infanteId != null && p.sillaId != null && p.bloqueoId != null && inf.tipoDoc && inf.numeroDoc && inf.fechaNacimientoInfante && (
