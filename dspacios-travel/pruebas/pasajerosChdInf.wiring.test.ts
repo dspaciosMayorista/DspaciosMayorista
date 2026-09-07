@@ -574,12 +574,24 @@ test("lib/reservar/pasajeros.ts es la única fuente de la constante de edad de i
 // infante nunca tiene fila propia ahí. Sin un paso adicional quedarían
 // invisibles en estos dos listados aunque sí aparezcan en el documento del
 // contrato. Estas pruebas verifican que ese paso adicional sigue existiendo.
+//
+// ⚠️ La consulta a `contrato_pasajeros` YA NO vive en estas dos páginas: se
+// movió a `lib/vuelos/contratoManual.ts` (`resolverManifiestoAutorizado`)
+// como parte de la corrección del blocker de RLS del PR #289 — esa consulta
+// necesita un cliente admin (server-only, tras autorizar por rol) para ver
+// infantes de contratos del otro tenant, algo que un `.from()` inline en la
+// página nunca podría hacer de forma segura. Las páginas ahora solo deben
+// LLAMAR al resolver compartido, nunca reimplementar la consulta.
 // ───────────────────────────────────────────────────────────────────────────
-test("vuelos/pasajeros/page.tsx trae infantes de contrato_pasajeros y los agrega al listado (no solo sillas)", () => {
+test("vuelos/pasajeros/page.tsx delega en resolverManifiestoAutorizado (contrato_pasajeros/es_infante viven en lib/vuelos/contratoManual.ts, no aquí)", () => {
   const src = leer("app/(dashboard)/dashboard/vuelos/pasajeros/page.tsx");
-  assert.match(src, /from\(\s*["']contrato_pasajeros["']\s*\)/, "no consulta contrato_pasajeros en absoluto");
-  assert.match(src, /\.eq\(\s*["']es_infante["']\s*,\s*true\s*\)/, "no filtra por es_infante=true");
+  assert.match(src, /resolverManifiestoAutorizado\(/, "no llama a resolverManifiestoAutorizado — sin eso, los infantes no se resuelven");
+  assert.doesNotMatch(src, /from\(\s*["']contrato_pasajeros["']\s*\)/, "no debe consultar contrato_pasajeros directamente (con el cliente de sesión) — esa lectura vive en el módulo autorizado");
   assert.match(src, /\[\.\.\.filasSillas,\s*\.\.\.filasInfantes\]/, "no combina las filas de sillas con las de infantes");
+
+  const lib = leer("lib/vuelos/contratoManual.ts");
+  assert.match(lib, /from\(\s*["']contrato_pasajeros["']\s*\)/, "lib/vuelos/contratoManual.ts no consulta contrato_pasajeros en absoluto");
+  assert.match(lib, /\.eq\(\s*["']es_infante["']\s*,\s*true\s*\)/, "lib/vuelos/contratoManual.ts no filtra por es_infante=true");
 });
 
 test("PasajerosBuscador.tsx admite filas sin silla (infante) sin romper la clave de fila", () => {
@@ -588,10 +600,10 @@ test("PasajerosBuscador.tsx admite filas sin silla (infante) sin romper la clave
   assert.match(src, /key=\{p\.id\}/, "la fila debe usar el id sintético, no sillaId — colisiona si un infante tiene sillaId null duplicado");
 });
 
-test("vuelos/[id]/page.tsx (detalle de un record) también trae los infantes de los contratos del bloqueo", () => {
+test("vuelos/[id]/page.tsx (detalle de un record) también trae los infantes de los contratos del bloqueo, delegando en resolverManifiestoAutorizado", () => {
   const src = leer("app/(dashboard)/dashboard/vuelos/[id]/page.tsx");
-  assert.match(src, /from\(\s*["']contrato_pasajeros["']\s*\)/, "no consulta contrato_pasajeros en absoluto");
-  assert.match(src, /\.eq\(\s*["']es_infante["']\s*,\s*true\s*\)/, "no filtra por es_infante=true");
+  assert.match(src, /resolverManifiestoAutorizado\(/, "no llama a resolverManifiestoAutorizado — sin eso, los infantes no se resuelven");
+  assert.doesNotMatch(src, /from\(\s*["']contrato_pasajeros["']\s*\)/, "no debe consultar contrato_pasajeros directamente (con el cliente de sesión) — esa lectura vive en el módulo autorizado");
   assert.match(src, /infantesBloqueo/, "no expone los infantes del bloqueo a la vista");
 });
 

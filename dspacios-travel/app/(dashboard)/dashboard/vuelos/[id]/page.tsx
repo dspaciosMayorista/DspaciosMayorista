@@ -11,6 +11,7 @@ import { SillaContrato } from "./SillaContrato";
 import { BloqueoTabs } from "./BloqueoTabs";
 import { ControlBloqueoForm } from "./ControlBloqueoForm";
 import { ControlBadges } from "@/components/vuelos/ControlBadges";
+import { resolverManifiestoAutorizado } from "@/lib/vuelos/contratoManual";
 
 export const dynamic = "force-dynamic";
 
@@ -74,16 +75,32 @@ export default async function BloqueoDetallePage({
   // de arriba está ligada 1:1 a operaciones reales sobre `sillas` (cambiar,
   // liberar, editar) y una fila de infante no tiene una silla sobre la cual
   // ejecutarlas.
-  const contratosDelBloqueo = [...new Set((sillas ?? []).map((s) => s.numero_contrato).filter((n): n is string => !!n))];
-  let infantesBloqueo: { id: number; nombre: string; tipo_id: string | null; identificacion: string | null; numero_contrato: string | null }[] = [];
-  if (contratosDelBloqueo.length) {
-    const { data: infData } = await sb
-      .from("contrato_pasajeros")
-      .select("id, nombre, tipo_id, identificacion, numero_contrato")
-      .eq("es_infante", true)
-      .in("numero_contrato", contratosDelBloqueo);
-    infantesBloqueo = infData ?? [];
-  }
+  //
+  // Además del contrato ORGÁNICO (`sillas.numero_contrato`, con FK), una
+  // silla puede estar asociada a un contrato MANUAL (`contrato_manual`,
+  // texto libre, pensado para ventas externas al sistema — migración 085)
+  // que en la práctica a veces SÍ corresponde a una venta interna real
+  // (típicamente minorista, sin tarifario/reservar propio) escrita sin su
+  // prefijo de tenant.
+  //
+  // ⚠️ `resolverManifiestoAutorizado` (lib/vuelos/contratoManual.ts) NO usa
+  // el cliente `sb` de esta página para las lecturas de `ventas`/
+  // `contrato_pasajeros`: primero AUTORIZA con `sb` (mi_rol() en el módulo
+  // Vuelos — misma fuente que `proxy.ts`) y solo entonces usa un cliente
+  // admin para ver la tabla COMPLETA. Es necesario porque este bloqueo es
+  // infraestructura COMPARTIDA (bloqueos_vuelo/sillas no tienen columna de
+  // tenant) pero `ventas`/`contrato_pasajeros` sí filtran por tenant para
+  // administracion/operaciones — con el cliente de sesión, un usuario de
+  // mayorista ni siquiera vería que existe la venta minorista candidata
+  // (ambigüedad oculta) ni al infante ya resuelto (RLS de nuevo). Las
+  // referencias que se le pasan salen SIEMPRE de las sillas de ESTE
+  // bloqueo, ya autorizado — nunca un número suelto.
+  const contratosOrganicosDelBloqueo = [...new Set((sillas ?? []).map((s) => s.numero_contrato).filter((n): n is string => !!n))];
+  const { infantes: infantesBloqueo } = await resolverManifiestoAutorizado(
+    sb,
+    contratosOrganicosDelBloqueo,
+    [...contratoManualPorSilla.values()]
+  );
 
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
