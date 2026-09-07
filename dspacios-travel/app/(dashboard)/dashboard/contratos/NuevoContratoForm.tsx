@@ -4,10 +4,12 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatMoneda } from "@/lib/utils";
+import { formatMoneda, calcularEdad } from "@/lib/utils";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import type { DestinoOpt } from "@/components/ComboDestino";
 import { ciudadIata } from "@/lib/iata";
+import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
+import { quitarPasajero, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 import {
   crearContrato,
   type PasajeroInput,
@@ -167,7 +169,15 @@ export function NuevoContratoForm({
     setItems((arr) => arr.map((it, j) => (j === i ? { ...it, ...patch } : it)));
   }
   function setPasajero(i: number, patch: Partial<PasajeroInput>) {
-    setPasajeros((arr) => arr.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+    setPasajeros((arr) => {
+      const next = arr.map((p, j) => (j === i ? { ...p, ...patch } : p));
+      // Un cambio de fecha de nacimiento puede mover al pasajero entre
+      // categorías (INF/CHD/ADT) o dejar de calificar como responsable de
+      // otro — revisión de alto riesgo, ronda 3 (B8): sin este recálculo, un
+      // `responsableIndex` quedaba "vivo" apuntando a una fila que el
+      // servidor ya no aceptaría.
+      return "fechaNacimiento" in patch ? recalcularVinculosPorEdad(next, fechaSalida || null) : next;
+    });
   }
   function setHotel(i: number, patch: Partial<HotelInput>) {
     setHoteles((arr) => arr.map((h, j) => (j === i ? { ...h, ...patch } : h)));
@@ -466,7 +476,15 @@ export function NuevoContratoForm({
           </div>
           <div>
             <label className={labelCls}>Fecha de salida (viaje)</label>
-            <Input type="date" value={fechaSalida} onChange={(e) => setFechaSalida(e.target.value)} />
+            <Input type="date" value={fechaSalida} onChange={(e) => {
+              const nueva = e.target.value;
+              setFechaSalida(nueva);
+              // La fecha de salida es la referencia de edad de TODOS los
+              // pasajeros — cambiarla puede mover a cualquiera entre
+              // categorías (INF/CHD/ADT) o invalidar un vínculo de
+              // responsable ya elegido (revisión de alto riesgo, ronda 3 — B8).
+              setPasajeros((arr) => recalcularVinculosPorEdad(arr, nueva || null));
+            }} />
           </div>
           <div>
             <label className={labelCls}>Fecha de regreso</label>
@@ -743,24 +761,58 @@ export function NuevoContratoForm({
             + Agregar pasajero
           </button>
         </div>
-        {pasajeros.map((p, i) => (
-          <div key={i} className="grid grid-cols-2 items-center gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-6">
-            <Input placeholder="Nombres" value={p.nombres} onChange={(e) => setPasajero(i, { nombres: e.target.value })} />
-            <Input placeholder="Apellidos" value={p.apellidos} onChange={(e) => setPasajero(i, { apellidos: e.target.value })} />
-            <Input placeholder="Tipo ID" value={p.tipoId} onChange={(e) => setPasajero(i, { tipoId: e.target.value })} />
-            <Input placeholder="Identificación" value={p.identificacion} onChange={(e) => setPasajero(i, { identificacion: e.target.value })} />
-            <Input type="date" value={p.fechaNacimiento} onChange={(e) => setPasajero(i, { fechaNacimiento: e.target.value })} />
-            <div className="flex items-center justify-between gap-2">
-              <label className="flex cursor-pointer items-center gap-1 text-xs text-gray-600">
-                <input type="checkbox" checked={p.esInfante} onChange={(e) => setPasajero(i, { esInfante: e.target.checked })} />
-                Infante
-              </label>
-              <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setPasajeros((a) => a.filter((_, j) => j !== i))}>
-                Quitar
-              </button>
+        {(() => {
+          // Edad REAL por fecha de nacimiento contra la fecha de salida — el
+          // único criterio que usa el servidor al crear el contrato. Ya no
+          // hay un checkbox "Infante" editable (revisión de alto riesgo,
+          // ronda 3 — B9): coexistían dos criterios visibles (el checkbox
+          // manual, que el servidor SIEMPRE ignoraba y recalculaba, y esta
+          // misma clasificación por fecha) — solo queda el derivado, real.
+          const refFecha = fechaSalida || null;
+          const edadesReales = pasajeros.map((p) => calcularEdad(p.fechaNacimiento, refFecha));
+          const esInfanteRealRow = pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, refFecha));
+          return pasajeros.map((p, i) => (
+            <div key={i} className="rounded-lg bg-gray-50 p-3">
+              <div className="grid grid-cols-2 items-center gap-2 md:grid-cols-6">
+                <Input placeholder="Nombres" value={p.nombres} onChange={(e) => setPasajero(i, { nombres: e.target.value })} />
+                <Input placeholder="Apellidos" value={p.apellidos} onChange={(e) => setPasajero(i, { apellidos: e.target.value })} />
+                <Input placeholder="Tipo ID" value={p.tipoId} onChange={(e) => setPasajero(i, { tipoId: e.target.value })} />
+                <Input placeholder="Identificación" value={p.identificacion} onChange={(e) => setPasajero(i, { identificacion: e.target.value })} />
+                <Input type="date" value={p.fechaNacimiento} onChange={(e) => setPasajero(i, { fechaNacimiento: e.target.value })} />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-gray-500">
+                    {edadesReales[i] == null
+                      ? "—"
+                      : `${esInfanteRealRow[i] ? "Infante" : edadesReales[i]! < 12 ? "Niño" : "Adulto"} · ${edadesReales[i]}a`}
+                  </span>
+                  <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setPasajeros((a) => quitarPasajero(a, i))}>
+                    Quitar
+                  </button>
+                </div>
+              </div>
+              {esInfanteRealRow[i] && (
+                <div className="mt-2">
+                  <label className="mb-1 block text-xs font-medium text-gray-600">Adulto responsable *</label>
+                  <select
+                    value={p.responsableIndex ?? ""}
+                    onChange={(e) => setPasajero(i, { responsableIndex: e.target.value === "" ? null : Number(e.target.value) })}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">Sin vincular (se rechazará al generar)</option>
+                    {pasajeros.map((otro, j) => {
+                      if (j === i) return null;
+                      const edadOtro = edadesReales[j];
+                      if (edadOtro == null || edadOtro < 18) return null;
+                      const nombre = `${otro.nombres} ${otro.apellidos}`.trim() || `Pasajero ${j + 1}`;
+                      return <option key={j} value={j}>{nombre}</option>;
+                    })}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-400">Todo infante debe quedar vinculado a un adulto (18+ años) del mismo contrato.</p>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          ));
+        })()}
       </section>
 
       {/* Valores */}

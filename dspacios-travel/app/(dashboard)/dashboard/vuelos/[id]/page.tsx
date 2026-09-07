@@ -68,6 +68,23 @@ export default async function BloqueoDetallePage({
   // salieron a otro record en estado 'cambio'). Consistente con la lista.
   const totalReal = (sillas ?? []).filter((s) => s.estado !== "cambio").length;
 
+  // Infantes de este vuelo (no ocupan silla — ver lib/reservar/pasajeros.ts —
+  // así que nunca tienen fila propia en `sillas`, pero deben seguir
+  // apareciendo en el manifiesto). Se listan aparte, en solo lectura: la tabla
+  // de arriba está ligada 1:1 a operaciones reales sobre `sillas` (cambiar,
+  // liberar, editar) y una fila de infante no tiene una silla sobre la cual
+  // ejecutarlas.
+  const contratosDelBloqueo = [...new Set((sillas ?? []).map((s) => s.numero_contrato).filter((n): n is string => !!n))];
+  let infantesBloqueo: { id: number; nombre: string; tipo_id: string | null; identificacion: string | null; numero_contrato: string | null }[] = [];
+  if (contratosDelBloqueo.length) {
+    const { data: infData } = await sb
+      .from("contrato_pasajeros")
+      .select("id, nombre, tipo_id, identificacion, numero_contrato")
+      .eq("es_infante", true)
+      .in("numero_contrato", contratosDelBloqueo);
+    infantesBloqueo = infData ?? [];
+  }
+
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
       <Link href="/dashboard/vuelos" className="text-sm text-gray-400 hover:text-gray-600">← Vuelos</Link>
@@ -188,6 +205,36 @@ export default async function BloqueoDetallePage({
             </div>
             {!sillas?.length && <p className="mt-4 text-sm text-gray-400">Este bloqueo no tiene sillas generadas.</p>}
             <p className="mt-2 text-xs text-gray-400">Para registrar una venta externa, usa “+ Contrato manual” en un cupo disponible. Para quitar un cupo libre, usa “eliminar cupo”.</p>
+
+            {infantesBloqueo.length > 0 && (
+              <div className="mt-6">
+                <p className="mb-2 text-sm font-semibold text-gray-700">
+                  Infantes de este vuelo <span className="font-normal text-gray-400">— no ocupan silla</span>
+                </p>
+                <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+                  <table className="w-full min-w-[600px] text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+                        <th className="px-3 py-2">Nombre</th>
+                        <th className="px-3 py-2">Tipo doc</th>
+                        <th className="px-3 py-2">Número</th>
+                        <th className="px-3 py-2">Contrato</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {infantesBloqueo.map((inf) => (
+                        <tr key={inf.id} className="border-t border-gray-100">
+                          <td className="px-3 py-2 text-gray-700">{inf.nombre || "—"}</td>
+                          <td className="px-3 py-2 text-gray-500">{inf.tipo_id || "—"}</td>
+                          <td className="px-3 py-2 text-gray-500">{inf.identificacion || "—"}</td>
+                          <td className="px-3 py-2 text-gray-500">{inf.numero_contrato || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </>
         }
         cambios={

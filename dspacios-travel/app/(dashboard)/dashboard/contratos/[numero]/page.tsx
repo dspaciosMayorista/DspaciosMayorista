@@ -97,7 +97,7 @@ export default async function ContratoDetallePage({
     sb.from("contrato_adjuntos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("numero_contrato", numero).order("created_at", { ascending: false }),
     sb.from("vouchers").select("id, tipo, proveedor, share_token, contenido").eq("numero_contrato", numero).order("id"),
     sb.from("cuotas").select("id, orden, tipo, fecha_limite, monto").eq("numero_contrato", numero).order("orden"),
-    sb.from("contrato_pasajeros").select("id, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_pasajeros").select("id, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, responsable_id").eq("numero_contrato", numero).order("orden"),
     sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre"),
     sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
     sb.from("proveedores").select("nombre").order("nombre"),

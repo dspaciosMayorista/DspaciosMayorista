@@ -9,6 +9,9 @@ import { formatMoneda } from "@/lib/utils";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
+import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
+import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
+import type { Json } from "@/types/database";
 import {
   generarFlujoId, crearMedidor, registrarEtapa, registrarErrorTecnico,
   crearEstadoFlujo, elevarEstadoFlujo, resultadoTotal,
@@ -61,6 +64,10 @@ export type PasajeroInput = {
   identificacion: string;
   fechaNacimiento: string;
   esInfante: boolean;
+  // Posición (0-based) del adulto responsable dentro de este mismo arreglo
+  // — solo aplica si este pasajero resulta infante por fecha de nacimiento
+  // real. Ver PasajeroReserva en lib/reservar/computo.ts (mismo criterio).
+  responsableIndex?: number | null;
 };
 
 export type HotelInput = {
@@ -442,6 +449,14 @@ async function crearContratoInterno(
         }
       : {}),
     tipo_paquete: input.tipoPaquete,
+    // Vínculo DURABLE contrato→bloqueo (columna `bloqueo_ref_id`, migración
+    // 022 — ya existía y ya la estampa `reservarDesdeTarifarioInterno`, pero
+    // este flujo manual nunca la había llenado). Sin esto, una vez que las
+    // sillas del contrato se liberan por completo (0 pax con silla), no hay
+    // forma de volver a descubrir a qué bloqueo pertenecía para reasignarle
+    // sillas de nuevo — `sillas.numero_contrato` queda null en todas y
+    // `ajustar_sillas_por_pasajeros` no tiene de dónde leer el bloqueo_id.
+    bloqueo_ref_id: input.tipoPaquete === "bloqueo" ? input.bloqueoId ?? null : null,
     asesor: oNull(input.asesorNombre),
     canal,
     tipo_asesor: tipoVenta,
@@ -490,19 +505,92 @@ async function crearContratoInterno(
     elevarEstadoFlujo(estado, "error");
     return { ok: false as const, error: MSG_ERROR_GUARDAR_CONTRATO };
   };
-  if (input.pasajeros.length) {
-    const { error } = await sb.from("contrato_pasajeros").insert(
+  // `es_infante` se recalcula SIEMPRE server-side desde la fecha de
+  // nacimiento contra `input.fechaSalida` (la misma fecha ya guardada como
+  // `ventas.fecha_salida`) — nunca se confía en el checkbox "Es infante"
+  // que manda el cliente (ver lib/reservar/pasajeros.ts). El mismo arreglo
+  // se reutiliza más abajo para decidir qué pasajeros ocupan silla.
+  const esInfanteReal = input.pasajeros.map((p) => esInfantePorEdad(p.fechaNacimiento, input.fechaSalida));
+
+  // Pasajeros + responsable + sillas del bloqueo negociado, TODOS EN UNA
+  // SOLA LLAMADA transaccional (segunda revisión de alto riesgo — B5): antes,
+  // los pasajeros se insertaban AQUÍ (bloqueando la creación si fallaban) y
+  // las sillas se asignaban DESPUÉS, dentro del bloque best-effort
+  // "negociado_admin" más abajo — si el RPC de sillas fallaba por falta de
+  // cupo, el contrato quedaba creado con pasajeros pero SIN sillas, marcado
+  // solo "parcial", y esta función terminaba devolviendo `ok: true` de
+  // todas formas. Ahora `crear_pasajeros_contrato` hace ambas cosas en una
+  // sola transacción Postgres: pasajeros, vínculo INF→responsable (exigido
+  // por el trigger de la migración 167 para todo infante nuevo — B1) y
+  // reconciliación de sillas se confirman o revierten JUNTOS. Si el bloqueo
+  // se quedó sin cupo, esto FALLA y BLOQUEA la creación completa del
+  // contrato (nunca `ok: true` con estado parcial).
+  // `p_holders_min`: igual criterio que ya tenía la sección de sillas —
+  // `holders.length` (conteo real por edad) manda siempre que haya
+  // pasajeros nombrados, y solo cae a `pax` (total, ver comentario en su
+  // definición más arriba) cuando NO se capturaron pasajeros nombrados.
+  const esBloqueoConCupo = input.tipoPaquete === "bloqueo" && !!input.bloqueoId;
+  let holdersMinPiso = 0;
+  if (esBloqueoConCupo) {
+    const holdersPiso = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
+    holdersMinPiso = input.pasajeros.length ? holdersPiso.length : pax;
+  }
+  if (input.pasajeros.length || esBloqueoConCupo) {
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return _errorHijas("sin_service_role_para_pasajeros", null);
+    }
+    const { data: { user: actorPasajeros } } = await ctx.sb.auth.getUser();
+    if (!actorPasajeros) return _errorHijas("sin_usuario_para_pasajeros", null);
+    const admin = createAdminClient();
+    const payloadPasajeros = payloadGuardarPasajeros(
       input.pasajeros.map((p, i) => ({
-        numero_contrato: numero,
         nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
-        tipo_id: oNull(p.tipoId) ?? "CC",
-        identificacion: oNull(p.identificacion),
-        fecha_nacimiento: oNull(p.fechaNacimiento),
-        es_infante: p.esInfante,
-        orden: i,
+        tipoId: oNull(p.tipoId) ?? "CC",
+        identificacion: oNull(p.identificacion) ?? "",
+        fechaNacimiento: p.fechaNacimiento ?? "",
+        esInfante: esInfanteReal[i] ?? false,
+        responsableIndex: p.responsableIndex ?? null,
       }))
     );
-    if (error) return _errorHijas("pasajeros", error);
+    const { error: pasajerosErr } = await admin.rpc("crear_pasajeros_contrato", {
+      p_numero_contrato: numero,
+      p_pasajeros: payloadPasajeros as unknown as Json,
+      p_holders_min: holdersMinPiso,
+      p_usuario_id: actorPasajeros.id,
+    });
+    if (pasajerosErr) return _errorHijas("pasajeros_y_sillas", pasajerosErr);
+
+    // Snapshot cosmético de nombre/documento sobre las sillas YA asignadas
+    // atómicamente arriba — solo para que `sillas.pasajero_*` (listados
+    // operativos de vuelos) muestre el nombre real; el inventario en sí ya
+    // quedó reservado de forma atómica, así que un fallo aquí es
+    // best-effort (nunca re-abre la condición de carrera ya resuelta).
+    if (esBloqueoConCupo) {
+      try {
+        const holders = input.pasajeros.filter((_, i) => pasajeroConsumeSilla(esInfanteReal[i]));
+        const { data: sillasAsignadas } = await admin
+          .from("sillas").select("id")
+          .eq("numero_contrato", numero).in("estado", ["en_plazo", "confirmada"])
+          .order("numero_silla");
+        await Promise.all(
+          (sillasAsignadas ?? []).map((s, i) => {
+            const p = holders[i];
+            return admin.from("sillas").update({
+              asesor: oNull(input.asesorNombre),
+              hotel: input.hoteles[0]?.nombre ?? null,
+              acomodacion: input.hoteles[0]?.acomodacion ?? null,
+              pasajero_nombres: oNull(p?.nombres),
+              pasajero_apellidos: oNull(p?.apellidos),
+              tipo_doc: oNull(p?.tipoId),
+              numero_doc: oNull(p?.identificacion),
+              nacimiento: oNull(p?.fechaNacimiento),
+            }).eq("id", s.id);
+          })
+        );
+      } catch {
+        // Best-effort — ver comentario arriba.
+      }
+    }
   }
 
   if (input.hoteles.length) {
@@ -708,45 +796,12 @@ async function crearContratoInterno(
           }
         }
 
-        // 2) Descontar cupos del record (asignar N sillas disponibles)
-        if (input.tipoPaquete === "bloqueo" && input.bloqueoId) {
-          const holders = input.pasajeros.filter((p) => !p.esInfante);
-          const adultos = holders.length || pax;
-          const { data: libres, error: libresError } = await admin
-            .from("sillas")
-            .select("id")
-            .eq("bloqueo_id", input.bloqueoId)
-            .in("estado", ["disponible", "cambio_entrante"])
-            .order("numero_silla")
-            .limit(adultos);
-          if (libresError) {
-            _resultadoAdmin = "parcial";
-            registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_consulta_sillas", libresError);
-          }
-          if (libres && libres.length) {
-            const resultadosSillas = await Promise.all(
-              libres.map((s, i) => {
-                const p = holders[i];
-                return admin.from("sillas").update({
-                  estado: "en_plazo",
-                  numero_contrato: numero,
-                  asesor: oNull(input.asesorNombre),
-                  hotel: input.hoteles[0]?.nombre ?? null,
-                  acomodacion: input.hoteles[0]?.acomodacion ?? null,
-                  pasajero_nombres: oNull(p?.nombres),
-                  pasajero_apellidos: oNull(p?.apellidos),
-                  tipo_doc: oNull(p?.tipoId),
-                  numero_doc: oNull(p?.identificacion),
-                  nacimiento: oNull(p?.fechaNacimiento),
-                }).eq("id", s.id);
-              })
-            );
-            if (resultadosSillas.some((r) => r.error)) {
-              _resultadoAdmin = "parcial";
-              registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_update_sillas", resultadosSillas.find((r) => r.error)?.error);
-            }
-          }
-        }
+        // El descuento de cupos (sillas del bloqueo negociado) ya NO vive
+        // aquí — se movió a la llamada única y BLOQUEANTE a
+        // `crear_pasajeros_contrato`, antes de este bloque (best-effort),
+        // junto con la creación de pasajeros y su vínculo de responsable
+        // (revisión de alto riesgo — B5: un fallo de capacidad no puede
+        // quedar como "parcial" con `ok: true`, debe bloquear la creación).
       } catch (e) {
         // No bloquear la creación del contrato si falla el paso
         // administrativo (comportamiento histórico sin cambios) — pero la

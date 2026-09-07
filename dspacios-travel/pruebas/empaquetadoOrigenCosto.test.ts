@@ -80,7 +80,7 @@ describe("reservar/actions.ts — costoAereo (ventas.costo_aereo + CxP) usa cost
   });
 
   test("CxP aérea (paso 9) se crea UNA sola vez, a partir del costoAereo ya calculado — cero doble CxP", () => {
-    const paso9 = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 9) CxP aérea"), reservarActionsSrc.indexOf("// 9-bis) Sillas"));
+    const paso9 = reservarActionsSrc.slice(reservarActionsSrc.indexOf("// 9) CxP aérea"), reservarActionsSrc.indexOf("// 10) Costo neto del HOTEL"));
     const matches = paso9.match(/pushCxP\("aereo",/g) ?? [];
     assert.equal(matches.length, 1, "debe haber EXACTAMENTE una llamada a pushCxP(\"aereo\", ...) en el paso de costo aéreo — nunca dos");
   });

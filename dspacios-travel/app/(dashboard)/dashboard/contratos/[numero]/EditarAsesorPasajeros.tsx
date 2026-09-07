@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
 import { actualizarAsesorContrato, actualizarPasajerosContrato, type PasajeroEdit } from "./editar-contrato-actions";
+import { filasIniciales } from "@/lib/reservar/pasajerosEdicion";
+import { quitarPasajero, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 
-export type PasajeroRow = { id: number; nombre: string; tipo_id: string | null; identificacion: string | null; fecha_nacimiento: string | null; es_infante: boolean };
+export type PasajeroRow = { id: number; nombre: string; tipo_id: string | null; identificacion: string | null; fecha_nacimiento: string | null; es_infante: boolean; responsable_id?: number | null };
 
 const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
@@ -35,7 +37,11 @@ export function EditarAsesorPasajeros({
   // vacías con el primer puesto pre-llenado con el titular.
   const [filas, setFilas] = useState<PasajeroEdit[]>(() => {
     if (pasajeros.length) {
-      return pasajeros.map((p) => ({ nombre: p.nombre, tipoId: p.tipo_id ?? "CC", identificacion: p.identificacion ?? "", fechaNacimiento: p.fecha_nacimiento ?? "", esInfante: p.es_infante }));
+      // `filasIniciales` traduce `responsable_id` (id real, persistido) a
+      // `responsableIndex` (posición en este mismo arreglo) — sin esto, el
+      // formulario cargaba SIEMPRE sin vínculo y el primer guardado, aunque
+      // no tocara pasajeros, borraba en silencio el vínculo ya guardado.
+      return filasIniciales(pasajeros);
     }
     const vacios: PasajeroEdit[] = Array.from({ length: Math.max(maxPax, 1) }, (_, i) => ({
       nombre: i === 0 ? (titularNombre ?? "") : "",
@@ -48,7 +54,24 @@ export function EditarAsesorPasajeros({
   });
   const [msgP, setMsgP] = useState("");
 
-  const setRow = (i: number, patch: Partial<PasajeroEdit>) => setFilas((f) => f.map((r, n) => (n === i ? { ...r, ...patch } : r)));
+  const setRow = (i: number, patch: Partial<PasajeroEdit>) => setFilas((f) => {
+    const next = f.map((r, n) => (n === i ? { ...r, ...patch } : r));
+    // Un cambio de fecha de nacimiento puede mover a este pasajero entre
+    // categorías (INF/CHD/ADT) o dejar de calificar como responsable de
+    // alguien más — revisión de alto riesgo, ronda 3 (B8): sin este
+    // recálculo, un `responsableIndex` quedaba "vivo" en el estado apuntando
+    // a una fila que el servidor ya no aceptaría (infante que dejó de serlo,
+    // o responsable que dejó de ser mayor de edad), invisible en la UI
+    // (el selector desaparece) hasta que el guardado se rechazaba sin que el
+    // usuario pudiera limpiarlo.
+    return "fechaNacimiento" in patch ? recalcularVinculosPorEdad(next, fechaSalida) : next;
+  });
+
+  // Quitar una fila (botón "Quitar") — `quitarPasajero` (lib/reservar/
+  // pasajerosFilas.ts, compartida con los 3 formularios de creación)
+  // reindexa los vínculos posteriores y limpia el que apuntaba exactamente
+  // a la fila quitada; nunca deja un vínculo potencialmente incorrecto.
+  const quitarFila = (i: number) => setFilas((f) => quitarPasajero(f, i));
 
   function guardarAsesor() {
     setMsgA("");
@@ -130,10 +153,38 @@ export function EditarAsesorPasajeros({
               {(() => {
                 const edad = calcularEdad(p.fechaNacimiento, fechaSalida);
                 if (edad == null) return <span className="pb-2 text-[11px] text-gray-300">—</span>;
-                const cat = edad < 2 ? "Infante" : edad < 12 ? "Niño" : "Adulto";
-                return <span className={`pb-2 text-[11px] ${edad < 2 ? "font-medium text-[var(--brand-accent)]" : "text-gray-400"}`}>{cat} · {edad}a</span>;
+                const esInfante = edad < 2;
+                const cat = esInfante ? "Infante" : edad < 12 ? "Niño" : "Adulto";
+                return (
+                  <>
+                    <span className={`pb-2 text-[11px] ${esInfante ? "font-medium text-[var(--brand-accent)]" : "text-gray-400"}`}>{cat} · {edad}a</span>
+                    {esInfante && (
+                      <div className="w-48">
+                        <label className="text-[11px] text-gray-500">Adulto responsable</label>
+                        <select
+                          value={p.responsableIndex ?? ""}
+                          onChange={(e) => setRow(i, { responsableIndex: e.target.value === "" ? null : Number(e.target.value) })}
+                          className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm"
+                        >
+                          <option value="">— Sin vincular —</option>
+                          {filas.map((otro, j) => {
+                            if (j === i) return null;
+                            // Servidor (trigger de la migración 167) exige mayoría de
+                            // edad real (≥18), no solo "no ser infante" — un niño
+                            // (CHD) tampoco puede ser responsable. Se filtra aquí
+                            // igual, solo para no ofrecer una opción que el servidor
+                            // va a rechazar de todos modos.
+                            const edadOtro = calcularEdad(otro.fechaNacimiento, fechaSalida);
+                            if (edadOtro == null || edadOtro < 18) return null;
+                            return <option key={j} value={j}>{otro.nombre || `Pasajero ${j + 1}`}</option>;
+                          })}
+                        </select>
+                      </div>
+                    )}
+                  </>
+                );
               })()}
-              <button type="button" onClick={() => setFilas((f) => f.filter((_, n) => n !== i))} className="pb-2 text-xs text-gray-400 hover:text-red-500">Quitar</button>
+              <button type="button" onClick={() => quitarFila(i)} className="pb-2 text-xs text-gray-400 hover:text-red-500">Quitar</button>
             </div>
           ))}
         </div>
