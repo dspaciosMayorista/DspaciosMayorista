@@ -1,3 +1,5 @@
+import { Fragment } from "react";
+import { CornerDownRight, TriangleAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
@@ -11,7 +13,8 @@ import { SillaContrato } from "./SillaContrato";
 import { BloqueoTabs } from "./BloqueoTabs";
 import { ControlBloqueoForm } from "./ControlBloqueoForm";
 import { ControlBadges } from "@/components/vuelos/ControlBadges";
-import { resolverManifiestoAutorizado } from "@/lib/vuelos/contratoManual";
+import { normalizarReferenciaManual, resolverManifiestoAutorizado } from "@/lib/vuelos/contratoManual";
+import { emparejarInfantesConSilla, descripcionEdadInfante } from "@/lib/vuelos/manifiestoInfantes";
 
 export const dynamic = "force-dynamic";
 
@@ -96,10 +99,42 @@ export default async function BloqueoDetallePage({
   // referencias que se le pasan salen SIEMPRE de las sillas de ESTE
   // bloqueo, ya autorizado — nunca un número suelto.
   const contratosOrganicosDelBloqueo = [...new Set((sillas ?? []).map((s) => s.numero_contrato).filter((n): n is string => !!n))];
-  const { infantes: infantesBloqueo } = await resolverManifiestoAutorizado(
+  const { infantes: infantesDelBloqueo, referenciaManualPorContrato } = await resolverManifiestoAutorizado(
     sb,
     contratosOrganicosDelBloqueo,
     [...contratoManualPorSilla.values()]
+  );
+
+  // Presentación: cada infante debe aparecer como renglón subordinado
+  // INMEDIATAMENTE debajo de la silla de su adulto responsable — nunca en
+  // una tabla aparte. La agrupación es exclusivamente por `responsable_id`
+  // (resuelto arriba a su documento, nunca a su nombre) emparejado contra el
+  // documento+contrato EFECTIVO de las sillas de ESTE bloqueo — ver
+  // lib/vuelos/manifiestoInfantes.ts. Si el responsable no viaja en este
+  // bloqueo (o su documento no cruza con ninguna silla), el infante no se
+  // asocia arbitrariamente: cae en `infantesSinResponsable` para la
+  // advertencia compacta del final.
+  const { infantesPorSillaId, sinResponsable: infantesSinResponsable } = emparejarInfantesConSilla(
+    (sillas ?? []).map((s) => ({
+      id: s.id,
+      tipoDoc: s.tipo_doc,
+      numeroDoc: s.numero_doc,
+      contratoEfectivo:
+        s.numero_contrato ??
+        (() => {
+          const manual = normalizarReferenciaManual(contratoManualPorSilla.get(s.id) ?? null);
+          return manual ? referenciaManualPorContrato.get(manual) ?? null : null;
+        })(),
+    })),
+    infantesDelBloqueo.map((i) => ({
+      id: i.id,
+      nombre: i.nombre,
+      tipoId: i.tipo_id,
+      identificacion: i.identificacion,
+      numeroContrato: i.numero_contrato,
+      fechaNacimiento: i.fecha_nacimiento,
+      responsable: i.responsable ? { id: i.responsable.id, tipoId: i.responsable.tipo_id, identificacion: i.responsable.identificacion } : null,
+    }))
   );
 
   return (
@@ -179,43 +214,59 @@ export default async function BloqueoDetallePage({
                 </thead>
                 <tbody>
                   {(sillas ?? []).map((s) => (
-                    <tr key={s.id} className="border-t border-gray-100">
-                      <td className="px-3 py-2 font-semibold text-gray-700">
-                        <span className="inline-flex items-center gap-1.5">
-                          <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ESTADO_COLOR[s.estado] ?? "#ccc" }} />
-                          {s.numero_silla}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-gray-700">{s.pasajero_nombres || "—"}</td>
-                      <td className="px-3 py-2 text-gray-700">{s.pasajero_apellidos || "—"}</td>
-                      <td className="px-3 py-2 text-gray-500">{s.tipo_doc || "—"}</td>
-                      <td className="px-3 py-2 text-gray-500">{s.numero_doc || "—"}</td>
-                      <td className="px-3 py-2 text-xs text-gray-500">{s.nacimiento ? formatFechaLarga(s.nacimiento) : "—"}</td>
-                      <td className="px-3 py-2">
-                        <SillaContrato sillaId={s.id} bloqueoId={bloqueoId} estado={s.estado} numeroContrato={s.numero_contrato} contratoManual={contratoManualPorSilla.get(s.id) ?? null} />
-                      </td>
-                      <td className="px-3 py-2 text-gray-500">{s.asesor || "—"}</td>
-                      <td className="px-3 py-2 text-gray-500">{s.hotel || "—"}</td>
-                      <td className="px-3 py-2 text-gray-500">{s.acomodacion || "—"}</td>
-                      <td className="px-3 py-2 text-xs text-gray-500">{s.plazo ? formatFechaLarga(s.plazo) : "—"}</td>
-                      <td className="px-3 py-2">
-                        <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId}
-                          bloqueada={s.estado === "cambio"} />
-                      </td>
-                      <td className="px-3 py-2">
-                        <PasajeroAcciones
-                          sillaId={s.id}
-                          bloqueoId={bloqueoId}
-                          bloqueada={s.estado === "cambio"}
-                          otros={otros ?? []}
-                          inicial={{
-                            pasajero_nombres: s.pasajero_nombres ?? "", pasajero_apellidos: s.pasajero_apellidos ?? "",
-                            tipo_doc: s.tipo_doc ?? "", numero_doc: s.numero_doc ?? "", nacimiento: s.nacimiento ?? "",
-                            asesor: s.asesor ?? "", hotel: s.hotel ?? "", acomodacion: s.acomodacion ?? "", plazo: s.plazo ?? "",
-                          }}
-                        />
-                      </td>
-                    </tr>
+                    <Fragment key={s.id}>
+                      <tr className="border-t border-gray-100">
+                        <td className="px-3 py-2 font-semibold text-gray-700">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: ESTADO_COLOR[s.estado] ?? "#ccc" }} />
+                            {s.numero_silla}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-gray-700">{s.pasajero_nombres || "—"}</td>
+                        <td className="px-3 py-2 text-gray-700">{s.pasajero_apellidos || "—"}</td>
+                        <td className="px-3 py-2 text-gray-500">{s.tipo_doc || "—"}</td>
+                        <td className="px-3 py-2 text-gray-500">{s.numero_doc || "—"}</td>
+                        <td className="px-3 py-2 text-xs text-gray-500">{s.nacimiento ? formatFechaLarga(s.nacimiento) : "—"}</td>
+                        <td className="px-3 py-2">
+                          <SillaContrato sillaId={s.id} bloqueoId={bloqueoId} estado={s.estado} numeroContrato={s.numero_contrato} contratoManual={contratoManualPorSilla.get(s.id) ?? null} />
+                        </td>
+                        <td className="px-3 py-2 text-gray-500">{s.asesor || "—"}</td>
+                        <td className="px-3 py-2 text-gray-500">{s.hotel || "—"}</td>
+                        <td className="px-3 py-2 text-gray-500">{s.acomodacion || "—"}</td>
+                        <td className="px-3 py-2 text-xs text-gray-500">{s.plazo ? formatFechaLarga(s.plazo) : "—"}</td>
+                        <td className="px-3 py-2">
+                          <SillaEstado sillaId={s.id} estado={s.estado} bloqueoId={bloqueoId}
+                            bloqueada={s.estado === "cambio"} />
+                        </td>
+                        <td className="px-3 py-2">
+                          <PasajeroAcciones
+                            sillaId={s.id}
+                            bloqueoId={bloqueoId}
+                            bloqueada={s.estado === "cambio"}
+                            otros={otros ?? []}
+                            inicial={{
+                              pasajero_nombres: s.pasajero_nombres ?? "", pasajero_apellidos: s.pasajero_apellidos ?? "",
+                              tipo_doc: s.tipo_doc ?? "", numero_doc: s.numero_doc ?? "", nacimiento: s.nacimiento ?? "",
+                              asesor: s.asesor ?? "", hotel: s.hotel ?? "", acomodacion: s.acomodacion ?? "", plazo: s.plazo ?? "",
+                            }}
+                          />
+                        </td>
+                      </tr>
+                      {/* Infante(s) a cargo de esta silla — renglón subordinado, sin
+                          silla propia: sin estado, sin acciones de silla. */}
+                      {(infantesPorSillaId.get(s.id) ?? []).map((inf) => (
+                        <tr key={`infante-${inf.id}`} className="border-t border-gray-50 bg-gray-50/60">
+                          <td colSpan={13} className="px-3 py-1.5 pl-8 text-xs">
+                            <span className="inline-flex flex-wrap items-center gap-1.5 text-gray-600">
+                              <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-gray-300" aria-hidden="true" />
+                              <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombre || "—"}</b></span>
+                              <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimiento, b.fecha_ida)}</span>
+                              <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -223,33 +274,15 @@ export default async function BloqueoDetallePage({
             {!sillas?.length && <p className="mt-4 text-sm text-gray-400">Este bloqueo no tiene sillas generadas.</p>}
             <p className="mt-2 text-xs text-gray-400">Para registrar una venta externa, usa “+ Contrato manual” en un cupo disponible. Para quitar un cupo libre, usa “eliminar cupo”.</p>
 
-            {infantesBloqueo.length > 0 && (
-              <div className="mt-6">
-                <p className="mb-2 text-sm font-semibold text-gray-700">
-                  Infantes de este vuelo <span className="font-normal text-gray-400">— no ocupan silla</span>
+            {infantesSinResponsable.length > 0 && (
+              <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <p>
+                  {infantesSinResponsable.length === 1
+                    ? "1 infante no se pudo ubicar bajo su responsable en este manifiesto: "
+                    : `${infantesSinResponsable.length} infantes no se pudieron ubicar bajo su responsable en este manifiesto: `}
+                  {infantesSinResponsable.map((inf) => inf.nombre || "—").join(", ")}. Revisa el vínculo de responsable en el contrato.
                 </p>
-                <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-                  <table className="w-full min-w-[600px] text-sm">
-                    <thead>
-                      <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-                        <th className="px-3 py-2">Nombre</th>
-                        <th className="px-3 py-2">Tipo doc</th>
-                        <th className="px-3 py-2">Número</th>
-                        <th className="px-3 py-2">Contrato</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {infantesBloqueo.map((inf) => (
-                        <tr key={inf.id} className="border-t border-gray-100">
-                          <td className="px-3 py-2 text-gray-700">{inf.nombre || "—"}</td>
-                          <td className="px-3 py-2 text-gray-500">{inf.tipo_id || "—"}</td>
-                          <td className="px-3 py-2 text-gray-500">{inf.identificacion || "—"}</td>
-                          <td className="px-3 py-2 text-gray-500">{inf.numero_contrato || "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
               </div>
             )}
           </>

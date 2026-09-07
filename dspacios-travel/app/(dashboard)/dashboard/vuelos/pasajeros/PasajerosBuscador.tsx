@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
+import { CornerDownRight, TriangleAlert } from "lucide-react";
 import { formatFechaLarga } from "@/lib/utils";
+import { descripcionEdadInfante } from "@/lib/vuelos/manifiestoInfantes";
 
 export type PasajeroFila = {
   id: string; // clave de fila estable — puede no venir de una silla (infantes)
@@ -10,6 +12,10 @@ export type PasajeroFila = {
   numeroSilla: number | null;
   estado: string;
   esInfante?: boolean;
+  /** Solo en filas de infante: `id` de la fila (adulto) a la que se subordina — ver lib/vuelos/manifiestoInfantes.ts. Nunca se resuelve por nombre. */
+  padreId?: string | null;
+  /** Solo en filas de infante: su fecha de nacimiento, para la línea "edad / fecha de nacimiento" del renglón subordinado. */
+  fechaNacimientoInfante?: string | null;
   nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string;
   contrato: string; asesor: string; agencia: string; hotel: string; acomodacion: string;
   bloqueoId: number | null;
@@ -28,23 +34,54 @@ const ESTADO_LABEL: Record<string, string> = {
 
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
-export function PasajerosBuscador({ filas }: { filas: PasajeroFila[] }) {
+export function PasajerosBuscador({
+  filas,
+  advertenciasInfantes = [],
+}: {
+  filas: PasajeroFila[];
+  /** Infantes cuyo responsable no se pudo ubicar en este listado (ver lib/vuelos/manifiestoInfantes.ts) — se avisan aparte, nunca se asocian a un adulto arbitrario. */
+  advertenciasInfantes?: { id: number; nombre: string }[];
+}) {
   const [q, setQ] = useState("");
   const [fMes, setFMes] = useState("");
 
-  const meses = useMemo(() => [...new Set(filas.map((p) => mesKey(p.fechaIda)).filter(Boolean))].sort(), [filas]);
+  // Cada infante es un renglón subordinado de su adulto responsable
+  // (`padreId`), nunca una fila independiente — se agrupan aquí, antes de
+  // filtrar/ordenar, para que el orden/búsqueda solo se apliquen sobre los
+  // adultos y los infantes queden siempre pegados a su fila.
+  const adultos = useMemo(() => filas.filter((p) => !p.esInfante), [filas]);
+  const infantesPorPadre = useMemo(() => {
+    const m = new Map<string, PasajeroFila[]>();
+    for (const p of filas) {
+      if (!p.esInfante || !p.padreId) continue;
+      const arr = m.get(p.padreId);
+      if (arr) arr.push(p);
+      else m.set(p.padreId, [p]);
+    }
+    return m;
+  }, [filas]);
+
+  const meses = useMemo(() => [...new Set(adultos.map((p) => mesKey(p.fechaIda)).filter(Boolean))].sort(), [adultos]);
 
   const vis = useMemo(() => {
     const term = norm(q.trim());
-    return filas
+    return adultos
       .filter((p) => !fMes || mesKey(p.fechaIda) === fMes)
       .filter((p) => {
         if (!term) return true;
-        const hay = norm(`${p.nombres} ${p.apellidos} ${p.numeroDoc} ${p.contrato}`);
-        return hay.includes(term);
+        const hayAdulto = norm(`${p.nombres} ${p.apellidos} ${p.numeroDoc} ${p.contrato}`);
+        if (hayAdulto.includes(term)) return true;
+        // Buscar por nombre/documento de un infante también debe mostrar a
+        // su responsable (el infante nunca se muestra solo).
+        return (infantesPorPadre.get(p.id) ?? []).some((h) => norm(`${h.nombres} ${h.numeroDoc}`).includes(term));
       })
       .sort((a, b) => (a.fechaIda ?? "").localeCompare(b.fechaIda ?? "") || a.apellidos.localeCompare(b.apellidos));
-  }, [filas, q, fMes]);
+  }, [adultos, infantesPorPadre, q, fMes]);
+
+  const totalVisible = useMemo(
+    () => vis.reduce((acc, p) => acc + 1 + (infantesPorPadre.get(p.id)?.length ?? 0), 0),
+    [vis, infantesPorPadre]
+  );
 
   const selCls = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
@@ -64,7 +101,7 @@ export function PasajerosBuscador({ filas }: { filas: PasajeroFila[] }) {
         {(q || fMes) && (
           <button type="button" onClick={() => { setQ(""); setFMes(""); }} className="text-xs font-medium text-gray-500 hover:text-gray-800">Limpiar</button>
         )}
-        <span className="ml-auto text-xs text-gray-400">{vis.length} pasajero(s)</span>
+        <span className="ml-auto text-xs text-gray-400">{totalVisible} pasajero(s)</span>
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
@@ -87,35 +124,54 @@ export function PasajerosBuscador({ filas }: { filas: PasajeroFila[] }) {
             {vis.length === 0 ? (
               <tr><td colSpan={10} className="px-3 py-10 text-center text-gray-400">Sin pasajeros para esta búsqueda.</td></tr>
             ) : vis.map((p) => (
-              <tr key={p.id} className="border-t border-gray-50">
-                <td className="px-3 py-2 font-medium text-gray-800">
-                  {`${p.nombres} ${p.apellidos}`.trim()}
-                  {p.esInfante && (
-                    <span className="ml-1.5 rounded-full bg-[var(--brand-accent)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--brand-accent)]">
-                      Infante
-                    </span>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-gray-600">{p.tipoDoc} {p.numeroDoc}</td>
-                <td className="px-3 py-2 text-gray-600">{p.contrato || "—"}</td>
-                <td className="px-3 py-2">
-                  {p.bloqueoId
-                    ? <Link href={`/dashboard/vuelos/${p.bloqueoId}`} className="font-mono font-semibold text-[#1D7C9A] hover:underline">{p.record}</Link>
-                    : <span className="font-mono">{p.record}</span>}
-                </td>
-                <td className="px-3 py-2 text-gray-600">{p.ruta || "—"}</td>
-                <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(p.fechaIda)}{p.vueloIda ? ` · ${p.vueloIda}` : ""}</td>
-                <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(p.fechaRegreso)}{p.vueloRegreso ? ` · ${p.vueloRegreso}` : ""}</td>
-                <td className="px-3 py-2 text-xs text-gray-600">
-                  {p.esInfante ? "No ocupa silla" : (ESTADO_LABEL[p.estado] ?? p.estado)}
-                </td>
-                <td className="px-3 py-2 text-gray-600">{p.hotel || "—"}</td>
-                <td className="px-3 py-2 text-gray-600">{p.asesor || "—"}</td>
-              </tr>
+              <Fragment key={p.id}>
+                <tr className="border-t border-gray-50">
+                  <td className="px-3 py-2 font-medium text-gray-800">{`${p.nombres} ${p.apellidos}`.trim()}</td>
+                  <td className="px-3 py-2 text-gray-600">{p.tipoDoc} {p.numeroDoc}</td>
+                  <td className="px-3 py-2 text-gray-600">{p.contrato || "—"}</td>
+                  <td className="px-3 py-2">
+                    {p.bloqueoId
+                      ? <Link href={`/dashboard/vuelos/${p.bloqueoId}`} className="font-mono font-semibold text-[#1D7C9A] hover:underline">{p.record}</Link>
+                      : <span className="font-mono">{p.record}</span>}
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">{p.ruta || "—"}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(p.fechaIda)}{p.vueloIda ? ` · ${p.vueloIda}` : ""}</td>
+                  <td className="px-3 py-2 text-xs text-gray-500">{formatFechaLarga(p.fechaRegreso)}{p.vueloRegreso ? ` · ${p.vueloRegreso}` : ""}</td>
+                  <td className="px-3 py-2 text-xs text-gray-600">{ESTADO_LABEL[p.estado] ?? p.estado}</td>
+                  <td className="px-3 py-2 text-gray-600">{p.hotel || "—"}</td>
+                  <td className="px-3 py-2 text-gray-600">{p.asesor || "—"}</td>
+                </tr>
+                {/* Infante(s) a cargo de este pasajero — renglón subordinado,
+                    sin silla propia: sin estado, sin acciones de silla. */}
+                {(infantesPorPadre.get(p.id) ?? []).map((inf) => (
+                  <tr key={inf.id} className="border-t border-gray-50 bg-gray-50/60">
+                    <td colSpan={10} className="px-3 py-1.5 pl-8 text-xs">
+                      <span className="inline-flex flex-wrap items-center gap-1.5 text-gray-600">
+                        <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-gray-300" aria-hidden="true" />
+                        <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombres || "—"}</b></span>
+                        <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimientoInfante ?? null, p.fechaIda)}</span>
+                        <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
+
+      {advertenciasInfantes.length > 0 && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <p>
+            {advertenciasInfantes.length === 1
+              ? "1 infante no se pudo ubicar bajo su responsable en este listado: "
+              : `${advertenciasInfantes.length} infantes no se pudieron ubicar bajo su responsable en este listado: `}
+            {advertenciasInfantes.map((inf) => inf.nombre || "—").join(", ")}. Revisa el vínculo de responsable en el contrato.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
