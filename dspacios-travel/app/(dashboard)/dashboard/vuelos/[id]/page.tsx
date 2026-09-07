@@ -11,6 +11,7 @@ import { SillaContrato } from "./SillaContrato";
 import { BloqueoTabs } from "./BloqueoTabs";
 import { ControlBloqueoForm } from "./ControlBloqueoForm";
 import { ControlBadges } from "@/components/vuelos/ControlBadges";
+import { resolverReferenciasManualesDesdeDB } from "@/lib/vuelos/contratoManual";
 
 export const dynamic = "force-dynamic";
 
@@ -74,7 +75,26 @@ export default async function BloqueoDetallePage({
   // de arriba está ligada 1:1 a operaciones reales sobre `sillas` (cambiar,
   // liberar, editar) y una fila de infante no tiene una silla sobre la cual
   // ejecutarlas.
-  const contratosDelBloqueo = [...new Set((sillas ?? []).map((s) => s.numero_contrato).filter((n): n is string => !!n))];
+  //
+  // Además del contrato ORGÁNICO (`sillas.numero_contrato`, con FK), una
+  // silla puede estar asociada a un contrato MANUAL (`contrato_manual`,
+  // texto libre, pensado para ventas externas al sistema — migración 085)
+  // que en la práctica a veces SÍ corresponde a una venta interna real
+  // (típicamente minorista, sin tarifario/reservar propio) escrita sin su
+  // prefijo de tenant. `resolverReferenciasManualesDesdeDB` intenta esa
+  // asociación de forma segura (fail-closed ante ambigüedad o ausencia —
+  // ver lib/vuelos/contratoManual.ts); si no resuelve nada, el contrato
+  // manual sigue siendo puramente externo y no cambia nada.
+  const referenciaManualPorContrato = await resolverReferenciasManualesDesdeDB(
+    sb,
+    [...contratoManualPorSilla.values()]
+  );
+  const contratosDelBloqueo = [
+    ...new Set([
+      ...(sillas ?? []).map((s) => s.numero_contrato).filter((n): n is string => !!n),
+      ...referenciaManualPorContrato.values(),
+    ]),
+  ];
   let infantesBloqueo: { id: number; nombre: string; tipo_id: string | null; identificacion: string | null; numero_contrato: string | null }[] = [];
   if (contratosDelBloqueo.length) {
     const { data: infData } = await sb
