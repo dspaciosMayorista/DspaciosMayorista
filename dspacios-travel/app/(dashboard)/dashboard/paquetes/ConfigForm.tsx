@@ -28,6 +28,10 @@ type Initial = Partial<{
   condicionPagoPctInicial: number | null;
   condicionPagoDiasSaldo: number | null;
   restriccionComercial: string;
+  programaIncluye: string;
+  programaNoIncluye: string;
+  programaTarifasEspeciales: string;
+  programaCondicionesComerciales: string;
 }>;
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -65,6 +69,10 @@ export function ConfigForm({
     initial?.condicionPagoDiasSaldo != null ? String(initial.condicionPagoDiasSaldo) : ""
   );
   const [restriccionComercial, setRestriccionComercial] = useState(initial?.restriccionComercial ?? "normal");
+  const [programaIncluye, setProgramaIncluye] = useState(initial?.programaIncluye ?? "");
+  const [programaNoIncluye, setProgramaNoIncluye] = useState(initial?.programaNoIncluye ?? "");
+  const [programaTarifasEspeciales, setProgramaTarifasEspeciales] = useState(initial?.programaTarifasEspeciales ?? "");
+  const [programaCondicionesComerciales, setProgramaCondicionesComerciales] = useState(initial?.programaCondicionesComerciales ?? "");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
@@ -92,6 +100,10 @@ export function ConfigForm({
       condicionPagoPctInicial: condicionPagoPct === "" ? null : Number(condicionPagoPct),
       condicionPagoDiasSaldo: condicionPagoDias === "" ? null : Number(condicionPagoDias),
       restriccionComercial,
+      programaIncluye,
+      programaNoIncluye,
+      programaTarifasEspeciales,
+      programaCondicionesComerciales,
     };
     start(async () => {
       const r = id ? await actualizarPaquete(id, cfg) : await crearPaquete(cfg);
@@ -224,6 +236,38 @@ export function ConfigForm({
         <div className="md:col-span-2">
           <label className={lbl}>Notas (opcional)</label>
           <textarea value={notas} onChange={(e) => setNotas(e.target.value)} className={sel} rows={2} />
+        </div>
+
+        <div className="md:col-span-2 rounded-lg border border-gray-100 bg-gray-50 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Descripción del paquete</p>
+          <p className="mb-3 text-[11px] text-gray-400">
+            Este contenido pertenece al paquete y lo ven por igual TODOS sus hoteles/opciones en el tarifario. Reemplaza el &ldquo;Incluye&rdquo; que antes se armaba solo.
+          </p>
+          {![programaIncluye, programaNoIncluye, programaTarifasEspeciales, programaCondicionesComerciales].some((t) => t.trim() !== "") && (
+            <p className="mb-3 text-xs italic text-gray-400">Sin descripción configurada.</p>
+          )}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className={lbl}>El programa incluye</label>
+              <textarea value={programaIncluye} onChange={(e) => setProgramaIncluye(e.target.value)} className={sel} rows={4} />
+              <p className="mt-1 text-[11px] text-gray-400">Escribe un elemento por línea.</p>
+            </div>
+            <div>
+              <label className={lbl}>El programa no incluye</label>
+              <textarea value={programaNoIncluye} onChange={(e) => setProgramaNoIncluye(e.target.value)} className={sel} rows={4} />
+              <p className="mt-1 text-[11px] text-gray-400">Escribe un elemento por línea.</p>
+            </div>
+            <div>
+              <label className={lbl}>Tarifas especiales</label>
+              <textarea value={programaTarifasEspeciales} onChange={(e) => setProgramaTarifasEspeciales(e.target.value)} className={sel} rows={4} />
+              <p className="mt-1 text-[11px] text-gray-400">Escribe un elemento por línea.</p>
+            </div>
+            <div>
+              <label className={lbl}>Condiciones comerciales</label>
+              <textarea value={programaCondicionesComerciales} onChange={(e) => setProgramaCondicionesComerciales(e.target.value)} className={sel} rows={4} />
+              <p className="mt-1 text-[11px] text-gray-400">Escribe un elemento por línea.</p>
+            </div>
+          </div>
         </div>
       </div>
 

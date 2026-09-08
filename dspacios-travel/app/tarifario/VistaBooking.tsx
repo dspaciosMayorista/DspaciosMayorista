@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import Image from "next/image";
-import { Star, Check } from "lucide-react";
+import { Star, Check, X, Info } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
@@ -27,6 +27,7 @@ import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import { minRoomPvpResumen, tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
+import { seccionesDescripcion, type DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
@@ -167,7 +168,7 @@ export function VistaBooking({
   planesInfo = {},
   capPorHotel = {},
   soloAcom = null,
-  incluidosPorPaquete = {},
+  descripcionPorPaquete = {},
   filasAddon = [],
 }: {
   filas: FilaResumen[];
@@ -181,10 +182,10 @@ export function VistaBooking({
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
   soloAcom?: string | null;
-  // Servicios marcados "incluido" al armar el paquete (armado_servicios) — se
-  // hornean en el PVP del hotel y nunca se publican como fila propia en
-  // tarifario_resultado, así que llegan aparte para mostrarlos en "Incluye".
-  incluidosPorPaquete?: Record<number, string[]>;
+  // Descripción manual del paquete (migración 169): incluye/no incluye/
+  // tarifas especiales/condiciones comerciales — texto libre configurado UNA
+  // sola vez en el paquete y compartido por todos sus hoteles/opciones.
+  descripcionPorPaquete?: Record<number, DescripcionPaqueteRaw>;
   // Add-ons (modulo="servicios") de TODOS los paquetes de hotel, sin el
   // recorte que aplica `filas` para la vitrina plana de Servicios — de acá
   // sale `addonsPorPaquete`, scoped al hotel que se está viendo.
@@ -624,7 +625,7 @@ export function VistaBooking({
       )}
 
       {abierto && (
-        <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} incluidosPorPaquete={incluidosPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
+        <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
       )}
 
       {receptivoAbierto && (
@@ -668,10 +669,19 @@ function ReceptivoModal({ receptivo, onClose }: { receptivo: ReceptivoModalInfo;
   );
 }
 
+// Ícono por sección de la descripción manual del paquete — nunca un emoji
+// (regla de marca): check para "Incluye", tache para "No incluye", un ícono
+// informativo neutro para el resto (tarifas especiales/condiciones).
+function IconoSeccion({ titulo }: { titulo: string }) {
+  if (titulo === "El programa incluye") return <Check size={14} className="shrink-0" style={{ color: "var(--brand-success)" }} />;
+  if (titulo === "El programa no incluye") return <X size={14} className="shrink-0 text-gray-400" />;
+  return <Info size={14} className="shrink-0 text-gray-400" />;
+}
+
 // ── Modal de detalle: elige opción (salida/paquete), categoría/régimen y
 //    habitaciones; calcula el precio y agrega al carrito ─────────────────────
 function HotelModal({
-  hotel, detalle, onReintentar, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, incluidosPorPaquete, addonsPorPaquete, onClose,
+  hotel, detalle, onReintentar, cuposPorBloqueo, origenPorBloqueo, puedeReservar, ventanaPorPaquete, planesInfo, cap, descripcionPorPaquete, addonsPorPaquete, onClose,
 }: {
   hotel: HotelCard;
   // Detalle bajo demanda (Tier 2) — mientras no llegue en "ok", el modal ya
@@ -682,7 +692,7 @@ function HotelModal({
   cuposPorBloqueo: Record<number, number>; origenPorBloqueo: Record<number, string>; puedeReservar: boolean;
   ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  incluidosPorPaquete: Record<number, string[]>; addonsPorPaquete: Map<number, Receptivo[]>;
+  descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>; addonsPorPaquete: Map<number, Receptivo[]>;
   onClose: () => void;
 }) {
   const { add, openDrawer } = useCart();
@@ -737,16 +747,11 @@ function HotelModal({
   const opKeyEfectivo = opciones.some((o) => o.key === opKey) ? opKey : (opciones[0]?.key ?? "");
   const opcion = opciones.find((o) => o.key === opKeyEfectivo);
 
-  // "Incluye": nada de esto se escribe a mano — se arma solo de lo que ya
-  // está configurado en el paquete (aéreo solo si la opción es de bloqueo;
-  // hospedaje siempre; servicios marcados "incluido" al armar el paquete).
-  const incluye: string[] = opcion
-    ? [
-        ...(opcion.modulo === "bloqueo" ? ["Tiquete aéreo"] : []),
-        `Hospedaje en ${hotel.hotelNombre}`,
-        ...(incluidosPorPaquete[opcion.paqueteId] ?? []),
-      ]
-    : [];
+  // Descripción manual del paquete (migración 169): incluye/no incluye/
+  // tarifas especiales/condiciones comerciales — texto libre configurado UNA
+  // sola vez en el paquete y compartido por TODOS sus hoteles/opciones (nunca
+  // varía por `hotel`, a diferencia de la vieja línea "Hospedaje en <hotel>").
+  const secciones = opcion ? seccionesDescripcion(descripcionPorPaquete[opcion.paqueteId]) : [];
   // Servicios opcionales (add-on) de ESTE paquete puntual — nunca los de otro
   // destino (a diferencia de irse a la pestaña Receptivos general).
   const addons: Receptivo[] = opcion ? (addonsPorPaquete.get(opcion.paqueteId) ?? []) : [];
@@ -853,17 +858,24 @@ function HotelModal({
                 </p>
               )}
 
-              {/* Incluye: informativo, se arma solo de lo configurado en el paquete */}
-              {incluye.length > 0 && (
-                <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
-                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">Incluye</p>
-                  <ul className="space-y-1">
-                    {incluye.map((it, i) => (
-                      <li key={i} className="flex items-center gap-1.5 text-sm text-gray-700">
-                        <Check size={14} style={{ color: "var(--brand-success)" }} /> {it}
-                      </li>
-                    ))}
-                  </ul>
+              {/* Descripción manual del paquete: encabezados fijos, un ítem de
+                  lista por línea no vacía. Sección omitida por completo si no
+                  tiene contenido (nunca un encabezado con lista vacía). */}
+              {secciones.length > 0 && (
+                <div className="space-y-3">
+                  {secciones.map((s) => (
+                    <div key={s.titulo} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">{s.titulo}</p>
+                      <ul className="space-y-1">
+                        {s.items.map((it, i) => (
+                          <li key={i} className="flex items-center gap-1.5 text-sm text-gray-700">
+                            <IconoSeccion titulo={s.titulo} />
+                            {it}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
                 </div>
               )}
 

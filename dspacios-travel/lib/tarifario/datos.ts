@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import type { FilaTarifario } from "@/app/tarifario/TarifarioPublic";
 import type { AcomConfig } from "@/lib/acomodaciones";
+import type { DescripcionPaqueteRaw } from "./descripcionPaquete.ts";
 // Imports RELATIVOS con extensión `.ts` (no `@/lib/...`) para los que son de
 // VALOR, no solo de tipo — mismo motivo que en lib/tarifario/vigencia.ts:
 // `@/` es un alias que solo resuelve Next.js/TypeScript en build; bajo
@@ -44,7 +45,7 @@ export type DatosTarifario = {
   capPorHotel: Record<number, CapHotelDato>;
   planesInfo: Record<string, { nombre: string | null; descripcion: string | null; nota_especial: string | null }>;
   ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>;
-  incluidosPorPaquete: Record<number, string[]>;
+  descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
 };
 
 // Mensaje público FIJO (revisión posterior, defecto "PAGINACIÓN IGNORA
@@ -298,10 +299,10 @@ export async function cargarDatosTarifario(
   const fotosPorServicio: Record<number, string> = {};
   const planesInfo: Record<string, { nombre: string | null; descripcion: string | null; nota_especial: string | null }> = {};
   const ventanaPorPaquete: Record<number, { min: string | null; max: string | null }> = {};
-  const incluidosPorPaquete: Record<number, string[]> = {};
+  const descripcionPorPaquete: Record<number, DescripcionPaqueteRaw> = {};
 
   const [
-    resFotosHotel, resHoteles, resAcomInfante, resFotosServicio, resPlanes, resVentana, resIncluidos,
+    resFotosHotel, resHoteles, resAcomInfante, resFotosServicio, resPlanes, resVentana, resDescripcion,
   ] = await Promise.all([
     // Foto de portada por hotel.
     hotelIds.length
@@ -339,9 +340,11 @@ export async function cargarDatosTarifario(
     paqIdsPorcion.length && admin
       ? admin.from("armado_paquetes").select("id, fecha_viaje_inicio, fecha_viaje_fin").in("id", paqIdsPorcion)
       : null,
-    // Servicios marcados "incluido" al armar cada paquete (para "Incluye").
+    // Descripción manual del paquete (migración 169): incluye/no incluye/
+    // tarifas especiales/condiciones comerciales, texto libre configurado UNA
+    // sola vez y compartido por todos los hoteles/opciones del paquete.
     paqIdsConHotel.length && admin
-      ? admin.from("armado_servicios").select("paquete_id, incluido, servicios_adicionales(nombre)").eq("incluido", true).in("paquete_id", paqIdsConHotel)
+      ? admin.from("armado_paquetes").select("id, programa_incluye, programa_no_incluye, programa_tarifas_especiales, programa_condiciones_comerciales").in("id", paqIdsConHotel)
       : null,
   ]);
 
@@ -423,15 +426,18 @@ export async function cargarDatosTarifario(
     _consultasAux += 1;
   }
 
-  if (resIncluidos) {
-    if (resIncluidos.error) {
+  if (resDescripcion) {
+    if (resDescripcion.error) {
       _huboErrorAux = true;
-      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_armado_servicios_incluidos", resIncluidos.error);
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_armado_paquetes_descripcion", resDescripcion.error);
     } else {
-      for (const r of resIncluidos.data ?? []) {
-        const nombre = (r as unknown as { servicios_adicionales: { nombre: string } | null }).servicios_adicionales?.nombre;
-        if (!nombre) continue;
-        (incluidosPorPaquete[r.paquete_id as number] ??= []).push(nombre);
+      for (const p of resDescripcion.data ?? []) {
+        descripcionPorPaquete[p.id as number] = {
+          incluye: p.programa_incluye,
+          noIncluye: p.programa_no_incluye,
+          tarifasEspeciales: p.programa_tarifas_especiales,
+          condicionesComerciales: p.programa_condiciones_comerciales,
+        };
       }
     }
     _consultasAux += 1;
@@ -445,7 +451,7 @@ export async function cargarDatosTarifario(
     ok: true,
     datos: {
       filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
-      infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, incluidosPorPaquete,
+      infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
     },
   };
 }

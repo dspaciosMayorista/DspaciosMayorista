@@ -146,6 +146,10 @@ export default async function PaqueteDetallePage({ params }: { params: Promise<{
           condicionPagoPctInicial: pq.condicion_pago_pct_inicial ?? null,
           condicionPagoDiasSaldo: pq.condicion_pago_dias_saldo ?? null,
           restriccionComercial: pq.restriccion_comercial ?? "normal",
+          programaIncluye: pq.programa_incluye ?? "",
+          programaNoIncluye: pq.programa_no_incluye ?? "",
+          programaTarifasEspeciales: pq.programa_tarifas_especiales ?? "",
+          programaCondicionesComerciales: pq.programa_condiciones_comerciales ?? "",
         }}
         tieneDestino={!!destinoId}
         vuelosDisp={vuelosDisp ?? []}
