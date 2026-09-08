@@ -35,6 +35,7 @@ import {
   type ComputoReserva,
 } from "@/lib/reservar/computo";
 import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
+import { faltantesCxP, type CxpExistente } from "@/lib/reservar/cxpCobertura";
 import {
   normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio,
   type ServicioEfectivo,
@@ -555,9 +556,12 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     numero_contrato: string; tenant: Tenant; proveedor: string | null; tipo_proveedor: string;
     servicio: string; valor_total: number; fecha_obligacion: string;
     aplica_retencion: boolean; pct_retencion: number; observaciones: string;
+    // Migración 170 — vínculo durable con el servicio del catálogo. Solo lo
+    // llevan las CxP que nacen de un servicio; hotel/aéreo van en null.
+    servicio_id: number | null;
   };
   const cxp: CxPRow[] = [];
-  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, cxpOpts?: { permitirCero?: boolean }) => {
+  const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, cxpOpts?: { permitirCero?: boolean; servicioId?: number | null }) => {
     if (!(valor > 0) && !cxpOpts?.permitirCero) return;
     cxp.push({
       numero_contrato: numero,
@@ -570,6 +574,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       aplica_retencion: pr?.aplica_retencion ?? false,
       pct_retencion: Number(pr?.pct_retencion) || 0,
       observaciones: valor > 0 ? OBS_AUTO : `${OBS_AUTO} · costo neto pendiente`,
+      servicio_id: cxpOpts?.servicioId ?? null,
     });
   };
 
@@ -644,6 +649,15 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // única compartida con checkout/crearCotizacion (lib/reservar/serviciosPaquete.ts),
   // dedup por servicioId (nunca solo por nombre).
   const serviciosEfectivos: ServicioEfectivo[] = [];
+  // Costo NETO de servicios del contrato (opcionales del paso 11 + incluidos
+  // del 11-bis). Se escribe UNA sola vez, al final, para que
+  // `ventas.costo_receptivo` cuadre EXACTAMENTE con la suma de las CxP de
+  // servicio que crea este mismo flujo — de eso depende que
+  // `asegurarCuentasPorPagar` (cobertura por monto, ver cxpCobertura.ts) no
+  // vuelva a crear una segunda cuenta por el mismo dinero, y que la
+  // rentabilidad no muestre un margen inflado por un costo con CxP pero sin
+  // columna.
+  let costoServiciosTotal = 0;
   if (input.servicios?.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
@@ -710,9 +724,9 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
         // Una CxP por servicio — tipo derivado de la MISMA fuente que el
         // resumen (asistencia→asistencia, tour_traslado→receptivo, otro→otro;
         // antes "otro" caía incorrectamente en "receptivo").
-        pushCxP(tipoProveedorCxpServicio(categoria), srv?.nombre ?? "Servicio", costoServ, srv?.proveedores ?? null);
+        pushCxP(tipoProveedorCxpServicio(categoria), srv?.nombre ?? "Servicio", costoServ, srv?.proveedores ?? null, null, { servicioId: s.servicio_id });
       }
-      if (costoReceptivo > 0) await admin.from("ventas").update({ costo_receptivo: costoReceptivo }).eq("numero_contrato", numero);
+      costoServiciosTotal += costoReceptivo;
     } catch {
       // Costo neto informativo; no bloquea la reserva.
     }
@@ -738,11 +752,27 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       for (const s of serviciosIncluidos) {
         serviciosEfectivos.push(s);
         if (s.costoNeto > 0) {
-          pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, provPorId.get(s.servicioId) ?? null);
+          pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, provPorId.get(s.servicioId) ?? null, null, { servicioId: s.servicioId });
+          // El costo del incluido va a la MISMA columna que el de los
+          // opcionales: su CxP existe, así que su costo tiene que existir
+          // también (si no, la rentabilidad mostraría un margen inflado y
+          // `asegurarCuentasPorPagar` vería cobertura sin costo).
+          costoServiciosTotal += s.costoNeto;
         }
       }
     } catch {
       // Costo neto/CxP informativo para el servicio incluido; no bloquea la reserva.
+    }
+  }
+
+  // Escritura ÚNICA de `costo_receptivo` (opcionales + incluidos), después de
+  // los dos bloques: la suma queda igual a la de las CxP de servicio creadas
+  // arriba, que es la invariante de la que depende `faltantesCxP`.
+  if (costoServiciosTotal > 0 && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      await createAdminClient().from("ventas").update({ costo_receptivo: costoServiciosTotal }).eq("numero_contrato", numero);
+    } catch {
+      // Costo neto informativo; no bloquea la reserva.
     }
   }
 
@@ -1078,7 +1108,9 @@ export type TourCarritoPayload = {
   // `servicioId`/`paqueteId` no se puede re-liquidar el costo NETO al
   // convertir (ver bloque de tours en `convertirCotizacionCarrito`) — esos
   // tours legados siguen sin CxP automática, igual que antes de este cambio.
-  servicioId?: number; paqueteId?: number; categoria?: string; proveedorId?: number | null;
+  // `proveedorId` NO viaja acá (revisión PR #294): es un id interno y el
+  // proveedor de la CxP se vuelve a resolver server-side contra el catálogo.
+  servicioId?: number; paqueteId?: number; categoria?: string;
 };
 
 // Un ítem del carrito con su asignación EXPLÍCITA de pasajeros — revisión de
@@ -1534,7 +1566,7 @@ export async function convertirCotizacionCarrito(
         categoria: normalizarCategoriaServicio(t.categoria),
         incluido: false,
         costoNeto: 0,
-        proveedorId: t.proveedorId ?? null,
+        proveedorId: null,
       })),
     ];
     const resumenGrupo = resumirServiciosContrato(serviciosEfectivosGrupo);
@@ -1670,13 +1702,15 @@ export async function convertirCotizacionCarrito(
       .map((f) => f.es_infante);
 
     type ProvFact = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
-    const cxp: { numero_contrato: string; tenant: Tenant; proveedor: string | null; tipo_proveedor: string; servicio: string; valor_total: number; fecha_obligacion: string; aplica_retencion: boolean; pct_retencion: number; observaciones: string }[] = [];
-    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null) => {
+    const cxp: { numero_contrato: string; tenant: Tenant; proveedor: string | null; tipo_proveedor: string; servicio: string; valor_total: number; fecha_obligacion: string; aplica_retencion: boolean; pct_retencion: number; observaciones: string; servicio_id: number | null }[] = [];
+    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, servicioId?: number | null) => {
       if (!(valor > 0)) return;
       cxp.push({
         numero_contrato: numero, tenant: tenantCotizacion, proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
         valor_total: Math.max(0, valor), fecha_obligacion: hoyServidor,
         aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0, observaciones: OBS_AUTO,
+        // Migración 170 — vínculo durable con el servicio del catálogo.
+        servicio_id: servicioId ?? null,
       });
     };
 
@@ -1878,7 +1912,7 @@ export async function convertirCotizacionCarrito(
             costoNeto += Math.max(Number(recTemp ?? srv?.recargo_individual) || 0, 0);
           }
           if (Number.isFinite(costoNeto) && costoNeto > 0) {
-            pushCxP(tipoProveedorCxpServicio(normalizarCategoriaServicio(srv?.categoria)), srv?.nombre ?? t.nombre, costoNeto, srv?.proveedores ?? null);
+            pushCxP(tipoProveedorCxpServicio(normalizarCategoriaServicio(srv?.categoria)), srv?.nombre ?? t.nombre, costoNeto, srv?.proveedores ?? null, null, t.servicioId);
           }
         } catch {
           // Costo neto/CxP informativo para el tour opcional; no bloquea la conversión.
@@ -1900,7 +1934,7 @@ export async function convertirCotizacionCarrito(
         const provPorId = new Map((provRows ?? []).map((r) => [r.id, r.proveedores as unknown as ProvFact]));
         for (const s of incluidosGrupo) {
           if (s.costoNeto > 0) {
-            pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, provPorId.get(s.servicioId) ?? null);
+            pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, provPorId.get(s.servicioId) ?? null, null, s.servicioId);
           }
         }
       } catch {
@@ -1921,8 +1955,21 @@ export async function convertirCotizacionCarrito(
       });
     }
 
-    if (costoAereoTotal > 0 || costoHotelTotal > 0) {
-      await admin.from("ventas").update({ costo_aereo: costoAereoTotal, costo_hotel: costoHotelTotal }).eq("numero_contrato", numero);
+    // `costo_receptivo` = suma de las CxP de SERVICIO creadas para este
+    // contrato (tours opcionales + incluidos del paquete). Sin esto, el
+    // carrito dejaba CxP de servicio con `costo_receptivo = 0`: la
+    // rentabilidad mostraba margen inflado y `asegurarCuentasPorPagar` veía
+    // cobertura sin costo. Se calcula de la MISMA lista que se va a insertar,
+    // así ambos números salen de una sola fuente.
+    const costoServiciosCarrito = cxp
+      .filter((r) => r.servicio_id != null)
+      .reduce((acc, r) => acc + (Number(r.valor_total) || 0), 0);
+    if (costoAereoTotal > 0 || costoHotelTotal > 0 || costoServiciosCarrito > 0) {
+      await admin.from("ventas").update({
+        costo_aereo: costoAereoTotal,
+        costo_hotel: costoHotelTotal,
+        ...(costoServiciosCarrito > 0 ? { costo_receptivo: costoServiciosCarrito } : {}),
+      }).eq("numero_contrato", numero);
     }
     if (cxp.length) {
       const { data: creadas } = await admin.from("cuentas_por_pagar").insert(cxp).select("id, tipo_proveedor, proveedor, servicio, valor_total");
@@ -2039,7 +2086,9 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
   const admin = createAdminClient();
 
   const [{ data: existentes }, { data: v }, { data: ch }, { data: cv }, { data: provs }] = await Promise.all([
-    admin.from("cuentas_por_pagar").select("tipo_proveedor").eq("numero_contrato", numeroContrato),
+    // `valor_total` además del tipo: la cobertura de servicios se mide en
+    // PESOS, no por existencia de etiqueta (ver lib/reservar/cxpCobertura.ts).
+    admin.from("cuentas_por_pagar").select("tipo_proveedor, valor_total").eq("numero_contrato", numeroContrato),
     admin.from("ventas").select("tenant, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, hotel, aerolinea, plazo, fecha_salida").eq("numero_contrato", numeroContrato).maybeSingle(),
     admin.from("contrato_hoteles").select("nombre, proveedor").eq("numero_contrato", numeroContrato).order("orden").limit(1),
     admin.from("contrato_vuelos").select("aerolinea").eq("numero_contrato", numeroContrato).order("orden").limit(1),
@@ -2048,7 +2097,6 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
   if (!v) return { ok: false, creadas: 0 };
   const tenant = (v.tenant as string | null) ?? "mayorista";
 
-  const yaTiene = new Set(((existentes ?? []).map((r) => r.tipo_proveedor).filter(Boolean)) as string[]);
   const hoy = new Date().toISOString().slice(0, 10);
   const vence = (v.plazo as string | null) ?? (v.fecha_salida as string | null) ?? null;
   const moneda = (v.moneda as string | null) ?? "COP";
@@ -2079,19 +2127,33 @@ export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{
     });
   };
 
-  // Crea solo los tipos de proveedor que falten y tengan costo real (> 0). El
-  // proveedor del hotel/aéreo se jala del contrato si existe; si no, queda
-  // "Sin especificar" (editable luego desde la pestaña Proveedores).
-  if (!yaTiene.has("hotel") && (Number(v.costo_hotel) || 0) > 0)
-    add("hotel", `Hotel ${hotelRow?.nombre ?? v.hotel ?? ""}`.trim(), Number(v.costo_hotel) || 0, hotelRow?.proveedor ?? null);
-  if (!yaTiene.has("aereo") && (Number(v.costo_aereo) || 0) > 0)
-    add("aereo", `Aéreo ${vueloRow?.aerolinea ?? v.aerolinea ?? ""}`.trim(), Number(v.costo_aereo) || 0, vueloRow?.aerolinea ?? (v.aerolinea as string | null));
-  if (!yaTiene.has("receptivo") && (Number(v.costo_receptivo) || 0) > 0)
-    add("receptivo", "Servicios receptivos", Number(v.costo_receptivo) || 0, null);
-  if (!yaTiene.has("asistencia") && (Number(v.costo_asistencia) || 0) > 0)
-    add("asistencia", "Asistencia médica", Number(v.costo_asistencia) || 0, null);
-  if (!yaTiene.has("otro") && (Number(v.otros_costos) || 0) > 0)
-    add("otro", "Otros costos", Number(v.otros_costos) || 0, null);
+  // Qué falta y por cuánto — decisión PURA y testeable
+  // (`faltantesCxP`, lib/reservar/cxpCobertura.ts). Hotel/aéreo por
+  // existencia; los tres tipos de SERVICIO por MONTO contra las columnas de
+  // costo de servicio, porque un mismo `costo_receptivo` puede estar
+  // repartido en CxP etiquetadas `receptivo`/`asistencia`/`otro` según la
+  // categoría de cada servicio: comparar solo la etiqueta volvía a crear una
+  // segunda cuenta por el mismo dinero.
+  const SERVICIO_LABEL: Record<string, string> = {
+    hotel: `Hotel ${hotelRow?.nombre ?? v.hotel ?? ""}`.trim(),
+    aereo: `Aéreo ${vueloRow?.aerolinea ?? v.aerolinea ?? ""}`.trim(),
+    receptivo: "Servicios receptivos",
+    asistencia: "Asistencia médica",
+    otro: "Otros costos",
+  };
+  const PROVEEDOR_DE: Record<string, string | null> = {
+    hotel: hotelRow?.proveedor ?? null,
+    aereo: vueloRow?.aerolinea ?? (v.aerolinea as string | null),
+  };
+  for (const f of faltantesCxP((existentes ?? []) as CxpExistente[], {
+    costo_hotel: Number(v.costo_hotel) || 0,
+    costo_aereo: Number(v.costo_aereo) || 0,
+    costo_receptivo: Number(v.costo_receptivo) || 0,
+    costo_asistencia: Number(v.costo_asistencia) || 0,
+    otros_costos: Number(v.otros_costos) || 0,
+  })) {
+    add(f.tipo, SERVICIO_LABEL[f.tipo] ?? f.tipo, f.valor, PROVEEDOR_DE[f.tipo] ?? null);
+  }
 
   if (!rows.length) return { ok: true, creadas: 0 };
 

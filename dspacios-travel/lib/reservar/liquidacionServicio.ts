@@ -60,10 +60,22 @@ export type FilaTemporadaServicio = {
 };
 export type FilaGrupoServicio = FilaGrupoTarifa & { servicio_id: number; temporada: string | null };
 
+// ⚠️ Este tipo CRUZA LA FRONTERA PÚBLICA: `buscarReceptivos` lo devuelve tal
+// cual al navegador (app/tarifario/BuscadorReceptivos.tsx, tarifario público
+// sin login) y `respuestaPublicaServicioPuntual` lo reenvía al checkout. Solo
+// puede llevar datos comerciales de cara al cliente.
+// - `categoria` SÍ cruza: es una etiqueta comercial de 3 valores fijos
+//   (asistencia/tour_traslado/otro), necesaria para clasificar el servicio.
+// - `proveedorId` NO cruza (revisión del PR #294): es un identificador
+//   INTERNO del catálogo de proveedores y ningún consumidor lo necesita —
+//   quien crea costos/CxP vuelve a resolver el proveedor SERVER-SIDE contra
+//   `servicios_adicionales`/`proveedores` con el cliente admin, nunca
+//   confiando en un valor que pasó por el navegador. Tampoco `costoNeto`
+//   ni nada derivado del costo.
 export type ResultadoServicio = {
   servicioId: number; nombre: string; destino: string | null; descripcion: string | null;
   paqueteId: number; total: number; pax: number; noches: number; moneda: string;
-  categoria: CategoriaServicio; proveedorId: number | null;
+  categoria: CategoriaServicio;
 };
 
 export type ContextoServicios = {
@@ -216,7 +228,7 @@ export function calcularPrecioConModoYMarkup(
   return {
     servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion,
     paqueteId: par.paqueteId, total, pax, noches: numNoches, moneda,
-    categoria: normalizarCategoriaServicio(srv.categoria), proveedorId: srv.proveedor_id ?? null,
+    categoria: normalizarCategoriaServicio(srv.categoria),
   };
 }
 

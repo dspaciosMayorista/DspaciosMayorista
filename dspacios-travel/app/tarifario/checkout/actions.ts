@@ -84,7 +84,7 @@ type SolicitudTourComputado = {
   nombre: string; destino: string | null; descripcion: string | null;
   fechaIda: string; fechaRegreso: string; noches: number;
   pax: number; precio: number; moneda: string;
-  categoria: CategoriaServicio; proveedorId: number | null;
+  categoria: CategoriaServicio;
 };
 
 export type SolicitudCliente = { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
@@ -450,7 +450,7 @@ async function crearCotizacionCarrito(input: {
       nombre: resultado.resultado.nombre, destino: resultado.resultado.destino, descripcion: resultado.resultado.descripcion,
       fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, noches: resultado.resultado.noches,
       pax: resultado.resultado.pax, precio: resultado.resultado.total, moneda: resultado.resultado.moneda,
-      categoria: resultado.resultado.categoria, proveedorId: resultado.resultado.proveedorId,
+      categoria: resultado.resultado.categoria,
     });
   }
 
@@ -473,7 +473,10 @@ async function crearCotizacionCarrito(input: {
   // categoría para un servicio "otro".
   const serviciosEfectivosSnap: ServicioEfectivo[] = [
     ...incluidosSnap,
-    ...toursOk.map((t): ServicioEfectivo => ({ servicioId: t.servicioId, nombre: t.nombre, categoria: t.categoria, incluido: false, costoNeto: 0, proveedorId: t.proveedorId })),
+    // `proveedorId: null` a propósito: el proveedor NUNCA viaja por el
+    // snapshot público del carrito — quien crea la CxP lo vuelve a resolver
+    // server-side contra el catálogo (ver convertirCotizacionCarrito).
+    ...toursOk.map((t): ServicioEfectivo => ({ servicioId: t.servicioId, nombre: t.nombre, categoria: t.categoria, incluido: false, costoNeto: 0, proveedorId: null })),
   ];
   const resumenServicios = resumirServiciosContrato(serviciosEfectivosSnap);
 

@@ -91,11 +91,12 @@ describe("computo.ts (computarReserva) — fuente única autoritativa, fail-clos
   });
 });
 
-describe("liquidacionServicio.ts (ResultadoServicio) — categoría/proveedor real fluyen desde buscarReceptivos hasta el checkout", () => {
-  test("ResultadoServicio incluye categoria/proveedorId (nunca se pierde la identidad del catálogo)", () => {
+describe("liquidacionServicio.ts (ResultadoServicio) — la CATEGORÍA real fluye desde buscarReceptivos hasta el checkout", () => {
+  test("ResultadoServicio incluye categoria (identidad comercial que sí puede cruzar al cliente)", () => {
     const tipo = cuerpoFuncion(liquidacion, "export type ResultadoServicio = {");
     assert.match(tipo, /categoria: CategoriaServicio/);
-    assert.match(tipo, /proveedorId: number \| null/);
+    // `proveedorId` se saca a propósito: ver R294-3 más abajo (frontera pública).
+    assert.doesNotMatch(tipo, /proveedorId/);
   });
   test("calcularPrecioConModoYMarkup — única construcción — usa normalizarCategoriaServicio (nunca inventa la categoría)", () => {
     const cuerpo = cuerpoFuncion(liquidacion, "export function calcularPrecioConModoYMarkup(");
@@ -180,20 +181,122 @@ describe("checkout/actions.ts (crearCotizacionCarrito) — el snapshot del carri
     const cuerpo = cuerpoFuncion(checkoutActions, "async function crearCotizacionCarrito(input: {");
     assert.match(cuerpo, /serviciosIncluidos:\s*incluidosSnap/);
   });
-  test("los tours opcionales conservan categoria/proveedorId de la re-liquidación server-side (nunca del cliente)", () => {
+  test("los tours opcionales conservan la categoria de la re-liquidación server-side (nunca del cliente)", () => {
     const cuerpo = cuerpoFuncion(checkoutActions, "async function crearCotizacionCarrito(input: {");
-    assert.match(cuerpo, /categoria:\s*resultado\.resultado\.categoria,\s*proveedorId:\s*resultado\.resultado\.proveedorId/);
+    assert.match(cuerpo, /categoria:\s*resultado\.resultado\.categoria/);
   });
 });
 
 describe("contratos/actions.ts (actualizarServiciosContrato) — editar opcionales nunca apaga una asistencia/tour incluido en el documento", () => {
-  test("consulta también los servicios INCLUIDOS del paquete (incluido=true), no solo los opcionales recién elegidos", () => {
+  test("consulta también los servicios INCLUIDOS del paquete, no solo los opcionales recién elegidos", () => {
     const cuerpo = cuerpoFuncion(contratosActions, "export async function actualizarServiciosContrato(");
-    assert.match(cuerpo, /\.eq\("paquete_id", venta\.paquete_armado_id\)\.eq\("incluido", true\)/);
+    assert.match(cuerpo, /armado_servicios[\s\S]{0,200}incluido, servicios_adicionales\(nombre, categoria\)/);
+    assert.match(cuerpo, /if \(r\.incluido\)/);
   });
   test("usa resumirServiciosContrato (fuente única) en vez de acumular tours[]/hayAsistencia a mano con comparación directa de string", () => {
     const cuerpo = cuerpoFuncion(contratosActions, "export async function actualizarServiciosContrato(");
     assert.match(cuerpo, /resumirServiciosContrato\(/);
     assert.doesNotMatch(cuerpo, /cat === "asistencia"\) hayAsistencia = true/);
+  });
+});
+
+
+// ───────────────────────────────────────────────────────────────────────────
+// Revisión independiente del PR #294 — garantías ESTRUCTURALES que no se
+// pueden probar con una función pura porque viven en el orden de las
+// operaciones o en la frontera pública de un tipo.
+// ───────────────────────────────────────────────────────────────────────────
+
+describe("R294-1 · asegurarCuentasPorPagar: cobertura por MONTO, nunca por existencia de etiqueta", () => {
+  test("usa faltantesCxP y ya no existe la regla `yaTiene.has(tipo)`", () => {
+    const cuerpo = cuerpoFuncion(reservarActions, "export async function asegurarCuentasPorPagar(");
+    assert.match(cuerpo, /faltantesCxP\(/);
+    assert.doesNotMatch(cuerpo, /yaTiene/, "volvió la regla por existencia de tipo_proveedor (duplicaba la CxP)");
+  });
+  test("lee `valor_total` de las CxP existentes (sin el monto no hay cobertura que medir)", () => {
+    const cuerpo = cuerpoFuncion(reservarActions, "export async function asegurarCuentasPorPagar(");
+    assert.match(cuerpo, /select\("tipo_proveedor, valor_total"\)/);
+  });
+});
+
+describe("R294-2 · computo.ts: el incluido en modo grupo NO altera el precio mostrado", () => {
+  test("el bloque de servicios incluidos no suma nada a precioVenta", () => {
+    const cuerpo = cuerpoFuncion(computo, "const serviciosIncluidos: ServicioEfectivo[] = [];");
+    assert.doesNotMatch(cuerpo, /precioVenta \+=/,
+      "cobrar el incluido por grupo aquí hace que el total mostrado y el cotizado no coincidan");
+    assert.doesNotMatch(cuerpo, /pvpAdicional/);
+  });
+  test("sigue fallando cerrado si el catálogo no tiene rango de pax que cubra la reserva", () => {
+    const cuerpo = cuerpoFuncion(computo, "const serviciosIncluidos: ServicioEfectivo[] = [];");
+    assert.match(cuerpo, /if \(costoNeto == null\) \{\s*\n\s*return \{\s*\n\s*ok: false,/);
+  });
+});
+
+describe("R294-3 · frontera pública: `proveedorId` (id interno) no cruza al navegador", () => {
+  test("ResultadoServicio ya no expone proveedorId", () => {
+    const tipo = cuerpoFuncion(liquidacion, "export type ResultadoServicio = {");
+    assert.doesNotMatch(tipo, /proveedorId/, "buscarReceptivos devuelve este tipo tal cual al tarifario público");
+    assert.match(tipo, /categoria: CategoriaServicio/, "la categoría sí puede cruzar (etiqueta comercial)");
+  });
+  test("el checkout público no persiste ni reenvía proveedorId real", () => {
+    const cuerpo = cuerpoFuncion(checkoutActions, "async function crearCotizacionCarrito(input: {");
+    assert.doesNotMatch(cuerpo, /proveedorId: resultado\.resultado\.proveedorId/);
+    assert.doesNotMatch(cuerpo, /proveedorId: t\.proveedorId/);
+  });
+  test("el snapshot del carrito tampoco lo lleva", () => {
+    const tipo = cuerpoFuncion(reservarActions, "export type TourCarritoPayload = {");
+    assert.doesNotMatch(tipo, /proveedorId\?:/);
+  });
+});
+
+describe("R294-4 · CxP de servicios: se estampa `servicio_id` (llave de reconciliación)", () => {
+  test("reservarDesdeTarifarioInterno estampa servicioId en opcionales e incluidos", () => {
+    const cuerpo = cuerpoFuncion(reservarActions, "async function reservarDesdeTarifarioInterno(input: ReservaInput");
+    assert.match(cuerpo, /servicio_id: cxpOpts\?\.servicioId \?\? null/);
+    assert.match(cuerpo, /\{ servicioId: s\.servicio_id \}/);
+    assert.match(cuerpo, /\{ servicioId: s\.servicioId \}/);
+  });
+  test("convertirCotizacionCarrito estampa servicioId en tours e incluidos", () => {
+    const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
+    assert.match(cuerpo, /servicio_id: servicioId \?\? null/);
+    assert.match(cuerpo, /srv\?\.proveedores \?\? null, null, t\.servicioId\)/);
+    assert.match(cuerpo, /provPorId\.get\(s\.servicioId\) \?\? null, null, s\.servicioId\)/);
+  });
+});
+
+describe("R294-5 · los costos de servicio cuadran con las CxP creadas", () => {
+  test("reservarDesdeTarifarioInterno escribe costo_receptivo UNA vez, con opcionales + incluidos", () => {
+    const cuerpo = cuerpoFuncion(reservarActions, "async function reservarDesdeTarifarioInterno(input: ReservaInput");
+    const escrituras = cuerpo.match(/costo_receptivo:/g) ?? [];
+    assert.equal(escrituras.length, 1, "debe haber exactamente una escritura de costo_receptivo");
+    assert.match(cuerpo, /costoServiciosTotal \+= s\.costoNeto/, "el costo del incluido debe entrar a la columna");
+  });
+  test("convertirCotizacionCarrito deriva costo_receptivo de las CxP que va a insertar", () => {
+    const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
+    assert.match(cuerpo, /costoServiciosCarrito[\s\S]{0,200}servicio_id != null/);
+  });
+});
+
+describe("R294-6 · actualizarServiciosContrato: valida ANTES de escribir (fallo cerrado real)", () => {
+  const cuerpo = cuerpoFuncion(contratosActions, "export async function actualizarServiciosContrato(");
+  test("el rechazo por CxP con pagos ocurre ANTES de tocar ítems, precio o CxP", () => {
+    const idxBloqueo = cuerpo.indexOf("plan.bloqueados.length");
+    const idxBorradoItems = cuerpo.indexOf('from("contrato_items").delete()');
+    const idxUpdatePrecio = cuerpo.indexOf("precio_venta: nuevoPrecio");
+    assert.ok(idxBloqueo > -1, "no existe el candado de CxP con movimientos");
+    assert.ok(idxBorradoItems > -1 && idxUpdatePrecio > -1);
+    assert.ok(idxBloqueo < idxBorradoItems, "se borran ítems antes de validar el plan de CxP");
+    assert.ok(idxBloqueo < idxUpdatePrecio, "se cambia el precio antes de validar el plan de CxP");
+  });
+  test("reconcilia por servicio_id (nunca por nombre) y respeta las filas sin servicio_id", () => {
+    assert.match(cuerpo, /planReconciliacionCxpServicios\(/);
+    assert.match(cuerpo, /\.not\("servicio_id", "is", null\)/);
+  });
+  test("cada cambio de CxP arrastra su asiento contable", () => {
+    assert.match(cuerpo, /eliminarAsientoCxP\(/);
+    assert.match(cuerpo, /postearAsientoCxP\(/);
+  });
+  test("sin service-role no edita: no puede reconciliar y no deja el contrato a medias", () => {
+    assert.match(cuerpo, /if \(!process\.env\.SUPABASE_SERVICE_ROLE_KEY\) \{\s*\n\s*return \{ ok: false,/);
   });
 });

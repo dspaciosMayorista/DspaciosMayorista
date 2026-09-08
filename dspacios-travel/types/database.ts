@@ -634,6 +634,10 @@ export type Database = {
           proveedor: string | null;
           tipo_proveedor: string | null;
           servicio: string | null;
+          // Migración 170: servicio del catálogo que originó esta CxP.
+          // NULL = hotel/aéreo, manual, o anterior a la 170. Única llave
+          // válida para reconciliar CxP de servicios (nunca por nombre).
+          servicio_id: number | null;
           fecha_obligacion: string | null;
           fecha_vencimiento: string | null;
           valor_total: number;
@@ -664,6 +668,7 @@ export type Database = {
           proveedor?: string | null;
           tipo_proveedor?: string | null;
           servicio?: string | null;
+          servicio_id?: number | null;
           fecha_obligacion?: string | null;
           fecha_vencimiento?: string | null;
           valor_total?: number;

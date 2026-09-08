@@ -689,19 +689,29 @@ export async function computarReserva(
           });
           continue;
         }
-        // Modo grupo: nunca se hornea en pvpPorAcom, así que si hoy se
-        // resuelve, es un cargo NUEVO. Con pax real conocido: si no hay rango
-        // de servicio_tarifa_pax que lo cubra, es una configuración
-        // incompleta del catálogo — falla cerrado (nunca $0 en silencio para
-        // un servicio marcado incluido con un modo que exige tarifa por grupo).
+        // Modo grupo: nunca se hornea en pvpPorAcom. Con pax real conocido:
+        // si no hay rango de servicio_tarifa_pax que lo cubra, es una
+        // configuración incompleta del catálogo — falla cerrado (nunca $0 en
+        // silencio para un servicio marcado incluido con un modo que exige
+        // tarifa por grupo).
         if (costoNeto == null) {
           return {
             ok: false,
             error: `El servicio incluido "${srv?.nombre ?? r.servicio_id}" está configurado en modo grupo pero no tiene una tarifa por rango de pasajeros que cubra ${totalPax} pax — corrige el catálogo (servicio_tarifa_pax) antes de reservar.`,
           };
         }
-        const pvpAdicional = Math.round(marcar(costoNeto, pctMk));
-        if (pvpAdicional > 0) precioVenta += pvpAdicional;
+        // ⚠️ NO se suma nada a `precioVenta`. El precio que el cliente ve
+        // ANTES de confirmar (vitrina/tarjeta/modal/carrito) sale de
+        // `evaluarHotelPorFechas`/`generarTarifario`, y esos dos hornean SOLO
+        // los incluidos con `precio_persona` (un servicio en modo grupo tiene
+        // `precio_persona` null, así que queda fuera). Cobrarlo aquí —como
+        // hacía la primera versión de este PR— hacía que el total mostrado y
+        // el total cotizado en servidor NO coincidieran para la misma
+        // composición: se mostraba un valor y se cotizaba otro. El costo SÍ
+        // se registra (abajo), con su CxP: si el montaje marcó incluido un
+        // servicio por grupo que la tarifa del paquete no cubre, el margen
+        // real baja y eso queda visible en rentabilidad — que es la verdad,
+        // en vez de un sobrecargo silencioso al cliente.
         serviciosIncluidos.push({
           servicioId: r.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria: normalizarCategoriaServicio(srv?.categoria),
           incluido: true, costoNeto, proveedorId: srv?.proveedor_id ?? null,
