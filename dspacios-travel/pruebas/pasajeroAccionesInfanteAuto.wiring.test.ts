@@ -20,7 +20,7 @@ describe("PasajeroAcciones.tsx — detección en vivo de infante en el alta manu
   const src = leer(RUTA_COMPONENTE);
 
   test("reutiliza esInfantePorEdad de lib/vuelos/infanteVuelo — nunca reimplementa el umbral", () => {
-    assert.match(src, /import \{ esInfantePorEdad \} from "@\/lib\/vuelos\/infanteVuelo";/);
+    assert.match(src, /import \{ esInfantePorEdad, sillaTieneDatosDePasajero \} from "@\/lib\/vuelos\/infanteVuelo";/);
   });
 
   test("recibe fechaIdaBloqueo y candidatosResponsable como props", () => {
@@ -74,13 +74,17 @@ describe("PasajeroAcciones.tsx — detección en vivo de infante en el alta manu
   // pasajero (evita el duplicado reportado: corregir la fecha de un
   // pasajero existente a <2 años NO debe crear un infante nuevo dejando al
   // original ocupando la silla). ──────────────────────────────────────────
-  test("sillaVacia se decide sobre `inicial` (estado ORIGINAL al abrir el modal), nunca sobre `form` (que cambia mientras se escribe)", () => {
+  test("sillaVacia se decide sobre `inicial` (estado ORIGINAL al abrir el modal) vía sillaTieneDatosDePasajero, nunca sobre `form` (que cambia mientras se escribe)", () => {
+    assert.match(
+      src,
+      /import \{ esInfantePorEdad, sillaTieneDatosDePasajero \} from "@\/lib\/vuelos\/infanteVuelo";/,
+      "debe reutilizar el predicado puro de lib/vuelos/infanteVuelo — nunca reimplementarlo inline"
+    );
     const inicio = src.indexOf("const sillaVacia =");
     assert.ok(inicio > -1, "no define sillaVacia");
-    const linea = src.slice(inicio, inicio + 200);
-    assert.match(linea, /inicial\.pasajero_nombres\.trim\(\)/, "debe leer inicial.pasajero_nombres, no form.pasajero_nombres");
-    assert.match(linea, /inicial\.pasajero_apellidos\.trim\(\)/, "debe leer inicial.pasajero_apellidos, no form.pasajero_apellidos");
-    assert.doesNotMatch(linea, /form\.pasajero_nombres|form\.pasajero_apellidos/, "sillaVacia NO debe depender de form (que cambia con cada tecla)");
+    const linea = src.slice(inicio, inicio + 100);
+    assert.match(linea, /sillaTieneDatosDePasajero\(inicial\)/, "debe evaluar el predicado sobre `inicial`, nunca sobre `form`");
+    assert.doesNotMatch(linea, /\bform\./, "sillaVacia NO debe depender de form (que cambia con cada tecla)");
   });
 
   test("bloqueadaPorSillaOcupada = esInfante && !sillaVacia (edición de silla ocupada hacia INF queda bloqueada, alta en silla vacía no)", () => {

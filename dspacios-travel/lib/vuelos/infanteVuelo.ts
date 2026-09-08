@@ -69,3 +69,30 @@ export function validarInfanteVueloInput(input: InfanteVueloInput): ValidacionIn
 
   return { ok: true };
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// ¿La silla ya tiene ALGÚN dato de pasajero? Usado por PasajeroAcciones.tsx
+// para decidir si el alta manual está partiendo de una silla VACÍA (la
+// conversión automática a infante solo aplica ahí) o si es una EDICIÓN de un
+// pasajero ya registrado (donde esa conversión queda bloqueada — ver ese
+// componente). Una fila puede llegar con datos PARCIALES (ej. solo
+// documento cargado, sin nombre todavía): cualquiera de los 5 campos con
+// valor cuenta como "ya tiene pasajero", nunca solo nombre+apellido.
+// ─────────────────────────────────────────────────────────────────────────
+export type DatosPasajeroSilla = {
+  pasajero_nombres: string;
+  pasajero_apellidos: string;
+  tipo_doc: string;
+  numero_doc: string;
+  nacimiento: string;
+};
+
+export function sillaTieneDatosDePasajero(d: DatosPasajeroSilla): boolean {
+  return Boolean(
+    d.pasajero_nombres.trim() ||
+      d.pasajero_apellidos.trim() ||
+      d.tipo_doc.trim() ||
+      d.numero_doc.trim() ||
+      d.nacimiento.trim()
+  );
+}

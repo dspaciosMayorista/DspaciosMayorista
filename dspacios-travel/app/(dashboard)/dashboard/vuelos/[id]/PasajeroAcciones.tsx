@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { editarPasajeroSilla, borrarPasajeroSilla, moverPasajeroSilla, guardarInfanteVuelo, type PasajeroSillaInput } from "../actions";
-import { esInfantePorEdad } from "@/lib/vuelos/infanteVuelo";
+import { esInfantePorEdad, sillaTieneDatosDePasajero } from "@/lib/vuelos/infanteVuelo";
 import { calcularEdad } from "@/lib/utils";
 
 type Pasajero = PasajeroSillaInput;
@@ -39,14 +39,17 @@ export function PasajeroAcciones({
 
   const set = (k: keyof Pasajero, val: string) => setForm((f) => ({ ...f, [k]: val }));
 
-  // Silla VACÍA al abrir el modal (sin pasajero ya registrado) — se decide
-  // sobre `inicial` (el estado ORIGINAL de la silla), nunca sobre `form`
-  // (que cambia mientras se escribe): si la silla YA tenía un pasajero, esto
-  // es una EDICIÓN, no un alta, y la conversión automática a infante no
-  // aplica aquí (ver más abajo) — evita el caso reportado donde corregir la
-  // fecha de un pasajero existente a <2 años creaba un infante NUEVO y
-  // dejaba al pasajero original duplicado ocupando la silla.
-  const sillaVacia = !inicial.pasajero_nombres.trim() && !inicial.pasajero_apellidos.trim();
+  // Silla VACÍA al abrir el modal (sin ningún dato de pasajero ya
+  // registrado) — se decide sobre `inicial` (el estado ORIGINAL de la
+  // silla), nunca sobre `form` (que cambia mientras se escribe): si la silla
+  // YA tenía CUALQUIER dato propio (nombre, apellido, documento o
+  // nacimiento — una fila puede llegar con datos PARCIALES, ej. solo
+  // documento sin nombre todavía), esto es una EDICIÓN, no un alta, y la
+  // conversión automática a infante no aplica aquí (ver más abajo) — evita
+  // el caso reportado donde corregir la fecha de un pasajero existente a
+  // <2 años creaba un infante NUEVO y dejaba al pasajero original duplicado
+  // ocupando la silla.
+  const sillaVacia = !sillaTieneDatosDePasajero(inicial);
 
   // Detección EN VIVO de infante — misma fuente de verdad que el RPC
   // guardar_infante_vuelo (lib/vuelos/infanteVuelo.ts), contra la fecha REAL

@@ -6,7 +6,7 @@
 // Action coincide con los límites que el RPC también aplica.
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { validarInfanteVueloInput, esInfantePorEdad, EDAD_INFANTE_MAX_VUELO } from "../lib/vuelos/infanteVuelo.ts";
+import { validarInfanteVueloInput, esInfantePorEdad, EDAD_INFANTE_MAX_VUELO, sillaTieneDatosDePasajero, type DatosPasajeroSilla } from "../lib/vuelos/infanteVuelo.ts";
 
 function input(over: Partial<Parameters<typeof validarInfanteVueloInput>[0]> = {}) {
   return {
@@ -101,5 +101,59 @@ describe("re-exporta la MISMA fuente de verdad de clasificación INF que el rest
 
   test("un día antes de cumplir 2 años: todavía es infante", () => {
     assert.equal(esInfantePorEdad("2024-06-16", "2026-06-15"), true);
+  });
+});
+
+// PasajeroAcciones.tsx usa este predicado (sobre `inicial`, el estado
+// ORIGINAL de la silla al abrir el modal) para decidir si el alta manual
+// parte de una silla VACÍA (única situación donde la conversión automática
+// a infante aplica) o si ya hay un pasajero registrado (edición, donde esa
+// conversión queda bloqueada). Una fila puede llegar con datos PARCIALES —
+// cualquiera de los 5 campos con valor cuenta como "ya tiene pasajero".
+describe("sillaTieneDatosDePasajero", () => {
+  const vacia: DatosPasajeroSilla = {
+    pasajero_nombres: "",
+    pasajero_apellidos: "",
+    tipo_doc: "",
+    numero_doc: "",
+    nacimiento: "",
+  };
+
+  test("REQUERIDO 1: todos los campos vacíos (o solo espacios) → silla VACÍA (false)", () => {
+    assert.equal(sillaTieneDatosDePasajero(vacia), false);
+    assert.equal(sillaTieneDatosDePasajero({ ...vacia, pasajero_nombres: "   ", tipo_doc: "  " }), false);
+  });
+
+  test("REQUERIDO 2: solo documento (tipo_doc + numero_doc, sin nombre) → OCUPADA (true)", () => {
+    assert.equal(sillaTieneDatosDePasajero({ ...vacia, tipo_doc: "CC", numero_doc: "123456" }), true);
+  });
+
+  test("REQUERIDO 2b: solo numero_doc (sin tipo_doc) también cuenta como OCUPADA", () => {
+    assert.equal(sillaTieneDatosDePasajero({ ...vacia, numero_doc: "123456" }), true);
+  });
+
+  test("REQUERIDO 3: solo fecha de nacimiento (sin nombre ni documento) → OCUPADA (true)", () => {
+    assert.equal(sillaTieneDatosDePasajero({ ...vacia, nacimiento: "2020-01-01" }), true);
+  });
+
+  test("REQUERIDO 4: solo nombre (sin apellido, documento ni nacimiento) → OCUPADA (true)", () => {
+    assert.equal(sillaTieneDatosDePasajero({ ...vacia, pasajero_nombres: "Ana" }), true);
+  });
+
+  test("REQUERIDO 4b: solo apellido (sin nombre) → OCUPADA (true)", () => {
+    assert.equal(sillaTieneDatosDePasajero({ ...vacia, pasajero_apellidos: "Perez" }), true);
+  });
+
+  test("todos los campos con datos: OCUPADA (true)", () => {
+    assert.equal(
+      sillaTieneDatosDePasajero({
+        pasajero_nombres: "Ana",
+        pasajero_apellidos: "Perez",
+        tipo_doc: "CC",
+        numero_doc: "123456",
+        nacimiento: "2020-01-01",
+      }),
+      true
+    );
   });
 });
