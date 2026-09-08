@@ -101,7 +101,7 @@ export function ThemeSwitcher() {
   return (
     <div
       ref={cont}
-      className="fixed z-50 flex items-center gap-1"
+      className="fixed z-50 flex items-center gap-1 print:hidden"
       style={pos ? { left: pos.x, top: pos.y, right: "auto", bottom: "auto" } : { right: 16, bottom: 16 }}
     >
       <button
