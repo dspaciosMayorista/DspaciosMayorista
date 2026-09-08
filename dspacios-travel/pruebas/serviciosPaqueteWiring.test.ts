@@ -82,7 +82,10 @@ describe("computo.ts (computarReserva) — fuente única autoritativa, fail-clos
   test("modo 'grupo' incluido SIN rango de pax que cubra la reserva real falla cerrado con un mensaje explícito (nunca se asume $0 en silencio)", () => {
     const cuerpo = cuerpoFuncion(computo, "const serviciosIncluidos: ServicioEfectivo[] = [];");
     assert.match(cuerpo, /if \(modo === "persona"\)/);
-    assert.match(cuerpo, /if \(costoNeto == null\) \{\s*\n\s*return \{\s*\n\s*ok: false,/);
+    // B6: el grupo se cobra con la fórmula compartida, y si ningún rango
+    // cubre el pax real la reserva no se genera (nunca $0 ni rango cercano).
+    assert.match(cuerpo, /if \(!cargo\.ok\) \{\s*\n\s*return \{\s*\n\s*ok: false,/);
+    assert.match(cuerpo, /no tiene una tarifa por rango de pasajeros que cubra/);
   });
   test("modo inválido en un servicio incluido falla cerrado (nunca 'persona' por default)", () => {
     const cuerpo = cuerpoFuncion(computo, "const serviciosIncluidos: ServicioEfectivo[] = [];");
@@ -135,7 +138,7 @@ describe("reservar/actions.ts (reservarDesdeTarifarioInterno) — CxP de servici
   });
   test("servicios INCLUIDOS generan su propia CxP (antes se perdían dentro de la CxP de hotel)", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "async function reservarDesdeTarifarioInterno(input: ReservaInput");
-    assert.match(cuerpo, /serviciosIncluidos\.length && process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
+    assert.match(cuerpo, /if \(serviciosIncluidos\.length\) \{/);
     assert.match(cuerpo, /tipoProveedorCxpServicio\(s\.categoria\)/);
   });
   test("el resumen final de asistencia/tours usa resumirServiciosContrato sobre incluidos+opcionales combinados", () => {
@@ -219,16 +222,36 @@ describe("R294-1 · asegurarCuentasPorPagar: cobertura por MONTO, nunca por exis
   });
 });
 
-describe("R294-2 · computo.ts: el incluido en modo grupo NO altera el precio mostrado", () => {
-  test("el bloque de servicios incluidos no suma nada a precioVenta", () => {
+describe("R294-2 (revisión B6) · el incluido por grupo se COBRA una vez, con la misma fórmula que mostró el buscador", () => {
+  // Antes de B6 este bloque no sumaba nada a `precioVenta`: el servicio
+  // quedaba con CxP (costo) y sin ingreso — pérdida, y contradecía "Incluido
+  // (todo junto)". Ahora sí se cobra, pero SOLO por `cargoGrupoIncluido`, la
+  // misma función que usa `buscarHoteles` con el pax real, para que lo
+  // mostrado y lo cotizado coincidan.
+  test("el cargo por grupo entra a precioVenta exactamente UNA vez y solo por la fórmula compartida", () => {
     const cuerpo = cuerpoFuncion(computo, "const serviciosIncluidos: ServicioEfectivo[] = [];");
-    assert.doesNotMatch(cuerpo, /precioVenta \+=/,
-      "cobrar el incluido por grupo aquí hace que el total mostrado y el cotizado no coincidan");
-    assert.doesNotMatch(cuerpo, /pvpAdicional/);
+    const sumas = cuerpo.match(/precioVenta \+=/g) ?? [];
+    assert.equal(sumas.length, 1, "el incluido por grupo se cobra una sola vez");
+    assert.match(cuerpo, /precioVenta \+= cargo\.pvp/);
+    assert.match(cuerpo, /cargoGrupoIncluido\(gruposIncluidosPendientes, totalPax, pctMk, numNochesInc\)/);
+  });
+  test("el motor de búsqueda usa la MISMA función con el pax real (nunca una división por persona)", () => {
+    const cuerpo = cuerpoFuncion(cotizar, "export async function buscarHoteles(");
+    assert.match(cuerpo, /cargoGrupoIncluido\(res\.serviciosGrupoIncluidos, paxGrupo,/);
+    assert.match(cuerpo, /if \(!cargo\.ok\) continue;/,
+      "una composición sin rango aplicable se descarta del listado, nunca se muestra con un precio inventado");
   });
   test("sigue fallando cerrado si el catálogo no tiene rango de pax que cubra la reserva", () => {
     const cuerpo = cuerpoFuncion(computo, "const serviciosIncluidos: ServicioEfectivo[] = [];");
-    assert.match(cuerpo, /if \(costoNeto == null\) \{\s*\n\s*return \{\s*\n\s*ok: false,/);
+    assert.match(cuerpo, /if \(!cargo\.ok\) \{\s*\n\s*return \{\s*\n\s*ok: false,/);
+  });
+  test("las superficies SIN pax avisan que el precio no es final (decisión del dueño), en vez de prometer un total falso", () => {
+    const reservaForm = leer("app/(dashboard)/dashboard/reservar/nuevo/ReservaForm.tsx");
+    const vistaBooking = leer("app/tarifario/VistaBooking.tsx");
+    for (const [nombre, fuente] of [["ReservaForm", reservaForm], ["VistaBooking", vistaBooking]] as const) {
+      assert.match(fuente, /serviciosGrupoPendientes/, `${nombre} debe recibir los servicios grupales pendientes`);
+      assert.match(fuente, /no (son|es) el total final/i, `${nombre} debe advertir que el precio mostrado no es final`);
+    }
   });
 });
 
@@ -267,7 +290,7 @@ describe("R294-4 · CxP de servicios: se estampa `servicio_id` (llave de reconci
 describe("R294-5 · los costos de servicio cuadran con las CxP creadas", () => {
   test("reservarDesdeTarifarioInterno escribe costo_receptivo UNA vez, con opcionales + incluidos", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "async function reservarDesdeTarifarioInterno(input: ReservaInput");
-    const escrituras = cuerpo.match(/costo_receptivo:/g) ?? [];
+    const escrituras = cuerpo.match(/costo_receptivo = costoServiciosTotal/g) ?? [];
     assert.equal(escrituras.length, 1, "debe haber exactamente una escritura de costo_receptivo");
     assert.match(cuerpo, /costoServiciosTotal \+= s\.costoNeto/, "el costo del incluido debe entrar a la columna");
   });

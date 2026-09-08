@@ -150,12 +150,18 @@ test("reservar/actions.ts: las filas derivadas (aliados_b2b, CxP, asientos) here
   const end = src.indexOf("export async function crearCotizacion(");
   const fn = src.slice(start, end);
   assert.match(fn, /aliados_b2b"\)\.insert\(\{\s*\n\s*numero_contrato:\s*numero,\s*\n\s*tenant,/, "el insert de aliados_b2b en reservarDesdeTarifarioInterno no estampa tenant");
-  assert.match(fn, /type CxPRow\s*=\s*\{\s*\n\s*numero_contrato:\s*string;\s*tenant:\s*Tenant;/, "el tipo CxPRow perdió el campo tenant");
-  assert.match(fn, /postearAsientoCxP\(\{[\s\S]{0,300}fecha:\s*hoyISO,\s*tenant,/, "el asiento automático de CxP en reservarDesdeTarifarioInterno no recibe el tenant explícito");
+  // Las filas de CxP ya no llevan `tenant` en TypeScript: desde la migración
+  // 171 lo estampa la propia transacción financiera a partir del parámetro
+  // `p_tenant`, que es el tenant YA validado que recibe esta función. Es una
+  // garantía más fuerte que la anterior (una fila del payload no puede
+  // apuntar a otra agencia ni por error de construcción), así que la prueba
+  // verifica el parámetro, no el campo de la fila.
+  assert.match(fn, /registrarFinancieroContrato\([\s\S]{0,300}numeroContrato: numero, tenant,/, "la escritura financiera de reservarDesdeTarifarioInterno no recibe el tenant validado");
+  assert.match(fn, /depsFinanciero\(numero, tenant, hoyISO\)/, "el asiento automático de CxP no recibe el tenant explícito");
 
   const carrito = src.slice(src.indexOf("export async function convertirCotizacionCarrito"));
-  assert.match(carrito, /tenant:\s*tenantCotizacion,\s*proveedor:/, "convertirCotizacionCarrito no estampa tenant en las filas de cuentas_por_pagar");
-  assert.match(carrito, /postearAsientoCxP\(\{[\s\S]{0,300}tenant:\s*tenantCotizacion/, "convertirCotizacionCarrito no pasa el tenant explícito al asiento automático");
+  assert.match(carrito, /registrarFinancieroContrato\([\s\S]{0,300}tenant: tenantCotizacion/, "convertirCotizacionCarrito no pasa el tenant de la cotización a la escritura financiera");
+  assert.match(carrito, /depsFinanciero\(numero, tenantCotizacion, hoyServidor\)/, "convertirCotizacionCarrito no pasa el tenant explícito al asiento automático");
 });
 
 test("reservar/actions.ts: actualizarVigenciaCotizacion y descartarCotizacion filtran por tenant salvo superadmin", () => {

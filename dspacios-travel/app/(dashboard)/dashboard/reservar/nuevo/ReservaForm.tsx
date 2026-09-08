@@ -96,13 +96,21 @@ export function ReservaForm({
   const nochesLive = nochesEntre(fIda, fReg); // noches reales del rango elegido
   const [cotPend, startCot] = useTransition();
   const [cotErr, setCotErr] = useState("");
+  // Servicios INCLUIDOS con cobro por grupo: esta tabla es POR PERSONA y no
+  // conoce el tamaño del grupo, así que su cargo no está en `precios`. Se
+  // avisa que el precio de la tabla NO es el final (decisión del dueño,
+  // revisión PR #294) — el total real, con el servicio grupal, se calcula al
+  // generar la reserva con el pax verdadero.
+  const [serviciosGrupo, setServiciosGrupo] = useState<string[]>([]);
 
   function cotizar() {
     setCotErr("");
     startCot(async () => {
       const r = await cotizarPorFechas({ paqueteId: meta.paqueteId, hotelId: meta.hotelId, fechaIda: fIda, fechaRegreso: fReg });
-      if (r.ok) { setCombosState(r.combos); setNochesCot(r.noches); setMonedaState(r.moneda); }
-      else setCotErr(r.error);
+      if (r.ok) {
+        setCombosState(r.combos); setNochesCot(r.noches); setMonedaState(r.moneda);
+        setServiciosGrupo(r.serviciosGrupoPendientes ?? []);
+      } else setCotErr(r.error);
     });
   }
 
@@ -323,6 +331,13 @@ export function ReservaForm({
             <span className="text-sm text-gray-500">{nochesLive || nochesCot || 0} noche(s)</span>
           </div>
           {cotErr && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{cotErr}</p>}
+          {serviciosGrupo.length > 0 && (
+            <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              Los precios de esta tabla <strong>no son el total final</strong>: el paquete incluye{" "}
+              {serviciosGrupo.join(", ")} con tarifa por grupo, que se calcula según el número real de
+              viajeros y se suma al generar la reserva.
+            </p>
+          )}
         </section>
       )}
       {/* Habitaciones */}

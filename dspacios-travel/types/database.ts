@@ -3411,6 +3411,28 @@ export type Database = {
           orden: number;
         }[];
       };
+      // Migración 171 — escritura financiera atómica del contrato. Solo
+      // `service_role` puede ejecutarlas (ver la migración): las llama el
+      // servidor con el cliente admin, nunca el navegador.
+      registrar_financiero_contrato: {
+        Args: {
+          p_numero_contrato: string;
+          p_tenant: string;
+          /** {costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos} — claves opcionales. */
+          p_costos: Json;
+          /** Filas de `cuentas_por_pagar` SIN numero_contrato/tenant (los pone la función). */
+          p_cxp: Json;
+        };
+        /** {creadas: [{id, tipo_proveedor, proveedor, servicio, servicio_id, valor_total}], eliminadas: [id]} */
+        Returns: Json;
+      };
+      revertir_contrato_incompleto: {
+        Args: {
+          p_numero_contrato: string;
+          p_tenant: string;
+        };
+        Returns: undefined;
+      };
     };
     Enums: {
       rol_usuario:

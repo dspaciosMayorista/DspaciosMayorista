@@ -33,8 +33,8 @@ import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHa
 import { liquidarHotelPaquete } from "@/lib/reservar/cotizar";
 import { resolverOrigenVuelo, empaquetadoVigente, hoyBogota, type OrigenVuelo } from "@/lib/reservar/origen";
 import {
-  normalizarCategoriaServicio, costoNetoServicioIncluido,
-  type CategoriaServicio, type ServicioEfectivo,
+  normalizarCategoriaServicio, costoNetoServicioIncluido, cargoGrupoIncluido,
+  type CategoriaServicio, type ServicioEfectivo, type ServicioGrupoIncluido,
 } from "@/lib/reservar/serviciosPaquete";
 import { validarModoServicio } from "@/lib/reservar/liquidacionServicio";
 
@@ -665,6 +665,10 @@ export async function computarReserva(
         (gruposPorServ.get(g.servicio_id) ?? gruposPorServ.set(g.servicio_id, []).get(g.servicio_id)!).push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio) || 0 });
       }
       const numNochesInc = meta.fecha_ida && meta.fecha_regreso ? (noches(meta.fecha_ida, meta.fecha_regreso) || 1) : 1;
+      // Incluidos por GRUPO: se juntan y se cobran de una sola vez más abajo,
+      // con la fórmula compartida (nunca uno por uno acá, para que el total
+      // sea exactamente el que mostró el buscador).
+      const gruposIncluidosPendientes: ServicioGrupoIncluido[] = [];
       for (const r of incRows) {
         if (r.servicio_id == null) continue;
         const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
@@ -689,33 +693,40 @@ export async function computarReserva(
           });
           continue;
         }
-        // Modo grupo: nunca se hornea en pvpPorAcom. Con pax real conocido:
-        // si no hay rango de servicio_tarifa_pax que lo cubra, es una
-        // configuración incompleta del catálogo — falla cerrado (nunca $0 en
-        // silencio para un servicio marcado incluido con un modo que exige
-        // tarifa por grupo).
-        if (costoNeto == null) {
+        // Modo grupo: nunca se hornea en pvpPorAcom (su costo depende del
+        // TAMAÑO del grupo). Acá se conoce el pax REAL, así que se cobra —
+        // una sola vez y con la MISMA fórmula que ya usó el buscador para
+        // mostrar el total (`cargoGrupoIncluido`), por lo que lo mostrado y
+        // lo cotizado coinciden para la misma composición. Las superficies
+        // que NO conocen el pax (tarifario público, tabla por acomodación de
+        // Reservar) no publican precio final: marcan el servicio grupal
+        // (decisión del dueño, revisión PR #294).
+        //
+        // Si ningún rango cubre el pax real, falla CERRADO (nunca $0 en
+        // silencio ni el rango más cercano).
+        gruposIncluidosPendientes.push({
+          servicioId: r.servicio_id,
+          nombre: srv?.nombre ?? "Servicio",
+          categoria: normalizarCategoriaServicio(srv?.categoria),
+          liquidacion: srv?.liquidacion ?? null,
+          proveedorId: srv?.proveedor_id ?? null,
+          rangos: gruposPorServ.get(r.servicio_id) ?? [],
+        });
+      }
+
+      // Cargo ÚNICO de los servicios incluidos por grupo, con el pax real.
+      // Misma función que usa el buscador de Vista Booking para mostrar el
+      // total, así que lo mostrado y lo cotizado coinciden exactamente.
+      if (gruposIncluidosPendientes.length) {
+        const cargo = cargoGrupoIncluido(gruposIncluidosPendientes, totalPax, pctMk, numNochesInc);
+        if (!cargo.ok) {
           return {
             ok: false,
-            error: `El servicio incluido "${srv?.nombre ?? r.servicio_id}" está configurado en modo grupo pero no tiene una tarifa por rango de pasajeros que cubra ${totalPax} pax — corrige el catálogo (servicio_tarifa_pax) antes de reservar.`,
+            error: `El servicio incluido "${cargo.nombre}" está configurado en modo grupo pero no tiene una tarifa por rango de pasajeros que cubra ${cargo.totalPax} pax — corrige el catálogo (servicio_tarifa_pax) antes de reservar.`,
           };
         }
-        // ⚠️ NO se suma nada a `precioVenta`. El precio que el cliente ve
-        // ANTES de confirmar (vitrina/tarjeta/modal/carrito) sale de
-        // `evaluarHotelPorFechas`/`generarTarifario`, y esos dos hornean SOLO
-        // los incluidos con `precio_persona` (un servicio en modo grupo tiene
-        // `precio_persona` null, así que queda fuera). Cobrarlo aquí —como
-        // hacía la primera versión de este PR— hacía que el total mostrado y
-        // el total cotizado en servidor NO coincidieran para la misma
-        // composición: se mostraba un valor y se cotizaba otro. El costo SÍ
-        // se registra (abajo), con su CxP: si el montaje marcó incluido un
-        // servicio por grupo que la tarifa del paquete no cubre, el margen
-        // real baja y eso queda visible en rentabilidad — que es la verdad,
-        // en vez de un sobrecargo silencioso al cliente.
-        serviciosIncluidos.push({
-          servicioId: r.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria: normalizarCategoriaServicio(srv?.categoria),
-          incluido: true, costoNeto, proveedorId: srv?.proveedor_id ?? null,
-        });
+        precioVenta += cargo.pvp;
+        serviciosIncluidos.push(...cargo.servicios);
       }
     }
   }

@@ -16,7 +16,7 @@
 // `distribucionHabitaciones.ts`.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { precioServicio, factorLiquidacion } from "../calc/paquetes.ts";
+import { precioServicio, factorLiquidacion, marcar } from "../calc/paquetes.ts";
 
 // `servicios_adicionales.categoria` es texto libre sin CHECK (migración 029,
 // "valores sugeridos: tour_traslado | asistencia | otro") — cualquier valor
@@ -122,4 +122,69 @@ export function costoNetoServicioIncluido(
   if (!cubre) return null; // ningún rango de pax cubre esta reserva — configuración incompleta, nunca se asume el más cercano
   const total = precioServicio("grupo", null, gruposNeto, totalPax) * factorLiquidacion(liquidacion, numNoches);
   return Number.isFinite(total) ? total : null;
+}
+
+
+// ── Servicios INCLUIDOS con cobro POR GRUPO ────────────────────────────────
+//
+// Un servicio marcado "Incluido (todo junto)" cuya tarifa el proveedor da POR
+// GRUPO (rangos de pax) no se puede hornear en la tarifa por persona del hotel
+// como se hace con los de cobro por persona: su costo depende del TAMAÑO del
+// grupo, que no se conoce hasta que hay una composición concreta. Por eso
+// `generarTarifario`/`evaluarHotelPorFechas` lo dejan FUERA del precio por
+// persona (su `precio_persona` es null) y el cargo se resuelve aquí, una sola
+// vez, con el pax REAL.
+//
+// Regla (decidida con el dueño, revisión del PR #294):
+//  · Donde SÍ se conoce el pax (buscador de Vista Booking, carrito, cotización
+//    y contrato) el cargo se suma UNA vez al total, así que lo que se muestra
+//    para una composición concreta es exactamente lo que se cobra.
+//  · Donde NO se conoce el pax (tarifario público y la tabla por acomodación
+//    de Reservar) no se publica un precio final: se marca que el paquete
+//    incluye un servicio grupal que se calcula según el número de viajeros.
+//    Nunca se muestra "gratis" para cobrarlo después.
+
+export type ServicioGrupoIncluido = {
+  servicioId: number;
+  nombre: string;
+  categoria: CategoriaServicio;
+  liquidacion: string | null;
+  proveedorId: number | null;
+  /** Rangos de `servicio_tarifa_pax` (temporada GENERAL) del servicio. */
+  rangos: { pax_desde: number; pax_hasta: number; precio: number }[];
+};
+
+export type CargoGrupoIncluido =
+  | { ok: true; pvp: number; servicios: ServicioEfectivo[] }
+  // Ningún rango cubre el pax real → configuración incompleta del catálogo.
+  // Falla cerrado: nunca se cobra $0 ni se asume el rango más cercano.
+  | { ok: false; nombre: string; totalPax: number };
+
+/**
+ * Cargo TOTAL (PVP, ya con markup) de los servicios incluidos por grupo para
+ * una composición concreta, más su costo NETO por servicio para la CxP.
+ *
+ * Es la ÚNICA fórmula: la usan el buscador (lo que se muestra), el motor de
+ * reserva (lo que se cotiza y se cobra) y la creación de CxP (lo que se debe).
+ * Si dos superficies usaran fórmulas distintas volvería el defecto de "muestra
+ * un valor y cobra otro".
+ */
+export function cargoGrupoIncluido(
+  servicios: readonly ServicioGrupoIncluido[],
+  totalPax: number,
+  pctMk: number,
+  numNoches: number
+): CargoGrupoIncluido {
+  let pvp = 0;
+  const efectivos: ServicioEfectivo[] = [];
+  for (const s of servicios ?? []) {
+    const costoNeto = costoNetoServicioIncluido("grupo", null, s.rangos ?? [], totalPax, s.liquidacion, numNoches);
+    if (costoNeto == null) return { ok: false, nombre: s.nombre, totalPax };
+    pvp += Math.round(marcar(costoNeto, pctMk));
+    efectivos.push({
+      servicioId: s.servicioId, nombre: s.nombre, categoria: s.categoria,
+      incluido: true, costoNeto, proveedorId: s.proveedorId,
+    });
+  }
+  return { ok: true, pvp, servicios: efectivos };
 }
