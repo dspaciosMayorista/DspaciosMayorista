@@ -786,7 +786,7 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
   ] = await Promise.all([
     admin.from("armado_paquetes").select("id, pct_mk").in("id", paqueteIds),
     admin.from("armado_servicios").select("paquete_id, servicio_id, modo").in("paquete_id", paqueteIds).in("servicio_id", servicioIds),
-    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda").in("id", servicioIds),
+    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda, categoria, proveedor_id").in("id", servicioIds),
     admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", servicioIds),
     admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", servicioIds),
   ]);
@@ -892,7 +892,7 @@ export async function liquidarServicioPuntual(input: {
   ] = await Promise.all([
     admin.from("armado_paquetes").select("id, pct_mk").eq("id", input.paqueteId).maybeSingle(),
     admin.from("armado_servicios").select("paquete_id, servicio_id, modo").eq("paquete_id", input.paqueteId).eq("servicio_id", input.servicioId).maybeSingle(),
-    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda").eq("id", input.servicioId).maybeSingle(),
+    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda, categoria, proveedor_id").eq("id", input.servicioId).maybeSingle(),
     admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").eq("servicio_id", input.servicioId),
     admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").eq("servicio_id", input.servicioId),
   ]);

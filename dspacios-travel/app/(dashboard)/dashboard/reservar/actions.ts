@@ -35,6 +35,10 @@ import {
   type ComputoReserva,
 } from "@/lib/reservar/computo";
 import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
+import {
+  normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio,
+  type ServicioEfectivo,
+} from "@/lib/reservar/serviciosPaquete";
 import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import { normalizarResponsablesPorGrupo } from "@/lib/reservar/pasajerosFilas";
@@ -103,7 +107,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // 1) Cálculo (precios, líneas, pax, impuesto) — fuente única compartida.
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
+  const { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, cargoMascota } = comp.data;
 
   // 2c) Resolver y VALIDAR el origen completo del vuelo (bloqueo negociado,
   // empaquetado o salida dinámica) ANTES de crear nada — ni sillas, ni venta,
@@ -634,13 +638,18 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     }
   }
 
-  // 11) Costo neto de SERVICIOS (receptivo) — admin, oculto al asesor.
+  // 11) Costo neto de SERVICIOS opcionales (receptivo) — admin, oculto al asesor.
+  // Los efectivos (incluidos + opcionales) se acumulan en `serviciosEfectivos`
+  // para un solo resumen final (asistencia_medica/tours_traslados) — fuente
+  // única compartida con checkout/crearCotizacion (lib/reservar/serviciosPaquete.ts),
+  // dedup por servicioId (nunca solo por nombre).
+  const serviciosEfectivos: ServicioEfectivo[] = [];
   if (input.servicios?.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
       const [{ data: arm }, { data: gruposNet }, { data: tempsNet }] = await Promise.all([
         admin.from("armado_servicios")
-          .select("servicio_id, modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedores(nombre, aplica_retencion, pct_retencion))")
+          .select("servicio_id, modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
           .eq("paquete_id", input.paqueteId).in("servicio_id", input.servicios),
         admin.from("servicio_tarifa_pax")
           .select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", input.servicios),
@@ -676,11 +685,9 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       };
       const nochesStay = meta.fecha_ida && meta.fecha_regreso ? noches(meta.fecha_ida, meta.fecha_regreso) : 1;
       let costoReceptivo = 0;
-      const tours: string[] = [];
-      let hayAsistencia = false;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedores: ProvFact } | null;
+        const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
         const nombreTemp = tempVigente(s.servicio_id);
         // Neto por persona: el de la temporada vigente, o el base.
         const netoPersona = (nombreTemp ? netoTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined) ?? srv?.precio_persona ?? null;
@@ -695,19 +702,63 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
           costoServ += Math.max(recTemp ?? (Number(srv?.recargo_individual) || 0), 0);
         }
         costoReceptivo += costoServ;
-        const cat = srv?.categoria ?? "otro";
-        if (cat === "asistencia") hayAsistencia = true;
-        else if (cat === "tour_traslado" && srv?.nombre) tours.push(srv.nombre);
-        // Una CxP por servicio (asistencia médica va a su propio tipo de proveedor).
-        pushCxP(cat === "asistencia" ? "asistencia" : "receptivo", srv?.nombre ?? "Servicio", costoServ, srv?.proveedores ?? null);
+        const categoria = normalizarCategoriaServicio(srv?.categoria);
+        serviciosEfectivos.push({
+          servicioId: s.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria,
+          incluido: false, costoNeto: costoServ, proveedorId: srv?.proveedor_id ?? null,
+        });
+        // Una CxP por servicio — tipo derivado de la MISMA fuente que el
+        // resumen (asistencia→asistencia, tour_traslado→receptivo, otro→otro;
+        // antes "otro" caía incorrectamente en "receptivo").
+        pushCxP(tipoProveedorCxpServicio(categoria), srv?.nombre ?? "Servicio", costoServ, srv?.proveedores ?? null);
       }
-      const upd: { costo_receptivo?: number; tours_traslados?: string; asistencia_medica?: boolean } = {};
-      if (costoReceptivo > 0) upd.costo_receptivo = costoReceptivo;
-      if (tours.length) upd.tours_traslados = tours.join(", ");
-      if (hayAsistencia) upd.asistencia_medica = true;
-      if (Object.keys(upd).length) await admin.from("ventas").update(upd).eq("numero_contrato", numero);
+      if (costoReceptivo > 0) await admin.from("ventas").update({ costo_receptivo: costoReceptivo }).eq("numero_contrato", numero);
     } catch {
       // Costo neto informativo; no bloquea la reserva.
+    }
+  }
+
+  // 11-bis) Servicios INCLUIDOS del paquete (armado_servicios.incluido=true).
+  // Su PVP ya está horneado (comp.data.serviciosIncluidos, ver computo.ts) —
+  // acá SOLO se genera la CxP de su proveedor real (antes se perdía dentro de
+  // la CxP de "hotel") y se suman al resumen de asistencia/tours. Mismo
+  // patrón best-effort que el resto de esta función (costo neto es
+  // informativo/operativo, un fallo técnico acá no bloquea ni revierte el
+  // contrato ya creado) — la validación DURA (modo inválido, grupo sin rango
+  // de pax) ya corrió en `computarReserva`, ANTES de crear nada.
+  if (serviciosIncluidos.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      const ids = serviciosIncluidos.map((s) => s.servicioId);
+      const { data: provRows } = await admin
+        .from("servicios_adicionales")
+        .select("id, proveedores(nombre, aplica_retencion, pct_retencion)")
+        .in("id", ids);
+      const provPorId = new Map((provRows ?? []).map((r) => [r.id, r.proveedores as unknown as ProvFact]));
+      for (const s of serviciosIncluidos) {
+        serviciosEfectivos.push(s);
+        if (s.costoNeto > 0) {
+          pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, provPorId.get(s.servicioId) ?? null);
+        }
+      }
+    } catch {
+      // Costo neto/CxP informativo para el servicio incluido; no bloquea la reserva.
+    }
+  }
+
+  // Resumen ÚNICO de asistencia/tours (incluidos + opcionales, deduplicado
+  // por servicioId) — misma fuente que checkout/crearCotizacion, para que
+  // cotización y contrato muestren exactamente el mismo resultado.
+  if (serviciosEfectivos.length && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const admin = createAdminClient();
+      const resumen = resumirServiciosContrato(serviciosEfectivos);
+      const upd: { tours_traslados?: string; asistencia_medica?: boolean } = {};
+      if (resumen.toursTraslados) upd.tours_traslados = resumen.toursTraslados;
+      if (resumen.asistenciaMedica) upd.asistencia_medica = true;
+      if (Object.keys(upd).length) await admin.from("ventas").update(upd).eq("numero_contrato", numero);
+    } catch {
+      // Informativo/display; no bloquea la reserva.
     }
   }
 
@@ -746,7 +797,14 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
   const esServicios = input.modulo === "servicios";
   const comp = await computarReserva(sb, input);
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { origen, meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, monedaReserva, cargoMascota } = comp.data;
+  const { origen, meta, pvpPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota } = comp.data;
+  // Mismo resumen ÚNICO que usa `reservarDesdeTarifarioInterno` al convertir
+  // (lib/reservar/serviciosPaquete.ts) — así la cotización ya muestra, antes
+  // de convertirse, exactamente lo que mostrará el contrato.
+  const resumenServicios = resumirServiciosContrato([
+    ...serviciosIncluidos,
+    ...serviciosItems.map((s): ServicioEfectivo => ({ servicioId: s.servicioId, nombre: s.nombre, categoria: s.categoria, incluido: false, costoNeto: 0, proveedorId: s.proveedorId })),
+  ]);
 
   // Origen del vuelo (bloqueo/empaquetado/salida) para el snapshot de la
   // cotización — misma fuente única que usa `reservarDesdeTarifarioInterno`
@@ -788,8 +846,8 @@ export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHast
     pax: totalPax || paxConSilla,
     estado: "pendiente",
     plan_nombre: planNombre,
-    asistencia_medica: false,
-    tours_traslados: null,
+    asistencia_medica: resumenServicios.asistenciaMedica,
+    tours_traslados: resumenServicios.toursTraslados,
     asesor_firma_nombre: oNull(asesorNombre),
     asesor_firma_cargo: "Asesor/a",
     asesor_firma_cc: null,
@@ -998,9 +1056,12 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
 //    elegido en el checkout es solo informativo en el mensaje de WhatsApp/
 //    correo, igual que ya pasaba desde la Fase 2; agregar la comisión B2B a
 //    mano en el contrato ya generado sigue disponible como siempre.
-//  · Los tours no generan CxP automática (no hay forma de re-liquidar su
-//    costo neto desde el snapshot del carrito) — sí quedan como ítem visible
-//    del contrato; el proveedor se registra a mano en la pestaña Proveedores.
+//  · Los tours/servicios (opcionales del carrito + incluidos del paquete) SÍ
+//    generan CxP automática cuando el snapshot trae `servicioId`/`paqueteId`
+//    (ver bloque de tours más abajo, que re-liquida el costo NETO al
+//    convertir con la MISMA fórmula que `reservarDesdeTarifarioInterno`) —
+//    cotizaciones de carrito creadas ANTES de este cambio no traen esos ids
+//    y sus tours siguen sin CxP automática (residual, documentado en el PR).
 export type ItemCarritoPayload = {
   modulo: "bloqueo" | "porcion_terrestre";
   paqueteId: number; hotelId: number; bloqueoId: number | null;
@@ -1011,6 +1072,13 @@ export type ItemCarritoPayload = {
 export type TourCarritoPayload = {
   nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null;
   pax: number; precio: number; moneda: string;
+  // Opcionales: cotizaciones de carrito creadas ANTES de este cambio no los
+  // traen — nunca se inventa una categoría/proveedor para esos casos
+  // legados, `normalizarCategoriaServicio(undefined)` cae a "otro". Sin
+  // `servicioId`/`paqueteId` no se puede re-liquidar el costo NETO al
+  // convertir (ver bloque de tours en `convertirCotizacionCarrito`) — esos
+  // tours legados siguen sin CxP automática, igual que antes de este cambio.
+  servicioId?: number; paqueteId?: number; categoria?: string; proveedorId?: number | null;
 };
 
 // Un ítem del carrito con su asignación EXPLÍCITA de pasajeros — revisión de
@@ -1104,10 +1172,15 @@ export async function convertirCotizacionCarrito(
 
   const payload = (cot.payload ?? {}) as {
     items?: ItemCarritoPayload[]; tours?: TourCarritoPayload[];
+    // Servicios INCLUIDOS de cada paquete de hotel del carrito, congelados al
+    // crear la cotización (checkout/actions.ts) — ausente en cotizaciones
+    // creadas antes de este cambio (queda `[]`, nunca se inventa contenido).
+    serviciosIncluidos?: ServicioEfectivo[];
     cliente?: { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
   };
   const itemsCrudos = payload.items ?? [];
   const tours = payload.tours ?? [];
+  const serviciosIncluidosCot = payload.serviciosIncluidos ?? [];
   const cliente = payload.cliente ?? { nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" };
   if (!itemsCrudos.length && !tours.length) return { ok: false, error: "La cotización no tiene ítems." };
   if (!opts.pasajeros.length) return { ok: false, error: "Captura los pasajeros antes de generar el contrato." };
@@ -1443,6 +1516,29 @@ export async function convertirCotizacionCarrito(
     // grupo.
     const paxTotal = pasajerosLocal.length;
 
+    // Resumen ÚNICO de asistencia/tours de ESTE grupo (incluidos del paquete
+    // scoped por `paqueteId` de sus hoteles + opcionales del carrito), misma
+    // fuente compartida que `crearCotizacion`/`reservarDesdeTarifarioInterno`
+    // (lib/reservar/serviciosPaquete.ts) — así la cotización de carrito y el
+    // contrato resultante muestran exactamente el mismo resultado. Legados
+    // sin `servicioId` caen a "otro" vía `normalizarCategoriaServicio`
+    // (nunca se inventa asistencia/tour para un dato ausente).
+    const incluidosGrupo = serviciosIncluidosCot.filter(
+      (s) => s.paqueteId != null && grupo.items.some((it) => it.paqueteId === s.paqueteId)
+    );
+    const serviciosEfectivosGrupo: ServicioEfectivo[] = [
+      ...incluidosGrupo,
+      ...grupo.tours.map((t, i): ServicioEfectivo => ({
+        servicioId: t.servicioId ?? -(i + 1),
+        nombre: t.nombre,
+        categoria: normalizarCategoriaServicio(t.categoria),
+        incluido: false,
+        costoNeto: 0,
+        proveedorId: t.proveedorId ?? null,
+      })),
+    ];
+    const resumenGrupo = resumirServiciosContrato(serviciosEfectivosGrupo);
+
     const { error: ve } = await sb.from("ventas").insert({
       numero_contrato: numero,
       // Conserva EXACTAMENTE el tenant de la cotización de origen (validado
@@ -1471,7 +1567,8 @@ export async function convertirCotizacionCarrito(
       plan_nombre: validados.length === 1
         ? `${validados[0].item.categoria} · ${validados[0].item.regimen}`
         : validados.length === 0 ? (grupo.tours.length === 1 ? grupo.tours[0].nombre : `${grupo.tours.length} tours`) : `${validados.length} hoteles`,
-      tours_traslados: grupo.tours.length ? grupo.tours.map((t) => t.nombre).join(", ") : null,
+      tours_traslados: resumenGrupo.toursTraslados,
+      asistencia_medica: resumenGrupo.asistenciaMedica,
     });
     if (ve) return { ok: false, error: ve.message };
 
@@ -1716,7 +1813,11 @@ export async function convertirCotizacionCarrito(
       pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? it.hotelNombre}`.trim(), costoHotel, prH);
     }
 
-    // Tours: quedan como ítem visible del contrato (sin CxP automática — ver nota arriba).
+    // Tours (opcionales del carrito): ítem visible del contrato + CxP real
+    // cuando se puede re-liquidar el costo NETO al convertir (servicioId +
+    // paqueteId presentes en el snapshot — cotizaciones de carrito creadas
+    // ANTES de este cambio no los traen, quedan sin CxP automática igual que
+    // antes, ver comentario de `TourCarritoPayload`).
     if (grupo.tours.length) {
       const itemsTours = grupo.tours.map((t, i) => ({
         numero_contrato: numero, descripcion: `Servicio · ${t.nombre}${t.destino ? ` — ${t.destino}` : ""}`,
@@ -1740,6 +1841,70 @@ export async function convertirCotizacionCarrito(
             restriccionComercial: "normal",
           });
         }
+      }
+      // CxP de cada tour opcional — re-liquida el costo NETO al convertir con
+      // la MISMA fórmula que usa `reservarDesdeTarifarioInterno` (paso 11)
+      // para sus servicios opcionales (temporada vigente, modo persona/
+      // grupo, recargo individual si va 1 pax) — NUNCA usa `t.precio`, que
+      // es el PVP ya marcado. Best-effort (igual que el resto de esta
+      // función): un fallo técnico acá es informativo/operativo, no bloquea
+      // ni revierte el contrato ya creado (la validación DURA de la reserva
+      // ya corrió antes de insertar cualquier fila).
+      for (const t of grupo.tours) {
+        if (t.servicioId == null || t.paqueteId == null) continue; // legado, sin ids para re-liquidar
+        try {
+          const { data: arm } = await admin
+            .from("armado_servicios")
+            .select("modo, servicios_adicionales(precio_persona, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
+            .eq("paquete_id", t.paqueteId).eq("servicio_id", t.servicioId).maybeSingle();
+          if (!arm) continue;
+          const srv = arm.servicios_adicionales as unknown as { precio_persona: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
+          const modo = (arm.modo as string) === "grupo" ? "grupo" : "persona";
+          const [{ data: gruposNet }, { data: tempsNet }] = await Promise.all([
+            admin.from("servicio_tarifa_pax").select("pax_desde, pax_hasta, precio, temporada").eq("servicio_id", t.servicioId),
+            admin.from("servicio_temporadas").select("nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").eq("servicio_id", t.servicioId),
+          ]);
+          const tempsRango: TemporadaRango[] = (tempsNet ?? []).map((tt) => toTemporadaRango(tt));
+          const nombreTemp = t.fechaIda && tempsRango.length ? temporadaVigenteParaFecha(new Date(`${t.fechaIda}T00:00:00`), tempsRango) : null;
+          const netoTemp = nombreTemp ? (tempsNet ?? []).find((tt) => tt.nombre === nombreTemp) ?? null : null;
+          const netoPersona = netoTemp?.precio_persona ?? srv?.precio_persona ?? null;
+          const gruposGeneral = (gruposNet ?? []).filter((g) => (g.temporada ?? "GENERAL") === "GENERAL").map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio }));
+          const gruposTempArr = nombreTemp ? (gruposNet ?? []).filter((g) => g.temporada === nombreTemp).map((g) => ({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio })) : [];
+          const grupos = gruposTempArr.length ? gruposTempArr : gruposGeneral;
+          const nochesTour = t.fechaIda && t.fechaRegreso ? (noches(t.fechaIda, t.fechaRegreso) || 1) : 1;
+          let costoNeto = precioServicio(modo, netoPersona, grupos, t.pax) * factorLiquidacion(srv?.liquidacion ?? null, nochesTour);
+          if (modo === "persona" && t.pax === 1) {
+            const recTemp = netoTemp?.recargo_individual;
+            costoNeto += Math.max(Number(recTemp ?? srv?.recargo_individual) || 0, 0);
+          }
+          if (Number.isFinite(costoNeto) && costoNeto > 0) {
+            pushCxP(tipoProveedorCxpServicio(normalizarCategoriaServicio(srv?.categoria)), srv?.nombre ?? t.nombre, costoNeto, srv?.proveedores ?? null);
+          }
+        } catch {
+          // Costo neto/CxP informativo para el tour opcional; no bloquea la conversión.
+        }
+      }
+    }
+
+    // Servicios INCLUIDOS del paquete que pertenecen a este grupo
+    // (`incluidosGrupo`, ver arriba) — su PVP ya está horneado en el
+    // snapshot del carrito (nunca se vuelve a sumar acá), solo se genera su
+    // CxP real. Mismo patrón best-effort que el bloque de tours.
+    if (incluidosGrupo.length) {
+      try {
+        const ids = incluidosGrupo.map((s) => s.servicioId);
+        const { data: provRows } = await admin
+          .from("servicios_adicionales")
+          .select("id, proveedores(nombre, aplica_retencion, pct_retencion)")
+          .in("id", ids);
+        const provPorId = new Map((provRows ?? []).map((r) => [r.id, r.proveedores as unknown as ProvFact]));
+        for (const s of incluidosGrupo) {
+          if (s.costoNeto > 0) {
+            pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, provPorId.get(s.servicioId) ?? null);
+          }
+        }
+      } catch {
+        // Costo neto/CxP informativo para el servicio incluido; no bloquea la conversión.
       }
     }
 

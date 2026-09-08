@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
+import { normalizarCategoriaServicio, resumirServiciosContrato } from "@/lib/reservar/serviciosPaquete";
 import { asegurarCuentasPorPagar } from "../reservar/actions";
 import { formatMoneda } from "@/lib/utils";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
@@ -1115,12 +1116,24 @@ export async function actualizarServiciosContrato(
   await sb.from("ventas").update({ precio_venta: nuevoPrecio }).eq("numero_contrato", numeroContrato);
 
   // Costo receptivo neto + casillas Tours/Asistencia (admin: oculto al asesor).
+  // El resumen de asistencia/tours combina los OPCIONALES recién elegidos
+  // (`serviciosIds`) CON los servicios INCLUIDOS del paquete
+  // (`armado_servicios.incluido=true`, ya horneados en el PVP del hotel,
+  // nunca se re-suman al costo) — editar la selección de opcionales nunca
+  // debe "apagar" en el documento una asistencia/tour que sigue incluida
+  // sin importar qué opcionales elija el asesor. Fuente única compartida con
+  // el resto de los caminos de creación (lib/reservar/serviciosPaquete.ts).
+  // ⚠️ Nota (residual, ver PR): esta función NO crea/ajusta CxP al cambiar
+  // la selección de opcionales — `cuentas_por_pagar` no tiene una columna
+  // que enlace una fila a un `servicio_id` concreto, así que no hay forma
+  // segura de identificar cuál CxP pertenece a cuál servicio para
+  // reconciliar sin arriesgar borrar/duplicar la fila equivocada; la CxP de
+  // costos ya congelados al crear el contrato queda sin tocar.
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try {
       const admin = createAdminClient();
       let costoReceptivo = 0;
-      const tours: string[] = [];
-      let hayAsistencia = false;
+      const efectivos: { servicioId: number; nombre: string; categoria: string | null; incluido: boolean }[] = [];
       if (serviciosIds.length) {
         const [{ data: arm }, { data: gruposNet }] = await Promise.all([
           admin.from("armado_servicios").select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre, liquidacion)").eq("paquete_id", venta.paquete_armado_id).in("servicio_id", serviciosIds),
@@ -1137,15 +1150,27 @@ export async function actualizarServiciosContrato(
           const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
           const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string; liquidacion: string | null } | null;
           costoReceptivo += precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], pax) * factorLiquidacion(srv?.liquidacion, nochesStay);
-          const cat = srv?.categoria ?? "otro";
-          if (cat === "asistencia") hayAsistencia = true;
-          else if (cat === "tour_traslado" && srv?.nombre) tours.push(srv.nombre);
+          efectivos.push({ servicioId: s.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria: srv?.categoria ?? null, incluido: false });
         }
       }
+      const { data: incRows } = await admin
+        .from("armado_servicios")
+        .select("servicio_id, servicios_adicionales(nombre, categoria)")
+        .eq("paquete_id", venta.paquete_armado_id).eq("incluido", true);
+      for (const r of incRows ?? []) {
+        const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null } | null;
+        efectivos.push({ servicioId: r.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria: srv?.categoria ?? null, incluido: true });
+      }
+      const resumen = resumirServiciosContrato(
+        efectivos.map((e) => ({
+          servicioId: e.servicioId, nombre: e.nombre, categoria: normalizarCategoriaServicio(e.categoria),
+          incluido: e.incluido, costoNeto: 0, proveedorId: null,
+        }))
+      );
       await admin.from("ventas").update({
         costo_receptivo: costoReceptivo,
-        tours_traslados: tours.length ? tours.join(", ") : null,
-        asistencia_medica: hayAsistencia,
+        tours_traslados: resumen.toursTraslados,
+        asistencia_medica: resumen.asistenciaMedica,
       }).eq("numero_contrato", numeroContrato);
     } catch {
       // Costo neto informativo; no bloquea la edición.

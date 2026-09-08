@@ -14,6 +14,7 @@ import {
   type SolicitudItemValidado, type SolicitudTourValidado,
 } from "@/lib/reservar/edadesMenores";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
+import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
 import type { Json } from "@/types/database";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
@@ -83,6 +84,7 @@ type SolicitudTourComputado = {
   nombre: string; destino: string | null; descripcion: string | null;
   fechaIda: string; fechaRegreso: string; noches: number;
   pax: number; precio: number; moneda: string;
+  categoria: CategoriaServicio; proveedorId: number | null;
 };
 
 export type SolicitudCliente = { nombres: string; apellidos: string; numeroDoc: string; telefono: string; email: string };
@@ -276,6 +278,12 @@ async function crearCotizacionCarrito(input: {
   const itemsSnap: Record<string, unknown>[] = [];
   const itemsOk: SolicitudItemComputado[] = [];
   const toursOk: SolicitudTourComputado[] = [];
+  // Servicios INCLUIDOS de cada paquete de hotel del carrito — acumulados
+  // acá para el resumen (asistencia/tours) y el snapshot que
+  // `convertirCotizacionCarrito` reutiliza al crear la CxP del proveedor
+  // real (nunca se vuelven a sumar al precio: ya vienen horneados en
+  // `precioVenta` desde `computarReserva`).
+  const incluidosSnap: ServicioEfectivo[] = [];
   const excluidos: ItemExcluido[] = [];
   let monedaPrincipal: string | null = null;
   let total = 0;
@@ -309,7 +317,8 @@ async function crearCotizacionCarrito(input: {
     };
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
-    const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas } = comp.data;
+    const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas, serviciosIncluidos } = comp.data;
+    incluidosSnap.push(...serviciosIncluidos.map((s) => ({ ...s, paqueteId: it.paqueteId })));
 
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
       excluidos.push({ etiqueta: `${it.hotelNombre} (moneda ${monedaReserva})`, motivo: "moneda" });
@@ -441,6 +450,7 @@ async function crearCotizacionCarrito(input: {
       nombre: resultado.resultado.nombre, destino: resultado.resultado.destino, descripcion: resultado.resultado.descripcion,
       fechaIda: t.fechaIda, fechaRegreso: t.fechaRegreso, noches: resultado.resultado.noches,
       pax: resultado.resultado.pax, precio: resultado.resultado.total, moneda: resultado.resultado.moneda,
+      categoria: resultado.resultado.categoria, proveedorId: resultado.resultado.proveedorId,
     });
   }
 
@@ -456,14 +466,25 @@ async function crearCotizacionCarrito(input: {
   const paxTotal = itemsOk.reduce((s, i) => s + (i.pax || 0), 0) || (toursOk[0]?.pax ?? 0);
   const planNombre: string | null = itemsOk.length > 1 ? `${itemsOk.length} hoteles` : (itemsOk[0] ? `${itemsOk[0].categoria} · ${itemsOk[0].regimen}` : null);
 
+  // Resumen ÚNICO (asistencia/tours) de servicios INCLUIDOS + opcionales
+  // realmente seleccionados — misma fuente que reservarDesdeTarifarioInterno/
+  // crearCotizacion (lib/reservar/serviciosPaquete.ts), deduplicado por
+  // servicioId. Nunca clasifica una asistencia como tour ni inventa
+  // categoría para un servicio "otro".
+  const serviciosEfectivosSnap: ServicioEfectivo[] = [
+    ...incluidosSnap,
+    ...toursOk.map((t): ServicioEfectivo => ({ servicioId: t.servicioId, nombre: t.nombre, categoria: t.categoria, incluido: false, costoNeto: 0, proveedorId: t.proveedorId })),
+  ];
+  const resumenServicios = resumirServiciosContrato(serviciosEfectivosSnap);
+
   const ventaSnap: Record<string, unknown> = {
     numero_contrato: "", cliente: clienteNombre, cliente_documento: input.cliente.numeroDoc.trim() || null,
     cliente_telefono: input.cliente.telefono.trim() || null, cliente_direccion: null,
     destino: destinoTxt, fecha_emision: hoy, fecha_salida: fechaIda, fecha_regreso: fechaRegreso,
     pax: paxTotal, estado: "pendiente",
     plan_nombre: planNombre,
-    asistencia_medica: false,
-    tours_traslados: toursOk.length ? toursOk.map((t) => t.nombre).join(", ") : null,
+    asistencia_medica: resumenServicios.asistenciaMedica,
+    tours_traslados: resumenServicios.toursTraslados,
     moneda,
   };
 
@@ -483,7 +504,7 @@ async function crearCotizacionCarrito(input: {
     // tiene tarifario/catálogo público — MINORISTA_OCULTAS en proxy.ts).
     tenant: "mayorista",
     tipo: "carrito",
-    payload: { items: itemsOk, tours: toursOk, cliente: input.cliente } as unknown as Json,
+    payload: { items: itemsOk, tours: toursOk, serviciosIncluidos: incluidosSnap, cliente: input.cliente } as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: clienteNombre,
     cliente_documento: input.cliente.numeroDoc.trim() || null,

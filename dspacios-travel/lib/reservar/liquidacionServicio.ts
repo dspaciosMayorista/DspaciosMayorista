@@ -40,9 +40,16 @@ import {
   precioServicio, factorLiquidacion, marcar, redondearVenta, temporadaVigenteParaFecha,
   toTemporadaRango, type TemporadaRango,
 } from "../calc/paquetes.ts";
+import { normalizarCategoriaServicio, type CategoriaServicio } from "./serviciosPaquete.ts";
 
 export type DatosServicioPar = { servicioId: number; paqueteId: number; nombre: string; destino: string | null; descripcion: string | null };
-export type FilaServicioAdicional = { id: number; precio_persona: number | null; recargo_individual: number | null; liquidacion: string | null; moneda: string | null };
+export type FilaServicioAdicional = {
+  id: number; precio_persona: number | null; recargo_individual: number | null; liquidacion: string | null; moneda: string | null;
+  // `categoria`/`proveedor_id` — migración 029/proveedor_id de servicios_adicionales.
+  // Opcionales para no romper llamadores viejos que aún no los seleccionan
+  // (quedan como "otro"/null vía `normalizarCategoriaServicio`, nunca inventan asistencia/tour).
+  categoria?: string | null; proveedor_id?: number | null;
+};
 export type FilaGrupoTarifa = { pax_desde: number; pax_hasta: number; precio: number };
 export type FilaArmadoServicio = { paquete_id: number; servicio_id: number; modo: string | null };
 export type FilaPaquete = { id: number; pct_mk: number | null };
@@ -56,6 +63,7 @@ export type FilaGrupoServicio = FilaGrupoTarifa & { servicio_id: number; tempora
 export type ResultadoServicio = {
   servicioId: number; nombre: string; destino: string | null; descripcion: string | null;
   paqueteId: number; total: number; pax: number; noches: number; moneda: string;
+  categoria: CategoriaServicio; proveedorId: number | null;
 };
 
 export type ContextoServicios = {
@@ -205,7 +213,11 @@ export function calcularPrecioConModoYMarkup(
   // dólares) y positivo antes de darlo por válido.
   if (!Number.isSafeInteger(total) || total <= 0) return null;
 
-  return { servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion, paqueteId: par.paqueteId, total, pax, noches: numNoches, moneda };
+  return {
+    servicioId: par.servicioId, nombre: par.nombre, destino: par.destino, descripcion: par.descripcion,
+    paqueteId: par.paqueteId, total, pax, noches: numNoches, moneda,
+    categoria: normalizarCategoriaServicio(srv.categoria), proveedorId: srv.proveedor_id ?? null,
+  };
 }
 
 // ── Búsqueda en lote (buscarReceptivos): TOLERANTE con la AUSENCIA de datos

@@ -96,7 +96,7 @@ test("convertirCotizacionCarrito: congela UNA vez por contrato (grupo), acumulan
   // de tours (para incluirlos en el mismo snapshot), con el número YA
   // generado del grupo — nunca dentro del loop por hotel (evitaría duplicar
   // filas al reintentar el no-op del RPC innecesariamente por ítem).
-  const idxLoopFin = fn.indexOf("// Tours: quedan como ítem visible");
+  const idxLoopFin = fn.indexOf("// Tours (opcionales del carrito): ítem visible del contrato");
   const idxCongelado = fn.indexOf("congelarCondicionesContratoBestEffort(admin,");
   assert.ok(idxLoopFin !== -1, "no se encontró el bloque de tours");
   assert.ok(idxCongelado > idxLoopFin, "el congelado del carrito se llama ANTES del bloque de tours — no incluiría sus componentes");

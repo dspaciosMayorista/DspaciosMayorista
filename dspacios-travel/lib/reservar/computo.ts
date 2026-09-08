@@ -32,6 +32,11 @@ import { validarCantidadMenores, validarEdadesMenores, clasificarMenoresPorEdad,
 import { distribuirPorHabitaciones, type HabitacionConsultada, type AsignacionHabitacion } from "@/lib/reservar/distribucionHabitaciones";
 import { liquidarHotelPaquete } from "@/lib/reservar/cotizar";
 import { resolverOrigenVuelo, empaquetadoVigente, hoyBogota, type OrigenVuelo } from "@/lib/reservar/origen";
+import {
+  normalizarCategoriaServicio, costoNetoServicioIncluido,
+  type CategoriaServicio, type ServicioEfectivo,
+} from "@/lib/reservar/serviciosPaquete";
+import { validarModoServicio } from "@/lib/reservar/liquidacionServicio";
 
 export type PasajeroReserva = {
   nombres: string;
@@ -115,7 +120,19 @@ export type ComputoReserva = {
   // flujo legado (sin `edadesMenores`).
   edadesMenoresUsadas: number[] | null;
   lineasHab: { acom: AcomRoom; habitaciones: number; pax: number; pvp: number }[];
-  serviciosItems: { nombre: string; precio: number }[];
+  // Add-ons OPCIONALES realmente seleccionados (`input.servicios`). `precio`
+  // ya está sumado UNA vez en `precioVenta` — nunca se vuelve a sumar aguas
+  // abajo. `categoria`/`proveedorId` vienen del catálogo (servicios_adicionales),
+  // nunca inventados — ver lib/reservar/serviciosPaquete.ts.
+  serviciosItems: { servicioId: number; nombre: string; precio: number; categoria: CategoriaServicio; proveedorId: number | null }[];
+  // Servicios INCLUIDOS del paquete (armado_servicios.incluido=true) — su
+  // costo ya está horneado en `pvpPorAcom`/`precioVenta` (modo persona) o se
+  // agregó como cargo aparte con pax real (modo grupo, ver más abajo); NUNCA
+  // se debe volver a sumar. `costoNeto` es SOLO para generar la CxP del
+  // proveedor real del servicio incluido (antes se perdía dentro de la CxP
+  // de hotel). `null` cuando `!esServicios` no aplica o el paquete no tiene
+  // servicios incluidos.
+  serviciosIncluidos: ServicioEfectivo[];
   impuestoTotal: number;
   monedaReserva: string;
   notaNino: string | null;     // anotación informativa (ej. "debe pagar seguro hotelero obligatorio")
@@ -507,24 +524,46 @@ export async function computarReserva(
 
   // Servicios (en tipo servicios es el total; en hotel son add-ons).
   const totalPax = esServicios ? (Number(input.paxServicios) || 0) : paxConSilla + numInfantes;
-  const serviciosItems: { nombre: string; precio: number }[] = [];
+  const serviciosItems: { servicioId: number; nombre: string; precio: number; categoria: CategoriaServicio; proveedorId: number | null }[] = [];
   if (input.servicios?.length) {
-    const { data: srvRows } = await sb
+    const { data: srvRows, error: srvRowsErr } = await sb
       .from("tarifario_resultado")
       .select("servicio_id, servicio_nombre, tipo_tarifa, pax_desde, pax_hasta, precio_pvp, recargo_individual")
       .eq("paquete_id", input.paqueteId)
       .eq("modulo", "servicios")
       .in("servicio_id", input.servicios);
-    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; recargoIndividual: number; grupos: { pax_desde: number; pax_hasta: number; precio: number }[] }>();
+    if (srvRowsErr) return { ok: false, error: `No se pudieron consultar los servicios seleccionados: ${srvRowsErr.message}` };
+    const byServ = new Map<number, { nombre: string; modo: "persona" | "grupo"; personaPvp: number | null; recargoIndividual: number; grupos: { pax_desde: number; pax_hasta: number; precio: number }[]; categoria: CategoriaServicio; proveedorId: number | null }>();
     for (const r of srvRows ?? []) {
       if (r.servicio_id == null) continue;
       let s = byServ.get(r.servicio_id);
       if (!s) {
-        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, recargoIndividual: 0, grupos: [] };
+        s = { nombre: r.servicio_nombre ?? "Servicio", modo: r.tipo_tarifa === "grupo" ? "grupo" : "persona", personaPvp: null, recargoIndividual: 0, grupos: [], categoria: "otro", proveedorId: null };
         byServ.set(r.servicio_id, s);
       }
       if (s.modo === "grupo") s.grupos.push({ pax_desde: r.pax_desde ?? 1, pax_hasta: r.pax_hasta ?? 1, precio: r.precio_pvp });
       else { s.personaPvp = r.precio_pvp; s.recargoIndividual = Math.max(Number(r.recargo_individual) || 0, 0); }
+    }
+
+    // Categoría/proveedor real del catálogo — SIEMPRE se consulta (no depende
+    // de que haya temporada vigente ni fecha de viaje conocida): sin esto,
+    // "asistencia_medica"/"tours_traslados" no se podrían clasificar. Falla
+    // cerrado: un error técnico acá aborta la reserva completa, nunca se
+    // clasifica un servicio como "otro" por defecto ante un fallo de consulta
+    // (distinto de que el catálogo genuinamente no traiga `categoria` — eso sí
+    // cae a "otro" vía `normalizarCategoriaServicio`, nunca inventa asistencia/tour).
+    if (byServ.size) {
+      const { data: catRows, error: catErr } = await sb
+        .from("servicios_adicionales")
+        .select("id, categoria, proveedor_id")
+        .in("id", [...byServ.keys()]);
+      if (catErr) return { ok: false, error: `No se pudo validar la categoría de los servicios seleccionados: ${catErr.message}` };
+      for (const r of catRows ?? []) {
+        const s = byServ.get(r.id);
+        if (!s) continue;
+        s.categoria = normalizarCategoriaServicio(r.categoria);
+        s.proveedorId = r.proveedor_id ?? null;
+      }
     }
 
     // Tarifa por TEMPORADA del servicio: si la fecha del viaje cae en una temporada
@@ -584,12 +623,90 @@ export async function computarReserva(
       }
     }
 
-    for (const s of byServ.values()) {
+    for (const [servicioId, s] of byServ) {
       let p = precioServicio(s.modo, s.personaPvp, s.grupos, totalPax);
       // Recargo individual: si el servicio va a 1 solo pax (cobro por persona),
       // se suma el suplemento a la tarifa.
       if (s.modo === "persona" && totalPax === 1 && s.recargoIndividual > 0) p += s.recargoIndividual;
-      if (p > 0) { precioVenta += p; serviciosItems.push({ nombre: s.nombre, precio: p }); }
+      if (p > 0) {
+        precioVenta += p;
+        serviciosItems.push({ servicioId, nombre: s.nombre, precio: p, categoria: s.categoria, proveedorId: s.proveedorId });
+      }
+    }
+  }
+
+  // Servicios INCLUIDOS del paquete (armado_servicios.incluido=true). Modo
+  // "persona" ya está horneado en pvpPorAcom (paquetes/actions.ts::
+  // aporteServiciosIncluidos, lib/reservar/liquidacionHotel.ts::
+  // evaluarHotelPorFechas) — acá SOLO se recupera su identidad (nombre/
+  // categoría/proveedor) para el resumen y la CxP, `costoNeto` nunca se suma
+  // a `precioVenta`. Modo "grupo" NO se hornea en pvpPorAcom (esas dos
+  // funciones lo descartan en silencio si `precio_persona` es null, que
+  // siempre lo es en modo grupo) — acá SÍ se resuelve y se cobra, con el pax
+  // REAL de esta reserva (algo que el motor de "desde" del catálogo público
+  // nunca conoce), como un cargo aparte — mismo patrón que `cargoMascota`.
+  const serviciosIncluidos: ServicioEfectivo[] = [];
+  if (!esServicios) {
+    const { data: incRows, error: incErr } = await sb
+      .from("armado_servicios")
+      .select("servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, liquidacion, proveedor_id)")
+      .eq("paquete_id", input.paqueteId)
+      .eq("incluido", true);
+    if (incErr) return { ok: false, error: `No se pudieron consultar los servicios incluidos del paquete: ${incErr.message}` };
+    if (incRows?.length) {
+      const ids = incRows.map((r) => r.servicio_id).filter((id): id is number => id != null);
+      const [{ data: gruposInc, error: gruposIncErr }] = await Promise.all([
+        sb.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").eq("temporada", "GENERAL").in("servicio_id", ids),
+      ]);
+      if (gruposIncErr) return { ok: false, error: `No se pudieron consultar las tarifas por grupo de los servicios incluidos: ${gruposIncErr.message}` };
+      const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+      for (const g of gruposInc ?? []) {
+        if (g.servicio_id == null) continue;
+        (gruposPorServ.get(g.servicio_id) ?? gruposPorServ.set(g.servicio_id, []).get(g.servicio_id)!).push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: Number(g.precio) || 0 });
+      }
+      const numNochesInc = meta.fecha_ida && meta.fecha_regreso ? (noches(meta.fecha_ida, meta.fecha_regreso) || 1) : 1;
+      for (const r of incRows) {
+        if (r.servicio_id == null) continue;
+        const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
+        // `validarModoServicio` — mismo validador estricto que usa el resto
+        // del sistema (lib/reservar/liquidacionServicio.ts): un modo inválido
+        // (null/""/texto corrupto) es una configuración incompleta del
+        // catálogo, nunca "persona" por default.
+        const modo = validarModoServicio(r.modo);
+        if (modo == null) {
+          return { ok: false, error: `El servicio incluido "${srv?.nombre ?? r.servicio_id}" tiene un modo de cobro inválido en el catálogo (armado_servicios.modo) — corrígelo antes de reservar.` };
+        }
+        const costoNeto = costoNetoServicioIncluido(
+          modo, srv?.precio_persona ?? null, gruposPorServ.get(r.servicio_id) ?? [], totalPax, srv?.liquidacion ?? null, numNochesInc
+        );
+        if (modo === "persona") {
+          // Ya horneado en pvpPorAcom — solo se registra para el resumen/CxP,
+          // costoNeto puede quedar en 0 si no se pudo resolver (nunca bloquea
+          // la reserva: el "desde" público ya venía con el mismo criterio).
+          serviciosIncluidos.push({
+            servicioId: r.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria: normalizarCategoriaServicio(srv?.categoria),
+            incluido: true, costoNeto: costoNeto ?? 0, proveedorId: srv?.proveedor_id ?? null,
+          });
+          continue;
+        }
+        // Modo grupo: nunca se hornea en pvpPorAcom, así que si hoy se
+        // resuelve, es un cargo NUEVO. Con pax real conocido: si no hay rango
+        // de servicio_tarifa_pax que lo cubra, es una configuración
+        // incompleta del catálogo — falla cerrado (nunca $0 en silencio para
+        // un servicio marcado incluido con un modo que exige tarifa por grupo).
+        if (costoNeto == null) {
+          return {
+            ok: false,
+            error: `El servicio incluido "${srv?.nombre ?? r.servicio_id}" está configurado en modo grupo pero no tiene una tarifa por rango de pasajeros que cubra ${totalPax} pax — corrige el catálogo (servicio_tarifa_pax) antes de reservar.`,
+          };
+        }
+        const pvpAdicional = Math.round(marcar(costoNeto, pctMk));
+        if (pvpAdicional > 0) precioVenta += pvpAdicional;
+        serviciosIncluidos.push({
+          servicioId: r.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria: normalizarCategoriaServicio(srv?.categoria),
+          incluido: true, costoNeto, proveedorId: srv?.proveedor_id ?? null,
+        });
+      }
     }
   }
 
@@ -610,6 +727,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
+    data: { origen, meta, pvpPorAcom, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, notaMascota: petNotaTxt },
   };
 }
