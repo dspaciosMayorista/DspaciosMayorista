@@ -31,7 +31,7 @@ function cxp(over: Partial<CxPFinanciera> & { tipo_proveedor: string; servicio: 
 }
 
 /** Base falsa: registra todo lo que pasó y permite forzar fallos concretos. */
-function baseFalsa(opts?: { fallaRegistro?: string; fallaReversion?: string; fallaAsiento?: string }) {
+function baseFalsa(opts?: { fallaRegistro?: string; fallaReversion?: string; fallaAsiento?: string; fallaPendiente?: string }) {
   let siguienteId = 100;
   const estado = {
     contratoExiste: true,
@@ -39,6 +39,7 @@ function baseFalsa(opts?: { fallaRegistro?: string; fallaReversion?: string; fal
     asientosPosteados: [] as number[],
     asientosBorrados: [] as number[],
     llamadas: [] as string[],
+    pendienteGuardado: false,
   };
   const deps: DepsFinanciero = {
     rpc: async (fn, args) => {
@@ -70,6 +71,11 @@ function baseFalsa(opts?: { fallaRegistro?: string; fallaReversion?: string; fal
       return { ok: true };
     },
     eliminarAsiento: async (id) => { estado.asientosBorrados.push(id); },
+    guardarPendiente: async () => {
+      if (opts?.fallaPendiente) return { ok: false, error: opts.fallaPendiente };
+      estado.pendienteGuardado = true;
+      return { ok: true };
+    },
   };
   return { deps, estado };
 }
@@ -211,6 +217,47 @@ describe("B7 · reintento: no duplica CxP ni asiento", () => {
     assert.equal(estado.asientosPosteados.length, 4, "dos asientos por corrida, sin quedar duplicados vivos");
     const vivos = estado.asientosPosteados.filter((id) => !estado.asientosBorrados.includes(id));
     assert.equal(vivos.length, 2, "solo quedan vivos los asientos de las CxP vigentes");
+  });
+});
+
+describe("B7 R2 · la intención se persiste ANTES de intentar el RPC (garantía durable, no solo compensatoria)", () => {
+  test("guardarPendiente se llama antes que el RPC financiero", async () => {
+    const orden: string[] = [];
+    const { estado } = baseFalsa();
+    const deps: DepsFinanciero = {
+      rpc: async (fn, args) => {
+        orden.push(`rpc:${fn}`);
+        if (fn === "registrar_financiero_contrato") {
+          const filas = (args.p_cxp as CxPFinanciera[]) ?? [];
+          return { data: { creadas: filas.map((f, i) => ({ id: i, ...f })), eliminadas: [] }, error: null };
+        }
+        return { data: null, error: null };
+      },
+      postearAsiento: async () => ({ ok: true }),
+      eliminarAsiento: async () => {},
+      guardarPendiente: async () => { orden.push("guardarPendiente"); return { ok: true }; },
+    };
+    await registrarFinancieroContrato(deps, { ...PARAMS, costos: {}, cxp: [cxp({ tipo_proveedor: "hotel", servicio: "Hotel X" })] });
+    assert.deepEqual(orden, ["guardarPendiente", "rpc:registrar_financiero_contrato"]);
+    void estado;
+  });
+
+  test("si no se puede ni persistir la intención (fallo antes de cualquier commit del RPC), se revierte igual que cualquier otro fallo", async () => {
+    const { deps, estado } = baseFalsa({ fallaPendiente: "no se pudo escribir contrato_financiero_pendiente" });
+    const r = await registrarFinancieroContrato(deps, { ...PARAMS, costos: {}, cxp: [cxp({ tipo_proveedor: "hotel", servicio: "Hotel X" })] });
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.revertido, true);
+    assert.match(r.error, /no se pudo escribir contrato_financiero_pendiente/);
+    assert.equal(estado.contratoExiste, false);
+    // Nunca se intentó el RPC financiero sin haber podido declarar la intención primero.
+    assert.ok(!estado.cxpCreadas.length);
+  });
+
+  test("un reintento (la MISMA llamada, dos veces) vuelve a declarar la intención — nunca se salta ese paso por ser un reintento", async () => {
+    const { deps, estado } = baseFalsa();
+    await registrarFinancieroContrato(deps, { ...PARAMS, costos: {}, cxp: [cxp({ tipo_proveedor: "hotel", servicio: "Hotel X" })] });
+    assert.equal(estado.pendienteGuardado, true);
   });
 });
 

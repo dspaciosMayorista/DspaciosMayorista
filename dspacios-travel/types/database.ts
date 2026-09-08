@@ -320,6 +320,12 @@ export type Database = {
           // Migración 164: back-link UNIQUE nullable — UN SOLO contrato por
           // cotización convertida (los pagos previos a abonos la llenan).
           cotizacion_id: number | null;
+          // Migración 172 — estado TÉCNICO de la escritura financiera
+          // (costos+CxP), NUNCA el estado comercial (esa es `estado`).
+          // Default 'completo'; solo reservarDesdeTarifarioInterno/
+          // convertirCotizacionCarrito lo insertan en 'pendiente'.
+          financiero_estado: string;
+          financiero_actualizado_en: string;
           created_at: string;
           updated_at: string;
         };
@@ -384,11 +390,45 @@ export type Database = {
           recobro_empresa?: number | null;
           recobro_aliado?: number | null;
           cotizacion_id?: number | null;
+          financiero_estado?: string;
+          financiero_actualizado_en?: string;
           created_at?: string;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["ventas"]["Insert"]>;
         Relationships: [];
+      };
+      contrato_financiero_pendiente: {
+        Row: {
+          numero_contrato: string;
+          tenant: string;
+          costos: Json;
+          cxp: Json;
+          intentos: number;
+          creado_en: string;
+          ultimo_intento_en: string | null;
+          ultimo_error: string | null;
+        };
+        Insert: {
+          numero_contrato: string;
+          tenant: string;
+          costos?: Json;
+          cxp?: Json;
+          intentos?: number;
+          creado_en?: string;
+          ultimo_intento_en?: string | null;
+          ultimo_error?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_financiero_pendiente"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "contrato_financiero_pendiente_numero_contrato_fkey";
+            columns: ["numero_contrato"];
+            isOneToOne: true;
+            referencedRelation: "ventas";
+            referencedColumns: ["numero_contrato"];
+          },
+        ];
       };
       abonos: {
         Row: {

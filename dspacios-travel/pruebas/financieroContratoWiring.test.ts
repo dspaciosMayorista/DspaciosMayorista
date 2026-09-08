@@ -41,6 +41,18 @@ function cuerpoFuncion(fuente: string, ancla: string): string {
   throw new Error(`no se encontró el cierre de "${ancla}"`);
 }
 
+// SQL plpgsql no usa llaves `{}` para el cuerpo — usa `$$ ... $$`. Extrae
+// desde el ancla hasta el `$$;` que cierra el `as $$`.
+function cuerpoFuncionSql(fuente: string, ancla: string): string {
+  const idx = fuente.indexOf(ancla);
+  assert.ok(idx > -1, `no se encontró "${ancla}"`);
+  const idxDollar = fuente.indexOf("as $$", idx);
+  assert.ok(idxDollar > -1, `no se encontró "as $$" tras "${ancla}"`);
+  const idxCierre = fuente.indexOf("$$;", idxDollar + 5);
+  assert.ok(idxCierre > -1, `no se encontró el "$$;" que cierra "${ancla}"`);
+  return fuente.slice(idx, idxCierre + 3);
+}
+
 const reservarActions = leer("app/(dashboard)/dashboard/reservar/actions.ts");
 const migracion = leer("supabase/migrations/20260601000171_financiero_contrato_atomico.sql");
 
@@ -154,5 +166,82 @@ describe("B7 · la migración 171 respeta las reglas del proyecto", () => {
   test("devuelve los ids reemplazados para poder borrar sus asientos (que viven fuera de la transacción)", () => {
     assert.match(migracion, /returning c\.id/);
     assert.match(migracion, /jsonb_build_object\('creadas', v_ids, 'eliminadas', v_eliminadas\)/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// B7 · RONDA 2 — la garantía de la ronda 1 era COMPENSATORIA (dependía de
+// que el mismo proceso, en la misma request, alcanzara a llamar a revertir
+// cuando algo fallaba). Estas pruebas fijan que los dos flujos usan la
+// garantía DURABLE (migración 172): estampan financiero_estado='pendiente'
+// al nacer y `confirmarVenta` nunca confirma un contrato con eso incompleto.
+// El comportamiento de fondo (qué pasa ante cada punto de interrupción) se
+// ejecuta de verdad en pruebas/reconciliacionFinanciera.test.ts y en
+// Postgres real en supabase/scripts/test_172_financiero_pendiente_durable.sql.
+// ───────────────────────────────────────────────────────────────────────────
+const migracion172 = leer("supabase/migrations/20260601000172_financiero_pendiente_durable.sql");
+
+describe("B7 R2 · los dos flujos nacen con financiero_estado='pendiente' explícito", () => {
+  for (const [nombre, ancla] of [["reservarDesdeTarifarioInterno", ANCLA_TARIFARIO], ["convertirCotizacionCarrito", ANCLA_CARRITO]] as const) {
+    test(`${nombre} estampa financiero_estado: "pendiente" en su insert de ventas`, () => {
+      const cuerpo = cuerpoFuncion(reservarActions, ancla);
+      assert.match(cuerpo, /financiero_estado:\s*"pendiente"/);
+    });
+  }
+  test("el default de la columna es 'completo', nunca 'pendiente' (no puede afectar otros caminos de creación)", () => {
+    assert.match(migracion172, /add column if not exists financiero_estado text not null default 'completo'/);
+  });
+});
+
+describe("B7 R2 · confirmarVenta se niega a confirmar con la escritura financiera incompleta", () => {
+  test("lee financiero_estado ANTES de marcar 'confirmado' y rechaza si sigue 'pendiente'", () => {
+    const cuerpo = cuerpoFuncion(reservarActions, "export async function confirmarVenta(numeroContrato: string)");
+    const idxLectura = cuerpo.indexOf('select("financiero_estado")');
+    const idxConfirma = cuerpo.indexOf('.update({ estado: "confirmado" })');
+    assert.ok(idxLectura > -1, "confirmarVenta debe leer financiero_estado");
+    assert.ok(idxConfirma > idxLectura, "debe leer financiero_estado ANTES de confirmar, no después");
+    assert.match(cuerpo, /financiero_estado === "pendiente"/);
+  });
+});
+
+describe("B7 R2 · el orquestador persiste la intención ANTES de intentar el RPC (no solo revertir después)", () => {
+  test("financieroContrato.ts declara guardarPendiente como dependencia obligatoria", () => {
+    const financieroContrato = leer("lib/reservar/financieroContrato.ts");
+    assert.match(financieroContrato, /guardarPendiente:/);
+    // El orden importa: se llama ANTES del bloque try/rpc.
+    const idxGuardar = financieroContrato.indexOf("deps.guardarPendiente(");
+    const idxRpc = financieroContrato.indexOf('deps.rpc("registrar_financiero_contrato"');
+    assert.ok(idxGuardar > -1 && idxRpc > idxGuardar, "guardarPendiente debe llamarse antes del RPC financiero");
+  });
+  test("reservar/actions.ts persiste con upsert (un reintento no puede fallar por clave duplicada)", () => {
+    assert.match(reservarActions, /contrato_financiero_pendiente"\)\.upsert\(/);
+  });
+});
+
+describe("B7 R2 · migración 172 corrige los tres bugs reproducidos empíricamente en la reversión", () => {
+  test("bug A: usa el MISMO bypass de inmutabilidad que eliminar_contrato (166), no un mecanismo nuevo", () => {
+    const revertir = cuerpoFuncionSql(migracion172, "create or replace function public.revertir_contrato_incompleto(");
+    assert.match(revertir, /set local app\.eliminando_contrato = 'true';/);
+    assert.match(revertir, /set local app\.eliminando_contrato = 'false';/);
+  });
+  test("bug B: borra aliados_b2b ANTES de borrar ventas (FK sin cascada)", () => {
+    const revertir = cuerpoFuncionSql(migracion172, "create or replace function public.revertir_contrato_incompleto(");
+    const idxAliados = revertir.indexOf("delete from public.aliados_b2b");
+    const idxVentas = revertir.lastIndexOf("delete from public.ventas");
+    assert.ok(idxAliados > -1 && idxVentas > idxAliados, "aliados_b2b debe borrarse antes que ventas");
+  });
+  test("bug C: el reset de sillas limpia asesor/hotel/acomodacion (antes solo limpiaba plazo/pasajero)", () => {
+    const revertir = cuerpoFuncionSql(migracion172, "create or replace function public.revertir_contrato_incompleto(");
+    assert.match(revertir, /asesor = null, hotel = null, acomodacion = null/);
+  });
+});
+
+describe("B7 R2 · el estado 'completo' nace ATÓMICAMENTE con los datos que lo justifican", () => {
+  test("registrar_financiero_contrato marca completo y limpia el pendiente en el mismo cuerpo que escribe costos/CxP", () => {
+    const registrar = cuerpoFuncionSql(migracion172, "create or replace function public.registrar_financiero_contrato(");
+    const idxCosto = registrar.indexOf("update public.ventas v set");
+    const idxCompleto = registrar.indexOf("financiero_estado = 'completo'");
+    const idxReturn = registrar.lastIndexOf("return jsonb_build_object");
+    assert.ok(idxCosto > -1 && idxCompleto > idxCosto && idxCompleto < idxReturn, "completo debe quedar DESPUÉS de escribir costos y ANTES de retornar — nunca en una transacción separada");
   });
 });

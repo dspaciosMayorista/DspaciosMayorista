@@ -12,15 +12,31 @@
 // garantía; una transacción sí.
 //
 // Este módulo orquesta esa garantía y es PURO respecto de Supabase: recibe
-// las tres operaciones que necesita (`rpc`, `postearAsiento`,
-// `eliminarAsiento`) como dependencias, así que su comportamiento —incluido
-// el de FALLO— se puede ejecutar de verdad en las pruebas, sin base de datos.
+// las operaciones que necesita como dependencias, así que su comportamiento
+// —incluido el de FALLO— se puede ejecutar de verdad en las pruebas, sin
+// base de datos.
 //
-// Reglas que implementa (revisión del PR #294, punto B7):
+// Reglas que implementa (revisión del PR #294, punto B7 — y su ronda 2, que
+// encontró que la garantía de la ronda 1 era COMPENSATORIA, no durable: si
+// el proceso muere entre el insert de `ventas` y esta escritura, o entre el
+// fallo de esta escritura y el intento de revertir, nada quedaba detectable
+// ni recuperable — ver migración 172):
 //   · o quedan el costo Y todas las CxP, o no queda el contrato;
 //   · nunca devuelve `ok: true` con una CxP faltante;
 //   · nunca devuelve error dejando un "contrato fantasma" (numerado, visible
-//     en los listados, sin costo ni obligación) — revierte antes de fallar;
+//     en los listados, sin costo ni obligación) — intenta revertir antes de
+//     fallar (camino RÁPIDO, síncrono, mientras el proceso sigue vivo);
+//   · PERO esa reversión síncrona NUNCA es la ÚNICA garantía: antes de
+//     intentar el RPC financiero, el payload YA CALCULADO (costos+cxp) se
+//     persiste en `contrato_financiero_pendiente` — su propio commit,
+//     independiente de si el RPC financiero después tiene éxito, falla, o el
+//     proceso muere sin poder ni intentarlo. Esa fila es la garantía
+//     DURABLE: sobrevive a la caída del proceso, es detectable (`ventas.
+//     financiero_estado='pendiente'`, consultable para siempre) y permite un
+//     reintento IDEMPOTENTE exacto desde otro proceso completamente distinto
+//     (`lib/reservar/reconciliacionFinanciera.ts`), sin inventar ni
+//     recalcular nada — reintenta con el MISMO payload que ya se decidió
+//     escribir;
 //   · un reintento no duplica: el RPC reemplaza las CxP automáticas previas y
 //     devuelve sus ids para que acá se borren TAMBIÉN sus asientos contables
 //     (que viven fuera de la transacción, referenciados por `cxp:<id>`).
@@ -59,12 +75,22 @@ export type CxPCreada = {
 };
 
 export type DepsFinanciero = {
-  /** `admin.rpc(...)` de Supabase (service-role): las dos funciones de la migración 171. */
+  /** `admin.rpc(...)` de Supabase (service-role): las funciones de las migraciones 171/172. */
   rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
   /** Devengo contable de una CxP recién creada (`postearAsientoCxP`). */
   postearAsiento: (c: CxPCreada) => Promise<{ ok: boolean; error?: string }>;
   /** Borra el asiento de una CxP que dejó de existir (`eliminarAsientoCxP`). */
   eliminarAsiento: (cuentaId: number) => Promise<unknown>;
+  /**
+   * Persiste el payload EN `contrato_financiero_pendiente` (migración 172),
+   * en SU PROPIO commit — antes de intentar el RPC financiero. Es la
+   * garantía durable: si el proceso muere justo después de esta llamada, el
+   * payload sigue ahí para que otro proceso (la reconciliación) lo reintente
+   * exactamente igual. Un fallo AQUÍ (no se pudo ni declarar la intención)
+   * se trata como fallo de toda la operación — sin esto, no hay nada
+   * recuperable si lo que sigue también falla.
+   */
+  guardarPendiente: (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[] }) => Promise<{ ok: boolean; error?: string }>;
 };
 
 export type ResultadoFinanciero =
@@ -100,8 +126,18 @@ function leerRespuesta(data: unknown): { creadas: CxPCreada[]; eliminadas: numbe
  * llamador tiene que DECIRLO, no tragárselo: quedó un contrato incompleto que
  * necesita revisión humana.
  *
- * `revertir_contrato_incompleto` falla CERRADO: se niega a borrar un contrato
- * que ya tenga abonos, pagos o retenciones (ahí ya hubo dinero real).
+ * `revertir_contrato_incompleto` (migración 172) falla CERRADO: se niega a
+ * borrar un contrato que ya tenga abonos, pagos o retenciones (ahí ya hubo
+ * dinero real), y limpia TODAS sus hijas sin dejar huérfanos —incluidas
+ * `aliados_b2b` y `contrato_condiciones` (esta última inmutable por trigger;
+ * el RPC usa el mismo bypass que `eliminar_contrato`, migración 166, solo
+ * para la ventana de ese borrado).
+ *
+ * Esta llamada es el camino RÁPIDO (síncrono, mientras el proceso original
+ * sigue vivo) — NUNCA la única garantía: si esta llamada no llega a
+ * ejecutarse (proceso caído) o falla, el contrato queda `financiero_estado
+ * ='pendiente'`, detectable y recuperable por la reconciliación
+ * (lib/reservar/reconciliacionFinanciera.ts) sin depender de este camino.
  */
 export async function revertirContratoIncompleto(
   deps: Pick<DepsFinanciero, "rpc">,
@@ -155,6 +191,15 @@ export async function registrarFinancieroContrato(
   }
 ): Promise<ResultadoFinanciero> {
   const { numeroContrato, tenant, costos, cxp, fecha } = params;
+
+  // Garantía DURABLE, antes de intentar nada: si esto no se alcanza a
+  // escribir, no hay reintento posible desde otro proceso — se trata igual
+  // que un fallo del RPC financiero (revierte de una).
+  const pendiente = await deps.guardarPendiente({ numeroContrato, tenant, costos, cxp });
+  if (!pendiente.ok) {
+    const rev = await revertirContratoIncompleto(deps, numeroContrato, tenant);
+    return { ok: false, ...mensajeFallo(numeroContrato, pendiente.error ?? "no se pudo registrar la intención de escritura financiera", rev) };
+  }
 
   let data: unknown;
   try {

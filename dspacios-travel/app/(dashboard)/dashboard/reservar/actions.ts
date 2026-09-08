@@ -86,7 +86,25 @@ async function rpcFinanciero(fn: string, args: Record<string, unknown>): Promise
   return { data: null, error: { message: `RPC no soportado: ${fn}` } };
 }
 
-// Dependencias completas de la escritura financiera (RPC + espejo contable).
+// Persiste la INTENCIÓN de escritura financiera (migración 172) — su propio
+// commit, independiente de si el RPC financiero que sigue después tiene
+// éxito, falla o el proceso muere sin poder ni intentarlo. `upsert` (no
+// `insert`) porque la reconciliación reintenta llamando a esta misma función
+// con el MISMO numero_contrato — el propio RPC financiero borra la fila al
+// tener éxito, pero un segundo intento antes de eso (o una carrera benigna)
+// no debe fallar por clave duplicada.
+async function guardarPendienteFinanciero(p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[] }): Promise<{ ok: boolean; error?: string }> {
+  const admin = createAdminClient();
+  const { error } = await admin.from("contrato_financiero_pendiente").upsert({
+    numero_contrato: p.numeroContrato,
+    tenant: p.tenant,
+    costos: p.costos as Json,
+    cxp: p.cxp as unknown as Json,
+  }, { onConflict: "numero_contrato" });
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+// Dependencias completas de la escritura financiera (RPC + espejo contable + intención durable).
 function depsFinanciero(numeroContrato: string, tenant: Tenant, fecha: string) {
   return {
     rpc: rpcFinanciero,
@@ -96,6 +114,7 @@ function depsFinanciero(numeroContrato: string, tenant: Tenant, fecha: string) {
         servicio: c.servicio, valorTotal: c.valor_total, fecha, tenant,
       }),
     eliminarAsiento: (cuentaId: number) => eliminarAsientoCxP(cuentaId),
+    guardarPendiente: guardarPendienteFinanciero,
   };
 }
 
@@ -273,6 +292,11 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     costo_aereo: datosVuelo ? costoAereo : undefined,
     aerolinea: datosVuelo?.aerolinea ?? null,
     estado: "pendiente",
+    // Migración 172: nace con la escritura financiera EN CURSO — solo pasa a
+    // 'completo' dentro de registrar_financiero_contrato, atómicamente con
+    // sus costos/CxP. Detectable/recuperable por reconciliacionFinanciera.ts
+    // aunque el proceso muera antes de llegar al paso 12.
+    financiero_estado: "pendiente",
     canal,
     tipo_asesor: input.tipoAsesor,
     modo_compra: modoCompra,
@@ -1663,6 +1687,8 @@ export async function convertirCotizacionCarrito(
         : validados.length === 0 ? null : `${validados.length} hoteles`,
       precio_venta: precioTotal,
       estado: "pendiente",
+      // Migración 172 — mismo criterio que reservarDesdeTarifarioInterno.
+      financiero_estado: "pendiente",
       canal: "B2C",
       tipo_asesor: "interno",
       plazo: null,
@@ -2165,6 +2191,22 @@ export async function descartarCotizacion(id: number): Promise<{ ok: boolean; er
 // ── Confirmar venta: sillas en_plazo -> confirmada ─────────────────────────
 export async function confirmarVenta(numeroContrato: string): Promise<{ ok: boolean; error?: string }> {
   const sb = await createClient();
+  // Migración 172 — candado real: un contrato con la escritura financiera
+  // incompleta (financiero_estado='pendiente') NUNCA se confirma. Antes de
+  // esto, `confirmarVenta` marcaba 'confirmado' sin mirar nada financiero —
+  // el único resguardo era `asegurarCuentasPorPagar`, un backfill best-effort
+  // que no bloquea nada. Default de la columna = 'completo' (migración 172):
+  // este chequeo NO afecta contratos manuales/de programa/importados —
+  // ninguno de ellos pasa nunca por 'pendiente'.
+  const { data: estadoFin, error: efErr } = await sb
+    .from("ventas").select("financiero_estado").eq("numero_contrato", numeroContrato).maybeSingle();
+  if (efErr) return { ok: false, error: efErr.message };
+  if (estadoFin?.financiero_estado === "pendiente") {
+    return {
+      ok: false,
+      error: "Este contrato tiene el registro de costos/cuentas por pagar incompleto (fallo técnico al crearlo) — no se puede confirmar todavía. Un administrador debe reintentarlo antes de continuar.",
+    };
+  }
   const { error } = await sb.from("ventas").update({ estado: "confirmado" }).eq("numero_contrato", numeroContrato);
   if (error) return { ok: false, error: error.message };
   // Sillas a confirmada (admin si hay service-role; si no, intento directo)

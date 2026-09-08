@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/cron/liberar-vencidas", "schedule": "0 6 * * *" },
-    { "path": "/api/cron/notificaciones", "schedule": "0 13 * * *" }
+    { "path": "/api/cron/notificaciones", "schedule": "0 13 * * *" },
+    { "path": "/api/cron/reconciliar-financiero", "schedule": "*/15 * * * *" }
   ]
 }
