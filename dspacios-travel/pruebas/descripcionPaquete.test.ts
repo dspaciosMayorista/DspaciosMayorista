@@ -57,12 +57,12 @@ describe("seccionesDescripcion — encabezados fijos, solo las secciones con con
     );
   });
 
-  test("REQUERIDO: solo 'incluye' configurado → una sola sección 'Incluye'", () => {
+  test("REQUERIDO: solo 'incluye' configurado → una sola sección 'El programa incluye'", () => {
     const d: DescripcionPaqueteRaw = { incluye: "Desayuno\nTraslados", noIncluye: null, tarifasEspeciales: null, condicionesComerciales: null };
-    assert.deepEqual(seccionesDescripcion(d), [{ titulo: "Incluye", items: ["Desayuno", "Traslados"] }]);
+    assert.deepEqual(seccionesDescripcion(d), [{ titulo: "El programa incluye", items: ["Desayuno", "Traslados"] }]);
   });
 
-  test("REQUERIDO: las 4 secciones con contenido, en orden fijo Incluye/No incluye/Tarifas especiales/Condiciones comerciales", () => {
+  test("REQUERIDO: las 4 secciones con contenido, en orden fijo El programa incluye/El programa no incluye/Tarifas especiales/Condiciones comerciales", () => {
     const d: DescripcionPaqueteRaw = {
       incluye: "A",
       noIncluye: "B",
@@ -70,8 +70,8 @@ describe("seccionesDescripcion — encabezados fijos, solo las secciones con con
       condicionesComerciales: "D",
     };
     assert.deepEqual(seccionesDescripcion(d), [
-      { titulo: "Incluye", items: ["A"] },
-      { titulo: "No incluye", items: ["B"] },
+      { titulo: "El programa incluye", items: ["A"] },
+      { titulo: "El programa no incluye", items: ["B"] },
       { titulo: "Tarifas especiales", items: ["C"] },
       { titulo: "Condiciones comerciales", items: ["D"] },
     ]);
@@ -80,7 +80,7 @@ describe("seccionesDescripcion — encabezados fijos, solo las secciones con con
   test("una sección vacía en medio de otras con contenido se omite (nunca un encabezado con lista vacía)", () => {
     const d: DescripcionPaqueteRaw = { incluye: "A", noIncluye: null, tarifasEspeciales: "C", condicionesComerciales: null };
     assert.deepEqual(seccionesDescripcion(d), [
-      { titulo: "Incluye", items: ["A"] },
+      { titulo: "El programa incluye", items: ["A"] },
       { titulo: "Tarifas especiales", items: ["C"] },
     ]);
   });

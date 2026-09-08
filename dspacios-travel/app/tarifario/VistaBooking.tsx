@@ -673,8 +673,8 @@ function ReceptivoModal({ receptivo, onClose }: { receptivo: ReceptivoModalInfo;
 // (regla de marca): check para "Incluye", tache para "No incluye", un ícono
 // informativo neutro para el resto (tarifas especiales/condiciones).
 function IconoSeccion({ titulo }: { titulo: string }) {
-  if (titulo === "Incluye") return <Check size={14} className="shrink-0" style={{ color: "var(--brand-success)" }} />;
-  if (titulo === "No incluye") return <X size={14} className="shrink-0 text-gray-400" />;
+  if (titulo === "El programa incluye") return <Check size={14} className="shrink-0" style={{ color: "var(--brand-success)" }} />;
+  if (titulo === "El programa no incluye") return <X size={14} className="shrink-0 text-gray-400" />;
   return <Info size={14} className="shrink-0 text-gray-400" />;
 }
 

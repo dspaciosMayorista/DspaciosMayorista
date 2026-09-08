@@ -37,8 +37,8 @@ export function lineasDeTexto(texto: string | null | undefined): string[] {
 /** Las 4 secciones a renderizar, en orden fijo, SOLO las que tienen contenido. */
 export function seccionesDescripcion(d: DescripcionPaqueteRaw | undefined | null): SeccionDescripcion[] {
   const candidatas: SeccionDescripcion[] = [
-    { titulo: "Incluye", items: lineasDeTexto(d?.incluye) },
-    { titulo: "No incluye", items: lineasDeTexto(d?.noIncluye) },
+    { titulo: "El programa incluye", items: lineasDeTexto(d?.incluye) },
+    { titulo: "El programa no incluye", items: lineasDeTexto(d?.noIncluye) },
     { titulo: "Tarifas especiales", items: lineasDeTexto(d?.tarifasEspeciales) },
     { titulo: "Condiciones comerciales", items: lineasDeTexto(d?.condicionesComerciales) },
   ];
