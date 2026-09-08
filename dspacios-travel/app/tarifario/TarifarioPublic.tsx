@@ -11,6 +11,7 @@ import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 import { obtenerDetalleSalida, obtenerDetallePaquete, obtenerDetalleServicios } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleSalida, claveDetallePaquete, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
+import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 
 export type CapHotel = Record<number, { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] }>;
 
@@ -298,7 +299,7 @@ export function TarifarioPublic({
   infoPorHotel = {},
   planesInfo = {},
   capPorHotel = {},
-  incluidosPorPaquete = {},
+  descripcionPorPaquete = {},
   filasAddon = [],
 }: {
   // Carga inicial (Tier 1) — resumen, SIN expansión sintética (ver
@@ -316,7 +317,7 @@ export function TarifarioPublic({
   infoPorHotel?: InfoHotel;
   planesInfo?: PlanesInfo;
   capPorHotel?: CapHotel;
-  incluidosPorPaquete?: Record<number, string[]>;
+  descripcionPorPaquete?: Record<number, DescripcionPaqueteRaw>;
   // Add-ons de paquetes de hotel (bloqueo/porción), SIN el recorte que oculta
   // esas filas de la vitrina plana de Servicios — solo para ofrecerlos scoped
   // dentro del modal de su propio hotel en Vista Booking (ver VistaBooking.tsx).
@@ -413,7 +414,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} incluidosPorPaquete={incluidosPorPaquete} filasAddon={filasAddon} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} />
       ) : (
         <>
           {/* Tabs de módulos */}

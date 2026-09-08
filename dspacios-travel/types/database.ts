@@ -2048,6 +2048,13 @@ export type Database = {
           condicion_pago_pct_inicial: number | null;
           condicion_pago_dias_saldo: number | null;
           restriccion_comercial: string;
+          // Descripción manual del paquete (migración 169) — texto libre, un
+          // elemento por línea, compartido por todos los hoteles/opciones del
+          // paquete. Reemplaza la generación automática de "Incluye".
+          programa_incluye: string | null;
+          programa_no_incluye: string | null;
+          programa_tarifas_especiales: string | null;
+          programa_condiciones_comerciales: string | null;
         };
         Insert: {
           id?: number;
@@ -2072,6 +2079,10 @@ export type Database = {
           condicion_pago_pct_inicial?: number | null;
           condicion_pago_dias_saldo?: number | null;
           restriccion_comercial?: string;
+          programa_incluye?: string | null;
+          programa_no_incluye?: string | null;
+          programa_tarifas_especiales?: string | null;
+          programa_condiciones_comerciales?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["armado_paquetes"]["Insert"]>;
         Relationships: [];

@@ -63,6 +63,14 @@ export interface PaqueteConfig {
   condicionPagoPctInicial?: unknown; // 1–99, no fracción
   condicionPagoDiasSaldo?: unknown;
   restriccionComercial?: unknown;
+  // Descripción manual del paquete (migración 169) — texto libre, un
+  // elemento por línea. Reemplaza la generación automática de "Incluye".
+  // Pertenece al paquete, nunca al hotel: se comparte por todos sus
+  // hoteles/opciones.
+  programaIncluye: string;
+  programaNoIncluye: string;
+  programaTarifasEspeciales: string;
+  programaCondicionesComerciales: string;
 }
 
 function validarCondicionYRestriccionPaquete(
@@ -101,6 +109,10 @@ function configToRow(c: PaqueteConfig, condicion: { condicion_pago_tipo: string;
     condicion_pago_pct_inicial: condicion.condicion_pago_pct_inicial,
     condicion_pago_dias_saldo: condicion.condicion_pago_dias_saldo,
     restriccion_comercial: condicion.restriccion_comercial,
+    programa_incluye: oNull(c.programaIncluye),
+    programa_no_incluye: oNull(c.programaNoIncluye),
+    programa_tarifas_especiales: oNull(c.programaTarifasEspeciales),
+    programa_condiciones_comerciales: oNull(c.programaCondicionesComerciales),
   };
 }
 

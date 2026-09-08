@@ -99,7 +99,7 @@ export default async function ReservarPage() {
   }
   const {
     filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
-    infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, incluidosPorPaquete,
+    infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
   } = resDatos.datos;
   if (resProgramas.error) {
     registrarErrorTecnico(FLUJO, flujoId, "programas_resumen", "error_getProgramasResumen", resProgramas.error);
@@ -146,7 +146,7 @@ export default async function ReservarPage() {
             planesInfo={planesInfo}
             capPorHotel={capPorHotel}
             ventanaPorPaquete={ventanaPorPaquete}
-            incluidosPorPaquete={incluidosPorPaquete}
+            descripcionPorPaquete={descripcionPorPaquete}
             filasAddon={filasAddon}
           />
         )}

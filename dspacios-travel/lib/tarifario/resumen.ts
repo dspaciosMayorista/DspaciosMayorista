@@ -6,6 +6,7 @@ import { aplicarFiltrosPostCarga } from "./filtrosPostCarga.ts";
 import { esFilaHotelVerificable } from "./vigencia.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico, medirPayloadSiHabilitado, textoEstimacionPayload } from "../observabilidad/medicion.ts";
 import type { InfoHotelDato, CapHotelDato } from "./datos.ts";
+import type { DescripcionPaqueteRaw } from "./descripcionPaquete.ts";
 import { condicionHotelFechas, type FilaTemporadaHotelRaw } from "../reservar/liquidacionHotel.ts";
 import { esNeutra } from "../cotizacion/condicionPago.ts";
 
@@ -195,7 +196,7 @@ export type DatosResumenTarifario = {
   capPorHotel: Record<number, CapHotelDato>;
   planesInfo: Record<string, { nombre: string | null; descripcion: string | null; nota_especial: string | null }>;
   ventanaPorPaquete: Record<number, { min: string | null; max: string | null }>;
-  incluidosPorPaquete: Record<number, string[]>;
+  descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
 };
 
 export const MSG_ERROR_CARGAR_TARIFARIO = "No fue posible cargar el tarifario en este momento. Intenta nuevamente en unos segundos.";
@@ -352,10 +353,10 @@ export async function cargarResumenTarifario(
   const fotosPorServicio: Record<number, string> = {};
   const planesInfo: Record<string, { nombre: string | null; descripcion: string | null; nota_especial: string | null }> = {};
   const ventanaPorPaquete: Record<number, { min: string | null; max: string | null }> = {};
-  const incluidosPorPaquete: Record<number, string[]> = {};
+  const descripcionPorPaquete: Record<number, DescripcionPaqueteRaw> = {};
 
   const [
-    resFotosHotel, resHoteles, resAcomInfante, resFotosServicio, resPlanes, resVentana, resIncluidos, resCondicionHotel,
+    resFotosHotel, resHoteles, resAcomInfante, resFotosServicio, resPlanes, resVentana, resDescripcion, resCondicionHotel,
   ] = await Promise.all([
     hotelIds.length
       ? sb.from("hotel_fotos").select("hotel_id, url, es_portada, orden").in("hotel_id", hotelIds).order("orden")
@@ -379,8 +380,9 @@ export async function cargarResumenTarifario(
     paqIdsPorcion.length && admin
       ? admin.from("armado_paquetes").select("id, fecha_viaje_inicio, fecha_viaje_fin").in("id", paqIdsPorcion)
       : null,
+    // Descripción manual del paquete (migración 169) — ver lib/tarifario/datos.ts.
     paqIdsConHotel.length && admin
-      ? admin.from("armado_servicios").select("paquete_id, incluido, servicios_adicionales(nombre)").eq("incluido", true).in("paquete_id", paqIdsConHotel)
+      ? admin.from("armado_paquetes").select("id, programa_incluye, programa_no_incluye, programa_tarifas_especiales, programa_condiciones_comerciales").in("id", paqIdsConHotel)
       : null,
     // Badge compacto "Con condiciones" de la tarjeta de exploración (migración
     // 164/165) — hotel_temporadas exige rol interno por RLS (migración 016),
@@ -519,15 +521,18 @@ export async function cargarResumenTarifario(
     }
   }
 
-  if (resIncluidos) {
-    if (resIncluidos.error) {
+  if (resDescripcion) {
+    if (resDescripcion.error) {
       _huboErrorAux = true;
-      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_armado_servicios_incluidos", resIncluidos.error);
+      registrarErrorTecnico(flujo, flujoId, "datos_auxiliares", "error_armado_paquetes_descripcion", resDescripcion.error);
     } else {
-      for (const r of resIncluidos.data ?? []) {
-        const nombre = (r as unknown as { servicios_adicionales: { nombre: string } | null }).servicios_adicionales?.nombre;
-        if (!nombre) continue;
-        (incluidosPorPaquete[r.paquete_id as number] ??= []).push(nombre);
+      for (const p of resDescripcion.data ?? []) {
+        descripcionPorPaquete[p.id as number] = {
+          incluye: p.programa_incluye,
+          noIncluye: p.programa_no_incluye,
+          tarifasEspeciales: p.programa_tarifas_especiales,
+          condicionesComerciales: p.programa_condiciones_comerciales,
+        };
       }
     }
   }
@@ -550,7 +555,7 @@ export async function cargarResumenTarifario(
     datos: {
       filasVisibles, filasAddon,
       cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
-      infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, incluidosPorPaquete,
+      infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
     },
   };
 }
