@@ -164,6 +164,7 @@ export default async function PasajerosPage() {
       filasInfantes.push({
         ...base,
         id: `infante-${inf.id}`,
+        infanteId: inf.id,
         padreId: base.id,
         sillaId: null,
         esInfante: true,

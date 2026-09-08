@@ -85,6 +85,17 @@ describe("vuelos/[id]/page.tsx — infante subordinado a su silla responsable", 
     assert.doesNotMatch(bloque, /<table/i, "la advertencia no debe ser una tabla");
   });
 
+  test("REQUERIDO: la línea del renglón muestra nombre, tipo+número de documento y edad/fecha (todo junto, antes de 'No ocupa silla')", () => {
+    const inicio = src.indexOf("infantesPorSillaId.get(s.id)");
+    const bloque = src.slice(inicio, inicio + 2000);
+    const idxNombre = bloque.indexOf("Infante a cargo");
+    const idxDoc = bloque.indexOf("inf.tipoId");
+    const idxEdad = bloque.indexOf("descripcionEdadInfante");
+    const idxNoOcupa = bloque.indexOf("No ocupa silla");
+    assert.ok(idxNombre > -1 && idxDoc > idxNombre && idxEdad > idxDoc && idxNoOcupa > idxEdad,
+      "el orden debe ser nombre → documento → edad/fecha → 'No ocupa silla', todos dentro de la misma línea del renglón");
+  });
+
   test("mantiene intacta la solución cross-tenant del PR #289 (resolverManifiestoAutorizado sigue siendo el único punto de lectura de contrato_pasajeros/ventas)", () => {
     assert.match(src, /resolverManifiestoAutorizado\(/, "no sigue usando resolverManifiestoAutorizado");
     assert.doesNotMatch(src, /createAdminClient|SUPABASE_SERVICE_ROLE_KEY/, "no debe construir el cliente admin directamente en la página");
@@ -148,10 +159,24 @@ describe("PasajerosBuscador.tsx — renderizado subordinado (Client Component, c
   test("el renglón del infante no ocupa silla ni expone acciones — solo texto informativo con el ícono conector y 'No ocupa silla'", () => {
     const finTbody = src.indexOf("<tbody>");
     const inicio = src.indexOf("infantesPorPadre.get(p.id)", finTbody);
-    const bloque = src.slice(inicio, inicio + 900);
+    const bloque = src.slice(inicio, inicio + 1200);
     assert.match(bloque, /CornerDownRight/, "debe usar un ícono conector (lucide-react) para dejar clara la relación con el responsable — nunca un emoji");
     assert.match(bloque, /No ocupa silla/, "debe indicar explícitamente que el infante no ocupa silla");
-    assert.match(bloque, /colSpan=\{10\}/, "debe ocupar el ancho completo de la tabla (10 columnas)");
+    // La tabla ganó una columna "Acciones" (migración 168, alta/edición de
+    // infante directamente desde aquí) — 10 → 11 columnas.
+    assert.match(bloque, /colSpan=\{11\}/, "debe ocupar el ancho completo de la tabla (11 columnas)");
+  });
+
+  test("REQUERIDO: la línea del renglón muestra nombre, tipo+número de documento y edad/fecha (todo junto, un solo <span> inline-flex, antes de 'No ocupa silla')", () => {
+    const finTbody = src.indexOf("<tbody>");
+    const inicio = src.indexOf("infantesPorPadre.get(p.id)", finTbody);
+    const bloque = src.slice(inicio, inicio + 1200);
+    const idxNombre = bloque.indexOf("Infante a cargo");
+    const idxDoc = bloque.indexOf("inf.tipoDoc");
+    const idxEdad = bloque.indexOf("descripcionEdadInfante");
+    const idxNoOcupa = bloque.indexOf("No ocupa silla");
+    assert.ok(idxNombre > -1 && idxDoc > idxNombre && idxEdad > idxDoc && idxNoOcupa > idxEdad,
+      "el orden debe ser nombre → documento → edad/fecha → 'No ocupa silla', todos dentro del mismo bloque de línea");
   });
 
   test("REQUERIDO 6: advertencia compacta (no tabla) para infantes sin responsable ubicable, con ícono de alerta", () => {

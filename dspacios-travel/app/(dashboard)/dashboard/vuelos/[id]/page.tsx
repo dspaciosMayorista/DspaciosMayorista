@@ -3,7 +3,7 @@ import { CornerDownRight, TriangleAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatCOP, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { CambiarSillasForm } from "./CambiarSillasForm";
 import { SillaEstado } from "./SillaEstado";
 import { PasajeroAcciones } from "./PasajeroAcciones";
@@ -17,6 +17,7 @@ import { normalizarReferenciaManual, resolverManifiestoAutorizado } from "@/lib/
 import { emparejarInfantesConSilla, descripcionEdadInfante } from "@/lib/vuelos/manifiestoInfantes";
 import { contratosQuePuedeAbrir, enlaceContratoEnVuelo } from "@/lib/vuelos/enlaceContrato";
 import { EnlaceEditarContrato } from "@/components/vuelos/EnlaceEditarContrato";
+import { InfanteVueloForm } from "@/components/vuelos/InfanteVueloForm";
 import { tenantContext } from "@/lib/tenant.server";
 
 export const dynamic = "force-dynamic";
@@ -166,6 +167,24 @@ export default async function BloqueoDetallePage({
   );
   const contratosAutorizados = await contratosQuePuedeAbrir(sb, numerosContratosInfantes);
 
+  // Candidatos a "adulto responsable" para el alta manual de PasajeroAcciones
+  // (ver ese componente): cualquier silla de ESTE vuelo con documento propio,
+  // que no esté en 'cambio', con fecha de nacimiento VÁLIDA y mayoría de edad
+  // REAL (≥18) a la fecha_ida del vuelo — un menor nunca debe ofrecerse como
+  // responsable en el <select>, aunque el servidor (guardar_infante_vuelo)
+  // vuelva a validar todo (documento, mayoría de edad, contrato) al guardar;
+  // esta lista solo alimenta el <select> en el cliente.
+  const candidatosResponsable = (sillas ?? [])
+    .filter((s) => s.estado !== "cambio" && s.tipo_doc && s.numero_doc && s.nacimiento)
+    .filter((s) => {
+      const edad = calcularEdad(s.nacimiento, b.fecha_ida);
+      return edad != null && edad >= 18;
+    })
+    .map((s) => ({
+      sillaId: s.id,
+      nombre: `${s.pasajero_nombres ?? ""} ${s.pasajero_apellidos ?? ""}`.trim() || `Silla #${s.numero_silla}`,
+    }));
+
   return (
     <div className="mx-auto max-w-[1500px] p-4 md:p-8">
       <Link href="/dashboard/vuelos" className="text-sm text-gray-400 hover:text-gray-600">← Vuelos</Link>
@@ -268,17 +287,32 @@ export default async function BloqueoDetallePage({
                             bloqueada={s.estado === "cambio"} />
                         </td>
                         <td className="px-3 py-2">
-                          <PasajeroAcciones
-                            sillaId={s.id}
-                            bloqueoId={bloqueoId}
-                            bloqueada={s.estado === "cambio"}
-                            otros={otros ?? []}
-                            inicial={{
-                              pasajero_nombres: s.pasajero_nombres ?? "", pasajero_apellidos: s.pasajero_apellidos ?? "",
-                              tipo_doc: s.tipo_doc ?? "", numero_doc: s.numero_doc ?? "", nacimiento: s.nacimiento ?? "",
-                              asesor: s.asesor ?? "", hotel: s.hotel ?? "", acomodacion: s.acomodacion ?? "", plazo: s.plazo ?? "",
-                            }}
-                          />
+                          <div className="flex flex-col items-start gap-1">
+                            <PasajeroAcciones
+                              sillaId={s.id}
+                              bloqueoId={bloqueoId}
+                              bloqueada={s.estado === "cambio"}
+                              otros={otros ?? []}
+                              fechaIdaBloqueo={b.fecha_ida}
+                              candidatosResponsable={candidatosResponsable.filter((c) => c.sillaId !== s.id)}
+                              inicial={{
+                                pasajero_nombres: s.pasajero_nombres ?? "", pasajero_apellidos: s.pasajero_apellidos ?? "",
+                                tipo_doc: s.tipo_doc ?? "", numero_doc: s.numero_doc ?? "", nacimiento: s.nacimiento ?? "",
+                                asesor: s.asesor ?? "", hotel: s.hotel ?? "", acomodacion: s.acomodacion ?? "", plazo: s.plazo ?? "",
+                              }}
+                            />
+                            {/* Alta de infante SIN silla a cargo de este adulto — exige
+                                documento propio (es, a la vez, la autorización de
+                                control_vuelo y el ancla del contrato efectivo — migración 168). */}
+                            {s.estado !== "cambio" && s.tipo_doc && s.numero_doc && (
+                              <InfanteVueloForm
+                                bloqueoId={bloqueoId}
+                                sillaResponsableId={s.id}
+                                fechaIdaBloqueo={b.fecha_ida}
+                                modo="crear"
+                              />
+                            )}
+                          </div>
                         </td>
                       </tr>
                       {/* Infante(s) a cargo de esta silla — renglón subordinado, sin
@@ -296,8 +330,24 @@ export default async function BloqueoDetallePage({
                               <span className="inline-flex flex-wrap items-center gap-1.5 text-gray-600">
                                 <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-gray-300" aria-hidden="true" />
                                 <span>Infante a cargo: <b className="font-medium text-gray-800">{inf.nombre || "—"}</b></span>
+                                <span className="text-gray-400">· {inf.tipoId || "—"} {inf.identificacion || "—"}</span>
                                 <span className="text-gray-400">· {descripcionEdadInfante(inf.fechaNacimiento, b.fecha_ida)}</span>
                                 <span className="rounded bg-gray-200/70 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">No ocupa silla</span>
+                                {inf.tipoId && inf.identificacion && inf.fechaNacimiento && (
+                                  <InfanteVueloForm
+                                    bloqueoId={bloqueoId}
+                                    sillaResponsableId={s.id}
+                                    fechaIdaBloqueo={b.fecha_ida}
+                                    modo="editar"
+                                    inicial={{
+                                      id: inf.id,
+                                      nombreCompleto: inf.nombre,
+                                      tipoDoc: inf.tipoId,
+                                      numeroDoc: inf.identificacion,
+                                      fechaNacimiento: inf.fechaNacimiento,
+                                    }}
+                                  />
+                                )}
                                 {enlace && (
                                   <EnlaceEditarContrato
                                     numeroContrato={enlace.numeroContrato}

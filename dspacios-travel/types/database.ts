@@ -3298,6 +3298,34 @@ export type Database = {
         Args: Record<string, never>;
         Returns: string;
       };
+      // Migración 168 — RPC ESTRECHO para alta/edición de UN infante (sin
+      // silla) directamente desde el detalle de un vuelo. El cliente nunca
+      // manda numero_contrato/responsable_id: manda la silla CONCRETA del
+      // adulto responsable (p_silla_responsable_id, real en p_bloqueo_id) y
+      // el server resuelve el contrato efectivo (orgánico o contrato_manual)
+      // y al responsable por documento. Nunca toca sillas/capacidad/holders/
+      // precios/CxP/contrato_items — ver cabecera de la migración 168.
+      guardar_infante_vuelo: {
+        Args: {
+          p_bloqueo_id: number;
+          p_silla_responsable_id: number;
+          p_infante_id: number | null;
+          p_nombres: string;
+          p_apellidos: string;
+          p_tipo_doc: string;
+          p_numero_doc: string;
+          p_fecha_nacimiento: string;
+        };
+        Returns: {
+          id: number;
+          nombre: string;
+          tipo_id: string;
+          identificacion: string | null;
+          fecha_nacimiento: string | null;
+          responsable_id: number | null;
+          numero_contrato: string;
+        }[];
+      };
       guardar_pasajeros_contrato: {
         Args: {
           p_numero_contrato: string;
