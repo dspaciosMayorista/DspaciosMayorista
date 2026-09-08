@@ -3,7 +3,7 @@ import { CornerDownRight, TriangleAlert } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatCOP, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { CambiarSillasForm } from "./CambiarSillasForm";
 import { SillaEstado } from "./SillaEstado";
 import { PasajeroAcciones } from "./PasajeroAcciones";
@@ -168,12 +168,18 @@ export default async function BloqueoDetallePage({
   const contratosAutorizados = await contratosQuePuedeAbrir(sb, numerosContratosInfantes);
 
   // Candidatos a "adulto responsable" para el alta manual de PasajeroAcciones
-  // (ver ese componente): cualquier silla de ESTE vuelo con documento propio
-  // y que no esté en 'cambio' — el servidor (guardar_infante_vuelo) vuelve a
-  // validar todo (documento, mayoría de edad, contrato) al guardar; esta
-  // lista solo alimenta el <select> en el cliente.
+  // (ver ese componente): cualquier silla de ESTE vuelo con documento propio,
+  // que no esté en 'cambio', con fecha de nacimiento VÁLIDA y mayoría de edad
+  // REAL (≥18) a la fecha_ida del vuelo — un menor nunca debe ofrecerse como
+  // responsable en el <select>, aunque el servidor (guardar_infante_vuelo)
+  // vuelva a validar todo (documento, mayoría de edad, contrato) al guardar;
+  // esta lista solo alimenta el <select> en el cliente.
   const candidatosResponsable = (sillas ?? [])
-    .filter((s) => s.estado !== "cambio" && s.tipo_doc && s.numero_doc)
+    .filter((s) => s.estado !== "cambio" && s.tipo_doc && s.numero_doc && s.nacimiento)
+    .filter((s) => {
+      const edad = calcularEdad(s.nacimiento, b.fecha_ida);
+      return edad != null && edad >= 18;
+    })
     .map((s) => ({
       sillaId: s.id,
       nombre: `${s.pasajero_nombres ?? ""} ${s.pasajero_apellidos ?? ""}`.trim() || `Silla #${s.numero_silla}`,

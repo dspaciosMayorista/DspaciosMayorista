@@ -38,7 +38,7 @@ describe("PasajeroAcciones.tsx — detección en vivo de infante en el alta manu
   test("en modo infante NO llama a editarPasajeroSilla — nunca ocupa la silla que se está editando", () => {
     const inicio = src.indexOf("function guardar()");
     assert.ok(inicio > -1);
-    const bloque = src.slice(inicio, inicio + 1200);
+    const bloque = src.slice(inicio, inicio + 1600);
     const idxSiInfante = bloque.indexOf("if (esInfante)");
     const idxReturn = bloque.indexOf("return;", idxSiInfante);
     const idxEditar = bloque.indexOf("editarPasajeroSilla(");
@@ -68,16 +68,80 @@ describe("PasajeroAcciones.tsx — detección en vivo de infante en el alta manu
     const inicio = src.indexOf("{!esInfante && (");
     assert.ok(inicio > -1, "no oculta los campos de silla cuando el pasajero es infante");
   });
+
+  // ── Alcance mínimo: la conversión automática a INF solo aplica en el ALTA
+  // sobre una silla VACÍA — nunca al editar una silla que ya tenía un
+  // pasajero (evita el duplicado reportado: corregir la fecha de un
+  // pasajero existente a <2 años NO debe crear un infante nuevo dejando al
+  // original ocupando la silla). ──────────────────────────────────────────
+  test("sillaVacia se decide sobre `inicial` (estado ORIGINAL al abrir el modal), nunca sobre `form` (que cambia mientras se escribe)", () => {
+    const inicio = src.indexOf("const sillaVacia =");
+    assert.ok(inicio > -1, "no define sillaVacia");
+    const linea = src.slice(inicio, inicio + 200);
+    assert.match(linea, /inicial\.pasajero_nombres\.trim\(\)/, "debe leer inicial.pasajero_nombres, no form.pasajero_nombres");
+    assert.match(linea, /inicial\.pasajero_apellidos\.trim\(\)/, "debe leer inicial.pasajero_apellidos, no form.pasajero_apellidos");
+    assert.doesNotMatch(linea, /form\.pasajero_nombres|form\.pasajero_apellidos/, "sillaVacia NO debe depender de form (que cambia con cada tecla)");
+  });
+
+  test("bloqueadaPorSillaOcupada = esInfante && !sillaVacia (edición de silla ocupada hacia INF queda bloqueada, alta en silla vacía no)", () => {
+    assert.match(src, /const bloqueadaPorSillaOcupada = esInfante && !sillaVacia;/);
+  });
+
+  test("REQUERIDO: si la silla YA estaba ocupada y la fecha corregida clasifica INF, guardar() bloquea con mensaje ANTES de llegar a cualquier llamada de guardado — no inserta el infante ni toca la silla", () => {
+    const inicio = src.indexOf("function guardar()");
+    const bloque = src.slice(inicio, inicio + 1500);
+    const idxSiInfante = bloque.indexOf("if (esInfante)");
+    const idxBloqueo = bloque.indexOf("if (bloqueadaPorSillaOcupada)", idxSiInfante);
+    const idxSetErrBloqueo = bloque.indexOf("setErr(", idxBloqueo);
+    const idxReturnBloqueo = bloque.indexOf("return;", idxSetErrBloqueo);
+    const idxResponsableCheck = bloque.indexOf('responsableId === ""', idxReturnBloqueo);
+    const idxGuardarInfanteVuelo = bloque.indexOf("guardarInfanteVuelo(", idxReturnBloqueo);
+    const idxEditarPasajeroSilla = bloque.indexOf("editarPasajeroSilla(");
+    assert.ok(idxSiInfante > -1 && idxBloqueo > idxSiInfante, "debe comprobar bloqueadaPorSillaOcupada dentro de la rama esInfante");
+    assert.ok(idxReturnBloqueo > idxBloqueo, "debe hacer return inmediatamente tras detectar la silla ocupada");
+    assert.ok(
+      idxResponsableCheck > idxReturnBloqueo && idxGuardarInfanteVuelo > idxResponsableCheck,
+      "el chequeo de silla ocupada debe ejecutarse ANTES de pedir/usar el responsable o llamar guardarInfanteVuelo — ninguna de las dos rutas de guardado se alcanza si la silla está ocupada"
+    );
+    assert.ok(idxEditarPasajeroSilla > idxGuardarInfanteVuelo, "editarPasajeroSilla tampoco debe alcanzarse desde la rama esInfante");
+  });
+
+  test("el botón Guardar queda deshabilitado cuando bloqueadaPorSillaOcupada (no solo un mensaje visual — el clic no dispara nada)", () => {
+    assert.match(src, /disabled=\{pending \|\| bloqueadaPorSillaOcupada\}/);
+  });
+
+  test("el selector de adulto responsable SOLO se renderiza en el alta sobre silla vacía (esInfante && sillaVacia) — nunca al editar una silla ocupada", () => {
+    const inicio = src.indexOf("{esInfante && sillaVacia && (");
+    assert.ok(inicio > -1, "el selector de responsable debe estar condicionado a esInfante && sillaVacia, no solo esInfante");
+  });
+
+  test("hay un banner de bloqueo DISTINTO (nunca el mismo selector de alta) cuando la silla está ocupada", () => {
+    const inicio = src.indexOf("{bloqueadaPorSillaOcupada && (");
+    assert.ok(inicio > -1, "no renderiza un aviso específico para el caso bloqueado");
+    const bloque = src.slice(inicio, inicio + 400);
+    assert.doesNotMatch(bloque, /candidatosResponsable\.map\(/, "el banner de bloqueo no debe incluir el selector de responsable — no se puede convertir aquí, no se ofrece elegir a quién");
+  });
 });
 
 describe("vuelos/[id]/page.tsx — construye candidatosResponsable desde las sillas reales de ESTE vuelo", () => {
   const src = leer(RUTA_BLOQUEO);
 
-  test("candidatosResponsable exige documento propio y excluye sillas en 'cambio' (mismo criterio que el trigger directo Infante)", () => {
+  test("candidatosResponsable exige documento propio, fecha de nacimiento válida y excluye sillas en 'cambio' (mismo criterio que el trigger directo Infante)", () => {
     const inicio = src.indexOf("const candidatosResponsable");
     assert.ok(inicio > -1);
-    const bloque = src.slice(inicio, inicio + 400);
-    assert.match(bloque, /s\.estado !== "cambio" && s\.tipo_doc && s\.numero_doc/);
+    const bloque = src.slice(inicio, inicio + 500);
+    assert.match(bloque, /s\.estado !== "cambio" && s\.tipo_doc && s\.numero_doc && s\.nacimiento/);
+  });
+
+  test("REQUERIDO: candidatosResponsable excluye MENORES DE EDAD — calcula edad real (calcularEdad) contra fecha_ida y exige >= 18, nunca solo 'tiene documento'", () => {
+    const inicio = src.indexOf("const candidatosResponsable");
+    const bloque = src.slice(inicio, inicio + 700);
+    assert.match(bloque, /calcularEdad\(s\.nacimiento, b\.fecha_ida\)/);
+    assert.match(bloque, /edad != null && edad >= 18/, "debe exigir mayoría de edad real (>=18), no solo tener documento");
+  });
+
+  test("importa calcularEdad de lib/utils (nunca reimplementa el cálculo de edad)", () => {
+    assert.match(src, /import \{ formatCOP, formatFechaLarga, calcularEdad \} from "@\/lib\/utils";/);
   });
 
   test("PasajeroAcciones recibe fechaIdaBloqueo y candidatosResponsable EXCLUYENDO la propia silla de la fila", () => {

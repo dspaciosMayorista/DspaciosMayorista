@@ -39,6 +39,15 @@ export function PasajeroAcciones({
 
   const set = (k: keyof Pasajero, val: string) => setForm((f) => ({ ...f, [k]: val }));
 
+  // Silla VACÍA al abrir el modal (sin pasajero ya registrado) — se decide
+  // sobre `inicial` (el estado ORIGINAL de la silla), nunca sobre `form`
+  // (que cambia mientras se escribe): si la silla YA tenía un pasajero, esto
+  // es una EDICIÓN, no un alta, y la conversión automática a infante no
+  // aplica aquí (ver más abajo) — evita el caso reportado donde corregir la
+  // fecha de un pasajero existente a <2 años creaba un infante NUEVO y
+  // dejaba al pasajero original duplicado ocupando la silla.
+  const sillaVacia = !inicial.pasajero_nombres.trim() && !inicial.pasajero_apellidos.trim();
+
   // Detección EN VIVO de infante — misma fuente de verdad que el RPC
   // guardar_infante_vuelo (lib/vuelos/infanteVuelo.ts), contra la fecha REAL
   // del vuelo (nunca la del contrato). El servidor sigue siendo la
@@ -51,17 +60,29 @@ export function PasajeroAcciones({
     () => (form.nacimiento ? calcularEdad(form.nacimiento, fechaIdaBloqueo) : null),
     [form.nacimiento, fechaIdaBloqueo]
   );
+  // Alcance mínimo pedido: la conversión automática a INF solo opera en el
+  // ALTA sobre una silla vacía. Si la silla ya tenía un pasajero y la fecha
+  // corregida clasifica como infante, se BLOQUEA el guardado — nunca se
+  // inserta el infante ni se toca la silla (ninguna conversión destructiva
+  // ni multioperación en este PR).
+  const bloqueadaPorSillaOcupada = esInfante && !sillaVacia;
 
   if (bloqueada) return <span className="text-[10px] text-gray-400">—</span>;
 
   function guardar() {
     setErr("");
     // Si la fecha de nacimiento clasifica como infante (< 2 años a la fecha
-    // REAL del vuelo), este pasajero NO ocupa silla — nunca se escribe en
-    // ESTA silla (queda disponible/sin tocar). En vez de eso, se crea como
-    // infante subordinado al adulto responsable elegido, vía el mismo RPC
-    // estrecho que usa el trigger directo "Infante" (migración 168).
+    // REAL del vuelo) Y la silla estaba VACÍA al abrir el modal (alta, no
+    // edición de un pasajero existente), este pasajero NO ocupa silla —
+    // nunca se escribe en ESTA silla (queda disponible/sin tocar). En vez de
+    // eso, se crea como infante subordinado al adulto responsable elegido,
+    // vía el mismo RPC estrecho que usa el trigger directo "Infante"
+    // (migración 168).
     if (esInfante) {
+      if (bloqueadaPorSillaOcupada) {
+        setErr("Esta silla ya tiene un pasajero registrado: no se puede convertir a infante editándola aquí. Borra o mueve primero al pasajero actual, o corrige la fecha de nacimiento.");
+        return;
+      }
       if (responsableId === "") { setErr("Elige el adulto responsable del infante."); return; }
       start(async () => {
         const r = await guardarInfanteVuelo(bloqueoId, Number(responsableId), null, {
@@ -147,7 +168,7 @@ export function PasajeroAcciones({
                   )}
                 </div>
 
-                {esInfante && (
+                {esInfante && sillaVacia && (
                   <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                     <p className="text-xs text-amber-800">
                       Con {edadInfante ?? "?"} años a la fecha del vuelo, este pasajero es <b>infante</b>: no ocupa silla
@@ -168,10 +189,20 @@ export function PasajeroAcciones({
                   </div>
                 )}
 
+                {bloqueadaPorSillaOcupada && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                    <p className="text-xs text-red-800">
+                      Con {edadInfante ?? "?"} años a la fecha del vuelo, este pasajero sería <b>infante</b> — pero esta
+                      silla ya tiene un pasajero registrado. No se puede convertir aquí: borra o mueve primero al
+                      pasajero actual, o corrige la fecha de nacimiento.
+                    </p>
+                  </div>
+                )}
+
                 {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
                 <div className="mt-4 flex justify-end gap-2">
                   <button type="button" onClick={() => setModo(null)} className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100">Cancelar</button>
-                  <button type="button" onClick={guardar} disabled={pending} className="rounded-lg px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : "Guardar"}</button>
+                  <button type="button" onClick={guardar} disabled={pending || bloqueadaPorSillaOcupada} className="rounded-lg px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "Guardando…" : "Guardar"}</button>
                 </div>
               </>
             ) : (
