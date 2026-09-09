@@ -7,6 +7,7 @@ import { marcar } from "@/lib/calc/paquetes";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
+import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 
 export type ServicioManual = {
   tipo: string;          // aereo / hotel / traslado / asistencia / otro
@@ -93,6 +94,13 @@ export async function crearCotizacionManual(
     return { ok: false, error: "El nombre del cliente es obligatorio." };
   const servicios = (input.servicios ?? []).filter((s) => (Number(s.costoNeto) || 0) > 0 || (s.nombre ?? "").trim() || (s.plataforma ?? "").trim());
   if (!servicios.length) return { ok: false, error: "Agrega al menos un servicio con su costo." };
+  const vigenciaRes = resolverVigenciaCotizacion({
+    hoy: hoyBogota(),
+    fechaSalida: input.fechaIda || null,
+    vigenciaSolicitada: input.vigenciaHasta,
+    diasPorDefecto: 3,
+  });
+  if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
 
   const { data: { user } } = await sb.auth.getUser();
 
@@ -202,7 +210,7 @@ export async function crearCotizacionManual(
       moneda,
       fecha_salida: input.fechaIda || null,
       fecha_regreso: input.fechaRegreso || null,
-      vigencia_hasta: input.vigenciaHasta || null,
+      vigencia_hasta: vigenciaRes.vigencia,
       asesor: asesor || null,
       creado_por: user?.email ?? null,
     })

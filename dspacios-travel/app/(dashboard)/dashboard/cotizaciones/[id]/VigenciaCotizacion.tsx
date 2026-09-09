@@ -6,9 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatFechaLarga } from "@/lib/utils";
 import { actualizarVigenciaCotizacion } from "../../reservar/actions";
+import { hoyBogota } from "@/lib/cotizacion/vigencia";
 
 // Editable solo si la cotización sigue abierta; si no, muestra la fecha fija.
-export function VigenciaCotizacion({ id, vigencia, editable }: { id: number; vigencia: string | null; editable: boolean }) {
+export function VigenciaCotizacion({ id, vigencia, fechaSalida, editable }: { id: number; vigencia: string | null; fechaSalida: string | null; editable: boolean }) {
   const router = useRouter();
   const [edit, setEdit] = useState(false);
   const [valor, setValor] = useState(vigencia ?? "");
@@ -39,7 +40,7 @@ export function VigenciaCotizacion({ id, vigencia, editable }: { id: number; vig
         </div>
       ) : (
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <Input type="date" value={valor} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setValor(e.target.value)} className="w-40" />
+          <Input type="date" value={valor} min={hoyBogota()} max={fechaSalida ?? undefined} onChange={(e) => setValor(e.target.value)} className="w-40" />
           <Button onClick={guardar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "…" : "Guardar"}
           </Button>

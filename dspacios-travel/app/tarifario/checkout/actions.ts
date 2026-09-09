@@ -15,6 +15,7 @@ import {
 } from "@/lib/reservar/edadesMenores";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
+import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import type { Json } from "@/types/database";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
@@ -272,7 +273,7 @@ async function crearCotizacionCarrito(input: {
   const clienteNombre = `${input.cliente.nombres} ${input.cliente.apellidos}`.trim();
   if (!clienteNombre) return { ok: false, error: "El nombre del cliente es obligatorio." };
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = hoyBogota();
   const hotelesSnap: Record<string, unknown>[] = [];
   const vuelosSnap: Record<string, unknown>[] = [];
   const itemsSnap: Record<string, unknown>[] = [];
@@ -493,9 +494,13 @@ async function crearCotizacionCarrito(input: {
 
   const detalle = { venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
 
-  const vig = new Date();
-  vig.setDate(vig.getDate() + 1);
-  const vigencia = vig.toISOString().slice(0, 10);
+  const vigenciaRes = resolverVigenciaCotizacion({
+    hoy,
+    fechaSalida: fechaIda,
+    diasPorDefecto: 1,
+  });
+  if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
+  const vigencia = vigenciaRes.vigencia;
 
   const { data: { user } } = await sb.auth.getUser();
   const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;

@@ -179,7 +179,7 @@ export default async function CotizacionDetallePage({
           <div className="text-xl font-bold">{formatMoneda(c.precio_venta ?? 0, moneda)}</div>
         </div>
         <Dato label="Pasajeros" value={String(c.pax ?? "—")} />
-        <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} editable={c.estado === "abierta"} />
+        <VigenciaCotizacion id={c.id} vigencia={c.vigencia_hasta} fechaSalida={c.fecha_salida} editable={c.estado === "abierta"} />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">

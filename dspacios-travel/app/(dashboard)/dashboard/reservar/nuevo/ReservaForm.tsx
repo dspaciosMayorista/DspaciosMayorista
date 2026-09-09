@@ -11,6 +11,7 @@ import { precioServicio } from "@/lib/calc/paquetes";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, paxTarifaDe, clasificarPorEdad, validarReservaHabitaciones, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
 
 // Suma N noches a una fecha YYYY-MM-DD y devuelve YYYY-MM-DD.
 const addDiasStr = (d: string, n: number) => {
@@ -70,6 +71,7 @@ export function ReservaForm({
   vendedores?: { nombre: string }[]; agencias?: { id: number; nombre: string }[]; freelances?: { id: number; nombre: string }[];
 }) {
   const router = useRouter();
+  const hoy = hoyBogota();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
@@ -181,10 +183,9 @@ export function ReservaForm({
   const [aliadoId, setAliadoId] = useState<number | "">("");
   const [modoCompra, setModoCompra] = useState<"neta" | "comisionable">("comisionable");
   const [plazo, setPlazo] = useState("");
-  // Vigencia de la cotización: por defecto 24 horas (hoy + 1 día, editable).
-  const [vigencia, setVigencia] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10);
-  });
+  // Por defecto 24 horas, sin superar nunca la salida del viaje.
+  const fechaSalidaCotizacion = esPorFechas ? fIda : meta.fechaIda;
+  const [vigencia, setVigencia] = useState(() => vigenciaInicial(hoy, meta.fechaIda, 1));
 
   // Pasajeros: la cantidad de filas se deriva del total; los datos se guardan
   // en `pax` (se extiende según se editen).
@@ -244,6 +245,7 @@ export function ReservaForm({
   // mismo recálculo que un cambio de fecha de nacimiento (B8, ronda 3).
   function cambiarFIda(v: string) {
     setFIda(v);
+    if (v && vigencia > v) setVigencia(v);
     setPax((prev) => recalcularVinculosPorEdad(prev, v || null));
   }
   function copiarCliente(i: number) {
@@ -622,8 +624,8 @@ export function ReservaForm({
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <label className={lbl}>Cotización válida hasta</label>
-          <Input type="date" value={vigencia} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setVigencia(e.target.value)} className="w-44" />
-          <p className="mt-1 text-xs text-gray-400">Por defecto, 24 horas. Editable.</p>
+          <Input type="date" value={vigencia} min={hoy} max={fechaSalidaCotizacion ?? undefined} onChange={(e) => setVigencia(e.target.value)} className="w-44" />
+          <p className="mt-1 text-xs text-gray-400">Por defecto, 24 horas; nunca después de la salida.</p>
         </div>
         <Button onClick={guardar} disabled={pending || bloquear} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Generando…" : "Generar cotización"}
