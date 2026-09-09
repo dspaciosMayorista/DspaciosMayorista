@@ -8,6 +8,7 @@ import { formatMoneda } from "@/lib/utils";
 import { Plane, Hotel, Car, HeartPulse, Plus, Trash2, type LucideIcon } from "lucide-react";
 import { crearCotizacionManual, type ServicioManual } from "../manual-actions";
 import { sugerirIncluye, NO_INCLUYE_DEFAULT } from "@/lib/cotizacion/incluye";
+import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
 
 type Asesor = { nombre: string | null; email: string };
 type Aliado = { id: number; nombre: string; tipo: string | null };
@@ -24,8 +25,7 @@ type Fila = ServicioManual & { _id: number };
 let _seq = 1;
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
-const hoy = new Date().toISOString().slice(0, 10);
-const masDias = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+const hoy = hoyBogota();
 
 function valor(f: { costoNeto: number; modo: "mk" | "ta"; pctMarkup: number; ta: number }): number {
   const c = Number(f.costoNeto) || 0;
@@ -55,7 +55,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   const [recobro, setRecobro] = useState("0");
   const [recobroAliado, setRecobroAliado] = useState("0");
   const [plazo, setPlazo] = useState("");
-  const [vigencia, setVigencia] = useState(masDias(3));
+  const [vigencia, setVigencia] = useState(vigenciaInicial(hoy, null, 3));
   const [observaciones, setObservaciones] = useState("");
   const [incluye, setIncluye] = useState("");
   const [noIncluye, setNoIncluye] = useState("");
@@ -151,7 +151,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
         <h2 className="mb-3 text-sm font-semibold text-gray-700">Datos del viaje</h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div className="col-span-2 md:col-span-2"><label className={lbl}>Destino</label><Input value={destino} onChange={(e) => setDestino(e.target.value)} placeholder="Ej. San Andrés" /></div>
-          <div><label className={lbl}>Fecha ida</label><Input type="date" value={fechaIda} min={hoy} onChange={(e) => setFechaIda(e.target.value)} /></div>
+          <div><label className={lbl}>Fecha ida</label><Input type="date" value={fechaIda} min={hoy} onChange={(e) => { const v = e.target.value; setFechaIda(v); if (v && vigencia > v) setVigencia(v); }} /></div>
           <div><label className={lbl}>Fecha regreso</label><Input type="date" value={fechaRegreso} min={fechaIda || hoy} onChange={(e) => setFechaRegreso(e.target.value)} /></div>
           <div><label className={lbl}>Adultos</label><Input type="number" min={1} value={pax} onChange={(e) => setPax(e.target.value)} /></div>
           <div><label className={lbl}>Niños</label><Input type="number" min={0} value={numNinos} onChange={(e) => setNumNinos(e.target.value)} /></div>
@@ -165,7 +165,7 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
             </select>
           </div>
           <div><label className={lbl}>Plazo de pago</label><Input value={plazo} onChange={(e) => setPlazo(e.target.value)} placeholder="Inmediato / 7 días…" /></div>
-          <div><label className={lbl}>Vigencia hasta</label><Input type="date" value={vigencia} min={hoy} onChange={(e) => setVigencia(e.target.value)} /></div>
+          <div><label className={lbl}>Vigencia hasta</label><Input type="date" value={vigencia} min={hoy} max={fechaIda || undefined} onChange={(e) => setVigencia(e.target.value)} /></div>
         </div>
 
         {/* Canal */}
