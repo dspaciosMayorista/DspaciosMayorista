@@ -920,11 +920,12 @@ export async function actualizarVenta(
 // alcanza el % mínimo — compartido por registrar/editar un abono (el umbral se
 // revisa igual después de cualquiera de las dos operaciones).
 async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>>, numeroContrato: string): Promise<void> {
-  const { data: venta } = await sb
+  const { data: venta, error: ventaError } = await sb
     .from("ventas")
-    .select("estado, precio_venta, tipo_paquete, moneda")
+    .select("estado, precio_venta, tipo_paquete, moneda, financiero_estado")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
+  if (ventaError || !venta) return;
   const esUSD = (venta?.moneda ?? "COP") === "USD";
   const { data: abs } = await sb.from("abonos").select("valor_abono, monto_cop").eq("numero_contrato", numeroContrato);
   const totalAbonado = (abs ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);   // en moneda del contrato
@@ -938,7 +939,7 @@ async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>
   const { data: cfg } = await sb.from("config_cobros").select("pct_abono").eq("tipo_paquete", venta?.tipo_paquete ?? "").maybeSingle();
   const pctMin = cfg?.pct_abono ?? 0.3;
   const alcanzaMinimo = totalAbonado >= (venta?.precio_venta ?? 0) * pctMin;
-  if (venta?.estado === "pendiente" && alcanzaMinimo) {
+  if (venta?.estado === "pendiente" && venta.financiero_estado !== "pendiente" && alcanzaMinimo) {
     await sb.from("ventas").update({ estado: "confirmado" }).eq("numero_contrato", numeroContrato);
     const client = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
     await client
@@ -960,12 +961,16 @@ export async function registrarAbono(
   fecha?: string,           // fecha del abono (por defecto hoy; editable para registrar abonos atrasados)
 ): Promise<{ ok: boolean; error?: string }> {
   const sb = await createClient();
-  const { data: venta } = await sb
+  const { data: venta, error: ventaError } = await sb
     .from("ventas")
-    .select("estado, precio_venta, tipo_paquete, moneda, tenant")
+    .select("estado, precio_venta, tipo_paquete, moneda, tenant, financiero_estado")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
+  if (ventaError || !venta) return { ok: false, error: ventaError?.message ?? "Contrato no encontrado." };
   const esUSD = (venta?.moneda ?? "COP") === "USD";
+  if (venta?.financiero_estado === "pendiente") {
+    return { ok: false, error: "Este contrato todavía tiene pendiente su registro financiero. No se pueden registrar abonos hasta completar la reconciliación." };
+  }
   const montoCop = Math.max(0, Number(valor) || 0);
   const trm = esUSD ? (Number(trmInput) || 0) : 1;
   if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día para el abono (contrato en USD)." };

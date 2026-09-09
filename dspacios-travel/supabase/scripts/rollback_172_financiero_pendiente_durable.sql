@@ -25,6 +25,9 @@
 
 begin;
 
+drop trigger if exists trg_bloquear_abono_financiero_pendiente on public.abonos;
+drop function if exists public.bloquear_abono_financiero_pendiente();
+
 drop table if exists public.contrato_financiero_pendiente;
 
 alter table public.ventas drop constraint if exists ventas_financiero_estado_check;
@@ -199,5 +202,6 @@ commit;
 select
   not exists (select 1 from information_schema.columns where table_schema='public' and table_name='ventas' and column_name='financiero_estado') as financiero_estado_borrada,
   not exists (select 1 from information_schema.columns where table_schema='public' and table_name='ventas' and column_name='financiero_actualizado_en') as financiero_actualizado_en_borrada,
-  to_regclass('public.contrato_financiero_pendiente') is null as tabla_pendiente_borrada;
-\echo 'esperado: t | t | t'
+  to_regclass('public.contrato_financiero_pendiente') is null as tabla_pendiente_borrada,
+  to_regprocedure('public.bloquear_abono_financiero_pendiente()') is null as funcion_abono_borrada;
+\echo 'esperado: t | t | t | t'

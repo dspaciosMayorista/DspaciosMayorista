@@ -34,6 +34,16 @@ select count(*) as policies_definidas
 from pg_policies where tablename = 'contrato_financiero_pendiente';
 \echo 'esperado: rls_activa = t | policies_definidas = 0 (default-deny: solo service_role, que bypassa RLS)'
 
+\echo '=== C2) un contrato financiero pendiente no puede recibir abonos ==='
+select
+  to_regprocedure('public.bloquear_abono_financiero_pendiente()') is not null as funcion_presente,
+  exists (
+    select 1 from pg_trigger
+    where tgname = 'trg_bloquear_abono_financiero_pendiente'
+      and not tgisinternal
+  ) as trigger_presente;
+\echo 'esperado: t | t'
+
 \echo '=== D) las dos funciones siguen solo para service_role ==='
 select
   p.proname,

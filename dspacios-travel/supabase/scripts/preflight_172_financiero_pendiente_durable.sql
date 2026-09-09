@@ -15,6 +15,7 @@ select
 
 \echo '=== 3) tablas que toca la revertir_contrato_incompleto corregida ==='
 select
+  to_regclass('public.abonos')                 is not null as abonos,
   to_regclass('public.facturacion')            is not null as facturacion,
   to_regclass('public.rentabilidad')           is not null as rentabilidad,
   to_regclass('public.liquidacion_comisiones') is not null as liquidacion_comisiones,

@@ -113,6 +113,19 @@ describe("Escenario 1/2 · caída del proceso original — dos resoluciones posi
     assert.deepEqual(revertidos, ["DTM-7002"]);
     assert.equal(ventas.has("DTM-7002"), false);
   });
+
+  test("si LEER el payload falla, no se confunde con ausencia ni se revierte el contrato", async () => {
+    const { deps, ventas, revertidos } = baseFalsa();
+    ventas.set("DTM-7002E", { numeroContrato: "DTM-7002E", tenant: "mayorista", financieroEstado: "pendiente" });
+    deps.leerPendiente = async () => { throw new Error("timeout leyendo payload"); };
+
+    await assert.rejects(
+      () => reconciliarFinancieroPendiente(deps, { umbralMinutos: 0 }),
+      /timeout leyendo payload/
+    );
+    assert.equal(ventas.has("DTM-7002E"), true, "un error de lectura nunca autoriza borrar");
+    assert.deepEqual(revertidos, []);
+  });
 });
 
 describe("Escenario 3 · reversión que se niega por dinero real — sigue detectable, nunca se calla", () => {

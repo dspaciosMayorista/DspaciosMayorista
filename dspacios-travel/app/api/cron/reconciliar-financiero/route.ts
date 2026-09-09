@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { reconciliarFinancieroPendienteAction } from "@/app/(dashboard)/dashboard/reservar/reconciliacion-actions";
+import { reconciliarFinancieroPendienteCron } from "@/app/(dashboard)/dashboard/reservar/reconciliacion-actions";
 
 // Cron (Vercel): cierra la garantía financiera durable de la migración 172
 // (revisión B7 del PR #294) — contratos que quedaron `financiero_estado
@@ -18,6 +18,6 @@ export async function GET(req: Request) {
   if (auth !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const r = await reconciliarFinancieroPendienteAction();
+  const r = await reconciliarFinancieroPendienteCron(secret);
   return NextResponse.json(r);
 }

@@ -191,6 +191,15 @@ describe("B7 R2 · los dos flujos nacen con financiero_estado='pendiente' explí
   test("el default de la columna es 'completo', nunca 'pendiente' (no puede afectar otros caminos de creación)", () => {
     assert.match(migracion172, /add column if not exists financiero_estado text not null default 'completo'/);
   });
+
+  test("ambos flujos cierran el estado incluso cuando costo y CxP son cero", () => {
+    const tarifario = cuerpoFuncion(reservarActions, ANCLA_TARIFARIO);
+    const carrito = cuerpoFuncion(reservarActions, ANCLA_CARRITO);
+    assert.doesNotMatch(tarifario, /if\s*\(cxp\.length\s*\|\|\s*Object\.keys\(costosContrato\)\.length\)/);
+    assert.doesNotMatch(carrito, /if\s*\(cxp\.length\s*\|\|\s*Object\.keys\(costosGrupo\)\.length\)/);
+    assert.match(tarifario, /const fin = await registrarFinancieroContrato/);
+    assert.match(carrito, /const fin = await registrarFinancieroContrato/);
+  });
 });
 
 describe("B7 R2 · confirmarVenta se niega a confirmar con la escritura financiera incompleta", () => {
@@ -233,6 +242,40 @@ describe("B7 R2 · migración 172 corrige los tres bugs reproducidos empíricame
   test("bug C: el reset de sillas limpia asesor/hotel/acomodacion (antes solo limpiaba plazo/pasajero)", () => {
     const revertir = cuerpoFuncionSql(migracion172, "create or replace function public.revertir_contrato_incompleto(");
     assert.match(revertir, /asesor = null, hotel = null, acomodacion = null/);
+  });
+});
+
+describe("B7 R3 · un pendiente no puede recibir dinero ni confirmarse por la ruta de abonos", () => {
+  test("la migración instala un trigger sobre abonos respaldado por el estado de ventas", () => {
+    assert.match(migracion172, /create trigger trg_bloquear_abono_financiero_pendiente/);
+    assert.match(migracion172, /before insert or update on public\.abonos/);
+    assert.match(migracion172, /v\.financiero_estado = 'pendiente'/);
+  });
+
+  test("registrarAbono falla temprano y recalcularEstadoAbono tampoco confirma un pendiente", () => {
+    const contratosActions = leer("app/(dashboard)/dashboard/contratos/actions.ts");
+    const registrar = cuerpoFuncion(contratosActions, "export async function registrarAbono(");
+    const recalcular = cuerpoFuncion(contratosActions, "async function recalcularEstadoAbono(");
+    assert.match(registrar, /financiero_estado === "pendiente"/);
+    assert.match(recalcular, /venta\.financiero_estado !== "pendiente"/);
+  });
+});
+
+describe("B7 R3 · reconciliación administrativa falla cerrado", () => {
+  const accionesReconciliacion = leer("app/(dashboard)/dashboard/reservar/reconciliacion-actions.ts");
+  const rutaCron = leer("app/api/cron/reconciliar-financiero/route.ts");
+
+  test("un error leyendo el payload se propaga; nunca se interpreta como fila ausente", () => {
+    assert.match(accionesReconciliacion, /if \(error\) throw new Error\(`No se pudo leer el payload financiero/);
+  });
+
+  test("la acción manual exige superadmin y el cron exige el secreto", () => {
+    const manual = cuerpoFuncion(accionesReconciliacion, "export async function reconciliarFinancieroPendienteAction(");
+    const cron = cuerpoFuncion(accionesReconciliacion, "export async function reconciliarFinancieroPendienteCron(");
+    assert.match(manual, /sb\.rpc\("mi_rol"\)/);
+    assert.match(manual, /rol !== "superadmin"/);
+    assert.match(cron, /secretRecibido !== secret/);
+    assert.match(rutaCron, /reconciliarFinancieroPendienteCron\(secret\)/);
   });
 });
 

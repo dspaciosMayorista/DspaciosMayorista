@@ -898,12 +898,14 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   const costosContrato: CostosContrato = {};
   if (costoHotelTotal > 0) costosContrato.costo_hotel = costoHotelTotal;
   if (costoServiciosTotal > 0) costosContrato.costo_receptivo = costoServiciosTotal;
-  if (cxp.length || Object.keys(costosContrato).length) {
-    const fin = await registrarFinancieroContrato(depsFinanciero(numero, tenant, hoyISO), {
-      numeroContrato: numero, tenant, costos: costosContrato, cxp, fecha: hoyISO,
-    });
-    if (!fin.ok) return { ok: false, error: fin.error };
-  }
+  // Se llama incluso con costo/CxP cero: el contrato nació con
+  // financiero_estado='pendiente' y este RPC es la única transición válida a
+  // 'completo'. Omitirlo dejaría una reserva sin costos pendiente para siempre
+  // y el reconciliador terminaría revirtiéndola por falta de payload.
+  const fin = await registrarFinancieroContrato(depsFinanciero(numero, tenant, hoyISO), {
+    numeroContrato: numero, tenant, costos: costosContrato, cxp, fecha: hoyISO,
+  });
+  if (!fin.ok) return { ok: false, error: fin.error };
 
   revalidatePath("/dashboard/contratos");
   return { ok: true, numero };
@@ -2099,17 +2101,17 @@ export async function convertirCotizacionCarrito(
       costosGrupo.costo_hotel = costoHotelTotal;
       if (costoServiciosCarrito > 0) costosGrupo.costo_receptivo = costoServiciosCarrito;
     }
-    if (cxp.length || Object.keys(costosGrupo).length) {
-      const fin = await registrarFinancieroContrato(
-        depsFinanciero(numero, tenantCotizacion, hoyServidor),
-        { numeroContrato: numero, tenant: tenantCotizacion, costos: costosGrupo, cxp, fecha: hoyServidor }
-      );
-      // `registrarFinancieroContrato` YA revirtió este contrato (o dijo por
-      // qué no pudo) — acá solo se agrega qué contratos del carrito sí
-      // quedaron completos, para que el error no parezca cancelarlo todo.
-      if (!fin.ok) {
-        return { ok: false, error: numeros.length ? `${fin.error} (los contratos ${numeros.join(", ")} sí quedaron completos)` : fin.error };
-      }
+    // Igual que el flujo individual, debe cerrar el estado aunque el payload
+    // financiero sea vacío.
+    const fin = await registrarFinancieroContrato(
+      depsFinanciero(numero, tenantCotizacion, hoyServidor),
+      { numeroContrato: numero, tenant: tenantCotizacion, costos: costosGrupo, cxp, fecha: hoyServidor }
+    );
+    // `registrarFinancieroContrato` YA revirtió este contrato (o dijo por
+    // qué no pudo) — acá solo se agrega qué contratos del carrito sí
+    // quedaron completos, para que el error no parezca cancelarlo todo.
+    if (!fin.ok) {
+      return { ok: false, error: numeros.length ? `${fin.error} (los contratos ${numeros.join(", ")} sí quedaron completos)` : fin.error };
     }
 
     numeros.push(numero);
@@ -2201,6 +2203,7 @@ export async function confirmarVenta(numeroContrato: string): Promise<{ ok: bool
   const { data: estadoFin, error: efErr } = await sb
     .from("ventas").select("financiero_estado").eq("numero_contrato", numeroContrato).maybeSingle();
   if (efErr) return { ok: false, error: efErr.message };
+  if (!estadoFin) return { ok: false, error: "Contrato no encontrado o sin acceso." };
   if (estadoFin?.financiero_estado === "pendiente") {
     return {
       ok: false,

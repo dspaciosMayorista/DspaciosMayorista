@@ -189,6 +189,37 @@ comment on table public.contrato_financiero_pendiente is
 
 alter table public.contrato_financiero_pendiente enable row level security;
 
+-- Un abono puede confirmar automáticamente una venta. Mientras la escritura
+-- financiera siga pendiente, permitirlo dejaría el contrato confirmado y con
+-- dinero real, justo cuando el reconciliador necesita poder completarlo o
+-- revertirlo. La protección vive en Postgres para cubrir cualquier escritor,
+-- no solo el formulario actual.
+create or replace function public.bloquear_abono_financiero_pendiente()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if exists (
+    select 1
+    from public.ventas v
+    where v.numero_contrato = new.numero_contrato
+      and v.financiero_estado = 'pendiente'
+  ) then
+    raise exception 'No se pueden registrar o modificar abonos mientras el contrato % tenga pendiente su registro financiero', new.numero_contrato;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.bloquear_abono_financiero_pendiente() from public, anon, authenticated;
+
+drop trigger if exists trg_bloquear_abono_financiero_pendiente on public.abonos;
+create trigger trg_bloquear_abono_financiero_pendiente
+before insert or update on public.abonos
+for each row execute function public.bloquear_abono_financiero_pendiente();
+
 -- ── C) registrar_financiero_contrato — ahora también cierra el estado ────
 -- Se agrega, dentro de la MISMA transacción que ya escribe costos+CxP (no
 -- se toca nada del cuerpo anterior salvo estas dos líneas finales): marcar

@@ -16,8 +16,8 @@
 --   E5 · caída ANTES de persistir cualquier payload → no hay nada que
 --        reintentar con certeza, así que la única resolución correcta es
 --        revertir (nunca inventar un costo);
---   E6 · reversión que se niega por dinero real (abono) — el contrato
---        sigue detectable (financiero_estado='pendiente'), nunca se borra;
+--   E6 · un pendiente rechaza abonos antes de cualquier escritura; la
+--        reversión conserva además su defensa ante dinero real previo;
 --   E7 · reintento del payload pendiente es idempotente (no duplica CxP ni
 --        pierde el marcador de éxito);
 --   E8 · CxP sin asiento es detectable por una consulta simple, sin columna
@@ -127,23 +127,46 @@ select count(*) as e5_sin_payload_conocido from public.contrato_financiero_pendi
 select public.revertir_contrato_incompleto('DTM-9723', 'mayorista');
 select (select count(*) from public.ventas where numero_contrato='DTM-9723') = 0 as e5_revertido_sin_inventar_costo;
 
-\echo '=== E6 · reversión que se niega por dinero real — el contrato NO desaparece, sigue detectable ==='
+\echo '=== E6 · un pendiente no acepta abonos; la reversión conserva su defensa para dinero previo ==='
 insert into public.ventas (numero_contrato, cliente, tenant, precio_venta, financiero_estado)
   values ('DTM-9724', 'Cliente E6', 'mayorista', 400000, 'pendiente');
+do $$
+declare v_bloqueado boolean := false;
+begin
+  begin
+    insert into public.abonos (numero_contrato, tenant, valor_abono, fecha_abono)
+      values ('DTM-9724', 'mayorista', 100000, current_date);
+  exception when others then
+    if position('pendiente su registro financiero' in sqlerrm) = 0 then raise; end if;
+    v_bloqueado := true;
+  end;
+  if not v_bloqueado then raise exception 'E6 FALLÓ: permitió un abono sobre un contrato financiero pendiente'; end if;
+end $$;
+select
+  (select count(*) from public.abonos where numero_contrato='DTM-9724') = 0 as e6_sin_abono_parcial,
+  (select financiero_estado from public.ventas where numero_contrato='DTM-9724') = 'pendiente' as e6_sigue_pendiente;
+
+-- Defensa adicional para datos que ya tuvieran dinero antes de quedar en un
+-- estado pendiente por reparación administrativa: la reversión no los borra.
+insert into public.ventas (numero_contrato, cliente, tenant, precio_venta, financiero_estado)
+  values ('DTM-9724B', 'Cliente E6B', 'mayorista', 400000, 'completo');
 insert into public.abonos (numero_contrato, tenant, valor_abono, fecha_abono)
-  values ('DTM-9724', 'mayorista', 100000, current_date);
+  values ('DTM-9724B', 'mayorista', 100000, current_date);
+update public.ventas set financiero_estado='pendiente' where numero_contrato='DTM-9724B';
 do $$
 declare v_ok boolean := false;
 begin
   begin
-    perform public.revertir_contrato_incompleto('DTM-9724', 'mayorista');
-  exception when others then v_ok := true;
+    perform public.revertir_contrato_incompleto('DTM-9724B', 'mayorista');
+  exception when others then
+    if position('ya tiene abonos' in sqlerrm) = 0 then raise; end if;
+    v_ok := true;
   end;
-  if not v_ok then raise exception 'E6 FALLÓ: revirtió un contrato con abono real'; end if;
+  if not v_ok then raise exception 'E6B FALLÓ: revirtió un contrato con abono real previo'; end if;
 end $$;
 select
-  (select count(*) from public.ventas where numero_contrato='DTM-9724') = 1 as e6_contrato_sigue_vivo,
-  (select financiero_estado from public.ventas where numero_contrato='DTM-9724') = 'pendiente' as e6_sigue_detectable_como_pendiente;
+  (select count(*) from public.ventas where numero_contrato='DTM-9724B') = 1 as e6b_contrato_con_dinero_sobrevive,
+  (select count(*) from public.abonos where numero_contrato='DTM-9724B') = 1 as e6b_abono_sobrevive;
 
 \echo '=== E7 · reintento del payload es idempotente (no duplica CxP) ==='
 insert into public.ventas (numero_contrato, cliente, tenant, precio_venta, financiero_estado)
