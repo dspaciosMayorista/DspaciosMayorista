@@ -149,15 +149,15 @@ select
 -- Defensa adicional para datos que ya tuvieran dinero antes de quedar en un
 -- estado pendiente por reparación administrativa: la reversión no los borra.
 insert into public.ventas (numero_contrato, cliente, tenant, precio_venta, financiero_estado)
-  values ('DTM-9724B', 'Cliente E6B', 'mayorista', 400000, 'completo');
+  values ('DTM-9727', 'Cliente E6B', 'mayorista', 400000, 'completo');
 insert into public.abonos (numero_contrato, tenant, valor_abono, fecha_abono)
-  values ('DTM-9724B', 'mayorista', 100000, current_date);
-update public.ventas set financiero_estado='pendiente' where numero_contrato='DTM-9724B';
+  values ('DTM-9727', 'mayorista', 100000, current_date);
+update public.ventas set financiero_estado='pendiente' where numero_contrato='DTM-9727';
 do $$
 declare v_ok boolean := false;
 begin
   begin
-    perform public.revertir_contrato_incompleto('DTM-9724B', 'mayorista');
+    perform public.revertir_contrato_incompleto('DTM-9727', 'mayorista');
   exception when others then
     if position('ya tiene abonos' in sqlerrm) = 0 then raise; end if;
     v_ok := true;
@@ -165,8 +165,8 @@ begin
   if not v_ok then raise exception 'E6B FALLÓ: revirtió un contrato con abono real previo'; end if;
 end $$;
 select
-  (select count(*) from public.ventas where numero_contrato='DTM-9724B') = 1 as e6b_contrato_con_dinero_sobrevive,
-  (select count(*) from public.abonos where numero_contrato='DTM-9724B') = 1 as e6b_abono_sobrevive;
+  (select count(*) from public.ventas where numero_contrato='DTM-9727') = 1 as e6b_contrato_con_dinero_sobrevive,
+  (select count(*) from public.abonos where numero_contrato='DTM-9727') = 1 as e6b_abono_sobrevive;
 
 \echo '=== E7 · reintento del payload es idempotente (no duplica CxP) ==='
 insert into public.ventas (numero_contrato, cliente, tenant, precio_venta, financiero_estado)
