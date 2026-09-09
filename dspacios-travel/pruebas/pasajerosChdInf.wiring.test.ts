@@ -642,7 +642,9 @@ test("reservar/actions.ts: un fallo de crear_pasajeros_contrato detiene la reser
   const inicio = src.indexOf("async function reservarDesdeTarifarioInterno");
   const bloque = src.slice(inicio, src.indexOf("export async function crearCotizacion"));
   const idxLlamada = bloque.indexOf('admin.rpc("crear_pasajeros_contrato"');
-  const idxReturn = bloque.indexOf("if (pasajerosErr) return { ok: false, error: pasajerosErr.message };");
+  // B7: la salida temprana además REVIERTE el contrato ya insertado (antes
+  // devolvía el error dejando un contrato fantasma sin pasajeros).
+  const idxReturn = bloque.indexOf("if (pasajerosErr) return fallarYRevertir(pasajerosErr.message);");
   assert.ok(idxLlamada > 0 && idxReturn > idxLlamada, "no detiene la reserva con un return inmediato si crear_pasajeros_contrato falla");
 });
 

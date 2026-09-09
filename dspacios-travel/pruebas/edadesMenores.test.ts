@@ -490,7 +490,7 @@ describe("20. Wiring — Vista Booking usa el helper real, no una copia/aproxima
 describe("21. Wiring — snapshot usa edades y distribución validadas por el servidor", () => {
   const checkout = leer("app/tarifario/checkout/actions.ts");
   test("hotelesSnap toma la distribución de comp.data (servidor), no del ítem crudo del cliente", () => {
-    assert.match(checkout, /distribucionMenores, edadesMenoresUsadas \} = comp\.data/);
+    assert.match(checkout, /distribucionMenores, edadesMenoresUsadas, serviciosIncluidos \} = comp\.data/);
     assert.match(checkout, /distribucion_menores: distribucionMenores/);
   });
   test("hotelesSnap toma la clasificación agregada (numNinos\\/numNinos2\\/numInfantes) de comp.data", () => {

@@ -33,6 +33,7 @@ import {
   clasificarMenoresPorEdad, verificarTarifasMenoresDisponibles, type ClasificacionMenores,
 } from "./edadesMenores.ts";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "./distribucionHabitaciones.ts";
+import { normalizarCategoriaServicio, type ServicioGrupoIncluido } from "./serviciosPaquete.ts";
 import {
   condicionHotelEstadia, barridoRestriccionEstadia, type VigenciaHotelCondicion,
 } from "../cotizacion/snapshotCondiciones.ts";
@@ -83,7 +84,16 @@ export type FilaTemporadaHotelRaw = {
   condicion_pago_dias_saldo?: number | null;
 };
 export type FilaTarifaHotelRaw = Record<string, unknown>; // tipo_habitacion, alimentacion, temporada, neto_*
-export type FilaServicioIncluidoRaw = { incluido: boolean; precio_persona: number | null; liquidacion: string | null };
+export type FilaServicioIncluidoRaw = {
+  incluido: boolean; precio_persona: number | null; liquidacion: string | null;
+  // Identidad + modo de cobro (revisión PR #294). Un incluido con cobro POR
+  // GRUPO no se puede hornear en la tarifa por persona (su costo depende del
+  // tamaño del grupo): se expone aparte, en `serviciosGrupoIncluidos`, para que
+  // cada superficie lo cobre con el pax real o lo marque si no lo conoce.
+  servicio_id: number; modo: string | null; nombre: string | null; categoria: string | null;
+  proveedor_id: number | null;
+  rangos_grupo: { pax_desde: number; pax_hasta: number; precio: number }[];
+};
 export type FilaBlackoutHotelRaw = { fecha_inicio: string; fecha_fin: string; total: boolean; acomodaciones: string[] | null; categorias: string[] | null };
 
 export type DatosHotelPaquete = {
@@ -97,6 +107,11 @@ export type DatosHotelPaquete = {
 
 export type ResultadoHotelFechas = {
   combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number; moneda: string;
+  // Servicios incluidos con cobro POR GRUPO: NO están dentro de `combos`
+  // (su costo depende del pax, que este motor no conoce). Quien sí conoce el
+  // pax les suma el cargo con `cargoGrupoIncluido`; quien no, muestra la marca
+  // "no es precio final". Vacío = el precio publicado es final.
+  serviciosGrupoIncluidos: ServicioGrupoIncluido[];
 };
 
 /**
@@ -132,15 +147,30 @@ export function evaluarHotelPorFechas(
       (r.acomodaciones.length === 0 || r.acomodaciones.includes(acom))
     );
   const monedaHotel = (datos.armadoHotel?.hotel_moneda ?? "COP") === "USD" ? "USD" : "COP";
-  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: datos.armadoHotel?.hotel_nombre ?? null, minNoches: 1, moneda: monedaHotel };
+  if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: datos.armadoHotel?.hotel_nombre ?? null, minNoches: 1, moneda: monedaHotel, serviciosGrupoIncluidos: [] };
   const filtroCat = datos.armadoHotel?.categorias ?? null;
   const filtroReg = datos.armadoHotel?.regimenes ?? null;
   const hotelNombre = datos.armadoHotel?.hotel_nombre ?? null;
   const temporadas: TemporadaRango[] = datos.temporadas.map(toTemporadaRango);
 
   let aporteServ = 0;
+  // Incluidos con cobro POR GRUPO: se apartan (no se pueden hornear por
+  // persona) y viajan en el resultado para que quien conozca el pax les sume
+  // el cargo real — ver `cargoGrupoIncluido` en serviciosPaquete.ts.
+  const serviciosGrupoIncluidos: ServicioGrupoIncluido[] = [];
   for (const s of datos.serviciosIncluidos) {
     if (!s.incluido) continue;
+    if (s.modo === "grupo") {
+      serviciosGrupoIncluidos.push({
+        servicioId: s.servicio_id,
+        nombre: s.nombre ?? "Servicio",
+        categoria: normalizarCategoriaServicio(s.categoria),
+        liquidacion: s.liquidacion,
+        proveedorId: s.proveedor_id,
+        rangos: s.rangos_grupo ?? [],
+      });
+      continue;
+    }
     if (s.precio_persona == null) continue;
     aporteServ += marcar(Number(s.precio_persona) || 0, pctMk) * factorLiquidacion(s.liquidacion, numNoches);
   }
@@ -183,7 +213,7 @@ export function evaluarHotelPorFechas(
     }
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2" && a !== "infante"));
-  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel };
+  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel, serviciosGrupoIncluidos };
 }
 
 // ── Condición de pago del hotel para un rango de fechas (badge, solo lectura) ──

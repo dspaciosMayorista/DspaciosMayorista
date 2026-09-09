@@ -320,6 +320,12 @@ export type Database = {
           // Migración 164: back-link UNIQUE nullable — UN SOLO contrato por
           // cotización convertida (los pagos previos a abonos la llenan).
           cotizacion_id: number | null;
+          // Migración 172 — estado TÉCNICO de la escritura financiera
+          // (costos+CxP), NUNCA el estado comercial (esa es `estado`).
+          // Default 'completo'; solo reservarDesdeTarifarioInterno/
+          // convertirCotizacionCarrito lo insertan en 'pendiente'.
+          financiero_estado: string;
+          financiero_actualizado_en: string;
           created_at: string;
           updated_at: string;
         };
@@ -384,11 +390,45 @@ export type Database = {
           recobro_empresa?: number | null;
           recobro_aliado?: number | null;
           cotizacion_id?: number | null;
+          financiero_estado?: string;
+          financiero_actualizado_en?: string;
           created_at?: string;
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["ventas"]["Insert"]>;
         Relationships: [];
+      };
+      contrato_financiero_pendiente: {
+        Row: {
+          numero_contrato: string;
+          tenant: string;
+          costos: Json;
+          cxp: Json;
+          intentos: number;
+          creado_en: string;
+          ultimo_intento_en: string | null;
+          ultimo_error: string | null;
+        };
+        Insert: {
+          numero_contrato: string;
+          tenant: string;
+          costos?: Json;
+          cxp?: Json;
+          intentos?: number;
+          creado_en?: string;
+          ultimo_intento_en?: string | null;
+          ultimo_error?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_financiero_pendiente"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "contrato_financiero_pendiente_numero_contrato_fkey";
+            columns: ["numero_contrato"];
+            isOneToOne: true;
+            referencedRelation: "ventas";
+            referencedColumns: ["numero_contrato"];
+          },
+        ];
       };
       abonos: {
         Row: {
@@ -634,6 +674,10 @@ export type Database = {
           proveedor: string | null;
           tipo_proveedor: string | null;
           servicio: string | null;
+          // Migración 170: servicio del catálogo que originó esta CxP.
+          // NULL = hotel/aéreo, manual, o anterior a la 170. Única llave
+          // válida para reconciliar CxP de servicios (nunca por nombre).
+          servicio_id: number | null;
           fecha_obligacion: string | null;
           fecha_vencimiento: string | null;
           valor_total: number;
@@ -664,6 +708,7 @@ export type Database = {
           proveedor?: string | null;
           tipo_proveedor?: string | null;
           servicio?: string | null;
+          servicio_id?: number | null;
           fecha_obligacion?: string | null;
           fecha_vencimiento?: string | null;
           valor_total?: number;
@@ -3405,6 +3450,28 @@ export type Database = {
           responsable_id: number | null;
           orden: number;
         }[];
+      };
+      // Migración 171 — escritura financiera atómica del contrato. Solo
+      // `service_role` puede ejecutarlas (ver la migración): las llama el
+      // servidor con el cliente admin, nunca el navegador.
+      registrar_financiero_contrato: {
+        Args: {
+          p_numero_contrato: string;
+          p_tenant: string;
+          /** {costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos} — claves opcionales. */
+          p_costos: Json;
+          /** Filas de `cuentas_por_pagar` SIN numero_contrato/tenant (los pone la función). */
+          p_cxp: Json;
+        };
+        /** {creadas: [{id, tipo_proveedor, proveedor, servicio, servicio_id, valor_total}], eliminadas: [id]} */
+        Returns: Json;
+      };
+      revertir_contrato_incompleto: {
+        Args: {
+          p_numero_contrato: string;
+          p_tenant: string;
+        };
+        Returns: undefined;
       };
     };
     Enums: {

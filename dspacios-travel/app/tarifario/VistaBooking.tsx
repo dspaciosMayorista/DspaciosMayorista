@@ -1266,6 +1266,11 @@ function SelectorPorFechas({
   const [sugerencias, setSugerencias] = useState<SugerenciaFecha[]>([]);
   const [viaSugerencia, setViaSugerencia] = useState(false);
   const [sugerenciaAplicando, setSugerenciaAplicando] = useState<string | null>(null);
+  // Servicios incluidos con cobro POR GRUPO: no caben en una tabla por
+  // persona (su costo depende de cuántos viajen). Se nombran para avisar que
+  // el precio mostrado no es el final — nunca se muestran como si fueran
+  // gratis para cobrarlos después (decisión del dueño, revisión PR #294).
+  const [serviciosGrupo, setServiciosGrupo] = useState<string[]>([]);
 
   function cotizar(overrideIda?: string, overrideRegreso?: string, desdeSugerencia = false) {
     setErr("");
@@ -1278,8 +1283,10 @@ function SelectorPorFechas({
         setCombos(r.combos); setNochesCot(r.noches); setCondicion(r.condicion ?? null);
         setCat(r.combos[0]?.categoria ?? ""); setReg(r.combos[0]?.regimen ?? "");
         setSugerencias([]); setViaSugerencia(desdeSugerencia);
+        setServiciosGrupo(r.serviciosGrupoPendientes ?? []);
       } else {
         setCombos(null); setCondicion(null); setErr(r.error); setSugerencias(r.sugerencias); setViaSugerencia(false);
+        setServiciosGrupo([]);
       }
       setSugerenciaAplicando(null);
     });
@@ -1347,6 +1354,13 @@ function SelectorPorFechas({
           <p className="mt-1 text-[11px] text-gray-400">Rango del paquete: {ventana.min ?? "—"} → {ventana.max ?? "—"}</p>
         )}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+        {serviciosGrupo.length > 0 && (
+          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+            Este plan incluye {serviciosGrupo.join(", ")} con tarifa por grupo: su valor depende del
+            número de viajeros, así que <strong>el precio de la tabla no es el total final</strong> —
+            se calcula completo al elegir la composición.
+          </p>
+        )}
         {!!sugerencias.length && (
           <div className="mt-2">
             <p className="text-xs font-medium text-gray-500">Fechas con tarifa para este hotel</p>

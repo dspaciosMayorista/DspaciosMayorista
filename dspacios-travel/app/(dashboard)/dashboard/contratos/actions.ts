@@ -4,11 +4,13 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
+import { normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio } from "@/lib/reservar/serviciosPaquete";
+import { planReconciliacionCxpServicios, type ServicioObjetivo } from "@/lib/reservar/cxpCobertura";
 import { asegurarCuentasPorPagar } from "../reservar/actions";
 import { formatMoneda } from "@/lib/utils";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
-import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
+import { reemplazarAsiento, cuentaDisponible, postearAsientoCxP, eliminarAsientoCxP, CUENTA } from "@/lib/contabilidad/asientos";
 import { esInfantePorEdad, pasajeroConsumeSilla } from "@/lib/reservar/pasajeros";
 import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import type { Json } from "@/types/database";
@@ -918,11 +920,12 @@ export async function actualizarVenta(
 // alcanza el % mínimo — compartido por registrar/editar un abono (el umbral se
 // revisa igual después de cualquiera de las dos operaciones).
 async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>>, numeroContrato: string): Promise<void> {
-  const { data: venta } = await sb
+  const { data: venta, error: ventaError } = await sb
     .from("ventas")
-    .select("estado, precio_venta, tipo_paquete, moneda")
+    .select("estado, precio_venta, tipo_paquete, moneda, financiero_estado")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
+  if (ventaError || !venta) return;
   const esUSD = (venta?.moneda ?? "COP") === "USD";
   const { data: abs } = await sb.from("abonos").select("valor_abono, monto_cop").eq("numero_contrato", numeroContrato);
   const totalAbonado = (abs ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);   // en moneda del contrato
@@ -936,7 +939,7 @@ async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>
   const { data: cfg } = await sb.from("config_cobros").select("pct_abono").eq("tipo_paquete", venta?.tipo_paquete ?? "").maybeSingle();
   const pctMin = cfg?.pct_abono ?? 0.3;
   const alcanzaMinimo = totalAbonado >= (venta?.precio_venta ?? 0) * pctMin;
-  if (venta?.estado === "pendiente" && alcanzaMinimo) {
+  if (venta?.estado === "pendiente" && venta.financiero_estado !== "pendiente" && alcanzaMinimo) {
     await sb.from("ventas").update({ estado: "confirmado" }).eq("numero_contrato", numeroContrato);
     const client = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
     await client
@@ -958,12 +961,16 @@ export async function registrarAbono(
   fecha?: string,           // fecha del abono (por defecto hoy; editable para registrar abonos atrasados)
 ): Promise<{ ok: boolean; error?: string }> {
   const sb = await createClient();
-  const { data: venta } = await sb
+  const { data: venta, error: ventaError } = await sb
     .from("ventas")
-    .select("estado, precio_venta, tipo_paquete, moneda, tenant")
+    .select("estado, precio_venta, tipo_paquete, moneda, tenant, financiero_estado")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
+  if (ventaError || !venta) return { ok: false, error: ventaError?.message ?? "Contrato no encontrado." };
   const esUSD = (venta?.moneda ?? "COP") === "USD";
+  if (venta?.financiero_estado === "pendiente") {
+    return { ok: false, error: "Este contrato todavía tiene pendiente su registro financiero. No se pueden registrar abonos hasta completar la reconciliación." };
+  }
   const montoCop = Math.max(0, Number(valor) || 0);
   const trm = esUSD ? (Number(trmInput) || 0) : 1;
   if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día para el abono (contrato en USD)." };
@@ -1087,6 +1094,96 @@ export async function actualizarServiciosContrato(
     if (p > 0) { nuevos.push({ nombre: s.nombre, precio: p }); nuevoTotal += p; }
   }
 
+  // ── Costos + reconciliación de CxP — TODO se resuelve ANTES de escribir ──
+  // Esta función cambia el conjunto FINANCIERO del contrato (recalcula
+  // `costo_receptivo` y el PVP), así que las cuentas por pagar de servicios
+  // tienen que moverse con él: si no, el contrato dice una cosa y la
+  // contabilidad otra. El emparejamiento es por `cuentas_por_pagar.servicio_id`
+  // (migración 170), nunca por nombre.
+  //
+  // Orden deliberado (fallo cerrado): primero se calcula el objetivo y se
+  // valida que el plan sea ejecutable; solo si lo es se escribe algo. Antes,
+  // los ítems y el precio se modificaban de una vez y las CxP no se tocaban
+  // nunca — el contrato quedaba editado y las obligaciones viejas vivas.
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { ok: false, error: "No se pueden editar los servicios: falta la configuración del servidor para actualizar costos y cuentas por pagar. Contacta a un administrador." };
+  }
+  const admin = createAdminClient();
+  const nochesStay = venta.fecha_salida && venta.fecha_regreso ? noches(venta.fecha_salida, venta.fecha_regreso) : 1;
+
+  // Objetivo: costo NETO por servicio seleccionado (temporada GENERAL, mismo
+  // criterio que ya usaba esta pantalla) + su proveedor real del catálogo.
+  const objetivo: ServicioObjetivo[] = [];
+  let costoReceptivo = 0;
+  if (serviciosIds.length) {
+    const [{ data: arm, error: armErr }, { data: gruposNet, error: gruposErr }] = await Promise.all([
+      admin.from("armado_servicios")
+        .select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre, liquidacion, proveedores(nombre, aplica_retencion, pct_retencion))")
+        .eq("paquete_id", venta.paquete_armado_id).in("servicio_id", serviciosIds),
+      admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio").eq("temporada", "GENERAL").in("servicio_id", serviciosIds),
+    ]);
+    // Fallo cerrado: sin los datos de costo no se puede reconciliar, y
+    // editar igual dejaría CxP inconsistentes en silencio.
+    if (armErr) return { ok: false, error: "No se pudieron consultar los servicios del paquete. Inténtalo de nuevo." };
+    if (gruposErr) return { ok: false, error: "No se pudieron consultar las tarifas por grupo de los servicios. Inténtalo de nuevo." };
+    const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+    for (const g of gruposNet ?? []) {
+      const arr = gruposPorServ.get(g.servicio_id) ?? [];
+      arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
+      gruposPorServ.set(g.servicio_id, arr);
+    }
+    for (const sRow of arm ?? []) {
+      const modo = (sRow.modo as string) === "grupo" ? "grupo" : "persona";
+      const srv = sRow.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedores: { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null } | null;
+      const costo = precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(sRow.servicio_id) ?? [], pax) * factorLiquidacion(srv?.liquidacion, nochesStay);
+      costoReceptivo += costo;
+      const categoria = normalizarCategoriaServicio(srv?.categoria);
+      objetivo.push({
+        servicioId: sRow.servicio_id,
+        nombre: srv?.nombre ?? "Servicio",
+        costoNeto: Number.isFinite(costo) ? costo : 0,
+        tipoProveedor: tipoProveedorCxpServicio(categoria),
+        proveedor: srv?.proveedores?.nombre ?? null,
+        aplicaRetencion: srv?.proveedores?.aplica_retencion ?? false,
+        pctRetencion: Number(srv?.proveedores?.pct_retencion) || 0,
+      });
+    }
+  }
+
+  // CxP de servicios ya existentes (solo las que declaran su `servicio_id`:
+  // hotel/aéreo/manuales/legado quedan intactas) + si ya tienen dinero movido.
+  const { data: cxpFilas, error: cxpErr } = await admin
+    .from("cuentas_por_pagar")
+    .select("id, servicio_id, valor_total")
+    .eq("numero_contrato", numeroContrato)
+    .not("servicio_id", "is", null);
+  if (cxpErr) return { ok: false, error: "No se pudieron consultar las cuentas por pagar del contrato. Inténtalo de nuevo." };
+  const idsCxp = (cxpFilas ?? []).map((r) => r.id);
+  const conMovimiento = new Set<number>();
+  if (idsCxp.length) {
+    const [{ data: pagos, error: pagosErr }, { data: rets, error: retsErr }] = await Promise.all([
+      admin.from("cxp_pagos").select("cuenta_por_pagar_id").in("cuenta_por_pagar_id", idsCxp),
+      admin.from("retenciones_cxp").select("cuenta_por_pagar_id").in("cuenta_por_pagar_id", idsCxp),
+    ]);
+    if (pagosErr || retsErr) return { ok: false, error: "No se pudieron verificar los pagos de las cuentas por pagar. Inténtalo de nuevo." };
+    for (const r of pagos ?? []) conMovimiento.add(r.cuenta_por_pagar_id);
+    for (const r of rets ?? []) conMovimiento.add(r.cuenta_por_pagar_id);
+  }
+  const plan = planReconciliacionCxpServicios(
+    (cxpFilas ?? []).map((r) => ({ id: r.id, servicio_id: r.servicio_id, valor_total: r.valor_total, tieneMovimientos: conMovimiento.has(r.id) })),
+    objetivo
+  );
+  // Fallo cerrado ANTES de tocar nada: quitar un servicio cuya cuenta ya
+  // tiene pagos/retenciones exigiría borrar dinero ya movido. Se rechaza la
+  // edición completa con un mensaje accionable, en vez de dejar el contrato
+  // y la contabilidad diciendo cosas distintas.
+  if (plan.bloqueados.length) {
+    return {
+      ok: false,
+      error: `No se puede quitar/ajustar ${plan.bloqueados.length === 1 ? "un servicio que ya tiene" : "servicios que ya tienen"} pagos o retenciones registrados en su cuenta por pagar. Anula primero esos movimientos en la pestaña Proveedores.`,
+    };
+  }
+
   // Quitar ítems de servicio actuales (y su total) para recalcular el precio.
   const { data: oldItems } = await sb
     .from("contrato_items")
@@ -1114,43 +1211,86 @@ export async function actualizarServiciosContrato(
   const nuevoPrecio = Math.max(0, (Number(venta.precio_venta) || 0) - oldTotal + nuevoTotal);
   await sb.from("ventas").update({ precio_venta: nuevoPrecio }).eq("numero_contrato", numeroContrato);
 
-  // Costo receptivo neto + casillas Tours/Asistencia (admin: oculto al asesor).
-  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    try {
-      const admin = createAdminClient();
-      let costoReceptivo = 0;
-      const tours: string[] = [];
-      let hayAsistencia = false;
-      if (serviciosIds.length) {
-        const [{ data: arm }, { data: gruposNet }] = await Promise.all([
-          admin.from("armado_servicios").select("servicio_id, modo, servicios_adicionales(precio_persona, categoria, nombre, liquidacion)").eq("paquete_id", venta.paquete_armado_id).in("servicio_id", serviciosIds),
-          admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio").eq("temporada", "GENERAL").in("servicio_id", serviciosIds),
-        ]);
-        const gruposPorServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
-        for (const g of gruposNet ?? []) {
-          const arr = gruposPorServ.get(g.servicio_id) ?? [];
-          arr.push({ pax_desde: g.pax_desde, pax_hasta: g.pax_hasta, precio: g.precio });
-          gruposPorServ.set(g.servicio_id, arr);
-        }
-        const nochesStay = venta.fecha_salida && venta.fecha_regreso ? noches(venta.fecha_salida, venta.fecha_regreso) : 1;
-        for (const s of arm ?? []) {
-          const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
-          const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; categoria: string | null; nombre: string; liquidacion: string | null } | null;
-          costoReceptivo += precioServicio(modo, srv?.precio_persona ?? null, gruposPorServ.get(s.servicio_id) ?? [], pax) * factorLiquidacion(srv?.liquidacion, nochesStay);
-          const cat = srv?.categoria ?? "otro";
-          if (cat === "asistencia") hayAsistencia = true;
-          else if (cat === "tour_traslado" && srv?.nombre) tours.push(srv.nombre);
-        }
-      }
-      await admin.from("ventas").update({
-        costo_receptivo: costoReceptivo,
-        tours_traslados: tours.length ? tours.join(", ") : null,
-        asistencia_medica: hayAsistencia,
-      }).eq("numero_contrato", numeroContrato);
-    } catch {
-      // Costo neto informativo; no bloquea la edición.
+  // ── Aplicar: costos, resumen y CxP reconciliadas ────────────────────────
+  // El plan ya se validó arriba (nada bloqueado), así que acá solo se
+  // ejecuta. Los servicios INCLUIDOS del paquete entran al resumen aunque no
+  // sean parte de la selección editable: editar los opcionales nunca debe
+  // "apagar" en el documento una asistencia/tour que sigue incluida.
+  const efectivos: { servicioId: number; nombre: string; categoria: string | null; incluido: boolean }[] =
+    objetivo.map((o) => ({ servicioId: o.servicioId, nombre: o.nombre, categoria: null, incluido: false }));
+  // La categoría real de los opcionales ya se resolvió al armar `objetivo`
+  // (tipoProveedor), pero el resumen necesita la categoría del catálogo tal
+  // cual — se vuelve a leer junto con los incluidos en una sola consulta.
+  const { data: catRows } = await admin
+    .from("armado_servicios")
+    .select("servicio_id, incluido, servicios_adicionales(nombre, categoria)")
+    .eq("paquete_id", venta.paquete_armado_id);
+  const catPorServicio = new Map<number, { nombre: string | null; categoria: string | null }>();
+  for (const r of catRows ?? []) {
+    const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null } | null;
+    catPorServicio.set(r.servicio_id, { nombre: srv?.nombre ?? null, categoria: srv?.categoria ?? null });
+    if (r.incluido) {
+      efectivos.push({ servicioId: r.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria: srv?.categoria ?? null, incluido: true });
     }
   }
+  for (const e of efectivos) {
+    if (e.categoria == null && !e.incluido) e.categoria = catPorServicio.get(e.servicioId)?.categoria ?? null;
+  }
+  const resumen = resumirServiciosContrato(
+    efectivos.map((e) => ({
+      servicioId: e.servicioId, nombre: e.nombre, categoria: normalizarCategoriaServicio(e.categoria),
+      incluido: e.incluido, costoNeto: 0, proveedorId: null,
+    }))
+  );
+  await admin.from("ventas").update({
+    costo_receptivo: costoReceptivo,
+    tours_traslados: resumen.toursTraslados,
+    asistencia_medica: resumen.asistenciaMedica,
+  }).eq("numero_contrato", numeroContrato);
+
+  // CxP: insertar las nuevas, ajustar el valor de las que siguen y eliminar
+  // las de servicios quitados (ninguna con movimientos — ya se bloqueó
+  // arriba). Cada cambio arrastra su asiento contable, con los mismos
+  // helpers que usa el resto del módulo (`cxp:{id}` como referencia).
+  const { data: ventaTenant } = await admin.from("ventas").select("tenant, moneda, plazo, fecha_salida").eq("numero_contrato", numeroContrato).maybeSingle();
+  const tenantCxp = (ventaTenant?.tenant as string | null) ?? "mayorista";
+  const hoyCxp = new Date().toISOString().slice(0, 10);
+  const OBS_EDIT = "Generado automáticamente al editar los servicios del contrato";
+
+  for (const del of plan.eliminar) {
+    const { error } = await admin.from("cuentas_por_pagar").delete().eq("id", del.id);
+    if (error) return { ok: false, error: "No se pudieron actualizar las cuentas por pagar del contrato. Inténtalo de nuevo." };
+    await eliminarAsientoCxP(del.id);
+  }
+  for (const upd of plan.actualizar) {
+    const { error } = await admin.from("cuentas_por_pagar").update({ valor_total: upd.valor, servicio: upd.nombre, tipo_proveedor: upd.tipoProveedor, proveedor: upd.proveedor }).eq("id", upd.id);
+    if (error) return { ok: false, error: "No se pudieron actualizar las cuentas por pagar del contrato. Inténtalo de nuevo." };
+    await postearAsientoCxP({
+      cuentaId: upd.id, numeroContrato, tipoProveedor: upd.tipoProveedor, proveedor: upd.proveedor,
+      servicio: upd.nombre, valorTotal: upd.valor, fecha: hoyCxp, tenant: tenantCxp,
+    });
+  }
+  if (plan.insertar.length) {
+    const { data: creadas, error } = await admin.from("cuentas_por_pagar").insert(
+      plan.insertar.map((o) => ({
+        numero_contrato: numeroContrato, tenant: tenantCxp, servicio_id: o.servicioId,
+        proveedor: o.proveedor, tipo_proveedor: o.tipoProveedor, servicio: o.nombre,
+        valor_total: Math.max(0, o.costoNeto), moneda: (ventaTenant?.moneda as string | null) ?? "COP",
+        fecha_obligacion: hoyCxp, fecha_vencimiento: (ventaTenant?.plazo as string | null) ?? (ventaTenant?.fecha_salida as string | null) ?? null,
+        aplica_retencion: o.aplicaRetencion, pct_retencion: o.pctRetencion, observaciones: OBS_EDIT,
+      }))
+    ).select("id, tipo_proveedor, proveedor, servicio, valor_total");
+    if (error) return { ok: false, error: "No se pudieron crear las cuentas por pagar de los servicios agregados. Inténtalo de nuevo." };
+    for (const c of creadas ?? []) {
+      await postearAsientoCxP({
+        cuentaId: c.id, numeroContrato, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
+        servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyCxp, tenant: tenantCxp,
+      });
+    }
+  }
+  revalidatePath("/dashboard/pagos");
+  revalidatePath("/dashboard/contabilidad/libro-diario");
+  revalidatePath("/dashboard/contabilidad/libro-auxiliar");
 
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   return { ok: true };

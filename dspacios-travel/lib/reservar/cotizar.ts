@@ -29,6 +29,7 @@ import {
 } from "@/lib/reservar/edadesMenores";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import { ejecutarConsultaPaginada } from "@/lib/tarifario/paginacion";
+import { cargoGrupoIncluido } from "./serviciosPaquete.ts";
 import {
   construirContextoServicios, calcularResultadoServicio, resolverLiquidacionServicioPuntual,
   respuestaPublicaServicioPuntual, formatearLogLiquidacionServicioPuntual, fallaErrorConsulta,
@@ -110,7 +111,7 @@ async function cargarDatosHotelPaquete(
     admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
     admin.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").eq("hotel_id", hotelId),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
-    admin.from("armado_servicios").select("incluido, servicios_adicionales(precio_persona, liquidacion)").eq("paquete_id", paqueteId),
+    admin.from("armado_servicios").select("incluido, servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, liquidacion, proveedor_id)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
   ]);
   if (hselErr) return { ok: false, motivo: "error_consulta", etapa: "armado_hoteles", detalleInterno: hselErr.message };
@@ -136,13 +137,46 @@ async function cargarDatosHotelPaquete(
     },
     temporadas: (temps ?? []) as FilaTemporadaHotelRaw[],
     tarifas: (tarifas ?? []) as FilaTarifaHotelRaw[],
-    serviciosIncluidos: (servSel ?? []).map((s) => ({
-      incluido: !!s.incluido,
-      precio_persona: (s.servicios_adicionales as unknown as { precio_persona: number | null } | null)?.precio_persona ?? null,
-      liquidacion: (s.servicios_adicionales as unknown as { liquidacion: string | null } | null)?.liquidacion ?? null,
-    })),
+    serviciosIncluidos: (servSel ?? []).map((s) => {
+      const srv = s.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null; precio_persona: number | null; liquidacion: string | null; proveedor_id: number | null } | null;
+      return {
+        incluido: !!s.incluido,
+        precio_persona: srv?.precio_persona ?? null,
+        liquidacion: srv?.liquidacion ?? null,
+        servicio_id: s.servicio_id,
+        modo: (s.modo as string | null) ?? null,
+        nombre: srv?.nombre ?? null,
+        categoria: srv?.categoria ?? null,
+        proveedor_id: srv?.proveedor_id ?? null,
+        // Se llenan abajo, en una sola consulta para todos los servicios.
+        rangos_grupo: [] as { pax_desde: number; pax_hasta: number; precio: number }[],
+      };
+    }),
     blackouts: (blackouts ?? []) as FilaBlackoutHotelRaw[],
   };
+
+  // Rangos por grupo de los servicios INCLUIDOS con cobro por grupo. Solo se
+  // consulta si el paquete tiene alguno (lo normal es que no), y falla CERRADO:
+  // sin los rangos no se puede saber cuánto cuesta el servicio para el grupo,
+  // y publicar el precio sin él sería mostrar un valor y cobrar otro.
+  const idsGrupo = datos.serviciosIncluidos.filter((s) => s.incluido && s.modo === "grupo").map((s) => s.servicio_id);
+  if (idsGrupo.length) {
+    const { data: rangos, error: rangosErr } = await admin
+      .from("servicio_tarifa_pax")
+      .select("servicio_id, pax_desde, pax_hasta, precio")
+      .eq("temporada", "GENERAL")
+      .in("servicio_id", idsGrupo);
+    if (rangosErr) return { ok: false, motivo: "error_consulta", etapa: "servicio_tarifa_pax", detalleInterno: rangosErr.message };
+    const porServ = new Map<number, { pax_desde: number; pax_hasta: number; precio: number }[]>();
+    for (const r of rangos ?? []) {
+      const arr = porServ.get(r.servicio_id) ?? [];
+      arr.push({ pax_desde: r.pax_desde, pax_hasta: r.pax_hasta, precio: Number(r.precio) || 0 });
+      porServ.set(r.servicio_id, arr);
+    }
+    for (const s of datos.serviciosIncluidos) {
+      if (s.incluido && s.modo === "grupo") s.rangos_grupo = porServ.get(s.servicio_id) ?? [];
+    }
+  }
   return { ok: true, datos };
 }
 
@@ -198,7 +232,15 @@ export type CotizarResult =
   // `condicion` = badge SOLO informativo (migración 164/165, ver
   // `condicionHotelFechas`) — `undefined`/`null` si el hotel no tiene
   // vigencias con condición configurada; nunca afecta `combos`/`moneda`.
-  | { ok: true; combos: ComboCotizado[]; noches: number; moneda: string; condicion?: CondicionHotelFechas | null }
+  | {
+      ok: true; combos: ComboCotizado[]; noches: number; moneda: string; condicion?: CondicionHotelFechas | null;
+      // Nombres de los servicios INCLUIDOS con cobro por grupo. Si viene con
+      // elementos, los precios por acomodación de `combos` NO son el precio
+      // final: falta el servicio grupal, que se calcula con el número real de
+      // viajeros al armar la reserva. La UI debe decirlo (decisión del dueño,
+      // revisión PR #294) — nunca mostrarlo como si estuviera incluido gratis.
+      serviciosGrupoPendientes: string[];
+    }
   | { ok: false; error: string; sugerencias: SugerenciaFecha[] };
 
 /**
@@ -289,7 +331,14 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
   // Se devuelve al cliente SIN `netos` (el costo interno no sale del servidor).
   const combosPublicos = res.combos.map((c) => ({ categoria: c.categoria, regimen: c.regimen, precios: c.precios }));
   const condicion = condicionHotelFechas(datos.temporadas, { fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso });
-  return { ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda, condicion };
+  return {
+    ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda, condicion,
+    // Marca honesta (decisión del dueño): esta tabla es POR PERSONA y no
+    // conoce el tamaño del grupo, así que un servicio incluido con cobro por
+    // grupo no puede estar en `precios`. Se nombra para que la UI advierta
+    // que el precio no es final — nunca se muestra como si fuera gratis.
+    serviciosGrupoPendientes: res.serviciosGrupoIncluidos.map((g) => g.nombre),
+  };
 }
 
 // ── Mini-motor de búsqueda (público): liquida TODOS los hoteles de porción para
@@ -621,6 +670,21 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
       // Infante: si el hotel no configuró tarifa para este combo, es gratis
       // (misma asimetría documentada del resto del motor de reservas).
       if (menores.infantes > 0 && combo.precios["infante"] != null) total += menores.infantes * combo.precios["infante"];
+      // Servicio INCLUIDO con cobro POR GRUPO: su costo depende del tamaño del
+      // grupo, así que no está en `combo.precios` (por persona). Acá SÍ se
+      // conoce el pax real de la composición consultada, así que se cobra —
+      // una sola vez, con la MISMA fórmula que usará la cotización y el
+      // contrato (`cargoGrupoIncluido`). Sin esto, el buscador mostraría un
+      // total y el checkout cobraría otro.
+      if (res.serviciosGrupoIncluidos.length) {
+        const paxGrupo = pax + menores.infantes;
+        const cargo = cargoGrupoIncluido(res.serviciosGrupoIncluidos, paxGrupo, Number(datos.paquete.pct_mk) || 0, numNoches);
+        // Sin rango que cubra esta composición NO se publica un precio
+        // inventado: el combo se descarta (el hotel puede seguir apareciendo
+        // con otras composiciones válidas).
+        if (!cargo.ok) continue;
+        total += cargo.pvp;
+      }
       combosValidos.push({ total, categoria: combo.categoria, regimen: combo.regimen, pax, menores });
     }
     if (combosValidos.length) {
@@ -786,7 +850,7 @@ export async function buscarReceptivos(inputRaw: unknown): Promise<{ ok: true; r
   ] = await Promise.all([
     admin.from("armado_paquetes").select("id, pct_mk").in("id", paqueteIds),
     admin.from("armado_servicios").select("paquete_id, servicio_id, modo").in("paquete_id", paqueteIds).in("servicio_id", servicioIds),
-    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda").in("id", servicioIds),
+    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda, categoria, proveedor_id").in("id", servicioIds),
     admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").in("servicio_id", servicioIds),
     admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").in("servicio_id", servicioIds),
   ]);
@@ -892,7 +956,7 @@ export async function liquidarServicioPuntual(input: {
   ] = await Promise.all([
     admin.from("armado_paquetes").select("id, pct_mk").eq("id", input.paqueteId).maybeSingle(),
     admin.from("armado_servicios").select("paquete_id, servicio_id, modo").eq("paquete_id", input.paqueteId).eq("servicio_id", input.servicioId).maybeSingle(),
-    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda").eq("id", input.servicioId).maybeSingle(),
+    admin.from("servicios_adicionales").select("id, precio_persona, recargo_individual, liquidacion, moneda, categoria, proveedor_id").eq("id", input.servicioId).maybeSingle(),
     admin.from("servicio_tarifa_pax").select("servicio_id, pax_desde, pax_hasta, precio, temporada").eq("servicio_id", input.servicioId),
     admin.from("servicio_temporadas").select("servicio_id, nombre, fecha_inicio, fecha_fin, compra_inicio, compra_fin, prioridad, precio_persona, recargo_individual").eq("servicio_id", input.servicioId),
   ]);
