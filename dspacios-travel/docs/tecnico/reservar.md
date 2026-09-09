@@ -156,6 +156,10 @@ serviciosItems, impuestoTotal, cargoMascota, etc.) — **sin ninguna escritura**
   ${CRON_SECRET}`, falla cerrado con 503 si no hay secreto configurado; `vercel.json`:
   `"0 6 * * *"`) → `liberarVencidas()`: libera sillas `en_plazo` cuyo `plazo < hoy` y **cancela**
   esa venta (no solo libera el cupo — `ventas.estado = 'cancelado'`).
+- **Reconciliación financiera diaria** (`app/api/cron/reconciliar-financiero/route.ts`,
+  `"0 10 * * *"`, compatible con Vercel Hobby): reintenta el payload financiero durable o
+  revierte el contrato incompleto. Mientras siga `financiero_estado = 'pendiente'`, el contrato
+  no acepta abonos; en Hobby la reparación automática puede tardar hasta la siguiente ejecución.
 
 ## 7. Editar una reserva pendiente — qué existe hoy, qué no
 
