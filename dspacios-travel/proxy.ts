@@ -22,12 +22,28 @@ const MINORISTA_OCULTAS = [
 // `/sitio_web` es la web pública de marketing (route group app/sitio_web): toda pública.
 const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/auth", "/portal", "/pagar", "/sitio_web"];
 
+// Vercel invoca estos endpoints sin una sesión de usuario. Cada ruta valida
+// `Authorization: Bearer ${CRON_SECRET}` por su cuenta; el proxy solo debe
+// dejarla llegar al handler. Lista exacta, no prefijo abierto: una ruta nueva
+// no queda expuesta accidentalmente sin añadir también su control de secreto.
+const RUTAS_CRON = new Set([
+  "/api/cron/liberar-vencidas",
+  "/api/cron/notificaciones",
+  "/api/cron/reconciliar-financiero",
+]);
+
 // Roles externos (aliados B2B / cliente final): su lugar es el Portal B2B,
 // NO el dashboard interno. Única excepción: /dashboard/reservar, desde donde
 // los aliados generan su contrato (el tarifario los enlaza ahí).
 const EXTERNOS = ["agencia", "freelance", "cliente_final"];
 
 export async function proxy(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  if (RUTAS_CRON.has(pathname)) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -54,8 +70,6 @@ export async function proxy(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
 
   // ── Auth: protege todo lo que no sea público ────────────────────────────
   // "/" lo maneja app/page.tsx (redirige a /tarifario); debe ser alcanzable sin
