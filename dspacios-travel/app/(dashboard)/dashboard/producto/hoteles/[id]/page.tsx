@@ -9,8 +9,10 @@ import { HotelFotos } from "./HotelFotos";
 import { HotelBlackouts } from "./HotelBlackouts";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
 import { CalculadoraEditor } from "./CalculadoraEditor";
+import { TarifasUnidadEditor, type FilaTarifaUnidadUI } from "./TarifasUnidadEditor";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import type { DubaiParams, MixtaParams, CorporativaParams, CalcTipo } from "@/lib/calc/calculadoras";
+import { adaptarTarifaAlojamientoPersistida } from "@/lib/calc/tarifaAlojamientoPersistida";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +22,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }, { data: tarifasUnidad }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre, politica_reservas)").eq("id", hotelId).single(),
     sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
@@ -37,6 +39,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     sb.from("hotel_blackouts").select("id, fecha_inicio, fecha_fin, total, acomodaciones, categorias, motivo").eq("hotel_id", hotelId).order("fecha_inicio"),
     sb.from("destinos").select("id, nombre").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "hotelero").order("nombre"),
+    sb.from("hotel_tarifas_unidad").select("*").eq("hotel_id", hotelId).order("tarifa_id").order("version_tarifario"),
   ]);
 
   if (!hotel) notFound();
@@ -66,11 +69,33 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   const regimenes = regsRows.map((x) => x.planes_alimentacion?.codigo).filter((x): x is string => !!x);
   const categoriaIds = catsRows.map((x) => x.categoria_id);
   const regimenIds = regsRows.map((x) => x.plan_id);
-  const temporadasNombres = (temporadas ?? []).map((t) => t.nombre).filter((x): x is string => !!x);
+  // `hotel_temporadas` puede tener varias filas con el mismo nombre (p. ej.
+  // importaciones sucesivas con rangos de fecha distintos) — se deduplica
+  // con Set para que el selector del editor no repita el mismo nombre.
+  const temporadasNombres = Array.from(
+    new Set((temporadas ?? []).map((t) => t.nombre).filter((x): x is string => !!x))
+  );
   const calcTipo = (calc?.tipo ?? null) as CalcTipo | null;
   const dubaiInicial = calc?.tipo === "dubai" ? (calc.params as unknown as DubaiParams) : null;
   const mixtaInicial = calc?.tipo === "mixta" ? (calc.params as unknown as MixtaParams) : null;
   const corporativaInicial = calc?.tipo === "corporativa" ? (calc.params as unknown as CorporativaParams) : null;
+
+  // Lectura defensiva de "Tarifas por unidad" (fase 2 Bernalo): cada fila se
+  // pasa por el MISMO adaptador que valida las Server Actions al escribir
+  // (`adaptarTarifaAlojamientoPersistida`) — no debería rechazar nada, porque
+  // este editor es el único camino de escritura de esta tabla, pero si algo
+  // quedó incoherente (ej. una fila cargada a mano en Supabase Studio) se
+  // excluye de la lista en vez de romper la página o mostrar un dato falso.
+  const filasTarifaUnidad: FilaTarifaUnidadUI[] = [];
+  let tarifasUnidadIncoherentes = 0;
+  for (const fila of tarifasUnidad ?? []) {
+    const adaptada = adaptarTarifaAlojamientoPersistida(fila);
+    if (adaptada.ok && adaptada.id != null) {
+      filasTarifaUnidad.push({ id: adaptada.id, estado: adaptada.estado, tarifa: adaptada.tarifa });
+    } else {
+      tarifasUnidadIncoherentes++;
+    }
+  }
 
   return (
     <div className="mx-auto max-w-5xl p-4 md:p-8">
@@ -163,6 +188,14 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           tarifas={(tarifas ?? []) as never}
           otrosHoteles={otrosHoteles ?? []}
           adultsOnly={h.adults_only ?? false}
+        />
+        <TarifasUnidadEditor
+          hotelId={hotelId}
+          temporadas={temporadasNombres}
+          categorias={categorias}
+          regimenes={regimenes}
+          filas={filasTarifaUnidad}
+          incoherentes={tarifasUnidadIncoherentes}
         />
       </div>
     </div>

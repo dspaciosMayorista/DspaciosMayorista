@@ -1072,7 +1072,7 @@ describe("frontera de producto — solo tarifas regulares por noche", () => {
     // Es la superficie que se lee sin abrir el repositorio: si el comentario
     // solo hablara de lo que la tabla guarda, un DBA podría leerla como si
     // fuera todo el tarifario.
-    const comentarioTabla = fuenteMigracion.match(/comment on table public\.hotel_tarifas_unidad is([\s\S]*?);\n/);
+    const comentarioTabla = fuenteMigracion.match(/comment on table public\.hotel_tarifas_unidad is([\s\S]*?);\r?\n/);
     assert.ok(comentarioTabla, "no se encontró el comment on table de hotel_tarifas_unidad");
     assert.match(comentarioTabla[1], /ALCANCE:/);
     assert.match(comentarioTabla[1], /NO es el tarifario Bernalo completo/);
@@ -1080,7 +1080,7 @@ describe("frontera de producto — solo tarifas regulares por noche", () => {
   });
 
   test("el `comment on column payload` exige las claves exactas del tipo del motor", () => {
-    const comentarioPayload = fuenteMigracion.match(/comment on column public\.hotel_tarifas_unidad\.payload is([\s\S]*?);\n/);
+    const comentarioPayload = fuenteMigracion.match(/comment on column public\.hotel_tarifas_unidad\.payload is([\s\S]*?);\r?\n/);
     assert.ok(comentarioPayload, "no se encontró el comment on column payload");
     assert.match(comentarioPayload[1], /EXACTAMENTE esas claves/);
     assert.match(comentarioPayload[1], /no se cuele/);
