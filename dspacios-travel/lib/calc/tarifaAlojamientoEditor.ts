@@ -30,6 +30,12 @@
 // La AUTORIDAD del cálculo (cuánto es el neto) sigue siendo 100% del motor
 // (`cotizarUnidadAlojamiento`) — este archivo no calcula ni un peso.
 //
+// Reglas de edad — respaldo desde la configuración del hotel (ronda 10): si
+// una tarifa no trae reglas explícitas, `aplicarFallbackReglasEdad` las
+// deriva de `edad_infante_max`/`edad_nino_max`/`adults_only` del hotel
+// (límites inclusivos) y las deja GRABADAS en el payload — nunca se vuelve a
+// leer la configuración del hotel al cotizar. Ver esa función más abajo.
+//
 // Fechas: `hotel_tarifas_unidad` NO tiene columnas `fecha_desde`/`fecha_hasta`
 // (migración 173) — el calendario autoritativo es `hotel_temporadas` (rangos
 // múltiples, blackouts y prioridad); esta tabla solo guarda el NOMBRE de la
@@ -223,6 +229,99 @@ export function construirDuplicado(
   const clon = JSON.parse(JSON.stringify(origen)) as TarifaAlojamiento;
   clon.versionTarifario = nueva;
   const validacion = validarTarifaAlojamiento(clon);
+  if (esBloqueado(validacion)) return { ok: false, error: validacion.mensaje };
+  return { ok: true, tarifa: validacion.tarifa };
+}
+
+// ── Respaldo de reglas de edad desde la configuración general del hotel ──
+// El motor Bernalo exige una `ReglaEdadMenor` que cubra CADA edad declarada
+// (`edad_fuera_de_regla` si no hay ninguna) — pero hasta esta ronda el
+// formulario nacía con `reglasEdad: []`, así que cualquier tarifa creada sin
+// cargar reglas a mano bloqueaba a CUALQUIER menor real. El hotel YA tiene
+// edades generales configuradas (`edad_infante_min/max`, `edad_nino_min/max`,
+// `adults_only`, ver `HotelConfigEditor`) — este respaldo las traduce a los
+// tres tramos que el motor entiende, SOLO cuando la tarifa no trae reglas
+// explícitas (nunca las reemplaza — punto 4 del encargo).
+//
+// Límites INCLUSIVOS, igual que el resto del sistema ya los interpreta: si
+// `edad_infante_max = 2`, la edad 2 es infante — el niño empieza en 3 años
+// aunque `edad_nino_min` del hotel esté guardado en 2 (ese campo no se usa
+// para construir el límite: solo sirve para el aviso informativo de la UI,
+// ver `TarifasUnidadEditor.tsx`). Por eso este respaldo se deriva ÚNICAMENTE
+// de `edad_infante_max` y `edad_nino_max` — dos números, sin huecos ni
+// solapamientos posibles por construcción:
+//   infante: 0..edadInfanteMax
+//   niño:    edadInfanteMax+1..edadNinoMax
+//   adulto tarifario (11-17, política Bernalo del menor que paga tarifa de
+//   adulto): edadNinoMax+1..17 — solo si ese rango no queda vacío.
+export type EdadesGeneralesHotel = {
+  edadInfanteMax: number;
+  edadNinoMax: number;
+  adultsOnly: boolean;
+};
+
+export type ResultadoReglasEdadHotel =
+  | { ok: true; reglas: ReglaEdadMenor[] }
+  | { ok: false; error: string };
+
+// Pura: solo genera y valida los NÚMEROS de la configuración del hotel — no
+// decide si aplicarlos a una tarifa (eso es `aplicarFallbackReglasEdad`,
+// abajo) ni consulta nada. Se exporta aparte para que la UI pueda precargar
+// el formulario con el MISMO cálculo que hará el servidor (punto 8 del
+// encargo), sin duplicar la fórmula.
+export function reglasEdadDesdeConfiguracionHotel(cfg: EdadesGeneralesHotel): ResultadoReglasEdadHotel {
+  // Adults Only: el hotel nunca recibe niños ni infantes — reglas vacías es
+  // la respuesta correcta, no una configuración pendiente (punto 5).
+  if (cfg.adultsOnly) return { ok: true, reglas: [] };
+
+  const { edadInfanteMax, edadNinoMax } = cfg;
+  if (!Number.isInteger(edadInfanteMax) || !Number.isInteger(edadNinoMax)) {
+    return {
+      ok: false,
+      error: "La configuración de edades del hotel es inválida: edad_infante_max y edad_nino_max deben ser números enteros.",
+    };
+  }
+  if (!(edadInfanteMax >= 0 && edadInfanteMax < edadNinoMax && edadNinoMax < 18)) {
+    return {
+      ok: false,
+      error: `La configuración de edades del hotel es inválida para derivar reglas de edad: se requiere 0 <= edad_infante_max (${edadInfanteMax}) < edad_nino_max (${edadNinoMax}) < 18. Corrige la configuración general del hotel o carga reglas de edad manuales para esta tarifa.`,
+    };
+  }
+
+  const reglas: ReglaEdadMenor[] = [
+    { categoria: "infante", edadMinAnios: 0, edadMaxAnios: edadInfanteMax },
+    { categoria: "nino", edadMinAnios: edadInfanteMax + 1, edadMaxAnios: edadNinoMax },
+  ];
+  // "Cuando aplique" (punto 6): si edadNinoMax ya llega a 17, no queda rango
+  // para el tercer tramo — dos reglas cubren la ocupación completa 0-17.
+  if (edadNinoMax < 17) {
+    reglas.push({ categoria: "adulto", edadMinAnios: edadNinoMax + 1, edadMaxAnios: 17 });
+  }
+  return { ok: true, reglas };
+}
+
+// Aplica el respaldo a una tarifa YA CONSTRUIDA (por el formulario o por
+// `construirDuplicado`): si `reglaMenores.reglas` ya tiene contenido, se
+// devuelve TAL CUAL (punto 4 — nunca se sobreescribe una regla explícita,
+// venga de donde venga). Si está vacía, se deriva desde la configuración del
+// hotel y el resultado se vuelve a pasar por el MOTOR COMPLETO
+// (`validarTarifaAlojamiento`) antes de aceptarse — el respaldo no es una
+// excepción a la validación, es otra forma de llegar a una tarifa que el
+// motor tiene que aprobar igual que cualquier otra.
+export function aplicarFallbackReglasEdad(
+  tarifa: TarifaAlojamiento,
+  hotelEdades: EdadesGeneralesHotel
+): ResultadoConstruccion {
+  if (tarifa.reglaMenores.reglas.length > 0) return { ok: true, tarifa };
+
+  const resultado = reglasEdadDesdeConfiguracionHotel(hotelEdades);
+  if (!resultado.ok) return { ok: false, error: resultado.error };
+
+  // Punto 3: las reglas resueltas quedan DENTRO del payload de la tarifa —
+  // el snapshot que se persiste no depende de que nadie vuelva a consultar
+  // `edad_infante_max`/`edad_nino_max` del hotel (mutables) para recotizar.
+  const conReglas: TarifaAlojamiento = { ...tarifa, reglaMenores: { reglas: resultado.reglas } };
+  const validacion = validarTarifaAlojamiento(conReglas);
   if (esBloqueado(validacion)) return { ok: false, error: validacion.mensaje };
   return { ok: true, tarifa: validacion.tarifa };
 }

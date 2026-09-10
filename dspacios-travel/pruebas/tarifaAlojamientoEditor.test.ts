@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  aplicarFallbackReglasEdad,
   construirDuplicado,
   construirFilaCandidata,
   construirTarifaDesdeFormulario,
@@ -12,10 +13,12 @@ import {
   puedeEliminar,
   puedeInactivar,
   puedePublicar,
+  reglasEdadDesdeConfiguracionHotel,
+  type EdadesGeneralesHotel,
   type EntradaFormularioTarifaUnidad,
   type EstadoTarifaUnidad,
 } from "../lib/calc/tarifaAlojamientoEditor.ts";
-import type { TarifaAlojamiento } from "../lib/calc/unidadAlojamiento.ts";
+import { cotizarUnidadAlojamiento, esBloqueado, type TarifaAlojamiento } from "../lib/calc/unidadAlojamiento.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Editor de dominio de `hotel_tarifas_unidad` (fase 2 Bernalo — Server
@@ -450,6 +453,141 @@ describe("construirDuplicado — identidad estable", () => {
   });
 });
 
+// ── Reglas de edad — respaldo desde la configuración del hotel (ronda 10) ──
+describe("reglasEdadDesdeConfiguracionHotel — límites inclusivos, sin huecos ni solapes", () => {
+  test("hotel 0–2 / 2–10 produce infante 0–2, niño 3–10 y adulto tarifario 11–17", () => {
+    const r = reglasEdadDesdeConfiguracionHotel({ edadInfanteMax: 2, edadNinoMax: 10, adultsOnly: false });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.reglas, [
+      { categoria: "infante", edadMinAnios: 0, edadMaxAnios: 2 },
+      { categoria: "nino", edadMinAnios: 3, edadMaxAnios: 10 },
+      { categoria: "adulto", edadMinAnios: 11, edadMaxAnios: 17 },
+    ]);
+  });
+
+  test("no agrega el tercer tramo si edadNinoMax ya llega a 17 (no queda rango para 'adulto tarifario')", () => {
+    const r = reglasEdadDesdeConfiguracionHotel({ edadInfanteMax: 3, edadNinoMax: 17, adultsOnly: false });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.reglas, [
+      { categoria: "infante", edadMinAnios: 0, edadMaxAnios: 3 },
+      { categoria: "nino", edadMinAnios: 4, edadMaxAnios: 17 },
+    ]);
+  });
+
+  test("adults_only: reglas SIEMPRE vacías, sin importar edad_infante_max/edad_nino_max", () => {
+    const r = reglasEdadDesdeConfiguracionHotel({ edadInfanteMax: 2, edadNinoMax: 10, adultsOnly: true });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.reglas, []);
+  });
+
+  test("configuración inválida falla cerrada: edadInfanteMax >= edadNinoMax", () => {
+    const r = reglasEdadDesdeConfiguracionHotel({ edadInfanteMax: 10, edadNinoMax: 10, adultsOnly: false });
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.match(r.error, /edad_infante_max/);
+    assert.match(r.error, /edad_nino_max/);
+  });
+
+  test("configuración inválida falla cerrada: edadNinoMax >= 18", () => {
+    const r = reglasEdadDesdeConfiguracionHotel({ edadInfanteMax: 3, edadNinoMax: 18, adultsOnly: false });
+    assert.equal(r.ok, false);
+  });
+
+  test("configuración inválida falla cerrada: edadInfanteMax negativo", () => {
+    const r = reglasEdadDesdeConfiguracionHotel({ edadInfanteMax: -1, edadNinoMax: 10, adultsOnly: false });
+    assert.equal(r.ok, false);
+  });
+
+  test("configuración inválida falla cerrada: valores no enteros (decimales)", () => {
+    const r = reglasEdadDesdeConfiguracionHotel({ edadInfanteMax: 2.5, edadNinoMax: 10, adultsOnly: false });
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.match(r.error, /enteros/);
+  });
+});
+
+describe("aplicarFallbackReglasEdad — solo actúa cuando la tarifa no trae reglas explícitas", () => {
+  const HOTEL_EDADES: EdadesGeneralesHotel = { edadInfanteMax: 2, edadNinoMax: 10, adultsOnly: false };
+
+  function tarifaPersonaSinReglas(): TarifaAlojamiento {
+    return {
+      id: "t-fallback",
+      versionTarifario: "bernalo-2026",
+      unidadCobro: "persona",
+      comisionPct: 0,
+      // `nino`/`infante` con precio configurado: el punto de esta fixture es
+      // demostrar que un menor de 8 años deja de BLOQUEARSE por falta de
+      // regla — con la categoría ya resuelta, la tarifa también necesita un
+      // precio para esa categoría o el motor bloquea igual, pero por
+      // `tarifa_no_encontrada` (otro problema, no el que corrige esta ronda).
+      valores: { adulto: 100_000, nino: 70_000, infante: 30_000, periodicidadInfante: "por_noche" },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+  }
+
+  test("tarifa sin reglas: deriva las tres reglas del hotel y las deja VALIDADAS por el motor completo", () => {
+    const r = aplicarFallbackReglasEdad(tarifaPersonaSinReglas(), HOTEL_EDADES);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.tarifa.reglaMenores.reglas, [
+      { categoria: "infante", edadMinAnios: 0, edadMaxAnios: 2 },
+      { categoria: "nino", edadMinAnios: 3, edadMaxAnios: 10 },
+      { categoria: "adulto", edadMinAnios: 11, edadMaxAnios: 17 },
+    ]);
+  });
+
+  test("un menor de 8 años deja de bloquearse: cotiza con categoría 'nino', no edad_fuera_de_regla", () => {
+    const resuelta = aplicarFallbackReglasEdad(tarifaPersonaSinReglas(), HOTEL_EDADES);
+    assert.equal(resuelta.ok, true);
+    if (!resuelta.ok) return;
+    const resultado = cotizarUnidadAlojamiento({
+      tarifa: resuelta.tarifa,
+      distribucion: { unidades: [{ adultos: 1, menores: [{ edadAnios: 8 }] }] },
+      noches: 1,
+    });
+    assert.equal(esBloqueado(resultado), false, !resultado.ok ? `bloqueado: ${resultado.codigo} — ${resultado.mensaje}` : "");
+    if (esBloqueado(resultado)) return;
+    assert.equal(resultado.menoresClasificados[0].categoriaTarifaria, "nino");
+  });
+
+  test("reglas explícitas NUNCA se sobrescriben — ni siquiera si difieren de lo que derivaría el hotel", () => {
+    const explicitas = {
+      ...tarifaPersonaSinReglas(),
+      reglaMenores: { reglas: [{ categoria: "nino" as const, edadMinAnios: 0, edadMaxAnios: 17 }] },
+    };
+    const r = aplicarFallbackReglasEdad(explicitas, HOTEL_EDADES);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.tarifa.reglaMenores.reglas, [{ categoria: "nino", edadMinAnios: 0, edadMaxAnios: 17 }]);
+  });
+
+  test("adults_only: la tarifa queda con reglas vacías (no es un error, es la respuesta correcta)", () => {
+    const r = aplicarFallbackReglasEdad(tarifaPersonaSinReglas(), { edadInfanteMax: 2, edadNinoMax: 10, adultsOnly: true });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.deepEqual(r.tarifa.reglaMenores.reglas, []);
+  });
+
+  test("configuración de edades del hotel inválida: falla cerrada con mensaje claro, no persiste nada", () => {
+    const r = aplicarFallbackReglasEdad(tarifaPersonaSinReglas(), { edadInfanteMax: 12, edadNinoMax: 10, adultsOnly: false });
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.match(r.error, /inválida/);
+  });
+
+  test("las reglas resueltas quedan DENTRO del payload (tarifa.reglaMenores) — no hay ningún campo aparte que las guarde", () => {
+    const r = aplicarFallbackReglasEdad(tarifaPersonaSinReglas(), HOTEL_EDADES);
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.ok(Array.isArray(r.tarifa.reglaMenores.reglas) && r.tarifa.reglaMenores.reglas.length > 0);
+  });
+});
+
 // ── imposibilidad de editar/eliminar una publicada ───────────────────────
 describe("máquina de estados — publicada solo pasa a inactiva", () => {
   const estados: EstadoTarifaUnidad[] = ["borrador", "publicada", "inactiva"];
@@ -719,6 +857,53 @@ describe("cableado — sin fechas propias y sin integración comercial", () => {
     assert.doesNotMatch(fuenteCruda, /unique\s*\(\s*hotel_id,\s*tarifa_id,\s*version_tarifario\s*\)/i);
     assert.match(fuenteCruda, /tarifa_id,\s*version_tarifario/);
   });
+
+  // ── Reglas de edad — respaldo desde la configuración del hotel (ronda 10) ──
+  test("crear/actualizar/publicar/duplicar resuelven el respaldo de reglas de edad ANTES de construir la fila candidata/insertar/actualizar", () => {
+    for (const nombre of [
+      "crearTarifaUnidadBorrador",
+      "actualizarTarifaUnidadBorrador",
+      "publicarTarifaUnidad",
+      "duplicarTarifaUnidadVersion",
+    ]) {
+      const cuerpo = cuerpoDeFuncion(fuentes.acciones, nombre);
+      const idxResolver = cuerpo.indexOf("resolverReglasEdadTarifa(");
+      assert.notEqual(idxResolver, -1, `${nombre} no llama a resolverReglasEdadTarifa`);
+      const idxCorte = cuerpo.indexOf("if (!reglasEdad.ok) return reglasEdad;");
+      assert.notEqual(idxCorte, -1, `${nombre} no corta fail-closed si el respaldo de edades falla`);
+      assert.ok(idxCorte > idxResolver, `${nombre}: el corte debe ir después de llamar a resolverReglasEdadTarifa`);
+      const idxCandidata = cuerpo.indexOf("construirFilaCandidata(");
+      assert.notEqual(idxCandidata, -1, `${nombre} no construye la fila candidata`);
+      assert.ok(idxCorte < idxCandidata, `${nombre}: el respaldo de edades debe resolverse antes de construir la fila candidata`);
+      const idxEscritura = Math.max(cuerpo.indexOf(".insert("), cuerpo.indexOf(".update("));
+      assert.ok(idxEscritura === -1 || idxCandidata < idxEscritura, `${nombre}: la fila candidata debe construirse antes de escribir`);
+    }
+  });
+
+  test("publicar reconstruye la fila completa (no solo el estado) para poder persistir las reglas de edad recién resueltas", () => {
+    const cuerpo = cuerpoDeFuncion(fuentes.acciones, "publicarTarifaUnidad");
+    assert.match(cuerpo, /construirFilaCandidata\(hotelId, reglasEdad\.tarifa, "publicada"\)/);
+    assert.match(cuerpo, /\.update\(\{\s*\.\.\.filaParaSupabase\(candidata\.fila\)/);
+  });
+
+  test("eliminar e inactivar NO resuelven reglas de edad (no reconstruyen ni persisten payload)", () => {
+    for (const nombre of ["eliminarTarifaUnidadBorrador", "inactivarTarifaUnidad"]) {
+      assert.doesNotMatch(cuerpoDeFuncion(fuentes.acciones, nombre), /resolverReglasEdadTarifa\(/);
+    }
+  });
+
+  test("resolverReglasEdadTarifa no consulta el hotel si la tarifa ya trae reglas explícitas (punto 4: nunca se sobreescriben)", () => {
+    const cuerpo = cuerpoDeFuncion(fuentes.acciones, "resolverReglasEdadTarifa");
+    assert.match(cuerpo, /if\s*\(tarifa\.reglaMenores\.reglas\.length > 0\)\s*return\s*\{\s*ok:\s*true,\s*tarifa\s*\};/);
+  });
+
+  test("edadesGeneralesDelHotel usa el cliente de SESIÓN y filtra por hotel_id — nunca admin", () => {
+    const cuerpo = cuerpoDeFuncion(fuentes.acciones, "edadesGeneralesDelHotel");
+    assert.doesNotMatch(cuerpo, /createClient\(\)/);
+    assert.doesNotMatch(cuerpo, /createAdminClient/i);
+    assert.match(cuerpo, /\.from\("hoteles"\)/);
+    assert.match(cuerpo, /\.eq\("id", hotelId\)/);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -877,5 +1062,59 @@ describe("TarifasUnidadEditor.tsx — comisión (ronda 8): captura, conserva, mu
   test("comisionPct nunca se multiplica ni se divide en este archivo — el único cálculo es dentro del motor real", () => {
     assert.doesNotMatch(fuenteComponente, /comisionPct\s*\*/);
     assert.doesNotMatch(fuenteComponente, /comisionPct\s*\//);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Reglas de edad — respaldo desde la configuración del hotel (ronda 10):
+// precarga en la UI + avisos. El servidor es la autoridad (ver el describe
+// de cableado más arriba); esto solo verifica la conveniencia de UI.
+// ─────────────────────────────────────────────────────────────────────────
+describe("TarifasUnidadEditor.tsx — reglas de edad: precarga al crear y avisos", () => {
+  const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const fuenteComponente = readFileSync(
+    join(raiz, "app/(dashboard)/dashboard/producto/hoteles/[id]/TarifasUnidadEditor.tsx"),
+    "utf8"
+  );
+  const fuentePagina = readFileSync(join(raiz, "app/(dashboard)/dashboard/producto/hoteles/[id]/page.tsx"), "utf8");
+
+  test("usa el MISMO cálculo puro que el servidor (reglasEdadDesdeConfiguracionHotel) — no reimplementa la fórmula", () => {
+    assert.match(fuenteComponente, /import\s*\{[^}]*reglasEdadDesdeConfiguracionHotel[^}]*\}\s*from\s*"@\/lib\/calc\/tarifaAlojamientoEditor"/);
+    assert.match(fuenteComponente, /reglasEdadDesdeConfiguracionHotel\(hotelEdades\)/);
+  });
+
+  test("el formulario nace precargado con las reglas del hotel al CREAR (no al editar)", () => {
+    assert.match(fuenteComponente, /useState<FormState>\(\(\) => formVacio\(reglasEdadAuto\)\)/);
+    assert.match(fuenteComponente, /setForm\(formVacio\(reglasEdadAuto\)\)/); // reset()
+  });
+
+  test("editar una tarifa existente marca el origen como 'existente', no 'auto' — no se confunde con la precarga", () => {
+    const cuerpo = fuenteComponente.slice(
+      fuenteComponente.indexOf("function editar("),
+      fuenteComponente.indexOf("function guardar(")
+    );
+    assert.match(cuerpo, /setOrigenReglasEdad\("existente"\)/);
+  });
+
+  test("modificar reglas a mano marca el origen como 'manual' (el aviso de auto-precarga desaparece)", () => {
+    assert.match(fuenteComponente, /setOrigenReglasEdad\("manual"\)/);
+  });
+
+  test("el aviso de precarga aparece SOLO al crear (no editando) y con origen 'auto'", () => {
+    assert.match(fuenteComponente, /\{!editando && origenReglasEdad === "auto" && \(/);
+    assert.match(fuenteComponente, /Los rangos se tomaron de la configuración general del hotel\./);
+  });
+
+  test("aviso adicional de límites inclusivos cuando edad_infante_max = 2 y edad_nino_min = 2", () => {
+    assert.match(fuenteComponente, /hotelEdades\.edadInfanteMax === 2 && hotelEdades\.edadNinoMin === 2/);
+    assert.match(fuenteComponente, /Los rangos son inclusivos: 2 años pertenece a Infante; Niño comienza en 3 años\./);
+  });
+
+  test("page.tsx pasa hotelEdades (edadInfanteMax/edadNinoMin/edadNinoMax/adultsOnly) al editor", () => {
+    assert.match(fuentePagina, /hotelEdades=\{\{/);
+    assert.match(fuentePagina, /edadInfanteMax:\s*h\.edad_infante_max/);
+    assert.match(fuentePagina, /edadNinoMin:\s*h\.edad_nino_min/);
+    assert.match(fuentePagina, /edadNinoMax:\s*h\.edad_nino_max/);
+    assert.match(fuentePagina, /adultsOnly:\s*h\.adults_only \?\? false/);
   });
 });

@@ -206,6 +206,12 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
             regimenes={regimenes}
             filas={filasTarifaUnidad}
             incoherentes={tarifasUnidadIncoherentes}
+            hotelEdades={{
+              edadInfanteMax: h.edad_infante_max,
+              edadNinoMin: h.edad_nino_min,
+              edadNinoMax: h.edad_nino_max,
+              adultsOnly: h.adults_only ?? false,
+            }}
           />
         )}
       </div>

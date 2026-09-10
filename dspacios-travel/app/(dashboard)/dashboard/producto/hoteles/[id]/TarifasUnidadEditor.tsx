@@ -36,7 +36,12 @@ import {
   type TarifaAlojamiento,
   type UnidadCobro,
 } from "@/lib/calc/unidadAlojamiento";
-import type { EntradaFormularioTarifaUnidad, EstadoTarifaUnidad } from "@/lib/calc/tarifaAlojamientoEditor";
+import {
+  reglasEdadDesdeConfiguracionHotel,
+  type EdadesGeneralesHotel,
+  type EntradaFormularioTarifaUnidad,
+  type EstadoTarifaUnidad,
+} from "@/lib/calc/tarifaAlojamientoEditor";
 import {
   actualizarTarifaUnidadBorrador,
   crearTarifaUnidadBorrador,
@@ -107,28 +112,50 @@ type FormState = {
   fuentePagina: string;
 };
 
-const FORM_VACIO: FormState = {
-  versionTarifario: "",
-  temporada: "",
-  comisionPct: "",
-  categoria: "",
-  alimentacion: "",
-  unidadCobro: "persona",
-  valorBase: "",
-  nino: "",
-  infante: "",
-  periodicidadInfante: "",
-  minPax: "1",
-  maxPax: "",
-  paxIncluidos: "0",
-  adultoAdicional: "",
-  personaSola: "",
-  menorAdicionalNino: "",
-  menorAdicionalInfante: "",
-  reglasEdad: [],
-  fuenteDocumento: "",
-  fuentePagina: "",
-};
+// `reglasEdad` ya NO nace siempre vacío: se precarga con el respaldo
+// derivado de la configuración general del hotel (punto 8 del encargo) — ver
+// `reglasEdadFormularioDesdeHotel` y el componente más abajo. Por eso
+// `FORM_VACIO` pasó de constante a función: necesita saber, en el momento de
+// crearse, cuáles son esas reglas por defecto para ESTE hotel.
+function formVacio(reglasEdadIniciales: FormState["reglasEdad"]): FormState {
+  return {
+    versionTarifario: "",
+    temporada: "",
+    comisionPct: "",
+    categoria: "",
+    alimentacion: "",
+    unidadCobro: "persona",
+    valorBase: "",
+    nino: "",
+    infante: "",
+    periodicidadInfante: "",
+    minPax: "1",
+    maxPax: "",
+    paxIncluidos: "0",
+    adultoAdicional: "",
+    personaSola: "",
+    menorAdicionalNino: "",
+    menorAdicionalInfante: "",
+    reglasEdad: reglasEdadIniciales,
+    fuenteDocumento: "",
+    fuentePagina: "",
+  };
+}
+
+// Mismo cálculo que hará el servidor (`lib/calc/tarifaAlojamientoEditor.ts`,
+// `reglasEdadDesdeConfiguracionHotel`) — la UI no reimplementa la fórmula,
+// solo traduce el resultado a los campos de texto del formulario. Si la
+// configuración del hotel es inválida (o es Adults Only) no hay nada que
+// precargar: el formulario nace con `reglasEdad: []`, igual que antes.
+function reglasEdadFormularioDesdeHotel(hotelEdades: EdadesGeneralesHotel): FormState["reglasEdad"] {
+  const resultado = reglasEdadDesdeConfiguracionHotel(hotelEdades);
+  if (!resultado.ok) return [];
+  return resultado.reglas.map((r) => ({
+    categoria: r.categoria,
+    edadMinAnios: String(r.edadMinAnios),
+    edadMaxAnios: String(r.edadMaxAnios),
+  }));
+}
 
 function aFormState(t: TarifaAlojamiento): FormState {
   const clave = (s: TarifaAlojamiento["suplementos"][number]) =>
@@ -216,6 +243,7 @@ export function TarifasUnidadEditor({
   regimenes,
   filas,
   incoherentes = 0,
+  hotelEdades,
 }: {
   hotelId: number;
   temporadas: string[];
@@ -223,9 +251,26 @@ export function TarifasUnidadEditor({
   regimenes: string[];
   filas: FilaTarifaUnidadUI[];
   incoherentes?: number;
+  // Edades generales del hotel (`edad_infante_max`/`edad_nino_min`/
+  // `edad_nino_max`/`adults_only`, ver `HotelConfigEditor`) — SOLO para
+  // precargar el formulario (punto 8 del encargo) y mostrar los avisos. El
+  // servidor vuelve a resolver esto mismo por su cuenta al guardar
+  // (`tarifasUnidadActions.ts`); esta prop nunca es la autoridad.
+  hotelEdades: EdadesGeneralesHotel & { edadNinoMin: number };
 }) {
+  const reglasEdadAuto = reglasEdadFormularioDesdeHotel(hotelEdades);
+
   const [editId, setEditId] = useState<number | null>(null);
-  const [form, setForm] = useState<FormState>(FORM_VACIO);
+  const [form, setForm] = useState<FormState>(() => formVacio(reglasEdadAuto));
+  // Origen de las reglas de edad ACTUALMENTE en el formulario — solo para
+  // decidir qué aviso mostrar (puntos 8 y 9): "auto" = se acaban de precargar
+  // desde la configuración del hotel y el usuario todavía no las tocó;
+  // "manual" = el usuario las agregó/editó/borró a mano; "existente" = se
+  // cargaron de una tarifa ya guardada (editar un borrador). Es un dato de
+  // presentación — nunca decide qué se guarda; eso lo resuelve el servidor.
+  const [origenReglasEdad, setOrigenReglasEdad] = useState<"auto" | "manual" | "existente">(
+    reglasEdadAuto.length > 0 ? "auto" : "manual"
+  );
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
@@ -247,11 +292,13 @@ export function TarifasUnidadEditor({
 
   function reset() {
     setEditId(null);
-    setForm(FORM_VACIO);
+    setForm(formVacio(reglasEdadAuto));
+    setOrigenReglasEdad(reglasEdadAuto.length > 0 ? "auto" : "manual");
     setErr("");
   }
 
   function editar(f: FilaTarifaUnidadUI) {
+    setOrigenReglasEdad("existente");
     setEditId(f.id);
     setForm(aFormState(f.tarifa));
     setErr("");
@@ -314,7 +361,10 @@ export function TarifasUnidadEditor({
     });
   }
 
-  const setReglas = (v: FormState["reglasEdad"]) => setForm({ ...form, reglasEdad: v });
+  const setReglas = (v: FormState["reglasEdad"]) => {
+    setOrigenReglasEdad("manual");
+    setForm({ ...form, reglasEdad: v });
+  };
 
   // Orden COMERCIAL, nunca por `tarifa.id` (identificador técnico sin
   // significado de negocio): temporada → categoría → alimentación →
@@ -519,6 +569,14 @@ export function TarifasUnidadEditor({
           >
             + Agregar regla
           </button>
+          {!editando && origenReglasEdad === "auto" && (
+            <p className="mt-2 rounded-lg bg-[var(--brand-accent)]/10 px-3 py-2 text-xs text-[var(--brand-primary)]">
+              Los rangos se tomaron de la configuración general del hotel.
+              {hotelEdades.edadInfanteMax === 2 && hotelEdades.edadNinoMin === 2 && (
+                <> Los rangos son inclusivos: 2 años pertenece a Infante; Niño comienza en 3 años.</>
+              )}
+            </p>
+          )}
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">

@@ -37,12 +37,21 @@
 // otra vez antes de publicar (el catálogo del hotel pudo cambiar entre que
 // se creó el borrador y se publicó) — fail-closed: cualquier error de
 // Supabase o valor inexistente/ajeno bloquea la escritura completa.
+//
+// Reglas de edad sin configurar (ronda 10): una tarifa sin reglas explícitas
+// bloqueaba a CUALQUIER menor real (`edad_fuera_de_regla`). `resolverReglas-
+// EdadTarifa` (con el cliente de SESIÓN) las deriva de la configuración
+// general del hotel (`edad_infante_max`/`edad_nino_max`/`adults_only`) antes
+// de crear, actualizar, publicar o duplicar — el SERVIDOR es la autoridad,
+// nunca depende de que el formulario las haya precargado. Reglas explícitas
+// nunca se tocan. Ver `lib/calc/tarifaAlojamientoEditor.ts` para la fórmula.
 // ─────────────────────────────────────────────────────────────────────────
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { Json } from "@/types/database";
 import {
+  aplicarFallbackReglasEdad,
   construirDuplicado,
   construirFilaCandidata,
   construirTarifaDesdeFormulario,
@@ -58,6 +67,7 @@ import {
   type TarifaUnidadAdaptada,
 } from "@/lib/calc/tarifaAlojamientoPersistida";
 import type { FilaCandidataTarifaUnidad } from "@/lib/calc/tarifaAlojamientoEditor";
+import type { TarifaAlojamiento } from "@/lib/calc/unidadAlojamiento";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -194,6 +204,50 @@ async function validarClasificacionHotel(
   return { ok: true };
 }
 
+// ── Respaldo de reglas de edad desde la configuración general del hotel ──
+// El SERVIDOR es la autoridad (punto 10 del encargo): aunque el formulario
+// ya precarga estas reglas para conveniencia del usuario (ver
+// `TarifasUnidadEditor.tsx`), esta función se llama SIEMPRE antes de crear,
+// actualizar, publicar o duplicar — así un formulario manipulado, un cliente
+// viejo sin la precarga, o un borrador creado antes de esta ronda, terminan
+// igual de cubiertos. `aplicarFallbackReglasEdad` (dominio puro) decide si
+// hace falta tocar algo: si la tarifa ya trae reglas explícitas, esta
+// consulta ni siquiera importa el resultado.
+async function edadesGeneralesDelHotel(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  hotelId: number
+): Promise<{ ok: true; edades: { edadInfanteMax: number; edadNinoMax: number; adultsOnly: boolean } } | { ok: false; error: string }> {
+  const { data, error } = await sb
+    .from("hoteles")
+    .select("edad_infante_max, edad_nino_max, adults_only")
+    .eq("id", hotelId)
+    .maybeSingle();
+  if (error) return { ok: false, error: "No se pudo leer la configuración de edades del hotel." };
+  if (!data) return { ok: false, error: "El hotel no existe." };
+  return {
+    ok: true,
+    edades: {
+      edadInfanteMax: data.edad_infante_max,
+      edadNinoMax: data.edad_nino_max,
+      adultsOnly: data.adults_only ?? false,
+    },
+  };
+}
+
+async function resolverReglasEdadTarifa(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  hotelId: number,
+  tarifa: TarifaAlojamiento
+): Promise<{ ok: true; tarifa: TarifaAlojamiento } | { ok: false; error: string }> {
+  // Reglas explícitas: no hace falta ni consultar el hotel (punto 4).
+  if (tarifa.reglaMenores.reglas.length > 0) return { ok: true, tarifa };
+
+  const edades = await edadesGeneralesDelHotel(sb, hotelId);
+  if (!edades.ok) return edades;
+
+  return aplicarFallbackReglasEdad(tarifa, edades.edades);
+}
+
 async function leerFilaPropia(
   sb: Awaited<ReturnType<typeof createClient>>,
   id: number,
@@ -240,7 +294,10 @@ export async function crearTarifaUnidadBorrador(
   const clasificacion = await validarClasificacionHotel(sb, hotelId, clasificacionDeTarifa(construccion.tarifa));
   if (!clasificacion.ok) return clasificacion;
 
-  const candidata = construirFilaCandidata(hotelId, construccion.tarifa, "borrador");
+  const reglasEdad = await resolverReglasEdadTarifa(sb, hotelId, construccion.tarifa);
+  if (!reglasEdad.ok) return reglasEdad;
+
+  const candidata = construirFilaCandidata(hotelId, reglasEdad.tarifa, "borrador");
   if (!candidata.ok) return { ok: false, error: candidata.error };
 
   const { data, error } = await sb
@@ -275,7 +332,10 @@ export async function actualizarTarifaUnidadBorrador(
   const clasificacion = await validarClasificacionHotel(sb, hotelId, clasificacionDeTarifa(construccion.tarifa));
   if (!clasificacion.ok) return clasificacion;
 
-  const candidata = construirFilaCandidata(hotelId, construccion.tarifa, "borrador");
+  const reglasEdad = await resolverReglasEdadTarifa(sb, hotelId, construccion.tarifa);
+  if (!reglasEdad.ok) return reglasEdad;
+
+  const candidata = construirFilaCandidata(hotelId, reglasEdad.tarifa, "borrador");
   if (!candidata.ok) return { ok: false, error: candidata.error };
 
   const { data, error } = await sb
@@ -310,9 +370,21 @@ export async function publicarTarifaUnidad(id: number, hotelId: number): Promise
   const clasificacion = await validarClasificacionHotel(sb, hotelId, clasificacionDeTarifa(actual.adaptada.tarifa));
   if (!clasificacion.ok) return clasificacion;
 
+  // Respaldo de reglas de edad (punto 2 del encargo: también antes de
+  // publicar). Cubre el caso de un borrador que quedó sin reglas —creado
+  // antes de esta ronda, o por cualquier otra vía— para que ninguna tarifa
+  // llegue a "publicada" bloqueando menores reales. Si hubo que derivarlas,
+  // el payload completo (no solo `estado`) se reescribe para que queden
+  // grabadas (punto 3: el snapshot debe quedar autocontenido).
+  const reglasEdad = await resolverReglasEdadTarifa(sb, hotelId, actual.adaptada.tarifa);
+  if (!reglasEdad.ok) return reglasEdad;
+
+  const candidata = construirFilaCandidata(hotelId, reglasEdad.tarifa, "publicada");
+  if (!candidata.ok) return { ok: false, error: candidata.error };
+
   const { data, error } = await sb
     .from("hotel_tarifas_unidad")
-    .update({ estado: "publicada", updated_at: new Date().toISOString() })
+    .update({ ...filaParaSupabase(candidata.fila), updated_at: new Date().toISOString() })
     .eq("id", id)
     .eq("hotel_id", hotelId)
     .eq("estado", "borrador")
@@ -386,7 +458,14 @@ export async function duplicarTarifaUnidadVersion(
   const construccion = construirDuplicado(actual.adaptada.tarifa, nuevaVersion);
   if (!construccion.ok) return { ok: false, error: construccion.error };
 
-  const candidata = construirFilaCandidata(hotelId, construccion.tarifa, "borrador");
+  // Respaldo de reglas de edad (punto 2: también antes de duplicar). El clon
+  // normalmente ya trae las reglas de la tarifa origen (explícitas o
+  // resueltas al crearla) — esto solo actúa si, por la razón que sea, esas
+  // reglas llegaron vacías y el hotel no es Adults Only.
+  const reglasEdad = await resolverReglasEdadTarifa(sb, hotelId, construccion.tarifa);
+  if (!reglasEdad.ok) return reglasEdad;
+
+  const candidata = construirFilaCandidata(hotelId, reglasEdad.tarifa, "borrador");
   if (!candidata.ok) return { ok: false, error: candidata.error };
 
   const { data, error } = await sb
