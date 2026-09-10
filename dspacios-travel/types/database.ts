@@ -2030,6 +2030,46 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
         Relationships: [];
       };
+      // Migración 173. Tabla SEPARADA de `tarifa_hotel` a propósito: esa modela el
+      // cobro POR PERSONA con columnas fijas por acomodación y no puede expresar
+      // "una pareja paga $550.000 por la unidad". Acá una fila = una tarifa, y el
+      // `payload` es el `TarifaAlojamiento` completo que consume el motor puro
+      // (`lib/calc/unidadAlojamiento.ts`) — se adapta con
+      // `lib/calc/tarifaAlojamientoPersistida.ts`, que además comprueba que estas
+      // columnas espejo (tarifa_id/version_tarifario/temporada/categoria/
+      // alimentacion/fuente_*) coincidan con el payload.
+      // `tarifa_id + version_tarifario` es globalmente único para que un snapshot
+      // resuelva una sola fila. El calendario no se duplica: sigue en
+      // `hotel_temporadas`, con sus rangos, blackouts y prioridad por hotel.
+      // ALCANCE: solo tarifas REGULARES por noche (persona/pareja/habitación/
+      // apartamento). NO es el tarifario Bernalo completo: día de sol, Navidad/Año
+      // Nuevo, tarifa especial de una noche, paquetes de 2 noches/3 días, reglas de
+      // comisión y condiciones generales son otro modelo (reemplazan el cálculo
+      // nocturno) y no van en esta tabla.
+      hotel_tarifas_unidad: {
+        // `Json` (no un tipo del dominio) porque la columna es jsonb crudo: lo que
+        // garantiza su forma es el motor al adaptarla, no la base. `estado` se deja
+        // como `string` a propósito, igual que el resto del archivo: el CHECK de la
+        // tabla es la restricción real y el adaptador valida el enum al leer.
+        // El futuro editor debe actualizar `updated_at` explícitamente: esta fase
+        // no introduce un trigger solo para mantener esa marca.
+        Row: {
+          id: number; hotel_id: number; tarifa_id: string; version_tarifario: string;
+          temporada: string | null; categoria: string | null; alimentacion: string | null;
+          estado: string;
+          fuente_documento: string | null; fuente_pagina: number | null; payload: Json;
+          created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: number; hotel_id: number; tarifa_id: string; version_tarifario: string;
+          temporada?: string | null; categoria?: string | null; alimentacion?: string | null;
+          estado?: string;
+          fuente_documento?: string | null; fuente_pagina?: number | null; payload: Json;
+          created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["hotel_tarifas_unidad"]["Insert"]>;
+        Relationships: [];
+      };
       servicios_adicionales: {
         Row: {
           id: number; nombre: string; proveedor_id: number | null; destino_id: number | null;
