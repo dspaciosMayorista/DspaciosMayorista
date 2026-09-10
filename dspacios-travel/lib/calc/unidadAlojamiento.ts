@@ -350,7 +350,11 @@ export function resultadoBloqueado(
   return { ok: false, codigo, mensaje, ...(contexto !== undefined ? { contexto } : {}) };
 }
 
-function esBloqueado(x: unknown): x is ResultadoBloqueado {
+// Exportado para que un consumo externo del motor (adaptadores) pueda
+// estrechar `A | ResultadoBloqueado` sin reimplementar el discriminante —
+// una copia local podría divergir si el resultado bloqueado cambiara de
+// forma. Es un type guard puro: no valida nada ni cambia ningún resultado.
+export function esBloqueado(x: unknown): x is ResultadoBloqueado {
   return typeof x === "object" && x !== null && (x as { ok?: unknown }).ok === false;
 }
 
@@ -489,15 +493,23 @@ export const MAX_OCUPANTES_POR_UNIDAD = 500;
 // `tarifa.id`/`versionTarifario` se exigen aquí (no al construir el
 // snapshot) porque un `ResultadoValido` debe poder snapshotearse siempre —
 // no queremos un cálculo exitoso que después falle al persistir.
-export function validarFormaEntrada(entradaDesconocida: unknown): { entrada: EntradaCotizacion } | ResultadoBloqueado {
-  if (!esObjeto(entradaDesconocida)) {
-    return resultadoBloqueado("configuracion_invalida", "La entrada debe ser un objeto con `tarifa`, `distribucion` y `noches`.");
-  }
-  const { tarifa, distribucion, noches } = entradaDesconocida;
-
-  if (!esObjeto(tarifa)) {
+//
+// Ronda 7 (integración/persistencia Bernalo): esta función se partió en dos
+// SIN cambiar su comportamiento. `validarFormaTarifa` valida SOLO la tarifa
+// (era la primera mitad de este cuerpo, tal cual, en el mismo orden);
+// `validarFormaEntrada` la delega y sigue con `distribucion`/`noches`. La
+// razón es concreta: una tarifa persistida (`hotel_tarifas_unidad.payload`)
+// debe poder validarse por sí sola, y el único modo de hacerlo antes era
+// inventar una distribución y unas noches de mentira solo para pasar por
+// acá — justo el tipo de dato fabricado que un adaptador fail-closed no
+// debe producir. El orden de comprobaciones y el texto de cada bloqueo son
+// idénticos: cualquier entrada que fallaba antes sigue fallando igual, con
+// el mismo código y el mismo mensaje.
+export function validarFormaTarifa(tarifaDesconocida: unknown): { tarifa: TarifaAlojamiento } | ResultadoBloqueado {
+  if (!esObjeto(tarifaDesconocida)) {
     return resultadoBloqueado("configuracion_invalida", "`tarifa` debe ser un objeto.");
   }
+  const tarifa = tarifaDesconocida;
   if (typeof tarifa.id !== "string" || tarifa.id.trim() === "") {
     return resultadoBloqueado("configuracion_invalida", "`tarifa.id` es obligatorio (string no vacío).");
   }
@@ -633,6 +645,22 @@ export function validarFormaEntrada(entradaDesconocida: unknown): { entrada: Ent
       return resultadoBloqueado("configuracion_invalida", "`tarifa.fuente.pagina` debe ser un entero positivo o null.");
     }
   }
+
+  // Cast tras validar la forma, igual que `validarFormaEntrada`: es el
+  // contrato de este archivo contra datos externos (`unknown` → forma
+  // verificada → tipo del dominio). Ningún campo se lee antes de haber sido
+  // comprobado arriba.
+  return { tarifa: tarifa as TarifaAlojamiento };
+}
+
+export function validarFormaEntrada(entradaDesconocida: unknown): { entrada: EntradaCotizacion } | ResultadoBloqueado {
+  if (!esObjeto(entradaDesconocida)) {
+    return resultadoBloqueado("configuracion_invalida", "La entrada debe ser un objeto con `tarifa`, `distribucion` y `noches`.");
+  }
+  const { distribucion, noches } = entradaDesconocida;
+
+  const formaTarifa = validarFormaTarifa(entradaDesconocida.tarifa);
+  if (esBloqueado(formaTarifa)) return formaTarifa;
 
   if (!esObjeto(distribucion) || !Array.isArray(distribucion.unidades)) {
     return resultadoBloqueado("configuracion_invalida", "`distribucion.unidades` debe ser un arreglo.");
@@ -773,6 +801,41 @@ export function validarCoherenciaCapacidad(tarifa: TarifaAlojamiento): Resultado
   return null;
 }
 
+// ── 0.quater Validador AISLADO de una tarifa ────────────────────────────
+// Compone las cuatro validaciones que no dependen de la distribución ni de
+// las noches, en el MISMO orden en que `cotizarUnidadAlojamiento` las
+// ejecuta para la tarifa: forma → coherencia por unidad de cobro → numérica
+// → coherencia de capacidad. Devuelve la tarifa ya tipada cuando todo pasa.
+//
+// Existe para que un adaptador de tarifas PERSISTIDAS pueda responder "¿esta
+// tarifa es utilizable?" sin inventar una distribución ni unas noches de
+// mentira — y sin reimplementar (ni duplicar, ni relajar) ninguna regla del
+// motor. Es una COMPOSICIÓN de lo que ya existe, no un quinto validador con
+// criterio propio: si mañana cambia una regla, cambia acá y en
+// `cotizarUnidadAlojamiento` a la vez porque es literalmente la misma
+// función.
+//
+// NO calcula precios, NO selecciona entre varias tarifas, NO aplica ningún
+// default comercial: solo dice si la tarifa es válida. La decisión de
+// "cuál de las tarifas válidas usar" es de un motor de selección posterior
+// (fuera del alcance de esta fase).
+export function validarTarifaAlojamiento(tarifaDesconocida: unknown): { tarifa: TarifaAlojamiento } | ResultadoBloqueado {
+  const forma = validarFormaTarifa(tarifaDesconocida);
+  if (esBloqueado(forma)) return forma;
+  const { tarifa } = forma;
+
+  const coherencia = validarCoherenciaTarifa(tarifa);
+  if (coherencia) return coherencia;
+
+  const numerica = validarTarifaNumerica(tarifa);
+  if (esBloqueado(numerica)) return numerica;
+
+  const coherenciaCapacidad = validarCoherenciaCapacidad(tarifa);
+  if (coherenciaCapacidad) return coherenciaCapacidad;
+
+  return { tarifa };
+}
+
 // ── A. Aplicación de reglas de menores ──────────────────────────────────
 // Clasifica cada menor por edad. Una edad sin regla que la cubra NO se
 // convierte en adulto — falla cerrado. Una edad cubierta por más de una
@@ -827,17 +890,18 @@ export function clasificarMenores(
 // `.find()` — con `.find()` una configuración duplicada se resuelve
 // arbitrariamente por la primera coincidencia; con el mapa, se detecta y
 // bloquea antes de calcular cualquier cosa.
-export function validarEntrada(
-  tarifa: TarifaAlojamiento,
-  entrada: EntradaCotizacion
+// Ronda 7 (integración/persistencia Bernalo): al igual que la validación de
+// forma, la numérica se partió en dos SIN cambiar el comportamiento.
+// `validarTarifaNumerica` es exactamente la porción de tarifa de
+// `validarEntrada` (valores, periodicidad de infante, capacidad, reglas de
+// edad, suplementos) y devuelve el mismo `mapaSuplementos`;
+// `validarEntrada` la delega después de sus dos comprobaciones de `noches`.
+// Se extrajo por la misma razón que `validarFormaTarifa`: un adaptador que
+// valida UNA TARIFA persistida no tiene noches legítimas que pasar, y
+// fabricar unas solo para cruzar esta función sería un dato inventado.
+export function validarTarifaNumerica(
+  tarifa: TarifaAlojamiento
 ): { mapaSuplementos: Map<string, SuplementoConfigurado> } | ResultadoBloqueado {
-  if (!esEnteroSeguro(entrada.noches)) {
-    return resultadoBloqueado("configuracion_invalida", "`noches` debe ser un entero.", { noches: entrada.noches });
-  }
-  if (entrada.noches < 0) {
-    return resultadoBloqueado("configuracion_invalida", "`noches` no puede ser negativo.", { noches: entrada.noches });
-  }
-
   // `adulto` es SIEMPRE obligatorio (ya se exigió su tipo en
   // `validarFormaEntrada`; aquí se exige que además sea un entero SEGURO —
   // rechaza NaN, Infinity y valores mayores a `Number.MAX_SAFE_INTEGER`,
@@ -925,6 +989,29 @@ export function validarEntrada(
     }
     mapaSuplementos.set(clave, s);
   }
+
+  return { mapaSuplementos };
+}
+
+// Validación numérica de la ENTRADA COMPLETA. Las comprobaciones de
+// `noches` van PRIMERO, antes de tocar la tarifa — el orden es el mismo que
+// tenía esta función antes de extraerle la parte de tarifa, y el orden de
+// los códigos/mensajes de bloqueo es parte del contrato observable de
+// `cotizarUnidadAlojamiento`: no cambia.
+export function validarEntrada(
+  tarifa: TarifaAlojamiento,
+  entrada: EntradaCotizacion
+): { mapaSuplementos: Map<string, SuplementoConfigurado> } | ResultadoBloqueado {
+  if (!esEnteroSeguro(entrada.noches)) {
+    return resultadoBloqueado("configuracion_invalida", "`noches` debe ser un entero.", { noches: entrada.noches });
+  }
+  if (entrada.noches < 0) {
+    return resultadoBloqueado("configuracion_invalida", "`noches` no puede ser negativo.", { noches: entrada.noches });
+  }
+
+  const numerica = validarTarifaNumerica(tarifa);
+  if (esBloqueado(numerica)) return numerica;
+  const { mapaSuplementos } = numerica;
 
   if (!Array.isArray(entrada.distribucion?.unidades) || entrada.distribucion.unidades.length === 0) {
     return resultadoBloqueado("configuracion_invalida", "`distribucion.unidades` debe tener al menos 1 unidad.");
