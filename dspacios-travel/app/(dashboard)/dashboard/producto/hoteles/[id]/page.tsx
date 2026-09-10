@@ -10,6 +10,7 @@ import { HotelBlackouts } from "./HotelBlackouts";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
 import { CalculadoraEditor } from "./CalculadoraEditor";
 import { TarifasUnidadEditor, type FilaTarifaUnidadUI } from "./TarifasUnidadEditor";
+import { ModeloTarifarioEditor, type ModeloTarifario } from "./ModeloTarifarioEditor";
 import type { AcomConfig } from "@/lib/acomodaciones";
 import type { DubaiParams, MixtaParams, CorporativaParams, CalcTipo } from "@/lib/calc/calculadoras";
 import { adaptarTarifaAlojamientoPersistida } from "@/lib/calc/tarifaAlojamientoPersistida";
@@ -59,6 +60,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
     pet_costo_neto: number | null;
     pet_costo_desc: string | null;
     pet_nota: string | null;
+    modelo_tarifario: ModeloTarifario | null;
     destinos: { nombre: string } | null;
     proveedores: { nombre: string; politica_reservas: string | null } | null;
   };
@@ -75,6 +77,11 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
   const temporadasNombres = Array.from(
     new Set((temporadas ?? []).map((t) => t.nombre).filter((x): x is string => !!x))
   );
+  // Decisión comercial (migración 174): qué editor de tarifas está activo
+  // para este hotel. Fail-closed hacia 'persona' (el default de la columna y
+  // el único editor que existía antes de la fase 2) ante cualquier valor
+  // ausente o inesperado — nunca se asume 'unidad' sin que la columna lo diga.
+  const modeloTarifario: ModeloTarifario = h.modelo_tarifario === "unidad" ? "unidad" : "persona";
   const calcTipo = (calc?.tipo ?? null) as CalcTipo | null;
   const dubaiInicial = calc?.tipo === "dubai" ? (calc.params as unknown as DubaiParams) : null;
   const mixtaInicial = calc?.tipo === "mixta" ? (calc.params as unknown as MixtaParams) : null;
@@ -124,6 +131,7 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
       )}
 
       <div className="mt-6">
+        <ModeloTarifarioEditor hotelId={hotelId} inicial={modeloTarifario} />
         <HotelConfigEditor
           hotelId={hotelId}
           rangos={rangos ?? []}
@@ -188,15 +196,18 @@ export default async function HotelDetallePage({ params }: { params: Promise<{ i
           tarifas={(tarifas ?? []) as never}
           otrosHoteles={otrosHoteles ?? []}
           adultsOnly={h.adults_only ?? false}
+          mostrarTarifaPersona={modeloTarifario === "persona"}
         />
-        <TarifasUnidadEditor
-          hotelId={hotelId}
-          temporadas={temporadasNombres}
-          categorias={categorias}
-          regimenes={regimenes}
-          filas={filasTarifaUnidad}
-          incoherentes={tarifasUnidadIncoherentes}
-        />
+        {modeloTarifario === "unidad" && (
+          <TarifasUnidadEditor
+            hotelId={hotelId}
+            temporadas={temporadasNombres}
+            categorias={categorias}
+            regimenes={regimenes}
+            filas={filasTarifaUnidad}
+            incoherentes={tarifasUnidadIncoherentes}
+          />
+        )}
       </div>
     </div>
   );

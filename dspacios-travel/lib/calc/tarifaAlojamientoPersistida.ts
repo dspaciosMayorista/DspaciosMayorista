@@ -8,10 +8,14 @@
 //   · NO selecciona entre varias tarifas. No ordena, no prioriza, no filtra
 //     por `estado` ni por vigencia: adapta la fila que le dan. Elegir "cuál
 //     de las tarifas válidas aplica" es de un motor de selección posterior.
-//   · NO inventa markup, comisión, moneda, impuestos ni periodicidades. El
+//   · NO inventa markup, moneda, impuestos ni periodicidades. El
 //     `TarifaAlojamiento` que devuelve tiene EXACTAMENTE los campos del
 //     payload, copiados uno por uno; nada se completa "por defecto" cuando
 //     falta, porque un default silencioso es un dato comercial inventado.
+//     La COMISIÓN Bernalo (`comisionPct`, ronda 8, confirmada) sigue la
+//     misma regla: es un campo OBLIGATORIO del payload — un payload sin
+//     ella (ej. una fila cargada antes de esta ronda) se RECHAZA en
+//     `validarFormaTarifa`, nunca se interpreta como 0%.
 //
 // ⚠️ FRONTERA DE PRODUCTO — LÉASE ANTES DE REUSAR ESTO (fase 1 Bernalo).
 // Esta entrega cubre ÚNICAMENTE las tarifas REGULARES de alojamiento por
@@ -29,8 +33,11 @@
 //     no se multiplica por noches);
 //   · paquetes de 2 noches / 3 días (el precio es del paquete, no de la
 //     noche: dividirlo daría un valor por noche que nadie cotizó);
-//   · reglas de comisión (son del canal de venta, no de la tarifa);
 //   · condiciones generales (texto contractual, no aritmética).
+// La comisión Bernalo (`comisionPct`) YA NO está en esta lista de exclusión
+// (ronda 8): es una propiedad confirmada de la TARIFA misma (bruta/
+// comisionable, no del canal de venta) y este adaptador la exige, valida y
+// espeja como cualquier otro campo — ver el punto 5 de abajo.
 // Los anteriores REEMPLAZAN el cálculo nocturno; requieren un modelo
 // posterior. `public.hotel_tarifas_unidad` NO es cobertura completa del
 // tarifario Bernalo: es el subconjunto regular por noche y así debe
@@ -69,7 +76,8 @@
 //   5. Las columnas ESPEJO coinciden con el payload: `tarifa_id` ↔ `id`,
 //      `version_tarifario` ↔ `versionTarifario`, `temporada`/`categoria`/
 //      `alimentacion` ↔ los campos homónimos, `fuente_documento`/
-//      `fuente_pagina` ↔ `payload.fuente`. Por qué importa: la columna es lo
+//      `fuente_pagina` ↔ `payload.fuente`, `comision_pct` ↔
+//      `payload.comisionPct` (migración 175). Por qué importa: la columna es lo
 //      que un listado o un filtro SQL va a leer sin abrir el JSON — si
 //      dijera algo distinto de lo que realmente se va a cotizar, sería una
 //      mentira silenciosa. La coherencia NO se delega a un trigger: el
@@ -248,6 +256,22 @@ function leerPaginaNullable(v: unknown, columna: string): Lectura<number | null>
   return rechazar("columna_invalida", `La columna "${columna}" debe ser un entero > 0 o null.`, { columna, valor: v });
 }
 
+// Columna obligatoria (a diferencia de `fuente_pagina`, que sí es
+// nullable): una fila sin `comision_pct` — típicamente una fila anterior a
+// la migración 175, que nace `null` sin backfill — se RECHAZA aquí, nunca
+// se interpreta como 0%. `Number.isFinite` (no `esEnteroSeguro`): la
+// comisión puede ser fraccionaria (ej. 17.5%), igual que en el motor.
+function leerComisionPct(v: unknown, columna: string): Lectura<number> {
+  if (typeof v !== "number" || !Number.isFinite(v)) {
+    return rechazar(
+      "columna_invalida",
+      `La columna "${columna}" es obligatoria (número finito) — una fila sin comisión (ej. previa a la migración 175) se rechaza, nunca se interpreta como 0%.`,
+      { columna, tipo: typeof v, valor: v }
+    );
+  }
+  return { ok: true, valor: v };
+}
+
 function leerEstado(v: unknown): Lectura<EstadoTarifaUnidad> {
   if (typeof v === "string" && ESTADOS_TARIFA_UNIDAD.has(v)) return { ok: true, valor: v as EstadoTarifaUnidad };
   return rechazar("columna_invalida", 'La columna "estado" debe ser "borrador", "publicada" o "inactiva".', {
@@ -269,6 +293,7 @@ const CAMPOS_TARIFA_ALOJAMIENTO: readonly string[] = [
   "capacidad",
   "suplementos",
   "reglaMenores",
+  "comisionPct",
   "temporada",
   "categoria",
   "alimentacion",
@@ -315,6 +340,7 @@ function construirTarifa(tarifa: TarifaAlojamiento): TarifaAlojamiento {
     },
     suplementos,
     reglaMenores: { reglas },
+    comisionPct: tarifa.comisionPct,
     versionTarifario: tarifa.versionTarifario,
   };
 
@@ -441,6 +467,9 @@ export function adaptarTarifaAlojamientoPersistida(filaDesconocida: unknown): Re
   const alimentacion = leerTextoNullable(fila.alimentacion, "alimentacion");
   if (!alimentacion.ok) return alimentacion;
 
+  const comisionPctColumna = leerComisionPct(fila.comision_pct, "comision_pct");
+  if (!comisionPctColumna.ok) return comisionPctColumna;
+
   const estado = leerEstado(fila.estado);
   if (!estado.ok) return estado;
 
@@ -473,6 +502,14 @@ export function adaptarTarifaAlojamientoPersistida(filaDesconocida: unknown): Re
       "`version_tarifario` no coincide con `payload.versionTarifario`.",
       { ...contextoFila, columnaVersion: version.valor, payloadVersion: tarifaPayload.versionTarifario }
     );
+  }
+
+  if (comisionPctColumna.valor !== tarifaPayload.comisionPct) {
+    return rechazar("payload_incoherente_con_columnas", "`comision_pct` no coincide con `payload.comisionPct`.", {
+      ...contextoFila,
+      columnaComisionPct: comisionPctColumna.valor,
+      payloadComisionPct: tarifaPayload.comisionPct,
+    });
   }
 
   const espejos: { columna: string; valorColumna: string | null; valorPayload: string | null }[] = [

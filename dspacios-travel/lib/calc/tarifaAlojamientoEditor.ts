@@ -16,10 +16,19 @@
 //
 // Alcance (igual que la fase 1): SOLO tarifas regulares de alojamiento por
 // noche. Sin día de sol, Navidad/Año Nuevo, tarifa especial de una noche,
-// paquetes de 2 noches/3 días, comisión ni condiciones generales. Sin
-// integración con reservar, tarifario público, cotizaciones, contratos,
-// costos ni CxP — este editor solo administra el catálogo de
-// `hotel_tarifas_unidad`.
+// paquetes de 2 noches/3 días ni condiciones generales. Sin integración con
+// reservar, tarifario público, cotizaciones, contratos, costos ni CxP —
+// este editor solo administra el catálogo de `hotel_tarifas_unidad`. El
+// neto que produce el motor será, más adelante, el COSTO que consuma esa
+// integración — no ocurre en esta fase.
+//
+// Comisión Bernalo (ronda 8, confirmada): la tarifa capturada por este
+// editor es BRUTA/comisionable — `EntradaFormularioTarifaUnidad.comisionPct`
+// es obligatoria (junto a la temporada) y se conserva tal cual al editar un
+// borrador (se re-envía en el formulario) y al duplicar una versión (el
+// clon de `construirDuplicado` copia la tarifa completa, comisión incluida).
+// La AUTORIDAD del cálculo (cuánto es el neto) sigue siendo 100% del motor
+// (`cotizarUnidadAlojamiento`) — este archivo no calcula ni un peso.
 //
 // Fechas: `hotel_tarifas_unidad` NO tiene columnas `fecha_desde`/`fecha_hasta`
 // (migración 173) — el calendario autoritativo es `hotel_temporadas` (rangos
@@ -79,6 +88,14 @@ export type ReglaEdadFormulario = {
 export type EntradaFormularioTarifaUnidad = {
   versionTarifario: string;
   temporada: string | null;
+  // Comisión Bernalo (ronda 8, confirmada): la tarifa capturada es BRUTA/
+  // comisionable; este porcentaje depende de la temporada y se aplica UNA
+  // vez sobre el total bruto completo — ver `lib/calc/unidadAlojamiento.ts`.
+  // Obligatorio: `number` (no `number | null`) a propósito — un campo vacío
+  // en la UI se traduce a `NaN` (mismo criterio que `valorBase`/`minPax`),
+  // nunca a un 0% implícito; el motor (`validarTarifaAlojamiento`) rechaza
+  // `NaN` con `configuracion_invalida`.
+  comisionPct: number;
   categoria: string | null;
   alimentacion: string | null;
   unidadCobro: UnidadCobro;
@@ -174,6 +191,7 @@ export function construirTarifaDesdeFormulario(
     capacidad,
     suplementos,
     reglaMenores: { reglas },
+    comisionPct: input.comisionPct,
     versionTarifario: version,
     ...(temporada !== null ? { temporada } : {}),
     ...(categoria !== null ? { categoria } : {}),
@@ -226,6 +244,10 @@ export type FilaCandidataTarifaUnidad = {
   estado: EstadoTarifaUnidad;
   fuente_documento: string | null;
   fuente_pagina: number | null;
+  // Espejo de `payload.comisionPct` (migración 175) — mismo criterio que
+  // temporada/categoria/alimentacion: se escribe SIEMPRE (la tarifa ya la
+  // trae obligatoria) y el adaptador verifica que coincida con el payload.
+  comision_pct: number;
   payload: TarifaAlojamiento;
 };
 
@@ -244,6 +266,7 @@ export function construirFilaCandidata(
     estado,
     fuente_documento: tarifa.fuente?.documento ?? null,
     fuente_pagina: tarifa.fuente?.pagina ?? null,
+    comision_pct: tarifa.comisionPct,
     payload: tarifa,
   };
 

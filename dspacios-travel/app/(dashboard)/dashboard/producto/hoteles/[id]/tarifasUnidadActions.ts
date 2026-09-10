@@ -80,6 +80,7 @@ function filaParaSupabase(fila: FilaCandidataTarifaUnidad) {
     estado: fila.estado,
     fuente_documento: fila.fuente_documento,
     fuente_pagina: fila.fuente_pagina,
+    comision_pct: fila.comision_pct,
     payload: fila.payload as unknown as Json,
   };
 }

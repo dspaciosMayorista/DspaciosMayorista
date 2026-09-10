@@ -28,6 +28,7 @@ function entradaBase(overrides: Partial<EntradaFormularioTarifaUnidad> = {}): En
   return {
     versionTarifario: "bernalo-2026",
     temporada: "ALTA",
+    comisionPct: 20,
     categoria: "Estándar",
     alimentacion: "PAM",
     unidadCobro: "pareja",
@@ -361,6 +362,7 @@ describe("construirFilaCandidata", () => {
     const tarifaSolapada: TarifaAlojamiento = {
       id: "t-solapada",
       unidadCobro: "persona",
+      comisionPct: 0,
       valores: { adulto: 100_000 },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
       suplementos: [],
@@ -384,6 +386,7 @@ describe("construirDuplicado — identidad estable", () => {
     return {
       id: "t-estable",
       unidadCobro: "pareja",
+      comisionPct: 15,
       valores: { adulto: 500_000 },
       capacidad: { minPax: 2, maxPax: 2, paxIncluidos: 2 },
       suplementos: [],
@@ -398,6 +401,13 @@ describe("construirDuplicado — identidad estable", () => {
     if (!r.ok) return;
     assert.equal(r.tarifa.id, "t-estable");
     assert.equal(r.tarifa.versionTarifario, "v2");
+  });
+
+  test("conserva comisionPct al duplicar como nueva versión", () => {
+    const r = construirDuplicado(origen(), "v2");
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.tarifa.comisionPct, 15);
   });
 
   test("no muta el objeto origen", () => {
@@ -570,7 +580,11 @@ describe("cableado — sin fechas propias y sin integración comercial", () => {
     const prohibidos = ["reservar", "tarifario", "cotizacion", "contrato", "costos", "cuentas_por_pagar", "cxp"];
     for (const fuente of Object.values(fuentes)) {
       for (const modulo of prohibidos) {
-        assert.doesNotMatch(fuente, new RegExp(`from ["'][^"']*${modulo}`, "i"));
+        // Límite de palabra: evita falsos positivos con archivos propios de
+        // esta fase cuyo nombre CONTIENE la palabra por coincidencia léxica
+        // (ej. "ModeloTarifarioEditor" — es el selector de modelo tarifario
+        // del hotel, no una importación del módulo público `tarifario`).
+        assert.doesNotMatch(fuente, new RegExp(`from ["'][^"']*\\b${modulo}\\b`, "i"));
       }
     }
   });
@@ -742,9 +756,10 @@ describe("TarifasUnidadEditor.tsx — sin defaults numéricos silenciosos", () =
     }
   });
 
-  test("los cinco campos obligatorios pasan por numRequerido", () => {
+  test("los seis campos obligatorios (incluida la comisión, ronda 8) pasan por numRequerido", () => {
     for (const patron of [
       /valorBase:\s*numRequerido\(f\.valorBase\)/,
+      /comisionPct:\s*numRequerido\(f\.comisionPct\)/,
       /minPax:\s*numRequerido\(f\.minPax\)/,
       /paxIncluidos:\s*numRequerido\(f\.paxIncluidos\)/,
       /edadMinAnios:\s*numRequerido\(r\.edadMinAnios\)/,
@@ -770,5 +785,97 @@ describe("TarifasUnidadEditor.tsx — sin defaults numéricos silenciosos", () =
   test("el desplazamiento al editar usa scrollIntoView sobre un ref, no window.scrollTo({ top: 0 })", () => {
     assert.doesNotMatch(fuenteComponente, /window\.scrollTo\(\{\s*top:\s*0/);
     assert.match(fuenteComponente, /formRef\.current\?\.scrollIntoView\(/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Comisión Bernalo (ronda 8) — cableado del formulario/tabla/detalle/
+// simulador. El componente NUNCA calcula la comisión: solo la captura (form),
+// la muestra (tabla/detalle) o la reenvía al motor real (simulador).
+// ─────────────────────────────────────────────────────────────────────────
+describe("TarifasUnidadEditor.tsx — comisión (ronda 8): captura, conserva, muestra, nunca la calcula", () => {
+  const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const fuenteComponente = readFileSync(
+    join(raiz, "app/(dashboard)/dashboard/producto/hoteles/[id]/TarifasUnidadEditor.tsx"),
+    "utf8"
+  );
+
+  // Copia local (el `cuerpoDeFuncion` del describe de arriba solo reconoce
+  // `(export )?async function NOMBRE` — `SimuladorCalculo` no es async ni se
+  // exporta). Mismo criterio tolerante a CRLF que el resto del archivo.
+  function cuerpoDeFuncion(fuente: string, nombre: string): string {
+    const patrones = [
+      new RegExp(`export\\s+async\\s+function\\s+${nombre}\\s*\\(`),
+      new RegExp(`async\\s+function\\s+${nombre}\\s*\\(`),
+      new RegExp(`export\\s+function\\s+${nombre}\\s*\\(`),
+      new RegExp(`function\\s+${nombre}\\s*\\(`),
+    ];
+    let inicio = -1;
+    for (const p of patrones) {
+      const m = fuente.match(p);
+      if (m && m.index != null) { inicio = m.index; break; }
+    }
+    assert.notEqual(inicio, -1, `no se encontró la función ${nombre}`);
+    const cierreMatch = fuente.slice(inicio).match(/\r?\n\}\r?\n/);
+    assert.notEqual(cierreMatch, null, `no se encontró el cierre de ${nombre}`);
+    return fuente.slice(inicio, inicio + (cierreMatch!.index ?? 0));
+  }
+
+  test("aFormState precarga comisionPct al editar (String(t.comisionPct)) — la edición conserva la comisión existente", () => {
+    assert.match(fuenteComponente, /comisionPct:\s*String\(t\.comisionPct\)/);
+  });
+
+  test("aEntradaFormulario reenvía comisionPct vía numRequerido — vacío nunca se convierte en 0", () => {
+    assert.match(fuenteComponente, /comisionPct:\s*numRequerido\(f\.comisionPct\)/);
+  });
+
+  test("guardar() rechaza un campo de comisión vacío ANTES de construir la entrada, con mensaje explícito", () => {
+    const posGuardia = fuenteComponente.search(/if \(!form\.comisionPct\.trim\(\)\)/);
+    const posInput = fuenteComponente.search(/const input = aEntradaFormulario\(form\)/);
+    assert.notEqual(posGuardia, -1);
+    assert.ok(posGuardia < posInput, "la guardia de comisión vacía debe correr antes de construir la entrada");
+  });
+
+  test("hay un campo 'Comisión (%)' junto a la temporada en el formulario", () => {
+    const posTemporada = fuenteComponente.search(/Temporada <span/);
+    const posComision = fuenteComponente.search(/Comisión \(%\)/);
+    assert.notEqual(posTemporada, -1);
+    assert.notEqual(posComision, -1);
+    // A pocos caracteres de distancia: son campos consecutivos del mismo bloque.
+    assert.ok(Math.abs(posComision - posTemporada) < 700, "el campo de comisión debe estar junto al de temporada");
+  });
+
+  test("la tabla principal y el detalle muestran la comisión de cada tarifa", () => {
+    assert.match(fuenteComponente, /<th className="px-3 py-2 text-right">Comisión<\/th>/);
+    assert.match(fuenteComponente, /\{f\.tarifa\.comisionPct\}%/);
+    assert.match(fuenteComponente, /\{t\.comisionPct\}%/);
+  });
+
+  test("el simulador muestra Total bruto, Comisión aplicada (% y valor) y Total neto a pagar — todos leídos de `resultado`, nunca recalculados", () => {
+    const cuerpo = cuerpoDeFuncion(fuenteComponente, "SimuladorCalculo");
+    assert.match(cuerpo, /Total bruto:\s*\{fmt\(resultado\.totalBruto\)\}/);
+    assert.match(cuerpo, /Comisión aplicada:\s*\{resultado\.comisionPct\}%.*\{fmt\(resultado\.valorComision\)\}/);
+    assert.match(cuerpo, /Total neto a pagar:\s*\{fmt\(resultado\.totalNeto\)\}/);
+  });
+
+  test("el simulador NO contiene una fórmula paralela de comisión — ningún `* (1 -`/Math.round propio sobre comisionPct fuera de la llamada al motor", () => {
+    const cuerpo = cuerpoDeFuncion(fuenteComponente, "SimuladorCalculo");
+    // La única mención a "1 -" o a un cálculo de comisión debe vivir DENTRO
+    // del motor (unidadAlojamiento.ts), nunca en este componente: aquí no
+    // debe existir ninguna expresión que multiplique/reste manualmente
+    // comisionPct contra un total.
+    assert.doesNotMatch(cuerpo, /1\s*-\s*.*comisionPct/);
+    assert.doesNotMatch(cuerpo, /comisionPct\s*\/\s*100/);
+    assert.doesNotMatch(cuerpo, /totalBruto\s*-\s*totalNeto/);
+    assert.doesNotMatch(cuerpo, /Math\.round\(/);
+  });
+
+  // Nota: la ausencia de fórmula paralela también aplica a la fila de
+  // detalle/tabla — ninguna de las dos hace aritmética con comisionPct,
+  // solo lo muestran (`{f.tarifa.comisionPct}%`/`{t.comisionPct}%`), porque
+  // esos valores vienen de la tarifa GUARDADA, no de un cálculo con noches.
+  test("comisionPct nunca se multiplica ni se divide en este archivo — el único cálculo es dentro del motor real", () => {
+    assert.doesNotMatch(fuenteComponente, /comisionPct\s*\*/);
+    assert.doesNotMatch(fuenteComponente, /comisionPct\s*\//);
   });
 });

@@ -2,11 +2,13 @@
 
 // ─────────────────────────────────────────────────────────────────────────
 // "Tarifas por unidad" (fase 2 Bernalo) — editor de `hotel_tarifas_unidad`
-// dentro del detalle de hotel. Complementa —no reemplaza— la "Tarifa neta"
-// de arriba (`tarifa_hotel`, cobro por persona con columnas fijas): esta
-// sección es para tarifas cobradas por pareja/habitación/apartamento (o
-// persona con reglas de menores de varios tramos), que ese modelo no puede
-// expresar. Ver `lib/calc/unidadAlojamiento.ts` y `lib/calc/
+// dentro del detalle de hotel. Solo se monta cuando `hoteles.modelo_tarifario
+// = 'unidad'` (migración 174): en ese modo es el ÚNICO editor de tarifas
+// activo del hotel — la sección de tarifas por persona (`tarifa_hotel`,
+// columnas fijas por acomodación) queda oculta, así que este texto no debe
+// asumir que esa sección está visible ni referirse a ella como "de arriba".
+// Cada tarifa define su propia unidad de cobro (persona/pareja/habitación/
+// apartamento). Ver `lib/calc/unidadAlojamiento.ts` y `lib/calc/
 // tarifaAlojamientoPersistida.ts`.
 //
 // Todo lo que este formulario junta se manda TAL CUAL a las Server Actions
@@ -21,14 +23,18 @@
 // columnas de fecha propias (migración 173).
 // ─────────────────────────────────────────────────────────────────────────
 
-import { useRef, useState, useTransition } from "react";
+import { Fragment, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type {
-  CategoriaTarifaria,
-  PeriodicidadCobro,
-  TarifaAlojamiento,
-  UnidadCobro,
+import {
+  cotizarUnidadAlojamiento,
+  esBloqueado,
+  type CategoriaTarifaria,
+  type DistribucionUnidades,
+  type PeriodicidadCobro,
+  type ResultadoCotizacionUnidad,
+  type TarifaAlojamiento,
+  type UnidadCobro,
 } from "@/lib/calc/unidadAlojamiento";
 import type { EntradaFormularioTarifaUnidad, EstadoTarifaUnidad } from "@/lib/calc/tarifaAlojamientoEditor";
 import {
@@ -79,6 +85,9 @@ const fmt = (n: number) => new Intl.NumberFormat("es-CO").format(n);
 type FormState = {
   versionTarifario: string;
   temporada: string;
+  // Comisión Bernalo (ronda 8): depende de la temporada, obligatoria, junto
+  // a esta en el formulario. Vacío nunca se traduce a 0% — ver `numRequerido`.
+  comisionPct: string;
   categoria: string;
   alimentacion: string;
   unidadCobro: UnidadCobro;
@@ -101,6 +110,7 @@ type FormState = {
 const FORM_VACIO: FormState = {
   versionTarifario: "",
   temporada: "",
+  comisionPct: "",
   categoria: "",
   alimentacion: "",
   unidadCobro: "persona",
@@ -128,6 +138,7 @@ function aFormState(t: TarifaAlojamiento): FormState {
   return {
     versionTarifario: t.versionTarifario,
     temporada: t.temporada ?? "",
+    comisionPct: String(t.comisionPct),
     categoria: t.categoria ?? "",
     alimentacion: t.alimentacion ?? "",
     unidadCobro: t.unidadCobro,
@@ -165,6 +176,7 @@ function aEntradaFormulario(f: FormState): EntradaFormularioTarifaUnidad {
   return {
     versionTarifario: f.versionTarifario,
     temporada: f.temporada || null,
+    comisionPct: numRequerido(f.comisionPct),
     categoria: f.categoria || null,
     alimentacion: f.alimentacion || null,
     unidadCobro: f.unidadCobro,
@@ -217,6 +229,10 @@ export function TarifasUnidadEditor({
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  // Fila cuyo detalle técnico (identidad, capacidad, suplementos, reglas de
+  // edad, fuente y el simulador de cálculo) está expandido. Una sola a la
+  // vez — evita una lista larga de cards abiertas simultáneamente.
+  const [detalleId, setDetalleId] = useState<number | null>(null);
   // La sección vive AL FINAL del detalle de hotel (debajo de temporadas,
   // tarifa neta, etc.) — desplazar la página al tope alejaba al usuario del
   // formulario que acababa de abrir. `scrollIntoView` sobre el propio
@@ -246,6 +262,7 @@ export function TarifasUnidadEditor({
   function guardar() {
     if (!form.versionTarifario.trim()) { setErr("La versión del tarifario es obligatoria."); return; }
     if (!form.valorBase.trim()) { setErr("El valor base es obligatorio."); return; }
+    if (!form.comisionPct.trim()) { setErr("La comisión (%) es obligatoria."); return; }
     setErr(""); setMsg("");
     const input = aEntradaFormulario(form);
     start(async () => {
@@ -299,20 +316,33 @@ export function TarifasUnidadEditor({
 
   const setReglas = (v: FormState["reglasEdad"]) => setForm({ ...form, reglasEdad: v });
 
-  const filasOrdenadas = [...filas].sort((a, b) => {
-    if (a.tarifa.id !== b.tarifa.id) return a.tarifa.id.localeCompare(b.tarifa.id);
-    return a.tarifa.versionTarifario.localeCompare(b.tarifa.versionTarifario);
-  });
+  // Orden COMERCIAL, nunca por `tarifa.id` (identificador técnico sin
+  // significado de negocio): temporada → categoría → alimentación →
+  // unidadCobro → versionTarifario, con "—"/vacío al final de cada nivel.
+  const comparar = (a: string | null | undefined, b: string | null | undefined) => {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return a.localeCompare(b);
+  };
+  const filasOrdenadas = [...filas].sort((a, b) =>
+    comparar(a.tarifa.temporada, b.tarifa.temporada) ||
+    comparar(a.tarifa.categoria, b.tarifa.categoria) ||
+    comparar(a.tarifa.alimentacion, b.tarifa.alimentacion) ||
+    comparar(a.tarifa.unidadCobro, b.tarifa.unidadCobro) ||
+    comparar(a.tarifa.versionTarifario, b.tarifa.versionTarifario)
+  );
 
   return (
     <section className="mt-8">
       <h2 className="mb-1 text-sm font-semibold text-gray-700">Tarifas por unidad (Bernalo)</h2>
       <p className="mb-3 text-xs text-gray-500">
-        Para tarifas cobradas por <b>pareja</b>, <b>habitación</b> o <b>apartamento</b> (o por persona con reglas de
-        menores de varios tramos) — la tabla &quot;Tarifa neta&quot; de arriba solo cubre el cobro por persona con
-        columnas fijas. La <b>temporada</b> se elige de las ya creadas arriba; esta sección nunca captura fechas.
-        Una tarifa nace en <b>borrador</b>, se <b>publica</b> cuando está lista (ya no se puede editar su contenido) y
-        solo puede pasar a <b>inactiva</b>. Para corregir una publicada, <b>duplícala como nueva versión</b>.
+        Este es el <b>modelo tarifario activo</b> de este hotel (ver &quot;Modelo tarifario&quot; arriba). Cada fila
+        define su propia <b>unidad de cobro</b> — <b>persona</b>, <b>pareja</b>, <b>habitación</b> o
+        <b> apartamento</b> — con sus propios valores, suplementos y reglas de menores. La <b>temporada</b> se elige
+        de las ya creadas arriba; esta sección nunca captura fechas. Una tarifa nace en <b>borrador</b>, se
+        <b> publica</b> cuando está lista (ya no se puede editar su contenido) y solo puede pasar a
+        <b> inactiva</b>. Para corregir una publicada, <b>duplícala como nueva versión</b>.
       </p>
 
       {incoherentes > 0 && (
@@ -336,6 +366,10 @@ export function TarifasUnidadEditor({
               <option value="">Sin temporada</option>
               {temporadas.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
+          </div>
+          <div>
+            <label className={lbl}>Comisión (%) <span className="font-normal text-gray-400">(según temporada — sobre el total bruto)</span></label>
+            <Input type="number" min={0} max={99.99} step="any" value={form.comisionPct} onChange={(e) => setForm({ ...form, comisionPct: e.target.value })} placeholder="20" />
           </div>
           <div>
             <label className={lbl}>Categoría <span className="font-normal text-gray-400">(opcional)</span></label>
@@ -512,53 +546,286 @@ export function TarifasUnidadEditor({
         <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
-              <th className="px-3 py-2">Estado</th>
-              <th className="px-3 py-2">Tarifa</th>
-              <th className="px-3 py-2">Versión</th>
-              <th className="px-3 py-2">Unidad</th>
-              <th className="px-3 py-2">Clasificación</th>
+              <th className="px-3 py-2">Temporada</th>
+              <th className="px-3 py-2">Categoría</th>
+              <th className="px-3 py-2">Alimentación</th>
+              <th className="px-3 py-2">Cobro</th>
               <th className="px-3 py-2 text-right">Valor base</th>
+              <th className="px-3 py-2 text-right">Comisión</th>
+              <th className="px-3 py-2">Capacidad</th>
+              <th className="px-3 py-2">Estado</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody>
             {filasOrdenadas.map((f) => (
-              <tr key={f.id} className="border-t border-gray-50">
-                <td className="px-3 py-2">
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ESTADO_BADGE[f.estado]}`}>{ESTADO_LABEL[f.estado]}</span>
-                </td>
-                <td className="px-3 py-2 font-mono text-[11px] text-gray-400">{f.tarifa.id}</td>
-                <td className="px-3 py-2 text-gray-700">{f.tarifa.versionTarifario}</td>
-                <td className="px-3 py-2 text-gray-500">{UNIDADES.find((u) => u.value === f.tarifa.unidadCobro)?.label ?? f.tarifa.unidadCobro}</td>
-                <td className="px-3 py-2 text-gray-500">
-                  {[f.tarifa.temporada, f.tarifa.categoria, f.tarifa.alimentacion].filter(Boolean).join(" · ") || "—"}
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums">{fmt(f.tarifa.valores.adulto)}</td>
-                <td className="px-3 py-2 text-right">
-                  <div className="flex items-center justify-end gap-3">
-                    {f.estado === "borrador" && (
-                      <>
-                        <button type="button" onClick={() => editar(f)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
-                        <button type="button" onClick={() => publicar(f.id)} className="text-xs text-[var(--brand-success)] hover:underline" disabled={pending}>Publicar</button>
-                      </>
-                    )}
-                    {f.estado === "publicada" && (
-                      <button type="button" onClick={() => inactivar(f.id)} className="text-xs text-amber-600 hover:underline" disabled={pending}>Inactivar</button>
-                    )}
-                    <button type="button" onClick={() => duplicar(f)} className="text-xs text-gray-500 hover:underline" disabled={pending}>Duplicar versión</button>
-                    {f.estado === "borrador" && (
-                      <button type="button" onClick={() => eliminar(f.id)} className="text-xs text-gray-400 hover:text-red-500" disabled={pending}>Eliminar</button>
-                    )}
-                  </div>
-                </td>
-              </tr>
+              <Fragment key={f.id}>
+                <tr className="border-t border-gray-50">
+                  <td className="px-3 py-2 text-gray-700">{f.tarifa.temporada ?? "—"}</td>
+                  <td className="px-3 py-2 text-gray-500">{f.tarifa.categoria ?? "—"}</td>
+                  <td className="px-3 py-2 text-gray-500">{f.tarifa.alimentacion ?? "—"}</td>
+                  <td className="px-3 py-2 text-gray-500">{UNIDADES.find((u) => u.value === f.tarifa.unidadCobro)?.label ?? f.tarifa.unidadCobro}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{fmt(f.tarifa.valores.adulto)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{f.tarifa.comisionPct}%</td>
+                  <td className="px-3 py-2 text-gray-500">
+                    {f.tarifa.capacidad.minPax}–{f.tarifa.capacidad.maxPax ?? "∞"} <span className="text-gray-400">({f.tarifa.capacidad.paxIncluidos} incl.)</span>
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ESTADO_BADGE[f.estado]}`}>{ESTADO_LABEL[f.estado]}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <div className="flex flex-wrap items-center justify-end gap-3">
+                      <button type="button" onClick={() => setDetalleId(detalleId === f.id ? null : f.id)} className="text-xs text-gray-500 hover:underline">
+                        {detalleId === f.id ? "Ocultar detalle" : "Ver detalle"}
+                      </button>
+                      {f.estado === "borrador" && (
+                        <>
+                          <button type="button" onClick={() => editar(f)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
+                          <button type="button" onClick={() => publicar(f.id)} className="text-xs text-[var(--brand-success)] hover:underline" disabled={pending}>Publicar</button>
+                        </>
+                      )}
+                      {f.estado === "publicada" && (
+                        <button type="button" onClick={() => inactivar(f.id)} className="text-xs text-amber-600 hover:underline" disabled={pending}>Inactivar</button>
+                      )}
+                      <button type="button" onClick={() => duplicar(f)} className="text-xs text-gray-500 hover:underline" disabled={pending}>Duplicar versión</button>
+                      {f.estado === "borrador" && (
+                        <button type="button" onClick={() => eliminar(f.id)} className="text-xs text-gray-400 hover:text-red-500" disabled={pending}>Eliminar</button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+                {detalleId === f.id && <FilaDetalle f={f} />}
+              </Fragment>
             ))}
             {!filasOrdenadas.length && (
-              <tr><td colSpan={7} className="px-3 py-4 text-center text-sm text-gray-400">Sin tarifas por unidad todavía.</td></tr>
+              <tr><td colSpan={9} className="px-3 py-4 text-center text-sm text-gray-400">Sin tarifas por unidad todavía.</td></tr>
             )}
           </tbody>
         </table>
       </div>
     </section>
+  );
+}
+
+// ── Detalle técnico de una tarifa (identidad, capacidad, niño/infante,
+// suplementos, reglas de edad y fuente) + el simulador de cálculo. Fila
+// aparte (colSpan completo) en vez de una card anidada, para mantener el
+// diseño compacto del resto del dashboard.
+function FilaDetalle({ f }: { f: FilaTarifaUnidadUI }) {
+  const t = f.tarifa;
+  const esPersona = t.unidadCobro === "persona";
+
+  const etiquetaSuplemento = (s: TarifaAlojamiento["suplementos"][number]): string => {
+    if (s.tipo === "adulto_adicional") return "Adulto adicional";
+    if (s.tipo === "persona_sola") return "Persona sola";
+    return s.categoriaMenor === "nino" ? "Menor adicional (niño)" : "Menor adicional (infante)";
+  };
+
+  return (
+    <tr className="border-t border-gray-50 bg-gray-50/50">
+      <td colSpan={9} className="px-4 py-3">
+        <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 text-xs text-gray-600 sm:grid-cols-2 lg:grid-cols-3">
+          <p><span className="font-medium text-gray-700">Versión / identidad:</span> {t.versionTarifario} <span className="font-mono text-[11px] text-gray-400">({t.id})</span></p>
+          <p><span className="font-medium text-gray-700">Estado:</span> {ESTADO_LABEL[f.estado]}</p>
+          <p><span className="font-medium text-gray-700">Valor base:</span> {fmt(t.valores.adulto)}</p>
+          <p><span className="font-medium text-gray-700">Comisión:</span> {t.comisionPct}% <span className="text-gray-400">(sobre el total bruto — base + niños + infantes + suplementos)</span></p>
+          <p><span className="font-medium text-gray-700">Pax incluidos:</span> {t.capacidad.paxIncluidos}</p>
+          <p><span className="font-medium text-gray-700">Capacidad mín./máx.:</span> {t.capacidad.minPax} – {t.capacidad.maxPax ?? "sin límite"}</p>
+          {esPersona && (t.valores.nino != null || t.valores.infante != null) && (
+            <p>
+              <span className="font-medium text-gray-700">Niño / Infante:</span>{" "}
+              {t.valores.nino != null ? `Niño ${fmt(t.valores.nino)}` : "Niño —"} · {t.valores.infante != null ? `Infante ${fmt(t.valores.infante)}` : "Infante —"}
+              {t.valores.periodicidadInfante && ` (${PERIODICIDADES.find((p) => p.value === t.valores.periodicidadInfante)?.label})`}
+            </p>
+          )}
+          <p><span className="font-medium text-gray-700">Fuente:</span> {t.fuente?.documento ?? "—"}{t.fuente?.pagina != null ? ` · pág. ${t.fuente.pagina}` : ""}</p>
+        </div>
+
+        {t.suplementos.length > 0 && (
+          <div className="mt-2 text-xs">
+            <p className="font-medium text-gray-700">Suplementos</p>
+            <ul className="text-gray-500">
+              {t.suplementos.map((s, i) => <li key={i}>{etiquetaSuplemento(s)}: {fmt(s.valor)}</li>)}
+            </ul>
+          </div>
+        )}
+
+        {t.reglaMenores.reglas.length > 0 && (
+          <div className="mt-2 text-xs">
+            <p className="font-medium text-gray-700">Reglas de edad</p>
+            <ul className="text-gray-500">
+              {t.reglaMenores.reglas.map((r, i) => (
+                <li key={i}>{CATEGORIAS_TARIFARIAS.find((c) => c.value === r.categoria)?.label ?? r.categoria}: {r.edadMinAnios}–{r.edadMaxAnios} años</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <SimuladorCalculo tarifa={t} />
+      </td>
+    </tr>
+  );
+}
+
+type SimUnidad = { adultos: string; menores: string[] };
+const simUnidadVacia = (): SimUnidad => ({ adultos: "", menores: [] });
+
+// Prueba interactiva 100% local — no persiste nada. Le pasa la tarifa TAL
+// CUAL (sin transformarla) al motor real `cotizarUnidadAlojamiento`; ni un
+// solo número se calcula aquí. Un campo vacío se traduce con el mismo
+// `numRequerido` que usa el formulario de arriba — nunca 0/1 inventado — así
+// que un campo vacío llega al motor como NaN y el motor lo rechaza con
+// `configuracion_invalida`, igual que rechazaría cualquier otro dato mal
+// formado.
+function SimuladorCalculo({ tarifa }: { tarifa: TarifaAlojamiento }) {
+  const [noches, setNoches] = useState("");
+  const [unidades, setUnidades] = useState<SimUnidad[]>([simUnidadVacia()]);
+  // `null` = "todavía no se calculó (o la entrada cambió después del último
+  // cálculo)". Nunca se ejecuta el motor al abrir el detalle ni en cada
+  // tecleo: solo al pulsar "Calcular", para no mostrar un resultado (o un
+  // bloqueo) de campos que la persona ni siquiera terminó de llenar.
+  const [resultado, setResultado] = useState<ResultadoCotizacionUnidad | null>(null);
+
+  // Cualquier cambio de entrada invalida el resultado anterior — nunca debe
+  // quedar visible un cálculo que ya no corresponde a lo que hay en el
+  // formulario. Todos los setters de este componente pasan por aquí.
+  const limpiarYSetNoches = (v: string) => { setResultado(null); setNoches(v); };
+  const limpiarYSetUnidades = (v: SimUnidad[]) => { setResultado(null); setUnidades(v); };
+  const setUnidad = (i: number, patch: Partial<SimUnidad>) =>
+    limpiarYSetUnidades(unidades.map((u, idx) => (idx === i ? { ...u, ...patch } : u)));
+
+  function calcular() {
+    const distribucion: DistribucionUnidades = {
+      unidades: unidades.map((u) => ({
+        adultos: numRequerido(u.adultos),
+        menores: u.menores.map((edad) => ({ edadAnios: numRequerido(edad) })),
+      })),
+    };
+    setResultado(
+      cotizarUnidadAlojamiento({
+        tarifa,
+        distribucion,
+        noches: numRequerido(noches),
+      })
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3">
+      <p className={lbl}>Probar cálculo <span className="font-normal text-gray-400">(local, no guarda nada — usa el motor real)</span></p>
+
+      <div className="mb-3 max-w-[140px]">
+        <label className="block text-[10px] text-gray-400">Noches</label>
+        <Input type="number" min={1} value={noches} onChange={(e) => limpiarYSetNoches(e.target.value)} placeholder="—" />
+      </div>
+
+      <div className="space-y-2">
+        {unidades.map((u, i) => (
+          <div key={i} className="rounded-lg border border-gray-100 p-2">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="w-24">
+                <label className="block text-[10px] text-gray-400">Adultos (unidad {i + 1})</label>
+                <Input type="number" min={0} value={u.adultos} onChange={(e) => setUnidad(i, { adultos: e.target.value })} placeholder="—" />
+              </div>
+              <button type="button" onClick={() => setUnidad(i, { menores: [...u.menores, ""] })} className="pb-2 text-xs font-medium text-[var(--brand-accent)]">+ Menor</button>
+              {unidades.length > 1 && (
+                <button type="button" onClick={() => limpiarYSetUnidades(unidades.filter((_, idx) => idx !== i))} className="pb-2 text-xs text-gray-400 hover:text-red-500">Quitar unidad</button>
+              )}
+            </div>
+            {u.menores.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {u.menores.map((edad, j) => (
+                  <div key={j} className="flex items-end gap-1">
+                    <div className="w-20">
+                      <label className="block text-[10px] text-gray-400">Edad (años)</label>
+                      <Input type="number" min={0} value={edad} onChange={(e) => setUnidad(i, { menores: u.menores.map((x, idx) => (idx === j ? e.target.value : x)) })} placeholder="—" />
+                    </div>
+                    <button type="button" onClick={() => setUnidad(i, { menores: u.menores.filter((_, idx) => idx !== j) })} className="pb-2 text-xs text-gray-400 hover:text-red-500">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <button type="button" onClick={() => limpiarYSetUnidades([...unidades, simUnidadVacia()])} className="mt-2 text-xs font-medium text-[var(--brand-accent)]">
+        + Agregar unidad
+      </button>
+
+      <div className="mt-3">
+        <Button onClick={calcular} style={{ backgroundColor: "var(--brand-primary)" }}>Calcular</Button>
+      </div>
+
+      {resultado != null && (
+      <div className="mt-3 border-t border-gray-100 pt-3">
+        {esBloqueado(resultado) ? (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+            <span className="font-medium">Bloqueado</span> ({resultado.codigo}): {resultado.mensaje}
+          </p>
+        ) : (
+          <div className="space-y-2 text-xs text-gray-700">
+            <p>
+              <span className="font-medium">Unidad de cobro:</span> {resultado.unidadCobro} ·{" "}
+              <span className="font-medium">Cantidad de unidades:</span> {resultado.cantidadUnidades} ·{" "}
+              <span className="font-medium">Noches:</span> {resultado.noches}
+            </p>
+            <div>
+              <p className="font-medium text-gray-600">Desglose</p>
+              <ul className="divide-y divide-gray-100">
+                {resultado.desglose.map((l, i) => (
+                  <li key={i} className="flex items-center justify-between py-1">
+                    <span>{l.concepto} <span className="text-gray-400">({l.tipo} · {l.periodicidad} · ×{l.cantidad})</span></span>
+                    <span className="tabular-nums">{fmt(l.valorTotal)}</span>
+                  </li>
+                ))}
+                {!resultado.desglose.length && <li className="py-1 text-gray-400">Sin líneas.</li>}
+              </ul>
+            </div>
+            {resultado.menoresClasificados.length > 0 && (
+              <div>
+                <p className="font-medium text-gray-600">Menores clasificados</p>
+                <ul className="text-gray-500">
+                  {resultado.menoresClasificados.map((m, i) => (
+                    <li key={i}>
+                      {m.edadAnios} años → {m.categoriaTarifaria} (regla {m.reglaAplicada.edadMinAnios}–{m.reglaAplicada.edadMaxAnios})
+                      {m.valorAplicado != null ? ` · ${fmt(m.valorAplicado)}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {resultado.suplementosAplicados.length > 0 && (
+              <div>
+                <p className="font-medium text-gray-600">Suplementos aplicados</p>
+                <ul className="text-gray-500">
+                  {resultado.suplementosAplicados.map((s, i) => (
+                    <li key={i}>{s.tipo}{s.tipo === "menor_adicional" ? ` (${s.categoriaMenor})` : ""} × {s.cantidad} = {fmt(s.valorTotal)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div>
+              <p className="font-medium text-gray-600">Capacidad utilizada</p>
+              <ul className="text-gray-500">
+                {resultado.capacidadUtilizada.map((c) => (
+                  <li key={c.indice}>Unidad {c.indice + 1}: {c.adultos} adultos + {c.menores} menores = {c.totalPax} pax</li>
+                ))}
+              </ul>
+            </div>
+            <div className="space-y-1 border-t border-gray-100 pt-2">
+              <p className="text-gray-500">
+                Total bruto/noche: {fmt(resultado.totalBrutoPorNoche)} · Cargos brutos por estadía: {fmt(resultado.totalBrutoPorEstadia)}
+              </p>
+              <p className="font-medium text-gray-800">Total bruto: {fmt(resultado.totalBruto)}</p>
+              <p className="text-[var(--brand-accent)]">
+                Comisión aplicada: {resultado.comisionPct}% ({fmt(resultado.valorComision)})
+              </p>
+              <p className="font-semibold text-gray-900">Total neto a pagar: {fmt(resultado.totalNeto)}</p>
+            </div>
+          </div>
+        )}
+      </div>
+      )}
+    </div>
   );
 }
