@@ -440,6 +440,88 @@ describe("adaptarOcupacionDesdeReservar — casos sin ambigüedad", () => {
   });
 });
 
+describe("adaptarOcupacionDesdeReservar — Caso C (Fase 3D): asociación explícita habitación↔edades", () => {
+  test("dos habitaciones con menores, cada una con su propia edad EXPLÍCITA: ya NO bloquea por ambigüedad (a diferencia del Caso B legado)", () => {
+    const r = adaptarOcupacionDesdeReservar({
+      habitacionesPorTipo: {},
+      paxTarifaPorTipo: {},
+      distribucionMenores: null,
+      edadesMenoresUsadas: null,
+      totalMenoresDeclarados: 0,
+      categoria: "estandar",
+      alimentacion: "PC",
+      noches: 2,
+      habitacionesExplicitas: [
+        { id: "doble-0", adultos: 2, edadesMenores: [5] },
+        { id: "doble-1", adultos: 2, edadesMenores: [9] },
+      ],
+    });
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      const h0 = r.habitaciones.find((h) => h.id === "doble-0")!;
+      const h1 = r.habitaciones.find((h) => h.id === "doble-1")!;
+      assert.deepEqual(h0.menores.map((m) => m.edadAnios), [5]);
+      assert.deepEqual(h1.menores.map((m) => m.edadAnios), [9]);
+    }
+  });
+
+  test("habitacionesExplicitas tiene PRIORIDAD sobre distribucionMenores/edadesMenoresUsadas — no se mezclan las dos fuentes", () => {
+    const r = adaptarOcupacionDesdeReservar({
+      habitacionesPorTipo: {},
+      paxTarifaPorTipo: {},
+      // Datos legados presentes pero deliberadamente IGNORADOS: si el
+      // adaptador los mezclara, produciría un resultado distinto (o
+      // bloquearía por ambigüedad, como en el Caso B).
+      distribucionMenores: [{ indice: 0, acom: "doble", adultos: 2, nino: 1, nino2: 0, infantes: 0 }],
+      edadesMenoresUsadas: [99],
+      totalMenoresDeclarados: 1,
+      categoria: "estandar",
+      alimentacion: "PC",
+      noches: 1,
+      habitacionesExplicitas: [{ id: "doble-0", adultos: 2, edadesMenores: [5] }],
+    });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.habitaciones[0].menores.map((m) => m.edadAnios), [5]);
+  });
+
+  test("id repetido entre habitaciones explícitas: bloquea", () => {
+    const r = adaptarOcupacionDesdeReservar({
+      habitacionesPorTipo: {}, paxTarifaPorTipo: {}, distribucionMenores: null, edadesMenoresUsadas: null,
+      totalMenoresDeclarados: 0, categoria: null, alimentacion: null, noches: 1,
+      habitacionesExplicitas: [
+        { id: "doble-0", adultos: 2, edadesMenores: [] },
+        { id: "doble-0", adultos: 2, edadesMenores: [] },
+      ],
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "configuracion_invalida");
+  });
+
+  test("colección explícita vacía: bloquea", () => {
+    const r = adaptarOcupacionDesdeReservar({
+      habitacionesPorTipo: {}, paxTarifaPorTipo: {}, distribucionMenores: null, edadesMenoresUsadas: null,
+      totalMenoresDeclarados: 0, categoria: null, alimentacion: null, noches: 1,
+      habitacionesExplicitas: [],
+    });
+    assert.equal(r.ok, false);
+  });
+
+  test("habitacionesExplicitas ausente (undefined) o null: sigue el camino legado sin cambios (Casos A/B intactos)", () => {
+    const sinCampo = adaptarOcupacionDesdeReservar({
+      habitacionesPorTipo: { doble: 1 }, paxTarifaPorTipo: { doble: 2 }, distribucionMenores: null,
+      edadesMenoresUsadas: null, totalMenoresDeclarados: 0, categoria: "estandar", alimentacion: "PC", noches: 1,
+    });
+    const conNull = adaptarOcupacionDesdeReservar({
+      habitacionesPorTipo: { doble: 1 }, paxTarifaPorTipo: { doble: 2 }, distribucionMenores: null,
+      edadesMenoresUsadas: null, totalMenoresDeclarados: 0, categoria: "estandar", alimentacion: "PC", noches: 1,
+      habitacionesExplicitas: null,
+    });
+    assert.equal(sinCampo.ok, true);
+    assert.equal(conNull.ok, true);
+    if (sinCampo.ok && conNull.ok) assert.deepEqual(sinCampo.habitaciones, conNull.habitaciones);
+  });
+});
+
 describe("ocupacionHabitacion.ts — módulo puro, sin Supabase/Next/contratos/CxP/UI", () => {
   test("no importa ninguno de esos módulos", () => {
     // Se revisan solo las líneas de import/require reales — el resto del

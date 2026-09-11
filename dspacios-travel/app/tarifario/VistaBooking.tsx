@@ -18,6 +18,17 @@ import {
   verificarTarifasMenoresDisponibles,
 } from "@/lib/reservar/edadesMenores";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
+import {
+  construirHabitacionesUI,
+  idsHabitacionesPorConteo,
+  sincronizarHabitaciones,
+  ajustarCantidadEdadesHabitacion,
+  establecerEdad,
+  construirPayloadHabitaciones,
+  validarHabitacionesOcupacion,
+  type EdadesPorHabitacion,
+} from "@/lib/reservar/ocupacionPorHabitacion";
+import { validarOcupacionHabitacionesBernalo } from "./ocupacionBernaloActions";
 import { obtenerDetalleHotel } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -1015,6 +1026,7 @@ function Selector({
 function EditorPax({
   pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
   edadInfanteMax, edadNinoMax, onAgregar, btnLabel = "Agregar al carrito", moneda = "COP",
+  modeloTarifario = null,
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -1027,12 +1039,39 @@ function EditorPax({
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) => void;
   btnLabel?: string;
   moneda?: string | null;
+  // Fase 3D Bernalo: cuando llega "unidad", esta habitación se captura por
+  // HABITACIÓN FÍSICA (edades propias por habitación) en vez del flujo
+  // legado (cantidad total + arreglo plano). `null`/ausente = comportamiento
+  // EXACTO de siempre — ningún llamador existente pasa este prop todavía,
+  // así que hoy no cambia nada para ningún hotel real (regla 9 del encargo:
+  // los hoteles "persona" conservan el flujo actual byte a byte).
+  modeloTarifario?: string | null;
 }) {
   const idBase = useId();
+  const esBernalo = modeloTarifario === "unidad";
   const [habs, setHabs] = useState<Record<string, number>>({});
   const [cantidadMenores, setCantidadMenoresState] = useState(0);
   const [edadesTxt, setEdadesTxt] = useState<string[]>([]);
-  const setHab = (a: AcomRoom, n: number) => setHabs((p) => ({ ...p, [a]: Math.max(0, n) }));
+  // Fase 3D — estado canónico SOLO para Bernalo: una entrada por habitación
+  // FÍSICA (id estable), nunca un conteo aparte (regla 14: single source —
+  // ver `lib/reservar/ocupacionPorHabitacion.ts`).
+  const [edadesPorHabitacion, setEdadesPorHabitacion] = useState<EdadesPorHabitacion>({});
+  const [resultadoValidacion, setResultadoValidacion] = useState<
+    { ok: true; habitaciones: number } | { ok: false; errores: { habitacionId: string | null; mensaje: string }[] } | null
+  >(null);
+  const [validando, setValidando] = useState(false);
+
+  const setHab = (a: AcomRoom, n: number) => {
+    const next = { ...habs, [a]: Math.max(0, n) };
+    setHabs(next);
+    // Regla 5: cambiar la distribución NUNCA reasigna una edad ya escrita a
+    // otra habitación — solo limpia las de las habitaciones que ya no
+    // existen (mismo id ⇒ misma habitación, siempre).
+    if (esBernalo) {
+      setEdadesPorHabitacion((ep) => sincronizarHabitaciones(ep, idsHabitacionesPorConteo(next)));
+      setResultadoValidacion(null);
+    }
+  };
 
   // Al cambiar la cantidad: agrega campos vacíos al final o quita solo los
   // sobrantes del final — las edades ya escritas nunca se reordenan/pierden.
@@ -1144,6 +1183,61 @@ function EditorPax({
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
   const inputEdadCls = "w-14 rounded-lg border px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
 
+  // ── Fase 3D Bernalo — captura por habitación física ────────────────────
+  // Todo lo de abajo solo se usa cuando `esBernalo`; para hoteles "persona"
+  // no se evalúa (habitacionesUI queda vacío) y el bloque JSX de siempre
+  // (más abajo) no cambia una sola línea.
+  const habitacionesUI = esBernalo ? construirHabitacionesUI(habs) : [];
+  const paxTarifaPorTipo: Record<string, number> = {};
+  if (esBernalo) for (const a of ACOM_ROOMS) paxTarifaPorTipo[a] = cfg(a).pax_tarifa;
+  const payloadBernalo = esBernalo ? construirPayloadHabitaciones(habs, paxTarifaPorTipo, edadesPorHabitacion) : [];
+  // Preview EN VIVO con la MISMA función que re-corre el servidor (regla 8:
+  // "la UI no es autoridad" — esto es solo feedback inmediato, nunca la
+  // validación que de verdad autoriza nada).
+  const previewBernalo = esBernalo && habitacionesUI.length > 0 ? validarHabitacionesOcupacion(payloadBernalo) : null;
+  const erroresPorHabitacion = new Map<string, string[]>();
+  if (previewBernalo && !previewBernalo.ok) {
+    for (const e of previewBernalo.errores) {
+      if (!e.habitacionId) continue;
+      const arr = erroresPorHabitacion.get(e.habitacionId) ?? [];
+      arr.push(e.mensaje);
+      erroresPorHabitacion.set(e.habitacionId, arr);
+    }
+  }
+
+  function cambiarCantidadMenoresHab(habId: string, n: number) {
+    setEdadesPorHabitacion((ep) => ajustarCantidadEdadesHabitacion(ep, habId, n));
+    setResultadoValidacion(null);
+  }
+  function cambiarEdadHab(habId: string, i: number, v: string) {
+    setEdadesPorHabitacion((ep) => establecerEdad(ep, habId, i, v));
+    setResultadoValidacion(null);
+  }
+
+  async function validarBernalo() {
+    if (validando || !hayHab) return;
+    setValidando(true);
+    setResultadoValidacion(null);
+    try {
+      // El servidor vuelve a validar con la MISMA función pura y adapta
+      // hasta el contrato canónico (Caso C, Fase 3A) — nunca confía en el
+      // resultado de `previewBernalo` calculado en el navegador.
+      const r = await validarOcupacionHabitacionesBernalo({
+        habitaciones: payloadBernalo,
+        // categoría/alimentación/noches del combo elegido: EditorPax no las
+        // recibe como prop todavía (quedan pendientes de 3E, ver el informe
+        // de la tarea) — no afectan la validación de edad/conteo por
+        // habitación que se prueba en esta fase.
+        categoria: null,
+        alimentacion: null,
+        noches: 1,
+      });
+      setResultadoValidacion(r.ok ? { ok: true, habitaciones: r.habitaciones.length } : { ok: false, errores: r.errores });
+    } finally {
+      setValidando(false);
+    }
+  }
+
   return (
     <>
       <div>
@@ -1160,68 +1254,152 @@ function EditorPax({
         </div>
       </div>
 
-      {muestraMenores && (
-        <div>
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <label htmlFor={`${idBase}-cant`} className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores</label>
-          </div>
-          {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
-              <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
-                value={cantidadMenores} disabled={!hayHab}
-                onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
+      {esBernalo ? (
+        // ── Fase 3D: una fila compacta por habitación FÍSICA, cada una con
+        // sus propias edades — nunca un total + arreglo plano para toda la
+        // solicitud. Mismo contenedor/clases que el resto del componente
+        // (sin tarjetas anidadas ni rediseño).
+        hayHab && (
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores por habitación</span>
             </div>
-            {edadesTxt.map((v, i) => {
-              const err = edadesParsed[i]?.error;
-              const mostrarError = v.trim() !== "" && err;
-              return (
-                <div key={i}>
-                  <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
-                  <input
-                    id={`${idBase}-edad-${i}`}
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    max={EDAD_MENOR_MAX}
-                    value={v}
-                    onChange={(e) => setEdadAt(i, e.target.value)}
-                    className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
-                    aria-invalid={mostrarError ? true : undefined}
-                  />
-                  {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
-                </div>
-              );
-            })}
+            {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
+            <div className="space-y-2">
+              {habitacionesUI.map((h, idx) => {
+                const edadesHab = edadesPorHabitacion[h.id] ?? [];
+                const erroresHab = erroresPorHabitacion.get(h.id) ?? [];
+                return (
+                  <div key={h.id} className="rounded-lg border border-gray-200 p-2">
+                    <div className="text-xs font-medium text-gray-700">
+                      {ACOM_ROOM_LABEL[h.acom]} #{idx + 1}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-end gap-3">
+                      <div>
+                        <label htmlFor={`${idBase}-${h.id}-cant`} className="mb-1 block text-xs font-medium text-gray-600">
+                          Cantidad de menores
+                        </label>
+                        <input
+                          id={`${idBase}-${h.id}-cant`}
+                          type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
+                          value={edadesHab.length}
+                          onChange={(e) => cambiarCantidadMenoresHab(h.id, Number(e.target.value))}
+                          className={inputCls}
+                        />
+                      </div>
+                      {edadesHab.map((v, i) => {
+                        const err = parseEdadMenor(v).error;
+                        const mostrarError = v.trim() !== "" && err;
+                        return (
+                          <div key={i}>
+                            <label htmlFor={`${idBase}-${h.id}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">
+                              Edad del menor {i + 1}
+                            </label>
+                            <input
+                              id={`${idBase}-${h.id}-edad-${i}`}
+                              type="number" inputMode="numeric" min={0} max={EDAD_MENOR_MAX}
+                              value={v}
+                              onChange={(e) => cambiarEdadHab(h.id, i, e.target.value)}
+                              className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                              aria-invalid={mostrarError ? true : undefined}
+                            />
+                            {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {erroresHab.length > 0 && (
+                      <p className="mt-1 text-[11px] text-red-600">{erroresHab.join(" ")}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
-            <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
-          )}
-          {clasifError && <p className="mt-1 text-[11px] text-red-600">{clasifError}</p>}
-          {cantidadMenores > 0 && !clasifError && edadesValidas && (
-            <p className="mt-1 text-[11px] text-gray-400">
-              {[infantes > 0 ? `${infantes} infante(s)` : null, ninosTotal > 0 ? `${ninosTotal} niño(s)` : null].filter(Boolean).join(" · ") || "Todas las edades corresponden a adulto."}
-            </p>
-          )}
-        </div>
+        )
+      ) : (
+        muestraMenores && (
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label htmlFor={`${idBase}-cant`} className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores</label>
+            </div>
+            {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
+                <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
+                  value={cantidadMenores} disabled={!hayHab}
+                  onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
+              </div>
+              {edadesTxt.map((v, i) => {
+                const err = edadesParsed[i]?.error;
+                const mostrarError = v.trim() !== "" && err;
+                return (
+                  <div key={i}>
+                    <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
+                    <input
+                      id={`${idBase}-edad-${i}`}
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={EDAD_MENOR_MAX}
+                      value={v}
+                      onChange={(e) => setEdadAt(i, e.target.value)}
+                      className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                      aria-invalid={mostrarError ? true : undefined}
+                    />
+                    {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+                  </div>
+                );
+              })}
+            </div>
+            {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
+              <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
+            )}
+            {clasifError && <p className="mt-1 text-[11px] text-red-600">{clasifError}</p>}
+            {cantidadMenores > 0 && !clasifError && edadesValidas && (
+              <p className="mt-1 text-[11px] text-gray-400">
+                {[infantes > 0 ? `${infantes} infante(s)` : null, ninosTotal > 0 ? `${ninosTotal} niño(s)` : null].filter(Boolean).join(" · ") || "Todas las edades corresponden a adulto."}
+              </p>
+            )}
+          </div>
+        )
       )}
 
-      {errores.length > 0 && (
+      {!esBernalo && errores.length > 0 && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{errores.join(" ")}</p>
       )}
 
-      <div className="flex items-center justify-between border-t border-gray-100 pt-3">
-        <div>
-          <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
-          <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
+      {esBernalo ? (
+        // Fase 3D: "captura y transporte" — valida contra el servidor, no
+        // agrega al carrito todavía (no hay cotización Bernalo disponible
+        // en este flujo, ver el informe de la tarea: eso es 3E).
+        <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+          <div className="text-xs text-gray-400">
+            {resultadoValidacion?.ok && `${resultadoValidacion.habitaciones} habitación(es) validada(s) por el servidor.`}
+            {resultadoValidacion && !resultadoValidacion.ok && (
+              <span className="text-red-600">{resultadoValidacion.errores.length} error(es) — revisa las habitaciones marcadas arriba.</span>
+            )}
+          </div>
+          <button type="button" onClick={validarBernalo} disabled={!hayHab || validando}
+            className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+            style={{ backgroundColor: "var(--brand-primary)" }}>
+            {validando ? "Validando…" : "Validar ocupación"}
+          </button>
         </div>
-        <button type="button" onClick={agregar} disabled={!puede}
-          className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
-          style={{ backgroundColor: "var(--brand-primary)" }}>
-          {btnLabel}
-        </button>
-      </div>
+      ) : (
+        <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+          <div>
+            <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
+            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
+          </div>
+          <button type="button" onClick={agregar} disabled={!puede}
+            className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+            style={{ backgroundColor: "var(--brand-primary)" }}>
+            {btnLabel}
+          </button>
+        </div>
+      )}
       {nota && <p className="text-[11px] text-gray-400">{nota}</p>}
     </>
   );

@@ -157,6 +157,19 @@ export function cotizarHabitaciones(items: ItemCotizarHabitacion[]): ResultadoCo
 // es inequívoca con los datos que Reservar produce hoy (ver el análisis al
 // principio de este archivo). Cualquier caso donde la entrada haya perdido
 // esa relación devuelve un bloqueo claro — nunca reparte a ciegas.
+//
+// Fase 3D: cada habitación FÍSICA ya trae sus propias edades — capturadas
+// así desde la UI (ver `lib/reservar/ocupacionPorHabitacion.ts`), nunca
+// reconstruidas desde un arreglo plano + conteos por habitación. Es la
+// asociación MÁS inequívoca posible: no hace falta ninguna heurística de
+// "una sola habitación con menores" (Caso B) porque el vínculo llega
+// explícito desde el origen.
+export type HabitacionConEdadesExplicitas = {
+  id: string;
+  adultos: number;
+  edadesMenores: number[];
+};
+
 export type EntradaAdaptadorReservar = {
   // Conteo de habitaciones por TIPO (acomodación) — el formulario legado
   // de Reservar (`ReservaInput.habitaciones`) siempre llega así: cuántas
@@ -179,12 +192,45 @@ export type EntradaAdaptadorReservar = {
   categoria: string | null;
   alimentacion: string | null;
   noches: number;
+  // Fase 3D — asociación EXPLÍCITA habitación↔edades. Cuando viene
+  // presente (no `null`/`undefined`), tiene PRIORIDAD ABSOLUTA sobre
+  // `distribucionMenores`/`edadesMenoresUsadas`/`habitacionesPorTipo`: es
+  // la fuente canónica, ya validada por el llamador (nunca una
+  // reconstrucción heurística) — ver Caso C más abajo.
+  habitacionesExplicitas?: HabitacionConEdadesExplicitas[] | null;
 };
 
 export function adaptarOcupacionDesdeReservar(
   input: EntradaAdaptadorReservar
 ): { ok: true; habitaciones: HabitacionOcupacion[] } | ResultadoBloqueado {
   const { categoria, alimentacion, noches } = input;
+
+  // ── Caso C (Fase 3D): asociación explícita habitación↔edades ──────────
+  if (input.habitacionesExplicitas != null) {
+    if (input.habitacionesExplicitas.length === 0) {
+      return resultadoBloqueado("configuracion_invalida", "No hay habitaciones para cotizar en la solicitud.");
+    }
+    const idsVistos = new Set<string>();
+    for (const h of input.habitacionesExplicitas) {
+      if (idsVistos.has(h.id)) {
+        return resultadoBloqueado(
+          "configuracion_invalida",
+          `El id de habitación "${h.id}" está repetido — cada habitación física debe tener un id único.`,
+          { habitacionId: h.id }
+        );
+      }
+      idsVistos.add(h.id);
+    }
+    const habitaciones: HabitacionOcupacion[] = input.habitacionesExplicitas.map((h) => ({
+      id: h.id,
+      adultos: h.adultos,
+      menores: h.edadesMenores.map((edadAnios) => ({ edadAnios })),
+      categoria,
+      alimentacion,
+      noches,
+    }));
+    return { ok: true, habitaciones };
+  }
 
   // ── Caso A: sin distribución por instancia (reparto manual legado) ────
   if (input.distribucionMenores === null) {
