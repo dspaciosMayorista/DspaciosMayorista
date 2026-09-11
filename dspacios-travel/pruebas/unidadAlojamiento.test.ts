@@ -81,6 +81,7 @@ describe("unidad persona", () => {
   const tarifaPersona: TarifaAlojamiento = {
     id: "t-persona-1",
     unidadCobro: "persona",
+    comisionPct: 0,
     versionTarifario: V,
     valores: { adulto: 100_000, nino: 70_000 },
     capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -95,7 +96,7 @@ describe("unidad persona", () => {
       noches: 3,
     });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 270_000);
+    assert.equal(r.totalBrutoPorNoche, 270_000);
     assert.equal(r.totalNeto, 810_000);
     assert.equal(r.cantidadUnidades, 2);
     assert.equal(r.menoresClasificados[0].categoriaTarifaria, "nino");
@@ -169,6 +170,7 @@ describe("unidad pareja", () => {
   const tarifaMumu: TarifaAlojamiento = {
     id: "t-mumu-1",
     unidadCobro: "pareja",
+    comisionPct: 0,
     versionTarifario: V,
     valores: { adulto: 550_000 },
     capacidad: { minPax: 2, maxPax: 2, paxIncluidos: 2 },
@@ -190,7 +192,7 @@ describe("unidad pareja", () => {
     });
     esperarValido(r);
     assert.equal(r.cantidadUnidades, 1);
-    assert.equal(r.totalNetoPorNoche, 550_000);
+    assert.equal(r.totalBrutoPorNoche, 550_000);
     assert.equal(r.totalNeto, 1_100_000);
   });
 
@@ -198,7 +200,7 @@ describe("unidad pareja", () => {
     const tarifa = parejaFlexible([{ tipo: "persona_sola", valor: 400_000 }]);
     const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 1, menores: [] }] }, noches: 1 });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 400_000);
+    assert.equal(r.totalBrutoPorNoche, 400_000);
     assert.equal(r.desglose[0].concepto, "Persona sola");
   });
 
@@ -210,7 +212,7 @@ describe("unidad pareja", () => {
       noches: 1,
     });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 550_000 + 400_000);
+    assert.equal(r.totalBrutoPorNoche, 550_000 + 400_000);
   });
 
   test("2 unidades: dos personas solas", () => {
@@ -221,7 +223,7 @@ describe("unidad pareja", () => {
       noches: 1,
     });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 800_000);
+    assert.equal(r.totalBrutoPorNoche, 800_000);
   });
 
   test("falta la tarifa persona sola → falla cerrado", () => {
@@ -248,7 +250,7 @@ describe("unidad pareja", () => {
     const conSuplemento: TarifaAlojamiento = { ...sinSuplemento, suplementos: [{ tipo: "menor_adicional", categoriaMenor: "nino", valor: 90_000 }] };
     const r = cotizarUnidadAlojamiento({ tarifa: conSuplemento, distribucion: { unidades: [{ adultos: 2, menores: [{ edadAnios: 5 }] }] }, noches: 1 });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 550_000 + 90_000);
+    assert.equal(r.totalBrutoPorNoche, 550_000 + 90_000);
   });
 
   test("pareja que supera maxPax por menores", () => {
@@ -268,15 +270,15 @@ describe("unidad pareja", () => {
       noches: 1,
     });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 550_000 + 400_000 + 550_000);
+    assert.equal(r.totalBrutoPorNoche, 550_000 + 400_000 + 550_000);
   });
 
   test("CONTROL NEGATIVO — dividir y volver a multiplicar cambiaría el total", () => {
     const tarifaImpar: TarifaAlojamiento = { ...tarifaMumu, id: "t-impar", valores: { adulto: 550_001 } };
     const r = cotizarUnidadAlojamiento({ tarifa: tarifaImpar, distribucion: { unidades: [{ adultos: 2, menores: [] }] }, noches: 1 });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 550_001);
-    assert.notEqual(r.totalNetoPorNoche, Math.round(550_001 / 2) * 2);
+    assert.equal(r.totalBrutoPorNoche, 550_001);
+    assert.notEqual(r.totalBrutoPorNoche, Math.round(550_001 / 2) * 2);
   });
 });
 
@@ -288,6 +290,7 @@ describe("unidad habitación — compatibilidad con Corporativa (Casa Amanzi)", 
     return {
       id: `t-amanzi-${pax}`,
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       categoria: "estandar",
       valores: { adulto: valorUnidad },
@@ -313,7 +316,7 @@ describe("unidad habitación — compatibilidad con Corporativa (Casa Amanzi)", 
       esperarValido(r);
       assert.equal(r.suplementosAplicados.length, 0);
       assert.equal(c.totalEsperado, valorUnidad);
-      assert.equal(r.totalNetoPorNoche, c.totalEsperado);
+      assert.equal(r.totalBrutoPorNoche, c.totalEsperado);
       assert.equal(r.cantidadUnidades, 1);
     });
   }
@@ -327,7 +330,7 @@ describe("unidad habitación — compatibilidad con Corporativa (Casa Amanzi)", 
     });
     esperarValido(r);
     assert.equal(r.cantidadUnidades, 2);
-    assert.equal(r.totalNetoPorNoche, 600_000);
+    assert.equal(r.totalBrutoPorNoche, 600_000);
   });
 
   test("dos habitaciones 3+1: detecta la PRIMERA sobre su capacidad", () => {
@@ -356,7 +359,7 @@ describe("unidad habitación — compatibilidad con Corporativa (Casa Amanzi)", 
     const tarifa = tarifaHabitacion(2, 500_000);
     const r = cotizarUnidadAlojamiento({ tarifa, distribucion: { unidades: [{ adultos: 2, menores: [] }] }, noches: 1 });
     esperarValido(r);
-    assert.notEqual(r.totalNetoPorNoche, tarifa.valores.adulto * 2);
+    assert.notEqual(r.totalBrutoPorNoche, tarifa.valores.adulto * 2);
   });
 
   test("CONTROL NEGATIVO — 3 pax en una DBL sin suplemento falla cerrado", () => {
@@ -372,7 +375,7 @@ describe("unidad habitación — compatibilidad con Corporativa (Casa Amanzi)", 
     };
     const conSuplemento = cotizarUnidadAlojamiento({ tarifa: ampliada, distribucion: { unidades: [{ adultos: 3, menores: [] }] }, noches: 1 });
     esperarValido(conSuplemento);
-    assert.equal(conSuplemento.totalNetoPorNoche, 580_000);
+    assert.equal(conSuplemento.totalBrutoPorNoche, 580_000);
 
     const sinSuplemento = cotizarUnidadAlojamiento({
       tarifa: { ...ampliada, suplementos: [] },
@@ -390,6 +393,7 @@ describe("unidad apartamento", () => {
   const tarifaApto: TarifaAlojamiento = {
     id: "t-apto-1",
     unidadCobro: "apartamento",
+    comisionPct: 0,
     versionTarifario: V,
     valores: { adulto: 800_000 },
     capacidad: { minPax: 1, maxPax: 6, paxIncluidos: 6 },
@@ -404,7 +408,7 @@ describe("unidad apartamento", () => {
       noches: 1,
     });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 800_000);
+    assert.equal(r.totalBrutoPorNoche, 800_000);
   });
 
   test("sobre capacidad", () => {
@@ -425,6 +429,7 @@ describe("coherencia de la tarifa por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 100_000 },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -439,6 +444,7 @@ describe("coherencia de la tarifa por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "pareja",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 550_000, nino: 100_000 },
       capacidad: { minPax: 2, maxPax: 2, paxIncluidos: 2 },
@@ -452,6 +458,7 @@ describe("coherencia de la tarifa por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 500_000, infante: 0 },
       capacidad: { minPax: 2, maxPax: 2, paxIncluidos: 2 },
@@ -465,6 +472,7 @@ describe("coherencia de la tarifa por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 500_000 },
       capacidad: { minPax: 2, maxPax: 2, paxIncluidos: 2 },
@@ -478,6 +486,7 @@ describe("coherencia de la tarifa por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "apartamento",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 800_000 },
       capacidad: { minPax: 1, maxPax: 6, paxIncluidos: 6 },
@@ -491,6 +500,7 @@ describe("coherencia de la tarifa por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "pareja",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 550_000 },
       capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
@@ -513,6 +523,7 @@ describe("validación de forma en runtime (datos externos)", () => {
     return {
       id: "t-forma",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 500_000 },
       capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
@@ -600,6 +611,7 @@ describe("snapshot ligado al cálculo — mezclar fuentes es imposible por const
     return {
       id: "tarifa-A",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: "version-A",
       categoria: "estandar-A",
       valores: { adulto: 500_000 },
@@ -613,6 +625,7 @@ describe("snapshot ligado al cálculo — mezclar fuentes es imposible por const
     return {
       id: "tarifa-B",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: "version-B",
       categoria: "estandar-B",
       valores: { adulto: 900_000 },
@@ -682,6 +695,7 @@ test("determinarCantidadUnidades", () => {
   const base: TarifaAlojamiento = {
     id: "t",
     unidadCobro: "persona",
+    comisionPct: 0,
     versionTarifario: V,
     valores: { adulto: 1 },
     capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -714,6 +728,7 @@ test("producto no soportado: day use (0 noches)", () => {
   const tarifa: TarifaAlojamiento = {
     id: "t",
     unidadCobro: "persona",
+    comisionPct: 0,
     versionTarifario: V,
     valores: { adulto: 100_000 },
     capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -731,6 +746,7 @@ describe("validación fail-closed numérica", () => {
     return {
       id: "t-valida",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 500_000 },
       capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
@@ -830,6 +846,7 @@ describe("snapshot", () => {
     return {
       id: "t-amanzi-2",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: "bernalo-2026",
       categoria: "estandar",
       alimentacion: "Solo alojamiento",
@@ -845,11 +862,21 @@ describe("snapshot", () => {
     return { unidades: [{ adultos: 2, menores: [] }] };
   }
 
-  test("ajusteComercial siempre null: este PR no inventa un total de venta", () => {
+  test("ajusteComercial (ronda 8): estructura versionable de comisión incluida, congelada del resultado — ya no es null", () => {
     const r = cotizarUnidadAlojamiento({ tarifa: tarifaBase(), distribucion: distribucionBase(), noches: 2 });
     esperarValido(r);
     const snap = construirSnapshotAlojamiento(r);
-    assert.equal(snap.ajusteComercial, null);
+    // `tarifaBase()` de este describe tiene comisionPct: 0 — bruto y neto
+    // coinciden exactamente, pero la estructura YA NO es `null`.
+    assert.deepEqual(snap.ajusteComercial, {
+      tipo: "comision_incluida",
+      version: 1,
+      comisionPct: 0,
+      totalBruto: 1_000_000,
+      valorComision: 0,
+      totalNeto: 1_000_000,
+    });
+    assert.equal(snap.totalBruto, 1_000_000);
     assert.equal(snap.totalNeto, 1_000_000);
     assert.equal("totalVenta" in snap, false);
     assert.equal("comision" in snap, false);
@@ -866,6 +893,7 @@ describe("snapshot", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t-amanzi-3",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: "bernalo-2026",
       categoria: "estandar",
       valores: { adulto: 500_000 },
@@ -937,6 +965,7 @@ describe("snapshot", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t-auditable",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 500_000 },
       capacidad: { minPax: 2, maxPax: 3, paxIncluidos: 2 },
@@ -960,7 +989,7 @@ describe("snapshot", () => {
     assert.equal(lineaBase.valorTotal, 500_000);
     assert.equal(lineaSuplemento.cantidad, ocupantesAdicionales);
     assert.equal(lineaSuplemento.valorTotal, ocupantesAdicionales * lineaSuplemento.valorUnitario);
-    assert.equal(lineaBase.valorTotal + lineaSuplemento.valorTotal, snap.totalNetoPorNoche);
+    assert.equal(lineaBase.valorTotal + lineaSuplemento.valorTotal, snap.totalBrutoPorNoche);
   });
 });
 
@@ -971,7 +1000,7 @@ describe("snapshot", () => {
 // encontraba nada que objetar en un objeto vacío o con `adulto: undefined`,
 // y el cálculo seguía adelante hasta `totalAdultos * tarifa.valores.adulto`
 // — que en JS da `NaN` — y el motor respondía `ok: true` con
-// `totalNetoPorNoche: NaN`. Ninguno de los casos de abajo puede producir
+// `totalBrutoPorNoche: NaN`. Ninguno de los casos de abajo puede producir
 // un `ResultadoValido`.
 // ─────────────────────────────────────────────────────────────────────────
 describe("valor base obligatorio (tarifa.valores.adulto)", () => {
@@ -980,6 +1009,7 @@ describe("valor base obligatorio (tarifa.valores.adulto)", () => {
       tarifa: {
         id: "t",
         unidadCobro: "persona",
+        comisionPct: 0,
         versionTarifario: V,
         valores,
         capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1008,8 +1038,8 @@ describe("valor base obligatorio (tarifa.valores.adulto)", () => {
         assert.equal(r.codigo, "configuracion_invalida");
         assert.notEqual(r.codigo, "tarifa_no_encontrada", "un valor mal formado no es lo mismo que 'no hay precio configurado'");
       }
-      // Ni siquiera existe la posibilidad de leer un `totalNetoPorNoche: NaN`.
-      assert.equal("totalNetoPorNoche" in r, false);
+      // Ni siquiera existe la posibilidad de leer un `totalBrutoPorNoche: NaN`.
+      assert.equal("totalBrutoPorNoche" in r, false);
     });
   }
 });
@@ -1029,6 +1059,7 @@ describe("enteros seguros — desbordamiento de Number.MAX_SAFE_INTEGER", () => 
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: Number.MAX_SAFE_INTEGER },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1044,6 +1075,7 @@ describe("enteros seguros — desbordamiento de Number.MAX_SAFE_INTEGER", () => 
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: Number.MAX_SAFE_INTEGER },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1059,6 +1091,7 @@ describe("enteros seguros — desbordamiento de Number.MAX_SAFE_INTEGER", () => 
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "pareja",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 2 },
       capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
@@ -1074,6 +1107,7 @@ describe("enteros seguros — desbordamiento de Number.MAX_SAFE_INTEGER", () => 
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 1 },
       capacidad: { minPax: 1, maxPax: 10, paxIncluidos: 1 },
@@ -1085,10 +1119,11 @@ describe("enteros seguros — desbordamiento de Number.MAX_SAFE_INTEGER", () => 
     esperarCodigo(r, "configuracion_invalida");
   });
 
-  test("totalNetoPorNoche × noches desborda → configuracion_invalida", () => {
+  test("totalBrutoPorNoche × noches desborda → configuracion_invalida", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: Number.MAX_SAFE_INTEGER },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1115,6 +1150,7 @@ describe("coherencia de capacidad por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 100_000 },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 3 },
@@ -1129,6 +1165,7 @@ describe("coherencia de capacidad por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "pareja",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 550_000 },
       capacidad: { minPax: 3, maxPax: 4, paxIncluidos: 2 },
@@ -1142,6 +1179,7 @@ describe("coherencia de capacidad por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "pareja",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 550_000 },
       capacidad: { minPax: 1, maxPax: 1, paxIncluidos: 1 },
@@ -1155,6 +1193,7 @@ describe("coherencia de capacidad por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "pareja",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 550_000 },
       capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 3 },
@@ -1168,6 +1207,7 @@ describe("coherencia de capacidad por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 500_000 },
       capacidad: { minPax: 2, maxPax: 2, paxIncluidos: 0 },
@@ -1185,6 +1225,7 @@ describe("coherencia de capacidad por unidadCobro", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "apartamento",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 800_000 },
       capacidad: { minPax: 3, maxPax: 6, paxIncluidos: 2 },
@@ -1198,6 +1239,7 @@ describe("coherencia de capacidad por unidadCobro", () => {
     const persona: TarifaAlojamiento = {
       id: "t",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 1 },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1223,6 +1265,7 @@ describe("discriminantes en runtime", () => {
       tarifa: {
         id: "t",
         unidadCobro: "pareja",
+        comisionPct: 0,
         versionTarifario: V,
         valores: { adulto: 550_000 },
         capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
@@ -1308,6 +1351,7 @@ describe("menor con tarifa de adulto (11-17 años, tercer tramo Bernalo)", () =>
   const tarifaPersonaBernalo: TarifaAlojamiento = {
     id: "t-bernalo",
     unidadCobro: "persona",
+    comisionPct: 0,
     versionTarifario: V,
     valores: { adulto: 100_000, nino: 70_000 },
     capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1359,7 +1403,7 @@ describe("menor con tarifa de adulto (11-17 años, tercer tramo Bernalo)", () =>
     assert.equal(lineaMenorAdulto?.valorUnitario, 100_000); // valores.adulto
     assert.equal(lineaMenorAdulto?.cantidad, 1);
     // 2 adultos × 100.000 + 1 menor-con-tarifa-adulto × 100.000 = 300.000
-    assert.equal(r.totalNetoPorNoche, 300_000);
+    assert.equal(r.totalBrutoPorNoche, 300_000);
   });
 
   test("el snapshot conserva edad real, categoría tarifaria, regla aplicada y valor utilizado", () => {
@@ -1390,7 +1434,7 @@ describe("menor con tarifa de adulto (11-17 años, tercer tramo Bernalo)", () =>
     });
     esperarValido(conAdultoReal);
     esperarValido(conMenorAdulto);
-    assert.equal(conAdultoReal.totalNetoPorNoche, conMenorAdulto.totalNetoPorNoche);
+    assert.equal(conAdultoReal.totalBrutoPorNoche, conMenorAdulto.totalBrutoPorNoche);
     // Pero la cantidad de "adultos declarados" SÍ debe diferir — el menor sigue siendo menor.
     assert.notEqual(conAdultoReal.cantidadUnidades, conMenorAdulto.cantidadUnidades);
   });
@@ -1399,6 +1443,7 @@ describe("menor con tarifa de adulto (11-17 años, tercer tramo Bernalo)", () =>
     const tarifaPareja: TarifaAlojamiento = {
       id: "t-pareja-bernalo",
       unidadCobro: "pareja",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 550_000 },
       capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
@@ -1411,7 +1456,7 @@ describe("menor con tarifa de adulto (11-17 años, tercer tramo Bernalo)", () =>
       noches: 1,
     });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 550_000 + 90_000);
+    assert.equal(r.totalBrutoPorNoche, 550_000 + 90_000);
     assert.equal(r.suplementosAplicados[0].tipo, "adulto_adicional");
   });
 
@@ -1419,6 +1464,7 @@ describe("menor con tarifa de adulto (11-17 años, tercer tramo Bernalo)", () =>
     const tarifaHab: TarifaAlojamiento = {
       id: "t-hab-bernalo",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 300_000 },
       capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 3 },
@@ -1431,7 +1477,7 @@ describe("menor con tarifa de adulto (11-17 años, tercer tramo Bernalo)", () =>
       noches: 1,
     });
     esperarValido(dentro);
-    assert.equal(dentro.totalNetoPorNoche, 300_000);
+    assert.equal(dentro.totalBrutoPorNoche, 300_000);
     assert.equal(dentro.suplementosAplicados.length, 0);
 
     const fuera = cotizarUnidadAlojamiento({
@@ -1440,7 +1486,7 @@ describe("menor con tarifa de adulto (11-17 años, tercer tramo Bernalo)", () =>
       noches: 1,
     });
     esperarValido(fuera);
-    assert.equal(fuera.totalNetoPorNoche, 300_000 + 50_000);
+    assert.equal(fuera.totalBrutoPorNoche, 300_000 + 50_000);
     assert.equal(fuera.suplementosAplicados[0].tipo, "adulto_adicional");
   });
 });
@@ -1467,6 +1513,7 @@ describe("periodicidad de cobros (punto 2) — infante, la única tarifa ambigua
     return {
       id: "t-periodicidad",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 100_000, infante: 30_000, ...(periodicidadInfante ? { periodicidadInfante } : {}) },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1479,16 +1526,16 @@ describe("periodicidad de cobros (punto 2) — infante, la única tarifa ambigua
   test("alojamiento $100.000 por noche × 3 noches + seguro $30.000 por estadía → total $330.000", () => {
     const r = cotizarUnidadAlojamiento({ tarifa: tarifaConInfante("por_estadia"), distribucion: distribucionConInfante, noches: 3 });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 100_000); // solo la línea de adulto es por noche
-    assert.equal(r.totalPorEstadia, 30_000); // el seguro, cobrado UNA sola vez
+    assert.equal(r.totalBrutoPorNoche, 100_000); // solo la línea de adulto es por noche
+    assert.equal(r.totalBrutoPorEstadia, 30_000); // el seguro, cobrado UNA sola vez
     assert.equal(r.totalNeto, 330_000);
   });
 
   test("seguro $30.000 por noche configurado explícitamente → total $390.000", () => {
     const r = cotizarUnidadAlojamiento({ tarifa: tarifaConInfante("por_noche"), distribucion: distribucionConInfante, noches: 3 });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 130_000); // 100.000 + 30.000, ambos por noche
-    assert.equal(r.totalPorEstadia, 0);
+    assert.equal(r.totalBrutoPorNoche, 130_000); // 100.000 + 30.000, ambos por noche
+    assert.equal(r.totalBrutoPorEstadia, 0);
     assert.equal(r.totalNeto, 390_000);
   });
 
@@ -1503,6 +1550,7 @@ describe("periodicidad de cobros (punto 2) — infante, la única tarifa ambigua
     const tarifa: TarifaAlojamiento = {
       id: "t-sin-infante",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 100_000, periodicidadInfante: "por_noche" },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1532,7 +1580,7 @@ describe("periodicidad de cobros (punto 2) — infante, la única tarifa ambigua
     const sumaPorNoche = snap.desglose.filter((l) => l.periodicidad === "por_noche").reduce((a, l) => a + l.valorTotal, 0);
     const sumaPorEstadia = snap.desglose.filter((l) => l.periodicidad === "por_estadia").reduce((a, l) => a + l.valorTotal, 0);
     assert.equal(sumaPorNoche * snap.noches + sumaPorEstadia, snap.totalNeto);
-    assert.equal(snap.totalPorEstadia, sumaPorEstadia);
+    assert.equal(snap.totalBrutoPorEstadia, sumaPorEstadia);
   });
 
   // ───────────────────────────────────────────────────────────────────────
@@ -1548,6 +1596,7 @@ describe("periodicidad de cobros (punto 2) — infante, la única tarifa ambigua
     const tarifa: TarifaAlojamiento = {
       id: "t-bernalo-infante-confirmado",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 100_000, infante: 30_000, periodicidadInfante: "por_noche" },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1558,8 +1607,8 @@ describe("periodicidad de cobros (punto 2) — infante, la única tarifa ambigua
 
     const r = cotizarUnidadAlojamiento({ tarifa, distribucion, noches: 3 });
     esperarValido(r);
-    assert.equal(r.totalNetoPorNoche, 130_000); // 100.000 (adulto) + 30.000 (infante), ambos por noche
-    assert.equal(r.totalPorEstadia, 0);
+    assert.equal(r.totalBrutoPorNoche, 130_000); // 100.000 (adulto) + 30.000 (infante), ambos por noche
+    assert.equal(r.totalBrutoPorEstadia, 0);
     assert.equal(r.totalNeto, 390_000);
 
     const snap = construirSnapshotAlojamiento(r);
@@ -1586,6 +1635,7 @@ describe("sin asignación proporcional al número de adultos (punto 3)", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t-enorme",
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 500_000 },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 2 },
@@ -1607,6 +1657,7 @@ describe("sin asignación proporcional al número de adultos (punto 3)", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t-limite",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 1 },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1622,6 +1673,7 @@ describe("sin asignación proporcional al número de adultos (punto 3)", () => {
     const tarifa: TarifaAlojamiento = {
       id: "t-limite-mas-uno",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 1 },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1642,6 +1694,7 @@ describe("sin asignación proporcional al número de adultos (punto 3)", () => {
     const tarifaHabitacion = (paxIncluidos: number, maxPax: number): TarifaAlojamiento => ({
       id: `t-${maxPax}`,
       unidadCobro: "habitacion",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 500_000 },
       capacidad: { minPax: 1, maxPax, paxIncluidos },
@@ -1662,8 +1715,8 @@ describe("sin asignación proporcional al número de adultos (punto 3)", () => {
     esperarValido(pocos);
     esperarValido(muchos);
     // En ambos casos: 2 adultos extra × 10.000 = 20.000 sobre la base.
-    assert.equal(pocos.totalNetoPorNoche, 500_000 + 20_000);
-    assert.equal(muchos.totalNetoPorNoche, 500_000 + 20_000);
+    assert.equal(pocos.totalBrutoPorNoche, 500_000 + 20_000);
+    assert.equal(muchos.totalBrutoPorNoche, 500_000 + 20_000);
   });
 });
 
@@ -1679,6 +1732,7 @@ describe("límite comercial sobre el TOTAL de ocupantes de la unidad (ronda 6)",
   const tarifaBase = (): TarifaAlojamiento => ({
     id: "t-total-ocupantes",
     unidadCobro: "persona",
+    comisionPct: 0,
     versionTarifario: V,
     valores: { adulto: 1, nino: 1 },
     capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1735,6 +1789,7 @@ describe("el resultado queda totalmente desligado de la entrada (ronda 6 — cop
     const tarifa: TarifaAlojamiento = {
       id: "t-desligado",
       unidadCobro: "persona",
+      comisionPct: 0,
       versionTarifario: V,
       valores: { adulto: 100_000, infante: 30_000, periodicidadInfante: "por_noche" },
       capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
@@ -1792,5 +1847,175 @@ describe("el resultado queda totalmente desligado de la entrada (ronda 6 — cop
     assert.equal(snap.menoresClasificados[0].reglaAplicada.categoria, "infante");
     assert.equal(snap.menoresClasificados[0].reglaAplicada.edadMaxAnios, 3);
     assert.equal(snap.totalNeto, 390_000);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// § Comisión Bernalo (ronda 8, confirmada): la tarifa capturada es BRUTA/
+// comisionable. `comisionPct` se aplica UNA vez sobre el total bruto YA
+// completo (base + niños + infantes + suplementos, según unidadCobro) —
+// totalNeto = Math.round(totalBruto × (1 − comisionPct/100)),
+// valorComision = totalBruto − totalNeto (derivado por resta, nunca
+// calculado aparte).
+// ─────────────────────────────────────────────────────────────────────────
+describe("comisión Bernalo (ronda 8) — bruto, comisión y neto", () => {
+  function tarifaPersonaBase(comisionPct: number): TarifaAlojamiento {
+    return {
+      id: "t-comision-persona",
+      versionTarifario: "bernalo-2026",
+      unidadCobro: "persona",
+      comisionPct,
+      valores: { adulto: 500_000 },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: { reglas: [] },
+    };
+  }
+
+  test("500.000 al 20% de comisión => bruto 500.000, comisión 100.000, neto 400.000", () => {
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaPersonaBase(20),
+      distribucion: { unidades: [{ adultos: 1, menores: [] }] },
+      noches: 1,
+    });
+    esperarValido(r);
+    assert.equal(r.totalBruto, 500_000);
+    assert.equal(r.comisionPct, 20);
+    assert.equal(r.valorComision, 100_000);
+    assert.equal(r.totalNeto, 400_000);
+    assert.equal(r.valorComision + r.totalNeto, r.totalBruto);
+  });
+
+  test("0% de comisión es válido: bruto y neto coinciden exactamente, comisión en $0", () => {
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaPersonaBase(0),
+      distribucion: { unidades: [{ adultos: 2, menores: [] }] },
+      noches: 3,
+    });
+    esperarValido(r);
+    assert.equal(r.totalBruto, 3_000_000);
+    assert.equal(r.valorComision, 0);
+    assert.equal(r.totalNeto, r.totalBruto);
+  });
+
+  test("persona: base + niño + infante — la comisión se aplica sobre la SUMA completa, no línea por línea", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t-comision-persona-menores",
+      versionTarifario: "bernalo-2026",
+      unidadCobro: "persona",
+      comisionPct: 20,
+      valores: { adulto: 100_000, nino: 70_000, infante: 30_000, periodicidadInfante: "por_noche" },
+      capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
+      suplementos: [],
+      reglaMenores: {
+        reglas: [
+          { categoria: "infante", edadMinAnios: 0, edadMaxAnios: 3 },
+          { categoria: "nino", edadMinAnios: 4, edadMaxAnios: 10 },
+        ],
+      },
+    };
+    const r = cotizarUnidadAlojamiento({
+      tarifa,
+      distribucion: { unidades: [{ adultos: 1, menores: [{ edadAnios: 6 }, { edadAnios: 2 }] }] },
+      noches: 1,
+    });
+    esperarValido(r);
+    // Bruto = 100.000 (adulto) + 70.000 (niño) + 30.000 (infante) = 200.000
+    assert.equal(r.totalBruto, 200_000);
+    assert.equal(r.valorComision, 40_000); // 20% de 200.000, no de cada línea por separado
+    assert.equal(r.totalNeto, 160_000);
+  });
+
+  test("habitación con suplementos: la comisión se aplica sobre base + suplementos ya sumados", () => {
+    const tarifa: TarifaAlojamiento = {
+      id: "t-comision-habitacion-suplementos",
+      versionTarifario: "bernalo-2026",
+      unidadCobro: "habitacion",
+      comisionPct: 10,
+      valores: { adulto: 400_000 },
+      capacidad: { minPax: 1, maxPax: 4, paxIncluidos: 2 },
+      suplementos: [{ tipo: "adulto_adicional", valor: 80_000 }],
+      reglaMenores: { reglas: [] },
+    };
+    const r = cotizarUnidadAlojamiento({
+      tarifa,
+      distribucion: { unidades: [{ adultos: 3, menores: [] }] }, // 1 adulto extra sobre paxIncluidos:2
+      noches: 1,
+    });
+    esperarValido(r);
+    // Bruto = 400.000 (base) + 80.000 (1 adulto adicional) = 480.000
+    assert.equal(r.totalBruto, 480_000);
+    assert.equal(r.valorComision, 48_000); // 10% de 480.000
+    assert.equal(r.totalNeto, 432_000);
+  });
+
+  test("comisiónPct vacío/NaN, negativo, 100, mayor que 100 e Infinity se rechazan con configuracion_invalida", () => {
+    const casos = [NaN, -1, 100, 150, Infinity, -Infinity];
+    for (const comisionPct of casos) {
+      const r = cotizarUnidadAlojamiento({
+        tarifa: tarifaPersonaBase(comisionPct),
+        distribucion: { unidades: [{ adultos: 1, menores: [] }] },
+        noches: 1,
+      });
+      esperarCodigo(r, "configuracion_invalida");
+    }
+  });
+
+  test("comisionPct ausente (payload sin la clave) se rechaza — nunca se interpreta como 0%", () => {
+    const tarifaSinComision = { ...tarifaPersonaBase(0) } as Partial<TarifaAlojamiento>;
+    delete tarifaSinComision.comisionPct;
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaSinComision,
+      distribucion: { unidades: [{ adultos: 1, menores: [] }] },
+      noches: 1,
+    });
+    esperarCodigo(r, "configuracion_invalida");
+  });
+
+  test("redondeo: una comisión que no divide exacto nunca rompe la igualdad bruto = comisión + neto", () => {
+    // 333.333 al 33% => 333.333 × 0.67 = 223.333,11 → Math.round = 223.333
+    const tarifa: TarifaAlojamiento = { ...tarifaPersonaBase(33), valores: { adulto: 333_333 } };
+    const r = cotizarUnidadAlojamiento({
+      tarifa,
+      distribucion: { unidades: [{ adultos: 1, menores: [] }] },
+      noches: 1,
+    });
+    esperarValido(r);
+    assert.equal(r.totalBruto, 333_333);
+    assert.equal(r.totalNeto, Math.round(333_333 * (1 - 33 / 100)));
+    assert.equal(r.valorComision + r.totalNeto, r.totalBruto);
+  });
+
+  test("el snapshot congela comisionPct/totalBruto/valorComision/totalNeto en ajusteComercial (estructura versionable)", () => {
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaPersonaBase(25),
+      distribucion: { unidades: [{ adultos: 1, menores: [] }] },
+      noches: 2,
+    });
+    esperarValido(r);
+    const snap = construirSnapshotAlojamiento(r);
+    assert.equal(snap.totalBruto, 1_000_000);
+    assert.equal(snap.totalNeto, 750_000);
+    assert.deepEqual(snap.ajusteComercial, {
+      tipo: "comision_incluida",
+      version: 1,
+      comisionPct: 25,
+      totalBruto: 1_000_000,
+      valorComision: 250_000,
+      totalNeto: 750_000,
+    });
+  });
+
+  test("datosFuente (dentro del ResultadoValido) también lleva comisionPct/totalBruto/valorComision/totalNeto", () => {
+    const r = cotizarUnidadAlojamiento({
+      tarifa: tarifaPersonaBase(15),
+      distribucion: { unidades: [{ adultos: 1, menores: [] }] },
+      noches: 1,
+    });
+    esperarValido(r);
+    assert.equal(r.datosFuente.comisionPct, 15);
+    assert.equal(r.datosFuente.totalBruto, 500_000);
+    assert.equal(r.datosFuente.valorComision, 75_000);
+    assert.equal(r.datosFuente.totalNeto, 425_000);
   });
 });

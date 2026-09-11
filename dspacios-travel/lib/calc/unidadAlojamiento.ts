@@ -14,16 +14,59 @@
 //   - CERO integración con `tarifa_hotel`, `computo.ts`, reservar,
 //     cotizaciones o contratos. Este motor no se llama todavía desde
 //     ningún flujo real.
-//   - CERO day use, paquetes de precio fijo, promociones o comisión
-//     confirmada. El código `requiere_cotizacion_manual` existe como forma
-//     (para que un PR futuro lo use al integrar `hotel_temporadas.solo_paquete`)
-//     pero este motor nunca lo devuelve por sí solo — no hay lógica de
-//     paquetes que decidir aquí.
-//   - La comisión/ajuste comercial en el snapshot es SIEMPRE `null` en este
-//     PR — no se ejecuta ninguna fórmula (`totalVenta = totalNeto + x`).
-//     La regla 20%/10% del PDF no está confirmada y ni siquiera sabemos si
-//     será markup, comisión incluida en PVP o descuento sobre rack — eso se
-//     define en un PR futuro cuando el dueño confirme la semántica.
+//   - CERO day use, paquetes de precio fijo ni promociones. El código
+//     `requiere_cotizacion_manual` existe como forma (para que un PR futuro
+//     lo use al integrar `hotel_temporadas.solo_paquete`) pero este motor
+//     nunca lo devuelve por sí solo — no hay lógica de paquetes que decidir
+//     aquí.
+//   - La COMISIÓN Bernalo YA está confirmada (semántica cerrada con el
+//     dueño, ver `TarifaAlojamiento.comisionPct` y la ronda 8 más abajo): la
+//     tarifa capturada es BRUTA/comisionable, la comisión depende de la
+//     temporada y se aplica UNA sola vez sobre el total bruto COMPLETO (base
+//     + niños + infantes + suplementos) — nunca línea por línea ni noche por
+//     noche. Lo que SIGUE sin confirmar/integrar es todo lo comercial
+//     posterior: el MK del paquete (motor existente, `lib/calc/paquetes.ts`,
+//     fuera de esta fase) y cualquier integración con Reservar/paquetes/
+//     tarifario público/cotizaciones/contratos — el neto que produce este
+//     motor será, más adelante, el COSTO que consuma esa integración, pero
+//     esta fase no la construye.
+//
+// Revisión de PR (ronda 8, confirmación comercial de la comisión): la tarifa
+// Bernalo capturada es BRUTA/comisionable. Ejemplo: bruto 500.000, comisión
+// 20%, neto a pagar 400.000. La comisión (`comisionPct`, obligatoria en la
+// tarifa, validada [0,100) — ver `validarTarifaNumerica`) se aplica UNA sola
+// vez sobre el TOTAL BRUTO ya completo (`totalBruto = totalBrutoPorNoche ×
+// noches + totalBrutoPorEstadia` — la MISMA suma que antes de esta ronda se
+// llamaba `totalNeto`; el desglose SIEMPRE representó importes BRUTOS, el
+// nombre del campo agregado simplemente no lo dejaba explícito):
+//   totalNeto = Math.round(totalBruto × (1 − comisionPct / 100))
+//   valorComision = totalBruto − totalNeto   (nunca se calcula por separado
+//                                              — se DERIVA de la resta, para
+//                                              conservar la igualdad exacta
+//                                              bruto = comisión + neto sin
+//                                              importar el redondeo)
+// `ResultadoValido` gana `totalBruto`/`comisionPct`/`valorComision`, y
+// `totalNeto` CAMBIA DE SIGNIFICADO: antes del total bruto sin comisión,
+// ahora el neto DESPUÉS de comisión (es el nombre que el resto del sistema
+// ya usaba para "lo que hay que pagar", así que se conserva el nombre y se
+// corrige su valor, en vez de agregar un campo más). `verificarConsistencia-
+// Resultado` valida ambas capas: que el desglose cuadre contra `totalBruto`,
+// y que `totalNeto`/`valorComision` sean exactamente los derivados de
+// `totalBruto`/`comisionPct`. `SnapshotAlojamiento.ajusteComercial` deja de
+// ser siempre `null`: ahora es una estructura versionable
+// (`AjusteComercialComisionIncluida`, `version: 1`) con el porcentaje y los
+// tres montos congelados.
+//
+// Revisión de PR (ronda 9, corrección de nombre — sin cambiar la fórmula):
+// `totalNetoPorNoche`/`totalPorEstadia` se renombraron a
+// `totalBrutoPorNoche`/`totalBrutoPorEstadia`. Ambos SIEMPRE contuvieron
+// importes BRUTOS (el desglose nunca tuvo la comisión aplicada) — el nombre
+// viejo era una contradicción semántica real, no solo cosmética: una futura
+// integración de paquetes podría haber leído `totalNetoPorNoche` confiando
+// en que ya traía la comisión descontada, cuando en realidad es exactamente
+// el bruto por noche. Sin alias: no hay integración comercial todavía que
+// necesite compatibilidad, así que conservar el nombre viejo solo
+// perpetuaría la ambigüedad que esta ronda corrige.
 //
 // Revisión de PR (ronda 2, sobre el PR #269 en draft): la distribución por
 // unidad reemplaza la cuenta agregada — cada habitación/pareja/apartamento
@@ -72,7 +115,7 @@
 //   1) `tarifa.valores.adulto` es SIEMPRE obligatorio y se valida como
 //      entero seguro >= 0 — antes `{ valores: {} }` pasaba de largo (el
 //      bucle genérico sobre `Object.entries` simplemente no encontraba
-//      nada que objetar) y terminaba en `ok:true` con `totalNetoPorNoche:
+//      nada que objetar) y terminaba en `ok:true` con `totalBrutoPorNoche:
 //      NaN`. Ahora se exige su presencia en `validarFormaEntrada` (forma)
 //      y su rango en `validarEntrada` (`esEnteroSeguro`).
 //   2) `esEnteroValido` se volvió `esEnteroSeguro` (`Number.isSafeInteger`,
@@ -104,7 +147,7 @@
 //   6) `verificarConsistenciaResultado`: aserción interna, corre justo
 //      antes de devolver `ok:true` — recalcula cada línea (cantidad ×
 //      valorUnitario === valorTotal, con enteros seguros), la suma del
-//      desglose contra `totalNetoPorNoche`, y `totalNetoPorNoche × noches`
+//      desglose contra `totalBrutoPorNoche`, y `totalBrutoPorNoche × noches`
 //      contra `totalNeto`. Si algo no cuadra, `configuracion_invalida` en
 //      vez de `ok:true`.
 //
@@ -128,10 +171,10 @@
 //      diferencia de adulto/niño, inequívocamente por noche. Nueva
 //      `PeriodicidadCobro` ("por_noche"|"por_estadia"): `infante`, si está
 //      configurado, EXIGE `periodicidadInfante` explícito (sin default).
-//      Cada `DesgloseLinea` declara su periodicidad; `totalNetoPorNoche`
+//      Cada `DesgloseLinea` declara su periodicidad; `totalBrutoPorNoche`
 //      solo suma líneas "por_noche" (se multiplica × noches),
-//      `totalPorEstadia` (nuevo campo) suma las "por_estadia" (una sola
-//      vez): `totalNeto = totalNetoPorNoche × noches + totalPorEstadia`.
+//      `totalBrutoPorEstadia` (nuevo campo) suma las "por_estadia" (una sola
+//      vez): `totalBruto = totalBrutoPorNoche × noches + totalBrutoPorEstadia`.
 //   3) Sin asignación proporcional a `adultos`. Se eliminó
 //      `Array.from({length: unidad.adultos})` en
 //      `aplicarSuplementosUnidad` — el reparto de `paxIncluidos` entre
@@ -297,6 +340,14 @@ export type TarifaAlojamiento = {
   capacidad: CapacidadUnidad;
   suplementos: SuplementoConfigurado[];
   reglaMenores: ReglaMenores; // {reglas:[]} si el hotel no tiene política de menores (ej. hoteles de pareja)
+  // Comisión Bernalo (ronda 8, confirmada): la tarifa capturada es BRUTA/
+  // comisionable — este porcentaje se aplica UNA vez sobre el total bruto
+  // COMPLETO (base + niños + infantes + suplementos, ya sumados) para
+  // derivar el neto a pagar. Depende de la temporada (por eso vive en la
+  // TARIFA, no en el hotel ni en una constante global). OBLIGATORIO: sin
+  // valor por defecto oculto — `validarFormaTarifa` la exige presente y
+  // `validarTarifaNumerica` la valida como número finito en [0, 100).
+  comisionPct: number;
   temporada?: string | null;
   categoria?: string | null; // tipo de habitación/apartamento
   alimentacion?: string | null;
@@ -375,25 +426,53 @@ export type DatosFuenteSnapshot = {
   categoria: string | null;
   alimentacion: string | null;
   fuente: { documento: string; pagina: number | null } | null;
+  // Comisión Bernalo (ronda 8): congelados en el mismo momento que el resto
+  // de `datosFuente` — ver `ResultadoValido` para la fórmula exacta.
+  comisionPct: number;
+  totalBruto: number;
+  valorComision: number;
+  totalNeto: number;
 };
 
 // ── Resultado válido ─────────────────────────────────────────────────────
-// `totalNetoPorNoche` es la suma de SOLO las líneas "por_noche" (se
-// multiplica por `noches`); `totalPorEstadia` es la suma de SOLO las
-// líneas "por_estadia" (se cobra una única vez). `totalNeto =
-// totalNetoPorNoche × noches + totalPorEstadia`. Mientras ninguna tarifa
-// configure `infante` con `periodicidadInfante: "por_estadia"`,
-// `totalPorEstadia` es siempre 0 y el comportamiento es idéntico al de
-// antes de esta ronda.
+// `totalBrutoPorNoche` es la suma de SOLO las líneas "por_noche" del
+// desglose (se multiplica por `noches`); `totalBrutoPorEstadia` es la suma de
+// SOLO las líneas "por_estadia" (se cobra una única vez). El desglose
+// representa SIEMPRE importes BRUTOS/comisionables — nunca netos — así que
+// `totalBruto = totalBrutoPorNoche × noches + totalBrutoPorEstadia` (misma
+// fórmula que antes de la ronda 8, cuando ese resultado se llamaba
+// `totalNeto`: el nombre no reflejaba que el desglose era bruto).
+//
+// Comisión Bernalo (ronda 8, confirmada — ver `TarifaAlojamiento.
+// comisionPct`): se aplica UNA sola vez sobre `totalBruto` completo (nunca
+// línea por línea ni noche por noche):
+//   totalNeto = Math.round(totalBruto × (1 − comisionPct / 100))
+//   valorComision = totalBruto − totalNeto   (derivado por resta, nunca
+//                                              calculado aparte, para que
+//                                              bruto = comisión + neto sea
+//                                              una igualdad EXACTA pase lo
+//                                              que pase con el redondeo)
+// `comisionPct`/`valorComision` son NUEVOS en esta ronda; `totalNeto` YA
+// EXISTÍA pero CAMBIA DE SIGNIFICADO: antes del bruto sin comisión (ahora
+// `totalBruto`), ahora el neto DESPUÉS de aplicar la comisión — se conserva
+// el nombre porque es el que el resto del sistema espera para "lo que hay
+// que pagar", y se corrige su valor en vez de agregar un campo más.
+// `verificarConsistenciaResultado` valida ambas capas antes de responder
+// `ok:true`: que el desglose cuadre contra `totalBruto`, y que
+// `totalNeto`/`valorComision` sean exactamente los derivados de
+// `totalBruto`/`comisionPct`.
 export type ResultadoValido = {
   ok: true;
   unidadCobro: UnidadCobro;
   cantidadUnidades: number;
   noches: number;
   desglose: DesgloseLinea[];
-  totalNetoPorNoche: number;
-  totalPorEstadia: number;
-  totalNeto: number; // totalNetoPorNoche × noches + totalPorEstadia
+  totalBrutoPorNoche: number;
+  totalBrutoPorEstadia: number;
+  totalBruto: number; // totalBrutoPorNoche × noches + totalBrutoPorEstadia (importe BRUTO/comisionable, antes de comisión)
+  comisionPct: number; // copia de `tarifa.comisionPct` en el momento del cálculo
+  valorComision: number; // totalBruto − totalNeto
+  totalNeto: number; // Math.round(totalBruto × (1 − comisionPct / 100)) — lo que hay que pagar
   menoresClasificados: MenorClasificado[];
   suplementosAplicados: SuplementoAplicado[];
   capacidadUtilizada: CapacidadUtilizadaUnidad[];
@@ -529,6 +608,16 @@ export function validarFormaTarifa(tarifaDesconocida: unknown): { tarifa: Tarifa
       "configuracion_invalida",
       '`tarifa.unidadCobro` debe ser "persona", "pareja", "habitacion" o "apartamento".',
       { unidadCobro: tarifa.unidadCobro }
+    );
+  }
+  // Obligatoria como `id`/`versionTarifario`: sin ella no hay comisión que
+  // aplicar y no existe un 0% implícito — un payload que no la traiga (ej.
+  // uno anterior a esta ronda) se rechaza aquí, nunca se interpreta como
+  // "sin comisión".
+  if (typeof tarifa.comisionPct !== "number") {
+    return resultadoBloqueado(
+      "configuracion_invalida",
+      "`tarifa.comisionPct` es obligatorio y debe ser un número — la comisión Bernalo no tiene un valor por defecto."
     );
   }
   if (!esObjeto(tarifa.valores)) {
@@ -905,7 +994,7 @@ export function validarTarifaNumerica(
   // `adulto` es SIEMPRE obligatorio (ya se exigió su tipo en
   // `validarFormaEntrada`; aquí se exige que además sea un entero SEGURO —
   // rechaza NaN, Infinity y valores mayores a `Number.MAX_SAFE_INTEGER`,
-  // que antes de esta ronda pasaban sin más y producían `totalNetoPorNoche:
+  // que antes de esta ronda pasaban sin más y producían `totalBrutoPorNoche:
   // NaN` con `ok: true`).
   if (!esEnteroSeguro(tarifa.valores.adulto) || tarifa.valores.adulto < 0) {
     return resultadoBloqueado("configuracion_invalida", "`tarifa.valores.adulto` debe ser un entero seguro >= 0.", {
@@ -936,6 +1025,17 @@ export function validarTarifaNumerica(
       "configuracion_invalida",
       "`tarifa.valores.periodicidadInfante` no tiene sentido sin `infante` configurado."
     );
+  }
+
+  // Comisión Bernalo (ronda 8): [0, 100) — no `esEnteroSeguro` a propósito,
+  // una comisión puede ser fraccionaria (ej. 17.5%), no solo entera. 100%
+  // dejaría un neto de $0 (deja de ser una tarifa vendible) y un valor mayor
+  // no tiene sentido comercial; ambos se rechazan explícitamente, nunca se
+  // recortan (`clamp`) a un valor "razonable" en silencio.
+  if (!Number.isFinite(tarifa.comisionPct) || tarifa.comisionPct < 0 || tarifa.comisionPct >= 100) {
+    return resultadoBloqueado("configuracion_invalida", "`tarifa.comisionPct` debe ser un número finito >= 0 y < 100.", {
+      comisionPct: tarifa.comisionPct,
+    });
   }
 
   const { minPax, maxPax, paxIncluidos } = tarifa.capacidad;
@@ -1354,18 +1454,32 @@ export function cotizarUnidadAlojamiento(entradaDesconocida: unknown): Resultado
       : calcularNoPersona(tarifa, distribucion, noches, mapaSuplementos);
   if (esBloqueado(calculo)) return calculo;
 
+  // Comisión Bernalo (ronda 8): se DERIVA aquí, antes de la aserción de
+  // consistencia — así `verificarConsistenciaResultado` puede validar en un
+  // solo paso tanto el bruto (desglose → totalBruto) como la comisión
+  // (totalBruto/comisionPct → valorComision/totalNeto). `comisionPct` ya se
+  // validó finito en [0,100) en `validarTarifaNumerica`, dentro de
+  // `validarEntrada`, más arriba. `valorComision` se deriva por RESTA (nunca
+  // se calcula por separado) para que `totalBruto = valorComision +
+  // totalNeto` sea una igualdad EXACTA sin importar el redondeo de
+  // `Math.round`.
+  const totalNeto = Math.round(calculo.totalBruto * (1 - tarifa.comisionPct / 100));
+  const valorComision = calculo.totalBruto - totalNeto;
+  const conComision = { ...calculo, comisionPct: tarifa.comisionPct, valorComision, totalNeto };
+
   // Aserción interna antes de devolver `ok:true`: recalcula cada línea y
-  // cada total con aritmética SEGURA y los compara contra lo que
-  // `calculo` produjo. Antes de esta ronda, un desbordamiento de
-  // `Number.MAX_SAFE_INTEGER` en cualquier multiplicación/suma (valor ×
-  // cantidad, suplemento × cantidad, total × noches) simplemente perdía
-  // precisión en silencio y el motor igual respondía `ok:true`.
-  const inconsistencia = verificarConsistenciaResultado(calculo);
+  // cada total BRUTO con aritmética SEGURA (comparados contra lo que
+  // `calculo` produjo) y, además, recalcula la comisión/neto/valorComision
+  // desde `totalBruto`/`comisionPct` y los compara contra lo que se acaba
+  // de derivar arriba. Antes de la ronda 8 esta función solo cubría el
+  // bruto; ahora también cierra la capa de comisión en el mismo lugar.
+  const inconsistencia = verificarConsistenciaResultado(conComision);
   if (inconsistencia) return inconsistencia;
 
   // `datosFuente` se arma UNA sola vez, aquí, con la MISMA tarifa/
   // distribución que efectivamente produjeron `calculo` — no hay otro
-  // punto de entrada que pueda mezclar datos de otro cálculo.
+  // punto de entrada que pueda mezclar datos de otro cálculo. Incluye la
+  // comisión/bruto/neto ya derivados y verificados arriba.
   const datosFuente: DatosFuenteSnapshot = clonarProfundo({
     tarifaId: tarifa.id,
     versionTarifario: tarifa.versionTarifario,
@@ -1378,23 +1492,31 @@ export function cotizarUnidadAlojamiento(entradaDesconocida: unknown): Resultado
     categoria: tarifa.categoria ?? null,
     alimentacion: tarifa.alimentacion ?? null,
     fuente: tarifa.fuente ?? null,
+    comisionPct: tarifa.comisionPct,
+    totalBruto: calculo.totalBruto,
+    valorComision,
+    totalNeto,
   });
 
   // Ronda 6: `calculo` puede seguir conservando referencias anidadas hacia
   // la entrada ORIGINAL (ej. `menoresClasificados[].reglaAplicada`, que
   // `clasificarMenores` toma directo de `tarifa.reglaMenores.reglas`, sin
   // copiar). `datosFuente` ya se clona arriba, pero eso no protege el
-  // resto de `calculo` — si el llamador muta la entrada después de
+  // resto de `conComision` — si el llamador muta la entrada después de
   // cotizar (antes de construir el snapshot), esa mutación se filtraría
   // al resultado ya devuelto. Se clona el objeto completo para que
   // `ResultadoValido` quede totalmente desligado de la entrada.
-  return clonarProfundo({ ...calculo, datosFuente });
+  return clonarProfundo({ ...conComision, datosFuente });
 }
 
-// El núcleo del cálculo todavía no trae `datosFuente` — lo agrega el
-// orquestador, una sola vez, para que sea imposible construirlo con datos
-// de otra tarifa/distribución.
-type ResultadoCalculoCore = Omit<ResultadoValido, "datosFuente"> | ResultadoBloqueado;
+// El núcleo del cálculo todavía no trae `datosFuente` NI la comisión
+// (`comisionPct`/`valorComision`/`totalNeto`) — el orquestador agrega ambas
+// cosas una sola vez, después de validar el bruto con
+// `verificarConsistenciaResultado`, para que sea imposible construirlas con
+// datos de otra tarifa/distribución o con un bruto todavía no verificado.
+type ResultadoCalculoCore =
+  | Omit<ResultadoValido, "datosFuente" | "comisionPct" | "valorComision" | "totalNeto">
+  | ResultadoBloqueado;
 
 function calcularPersona(tarifa: TarifaAlojamiento, distribucion: DistribucionUnidades, noches: number): ResultadoCalculoCore {
   let totalAdultos = 0;
@@ -1437,7 +1559,7 @@ function calcularPersona(tarifa: TarifaAlojamiento, distribucion: DistribucionUn
   }
 
   const desglose = construirDesglosePersona(tarifa, totalAdultos, menoresConValor);
-  const { totalNetoPorNoche, totalPorEstadia } = dividirPorPeriodicidad(desglose);
+  const { totalBrutoPorNoche, totalBrutoPorEstadia } = dividirPorPeriodicidad(desglose);
 
   return {
     ok: true,
@@ -1445,9 +1567,9 @@ function calcularPersona(tarifa: TarifaAlojamiento, distribucion: DistribucionUn
     cantidadUnidades: totalAdultos,
     noches,
     desglose,
-    totalNetoPorNoche,
-    totalPorEstadia,
-    totalNeto: totalNetoPorNoche * noches + totalPorEstadia,
+    totalBrutoPorNoche,
+    totalBrutoPorEstadia,
+    totalBruto: totalBrutoPorNoche * noches + totalBrutoPorEstadia,
     menoresClasificados: menoresConValor,
     suplementosAplicados: [],
     capacidadUtilizada,
@@ -1488,7 +1610,7 @@ function calcularNoPersona(
     });
   }
 
-  const { totalNetoPorNoche, totalPorEstadia } = dividirPorPeriodicidad(desglose);
+  const { totalBrutoPorNoche, totalBrutoPorEstadia } = dividirPorPeriodicidad(desglose);
 
   return {
     ok: true,
@@ -1496,9 +1618,9 @@ function calcularNoPersona(
     cantidadUnidades: distribucion.unidades.length,
     noches,
     desglose,
-    totalNetoPorNoche,
-    totalPorEstadia,
-    totalNeto: totalNetoPorNoche * noches + totalPorEstadia,
+    totalBrutoPorNoche,
+    totalBrutoPorEstadia,
+    totalBruto: totalBrutoPorNoche * noches + totalBrutoPorEstadia,
     menoresClasificados,
     suplementosAplicados,
     capacidadUtilizada,
@@ -1509,17 +1631,18 @@ function calcularNoPersona(
 // (y en las líneas de "adulto"/"nino" de persona) TODO es "por_noche" hoy
 // — "por_estadia" solo puede aparecer si una tarifa configura
 // `infante` con `periodicidadInfante: "por_estadia"`.
-function dividirPorPeriodicidad(desglose: DesgloseLinea[]): { totalNetoPorNoche: number; totalPorEstadia: number } {
-  let totalNetoPorNoche = 0;
-  let totalPorEstadia = 0;
+function dividirPorPeriodicidad(desglose: DesgloseLinea[]): { totalBrutoPorNoche: number; totalBrutoPorEstadia: number } {
+  let totalBrutoPorNoche = 0;
+  let totalBrutoPorEstadia = 0;
   for (const l of desglose) {
-    if (l.periodicidad === "por_estadia") totalPorEstadia += l.valorTotal;
-    else totalNetoPorNoche += l.valorTotal;
+    if (l.periodicidad === "por_estadia") totalBrutoPorEstadia += l.valorTotal;
+    else totalBrutoPorNoche += l.valorTotal;
   }
-  return { totalNetoPorNoche, totalPorEstadia };
+  return { totalBrutoPorNoche, totalBrutoPorEstadia };
 }
 
-// ── Aserción interna de consistencia (punto 6 + parte del punto 2) ─────
+// ── Aserción interna de consistencia (punto 6 + parte del punto 2; ronda 8
+// extiende esta MISMA función a la capa de comisión) ────────────────────
 // Único punto de salida "sí": recalcula cada línea y cada total con
 // aritmética SEGURA (`esEnteroSeguro`) y los compara contra lo que
 // `calcularPersona`/`calcularNoPersona` ya produjeron. Cubre, en un solo
@@ -1528,7 +1651,20 @@ function dividirPorPeriodicidad(desglose: DesgloseLinea[]): { totalNetoPorNoche:
 // "posible desbordamiento" por cada función interna. Si algo no cuadra —
 // por desbordamiento de `Number.MAX_SAFE_INTEGER` o por cualquier otra
 // inconsistencia — el motor NUNCA responde `ok:true`.
-function verificarConsistenciaResultado(nucleo: Omit<ResultadoValido, "datosFuente">): ResultadoBloqueado | null {
+//
+// Ronda 8 (comisión Bernalo): el desglose SIEMPRE representa importes
+// BRUTOS/comisionables — así que la primera mitad de esta función (sin
+// cambios en su lógica) sigue verificando el desglose contra `totalBruto`
+// (antes se llamaba `totalNeto`, mismo cálculo, nombre corregido). La
+// segunda mitad, nueva, recalcula la comisión desde cero
+// (`totalBruto`/`comisionPct` → `valorComision`/`totalNeto` esperados) y
+// los compara contra lo que el orquestador ya derivó — así un futuro cambio
+// que rompa la fórmula de comisión (o que la aplique dos veces, o la
+// aplique por línea) queda atrapado aquí, en el mismo punto de salida "sí"
+// que ya protege el resto del motor.
+function verificarConsistenciaResultado(
+  nucleo: Omit<ResultadoValido, "datosFuente">
+): ResultadoBloqueado | null {
   let sumaPorNoche = 0;
   let sumaPorEstadia = 0;
   for (const l of nucleo.desglose) {
@@ -1562,36 +1698,70 @@ function verificarConsistenciaResultado(nucleo: Omit<ResultadoValido, "datosFuen
     if (l.periodicidad === "por_estadia") sumaPorEstadia = nuevaSuma;
     else sumaPorNoche = nuevaSuma;
   }
-  if (sumaPorNoche !== nucleo.totalNetoPorNoche) {
-    return resultadoBloqueado("configuracion_invalida", "La suma de las líneas 'por_noche' no coincide con `totalNetoPorNoche`.", {
+  if (sumaPorNoche !== nucleo.totalBrutoPorNoche) {
+    return resultadoBloqueado("configuracion_invalida", "La suma de las líneas 'por_noche' no coincide con `totalBrutoPorNoche`.", {
       sumaPorNoche,
-      totalNetoPorNoche: nucleo.totalNetoPorNoche,
+      totalBrutoPorNoche: nucleo.totalBrutoPorNoche,
     });
   }
-  if (sumaPorEstadia !== nucleo.totalPorEstadia) {
-    return resultadoBloqueado("configuracion_invalida", "La suma de las líneas 'por_estadia' no coincide con `totalPorEstadia`.", {
+  if (sumaPorEstadia !== nucleo.totalBrutoPorEstadia) {
+    return resultadoBloqueado("configuracion_invalida", "La suma de las líneas 'por_estadia' no coincide con `totalBrutoPorEstadia`.", {
       sumaPorEstadia,
-      totalPorEstadia: nucleo.totalPorEstadia,
+      totalBrutoPorEstadia: nucleo.totalBrutoPorEstadia,
     });
   }
   if (!esEnteroSeguro(nucleo.noches) || nucleo.noches < 0) {
     return resultadoBloqueado("configuracion_invalida", "`noches` no es un entero seguro.", { noches: nucleo.noches });
   }
-  const totalPorNocheEsperado = nucleo.totalNetoPorNoche * nucleo.noches;
-  if (!esEnteroSeguro(totalPorNocheEsperado)) {
-    return resultadoBloqueado("configuracion_invalida", "`totalNetoPorNoche` × `noches` excede un entero seguro.", {
-      totalNetoPorNoche: nucleo.totalNetoPorNoche,
+  const totalBrutoPorNocheEsperado = nucleo.totalBrutoPorNoche * nucleo.noches;
+  if (!esEnteroSeguro(totalBrutoPorNocheEsperado)) {
+    return resultadoBloqueado("configuracion_invalida", "`totalBrutoPorNoche` × `noches` excede un entero seguro.", {
+      totalBrutoPorNoche: nucleo.totalBrutoPorNoche,
       noches: nucleo.noches,
     });
   }
-  const totalEsperado = totalPorNocheEsperado + nucleo.totalPorEstadia;
-  if (!esEnteroSeguro(totalEsperado) || totalEsperado !== nucleo.totalNeto) {
+  const totalBrutoEsperado = totalBrutoPorNocheEsperado + nucleo.totalBrutoPorEstadia;
+  if (!esEnteroSeguro(totalBrutoEsperado) || totalBrutoEsperado !== nucleo.totalBruto) {
     return resultadoBloqueado(
       "configuracion_invalida",
-      "`totalNetoPorNoche` × `noches` + `totalPorEstadia` no coincide con `totalNeto`, o excede un entero seguro.",
-      { totalNetoPorNoche: nucleo.totalNetoPorNoche, noches: nucleo.noches, totalPorEstadia: nucleo.totalPorEstadia, totalNeto: nucleo.totalNeto }
+      "`totalBrutoPorNoche` × `noches` + `totalBrutoPorEstadia` no coincide con `totalBruto`, o excede un entero seguro.",
+      { totalBrutoPorNoche: nucleo.totalBrutoPorNoche, noches: nucleo.noches, totalBrutoPorEstadia: nucleo.totalBrutoPorEstadia, totalBruto: nucleo.totalBruto }
     );
   }
+
+  // ── Capa de comisión (ronda 8) ─────────────────────────────────────────
+  // Redundante a propósito con `validarTarifaNumerica` (que ya validó
+  // `comisionPct` antes de llegar aquí) — mismo criterio paranoico que el
+  // resto de esta función, que re-verifica valores ya garantizados por
+  // construcción unas líneas más arriba.
+  if (!Number.isFinite(nucleo.comisionPct) || nucleo.comisionPct < 0 || nucleo.comisionPct >= 100) {
+    return resultadoBloqueado("configuracion_invalida", "`comisionPct` no es un número finito en [0, 100).", {
+      comisionPct: nucleo.comisionPct,
+    });
+  }
+  const totalNetoEsperado = Math.round(nucleo.totalBruto * (1 - nucleo.comisionPct / 100));
+  if (!esEnteroSeguro(totalNetoEsperado) || totalNetoEsperado !== nucleo.totalNeto) {
+    return resultadoBloqueado(
+      "configuracion_invalida",
+      "`totalNeto` no coincide con `Math.round(totalBruto × (1 − comisionPct / 100))`.",
+      { totalBruto: nucleo.totalBruto, comisionPct: nucleo.comisionPct, totalNeto: nucleo.totalNeto, totalNetoEsperado }
+    );
+  }
+  if (totalNetoEsperado < 0 || totalNetoEsperado > nucleo.totalBruto) {
+    return resultadoBloqueado("configuracion_invalida", "`totalNeto` quedó fuera del rango [0, totalBruto].", {
+      totalBruto: nucleo.totalBruto,
+      totalNeto: nucleo.totalNeto,
+    });
+  }
+  const valorComisionEsperado = nucleo.totalBruto - nucleo.totalNeto;
+  if (!esEnteroSeguro(valorComisionEsperado) || valorComisionEsperado !== nucleo.valorComision) {
+    return resultadoBloqueado(
+      "configuracion_invalida",
+      "`valorComision` no coincide con `totalBruto − totalNeto` — la igualdad bruto = comisión + neto debe ser exacta.",
+      { totalBruto: nucleo.totalBruto, totalNeto: nucleo.totalNeto, valorComision: nucleo.valorComision, valorComisionEsperado }
+    );
+  }
+
   return null;
 }
 
@@ -1600,6 +1770,24 @@ function clonarProfundo<T>(valor: T): T {
   return typeof structuredClone === "function" ? structuredClone(valor) : (JSON.parse(JSON.stringify(valor)) as T);
 }
 
+// ── Ajuste comercial (comisión incluida, ronda 8) ───────────────────────
+// Estructura EXPLÍCITA y VERSIONABLE: `tipo` la nombra sin ambigüedad
+// (nunca más "el ajuste comercial" genérico) y `version` deja espacio para
+// que un futuro cambio de fórmula (ej. un ajuste distinto a comisión
+// incluida) agregue una `version: 2` sin romper snapshots ya persistidos —
+// un consumidor futuro puede discriminar por `version` antes de leer los
+// montos. Los cuatro montos quedan CONGELADOS (copiados del resultado que
+// ya pasó `verificarConsistenciaResultado`), nunca recalculados por quien
+// lea el snapshot.
+export type AjusteComercialComisionIncluida = {
+  tipo: "comision_incluida";
+  version: 1;
+  comisionPct: number;
+  totalBruto: number;
+  valorComision: number;
+  totalNeto: number;
+};
+
 // ── Snapshot (todavía sin persistir) ────────────────────────────────────
 // Copia profunda de TODO lo que entra — nunca conserva una referencia viva
 // a la tarifa, la distribución o cualquier objeto anidado que el llamador
@@ -1607,11 +1795,11 @@ function clonarProfundo<T>(valor: T): T {
 // alterar un snapshot ya construido (mismo principio que ya usa
 // `contrato_hoteles`/`contrato_items` en el sistema real, ver CLAUDE.md).
 //
-// `ajusteComercial` queda SIEMPRE en `null` en este PR: la comisión/markup
-// Bernalo no está confirmada (ni siquiera se sabe si será markup, comisión
-// incluida en PVP o descuento sobre rack) — este motor no ejecuta ninguna
-// fórmula de liquidación comercial. El campo existe como espacio
-// versionable para cuando esa regla se confirme, en un PR posterior.
+// `ajusteComercial` (ronda 8, confirmada): la comisión Bernalo YA está
+// confirmada — ver el encabezado del archivo y `TarifaAlojamiento.
+// comisionPct`. Deja de ser siempre `null`: ahora es SIEMPRE la estructura
+// versionable `AjusteComercialComisionIncluida`, con el porcentaje y los
+// tres montos (bruto/comisión/neto) ya derivados y verificados.
 export type SnapshotAlojamiento = {
   versionMotor: string;
   unidadCobro: UnidadCobro;
@@ -1629,10 +1817,11 @@ export type SnapshotAlojamiento = {
   temporada: string | null;
   categoria: string | null;
   alimentacion: string | null;
-  totalNetoPorNoche: number;
-  totalPorEstadia: number;
+  totalBrutoPorNoche: number;
+  totalBrutoPorEstadia: number;
+  totalBruto: number;
   totalNeto: number;
-  ajusteComercial: null;
+  ajusteComercial: AjusteComercialComisionIncluida;
   fuente: { documento: string; pagina: number | null } | null;
   versionTarifario: string;
 };
@@ -1656,10 +1845,18 @@ export function construirSnapshotAlojamiento(resultado: ResultadoValido): Snapsh
     temporada: f.temporada,
     categoria: f.categoria,
     alimentacion: f.alimentacion,
-    totalNetoPorNoche: resultado.totalNetoPorNoche,
-    totalPorEstadia: resultado.totalPorEstadia,
+    totalBrutoPorNoche: resultado.totalBrutoPorNoche,
+    totalBrutoPorEstadia: resultado.totalBrutoPorEstadia,
+    totalBruto: resultado.totalBruto,
     totalNeto: resultado.totalNeto,
-    ajusteComercial: null,
+    ajusteComercial: {
+      tipo: "comision_incluida",
+      version: 1,
+      comisionPct: resultado.comisionPct,
+      totalBruto: resultado.totalBruto,
+      valorComision: resultado.valorComision,
+      totalNeto: resultado.totalNeto,
+    },
     fuente: f.fuente,
     versionTarifario: f.versionTarifario,
   });

@@ -62,14 +62,25 @@ const hoyLocal = () => new Date().toLocaleDateString("en-CA");
 const esVencida = (t: Temporada, hoy: string): boolean => !!t.compra_fin && t.compra_fin < hoy;
 
 export function HotelDetalleClient({
-  hotelId, categorias, regimenes, temporadas, tarifas, otrosHoteles, adultsOnly = false,
-}: { hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[]; otrosHoteles: { id: number; nombre: string }[]; adultsOnly?: boolean }) {
+  hotelId, categorias, regimenes, temporadas, tarifas, otrosHoteles, adultsOnly = false, mostrarTarifaPersona = true,
+}: {
+  hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[];
+  otrosHoteles: { id: number; nombre: string }[]; adultsOnly?: boolean;
+  // Oculta ÚNICAMENTE la sección de tarifas por persona (`TarifasBox`) cuando
+  // el hotel tiene activo el editor de fase 2 Bernalo (`modelo_tarifario`
+  // = 'unidad', migración 174). Temporadas/promociones (`TemporadasBox`)
+  // siguen mostrándose siempre: el calendario es compartido por los dos
+  // editores, no es exclusivo del modelo por persona.
+  mostrarTarifaPersona?: boolean;
+}) {
   const hoy = hoyLocal();
   const vencidasNombres = new Set(temporadas.filter((t) => esVencida(t, hoy)).map((t) => t.nombre));
   return (
     <div className="space-y-8">
       <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} />
-      <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} vencidasNombres={vencidasNombres} adultsOnly={adultsOnly} />
+      {mostrarTarifaPersona && (
+        <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} vencidasNombres={vencidasNombres} adultsOnly={adultsOnly} />
+      )}
     </div>
   );
 }
@@ -520,7 +531,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
 
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold text-gray-700">Tarifa neta (lo que pagas al proveedor)</h2>
+      <h2 className="mb-3 text-sm font-semibold text-gray-700">Tarifas por persona <span className="font-normal text-gray-400">(lo que pagas al proveedor)</span></h2>
       {faltaConfig && (
         <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
           Para cargar tarifas necesitas: al menos una categoría y un régimen aplicados al hotel, y una temporada creada arriba.

@@ -1410,6 +1410,7 @@ export type Database = {
           pet_costo_neto: number;
           pet_costo_desc: string | null;
           pet_nota: string | null;
+          modelo_tarifario: "persona" | "unidad";
         };
         Insert: {
           id?: number;
@@ -1443,6 +1444,7 @@ export type Database = {
           pet_costo_neto?: number;
           pet_costo_desc?: string | null;
           pet_nota?: string | null;
+          modelo_tarifario?: "persona" | "unidad";
         };
         Update: Partial<Database["public"]["Tables"]["hoteles"]["Insert"]>;
         Relationships: [
@@ -2053,11 +2055,15 @@ export type Database = {
         // tabla es la restricción real y el adaptador valida el enum al leer.
         // El futuro editor debe actualizar `updated_at` explícitamente: esta fase
         // no introduce un trigger solo para mantener esa marca.
+        // `comision_pct` (migración 175): espejo de `payload.comisionPct` —
+        // comisión Bernalo, nullable SIN backfill (filas previas a la 175
+        // quedan en null a propósito, ver la migración).
         Row: {
           id: number; hotel_id: number; tarifa_id: string; version_tarifario: string;
           temporada: string | null; categoria: string | null; alimentacion: string | null;
           estado: string;
           fuente_documento: string | null; fuente_pagina: number | null; payload: Json;
+          comision_pct: number | null;
           created_at: string; updated_at: string;
         };
         Insert: {
@@ -2065,6 +2071,7 @@ export type Database = {
           temporada?: string | null; categoria?: string | null; alimentacion?: string | null;
           estado?: string;
           fuente_documento?: string | null; fuente_pagina?: number | null; payload: Json;
+          comision_pct?: number | null;
           created_at?: string; updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["hotel_tarifas_unidad"]["Insert"]>;

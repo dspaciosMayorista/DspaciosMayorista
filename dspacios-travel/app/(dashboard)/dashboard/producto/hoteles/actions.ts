@@ -176,6 +176,41 @@ export async function actualizarHotelConfig(
   return { ok: true };
 }
 
+// Qué editor de tarifas está activo para el hotel (persona | unidad Bernalo,
+// migración 174). Enum validado server-side — nunca se confía en el string
+// que manda el cliente, aunque la UI ya restrinja las opciones a un
+// `<button>` por valor. Solo toca `hoteles`: no inserta, actualiza ni borra
+// ninguna fila de `tarifa_hotel` ni de `hotel_tarifas_unidad` — es
+// exclusivamente el interruptor de qué pantalla se muestra.
+const MODELOS_TARIFARIOS = ["persona", "unidad"] as const;
+type ModeloTarifarioHotel = (typeof MODELOS_TARIFARIOS)[number];
+
+export async function actualizarModeloTarifarioHotel(hotelId: number, modelo: string): Promise<Result> {
+  if (!(MODELOS_TARIFARIOS as readonly string[]).includes(modelo)) {
+    return { ok: false, error: `Modelo tarifario inválido: "${modelo}". Debe ser "persona" o "unidad".` };
+  }
+  const sb = await createClient();
+  const { data, error } = await sb
+    .from("hoteles")
+    .update({ modelo_tarifario: modelo as ModeloTarifarioHotel })
+    .eq("id", hotelId)
+    .select("id");
+  if (error) return { ok: false, error: error.message };
+  // El `.update()` de Supabase no falla si el `.eq("id", ...)` no encuentra
+  // ninguna fila (no es un error de base) — sin este chequeo, un hotelId
+  // inexistente devolvería `ok:true` sin haber cambiado nada. Más de una
+  // fila afectada sería igual de grave (un filtro roto escribiendo sobre
+  // hoteles ajenos): en ambos casos, fail-closed con un mensaje explícito.
+  if (!data || data.length === 0) {
+    return { ok: false, error: "No se encontró el hotel a actualizar (0 filas afectadas)." };
+  }
+  if (data.length > 1) {
+    return { ok: false, error: `Se afectó más de una fila (${data.length}) al actualizar el modelo tarifario — operación cancelada.` };
+  }
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true };
+}
+
 // ── Configuración de acomodaciones por hotel (reservar por habitaciones) ────
 export type AcomConfigInput = {
   acomodacion: AcomRoom;

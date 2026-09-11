@@ -45,6 +45,7 @@ type PayloadFixture = {
   id: string;
   versionTarifario: string;
   unidadCobro: string;
+  comisionPct: number;
   valores: { adulto: number; nino?: number; infante?: number; periodicidadInfante?: string };
   capacidad: { minPax: number; maxPax: number | null; paxIncluidos: number };
   suplementos: unknown[];
@@ -66,6 +67,7 @@ type FilaFixture = {
   estado: string;
   fuente_documento: string | null;
   fuente_pagina: number | null;
+  comision_pct: number;
   payload: PayloadFixture;
 };
 
@@ -77,6 +79,7 @@ function payloadPareja(): PayloadFixture {
     id: "t-fixture-pareja",
     versionTarifario: VERSION,
     unidadCobro: "pareja",
+    comisionPct: 20,
     valores: { adulto: 550_000 },
     capacidad: { minPax: 2, maxPax: 2, paxIncluidos: 2 },
     suplementos: [],
@@ -101,6 +104,7 @@ function filaPareja(): FilaFixture {
     estado: "publicada",
     fuente_documento: "Documento de prueba",
     fuente_pagina: 13,
+    comision_pct: 20,
     payload: payloadPareja(),
   };
 }
@@ -116,6 +120,7 @@ describe("adaptador — fila válida", () => {
     assert.deepEqual(r.tarifa, {
       id: "t-fixture-pareja",
       unidadCobro: "pareja",
+      comisionPct: 20,
       valores: { adulto: 550_000 },
       capacidad: { minPax: 2, maxPax: 2, paxIncluidos: 2 },
       suplementos: [],
@@ -171,6 +176,7 @@ describe("adaptador — fila válida", () => {
       estado: "borrador",
       fuente_documento: null,
       fuente_pagina: null,
+      comision_pct: 20,
       payload,
     });
     esperarOk(r);
@@ -239,6 +245,32 @@ describe("adaptador — columnas espejo incoherentes con el payload", () => {
     esperarRechazo(r, "payload_incoherente_con_columnas");
     assert.equal(r.contexto.columnaVersion, "bernalo-2025");
     assert.equal(r.contexto.payloadVersion, VERSION);
+  });
+
+  test("comision_pct (columna) ≠ payload.comisionPct → payload_incoherente_con_columnas (migración 175)", () => {
+    const fila = filaPareja();
+    fila.comision_pct = 15; // payload trae 20 (payloadPareja())
+    const r = adaptarTarifaAlojamientoPersistida(fila);
+    esperarRechazo(r, "payload_incoherente_con_columnas");
+    assert.equal(r.contexto.columnaComisionPct, 15);
+    assert.equal(r.contexto.payloadComisionPct, 20);
+  });
+
+  test("comision_pct (columna) en null cuando el payload SÍ trae comisionPct → payload_incoherente_con_columnas (fila previa a la 175, sin backfill)", () => {
+    const fila: Record<string, unknown> = filaPareja();
+    fila.comision_pct = null;
+    esperarRechazo(adaptarTarifaAlojamientoPersistida(fila), "columna_invalida");
+  });
+
+  test("payload.comisionPct ausente (fila cargada antes de la ronda 8) se rechaza SIEMPRE, aunque la columna comision_pct tenga un valor — nunca se interpreta como 0%", () => {
+    const fila: Record<string, unknown> = filaPareja();
+    const payload = fila.payload as Record<string, unknown>;
+    delete payload.comisionPct;
+    // La columna SÍ trae un valor (20, de filaPareja()) — aun así se
+    // rechaza, porque la fuente de verdad (el payload) no lo tiene.
+    const r = adaptarTarifaAlojamientoPersistida(fila);
+    esperarRechazo(r, "tarifa_invalida");
+    assert.match(r.mensaje, /comisionPct/);
   });
 
   test("temporada: columna con valor, payload con otro", () => {
@@ -434,7 +466,8 @@ describe("adaptador — unidad de cobro desconocida", () => {
         estado: "publicada",
         fuente_documento: null,
         fuente_pagina: null,
-        payload: { ...payload, id: `t-fixture-${unidad}`, versionTarifario: VERSION, unidadCobro: unidad },
+        comision_pct: 20,
+        payload: { ...payload, id: `t-fixture-${unidad}`, versionTarifario: VERSION, unidadCobro: unidad, comisionPct: 20 },
       };
       const r = adaptarTarifaAlojamientoPersistida(fila);
       esperarOk(r);
@@ -750,6 +783,7 @@ describe("adaptador — reglas de edad ambiguas", () => {
         id: "t-fixture-ambig",
         versionTarifario: VERSION,
         unidadCobro: "persona",
+        comisionPct: 20,
         valores: { adulto: 100_000, nino: 70_000, infante: 30_000, periodicidadInfante: "por_noche" },
         capacidad: { minPax: 1, maxPax: null, paxIncluidos: 0 },
         suplementos: [],
@@ -819,10 +853,12 @@ describe("adaptador — varias modalidades y versiones del MISMO hotel", () => {
       estado: "publicada",
       fuente_documento: null,
       fuente_pagina: null,
+      comision_pct: 20,
       payload: {
         id: tarifaId,
         versionTarifario: version,
         unidadCobro,
+        comisionPct: 20,
         valores,
         capacidad,
         suplementos,
@@ -943,8 +979,14 @@ describe("cableado — sin integración con flujos comerciales", () => {
     assert.doesNotMatch(codigoAdaptador, /from "@\//);
   });
 
-  test("el adaptador no inventa conceptos comerciales", () => {
-    for (const termino of [/\bmarkup\b/i, /\bcomisi[oó]n\b/i, /\bimpuesto\b/i, /\bmoneda\b/i, /\bIVA\b/, /\btrm\b/i]) {
+  test("el adaptador no inventa conceptos comerciales (markup/impuesto/moneda/IVA/TRM — comisión ya no aplica, ver ronda 8)", () => {
+    // "comisión" salió de esta lista a propósito (ronda 8): dejó de ser un
+    // concepto ajeno inventado para pasar a ser `comisionPct`, un campo
+    // OBLIGATORIO y validado del payload — el adaptador lo lee/exige/espeja,
+    // nunca lo inventa, así que la palabra SÍ debe aparecer en su código
+    // (mensajes de error, nombre de columna/función) sin que eso sea un
+    // concepto colado por la puerta de atrás.
+    for (const termino of [/\bmarkup\b/i, /\bimpuesto\b/i, /\bmoneda\b/i, /\bIVA\b/, /\btrm\b/i]) {
       assert.doesNotMatch(codigoAdaptador, termino);
     }
   });
@@ -960,6 +1002,14 @@ describe("cableado — sin integración con flujos comerciales", () => {
     assert.match(fuenteMotor, /export function validarFormaTarifa\(/);
     assert.match(fuenteMotor, /export function validarTarifaNumerica\(/);
     assert.match(fuenteAdaptador, /validarTarifaAlojamiento/);
+  });
+
+  test("ronda 9 — sin alias: totalNetoPorNoche/totalPorEstadia no existen como identificadores en el motor (solo en la nota histórica de por qué se renombraron)", () => {
+    const codigoMotor = sinComentarios(fuenteMotor);
+    assert.doesNotMatch(codigoMotor, /\btotalNetoPorNoche\b/);
+    assert.doesNotMatch(codigoMotor, /\btotalPorEstadia\b/);
+    assert.match(codigoMotor, /\btotalBrutoPorNoche\b/);
+    assert.match(codigoMotor, /\btotalBrutoPorEstadia\b/);
   });
 
   test("la migración 173 solo crea la tabla nueva: ninguna tabla existente recibe DDL", () => {
@@ -1055,6 +1105,17 @@ describe("frontera de producto — solo tarifas regulares por noche", () => {
     "condiciones generales",
   ];
 
+  // El adaptador NUNCA se editó (ni se debe editar) para dejar de excluir los
+  // primeros seis productos — solo "reglas de comisión" salió de su lista:
+  // la comisión Bernalo (ronda 8) dejó de ser un producto ajeno al canal de
+  // venta y pasó a ser una propiedad confirmada de la TARIFA misma
+  // (`comisionPct`), así que el adaptador la exige/valida/espeja como
+  // cualquier otro campo — ya no tiene sentido que la nombre como "excluida".
+  // La migración 173 (histórica, sin editar) SÍ sigue mencionando la frase
+  // tal cual corrió en producción — por eso la prueba de la migración usa la
+  // lista completa y esta usa la reducida.
+  const PRODUCTOS_EXCLUIDOS_ADAPTADOR = PRODUCTOS_EXCLUIDOS.filter((p) => p !== "reglas de comisión");
+
   test("la migración nombra producto por producto lo que NO cubre", () => {
     for (const producto of PRODUCTOS_EXCLUIDOS) {
       assert.ok(
@@ -1072,7 +1133,7 @@ describe("frontera de producto — solo tarifas regulares por noche", () => {
     // Es la superficie que se lee sin abrir el repositorio: si el comentario
     // solo hablara de lo que la tabla guarda, un DBA podría leerla como si
     // fuera todo el tarifario.
-    const comentarioTabla = fuenteMigracion.match(/comment on table public\.hotel_tarifas_unidad is([\s\S]*?);\n/);
+    const comentarioTabla = fuenteMigracion.match(/comment on table public\.hotel_tarifas_unidad is([\s\S]*?);\r?\n/);
     assert.ok(comentarioTabla, "no se encontró el comment on table de hotel_tarifas_unidad");
     assert.match(comentarioTabla[1], /ALCANCE:/);
     assert.match(comentarioTabla[1], /NO es el tarifario Bernalo completo/);
@@ -1080,20 +1141,25 @@ describe("frontera de producto — solo tarifas regulares por noche", () => {
   });
 
   test("el `comment on column payload` exige las claves exactas del tipo del motor", () => {
-    const comentarioPayload = fuenteMigracion.match(/comment on column public\.hotel_tarifas_unidad\.payload is([\s\S]*?);\n/);
+    const comentarioPayload = fuenteMigracion.match(/comment on column public\.hotel_tarifas_unidad\.payload is([\s\S]*?);\r?\n/);
     assert.ok(comentarioPayload, "no se encontró el comment on column payload");
     assert.match(comentarioPayload[1], /EXACTAMENTE esas claves/);
     assert.match(comentarioPayload[1], /no se cuele/);
   });
 
   test("el adaptador nombra la misma frontera (no solo la migración)", () => {
-    for (const producto of PRODUCTOS_EXCLUIDOS) {
+    for (const producto of PRODUCTOS_EXCLUIDOS_ADAPTADOR) {
       assert.ok(
         fuenteAdaptador.includes(producto),
         `el adaptador no nombra el producto excluido "${producto}": quien lo reutilice no vería la frontera`
       );
     }
     assert.match(aTextoPlano(fuenteAdaptador), /NO es cobertura completa del tarifario Bernalo/);
+  });
+
+  test("el adaptador YA NO excluye la comisión — la ronda 8 la confirmó como propiedad de la tarifa, no del canal de venta", () => {
+    assert.doesNotMatch(fuenteAdaptador, /reglas de comisión \(son del canal de venta/);
+    assert.match(aTextoPlano(fuenteAdaptador), /comisionPct.*obligatorio|obligatorio.*comisionPct/i);
   });
 
   // ── La frontera en el COMPORTAMIENTO ───────────────────────────────────
@@ -1151,7 +1217,62 @@ describe("frontera de producto — solo tarifas regulares por noche", () => {
     assert.ok(bloqueAdaptador, "no se pudo leer CAMPOS_TARIFA_ALOJAMIENTO del adaptador");
     const camposAdaptador = [...bloqueAdaptador[1].matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"/g)].map((m) => m[1]).sort();
 
-    assert.equal(camposMotor.length, 11, "el tipo del motor cambió de tamaño: revisar la frontera de producto");
+    assert.equal(camposMotor.length, 12, "el tipo del motor cambió de tamaño: revisar la frontera de producto (ronda 8 sumó comisionPct, de 11 a 12)");
     assert.deepEqual(camposAdaptador, camposMotor);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Migración 175 (`hotel_tarifas_unidad.comision_pct`) — mismo criterio que
+// las pruebas de texto de la 173: no requiere una base Postgres, solo que el
+// archivo declare lo que promete. No se corrió Docker en esta ronda (según
+// instrucción); la validación SQL end-to-end queda pendiente para la
+// próxima vez que se pida explícitamente.
+// ─────────────────────────────────────────────────────────────────────────
+describe("migración 175 — hotel_tarifas_unidad.comision_pct", () => {
+  const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");
+  const fuenteMigracion175 = leer("supabase/migrations/20260601000175_tarifas_alojamiento_unidad_comision.sql");
+
+  test("agrega la columna nullable, SIN backfill (sin UPDATE en el cuerpo SQL) ni default", () => {
+    assert.match(fuenteMigracion175, /add column if not exists comision_pct numeric;/);
+    assert.doesNotMatch(fuenteMigracion175, /\bupdate\s+public\.hotel_tarifas_unidad\b/i);
+  });
+
+  test("el CHECK permite null o exige [0, 100), coherente con validarTarifaNumerica del motor", () => {
+    assert.match(fuenteMigracion175, /check \(comision_pct is null or \(comision_pct >= 0 and comision_pct < 100\)\)/);
+  });
+
+  test("no modifica la migración 173 — es un archivo aparte, aditivo", () => {
+    assert.doesNotMatch(fuenteMigracion175, /create table/i);
+    assert.match(fuenteMigracion175, /^begin;/m);
+    assert.match(fuenteMigracion175, /^commit;/m);
+  });
+
+  test("el comentario de columna documenta el espejo con payload.comisionPct y la ausencia de backfill", () => {
+    assert.match(fuenteMigracion175, /comment on column public\.hotel_tarifas_unidad\.comision_pct is/);
+    assert.match(fuenteMigracion175, /payload\.comisionPct/);
+    assert.match(fuenteMigracion175, /Nullable SIN backfill/i);
+  });
+
+  test("preflight/postcheck/rollback de la 175 existen", () => {
+    for (const rel of [
+      "supabase/scripts/preflight_175_tarifas_alojamiento_unidad_comision.sql",
+      "supabase/scripts/postcheck_175_tarifas_alojamiento_unidad_comision.sql",
+      "supabase/scripts/rollback_175_tarifas_alojamiento_unidad_comision.sql",
+    ]) {
+      assert.doesNotThrow(() => leer(rel), `falta ${rel}`);
+    }
+  });
+
+  test("el preflight INFORMA cuántas filas quedarían sin comisión, sin inventar ningún porcentaje", () => {
+    const preflight = leer("supabase/scripts/preflight_175_tarifas_alojamiento_unidad_comision.sql");
+    assert.match(preflight, /filas_sin_comisionPct_en_payload/);
+    assert.doesNotMatch(preflight, /\bupdate\s+public\.hotel_tarifas_unidad\b/i);
+  });
+
+  test("el postcheck verifica que ninguna fila quedó con un porcentaje inventado por la migración", () => {
+    const postcheck = leer("supabase/scripts/postcheck_175_tarifas_alojamiento_unidad_comision.sql");
+    assert.match(postcheck, /filas_con_comision/);
   });
 });
