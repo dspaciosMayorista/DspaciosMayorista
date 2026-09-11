@@ -247,6 +247,40 @@ export async function computarReserva(
 
   const esServicios = input.modulo === "servicios";
 
+  // Fase 3 Bernalo (guardia, ver informe de la tarea): un hotel con
+  // `modelo_tarifario = 'unidad'` administra su tarifa en
+  // `hotel_tarifas_unidad` (fase 2), NO en `tarifa_hotel`. Sin este chequeo,
+  // Reservar seguiría leyendo `tarifa_hotel`/`tarifario_resultado` en
+  // silencio — datos que para un hotel Bernalo pueden estar vacíos (precio
+  // $0 invisible) o, peor, quedar viejos/obsoletos si el hotel usó el
+  // editor por persona ANTES de migrar a Bernalo. Se verifica ANTES de leer
+  // cualquier tabla de tarifa (tarifa_hotel/tarifario_resultado) — nunca
+  // después de haber calculado ya un precio con la fuente equivocada.
+  // La integración real de `hotel_tarifas_unidad` con Reservar (motor
+  // `cotizarUnidadAlojamiento` por habitación) queda fuera de esta fase —
+  // ver el informe de la tarea: el desglose por acomodación que consumen
+  // `contrato_items`/CxP (`pvpPorAcom`/`netoPorAcom`/`lineasHab`, por
+  // persona/columna) no tiene una forma no-ambigua de derivarse de una
+  // tarifa Bernalo (comisión aplicada una sola vez al total, no por
+  // categoría) sin aproximar — tocar esa descomposición excede el alcance
+  // de esta fase (no se debía tocar contratos/CxP salvo lo estrictamente
+  // necesario).
+  if (!esServicios) {
+    const { data: modeloRow, error: modeloError } = await sb
+      .from("hoteles")
+      .select("modelo_tarifario")
+      .eq("id", input.hotelId)
+      .maybeSingle();
+    if (modeloError) return { ok: false, error: "No se pudo validar el modelo tarifario del hotel." };
+    if (modeloRow?.modelo_tarifario === "unidad") {
+      return {
+        ok: false,
+        error:
+          "Este hotel administra su tarifa con el editor Bernalo por unidad (hotel_tarifas_unidad) — la reserva en vivo para este modelo todavía no está integrada en Reservar. Contacta al equipo técnico o usa un hotel con modelo tarifario \"persona\".",
+      };
+    }
+  }
+
   const pvpPorAcom: Record<string, number> = {};
   const netoPorAcom: Record<string, number> = {};
   let precioVenta = 0;

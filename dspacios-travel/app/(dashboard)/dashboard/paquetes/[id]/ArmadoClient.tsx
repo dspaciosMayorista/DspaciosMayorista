@@ -77,7 +77,7 @@ export function ArmadoClient(props: {
     setMsg("");
     start(async () => {
       const r = await generarTarifario(props.paqueteId);
-      if (r.ok) setMsg(`Tarifario generado: ${r.id ?? 0} tarifas publicadas.`);
+      if (r.ok) setMsg(`Tarifario generado: ${r.id ?? 0} tarifas publicadas.${r.aviso ? ` ${r.aviso}` : ""}`);
       else setMsg(`Error: ${r.error}`);
       refrescar();
     });

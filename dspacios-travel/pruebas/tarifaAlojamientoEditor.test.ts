@@ -690,6 +690,7 @@ describe("cableado — sin fechas propias y sin integración comercial", () => {
   // Extrae el cuerpo de una función con nombre `export async function NOMBRE`
   // (o `async function NOMBRE` para los helpers no exportados), desde su
   // declaración hasta el primer `\n}\n` que la cierra a nivel de columna 0.
+  // Tolerante a CRLF (el repo guarda estos archivos con \r\n).
   function cuerpoDeFuncion(fuente: string, nombre: string): string {
     const marcador = fuente.includes(`export async function ${nombre}`)
       ? `export async function ${nombre}`
@@ -697,9 +698,10 @@ describe("cableado — sin fechas propias y sin integración comercial", () => {
     const inicio = fuente.indexOf(marcador);
     assert.notEqual(inicio, -1, `no se encontró la función ${nombre}`);
     const resto = fuente.slice(inicio);
-    const fin = resto.indexOf("\n}\n");
-    assert.notEqual(fin, -1, `no se encontró el cierre de ${nombre}`);
-    return resto.slice(0, fin + 3);
+    const cierre = resto.match(/\r?\n\}\r?\n/);
+    assert.notEqual(cierre?.index, undefined, `no se encontró el cierre de ${nombre}`);
+    const fin = cierre!.index! + cierre![0].length;
+    return resto.slice(0, fin);
   }
 
   test("el editor de dominio no consulta Supabase ni hace I/O de red", () => {

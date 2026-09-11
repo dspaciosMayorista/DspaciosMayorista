@@ -22,7 +22,7 @@ import {
   type CondicionPagoEntrada,
 } from "@/lib/cotizacion/condicionPagoCatalogo";
 
-type Result = { ok: true; id?: number } | { ok: false; error: string };
+type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 const dNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s : null);
 
@@ -348,7 +348,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda)")
+      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
@@ -403,8 +403,27 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     paqueteMoneda = monedasServicio[0] ?? "COP";
   }
 
-  // Temporadas y tarifas netas de cada hotel involucrado
-  const hotelIds = hoteles.map((h) => h.hotel_id);
+  // Temporadas y tarifas netas de cada hotel involucrado.
+  //
+  // Fase 3 Bernalo (guardia, ver informe de la tarea): un hotel con
+  // `modelo_tarifario = 'unidad'` administra su tarifa en
+  // `hotel_tarifas_unidad` (fase 2), NO en `tarifa_hotel` — ese hotel se
+  // EXCLUYE de esta consulta y de la generación de filas más abajo
+  // (`hotelesBernaloExcluidos`), en vez de leer `tarifa_hotel` en silencio
+  // (que para un hotel Bernalo puede estar vacío, o peor, contener datos
+  // viejos de antes de migrar a Bernalo). La integración real de
+  // `hotel_tarifas_unidad` con el tarifario queda fuera de esta fase — el
+  // desglose por acomodación (columna sencilla/doble/triple/multiple/niño/
+  // niño2/infante) que este archivo escribe en `tarifario_resultado` no
+  // tiene una forma no ambigua de derivarse de una tarifa Bernalo (la
+  // comisión se aplica una sola vez sobre el total, no por categoría) sin
+  // aproximar — ver el informe de la tarea.
+  const hotelesBernaloExcluidos = hoteles
+    .filter((h) => (h.hoteles as unknown as { modelo_tarifario?: string | null } | null)?.modelo_tarifario === "unidad")
+    .map((h) => (h.hoteles as unknown as { nombre?: string | null } | null)?.nombre ?? `#${h.hotel_id}`);
+  const hotelIds = hoteles
+    .filter((h) => (h.hoteles as unknown as { modelo_tarifario?: string | null } | null)?.modelo_tarifario !== "unidad")
+    .map((h) => h.hotel_id);
   const temporadasPorHotel = new Map<number, TemporadaRango[]>();
   type TarifaRow = Record<string, unknown>;
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
@@ -742,7 +761,15 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   revalidatePath("/tarifario");
-  return { ok: true, id: filas.length };
+  return {
+    ok: true,
+    id: filas.length,
+    ...(hotelesBernaloExcluidos.length
+      ? {
+          aviso: `${hotelesBernaloExcluidos.length === 1 ? "El hotel" : "Los hoteles"} ${hotelesBernaloExcluidos.join(", ")} usa${hotelesBernaloExcluidos.length === 1 ? "" : "n"} el modelo tarifario Bernalo por unidad — no se generaron tarifas para ${hotelesBernaloExcluidos.length === 1 ? "ese hotel" : "esos hoteles"} (la integración con el tarifario aún no está disponible para ese modelo).`,
+        }
+      : {}),
+  };
 }
 
 // ── AUTO-RECÁLCULO ─────────────────────────────────────────────────────────
