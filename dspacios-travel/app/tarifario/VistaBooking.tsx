@@ -28,7 +28,12 @@ import {
   validarHabitacionesOcupacion,
   type EdadesPorHabitacion,
 } from "@/lib/reservar/ocupacionPorHabitacion";
-import { validarOcupacionHabitacionesBernalo } from "./ocupacionBernaloActions";
+import {
+  cotizarAlojamientoBernaloPublico,
+  type ResultadoCotizarAlojamientoBernaloPublico,
+  type SalidaSeleccionadaBernaloEntrada,
+} from "./cotizacionBernaloActions";
+import type { HotelBernaloDescubierto, SalidaAereaBernalo } from "@/lib/tarifario/datosBernalo";
 import { obtenerDetalleHotel } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -181,6 +186,7 @@ export function VistaBooking({
   soloAcom = null,
   descripcionPorPaquete = {},
   filasAddon = [],
+  hotelesBernalo = [],
 }: {
   filas: FilaResumen[];
   fotosPorHotel?: Record<number, string>;
@@ -201,9 +207,16 @@ export function VistaBooking({
   // recorte que aplica `filas` para la vitrina plana de Servicios — de acá
   // sale `addonsPorPaquete`, scoped al hotel que se está viendo.
   filasAddon?: FilaResumen[];
+  // Fase 3E Bernalo — descubrimiento PARALELO (regla 6 del encargo): hoteles
+  // `modelo_tarifario = 'unidad'` de paquetes activos, sin precio (nunca
+  // pasan por `tarifario_resultado`/`filas` de arriba). Se muestran en su
+  // propia sección, con "Consultar tarifa" en vez de un precio.
+  hotelesBernalo?: HotelBernaloDescubierto[];
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
+  // Fase 3E Bernalo: hotel descubierto cuyo modal de cotización está abierto.
+  const [modalBernalo, setModalBernalo] = useState<HotelBernaloDescubierto | null>(null);
   // Buscador de bloqueos: origen → destino → salida (vuelo).
   const [origenSel, setOrigenSel] = useState("");
   const [destinoSel, setDestinoSel] = useState("");
@@ -635,8 +648,42 @@ export function VistaBooking({
       </>
       )}
 
+      {/* Fase 3E Bernalo — sección PARALELA (regla 6/8): nunca se mezcla con
+          la grilla de arriba (que sale de `tarifario_resultado`); sin precio
+          precargado, "Consultar tarifa" abre la cotización en vivo. */}
+      {hotelesBernalo.length > 0 && (
+        <div className="mt-6">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            Alojamientos con tarifa personalizada
+            <span className="ml-2 font-normal normal-case text-gray-400">({hotelesBernalo.length})</span>
+          </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {hotelesBernalo.map((h) => (
+              <div key={`${h.paqueteId}-${h.hotelId}`} className="flex flex-col justify-between rounded-2xl border border-gray-200 bg-white p-4">
+                <div>
+                  <div className="font-semibold text-gray-800">{h.hotelNombre}</div>
+                  <div className="mt-0.5 text-xs text-gray-500">{h.destinoNombre ?? ""}</div>
+                </div>
+                <div className="mt-3 flex items-end justify-between">
+                  <span className="text-sm text-gray-400">Consultar tarifa</span>
+                  <button type="button" onClick={() => setModalBernalo(h)}
+                    className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                    style={{ backgroundColor: "var(--brand-accent)" }}>
+                    Consultar tarifa →
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {abierto && (
         <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
+      )}
+
+      {modalBernalo && (
+        <HotelBernaloCotizarModal hotel={modalBernalo} onClose={() => setModalBernalo(null)} />
       )}
 
       {receptivoAbierto && (
@@ -951,6 +998,57 @@ function HotelModal({
   );
 }
 
+// ── Fase 3E Bernalo — modal de cotización dinámica de un hotel descubierto
+// (`hotelesBernalo`, ver `lib/tarifario/datosBernalo.ts`). A diferencia de
+// `HotelModal` (hoteles "persona", con `tarifario_resultado` ya calculado),
+// este modal no tiene ningún precio precargado — todo sale de `EditorPax`
+// en modo Bernalo, que cotiza en vivo contra
+// `cotizarAlojamientoBernaloPublico`. Sin "Agregar al carrito" (regla 19).
+function HotelBernaloCotizarModal({ hotel, onClose }: { hotel: HotelBernaloDescubierto; onClose: () => void }) {
+  // B1.18: categorías/alimentación vacías = el hotel no es cotizable — mensaje
+  // genérico de configuración incompleta, nunca texto libre ni un editor que
+  // deje adivinar la clasificación.
+  const configuracionIncompleta = hotel.categorias.length === 0 || hotel.regimenes.length === 0;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
+      <div
+        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 p-5">
+          <div>
+            <div className="font-semibold text-gray-800">{hotel.hotelNombre}</div>
+            <div className="text-xs text-gray-500">{hotel.destinoNombre ?? ""}</div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-700">
+            Cerrar ✕
+          </button>
+        </div>
+        <div className="space-y-4 p-5">
+          {configuracionIncompleta ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              Este hotel todavía no tiene su configuración completa (categorías/alimentación) —
+              no está disponible para cotizar en línea. Contacta a un asesor.
+            </p>
+          ) : (
+            <EditorPax
+              pvp={{}}
+              moneda={hotel.moneda}
+              modeloTarifario="unidad"
+              hotelId={hotel.hotelId}
+              paqueteId={hotel.paqueteId}
+              categoriasDisponibles={hotel.categorias}
+              alimentacionesDisponibles={hotel.regimenes}
+              salidas={hotel.salidas}
+              onAgregar={() => {}}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Selector({
   opcion, hotel, puedeReservar, planesInfo, cap, onAgregar,
 }: {
@@ -1026,7 +1124,7 @@ function Selector({
 function EditorPax({
   pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
   edadInfanteMax, edadNinoMax, onAgregar, btnLabel = "Agregar al carrito", moneda = "COP",
-  modeloTarifario = null,
+  modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [],
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -1039,13 +1137,28 @@ function EditorPax({
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) => void;
   btnLabel?: string;
   moneda?: string | null;
-  // Fase 3D Bernalo: cuando llega "unidad", esta habitación se captura por
-  // HABITACIÓN FÍSICA (edades propias por habitación) en vez del flujo
-  // legado (cantidad total + arreglo plano). `null`/ausente = comportamiento
-  // EXACTO de siempre — ningún llamador existente pasa este prop todavía,
-  // así que hoy no cambia nada para ningún hotel real (regla 9 del encargo:
-  // los hoteles "persona" conservan el flujo actual byte a byte).
+  // Fase 3D/3E Bernalo: cuando llega "unidad", esta habitación se captura
+  // por HABITACIÓN FÍSICA (edades propias por habitación) y se cotiza en
+  // vivo contra el servidor — en vez del flujo legado (cantidad total +
+  // arreglo plano + `pvp` ya calculado). `null`/ausente = comportamiento
+  // EXACTO de siempre (regla 9 del encargo: hoteles "persona" sin cambios).
   modeloTarifario?: string | null;
+  // Identidad REAL — obligatorios cuando `modeloTarifario === "unidad"`
+  // (nunca placeholders, regla 9 de Fase 3E): sin ellos no se puede llamar
+  // `cotizarAlojamientoBernaloPublico`, que re-valida pertenencia al
+  // paquete server-side.
+  hotelId?: number;
+  paqueteId?: number;
+  // Categoría/alimentación REALES habilitadas para este hotel en este
+  // paquete (`armado_hoteles.categorias`/`regimenes`) — nunca un valor
+  // normalizado inventado como "estandar" cuando el real es "Estándar".
+  categoriasDisponibles?: string[];
+  alimentacionesDisponibles?: string[];
+  // A1: salidas aéreas REALES del paquete (`lib/tarifario/datosBernalo.ts`) —
+  // vacío = porción terrestre (fechas libres, validadas por el servidor
+  // contra la ventana del paquete); una = se autoselecciona; varias = la UI
+  // exige elegir explícitamente. Nunca se "toma la primera" en silencio.
+  salidas?: SalidaAereaBernalo[];
 }) {
   const idBase = useId();
   const esBernalo = modeloTarifario === "unidad";
@@ -1056,10 +1169,27 @@ function EditorPax({
   // FÍSICA (id estable), nunca un conteo aparte (regla 14: single source —
   // ver `lib/reservar/ocupacionPorHabitacion.ts`).
   const [edadesPorHabitacion, setEdadesPorHabitacion] = useState<EdadesPorHabitacion>({});
-  const [resultadoValidacion, setResultadoValidacion] = useState<
-    { ok: true; habitaciones: number } | { ok: false; errores: { habitacionId: string | null; mensaje: string }[] } | null
-  >(null);
+  // Fase 3E — clasificación y fechas REALES elegidas para esta cotización
+  // (nunca placeholders): categoría/alimentación salen de las opciones
+  // realmente vinculadas al hotel/paquete (`categoriasDisponibles`/
+  // `alimentacionesDisponibles`); las fechas las escribe el usuario, dentro
+  // de la ventana que el servidor vuelve a validar.
+  const [categoriaSel, setCategoriaSel] = useState("");
+  const [alimentacionSel, setAlimentacionSel] = useState("");
+  const [fechaIdaBernalo, setFechaIdaBernalo] = useState("");
+  const [fechaRegresoBernalo, setFechaRegresoBernalo] = useState("");
+  // A1: identidad de la salida elegida cuando hay MÁS de una — clave
+  // `"tipo:id"`; vacío hasta que el usuario elige explícitamente (nunca se
+  // autocompleta con la primera).
+  const [salidaElegidaKey, setSalidaElegidaKey] = useState("");
+  const [resultadoCotizacion, setResultadoCotizacion] = useState<ResultadoCotizarAlojamientoBernaloPublico | null>(null);
   const [validando, setValidando] = useState(false);
+
+  // Fase 3E: independiente de `pvp` (que en Bernalo no existe todavía —
+  // el precio sale de cotizar, no de una tabla precalculada) — cuántas
+  // habitaciones se eligieron, sin importar ninguna tarifa por columna.
+  const totalHabBernalo = ACOM_ROOMS.reduce((s, a) => s + (habs[a] ?? 0), 0);
+  const hayHabBernalo = totalHabBernalo > 0;
 
   const setHab = (a: AcomRoom, n: number) => {
     const next = { ...habs, [a]: Math.max(0, n) };
@@ -1069,7 +1199,7 @@ function EditorPax({
     // existen (mismo id ⇒ misma habitación, siempre).
     if (esBernalo) {
       setEdadesPorHabitacion((ep) => sincronizarHabitaciones(ep, idsHabitacionesPorConteo(next)));
-      setResultadoValidacion(null);
+      setResultadoCotizacion(null);
     }
   };
 
@@ -1183,7 +1313,7 @@ function EditorPax({
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
   const inputEdadCls = "w-14 rounded-lg border px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
 
-  // ── Fase 3D Bernalo — captura por habitación física ────────────────────
+  // ── Fase 3D/3E Bernalo — captura por habitación física + cotización real ─
   // Todo lo de abajo solo se usa cuando `esBernalo`; para hoteles "persona"
   // no se evalúa (habitacionesUI queda vacío) y el bloque JSX de siempre
   // (más abajo) no cambia una sola línea.
@@ -1207,32 +1337,49 @@ function EditorPax({
 
   function cambiarCantidadMenoresHab(habId: string, n: number) {
     setEdadesPorHabitacion((ep) => ajustarCantidadEdadesHabitacion(ep, habId, n));
-    setResultadoValidacion(null);
+    setResultadoCotizacion(null);
   }
   function cambiarEdadHab(habId: string, i: number, v: string) {
     setEdadesPorHabitacion((ep) => establecerEdad(ep, habId, i, v));
-    setResultadoValidacion(null);
+    setResultadoCotizacion(null);
   }
 
-  async function validarBernalo() {
-    if (validando || !hayHab) return;
+  // A1: identidad discriminada de la salida elegida — nunca `[0]`. Con una
+  // sola salida real se autoselecciona (regla A1.2); con varias, EXIGE que
+  // el usuario elija una explícitamente (regla A1.3 — `salidaElegidaKey`
+  // queda vacío hasta que el usuario hace clic, así que
+  // `salidaElegidaKeyEfectiva` no cae en ninguna por defecto); sin ninguna
+  // salida real, el paquete es porción terrestre y se cotiza con las fechas
+  // escritas a mano.
+  const salidaElegidaKeyEfectiva = salidas.length === 1
+    ? `${salidas[0].tipo}:${salidas[0].id}`
+    : (salidas.some((s) => `${s.tipo}:${s.id}` === salidaElegidaKey) ? salidaElegidaKey : "");
+  const salidaElegida = salidas.find((s) => `${s.tipo}:${s.id}` === salidaElegidaKeyEfectiva) ?? null;
+
+  const salidaPayload: SalidaSeleccionadaBernaloEntrada | null =
+    salidas.length > 0
+      ? (salidaElegida ? { tipo: salidaElegida.tipo, id: salidaElegida.id } : null)
+      : (fechaIdaBernalo && fechaRegresoBernalo ? { tipo: "sin_vuelo", fechaIda: fechaIdaBernalo, fechaRegreso: fechaRegresoBernalo } : null);
+
+  const bernaloListoParaCotizar =
+    hayHabBernalo && !!hotelId && !!paqueteId && !!categoriaSel && !!alimentacionSel && !!salidaPayload;
+
+  async function cotizarBernalo() {
+    if (validando || !bernaloListoParaCotizar || !hotelId || !paqueteId || !salidaPayload) return;
     setValidando(true);
-    setResultadoValidacion(null);
+    setResultadoCotizacion(null);
     try {
-      // El servidor vuelve a validar con la MISMA función pura y adapta
-      // hasta el contrato canónico (Caso C, Fase 3A) — nunca confía en el
-      // resultado de `previewBernalo` calculado en el navegador.
-      const r = await validarOcupacionHabitacionesBernalo({
+      // El servidor vuelve a validar TODO (ocupación, pertenencia al
+      // paquete, categoría/alimentación, salida real, ventana de fechas) —
+      // nunca se confía en `previewBernalo` ni en nada calculado en el
+      // navegador (reglas 2-3 de Fase 3E). La salida viaja como identidad
+      // {tipo,id} (o "sin_vuelo" + fechas) — nunca un índice `[0]`.
+      const r = await cotizarAlojamientoBernaloPublico({
+        paqueteId, hotelId, categoria: categoriaSel, alimentacion: alimentacionSel,
+        salida: salidaPayload,
         habitaciones: payloadBernalo,
-        // categoría/alimentación/noches del combo elegido: EditorPax no las
-        // recibe como prop todavía (quedan pendientes de 3E, ver el informe
-        // de la tarea) — no afectan la validación de edad/conteo por
-        // habitación que se prueba en esta fase.
-        categoria: null,
-        alimentacion: null,
-        noches: 1,
       });
-      setResultadoValidacion(r.ok ? { ok: true, habitaciones: r.habitaciones.length } : { ok: false, errores: r.errores });
+      setResultadoCotizacion(r);
     } finally {
       setValidando(false);
     }
@@ -1243,24 +1390,116 @@ function EditorPax({
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Habitaciones</p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {ACOM_ROOMS.map((a) => (
-            <div key={a} className={`rounded-lg border p-2 ${pvp[a] == null ? "opacity-40" : ""}`}>
-              <div className="text-xs font-medium text-gray-700">{ACOM_ROOM_LABEL[a]}</div>
-              <div className="text-[11px] text-gray-400">{pvp[a] != null ? `${formatMoneda(pvp[a], moneda)}/pers` : "No aplica"}</div>
-              <input type="number" min={0} value={habs[a] ?? 0} disabled={pvp[a] == null}
-                onChange={(e) => setHab(a, Number(e.target.value))} className={`${inputCls} mt-1`} />
-            </div>
-          ))}
+          {ACOM_ROOMS.map((a) => {
+            // Bernalo no tiene un PVP por columna precalculado (regla del
+            // encargo: el precio sale de cotizar, no de una tabla) — todas
+            // las acomodaciones quedan habilitadas; el servidor es quien
+            // dice si esa categoría/habitación tiene tarifa publicada.
+            const habilitada = esBernalo || pvp[a] != null;
+            return (
+              <div key={a} className={`rounded-lg border p-2 ${habilitada ? "" : "opacity-40"}`}>
+                <div className="text-xs font-medium text-gray-700">{ACOM_ROOM_LABEL[a]}</div>
+                <div className="text-[11px] text-gray-400">
+                  {esBernalo ? "" : (pvp[a] != null ? `${formatMoneda(pvp[a], moneda)}/pers` : "No aplica")}
+                </div>
+                <input type="number" min={0} value={habs[a] ?? 0} disabled={!habilitada}
+                  onChange={(e) => setHab(a, Number(e.target.value))} className={`${inputCls} mt-1`} />
+              </div>
+            );
+          })}
         </div>
       </div>
 
       {esBernalo ? (
-        // ── Fase 3D: una fila compacta por habitación FÍSICA, cada una con
-        // sus propias edades — nunca un total + arreglo plano para toda la
-        // solicitud. Mismo contenedor/clases que el resto del componente
-        // (sin tarjetas anidadas ni rediseño).
-        hayHab && (
-          <div>
+        // ── Fase 3D/3E: una fila compacta por habitación FÍSICA, cada una
+        // con sus propias edades, más la clasificación/fechas REALES de
+        // esta cotización — nunca un total + arreglo plano para toda la
+        // solicitud, nunca un placeholder. Mismo contenedor/clases que el
+        // resto del componente (sin tarjetas anidadas ni rediseño).
+        hayHabBernalo && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label htmlFor={`${idBase}-categoria`} className="mb-1 block text-xs font-medium text-gray-600">Categoría</label>
+                {/* B1: SOLO opciones reales vinculadas al hotel/paquete —
+                    nunca texto libre. El gate de "configuración incompleta"
+                    vive en HotelBernaloCotizarModal (no monta este editor si
+                    no hay categorías/regímenes); por defensa en profundidad
+                    el select queda deshabilitado y sin opciones en vez de
+                    caer a un input de texto. */}
+                <select id={`${idBase}-categoria`} value={categoriaSel} disabled={!categoriasDisponibles.length}
+                  onChange={(e) => { setCategoriaSel(e.target.value); setResultadoCotizacion(null); }}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+                  <option value="">Elige…</option>
+                  {categoriasDisponibles.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor={`${idBase}-alimentacion`} className="mb-1 block text-xs font-medium text-gray-600">Alimentación</label>
+                <select id={`${idBase}-alimentacion`} value={alimentacionSel} disabled={!alimentacionesDisponibles.length}
+                  onChange={(e) => { setAlimentacionSel(e.target.value); setResultadoCotizacion(null); }}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+                  <option value="">Elige…</option>
+                  {alimentacionesDisponibles.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              {salidas.length === 0 ? (
+                // A1.6: sin salidas reales configuradas → porción terrestre;
+                // las fechas SÍ las escribe el usuario, y el servidor las
+                // vuelve a validar contra la ventana de viaje del paquete.
+                <>
+                  <div>
+                    <label htmlFor={`${idBase}-fecha-ida`} className="mb-1 block text-xs font-medium text-gray-600">Entrada</label>
+                    <input id={`${idBase}-fecha-ida`} type="date" value={fechaIdaBernalo}
+                      onChange={(e) => { setFechaIdaBernalo(e.target.value); setResultadoCotizacion(null); }}
+                      className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label htmlFor={`${idBase}-fecha-regreso`} className="mb-1 block text-xs font-medium text-gray-600">Salida</label>
+                    <input id={`${idBase}-fecha-regreso`} type="date" value={fechaRegresoBernalo}
+                      onChange={(e) => { setFechaRegresoBernalo(e.target.value); setResultadoCotizacion(null); }}
+                      className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                  </div>
+                </>
+              ) : salidas.length === 1 ? (
+                // A1.2: una sola salida real — se autoselecciona; solo se
+                // muestra como información (fechas AUTORITATIVAS de esa
+                // salida, nunca editables aquí).
+                <div>
+                  <span className="mb-1 block text-xs font-medium text-gray-600">Salida</span>
+                  <p className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm text-gray-700">
+                    {salidas[0].etiqueta ? `${salidas[0].etiqueta} · ` : ""}{fmtFecha(salidas[0].fechaIda)} → {fmtFecha(salidas[0].fechaRegreso)}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+            {salidas.length > 1 && (
+              // A1.3: varias salidas reales — la UI EXIGE una elección
+              // explícita, nunca "toma la primera" en silencio.
+              <div>
+                <p className="mb-1 text-xs font-medium text-gray-600">Elige tu salida</p>
+                <div className="flex flex-wrap gap-2">
+                  {salidas.map((s) => {
+                    const key = `${s.tipo}:${s.id}`;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => { setSalidaElegidaKey(key); setResultadoCotizacion(null); }}
+                        className="rounded-lg border px-3 py-2 text-left text-sm transition-colors"
+                        style={salidaElegidaKeyEfectiva === key
+                          ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
+                          : { borderColor: "#e5e7eb", backgroundColor: "white" }}
+                      >
+                        <span className="block font-medium text-gray-800">{s.etiqueta || (s.tipo === "bloqueo" ? "Bloqueo" : "Empaquetado")}</span>
+                        <span className="block text-xs text-gray-500">{fmtFecha(s.fechaIda)} → {fmtFecha(s.fechaRegreso)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="mb-1 flex items-center justify-between gap-2">
               <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores por habitación</span>
             </div>
@@ -1371,21 +1610,37 @@ function EditorPax({
       )}
 
       {esBernalo ? (
-        // Fase 3D: "captura y transporte" — valida contra el servidor, no
-        // agrega al carrito todavía (no hay cotización Bernalo disponible
-        // en este flujo, ver el informe de la tarea: eso es 3E).
-        <div className="flex items-center justify-between border-t border-gray-100 pt-3">
-          <div className="text-xs text-gray-400">
-            {resultadoValidacion?.ok && `${resultadoValidacion.habitaciones} habitación(es) validada(s) por el servidor.`}
-            {resultadoValidacion && !resultadoValidacion.ok && (
-              <span className="text-red-600">{resultadoValidacion.errores.length} error(es) — revisa las habitaciones marcadas arriba.</span>
-            )}
+        // Fase 3E: cotización dinámica real contra el servidor — SIN
+        // "Agregar al carrito" (regla 19 del encargo: esta fase es
+        // descubrimiento + cotización, nunca carrito/contrato). El TOTAL
+        // es la autoridad (regla 18); el promedio por viajero es solo
+        // referencia visual, nunca el número que se resalta primero.
+        <div className="space-y-2 border-t border-gray-100 pt-3">
+          {resultadoCotizacion?.ok && (
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs text-gray-400">
+                  Total solicitado{resultadoCotizacion.paxTotal > 0 ? ` · ${resultadoCotizacion.paxTotal} pax` : ""}
+                </div>
+                <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>
+                  {formatMoneda(resultadoCotizacion.pvp, resultadoCotizacion.moneda)}
+                </div>
+                <div className="text-[11px] text-gray-400">
+                  ≈ {formatMoneda(resultadoCotizacion.promedioPorViajero, resultadoCotizacion.moneda)} por viajero (referencia)
+                </div>
+              </div>
+            </div>
+          )}
+          {resultadoCotizacion && !resultadoCotizacion.ok && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{resultadoCotizacion.mensaje}</p>
+          )}
+          <div className="flex items-center justify-end">
+            <button type="button" onClick={cotizarBernalo} disabled={!bernaloListoParaCotizar || validando}
+              className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+              style={{ backgroundColor: "var(--brand-primary)" }}>
+              {validando ? "Cotizando…" : "Cotizar"}
+            </button>
           </div>
-          <button type="button" onClick={validarBernalo} disabled={!hayHab || validando}
-            className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
-            style={{ backgroundColor: "var(--brand-primary)" }}>
-            {validando ? "Validando…" : "Validar ocupación"}
-          </button>
         </div>
       ) : (
         <div className="flex items-center justify-between border-t border-gray-100 pt-3">

@@ -52,14 +52,20 @@ function cuerpoFuncion(fuenteCompleta: string, ancla: string): string {
 const cuerpoEditorPax = cuerpoFuncion(fuenteVistaBooking, "function EditorPax({");
 
 describe("EditorPax — hotel 'persona' conserva la salida anterior (regla 9)", () => {
-  test("el prop modeloTarifario es opcional, default null — ningún llamador existente lo pasa (queda en el flujo legado)", () => {
+  test("el prop modeloTarifario es opcional, default null — los 2 call sites de hoteles 'persona' no lo pasan (queda en el flujo legado)", () => {
+    // Fase 3E agregó un TERCER call site (HotelBernaloCotizarModal) que SÍ
+    // pasa modeloTarifario="unidad" — ver pruebas/ocupacionBernaloUI3EWiring.test.ts.
+    // Los 2 call sites de hoteles "persona" que ya existían en Fase 3D siguen
+    // exactamente igual, sin el prop nuevo.
     assert.match(cuerpoEditorPax, /modeloTarifario\s*=\s*null/);
     const llamadas = [...fuenteVistaBooking.matchAll(/<EditorPax\s/g)];
-    assert.equal(llamadas.length, 2, "se esperaban los 2 call sites existentes, sin agregar/quitar ninguno");
+    assert.equal(llamadas.length, 3, "2 call sites de hoteles persona + 1 de HotelBernaloCotizarModal (Fase 3E)");
+    let sinModelo = 0;
     for (const m of llamadas) {
       const bloque = fuenteVistaBooking.slice(m.index, m.index + 400);
-      assert.doesNotMatch(bloque, /modeloTarifario=/, "ningún call site existente debe pasar el prop nuevo todavía (fuera de alcance de 3D, ver 3E)");
+      if (!/modeloTarifario=/.test(bloque)) sinModelo++;
     }
+    assert.equal(sinModelo, 2, "los 2 call sites de hoteles persona no deben pasar modeloTarifario");
   });
 
   test("el bloque JSX legado (flat: cantidad de menores + edadesTxt.map) sigue presente TAL CUAL, dentro de la rama !esBernalo", () => {
@@ -106,9 +112,14 @@ describe("EditorPax — captura por habitación cuando modeloTarifario === 'unid
     assert.doesNotMatch(codigoVistaBooking, /orquestarCotizacionAlojamientoBernalo|resolverYCotizarAlojamientoBernalo/);
   });
 
-  test("el botón de Bernalo llama al servidor (validarOcupacionHabitacionesBernalo), no re-usa 'agregar()' del flujo legado", () => {
-    assert.match(cuerpoEditorPax, /onClick=\{validarBernalo\}/);
-    assert.match(cuerpoEditorPax, /await validarOcupacionHabitacionesBernalo\(\{/);
+  test("el botón de Bernalo llama al servidor, nunca re-usa 'agregar()' del flujo legado", () => {
+    // Fase 3E reemplazó el botón "Validar ocupación" (solo formato, Fase 3D)
+    // por "Cotizar" (cotización real, `cotizarAlojamientoBernaloPublico`) —
+    // ver pruebas/ocupacionBernaloUI3EWiring.test.ts para el detalle
+    // completo de esa transición. Esta prueba solo confirma que SIGUE sin
+    // reusar `agregar()`/`onAgregar` del flujo legado.
+    assert.doesNotMatch(cuerpoEditorPax, /onClick=\{agregar\}[\s\S]{0,80}esBernalo/);
+    assert.match(cuerpoEditorPax, /await cotizarAlojamientoBernaloPublico\(\{/);
   });
 });
 
