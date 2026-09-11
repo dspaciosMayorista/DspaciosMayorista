@@ -9,10 +9,16 @@ import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { formatMoneda } from "@/lib/utils";
 import { comisionDefault } from "@/lib/b2b";
 import {
-  resolverB2BParaMensaje, validarCrearSolicitudInput, resolverContextoB2B,
+  resolverB2BParaMensaje, resolverContextoB2B,
   respuestaPublicaInsertCotizacion, formatearLogInsertCotizacion,
   type SolicitudItemValidado, type SolicitudTourValidado,
 } from "@/lib/reservar/edadesMenores";
+import {
+  validarCrearSolicitudInput,
+  type SolicitudItemVariante,
+  type SalidaSeleccionadaBernaloEntrada,
+} from "@/lib/reservar/solicitudAlojamientoBernalo";
+import type { HabitacionOcupacionEntrada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
@@ -25,7 +31,8 @@ import type { Json } from "@/types/database";
 // `unknown`, lo revalida con `validarSolicitudItem` (que ni siquiera lee
 // estos 5 campos) y el precio/pax/ninos/ninos2/infantes reales SIEMPRE salen
 // de `computarReserva` — nunca de lo que mande el navegador.
-export type SolicitudItem = {
+export type SolicitudItemPersona = {
+  modeloTarifario?: undefined;
   modulo: "bloqueo" | "porcion_terrestre";
   paqueteId: number;
   hotelId: number;
@@ -49,6 +56,28 @@ export type SolicitudItem = {
   // legado ninos/ninos2/infantes de arriba.
   edadesMenores?: number[];
 };
+
+// Ítem Bernalo del carrito (Fase 3F-1, `hoteles.modelo_tarifario = "unidad"`)
+// — SOLO decisiones del usuario, mismo criterio que `HotelCartItemBernalo`
+// (lib/cart/CartContext.tsx): nunca neto/bruto/comisión/snapshot/payload/
+// costos/markup. `precio`/`moneda` son presentación, nunca autoridad —
+// `validarSolicitudItemBernalo` (lib/reservar/solicitudAlojamientoBernalo.ts)
+// ni siquiera los lee.
+export type SolicitudItemBernalo = {
+  modeloTarifario: "unidad";
+  paqueteId: number;
+  hotelId: number;
+  hotelNombre: string;
+  destino: string | null;
+  categoria: string;
+  alimentacion: string;
+  salida: SalidaSeleccionadaBernaloEntrada;
+  habitaciones: HabitacionOcupacionEntrada[];
+  precio: number;
+  moneda: string | null;
+};
+
+export type SolicitudItem = SolicitudItemPersona | SolicitudItemBernalo;
 
 // Ítem YA validado (`validarSolicitudItem`) + los valores REALES que arrojó
 // `computarReserva` para ese ítem — es lo único que se usa para el resumen
@@ -262,7 +291,7 @@ function construirMensaje(
 export type ItemExcluido = { etiqueta: string; motivo: "moneda" | "no_disponible" };
 
 async function crearCotizacionCarrito(input: {
-  items: SolicitudItemValidado[];
+  items: SolicitudItemVariante[];
   tours: SolicitudTourValidado[];
   cliente: SolicitudCliente;
 }): Promise<
@@ -291,6 +320,55 @@ async function crearCotizacionCarrito(input: {
   let hIdx = 0, vIdx = 0, iIdx = 0;
 
   for (const it of input.items) {
+    // Fase 3F-1: el carrito/checkout YA reconoce y transporta la variante
+    // Bernalo hasta acá (ver `SolicitudItemBernaloValidado`), pero la
+    // cotización real de tarifa por habitación sigue siendo 3F-2+. Se
+    // enruta por el MISMO `computarReserva` que usa el resto de ítems —
+    // nunca un mensaje de rechazo fabricado aparte — para que la guardia de
+    // Fase 3 (`hoteles.modelo_tarifario === 'unidad'`, `lib/reservar/computo.ts`,
+    // SIN CAMBIOS en esta fase) sea la única fuente de verdad de "todavía no
+    // se puede cotizar este hotel desde aquí". El mapeo de `salida` a
+    // `modulo`/`bloqueoId`/`empaquetadoId`/fechas reutiliza EXACTAMENTE las
+    // mismas reglas que ya aplica `resolverOrigenVuelo`
+    // (lib/reservar/origen.ts) para el resto de la app — nunca inventa una
+    // combinación nueva.
+    if (it.modeloTarifario === "unidad") {
+      const reservaBernalo: ReservaInput = {
+        paqueteId: it.paqueteId,
+        bloqueoId: it.salida.tipo === "bloqueo" ? it.salida.id : null,
+        empaquetadoId: it.salida.tipo === "empaquetado" ? it.salida.id : null,
+        modulo: it.salida.tipo === "sin_vuelo" ? "porcion_terrestre" : "bloqueo",
+        hotelId: it.hotelId,
+        fechaIda: it.salida.tipo === "sin_vuelo" ? it.salida.fechaIda : undefined,
+        fechaRegreso: it.salida.tipo === "sin_vuelo" ? it.salida.fechaRegreso : undefined,
+        categoria: it.categoria,
+        regimen: it.alimentacion,
+        // El motor persona (`ComputoReserva.pvpPorAcom`/`lineasHab`, por
+        // acomodación) no tiene forma no-ambigua de representar habitaciones
+        // Bernalo (comisión aplicada una sola vez al total, no por columna —
+        // ver el comentario de la guardia en computo.ts) — `{}` es honesto:
+        // nunca finge traducir la composición real a este formato. La
+        // guardia bloquea antes de que esto importe.
+        habitaciones: {},
+        ninos: 0, ninos2: 0, infantes: 0,
+        cliente: {
+          nombres: input.cliente.nombres, apellidos: input.cliente.apellidos, tipoDoc: "CC",
+          numeroDoc: input.cliente.numeroDoc, telefono: input.cliente.telefono, email: input.cliente.email,
+        },
+        tipoAsesor: "interno", asesorInterno: "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
+        aliadoId: null, plazo: "", pasajeros: [], servicios: [],
+      };
+      const compBernalo = await computarReserva(sb, reservaBernalo);
+      // `compBernalo.ok` es SIEMPRE `false` hoy (guardia de Fase 3) — el
+      // `else` es defensa en profundidad, nunca una ruta que 3F-1 sepa
+      // completar: no hay contrato_items/CxP/snapshot para un ítem Bernalo
+      // en esta fase, así que ni un éxito del motor puede seguir de largo.
+      return {
+        ok: false,
+        error: `No se pudo cotizar ${it.hotelNombre}: ${compBernalo.ok ? "la integración de tarifa por habitación (Bernalo) todavía no está completa en el checkout." : compBernalo.error}`,
+      };
+    }
+
     const reserva: ReservaInput = {
       paqueteId: it.paqueteId,
       bloqueoId: it.bloqueoId,

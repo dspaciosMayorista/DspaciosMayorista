@@ -344,6 +344,13 @@ export function validarDestinoConsulta(v: unknown): { ok: true; destino: string 
 // (ninos/ninos2/infantes) por venir ausente. Ese fallback solo existe para
 // el flujo interno de Reservar (`ReservaForm.tsx`), que no pasa por acá.
 export type SolicitudItemValidado = {
+  // Marcador de discriminación (Fase 3F-1, unión con `SolicitudItemBernaloValidado`
+  // en `lib/reservar/solicitudAlojamientoBernalo.ts`) — SIEMPRE `undefined`
+  // acá, nunca se asigna. Un ítem persona nunca lo trae: JSON.stringify
+  // descarta claves `undefined`, así que la serialización de este tipo es
+  // byte a byte la misma de siempre. Existe solo para que TypeScript pueda
+  // discriminar `if (item.modeloTarifario === "unidad")` sin un cast.
+  modeloTarifario?: undefined;
   modulo: "bloqueo" | "porcion_terrestre";
   paqueteId: number;
   hotelId: number;
@@ -637,66 +644,16 @@ export function validarClienteInput(v: unknown): { ok: true; cliente: SolicitudC
   return { ok: true, cliente };
 }
 
-export type CrearSolicitudInputValidado = {
-  items: SolicitudItemValidado[];
-  tours: SolicitudTourValidado[];
-  cliente: SolicitudClienteValidado;
-  modo?: "comisionable" | "neta";
-};
-
-// Frontera completa: `v` es `unknown` (esta Server Action pública es
-// alcanzable con cualquier body HTTP) — se valida objeto, arreglos, cada
-// ítem/tour anidado y cada campo antes de usar `.length`/`.map()`/`.trim()`/
-// aritmética sobre cualquiera de ellos. Los ítems de hotel se validan con
-// `validarSolicitudItem`, que exige `edadesMenores` — nunca se cae al
-// reparto legado ninos/ninos2/infantes en este flujo público. Los topes de
-// arreglo (`MAX_*_CARRITO`) se revisan ANTES de iterar — un payload gigante
-// falla por tamaño, nunca llega a procesar ítem por ítem ni a tocar Supabase.
-export function validarCrearSolicitudInput(v: unknown): { ok: true; input: CrearSolicitudInputValidado } | { ok: false; error: string } {
-  if (!esObjetoRaiz(v)) return { ok: false, error: "La solicitud no tiene una forma válida." };
-  if (!Array.isArray(v.items)) return { ok: false, error: "El carrito de hoteles debe ser un arreglo." };
-  if (v.items.length > MAX_ITEMS_CARRITO) return { ok: false, error: `No se pueden cotizar más de ${MAX_ITEMS_CARRITO} hoteles a la vez.` };
-  const toursRaw = v.tours;
-  if (toursRaw !== undefined && !Array.isArray(toursRaw)) return { ok: false, error: "El carrito de servicios debe ser un arreglo." };
-  const toursLen = Array.isArray(toursRaw) ? toursRaw.length : 0;
-  if (toursLen > MAX_TOURS_CARRITO) return { ok: false, error: `No se pueden cotizar más de ${MAX_TOURS_CARRITO} servicios a la vez.` };
-  if (v.items.length + toursLen > MAX_LINEAS_CARRITO) {
-    return { ok: false, error: `No se pueden cotizar más de ${MAX_LINEAS_CARRITO} líneas (hoteles + servicios) a la vez.` };
-  }
-
-  const items: SolicitudItemValidado[] = [];
-  for (let i = 0; i < v.items.length; i++) {
-    const r = validarSolicitudItem(v.items[i], i);
-    if (!r.ok) return { ok: false, error: r.error };
-    items.push(r.item);
-  }
-  const tours: SolicitudTourValidado[] = [];
-  if (Array.isArray(toursRaw)) {
-    for (let i = 0; i < toursRaw.length; i++) {
-      const r = validarTourInput(toursRaw[i], i);
-      if (!r.ok) return { ok: false, error: r.error };
-      tours.push(r.tour);
-    }
-  }
-  const vCliente = validarClienteInput(v.cliente);
-  if (!vCliente.ok) return { ok: false, error: vCliente.error };
-
-  // `modo` (comisionable/neta) es una elección legítima de un B2B YA
-  // autenticado — se valida la forma acá, pero solo tiene efecto si
-  // `crearSolicitudReserva` confirma `esB2B` server-side (`getContextoB2B()`
-  // + `resolverB2BParaMensaje`). Un visitante anónimo puede mandar cualquier
-  // `modo`: no importa, nunca se usa si la sesión no es B2B.
-  // `facturacion`/`pctComision` YA NO se aceptan del navegador en absoluto
-  // (defecto real corregido: antes un anónimo podía mandar `pctComision: 1`
-  // y aparentar 100% de comisión/gratis) — el servidor los resuelve siempre
-  // desde la sesión + base de datos.
-  let modo: "comisionable" | "neta" | undefined;
-  if (v.modo !== undefined) {
-    if (v.modo !== "comisionable" && v.modo !== "neta") return { ok: false, error: "La modalidad de compra es inválida." };
-    modo = v.modo;
-  }
-  return { ok: true, input: { items, tours, cliente: vCliente.cliente, modo } };
-}
+// `CrearSolicitudInputValidado`/`validarCrearSolicitudInput` (la frontera
+// completa del carrito público) se MOVIERON a
+// `lib/reservar/solicitudAlojamientoBernalo.ts` en Fase 3F-1: ese archivo
+// necesita despachar cada ítem entre `validarSolicitudItem` (acá) y
+// `validarSolicitudItemBernalo` (Fase 3F-1), y no puede vivir DENTRO de este
+// archivo sin cerrar un ciclo de imports con `ocupacionPorHabitacion.ts`
+// (que ya importa de este archivo) — ver el encabezado de ese módulo para
+// el detalle completo. `validarSolicitudItem`/`validarTourInput`/
+// `validarClienteInput` (todo lo que NO es específico de Bernalo) se
+// quedan aquí sin cambios; el módulo nuevo los importa.
 
 // ── Frontera pública del INSERT de `cotizaciones` (ronda 7) ────────────────
 // Defecto real corregido: `crearCotizacionCarrito` (checkout/actions.ts)

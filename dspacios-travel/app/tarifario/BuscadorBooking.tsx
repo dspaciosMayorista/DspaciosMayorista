@@ -3,7 +3,7 @@
 import { useId, useMemo, useState, useTransition } from "react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { buscarHoteles } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type BusquedaResultado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
@@ -278,7 +278,7 @@ function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | nul
   // La clasificación (infante/Niño 1/Niño 2) ya viene resuelta por edad real
   // desde la búsqueda (misma para todos los combos de este hotel — depende
   // del umbral del hotel, no de la categoría/régimen elegidos).
-  const item: Omit<HotelCartItem, "id"> = {
+  const item: Omit<HotelCartItemPersona, "id"> = {
     tipo: "hotel",
     modulo: "porcion_terrestre", paqueteId: r.paqueteId, hotelId: r.hotelId, bloqueoId: null,
     hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: foto,
@@ -289,7 +289,7 @@ function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | nul
   // El estado del botón se deriva del carrito real: si se quita del carrito,
   // vuelve a estar disponible para agregar.
   const enCarrito = items.find((i) =>
-    i.tipo === "hotel" && i.hotelId === item.hotelId && i.paqueteId === item.paqueteId &&
+    i.tipo === "hotel" && i.modeloTarifario !== "unidad" && i.hotelId === item.hotelId && i.paqueteId === item.paqueteId &&
     i.fechaIda === item.fechaIda && i.fechaRegreso === item.fechaRegreso &&
     i.categoria === item.categoria && i.regimen === item.regimen);
   const estrellas = info?.estrellas && info.estrellas > 0 ? "★".repeat(info.estrellas) : "";

@@ -80,10 +80,16 @@ describe("cotizacionBernaloActions.ts — A1: identidad discriminada de salida, 
     assert.doesNotMatch(tipoEntrada, /fechaIda:\s*string;\s*\n\s*fechaRegreso/);
   });
 
-  test('el tipo SalidaSeleccionadaBernaloEntrada es una unión discriminada por "tipo" (bloqueo/empaquetado/sin_vuelo)', () => {
-    const tipoSalida = fuenteAction.slice(
-      fuenteAction.indexOf("export type SalidaSeleccionadaBernaloEntrada"),
-      fuenteAction.indexOf("export type EntradaCotizarAlojamientoBernaloPublico")
+  test('el tipo SalidaSeleccionadaBernaloEntrada es una unión discriminada por "tipo" (bloqueo/empaquetado/sin_vuelo) — Fase 3F-1 la movió a un módulo neutral, reexportada acá', () => {
+    // Fase 3F-1: la definición vive en `lib/reservar/solicitudAlojamientoBernalo.ts`
+    // (módulo neutral, sin "use server" — lo necesita también el carrito,
+    // `lib/cart/CartContext.tsx`, un componente cliente). Este archivo solo
+    // la REEXPORTA para no romper a quien ya la importaba desde esta ruta.
+    assert.match(codigoAction, /export type \{ SalidaSeleccionadaBernaloEntrada \} from "@\/lib\/reservar\/solicitudAlojamientoBernalo"/);
+    const fuenteNeutral = readFileSync(join(raiz, "lib/reservar/solicitudAlojamientoBernalo.ts"), "utf8");
+    const tipoSalida = fuenteNeutral.slice(
+      fuenteNeutral.indexOf("export type SalidaSeleccionadaBernaloEntrada"),
+      fuenteNeutral.indexOf("export type SalidaSeleccionadaBernaloEntrada") + 400
     );
     assert.match(tipoSalida, /tipo:\s*"bloqueo"/);
     assert.match(tipoSalida, /tipo:\s*"empaquetado"/);

@@ -76,6 +76,15 @@ import {
 } from "@/lib/reservar/ocupacionPorHabitacion";
 import { normalizarCategoriaServicio, type ServicioGrupoIncluido } from "@/lib/reservar/serviciosPaquete";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
+// Fase 3F-1: `SalidaSeleccionadaBernaloEntrada` pasó a vivir en un módulo
+// NEUTRAL (sin "use server"/"use client"), fuente única compartida con el
+// carrito (`lib/cart/CartContext.tsx`) y el checkout público
+// (`app/tarifario/checkout/actions.ts`) — ninguno de los dos tiene que
+// importar este archivo "use server" para conocer la forma de la salida
+// elegida. Reexportada acá para no romper a nadie que ya la importaba desde
+// esta ruta (ej. `app/tarifario/VistaBooking.tsx`).
+export type { SalidaSeleccionadaBernaloEntrada } from "@/lib/reservar/solicitudAlojamientoBernalo";
+import type { SalidaSeleccionadaBernaloEntrada } from "@/lib/reservar/solicitudAlojamientoBernalo";
 
 export type CodigoRechazoCotizacionBernaloPublico =
   | "ocupacion_invalida"
@@ -97,15 +106,6 @@ export type RechazoCotizacionBernaloPublico = {
 };
 
 export type ResultadoCotizarAlojamientoBernaloPublico = ResultadoPvpAlojamientoBernalo | RechazoCotizacionBernaloPublico;
-
-// A1: identidad discriminada de la salida aérea elegida — NUNCA un índice.
-// "sin_vuelo" solo es válida cuando el paquete de verdad no tiene ninguna
-// salida configurada (porción terrestre); el servidor lo revalida (regla
-// A2.9): si existen salidas válidas, "sin_vuelo" se rechaza.
-export type SalidaSeleccionadaBernaloEntrada =
-  | { tipo: "bloqueo"; id: number }
-  | { tipo: "empaquetado"; id: number }
-  | { tipo: "sin_vuelo"; fechaIda: string; fechaRegreso: string };
 
 export type EntradaCotizarAlojamientoBernaloPublico = {
   paqueteId: number;

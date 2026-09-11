@@ -4,20 +4,32 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type CartItem, type HotelCartItem } from "@/lib/cart/CartContext";
+import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
 import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B } from "./actions";
 
-function resumenHab(it: HotelCartItem): string {
+function resumenHab(it: HotelCartItemPersona): string {
   const partes = Object.entries(it.habitaciones).filter(([, n]) => n > 0).map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
   if (it.ninos > 0) partes.push(`${it.ninos} Niño 1`);
   if (it.ninos2 > 0) partes.push(`${it.ninos2} Niño 2`);
   return partes.join(", ");
 }
 
+// Resumen mínimo, solo lectura, de un ítem Bernalo — este checkout todavía
+// no lo puede enviar (ver `hotelItems` abajo, restringido a persona); existe
+// para que la lista de "Tu selección" pueda mostrarlo sin fingir que ya se
+// puede finalizar la compra con él (Fase 3F-1: transporte, no integración).
+function resumenHabBernalo(it: { habitaciones: { acom: string; adultos: number }[] }): string {
+  return it.habitaciones.map((h) => `${ACOM_ROOM_LABEL[h.acom as AcomRoom] ?? h.acom} (${h.adultos} adt)`).join(", ");
+}
+
 export default function CheckoutPage() {
   const { items, total, remove, clear } = useCart();
-  const hotelItems = items.filter((i): i is HotelCartItem => i.tipo === "hotel");
+  // Solo hoteles "persona": este checkout aún no sabe enviar un ítem Bernalo
+  // (`crearSolicitudReserva` lo bloquearía en el servidor de todas formas,
+  // ver checkout/actions.ts — pero ni siquiera se intenta armar el payload
+  // persona-shaped con datos que un ítem Bernalo no tiene).
+  const hotelItems = items.filter((i): i is HotelCartItemPersona => i.tipo === "hotel" && i.modeloTarifario !== "unidad");
   const tourItems = items.filter((i): i is Extract<CartItem, { tipo: "tour" }> => i.tipo === "tour");
   const [c, setC] = useState({ nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" });
   const [pending, start] = useTransition();
@@ -64,7 +76,7 @@ export default function CheckoutPage() {
     // AQUÍ, con un mensaje que dice qué hotel retirar y volver a agregar —
     // nunca se manda al servidor a que intente adivinar (ese reparto legado
     // ya no existe para este flujo público, ver checkout/actions.ts).
-    const itemsNormalizados: { it: HotelCartItem; edadesMenores: number[] }[] = [];
+    const itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[] = [];
     for (const it of hotelItems) {
       const r = normalizarEdadesMenoresCarrito(it);
       if (!r.ok) { setErr(`${it.hotelNombre}: ${r.error}`); return; }
@@ -143,13 +155,19 @@ export default function CheckoutPage() {
                         : <span aria-hidden>{it.tipo === "hotel" ? "🏨" : "🗺️"}</span>}
                     </div>
                     <div className="min-w-0 flex-1">
-                      {it.tipo === "hotel" ? (
+                      {it.tipo === "hotel" && it.modeloTarifario !== "unidad" ? (
                         <>
                           <div className="font-medium text-gray-800">{it.hotelNombre}</div>
                           <div className="text-xs text-gray-500">
                             {it.destino ?? ""}{it.fechaIda ? ` · ${it.fechaIda} → ${it.fechaRegreso ?? ""}` : ""}
                           </div>
                           <div className="text-xs text-gray-400">{it.categoria} / {it.regimen} · {resumenHab(it)}</div>
+                        </>
+                      ) : it.tipo === "hotel" ? (
+                        <>
+                          <div className="font-medium text-gray-800">{it.hotelNombre}</div>
+                          <div className="text-xs text-gray-500">{it.destino ?? ""}</div>
+                          <div className="text-xs text-gray-400">{it.categoria} / {it.alimentacion} · {resumenHabBernalo(it)}</div>
                         </>
                       ) : (
                         <>

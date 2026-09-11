@@ -5,7 +5,7 @@ import Image from "next/image";
 import { Star, Check, X, Info } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
-import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges, CondicionCompacta, type CondicionHotelBadgeData } from "@/components/cotizacion/CondicionHotelBadges";
@@ -1054,7 +1054,7 @@ function Selector({
 }: {
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Omit<HotelCartItem, "id">) => void;
+  onAgregar: (item: Omit<HotelCartItemPersona, "id">) => void;
 }) {
   const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
   const [cat, setCat] = useState(cats[0] ?? "");
@@ -1667,7 +1667,7 @@ function SelectorPorFechas({
 }: {
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Omit<HotelCartItem, "id">) => void;
+  onAgregar: (item: Omit<HotelCartItemPersona, "id">) => void;
 }) {
   // No se permite check-in en el pasado: el mínimo es HOY (o el inicio del rango
   // del paquete si es posterior). Si el paquete empieza antes de hoy, arranca hoy.
