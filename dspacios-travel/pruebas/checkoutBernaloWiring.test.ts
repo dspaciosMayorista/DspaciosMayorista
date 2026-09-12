@@ -310,6 +310,69 @@ describe("app/tarifario/checkout/actions.ts — cierre #3: vuelosSnap público p
   });
 });
 
+describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la línea de alojamiento Bernalo en la cotización NUNCA se renderiza per-cápita", () => {
+  const cuerpoFn = cuerpoFuncion(fuenteCheckoutActions, "async function crearCotizacionCarrito(input: {");
+  const idxRamaBernalo = cuerpoFn.indexOf('it.modeloTarifario === "unidad"');
+  const idxCierreRama = cuerpoFn.indexOf("const reserva: ReservaInput = {", idxRamaBernalo);
+  const ramaBernalo = cuerpoFn.slice(idxRamaBernalo, idxCierreRama);
+
+  test('itemsSnap de un ítem Bernalo se arma con modo_precio: "total" y valor_total — nunca adultos: 1/tarifa_adulto (eso es lo que producía "Adultos 1" para una doble de 2 adultos)', () => {
+    const idxPush = ramaBernalo.indexOf("itemsSnap.push({");
+    assert.notEqual(idxPush, -1);
+    const bloque = ramaBernalo.slice(idxPush, idxPush + 500);
+    assert.match(bloque, /modo_precio: "total", valor_total: resultadoBernalo\.precioVenta,/);
+    assert.doesNotMatch(bloque, /adultos: 1,/);
+    assert.match(bloque, /adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0,/);
+  });
+
+  test("la descripción de la línea agregada incluye habitaciones Y viajeros (mismo criterio que el contrato ya convertido en reservar/actions.ts)", () => {
+    const idxPush = ramaBernalo.indexOf("itemsSnap.push({");
+    const bloque = ramaBernalo.slice(idxPush, idxPush + 400);
+    assert.match(bloque, /habitación\(es\), \$\{resultadoBernalo\.paxTotal\} viajero\(s\)/);
+  });
+
+  test("habitacionesBernaloSnap se llena con la ocupación REAL de cada habitación (h.adultos) — nunca con la cantidad de habitaciones ni un valor fijo", () => {
+    const idxPush = ramaBernalo.indexOf("habitacionesBernaloSnap.push({");
+    assert.notEqual(idxPush, -1);
+    const bloque = ramaBernalo.slice(idxPush, idxPush + 300);
+    assert.match(bloque, /adultos: h\.adultos,/);
+    assert.match(bloque, /edadesMenores: h\.edadesMenores,/);
+    assert.doesNotMatch(bloque, /adultos: habitacionesSnap\.length/);
+  });
+
+  test("habitacionesBernaloSnap itera habitacionesSnap (las mismas ocupaciones ya validadas, .ocupacion de cada habitación) — no reconstruye la lista desde it.habitaciones crudo", () => {
+    const idxForEach = ramaBernalo.indexOf("habitacionesSnap.forEach(");
+    assert.notEqual(idxForEach, -1);
+    const idxOcupacion = ramaBernalo.indexOf("resultadoBernalo.habitaciones.map((h) => h.ocupacion)");
+    assert.ok(idxOcupacion !== -1 && idxOcupacion < idxForEach, "habitacionesSnap debe construirse (desde .ocupacion) antes de recorrerla para el detalle por habitación");
+  });
+});
+
+describe("app/tarifario/checkout/actions.ts — la cotización persiste habitacionesBernalo en su detalle", () => {
+  test('el objeto `detalle` guardado incluye "habitacionesBernalo: habitacionesBernaloSnap"', () => {
+    const idxDetalle = codigoCheckoutActions.indexOf("const detalle = {");
+    assert.notEqual(idxDetalle, -1);
+    const bloque = codigoCheckoutActions.slice(idxDetalle, idxDetalle + 300);
+    assert.match(bloque, /habitacionesBernalo: habitacionesBernaloSnap,/);
+  });
+});
+
+describe("app/cotizacion/[id]/page.tsx — pasa habitacionesBernalo al documento previo (mismo detalle por habitación que el contrato ya convertido)", () => {
+  const fuentePage = leer("app/cotizacion/[id]/page.tsx");
+
+  test("el tipo Detalle declara habitacionesBernalo opcional", () => {
+    const tipo = fuentePage.slice(fuentePage.indexOf("type Detalle = {"), fuentePage.indexOf("type Detalle = {") + 700);
+    assert.match(tipo, /habitacionesBernalo\?: HabitacionBernaloDocumento\[\];/);
+  });
+
+  test("<ContratoDocumento> de la rama de cotización del tarifario recibe habitacionesBernalo={d.habitacionesBernalo ?? []}", () => {
+    const idxContrato = fuentePage.indexOf("<ContratoDocumento");
+    const idxFinTarifario = fuentePage.indexOf("</ContratoDocumento>", idxContrato);
+    const bloque = fuentePage.slice(idxContrato, idxFinTarifario === -1 ? idxContrato + 500 : idxFinTarifario);
+    assert.match(bloque, /habitacionesBernalo=\{d\.habitacionesBernalo \?\? \[\]\}/);
+  });
+});
+
 describe("lib/reservar/computoReservaBernalo.ts — cierre #2: hotelDestino autoritativo (Fase 3F-4A)", () => {
   const fuenteComputoBernalo = leer("lib/reservar/computoReservaBernalo.ts");
   const codigoComputoBernalo = sinComentarios(fuenteComputoBernalo);

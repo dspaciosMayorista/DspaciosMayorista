@@ -416,6 +416,14 @@ async function crearCotizacionCarrito(input: {
   const hotelesSnap: Record<string, unknown>[] = [];
   const vuelosSnap: Record<string, unknown>[] = [];
   const itemsSnap: Record<string, unknown>[] = [];
+  // Detalle por habitación de los hoteles Bernalo del carrito — SOLO datos
+  // no sensibles (mismo criterio que `habitacionesBernaloDeContrato`, la
+  // función que lee esto ya convertido a contrato desde
+  // `contrato_alojamiento_bernalo`): nunca neto/bruto/comisión/fuente. Antes
+  // de convertir, esta cotización todavía no tiene filas en esa tabla —
+  // este snapshot es la única forma de mostrar el mismo detalle por
+  // habitación en el documento previo.
+  const habitacionesBernaloSnap: Record<string, unknown>[] = [];
   const itemsOk: SolicitudItemComputado[] = [];
   const itemsBernaloOk: SolicitudItemBernaloComputado[] = [];
   const toursOk: SolicitudTourComputado[] = [];
@@ -501,11 +509,29 @@ async function crearCotizacionCarrito(input: {
         fecha_ingreso: resultadoBernalo.salida.fechaIda, fecha_salida: resultadoBernalo.salida.fechaRegreso,
         nota_regimen: null, foto_url: null,
       });
+      // Regla C.13/14 (mismo criterio que el contrato ya convertido, ver
+      // `reservar/actions.ts`): UNA sola línea AGREGADA con `modo_precio:
+      // "total"` — nunca `adultos`/`tarifa_adulto` (per-cápita), que en
+      // Bernalo describen 1 habitación con su propia ocupación, no 1
+      // adulto. Con el modo legado, una doble de 2 adultos se veía como
+      // "Adultos 1" en la tabla de valores del documento previo.
       iIdx++;
       itemsSnap.push({
         id: iIdx,
-        descripcion: `${resultadoBernalo.hotelNombre}${destinoAutoritativo ? ` — ${destinoAutoritativo}` : ""} · ${it.categoria} / ${it.alimentacion} · ${habitacionesSnap.length} habitación(es)`,
-        adultos: 1, ninos: 0, tarifa_adulto: resultadoBernalo.precioVenta, tarifa_nino: 0,
+        descripcion: `${resultadoBernalo.hotelNombre}${destinoAutoritativo ? ` — ${destinoAutoritativo}` : ""} · ${it.categoria} / ${it.alimentacion} · ${habitacionesSnap.length} habitación(es), ${resultadoBernalo.paxTotal} viajero(s)`,
+        adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0,
+        modo_precio: "total", valor_total: resultadoBernalo.precioVenta,
+      });
+      habitacionesSnap.forEach((h, idx) => {
+        habitacionesBernaloSnap.push({
+          habitacionId: h.id,
+          orden: idx,
+          hotelNombre: resultadoBernalo.hotelNombre,
+          categoria: it.categoria,
+          alimentacion: it.alimentacion,
+          adultos: h.adultos,
+          edadesMenores: h.edadesMenores,
+        });
       });
 
       // Cierre 3F-4A #3: `vuelosSnap` público con la MISMA forma que persona
@@ -723,7 +749,10 @@ async function crearCotizacionCarrito(input: {
     moneda,
   };
 
-  const detalle = { venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
+  const detalle = {
+    venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap,
+    habitacionesBernalo: habitacionesBernaloSnap,
+  };
 
   const vigenciaRes = resolverVigenciaCotizacion({
     hoy,
