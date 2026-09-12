@@ -7,6 +7,7 @@ import { agenciaDe } from "@/lib/tenant.server";
 import type { Tenant } from "@/lib/tenant";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
+import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,7 @@ export default async function ContratoPublicoPage({
     { data: planes },
     { data: contratoCondiciones },
     { data: overridesCondiciones },
+    habitacionesBernalo,
   ] = await Promise.all([
     sb.from("contrato_pasajeros").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("contrato_hoteles").select("*").eq("numero_contrato", numero).order("orden"),
@@ -68,6 +70,9 @@ export default async function ContratoPublicoPage({
     sb.from("planes_alimentacion").select("codigo, nombre, nota_especial"),
     sb.from("contrato_condiciones").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("restriccion_overrides").select("*").eq("numero_contrato", numero).order("creado_en"),
+    // Fase 3F-4B: la autorización aquí es el `share_token` secreto — ya
+    // verificado arriba (regla 19).
+    habitacionesBernaloDeContrato(numero),
   ]);
 
   const totalPagado = (abonos ?? []).reduce(
@@ -98,6 +103,7 @@ export default async function ContratoPublicoPage({
             totalPagado={totalPagado}
             agencia={agencia}
             condiciones={condicionesResueltas}
+            habitacionesBernalo={habitacionesBernalo}
           />
         </div>
       </div>

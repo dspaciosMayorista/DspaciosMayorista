@@ -353,7 +353,11 @@ test("computo.ts: revalida activo/vigencia del empaquetado en el momento de reso
 });
 
 test("reservar/actions.ts: resuelve y valida el origen COMPLETO (paso 2c) antes del número de contrato y del insert de ventas — no crea nada si falla", () => {
-  assert.match(reservarActionsSrc, /import \{ resolverDatosVuelo, type DatosVueloOrigen \} from "@\/lib\/reservar\/empaquetadoOrigen";/);
+  // Fase 3F-4B agregó `datosVueloBloqueo`/`datosVueloEmpaquetado` al mismo
+  // import (reutilizados por `convertirCotizacionCarrito` para la CxP aérea
+  // Bernalo) — el regex solo exige que `resolverDatosVuelo`/`DatosVueloOrigen`
+  // sigan viniendo de este módulo, sin importar qué más se importe junto.
+  assert.match(reservarActionsSrc, /import \{[^}]*\bresolverDatosVuelo\b[^}]*\btype DatosVueloOrigen\b[^}]*\} from "@\/lib\/reservar\/empaquetadoOrigen";/);
   const paso2c = reservarActionsSrc.indexOf("// 2c) Resolver y VALIDAR el origen completo");
   const paso3 = reservarActionsSrc.indexOf("// 3) Número de contrato");
   const pasoVenta = reservarActionsSrc.indexOf('// 4) Venta (cabecera) — nace PENDIENTE');

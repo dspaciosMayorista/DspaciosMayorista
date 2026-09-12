@@ -348,24 +348,11 @@ describe("app/tarifario/checkout/actions.ts — SolicitudResult: precio_actualiz
   });
 });
 
-describe("app/(dashboard)/dashboard/reservar/actions.ts — convertirCotizacionCarrito bloquea Bernalo (regla C.15)", () => {
-  const fuenteConvertir = leer("app/(dashboard)/dashboard/reservar/actions.ts");
-  const cuerpoFn = cuerpoFuncion(fuenteConvertir, "export async function convertirCotizacionCarrito(");
-
-  test('detecta modeloTarifario === "unidad" en itemsCrudos ANTES de validar asignaciones/pasajeros', () => {
-    const idxGuard = cuerpoFn.indexOf('modeloTarifario === "unidad"');
-    const idxAsignaciones = cuerpoFn.indexOf("opts.asignaciones");
-    assert.notEqual(idxGuard, -1);
-    assert.ok(idxGuard < idxAsignaciones, "la guardia Bernalo debe evaluarse antes de tocar asignaciones/pasajeros");
-  });
-
-  test("el mensaje de bloqueo es explícito (\"integración contractual pendiente\") — nunca cae en silencio al flujo persona", () => {
-    const idxGuard = cuerpoFn.indexOf('modeloTarifario === "unidad"');
-    const bloque = cuerpoFn.slice(idxGuard, idxGuard + 400);
-    assert.match(bloque, /return \{ ok: false, error:/);
-    assert.match(bloque, /integración contractual pendiente/);
-  });
-});
+// El describe "convertirCotizacionCarrito bloquea Bernalo (regla C.15)" que
+// vivía aquí (Fase 3F-4A) se RETIRÓ: Fase 3F-4B levantó ese bloqueo genérico
+// — `convertirCotizacionCarrito` ahora reliquida y convierte un ítem Bernalo
+// (con las guardias de precio/proveedor de la nueva fase). Sus pruebas de
+// wiring viven en pruebas/convertirCotizacionCarritoBernaloWiring.test.ts.
 
 describe("lib/reservar/solicitudAlojamientoBernalo.ts — precioDeclarado/monedaDeclarada (regla B.10, Fase 3F-4A)", () => {
   const fuenteSolicitud = leer("lib/reservar/solicitudAlojamientoBernalo.ts");

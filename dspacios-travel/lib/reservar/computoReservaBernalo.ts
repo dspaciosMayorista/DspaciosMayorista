@@ -239,7 +239,7 @@ export async function computarReservaBernalo(
       .eq("paquete_id", input.paqueteId),
     admin
       .from("armado_empaquetados")
-      .select("empaquetado_id, aplica_mk, ta, empaquetados(id, fecha_ida, fecha_regreso, tarifa_para_empaquetar, activo, compra_inicio, compra_fin)")
+      .select("empaquetado_id, aplica_mk, ta, empaquetados(id, fecha_ida, fecha_regreso, tarifa_proveedor, fee_infante, activo, compra_inicio, compra_fin)")
       .eq("paquete_id", input.paqueteId),
   ]);
   if (eServ || eVuelo || eEmp) {
@@ -259,14 +259,34 @@ export async function computarReservaBernalo(
   }
   for (const v of empaquetadosSel ?? []) {
     const e = v.empaquetados as unknown as {
-      id: number; fecha_ida: string | null; fecha_regreso: string | null; tarifa_para_empaquetar: number;
+      id: number; fecha_ida: string | null; fecha_regreso: string | null; tarifa_proveedor: number; fee_infante: number;
       activo: boolean; compra_inicio: string | null; compra_fin: string | null;
     } | null;
     if (!e || !e.activo || !e.fecha_ida || !e.fecha_regreso) continue;
     if (!empaquetadoVigente(e.compra_inicio, e.compra_fin, hoy)) continue;
+    // Corrección (hallazgo confirmado Fase 3F-4B cierre): `costoTiqueteSilla`
+    // de un empaquetado es lo que realmente se le paga al proveedor —
+    // `tarifa_proveedor` (neto), NUNCA `tarifa_para_empaquetar` (reventa
+    // tecleada a mano). Mismo criterio que ya corrigió persona
+    // (`lib/reservar/empaquetadoOrigen.ts::datosVueloEmpaquetado`, campo
+    // `costo_neto`) — antes este archivo repetía el bug que ese módulo ya
+    // había cerrado. `bloqueos_vuelo` NO cambia: sigue siendo
+    // `tarifa_para_empaquetar`, su único costo disponible (no tiene un
+    // campo "neto" separado).
+    // `fee_infante` se SELECCIONA (pedido del encargo) pero NO entra a
+    // `costoTiqueteSilla` ni a este motor de PVP/costo interno — el cargo
+    // por infante de un empaquetado es un valor FIJO por infante, no un
+    // "tiquete por silla" (los infantes no tienen silla, `paxConSilla` los
+    // excluye por definición). La CxP aérea REAL/`ventas.costo_aereo` de
+    // `convertirCotizacionCarrito` (reservar/actions.ts) lo calcula aparte,
+    // con su propia lectura fresca vía `datosVueloBloqueo`/
+    // `datosVueloEmpaquetado` (`dv.costo_neto`/`dv.fee_infante`) — nunca
+    // desde este resultado, que solo expone `costoVueloTotal` sin infantes
+    // (regla 7 del encargo original, sin cambios: "nunca × paxTotal").
+    void e.fee_infante;
     salidasValidas.push({
       tipo: "empaquetado", id: e.id, fechaIda: e.fecha_ida, fechaRegreso: e.fecha_regreso,
-      costoTiqueteSilla: Number(e.tarifa_para_empaquetar) || 0, aplicaMk: !!v.aplica_mk, ta: Number(v.ta) || 0,
+      costoTiqueteSilla: Number(e.tarifa_proveedor) || 0, aplicaMk: !!v.aplica_mk, ta: Number(v.ta) || 0,
     });
   }
   const totalConfiguradas = (vuelosSel?.length ?? 0) + (empaquetadosSel?.length ?? 0);

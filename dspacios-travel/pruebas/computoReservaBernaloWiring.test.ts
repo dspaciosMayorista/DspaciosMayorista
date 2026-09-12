@@ -107,6 +107,34 @@ describe("computoReservaBernalo.ts — A2: mismos filtros del generador legado, 
   });
 });
 
+// ── Cierre 3F-4B, prueba obligatoria (d): empaquetado usa tarifa_proveedor,
+// NUNCA tarifa_para_empaquetar — mismo bug que ya se había corregido para
+// persona (lib/reservar/empaquetadoOrigen.ts::datosVueloEmpaquetado). ──────
+describe("computoReservaBernalo.ts — hallazgo confirmado (d): empaquetado usa tarifa_proveedor (neto), nunca tarifa_para_empaquetar (reventa)", () => {
+  test("el SELECT de empaquetados pide tarifa_proveedor/fee_infante — ya NO pide tarifa_para_empaquetar", () => {
+    const idxSelect = fuente.indexOf('.from("armado_empaquetados")');
+    const bloqueSelect = fuente.slice(idxSelect, idxSelect + 300);
+    assert.match(bloqueSelect, /tarifa_proveedor/);
+    assert.match(bloqueSelect, /fee_infante/);
+    assert.doesNotMatch(bloqueSelect, /tarifa_para_empaquetar/, "el SELECT de empaquetados ya no debe pedir tarifa_para_empaquetar (reventa)");
+  });
+
+  test("costoTiqueteSilla de un empaquetado sale de e.tarifa_proveedor — NUNCA de e.tarifa_para_empaquetar", () => {
+    const idxLoop = fuente.indexOf("for (const v of empaquetadosSel ?? []) {");
+    const idxCierre = fuente.indexOf("const totalConfiguradas", idxLoop);
+    const bloque = fuente.slice(idxLoop, idxCierre);
+    assert.match(bloque, /costoTiqueteSilla: Number\(e\.tarifa_proveedor\) \|\| 0,/);
+    assert.doesNotMatch(sinComentarios(bloque), /costoTiqueteSilla:\s*Number\(e\.tarifa_para_empaquetar\)/);
+  });
+
+  test("bloqueos_vuelo NO cambia: costoTiqueteSilla sigue siendo tarifa_para_empaquetar (único costo disponible ahí)", () => {
+    const idxLoop = fuente.indexOf("for (const v of vuelosSel ?? []) {");
+    const idxCierre = fuente.indexOf("for (const v of empaquetadosSel", idxLoop);
+    const bloque = fuente.slice(idxLoop, idxCierre);
+    assert.match(bloque, /costoTiqueteSilla: Number\(b\.tarifa_para_empaquetar\) \|\| 0,/);
+  });
+});
+
 describe("computoReservaBernalo.ts — A3: moneda resuelta desde los componentes reales", () => {
   test("usa resolverMonedaComponentesBernalo — nunca `pq.moneda ?? \"COP\"`", () => {
     assert.match(codigo, /import\s*\{[\s\S]*resolverMonedaComponentesBernalo[\s\S]*\}\s*from\s*"@\/lib\/calc\/pvpAlojamientoBernalo"/);

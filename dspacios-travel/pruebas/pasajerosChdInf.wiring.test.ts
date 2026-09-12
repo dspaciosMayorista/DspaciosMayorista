@@ -168,7 +168,11 @@ test("reservar/actions.ts: convertirCotizacionCarrito crea pasajeros+responsable
   // ningún contrato — mismo candado que crear_pasajeros_contrato de un
   // solo bloqueo (nunca queda una creación "sin autor").
   const idxGuardia = bloque.indexOf("usuarioCond");
-  const idxLoopGrupos = bloque.indexOf("for (const { grupo, validados } of gruposValidados)");
+  // Fase 3F-4B: `validados` se separó en `validadosPersona`/`validadosBernalo`
+  // (el mismo grupo puede traer ítems de los dos modelos) — se busca el loop
+  // de CREACIÓN real (el que corre DESPUÉS de la guardia de usuario), no la
+  // primera aparición del mismo patrón dentro de la pre-validación de arriba.
+  const idxLoopGrupos = bloque.indexOf("for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados)", idxGuardia);
   assert.match(bloque, /if\s*\(!usuarioCond\)\s*\{\s*\n\s*return \{ ok: false, error:/, "no exige un usuario real antes de crear los contratos");
   assert.ok(idxGuardia > 0 && idxLoopGrupos > idxGuardia, "la guardia de usuario real debe ir ANTES del loop de creación de contratos");
 });
@@ -724,7 +728,8 @@ test("B18 (ronda 7): pre-validación de TODOS los grupos ANTES de crear el prime
   // Existe un bucle de pre-validación que corre reindexarGrupoLocal por grupo y
   // retorna ANTES del bucle de creación (que hace ventas.insert).
   const idxPre = bloque.indexOf("PRE-VALIDACIÓN de TODOS los grupos");
-  const idxLoopCreacion = bloque.indexOf("for (const { grupo, validados } of gruposValidados) {", idxPre);
+  // Fase 3F-4B: `validados` → `validadosPersona`/`validadosBernalo`.
+  const idxLoopCreacion = bloque.indexOf("for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados) {", idxPre);
   const idxVentasInsert = bloque.indexOf('await sb.from("ventas").insert(', idxPre);
   assert.ok(idxPre > 0, "no existe la pre-validación de grupos");
   assert.ok(idxLoopCreacion > idxPre, "la pre-validación no va ANTES del bucle de creación");
