@@ -748,7 +748,17 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (filas.length) {
     const ins = await sb.from("tarifario_resultado").insert(filas);
     if (ins.error) return { ok: false, error: ins.error.message };
-  } else if (tipo === "bloqueo" || tipo === "porcion_terrestre") {
+  } else if ((tipo === "bloqueo" || tipo === "porcion_terrestre") && hotelesBernaloExcluidos.length === 0) {
+    // Hallazgo confirmado: un paquete cuyos hoteles son TODOS Bernalo
+    // (`modelo_tarifario = 'unidad'`) queda con `hotelIds` vacío arriba —
+    // nunca genera ninguna fila legacy de `tarifario_resultado` (correcto:
+    // ese modelo no vive ahí, ver el comentario de `hotelesBernaloExcluidos`
+    // más arriba), así que `filas.length` cae en 0 igual que un paquete
+    // realmente roto (sin temporadas/tarifas). Sin este chequeo, un paquete
+    // Bernalo válido (con sus tarifas por unidad bien cargadas en
+    // `hotel_tarifas_unidad`) nunca podía guardarse — el error legacy solo
+    // debe aplicar cuando de verdad no hay NINGÚN hotel Bernalo excluido que
+    // explique por qué no hay filas.
     return {
       ok: false,
       error:

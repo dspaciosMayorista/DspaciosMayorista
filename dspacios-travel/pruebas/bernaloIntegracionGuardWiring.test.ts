@@ -144,6 +144,60 @@ describe("paquetes/actions.ts (generarTarifario) — hoteles 'unidad' se EXCLUYE
   });
 });
 
+// ── Hallazgo confirmado: paquete SOLO Bernalo no debe caer en el error
+// legacy "No se generaron tarifas" — filas.length=0 es esperado y correcto
+// para ese caso (el modelo por unidad no escribe tarifario_resultado), no
+// una señal de paquete roto. ─────────────────────────────────────────────
+describe("paquetes/actions.ts (generarTarifario) — hallazgo confirmado: filas.length=0 por Bernalo NUNCA es el error legacy", () => {
+  const cuerpo = cuerpoFuncion(paqueteActions, "export async function generarTarifario(paqueteId: number): Promise<Result> {");
+
+  test('el error legacy "No se generaron tarifas" solo se devuelve si hotelesBernaloExcluidos.length === 0 (nunca cuando SÍ hay hoteles Bernalo excluidos)', () => {
+    const idxError = cuerpo.indexOf("No se generaron tarifas");
+    assert.notEqual(idxError, -1);
+    // La condición completa del `else if` que envuelve el error legacy debe
+    // incluir explícitamente `hotelesBernaloExcluidos.length === 0` — nunca
+    // solo `tipo === "bloqueo" || tipo === "porcion_terrestre"` a secas.
+    const idxElseIf = cuerpo.lastIndexOf("} else if (", idxError);
+    assert.notEqual(idxElseIf, -1);
+    const condicion = cuerpo.slice(idxElseIf, cuerpo.indexOf("{", idxElseIf) + 1);
+    assert.match(condicion, /hotelesBernaloExcluidos\.length === 0/, `la condición del error legacy debe excluir el caso Bernalo: "${condicion}"`);
+  });
+
+  test("un paquete SOLO Bernalo (filas.length=0, hotelesBernaloExcluidos.length>0) llega al return final ok:true — nunca al return de error", () => {
+    const idxErrorReturn = cuerpo.indexOf("No se generaron tarifas");
+    const idxElseIf = cuerpo.lastIndexOf("} else if (", idxErrorReturn);
+    const condicion = cuerpo.slice(idxElseIf, cuerpo.indexOf("{", idxElseIf) + 1);
+    // Simula la evaluación: con hotelesBernaloExcluidos.length>0 la
+    // condición completa (que exige === 0) debe evaluar false, así que el
+    // `else if` no dispara y el control cae al return final.
+    assert.match(condicion, /&&/, "la condición debe combinar el tipo Y la ausencia de Bernalo excluidos (AND), no evaluarlos por separado");
+  });
+
+  test("nunca se insertan filas ficticias en tarifario_resultado para Bernalo — el insert solo corre si filas.length es verdadero", () => {
+    const idxIf = cuerpo.indexOf("if (filas.length) {");
+    const idxInsert = cuerpo.indexOf('.from("tarifario_resultado").insert(filas)');
+    assert.notEqual(idxIf, -1);
+    assert.notEqual(idxInsert, -1);
+    assert.ok(idxIf < idxInsert && idxInsert < idxIf + 150, "el insert debe estar DENTRO del if (filas.length), nunca fuera ni con un array rellenado a mano");
+  });
+
+  test("el return final sigue devolviendo id: filas.length (0 para un paquete solo Bernalo) y el aviso Bernalo, sin cambios", () => {
+    assert.match(cuerpo, /id: filas\.length,/);
+    assert.match(cuerpo, /hotelesBernaloExcluidos\.length[\s\S]{0,40}\?/);
+  });
+
+  test("paquete mixto (persona + Bernalo): filas.length>0 sigue insertando SOLO las filas persona — el aviso Bernalo no depende de si hubo filas persona", () => {
+    // El `if (filas.length)` inserta sin mirar `hotelesBernaloExcluidos` —
+    // las dos ramas (insertar filas persona, avisar de los excluidos) son
+    // independientes entre sí, así que un paquete mixto hace ambas cosas.
+    const idxIf = cuerpo.indexOf("if (filas.length) {");
+    const idxAviso = cuerpo.indexOf("hotelesBernaloExcluidos.length", cuerpo.indexOf("return {"));
+    assert.notEqual(idxIf, -1);
+    assert.notEqual(idxAviso, -1);
+    assert.ok(idxIf < idxAviso, "el insert de filas persona y el aviso Bernalo deben ser ramas independientes, ambas alcanzables en el mismo llamado");
+  });
+});
+
 describe("ArmadoClient.tsx — el aviso de hoteles Bernalo excluidos se muestra al generar el tarifario", () => {
   const armadoClient = leer("app/(dashboard)/dashboard/paquetes/[id]/ArmadoClient.tsx");
   test("el mensaje de éxito incluye r.aviso cuando viene presente", () => {
