@@ -1321,6 +1321,19 @@ export async function convertirCotizacionCarrito(
   const serviciosIncluidosCot = payload.serviciosIncluidos ?? [];
   const cliente = payload.cliente ?? { nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" };
   if (!itemsCrudos.length && !tours.length) return { ok: false, error: "La cotización no tiene ítems." };
+
+  // Fase 3F-4A, regla C.15: un ítem Bernalo (`hoteles.modelo_tarifario =
+  // "unidad"`) persistido en `cotizaciones.payload` viene marcado con
+  // `modeloTarifario: "unidad"` (checkout/actions.ts) — se bloquea EXPLÍCITO
+  // acá, antes de tocar pasajeros/asignaciones/sillas, para que nunca caiga
+  // al flujo persona de abajo (que asumiría `habitaciones: Record<string,
+  // number>` por acomodación, una forma que Bernalo no tiene). La
+  // integración contractual (contrato_items, CxP, `contrato_alojamiento_
+  // bernalo`) es 3F-4B — todavía no existe.
+  if (itemsCrudos.some((it) => (it as unknown as { modeloTarifario?: string }).modeloTarifario === "unidad")) {
+    return { ok: false, error: "Esta cotización incluye un hotel con tarifa por habitación (Bernalo) — la integración contractual pendiente todavía no está disponible. Contacta a un asesor para convertirla manualmente." };
+  }
+
   if (!opts.pasajeros.length) return { ok: false, error: "Captura los pasajeros antes de generar el contrato." };
 
   // ── Validar `opts.asignaciones` (B11): una entrada por ítem, posiciones

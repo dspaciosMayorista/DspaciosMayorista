@@ -105,11 +105,34 @@ export function validarSalidaSeleccionadaBernalo(
 }
 
 // ── Ítem Bernalo del carrito — SOLO decisiones del usuario ─────────────────
-// Deliberadamente SIN `precio`/`moneda`/`pax`/ningún campo de dinero: el ítem
-// ya validado (server) nunca lleva autoridad de precio, igual que
-// `SolicitudItemValidado` (persona, `edadesMenores.ts`) tampoco la lleva.
+// Deliberadamente SIN `pax`/ningún campo de dinero AUTORITATIVO: el precio
+// real de un ítem Bernalo SIEMPRE sale de re-liquidar con
+// `computarReservaBernalo` (checkout/actions.ts), nunca de este objeto,
+// igual que `SolicitudItemValidado` (persona, `edadesMenores.ts`) tampoco
+// lleva autoridad de precio.
+//
+// Fase 3F-4A agrega `precioDeclarado`/`monedaDeclarada`: el precio/moneda que
+// el CARRITO mostraba al usuario al momento de enviar el checkout — nunca se
+// usan para calcular nada, SOLO para que el checkout detecte si cambiaron
+// frente al recálculo autoritativo y exija una segunda confirmación (regla
+// B.10 del encargo). Si el body no los trae o vienen con forma inválida, se
+// normalizan a `null` (que siempre se interpreta como "no coincide", nunca
+// como "confía en esto").
+//
+// Cierre 3F-4A #1 agrega `itemId`: el `id` estable que el carrito ya le
+// asigna a cada `HotelCartItemBernalo` (`lib/cart/CartContext.tsx`, generado
+// una sola vez al hacer `add()`). Viaja de ida y vuelta SOLO para que el
+// checkout pueda decirle a la UI EXACTAMENTE qué ítem cambió de precio — dos
+// ítems del mismo paquete/hotel con ocupaciones distintas (dos habitaciones
+// diferentes agregadas por separado) tienen `itemId` distintos aunque
+// compartan paqueteId+hotelId, así que nunca se confunden. Es un identificador
+// de CORRELACIÓN, no de autorización: se valida como texto acotado (misma
+// función que hotelNombre/destino) y nunca se usa para decidir precio,
+// pertenencia ni ningún otro efecto — solo se copia tal cual al resultado
+// `precio_actualizado` cuando el servidor rechaza el precio declarado.
 export type SolicitudItemBernaloValidado = {
   modeloTarifario: "unidad";
+  itemId: string;
   paqueteId: number;
   hotelId: number;
   hotelNombre: string;
@@ -118,6 +141,8 @@ export type SolicitudItemBernaloValidado = {
   alimentacion: string;
   salida: SalidaSeleccionadaBernaloEntrada;
   habitaciones: HabitacionOcupacionValidada[];
+  precioDeclarado: number | null;
+  monedaDeclarada: string | null;
 };
 
 export function validarSolicitudItemBernalo(
@@ -127,6 +152,12 @@ export function validarSolicitudItemBernalo(
   const ctx = `El ítem ${indice + 1} del carrito`;
   if (!esObjetoPlano(v)) return { ok: false, error: `${ctx} no tiene una forma válida.` };
 
+  // Cierre 3F-4A #1: `itemId` es OBLIGATORIO — sin él, un `precio_actualizado`
+  // no podría correlacionar de vuelta al ítem exacto del carrito (nunca se
+  // completa con un valor inventado, ni se cae al emparejamiento ambiguo
+  // por paqueteId+hotelId).
+  const vItemId = validarTextoAcotado(v.itemId, `${ctx}: el identificador`);
+  if (!vItemId.ok) return { ok: false, error: vItemId.error };
   if (typeof v.paqueteId !== "number" || !Number.isInteger(v.paqueteId)) return { ok: false, error: `${ctx} tiene un paquete inválido.` };
   if (typeof v.hotelId !== "number" || !Number.isInteger(v.hotelId)) return { ok: false, error: `${ctx} tiene un hotel inválido.` };
   const vNombre = validarTextoAcotado(v.hotelNombre, `${ctx}: el nombre del hotel`);
@@ -159,13 +190,22 @@ export function validarSolicitudItemBernalo(
     return { ok: false, error: `${ctx}: no se pueden pedir más de ${MAX_HABITACIONES_CONSULTA} habitaciones.` };
   }
 
+  // Precio/moneda DECLARADOS por el carrito (Fase 3F-4A) — nunca autoridad,
+  // solo comparación (ver la nota del tipo). Forma inválida/ausente ⇒ `null`,
+  // que el checkout siempre trata como "cambió" (fail-closed), nunca como
+  // "coincide con el servidor".
+  const precioDeclarado = typeof v.precio === "number" && Number.isFinite(v.precio) ? v.precio : null;
+  const monedaDeclarada = typeof v.moneda === "string" && v.moneda.trim() ? v.moneda.trim() : null;
+
   return {
     ok: true,
     item: {
       modeloTarifario: "unidad",
+      itemId: vItemId.texto,
       paqueteId: v.paqueteId, hotelId: v.hotelId, hotelNombre: vNombre.texto, destino,
       categoria: vCategoria.texto, alimentacion: vAlimentacion.texto,
       salida: vSalida.salida, habitaciones: vHab.habitaciones,
+      precioDeclarado, monedaDeclarada,
     },
   };
 }

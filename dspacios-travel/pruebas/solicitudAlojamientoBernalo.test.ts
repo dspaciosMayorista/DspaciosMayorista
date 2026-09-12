@@ -25,6 +25,7 @@ function habitacionBase(id: string, acom: string, adultos: number, edadesMenores
 function itemBernaloBase(overrides: Record<string, unknown> = {}) {
   return {
     modeloTarifario: "unidad",
+    itemId: "cart-item-1",
     paqueteId: 10, hotelId: 20, hotelNombre: "Hotel Bernalo", destino: "San Andrés",
     categoria: "Estándar", alimentacion: "PC",
     salida: { tipo: "sin_vuelo", fechaIda: "2026-12-01", fechaRegreso: "2026-12-05" },
@@ -154,7 +155,12 @@ describe("validarSolicitudItemBernalo — reconoce la variante y valida forma", 
   });
 
   // ── Test obligatorio 4/8: precio/costos/neto/comisión/snapshot no se propagan ──
-  test("un payload con precio/costoNeto/totalNeto/comisionPct/snapshot/payload/markup NUNCA aparece en el ítem validado", () => {
+  // Fase 3F-4A: `precio`/`moneda` SÍ sobreviven, pero renombrados a
+  // `precioDeclarado`/`monedaDeclarada` — nunca bajo su nombre crudo (para
+  // que nadie los confunda con autoridad de precio) y nunca usados para
+  // calcular nada dentro de este módulo (ver la nota del tipo). El resto de
+  // campos de dinero/costeo interno sigue completamente prohibido.
+  test("un payload con costoNeto/totalNeto/comisionPct/snapshot/payload/markup NUNCA aparece en el ítem validado; precio/moneda solo sobreviven renombrados", () => {
     const crudo = itemBernaloBase({
       precio: 999_999_999, moneda: "USD", costoNeto: 1, totalNeto: 2, totalBruto: 3,
       comisionPct: 50, valorComision: 4, snapshot: { fraude: true }, payload: { x: 1 }, markup: 0.9,
@@ -166,7 +172,61 @@ describe("validarSolicitudItemBernalo — reconoce la variante y valida forma", 
     for (const prohibida of ["precio", "moneda", "costoNeto", "totalNeto", "totalBruto", "comisionPct", "valorComision", "snapshot", "payload", "markup"]) {
       assert.ok(!claves.includes(prohibida), `"${prohibida}" no debería sobrevivir en el ítem validado`);
     }
-    assert.deepEqual(claves.sort(), ["alimentacion", "categoria", "destino", "habitaciones", "hotelId", "hotelNombre", "modeloTarifario", "paqueteId", "salida"].sort());
+    assert.deepEqual(
+      claves.sort(),
+      ["alimentacion", "categoria", "destino", "habitaciones", "hotelId", "hotelNombre", "itemId", "modeloTarifario", "monedaDeclarada", "paqueteId", "precioDeclarado", "salida"].sort()
+    );
+    assert.equal(r.item.precioDeclarado, 999_999_999);
+    assert.equal(r.item.monedaDeclarada, "USD");
+  });
+
+  // ── Cierre 3F-4A #1: itemId — correlación, nunca autorización ──
+  test("itemId es OBLIGATORIO: sin él (o con forma inválida) el ítem se rechaza", () => {
+    for (const v of [{ itemId: undefined }, { itemId: null }, { itemId: "" }, { itemId: 123 }, { itemId: {} }]) {
+      const r = validarSolicitudItemBernalo(itemBernaloBase(v), 0);
+      assert.equal(r.ok, false, `itemId=${JSON.stringify(v.itemId)} debería rechazarse`);
+    }
+  });
+
+  test("itemId se conserva TAL CUAL — nunca se normaliza/regenera ni se usa para nada más que transportarlo", () => {
+    const r = validarSolicitudItemBernalo(itemBernaloBase({ itemId: "abc-123-XYZ" }), 0);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.item.itemId, "abc-123-XYZ");
+  });
+
+  test("dos ítems con el MISMO paqueteId/hotelId pero itemId distinto validan como entradas independientes", () => {
+    const r1 = validarSolicitudItemBernalo(itemBernaloBase({ itemId: "cart-item-A" }), 0);
+    const r2 = validarSolicitudItemBernalo(itemBernaloBase({ itemId: "cart-item-B" }), 1);
+    assert.equal(r1.ok, true);
+    assert.equal(r2.ok, true);
+    if (!r1.ok || !r2.ok) return;
+    assert.notEqual(r1.item.itemId, r2.item.itemId);
+    assert.equal(r1.item.paqueteId, r2.item.paqueteId);
+    assert.equal(r1.item.hotelId, r2.item.hotelId);
+  });
+
+  // ── Fase 3F-4A: precioDeclarado/monedaDeclarada — comparación, no autoridad ──
+  test("precioDeclarado/monedaDeclarada caen a null cuando el body no los trae o vienen con forma inválida (nunca inventan un número)", () => {
+    const sinPrecio = validarSolicitudItemBernalo(itemBernaloBase(), 0);
+    assert.equal(sinPrecio.ok, true);
+    if (sinPrecio.ok) {
+      assert.equal(sinPrecio.item.precioDeclarado, null);
+      assert.equal(sinPrecio.item.monedaDeclarada, null);
+    }
+
+    const formaInvalida = validarSolicitudItemBernalo(itemBernaloBase({ precio: "1000", moneda: 123, }), 0);
+    assert.equal(formaInvalida.ok, true);
+    if (formaInvalida.ok) {
+      assert.equal(formaInvalida.item.precioDeclarado, null);
+      assert.equal(formaInvalida.item.monedaDeclarada, null);
+    }
+
+    const noFinito = validarSolicitudItemBernalo(itemBernaloBase({ precio: Number.POSITIVE_INFINITY, moneda: "  " }), 0);
+    assert.equal(noFinito.ok, true);
+    if (noFinito.ok) {
+      assert.equal(noFinito.item.precioDeclarado, null);
+      assert.equal(noFinito.item.monedaDeclarada, null);
+    }
   });
 });
 

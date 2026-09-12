@@ -135,6 +135,12 @@ type CartCtx = {
   items: CartItem[];
   add: (item: DistributiveOmit<CartItem, "id">) => void;
   remove: (id: string) => void;
+  // Fase 3F-4A: cuando el checkout detecta que el PVP/moneda autoritativos de
+  // un ítem Bernalo ya no coinciden con lo que el carrito mostraba
+  // (`precio_actualizado`), esto actualiza SOLO el ítem visible en el
+  // carrito — nunca reordena ni recalcula nada más. No-op si `id` no
+  // corresponde a un ítem de hotel Bernalo (ej. ya se eliminó del carrito).
+  actualizarPrecioBernalo: (id: string, precio: number, moneda: string | null) => void;
   clear: () => void;
   total: number;
   count: number;
@@ -181,6 +187,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setItems((prev) => [...prev, { ...item, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` } as CartItem]);
   }, []);
   const remove = useCallback((id: string) => setItems((prev) => prev.filter((i) => i.id !== id)), []);
+  const actualizarPrecioBernalo = useCallback((id: string, precio: number, moneda: string | null) => {
+    setItems((prev) => prev.map((i) => (i.id === id && i.tipo === "hotel" && i.modeloTarifario === "unidad" ? { ...i, precio, moneda } : i)));
+  }, []);
   const clear = useCallback(() => setItems([]), []);
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
@@ -189,7 +198,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      items, add, remove, clear, total, count: items.length,
+      items, add, remove, actualizarPrecioBernalo, clear, total, count: items.length,
       drawerOpen, openDrawer, closeDrawer, addonsIntent, setAddonsIntent,
     }}>
       {children}
@@ -202,7 +211,7 @@ export function useCart(): CartCtx {
   if (!c) {
     // Outside CartProvider: return safe no-ops.
     return {
-      items: [], add: () => {}, remove: () => {}, clear: () => {}, total: 0, count: 0,
+      items: [], add: () => {}, remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, total: 0, count: 0,
       drawerOpen: false, openDrawer: () => {}, closeDrawer: () => {}, addonsIntent: null, setAddonsIntent: () => {},
     };
   }

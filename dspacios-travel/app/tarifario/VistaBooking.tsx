@@ -27,6 +27,7 @@ import {
   construirPayloadHabitaciones,
   validarHabitacionesOcupacion,
   type EdadesPorHabitacion,
+  type HabitacionOcupacionEntrada,
 } from "@/lib/reservar/ocupacionPorHabitacion";
 import {
   cotizarAlojamientoBernaloPublico,
@@ -1009,6 +1010,34 @@ function HotelBernaloCotizarModal({ hotel, onClose }: { hotel: HotelBernaloDescu
   // genérico de configuración incompleta, nunca texto libre ni un editor que
   // deje adivinar la clasificación.
   const configuracionIncompleta = hotel.categorias.length === 0 || hotel.regimenes.length === 0;
+  const { add, openDrawer } = useCart();
+
+  // Fase 3F-4A: EditorPax ya cotizó en vivo (resultadoCotizacion.ok) y reporta
+  // SOLO las decisiones + el PVP/moneda que mostró — la identidad del
+  // hotel/paquete la completa este modal (ya la conoce de `hotel`). Nunca se
+  // agrega neto/costos/comisión/snapshot al carrito (regla A.5).
+  function agregarBernalo(item: {
+    categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
+    habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
+  }) {
+    add({
+      tipo: "hotel",
+      modeloTarifario: "unidad",
+      paqueteId: hotel.paqueteId,
+      hotelId: hotel.hotelId,
+      hotelNombre: hotel.hotelNombre,
+      destino: hotel.destinoNombre,
+      fotoUrl: null,
+      categoria: item.categoria,
+      alimentacion: item.alimentacion,
+      salida: item.salida,
+      habitaciones: item.habitaciones,
+      precio: item.precio,
+      moneda: item.moneda,
+    });
+    openDrawer();
+    onClose();
+  }
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div
@@ -1041,6 +1070,7 @@ function HotelBernaloCotizarModal({ hotel, onClose }: { hotel: HotelBernaloDescu
               alimentacionesDisponibles={hotel.regimenes}
               salidas={hotel.salidas}
               onAgregar={() => {}}
+              onAgregarBernalo={agregarBernalo}
             />
           )}
         </div>
@@ -1123,7 +1153,7 @@ function Selector({
 // Niño 2 (ver lib/reservar/edadesMenores.ts) — nunca un conteo manual por tarifa.
 function EditorPax({
   pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
-  edadInfanteMax, edadNinoMax, onAgregar, btnLabel = "Agregar al carrito", moneda = "COP",
+  edadInfanteMax, edadNinoMax, onAgregar, onAgregarBernalo, btnLabel = "Agregar al carrito", moneda = "COP",
   modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [],
 }: {
   pvp: Record<string, number>;
@@ -1135,6 +1165,15 @@ function EditorPax({
   edadInfanteMax?: number | null;
   edadNinoMax?: number | null;
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) => void;
+  // Fase 3F-4A: SOLO se usa cuando `modeloTarifario === "unidad"` — forma
+  // completamente distinta a `onAgregar` (persona) porque Bernalo no tiene
+  // conteos por acomodación ni niños/infantes agregados, sino habitaciones
+  // físicas con sus propias edades (regla A.2 del encargo). Se dispara
+  // únicamente tras una cotización exitosa (`resultadoCotizacion.ok`).
+  onAgregarBernalo?: (item: {
+    categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
+    habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
+  }) => void;
   btnLabel?: string;
   moneda?: string | null;
   // Fase 3D/3E Bernalo: cuando llega "unidad", esta habitación se captura
@@ -1363,6 +1402,20 @@ function EditorPax({
 
   const bernaloListoParaCotizar =
     hayHabBernalo && !!hotelId && !!paqueteId && !!categoriaSel && !!alimentacionSel && !!salidaPayload;
+
+  // Regla A.1: SOLO se habilita después de una cotización Bernalo exitosa.
+  // `resultadoCotizacion` ya se limpia (null) ante cualquier cambio de
+  // salida/clasificación/ocupación (ver setHab/cambiarCantidadMenoresHab/
+  // cambiarEdadHab/los onChange de categoría-alimentación-salida más abajo),
+  // así que este botón se deshabilita solo con recotizar pendiente —
+  // ninguna lógica de invalidación nueva hace falta acá.
+  function agregarBernaloClick() {
+    if (!onAgregarBernalo || !resultadoCotizacion?.ok || !salidaPayload) return;
+    onAgregarBernalo({
+      categoria: categoriaSel, alimentacion: alimentacionSel, salida: salidaPayload,
+      habitaciones: payloadBernalo, precio: resultadoCotizacion.pvp, moneda: resultadoCotizacion.moneda,
+    });
+  }
 
   async function cotizarBernalo() {
     if (validando || !bernaloListoParaCotizar || !hotelId || !paqueteId || !salidaPayload) return;
@@ -1610,11 +1663,10 @@ function EditorPax({
       )}
 
       {esBernalo ? (
-        // Fase 3E: cotización dinámica real contra el servidor — SIN
-        // "Agregar al carrito" (regla 19 del encargo: esta fase es
-        // descubrimiento + cotización, nunca carrito/contrato). El TOTAL
-        // es la autoridad (regla 18); el promedio por viajero es solo
-        // referencia visual, nunca el número que se resalta primero.
+        // Fase 3F-4A: cotización dinámica real contra el servidor + "Agregar
+        // al carrito" habilitado SOLO tras una cotización exitosa (regla
+        // A.1). El TOTAL es la autoridad (regla 18); el promedio por viajero
+        // es solo referencia visual, nunca el número que se resalta primero.
         <div className="space-y-2 border-t border-gray-100 pt-3">
           {resultadoCotizacion?.ok && (
             <div className="flex items-center justify-between">
@@ -1634,12 +1686,18 @@ function EditorPax({
           {resultadoCotizacion && !resultadoCotizacion.ok && (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{resultadoCotizacion.mensaje}</p>
           )}
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-2">
             <button type="button" onClick={cotizarBernalo} disabled={!bernaloListoParaCotizar || validando}
-              className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
-              style={{ backgroundColor: "var(--brand-primary)" }}>
-              {validando ? "Cotizando…" : "Cotizar"}
+              className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 disabled:opacity-40">
+              {validando ? "Cotizando…" : resultadoCotizacion?.ok ? "Recotizar" : "Cotizar"}
             </button>
+            {onAgregarBernalo && (
+              <button type="button" onClick={agregarBernaloClick} disabled={!resultadoCotizacion?.ok}
+                className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+                style={{ backgroundColor: "var(--brand-primary)" }}>
+                Agregar al carrito
+              </button>
+            )}
           </div>
         </div>
       ) : (

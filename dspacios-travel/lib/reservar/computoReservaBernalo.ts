@@ -119,6 +119,8 @@ export type ComputoReservaBernaloOk = {
   aportePvpVuelo: number;
   hotelId: number;
   hotelNombre: string;
+  /** Destino AUTORITATIVO del paquete (`armado_paquetes.destino_id -> destinos.nombre`) — `null` solo si el paquete no tiene destino configurado. Nunca el texto que haya podido mandar el navegador. */
+  hotelDestino: string | null;
   proveedorHotel: ProveedorHotelBernalo;
   salida: SalidaResueltaBernalo;
   /** Una entrada POR HABITACIÓN FÍSICA — nunca agrupada ni resumida (regla explícita del encargo). */
@@ -158,13 +160,18 @@ export async function computarReservaBernalo(
   // tarifario público (`tarifario_resultado.paquete_activo = true`).
   const { data: pq, error: ePq } = await admin
     .from("armado_paquetes")
-    .select("id, activo, pct_mk, moneda, fecha_viaje_inicio, fecha_viaje_fin")
+    .select("id, activo, pct_mk, moneda, fecha_viaje_inicio, fecha_viaje_fin, destinos(nombre)")
     .eq("id", input.paqueteId)
     .maybeSingle();
   if (ePq) return { ok: false, codigo: "error_interno", mensaje: "No se pudo validar el paquete." };
   if (!pq || !pq.activo) {
     return { ok: false, codigo: "paquete_no_disponible", mensaje: "Este paquete ya no está disponible." };
   }
+  // Destino AUTORITATIVO del paquete (mismo criterio que `meta.destino_nombre`
+  // en el flujo persona, computo.ts, y que `destinoPorPaquete` en
+  // `lib/tarifario/datosBernalo.ts`) — nunca el texto que haya podido mandar
+  // el navegador (Fase 3F-4A, cierre #2).
+  const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
   // 2) Hotel realmente vinculado al paquete, modelo tarifario Bernalo, y
   // proveedor real (para la futura CxP, 3F-4) — nunca se asume por el
@@ -460,6 +467,7 @@ export async function computarReservaBernalo(
     aportePvpVuelo: resultadoComposicion.aporteVueloTotal,
     hotelId: input.hotelId,
     hotelNombre,
+    hotelDestino: destinoNombre,
     proveedorHotel,
     salida: salidaResuelta,
     habitaciones,

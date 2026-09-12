@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computarReserva, type ReservaInput } from "@/lib/reservar/computo";
+import { computarReservaBernalo, type SalidaResueltaBernalo } from "@/lib/reservar/computoReservaBernalo";
 import { parseRuta, ciudadIata } from "@/lib/iata";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { formatMoneda } from "@/lib/utils";
@@ -18,7 +19,7 @@ import {
   type SolicitudItemVariante,
   type SalidaSeleccionadaBernaloEntrada,
 } from "@/lib/reservar/solicitudAlojamientoBernalo";
-import type { HabitacionOcupacionEntrada } from "@/lib/reservar/ocupacionPorHabitacion";
+import type { HabitacionOcupacionEntrada, HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
@@ -63,8 +64,14 @@ export type SolicitudItemPersona = {
 // costos/markup. `precio`/`moneda` son presentación, nunca autoridad —
 // `validarSolicitudItemBernalo` (lib/reservar/solicitudAlojamientoBernalo.ts)
 // ni siquiera los lee.
+// `itemId` (cierre 3F-4A #1) es el `id` estable que el carrito ya asignó al
+// ítem (`HotelCartItemBernalo.id`) — viaja SOLO para correlación: permite que
+// un `precio_actualizado` señale exactamente cuál ítem cambió, incluso si el
+// carrito tiene dos ítems del mismo paquete/hotel con ocupaciones distintas.
+// Nunca se usa para autorizar ni para calcular nada.
 export type SolicitudItemBernalo = {
   modeloTarifario: "unidad";
+  itemId: string;
   paqueteId: number;
   hotelId: number;
   hotelNombre: string;
@@ -88,6 +95,27 @@ type SolicitudItemComputado = SolicitudItemValidado & {
   ninos: number;
   ninos2: number;
   infantes: number;
+  pax: number;
+  precio: number;
+};
+
+// Ítem Bernalo YA re-liquidado con `computarReservaBernalo` — SOLO decisiones
+// + PVP/moneda/pax autoritativos (regla C.12/13 de Fase 3F-4A). Deliberadamente
+// SIN `resultado`/`snapshot` por habitación (netos, comisión, fuente,
+// proveedor): eso vive en `ComputoReservaBernaloOk.habitaciones[].resultado/
+// .snapshot` y NUNCA debe llegar a este objeto — lo único que se conserva de
+// cada habitación es su ocupación de ENTRADA (`HabitacionOcupacionValidada`,
+// ya sin dinero).
+type SolicitudItemBernaloComputado = {
+  modeloTarifario: "unidad";
+  paqueteId: number;
+  hotelId: number;
+  hotelNombre: string;
+  destino: string | null;
+  categoria: string;
+  alimentacion: string;
+  salida: SalidaResueltaBernalo;
+  habitaciones: HabitacionOcupacionValidada[];
   pax: number;
   precio: number;
 };
@@ -201,9 +229,70 @@ export async function fotosPortada(hotelIds: number[]): Promise<Record<number, s
   return out;
 }
 
+// Fase 3F-4A, regla B.10: cuando el PVP/moneda AUTORITATIVOS de un ítem
+// Bernalo ya no coinciden con lo que el carrito mostraba, el checkout NUNCA
+// crea la cotización — devuelve este resultado estructurado en su lugar, con
+// SOLO el nuevo PVP/moneda públicos (nunca netos/costos/comisión/snapshot).
+// El cliente debe actualizar el ítem visible y reintentar — el reintento
+// vuelve a pasar por el MISMO recálculo completo (regla B.11: "nunca acepta
+// el precio solo porque coincide con el cliente" — no existe un modo
+// "confía en esto", solo repetición de la misma verificación autoritativa).
+export type ResultadoPrecioActualizadoBernalo = {
+  ok: false;
+  tipo: "precio_actualizado";
+  // Cierre 3F-4A #1: identifica el ítem EXACTO del carrito (no
+  // paqueteId+hotelId, que puede repetirse entre dos ítems con ocupaciones
+  // distintas) — la UI actualiza este ítem y solo este.
+  itemId: string;
+  paqueteId: number;
+  hotelId: number;
+  pvp: number;
+  moneda: string;
+  mensaje: string;
+};
+
 export type SolicitudResult =
   | { ok: true; cotizacion: { id: number; codigo: string; url: string }; waUrl: string | null; mailtoUrl: string | null; mensaje: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string }
+  | ResultadoPrecioActualizadoBernalo;
+
+// ── Snapshot público de vuelo — compartido entre persona (bloqueo) y Bernalo
+// (bloqueo/empaquetado, Fase 3F-4A cierre #3). `bloqueos_vuelo` y
+// `empaquetados` tienen EXACTAMENTE las mismas columnas de vuelo (mismo
+// select de siempre) — un solo constructor arma los 1-2 tramos (ida +
+// regreso si aplica) con la MISMA forma pública que ya renderiza
+// `ContratoDocumento`. Nunca expone tarifa/costo (esas columnas ni siquiera
+// se seleccionan en `CAMPOS_VUELO_SNAP`).
+const CAMPOS_VUELO_SNAP = "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg";
+
+type FilaVueloSnap = {
+  aerolinea: string | null; record: string | null; ruta: string | null;
+  fecha_ida: string | null; fecha_regreso: string | null;
+  vuelo_ida: string | null; vuelo_regreso: string | null;
+  hora_salida_ida: string | null; hora_llegada_ida: string | null;
+  hora_salida_reg: string | null; hora_llegada_reg: string | null;
+};
+
+function construirTramosVueloSnap(bq: FilaVueloSnap): Record<string, unknown>[] {
+  const r = parseRuta(bq.ruta);
+  const tramos: Record<string, unknown>[] = [{
+    aerolinea: bq.aerolinea, record: bq.record, direccion: "ida",
+    origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
+    destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+    numero_vuelo: bq.vuelo_ida, hora_salida: bq.hora_salida_ida, hora_llegada: bq.hora_llegada_ida,
+    fecha_salida: bq.fecha_ida,
+  }];
+  if (bq.fecha_regreso || bq.vuelo_regreso) {
+    tramos.push({
+      aerolinea: bq.aerolinea, record: bq.record, direccion: "regreso",
+      origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino),
+      destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+      numero_vuelo: bq.vuelo_regreso, hora_salida: bq.hora_salida_reg, hora_llegada: bq.hora_llegada_reg,
+      fecha_salida: bq.fecha_regreso,
+    });
+  }
+  return tramos;
+}
 
 function resumenHab(it: SolicitudItemComputado): string {
   const partes = Object.entries(it.habitaciones)
@@ -215,6 +304,17 @@ function resumenHab(it: SolicitudItemComputado): string {
   return partes.join(", ");
 }
 
+// Bernalo no tiene conteo por acomodación (regla A.2: habitaciones FÍSICAS
+// con adultos/edades propias, no columnas persona/nino/nino2/infante) — el
+// resumen de texto solo cuenta habitaciones y menores, nunca inventa una
+// clasificación que este modelo no tiene.
+function resumenHabBernalo(it: SolicitudItemBernaloComputado): string {
+  const totalMenores = it.habitaciones.reduce((s, h) => s + h.edadesMenores.length, 0);
+  const partes = [`${it.habitaciones.length} habitación(es)`];
+  if (totalMenores > 0) partes.push(`${totalMenores} menor(es)`);
+  return partes.join(", ");
+}
+
 function construirMensaje(
   cliente: SolicitudCliente,
   cot: { codigo: string; url: string },
@@ -223,6 +323,7 @@ function construirMensaje(
   moneda: string,
   extra: string | null,
   b2b?: { modo: "comisionable" | "neta"; facturacion: Facturacion; pctComision: number },
+  itemsBernalo: SolicitudItemBernaloComputado[] = [],
 ): string {
   const L: string[] = [];
   L.push("Solicitud de reserva — D'spacios Travel");
@@ -245,6 +346,14 @@ function construirMensaje(
     L.push(`${i + 1}) ${it.hotelNombre}${it.destino ? ` — ${it.destino}` : ""}`);
     if (it.fechaIda) L.push(`   ${it.fechaIda} → ${it.fechaRegreso ?? ""}${it.noches ? ` (${it.noches} noches)` : ""}`);
     L.push(`   ${it.categoria} / ${it.regimen} · ${resumenHab(it)}`);
+    L.push(`   ${it.pax} pax · Valor estimado: ${formatMoneda(it.precio, moneda)}`);
+    L.push("");
+  });
+  itemsBernalo.forEach((it, i) => {
+    total += it.precio;
+    L.push(`${items.length + i + 1}) ${it.hotelNombre}${it.destino ? ` — ${it.destino}` : ""}`);
+    L.push(`   ${it.salida.fechaIda} → ${it.salida.fechaRegreso}`);
+    L.push(`   ${it.categoria} / ${it.alimentacion} · ${resumenHabBernalo(it)}`);
     L.push(`   ${it.pax} pax · Valor estimado: ${formatMoneda(it.precio, moneda)}`);
     L.push("");
   });
@@ -295,8 +404,9 @@ async function crearCotizacionCarrito(input: {
   tours: SolicitudTourValidado[];
   cliente: SolicitudCliente;
 }): Promise<
-  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[] }
+  | { ok: true; id: number; codigo: string; url: string; moneda: string; itemsOk: SolicitudItemComputado[]; itemsBernaloOk: SolicitudItemBernaloComputado[]; toursOk: SolicitudTourComputado[]; excluidos: ItemExcluido[] }
   | { ok: false; error: string }
+  | ResultadoPrecioActualizadoBernalo
 > {
   const sb = await createClient();
   const clienteNombre = `${input.cliente.nombres} ${input.cliente.apellidos}`.trim();
@@ -307,6 +417,7 @@ async function crearCotizacionCarrito(input: {
   const vuelosSnap: Record<string, unknown>[] = [];
   const itemsSnap: Record<string, unknown>[] = [];
   const itemsOk: SolicitudItemComputado[] = [];
+  const itemsBernaloOk: SolicitudItemBernaloComputado[] = [];
   const toursOk: SolicitudTourComputado[] = [];
   // Servicios INCLUIDOS de cada paquete de hotel del carrito — acumulados
   // acá para el resumen (asistencia/tours) y el snapshot que
@@ -320,53 +431,110 @@ async function crearCotizacionCarrito(input: {
   let hIdx = 0, vIdx = 0, iIdx = 0;
 
   for (const it of input.items) {
-    // Fase 3F-1: el carrito/checkout YA reconoce y transporta la variante
-    // Bernalo hasta acá (ver `SolicitudItemBernaloValidado`), pero la
-    // cotización real de tarifa por habitación sigue siendo 3F-2+. Se
-    // enruta por el MISMO `computarReserva` que usa el resto de ítems —
-    // nunca un mensaje de rechazo fabricado aparte — para que la guardia de
-    // Fase 3 (`hoteles.modelo_tarifario === 'unidad'`, `lib/reservar/computo.ts`,
-    // SIN CAMBIOS en esta fase) sea la única fuente de verdad de "todavía no
-    // se puede cotizar este hotel desde aquí". El mapeo de `salida` a
-    // `modulo`/`bloqueoId`/`empaquetadoId`/fechas reutiliza EXACTAMENTE las
-    // mismas reglas que ya aplica `resolverOrigenVuelo`
-    // (lib/reservar/origen.ts) para el resto de la app — nunca inventa una
-    // combinación nueva.
+    // Fase 3F-4A: el ítem Bernalo se re-liquida DIRECTO con el servicio
+    // interno autoritativo (`computarReservaBernalo`, Fase 3F-3) — el MISMO
+    // que usa la cotización pública en vivo (`cotizarAlojamientoBernaloPublico`),
+    // nunca una segunda implementación del cálculo (regla D.17). `computarReserva`
+    // (persona) ni su guardia de Fase 3 se tocan para este ítem.
     if (it.modeloTarifario === "unidad") {
-      const reservaBernalo: ReservaInput = {
+      const resultadoBernalo = await computarReservaBernalo({
         paqueteId: it.paqueteId,
-        bloqueoId: it.salida.tipo === "bloqueo" ? it.salida.id : null,
-        empaquetadoId: it.salida.tipo === "empaquetado" ? it.salida.id : null,
-        modulo: it.salida.tipo === "sin_vuelo" ? "porcion_terrestre" : "bloqueo",
         hotelId: it.hotelId,
-        fechaIda: it.salida.tipo === "sin_vuelo" ? it.salida.fechaIda : undefined,
-        fechaRegreso: it.salida.tipo === "sin_vuelo" ? it.salida.fechaRegreso : undefined,
         categoria: it.categoria,
-        regimen: it.alimentacion,
-        // El motor persona (`ComputoReserva.pvpPorAcom`/`lineasHab`, por
-        // acomodación) no tiene forma no-ambigua de representar habitaciones
-        // Bernalo (comisión aplicada una sola vez al total, no por columna —
-        // ver el comentario de la guardia en computo.ts) — `{}` es honesto:
-        // nunca finge traducir la composición real a este formato. La
-        // guardia bloquea antes de que esto importe.
-        habitaciones: {},
-        ninos: 0, ninos2: 0, infantes: 0,
-        cliente: {
-          nombres: input.cliente.nombres, apellidos: input.cliente.apellidos, tipoDoc: "CC",
-          numeroDoc: input.cliente.numeroDoc, telefono: input.cliente.telefono, email: input.cliente.email,
-        },
-        tipoAsesor: "interno", asesorInterno: "", agenciaNombre: "", agenciaAsesor: "", freelanceNombre: "",
-        aliadoId: null, plazo: "", pasajeros: [], servicios: [],
-      };
-      const compBernalo = await computarReserva(sb, reservaBernalo);
-      // `compBernalo.ok` es SIEMPRE `false` hoy (guardia de Fase 3) — el
-      // `else` es defensa en profundidad, nunca una ruta que 3F-1 sepa
-      // completar: no hay contrato_items/CxP/snapshot para un ítem Bernalo
-      // en esta fase, así que ni un éxito del motor puede seguir de largo.
-      return {
-        ok: false,
-        error: `No se pudo cotizar ${it.hotelNombre}: ${compBernalo.ok ? "la integración de tarifa por habitación (Bernalo) todavía no está completa en el checkout." : compBernalo.error}`,
-      };
+        alimentacion: it.alimentacion,
+        salida: it.salida,
+        habitaciones: it.habitaciones,
+      });
+      if (!resultadoBernalo.ok) {
+        // Regla D.18: tarifa/salida ya no vigente ⇒ bloquea, nunca crea
+        // cotización — mismo criterio fail-closed que el resto del archivo
+        // (ver `comp.ok` de persona más abajo).
+        return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${resultadoBernalo.mensaje}` };
+      }
+
+      // Regla B.9/B.10/B.11: el resultado del SERVIDOR reemplaza cualquier
+      // precio que haya mandado el navegador. Si el PVP/moneda autoritativos
+      // ya no coinciden con lo que el carrito mostraba (`precioDeclarado`/
+      // `monedaDeclarada` — Fase 3F-4A, `solicitudAlojamientoBernalo.ts`),
+      // NUNCA se crea la cotización: se corta acá mismo y se devuelve el
+      // nuevo precio público para que el cliente confirme de nuevo. No hay
+      // un modo "confía en esto": el PRÓXIMO intento vuelve a pasar por este
+      // mismo bloque y se recalcula de cero (regla B.11).
+      if (resultadoBernalo.precioVenta !== it.precioDeclarado || resultadoBernalo.moneda !== it.monedaDeclarada) {
+        return {
+          ok: false,
+          tipo: "precio_actualizado",
+          // Cierre 3F-4A #1: `itemId` (el `id` del ítem del carrito, nunca
+          // paqueteId+hotelId) para que la UI actualice EXACTAMENTE ese
+          // ítem — dos ítems del mismo paquete/hotel con ocupaciones
+          // distintas nunca se confunden entre sí.
+          itemId: it.itemId,
+          paqueteId: it.paqueteId,
+          hotelId: it.hotelId,
+          pvp: resultadoBernalo.precioVenta,
+          moneda: resultadoBernalo.moneda,
+          mensaje: `El precio de ${it.hotelNombre} cambió a ${formatMoneda(resultadoBernalo.precioVenta, resultadoBernalo.moneda)}. Confirma de nuevo para continuar.`,
+        };
+      }
+
+      if (monedaPrincipal && resultadoBernalo.moneda !== monedaPrincipal) {
+        excluidos.push({ etiqueta: `${it.hotelNombre} (moneda ${resultadoBernalo.moneda})`, motivo: "moneda" });
+        continue;
+      }
+      monedaPrincipal = monedaPrincipal ?? resultadoBernalo.moneda;
+
+      // Regla C.13: SOLO la ocupación de ENTRADA de cada habitación (nunca
+      // `.resultado`/`.snapshot`, que traen netos/comisión/fuente/tarifa) —
+      // ver `SolicitudItemBernaloComputado`.
+      const habitacionesSnap = resultadoBernalo.habitaciones.map((h) => h.ocupacion);
+      // Cierre 3F-4A #2: destino AUTORITATIVO (`resultadoBernalo.hotelDestino`,
+      // resuelto server-side contra `armado_paquetes.destino_id -> destinos`
+      // dentro de `computarReservaBernalo`) — NUNCA `it.destino` (texto libre
+      // del carrito, sin validar contra nada real).
+      const destinoAutoritativo = resultadoBernalo.hotelDestino;
+
+      hIdx++;
+      hotelesSnap.push({
+        id: hIdx, nombre: resultadoBernalo.hotelNombre, categoria: it.categoria, ciudad: destinoAutoritativo,
+        proveedor: null, alimentacion: it.alimentacion, acomodacion: it.categoria,
+        detalle_acomodacion: `${habitacionesSnap.length} habitación(es)`,
+        fecha_ingreso: resultadoBernalo.salida.fechaIda, fecha_salida: resultadoBernalo.salida.fechaRegreso,
+        nota_regimen: null, foto_url: null,
+      });
+      iIdx++;
+      itemsSnap.push({
+        id: iIdx,
+        descripcion: `${resultadoBernalo.hotelNombre}${destinoAutoritativo ? ` — ${destinoAutoritativo}` : ""} · ${it.categoria} / ${it.alimentacion} · ${habitacionesSnap.length} habitación(es)`,
+        adultos: 1, ninos: 0, tarifa_adulto: resultadoBernalo.precioVenta, tarifa_nino: 0,
+      });
+
+      // Cierre 3F-4A #3: `vuelosSnap` público con la MISMA forma que persona
+      // (`construirTramosVueloSnap`, arriba) — SOLO para bloqueo/empaquetado,
+      // y SIEMPRE sobre `resultadoBernalo.salida` (la salida RESUELTA por el
+      // servicio interno, confirmada perteneciente al paquete real — nunca
+      // `it.salida`, que es la elección cruda del navegador). "sin_vuelo"
+      // nunca genera un tramo — no hay vuelo que inventar.
+      if (resultadoBernalo.salida.tipo === "bloqueo" || resultadoBernalo.salida.tipo === "empaquetado") {
+        const tabla = resultadoBernalo.salida.tipo === "bloqueo" ? "bloqueos_vuelo" : "empaquetados";
+        const { data: bq } = await sb
+          .from(tabla)
+          .select(CAMPOS_VUELO_SNAP)
+          .eq("id", resultadoBernalo.salida.id)
+          .maybeSingle();
+        if (bq) {
+          for (const tramo of construirTramosVueloSnap(bq)) { vIdx++; vuelosSnap.push({ id: vIdx, ...tramo }); }
+        }
+      }
+
+      total += resultadoBernalo.precioVenta;
+      itemsBernaloOk.push({
+        modeloTarifario: "unidad",
+        paqueteId: it.paqueteId, hotelId: it.hotelId, hotelNombre: resultadoBernalo.hotelNombre, destino: destinoAutoritativo,
+        categoria: it.categoria, alimentacion: it.alimentacion,
+        salida: resultadoBernalo.salida, habitaciones: habitacionesSnap,
+        pax: resultadoBernalo.paxTotal, precio: resultadoBernalo.precioVenta,
+      });
+      continue;
     }
 
     const reserva: ReservaInput = {
@@ -449,28 +617,10 @@ async function crearCotizacionCarrito(input: {
     if (it.modulo === "bloqueo" && it.bloqueoId) {
       const { data: bq } = await sb
         .from("bloqueos_vuelo")
-        .select("aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg")
+        .select(CAMPOS_VUELO_SNAP)
         .eq("id", it.bloqueoId).maybeSingle();
       if (bq) {
-        const r = parseRuta(bq.ruta);
-        vIdx++;
-        vuelosSnap.push({
-          id: vIdx, aerolinea: bq.aerolinea, record: bq.record, direccion: "ida",
-          origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen),
-          destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
-          numero_vuelo: bq.vuelo_ida, hora_salida: bq.hora_salida_ida, hora_llegada: bq.hora_llegada_ida,
-          fecha_salida: bq.fecha_ida,
-        });
-        if (bq.fecha_regreso || bq.vuelo_regreso) {
-          vIdx++;
-          vuelosSnap.push({
-            id: vIdx, aerolinea: bq.aerolinea, record: bq.record, direccion: "regreso",
-            origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino),
-            destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
-            numero_vuelo: bq.vuelo_regreso, hora_salida: bq.hora_salida_reg, hora_llegada: bq.hora_llegada_reg,
-            fecha_salida: bq.fecha_regreso,
-          });
-        }
+        for (const tramo of construirTramosVueloSnap(bq)) { vIdx++; vuelosSnap.push({ id: vIdx, ...tramo }); }
       }
     }
 
@@ -533,17 +683,20 @@ async function crearCotizacionCarrito(input: {
     });
   }
 
-  if (!itemsOk.length && !toursOk.length) return { ok: false, error: "No se pudo generar la cotización (revisa disponibilidad)." };
+  if (!itemsOk.length && !itemsBernaloOk.length && !toursOk.length) return { ok: false, error: "No se pudo generar la cotización (revisa disponibilidad)." };
 
+  const totalHoteles = itemsOk.length + itemsBernaloOk.length;
   const moneda = monedaPrincipal ?? "COP";
-  const destinos = [...new Set(itemsOk.map((i) => i.destino).filter((d): d is string => !!d))];
+  const destinos = [...new Set([...itemsOk.map((i) => i.destino), ...itemsBernaloOk.map((i) => i.destino)].filter((d): d is string => !!d))];
   const destinoTxt = destinos.length ? destinos.join(" · ") : null;
-  const fechasIda = itemsOk.map((i) => i.fechaIda).filter((f): f is string => !!f).sort();
-  const fechasRegreso = itemsOk.map((i) => i.fechaRegreso).filter((f): f is string => !!f).sort();
+  const fechasIda = [...itemsOk.map((i) => i.fechaIda), ...itemsBernaloOk.map((i) => i.salida.fechaIda)].filter((f): f is string => !!f).sort();
+  const fechasRegreso = [...itemsOk.map((i) => i.fechaRegreso), ...itemsBernaloOk.map((i) => i.salida.fechaRegreso)].filter((f): f is string => !!f).sort();
   const fechaIda = fechasIda[0] ?? null;
   const fechaRegreso = fechasRegreso.length ? fechasRegreso[fechasRegreso.length - 1] : null;
-  const paxTotal = itemsOk.reduce((s, i) => s + (i.pax || 0), 0) || (toursOk[0]?.pax ?? 0);
-  const planNombre: string | null = itemsOk.length > 1 ? `${itemsOk.length} hoteles` : (itemsOk[0] ? `${itemsOk[0].categoria} · ${itemsOk[0].regimen}` : null);
+  const paxTotal = itemsOk.reduce((s, i) => s + (i.pax || 0), 0) + itemsBernaloOk.reduce((s, i) => s + (i.pax || 0), 0) || (toursOk[0]?.pax ?? 0);
+  const planNombre: string | null = totalHoteles > 1
+    ? `${totalHoteles} hoteles`
+    : (itemsOk[0] ? `${itemsOk[0].categoria} · ${itemsOk[0].regimen}` : (itemsBernaloOk[0] ? `${itemsBernaloOk[0].categoria} · ${itemsBernaloOk[0].alimentacion}` : null));
 
   // Resumen ÚNICO (asistencia/tours) de servicios INCLUIDOS + opcionales
   // realmente seleccionados — misma fuente que reservarDesdeTarifarioInterno/
@@ -590,12 +743,16 @@ async function crearCotizacionCarrito(input: {
     // tiene tarifario/catálogo público — MINORISTA_OCULTAS en proxy.ts).
     tenant: "mayorista",
     tipo: "carrito",
-    payload: { items: itemsOk, tours: toursOk, serviciosIncluidos: incluidosSnap, cliente: input.cliente } as unknown as Json,
+    // Regla C.14: cada ítem Bernalo persistido lleva `modeloTarifario:
+    // "unidad"` (ya presente en `SolicitudItemBernaloComputado`) para que
+    // `convertirCotizacionCarrito` (3F-4B) lo detecte y bloquee la
+    // conversión a contrato explícitamente, sin caer al flujo persona.
+    payload: { items: [...itemsOk, ...itemsBernaloOk], tours: toursOk, serviciosIncluidos: incluidosSnap, cliente: input.cliente } as unknown as Json,
     detalle: detalle as unknown as Json,
     cliente: clienteNombre,
     cliente_documento: input.cliente.numeroDoc.trim() || null,
     destino: destinoTxt,
-    hotel: itemsOk.length === 1 ? itemsOk[0].hotelNombre : (itemsOk.length ? `${itemsOk.length} hoteles` : null),
+    hotel: totalHoteles === 1 ? (itemsOk[0]?.hotelNombre ?? itemsBernaloOk[0]?.hotelNombre ?? null) : (totalHoteles ? `${totalHoteles} hoteles` : null),
     modulo: "carrito",
     plan_nombre: planNombre,
     pax: paxTotal,
@@ -628,7 +785,7 @@ async function crearCotizacionCarrito(input: {
   const origin = host ? `${proto}://${host}` : "";
   const url = origin && row.share_token ? `${origin}/cot/${row.share_token}` : "";
 
-  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, toursOk, excluidos };
+  return { ok: true, id: row.id, codigo: row.codigo, url, moneda, itemsOk, itemsBernaloOk, toursOk, excluidos };
 }
 
 // Genera UNA sola cotización combinada para todo el carrito y arma los
@@ -702,7 +859,7 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   }
   const notaExcluidos = notasExcluidos.length ? notasExcluidos.join("\n") : null;
   const extra = [mensajeExtra?.trim() || null, notaExcluidos].filter(Boolean).join("\n\n") || null;
-  const mensaje = construirMensaje(input.cliente, { codigo: cot.codigo, url: cot.url }, cot.itemsOk, cot.toursOk, cot.moneda, extra, b2b);
+  const mensaje = construirMensaje(input.cliente, { codigo: cot.codigo, url: cot.url }, cot.itemsOk, cot.toursOk, cot.moneda, extra, b2b, cot.itemsBernaloOk);
   const wa = (whatsapp ?? "").replace(/\D/g, "");
   const waUrl = wa ? `https://wa.me/${wa}?text=${encodeURIComponent(mensaje)}` : null;
   const correos = (emails ?? "").split(",").map((e) => e.trim()).filter(Boolean).join(",");

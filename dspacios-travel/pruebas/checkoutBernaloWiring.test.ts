@@ -127,9 +127,9 @@ describe("app/tarifario/checkout/actions.ts — SolicitudItem: unión discrimina
     }
   });
 
-  test("SolicitudItemBernalo (test obligatorio 9: la variante COMPLETA que recibe el checkout) trae paquete/hotel/categoría/alimentación/salida/habitaciones — nunca precio como parte de la validación", () => {
+  test("SolicitudItemBernalo (test obligatorio 9: la variante COMPLETA que recibe el checkout) trae itemId/paquete/hotel/categoría/alimentación/salida/habitaciones — nunca precio como parte de la validación", () => {
     const tipo = fuenteCheckoutActions.slice(fuenteCheckoutActions.indexOf("export type SolicitudItemBernalo"), fuenteCheckoutActions.indexOf("export type SolicitudItem ="));
-    for (const campo of ["modeloTarifario:", "paqueteId:", "hotelId:", "hotelNombre:", "categoria:", "alimentacion:", "salida:", "habitaciones:"]) {
+    for (const campo of ["modeloTarifario:", "itemId:", "paqueteId:", "hotelId:", "hotelNombre:", "categoria:", "alimentacion:", "salida:", "habitaciones:"]) {
       assert.match(tipo, new RegExp(campo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `falta el campo "${campo}" en SolicitudItemBernalo`);
     }
   });
@@ -141,9 +141,12 @@ describe("app/tarifario/checkout/actions.ts — SolicitudItem: unión discrimina
   });
 });
 
-describe("app/tarifario/checkout/actions.ts — crearCotizacionCarrito: rama Bernalo (test obligatorio 4/9/10)", () => {
+describe("app/tarifario/checkout/actions.ts — crearCotizacionCarrito: rama Bernalo (Fase 3F-4A)", () => {
   const cuerpoFn = cuerpoFuncion(fuenteCheckoutActions, "async function crearCotizacionCarrito(input: {");
   const idxRamaBernalo = cuerpoFn.indexOf('it.modeloTarifario === "unidad"');
+  // La rama Bernalo termina en `continue;` (procesa el ítem y sigue el loop,
+  // igual que persona) — el camino persona arranca justo después con
+  // `const reserva: ReservaInput = {`.
   const idxCierreRama = cuerpoFn.indexOf("const reserva: ReservaInput = {", idxRamaBernalo);
   const ramaBernalo = cuerpoFn.slice(idxRamaBernalo, idxCierreRama);
 
@@ -152,45 +155,319 @@ describe("app/tarifario/checkout/actions.ts — crearCotizacionCarrito: rama Ber
     assert.ok(idxRamaBernalo < idxCierreRama, "la rama Bernalo debe resolverse ANTES del camino persona");
   });
 
-  test("mapea `salida` a modulo/bloqueoId/empaquetadoId/fechas con la MISMA regla que resolverOrigenVuelo — nunca inventa una combinación nueva", () => {
-    assert.match(ramaBernalo, /bloqueoId: it\.salida\.tipo === "bloqueo" \? it\.salida\.id : null/);
-    assert.match(ramaBernalo, /empaquetadoId: it\.salida\.tipo === "empaquetado" \? it\.salida\.id : null/);
-    assert.match(ramaBernalo, /modulo: it\.salida\.tipo === "sin_vuelo" \? "porcion_terrestre" : "bloqueo"/);
-    assert.match(ramaBernalo, /fechaIda: it\.salida\.tipo === "sin_vuelo" \? it\.salida\.fechaIda : undefined/);
+  test("regla D.17: llama computarReservaBernalo UNA sola vez — nunca computarReserva ni una segunda implementación del cálculo", () => {
+    assert.match(ramaBernalo, /await computarReservaBernalo\(\{/);
+    const usos = [...ramaBernalo.matchAll(/computarReservaBernalo\(/g)];
+    assert.equal(usos.length, 1, "computarReservaBernalo debe llamarse UNA sola vez en la rama Bernalo");
+    assert.doesNotMatch(ramaBernalo, /computarReserva\(sb,/);
   });
 
-  test("categoria/regimen vienen de it.categoria/it.alimentacion — nunca de un valor fabricado", () => {
-    assert.match(ramaBernalo, /categoria: it\.categoria/);
-    assert.match(ramaBernalo, /regimen: it\.alimentacion/);
+  test("construye la entrada del servicio con la salida/habitaciones YA VALIDADAS de it — nunca fabrica una forma nueva", () => {
+    assert.match(ramaBernalo, /categoria: it\.categoria,/);
+    assert.match(ramaBernalo, /alimentacion: it\.alimentacion,/);
+    assert.match(ramaBernalo, /salida: it\.salida,/);
+    assert.match(ramaBernalo, /habitaciones: it\.habitaciones,/);
   });
 
-  test("(test obligatorio 4) NUNCA lee it.precio/it.moneda al construir la reliquidación — el precio del carrito no se convierte en autoridad", () => {
-    assert.doesNotMatch(ramaBernalo, /it\.precio/);
-    assert.doesNotMatch(ramaBernalo, /it\.moneda/);
+  test("regla D.18: si el servicio interno rechaza (tarifa/salida no vigente), retorna error y corta ANTES de comparar precio o escribir snapshot", () => {
+    const idxRechazo = ramaBernalo.indexOf("if (!resultadoBernalo.ok)");
+    const idxComparacion = ramaBernalo.indexOf("precioVenta !== it.precioDeclarado");
+    assert.notEqual(idxRechazo, -1);
+    assert.ok(idxRechazo < idxComparacion, "el rechazo del servicio interno debe resolverse antes de comparar el precio");
   });
 
-  test("(test obligatorio 10) enruta HACIA computarReserva — nunca fabrica un mensaje de rechazo aparte sin pasar por la guardia real", () => {
-    assert.match(cuerpoFn.slice(idxRamaBernalo, idxRamaBernalo + 3000), /await computarReserva\(sb, reservaBernalo\)/);
+  test("regla B.9/B.10/B.11: compara precioVenta/moneda AUTORITATIVOS contra precioDeclarado/monedaDeclarada — nunca acepta it.precio/it.moneda del wire crudo", () => {
+    assert.match(ramaBernalo, /resultadoBernalo\.precioVenta !== it\.precioDeclarado/);
+    assert.match(ramaBernalo, /resultadoBernalo\.moneda !== it\.monedaDeclarada/);
+    // `it` en este punto es `SolicitudItemBernaloValidado` (ya pasó por
+    // validarSolicitudItemBernalo) — nunca lee `it.precio`/`it.moneda`
+    // directo (esas claves no existen en el tipo validado, solo en el wire).
+    assert.doesNotMatch(ramaBernalo, /it\.precio\b/);
+    assert.doesNotMatch(ramaBernalo, /it\.moneda\b/);
   });
 
-  test("nunca escribe contrato_items/CxP/ventas para la rama Bernalo (3F-1: transporte, no integración) — siempre retorna antes de esa sección", () => {
-    const bloqueCompleto = cuerpoFn.slice(idxRamaBernalo, idxRamaBernalo + 3000);
-    const matchReturn = /return \{\s*\n\s*ok: false,/.exec(bloqueCompleto);
-    assert.ok(matchReturn, "la rama Bernalo debe terminar en un return explícito");
-    // Sin comentarios: la prosa explicativa de esta misma rama menciona
-    // "contrato_items"/"CxP" a propósito (para decir que NO se escriben) —
-    // solo el CÓDIGO real (fuera de comentarios) debe estar ausente.
-    assert.doesNotMatch(sinComentarios(bloqueCompleto.slice(0, matchReturn!.index + 200)), /contrato_items|cuentas_por_pagar|\.insert\(/);
+  test("regla B.10: ante un cambio de precio, retorna tipo:'precio_actualizado' con SOLO itemId/pvp/moneda públicos — nunca inserta la cotización", () => {
+    const bloqueMismatch = ramaBernalo.slice(ramaBernalo.indexOf("resultadoBernalo.precioVenta !== it.precioDeclarado") - 50, ramaBernalo.indexOf("resultadoBernalo.precioVenta !== it.precioDeclarado") + 800);
+    assert.match(bloqueMismatch, /tipo: "precio_actualizado"/);
+    assert.match(bloqueMismatch, /itemId: it\.itemId,/);
+    assert.match(bloqueMismatch, /pvp: resultadoBernalo\.precioVenta,/);
+    assert.match(bloqueMismatch, /moneda: resultadoBernalo\.moneda,/);
+    assert.doesNotMatch(bloqueMismatch, /costoHotelTotal|aportePvp|proveedorHotel|serviciosIncluidos\b|\.insert\(/i);
   });
 
-  test("no llama ninguna función de carrito/checkout más allá de computarReserva (sin crear cotización/contrato para Bernalo en esta fase)", () => {
-    assert.doesNotMatch(ramaBernalo, /hotelesSnap\.push|itemsSnap\.push|itemsOk\.push/);
+  test("regla C.13: el snapshot de habitaciones toma SOLO `.ocupacion` de cada habitación — nunca `.resultado`/`.snapshot` (netos/comisión/fuente)", () => {
+    assert.match(ramaBernalo, /resultadoBernalo\.habitaciones\.map\(\(h\) => h\.ocupacion\)/);
+    assert.doesNotMatch(ramaBernalo, /h\.resultado|h\.snapshot/);
+  });
+
+  test("regla C.14: el ítem acumulado (itemsBernaloOk) queda marcado con modeloTarifario: \"unidad\" para que 3F-4B lo detecte", () => {
+    const idxPush = ramaBernalo.indexOf("itemsBernaloOk.push({");
+    assert.notEqual(idxPush, -1);
+    assert.match(ramaBernalo.slice(idxPush, idxPush + 200), /modeloTarifario: "unidad",/);
+  });
+
+  test("nunca escribe contrato_items/CxP/ventas para la rama Bernalo (3F-4A: cotización informativa, no contrato) — solo cotizaciones vía el insert compartido con persona", () => {
+    assert.doesNotMatch(sinComentarios(ramaBernalo), /contrato_items|cuentas_por_pagar/);
   });
 });
 
-describe("lib/reservar/computo.ts — la guardia de Fase 3 sigue intacta (test obligatorio 10: computarReserva continúa bloqueando Bernalo)", () => {
-  test('modelo_tarifario === "unidad" sigue bloqueando — sin cambios en esta fase (3F-1 no levanta la guardia)', () => {
+describe("app/tarifario/checkout/actions.ts — cierre #2: metadatos autoritativos (hotelNombre/destino)", () => {
+  const cuerpoFn = cuerpoFuncion(fuenteCheckoutActions, "async function crearCotizacionCarrito(input: {");
+  const idxRamaBernalo = cuerpoFn.indexOf('it.modeloTarifario === "unidad"');
+  const idxCierreRama = cuerpoFn.indexOf("const reserva: ReservaInput = {", idxRamaBernalo);
+  const ramaBernalo = cuerpoFn.slice(idxRamaBernalo, idxCierreRama);
+
+  test("el destino persistido en hotelesSnap/itemsSnap/itemsBernaloOk sale de resultadoBernalo.hotelDestino — nunca de it.destino (texto libre del carrito)", () => {
+    assert.match(ramaBernalo, /const destinoAutoritativo = resultadoBernalo\.hotelDestino;/);
+    assert.match(ramaBernalo, /ciudad: destinoAutoritativo,/);
+    assert.match(ramaBernalo, /destino: destinoAutoritativo,/);
+    // `it.destino` (el valor crudo del carrito) NUNCA se escribe en ningún
+    // snapshot/objeto persistido de esta rama — la única lectura permitida
+    // de `it.destino` sería para lógica de decisión, y ni siquiera esa existe.
+    assert.doesNotMatch(ramaBernalo, /:\s*it\.destino\b/);
+  });
+
+  test("hotelNombre persistido sale SIEMPRE de resultadoBernalo.hotelNombre — nunca de it.hotelNombre", () => {
+    assert.doesNotMatch(ramaBernalo, /nombre:\s*it\.hotelNombre/);
+    assert.match(ramaBernalo, /nombre: resultadoBernalo\.hotelNombre,/);
+    assert.match(ramaBernalo, /hotelNombre: resultadoBernalo\.hotelNombre,/);
+  });
+
+  test("hotelNombre/destino MANIPULADOS por el navegador (ej. it.hotelNombre=\"Hotel Falso 5 estrellas\", it.destino=\"Dubai\") nunca llegan a hotelesSnap/itemsSnap/itemsBernaloOk — solo resultadoBernalo.hotelNombre/hotelDestino, que ignoran por completo lo que trae `it`", () => {
+    // `it` (SolicitudItemBernaloValidado) puede traer CUALQUIER texto en
+    // hotelNombre/destino — `validarSolicitudItemBernalo` solo acota longitud,
+    // nunca verifica que coincida con el hotel/paquete real. Un navegador
+    // manipulado podría mandar it.hotelNombre="Hotel Falso 5 estrellas" y
+    // it.destino="Dubai" para un hotel que en realidad es otro — el código de
+    // esta rama nunca lee esas dos propiedades para construir ningún snapshot
+    // persistido (ya verificado campo por campo arriba); esta prueba lo
+    // confirma de forma agregada, sobre el bloque completo de la rama.
+    const bloqueSnapshots = ramaBernalo.slice(ramaBernalo.indexOf("hIdx++"), ramaBernalo.indexOf("continue;", ramaBernalo.indexOf("itemsBernaloOk.push({")));
+    assert.doesNotMatch(bloqueSnapshots, /it\.hotelNombre|it\.destino\b/);
+    assert.match(bloqueSnapshots, /resultadoBernalo\.hotelNombre/);
+    assert.match(bloqueSnapshots, /destinoAutoritativo/);
+  });
+
+  test("computarReservaBernalo (servicio interno) resuelve el destino desde armado_paquetes.destinos — no un segundo query duplicado en checkout/actions.ts", () => {
+    // El servicio interno YA es la fuente: checkout/actions.ts no vuelve a
+    // consultar `destinos` por su cuenta (evita divergencia entre dos
+    // consultas que podrían responder distinto).
+    assert.doesNotMatch(sinComentarios(fuenteCheckoutActions), /\.from\("destinos"\)/);
+    const fuenteComputoBernalo = leer("lib/reservar/computoReservaBernalo.ts");
+    assert.match(fuenteComputoBernalo, /destinos\(nombre\)/);
+    assert.match(fuenteComputoBernalo, /hotelDestino: destinoNombre,/);
+  });
+});
+
+describe("app/tarifario/checkout/actions.ts — cierre #3: vuelosSnap público para salida bloqueo/empaquetado", () => {
+  const cuerpoFn = cuerpoFuncion(fuenteCheckoutActions, "async function crearCotizacionCarrito(input: {");
+  const idxRamaBernalo = cuerpoFn.indexOf('it.modeloTarifario === "unidad"');
+  const idxCierreRama = cuerpoFn.indexOf("const reserva: ReservaInput = {", idxRamaBernalo);
+  const ramaBernalo = cuerpoFn.slice(idxRamaBernalo, idxCierreRama);
+
+  test("reutiliza construirTramosVueloSnap/CAMPOS_VUELO_SNAP — el MISMO constructor que ya usa la rama persona, nunca copia la consulta/transformación", () => {
+    assert.match(ramaBernalo, /construirTramosVueloSnap\(bq\)/);
+    assert.match(ramaBernalo, /\.select\(CAMPOS_VUELO_SNAP\)/);
+    // El constructor mismo (fuera de esta rama) debe existir una sola vez —
+    // ambas ramas (persona/Bernalo) lo importan del mismo lugar (está en el
+    // mismo archivo, no se copia su cuerpo).
+    const usosConstructor = [...codigoCheckoutActions.matchAll(/function construirTramosVueloSnap\(/g)];
+    assert.equal(usosConstructor.length, 1, "construirTramosVueloSnap debe definirse UNA sola vez");
+  });
+
+  test("consulta SIEMPRE resultadoBernalo.salida (la salida RESUELTA/autoritativa) — nunca it.salida (la elección cruda del navegador)", () => {
+    const idxVuelo = ramaBernalo.indexOf("resultadoBernalo.salida.tipo ===");
+    assert.notEqual(idxVuelo, -1);
+    const bloque = ramaBernalo.slice(idxVuelo, idxVuelo + 500);
+    assert.match(bloque, /\.eq\("id", resultadoBernalo\.salida\.id\)/);
+    assert.doesNotMatch(bloque, /it\.salida\.id/);
+  });
+
+  test('cubre tipo "bloqueo" (tabla bloqueos_vuelo) Y "empaquetado" (tabla empaquetados) — nunca solo uno de los dos', () => {
+    const idxVuelo = ramaBernalo.indexOf("resultadoBernalo.salida.tipo ===");
+    const bloque = ramaBernalo.slice(idxVuelo, idxVuelo + 500);
+    assert.match(bloque, /"bloqueo"/);
+    assert.match(bloque, /"empaquetado"/);
+    assert.match(bloque, /"bloqueos_vuelo"/);
+    assert.match(bloque, /"empaquetados"/);
+  });
+
+  test('"sin_vuelo" NUNCA entra al bloque que arma vuelosSnap (no inventa un vuelo)', () => {
+    const idxVuelo = ramaBernalo.indexOf("resultadoBernalo.salida.tipo ===");
+    const bloque = ramaBernalo.slice(idxVuelo, idxVuelo + 500);
+    assert.doesNotMatch(bloque, /"sin_vuelo"/);
+  });
+
+  test("no expone tarifa/costo en el snapshot de vuelo — CAMPOS_VUELO_SNAP nunca selecciona tarifa_para_empaquetar/tarifa_proveedor", () => {
+    assert.doesNotMatch(codigoCheckoutActions, /CAMPOS_VUELO_SNAP\s*=\s*"[^"]*tarifa/);
+  });
+
+  test("elegir entre dos salidas persiste la SELECCIONADA, nunca la primera: la consulta se filtra por resultadoBernalo.salida.id (ya resuelto por identidad real contra las salidas válidas del paquete, ver computoReservaBernaloWiring), nunca por índice [0]", () => {
+    const idxVuelo = ramaBernalo.indexOf("resultadoBernalo.salida.tipo ===");
+    const bloque = ramaBernalo.slice(idxVuelo, idxVuelo + 500);
+    assert.doesNotMatch(bloque, /\[0\]/);
+    assert.match(bloque, /resultadoBernalo\.salida\.id/);
+  });
+});
+
+describe("lib/reservar/computoReservaBernalo.ts — cierre #2: hotelDestino autoritativo (Fase 3F-4A)", () => {
+  const fuenteComputoBernalo = leer("lib/reservar/computoReservaBernalo.ts");
+  const codigoComputoBernalo = sinComentarios(fuenteComputoBernalo);
+
+  test("ComputoReservaBernaloOk declara hotelDestino: string | null", () => {
+    const tipo = fuenteComputoBernalo.slice(fuenteComputoBernalo.indexOf("export type ComputoReservaBernaloOk"), fuenteComputoBernalo.indexOf("export type ResultadoComputoReservaBernalo"));
+    assert.match(tipo, /hotelDestino: string \| null;/);
+  });
+
+  test("destinoNombre se resuelve desde el JOIN armado_paquetes.destinos(nombre) — nunca desde input (el llamador no puede mandar un destino)", () => {
+    assert.match(codigoComputoBernalo, /destinos\(nombre\)/);
+    assert.match(codigoComputoBernalo, /const destinoNombre = \(pq\.destinos as unknown as \{ nombre: string \} \| null\)\?\.nombre \?\? null;/);
+    assert.doesNotMatch(codigoComputoBernalo, /hotelDestino:\s*input\./);
+  });
+});
+
+describe("app/tarifario/checkout/actions.ts — SolicitudResult: precio_actualizado (regla B.10)", () => {
+  test("SolicitudResult incluye la variante ResultadoPrecioActualizadoBernalo (tipo:'precio_actualizado', ok:false)", () => {
+    const tipo = fuenteCheckoutActions.slice(
+      fuenteCheckoutActions.indexOf("export type ResultadoPrecioActualizadoBernalo"),
+      fuenteCheckoutActions.indexOf("export type SolicitudResult =")
+    );
+    for (const campo of ["ok: false;", 'tipo: "precio_actualizado";', "itemId: string;", "paqueteId: number;", "hotelId: number;", "pvp: number;", "moneda: string;"]) {
+      assert.match(tipo, new RegExp(campo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    }
+    assert.match(codigoCheckoutActions, /export type SolicitudResult =[\s\S]*ResultadoPrecioActualizadoBernalo/);
+  });
+
+  test("crearSolicitudReserva propaga precio_actualizado ANTES del insert en crm_contactos/mensaje (if (!cot.ok) return cot;)", () => {
+    const cuerpoFn = cuerpoFuncion(fuenteCheckoutActions, "export async function crearSolicitudReserva(inputRaw: unknown)");
+    const idxCall = cuerpoFn.indexOf("await crearCotizacionCarrito(");
+    const idxReturn = cuerpoFn.indexOf("if (!cot.ok) return cot;", idxCall);
+    const idxCrm = cuerpoFn.indexOf("crm_contactos");
+    assert.notEqual(idxReturn, -1);
+    assert.ok(idxCall < idxReturn && idxReturn < idxCrm, "precio_actualizado/error deben salir ANTES de los efectos secundarios (CRM/mensaje)");
+  });
+});
+
+describe("app/(dashboard)/dashboard/reservar/actions.ts — convertirCotizacionCarrito bloquea Bernalo (regla C.15)", () => {
+  const fuenteConvertir = leer("app/(dashboard)/dashboard/reservar/actions.ts");
+  const cuerpoFn = cuerpoFuncion(fuenteConvertir, "export async function convertirCotizacionCarrito(");
+
+  test('detecta modeloTarifario === "unidad" en itemsCrudos ANTES de validar asignaciones/pasajeros', () => {
+    const idxGuard = cuerpoFn.indexOf('modeloTarifario === "unidad"');
+    const idxAsignaciones = cuerpoFn.indexOf("opts.asignaciones");
+    assert.notEqual(idxGuard, -1);
+    assert.ok(idxGuard < idxAsignaciones, "la guardia Bernalo debe evaluarse antes de tocar asignaciones/pasajeros");
+  });
+
+  test("el mensaje de bloqueo es explícito (\"integración contractual pendiente\") — nunca cae en silencio al flujo persona", () => {
+    const idxGuard = cuerpoFn.indexOf('modeloTarifario === "unidad"');
+    const bloque = cuerpoFn.slice(idxGuard, idxGuard + 400);
+    assert.match(bloque, /return \{ ok: false, error:/);
+    assert.match(bloque, /integración contractual pendiente/);
+  });
+});
+
+describe("lib/reservar/solicitudAlojamientoBernalo.ts — precioDeclarado/monedaDeclarada (regla B.10, Fase 3F-4A)", () => {
+  const fuenteSolicitud = leer("lib/reservar/solicitudAlojamientoBernalo.ts");
+
+  test("SolicitudItemBernaloValidado declara precioDeclarado/monedaDeclarada como number|null / string|null", () => {
+    const tipo = fuenteSolicitud.slice(fuenteSolicitud.indexOf("export type SolicitudItemBernaloValidado"), fuenteSolicitud.indexOf("export function validarSolicitudItemBernalo"));
+    assert.match(tipo, /precioDeclarado: number \| null;/);
+    assert.match(tipo, /monedaDeclarada: string \| null;/);
+  });
+
+  test("nunca se usan para calcular nada dentro de este módulo — solo se asignan al ítem validado", () => {
+    // `cuerpoFuncion` (brace-depth-aware) confunde el tipo de retorno de esta
+    // función (`{ ok: true; ... } | { ok: false; error: string }`, sin
+    // envoltorio genérico) con el cuerpo real — se acota manualmente hasta el
+    // siguiente bloque del archivo en su lugar.
+    const idxInicio = fuenteSolicitud.indexOf("export function validarSolicitudItemBernalo(");
+    const idxFin = fuenteSolicitud.indexOf("// ── Comparación de composiciones Bernalo", idxInicio);
+    assert.ok(idxInicio > -1 && idxFin > idxInicio);
+    const cuerpoFn = fuenteSolicitud.slice(idxInicio, idxFin);
+    // Las únicas apariciones de `precioDeclarado`/`monedaDeclarada` en el
+    // cuerpo son su declaración `const` y su uso en el objeto de retorno.
+    const usosPrecio = [...cuerpoFn.matchAll(/precioDeclarado/g)].length;
+    const usosMoneda = [...cuerpoFn.matchAll(/monedaDeclarada/g)].length;
+    assert.equal(usosPrecio, 2);
+    assert.equal(usosMoneda, 2);
+  });
+
+  test("cierre #1: SolicitudItemBernaloValidado declara itemId: string, y validarSolicitudItemBernalo lo exige (validarTextoAcotado, sin permitir vacío)", () => {
+    const tipo = fuenteSolicitud.slice(fuenteSolicitud.indexOf("export type SolicitudItemBernaloValidado"), fuenteSolicitud.indexOf("export function validarSolicitudItemBernalo"));
+    assert.match(tipo, /itemId: string;/);
+    const idxInicio = fuenteSolicitud.indexOf("export function validarSolicitudItemBernalo(");
+    const idxFin = fuenteSolicitud.indexOf("// ── Comparación de composiciones Bernalo", idxInicio);
+    const cuerpoFn = fuenteSolicitud.slice(idxInicio, idxFin);
+    assert.match(cuerpoFn, /validarTextoAcotado\(v\.itemId,/);
+    assert.match(cuerpoFn, /itemId: vItemId\.texto,/);
+  });
+});
+
+describe("lib/reservar/computo.ts — la guardia de Fase 3 sigue intacta (regla D.16: computarReserva sigue bloqueando Bernalo)", () => {
+  test('modelo_tarifario === "unidad" sigue bloqueando — sin cambios en Fase 3F-4A', () => {
     assert.match(codigoComputo, /modeloRow\?\.modelo_tarifario === "unidad"/);
     assert.match(codigoComputo, /todavía no está integrada en Reservar/);
+  });
+});
+
+describe("lib/cart/CartContext.tsx — actualizarPrecioBernalo (regla B.10, Fase 3F-4A)", () => {
+  test("expuesto en CartCtx y en el valor del Provider", () => {
+    assert.match(codigoCart, /actualizarPrecioBernalo: \(id: string, precio: number, moneda: string \| null\) => void;/);
+    assert.match(codigoCart, /items, add, remove, actualizarPrecioBernalo, clear, total, count: items\.length,/);
+  });
+
+  test("solo actualiza precio/moneda de un ítem Bernalo por id — nunca toca otros campos ni ítems persona/tour", () => {
+    const idxFn = codigoCart.indexOf("const actualizarPrecioBernalo = useCallback(");
+    const cuerpo = codigoCart.slice(idxFn, idxFn + 300);
+    assert.match(cuerpo, /i\.modeloTarifario === "unidad"/);
+    assert.match(cuerpo, /\{ \.\.\.i, precio, moneda \}/);
+  });
+
+  test("el fallback fuera de CartProvider también declara actualizarPrecioBernalo (no-op)", () => {
+    // "Outside CartProvider" es texto de comentario — buscar en la fuente
+    // CRUDA (codigoCart le quita las líneas de comentario).
+    const idxFallback = fuenteCart.indexOf("Outside CartProvider");
+    assert.notEqual(idxFallback, -1);
+    const cuerpo = fuenteCart.slice(idxFallback, idxFallback + 400);
+    assert.match(cuerpo, /actualizarPrecioBernalo: \(\) => \{\},/);
+  });
+});
+
+describe("app/tarifario/checkout/page.tsx — envía ítems Bernalo y maneja precio_actualizado (Fase 3F-4A)", () => {
+  const fuentePage = leer("app/tarifario/checkout/page.tsx");
+  const codigoPage = sinComentarios(fuentePage);
+
+  test("filtra bernaloItems del carrito y los incluye en el payload de crearSolicitudReserva", () => {
+    assert.match(codigoPage, /modeloTarifario === "unidad"/);
+    assert.match(codigoPage, /bernaloItems\.map\(\(it\) => \(\{/);
+    assert.match(codigoPage, /modeloTarifario: "unidad" as const,/);
+  });
+
+  test('detecta la variante precio_actualizado (discriminada por "tipo" in r) y actualiza el carrito vía actualizarPrecioBernalo — nunca acepta el resultado como éxito', () => {
+    assert.match(codigoPage, /else if \("tipo" in r\)/);
+    assert.match(codigoPage, /actualizarPrecioBernalo\(item\.id, r\.pvp, r\.moneda\)/);
+    // El branch de éxito (`setRes`/`clear()`) solo se alcanza en `r.ok` — el
+    // branch de precio_actualizado nunca llama a `clear()` ni a `setRes`.
+    const idxBranch = codigoPage.indexOf('else if ("tipo" in r)');
+    const bloque = codigoPage.slice(idxBranch, idxBranch + 400);
+    assert.doesNotMatch(bloque, /setRes\(|clear\(\)/);
+  });
+
+  test("exige un clic explícito adicional para reintentar (el botón cambia de texto, no se auto-reenvía)", () => {
+    assert.match(codigoPage, /precioCambio \? "Confirmar con el nuevo precio y enviar" : "Generar cotización y enviar solicitud"/);
+  });
+
+  test("cierre #1: envía itemId (it.id del carrito) en el payload Bernalo — nunca lo omite", () => {
+    const idxMap = codigoPage.indexOf("bernaloItems.map((it) => ({");
+    const bloque = codigoPage.slice(idxMap, idxMap + 300);
+    assert.match(bloque, /itemId: it\.id,/);
+  });
+
+  test("cierre #1: correlaciona el precio_actualizado por itemId (r.itemId) — nunca por paqueteId+hotelId", () => {
+    const idxBranch = codigoPage.indexOf('else if ("tipo" in r)');
+    const bloque = codigoPage.slice(idxBranch, idxBranch + 400);
+    assert.match(bloque, /bernaloItems\.find\(\(i\) => i\.id === r\.itemId\)/);
+    assert.doesNotMatch(bloque, /i\.paqueteId === r\.paqueteId && i\.hotelId === r\.hotelId/);
   });
 });
