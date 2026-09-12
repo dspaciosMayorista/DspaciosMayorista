@@ -21,10 +21,11 @@
 //      del cálculo (regla 1: "no mantengas dos implementaciones monetarias").
 //   3. SANITIZAR su resultado a las 5 claves públicas de siempre
 //      (`ok`/`pvp`/`moneda`/`paxTotal`/`promedioPorViajero`) o a un rechazo
-//      con código + mensaje FIJO — nunca reenviar el objeto interno
-//      completo (que trae netos, aportes, snapshots, proveedor, habitación
-//      por habitación) ni su `.mensaje` crudo (que sí puede nombrar
-//      tarifas/servicios internos).
+//      con código + mensaje público controlado — nunca reenviar el objeto
+//      interno completo (que trae netos, aportes, snapshots, proveedor,
+//      habitación por habitación). Cuando el motor bloquea por ocupación/
+//      tarifa, sí se adjunta una causa comercial saneada para que el asesor
+//      sepa qué corregir.
 //
 // Reglas de seguridad que se conservan intactas (ver el servicio interno
 // para el detalle de cada una — ninguna cambió de comportamiento):
@@ -144,8 +145,17 @@ const MENSAJES_PUBLICOS: Record<string, string> = {
   moneda_contradice_paquete: "Hay una inconsistencia de moneda en la configuración de este paquete — contacta a un asesor.",
 };
 
-function mensajePublico(codigo: string): string {
-  return MENSAJES_PUBLICOS[codigo] ?? "No fue posible cotizar con los datos ingresados.";
+function mensajePublico(codigo: string, detalle?: string): string {
+  const base = MENSAJES_PUBLICOS[codigo] ?? "No fue posible cotizar con los datos ingresados.";
+  if (!detalle || !["no_cotizable", "configuracion_invalida", "ocupacion_no_permitida", "edad_fuera_de_regla", "tarifa_no_encontrada"].includes(codigo)) {
+    return base;
+  }
+  const detalleLimpio = detalle
+    .replace(/[`"'{}[\]]/g, "")
+    .replace(/\b(?:snapshot|totalNeto|valorComision|comision|proveedor|hotel_tarifas_unidad|armado_hoteles|armado_paquetes|servicios_adicionales|Supabase|Postgres|SQL|RLS)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return detalleLimpio ? `${base} Motivo: ${detalleLimpio}` : base;
 }
 
 /**
@@ -190,9 +200,7 @@ export async function cotizarAlojamientoBernaloPublico(
   });
 
   if (!resultado.ok) {
-    // C1: mensaje público FIJO — nunca `resultado.mensaje` (que sí puede
-    // nombrar una tarifa/servicio interno).
-    return { ok: false, codigo: resultado.codigo, mensaje: mensajePublico(resultado.codigo) };
+    return { ok: false, codigo: resultado.codigo, mensaje: mensajePublico(resultado.codigo, resultado.mensaje) };
   }
 
   // 3) Sanitización final — SOLO estas 5 claves, nunca el objeto interno

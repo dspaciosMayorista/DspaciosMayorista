@@ -74,21 +74,33 @@ describe("cotizacionBernaloActions.ts — valida FORMA antes de llamar al servic
   });
 });
 
-describe("cotizacionBernaloActions.ts — C1: mensajes públicos, nunca el mensaje interno crudo", () => {
+describe("cotizacionBernaloActions.ts — mensajes públicos con motivo comercial saneado", () => {
   test("MENSAJES_PUBLICOS tiene entradas para servicio_sin_tarifa/servicio_sin_rango_grupal", () => {
     const mapa = fuenteAction.slice(fuenteAction.indexOf("const MENSAJES_PUBLICOS"), fuenteAction.indexOf("function mensajePublico"));
     assert.match(mapa, /servicio_sin_tarifa:/);
     assert.match(mapa, /servicio_sin_rango_grupal:/);
   });
 
-  test("el fallo del servicio interno SIEMPRE se traduce con mensajePublico(resultado.codigo) — nunca reenvía resultado.mensaje", () => {
-    assert.match(codigoAction, /mensajePublico\(resultado\.codigo\)/);
-    assert.doesNotMatch(codigoAction, /mensaje:\s*resultado\.mensaje/);
+  test("el fallo del servicio interno se traduce con mensajePublico(resultado.codigo, resultado.mensaje) — nunca reenvía el objeto interno completo", () => {
+    assert.match(codigoAction, /mensajePublico\(resultado\.codigo, resultado\.mensaje\)/);
+    assert.doesNotMatch(codigoAction, /return resultado;/);
+    assert.doesNotMatch(codigoAction, /\.\.\.resultado/);
   });
 
   test("ningún mensaje público fijo en MENSAJES_PUBLICOS interpola una variable (todos son texto fijo, nunca nombres internos)", () => {
     const mapa = fuenteAction.slice(fuenteAction.indexOf("const MENSAJES_PUBLICOS"), fuenteAction.indexOf("function mensajePublico"));
     assert.doesNotMatch(mapa, /\$\{/);
+  });
+
+  test("solo los rechazos comerciales pueden adjuntar Motivo y el detalle se limpia de campos/tablas sensibles", () => {
+    const fn = fuenteAction.slice(fuenteAction.indexOf("function mensajePublico"), fuenteAction.indexOf("/**", fuenteAction.indexOf("function mensajePublico")));
+    for (const codigo of ["no_cotizable", "configuracion_invalida", "ocupacion_no_permitida", "edad_fuera_de_regla", "tarifa_no_encontrada"]) {
+      assert.match(fn, new RegExp(codigo));
+    }
+    assert.match(fn, /Motivo:/);
+    for (const sensible of ["snapshot", "totalNeto", "valorComision", "hotel_tarifas_unidad", "armado_hoteles", "armado_paquetes", "servicios_adicionales"]) {
+      assert.match(fn, new RegExp(sensible));
+    }
   });
 });
 
@@ -111,8 +123,12 @@ describe("cotizacionBernaloActions.ts — la respuesta pública conserva ÚNICAM
     assert.match(codigoAction, /paxTotal: resultado\.paxTotal,/);
   });
 
-  test("no reenvía ningún campo interno (costoHotelTotal/aportePvp*/habitaciones/serviciosIncluidos/snapshot/proveedorHotel) en ninguna parte del archivo", () => {
-    assert.doesNotMatch(codigoAction, /costoHotelTotal|costoVueloTotal|costoServiciosTotal|aportePvp|proveedorHotel|serviciosIncluidos\b|snapshot/i);
+  test("no reenvía ningún campo interno en los objetos de respuesta pública", () => {
+    const bloqueOk = codigoAction.slice(codigoAction.indexOf("return {\n    ok: true,"), codigoAction.indexOf("};", codigoAction.indexOf("return {\n    ok: true,")));
+    assert.doesNotMatch(bloqueOk, /costoHotelTotal|costoVueloTotal|costoServiciosTotal|aportePvp|proveedorHotel|serviciosIncluidos\b|snapshot|habitaciones/i);
+    const rechazo = codigoAction.slice(codigoAction.indexOf("if (!resultado.ok)"), codigoAction.indexOf("return {\n    ok: true,"));
+    assert.match(rechazo, /return \{ ok: false, codigo: resultado\.codigo, mensaje: mensajePublico\(resultado\.codigo, resultado\.mensaje\) \};/);
+    assert.doesNotMatch(rechazo, /costoHotelTotal|costoVueloTotal|costoServiciosTotal|aportePvp|proveedorHotel|serviciosIncluidos\b|snapshot|habitaciones:/i);
   });
 });
 
