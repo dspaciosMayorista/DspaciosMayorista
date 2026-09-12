@@ -75,6 +75,14 @@ function Pill({ label, value }: { label: string; value: string }) {
   );
 }
 
+function resumenMenoresHabitacion(edadesMenores: number[]) {
+  const cantidad = edadesMenores.length;
+  if (!cantidad) return "—";
+  const edades = edadesMenores.map((edad) => `${edad} ${edad === 1 ? "año" : "años"}`).join(", ");
+  const sufijo = cantidad === 1 ? "menor" : "menores";
+  return `${cantidad} ${sufijo} (${edades})`;
+}
+
 export function ContratoDocumento({
   venta,
   pasajeros,
@@ -536,7 +544,7 @@ export function ContratoDocumento({
                       <td className="border border-gray-200 px-2 py-1">{h.alimentacion ?? "—"}</td>
                       <td className="border border-gray-200 px-2 py-1">{h.adultos}</td>
                       <td className="border border-gray-200 px-2 py-1">
-                        {h.edadesMenores.length ? h.edadesMenores.join(", ") : "—"}
+                        {resumenMenoresHabitacion(h.edadesMenores)}
                       </td>
                     </tr>
                   ))}

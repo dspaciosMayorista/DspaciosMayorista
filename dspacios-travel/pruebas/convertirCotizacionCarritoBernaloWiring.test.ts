@@ -338,9 +338,14 @@ describe("lib/contrato/valorContratoItem.ts / ContratoDocumento.tsx — regla C.
     assert.doesNotMatch(codigoDoc, /\{alojItems\.map\(\(it\) =>/);
   });
 
-  test("regla F.32/33/34: sección de habitacionesBernalo existe, muestra hotel/categoría/alimentación/adultos/edades — nunca un campo financiero/snapshot", () => {
+  test("regla F.32/33/34: sección de habitacionesBernalo existe, muestra hotel/categoría/alimentación/adultos y menores como cantidad + edades — nunca un campo financiero/snapshot", () => {
     assert.match(codigoDoc, /habitacionesBernalo\.map\(\(h\) =>/);
+    assert.match(codigoDoc, /resumenMenoresHabitacion\(h\.edadesMenores\)/);
+    assert.match(codigoDoc, /const cantidad = edadesMenores\.length;/);
+    assert.match(codigoDoc, /edadesMenores\.map\(\(edad\) => `\$\{edad\} \$\{edad === 1 \? "año" : "años"\}`\)\.join\(", "\)/);
+    assert.match(codigoDoc, /\$\{cantidad\} \$\{sufijo\} \(\$\{edades\}\)/);
     assert.doesNotMatch(codigoDoc, /h\.snapshot|h\.neto|h\.bruto|h\.comision/i);
+    assert.doesNotMatch(codigoDoc, /h\.edadesMenores\.join\(", "\) : "—"/);
   });
 });
 
