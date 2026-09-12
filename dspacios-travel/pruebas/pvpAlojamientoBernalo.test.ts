@@ -164,7 +164,7 @@ describe("calcularPvpAlojamientoBernalo — servicio incluido por persona usa pa
     const hab2: HabitacionOcupacion = { id: "h2", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
     const res = cotizar([hab1, hab2]);
     const r = calcularPvpAlojamientoBernalo(entradaBase(res, {
-      serviciosPersona: [{ servicioId: 1, nombre: "Traslado", categoria: "tour_traslado", precioPersonaNeto: 20_000, liquidacion: null }],
+      serviciosPersona: [{ servicioId: 1, nombre: "Traslado", categoria: "tour_traslado", precioPersonaNeto: 20_000, liquidacion: null, proveedorId: null }],
     }));
     assert.equal(r.ok, true);
     if (r.ok) {
@@ -211,7 +211,7 @@ describe("calcularPvpAlojamientoBernalo — sin rango grupal aplicable bloquea",
     const hab: HabitacionOcupacion = { id: "h1", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
     const res = cotizar([hab]);
     const r = calcularPvpAlojamientoBernalo(entradaBase(res, {
-      serviciosPersona: [{ servicioId: 4, nombre: "Sin tarifa", categoria: "otro", precioPersonaNeto: null, liquidacion: null }],
+      serviciosPersona: [{ servicioId: 4, nombre: "Sin tarifa", categoria: "otro", precioPersonaNeto: null, liquidacion: null, proveedorId: null }],
     }));
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.codigo, "servicio_sin_tarifa");
@@ -248,7 +248,7 @@ describe("calcularPvpAlojamientoBernalo — vuelo/servicios no se multiplican po
     const habDoble1: HabitacionOcupacion = { id: "h1", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
     const habDoble2: HabitacionOcupacion = { id: "h2", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
     const vuelo = { costoTiqueteSilla: 50_000, aplicaMk: true, ta: 0 };
-    const servicios = [{ servicioId: 1, nombre: "Traslado", categoria: "tour_traslado" as const, precioPersonaNeto: 20_000, liquidacion: null }];
+    const servicios = [{ servicioId: 1, nombre: "Traslado", categoria: "tour_traslado" as const, precioPersonaNeto: 20_000, liquidacion: null, proveedorId: null }];
 
     const resUnica = cotizar([habUnica]);
     const resDoble = cotizar([habDoble1, habDoble2]);
@@ -275,22 +275,110 @@ describe("calcularPvpAlojamientoBernalo — vuelo/servicios no se multiplican po
   });
 });
 
-describe("calcularPvpAlojamientoBernalo — no expone campos internos (frontera pública)", () => {
-  test("el resultado ok solo tiene ok/pvp/moneda/paxTotal/promedioPorViajero", () => {
+// ⚠️ Fase 3F-3: `calcularPvpAlojamientoBernalo` DEJÓ de ser la frontera
+// pública en sí misma (ver el encabezado del archivo fuente) — ahora expone
+// A PROPÓSITO el desglose interno (costos netos, aportes de PVP, servicios
+// resueltos) que `lib/reservar/computoReservaBernalo.ts` necesita para
+// construir `ComputoReservaBernalo`. La frontera pública real es
+// `app/tarifario/cotizacionBernaloActions.ts`, que sanitiza a las 5 claves
+// de siempre — esa garantía se prueba en pruebas/cotizacionBernaloWiring.test.ts,
+// no acá.
+describe("calcularPvpAlojamientoBernalo — expone el desglose interno completo (Fase 3F-3)", () => {
+  test("el resultado ok trae las claves públicas de siempre MÁS el desglose interno de costos/aportes", () => {
     const hab: HabitacionOcupacion = { id: "h1", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
     const r = calcularPvpAlojamientoBernalo(entradaBase(cotizar([hab])));
     assert.equal(r.ok, true);
     if (r.ok) {
-      assert.deepEqual(Object.keys(r).sort(), ["moneda", "ok", "paxTotal", "promedioPorViajero", "pvp"]);
+      assert.deepEqual(Object.keys(r).sort(), [
+        "aporteHotelTotal", "aporteServiciosTotal", "aporteVueloTotal",
+        "costoHotelTotal", "costoServiciosTotal", "costoVueloTotal",
+        "moneda", "ok", "paxConSilla", "paxTotal", "promedioPorViajero", "pvp",
+        "serviciosIncluidosResueltos",
+      ].sort());
     }
   });
 
-  test("el código fuente nunca reenvía totalNeto/totalBruto/comision/snapshot/payload/fuente en el tipo de salida", () => {
-    const tipoSalida = fuenteComposer.slice(
-      fuenteComposer.indexOf("export type ResultadoPvpAlojamientoBernaloOk"),
-      fuenteComposer.indexOf("export type CodigoPvpAlojamientoBernalo")
-    );
-    assert.doesNotMatch(tipoSalida, /totalNeto|totalBruto|comision|snapshot|payload|fuente/i);
+  test("costoHotelTotal = suma EXACTA de resultado.totalNeto por habitación (regla 5), nunca marcado con el %mk", () => {
+    const hab1: HabitacionOcupacion = { id: "h1", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
+    const hab2: HabitacionOcupacion = { id: "h2", adultos: 3, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
+    const res = cotizar([hab1, hab2]);
+    const r = calcularPvpAlojamientoBernalo(entradaBase(res));
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      const netoEsperado = res.porHabitacion.reduce((s, ph) => s + ph.resultado.totalNeto, 0);
+      assert.equal(r.costoHotelTotal, netoEsperado);
+      assert.notEqual(r.costoHotelTotal, r.aporteHotelTotal); // el costo NUNCA es el aporte marcado
+    }
+  });
+
+  test("costoVueloTotal excluye infantes (regla 7): costoTiqueteSilla × paxConSilla, nunca × paxTotal", () => {
+    const hab: HabitacionOcupacion = { id: "h1", adultos: 2, menores: [{ edadAnios: 1 }], categoria: "estandar", alimentacion: "PC", noches: 1 };
+    const res = cotizar([hab]);
+    const r = calcularPvpAlojamientoBernalo(entradaBase(res, { vuelo: { costoTiqueteSilla: 50_000, aplicaMk: true, ta: 0 } }));
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.paxTotal, 3); // 2 adultos + 1 infante
+      assert.equal(r.paxConSilla, 2); // el infante NO tiene silla
+      assert.equal(r.costoVueloTotal, 50_000 * 2);
+      assert.notEqual(r.costoVueloTotal, 50_000 * r.paxTotal);
+    }
+  });
+
+  test("sin vuelo, costoVueloTotal y aporteVueloTotal son 0", () => {
+    const hab: HabitacionOcupacion = { id: "h1", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
+    const r = calcularPvpAlojamientoBernalo(entradaBase(cotizar([hab])));
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.costoVueloTotal, 0);
+      assert.equal(r.aporteVueloTotal, 0);
+    }
+  });
+
+  test("costoServiciosTotal conserva identidad separada del hotel (regla 6): nunca se suma dentro de costoHotelTotal", () => {
+    const hab1: HabitacionOcupacion = { id: "h1", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
+    const hab2: HabitacionOcupacion = { id: "h2", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
+    const res = cotizar([hab1, hab2]);
+    const r = calcularPvpAlojamientoBernalo(entradaBase(res, {
+      serviciosPersona: [{ servicioId: 9, nombre: "Traslado", categoria: "tour_traslado", precioPersonaNeto: 20_000, liquidacion: null, proveedorId: 55 }],
+    }));
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      const netoHotelEsperado = res.porHabitacion.reduce((s, ph) => s + ph.resultado.totalNeto, 0);
+      assert.equal(r.costoHotelTotal, netoHotelEsperado); // el servicio NUNCA se cuela aquí
+      assert.equal(r.costoServiciosTotal, 20_000 * 4); // 4 pax reales, aparte
+      assert.equal(r.serviciosIncluidosResueltos.length, 1);
+      assert.equal(r.serviciosIncluidosResueltos[0].proveedorId, 55);
+    }
+  });
+
+  test("serviciosIncluidosResueltos incluye servicios de grupo con su proveedor real (nunca null por omisión)", () => {
+    const hab: HabitacionOcupacion = { id: "h1", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
+    const res = cotizar([hab]);
+    const gruposServicio: ServicioGrupoIncluido[] = [{
+      servicioId: 2, nombre: "Tour grupal", categoria: "tour_traslado", liquidacion: null, proveedorId: 77,
+      rangos: [{ pax_desde: 1, pax_hasta: 10, precio: 200_000 }],
+    }];
+    const r = calcularPvpAlojamientoBernalo(entradaBase(res, { serviciosGrupo: gruposServicio }));
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.serviciosIncluidosResueltos.length, 1);
+      assert.equal(r.serviciosIncluidosResueltos[0].proveedorId, 77);
+      assert.equal(r.serviciosIncluidosResueltos[0].costoNeto, 200_000);
+      assert.equal(r.costoServiciosTotal, 200_000);
+    }
+  });
+
+  test("condición de demostración (regla 8): pvp = redondearVenta(aporteHotel + aporteServicios + aporteVuelo)", () => {
+    const hab: HabitacionOcupacion = { id: "h1", adultos: 2, menores: [], categoria: "estandar", alimentacion: "PC", noches: 1 };
+    const res = cotizar([hab]);
+    const r = calcularPvpAlojamientoBernalo(entradaBase(res, {
+      vuelo: { costoTiqueteSilla: 50_000, aplicaMk: true, ta: 0 },
+      serviciosPersona: [{ servicioId: 1, nombre: "Traslado", categoria: "tour_traslado", precioPersonaNeto: 20_000, liquidacion: null, proveedorId: null }],
+    }));
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.pvp, redondearVenta(r.aporteHotelTotal + r.aporteServiciosTotal + r.aporteVueloTotal, MONEDA));
+    }
   });
 });
 

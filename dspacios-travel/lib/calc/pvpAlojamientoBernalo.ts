@@ -18,18 +18,29 @@
 // (`lib/calc/paquetes.ts`) y `costoNetoServicioIncluido`/`cargoGrupoIncluido`
 // (`lib/reservar/serviciosPaquete.ts`, fuente ÚNICA de servicios incluidos).
 //
-// FRONTERA PÚBLICA (regla de la tarea): el resultado de este módulo es lo
-// único que puede viajar hacia el navegador. Nunca expone `totalNeto`,
-// `totalBruto`, comisión, `payload`, snapshot, fuente ni ningún costo — los
-// lee del `ResultadoColeccionCotizada` recibido (que SÍ los trae, para
-// trazabilidad interna) pero jamás los reenvía. `ResultadoPvpAlojamientoBernalo`
-// es un tipo CERRADO (no un `Omit<>` ni un passthrough) precisamente para que
-// TypeScript impida filtrar un campo interno por accidente.
+// ⚠️ Fase 3F-3 — este archivo DEJÓ de ser la frontera pública en sí misma.
+// Hasta 3E, `calcularPvpAlojamientoBernalo` devolvía SOLO lo publicable
+// (pvp/moneda/paxTotal/promedioPorViajero) porque era la última parada antes
+// del navegador. 3F-3 necesita, del MISMO cálculo, el desglose interno
+// (netos por componente, aportes de PVP por separado, la lista resuelta de
+// servicios incluidos con su proveedor) para que el servicio autoritativo
+// (`lib/reservar/computoReservaBernalo.ts`) pueda construir costos/CxP más
+// adelante — sin recalcular la aritmética una segunda vez en otro archivo
+// (eso sí sería el defecto que la tarea pide evitar: "no mantengas dos
+// implementaciones monetarias"). Por eso el resultado OK ahora INCLUYE ese
+// desglose. La frontera pública real es ahora la Server Action
+// (`app/tarifario/cotizacionBernaloActions.ts`): es ELLA quien sanitiza a
+// las 5 claves públicas de siempre antes de que algo llegue al navegador —
+// este módulo ya no es, por sí solo, "lo único que puede viajar hacia el
+// navegador". `ResultadoPvpAlojamientoBernalo` sigue siendo un tipo CERRADO
+// (nunca un `Omit<>`/passthrough) para que un campo nuevo del motor no se
+// cuele aquí sin que alguien lo declare a propósito.
 //
 // Fuera de alcance de este archivo: consultar Supabase (recibe todo ya
-// leído), validar pertenencia hotel/categoría/alimentación al paquete (eso
-// es la frontera server-side, `app/tarifario/cotizacionBernaloActions.ts`),
-// impuesto/base comisionable contable (Fase 3F, ver el informe de la tarea).
+// leído), validar pertenencia hotel/categoría/alimentación al paquete o
+// resolver hotel/proveedor/salida (eso vive en
+// `lib/reservar/computoReservaBernalo.ts`), impuesto/base comisionable
+// contable (Fase 3F, sigue pendiente).
 // ─────────────────────────────────────────────────────────────────────────
 
 import { marcar, aporteVuelo, redondearVenta } from "./paquetes.ts";
@@ -48,6 +59,23 @@ export type ServicioIncluidoPersonaBernalo = {
   /** Neto por persona (sin markup) — `null` = configuración incompleta, falla cerrado. */
   precioPersonaNeto: number | null;
   liquidacion: string | null;
+  /** Fase 3F-3: proveedor real del catálogo — necesario para la futura CxP del servicio. */
+  proveedorId: number | null;
+};
+
+// Un servicio incluido YA resuelto (persona o grupo, indistinguible en la
+// salida): identidad + costo NETO real + proveedor — lo mínimo que 3F-4
+// necesita para generar su CxP sin volver a consultar el catálogo. `moneda`
+// NO se resuelve aquí (esta función es pura, sin acceso a la moneda
+// "oficial" ya validada del contrato) — la asigna el llamador
+// (`computoReservaBernalo.ts`), que ya la tiene como la misma `input.moneda`
+// que entra a esta función.
+export type ServicioIncluidoResueltoBernalo = {
+  servicioId: number;
+  nombre: string;
+  categoria: CategoriaServicio;
+  costoNeto: number;
+  proveedorId: number | null;
 };
 
 export type VueloBernalo = {
@@ -70,7 +98,10 @@ export type EntradaPvpAlojamientoBernalo = {
   vuelo: VueloBernalo | null;
 };
 
-// ── Salida — SOLO campos comerciales públicos, tipo cerrado ────────────
+// ── Salida — pvp/moneda/paxTotal/promedioPorViajero son PUBLICABLES tal
+// cual (así los sanitiza la Server Action); el resto (desde `paxConSilla`
+// hacia abajo) es desglose INTERNO — nunca se reenvía sin pasar por la
+// sanitización de `cotizacionBernaloActions.ts` (Fase 3F-3).
 export type ResultadoPvpAlojamientoBernaloOk = {
   ok: true;
   pvp: number;
@@ -79,6 +110,23 @@ export type ResultadoPvpAlojamientoBernaloOk = {
   paxTotal: number;
   /** Solo de referencia visual — el total (`pvp`) es la autoridad. */
   promedioPorViajero: number;
+  // ── Desde acá, desglose INTERNO (Fase 3F-3) ──────────────────────────
+  /** Adultos + menores CON silla (excluye infantes) — usado para el costo/aporte de vuelo. */
+  paxConSilla: number;
+  /** Costo NETO del hotel = Σ literal de `resultado.totalNeto` por habitación — regla 5, una vez por habitación física. */
+  costoHotelTotal: number;
+  /** Costo NETO agregado de TODOS los servicios incluidos (persona + grupo) — regla 6, identidad separada del hotel. */
+  costoServiciosTotal: number;
+  /** Costo NETO del vuelo = costoTiqueteSilla × paxConSilla — regla 7, nunca por paxTotal ni con TA/markup (eso es el aporte de PVP, no el costo). `0` si no hay vuelo. */
+  costoVueloTotal: number;
+  /** Aporte de PVP del hotel (con markup) — mismo valor que antes se sumaba en silencio dentro de `pvp`. */
+  aporteHotelTotal: number;
+  /** Aporte de PVP de los servicios incluidos (persona + grupo, con markup). */
+  aporteServiciosTotal: number;
+  /** Aporte de PVP del vuelo (con markup o TA según `aplicaMk`, × paxConSilla). */
+  aporteVueloTotal: number;
+  /** Cada servicio incluido YA resuelto (persona y grupo indistinguibles acá) con su costo neto y proveedor real — para la futura CxP (3F-4). */
+  serviciosIncluidosResueltos: ServicioIncluidoResueltoBernalo[];
 };
 
 export type CodigoPvpAlojamientoBernalo = "servicio_sin_tarifa" | "servicio_sin_rango_grupal";
@@ -97,12 +145,14 @@ export type ResultadoPvpAlojamientoBernalo = ResultadoPvpAlojamientoBernaloOk | 
  * completa) — nunca por habitación ni por componente.
  */
 export function calcularPvpAlojamientoBernalo(input: EntradaPvpAlojamientoBernalo): ResultadoPvpAlojamientoBernalo {
-  // ── 1) Hotel: una vez por habitación física (regla 12) ─────────────────
+  // ── 1) Hotel: una vez por habitación física (regla 5/12) ────────────────
   let aporteHotelTotal = 0;
+  let costoHotelTotal = 0;
   let paxTotal = 0;
   let paxConSilla = 0;
   for (const ph of input.resultadoHabitaciones.porHabitacion) {
     aporteHotelTotal += marcar(ph.resultado.totalNeto, input.pctMk);
+    costoHotelTotal += ph.resultado.totalNeto;
     const unidad = ph.resultado.datosFuente.distribucion.unidades[0];
     const adultos = unidad?.adultos ?? 0;
     const menoresTotal = ph.resultado.menoresClasificados.length;
@@ -111,8 +161,11 @@ export function calcularPvpAlojamientoBernalo(input: EntradaPvpAlojamientoBernal
     paxConSilla += adultos + menoresConSilla;
   }
 
-  // ── 2) Servicios incluidos: persona (pax total real) + grupo (una vez) ─
+  // ── 2) Servicios incluidos: persona (pax total real) + grupo (una vez) —
+  // regla 6: identidad separada del hotel, nunca absorbidos en su costo. ──
   let aporteServiciosTotal = 0;
+  let costoServiciosTotal = 0;
+  const serviciosIncluidosResueltos: ServicioIncluidoResueltoBernalo[] = [];
   for (const s of input.serviciosPersona) {
     const costoNeto = costoNetoServicioIncluido("persona", s.precioPersonaNeto, [], paxTotal, s.liquidacion, input.numNoches);
     if (costoNeto == null) {
@@ -126,6 +179,10 @@ export function calcularPvpAlojamientoBernalo(input: EntradaPvpAlojamientoBernal
     // `aporteServiciosIncluidos` legado (paquetes/actions.ts): la suma se
     // redondea UNA sola vez, al final (regla 16).
     aporteServiciosTotal += marcar(costoNeto, input.pctMk);
+    costoServiciosTotal += costoNeto;
+    serviciosIncluidosResueltos.push({
+      servicioId: s.servicioId, nombre: s.nombre, categoria: s.categoria, costoNeto, proveedorId: s.proveedorId,
+    });
   }
   if (input.serviciosGrupo.length) {
     const r = cargoGrupoIncluido(input.serviciosGrupo, paxTotal, input.pctMk, input.numNoches);
@@ -139,14 +196,25 @@ export function calcularPvpAlojamientoBernalo(input: EntradaPvpAlojamientoBernal
     // `r.pvp` ya viene redondeado por `cargoGrupoIncluido` (mismo criterio
     // que usa hoy el buscador en vivo) — se suma tal cual, sin recalcular.
     aporteServiciosTotal += r.pvp;
+    for (const efectivo of r.servicios) {
+      costoServiciosTotal += efectivo.costoNeto;
+      serviciosIncluidosResueltos.push({
+        servicioId: efectivo.servicioId, nombre: efectivo.nombre, categoria: efectivo.categoria,
+        costoNeto: efectivo.costoNeto, proveedorId: efectivo.proveedorId,
+      });
+    }
   }
 
-  // ── 3) Vuelo: por SILLA real, nunca por habitación (regla 14) ──────────
+  // ── 3) Vuelo: por SILLA real, nunca por habitación (regla 7/14) ─────────
+  // Costo NETO (lo que se le debe a la aerolínea): SIEMPRE costoTiqueteSilla
+  // × paxConSilla, sin markup ni TA — eso es el aporte de PVP (abajo), otra
+  // magnitud. `0` si el paquete no lleva vuelo (porción terrestre).
+  const costoVueloTotal = input.vuelo ? input.vuelo.costoTiqueteSilla * paxConSilla : 0;
   const aporteVueloTotal = input.vuelo
     ? aporteVuelo(input.vuelo.costoTiqueteSilla, input.vuelo.aplicaMk, input.pctMk, input.vuelo.ta) * paxConSilla
     : 0;
 
-  // ── 4) Redondeo ÚNICO, sobre la suma completa (regla 15/16) ─────────────
+  // ── 4) Redondeo ÚNICO, sobre la suma completa (regla 8/15/16) ───────────
   const pvp = redondearVenta(aporteHotelTotal + aporteServiciosTotal + aporteVueloTotal, input.moneda);
 
   return {
@@ -155,6 +223,14 @@ export function calcularPvpAlojamientoBernalo(input: EntradaPvpAlojamientoBernal
     moneda: input.moneda,
     paxTotal,
     promedioPorViajero: paxTotal > 0 ? Math.round(pvp / paxTotal) : pvp,
+    paxConSilla,
+    costoHotelTotal,
+    costoServiciosTotal,
+    costoVueloTotal,
+    aporteHotelTotal,
+    aporteServiciosTotal,
+    aporteVueloTotal,
+    serviciosIncluidosResueltos,
   };
 }
 
