@@ -310,30 +310,32 @@ describe("app/tarifario/checkout/actions.ts — cierre #3: vuelosSnap público p
   });
 });
 
-describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la línea de alojamiento Bernalo en la cotización conserva la tabla con ocupación real", () => {
+describe("app/tarifario/checkout/actions.ts — línea Bernalo en cotización: total agregado + composición real", () => {
   const cuerpoFn = cuerpoFuncion(fuenteCheckoutActions, "async function crearCotizacionCarrito(input: {");
   const idxRamaBernalo = cuerpoFn.indexOf('it.modeloTarifario === "unidad"');
   const idxCierreRama = cuerpoFn.indexOf("const reserva: ReservaInput = {", idxRamaBernalo);
   const ramaBernalo = cuerpoFn.slice(idxRamaBernalo, idxCierreRama);
 
-  test('itemsSnap de un ítem Bernalo usa adultos/ninos reales — nunca adultos: 1 fijo (eso producía "Adultos 1" para una doble de 2 adultos)', () => {
+  test('itemsSnap de un ítem Bernalo usa modo_precio: "total" — nunca inventa tarifa adulto/niño repartiendo el PVP', () => {
     const idxPush = ramaBernalo.indexOf("itemsSnap.push({");
     assert.notEqual(idxPush, -1);
     const bloque = ramaBernalo.slice(idxPush, idxPush + 500);
     assert.doesNotMatch(bloque, /adultos: 1,/);
-    assert.match(bloque, /adultos: adultosBernalo, ninos: ninosBernalo,/);
-    assert.match(ramaBernalo, /const adultosBernalo = habitacionesSnap\.reduce\(\(s, h\) => s \+ h\.adultos, 0\);/);
-    assert.match(ramaBernalo, /const ninosBernalo = habitacionesSnap\.reduce\(\(s, h\) => s \+ h\.edadesMenores\.length, 0\);/);
+    assert.match(bloque, /adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0,/);
+    assert.match(bloque, /modo_precio: "total", valor_total: resultadoBernalo\.precioVenta,/);
+    assert.doesNotMatch(ramaBernalo, /resultadoBernalo\.precioVenta \/ adultosBernalo/);
+    assert.doesNotMatch(ramaBernalo, /resultadoBernalo\.precioVenta \/ ninosBernalo/);
   });
 
-  test("el valor total de la tabla se conserva distribuyendo el total sobre la ocupación visible", () => {
-    const idxCalculo = ramaBernalo.indexOf("const tarifaAdultoBernalo =");
-    const idxPush = ramaBernalo.indexOf("itemsSnap.push({");
-    assert.ok(idxCalculo !== -1 && idxCalculo < idxPush);
-    const bloque = ramaBernalo.slice(idxCalculo, idxPush + 500);
-    assert.match(bloque, /resultadoBernalo\.precioVenta \/ adultosBernalo/);
-    assert.match(bloque, /resultadoBernalo\.precioVenta \/ ninosBernalo/);
-    assert.match(bloque, /tarifa_adulto: tarifaAdultoBernalo, tarifa_nino: tarifaNinoBernalo,/);
+  test("la composición pública Bernalo se arma desde resultado.desglose por habitación", () => {
+    const idxForEach = ramaBernalo.indexOf("resultadoBernalo.habitaciones.forEach(");
+    assert.notEqual(idxForEach, -1);
+    const bloque = ramaBernalo.slice(idxForEach, idxForEach + 900);
+    assert.match(bloque, /for \(const linea of hComp\.resultado\.desglose\)/);
+    for (const campo of ["concepto: linea.concepto", "cantidad: linea.cantidad", "valorUnitario: linea.valorUnitario", "valorTotal: linea.valorTotal", "periodicidad: linea.periodicidad"]) {
+      assert.match(bloque, new RegExp(campo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    }
+    assert.doesNotMatch(bloque, /snapshot|totalNeto|valorComision|comision/i);
   });
 
   test("la descripción de la línea de alojamiento incluye habitaciones Y viajeros", () => {
@@ -351,20 +353,21 @@ describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la línea d
     assert.doesNotMatch(bloque, /adultos: habitacionesSnap\.length/);
   });
 
-  test("habitacionesBernaloSnap itera habitacionesSnap (las mismas ocupaciones ya validadas, .ocupacion de cada habitación) — no reconstruye la lista desde it.habitaciones crudo", () => {
-    const idxForEach = ramaBernalo.indexOf("habitacionesSnap.forEach(");
+  test("habitacionesBernaloSnap itera resultadoBernalo.habitaciones (las mismas ocupaciones ya validadas + resultado público) — no reconstruye la lista desde it.habitaciones crudo", () => {
+    const idxForEach = ramaBernalo.indexOf("resultadoBernalo.habitaciones.forEach(");
     assert.notEqual(idxForEach, -1);
     const idxOcupacion = ramaBernalo.indexOf("resultadoBernalo.habitaciones.map((h) => h.ocupacion)");
-    assert.ok(idxOcupacion !== -1 && idxOcupacion < idxForEach, "habitacionesSnap debe construirse (desde .ocupacion) antes de recorrerla para el detalle por habitación");
+    assert.ok(idxOcupacion !== -1 && idxOcupacion < idxForEach, "habitacionesSnap debe construirse (desde .ocupacion) antes de recorrer resultadoBernalo.habitaciones para el detalle");
   });
 });
 
-describe("app/tarifario/checkout/actions.ts — la cotización persiste habitacionesBernalo en su detalle", () => {
-  test('el objeto `detalle` guardado incluye "habitacionesBernalo: habitacionesBernaloSnap"', () => {
+describe("app/tarifario/checkout/actions.ts — la cotización persiste detalle público Bernalo", () => {
+  test('el objeto `detalle` guardado incluye habitacionesBernalo y composicionBernalo', () => {
     const idxDetalle = codigoCheckoutActions.indexOf("const detalle = {");
     assert.notEqual(idxDetalle, -1);
-    const bloque = codigoCheckoutActions.slice(idxDetalle, idxDetalle + 300);
+    const bloque = codigoCheckoutActions.slice(idxDetalle, idxDetalle + 400);
     assert.match(bloque, /habitacionesBernalo: habitacionesBernaloSnap,/);
+    assert.match(bloque, /composicionBernalo: composicionBernaloSnap,/);
   });
 });
 
@@ -374,13 +377,15 @@ describe("app/cotizacion/[id]/page.tsx — pasa habitacionesBernalo al documento
   test("el tipo Detalle declara habitacionesBernalo opcional", () => {
     const tipo = fuentePage.slice(fuentePage.indexOf("type Detalle = {"), fuentePage.indexOf("type Detalle = {") + 700);
     assert.match(tipo, /habitacionesBernalo\?: HabitacionBernaloDocumento\[\];/);
+    assert.match(tipo, /composicionBernalo\?: ComposicionBernaloDocumento\[\];/);
   });
 
-  test("<ContratoDocumento> de la rama de cotización del tarifario recibe habitacionesBernalo={d.habitacionesBernalo ?? []}", () => {
+  test("<ContratoDocumento> de la rama de cotización del tarifario recibe habitacionesBernalo y composicionBernalo", () => {
     const idxContrato = fuentePage.indexOf("<ContratoDocumento");
     const idxFinTarifario = fuentePage.indexOf("</ContratoDocumento>", idxContrato);
     const bloque = fuentePage.slice(idxContrato, idxFinTarifario === -1 ? idxContrato + 500 : idxFinTarifario);
     assert.match(bloque, /habitacionesBernalo=\{d\.habitacionesBernalo \?\? \[\]\}/);
+    assert.match(bloque, /composicionBernalo=\{d\.composicionBernalo \?\? \[\]\}/);
   });
 });
 

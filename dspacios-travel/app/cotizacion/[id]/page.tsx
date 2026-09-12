@@ -12,7 +12,7 @@ import type {
   ContratoVuelo,
   ContratoItem,
 } from "@/types/database";
-import type { HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
+import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export async function generateMetadata({
@@ -54,6 +54,7 @@ type Detalle = {
   // porque no se ha convertido a contrato). Ausente en cotizaciones sin
   // hoteles Bernalo.
   habitacionesBernalo?: HabitacionBernaloDocumento[];
+  composicionBernalo?: ComposicionBernaloDocumento[];
 };
 
 const PRINT_STYLES = `
@@ -155,6 +156,7 @@ export default async function CotizacionImprimiblePage({
             vuelos={d.vuelos ?? []}
             items={d.items ?? []}
             habitacionesBernalo={d.habitacionesBernalo ?? []}
+            composicionBernalo={d.composicionBernalo ?? []}
             totalPagado={0}
             esCotizacion
             codigo={cot.codigo}

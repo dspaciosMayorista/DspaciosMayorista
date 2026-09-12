@@ -347,6 +347,17 @@ describe("lib/contrato/valorContratoItem.ts / ContratoDocumento.tsx — regla C.
     assert.doesNotMatch(codigoDoc, /h\.snapshot|h\.neto|h\.bruto|h\.comision/i);
     assert.doesNotMatch(codigoDoc, /h\.edadesMenores\.join\(", "\) : "—"/);
   });
+
+  test("cotizaciones Bernalo muestran composición de tarifa separada — sin mezclarla con la tabla adulto/niño de alojamientos persona", () => {
+    assert.match(codigoDoc, /composicionBernalo = \[\]/);
+    assert.match(codigoDoc, /Composición tarifa Bernalo/);
+    assert.match(codigoDoc, /composicionBernalo\.map\(\(linea, idx\) =>/);
+    for (const columna of ["Concepto", "Cantidad", "Valor unitario", "Cobro", "Valor total"]) {
+      assert.match(fuenteDoc, new RegExp(columna));
+    }
+    assert.match(codigoDoc, /etiquetaPeriodicidad\(linea\.periodicidad\)/);
+    assert.match(codigoDoc, /alojItemsPorPersona\.map\(\(it\) =>/);
+  });
 });
 
 describe("lib/reservar/alojamientoBernaloDocumento.ts — regla D.19/20: frontera service-role, SELECT sanitizado", () => {

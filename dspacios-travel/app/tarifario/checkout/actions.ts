@@ -23,6 +23,7 @@ import type { HabitacionOcupacionEntrada, HabitacionOcupacionValidada } from "@/
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import type { ComposicionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type { Json } from "@/types/database";
 
 // Forma que arma el CARRITO en el cliente (ver lib/cart/CartContext.tsx) —
@@ -424,6 +425,7 @@ async function crearCotizacionCarrito(input: {
   // este snapshot es la única forma de mostrar el mismo detalle por
   // habitación en el documento previo.
   const habitacionesBernaloSnap: Record<string, unknown>[] = [];
+  const composicionBernaloSnap: ComposicionBernaloDocumento[] = [];
   const itemsOk: SolicitudItemComputado[] = [];
   const itemsBernaloOk: SolicitudItemBernaloComputado[] = [];
   const toursOk: SolicitudTourComputado[] = [];
@@ -509,23 +511,19 @@ async function crearCotizacionCarrito(input: {
         fecha_ingreso: resultadoBernalo.salida.fechaIda, fecha_salida: resultadoBernalo.salida.fechaRegreso,
         nota_regimen: null, foto_url: null,
       });
-      // Documento previo: conserva la tabla normal de "Valores y Pagos",
-      // pero con la ocupación real de Bernalo. El contrato convertido sí usa
-      // `modo_precio: "total"` porque allí ya existe el detalle persistido.
-      const adultosBernalo = habitacionesSnap.reduce((s, h) => s + h.adultos, 0);
-      const ninosBernalo = habitacionesSnap.reduce((s, h) => s + h.edadesMenores.length, 0);
-      const tarifaAdultoBernalo = adultosBernalo > 0 ? resultadoBernalo.precioVenta / adultosBernalo : 0;
-      const tarifaNinoBernalo = adultosBernalo > 0
-        ? 0
-        : (ninosBernalo > 0 ? resultadoBernalo.precioVenta / ninosBernalo : 0);
+      // Bernalo se cobra por unidad (pareja/habitación/apartamento/persona
+      // según la tarifa capturada), así que el documento previo NO inventa
+      // una tarifa adulto/niño dividiendo el PVP. La tabla per-cápita queda
+      // para hoteles persona; Bernalo viaja como línea total + composición.
       iIdx++;
       itemsSnap.push({
         id: iIdx,
         descripcion: `${resultadoBernalo.hotelNombre}${destinoAutoritativo ? ` — ${destinoAutoritativo}` : ""} · ${it.categoria} / ${it.alimentacion} · ${habitacionesSnap.length} habitación(es), ${resultadoBernalo.paxTotal} viajero(s)`,
-        adultos: adultosBernalo, ninos: ninosBernalo,
-        tarifa_adulto: tarifaAdultoBernalo, tarifa_nino: tarifaNinoBernalo,
+        adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0,
+        modo_precio: "total", valor_total: resultadoBernalo.precioVenta,
       });
-      habitacionesSnap.forEach((h, idx) => {
+      resultadoBernalo.habitaciones.forEach((hComp, idx) => {
+        const h = hComp.ocupacion;
         habitacionesBernaloSnap.push({
           habitacionId: h.id,
           orden: idx,
@@ -535,6 +533,18 @@ async function crearCotizacionCarrito(input: {
           adultos: h.adultos,
           edadesMenores: h.edadesMenores,
         });
+        for (const linea of hComp.resultado.desglose) {
+          composicionBernaloSnap.push({
+            habitacionId: h.id,
+            orden: idx,
+            hotelNombre: resultadoBernalo.hotelNombre,
+            concepto: linea.concepto,
+            cantidad: linea.cantidad,
+            valorUnitario: linea.valorUnitario,
+            valorTotal: linea.valorTotal,
+            periodicidad: linea.periodicidad,
+          });
+        }
       });
 
       // Cierre 3F-4A #3: `vuelosSnap` público con la MISMA forma que persona
@@ -755,6 +765,7 @@ async function crearCotizacionCarrito(input: {
   const detalle = {
     venta: ventaSnap, pasajeros: [], hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap,
     habitacionesBernalo: habitacionesBernaloSnap,
+    composicionBernalo: composicionBernaloSnap,
   };
 
   const vigenciaRes = resolverVigenciaCotizacion({

@@ -30,6 +30,17 @@ export type HabitacionBernaloDocumento = {
   edadesMenores: number[];
 };
 
+export type ComposicionBernaloDocumento = {
+  habitacionId: string;
+  orden: number;
+  hotelNombre: string;
+  concepto: string;
+  cantidad: number;
+  valorUnitario: number;
+  valorTotal: number;
+  periodicidad: "por_noche" | "por_estadia";
+};
+
 /**
  * Habitaciones Bernalo de un contrato, SANITIZADAS para mostrar en el
  * documento — nunca `snapshot` (neto/bruto/comisión/fuente) ni `hotel_id`

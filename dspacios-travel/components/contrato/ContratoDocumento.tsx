@@ -11,7 +11,7 @@ import {
 import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
-import type { HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
+import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type {
   VentaDocumento,
   ContratoPasajero,
@@ -53,6 +53,9 @@ type Props = {
   // nunca trae neto/bruto/comisión/fuente ni el snapshot completo (regla
   // F.34). Vacío/ausente para cualquier contrato persona.
   habitacionesBernalo?: HabitacionBernaloDocumento[];
+  // Composición pública de la tarifa Bernalo usada en cotizaciones previas:
+  // líneas del motor (base/suplementos) sin netos, comisión ni snapshot.
+  composicionBernalo?: ComposicionBernaloDocumento[];
 };
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
@@ -83,6 +86,10 @@ function resumenMenoresHabitacion(edadesMenores: number[]) {
   return `${cantidad} ${sufijo} (${edades})`;
 }
 
+function etiquetaPeriodicidad(periodicidad: ComposicionBernaloDocumento["periodicidad"]) {
+  return periodicidad === "por_estadia" ? "Por estadía" : "Por noche";
+}
+
 export function ContratoDocumento({
   venta,
   pasajeros,
@@ -96,6 +103,7 @@ export function ContratoDocumento({
   agencia,
   condiciones,
   habitacionesBernalo = [],
+  composicionBernalo = [],
 }: Props) {
   const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
   // Fase 3F-4B: helper ÚNICO (lib/contrato/valorContratoItem.ts) — lee
@@ -469,6 +477,36 @@ export function ContratoDocumento({
                   <span className="font-semibold text-gray-800">{formatMoneda(valorVisibleContratoItem(it), moneda)}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {composicionBernalo.length > 0 && (
+            <div className="mb-3 overflow-x-auto">
+              <p className="mb-1 text-xs font-semibold text-gray-500">Composición tarifa Bernalo</p>
+              <table className="w-full min-w-[560px] border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-50 text-left text-gray-500">
+                    <th className="border border-gray-200 px-2 py-1">Hotel</th>
+                    <th className="border border-gray-200 px-2 py-1">Concepto</th>
+                    <th className="border border-gray-200 px-2 py-1">Cantidad</th>
+                    <th className="border border-gray-200 px-2 py-1">Valor unitario</th>
+                    <th className="border border-gray-200 px-2 py-1">Cobro</th>
+                    <th className="border border-gray-200 px-2 py-1">Valor total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {composicionBernalo.map((linea, idx) => (
+                    <tr key={`${linea.habitacionId}-${idx}`}>
+                      <td className="border border-gray-200 px-2 py-1">{linea.hotelNombre}</td>
+                      <td className="border border-gray-200 px-2 py-1">{linea.concepto}</td>
+                      <td className="border border-gray-200 px-2 py-1">{linea.cantidad}</td>
+                      <td className="border border-gray-200 px-2 py-1">{formatMoneda(linea.valorUnitario, moneda)}</td>
+                      <td className="border border-gray-200 px-2 py-1">{etiquetaPeriodicidad(linea.periodicidad)}</td>
+                      <td className="border border-gray-200 px-2 py-1 font-medium">{formatMoneda(linea.valorTotal, moneda)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 
