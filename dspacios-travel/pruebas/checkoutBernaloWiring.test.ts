@@ -310,22 +310,33 @@ describe("app/tarifario/checkout/actions.ts — cierre #3: vuelosSnap público p
   });
 });
 
-describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la línea de alojamiento Bernalo en la cotización NUNCA se renderiza per-cápita", () => {
+describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la línea de alojamiento Bernalo en la cotización conserva la tabla con ocupación real", () => {
   const cuerpoFn = cuerpoFuncion(fuenteCheckoutActions, "async function crearCotizacionCarrito(input: {");
   const idxRamaBernalo = cuerpoFn.indexOf('it.modeloTarifario === "unidad"');
   const idxCierreRama = cuerpoFn.indexOf("const reserva: ReservaInput = {", idxRamaBernalo);
   const ramaBernalo = cuerpoFn.slice(idxRamaBernalo, idxCierreRama);
 
-  test('itemsSnap de un ítem Bernalo se arma con modo_precio: "total" y valor_total — nunca adultos: 1/tarifa_adulto (eso es lo que producía "Adultos 1" para una doble de 2 adultos)', () => {
+  test('itemsSnap de un ítem Bernalo usa adultos/ninos reales — nunca adultos: 1 fijo (eso producía "Adultos 1" para una doble de 2 adultos)', () => {
     const idxPush = ramaBernalo.indexOf("itemsSnap.push({");
     assert.notEqual(idxPush, -1);
     const bloque = ramaBernalo.slice(idxPush, idxPush + 500);
-    assert.match(bloque, /modo_precio: "total", valor_total: resultadoBernalo\.precioVenta,/);
     assert.doesNotMatch(bloque, /adultos: 1,/);
-    assert.match(bloque, /adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0,/);
+    assert.match(bloque, /adultos: adultosBernalo, ninos: ninosBernalo,/);
+    assert.match(ramaBernalo, /const adultosBernalo = habitacionesSnap\.reduce\(\(s, h\) => s \+ h\.adultos, 0\);/);
+    assert.match(ramaBernalo, /const ninosBernalo = habitacionesSnap\.reduce\(\(s, h\) => s \+ h\.edadesMenores\.length, 0\);/);
   });
 
-  test("la descripción de la línea agregada incluye habitaciones Y viajeros (mismo criterio que el contrato ya convertido en reservar/actions.ts)", () => {
+  test("el valor total de la tabla se conserva distribuyendo el total sobre la ocupación visible", () => {
+    const idxCalculo = ramaBernalo.indexOf("const tarifaAdultoBernalo =");
+    const idxPush = ramaBernalo.indexOf("itemsSnap.push({");
+    assert.ok(idxCalculo !== -1 && idxCalculo < idxPush);
+    const bloque = ramaBernalo.slice(idxCalculo, idxPush + 500);
+    assert.match(bloque, /resultadoBernalo\.precioVenta \/ adultosBernalo/);
+    assert.match(bloque, /resultadoBernalo\.precioVenta \/ ninosBernalo/);
+    assert.match(bloque, /tarifa_adulto: tarifaAdultoBernalo, tarifa_nino: tarifaNinoBernalo,/);
+  });
+
+  test("la descripción de la línea de alojamiento incluye habitaciones Y viajeros", () => {
     const idxPush = ramaBernalo.indexOf("itemsSnap.push({");
     const bloque = ramaBernalo.slice(idxPush, idxPush + 400);
     assert.match(bloque, /habitación\(es\), \$\{resultadoBernalo\.paxTotal\} viajero\(s\)/);

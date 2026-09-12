@@ -509,18 +509,21 @@ async function crearCotizacionCarrito(input: {
         fecha_ingreso: resultadoBernalo.salida.fechaIda, fecha_salida: resultadoBernalo.salida.fechaRegreso,
         nota_regimen: null, foto_url: null,
       });
-      // Regla C.13/14 (mismo criterio que el contrato ya convertido, ver
-      // `reservar/actions.ts`): UNA sola línea AGREGADA con `modo_precio:
-      // "total"` — nunca `adultos`/`tarifa_adulto` (per-cápita), que en
-      // Bernalo describen 1 habitación con su propia ocupación, no 1
-      // adulto. Con el modo legado, una doble de 2 adultos se veía como
-      // "Adultos 1" en la tabla de valores del documento previo.
+      // Documento previo: conserva la tabla normal de "Valores y Pagos",
+      // pero con la ocupación real de Bernalo. El contrato convertido sí usa
+      // `modo_precio: "total"` porque allí ya existe el detalle persistido.
+      const adultosBernalo = habitacionesSnap.reduce((s, h) => s + h.adultos, 0);
+      const ninosBernalo = habitacionesSnap.reduce((s, h) => s + h.edadesMenores.length, 0);
+      const tarifaAdultoBernalo = adultosBernalo > 0 ? resultadoBernalo.precioVenta / adultosBernalo : 0;
+      const tarifaNinoBernalo = adultosBernalo > 0
+        ? 0
+        : (ninosBernalo > 0 ? resultadoBernalo.precioVenta / ninosBernalo : 0);
       iIdx++;
       itemsSnap.push({
         id: iIdx,
         descripcion: `${resultadoBernalo.hotelNombre}${destinoAutoritativo ? ` — ${destinoAutoritativo}` : ""} · ${it.categoria} / ${it.alimentacion} · ${habitacionesSnap.length} habitación(es), ${resultadoBernalo.paxTotal} viajero(s)`,
-        adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0,
-        modo_precio: "total", valor_total: resultadoBernalo.precioVenta,
+        adultos: adultosBernalo, ninos: ninosBernalo,
+        tarifa_adulto: tarifaAdultoBernalo, tarifa_nino: tarifaNinoBernalo,
       });
       habitacionesSnap.forEach((h, idx) => {
         habitacionesBernaloSnap.push({
