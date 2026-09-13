@@ -97,18 +97,74 @@ function monedaExplicita(m: string | null | undefined): "COP" | "USD" | null {
 }
 
 /**
- * Lista los hoteles con `modelo_tarifario = 'unidad'` de TODOS los paquetes
- * activos del catálogo — sin precio, sin tocar `tarifario_resultado` — junto
- * con las salidas aéreas reales (id/tipo/fechas/etiqueta) de cada paquete.
- * Puro I/O: no decide nada, solo consulta y da forma a las filas.
+ * Alcance OPCIONAL del descubrimiento. Sin opciones (o con `destino` vacío)
+ * el comportamiento es EXACTAMENTE el de siempre: TODOS los paquetes activos
+ * — así el llamador histórico (`app/tarifario/page.tsx`, la vitrina completa)
+ * no cambia en nada.
+ *
+ * `destino` acota el descubrimiento a los paquetes activos cuyo
+ * `destinos.nombre` coincide. El recorte se hace EN LA CONSULTA
+ * (`destinos.nombre` → `destinos.id` → `armado_paquetes.destino_id IN (…)`),
+ * no en JavaScript: antes se traían TODOS los paquetes activos con su join a
+ * `destinos` y recién ahí se descartaban los de otros destinos — una
+ * búsqueda acotada a un destino pagaba el catálogo completo en cada llamada
+ * (ver el informe de la corrección de búsqueda general de Vista Booking). El
+ * nombre es la MISMA cadena que ya usan `destinosPorcion`/`destinosBuscador`
+ * en `VistaBooking.tsx` (derivadas de
+ * `filas[].destino_nombre`/`hotelesBernalo[].destinoNombre`), así que el
+ * valor que manda el buscador entra sin traducción.
+ *
+ * Falla cerrado: si el destino pedido no existe (ningún `destinos.id`) o su
+ * consulta falla, se devuelve una lista VACÍA — nunca el catálogo completo,
+ * que sería anunciar hoteles de otros destinos como si fueran de este.
  */
-export async function cargarHotelesBernaloDescubiertos(): Promise<ResultadoHotelesBernaloDescubiertos> {
+export type OpcionesDescubrimientoBernalo = { destino?: string | null };
+
+/**
+ * Lista los hoteles con `modelo_tarifario = 'unidad'` de los paquetes
+ * activos del catálogo (todos, o solo los de `opciones.destino`) — sin
+ * precio, sin tocar `tarifario_resultado` — junto con las salidas aéreas
+ * reales (id/tipo/fechas/etiqueta) de cada paquete. Puro I/O: no decide nada,
+ * solo consulta y da forma a las filas.
+ */
+export async function cargarHotelesBernaloDescubiertos(
+  opciones?: OpcionesDescubrimientoBernalo
+): Promise<ResultadoHotelesBernaloDescubiertos> {
   const admin = createAdminClient();
 
-  const { data: paquetes, error: ePq } = await admin
-    .from("armado_paquetes")
-    .select("id, nombre, tipo, destino_id, destinos(nombre)")
-    .eq("activo", true);
+  // Identidad del destino EN LA BASE. Los nombres de `destinos` pueden
+  // repetirse (el catálogo tiene una herramienta de fusión justamente porque
+  // existen duplicados), así que se resuelven TODOS los ids con ese nombre
+  // — nunca `.maybeSingle()`, que fallaría con el catálogo real. Sin destino
+  // pedido no se consulta nada: el comportamiento sin filtro queda intacto.
+  const destinoPedido = (opciones?.destino ?? "").trim();
+  let idsDestino: number[] = [];
+  if (destinoPedido) {
+    const { data: destinos, error: eDestino } = await admin
+      .from("destinos")
+      .select("id")
+      .eq("nombre", destinoPedido);
+    if (eDestino) return { ok: false, error: eDestino.message };
+    idsDestino = [...new Set((destinos ?? []).map((d) => d.id as number))];
+    // Destino inexistente: se devuelve VACÍO, no el catálogo completo. Sin
+    // este corte, `idsDestino` vacío dejaría la consulta sin filtro y el
+    // descubrimiento anunciaría hoteles de todos los destinos como si
+    // pertenecieran al pedido.
+    if (!idsDestino.length) return { ok: true, hoteles: [], hotelIdsUnidadAutoritativos: [] };
+  }
+
+  // Un solo armador para las dos ramas (con y sin destino): la consulta es
+  // la MISMA, solo cambia el filtro.
+  const paquetesBase = () => {
+    let q = admin
+      .from("armado_paquetes")
+      .select("id, nombre, tipo, destino_id, destinos(nombre)")
+      .eq("activo", true);
+    if (idsDestino.length) q = q.in("destino_id", idsDestino);
+    return q;
+  };
+
+  const { data: paquetes, error: ePq } = await paquetesBase();
   if (ePq) return { ok: false, error: ePq.message };
   const paquetesActivos = paquetes ?? [];
   if (!paquetesActivos.length) return { ok: true, hoteles: [], hotelIdsUnidadAutoritativos: [] };

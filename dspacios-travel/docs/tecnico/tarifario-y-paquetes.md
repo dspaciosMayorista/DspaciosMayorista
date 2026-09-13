@@ -224,6 +224,51 @@ neto.
    `app/(dashboard)/dashboard/page.tsx`'s `OCULTOS_MINORISTA` (que sí incluye
    `/dashboard/tarifario`).
 
+### ⚠️ PENDIENTE conocido — la exploración carga el catálogo COMPLETO al montar
+
+`app/tarifario/page.tsx` trae de una sola vez todo lo que la vista de exploración
+necesita, **antes de que el usuario elija nada**: las filas de `tarifario_resultado`, el
+descubrimiento Bernalo (`cargarHotelesBernaloDescubiertos()`, sin argumentos — todos los
+destinos) y la metadata/fotos (`cargarInfoHotelesBernalo`). Es `Promise.all`, así que el
+descubrimiento **no bloquea** la carga principal y un fallo degrada a lista vacía, pero el
+volumen que viaja al navegador NO depende de lo que el usuario vaya a mirar.
+
+**Esto NO está resuelto.** La ronda que acotó la *búsqueda por fechas* a un destino
+concreto (`destinosPorcionPublica` + destino obligatorio en `BuscadorBooking` y en
+`busquedaUnidadActions`) acota **la evaluación del motor**, no la carga inicial: el
+catálogo de la exploración sigue entrando entero al montar. La frontera de búsqueda exige
+destino justamente para que evaluar "todos los hoteles de todos los destinos" no sea una
+operación alcanzable desde la UI — pero la página ya se trajo ese catálogo para poder
+explorarlo.
+
+**Próxima tarea (no iniciada):** paginación / carga bajo demanda de la exploración —
+traer las tarjetas por destino (o por lotes con scroll), y que los destinos del selector
+salgan de una consulta agregada en vez de derivarse del catálogo completo en memoria.
+
+### ⚠️ PENDIENTE conocido — `buscarAlojamientosUnidadPorFechas` sin caché/rate limiting
+
+`app/tarifario/busquedaUnidadActions.ts` es una Server Action **pública** (sin sesión) que,
+por cada búsqueda, evalúa TODOS los hoteles por unidad del destino pedido y, dentro de cada
+uno, combinaciones categoría×alimentación hasta el primer éxito — cada combinación evaluada
+llama `computarReservaBernalo` (varias consultas propias). El destino obligatorio acota el
+universo (nunca evalúa el catálogo completo de todos los destinos), pero **no hay tope
+dentro de un destino con muchos hoteles/paquetes**, y nada impide repetir la MISMA búsqueda
+(mismo destino+fechas+ocupación) muchas veces seguidas.
+
+**No está mitigado.** Se auditó el repositorio (sin Redis/Upstash, sin `unstable_cache` en
+uso real) y no existe ningún patrón reutilizable de caché o rate limiting para Server
+Actions públicas. Se decidió explícitamente **no inventar** un `Map` en memoria de proceso
+como reemplazo: en Vercel cada invocación puede caer en una instancia serverless distinta
+(o una fría, sin nada cacheado), así que un caché en memoria daría una falsa sensación de
+protección sin proteger nada realmente. Se conserva `CONCURRENCIA_HOTELES_UNIDAD = 4` (acota
+paralelismo interno, no el costo total) y el destino obligatorio (acota el universo, no el
+costo de un destino grande ni las repeticiones). Limitar la concurrencia **no resuelve** el
+riesgo de costo — no se presenta como una mitigación.
+
+**Próxima tarea (no iniciada):** caché/rate limiting real (p. ej. Upstash Redis con TTL
+corto, clave = destino+fechas+ocupación normalizados, sin guardar datos privados) antes de
+exponer esta búsqueda a tráfico público de alto volumen.
+
 ## 7. `tarifario_resultado` — esquema exacto
 
 `id, paquete_id (FK cascade), paquete_nombre, paquete_activo, modulo (enum tarifario_modulo),

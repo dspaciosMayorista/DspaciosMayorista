@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { destinosPorcionPublica } from "../lib/tarifario/destinosPorcion.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Fase 3E Bernalo — verificación por inspección de la UI de descubrimiento
@@ -530,7 +531,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
     // ningún punto de `filas`/`hoteles` (persona) — nunca queda vacía por
     // depender de datos legacy que no existen para ese destino.
     const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
-    const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionSel, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
+    const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
     assert.notEqual(idxDecl, -1);
     assert.notEqual(idxFin, -1);
     const cuerpo = fuenteVista.slice(idxDecl, idxFin);
@@ -538,46 +539,63 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
     assert.doesNotMatch(cuerpo, /\bfilas\b/, "el filtro de destino de la grilla unidad nunca debe depender de `filas` (legacy)");
   });
 
-  test("destinosBuscador (mini-motor legacy de Porción terrestre) es EXCLUSIVAMENTE legacy — nunca incluye destinos de hotelesBernalo", () => {
-    const idxDecl = fuenteVista.indexOf("const destinosBuscador = useMemo(");
-    const idxFin = fuenteVista.indexOf(");", idxDecl);
-    assert.notEqual(idxDecl, -1);
-    assert.notEqual(idxFin, -1);
-    const cuerpo = fuenteVista.slice(idxDecl, idxFin + 2);
-    assert.doesNotMatch(cuerpo, /hotelesBernalo/, "el buscador legacy (BuscadorBooking/cotizarPorFechas) no sabe devolver hoteles unidad — no debe anunciarlos como opción");
-    assert.match(cuerpo, /filas\.filter\(\(f\) => f\.modulo === "porcion_terrestre" && f\.destino_nombre\)/);
+  test("hay UNA sola lista de destinos de Porción terrestre: la vieja lista sólo-persona del motor ya no existe", () => {
+    // La lista propia del mini-motor (`destinosBuscador`) se eliminó: un
+    // destino que sólo existía por hoteles unidad quedaba fuera de su
+    // desplegable, así que el motor —que sí sabe resolverlos— no se podía
+    // invocar para ese destino desde la UI (ver
+    // `pruebas/destinosPorcionPublica.test.ts`).
+    assert.doesNotMatch(fuenteVista, /destinosBuscador/);
+    assert.match(fuenteVista, /const destinosPorcion = useMemo\(/);
+    assert.match(fuenteVista, /destinosPorcionPublica\(filas, hotelesBernalo\)/);
   });
 
-  test("BuscadorBooking recibe destinosBuscador (nunca destinosPorcion ni un `destinos` viejo que mezcle unidad)", () => {
-    assert.match(fuenteVista, /<BuscadorBooking fotosPorHotel=\{fotosPorHotel\} infoPorHotel=\{infoPorHotel\} destinos=\{destinosBuscador\} \/>/);
+  test("BuscadorBooking recibe `destinosPorcion` — la UNIÓN real (persona + unidad) — y no una lista propia", () => {
+    // El mini-motor comunica hacia arriba el estado de la búsqueda
+    // (`onBusqueda`); `sugerenciaPedida` es el canal de vuelta (las fechas
+    // alternativas que ofrece en el estado vacío se vuelven a pedir desde acá).
+    assert.match(
+      fuenteVista,
+      /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{setBusquedaPorcion\} sugerenciaPedida=\{sugerenciaPedida\} \/>/
+    );
     // Ya no debe existir ninguna variable `destinos` (el nombre viejo,
-    // ambiguo sobre si mezclaba o no unidad) — solo `destinosBuscador`/
-    // `destinosBloqueo`/`destinosPorcion`/`destinosServicios`, cada uno con
-    // su alcance claro.
+    // ambiguo sobre si mezclaba o no unidad) — solo `destinosBloqueo`/
+    // `destinosPorcion`/`destinosServicios`, cada uno con su alcance claro.
     assert.doesNotMatch(fuenteVista, /const destinos = useMemo/);
-    // `destinosPorcion` nunca debe aparecer como prop de BuscadorBooking —
-    // es un control DISTINTO (filtro local de la grilla, no un buscador).
-    assert.doesNotMatch(fuenteVista, /<BuscadorBooking[^>]*destinos=\{destinosPorcion\}/);
+    // Y el selector de EXPLORACIÓN de la misma pestaña usa LA MISMA lista: un
+    // destino ofrecible no puede estar en un desplegable y faltar en el otro.
+    assert.equal(
+      [...fuenteVista.matchAll(/destinosPorcion\.map\(\(d\) => <option key=\{d\} value=\{d\}>\{d\}<\/option>\)/g)].length,
+      1,
+      "el selector de exploración sigue anunciando exactamente la misma lista que recibe el motor"
+    );
   });
 
   // Residual confirmado (validación real, ronda 3): Porción terrestre no
   // tenía NINGÚN selector de destino sobre su propia grilla — a diferencia
   // de Bloqueo (`destinoSel`/`destinosBloqueo`), los destinos unidad `tipo:
-  // "porcion_terrestre"` quedaban fuera de cualquier filtro real (solo
-  // vivían en `destinosBuscador`, legacy-only). `destinosPorcion` +
-  // `destinoPorcionSel` cierran ese hueco con el mismo patrón que Bloqueo,
-  // pero con estado PROPIO (nunca reutiliza `destinoSel`, para que la
-  // selección no persista incorrectamente al cambiar de pestaña).
+  // "porcion_terrestre"` quedaban fuera de cualquier filtro real.
+  // `destinosPorcion` + `destinoPorcionSel` cierran ese hueco con el mismo
+  // patrón que Bloqueo, pero con estado PROPIO (nunca reutiliza `destinoSel`,
+  // para que la selección no persista incorrectamente al cambiar de pestaña).
   describe("destinosPorcion / destinoPorcionSel — filtro de destino REAL para la grilla de Porción terrestre", () => {
-    test("destinosPorcion combina destinos persona (filas, modulo=porcion_terrestre) y unidad (hotelesBernalo, tipo=porcion_terrestre), deduplicados y ordenados", () => {
-      const idxDecl = fuenteVista.indexOf("const destinosPorcion = useMemo(() => {");
-      const idxFin = fuenteVista.indexOf("}, [filas, hotelesBernalo]);", idxDecl);
+    test("destinosPorcion es la unión persona + unidad y delega en la función pura (una sola definición del criterio)", () => {
+      assert.match(
+        fuenteVista,
+        /const destinosPorcion = useMemo\(\s*\n\s*\(\) => destinosPorcionPublica\(filas, hotelesBernalo\),\s*\n\s*\[filas, hotelesBernalo\]\s*\n\s*\);/
+      );
+      // El criterio (qué fila cuenta como destino de porción, dedup y orden) NO
+      // se re-implementa acá: vive en `destinosPorcionPublica`, donde se prueba
+      // con catálogo de fixture.
+      const idxDecl = fuenteVista.indexOf("const destinosPorcion = useMemo(");
+      const idxFin = fuenteVista.indexOf(");", idxDecl);
       assert.notEqual(idxDecl, -1);
       assert.notEqual(idxFin, -1);
-      const cuerpo = fuenteVista.slice(idxDecl, idxFin);
-      assert.match(cuerpo, /filas\.filter\(\(f\) => f\.modulo === "porcion_terrestre" && f\.destino_nombre\)\.map\(\(f\) => f\.destino_nombre as string\)/);
-      assert.match(cuerpo, /hotelesBernalo\.filter\(\(h\) => h\.tipo === "porcion_terrestre" && h\.destinoNombre\)\.map\(\(h\) => h\.destinoNombre as string\)/);
-      assert.match(cuerpo, /return \[\.\.\.new Set\(\[\.\.\.legacy, \.\.\.unidad\]\)\]\.filter\(Boolean\)\.sort\(\);/);
+      const cuerpo = fuenteVista.slice(idxDecl, idxFin + 2);
+      assert.doesNotMatch(cuerpo, /\.filter\(/);
+      assert.doesNotMatch(cuerpo, /new Set/);
+      // La misma lista alimenta el selector de exploración Y el del motor.
+      assert.match(fuenteVista, /value=\{destinoPorcionSel\}/);
     });
 
     test("destinoPorcionSel es un estado INDEPENDIENTE de destinoSel (Bloqueo) — nunca se reutiliza ni se resetea entre sí", () => {
@@ -587,21 +605,37 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
       assert.doesNotMatch(fuenteVista, /setDestinoPorcionSel\([^)]*\)[\s\S]{0,60}setDestinoSel\(/);
     });
 
+    test("el destino de la grilla es UN valor DERIVADO: sin búsqueda vigente vale exactamente destinoPorcionSel (la exploración no cambió de estado)", () => {
+      // Ronda de búsqueda cerrada: mientras hay una búsqueda de Porción
+      // terrestre vigente, la grilla se cierra al destino BUSCADO; fuera de
+      // eso la exploración se comporta igual que siempre. Para que eso siga
+      // siendo UNA sola decisión (y no dos filtros compitiendo), los memos
+      // consumen un único valor derivado cuyo respaldo es el estado de
+      // exploración de siempre — `destinoPorcionSel` no se reutiliza para
+      // guardar el destino buscado.
+      assert.match(
+        fuenteVista,
+        /const destinoPorcionEfectivo = busquedaPorcion \? busquedaPorcion\.destino : destinoPorcionSel;/
+      );
+      const derivaciones = [...fuenteVista.matchAll(/const destinoPorcionEfectivo =/g)];
+      assert.equal(derivaciones.length, 1, "una sola derivación del destino efectivo");
+    });
+
     test("el filtro de destino de Porción terrestre en `hoteles` (persona) está gateado por mod === 'porcion_terrestre', nunca por sub === 'bloqueo'", () => {
-      assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionSel && \(f\.destino_nombre \?\? ""\) !== destinoPorcionSel\) return false;/);
+      assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionEfectivo && \(f\.destino_nombre \?\? ""\) !== destinoPorcionEfectivo\) return false;/);
     });
 
     test("hotelesUnidadVisibles filtra por destinoPorcionSel SOLO cuando sub === 'porcion_terrestre' — igual patrón que destinoSel/bloqueo", () => {
       const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
-      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionSel, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
+      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
       assert.notEqual(idxDecl, -1);
       assert.notEqual(idxFin, -1);
       const cuerpo = fuenteVista.slice(idxDecl, idxFin);
-      assert.match(cuerpo, /if \(sub === "porcion_terrestre" && destinoPorcionSel\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionSel\);/);
+      assert.match(cuerpo, /if \(sub === "porcion_terrestre" && destinoPorcionEfectivo\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionEfectivo\);/);
     });
 
     test("el selector de destino de Porción terrestre se renderiza solo para sub === 'porcion_terrestre', asociado a 'O explora todos los alojamientos' — nunca dispara buscarHoteles/cotizarPorFechas", () => {
-      const idxSelector = fuenteVista.indexOf('sub === "porcion_terrestre" && destinosPorcion.length > 0 && (');
+      const idxSelector = fuenteVista.indexOf('sub === "porcion_terrestre" && !enBusquedaPorcion && destinosPorcion.length > 0 && (');
       assert.notEqual(idxSelector, -1);
       const idxFinSelector = fuenteVista.indexOf("</label>", idxSelector);
       assert.notEqual(idxFinSelector, -1);
@@ -616,27 +650,26 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
     // componente no es ejecutable bajo `node --test` (JSX/Next): cada uno
     // verifica la pieza de código que GARANTIZA el comportamiento descrito.
     test("catálogo solo-unidad de Porción terrestre: destinosPorcion no exige NINGUNA fila persona — un destino que solo existe en hotelesBernalo aparece igual", () => {
-      const idxDecl = fuenteVista.indexOf("const destinosPorcion = useMemo(() => {");
-      const idxFin = fuenteVista.indexOf("}, [filas, hotelesBernalo]);", idxDecl);
-      const cuerpo = fuenteVista.slice(idxDecl, idxFin);
-      // `unidad` se calcula de forma TOTALMENTE independiente de `legacy` —
-      // ninguna de las dos ramas condiciona a la otra, así que con `legacy`
-      // vacío (0 filas persona de porción terrestre) el destino unidad sigue
-      // entrando al `Set` combinado.
-      const idxLegacy = cuerpo.indexOf("const legacy =");
-      const idxUnidad = cuerpo.indexOf("const unidad =");
-      assert.notEqual(idxLegacy, -1);
-      assert.notEqual(idxUnidad, -1);
-      const lineaUnidad = cuerpo.slice(idxUnidad, cuerpo.indexOf(";", idxUnidad));
-      assert.doesNotMatch(lineaUnidad, /\blegacy\b/, "la rama unidad de destinosPorcion no debe depender de la rama legacy");
+      // Antes esto sólo se podía verificar por la FORMA del memo (dos ramas,
+      // `legacy` y `unidad`, calculadas por separado). Ahora la unión es una
+      // función pura, así que el escenario se corre DE VERDAD con el catálogo
+      // del caso: CERO filas persona y un hotel unidad en CARTAGENA.
+      assert.deepEqual(
+        destinosPorcionPublica([], [{ tipo: "porcion_terrestre", destinoNombre: "CARTAGENA" }]),
+        ["CARTAGENA"],
+        "un destino que sólo existe por hoteles unidad tiene que seguir apareciendo en el selector"
+      );
+      // Y `VistaBooking` consume ESA función — no una segunda copia del criterio
+      // que pueda divergir de la que se acaba de probar.
+      assert.match(fuenteVista, /destinosPorcionPublica\(filas, hotelesBernalo\)/);
     });
 
     test("seleccionar un destino exclusivamente unidad conserva la tarjeta unidad visible: el filtro de hotelesUnidadVisibles compara SOLO h.destinoNombre (de hotelesBernalo), nunca contra `hoteles`/`filas` (persona)", () => {
       const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
-      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionSel, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
+      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
       const cuerpo = fuenteVista.slice(idxDecl, idxFin);
       assert.match(cuerpo, /let arr = hotelesBernalo\.filter\(\(h\) => h\.tipo === sub\);/);
-      assert.match(cuerpo, /if \(sub === "porcion_terrestre" && destinoPorcionSel\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionSel\);/);
+      assert.match(cuerpo, /if \(sub === "porcion_terrestre" && destinoPorcionEfectivo\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionEfectivo\);/);
       assert.doesNotMatch(cuerpo, /\bfilas\b|\bhoteles\b/, "el filtro de la grilla unidad nunca debe depender de datos persona");
     });
 
@@ -647,7 +680,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
       // excluye, mientras que CUALQUIER oferta con destinoNombre "A" (sin
       // importar cuántas haya) evalúa true y permanece. Nunca se excluyen
       // "de más" ni "de menos".
-      assert.match(codigoVista, /if \(sub === "porcion_terrestre" && destinoPorcionSel\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionSel\);/);
+      assert.match(codigoVista, /if \(sub === "porcion_terrestre" && destinoPorcionEfectivo\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionEfectivo\);/);
     });
 
     test("destino compartido persona/unidad: hoteles (persona) y hotelesUnidadVisibles (unidad) filtran por el MISMO valor destinoPorcionSel — ambos modelos responden a la misma selección, nunca dos estados distintos", () => {
@@ -655,10 +688,10 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
       // `hoteles` (mod === "porcion_terrestre") y el de `hotelesUnidadVisibles`
       // (sub === "porcion_terrestre") — así que elegir un destino presente en
       // ambas fuentes deja visibles las tarjetas de los dos modelos a la vez.
-      const usosEnHoteles = [...codigoVista.matchAll(/mod === "porcion_terrestre" && destinoPorcionSel/g)];
-      const usosEnUnidadVisibles = [...codigoVista.matchAll(/sub === "porcion_terrestre" && destinoPorcionSel/g)];
-      assert.equal(usosEnHoteles.length, 1, "hoteles (persona) debe filtrar por destinoPorcionSel exactamente una vez");
-      assert.equal(usosEnUnidadVisibles.length, 1, "hotelesUnidadVisibles debe filtrar por destinoPorcionSel exactamente una vez");
+      const usosEnHoteles = [...codigoVista.matchAll(/mod === "porcion_terrestre" && destinoPorcionEfectivo/g)];
+      const usosEnUnidadVisibles = [...codigoVista.matchAll(/sub === "porcion_terrestre" && destinoPorcionEfectivo/g)];
+      assert.equal(usosEnHoteles.length, 1, "hoteles (persona) debe filtrar por el destino efectivo exactamente una vez");
+      assert.equal(usosEnUnidadVisibles.length, 1, "hotelesUnidadVisibles debe filtrar por el destino efectivo exactamente una vez");
       // Ningún estado paralelo (ej. `destinoPorcionSelPersona`/`...Unidad`) —
       // solo existe UNA declaración de estado para porción terrestre.
       const declaraciones = [...fuenteVista.matchAll(/const \[destinoPorcionSel,/g)];
@@ -673,7 +706,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
       // gateado por `mod === "bloqueo"` — el nuevo filtro de porción
       // terrestre no lo toca ni lo reemplaza, solo agrega su propia rama.
       assert.match(codigoVista, /if \(mod === "bloqueo" && f\.bloqueo_id != null\) \{/);
-      assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionSel && \(f\.destino_nombre \?\? ""\) !== destinoPorcionSel\) return false;/);
+      assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionEfectivo && \(f\.destino_nombre \?\? ""\) !== destinoPorcionEfectivo\) return false;/);
     });
   });
 });

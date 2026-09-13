@@ -7,7 +7,7 @@ import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
 import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
-import { type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
+import { type BusquedaResultado, type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges, CondicionCompacta, type CondicionHotelBadgeData } from "@/components/cotizacion/CondicionHotelBadges";
 import {
   EDAD_MENOR_MAX,
@@ -38,13 +38,15 @@ import type { HotelBernaloDescubierto, SalidaAereaBernalo } from "@/lib/tarifari
 import { obtenerDetalleHotel } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
-import { BuscadorBooking } from "./BuscadorBooking";
+import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
+import type { OfertaUnidadConfirmada } from "./busquedaUnidadActions";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import { minRoomPvpResumen, tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
 import { seccionesDescripcion, type DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
+import { destinosPorcionPublica } from "@/lib/tarifario/destinosPorcion";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
@@ -94,6 +96,16 @@ type HotelUnidadCard = {
    * abrir el modal — dentro del modal cada oferta muestra su propio destino. */
   destino: string | null;
   ofertas: HotelBernaloDescubierto[];
+  // Hallazgo confirmado (auditoría independiente): SOLO presente en modo
+  // búsqueda — la oferta que el servidor CONFIRMÓ disponible
+  // (`buscarAlojamientosUnidadPorFechas`), con la identidad EXACTA
+  // (paqueteId/categoría/alimentación/fechas/ocupación) que pasó
+  // `computarReservaBernalo`. En exploración queda `undefined` y el modal se
+  // comporta exactamente como antes (el usuario elige todo a mano). Nunca se
+  // usa para decidir un precio — solo para PRELLENAR el formulario; el modal
+  // vuelve a validar/cotizar todo contra el servidor antes de agregar al
+  // carrito.
+  confirmada?: OfertaUnidadConfirmada;
 };
 
 // Una sola lista visible en la grilla — para el cliente, un hotel por unidad
@@ -101,9 +113,24 @@ type HotelUnidadCard = {
 // cálculo. `key` es la identidad estable de React (evita colisiones entre
 // las dos fuentes); el resto de la lógica (abrir el modal correcto) discrimina
 // por `tipo`.
+//
+// La tercera rama ("busqueda") es la MISMA lista en modo búsqueda: una fila
+// persona ya liquidada por el motor (`buscarHoteles`) en vez de una tarjeta de
+// exploración. Antes esa fila la pintaba `BuscadorBooking` en SU propia grilla
+// y esta vista volvía a pintar la suya DEBAJO — dos listas para una sola
+// búsqueda. Ahora hay una sola colección y un solo lugar donde se pinta.
 type Tarjeta =
   | { tipo: "persona"; key: string; card: HotelCard }
-  | { tipo: "unidad"; key: string; hotel: HotelUnidadCard };
+  | { tipo: "unidad"; key: string; hotel: HotelUnidadCard }
+  | { tipo: "busqueda"; key: string; r: BusquedaResultado };
+
+// Nombre visible de una tarjeta, sin importar de cuál de las tres fuentes
+// venga — lo necesita el orden alfabético de la colección única.
+function nombreTarjeta(t: Tarjeta): string {
+  if (t.tipo === "persona") return t.card.hotelNombre;
+  if (t.tipo === "unidad") return t.hotel.hotelNombre;
+  return t.r.hotelNombre ?? "—";
+}
 
 type Receptivo = {
   servicioId: number | null;
@@ -330,21 +357,98 @@ export function VistaBooking({
   // INDEPENDIENTE de `destinoSel` (el de Bloqueo). Residual confirmado
   // (validación real, ronda 3): Porción terrestre no tenía NINGÚN selector
   // de destino sobre su propia grilla — los destinos unidad `tipo:
-  // "porcion_terrestre"` quedaban fuera de cualquier filtro real (solo
-  // vivían en `destinosBuscador`, que es legacy-only y alimenta
-  // `BuscadorBooking`, no la grilla). Reutilizar `destinoSel` habría hecho
-  // que una selección de Bloqueo persistiera (incorrectamente) al cambiar de
-  // pestaña, o viceversa — de ahí el estado propio.
+  // "porcion_terrestre"` quedaban fuera de cualquier filtro real.
+  // Reutilizar `destinoSel` habría hecho que una selección de Bloqueo
+  // persistiera (incorrectamente) al cambiar de pestaña, o viceversa — de ahí
+  // el estado propio. Es una de las dos entradas de `destinosPorcion`, que
+  // ahora alimenta tanto este selector como el del motor de búsqueda.
   const [destinoPorcionSel, setDestinoPorcionSel] = useState("");
+  // MODO BÚSQUEDA de Porción terrestre: lo que el buscador (`BuscadorBooking`)
+  // comunica hacia arriba cuando ejecuta una búsqueda con éxito, y `null`
+  // cuando la limpia o cuando los criterios mostrados dejan de corresponder a
+  // los resultados. Mientras está activo, esta vista NO es un catálogo de
+  // exploración: la grilla queda CERRADA al destino buscado (persona + unidad
+  // por igual) y se deja de ofrecer "O explora todos los alojamientos" — que
+  // era exactamente lo que mezclaba un hotel unidad del destino buscado con
+  // hoteles de otros destinos, por debajo de los resultados (ver el informe
+  // de la tarea).
+  const [busquedaPorcion, setBusquedaPorcion] = useState<EstadoBusquedaPorcion | null>(null);
+  // Destino EFECTIVO de la grilla de Porción terrestre: el de la búsqueda
+  // cuando hay una vigente, y si no el del selector de exploración de siempre
+  // (`destinoPorcionSel`, que no se toca). Es el ÚNICO punto de sustitución:
+  // los memos de abajo consumen este valor, así que persona y unidad quedan
+  // cerradas por el mismo criterio y en el mismo lugar.
+  const destinoPorcionEfectivo = busquedaPorcion ? busquedaPorcion.destino : destinoPorcionSel;
+  const enBusquedaPorcion = sub === "porcion_terrestre" && busquedaPorcion != null;
+  // Sugerencia de fecha pedida por el usuario desde los chips del estado vacío
+  // (que ahora viven acá, junto a la lista unificada). El `nonce` se
+  // incrementa en cada clic: baja al buscador, que la aplica UNA vez por clic
+  // (ver `sugerenciaPedida` en `BuscadorBooking`).
+  const [sugerenciaPedida, setSugerenciaPedida] = useState<(SugerenciaFecha & { nonce: number }) | null>(null);
+
+  // Hallazgo confirmado (auditoría independiente): `BuscadorBooking` se
+  // desmonta al abandonar Porción terrestre (solo se renderiza cuando
+  // `sub === "porcion_terrestre"`, más abajo), pero `busquedaPorcion`/
+  // `sugerenciaPedida` viven ACÁ, en el padre — nada los limpiaba al cambiar
+  // de pestaña. Volver a Porción terrestre remontaba un formulario en blanco
+  // (perdía su propio estado interno) mientras la grilla seguía "congelada"
+  // en modo búsqueda (encabezado, contador y estado vacío de la búsqueda
+  // anterior), sin el botón "Limpiar resultados" a la vista (vive dentro del
+  // `BuscadorBooking` recién montado, gateado por SU propio estado, que
+  // volvió a nacer en `null`).
+  //
+  // Único punto de cambio de `sub`: centraliza la limpieza en el HANDLER que
+  // cambia de pestaña (nunca en un `useEffect` que compare `sub` — sería un
+  // `setState` síncrono dentro de un efecto, exactamente lo que se pidió
+  // evitar cuando el handler ya puede resolverlo). Lee `sub` del cierre del
+  // render actual (nunca queda obsoleto: se llama de forma síncrona desde un
+  // clic, no desde un efecto), así que siempre compara contra el valor
+  // vigente.
+  function cambiarSub(next: typeof sub) {
+    if (sub === "porcion_terrestre" && next !== "porcion_terrestre") {
+      setBusquedaPorcion(null);
+      setSugerenciaPedida(null);
+    }
+    setSub(next);
+  }
+
   // Filtros de la grilla de hoteles: pet friendly / adults only.
   const [soloPetFriendly, setSoloPetFriendly] = useState(false);
   const [soloAdultsOnly, setSoloAdultsOnly] = useState(false);
 
+  // Cuántos ALOJAMIENTOS trajo la búsqueda vigente ANTES de los filtros del
+  // usuario. Sirve para que el estado vacío diga la verdad: "tus filtros
+  // ocultaron lo que la búsqueda sí encontró" es un problema DISTINTO (y con
+  // otra salida) que "la búsqueda no encontró nada" — y confundirlos mandaría
+  // al usuario a cambiar fechas cuando el problema es un checkbox.
+  // Cuenta ALOJAMIENTOS, no filas: `buscarHoteles` devuelve una fila por
+  // (paquete, hotel), así que un mismo hotel en dos paquetes del destino
+  // inflaría el número por encima de lo que la grilla realmente pinta (una
+  // tarjeta por hotel — ver `tarjetas`).
+  const resultadosBusquedaVisibles = useMemo(() => {
+    if (!busquedaPorcion) return 0;
+    const idsUnidad = new Set(hotelIdsUnidadAutoritativos);
+    const hotelesPersona = new Set<number>();
+    for (const r of busquedaPorcion.resultados) {
+      if (!idsUnidad.has(r.hotelId)) hotelesPersona.add(r.hotelId);
+    }
+    return hotelesPersona.size + busquedaPorcion.unidad.length;
+  }, [busquedaPorcion, hotelIdsUnidadAutoritativos]);
+
   const { add, openDrawer, addonsIntent, setAddonsIntent } = useCart();
+  // `cambiarSub` no es un `useState` setter (React no lo reconoce como
+  // referencia estable) — se re-crea en cada render porque lee `sub` del
+  // cierre. Pasarlo directo como dependencia del efecto de abajo dispararía
+  // el efecto en CADA render mientras `addonsIntent` siga activo (bucle). Se
+  // llama a través de un ref "último valor" — mismo patrón ya usado para
+  // `aplicarSugerenciaFecha` en `BuscadorBooking.tsx` — así el efecto solo
+  // depende de `addonsIntent`.
+  const cambiarSubRef = useRef(cambiarSub);
+  useEffect(() => { cambiarSubRef.current = cambiarSub; });
   // Señal del carrito ("+ Agregar servicios/tours" con un hotel ya elegido):
   // salta directo a Receptivos con destino/fechas/pax ya puestos.
   useEffect(() => {
-    if (addonsIntent) setSub("receptivos");
+    if (addonsIntent) cambiarSubRef.current("receptivos");
   }, [addonsIntent]);
 
   // Salidas (bloqueos) con cupos > 0, con su origen/destino/fechas/cupos.
@@ -402,7 +506,7 @@ export function VistaBooking({
         if (destinoSel && (f.destino_nombre ?? "") !== destinoSel) return false;
         if (salidaSel !== "" && f.bloqueo_id !== salidaSel) return false;
       }
-      if (mod === "porcion_terrestre" && destinoPorcionSel && (f.destino_nombre ?? "") !== destinoPorcionSel) return false;
+      if (mod === "porcion_terrestre" && destinoPorcionEfectivo && (f.destino_nombre ?? "") !== destinoPorcionEfectivo) return false;
       return true;
     });
     const map = new Map<number, HotelCard>();
@@ -437,7 +541,7 @@ export function VistaBooking({
     if (soloAdultsOnly) arr = arr.filter((c) => c.adultsOnly);
     for (const c of arr) c.desde = minRoomPvp(c.filas);
     return arr.sort((a, b) => a.hotelNombre.localeCompare(b.hotelNombre));
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionSel, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionEfectivo, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
 
   // Hoteles por unidad (Bernalo) visibles en el submódulo/filtros ACTIVOS —
   // para el cliente son hoteles normales, así que responden a la misma
@@ -462,11 +566,11 @@ export function VistaBooking({
     if (sub === "receptivos") return [];
     let arr = hotelesBernalo.filter((h) => h.tipo === sub);
     if (sub === "bloqueo" && destinoSel) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoSel);
-    if (sub === "porcion_terrestre" && destinoPorcionSel) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoPorcionSel);
+    if (sub === "porcion_terrestre" && destinoPorcionEfectivo) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoPorcionEfectivo);
     if (soloPetFriendly) arr = arr.filter((h) => infoPorHotel[h.hotelId]?.petFriendly === true);
     if (soloAdultsOnly) arr = arr.filter((h) => infoPorHotel[h.hotelId]?.adultsOnly === true);
     return arr;
-  }, [hotelesBernalo, sub, destinoSel, destinoPorcionSel, soloPetFriendly, soloAdultsOnly, infoPorHotel]);
+  }, [hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel]);
 
   // Una sola colección para la grilla — persona y unidad mezclados, sin
   // sección aparte (el usuario ve hoteles, no "modelos de cálculo"). Clave
@@ -501,6 +605,87 @@ export function VistaBooking({
   // acá) — la única fuente correcta para esta exclusión.
   const tarjetas = useMemo<Tarjeta[]>(() => {
     const idsUnidadAutoritativa = new Set(hotelIdsUnidadAutoritativos);
+
+    // ── Modo búsqueda: UNA sola lista, la de la búsqueda ──────────────────
+    // Cuando hay una búsqueda vigente, la grilla deja de ser el catálogo de
+    // exploración y pasa a ser EXACTAMENTE lo que esa búsqueda produjo:
+    //   · persona → las filas que devolvió `buscarHoteles`
+    //     (`busquedaPorcion.resultados`), que ya validó fechas, ocupación y
+    //     tarifa. NUNCA se completa con la grilla precargada: por eso un hotel
+    //     que el motor rechazó no puede reaparecer acá por estar en el
+    //     catálogo del destino.
+    //   · unidad → los alojamientos que el servidor CONFIRMÓ disponibles
+    //     (`busquedaPorcion.unidad`, ya filtrado a `estado === "disponible"`).
+    //     Un `sin_disponibilidad` no es un resultado disponible y no llega
+    //     hasta acá; un estado desconocido por error técnico tampoco.
+    // Los filtros de Pet friendly / Adults Only SÍ aplican (son del usuario);
+    // `soloAcom` no — la búsqueda ya resolvió la composición que se pidió.
+    // Igual que en exploración, la fila persona de un hotel que hoy es unidad
+    // se excluye por el canal autoritativo: sería la caché obsoleta de
+    // `tarifario_resultado`, no una oferta vigente.
+    if (enBusquedaPorcion && busquedaPorcion) {
+      const porFiltros = (hotelId: number) => {
+        const info = infoPorHotel[hotelId];
+        if (soloPetFriendly && !info?.petFriendly) return false;
+        if (soloAdultsOnly && !info?.adultsOnly) return false;
+        return true;
+      };
+      // Un hotel = una tarjeta, igual que en exploración (que arma una sola
+      // tarjeta persona por hotel). `buscarHoteles` devuelve una fila por
+      // (paquete, hotel), así que el MISMO hotel puede venir varias veces si
+      // el destino lo tiene armado en más de un paquete — sin este recorte la
+      // grilla mostraría la misma tarjeta repetida (y un contador inflado).
+      // El motor ya devuelve `resultados` ordenado por total ascendente
+      // (`resultados.sort((a, b) => a.total - b.total)` en `cotizar.ts`), así
+      // que quedarse con la PRIMERA fila de cada hotel es quedarse con la más
+      // barata — el mismo criterio con el que el motor elige el `combos[0]`.
+      const vistos = new Set<number>();
+      const busca: Tarjeta[] = [];
+      for (const r of busquedaPorcion.resultados) {
+        if (vistos.has(r.hotelId)) continue;
+        vistos.add(r.hotelId);
+        if (idsUnidadAutoritativa.has(r.hotelId) || !porFiltros(r.hotelId)) continue;
+        busca.push({ tipo: "busqueda" as const, key: `b-${r.paqueteId}-${r.hotelId}`, r });
+      }
+      // Hallazgo confirmado (auditoría independiente): antes `u.ofertas`
+      // traía TODAS las ofertas del hotel (todas sus paqueteId de porción
+      // terrestre), como si todas estuvieran confirmadas — el modal dejaba
+      // elegir una categoría/alimentación/paquete DISTINTO al que realmente
+      // pasó `computarReservaBernalo`. Ahora `u.oferta` (singular) es la
+      // identidad EXACTA que confirmó al hotel; se envuelve en un arreglo de
+      // UN solo elemento (mismo shape `HotelBernaloDescubierto` que ya
+      // consume `HotelBernaloCotizarModal`, pero con categorías/regímenes
+      // acotados a la combinación confirmada) para que el modal la
+      // AUTOSELECCIONE — `ofertas.length === 1` ya dispara esa rama sin
+      // tocar el modal. Nunca puede preseleccionar una oferta no verificada
+      // porque no hay ninguna otra en el arreglo.
+      const unidad: Tarjeta[] = busquedaPorcion.unidad
+        .filter((u) => porFiltros(u.hotelId))
+        .map((u) => ({
+          tipo: "unidad" as const,
+          key: `u-${u.hotelId}`,
+          hotel: {
+            hotelId: u.hotelId,
+            hotelNombre: u.oferta.hotelNombre,
+            destino: u.oferta.destinoNombre,
+            ofertas: [{
+              hotelId: u.oferta.hotelId,
+              hotelNombre: u.oferta.hotelNombre,
+              paqueteId: u.oferta.paqueteId,
+              paqueteNombre: u.oferta.paqueteNombre,
+              destinoNombre: u.oferta.destinoNombre,
+              tipo: "porcion_terrestre" as const,
+              categorias: [u.oferta.categoria],
+              regimenes: [u.oferta.alimentacion],
+              moneda: u.oferta.moneda,
+              salidas: [],
+            }],
+            confirmada: u.oferta,
+          },
+        }));
+      return [...busca, ...unidad].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
+    }
+
     const a: Tarjeta[] = hoteles
       .filter((c) => !idsUnidadAutoritativa.has(c.hotelId))
       .map((c) => ({ tipo: "persona" as const, key: `p-${c.hotelId}`, card: c }));
@@ -515,12 +700,8 @@ export function VistaBooking({
       key: `u-${hotelId}`,
       hotel: { hotelId, hotelNombre: ofertas[0].hotelNombre, destino: ofertas[0].destinoNombre, ofertas },
     }));
-    return [...a, ...b].sort((x, y) => {
-      const nx = x.tipo === "persona" ? x.card.hotelNombre : x.hotel.hotelNombre;
-      const ny = y.tipo === "persona" ? y.card.hotelNombre : y.hotel.hotelNombre;
-      return nx.localeCompare(ny);
-    });
-  }, [hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos]);
+    return [...a, ...b].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
+  }, [hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel, soloPetFriendly, soloAdultsOnly]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
   const [detalleHotel, setDetalleHotel] = useState<EstadoDetalle<FilaTarifario> | null>(null);
@@ -650,43 +831,26 @@ export function VistaBooking({
     { key: "receptivos", label: "Receptivos" },
   ] as const;
 
-  // Destinos disponibles (porción) — ÚNICAMENTE para `destinosBuscador`, la
-  // lista que alimenta el mini-motor legacy `BuscadorBooking` (búsqueda por
-  // fechas vía `cotizarPorFechas`/`buscarHoteles`, ver más abajo).
+  // Destinos de Porción terrestre — la UNIÓN real (persona + unidad), y la
+  // ÚNICA lista de destinos de esta pestaña: alimenta el selector de
+  // exploración de la grilla Y el selector del motor de búsqueda
+  // (`BuscadorBooking`).
   //
-  // ⚠️ Hallazgo confirmado (validación real, ronda 2): una corrección previa
-  // agregó acá los destinos de ofertas unidad `tipo: "porcion_terrestre"` —
-  // pero `BuscadorBooking` solo sabe buscar/devolver hoteles PERSONA
-  // (`cotizarPorFechas` es 100% legacy, sin ninguna rama Bernalo). Ofrecer
-  // un destino "solo unidad" en ese buscador era una promesa vacía: el
-  // usuario lo elegía, buscaba por fechas, y el motor legacy no tenía NADA
-  // que devolver para ese destino — ni error explicativo, simplemente vacío,
-  // como si el destino no existiera. No se implementa un segundo motor de
-  // búsqueda ni una consulta N+1 en esta tarea — la solución honesta es NO
-  // anunciar ahí lo que este buscador no puede resolver. El destino unidad
-  // SÍ sigue disponible donde corresponde: el filtro real de tarjetas de
-  // CADA pestaña — `destinosBloqueo` en Bloqueo, `destinosPorcion` en
-  // Porción terrestre (ver justo abajo) — ninguno de los dos pasa por
-  // ningún buscador/consulta, ambos filtran `hoteles`/`hotelesUnidadVisibles`
-  // reactivamente en el cliente.
-  const destinosBuscador = useMemo(
-    () => [...new Set(filas.filter((f) => f.modulo === "porcion_terrestre" && f.destino_nombre).map((f) => f.destino_nombre as string))].sort((a, b) => a.localeCompare(b)),
-    [filas]
+  // Antes había DOS listas, y la del motor se armaba SÓLO con filas persona:
+  // un destino que existía únicamente por hoteles unidad quedaba fuera de su
+  // desplegable, así que el motor —que desde `buscarAlojamientosUnidadPorFechas`
+  // SÍ sabe resolver esos hoteles— no se podía invocar para ese destino desde la
+  // UI. Un destino ofrecible que no se puede seleccionar es un destino que no se
+  // puede buscar.
+  //
+  // La unión vive en `destinosPorcionPublica` (función pura) y no acá: así la
+  // prueba la ejercita con un catálogo de fixture —incluido el caso
+  // "sin ninguna fila persona y con un hotel unidad"— en vez de verificar su
+  // forma por texto fuente.
+  const destinosPorcion = useMemo(
+    () => destinosPorcionPublica(filas, hotelesBernalo),
+    [filas, hotelesBernalo]
   );
-  // Residual confirmado (validación real, ronda 3): filtro de destino REAL
-  // sobre la grilla de Porción terrestre — distinto de `destinosBuscador`
-  // (legacy-only, alimenta `BuscadorBooking`). Incluye destinos persona
-  // (`filas`, modulo="porcion_terrestre") Y destinos unidad (`hotelesBernalo`,
-  // tipo="porcion_terrestre") — mismo criterio que `destinosBloqueo`: se
-  // agregan por separado, se combinan en un `Set` (deduplicado) y se
-  // ordenan. Nunca inventa origen/vuelo/salida (Porción terrestre no los
-  // tiene). Se usa exclusivamente para filtrar `hoteles`/`hotelesUnidadVisibles`
-  // más abajo — nunca llega a `BuscadorBooking`.
-  const destinosPorcion = useMemo(() => {
-    const legacy = filas.filter((f) => f.modulo === "porcion_terrestre" && f.destino_nombre).map((f) => f.destino_nombre as string);
-    const unidad = hotelesBernalo.filter((h) => h.tipo === "porcion_terrestre" && h.destinoNombre).map((h) => h.destinoNombre as string);
-    return [...new Set([...legacy, ...unidad])].filter(Boolean).sort();
-  }, [filas, hotelesBernalo]);
   // Destinos disponibles de RECEPTIVOS para el filtro de su mini-motor.
   const destinosServicios = useMemo(
     () => [...new Set(filas.filter((f) => f.modulo === "servicios" && f.destino_nombre).map((f) => f.destino_nombre as string))].sort((a, b) => a.localeCompare(b)),
@@ -701,7 +865,7 @@ export function VistaBooking({
           <button
             key={t.key}
             type="button"
-            onClick={() => setSub(t.key)}
+            onClick={() => cambiarSub(t.key)}
             className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
             style={sub === t.key
               ? { backgroundColor: "var(--brand-primary)", color: "white" }
@@ -813,14 +977,32 @@ export function VistaBooking({
         </>
       ) : (
       <>
-      {/* Mini-motor por fechas: solo en Porción terrestre (en bloqueo manda el vuelo) */}
+      {/* Mini-motor por fechas: solo en Porción terrestre (en bloqueo manda el
+          vuelo). Recibe `destinosPorcion` — la unión persona + unidad —, no una
+          lista propia: el motor resuelve las dos mitades, así que su selector
+          tiene que ofrecer exactamente lo que el motor puede devolver. */}
       {sub === "porcion_terrestre" && (
-        <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} destinos={destinosBuscador} />
+        <BuscadorBooking destinos={destinosPorcion} onBusqueda={setBusquedaPorcion} sugerenciaPedida={sugerenciaPedida} />
       )}
 
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-          {sub === "bloqueo" ? "Hoteles disponibles" : "O explora todos los alojamientos"}
+          {sub === "bloqueo" ? (
+            "Hoteles disponibles"
+          ) : enBusquedaPorcion ? (
+            // Modo búsqueda: la grilla de abajo ya no es el catálogo de
+            // exploración sino el resultado de la búsqueda. Decirlo evita
+            // que se lea como "y además hay todo esto" — y deja claro por
+            // qué desaparecieron los hoteles de otros destinos.
+            <>
+              Resultados de tu búsqueda{` en ${busquedaPorcion.destino}`}
+              <span className="ml-2 font-normal normal-case text-gray-400">
+                {busquedaPorcion.fechaIda} → {busquedaPorcion.fechaRegreso}
+              </span>
+            </>
+          ) : (
+            "O explora todos los alojamientos"
+          )}
           <span className="ml-2 font-normal normal-case text-gray-400">({tarjetas.length})</span>
         </p>
         <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
@@ -829,8 +1011,13 @@ export function VistaBooking({
               ronda 3: control DISTINTO del mini-motor BuscadorBooking de
               arriba (ese busca por fechas contra el motor legacy; este
               filtra en el cliente la grilla unificada persona+unidad que ya
-              está pintada, sin ninguna consulta nueva). */}
-          {sub === "porcion_terrestre" && destinosPorcion.length > 0 && (
+              está pintada, sin ninguna consulta nueva). En modo búsqueda se
+              oculta: el destino lo manda la búsqueda vigente, y ofrecer un
+              selector que compite con ella invitaría a creer que cambiarlo
+              re-ejecuta la búsqueda (no lo haría — solo movería el filtro
+              de la grilla por debajo de un encabezado que dice otra cosa).
+              Para volver a explorar está "Limpiar resultados". */}
+          {sub === "porcion_terrestre" && !enBusquedaPorcion && destinosPorcion.length > 0 && (
             <label className="flex items-center gap-1.5">
               <span>Destino</span>
               <select
@@ -853,10 +1040,69 @@ export function VistaBooking({
           </label>
         </div>
       </div>
-      {!tarjetas.length && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados. Prueba quitar filtros o cambiar de pestaña (Paquetes/Porción).</p>}
+      {/* Estado vacío de la GRILLA (exploración). En modo búsqueda NO se
+          pinta: hay un estado vacío ÚNICO de búsqueda más abajo, junto a la
+          lista unificada — dos mensajes vacíos para la misma grilla dirían lo
+          mismo dos veces, y el de acá además invitaría a "quitar filtros", que
+          no es el problema cuando el resultado está cerrado por destino. */}
+      {!tarjetas.length && !enBusquedaPorcion && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados. Prueba quitar filtros o cambiar de pestaña (Paquetes/Porción).</p>}
+      {/* Estado vacío ÚNICO de la búsqueda — uno solo para persona y unidad,
+          porque la lista es una sola. Distingue dos situaciones que NO son la
+          misma y no se resuelven igual:
+            · la búsqueda SÍ trajo resultados y fueron los filtros del usuario
+              los que los ocultaron (salida: quitar un filtro);
+            · la búsqueda no encontró nada (salida: el diagnóstico real y,
+              solo si el motivo fue de fechas, las fechas alternativas con
+              tarifa — cambiar de fecha no arregla un problema de capacidad). */}
+      {enBusquedaPorcion && !tarjetas.length && (
+        <div className="rounded-xl border border-dashed border-gray-200 py-8 text-center">
+          {resultadosBusquedaVisibles > 0 ? (
+            <p className="text-sm text-gray-500">
+              Tus filtros ocultaron los {resultadosBusquedaVisibles} resultado(s) de esta búsqueda. Quita un filtro para verlos de nuevo.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-gray-400">
+                {busquedaPorcion.diagnostico
+                  ? busquedaPorcion.diagnostico
+                  : "No hay hoteles que cumplan esa composición/fechas/filtros. Prueba otra acomodación, fechas o quita un filtro."}
+              </p>
+              {!!busquedaPorcion.sugerenciasFecha.length && (
+                <div className="mt-3">
+                  <p className="text-xs font-medium text-gray-500">Prueba estas fechas con tarifa</p>
+                  <div className="mt-1.5 flex flex-wrap justify-center gap-1.5">
+                    {busquedaPorcion.sugerenciasFecha.map((s) => (
+                      <button
+                        key={s.fechaIda}
+                        type="button"
+                        onClick={() => setSugerenciaPedida({ ...s, nonce: (sugerenciaPedida?.nonce ?? 0) + 1 })}
+                        className="rounded-full border border-gray-300 bg-transparent px-3 py-1 text-xs font-medium text-gray-600 transition-colors hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)]"
+                      >
+                        {s.etiqueta}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {tarjetas.map((t) =>
-          t.tipo === "persona" ? (
+          t.tipo === "busqueda" ? (
+            // Fila persona ya liquidada por el motor para estas fechas y esta
+            // ocupación — la MISMA lista que las tarjetas de exploración, en
+            // modo búsqueda. El componente vive en `BuscadorBooking` porque es
+            // el único que conoce el carrito por persona
+            // (`HotelCartItemPersona`); acá solo se le da el lugar en la grilla.
+            <Resultado
+              key={t.key}
+              r={t.r}
+              foto={fotosPorHotel[t.r.hotelId] ?? null}
+              info={infoPorHotel[t.r.hotelId]}
+            />
+          ) : t.tipo === "persona" ? (
             <TarjetaHotelCard
               key={t.key}
               onClick={() => abrirHotel(t.card)}
@@ -908,6 +1154,24 @@ export function VistaBooking({
               tieneCondicion={infoPorHotel[t.hotel.hotelId]?.tieneCondicion}
               descripcion={infoPorHotel[t.hotel.hotelId]?.descripcion ?? null}
               desde={null}
+              badgeEsquina={enBusquedaPorcion ? (
+                // Disponibilidad REAL para las fechas y la ocupación que se
+                // escribieron en el buscador: en modo búsqueda esta tarjeta
+                // SOLO existe si el servidor confirmó el hotel como disponible
+                // (`busquedaPorcion.unidad` ya viene filtrado a
+                // `estado === "disponible"` — ver `BuscadorBooking`). El badge
+                // no decide nada acá, solo hace visible un hecho ya verificado;
+                // por eso no hay rama "sin disponibilidad": un veredicto
+                // negativo no es un resultado disponible y no llega a la
+                // grilla. Fuera de modo búsqueda no hay badge en absoluto —
+                // no hay disponibilidad declarada que mostrar.
+                <span
+                  className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white transition-opacity hover:opacity-90"
+                  style={{ backgroundColor: "var(--brand-success)" }}
+                >
+                  Disponible para tus fechas
+                </span>
+              ) : undefined}
             />
           )
         )}
@@ -1354,6 +1618,14 @@ function HotelBernaloCotizarModal({ hotelGrupo, onClose }: { hotelGrupo: HotelUn
               categoriasDisponibles={hotel.categorias}
               alimentacionesDisponibles={hotel.regimenes}
               salidas={hotel.salidas}
+              // Prefill de modo búsqueda — SOLO si la oferta que el usuario
+              // tiene seleccionada ahora mismo es la misma que el servidor
+              // confirmó (siempre lo es cuando viene de una búsqueda, porque
+              // `ofertas` trae un único elemento — ver `tarjetas` — pero la
+              // comparación explícita por `paqueteId` es la guarda real:
+              // nunca precarga el formulario con datos de una oferta que el
+              // usuario pudo haber cambiado).
+              preseleccionBernalo={hotelGrupo.confirmada?.paqueteId === hotel.paqueteId ? hotelGrupo.confirmada : undefined}
               onAgregar={() => {}}
               onAgregarBernalo={agregarBernalo}
             />
@@ -1440,6 +1712,7 @@ function EditorPax({
   pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
   edadInfanteMax, edadNinoMax, onAgregar, onAgregarBernalo, btnLabel = "Agregar al carrito", moneda = "COP",
   modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [],
+  preseleccionBernalo = null,
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -1483,25 +1756,56 @@ function EditorPax({
   // contra la ventana del paquete); una = se autoselecciona; varias = la UI
   // exige elegir explícitamente. Nunca se "toma la primera" en silencio.
   salidas?: SalidaAereaBernalo[];
+  // Hallazgo confirmado (auditoría independiente): PREFILL de una oferta que
+  // el servidor ya CONFIRMÓ disponible en modo búsqueda — categoría,
+  // alimentación, fechas y la ocupación (habitación↔edades) exactas que
+  // pasaron `computarReservaBernalo`. Solo inicializa el estado del
+  // formulario (useState perezoso, una sola vez — el componente se remonta
+  // por `key={paqueteId}` en el llamador si la oferta cambia); NUNCA marca
+  // nada como "ya confirmado": `resultadoCotizacion` sigue naciendo `null` y
+  // cualquier cambio del usuario lo resetea (mismo mecanismo que ya existía),
+  // así que el modal SIEMPRE exige volver a cotizar antes de agregar al
+  // carrito. `null`/ausente = comportamiento EXACTO de siempre (exploración).
+  preseleccionBernalo?: OfertaUnidadConfirmada | null;
 }) {
   const idBase = useId();
   const esBernalo = modeloTarifario === "unidad";
-  const [habs, setHabs] = useState<Record<string, number>>({});
+  // Prefill de modo búsqueda (ver el prop arriba): SOLO inicializa el
+  // estado — un `useState` perezoso corre UNA vez, así que esto nunca
+  // "reaplica" el prefill si el usuario lo cambia después. `habs` cuenta
+  // habitaciones por tipo agrupando `preseleccionBernalo.ocupacion` (mismos
+  // ids posicionales `${acom}-${n}` que ya usa `construirHabitacionesUI`,
+  // así que no hay ninguna reconstrucción ambigua).
+  const [habs, setHabs] = useState<Record<string, number>>(() => {
+    if (!preseleccionBernalo) return {};
+    const out: Record<string, number> = {};
+    for (const h of preseleccionBernalo.ocupacion) out[h.acom] = (out[h.acom] ?? 0) + 1;
+    return out;
+  });
   const [cantidadMenores, setCantidadMenoresState] = useState(0);
   const [edadesTxt, setEdadesTxt] = useState<string[]>([]);
   // Fase 3D — estado canónico SOLO para Bernalo: una entrada por habitación
   // FÍSICA (id estable), nunca un conteo aparte (regla 14: single source —
   // ver `lib/reservar/ocupacionPorHabitacion.ts`).
-  const [edadesPorHabitacion, setEdadesPorHabitacion] = useState<EdadesPorHabitacion>({});
+  const [edadesPorHabitacion, setEdadesPorHabitacion] = useState<EdadesPorHabitacion>(() => {
+    if (!preseleccionBernalo) return {};
+    const out: EdadesPorHabitacion = {};
+    for (const h of preseleccionBernalo.ocupacion) out[h.id] = h.edadesMenores.map(String);
+    return out;
+  });
   // Fase 3E — clasificación y fechas REALES elegidas para esta cotización
   // (nunca placeholders): categoría/alimentación salen de las opciones
   // realmente vinculadas al hotel/paquete (`categoriasDisponibles`/
   // `alimentacionesDisponibles`); las fechas las escribe el usuario, dentro
-  // de la ventana que el servidor vuelve a validar.
-  const [categoriaSel, setCategoriaSel] = useState("");
-  const [alimentacionSel, setAlimentacionSel] = useState("");
-  const [fechaIdaBernalo, setFechaIdaBernalo] = useState("");
-  const [fechaRegresoBernalo, setFechaRegresoBernalo] = useState("");
+  // de la ventana que el servidor vuelve a validar. Con
+  // `preseleccionBernalo` (modo búsqueda) nacen con la combinación/fechas ya
+  // confirmadas — el usuario puede cambiarlas igual, y cualquier cambio
+  // limpia `resultadoCotizacion` (ver los `onChange` más abajo), así que el
+  // prefill nunca sustituye la validación real al cotizar.
+  const [categoriaSel, setCategoriaSel] = useState(preseleccionBernalo?.categoria ?? "");
+  const [alimentacionSel, setAlimentacionSel] = useState(preseleccionBernalo?.alimentacion ?? "");
+  const [fechaIdaBernalo, setFechaIdaBernalo] = useState(preseleccionBernalo?.fechaIda ?? "");
+  const [fechaRegresoBernalo, setFechaRegresoBernalo] = useState(preseleccionBernalo?.fechaRegreso ?? "");
   // A1: identidad de la salida elegida cuando hay MÁS de una — clave
   // `"tipo:id"`; vacío hasta que el usuario elige explícitamente (nunca se
   // autocompleta con la primera).
