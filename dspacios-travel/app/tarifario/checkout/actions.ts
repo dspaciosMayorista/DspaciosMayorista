@@ -23,6 +23,7 @@ import type { HabitacionOcupacionEntrada, HabitacionOcupacionValidada } from "@/
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import { resumirServiciosContrato, type CategoriaServicio, type ServicioEfectivo } from "@/lib/reservar/serviciosPaquete";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
+import { calcularResidualServiciosIncluidosPorGrupo } from "@/lib/reservar/desglosePersonaCotizacion";
 import type { ComposicionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type { Json } from "@/types/database";
 
@@ -603,7 +604,7 @@ async function crearCotizacionCarrito(input: {
     };
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
-    const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas, serviciosIncluidos } = comp.data;
+    const { meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas, serviciosIncluidos } = comp.data;
     incluidosSnap.push(...serviciosIncluidos.map((s) => ({ ...s, paqueteId: it.paqueteId })));
 
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
@@ -663,12 +664,81 @@ async function crearCotizacionCarrito(input: {
       }
     }
 
-    iIdx++;
-    itemsSnap.push({
-      id: iIdx,
-      descripcion: `${meta.hotel_nombre ?? it.hotelNombre}${meta.destino_nombre ?? it.destino ? ` — ${meta.destino_nombre ?? it.destino}` : ""} · ${it.categoria} / ${it.regimen} · ${partes.join(", ")}`,
-      adultos: 1, ninos: 0, tarifa_adulto: precioVenta, tarifa_nino: 0,
+    // Regla (corrección de este hallazgo): la tabla de valores del documento
+    // debe reflejar la MISMA composición por acomodación/menor que ya usa el
+    // contrato ya convertido (`reservar/actions.ts`, líneas 1055-1067) — nunca
+    // una única fila "adultos: 1" con `tarifa_adulto: precioVenta`, que
+    // convertía todo el precio del hotel en la tarifa de una sola persona
+    // (una doble de 2 adultos se veía como "Adultos 1 · $590.000" en vez de
+    // "Adultos 2 · $295.000"). Cada fila sale de `comp.data`
+    // (`lineasHab`/`pvpPorAcom`/`numNinos`/`numNinos2`/`numInfantes`) — nunca
+    // de una cantidad u precio mandado por el navegador.
+    const hotelEtiqueta = `${meta.hotel_nombre ?? it.hotelNombre}${meta.destino_nombre ?? it.destino ? ` — ${meta.destino_nombre ?? it.destino}` : ""}`;
+    for (const l of lineasHab) {
+      iIdx++;
+      itemsSnap.push({
+        id: iIdx,
+        descripcion: `${hotelEtiqueta} · ${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${it.categoria} / ${it.regimen}`,
+        adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0,
+      });
+    }
+    if (numNinos > 0 && pvpPorAcom["nino"] != null) {
+      iIdx++;
+      itemsSnap.push({
+        id: iIdx,
+        descripcion: `${hotelEtiqueta} · Niño 1 · ${it.categoria} / ${it.regimen}`,
+        adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino"],
+      });
+    }
+    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) {
+      iIdx++;
+      itemsSnap.push({
+        id: iIdx,
+        descripcion: `${hotelEtiqueta} · Niño 2 · ${it.categoria} / ${it.regimen}`,
+        adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["nino2"],
+      });
+    }
+    if (numInfantes > 0 && pvpPorAcom["infante"] != null) {
+      iIdx++;
+      itemsSnap.push({
+        id: iIdx,
+        descripcion: `${hotelEtiqueta} · Infante · ${it.categoria} / ${it.regimen}`,
+        adultos: 0, ninos: numInfantes, tarifa_adulto: 0, tarifa_nino: pvpPorAcom["infante"],
+      });
+    }
+
+    // Hallazgo confirmado: las filas de arriba (habitaciones + Niño 1/2 +
+    // Infante) NO agotan necesariamente `precioVenta` — un servicio INCLUIDO
+    // del paquete con cobro por GRUPO (`cargoGrupoIncluido`, ver
+    // lib/reservar/computo.ts) se suma a `precioVenta` sin pasar por
+    // `lineasHab`/`pvpPorAcom`, porque su costo depende del tamaño real del
+    // grupo. `cargoMascota`/`serviciosItems` (add-ons) son las OTRAS dos
+    // fuentes que `computo.ts` puede sumar a `precioVenta` fuera de
+    // habitaciones/menores — pero `reserva` (arriba) nunca envía
+    // `mascotas`/`servicios`, así que ambas quedan estructuralmente en 0/[]
+    // en este flujo público: la única fuente real de un residual positivo acá
+    // es el servicio incluido por grupo. Nunca se reparte el residual sobre
+    // `tarifa_adulto` ni se guarda en silencio una cotización cuyas filas
+    // visibles sumen distinto de `precioVenta` (regla fail-closed, sin
+    // tolerancias).
+    const rResidual = calcularResidualServiciosIncluidosPorGrupo({
+      precioVenta,
+      lineasHab,
+      numNinos, tarifaNino: pvpPorAcom["nino"],
+      numNinos2, tarifaNino2: pvpPorAcom["nino2"],
+      numInfantes, tarifaInfante: pvpPorAcom["infante"],
     });
+    if (!rResidual.ok) return { ok: false, error: `${it.hotelNombre}: ${rResidual.error}` };
+    if (rResidual.residual > 0) {
+      iIdx++;
+      itemsSnap.push({
+        id: iIdx,
+        descripcion: `${hotelEtiqueta} · Servicios incluidos por grupo`,
+        adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0,
+        modo_precio: "total", valor_total: rResidual.residual,
+      });
+    }
+
     total += precioVenta;
     itemsOk.push({ ...it, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta });
   }

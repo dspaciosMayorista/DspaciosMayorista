@@ -371,6 +371,120 @@ describe("app/tarifario/checkout/actions.ts — la cotización persiste detalle 
   });
 });
 
+describe("app/tarifario/checkout/actions.ts — hallazgo confirmado: la rama PERSONA de la cotización mostraba 'Adultos 1' con tarifa_adulto: precioVenta", () => {
+  const cuerpoFn = cuerpoFuncion(fuenteCheckoutActions, "async function crearCotizacionCarrito(input: {");
+  const idxRamaPersona = cuerpoFn.indexOf("const reserva: ReservaInput = {");
+  const idxFinRamaPersona = cuerpoFn.indexOf("for (const t of input.tours)");
+  const ramaPersona = cuerpoFn.slice(idxRamaPersona, idxFinRamaPersona);
+  const ramaPersonaSinComentarios = sinComentarios(ramaPersona);
+
+  test('ya NO existe una fila con adultos: 1 y tarifa_adulto: precioVenta (el bug que convertía todo el precio del hotel en la tarifa de una sola persona)', () => {
+    assert.doesNotMatch(ramaPersonaSinComentarios, /adultos: 1, ninos: 0, tarifa_adulto: precioVenta,/);
+  });
+
+  test("destructura pvpPorAcom de comp.data — necesario para las filas de Niño 1/Niño 2/Infante", () => {
+    assert.match(ramaPersona, /const \{ meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes,/);
+  });
+
+  test("las filas de habitación recorren lineasHab y usan adultos: l.pax / tarifa_adulto: l.pvp — nunca un total fijo", () => {
+    const idxFor = ramaPersona.indexOf("for (const l of lineasHab) {");
+    assert.notEqual(idxFor, -1);
+    const bloque = ramaPersona.slice(idxFor, idxFor + 350);
+    assert.match(bloque, /adultos: l\.pax, ninos: 0, tarifa_adulto: l\.pvp, tarifa_nino: 0,/);
+  });
+
+  test("Niño 1 usa ninos: numNinos y tarifa_nino: pvpPorAcom[\"nino\"] — nunca un valor inventado", () => {
+    const idxNino1 = ramaPersona.indexOf('numNinos > 0 && pvpPorAcom["nino"] != null');
+    assert.notEqual(idxNino1, -1);
+    const bloque = ramaPersona.slice(idxNino1, idxNino1 + 300);
+    assert.match(bloque, /adultos: 0, ninos: numNinos, tarifa_adulto: 0, tarifa_nino: pvpPorAcom\["nino"\],/);
+  });
+
+  test("Niño 2 usa ninos: numNinos2 y tarifa_nino: pvpPorAcom[\"nino2\"]", () => {
+    const idxNino2 = ramaPersona.indexOf('numNinos2 > 0 && pvpPorAcom["nino2"] != null');
+    assert.notEqual(idxNino2, -1);
+    const bloque = ramaPersona.slice(idxNino2, idxNino2 + 300);
+    assert.match(bloque, /adultos: 0, ninos: numNinos2, tarifa_adulto: 0, tarifa_nino: pvpPorAcom\["nino2"\],/);
+  });
+
+  test("Infante usa ninos: numInfantes y tarifa_nino: pvpPorAcom[\"infante\"]", () => {
+    const idxInf = ramaPersona.indexOf('numInfantes > 0 && pvpPorAcom["infante"] != null');
+    assert.notEqual(idxInf, -1);
+    const bloque = ramaPersona.slice(idxInf, idxInf + 300);
+    assert.match(bloque, /adultos: 0, ninos: numInfantes, tarifa_adulto: 0, tarifa_nino: pvpPorAcom\["infante"\],/);
+  });
+
+  test("cada fila nueva incrementa iIdx ANTES de usarlo como id (id único, nunca un id fijo/repetido como 50/51/52)", () => {
+    const usosIIdxPlusPlus = [...ramaPersona.matchAll(/iIdx\+\+;\s*\n\s*itemsSnap\.push\(\{\s*\n\s*id: iIdx,/g)];
+    // 5 sitios: lineasHab (dentro del for), Niño 1, Niño 2, Infante, residual de servicios por grupo.
+    assert.equal(usosIIdxPlusPlus.length, 5, "las 5 ramas (habitación/Niño 1/Niño 2/Infante/residual) deben incrementar iIdx antes de usarlo como id");
+    assert.doesNotMatch(ramaPersonaSinComentarios, /id: 50,|id: 51,|id: 52,/);
+  });
+
+  test("las descripciones identifican hotel, destino, acomodación, categoría y régimen", () => {
+    const idxEtiqueta = ramaPersona.indexOf("const hotelEtiqueta = ");
+    assert.notEqual(idxEtiqueta, -1);
+    const bloqueEtiqueta = ramaPersona.slice(idxEtiqueta, idxEtiqueta + 200);
+    assert.match(bloqueEtiqueta, /meta\.hotel_nombre \?\? it\.hotelNombre/);
+    assert.match(bloqueEtiqueta, /meta\.destino_nombre \?\? it\.destino/);
+    const idxForDesc = ramaPersona.indexOf("for (const l of lineasHab) {");
+    const bloqueDesc = ramaPersona.slice(idxForDesc, idxForDesc + 350);
+    assert.match(bloqueDesc, /hotelEtiqueta.*ACOM_ROOM_LABEL\[l\.acom\].*it\.categoria\} \/ \$\{it\.regimen\}/);
+  });
+
+  test('hallazgo confirmado: llama a calcularResidualServiciosIncluidosPorGrupo (helper PURO, probado numéricamente en pruebas/desglosePersonaCotizacion.test.ts) — ya no afirma por texto que las 4 filas per-cápita agotan precioVenta', () => {
+    assert.match(codigoCheckoutActions, /import \{ calcularResidualServiciosIncluidosPorGrupo \} from "@\/lib\/reservar\/desglosePersonaCotizacion";/);
+    const idxLlamada = ramaPersona.indexOf("calcularResidualServiciosIncluidosPorGrupo({");
+    assert.notEqual(idxLlamada, -1);
+    const bloque = ramaPersona.slice(idxLlamada, idxLlamada + 300);
+    assert.match(bloque, /precioVenta,/);
+    assert.match(bloque, /lineasHab,/);
+    assert.match(bloque, /numNinos, tarifaNino: pvpPorAcom\["nino"\],/);
+    assert.match(bloque, /numNinos2, tarifaNino2: pvpPorAcom\["nino2"\],/);
+    assert.match(bloque, /numInfantes, tarifaInfante: pvpPorAcom\["infante"\],/);
+  });
+
+  test('un residual NEGATIVO (helper ok:false) corta la cotización con error — nunca continúa como si el residual fuera 0', () => {
+    const idxLlamada = ramaPersona.indexOf("const rResidual = calcularResidualServiciosIncluidosPorGrupo(");
+    assert.notEqual(idxLlamada, -1);
+    const idxCheck = ramaPersona.indexOf("if (!rResidual.ok)", idxLlamada);
+    assert.notEqual(idxCheck, -1);
+    const bloque = ramaPersona.slice(idxCheck, idxCheck + 120);
+    assert.match(bloque, /return \{ ok: false, error:/);
+  });
+
+  test('un residual POSITIVO se representa como línea AGREGADA honesta ("Servicios incluidos por grupo"), modo_precio: "total" — nunca repartido en tarifa_adulto/tarifa_nino', () => {
+    const idxIf = ramaPersona.indexOf("if (rResidual.residual > 0) {");
+    assert.notEqual(idxIf, -1);
+    const bloque = ramaPersona.slice(idxIf, idxIf + 350);
+    assert.match(bloque, /Servicios incluidos por grupo/);
+    assert.match(bloque, /modo_precio: "total", valor_total: rResidual\.residual,/);
+    assert.match(bloque, /adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0,/);
+  });
+
+  test('la línea de residual también incrementa iIdx antes de usarlo como id (id único, no fijo)', () => {
+    const idxIf = ramaPersona.indexOf("if (rResidual.residual > 0) {");
+    const bloque = ramaPersona.slice(idxIf, idxIf + 200);
+    assert.match(bloque, /iIdx\+\+;\s*\n\s*itemsSnap\.push\(\{\s*\n\s*id: iIdx,/);
+  });
+
+  test("no reparte el residual sobre tarifa_adulto/tarifa_nino de ninguna de las 4 filas per-cápita (esas 4 siguen usando SOLO l.pvp/pvpPorAcom, nunca +residual)", () => {
+    assert.doesNotMatch(sinComentarios(ramaPersona), /tarifa_adulto: l\.pvp \+|tarifa_nino: pvpPorAcom\[[^\]]+\] \+/);
+  });
+
+  test("no lee cantidades/precios crudos del navegador (it.pax/it.precio/it.ninos) para armar las filas — todo sale de comp.data", () => {
+    const idxInicio = ramaPersona.indexOf("const hotelEtiqueta = ");
+    const idxFin = ramaPersona.indexOf("total += precioVenta;");
+    const bloque = ramaPersona.slice(idxInicio, idxFin);
+    assert.doesNotMatch(bloque, /it\.pax\b|it\.precio\b|it\.ninos\b|it\.ninos2\b|it\.infantes\b/);
+  });
+
+  test("regla 10: la conversión a contrato (convertirCotizacionCarrito) y el cálculo de comp/precioVenta no se tocan — este archivo solo cambia itemsSnap", () => {
+    assert.doesNotMatch(sinComentarios(fuenteCheckoutActions), /function convertirCotizacionCarrito/);
+    assert.match(codigoCheckoutActions, /const comp = await computarReserva\(sb, reserva\);/);
+  });
+});
+
 describe("app/cotizacion/[id]/page.tsx — pasa habitacionesBernalo al documento previo (mismo detalle por habitación que el contrato ya convertido)", () => {
   const fuentePage = leer("app/cotizacion/[id]/page.tsx");
 
