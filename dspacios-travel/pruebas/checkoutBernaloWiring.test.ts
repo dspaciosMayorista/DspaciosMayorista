@@ -389,6 +389,47 @@ describe("app/cotizacion/[id]/page.tsx — pasa habitacionesBernalo al documento
   });
 });
 
+describe("app/cot/[token]/page.tsx — hallazgo confirmado: el enlace público no cableaba habitacionesBernalo/composicionBernalo (solo la ruta autenticada los tenía)", () => {
+  const fuentePageToken = leer("app/cot/[token]/page.tsx");
+  const codigoPageToken = sinComentarios(fuentePageToken);
+
+  test("importa HabitacionBernaloDocumento y ComposicionBernaloDocumento desde @/lib/reservar/alojamientoBernaloDocumento", () => {
+    assert.match(
+      codigoPageToken,
+      /import type \{ ComposicionBernaloDocumento, HabitacionBernaloDocumento \} from "@\/lib\/reservar\/alojamientoBernaloDocumento";/
+    );
+  });
+
+  test("el tipo Detalle declara ambos campos como opcionales — mismo shape que app/cotizacion/[id]/page.tsx", () => {
+    const tipo = fuentePageToken.slice(fuentePageToken.indexOf("type Detalle = {"), fuentePageToken.indexOf("type Detalle = {") + 700);
+    assert.match(tipo, /habitacionesBernalo\?: HabitacionBernaloDocumento\[\];/);
+    assert.match(tipo, /composicionBernalo\?: ComposicionBernaloDocumento\[\];/);
+  });
+
+  test("<ContratoDocumento> recibe habitacionesBernalo={d.habitacionesBernalo ?? []} y composicionBernalo={d.composicionBernalo ?? []}", () => {
+    const idxContrato = fuentePageToken.indexOf("<ContratoDocumento");
+    assert.notEqual(idxContrato, -1);
+    const idxFin = fuentePageToken.indexOf("/>", idxContrato);
+    const bloque = fuentePageToken.slice(idxContrato, idxFin === -1 ? idxContrato + 600 : idxFin);
+    assert.match(bloque, /habitacionesBernalo=\{d\.habitacionesBernalo \?\? \[\]\}/);
+    assert.match(bloque, /composicionBernalo=\{d\.composicionBernalo \?\? \[\]\}/);
+  });
+
+  test("la autorización sigue siendo EXCLUSIVAMENTE por share_token — el fix no introdujo ni tocó ningún .eq(\"id\", ...) ni un segundo query de autorización", () => {
+    assert.match(codigoPageToken, /\.eq\("share_token", token\)/);
+    assert.doesNotMatch(codigoPageToken, /\.eq\("id",/);
+    // Solo debe existir UNA consulta a `cotizaciones` en generateMetadata y
+    // otra en el componente — ambas por share_token, ninguna otra vía de acceso.
+    const usosEqShareToken = [...codigoPageToken.matchAll(/\.eq\("share_token", token\)/g)];
+    assert.equal(usosEqShareToken.length, 2, 'debe haber exactamente 2 usos de .eq("share_token", token): generateMetadata y el componente');
+  });
+
+  test("no se tocó createAdminClient() ni la selección de columnas de la consulta — el fix es solo tipos + props, no seguridad/consulta", () => {
+    assert.match(codigoPageToken, /const sb = createAdminClient\(\);/);
+    assert.match(codigoPageToken, /\.select\("codigo, detalle, vigencia_hasta"\)/);
+  });
+});
+
 describe("lib/reservar/computoReservaBernalo.ts — cierre #2: hotelDestino autoritativo (Fase 3F-4A)", () => {
   const fuenteComputoBernalo = leer("lib/reservar/computoReservaBernalo.ts");
   const codigoComputoBernalo = sinComentarios(fuenteComputoBernalo);
