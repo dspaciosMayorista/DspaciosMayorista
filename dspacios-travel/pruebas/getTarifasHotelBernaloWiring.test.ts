@@ -256,28 +256,26 @@ describe("setHotelFiltros — modelo UNIDAD: valida COMBINACIONES reales, no cat
     assert.match(ramaUnidad, /if \(eFilas\) return \{ ok: false, error: eFilas\.message \};/);
   });
 
-  test("construye un Set de PARES publicados (categoria+alimentacion juntos), no dos Sets independientes", () => {
-    const idxPares = ramaUnidad.indexOf("const paresPublicados = new Set(");
+  test("delega en el helper PURO compartido (lib/calc/paresPublicadosUnidad.ts) — construye el Set de pares y valida el cartesiano completo con la MISMA función que usan datosBernalo.ts/generarTarifario, no dos Sets independientes ni una copia local", () => {
+    assert.match(
+      codigoActions,
+      /import \{ construirSetParesPublicados, todosLosParesConfiguradosPublicados, primerParConfiguradoSinPublicar \} from "@\/lib\/calc\/paresPublicadosUnidad";/
+    );
+    const idxPares = ramaUnidad.indexOf("const paresPublicados = construirSetParesPublicados(filas ?? []);");
     assert.notEqual(idxPares, -1);
-    const bloque = ramaUnidad.slice(idxPares, idxPares + 300);
-    assert.match(bloque, /JSON\.stringify\(\[f\.categoria, f\.alimentacion\]\)/);
+    assert.match(ramaUnidad, /if \(!todosLosParesConfiguradosPublicados\(categorias, regimenes, paresPublicados\)\) \{/);
     assert.doesNotMatch(sinComentarios(ramaUnidad), /categoriasPublicadas|alimentacionesPublicadas/, "no debe quedar el criterio viejo de dos Sets independientes");
+    assert.doesNotMatch(sinComentarios(ramaUnidad), /for \(const c of categorias\) \{\s*\n\s*for \(const r of regimenes\)/, "no debe reimplementar el doble for anidado inline — eso ya lo hace el helper");
   });
 
-  test("verifica TODO el producto cartesiano categorias × regimenes contra los pares publicados (doble for anidado)", () => {
-    const idxDobleFor = ramaUnidad.indexOf("for (const c of categorias) {");
-    assert.notEqual(idxDobleFor, -1);
-    const bloque = ramaUnidad.slice(idxDobleFor, idxDobleFor + 300);
-    assert.match(bloque, /for \(const r of regimenes\) \{/);
-    assert.match(bloque, /if \(!paresPublicados\.has\(JSON\.stringify\(\[c, r\]\)\)\) \{/);
-  });
-
-  test('el mensaje de error de una combinación faltante identifica AMBOS valores (categoría y alimentación)', () => {
-    const idxErr = ramaUnidad.indexOf("No hay ninguna tarifa publicada para la combinación");
+  test('el mensaje de error de una combinación faltante identifica AMBOS valores (categoría y alimentación), resueltos por primerParConfiguradoSinPublicar', () => {
+    const idxFaltante = ramaUnidad.indexOf("const faltante = primerParConfiguradoSinPublicar(categorias, regimenes, paresPublicados);");
+    assert.notEqual(idxFaltante, -1);
+    const idxErr = ramaUnidad.indexOf("No hay ninguna tarifa publicada para la combinación", idxFaltante);
     assert.notEqual(idxErr, -1);
-    const bloque = ramaUnidad.slice(idxErr - 20, idxErr + 150);
-    assert.match(bloque, /\$\{c\}/);
-    assert.match(bloque, /\$\{r\}/);
+    const bloque = ramaUnidad.slice(idxErr - 20, idxErr + 200);
+    assert.match(bloque, /\$\{faltante\.categoria\}/);
+    assert.match(bloque, /\$\{faltante\.alimentacion\}/);
   });
 
   test("persiste arreglos EXPLÍCITOS (nunca null) cuando el hotel es unidad, y solo tras pasar la validación de combinaciones", () => {
@@ -286,7 +284,7 @@ describe("setHotelFiltros — modelo UNIDAD: valida COMBINACIONES reales, no cat
     const bloqueUpsert = ramaUnidad.slice(idxUpsert, idxUpsert + 200);
     assert.match(bloqueUpsert, /hotel_id: hotelId, categorias, regimenes \},/);
     assert.doesNotMatch(bloqueUpsert, /categorias\.length \? categorias : null/);
-    const idxDobleFor = ramaUnidad.indexOf("for (const c of categorias) {");
+    const idxDobleFor = ramaUnidad.indexOf("if (!todosLosParesConfiguradosPublicados(categorias, regimenes, paresPublicados)) {");
     assert.ok(idxDobleFor < idxUpsert, "la validación de combinaciones debe ejecutarse ANTES del upsert");
   });
 });

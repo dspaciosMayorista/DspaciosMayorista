@@ -171,8 +171,12 @@ describe("VistaBooking.tsx — 'Ver opciones' dispara el detalle bajo demanda co
   });
 
   test("el botón 'Ver opciones' llama abrirHotel (no setAbierto directo, que saltaría el detalle)", () => {
-    assert.match(vistaBooking, /onClick=\{\(\) => abrirHotel\(h\)\}/);
-    assert.doesNotMatch(vistaBooking, /onClick=\{\(\) => setAbierto\(h\)\}/, "el click de la tarjeta debe pasar por abrirHotel, no llamar setAbierto directo");
+    // Vista Booking unificada: la tarjeta persona vive dentro de
+    // `tarjetas.map((t) => ...)` y abre con `abrirHotel(t.card)` (antes
+    // `abrirHotel(h)`, cuando `hoteles.map((h) => ...)` era la grilla
+    // directa) — mismo comportamiento, nueva identidad de variable.
+    assert.match(vistaBooking, /onClick=\{\(\) => abrirHotel\(t\.card\)\}/);
+    assert.doesNotMatch(vistaBooking, /onClick=\{\(\) => setAbierto\(/, "el click de la tarjeta debe pasar por abrirHotel, no llamar setAbierto directo");
   });
 
   test("carrera al abrir dos hoteles: la respuesta de un hotel viejo se descarta si claveAbiertaRef ya cambió", () => {

@@ -303,6 +303,7 @@ export function TarifarioPublic({
   descripcionPorPaquete = {},
   filasAddon = [],
   hotelesBernalo = [],
+  hotelIdsUnidadAutoritativos = [],
 }: {
   // Carga inicial (Tier 1) — resumen, SIN expansión sintética (ver
   // lib/tarifario/resumen.ts). `FilaTarifario` (matriz completa por
@@ -326,6 +327,15 @@ export function TarifarioPublic({
   filasAddon?: FilaResumen[];
   // Fase 3E Bernalo — descubrimiento PARALELO, ver `lib/tarifario/datosBernalo.ts`.
   hotelesBernalo?: HotelBernaloDescubierto[];
+  // Hallazgo confirmado (validación final): identidad AUTORITATIVA de "este
+  // hotel es modelo unidad ahora mismo" (`lib/tarifario/datosBernalo.ts`,
+  // `hotelIdsUnidadAutoritativos`) — a diferencia de `hotelesBernalo`, NUNCA
+  // se filtra por acomodación/categoría/régimen/texto antes de llegar a
+  // VistaBooking (ver más abajo, se pasa TAL CUAL, sin pasar por
+  // `hotelesBernaloFiltrados` ni por el gate de `fAcom`). Solo sirve para
+  // excluir tarjetas persona obsoletas — nunca decide qué tarjeta unidad
+  // mostrar.
+  hotelIdsUnidadAutoritativos?: number[];
 }) {
   const [vista, setVista] = useState<"tabla" | "booking" | "programas">("booking");
   const [q, setQ] = useState("");
@@ -333,19 +343,51 @@ export function TarifarioPublic({
   const [fReg, setFReg] = useState("");
   const [fAcom, setFAcom] = useState("");
 
-  // Opciones únicas para los selects (de toda la base, ordenadas).
+  // Opciones únicas para los selects (de toda la base, ordenadas). Incluyen
+  // las categorías/alimentaciones de los hoteles por unidad (Bernalo) —
+  // para el usuario es el mismo filtro de "Categoría"/"Alimentación" sin
+  // importar cómo se calcula la tarifa de cada hotel.
   const cats = useMemo(
-    () => [...new Set(filas.map((f) => f.categoria).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b)),
-    [filas]
+    () =>
+      [...new Set([...filas.map((f) => f.categoria), ...hotelesBernalo.flatMap((h) => h.categorias)].filter((x): x is string => !!x))].sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [filas, hotelesBernalo]
   );
   const regs = useMemo(
-    () => [...new Set(filas.map((f) => f.regimen).filter((x): x is string => !!x))].sort((a, b) => a.localeCompare(b)),
-    [filas]
+    () =>
+      [...new Set([...filas.map((f) => f.regimen), ...hotelesBernalo.flatMap((h) => h.regimenes)].filter((x): x is string => !!x))].sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [filas, hotelesBernalo]
   );
 
   const filasFiltradas = useMemo(
     () => filas.filter((f) => coincideFiltro(f, q.trim(), fCat, fReg)),
     [filas, q, fCat, fReg]
+  );
+  // Mismo filtro de texto/categoría/alimentación que `filasFiltradas`, pero
+  // sobre los hoteles por unidad — para el cliente son el mismo buscador, no
+  // uno aparte. P2: la búsqueda por texto compara nombre DE HOTEL Y destino/
+  // ciudad (mismo criterio que `coincideFiltro`, que también compara contra
+  // `paquete_nombre` para persona — el destino es el equivalente funcional
+  // de "dónde queda esto" cuando no hay nombre de paquete que enseñar). El
+  // filtro de acomodación (`fAcom`) no aplica: esas acomodaciones (sencilla/
+  // doble/triple) son per-cápita y un hotel por unidad cobra por pareja/
+  // habitación/apartamento, así que activarlo excluye estos hoteles del
+  // resultado (ver VistaBooking, donde se hace el cruce).
+  const hotelesBernaloFiltrados = useMemo(
+    () =>
+      hotelesBernalo.filter((h) => {
+        if (q.trim()) {
+          const hay = `${h.hotelNombre} ${h.destinoNombre ?? ""}`.toLowerCase();
+          if (!hay.includes(q.trim().toLowerCase())) return false;
+        }
+        if (fCat && !h.categorias.includes(fCat)) return false;
+        if (fReg && !h.regimenes.includes(fReg)) return false;
+        return true;
+      }),
+    [hotelesBernalo, q, fCat, fReg]
   );
   const hayFiltro = !!(q.trim() || fCat || fReg || fAcom);
 
@@ -418,7 +460,7 @@ export function TarifarioPublic({
       {vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} />
+        <VistaBooking filas={filasFiltradas} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} />
       ) : (
         <>
           {/* Tabs de módulos */}
