@@ -38,6 +38,14 @@ const fuenteBuscador = readFileSync(join(raiz, "app/tarifario/BuscadorBooking.ts
 const fuenteVista = readFileSync(join(raiz, "app/tarifario/VistaBooking.tsx"), "utf8");
 const fuenteAction = readFileSync(join(raiz, "app/tarifario/busquedaUnidadActions.ts"), "utf8");
 const fuenteDatos = readFileSync(join(raiz, "lib/tarifario/datosBernalo.ts"), "utf8");
+// La decisión por hotel (antes `evaluarHotel`, inline en la Server Action)
+// se extrajo a un módulo PURO e inyectable — cierre del hallazgo "Hotel
+// Prueba Odair no aparece" — para poder probarla con comportamiento REAL
+// (`pruebas/evaluarDisponibilidadUnidad.test.ts`), no solo por inspección de
+// fuente. Este archivo sigue verificando el CABLEADO (qué usa qué, en qué
+// orden, qué expone la Server Action) — la lógica de decisión en sí ya no se
+// verifica acá dos veces.
+const fuenteEval = readFileSync(join(raiz, "lib/tarifario/evaluarDisponibilidadUnidad.ts"), "utf8");
 
 function sinComentarios(fuente: string): string {
   return fuente
@@ -49,6 +57,7 @@ const codigoBuscador = sinComentarios(fuenteBuscador);
 const codigoVista = sinComentarios(fuenteVista);
 const codigoAction = sinComentarios(fuenteAction);
 const codigoDatos = sinComentarios(fuenteDatos);
+const codigoEval = sinComentarios(fuenteEval);
 
 // Extrae el cuerpo de una función balanceando llaves reales (mismo criterio
 // brace-depth-aware que `pruebas/ocupacionBernaloUIWiring.test.ts`).
@@ -77,7 +86,7 @@ function cuerpoFuncion(fuenteCompleta: string, ancla: string): string {
 
 const cuerpoBuscar = cuerpoFuncion(fuenteBuscador, "function buscar(overrideIda?");
 const cuerpoLimpiar = cuerpoFuncion(fuenteBuscador, "function limpiarResultados()");
-const cuerpoEvaluarHotel = cuerpoFuncion(codigoAction, "async function evaluarHotel(hotelId: number)");
+const cuerpoEvaluarHotel = cuerpoFuncion(codigoEval, "export async function evaluarDisponibilidadHotelUnidad(");
 const cuerpoTarjetas = cuerpoFuncion(codigoVista, "const tarjetas = useMemo<Tarjeta[]>(() => {");
 
 // ── 1) UNA SOLA LISTA DE RESULTADOS ───────────────────────────────────────
@@ -176,10 +185,10 @@ describe("Disponibilidad REAL: la lista de búsqueda no se completa con el catá
     assert.match(codigoVista, /badgeEsquina=\{enBusquedaPorcion \? \(/);
   });
 
-  test("un estado que el servidor NO pudo concluir no se anuncia: se cae de la lista", () => {
-    assert.match(codigoAction, /veredictos\.filter\(\(v\): v is DisponibilidadUnidadHotel => v !== null\)/);
-    assert.match(cuerpoEvaluarHotel, /if \(!fila\) return null;/, "sin fila maestra no se inventan umbrales de edad");
-    assert.doesNotMatch(codigoAction, /"desconocido"|"no_evaluado"|"error"/, "no existe un estado de disponibilidad para 'no concluido'");
+  test("un estado que el servidor NO pudo concluir no se anuncia: se cae de la lista (y ahora queda REGISTRADO como inconcluyente, no en silencio)", () => {
+    assert.match(codigoAction, /if \(v\.tipo === "veredicto"\) \{ disponibilidad\.push\(v\.valor\); continue; \}/);
+    assert.match(codigoAction, /incompleto = true;/);
+    assert.match(cuerpoEvaluarHotel, /if \(!fila\) return \{ tipo: "inconcluyente", hotelId, motivo: "hotel_sin_fila_maestra" \};/, "sin fila maestra no se inventan umbrales de edad");
   });
 
   test("fuera del modo búsqueda la exploración sigue funcionando normalmente", () => {
@@ -217,40 +226,42 @@ describe("Sin truncamiento (verificado por inspección de fuente, NO ejecutado c
     // El array de veredictos tiene una casilla por TODOS los hoteles
     // detectados (sin importar cuántos sean) y el pool escribe en la casilla
     // que le toca, sin recortar la lista de antemano.
-    assert.match(codigoAction, /new Array\(idsAevaluar\.length\)\.fill\(null\)/);
+    assert.match(codigoAction, /new Array<VeredictoHotelUnidad \| null>\(idsAevaluar\.length\)\.fill\(null\)/);
     assert.match(codigoAction, /if \(i >= idsAevaluar\.length\) return;/);
   });
 
-  test("el código no impone ningún tope de combinaciones por hotel (sin MAX_INTENTOS_POR_HOTEL/contador) — nunca se probó con 5 combinaciones reales, solo se verifica la ausencia del recorte en el texto fuente", () => {
-    assert.doesNotMatch(codigoAction, /MAX_INTENTOS_POR_HOTEL|maxIntentos/);
+  // La lógica de decisión POR HOTEL (combos, motivos, cortes tempranos) ya no
+  // se verifica acá por inspección de fuente: vive en
+  // `lib/tarifario/evaluarDisponibilidadUnidad.ts` y se prueba con
+  // comportamiento REAL en `pruebas/evaluarDisponibilidadUnidad.test.ts`
+  // (incluida la ausencia de `break`/`continue` prematuros — ver "dos
+  // combinaciones: la primera falla técnico, la segunda confirma"). Acá solo
+  // se verifica que la Server Action DELEGA en esa función en vez de
+  // reimplementarla, y que el módulo puro no tiene un tope explícito.
+  test("no existe un MAX_INTENTOS_POR_HOTEL/contador de combinaciones en el módulo de decisión, y la Server Action delega en él (no reimplementa la lógica)", () => {
+    assert.doesNotMatch(codigoEval, /MAX_INTENTOS_POR_HOTEL|maxIntentos/);
     // `combinacionesDe` emite la k-ésima combinación de CADA oferta antes de
     // pasar a la k+1: ninguna queda fuera del recorrido.
-    assert.match(codigoAction, /for \(let k = 0; k < maxPares; k\+\+\) \{/);
+    assert.match(codigoEval, /for \(let k = 0; k < maxPares; k\+\+\) \{/);
     assert.match(cuerpoEvaluarHotel, /const combos = combinacionesDe\(ofertas\);/);
     assert.match(cuerpoEvaluarHotel, /for \(const combo of combos\) \{/);
-    // Basta el PRIMER éxito para declararlo disponible — decisión acotada,
-    // no un recorte silencioso: la identidad EXACTA que funcionó se conserva
-    // (nunca se sigue evaluando un hotel ya resuelto para "llenar opciones").
-    assert.match(cuerpoEvaluarHotel, /if \(resultado\.ok\) \{/);
-    assert.match(cuerpoEvaluarHotel, /estado: "disponible",/);
-    assert.match(cuerpoEvaluarHotel, /oferta: \{/);
-    // …y ninguno de los dos cortes prematuros SILENCIOSOS existe: ni
-    // `break`/`continue` por contador, ni abandono del bucle por un fallo no
-    // concluyente (el `return` explícito de arriba es la única salida
-    // temprana, y está documentada, no oculta).
     assert.doesNotMatch(cuerpoEvaluarHotel, /\bbreak;|\bcontinue;/);
+    // La Server Action llama a la función real, con el `computarReservaBernalo`
+    // real inyectado — nunca copia su cuerpo.
+    assert.match(codigoAction, /import \{\s*\n?\s*evaluarDisponibilidadHotelUnidad,/);
+    assert.match(codigoAction, /computar: computarReservaBernalo,/);
+    assert.doesNotMatch(codigoAction, /async function evaluarHotel\(/, "no debe quedar una copia local de la función movida");
   });
 
-  test('"no evaluado" nunca se trata como "sin disponibilidad"', () => {
-    assert.match(codigoAction, /const MOTIVOS_SIN_DISPONIBILIDAD = new Set<string>\(\["fechas_fuera_de_ventana", "no_cotizable"\]\);/);
-    assert.match(cuerpoEvaluarHotel, /let motivoNoConcluyente = false;/);
-    assert.match(cuerpoEvaluarHotel, /if \(!MOTIVOS_SIN_DISPONIBILIDAD\.has\(resultado\.codigo\)\) motivoNoConcluyente = true;/);
-    // La afirmación sólo se hace tras AGOTAR las combinaciones, con al menos
-    // una evaluada y sin ningún motivo que el motor no pueda concluir.
-    assert.match(cuerpoEvaluarHotel, /if \(combos\.length > 0 && !motivoNoConcluyente\) return \{ hotelId, estado: "sin_disponibilidad" \};/);
+  test('"no evaluado" nunca se trata como "sin disponibilidad": el módulo de decisión distingue veredicto de inconcluyente (cobertura real en evaluarDisponibilidadUnidad.test.ts)', () => {
+    assert.match(codigoEval, /const MOTIVOS_SIN_DISPONIBILIDAD = new Set<string>\(\["fechas_fuera_de_ventana", "no_cotizable"\]\);/);
+    assert.match(codigoEval, /export type VeredictoHotelUnidad =/);
+    assert.match(codigoEval, /tipo: "inconcluyente"; hotelId: number; motivo: string/);
     // Un rechazo del reparto por CONFIGURACIÓN del hotel (no por la selección
-    // pedida) tampoco autoriza la afirmación.
-    assert.match(cuerpoEvaluarHotel, /return reparto\.tipo === "seleccion_invalida" \? \{ hotelId, estado: "sin_disponibilidad" \} : null;/);
+    // pedida) tampoco autoriza la afirmación — inconcluyente, no
+    // sin_disponibilidad.
+    assert.match(cuerpoEvaluarHotel, /if \(reparto\.tipo === "seleccion_invalida"\) \{/);
+    assert.match(cuerpoEvaluarHotel, /return \{ tipo: "inconcluyente", hotelId, motivo: `reparto_\$\{reparto\.tipo\}` \};/);
   });
 
   test("lo único acotado es la concurrencia, y no se exporta (un `export const` rompería el build de Next)", () => {
@@ -312,8 +323,11 @@ describe("BuscadorBooking — canal de búsqueda hacia VistaBooking (requisito A
     assert.doesNotMatch(codigoBuscador, /huellaBuscada === huellaActual/);
     // La única decisión de limpieza es `limpiarResultados()`, y la invoca CADA
     // control que cambia un criterio: los cuatro del formulario de cabecera...
+    // El de destino ahora es multilínea (también resuelve `destinoId` desde
+    // la opción elegida — ver el describe de identidad de destino), pero
+    // sigue terminando en `limpiarResultados();` como los demás.
+    assert.match(codigoBuscador, /const opcion = destinos\.find\(\(d\) => d\.nombre === nombre\);\s*\n\s*setDestino\(nombre\);\s*\n\s*setDestinoId\(opcion\?\.id \?\? null\);\s*\n\s*limpiarResultados\(\);/);
     for (const control of [
-      "onChange={(e) => { setDestino(e.target.value); limpiarResultados(); }}",
       "onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva);",
       "onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }}",
       "onChange={(e) => { limpiarResultados(); setAdultos(e.target.value); }}",
@@ -339,7 +353,7 @@ describe("BuscadorBooking — canal de búsqueda hacia VistaBooking (requisito A
     // El `<select>` se pinta siempre y su opción inicial no es elegible: no hay
     // forma de buscar "todos los destinos" desde la UI.
     assert.match(codigoBuscador, /<option value="" disabled>Selecciona un destino<\/option>/);
-    assert.match(codigoBuscador, /\{destinos\.map\(\(d\) => <option key=\{d\} value=\{d\}>\{d\}<\/option>\)\}/);
+    assert.match(codigoBuscador, /\{destinos\.map\(\(d\) => <option key=\{d\.nombre\} value=\{d\.nombre\}>\{d\.nombre\}<\/option>\)\}/);
     assert.doesNotMatch(codigoBuscador, /<option value="">Todos<\/option>/);
     assert.doesNotMatch(codigoBuscador, /destinos\.length > 0 && \(/);
     // Y aun con un body manipulado, el motor general rechaza el destino vacío
@@ -351,14 +365,21 @@ describe("BuscadorBooking — canal de búsqueda hacia VistaBooking (requisito A
     assert.ok(posDestino > -1 && posLlamaMotor > posDestino, "el rechazo del destino vacío debe ir ANTES de llamar al motor");
   });
 
-  test("la Server Action de unidad también falla cerrada con destino vacío o sólo espacios", () => {
+  test("la Server Action de unidad también falla cerrada con destino vacío o sólo espacios — salvo que un destinoId válido ya identifique el destino sin ambigüedad", () => {
     // `validarDestinoConsulta` acepta "" a propósito (otros flujos públicos lo
     // usan como "todos los destinos"), así que el rechazo vive en la acción.
-    assert.match(codigoAction, /if \(vDestino\.destino\.trim\(\) === ""\) \{/);
+    // Un `destinoId` válido también cuenta como destino elegido (identidad
+    // estable — ver `validarDestinoIdConsulta`).
+    assert.match(codigoAction, /if \(vDestino\.destino\.trim\(\) === "" && destinoId == null\) \{/);
     assert.match(codigoAction, /return \{ ok: false, error: "Selecciona un destino para buscar\." \};/);
-    const posGuarda = codigoAction.indexOf('if (vDestino.destino.trim() === "")');
-    const posDescubrimiento = codigoAction.indexOf("cargarHotelesBernaloDescubiertos({ destino: vDestino.destino })");
+    const posGuarda = codigoAction.indexOf('if (vDestino.destino.trim() === "" && destinoId == null)');
+    const posDescubrimiento = codigoAction.indexOf("cargarHotelesBernaloDescubiertos({ destino: vDestino.destino, destinoId })");
     assert.ok(posGuarda > -1 && posDescubrimiento > posGuarda, "el rechazo debe ir ANTES del descubrimiento (que sin destino barrenaría el catálogo)");
+  });
+
+  test("destinoId se valida como entero positivo — cualquier otra cosa (string, negativo, decimal) se descarta sin lanzar y cae al camino por nombre", () => {
+    assert.match(codigoAction, /function validarDestinoIdConsulta\(v: unknown\): number \| null \{/);
+    assert.match(codigoAction, /if \(typeof v !== "number" \|\| !Number\.isInteger\(v\) \|\| v <= 0\) return null;/);
   });
 
   test("una respuesta que llega DESPUÉS de que el usuario cambió los criterios no se sube (guarda contra la carrera, vía generacionBusquedaRef — ver el bloque de la carrera residual más abajo)", () => {
@@ -406,15 +427,28 @@ describe("BuscadorBooking — una sola llamada por búsqueda, nunca una por tarj
     assert.equal([...codigoBuscador.matchAll(/buscarHoteles\(\{/g)].length, 1);
   });
 
-  test("la disponibilidad es AUXILIAR: si la acción falla o rechaza, la búsqueda persona se muestra igual", () => {
-    assert.match(cuerpoBuscar, /\}\)\.catch\(\(\) => null\),/);
-    // Un rechazo de la acción auxiliar deja la lista de unidad VACÍA — nunca
-    // impide publicar las filas persona.
-    assert.match(cuerpoBuscar, /unidadRes\?\.ok\s*\n?\s*\? unidadRes\.disponibilidad\.filter/);
-    assert.match(cuerpoBuscar, /: \[\];/);
+  test("la disponibilidad es AUXILIAR: si la acción falla, rechaza o lanza, la búsqueda persona se muestra igual — nunca un `.catch(() => null)` que borre la distinción entre error y vacío", () => {
+    // Fallo estructural corregido: el `.catch(() => null)` original convertía
+    // CUALQUIER excepción en `null`, indistinguible de "no hay hoteles
+    // unidad" — ahora el catch produce un `ResultadoBusquedaUnidad`
+    // tipado (`ok: false`), nunca `null` a secas.
+    assert.doesNotMatch(codigoBuscador, /\.catch\(\(\) => null\)/);
+    assert.match(cuerpoBuscar, /\.catch\(\(e\): ResultadoBusquedaUnidad => \(\{/);
+    assert.match(cuerpoBuscar, /ok: false,/);
+    // `unidadRes` ya no puede ser `null` (el catch siempre resuelve a un
+    // `ResultadoBusquedaUnidad`), así que el consumo ya no necesita `?.`.
+    assert.match(cuerpoBuscar, /if \(unidadRes\.ok\) \{/);
+    assert.match(cuerpoBuscar, /unidad = unidadRes\.disponibilidad\.filter/);
+    // Un `ok:false` (o `incompleto:true`) deja un AVISO, nunca detiene la
+    // publicación de los resultados persona.
+    assert.match(cuerpoBuscar, /avisoUnidad = "No pudimos completar la búsqueda de alojamientos por unidad/);
+    assert.match(cuerpoBuscar, /if \(unidadRes\.incompleto\) \{/);
     // El error de la búsqueda persona sí corta (y sube `null`): son sus
-    // resultados los que no se pueden pintar.
+    // resultados los que no se pueden pintar — la unidad nunca bloquea esto.
     assert.match(cuerpoBuscar, /if \(!r\.ok\) \{ setErr\(r\.error\); onBusqueda\?\.\(null\); return; \}/);
+    const posGuardaPersona = cuerpoBuscar.indexOf('if (!r.ok) { setErr(r.error); onBusqueda?.(null); return; }');
+    const posUnidad = cuerpoBuscar.indexOf('if (unidadRes.ok) {');
+    assert.ok(posGuardaPersona > -1 && posUnidad > posGuardaPersona, "persona se valida primero; su fallo corta ANTES de tocar unidad");
   });
 });
 
@@ -621,13 +655,13 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
   });
 
   test("los candidatos se acotan por DESTINO antes de leer nada por paquete_id (no calcula hoteles de todos los destinos)", () => {
-    assert.match(codigoAction, /cargarHotelesBernaloDescubiertos\(\{ destino: vDestino\.destino \}\)/);
+    assert.match(codigoAction, /cargarHotelesBernaloDescubiertos\(\{ destino: vDestino\.destino, destinoId \}\)/);
     assert.doesNotMatch(codigoAction, /cargarHotelesBernaloDescubiertos\(\)/);
   });
 
-  test("solo considera paquetes de porción terrestre (un paquete con vuelo no se puede resolver con salida sin_vuelo)", () => {
-    assert.match(codigoAction, /if \(h\.tipo !== "porcion_terrestre"\) continue;/);
-    assert.match(codigoAction, /salida: \{ tipo: "sin_vuelo", fechaIda, fechaRegreso \}/);
+  test("solo considera paquetes de porción terrestre (un paquete con vuelo no se puede resolver con salida sin_vuelo) — filtro y llamada `sin_vuelo` viven en el módulo puro, la Server Action lo inyecta", () => {
+    assert.match(codigoEval, /if \(h\.tipo !== "porcion_terrestre"\) continue;/);
+    assert.match(codigoEval, /salida: \{ tipo: "sin_vuelo", fechaIda, fechaRegreso \}/);
   });
 
   test("una sola lectura por lote de las reglas de ocupación de TODOS los candidatos (nunca una consulta por hotel)", () => {
@@ -637,14 +671,16 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
     assert.match(codigoAction, /\.in\("id", idsAevaluar\)/);
   });
 
-  test("reutiliza el reparto autoritativo del motor persona y lo reenvía por la MISMA frontera de validación pública", () => {
-    assert.match(codigoAction, /repartirMenoresEnHabitaciones\(\{/);
-    assert.match(codigoAction, /const vOcupacion = validarHabitacionesOcupacion\(reparto\.habitaciones\);/);
+  test("reutiliza el reparto autoritativo del motor persona y lo reenvía por la MISMA frontera de validación pública (módulo puro, cobertura real de ese reenvío en evaluarDisponibilidadUnidad.test.ts)", () => {
+    assert.match(codigoEval, /repartirMenoresEnHabitaciones\(\{/);
+    assert.match(codigoEval, /const vOcupacion = validarHabitacionesOcupacion\(entradaOcupacion\);/);
   });
 
-  test("reutiliza computarReservaBernalo como única fuente del cálculo (no cambia el cálculo financiero)", () => {
-    assert.match(codigoAction, /await computarReservaBernalo\(\{/);
+  test("reutiliza computarReservaBernalo como única fuente del cálculo (no cambia el cálculo financiero) — la Server Action inyecta la función REAL, el módulo puro solo conoce su firma", () => {
+    assert.match(codigoAction, /computar: computarReservaBernalo,/);
+    assert.match(codigoEval, /const resultado = await computar\(\{/);
     assert.doesNotMatch(codigoAction, /snapshot|totalNeto|valorComision|comision|proveedor|costo/i);
+    assert.doesNotMatch(codigoEval, /snapshot|totalNeto|valorComision|comision|proveedor|costo/i);
   });
 
   test("el resultado interno de computarReservaBernalo NUNCA se guarda ni se reenvía completo: solo se lee su código, y de él se construye a mano la identidad pública mínima", () => {
@@ -669,20 +705,24 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
   // (`oferta: OfertaUnidadConfirmada`, singular) — nunca un arreglo de
   // ofertas sin verificar.
   test("la respuesta pública lleva la identidad de la oferta CONFIRMADA (hotel + paquete + categoría + alimentación + fechas + ocupación) — nunca todas las ofertas del hotel, nunca precio/costo/snapshot/proveedor", () => {
-    const pos = codigoAction.indexOf("export type DisponibilidadUnidadHotel =");
+    // Los dos tipos viven ahora en el módulo puro (`evaluarDisponibilidadUnidad.ts`)
+    // y `busquedaUnidadActions.ts` los REEXPORTA (frontera pública) — nunca los
+    // redeclara.
+    assert.match(codigoAction, /export type \{ DisponibilidadUnidadHotel, OfertaUnidadConfirmada \};/);
+    const pos = codigoEval.indexOf("export type DisponibilidadUnidadHotel =");
     assert.ok(pos > -1, "falta el tipo del veredicto por hotel");
-    const decl = codigoAction.slice(pos, codigoAction.indexOf("};", pos) + 2);
+    const decl = codigoEval.slice(pos, codigoEval.indexOf("};", pos) + 2);
     assert.match(decl, /hotelId: number; estado: "disponible"; oferta: OfertaUnidadConfirmada/, "la rama positiva lleva la identidad de UNA sola oferta — la confirmada, no el catálogo completo");
     assert.doesNotMatch(decl, /ofertas: HotelBernaloDescubierto\[\]/, "nunca debe volver el arreglo completo de ofertas sin verificar");
     assert.match(decl, /hotelId: number; estado: "sin_disponibilidad"/);
     assert.doesNotMatch(decl, /pvp|precio|neto|snapshot|costo|proveedor|comision/i);
-    assert.match(codigoAction, /export type ResultadoBusquedaUnidad =\s*\n\s*\| \{ ok: true; disponibilidad: DisponibilidadUnidadHotel\[\] \}\s*\n\s*\| \{ ok: false; error: string \};/);
+    assert.match(codigoAction, /export type ResultadoBusquedaUnidad =\s*\n\s*\| \{ ok: true; disponibilidad: DisponibilidadUnidadHotel\[\]; incompleto: boolean \}\s*\n\s*\| \{ ok: false; error: string \};/);
     // `OfertaUnidadConfirmada` (el shape de `oferta`) en sí: identidad
     // escalar + fechas + ocupación — nunca precio/costo/snapshot/proveedor,
     // y nunca los arreglos de categorías/regímenes/salidas de TODO el hotel.
-    const posOferta = codigoAction.indexOf("export type OfertaUnidadConfirmada = {");
+    const posOferta = codigoEval.indexOf("export type OfertaUnidadConfirmada = {");
     assert.ok(posOferta > -1, "falta el tipo de la oferta confirmada");
-    const declOferta = codigoAction.slice(posOferta, codigoAction.indexOf("};", posOferta) + 2);
+    const declOferta = codigoEval.slice(posOferta, codigoEval.indexOf("};", posOferta) + 2);
     assert.match(declOferta, /categoria: string;/);
     assert.match(declOferta, /alimentacion: string;/);
     assert.match(declOferta, /fechaIda: string;/);
@@ -692,15 +732,26 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
     assert.doesNotMatch(declOferta, /pvp|precio|neto|snapshot|costo|proveedor|comision/i);
   });
 
-  test("un fallo del descubrimiento o de las reglas de ocupación no rompe la búsqueda: se devuelve vacío (fail-closed)", () => {
-    assert.match(codigoAction, /return \{ ok: true, disponibilidad: \[\] \}; \/\/ auxiliar: un fallo acá nunca rompe la búsqueda/);
-    assert.match(codigoAction, /return \{ ok: true, disponibilidad: \[\] \}; \/\/ fail-closed: sin reglas confiables no se afirma nada/);
+  test("un fallo del descubrimiento o de las reglas de ocupación ahora es un error TÉCNICO explícito (ok:false) — fallo estructural corregido: antes se disfrazaba de 'cero hoteles' (ver la cabecera del archivo)", () => {
+    assert.match(codigoAction, /if \(!descubrimiento\.ok\) \{/);
+    assert.match(codigoAction, /return \{ ok: false, error: "No se pudo consultar la disponibilidad de alojamientos por unidad\." \};/);
+    assert.match(codigoAction, /if \(eAcom \|\| eHoteles\) \{/);
+    assert.match(codigoAction, /return \{ ok: false, error: "No se pudieron consultar las reglas de ocupación de los hoteles\." \};/);
+    // Solo el caso LEGÍTIMO (no hay ningún hotel unidad en este destino, sin
+    // ningún error) sigue devolviendo una lista vacía — nunca un error.
+    assert.match(codigoAction, /if \(!ofertasPorHotel\.size\) return \{ ok: true, disponibilidad: \[\], incompleto: false \};/);
   });
 
-  test("un hotel sin fila maestra o Adults Only con menores declarados nunca se anuncia como disponible", () => {
-    assert.match(cuerpoEvaluarHotel, /if \(!fila\) return null;/);
-    assert.match(cuerpoEvaluarHotel, /if \(edades\.length > 0 && fila\.adults_only\) return \{ hotelId, estado: "sin_disponibilidad" \};/);
-    assert.match(cuerpoEvaluarHotel, /return \{ hotelId, estado: "sin_disponibilidad" \};/);
+  test("un hotel sin fila maestra o Adults Only con menores declarados nunca se anuncia como disponible (cobertura real de ambos casos en evaluarDisponibilidadUnidad.test.ts)", () => {
+    assert.match(cuerpoEvaluarHotel, /if \(!fila\) return \{ tipo: "inconcluyente", hotelId, motivo: "hotel_sin_fila_maestra" \};/);
+    assert.match(cuerpoEvaluarHotel, /if \(edadesMenores\.length > 0 && fila\.adults_only\) \{/);
+    assert.match(cuerpoEvaluarHotel, /return \{ tipo: "veredicto", valor: \{ hotelId, estado: "sin_disponibilidad" \} \};/);
+  });
+
+  test("un hotel inconcluyente marca la búsqueda como INCOMPLETA y registra el motivo real — nunca desaparece en silencio (el defecto original)", () => {
+    assert.match(codigoAction, /incompleto = true;/);
+    assert.match(codigoAction, /console\.error\(`\[buscarAlojamientosUnidadPorFechas\] etapa=evaluacion hotelId=\$\{v\.hotelId\} motivo=\$\{v\.motivo\}`\);/);
+    assert.match(codigoAction, /return \{ ok: true, disponibilidad, incompleto \};/);
   });
 
   test("no escribe nada (solo lectura): ninguna mutación en la acción", () => {
@@ -711,12 +762,20 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
 // ── El descubrimiento, ahora acotado por destino ──────────────────────────
 
 describe("datosBernalo.ts — descubrimiento acotado por destino (base de datos, no JavaScript)", () => {
-  test("acepta un destino opcional sin cambiar el comportamiento por defecto (page.tsx sigue llamando sin argumentos)", () => {
-    assert.match(codigoDatos, /export type OpcionesDescubrimientoBernalo = \{ destino\?: string \| null \};/);
+  test("acepta un destino opcional (nombre y/o id) sin cambiar el comportamiento por defecto (page.tsx sigue llamando sin argumentos)", () => {
+    assert.match(codigoDatos, /export type OpcionesDescubrimientoBernalo = \{ destino\?: string \| null; destinoId\?: number \| null \};/);
     assert.match(codigoDatos, /export async function cargarHotelesBernaloDescubiertos\(\s*\n\s*opciones\?: OpcionesDescubrimientoBernalo\s*\n\)/);
     const fuentePagina = sinComentarios(readFileSync(join(raiz, "app/tarifario/page.tsx"), "utf8"));
     assert.match(fuentePagina, /cargarHotelesBernaloDescubiertos\(\)/, "la vitrina completa sigue llamando sin opciones");
     assert.doesNotMatch(fuentePagina, /cargarHotelesBernaloDescubiertos\(\{/);
+  });
+
+  test("destinoId es la vía PREFERIDA: cuando llega, NO se consulta `destinos` por nombre — se usa directo, sin ambigüedad de texto (cierre del hallazgo de identidad de destino)", () => {
+    assert.match(codigoDatos, /const destinoIdPedido = opciones\?\.destinoId \?\? null;/);
+    assert.match(codigoDatos, /if \(destinoIdPedido != null\) \{\s*\n\s*idsDestino = \[destinoIdPedido\];/);
+    // El camino por nombre queda como respaldo — un `else if`, nunca se
+    // combinan ni se intersectan.
+    assert.match(codigoDatos, /\} else if \(destinoPedido\) \{/);
   });
 
   test("el destino se resuelve a sus ids y se filtra EN LA CONSULTA — no se traen los paquetes de otros destinos", () => {
@@ -788,8 +847,8 @@ describe("Oferta REALMENTE confirmada — identidad exacta hasta el modal (nunca
     // estas fechas, su combinación simplemente no produce `resultado.ok` y
     // el `for` sigue hasta la de la 2ª oferta, que si tiene éxito es la que
     // se identifica.
-    assert.match(codigoAction, /for \(let k = 0; k < maxPares; k\+\+\) \{/);
-    assert.match(codigoAction, /for \(let o = 0; o < ofertas\.length; o\+\+\) \{/);
+    assert.match(codigoEval, /for \(let k = 0; k < maxPares; k\+\+\) \{/);
+    assert.match(codigoEval, /for \(let o = 0; o < ofertas\.length; o\+\+\) \{/);
     assert.match(cuerpoEvaluarHotel, /for \(const combo of combos\) \{/);
     // El resultado se construye DENTRO del cuerpo del `for`, con el `combo`
     // de ESA iteración — no hay ningún camino que "recuerde" solo la
@@ -1015,7 +1074,7 @@ describe("Carrera residual de solicitudes — generacionBusquedaRef (invalidaci�
   });
 
   test("buscar(A) → cambiar destino antes de responder → A no publica: el onChange de destino pasa por limpiarResultados(), que incrementa la generación de forma síncrona", () => {
-    assert.ok(codigoBuscador.includes('onChange={(e) => { setDestino(e.target.value); limpiarResultados(); }}'));
+    assert.match(codigoBuscador, /setDestino\(nombre\);\s*\n\s*setDestinoId\(opcion\?\.id \?\? null\);\s*\n\s*limpiarResultados\(\);/);
     assert.match(cuerpoLimpiar, /generacionBusquedaRef\.current \+= 1;/);
     assert.match(cuerpoBuscar, /if \(generacionBusquedaRef\.current !== miGeneracion\) return;/);
   });
@@ -1084,5 +1143,37 @@ describe("Carrera residual de solicitudes — generacionBusquedaRef (invalidaci�
     assert.ok(posFinNonce > -1, "no se encontró el cierre del efecto de la sugerencia de fecha");
     const cuerpoEfectoNonce = fuenteBuscador.slice(posInicioNonce, posFinNonce);
     assert.doesNotMatch(cuerpoEfectoNonce, /\bset[A-Z]\w*\(/);
+  });
+});
+
+// ── Aviso "unidad incompleta" — persona nunca se oculta por un fallo unidad ─
+//
+// Cierre del hallazgo "Hotel Prueba Odair no aparece": antes un fallo o
+// excepción en `buscarAlojamientosUnidadPorFechas` se volvía silenciosamente
+// un arreglo `unidad: []` — indistinguible de "este destino no tiene hoteles
+// por unidad". `EstadoBusquedaPorcion.avisoUnidad` lo hace explícito sin
+// bloquear nunca la publicación de los resultados persona.
+describe("Aviso de búsqueda unidad incompleta — persona se muestra igual, nunca se oculta por un fallo de la otra mitad", () => {
+  test("EstadoBusquedaPorcion lleva avisoUnidad, y el envío hacia VistaBooking siempre lo incluye (nunca queda undefined)", () => {
+    const tipo = cuerpoFuncion(codigoBuscador, "export type EstadoBusquedaPorcion = {");
+    assert.match(tipo, /avisoUnidad: string \| null;/);
+    const envio = cuerpoBuscar.slice(cuerpoBuscar.indexOf("onBusqueda?.({"), cuerpoBuscar.indexOf("});", cuerpoBuscar.indexOf("onBusqueda?.({")));
+    assert.match(envio, /avisoUnidad,/);
+  });
+
+  test("VistaBooking pinta el aviso SOLO en modo búsqueda y solo cuando existe — nunca reemplaza ni oculta la grilla de resultados", () => {
+    assert.match(codigoVista, /\{enBusquedaPorcion && busquedaPorcion\?\.avisoUnidad && \(/);
+    const pos = codigoVista.indexOf("enBusquedaPorcion && busquedaPorcion?.avisoUnidad && (");
+    const posBuscador = codigoVista.indexOf("<BuscadorBooking ");
+    const posGrilla = codigoVista.indexOf("{tarjetas.map((t) =>");
+    assert.ok(posBuscador > -1 && pos > posBuscador, "el aviso debe ir DESPUÉS del buscador");
+    assert.ok(posGrilla > pos, "el aviso debe ir ANTES de la grilla — nunca la reemplaza, solo la antecede");
+  });
+
+  test("un ok:false o una excepción de la Server Action de unidad SIEMPRE producen un avisoUnidad no nulo — nunca undefined/silencioso", () => {
+    const posElse = cuerpoBuscar.indexOf("} else {", cuerpoBuscar.indexOf("if (unidadRes.ok) {"));
+    const bloqueElse = cuerpoBuscar.slice(posElse, cuerpoBuscar.indexOf("}", cuerpoBuscar.indexOf("avisoUnidad =", posElse)) + 1);
+    assert.match(bloqueElse, /console\.error\(/, "el error real debe quedar en los logs, no solo en el aviso genérico al usuario");
+    assert.match(bloqueElse, /avisoUnidad = "/);
   });
 });

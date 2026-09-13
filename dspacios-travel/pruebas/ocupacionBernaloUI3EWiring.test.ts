@@ -565,7 +565,7 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
     // Y el selector de EXPLORACIÓN de la misma pestaña usa LA MISMA lista: un
     // destino ofrecible no puede estar en un desplegable y faltar en el otro.
     assert.equal(
-      [...fuenteVista.matchAll(/destinosPorcion\.map\(\(d\) => <option key=\{d\} value=\{d\}>\{d\}<\/option>\)/g)].length,
+      [...fuenteVista.matchAll(/destinosPorcion\.map\(\(d\) => <option key=\{d\.nombre\} value=\{d\.nombre\}>\{d\.nombre\}<\/option>\)/g)].length,
       1,
       "el selector de exploración sigue anunciando exactamente la misma lista que recibe el motor"
     );
@@ -655,8 +655,8 @@ describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro 
       // función pura, así que el escenario se corre DE VERDAD con el catálogo
       // del caso: CERO filas persona y un hotel unidad en CARTAGENA.
       assert.deepEqual(
-        destinosPorcionPublica([], [{ tipo: "porcion_terrestre", destinoNombre: "CARTAGENA" }]),
-        ["CARTAGENA"],
+        destinosPorcionPublica([], [{ tipo: "porcion_terrestre", destinoNombre: "CARTAGENA", destinoId: 6 }]),
+        [{ id: 6, nombre: "CARTAGENA" }],
         "un destino que sólo existe por hoteles unidad tiene que seguir apareciendo en el selector"
       );
       // Y `VistaBooking` consume ESA función — no una segunda copia del criterio

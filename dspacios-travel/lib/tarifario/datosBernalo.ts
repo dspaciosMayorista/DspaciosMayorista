@@ -60,6 +60,15 @@ export type HotelBernaloDescubierto = {
   categorias: string[];
   /** Alimentaciones/regímenes habilitados (`armado_hoteles.regimenes`). */
   regimenes: string[];
+  /** `armado_paquetes.destino_id` real del paquete — identidad ESTABLE del
+   * destino (`destinosNombre` puede repetirse o variar por mayúsculas/
+   * espacios entre registros distintos de `destinos`; el id nunca). `null`
+   * solo si el paquete no tiene destino configurado (mismo caso en que
+   * `destinoNombre` es `null`). Cierre del hallazgo de búsqueda unidad: antes
+   * la búsqueda por destino solo viajaba como texto y tenía que
+   * re-resolverse contra `destinos.nombre` río abajo — ver
+   * `OpcionesDescubrimientoBernalo.destinoId`. */
+  destinoId: number | null;
   /** `null` = el hotel no tiene moneda configurada — nunca se asume COP (regla A3.13). */
   moneda: "COP" | "USD" | null;
   /** Salidas aéreas válidas del paquete — vacío = porción terrestre (sin vuelo). */
@@ -117,8 +126,18 @@ function monedaExplicita(m: string | null | undefined): "COP" | "USD" | null {
  * Falla cerrado: si el destino pedido no existe (ningún `destinos.id`) o su
  * consulta falla, se devuelve una lista VACÍA — nunca el catálogo completo,
  * que sería anunciar hoteles de otros destinos como si fueran de este.
+ *
+ * `destinoId` es la vía PREFERIDA (cierre del hallazgo de búsqueda unidad):
+ * cuando el llamador ya conoce el `destinos.id` real (lo conoce siempre que
+ * el destino se eligió de una opción que vino de una oferta unidad — ver
+ * `lib/tarifario/destinosPorcion.ts`), se usa DIRECTO, sin la consulta
+ * `destinos.nombre → id` de abajo. Esa consulta por texto queda como
+ * respaldo para cuando solo se tiene el nombre (compatibilidad con el
+ * llamador legado y con destinos que solo existen por filas persona, que no
+ * traen id). Si se mandan los dos, `destinoId` GANA — nunca se mezclan ni se
+ * intersectan.
  */
-export type OpcionesDescubrimientoBernalo = { destino?: string | null };
+export type OpcionesDescubrimientoBernalo = { destino?: string | null; destinoId?: number | null };
 
 /**
  * Lista los hoteles con `modelo_tarifario = 'unidad'` de los paquetes
@@ -132,14 +151,21 @@ export async function cargarHotelesBernaloDescubiertos(
 ): Promise<ResultadoHotelesBernaloDescubiertos> {
   const admin = createAdminClient();
 
-  // Identidad del destino EN LA BASE. Los nombres de `destinos` pueden
-  // repetirse (el catálogo tiene una herramienta de fusión justamente porque
-  // existen duplicados), así que se resuelven TODOS los ids con ese nombre
-  // — nunca `.maybeSingle()`, que fallaría con el catálogo real. Sin destino
-  // pedido no se consulta nada: el comportamiento sin filtro queda intacto.
+  // Identidad del destino EN LA BASE. `destinoId` es la vía preferida (ver el
+  // comentario de `OpcionesDescubrimientoBernalo`): cuando se conoce, se usa
+  // DIRECTO — ni siquiera se consulta `destinos`, así que no hay texto que
+  // pueda dejar de coincidir. Solo sin `destinoId` se cae al camino legado
+  // por nombre: los nombres de `destinos` pueden repetirse (el catálogo tiene
+  // una herramienta de fusión justamente porque existen duplicados), así que
+  // se resuelven TODOS los ids con ese nombre — nunca `.maybeSingle()`, que
+  // fallaría con el catálogo real. Sin destino pedido no se consulta nada: el
+  // comportamiento sin filtro queda intacto.
+  const destinoIdPedido = opciones?.destinoId ?? null;
   const destinoPedido = (opciones?.destino ?? "").trim();
   let idsDestino: number[] = [];
-  if (destinoPedido) {
+  if (destinoIdPedido != null) {
+    idsDestino = [destinoIdPedido];
+  } else if (destinoPedido) {
     const { data: destinos, error: eDestino } = await admin
       .from("destinos")
       .select("id")
@@ -172,10 +198,12 @@ export async function cargarHotelesBernaloDescubiertos(
 
   const nombrePorPaquete = new Map<number, string>();
   const destinoPorPaquete = new Map<number, string | null>();
+  const destinoIdPorPaquete = new Map<number, number | null>();
   const tipoPorPaquete = new Map<number, HotelBernaloDescubierto["tipo"]>();
   for (const p of paquetesActivos) {
     nombrePorPaquete.set(p.id, p.nombre);
     destinoPorPaquete.set(p.id, (p.destinos as unknown as { nombre: string } | null)?.nombre ?? null);
+    destinoIdPorPaquete.set(p.id, (p.destino_id as number | null) ?? null);
     tipoPorPaquete.set(p.id, (p.tipo as HotelBernaloDescubierto["tipo"] | null) ?? "bloqueo");
   }
 
@@ -324,6 +352,7 @@ export async function cargarHotelesBernaloDescubiertos(
       paqueteId: f.paquete_id,
       paqueteNombre: nombrePorPaquete.get(f.paquete_id) ?? "",
       destinoNombre: destinoPorPaquete.get(f.paquete_id) ?? null,
+      destinoId: destinoIdPorPaquete.get(f.paquete_id) ?? null,
       tipo: tipoPorPaquete.get(f.paquete_id) ?? "bloqueo",
       categorias,
       regimenes,

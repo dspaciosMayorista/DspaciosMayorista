@@ -22,20 +22,26 @@ import { destinosPorcionPublica } from "../lib/tarifario/destinosPorcion.ts";
 // —que ya sabe resolverlas— no se podía invocar para ese destino desde la UI.
 // La otra mitad del requisito (que ese destino llegue realmente al `<select>`
 // del buscador) se verifica en `busquedaPorcionTerrestreWiring.test.ts`.
+//
+// Identidad por `id` (cierre del hallazgo "Hotel Prueba Odair"): cada opción
+// es `{ id, nombre }`, no solo el nombre. Las filas persona no traen id
+// (`tarifario_resultado` no tiene `destino_id`) — para ellas `id` queda
+// `null`. Una oferta unidad SÍ conoce su `armado_paquetes.destino_id` real, y
+// ese id prevalece sobre `null` para el mismo nombre.
 // ─────────────────────────────────────────────────────────────────────────
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("destinosPorcionPublica — la unión real de destinos de Porción terrestre", () => {
-  test("el caso que motivó el cambio: SIN ninguna fila persona, un destino que sólo existe por hotel unidad SIGUE apareciendo", () => {
+  test("el caso que motivó el cambio: SIN ninguna fila persona, un destino que sólo existe por hotel unidad SIGUE apareciendo, con su id", () => {
     const destinos = destinosPorcionPublica(
       [], // ni una fila persona en todo el tarifario
-      [{ tipo: "porcion_terrestre", destinoNombre: "CARTAGENA" }]
+      [{ tipo: "porcion_terrestre", destinoNombre: "CARTAGENA", destinoId: 6 }]
     );
-    assert.deepEqual(destinos, ["CARTAGENA"]);
+    assert.deepEqual(destinos, [{ id: 6, nombre: "CARTAGENA" }]);
   });
 
-  test("con un catálogo mixto devuelve la UNIÓN: persona + unidad, deduplicada y ordenada", () => {
+  test("con un catálogo mixto devuelve la UNIÓN: persona + unidad, deduplicada y ordenada, con el id de la oferta unidad cuando existe", () => {
     const destinos = destinosPorcionPublica(
       [
         { modulo: "porcion_terrestre", destino_nombre: "SANTA MARTA" },
@@ -43,12 +49,32 @@ describe("destinosPorcionPublica — la unión real de destinos de Porción terr
         { modulo: "porcion_terrestre", destino_nombre: "CARTAGENA" }, // repetido entre paquetes
       ],
       [
-        { tipo: "porcion_terrestre", destinoNombre: "CARTAGENA" }, // ya venía por persona
-        { tipo: "porcion_terrestre", destinoNombre: "SAN ANDRES" }, // sólo unidad
+        { tipo: "porcion_terrestre", destinoNombre: "CARTAGENA", destinoId: 6 }, // ya venía por persona (sin id) — el id de unidad prevalece
+        { tipo: "porcion_terrestre", destinoNombre: "SAN ANDRES", destinoId: 7 }, // sólo unidad
       ]
     );
     // Deduplicado (CARTAGENA una sola vez) y ordenado de forma estable.
-    assert.deepEqual(destinos, ["CARTAGENA", "SAN ANDRES", "SANTA MARTA"]);
+    assert.deepEqual(destinos, [
+      { id: 6, nombre: "CARTAGENA" },
+      { id: 7, nombre: "SAN ANDRES" },
+      { id: null, nombre: "SANTA MARTA" },
+    ]);
+  });
+
+  test("un destino SOLO persona (sin ninguna oferta unidad) queda con id null — nunca se inventa uno", () => {
+    const destinos = destinosPorcionPublica(
+      [{ modulo: "porcion_terrestre", destino_nombre: "SANTA MARTA" }],
+      []
+    );
+    assert.deepEqual(destinos, [{ id: null, nombre: "SANTA MARTA" }]);
+  });
+
+  test("una oferta unidad SIN destinoId (paquete sin destino configurado) no rompe nada: queda id null, igual que una fila persona", () => {
+    const destinos = destinosPorcionPublica(
+      [],
+      [{ tipo: "porcion_terrestre", destinoNombre: "CARTAGENA", destinoId: null }]
+    );
+    assert.deepEqual(destinos, [{ id: null, nombre: "CARTAGENA" }]);
   });
 
   test("sólo mezcla lo que corresponde: ni filas de otro módulo ni ofertas de otro tipo", () => {
@@ -59,11 +85,14 @@ describe("destinosPorcionPublica — la unión real de destinos de Porción terr
         { modulo: "porcion_terrestre", destino_nombre: "SANTA MARTA" },
       ],
       [
-        { tipo: "bloqueo", destinoNombre: "NO DEBE SALIR (unidad de bloqueo)" },
-        { tipo: "porcion_terrestre", destinoNombre: "CARTAGENA" },
+        { tipo: "bloqueo", destinoNombre: "NO DEBE SALIR (unidad de bloqueo)", destinoId: 99 },
+        { tipo: "porcion_terrestre", destinoNombre: "CARTAGENA", destinoId: 6 },
       ]
     );
-    assert.deepEqual(destinos, ["CARTAGENA", "SANTA MARTA"]);
+    assert.deepEqual(destinos, [
+      { id: 6, nombre: "CARTAGENA" },
+      { id: null, nombre: "SANTA MARTA" },
+    ]);
   });
 
   test("un destino sin nombre no abre una opción vacía en el desplegable", () => {
@@ -78,7 +107,7 @@ describe("destinosPorcionPublica — la unión real de destinos de Porción terr
         { tipo: "porcion_terrestre", destinoNombre: "" },
       ]
     );
-    assert.deepEqual(destinos, ["CARTAGENA"]);
+    assert.deepEqual(destinos, [{ id: null, nombre: "CARTAGENA" }]);
   });
 
   test("sin catálogo devuelve la lista vacía (nunca `undefined` ni una opción fantasma)", () => {
@@ -90,7 +119,7 @@ describe("destinosPorcionPublica — la unión real de destinos de Porción terr
       { modulo: "porcion_terrestre", destino_nombre: "SANTA MARTA" },
       { modulo: "porcion_terrestre", destino_nombre: "CARTAGENA" },
     ];
-    const hoteles = [{ tipo: "porcion_terrestre", destinoNombre: "SAN ANDRES" }];
+    const hoteles = [{ tipo: "porcion_terrestre", destinoNombre: "SAN ANDRES", destinoId: 7 }];
     destinosPorcionPublica(filas, hoteles);
     assert.deepEqual(filas.map((f) => f.destino_nombre), ["SANTA MARTA", "CARTAGENA"]);
     assert.deepEqual(hoteles.map((h) => h.destinoNombre), ["SAN ANDRES"]);
@@ -102,10 +131,13 @@ describe("destinosPorcionPublica — la unión real de destinos de Porción terr
     // destino"): la función tipa por lo mínimo que necesita, así que el exceso
     // de columnas no participa ni estorba.
     const filas = [{ paqueteId: 7, hotelId: 3, modulo: "porcion_terrestre", destino_nombre: "CARTAGENA", neto: 0 }];
-    const hoteles = [{ paqueteId: 9, hotelId: 4, tipo: "porcion_terrestre", destinoNombre: "SAN ANDRES", hotelNombre: "X" }];
+    const hoteles = [{ paqueteId: 9, hotelId: 4, tipo: "porcion_terrestre", destinoNombre: "SAN ANDRES", destinoId: 7, hotelNombre: "X" }];
     const destinos = destinosPorcionPublica(filas, hoteles);
-    assert.deepEqual(destinos, ["CARTAGENA", "SAN ANDRES"]);
-    assert.ok(destinos.every((d) => typeof d === "string" && d.trim() !== ""));
+    assert.deepEqual(destinos, [
+      { id: null, nombre: "CARTAGENA" },
+      { id: 7, nombre: "SAN ANDRES" },
+    ]);
+    assert.ok(destinos.every((d) => typeof d.nombre === "string" && d.nombre.trim() !== ""));
   });
 
   test("`VistaBooking` NO re-implementa el filtro: delega en esta función como única fuente", () => {

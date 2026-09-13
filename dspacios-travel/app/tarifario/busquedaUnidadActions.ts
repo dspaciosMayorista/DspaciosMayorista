@@ -34,10 +34,11 @@
 //     tarjeta. El fan-out interno cubre TODOS los hoteles del destino (nadie
 //     queda sin evaluar) y solo acota la concurrencia — ver
 //     `CONCURRENCIA_HOTELES_UNIDAD`. Dentro de cada hotel, la evaluación SÍ
-//     se corta en el primer éxito (ver `evaluarHotel`).
+//     se corta en el primer éxito (ver `evaluarDisponibilidadHotelUnidad`,
+//     `lib/tarifario/evaluarDisponibilidadUnidad.ts`).
 //   · NO vuelve a traer hoteles de otros destinos: el descubrimiento se
 //     acota por destino ANTES de leer por `paquete_id`
-//     (`cargarHotelesBernaloDescubiertos({ destino })`).
+//     (`cargarHotelesBernaloDescubiertos({ destinoId })` — ver más abajo).
 //   · NO cambia el cálculo financiero: reutiliza tal cual
 //     `computarReservaBernalo`, la única fuente de verdad del cálculo.
 //
@@ -45,6 +46,69 @@
 // revalida en forma con los MISMOS validadores que usa el resto del flujo
 // público (`lib/reservar/edadesMenores.ts`), antes de tocar la base de
 // datos o el motor.
+//
+// ⚠️ CAUSA RAÍZ CONFIRMADA POR EJECUCIÓN REAL (hallazgo: "Hotel Prueba
+// Odair" —`hotel_id=216`, `modelo_tarifario='unidad'`, con paquete de
+// porción terrestre activo, categorías/regímenes configurados y tarifa
+// PUBLICADA en `hotel_tarifas_unidad`— no aparecía en el buscador general de
+// su destino, pese a poder cotizarse desde su modal y aparecer en la
+// exploración). No fue una hipótesis: se confirmó extrayendo la decisión por
+// hotel a una función PURA e inyectable —
+// `evaluarDisponibilidadHotelUnidad` (`lib/tarifario/
+// evaluarDisponibilidadUnidad.ts`)— y EJECUTÁNDOLA de verdad bajo `node
+// --test` (`pruebas/evaluarDisponibilidadUnidad.test.ts`, no inspección de
+// fuente): el primer intento, con un `computar` de prueba que SIEMPRE
+// confirma (`{ ok: true }`), igual devolvía "inconcluyente" en vez de
+// "disponible".
+//
+// La causa: `validarHabitacionesOcupacion` (frontera que revalida la
+// ocupación antes de llamar a `computarReservaBernalo`) exige
+// `HabitacionOcupacionEntrada`, que incluye `cantidadMenores: number`. Pero
+// `repartirMenoresEnHabitaciones` (el reparto que arma esa ocupación para el
+// buscador) devuelve `HabitacionRepartida[]` — SOLO `id/acom/adultos/
+// edadesMenores`, SIN `cantidadMenores`. El código original pasaba
+// `reparto.habitaciones` DIRECTO al validador, así que
+// `typeof fila.cantidadMenores !== "number"` era SIEMPRE verdadero →
+// `vOcupacion.ok` daba `false` para TODO hotel, en TODA búsqueda, desde que
+// existe este código — no un caso puntual de `hotel_id=216`: la búsqueda
+// general de "unidad" en Porción terrestre NUNCA pudo confirmar un solo
+// hotel disponible. Corregido derivando `cantidadMenores` de
+// `edadesMenores.length` (mismo criterio que ya usa
+// `construirPayloadHabitaciones` para el flujo del modal) antes de validar
+// — ver el comentario junto a esa línea en `evaluarDisponibilidadUnidad.ts`.
+//
+// Ese defecto por sí solo ya explica el caso reportado. Además, tres puntos
+// de esta acción convertían cualquier OTRO error TÉCNICO en "cero
+// resultados" silencioso, indistinguible de "sin disponibilidad real" —
+// corregidos igual, como defensa en profundidad (un fallo técnico futuro,
+// de cualquier causa, tampoco debe desaparecer en silencio):
+//   1) `cargarHotelesBernaloDescubiertos` fallando → `{ ok: true,
+//      disponibilidad: [] }`. Ahora: `{ ok: false, error }`.
+//   2) La consulta por lote de `hotel_acomodaciones`/`hoteles` fallando →
+//      igual, `{ ok: true, disponibilidad: [] }`. Ahora: `{ ok: false,
+//      error }`.
+//   3) `evaluarHotel` probando cada combinación categoría×alimentación
+//      contra `computarReservaBernalo` y, cuando el motor rechazaba TODAS
+//      con un código que no es "sin disponibilidad real"
+//      (`fechas_fuera_de_ventana`/`no_cotizable`) — por ejemplo
+//      `moneda_no_determinable`, `salida_no_vinculada`,
+//      `configuracion_incompleta`, `error_interno`, o un drift de datos como
+//      `hotel_no_vinculado` — devolvía `return null`, y ese hotel
+//      simplemente desaparecía del arreglo `disponibilidad`, sin ningún
+//      rastro del código real. Ahora `evaluarDisponibilidadHotelUnidad`
+//      devuelve un `VeredictoHotelUnidad` de TRES formas: `veredicto`
+//      (disponible/sin_disponibilidad, con fundamento) o `inconcluyente`
+//      (con el código técnico REAL en `motivo`, para diagnosticar en los
+//      logs de Vercel — ver el `console.error` de más abajo). Un hotel
+//      inconcluyente NUNCA se afirma disponible ni sin_disponibilidad —
+//      simplemente no entra al arreglo, igual que antes en ESE aspecto—,
+//      pero ahora su motivo se REGISTRA y el llamador se entera de que la
+//      búsqueda quedó INCOMPLETA (`incompleto: true`) en vez de creer que
+//      vio el universo completo de hoteles del destino.
+// `ResultadoBusquedaUnidad` gana `incompleto: boolean` en la rama `ok:true`:
+// `BuscadorBooking` lo usa para mostrar un aviso ("no pudimos confirmar
+// todos los alojamientos") sin descartar los resultados persona ni los
+// hoteles unidad que SÍ se pudieron confirmar.
 //
 // ⚠️ Costo/abuso (hallazgo confirmado, auditoría independiente): destino
 // obligatorio acota el universo a evaluar, pero NO hay tope de hoteles ni de
@@ -65,7 +129,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { defaultAcomConfig, type AcomConfig, type AcomRoom } from "@/lib/acomodaciones";
+import type { AcomConfig } from "@/lib/acomodaciones";
 import {
   validarAdultosDeclarados,
   validarCantidadMenores,
@@ -76,10 +140,22 @@ import {
   validarRangoFechasConsulta,
   type HabitacionInputValidada,
 } from "@/lib/reservar/edadesMenores";
-import { validarHabitacionesOcupacion, type HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
-import { repartirMenoresEnHabitaciones } from "@/lib/reservar/repartoMenoresBusqueda";
 import { computarReservaBernalo } from "@/lib/reservar/computoReservaBernalo";
-import { cargarHotelesBernaloDescubiertos, type HotelBernaloDescubierto } from "@/lib/tarifario/datosBernalo";
+import { cargarHotelesBernaloDescubiertos } from "@/lib/tarifario/datosBernalo";
+import {
+  evaluarDisponibilidadHotelUnidad,
+  ofertasPorHotelDe,
+  type DisponibilidadUnidadHotel,
+  type FilaHotelBusquedaUnidad,
+  type OfertaUnidadConfirmada,
+  type VeredictoHotelUnidad,
+} from "@/lib/tarifario/evaluarDisponibilidadUnidad";
+
+// Reexportados: `VistaBooking.tsx`/`BuscadorBooking.tsx` los importan desde
+// ESTE archivo (es la frontera pública) — viven físicamente en el módulo
+// puro para que `evaluarDisponibilidadHotelUnidad` los pueda construir sin
+// depender de un archivo `"use server"`.
+export type { DisponibilidadUnidadHotel, OfertaUnidadConfirmada };
 
 // ── Concurrencia del fan-out interno ─────────────────────────────────────
 // La evaluación es COMPLETA: TODOS los hoteles por unidad del destino
@@ -100,136 +176,49 @@ import { cargarHotelesBernaloDescubiertos, type HotelBernaloDescubierto } from "
 // para este tipo de archivos).
 const CONCURRENCIA_HOTELES_UNIDAD = 4;
 
-// ÚNICAS razones por las que se AFIRMA "sin_disponibilidad": el motor dijo
-// que esa oferta no cubre las fechas pedidas o que no pudo componer una
-// cotización para esa ocupación. Cualquier otro código
-// (`configuracion_incompleta`, `moneda_no_determinable`, `error_interno`,
-// drift de datos como `hotel_no_vinculado`/`paquete_no_disponible`) NO
-// autoriza la afirmación: significa "no pudimos determinarlo", y lo honesto
-// es no decir nada (la tarjeta queda como estaba, sin badge).
-const MOTIVOS_SIN_DISPONIBILIDAD = new Set<string>(["fechas_fuera_de_ventana", "no_cotizable"]);
-
 export type EstadoDisponibilidadUnidad = "disponible" | "sin_disponibilidad";
 
 /**
- * Identidad pública MÍNIMA de la combinación que REALMENTE pasó
- * `computarReservaBernalo` — nunca el catálogo completo del hotel
- * (`HotelBernaloDescubierto` trae categorías/regímenes/salidas de TODAS sus
- * ofertas; acá solo viajan los campos escalares de la UNA combinación que se
- * confirmó). Deliberadamente NO reutiliza `HotelBernaloDescubierto` como
- * shape de salida por esto mismo.
- *
- * `ocupacion` es la asociación habitación↔edades con la que se confirmó
- * (misma forma que exige el Caso C del adaptador, `HabitacionOcupacionValidada`)
- * — permite precargar el modal de cotización sin ambigüedad (mismos ids
- * posicionales que ya usa `construirHabitacionesUI`), pero es solo un
- * PREFILL: el modal vuelve a validar/cotizar todo contra el servidor antes
- * de poder agregar al carrito (regla de la tarea — el prefill nunca
- * reemplaza esa validación).
- *
- * Nunca lleva pvp/costo/neto/snapshot/proveedor/comisión.
+ * Resultado de la búsqueda. `ok: false` es un fallo TÉCNICO real (nunca "no
+ * hay resultados" disfrazado — ver el fallo estructural corregido en la
+ * cabecera del archivo). Con `ok: true`, `incompleto: true` avisa que al
+ * menos un hotel del destino no se pudo evaluar con fundamento (fallo
+ * técnico puntual, código no clasificado, o drift de datos) — la lista
+ * `disponibilidad` sigue siendo válida para lo que SÍ se concluyó, pero no es
+ * necesariamente el universo completo de hoteles unidad del destino.
  */
-export type OfertaUnidadConfirmada = {
-  hotelId: number;
-  hotelNombre: string;
-  paqueteId: number;
-  paqueteNombre: string;
-  destinoNombre: string | null;
-  categoria: string;
-  alimentacion: string;
-  moneda: "COP" | "USD" | null;
-  fechaIda: string;
-  fechaRegreso: string;
-  ocupacion: { id: string; acom: AcomRoom; adultos: number; edadesMenores: number[] }[];
-};
-
-/**
- * Veredicto por hotel. La rama `"disponible"` lleva ÚNICAMENTE la oferta
- * confirmada (`oferta`, singular) — nunca todas las ofertas del hotel como si
- * todas estuvieran verificadas: la evaluación se corta en el primer combo
- * (paqueteId × categoría × alimentación) que produce `computarReservaBernalo`
- * con éxito, así que solo ESE combo tiene fundamento para presentarse como
- * disponible (ver `evaluarHotel`).
- *
- * Un hotel que NO se pudo concluir no aparece en esta lista: la ausencia de
- * dato no es un dato.
- */
-export type DisponibilidadUnidadHotel =
-  | { hotelId: number; estado: "disponible"; oferta: OfertaUnidadConfirmada }
-  | { hotelId: number; estado: "sin_disponibilidad" };
-
 export type ResultadoBusquedaUnidad =
-  | { ok: true; disponibilidad: DisponibilidadUnidadHotel[] }
+  | { ok: true; disponibilidad: DisponibilidadUnidadHotel[]; incompleto: boolean }
   | { ok: false; error: string };
 
 export type EntradaBuscarAlojamientosUnidad = {
   fechaIda: string;
   fechaRegreso: string;
   destino: string;
+  /** Identidad ESTABLE del destino (`destinos.id`) — cuando llega, se usa
+   * DIRECTO y `destino` (nombre) queda solo para mensajes/compatibilidad; ver
+   * `lib/tarifario/destinosPorcion.ts` y `OpcionesDescubrimientoBernalo`. */
+  destinoId?: number | null;
   habitaciones: { acom: string }[];
   adultos: number;
   cantidadMenores: number;
   edadesMenores: number[];
 };
 
-type FilaHotelBusqueda = {
-  id: number;
-  edad_infante_max: number | null;
-  edad_nino_max: number | null;
-  adults_only: boolean | null;
-};
-
-/** Descubrimiento Bernalo del destino, acotado a porción terrestre (sin vuelo). */
-function ofertasPorHotelDe(
-  hoteles: HotelBernaloDescubierto[]
-): Map<number, HotelBernaloDescubierto[]> {
-  const mapa = new Map<number, HotelBernaloDescubierto[]>();
-  for (const h of hoteles) {
-    // Solo paquetes de porción terrestre: la búsqueda que alimenta esta
-    // acción es la de esa pestaña, y solo estos pueden resolverse con
-    // `salida: sin_vuelo` (un paquete con vuelo exige elegir una salida y
-    // el motor lo bloquea — se evita la llamada en vez de gastarla).
-    if (h.tipo !== "porcion_terrestre") continue;
-    const arr = mapa.get(h.hotelId) ?? [];
-    arr.push(h);
-    mapa.set(h.hotelId, arr);
-  }
-  return mapa;
-}
-
-/**
- * Combinaciones (oferta, categoría, alimentación) de un hotel, en orden
- * determinista y "index-major" entre ofertas: la k-ésima combinación de cada
- * oferta del hotel se evalúa antes de pasar a la k+1. Todas se recorren
- * (la evaluación es completa), así que este orden ya no decide QUÉ se
- * evalúa: decide solo cuál se prueba primero — un hotel disponible sale por
- * el primer acierto, y así ese acierto no queda sesgado siempre hacia la
- * misma oferta cuando hay varias.
- */
-function combinacionesDe(ofertas: HotelBernaloDescubierto[]): { oferta: HotelBernaloDescubierto; categoria: string; alimentacion: string }[] {
-  const porOferta = ofertas.map((oferta) => {
-    const pares: { categoria: string; alimentacion: string }[] = [];
-    for (const categoria of oferta.categorias) {
-      for (const alimentacion of oferta.regimenes) pares.push({ categoria, alimentacion });
-    }
-    return pares;
-  });
-  const maxPares = porOferta.reduce((m, p) => Math.max(m, p.length), 0);
-  const out: { oferta: HotelBernaloDescubierto; categoria: string; alimentacion: string }[] = [];
-  for (let k = 0; k < maxPares; k++) {
-    for (let o = 0; o < ofertas.length; o++) {
-      const par = porOferta[o][k];
-      if (par) out.push({ oferta: ofertas[o], categoria: par.categoria, alimentacion: par.alimentacion });
-    }
-  }
-  return out;
+/** `destinoId` es un número entero positivo, o no participa — nunca se
+ * confía en un valor no numérico/negativo/decimal mandado por el navegador
+ * (Server Action pública). */
+function validarDestinoIdConsulta(v: unknown): number | null {
+  if (typeof v !== "number" || !Number.isInteger(v) || v <= 0) return null;
+  return v;
 }
 
 /**
  * Determina, para los hoteles por unidad del destino buscado, si alguno de
  * sus paquetes de porción terrestre puede atender las fechas y la ocupación
- * declaradas. Best-effort y de solo lectura: NUNCA escribe nada, nunca
- * cotiza hacia el carrito y nunca devuelve un precio.
+ * declaradas. Best-effort SOLO en lo que es legítimamente best-effort (ver la
+ * cabecera): NUNCA escribe nada, nunca cotiza hacia el carrito y nunca
+ * devuelve un precio.
  */
 export async function buscarAlojamientosUnidadPorFechas(
   input: unknown
@@ -244,19 +233,24 @@ export async function buscarAlojamientosUnidadPorFechas(
   if (!vRango.ok) return { ok: false, error: vRango.error };
   const vDestino = validarDestinoConsulta(datos.destino);
   if (!vDestino.ok) return { ok: false, error: vDestino.error };
+  const destinoId = validarDestinoIdConsulta(datos.destinoId);
   // DESTINO OBLIGATORIO — y acá, en la frontera, es donde de verdad se exige:
   // el chequeo del cliente es sólo una comodidad, la acción es pública y se
   // puede invocar directo. `validarDestinoConsulta` acepta "" a propósito
   // (otros flujos públicos lo usan como "todos los destinos"), así que este
   // rechazo vive ACÁ y no allá: cambiarlo en el validador compartido cambiaría
-  // también esos otros flujos, que no se tocan.
+  // también esos otros flujos, que no se tocan. Un `destinoId` válido también
+  // cuenta como destino elegido (el nombre puede llegar vacío si el llamador
+  // solo tiene el id — no debería pasar desde `BuscadorBooking`, que siempre
+  // manda los dos, pero no se exige el nombre si el id ya identifica el
+  // destino sin ambigüedad).
   //
   // Sin esta guarda, un destino vacío haría que el descubrimiento barriera el
   // catálogo entero (todas las ofertas `porcion_terrestre`, todos sus hoteles
   // y todas sus combinaciones) para responder por algo que nadie pidió — un
   // trabajo público sin cota de tamaño. `trim()`: un destino de puros espacios
   // no es una selección, es el placeholder disfrazado.
-  if (vDestino.destino.trim() === "") {
+  if (vDestino.destino.trim() === "" && destinoId == null) {
     return { ok: false, error: "Selecciona un destino para buscar." };
   }
   const vHabitaciones = validarHabitacionesConsultadas(datos.habitaciones);
@@ -279,15 +273,19 @@ export async function buscarAlojamientosUnidadPorFechas(
 
   // ── 2) Descubrimiento ACOTADO POR DESTINO ─────────────────────────────
   // Ni se leen ni se evalúan hoteles de otros destinos: el filtro va dentro
-  // del descubrimiento, antes de las lecturas por `paquete_id`.
-  const descubrimiento = await cargarHotelesBernaloDescubiertos({ destino: vDestino.destino });
+  // del descubrimiento, antes de las lecturas por `paquete_id`. `destinoId`
+  // (cuando llega) evita la consulta `destinos.nombre → id` por completo —
+  // ver `OpcionesDescubrimientoBernalo` en `lib/tarifario/datosBernalo.ts`.
+  const descubrimiento = await cargarHotelesBernaloDescubiertos({ destino: vDestino.destino, destinoId });
   if (!descubrimiento.ok) {
     console.error(`[buscarAlojamientosUnidadPorFechas] etapa=descubrimiento detalle=${descubrimiento.error}`);
-    return { ok: true, disponibilidad: [] }; // auxiliar: un fallo acá nunca rompe la búsqueda
+    // Fallo TÉCNICO real — nunca se disfraza de "sin resultados" (ver la
+    // cabecera del archivo, fallo estructural corregido).
+    return { ok: false, error: "No se pudo consultar la disponibilidad de alojamientos por unidad." };
   }
 
   const ofertasPorHotel = ofertasPorHotelDe(descubrimiento.hoteles);
-  if (!ofertasPorHotel.size) return { ok: true, disponibilidad: [] };
+  if (!ofertasPorHotel.size) return { ok: true, disponibilidad: [], incompleto: false };
 
   // Orden determinista (ascendente). SIN tope: recortar la lista dejaría
   // hoteles por unidad del destino buscado fuera de la búsqueda sin decirlo.
@@ -306,7 +304,10 @@ export async function buscarAlojamientosUnidadPorFechas(
   ]);
   if (eAcom || eHoteles) {
     console.error(`[buscarAlojamientosUnidadPorFechas] etapa=hotel_acomodaciones_o_hoteles detalle=${eAcom?.message ?? eHoteles?.message}`);
-    return { ok: true, disponibilidad: [] }; // fail-closed: sin reglas confiables no se afirma nada
+    // Fallo TÉCNICO real — sin reglas confiables no se afirma nada, pero
+    // tampoco se disfraza de "cero hoteles disponibles" (fallo estructural
+    // corregido, ver la cabecera).
+    return { ok: false, error: "No se pudieron consultar las reglas de ocupación de los hoteles." };
   }
 
   const reglasPorHotel = new Map<number, AcomConfig[]>();
@@ -315,122 +316,52 @@ export async function buscarAlojamientosUnidadPorFechas(
     arr.push(r);
     reglasPorHotel.set(r.hotel_id, arr);
   }
-  const filaPorHotel = new Map<number, FilaHotelBusqueda>();
-  for (const h of (hotelRows ?? []) as FilaHotelBusqueda[]) filaPorHotel.set(h.id, h);
+  const filaPorHotel = new Map<number, FilaHotelBusquedaUnidad>();
+  for (const h of (hotelRows ?? []) as FilaHotelBusquedaUnidad[]) filaPorHotel.set(h.id, h);
 
   // ── 4) Evaluación COMPLETA, con concurrencia acotada ──────────────────
-  // Un veredicto por hotel, o `null` cuando no se pudo concluir (y entonces
-  // no se afirma nada). La cobertura no se recorta: cada hotel que entra acá
-  // agota TODAS sus ofertas y combinaciones antes de arriesgar un "no".
-  async function evaluarHotel(hotelId: number): Promise<DisponibilidadUnidadHotel | null> {
-    const ofertas = ofertasPorHotel.get(hotelId) ?? [];
-    const fila = filaPorHotel.get(hotelId);
-    // Sin fila maestra no se INVENTAN umbrales de edad ni "no es Adults
-    // Only" (mismo criterio fail-closed que el motor persona): este hotel no
-    // participa de la afirmación.
-    if (!fila) return null;
-
-    // Restricción propia del hotel, ajena a fechas/ocupación de habitación:
-    // un Adults Only no puede atender una búsqueda con menores declarados.
-    if (edades.length > 0 && fila.adults_only) return { hotelId, estado: "sin_disponibilidad" };
-
-    const reglas = reglasPorHotel.get(hotelId) ?? [];
-    const configDe = (a: AcomRoom): AcomConfig => reglas.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
-
-    const reparto = repartirMenoresEnHabitaciones({
-      habitaciones: habitacionesValidadas.map((h) => ({ acom: h.acom, config: configDe(h.acom) })),
-      adultosDeclarados: adultos,
-      edades,
-      infanteMax: fila.edad_infante_max ?? 2,
-      ninoMax: fila.edad_nino_max ?? 10,
-    });
-    if (!reparto.ok) {
-      // La SELECCIÓN no cabe en este hotel (habitaciones/adultos/menores):
-      // es una razón honesta de "no disponible para tu búsqueda". Un rechazo
-      // por CONFIGURACIÓN del hotel o por una edad que el hotel clasifica
-      // como adulto no autoriza la afirmación — no se dice nada.
-      return reparto.tipo === "seleccion_invalida" ? { hotelId, estado: "sin_disponibilidad" } : null;
-    }
-
-    // Reenvío por la MISMA frontera de validación que usa la cotización
-    // pública (nunca se salta): la asociación habitación↔edades que produce
-    // el reparto se revalida como si viniera del navegador.
-    const vOcupacion = validarHabitacionesOcupacion(reparto.habitaciones);
-    if (!vOcupacion.ok) {
-      console.error(`[buscarAlojamientosUnidadPorFechas] etapa=ocupacion hotelId=${hotelId} detalle=reparto interno rechazado por el validador`);
-      return null;
-    }
-    const ocupacion: HabitacionOcupacionValidada[] = vOcupacion.habitaciones;
-
-    // Decisión acotada (auditoría independiente): basta el PRIMER combo que
-    // confirme al hotel — no hace falta agotar las demás combinaciones solo
-    // para "llenar opciones" en la respuesta pública. En modo búsqueda se
-    // presenta exclusivamente esa combinación confirmada; "Explorar" (fuera
-    // del modo búsqueda) sigue mostrando todas las demás ofertas del hotel
-    // por su cuenta, sin relación con este veredicto.
-    const combos = combinacionesDe(ofertas);
-    let motivoNoConcluyente = false;
-
-    for (const combo of combos) {
-      const resultado = await computarReservaBernalo({
-        paqueteId: combo.oferta.paqueteId,
-        hotelId,
-        categoria: combo.categoria,
-        alimentacion: combo.alimentacion,
-        salida: { tipo: "sin_vuelo", fechaIda, fechaRegreso },
-        habitaciones: ocupacion,
-      });
-      if (resultado.ok) {
-        // Identidad EXACTA de la combinación que funcionó — nunca el
-        // catálogo completo del hotel (ver `OfertaUnidadConfirmada`).
-        return {
-          hotelId,
-          estado: "disponible",
-          oferta: {
-            hotelId,
-            hotelNombre: combo.oferta.hotelNombre,
-            paqueteId: combo.oferta.paqueteId,
-            paqueteNombre: combo.oferta.paqueteNombre,
-            destinoNombre: combo.oferta.destinoNombre,
-            categoria: combo.categoria,
-            alimentacion: combo.alimentacion,
-            moneda: combo.oferta.moneda,
-            fechaIda,
-            fechaRegreso,
-            ocupacion,
-          },
-        };
-      }
-      // El resultado interno NUNCA se guarda ni se reenvía — solo su código.
-      if (!MOTIVOS_SIN_DISPONIBILIDAD.has(resultado.codigo)) motivoNoConcluyente = true;
-    }
-
-    // Recién acá —agotadas todas las combinaciones, con al menos una que
-    // evaluar, y sin ningún fallo que el motor no pueda concluir— se afirma
-    // que el hotel no cubre las fechas/ocupación. Si quedó alguna sin
-    // evaluar o alguna falló por un motivo técnico, NO se afirma nada.
-    if (combos.length > 0 && !motivoNoConcluyente) return { hotelId, estado: "sin_disponibilidad" };
-    return null;
-  }
-
-  // Pool de trabajadores sobre el MISMO índice compartido: cada uno toma el
-  // siguiente hotel libre y nadie evalúa dos veces el mismo. `siguiente++` es
-  // seguro porque entre la lectura y la escritura no hay `await` (JavaScript
-  // es de un solo hilo), así que no se pierde ni se repite ningún índice.
-  const veredictos: (DisponibilidadUnidadHotel | null)[] = new Array(idsAevaluar.length).fill(null);
+  // Cada hotel produce un `VeredictoHotelUnidad` (veredicto con fundamento, o
+  // inconcluyente con el motivo real — ver `lib/tarifario/
+  // evaluarDisponibilidadUnidad.ts`). La cobertura no se recorta: cada hotel
+  // que entra acá agota TODAS sus ofertas y combinaciones antes de arriesgar
+  // un "no".
+  const veredictos = new Array<VeredictoHotelUnidad | null>(idsAevaluar.length).fill(null);
   let siguiente = 0;
   const trabajador = async () => {
     while (true) {
       const i = siguiente++;
       if (i >= idsAevaluar.length) return;
-      veredictos[i] = await evaluarHotel(idsAevaluar[i]);
+      const hotelId = idsAevaluar[i];
+      veredictos[i] = await evaluarDisponibilidadHotelUnidad({
+        hotelId,
+        ofertas: ofertasPorHotel.get(hotelId) ?? [],
+        fila: filaPorHotel.get(hotelId),
+        reglas: reglasPorHotel.get(hotelId) ?? [],
+        habitacionesConsultadas: habitacionesValidadas.map((h) => ({ acom: h.acom })),
+        adultosDeclarados: adultos,
+        edadesMenores: edades,
+        fechaIda,
+        fechaRegreso,
+        computar: computarReservaBernalo,
+      });
     }
   };
   await Promise.all(
     Array.from({ length: Math.min(CONCURRENCIA_HOTELES_UNIDAD, idsAevaluar.length) }, () => trabajador())
   );
 
-  // "No evaluado" se cae acá: nunca entra a la lista como si fuera un
-  // veredicto.
-  return { ok: true, disponibilidad: veredictos.filter((v): v is DisponibilidadUnidadHotel => v !== null) };
+  // Separa veredictos con fundamento de inconcluyentes — un hotel
+  // inconcluyente NUNCA entra a `disponibilidad` (ni disponible ni
+  // sin_disponibilidad sin fundamento), pero SÍ marca la búsqueda como
+  // incompleta y deja su motivo real en los logs — nunca en silencio.
+  const disponibilidad: DisponibilidadUnidadHotel[] = [];
+  let incompleto = false;
+  for (const v of veredictos) {
+    if (!v) continue; // no debería pasar (todo índice se llena), defensivo
+    if (v.tipo === "veredicto") { disponibilidad.push(v.valor); continue; }
+    incompleto = true;
+    console.error(`[buscarAlojamientosUnidadPorFechas] etapa=evaluacion hotelId=${v.hotelId} motivo=${v.motivo}`);
+  }
+
+  return { ok: true, disponibilidad, incompleto };
 }

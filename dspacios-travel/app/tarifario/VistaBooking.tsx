@@ -674,6 +674,12 @@ export function VistaBooking({
               paqueteId: u.oferta.paqueteId,
               paqueteNombre: u.oferta.paqueteNombre,
               destinoNombre: u.oferta.destinoNombre,
+              // `OfertaUnidadConfirmada` no lleva `destinoId` (no lo necesita
+              // el modal de cotización, que solo usa esta forma sintética
+              // para autoseleccionar la oferta confirmada) — `null` acá no
+              // afecta nada, esta tarjeta no vuelve a pasar por el selector
+              // de destino.
+              destinoId: null,
               tipo: "porcion_terrestre" as const,
               categorias: [u.oferta.categoria],
               regimenes: [u.oferta.alimentacion],
@@ -985,6 +991,17 @@ export function VistaBooking({
         <BuscadorBooking destinos={destinosPorcion} onBusqueda={setBusquedaPorcion} sugerenciaPedida={sugerenciaPedida} />
       )}
 
+      {/* Aviso NO bloqueante: la mitad "unidad" de la búsqueda vigente no se
+          pudo completar con confianza (fallo técnico o evaluación parcial —
+          ver `EstadoBusquedaPorcion.avisoUnidad`). Los resultados persona de
+          abajo siguen siendo los completos; esto nunca los reemplaza ni los
+          oculta, solo avisa que la mitad unidad puede estar incompleta. */}
+      {enBusquedaPorcion && busquedaPorcion?.avisoUnidad && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+          {busquedaPorcion.avisoUnidad}
+        </div>
+      )}
+
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
           {sub === "bloqueo" ? (
@@ -1026,7 +1043,7 @@ export function VistaBooking({
                 className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs"
               >
                 <option value="">Todos</option>
-                {destinosPorcion.map((d) => <option key={d} value={d}>{d}</option>)}
+                {destinosPorcion.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
               </select>
             </label>
           )}

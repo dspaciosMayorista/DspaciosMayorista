@@ -5,10 +5,11 @@ import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { buscarHoteles } from "@/app/(dashboard)/dashboard/reservar/actions";
-import { buscarAlojamientosUnidadPorFechas, type DisponibilidadUnidadHotel } from "./busquedaUnidadActions";
+import { buscarAlojamientosUnidadPorFechas, type DisponibilidadUnidadHotel, type ResultadoBusquedaUnidad } from "./busquedaUnidadActions";
 import { type BusquedaResultado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 import { EDAD_MENOR_MAX, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseEdadMenor } from "@/lib/reservar/edadesMenores";
+import type { DestinoPorcionOpcion } from "@/lib/tarifario/destinosPorcion";
 
 // Veredicto POSITIVO del servidor sobre un hotel por unidad para las fechas y
 // la ocupación declaradas (`buscarAlojamientosUnidadPorFechas`). Se deriva del
@@ -50,18 +51,27 @@ export type EstadoBusquedaPorcion = {
   /** Alojamientos por unidad (Bernalo) del destino que el servidor CONFIRMÓ
    * disponibles. Los `sin_disponibilidad` NO entran acá (no son un resultado
    * disponible) y un estado desconocido por error técnico tampoco se anuncia
-   * — ver `MOTIVOS_SIN_DISPONIBILIDAD` en `busquedaUnidadActions.ts`. */
+   * — ver `MOTIVOS_SIN_DISPONIBILIDAD` en `evaluarDisponibilidadUnidad.ts`. */
   unidad: AlojamientoUnidadDisponible[];
+  /** Aviso NO bloqueante cuando la mitad "unidad" de la búsqueda no se pudo
+   * completar con confianza — fallo técnico real (`ok:false`) o evaluación
+   * parcial (`incompleto:true`, al menos un hotel quedó inconcluyente). Los
+   * resultados PERSONA (`resultados`) siguen siendo válidos y se muestran
+   * igual: un fallo de la mitad unidad nunca oculta la mitad persona ni se
+   * disfraza de "no hay alojamientos por unidad en este destino" (fallo
+   * estructural corregido — ver `busquedaUnidadActions.ts`). `null` = la
+   * búsqueda unidad se completó con confianza (o no había nada que evaluar). */
+  avisoUnidad: string | null;
 };
 
 // Huella de los criterios de una búsqueda — sirve para detectar que el usuario
 // cambió un campo DESPUÉS de buscar y que, por lo tanto, los resultados ya
 // mostrados no corresponden a lo que está en pantalla.
 function huellaBusqueda(a: {
-  destino: string; fIda: string; fReg: string; adultos: string;
+  destino: string; destinoId: number | null; fIda: string; fReg: string; adultos: string;
   habs: AcomRoom[]; cantidadMenores: number; edadesTxt: string[];
 }): string {
-  return [a.destino, a.fIda, a.fReg, a.adultos, a.habs.join(","), a.cantidadMenores, a.edadesTxt.join(",")].join("|");
+  return [a.destino, a.destinoId ?? "", a.fIda, a.fReg, a.adultos, a.habs.join(","), a.cantidadMenores, a.edadesTxt.join(",")].join("|");
 }
 
 export function BuscadorBooking({
@@ -73,8 +83,13 @@ export function BuscadorBooking({
    * SELECCIONABLE y, por lo tanto, buscable desde acá: el motor
    * (`buscarHoteles` + `buscarAlojamientosUnidadPorFechas`) ya sabe
    * resolverlo, pero con la lista vieja solo-persona ese destino ni siquiera
-   * aparecía en el desplegable. */
-  destinos?: string[];
+   * aparecía en el desplegable. Cada opción trae su `id` (`destinos.id`)
+   * cuando se conoce — la búsqueda unidad lo manda tal cual a la Server
+   * Action, que ya no tiene que re-resolverlo por texto (cierre del hallazgo
+   * de identidad de destino: dos registros de `destinos` pueden diferir por
+   * mayúsculas/espacios, y una resolución por nombre dentro de la acción
+   * podía no encontrar el id correcto). */
+  destinos?: DestinoPorcionOpcion[];
   /** Canal hacia `VistaBooking` — ver `EstadoBusquedaPorcion`. */
   onBusqueda?: (estado: EstadoBusquedaPorcion | null) => void;
   /** Sugerencia de fecha elegida por el usuario. Los chips viven en
@@ -89,6 +104,13 @@ export function BuscadorBooking({
   const [fReg, setFReg] = useState("");
   const [adultos, setAdultos] = useState("2");
   const [destino, setDestino] = useState("");
+  // Identidad ESTABLE del destino elegido (`destinos.id`) — viaja junto al
+  // nombre, nunca en su lugar: `buscarHoteles` (persona) solo conoce nombre
+  // (`tarifario_resultado` no tiene `destino_id`, ver `destinosPorcion.ts`),
+  // así que el nombre sigue siendo obligatorio. `null` cuando la opción
+  // elegida no trae id (destino solo-persona) — la búsqueda unidad cae
+  // entonces a su camino legado por nombre dentro de la Server Action.
+  const [destinoId, setDestinoId] = useState<number | null>(null);
   const [nHab, setNHab] = useState("1");
   const [habs, setHabs] = useState<AcomRoom[]>(["doble"]);
   const [cantidadMenores, setCantidadMenoresState] = useState(0);
@@ -237,7 +259,7 @@ export function BuscadorBooking({
     // Los criterios de ESTA búsqueda quedan fijados de una vez — la huella
     // sirve para identificarlos (botón "Limpiar resultados"), no para
     // invalidar: eso ya lo hace `miGeneracion` de forma síncrona.
-    const huella = huellaBusqueda({ destino, fIda: idaUsada, fReg: regresoUsada, adultos, habs, cantidadMenores, edadesTxt });
+    const huella = huellaBusqueda({ destino, destinoId, fIda: idaUsada, fReg: regresoUsada, adultos, habs, cantidadMenores, edadesTxt });
     setHuellaBuscada(huella);
     start(async () => {
       // DOS llamadas por búsqueda, SIEMPRE en paralelo y NUNCA una por
@@ -255,11 +277,14 @@ export function BuscadorBooking({
         }),
         buscarAlojamientosUnidadPorFechas({
           fechaIda: idaUsada, fechaRegreso: regresoUsada,
-          destino,
+          destino, destinoId,
           habitaciones: habs.map((acom) => ({ acom })),
           adultos: adultosParsed,
           cantidadMenores, edadesMenores: edades,
-        }).catch(() => null),
+        }).catch((e): ResultadoBusquedaUnidad => ({
+          ok: false,
+          error: e instanceof Error ? e.message : "No se pudo completar la búsqueda de alojamientos por unidad.",
+        })),
       ]);
       // Esta búsqueda quedó obsoleta: algo (otro `buscar()`, una sugerencia
       // de fecha que dispara otro `buscar()`, o `limpiarResultados()` — botón
@@ -282,18 +307,37 @@ export function BuscadorBooking({
       if (!r.ok) { setErr(r.error); onBusqueda?.(null); return; }
       // Solo lo CONFIRMADO disponible entra al resultado: `sin_disponibilidad`
       // no es un resultado disponible (y un hotel sobre el que el servidor no
-      // pudo concluir no llegó hasta acá — ver `evaluarHotel`). Se filtra acá,
-      // en el borde, para que la lista unificada de `VistaBooking` no tenga
-      // que saber de estados.
-      const unidad: AlojamientoUnidadDisponible[] = unidadRes?.ok
-        ? unidadRes.disponibilidad.filter((d): d is AlojamientoUnidadDisponible => d.estado === "disponible")
-        : [];
+      // pudo concluir no llegó hasta acá — ver `evaluarDisponibilidadUnidad.ts`).
+      // Se filtra acá, en el borde, para que la lista unificada de
+      // `VistaBooking` no tenga que saber de estados.
+      //
+      // Fallo estructural corregido: antes un `unidadRes.ok === false` (o una
+      // excepción, con el `.catch(() => null)` de antes) se volvía
+      // SILENCIOSAMENTE un arreglo `unidad` vacío — indistinguible de "este
+      // destino no tiene hoteles por unidad". Ahora SIEMPRE se distingue con
+      // `avisoUnidad`: los resultados PERSONA (`r.resultados`) se muestran
+      // igual (nunca dependen de que la mitad unidad haya funcionado), pero
+      // el aviso deja claro que la búsqueda unidad no se pudo completar (o se
+      // completó solo parcialmente — `incompleto`) en vez de dar a entender
+      // que se agotó el universo de hoteles del destino.
+      let unidad: AlojamientoUnidadDisponible[] = [];
+      let avisoUnidad: string | null = null;
+      if (unidadRes.ok) {
+        unidad = unidadRes.disponibilidad.filter((d): d is AlojamientoUnidadDisponible => d.estado === "disponible");
+        if (unidadRes.incompleto) {
+          avisoUnidad = "No pudimos confirmar la disponibilidad de todos los alojamientos por unidad de este destino — algunos podrían faltar. Los resultados por persona sí están completos.";
+        }
+      } else {
+        console.error(`[BuscadorBooking] búsqueda unidad falló: ${unidadRes.error}`);
+        avisoUnidad = "No pudimos completar la búsqueda de alojamientos por unidad para este destino. Los resultados por persona sí se muestran.";
+      }
       onBusqueda?.({
         destino, fechaIda: idaUsada, fechaRegreso: regresoUsada,
         resultados: r.resultados,
         diagnostico: r.diagnostico ?? null,
         sugerenciasFecha: r.sugerenciasFecha ?? [],
         unidad,
+        avisoUnidad,
       });
     });
   }
@@ -341,9 +385,22 @@ export function BuscadorBooking({
               obligatorio para buscar, así que una opción "sin destino" elegible
               sólo ofrecería el valor que el motor rechaza. */}
           <div><label className="mb-1 block text-xs text-gray-500">Destino</label>
-            <select value={destino} onChange={(e) => { setDestino(e.target.value); limpiarResultados(); }} className={sel}>
+            <select
+              value={destino}
+              onChange={(e) => {
+                const nombre = e.target.value;
+                // El id viaja junto al nombre elegido — se busca en la MISMA
+                // lista que armó las opciones, nunca se adivina ni se vuelve
+                // a resolver por texto en otro lugar.
+                const opcion = destinos.find((d) => d.nombre === nombre);
+                setDestino(nombre);
+                setDestinoId(opcion?.id ?? null);
+                limpiarResultados();
+              }}
+              className={sel}
+            >
               <option value="" disabled>Selecciona un destino</option>
-              {destinos.map((d) => <option key={d} value={d}>{d}</option>)}
+              {destinos.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
             </select>
           </div>
           <div><label className="mb-1 block text-xs text-gray-500">Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} /></div>
