@@ -9,6 +9,7 @@ import type {
   ContratoVuelo,
   ContratoItem,
 } from "@/types/database";
+import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +30,11 @@ type Detalle = {
   hoteles: ContratoHotel[];
   vuelos: ContratoVuelo[];
   items: ContratoItem[];
+  // Snapshot Bernalo de la cotización (ver `crearCotizacionCarrito`) — mismo
+  // shape que usa la ruta autenticada `app/cotizacion/[id]/page.tsx`. Ausente
+  // en cotizaciones sin hoteles Bernalo.
+  habitacionesBernalo?: HabitacionBernaloDocumento[];
+  composicionBernalo?: ComposicionBernaloDocumento[];
 };
 
 // Vista pública (sin login) de una cotización, por token imposible de adivinar.
@@ -67,6 +73,8 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
             hoteles={d.hoteles ?? []}
             vuelos={d.vuelos ?? []}
             items={d.items ?? []}
+            habitacionesBernalo={d.habitacionesBernalo ?? []}
+            composicionBernalo={d.composicionBernalo ?? []}
             totalPagado={0}
             esCotizacion
             codigo={cot.codigo}

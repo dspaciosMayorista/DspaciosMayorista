@@ -5,7 +5,7 @@ import Image from "next/image";
 import { Star, Check, X, Info } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
-import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges, CondicionCompacta, type CondicionHotelBadgeData } from "@/components/cotizacion/CondicionHotelBadges";
@@ -18,6 +18,23 @@ import {
   verificarTarifasMenoresDisponibles,
 } from "@/lib/reservar/edadesMenores";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
+import {
+  construirHabitacionesUI,
+  idsHabitacionesPorConteo,
+  sincronizarHabitaciones,
+  ajustarCantidadEdadesHabitacion,
+  establecerEdad,
+  construirPayloadHabitaciones,
+  validarHabitacionesOcupacion,
+  type EdadesPorHabitacion,
+  type HabitacionOcupacionEntrada,
+} from "@/lib/reservar/ocupacionPorHabitacion";
+import {
+  cotizarAlojamientoBernaloPublico,
+  type ResultadoCotizarAlojamientoBernaloPublico,
+  type SalidaSeleccionadaBernaloEntrada,
+} from "./cotizacionBernaloActions";
+import type { HotelBernaloDescubierto, SalidaAereaBernalo } from "@/lib/tarifario/datosBernalo";
 import { obtenerDetalleHotel } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -170,6 +187,7 @@ export function VistaBooking({
   soloAcom = null,
   descripcionPorPaquete = {},
   filasAddon = [],
+  hotelesBernalo = [],
 }: {
   filas: FilaResumen[];
   fotosPorHotel?: Record<number, string>;
@@ -190,9 +208,16 @@ export function VistaBooking({
   // recorte que aplica `filas` para la vitrina plana de Servicios — de acá
   // sale `addonsPorPaquete`, scoped al hotel que se está viendo.
   filasAddon?: FilaResumen[];
+  // Fase 3E Bernalo — descubrimiento PARALELO (regla 6 del encargo): hoteles
+  // `modelo_tarifario = 'unidad'` de paquetes activos, sin precio (nunca
+  // pasan por `tarifario_resultado`/`filas` de arriba). Se muestran en su
+  // propia sección, con "Consultar tarifa" en vez de un precio.
+  hotelesBernalo?: HotelBernaloDescubierto[];
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
+  // Fase 3E Bernalo: hotel descubierto cuyo modal de cotización está abierto.
+  const [modalBernalo, setModalBernalo] = useState<HotelBernaloDescubierto | null>(null);
   // Buscador de bloqueos: origen → destino → salida (vuelo).
   const [origenSel, setOrigenSel] = useState("");
   const [destinoSel, setDestinoSel] = useState("");
@@ -624,8 +649,42 @@ export function VistaBooking({
       </>
       )}
 
+      {/* Fase 3E Bernalo — sección PARALELA (regla 6/8): nunca se mezcla con
+          la grilla de arriba (que sale de `tarifario_resultado`); sin precio
+          precargado, "Consultar tarifa" abre la cotización en vivo. */}
+      {hotelesBernalo.length > 0 && (
+        <div className="mt-6">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            Alojamientos con tarifa personalizada
+            <span className="ml-2 font-normal normal-case text-gray-400">({hotelesBernalo.length})</span>
+          </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {hotelesBernalo.map((h) => (
+              <div key={`${h.paqueteId}-${h.hotelId}`} className="flex flex-col justify-between rounded-2xl border border-gray-200 bg-white p-4">
+                <div>
+                  <div className="font-semibold text-gray-800">{h.hotelNombre}</div>
+                  <div className="mt-0.5 text-xs text-gray-500">{h.destinoNombre ?? ""}</div>
+                </div>
+                <div className="mt-3 flex items-end justify-between">
+                  <span className="text-sm text-gray-400">Consultar tarifa</span>
+                  <button type="button" onClick={() => setModalBernalo(h)}
+                    className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                    style={{ backgroundColor: "var(--brand-accent)" }}>
+                    Consultar tarifa →
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {abierto && (
         <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
+      )}
+
+      {modalBernalo && (
+        <HotelBernaloCotizarModal hotel={modalBernalo} onClose={() => setModalBernalo(null)} />
       )}
 
       {receptivoAbierto && (
@@ -940,12 +999,92 @@ function HotelModal({
   );
 }
 
+// ── Fase 3E Bernalo — modal de cotización dinámica de un hotel descubierto
+// (`hotelesBernalo`, ver `lib/tarifario/datosBernalo.ts`). A diferencia de
+// `HotelModal` (hoteles "persona", con `tarifario_resultado` ya calculado),
+// este modal no tiene ningún precio precargado — todo sale de `EditorPax`
+// en modo Bernalo, que cotiza en vivo contra
+// `cotizarAlojamientoBernaloPublico`. Sin "Agregar al carrito" (regla 19).
+function HotelBernaloCotizarModal({ hotel, onClose }: { hotel: HotelBernaloDescubierto; onClose: () => void }) {
+  // B1.18: categorías/alimentación vacías = el hotel no es cotizable — mensaje
+  // genérico de configuración incompleta, nunca texto libre ni un editor que
+  // deje adivinar la clasificación.
+  const configuracionIncompleta = hotel.categorias.length === 0 || hotel.regimenes.length === 0;
+  const { add, openDrawer } = useCart();
+
+  // Fase 3F-4A: EditorPax ya cotizó en vivo (resultadoCotizacion.ok) y reporta
+  // SOLO las decisiones + el PVP/moneda que mostró — la identidad del
+  // hotel/paquete la completa este modal (ya la conoce de `hotel`). Nunca se
+  // agrega neto/costos/comisión/snapshot al carrito (regla A.5).
+  function agregarBernalo(item: {
+    categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
+    habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
+  }) {
+    add({
+      tipo: "hotel",
+      modeloTarifario: "unidad",
+      paqueteId: hotel.paqueteId,
+      hotelId: hotel.hotelId,
+      hotelNombre: hotel.hotelNombre,
+      destino: hotel.destinoNombre,
+      fotoUrl: null,
+      categoria: item.categoria,
+      alimentacion: item.alimentacion,
+      salida: item.salida,
+      habitaciones: item.habitaciones,
+      precio: item.precio,
+      moneda: item.moneda,
+    });
+    openDrawer();
+    onClose();
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
+      <div
+        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 p-5">
+          <div>
+            <div className="font-semibold text-gray-800">{hotel.hotelNombre}</div>
+            <div className="text-xs text-gray-500">{hotel.destinoNombre ?? ""}</div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-700">
+            Cerrar ✕
+          </button>
+        </div>
+        <div className="space-y-4 p-5">
+          {configuracionIncompleta ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              Este hotel todavía no tiene su configuración completa (categorías/alimentación) —
+              no está disponible para cotizar en línea. Contacta a un asesor.
+            </p>
+          ) : (
+            <EditorPax
+              pvp={{}}
+              moneda={hotel.moneda}
+              modeloTarifario="unidad"
+              hotelId={hotel.hotelId}
+              paqueteId={hotel.paqueteId}
+              categoriasDisponibles={hotel.categorias}
+              alimentacionesDisponibles={hotel.regimenes}
+              salidas={hotel.salidas}
+              onAgregar={() => {}}
+              onAgregarBernalo={agregarBernalo}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Selector({
   opcion, hotel, puedeReservar, planesInfo, cap, onAgregar,
 }: {
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Omit<HotelCartItem, "id">) => void;
+  onAgregar: (item: Omit<HotelCartItemPersona, "id">) => void;
 }) {
   const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
   const [cat, setCat] = useState(cats[0] ?? "");
@@ -1014,7 +1153,8 @@ function Selector({
 // Niño 2 (ver lib/reservar/edadesMenores.ts) — nunca un conteo manual por tarifa.
 function EditorPax({
   pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
-  edadInfanteMax, edadNinoMax, onAgregar, btnLabel = "Agregar al carrito", moneda = "COP",
+  edadInfanteMax, edadNinoMax, onAgregar, onAgregarBernalo, btnLabel = "Agregar al carrito", moneda = "COP",
+  modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [],
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -1025,14 +1165,82 @@ function EditorPax({
   edadInfanteMax?: number | null;
   edadNinoMax?: number | null;
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) => void;
+  // Fase 3F-4A: SOLO se usa cuando `modeloTarifario === "unidad"` — forma
+  // completamente distinta a `onAgregar` (persona) porque Bernalo no tiene
+  // conteos por acomodación ni niños/infantes agregados, sino habitaciones
+  // físicas con sus propias edades (regla A.2 del encargo). Se dispara
+  // únicamente tras una cotización exitosa (`resultadoCotizacion.ok`).
+  onAgregarBernalo?: (item: {
+    categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
+    habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
+  }) => void;
   btnLabel?: string;
   moneda?: string | null;
+  // Fase 3D/3E Bernalo: cuando llega "unidad", esta habitación se captura
+  // por HABITACIÓN FÍSICA (edades propias por habitación) y se cotiza en
+  // vivo contra el servidor — en vez del flujo legado (cantidad total +
+  // arreglo plano + `pvp` ya calculado). `null`/ausente = comportamiento
+  // EXACTO de siempre (regla 9 del encargo: hoteles "persona" sin cambios).
+  modeloTarifario?: string | null;
+  // Identidad REAL — obligatorios cuando `modeloTarifario === "unidad"`
+  // (nunca placeholders, regla 9 de Fase 3E): sin ellos no se puede llamar
+  // `cotizarAlojamientoBernaloPublico`, que re-valida pertenencia al
+  // paquete server-side.
+  hotelId?: number;
+  paqueteId?: number;
+  // Categoría/alimentación REALES habilitadas para este hotel en este
+  // paquete (`armado_hoteles.categorias`/`regimenes`) — nunca un valor
+  // normalizado inventado como "estandar" cuando el real es "Estándar".
+  categoriasDisponibles?: string[];
+  alimentacionesDisponibles?: string[];
+  // A1: salidas aéreas REALES del paquete (`lib/tarifario/datosBernalo.ts`) —
+  // vacío = porción terrestre (fechas libres, validadas por el servidor
+  // contra la ventana del paquete); una = se autoselecciona; varias = la UI
+  // exige elegir explícitamente. Nunca se "toma la primera" en silencio.
+  salidas?: SalidaAereaBernalo[];
 }) {
   const idBase = useId();
+  const esBernalo = modeloTarifario === "unidad";
   const [habs, setHabs] = useState<Record<string, number>>({});
   const [cantidadMenores, setCantidadMenoresState] = useState(0);
   const [edadesTxt, setEdadesTxt] = useState<string[]>([]);
-  const setHab = (a: AcomRoom, n: number) => setHabs((p) => ({ ...p, [a]: Math.max(0, n) }));
+  // Fase 3D — estado canónico SOLO para Bernalo: una entrada por habitación
+  // FÍSICA (id estable), nunca un conteo aparte (regla 14: single source —
+  // ver `lib/reservar/ocupacionPorHabitacion.ts`).
+  const [edadesPorHabitacion, setEdadesPorHabitacion] = useState<EdadesPorHabitacion>({});
+  // Fase 3E — clasificación y fechas REALES elegidas para esta cotización
+  // (nunca placeholders): categoría/alimentación salen de las opciones
+  // realmente vinculadas al hotel/paquete (`categoriasDisponibles`/
+  // `alimentacionesDisponibles`); las fechas las escribe el usuario, dentro
+  // de la ventana que el servidor vuelve a validar.
+  const [categoriaSel, setCategoriaSel] = useState("");
+  const [alimentacionSel, setAlimentacionSel] = useState("");
+  const [fechaIdaBernalo, setFechaIdaBernalo] = useState("");
+  const [fechaRegresoBernalo, setFechaRegresoBernalo] = useState("");
+  // A1: identidad de la salida elegida cuando hay MÁS de una — clave
+  // `"tipo:id"`; vacío hasta que el usuario elige explícitamente (nunca se
+  // autocompleta con la primera).
+  const [salidaElegidaKey, setSalidaElegidaKey] = useState("");
+  const [resultadoCotizacion, setResultadoCotizacion] = useState<ResultadoCotizarAlojamientoBernaloPublico | null>(null);
+  const [validando, setValidando] = useState(false);
+
+  // Fase 3E: independiente de `pvp` (que en Bernalo no existe todavía —
+  // el precio sale de cotizar, no de una tabla precalculada) — cuántas
+  // habitaciones se eligieron, sin importar ninguna tarifa por columna.
+  const totalHabBernalo = ACOM_ROOMS.reduce((s, a) => s + (habs[a] ?? 0), 0);
+  const hayHabBernalo = totalHabBernalo > 0;
+
+  const setHab = (a: AcomRoom, n: number) => {
+    const next = { ...habs, [a]: Math.max(0, n) };
+    setHabs(next);
+    // Regla 5: cambiar la distribución NUNCA reasigna una edad ya escrita a
+    // otra habitación — solo limpia las de las habitaciones que ya no
+    // existen (mismo id ⇒ misma habitación, siempre).
+    if (esBernalo) {
+      setEdadesPorHabitacion((ep) => sincronizarHabitaciones(ep, idsHabitacionesPorConteo(next)));
+      setResultadoCotizacion(null);
+    }
+  };
 
   // Al cambiar la cantidad: agrega campos vacíos al final o quita solo los
   // sobrantes del final — las edades ya escritas nunca se reordenan/pierden.
@@ -1144,84 +1352,367 @@ function EditorPax({
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
   const inputEdadCls = "w-14 rounded-lg border px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
 
+  // ── Fase 3D/3E Bernalo — captura por habitación física + cotización real ─
+  // Todo lo de abajo solo se usa cuando `esBernalo`; para hoteles "persona"
+  // no se evalúa (habitacionesUI queda vacío) y el bloque JSX de siempre
+  // (más abajo) no cambia una sola línea.
+  const habitacionesUI = esBernalo ? construirHabitacionesUI(habs) : [];
+  const paxTarifaPorTipo: Record<string, number> = {};
+  if (esBernalo) for (const a of ACOM_ROOMS) paxTarifaPorTipo[a] = cfg(a).pax_tarifa;
+  const payloadBernalo = esBernalo ? construirPayloadHabitaciones(habs, paxTarifaPorTipo, edadesPorHabitacion) : [];
+  // Preview EN VIVO con la MISMA función que re-corre el servidor (regla 8:
+  // "la UI no es autoridad" — esto es solo feedback inmediato, nunca la
+  // validación que de verdad autoriza nada).
+  const previewBernalo = esBernalo && habitacionesUI.length > 0 ? validarHabitacionesOcupacion(payloadBernalo) : null;
+  const erroresPorHabitacion = new Map<string, string[]>();
+  if (previewBernalo && !previewBernalo.ok) {
+    for (const e of previewBernalo.errores) {
+      if (!e.habitacionId) continue;
+      const arr = erroresPorHabitacion.get(e.habitacionId) ?? [];
+      arr.push(e.mensaje);
+      erroresPorHabitacion.set(e.habitacionId, arr);
+    }
+  }
+
+  function cambiarCantidadMenoresHab(habId: string, n: number) {
+    setEdadesPorHabitacion((ep) => ajustarCantidadEdadesHabitacion(ep, habId, n));
+    setResultadoCotizacion(null);
+  }
+  function cambiarEdadHab(habId: string, i: number, v: string) {
+    setEdadesPorHabitacion((ep) => establecerEdad(ep, habId, i, v));
+    setResultadoCotizacion(null);
+  }
+
+  // A1: identidad discriminada de la salida elegida — nunca `[0]`. Con una
+  // sola salida real se autoselecciona (regla A1.2); con varias, EXIGE que
+  // el usuario elija una explícitamente (regla A1.3 — `salidaElegidaKey`
+  // queda vacío hasta que el usuario hace clic, así que
+  // `salidaElegidaKeyEfectiva` no cae en ninguna por defecto); sin ninguna
+  // salida real, el paquete es porción terrestre y se cotiza con las fechas
+  // escritas a mano.
+  const salidaElegidaKeyEfectiva = salidas.length === 1
+    ? `${salidas[0].tipo}:${salidas[0].id}`
+    : (salidas.some((s) => `${s.tipo}:${s.id}` === salidaElegidaKey) ? salidaElegidaKey : "");
+  const salidaElegida = salidas.find((s) => `${s.tipo}:${s.id}` === salidaElegidaKeyEfectiva) ?? null;
+
+  const salidaPayload: SalidaSeleccionadaBernaloEntrada | null =
+    salidas.length > 0
+      ? (salidaElegida ? { tipo: salidaElegida.tipo, id: salidaElegida.id } : null)
+      : (fechaIdaBernalo && fechaRegresoBernalo ? { tipo: "sin_vuelo", fechaIda: fechaIdaBernalo, fechaRegreso: fechaRegresoBernalo } : null);
+
+  const bernaloListoParaCotizar =
+    hayHabBernalo && !!hotelId && !!paqueteId && !!categoriaSel && !!alimentacionSel && !!salidaPayload;
+
+  // Regla A.1: SOLO se habilita después de una cotización Bernalo exitosa.
+  // `resultadoCotizacion` ya se limpia (null) ante cualquier cambio de
+  // salida/clasificación/ocupación (ver setHab/cambiarCantidadMenoresHab/
+  // cambiarEdadHab/los onChange de categoría-alimentación-salida más abajo),
+  // así que este botón se deshabilita solo con recotizar pendiente —
+  // ninguna lógica de invalidación nueva hace falta acá.
+  function agregarBernaloClick() {
+    if (!onAgregarBernalo || !resultadoCotizacion?.ok || !salidaPayload) return;
+    onAgregarBernalo({
+      categoria: categoriaSel, alimentacion: alimentacionSel, salida: salidaPayload,
+      habitaciones: payloadBernalo, precio: resultadoCotizacion.pvp, moneda: resultadoCotizacion.moneda,
+    });
+  }
+
+  async function cotizarBernalo() {
+    if (validando || !bernaloListoParaCotizar || !hotelId || !paqueteId || !salidaPayload) return;
+    setValidando(true);
+    setResultadoCotizacion(null);
+    try {
+      // El servidor vuelve a validar TODO (ocupación, pertenencia al
+      // paquete, categoría/alimentación, salida real, ventana de fechas) —
+      // nunca se confía en `previewBernalo` ni en nada calculado en el
+      // navegador (reglas 2-3 de Fase 3E). La salida viaja como identidad
+      // {tipo,id} (o "sin_vuelo" + fechas) — nunca un índice `[0]`.
+      const r = await cotizarAlojamientoBernaloPublico({
+        paqueteId, hotelId, categoria: categoriaSel, alimentacion: alimentacionSel,
+        salida: salidaPayload,
+        habitaciones: payloadBernalo,
+      });
+      setResultadoCotizacion(r);
+    } finally {
+      setValidando(false);
+    }
+  }
+
   return (
     <>
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Habitaciones</p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {ACOM_ROOMS.map((a) => (
-            <div key={a} className={`rounded-lg border p-2 ${pvp[a] == null ? "opacity-40" : ""}`}>
-              <div className="text-xs font-medium text-gray-700">{ACOM_ROOM_LABEL[a]}</div>
-              <div className="text-[11px] text-gray-400">{pvp[a] != null ? `${formatMoneda(pvp[a], moneda)}/pers` : "No aplica"}</div>
-              <input type="number" min={0} value={habs[a] ?? 0} disabled={pvp[a] == null}
-                onChange={(e) => setHab(a, Number(e.target.value))} className={`${inputCls} mt-1`} />
-            </div>
-          ))}
+          {ACOM_ROOMS.map((a) => {
+            // Bernalo no tiene un PVP por columna precalculado (regla del
+            // encargo: el precio sale de cotizar, no de una tabla) — todas
+            // las acomodaciones quedan habilitadas; el servidor es quien
+            // dice si esa categoría/habitación tiene tarifa publicada.
+            const habilitada = esBernalo || pvp[a] != null;
+            return (
+              <div key={a} className={`rounded-lg border p-2 ${habilitada ? "" : "opacity-40"}`}>
+                <div className="text-xs font-medium text-gray-700">{ACOM_ROOM_LABEL[a]}</div>
+                <div className="text-[11px] text-gray-400">
+                  {esBernalo ? "" : (pvp[a] != null ? `${formatMoneda(pvp[a], moneda)}/pers` : "No aplica")}
+                </div>
+                <input type="number" min={0} value={habs[a] ?? 0} disabled={!habilitada}
+                  onChange={(e) => setHab(a, Number(e.target.value))} className={`${inputCls} mt-1`} />
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {muestraMenores && (
-        <div>
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <label htmlFor={`${idBase}-cant`} className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores</label>
-          </div>
-          {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
-              <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
-                value={cantidadMenores} disabled={!hayHab}
-                onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
-            </div>
-            {edadesTxt.map((v, i) => {
-              const err = edadesParsed[i]?.error;
-              const mostrarError = v.trim() !== "" && err;
-              return (
-                <div key={i}>
-                  <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
-                  <input
-                    id={`${idBase}-edad-${i}`}
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    max={EDAD_MENOR_MAX}
-                    value={v}
-                    onChange={(e) => setEdadAt(i, e.target.value)}
-                    className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
-                    aria-invalid={mostrarError ? true : undefined}
-                  />
-                  {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+      {esBernalo ? (
+        // ── Fase 3D/3E: una fila compacta por habitación FÍSICA, cada una
+        // con sus propias edades, más la clasificación/fechas REALES de
+        // esta cotización — nunca un total + arreglo plano para toda la
+        // solicitud, nunca un placeholder. Mismo contenedor/clases que el
+        // resto del componente (sin tarjetas anidadas ni rediseño).
+        hayHabBernalo && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label htmlFor={`${idBase}-categoria`} className="mb-1 block text-xs font-medium text-gray-600">Categoría</label>
+                {/* B1: SOLO opciones reales vinculadas al hotel/paquete —
+                    nunca texto libre. El gate de "configuración incompleta"
+                    vive en HotelBernaloCotizarModal (no monta este editor si
+                    no hay categorías/regímenes); por defensa en profundidad
+                    el select queda deshabilitado y sin opciones en vez de
+                    caer a un input de texto. */}
+                <select id={`${idBase}-categoria`} value={categoriaSel} disabled={!categoriasDisponibles.length}
+                  onChange={(e) => { setCategoriaSel(e.target.value); setResultadoCotizacion(null); }}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+                  <option value="">Elige…</option>
+                  {categoriasDisponibles.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor={`${idBase}-alimentacion`} className="mb-1 block text-xs font-medium text-gray-600">Alimentación</label>
+                <select id={`${idBase}-alimentacion`} value={alimentacionSel} disabled={!alimentacionesDisponibles.length}
+                  onChange={(e) => { setAlimentacionSel(e.target.value); setResultadoCotizacion(null); }}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+                  <option value="">Elige…</option>
+                  {alimentacionesDisponibles.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              {salidas.length === 0 ? (
+                // A1.6: sin salidas reales configuradas → porción terrestre;
+                // las fechas SÍ las escribe el usuario, y el servidor las
+                // vuelve a validar contra la ventana de viaje del paquete.
+                <>
+                  <div>
+                    <label htmlFor={`${idBase}-fecha-ida`} className="mb-1 block text-xs font-medium text-gray-600">Entrada</label>
+                    <input id={`${idBase}-fecha-ida`} type="date" value={fechaIdaBernalo}
+                      onChange={(e) => { setFechaIdaBernalo(e.target.value); setResultadoCotizacion(null); }}
+                      className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label htmlFor={`${idBase}-fecha-regreso`} className="mb-1 block text-xs font-medium text-gray-600">Salida</label>
+                    <input id={`${idBase}-fecha-regreso`} type="date" value={fechaRegresoBernalo}
+                      onChange={(e) => { setFechaRegresoBernalo(e.target.value); setResultadoCotizacion(null); }}
+                      className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                  </div>
+                </>
+              ) : salidas.length === 1 ? (
+                // A1.2: una sola salida real — se autoselecciona; solo se
+                // muestra como información (fechas AUTORITATIVAS de esa
+                // salida, nunca editables aquí).
+                <div>
+                  <span className="mb-1 block text-xs font-medium text-gray-600">Salida</span>
+                  <p className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm text-gray-700">
+                    {salidas[0].etiqueta ? `${salidas[0].etiqueta} · ` : ""}{fmtFecha(salidas[0].fechaIda)} → {fmtFecha(salidas[0].fechaRegreso)}
+                  </p>
                 </div>
-              );
-            })}
+              ) : null}
+            </div>
+            {salidas.length > 1 && (
+              // A1.3: varias salidas reales — la UI EXIGE una elección
+              // explícita, nunca "toma la primera" en silencio.
+              <div>
+                <p className="mb-1 text-xs font-medium text-gray-600">Elige tu salida</p>
+                <div className="flex flex-wrap gap-2">
+                  {salidas.map((s) => {
+                    const key = `${s.tipo}:${s.id}`;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => { setSalidaElegidaKey(key); setResultadoCotizacion(null); }}
+                        className="rounded-lg border px-3 py-2 text-left text-sm transition-colors"
+                        style={salidaElegidaKeyEfectiva === key
+                          ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
+                          : { borderColor: "#e5e7eb", backgroundColor: "white" }}
+                      >
+                        <span className="block font-medium text-gray-800">{s.etiqueta || (s.tipo === "bloqueo" ? "Bloqueo" : "Empaquetado")}</span>
+                        <span className="block text-xs text-gray-500">{fmtFecha(s.fechaIda)} → {fmtFecha(s.fechaRegreso)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores por habitación</span>
+            </div>
+            {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
+            <div className="space-y-2">
+              {habitacionesUI.map((h, idx) => {
+                const edadesHab = edadesPorHabitacion[h.id] ?? [];
+                const erroresHab = erroresPorHabitacion.get(h.id) ?? [];
+                return (
+                  <div key={h.id} className="rounded-lg border border-gray-200 p-2">
+                    <div className="text-xs font-medium text-gray-700">
+                      {ACOM_ROOM_LABEL[h.acom]} #{idx + 1}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-end gap-3">
+                      <div>
+                        <label htmlFor={`${idBase}-${h.id}-cant`} className="mb-1 block text-xs font-medium text-gray-600">
+                          Cantidad de menores
+                        </label>
+                        <input
+                          id={`${idBase}-${h.id}-cant`}
+                          type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
+                          value={edadesHab.length}
+                          onChange={(e) => cambiarCantidadMenoresHab(h.id, Number(e.target.value))}
+                          className={inputCls}
+                        />
+                      </div>
+                      {edadesHab.map((v, i) => {
+                        const err = parseEdadMenor(v).error;
+                        const mostrarError = v.trim() !== "" && err;
+                        return (
+                          <div key={i}>
+                            <label htmlFor={`${idBase}-${h.id}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">
+                              Edad del menor {i + 1}
+                            </label>
+                            <input
+                              id={`${idBase}-${h.id}-edad-${i}`}
+                              type="number" inputMode="numeric" min={0} max={EDAD_MENOR_MAX}
+                              value={v}
+                              onChange={(e) => cambiarEdadHab(h.id, i, e.target.value)}
+                              className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                              aria-invalid={mostrarError ? true : undefined}
+                            />
+                            {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {erroresHab.length > 0 && (
+                      <p className="mt-1 text-[11px] text-red-600">{erroresHab.join(" ")}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
-            <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
-          )}
-          {clasifError && <p className="mt-1 text-[11px] text-red-600">{clasifError}</p>}
-          {cantidadMenores > 0 && !clasifError && edadesValidas && (
-            <p className="mt-1 text-[11px] text-gray-400">
-              {[infantes > 0 ? `${infantes} infante(s)` : null, ninosTotal > 0 ? `${ninosTotal} niño(s)` : null].filter(Boolean).join(" · ") || "Todas las edades corresponden a adulto."}
-            </p>
-          )}
-        </div>
+        )
+      ) : (
+        muestraMenores && (
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label htmlFor={`${idBase}-cant`} className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores</label>
+            </div>
+            {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
+                <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
+                  value={cantidadMenores} disabled={!hayHab}
+                  onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
+              </div>
+              {edadesTxt.map((v, i) => {
+                const err = edadesParsed[i]?.error;
+                const mostrarError = v.trim() !== "" && err;
+                return (
+                  <div key={i}>
+                    <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
+                    <input
+                      id={`${idBase}-edad-${i}`}
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={EDAD_MENOR_MAX}
+                      value={v}
+                      onChange={(e) => setEdadAt(i, e.target.value)}
+                      className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                      aria-invalid={mostrarError ? true : undefined}
+                    />
+                    {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+                  </div>
+                );
+              })}
+            </div>
+            {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
+              <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
+            )}
+            {clasifError && <p className="mt-1 text-[11px] text-red-600">{clasifError}</p>}
+            {cantidadMenores > 0 && !clasifError && edadesValidas && (
+              <p className="mt-1 text-[11px] text-gray-400">
+                {[infantes > 0 ? `${infantes} infante(s)` : null, ninosTotal > 0 ? `${ninosTotal} niño(s)` : null].filter(Boolean).join(" · ") || "Todas las edades corresponden a adulto."}
+              </p>
+            )}
+          </div>
+        )
       )}
 
-      {errores.length > 0 && (
+      {!esBernalo && errores.length > 0 && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{errores.join(" ")}</p>
       )}
 
-      <div className="flex items-center justify-between border-t border-gray-100 pt-3">
-        <div>
-          <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
-          <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
+      {esBernalo ? (
+        // Fase 3F-4A: cotización dinámica real contra el servidor + "Agregar
+        // al carrito" habilitado SOLO tras una cotización exitosa (regla
+        // A.1). El TOTAL es la autoridad (regla 18); el promedio por viajero
+        // es solo referencia visual, nunca el número que se resalta primero.
+        <div className="space-y-2 border-t border-gray-100 pt-3">
+          {resultadoCotizacion?.ok && (
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs text-gray-400">
+                  Total solicitado{resultadoCotizacion.paxTotal > 0 ? ` · ${resultadoCotizacion.paxTotal} pax` : ""}
+                </div>
+                <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>
+                  {formatMoneda(resultadoCotizacion.pvp, resultadoCotizacion.moneda)}
+                </div>
+                <div className="text-[11px] text-gray-400">
+                  ≈ {formatMoneda(resultadoCotizacion.promedioPorViajero, resultadoCotizacion.moneda)} por viajero (referencia)
+                </div>
+              </div>
+            </div>
+          )}
+          {resultadoCotizacion && !resultadoCotizacion.ok && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{resultadoCotizacion.mensaje}</p>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            <button type="button" onClick={cotizarBernalo} disabled={!bernaloListoParaCotizar || validando}
+              className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 disabled:opacity-40">
+              {validando ? "Cotizando…" : resultadoCotizacion?.ok ? "Recotizar" : "Cotizar"}
+            </button>
+            {onAgregarBernalo && (
+              <button type="button" onClick={agregarBernaloClick} disabled={!resultadoCotizacion?.ok}
+                className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+                style={{ backgroundColor: "var(--brand-primary)" }}>
+                Agregar al carrito
+              </button>
+            )}
+          </div>
         </div>
-        <button type="button" onClick={agregar} disabled={!puede}
-          className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
-          style={{ backgroundColor: "var(--brand-primary)" }}>
-          {btnLabel}
-        </button>
-      </div>
+      ) : (
+        <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+          <div>
+            <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
+            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
+          </div>
+          <button type="button" onClick={agregar} disabled={!puede}
+            className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+            style={{ backgroundColor: "var(--brand-primary)" }}>
+            {btnLabel}
+          </button>
+        </div>
+      )}
       {nota && <p className="text-[11px] text-gray-400">{nota}</p>}
     </>
   );
@@ -1234,7 +1725,7 @@ function SelectorPorFechas({
 }: {
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Omit<HotelCartItem, "id">) => void;
+  onAgregar: (item: Omit<HotelCartItemPersona, "id">) => void;
 }) {
   // No se permite check-in en el pasado: el mínimo es HOY (o el inicio del rango
   // del paquete si es posterior). Si el paquete empieza antes de hoy, arranca hoy.

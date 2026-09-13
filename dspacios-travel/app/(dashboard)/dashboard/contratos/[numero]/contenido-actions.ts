@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Edición del CONTENIDO de un contrato — SOLO SUPERADMIN
@@ -70,11 +71,37 @@ async function reemplazarFilas(
 // ── Ítems de valores (lo que ve el cliente en el documento) ───────────────
 export type ItemContenido = {
   descripcion: string; adultos: number; ninos: number; tarifaAdulto: number; tarifaNino: number;
+  // Solo LECTURA en este editor (cierre 3F-4B) — el formulario no las
+  // captura ni las envía de vuelta; existen para que la UI pueda mostrar el
+  // valor REAL de una línea `modo_precio = "total"` (Bernalo) en vez de $0,
+  // y para que `guardarItemsContrato` pueda detectar y rechazar su edición
+  // (ver el guard ahí). Opcionales: filas legadas sin estas columnas caen al
+  // default histórico.
+  modoPrecio?: string; valorTotal?: number | null;
 };
 
 export async function guardarItemsContrato(numero: string, items: ItemContenido[]): Promise<Result> {
   const guard = await soloSuperadmin();
   if (!guard.ok) return guard;
+  // Hallazgo confirmado (cierre 3F-4B): este editor arma cada fila SIEMPRE en
+  // modo `por_persona` (el formulario no captura `modo_precio`/`valor_total`)
+  // y `reemplazarFilas` reemplaza la tabla COMPLETA (borra todo lo viejo,
+  // inserta lo nuevo) — guardar aquí sobre un contrato con una línea
+  // `modo_precio = "total"` (Bernalo) la destruiría en silencio, perdiendo su
+  // `valor_total` real. Se rechaza la edición completa ANTES de tocar nada
+  // en vez de intentar preservarla a medias (el formulario no tiene forma de
+  // enviarla de vuelta intacta).
+  const { data: existentes, error: eExist } = await guard.sb
+    .from("contrato_items")
+    .select("modo_precio")
+    .eq("numero_contrato", numero);
+  if (eExist) return { ok: false, error: eExist.message };
+  if ((existentes ?? []).some((it) => it.modo_precio === "total")) {
+    return {
+      ok: false,
+      error: "Este contrato tiene una línea de precio total (hotel con tarifa por habitación / Bernalo) — este editor todavía no sabe conservarla y bloquea el guardado para no destruirla. Contacta al equipo técnico si necesitas corregir esa línea.",
+    };
+  }
   const filas = items
     .filter((it) => it.descripcion.trim())
     .map((it, i) => ({
@@ -188,12 +215,23 @@ export async function sincronizarPrecioVenta(numero: string): Promise<Result> {
   if (!guard.ok) return guard;
   const { data: items, error } = await guard.sb
     .from("contrato_items")
-    .select("adultos, ninos, tarifa_adulto, tarifa_nino")
+    .select("modo_precio, valor_total, adultos, ninos, tarifa_adulto, tarifa_nino")
     .eq("numero_contrato", numero);
   if (error) return { ok: false, error: error.message };
-  const total = (items ?? []).reduce(
-    (s, it) => s + (it.adultos ?? 0) * (it.tarifa_adulto ?? 0) + (it.ninos ?? 0) * (it.tarifa_nino ?? 0),
-    0
+  // Hallazgo confirmado (cierre 3F-4B): antes esta suma solo leía
+  // adultos/ninos/tarifa_adulto/tarifa_nino — una línea `modo_precio =
+  // "total"` (Bernalo) sumaba $0, así que "Igualar el precio de venta"
+  // invitaba a poner `ventas.precio_venta` en $0 en un contrato Bernalo.
+  // El helper compartido (`lib/contrato/valorContratoItem.ts`) lee
+  // `valor_total` para esas líneas — la misma fuente que ya usa
+  // `ContratoDocumento.tsx`/`ContenidoContratoEditor.tsx`, nunca una tercera
+  // fórmula que pudiera divergir.
+  const total = totalVisibleContratoItems(
+    (items ?? []).map((it) => ({
+      modo_precio: it.modo_precio, valor_total: it.valor_total,
+      adultos: it.adultos ?? 0, ninos: it.ninos ?? 0,
+      tarifa_adulto: it.tarifa_adulto ?? 0, tarifa_nino: it.tarifa_nino ?? 0,
+    }))
   );
   const { error: ue } = await guard.sb
     .from("ventas")

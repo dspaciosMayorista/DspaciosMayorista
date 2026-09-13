@@ -34,7 +34,9 @@ import {
   type PasajeroReserva,
   type ComputoReserva,
 } from "@/lib/reservar/computo";
-import { resolverDatosVuelo, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
+import { resolverDatosVuelo, datosVueloBloqueo, datosVueloEmpaquetado, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
+import { computarReservaBernalo, type ComputoReservaBernaloOk, type SalidaResueltaBernalo } from "@/lib/reservar/computoReservaBernalo";
+import type { HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { faltantesCxP, type CxpExistente } from "@/lib/reservar/cxpCobertura";
 import {
   normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio,
@@ -1199,11 +1201,33 @@ export async function convertirCotizacion(id: number, pasajeros?: PasajeroReserv
 //    cotizaciones de carrito creadas ANTES de este cambio no traen esos ids
 //    y sus tours siguen sin CxP automática (residual, documentado en el PR).
 export type ItemCarritoPayload = {
+  // Marcador de discriminación — SIEMPRE `undefined` para un ítem persona
+  // (nunca se escribe en runtime; JSON.stringify lo descarta). Existe solo
+  // para que TypeScript narrowe `it.modeloTarifario === "unidad"` contra la
+  // unión con `ItemCarritoBernaloPayload` (Fase 3F-4B) sin necesitar un cast
+  // — mismo criterio que `HotelCartItemPersona`/`SolicitudItemPersona`.
+  modeloTarifario?: undefined;
   modulo: "bloqueo" | "porcion_terrestre";
   paqueteId: number; hotelId: number; bloqueoId: number | null;
   hotelNombre: string; destino: string | null; categoria: string; regimen: string;
   fechaIda: string | null; fechaRegreso: string | null; noches: number | null;
   habitaciones: Record<string, number>; ninos: number; ninos2: number; infantes: number; pax: number; precio: number;
+};
+
+// Ítem Bernalo YA COMPUTADO al crear la cotización de carrito (Fase 3F-4A,
+// `SolicitudItemBernaloComputado` en checkout/actions.ts) — SOLO decisiones
+// + PVP/pax autoritativos AL MOMENTO DE COTIZAR, nunca netos/costos/
+// comisión/snapshot (esos nunca se persistieron en `cotizaciones.payload`).
+// Fase 3F-4B re-liquida esto EN VIVO con `computarReservaBernalo` al
+// convertir (regla A.3) — este tipo es solo la forma del payload YA
+// GUARDADO, nunca la autoridad de precio final.
+export type ItemCarritoBernaloPayload = {
+  modeloTarifario: "unidad";
+  paqueteId: number; hotelId: number; hotelNombre: string; destino: string | null;
+  categoria: string; alimentacion: string;
+  salida: SalidaResueltaBernalo;
+  habitaciones: HabitacionOcupacionValidada[];
+  pax: number; precio: number;
 };
 export type TourCarritoPayload = {
   nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null;
@@ -1231,7 +1255,16 @@ export type TourCarritoPayload = {
 // cada ítem) declara explícitamente qué POSICIONES (1-based, dentro de
 // `opts.pasajeros` — misma convención que `responsableOrden`) corresponden a
 // cada ítem — nunca se adivina por posición/conteo.
-type ItemCarritoConAsignacion = ItemCarritoPayload & { __posiciones: number[] };
+// Unión discriminada real (persona | Bernalo) — Fase 3F-4B. El acceso a
+// campos ESPECÍFICOS de una variante (`.modulo`/`.bloqueoId` de persona,
+// `.salida`/`.alimentacion` de Bernalo) SIEMPRE debe pasar primero por
+// `it.modeloTarifario === "unidad"` para que TypeScript angoste — nunca un
+// cast. `ItemCarritoPersonaConAsignacion` (abajo) es la variante YA
+// angostada, para las funciones que solo conocen el camino persona
+// (`reservasSillasDeGrupo`, sin cambios de comportamiento — regla 16).
+type ItemCarritoConAsignacion = (ItemCarritoPayload | ItemCarritoBernaloPayload) & { __posiciones: number[] };
+type ItemCarritoPersonaConAsignacion = ItemCarritoPayload & { __posiciones: number[] };
+type ItemCarritoBernaloConAsignacion = ItemCarritoBernaloPayload & { __posiciones: number[] };
 // Un tour del carrito con su asignación EXPLÍCITA de pasajeros — B17 (ronda
 // 6). Igual que los hoteles/bloqueos, los tours se agregan de forma
 // INDEPENDIENTE (cada uno con su propio `pax`), así que quién viaja en cada
@@ -1254,7 +1287,7 @@ type TourCarritoConAsignacion = TourCarritoPayload & { __posiciones: number[] };
 // efectiva que se pasa como `p_fecha_referencia_fallback` al RPC), así que
 // esta función nunca necesita decidir "hoy" por su cuenta.
 function reservasSillasDeGrupo(
-  validados: readonly { item: ItemCarritoConAsignacion; comp: ComputoReserva }[],
+  validados: readonly { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva }[],
   mapaGlobalALocal: ReadonlyMap<number, number>,
   pasajerosNormalizadosGlobal: readonly PasajeroReserva[],
   fechaRefGrupo: string
@@ -1272,6 +1305,141 @@ function reservasSillasDeGrupo(
       };
     });
   return consolidarReservasSillasPorBloqueo(itemsBloqueoLocal);
+}
+
+/** Fila de `proveedores` embebida en un `.select("...proveedores(nombre, aplica_retencion, pct_retencion)")`. */
+type ProveedorFilaCatalogo = { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
+
+// ── Fase 3F-4B, regla A: reliquidación + regla B: proveedores obligatorios ──
+// Re-liquida un ítem Bernalo EN VIVO con el ÚNICO servicio autoritativo
+// (`computarReservaBernalo`, el mismo que usa la cotización pública — regla
+// D.17 de 3F-4A, sin segunda implementación) y aplica las guardias que la
+// VISTA PREVIA no exige pero el CONTRATO sí:
+//   · tarifa/salida/moneda/configuración inválida → bloquea (regla A.4),
+//     con el mensaje real del servicio interno (nunca uno fabricado aparte).
+//   · el PVP recalculado difiere del PVP persistido en la cotización →
+//     bloquea con mensaje de "recotiza" — NUNCA actualiza ni convierte con
+//     el precio nuevo en silencio (regla A.5).
+//   · proveedor del HOTEL ausente → bloquea (regla B.9.1): la vista previa
+//     podía cotizar sin proveedor (`proveedorHotel: null` es un resultado
+//     válido de `computarReservaBernalo`), el contrato no.
+//   · algún servicio incluido con costo > 0 sin proveedor resuelto →
+//     bloquea (regla B.9.2) — nunca "Sin especificar" para una obligación
+//     financiera Bernalo (regla B.11).
+// El proveedor AÉREO (si la salida es bloqueo/empaquetado) NO se valida
+// aquí — regla B.9.3: se resuelve más abajo, en la creación, con la MISMA
+// función que ya usa el flujo persona (`datosVueloBloqueo`/
+// `datosVueloEmpaquetado`, `lib/reservar/empaquetadoOrigen.ts`), que
+// tolera proveedor ausente exactamente como persona (fallback al nombre de
+// la aerolínea) — no existe una regla más estricta y segura que inventar
+// aquí, así que se reutiliza tal cual.
+async function validarBernaloParaConversion(
+  it: ItemCarritoBernaloConAsignacion,
+  monedaCotizacion: string | null
+): Promise<
+  | { ok: true; resultado: ComputoReservaBernaloOk; proveedoresServicios: Map<number, ProveedorFilaCatalogo> }
+  | { ok: false; error: string }
+> {
+  // Service-role propio (mismo criterio que `computarReservaBernalo`, que
+  // tampoco recibe cliente por parámetro): esta validación corre en Paso 1,
+  // ANTES de que este archivo confirme `SUPABASE_SERVICE_ROLE_KEY` (esa
+  // verificación vive en Paso 2, ver más abajo) — nunca debe depender de
+  // `admin`/`sb` del llamador, que en ese punto todavía podría ser el
+  // cliente de sesión.
+  const admin = createAdminClient();
+  const resultado = await computarReservaBernalo({
+    paqueteId: it.paqueteId,
+    hotelId: it.hotelId,
+    categoria: it.categoria,
+    alimentacion: it.alimentacion,
+    salida: it.salida,
+    habitaciones: it.habitaciones,
+  });
+  if (!resultado.ok) {
+    return { ok: false, error: `${it.hotelNombre}: ${resultado.mensaje}` };
+  }
+
+  // Regla A.5: el precio del carrito NUNCA es autoridad — pero un cambio
+  // real (tarifa modificada, temporada vencida y reemplazada, etc.) tampoco
+  // se acepta en silencio. Se corta y se pide recotizar, igual que hace el
+  // checkout (Fase 3F-4A, regla B.10) — la diferencia es que acá ya no hay
+  // "segunda confirmación" posible dentro de esta llamada: el asesor tiene
+  // que volver al tarifario, rehacer la cotización y reintentar convertir.
+  if (resultado.precioVenta !== it.precio) {
+    return {
+      ok: false,
+      error: `${it.hotelNombre}: el precio cambió desde que se generó la cotización (antes ${it.precio}, ahora ${resultado.precioVenta} ${resultado.moneda}). Vuelve al tarifario, recotiza y genera una nueva cotización antes de convertir.`,
+    };
+  }
+
+  // Hallazgo confirmado (cierre 3F-4B): el payload persistido de un ítem
+  // Bernalo (`ItemCarritoBernaloPayload`) no guarda SU PROPIA moneda por
+  // ítem — solo `cotizaciones.moneda` (la moneda ÚNICA declarada para TODA
+  // la cotización, congelada al crearla en checkout/actions.ts). Comparar
+  // solo el precio numérico no detecta un cambio de moneda (ej. el catálogo
+  // pasó de COP a USD y el número coincidiera por coincidencia/redondeo) —
+  // se exige la invariante explícita: la moneda recalculada de CADA ítem
+  // Bernalo debe coincidir con la moneda declarada de la cotización.
+  if (monedaCotizacion && resultado.moneda !== monedaCotizacion) {
+    return {
+      ok: false,
+      error: `${resultado.hotelNombre}: la moneda cambió desde que se generó la cotización (antes ${monedaCotizacion}, ahora ${resultado.moneda}). Vuelve al tarifario, recotiza y genera una nueva cotización antes de convertir.`,
+    };
+  }
+
+  // Cierre 3F-4B (hallazgo confirmado): un ítem Bernalo con salida "bloqueo"
+  // o "empaquetado" implica un vuelo negociado/de sistema real — que en el
+  // flujo persona SIEMPRE reserva cupo físico (`sillas`/inventario del
+  // record) dentro de la MISMA transacción atómica que crea el contrato
+  // (`crear_pasajeros_contrato_multi`). Bernalo todavía NO participa en esa
+  // reserva de sillas (regla A.8 de la fase anterior: nunca se disfraza de
+  // la forma persona-shaped que usa ese motor) — integrarlo exige tocar el
+  // núcleo de inventario compartido con persona, fuera del alcance de este
+  // cierre puntual. Convertir de todas formas emitiría el costo/CxP aéreo
+  // correctos pero SIN decrementar ningún cupo real: sobreventa silenciosa
+  // del mismo vuelo. Se bloquea explícito en vez de arriesgarlo — la
+  // resolución correcta es la integración real con Reservar interno.
+  if (resultado.salida.tipo !== "sin_vuelo") {
+    return {
+      ok: false,
+      error: `${resultado.hotelNombre}: esta reserva usa una salida aérea negociada/de sistema (${resultado.salida.tipo}) — la conversión a contrato para hoteles Bernalo con vuelo todavía no reserva cupo real en el inventario de sillas y se bloquea para evitar sobreventa. Solo se puede convertir por ahora una cotización Bernalo de porción terrestre (sin vuelo). Contacta al equipo técnico para la integración con Reservar interno.`,
+    };
+  }
+
+  // Regla B.9.1: proveedor del hotel OBLIGATORIO para el contrato (la vista
+  // previa/cotización pública sí tolera `proveedorHotel: null`).
+  if (!resultado.proveedorHotel?.nombre) {
+    return {
+      ok: false,
+      error: `${resultado.hotelNombre}: este hotel no tiene proveedor configurado en el catálogo — no se puede convertir a contrato. Configura el proveedor del hotel e inténtalo de nuevo.`,
+    };
+  }
+
+  // Regla B.9.2/B.10: cada servicio incluido con costo real requiere un
+  // proveedor REAL resuelto server-side — nunca "Sin especificar" (B.11).
+  const proveedoresServicios = new Map<number, ProveedorFilaCatalogo>();
+  const idsServiciosConCosto = [...new Set(resultado.serviciosIncluidos.filter((s) => s.costoNeto > 0).map((s) => s.servicioId))];
+  if (idsServiciosConCosto.length) {
+    const { data: filasServicio, error: eServ } = await admin
+      .from("servicios_adicionales")
+      .select("id, nombre, proveedores(nombre, aplica_retencion, pct_retencion)")
+      .in("id", idsServiciosConCosto);
+    if (eServ) {
+      return { ok: false, error: `${resultado.hotelNombre}: no se pudo validar el proveedor de los servicios incluidos (${eServ.message}).` };
+    }
+    for (const f of filasServicio ?? []) proveedoresServicios.set(f.id, f.proveedores as unknown as ProveedorFilaCatalogo);
+    for (const s of resultado.serviciosIncluidos) {
+      if (s.costoNeto <= 0) continue;
+      if (!proveedoresServicios.get(s.servicioId)?.nombre) {
+        return {
+          ok: false,
+          error: `${resultado.hotelNombre}: el servicio incluido "${s.nombre}" no tiene proveedor configurado con cuenta por pagar asociada — no se puede convertir a contrato. Configura su proveedor e inténtalo de nuevo.`,
+        };
+      }
+    }
+  }
+
+  return { ok: true, resultado, proveedoresServicios };
 }
 
 
@@ -1293,10 +1461,43 @@ export async function convertirCotizacionCarrito(
   const sb = await createClient();
   const { data: cot } = await sb
     .from("cotizaciones")
-    .select("id, estado, tipo, payload, tenant")
+    .select("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda")
     .eq("id", id).eq("tipo", "carrito").maybeSingle();
   if (!cot) return { ok: false, error: "Cotización no encontrada." };
+  // Hallazgo confirmado (cierre 3F-4B): mismo criterio que `convertirCotizacion`
+  // (persona, un solo contrato) — si esta cotización YA quedó "convertida" en
+  // un intento anterior, un reintento (doble clic, red lenta, etc.) NUNCA debe
+  // volver a crear contratos/sillas/CxP: devuelve los números ya generados.
+  const detalleExistente = (cot.detalle ?? {}) as { contratos?: unknown; contratosPorGrupo?: Record<string, string>; agrupar?: string };
+  if (cot.estado === "convertida") {
+    const contratosPrevios = Array.isArray(detalleExistente.contratos)
+      ? (detalleExistente.contratos as unknown[]).filter((n): n is string => typeof n === "string")
+      : [];
+    if (contratosPrevios.length) return { ok: true, numeros: contratosPrevios };
+    if (cot.numero_contrato) return { ok: true, numeros: [cot.numero_contrato] };
+  }
   if (cot.estado === "descartada") return { ok: false, error: "La cotización está descartada; no se puede convertir." };
+
+  // Hallazgo confirmado (idempotencia, ronda 2): la clave de progreso por
+  // grupo (`claveDeGrupo`, más abajo) sale de `grupo.destino`, que solo
+  // existe porque `opts.agrupar` decidió CÓMO se armaron los grupos — "todo"
+  // arma un único grupo con `destino: null`, "por_destino" arma uno por
+  // destino real. Si un intento previo ya dejó progreso
+  // (`contratosPorGrupo` no vacío) y el reintento llega con OTRO
+  // `opts.agrupar`, la misma clave ("__sin_destino__" vs. un destino real, o
+  // viceversa) dejaría de significar lo mismo — un ítem que antes vivía
+  // "adentro" de un contrato ya creado podría terminar huérfano en un grupo
+  // nuevo, o un grupo nuevo podría creerse "ya completo" por una clave que
+  // en realidad es de otro modo. Se persiste el modo usado en
+  // `detalle.agrupar` (ver más abajo) y un reintento con un modo distinto se
+  // rechaza explícito — nunca intenta reconciliar las dos agrupaciones.
+  const contratosPorGrupoExistente = detalleExistente.contratosPorGrupo ?? {};
+  if (Object.keys(contratosPorGrupoExistente).length > 0 && detalleExistente.agrupar && detalleExistente.agrupar !== opts.agrupar) {
+    return {
+      ok: false,
+      error: `Esta cotización ya tiene contratos creados agrupando por "${detalleExistente.agrupar}" — no se puede reintentar la conversión con un modo de agrupación distinto ("${opts.agrupar}"), cambiaría a qué contrato pertenece cada grupo ya creado. Vuelve a convertir con "${detalleExistente.agrupar}".`,
+    };
+  }
 
   // Sin tenant asignado no se convierte (ver migración 153 — nunca se asume
   // un tenant por defecto), y el caller debe tener acceso a esa agencia.
@@ -1309,7 +1510,7 @@ export async function convertirCotizacionCarrito(
   const tenantCotizacion = cot.tenant as Tenant;
 
   const payload = (cot.payload ?? {}) as {
-    items?: ItemCarritoPayload[]; tours?: TourCarritoPayload[];
+    items?: (ItemCarritoPayload | ItemCarritoBernaloPayload)[]; tours?: TourCarritoPayload[];
     // Servicios INCLUIDOS de cada paquete de hotel del carrito, congelados al
     // crear la cotización (checkout/actions.ts) — ausente en cotizaciones
     // creadas antes de este cambio (queda `[]`, nunca se inventa contenido).
@@ -1321,6 +1522,16 @@ export async function convertirCotizacionCarrito(
   const serviciosIncluidosCot = payload.serviciosIncluidos ?? [];
   const cliente = payload.cliente ?? { nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" };
   if (!itemsCrudos.length && !tours.length) return { ok: false, error: "La cotización no tiene ítems." };
+
+  // Fase 3F-4B, regla A.7: esta conversión YA sabe reliquidar/escribir un
+  // ítem Bernalo (`hoteles.modelo_tarifario = "unidad"`, marcado en el
+  // payload con `modeloTarifario: "unidad"` desde checkout/actions.ts,
+  // Fase 3F-4A) — el bloqueo genérico de 3F-4A se retira. El "Reservar"
+  // interno (formulario `/dashboard/reservar/nuevo`) sigue bloqueado sin
+  // cambios: su guardia vive en `lib/reservar/computo.ts` (regla D.16/
+  // "Reservar interno continúa bloqueado" de este encargo), un archivo que
+  // esta fase no toca.
+
   if (!opts.pasajeros.length) return { ok: false, error: "Captura los pasajeros antes de generar el contrato." };
 
   // ── Validar `opts.asignaciones` (B11): una entrada por ítem, posiciones
@@ -1421,11 +1632,52 @@ export async function convertirCotizacionCarrito(
 
   const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
 
-  // ── Paso 1: validar TODO (precio autoritativo + cupos) antes de insertar ──
-  const gruposValidados: { grupo: Grupo; validados: { item: ItemCarritoConAsignacion; comp: ComputoReserva }[] }[] = [];
+  // Hallazgo confirmado (idempotencia, ronda 2): un grupo que YA generó su
+  // contrato en un intento anterior se salta ANTES de reliquidar/validar sus
+  // ítems — nunca solo antes de escribir (como quedó en la ronda 1). Un
+  // grupo completo no debe poder bloquear el reintento porque su precio,
+  // moneda o proveedor cambiaron DESPUÉS de convertirlo (ese contrato ya es
+  // un hecho consumado; no hay nada que re-decidir sobre él). `numeros` se
+  // siembra aquí mismo con los contratos que ya existían, en el mismo orden
+  // que `grupos`.
+  const claveDeGrupo = (g: Grupo) => g.destino ?? "__sin_destino__";
+  const contratosPorGrupo: Record<string, string> = { ...contratosPorGrupoExistente };
+  const detalleBase = (cot.detalle ?? {}) as Record<string, unknown>;
+  const numeros: string[] = [];
   for (const grupo of grupos) {
-    const validados: { item: ItemCarritoConAsignacion; comp: ComputoReserva }[] = [];
+    const numeroExistente = contratosPorGrupo[claveDeGrupo(grupo)];
+    if (numeroExistente) numeros.push(numeroExistente);
+  }
+  const gruposPendientes = grupos.filter((g) => !contratosPorGrupo[claveDeGrupo(g)]);
+
+  // ── Paso 1: validar TODO (precio autoritativo + cupos) antes de insertar ──
+  // Fase 3F-4B: cada ítem se despacha por `modeloTarifario` a su propio
+  // camino de validación — persona sigue exactamente igual
+  // (`validadosPersona`); Bernalo re-liquida con `computarReservaBernalo` y
+  // aplica las guardias de proveedor/PVP de `validarBernaloParaConversion`
+  // (`validadosBernalo`). Mantenerlos en arreglos SEPARADOS (en vez de una
+  // unión etiquetada mezclada) evita reintroducir un cast en
+  // `reservasSillasDeGrupo`/el resto del código persona, que sigue
+  // recibiendo EXACTAMENTE la misma forma que antes (regla A.16). Solo se
+  // valida `gruposPendientes` — los grupos ya convertidos ni se tocan.
+  type ValidadoBernalo = { item: ItemCarritoBernaloConAsignacion; resultado: ComputoReservaBernaloOk; proveedoresServicios: Map<number, ProveedorFilaCatalogo> };
+  const gruposValidados: {
+    grupo: Grupo;
+    validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva }[];
+    validadosBernalo: ValidadoBernalo[];
+  }[] = [];
+  for (const grupo of gruposPendientes) {
+    const validadosPersona: { item: ItemCarritoPersonaConAsignacion; comp: ComputoReserva }[] = [];
+    const validadosBernalo: ValidadoBernalo[] = [];
     for (const it of grupo.items) {
+      // Regla A.1/A.2/A.8: SOLO las decisiones guardadas se reconstruyen —
+      // nunca se arma un `ReservaInput` persona-shaped para un ítem Bernalo.
+      if (it.modeloTarifario === "unidad") {
+        const rBernalo = await validarBernaloParaConversion(it, cot.moneda ?? null);
+        if (!rBernalo.ok) return { ok: false, error: rBernalo.error };
+        validadosBernalo.push({ item: it, resultado: rBernalo.resultado, proveedoresServicios: rBernalo.proveedoresServicios });
+        continue;
+      }
       const reserva: ReservaInput = {
         paqueteId: it.paqueteId, bloqueoId: it.bloqueoId, modulo: it.modulo, hotelId: it.hotelId,
         fechaIda: it.modulo !== "bloqueo" ? (it.fechaIda ?? undefined) : undefined,
@@ -1443,6 +1695,21 @@ export async function convertirCotizacionCarrito(
       };
       const comp = await computarReserva(sb, reserva);
       if (!comp.ok) return { ok: false, error: `${it.hotelNombre}: ${comp.error}` };
+      // Hallazgo confirmado (P2-1): mismo criterio que la guarda de moneda de
+      // `validarBernaloParaConversion` — `cotizaciones.moneda` es la moneda
+      // ÚNICA congelada para TODA la cotización (persona + Bernalo mixtos
+      // incluidos). Sin este chequeo, un ítem persona cuya moneda cambió
+      // desde que se cotizó (catálogo re-configurado de COP a USD, etc.)
+      // podía terminar estampando `ventas.moneda` con una moneda distinta a
+      // la de un ítem Bernalo del MISMO contrato — un contrato con dos
+      // monedas mezcladas en silencio. Se bloquea ANTES de acumular el ítem,
+      // con el mismo mensaje de "recotiza" que usa Bernalo.
+      if (cot.moneda && comp.data.monedaReserva !== cot.moneda) {
+        return {
+          ok: false,
+          error: `${it.hotelNombre}: la moneda cambió desde que se generó la cotización (antes ${cot.moneda}, ahora ${comp.data.monedaReserva}). Vuelve al tarifario, recotiza y genera una nueva cotización antes de convertir.`,
+        };
+      }
       // La capacidad de sillas ya NO se valida por ÍTEM aquí (B21, ronda 8): el
       // RPC reserva la UNIÓN consolidada por bloqueo, no la suma por ítem, así
       // que un chequeo por ítem daba falsos OK (ej. 3 sillas y dos ítems
@@ -1450,14 +1717,15 @@ export async function convertirCotizacionCarrito(
       // pero la demanda real consolidada es 4). Se valida la demanda
       // consolidada de TODA la operación en la pre-validación de más abajo,
       // antes de escribir nada.
-      validados.push({ item: it, comp: comp.data });
+      validadosPersona.push({ item: it, comp: comp.data });
     }
-    gruposValidados.push({ grupo, validados });
+    gruposValidados.push({ grupo, validadosPersona, validadosBernalo });
   }
 
   // ── Paso 2: crear un contrato por grupo, con TODOS sus hoteles/tours ──────
+  // `numeros` ya viene sembrado (arriba) con los contratos de grupos que
+  // esta misma llamada saltó por estar ya convertidos.
   const OBS_AUTO = "Generado automáticamente desde el carrito (tarifario)";
-  const numeros: string[] = [];
 
   // Usuario real de la sesión — resuelto UNA vez para todos los grupos.
   // Antes solo alimentaba el congelado de condiciones (best-effort); ahora
@@ -1510,9 +1778,15 @@ export async function convertirCotizacionCarrito(
   // usado por varios grupos suma su demanda, no se valida grupo por grupo.
   const pre: { ok: false; error: string } | { ok: true; demanda: Map<number, number> } = (() => {
     const reservasPorGrupo: ReservaSillasPorBloqueo[][] = [];
-    for (const { grupo, validados } of gruposValidados) {
+    for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados) {
+      // Bernalo aporta su fecha RESUELTA (`resultado.salida`, autoritativa —
+      // nunca la del ítem crudo) a la referencia de edad del grupo, pero
+      // NUNCA participa en `reservasSillasDeGrupo` más abajo (regla A.8: no
+      // se disfraza de `ReservaInput` persona-shaped, y esta fase no integra
+      // Bernalo con el inventario de sillas — ver "riesgos residuales").
       const fechasIdaPre = [
-        ...validados.map((v) => v.comp.meta.fecha_ida),
+        ...validadosPersona.map((v) => v.comp.meta.fecha_ida),
+        ...validadosBernalo.map((v) => v.resultado.salida.fechaIda),
         ...grupo.tours.map((t) => t.fechaIda),
       ].filter((f): f is string => !!f).sort();
       // B-fix (fecha_salida NULL, revisión de Opus ronda 9): si este grupo no
@@ -1550,7 +1824,7 @@ export async function convertirCotizacionCarrito(
       // responsables de arriba ya garantiza que esto no puede fallar aquí.
       const pasajerosNormPre = normalizarResponsablesPorGrupo(opts.pasajeros, fechaRefPre);
       const { mapaGlobalALocal: mapaPre } = reindexarGrupoLocal(pasajerosNormPre, universoPre);
-      reservasPorGrupo.push(reservasSillasDeGrupo(validados, mapaPre, pasajerosNormPre, fechaRefPre));
+      reservasPorGrupo.push(reservasSillasDeGrupo(validadosPersona, mapaPre, pasajerosNormPre, fechaRefPre));
     }
     return { ok: true, demanda: demandaSillasPorBloqueo(reservasPorGrupo) };
   })();
@@ -1575,14 +1849,27 @@ export async function convertirCotizacionCarrito(
     }
   }
 
-  for (const { grupo, validados } of gruposValidados) {
+  // `contratosPorGrupo`/`claveDeGrupo`/`detalleBase` ya se inicializaron
+  // ANTES de Paso 1 (`gruposPendientes` los usó para excluir los grupos ya
+  // convertidos de la reliquidación/validación) — `gruposValidados` acá
+  // SOLO contiene grupos pendientes, así que este loop nunca necesita
+  // volver a chequear "¿ya existe?": si estuviera completo no habría
+  // llegado hasta Paso 1 en absoluto.
+  for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados) {
+    const claveGrupo = claveDeGrupo(grupo);
     const numRes = await siguienteNumeroContrato(tenantCotizacion);
     if (!numRes.ok) return { ok: false, error: numRes.error };
     const numero = numRes.numero;
+    const totalHotelesGrupo = validadosPersona.length + validadosBernalo.length;
 
     const clienteNombre = `${cliente.nombres} ${cliente.apellidos}`.trim();
+    // Regla A.6/C.12: destino/fechas/precio/moneda del contrato se agregan
+    // sobre AMBAS listas — una cotización mixta persona+Bernalo debe quedar
+    // en UN contrato coherente, sin que la presencia de Bernalo cambie cómo
+    // se calculan estos totales para las líneas persona (regla 16).
     const destinos = [...new Set([
-      ...validados.map((v) => v.comp.meta.destino_nombre ?? v.item.destino),
+      ...validadosPersona.map((v) => v.comp.meta.destino_nombre ?? v.item.destino),
+      ...validadosBernalo.map((v) => v.resultado.hotelDestino ?? v.item.destino),
       ...grupo.tours.map((t) => t.destino),
     ].filter((d): d is string => !!d))];
     // Fechas del CONTRATO: la más temprana/tardía de TODAS las unidades del
@@ -1593,11 +1880,13 @@ export async function convertirCotizacionCarrito(
     // contra la que el RPC recalcula es_infante de TODOS los pasajeros — la UI
     // clasifica contra esta MISMA fecha (ver `fechaContratoDePasajero`).
     const fechasIda = [
-      ...validados.map((v) => v.comp.meta.fecha_ida),
+      ...validadosPersona.map((v) => v.comp.meta.fecha_ida),
+      ...validadosBernalo.map((v) => v.resultado.salida.fechaIda),
       ...grupo.tours.map((t) => t.fechaIda),
     ].filter((f): f is string => !!f).sort();
     const fechasReg = [
-      ...validados.map((v) => v.comp.meta.fecha_regreso),
+      ...validadosPersona.map((v) => v.comp.meta.fecha_regreso),
+      ...validadosBernalo.map((v) => v.resultado.salida.fechaRegreso),
       ...grupo.tours.map((t) => t.fechaRegreso),
     ].filter((f): f is string => !!f).sort();
     // Fecha de referencia REAL de este grupo — cuando existe, es la MISMA que
@@ -1612,8 +1901,13 @@ export async function convertirCotizacionCarrito(
     // persistido (nunca inventado), el otro es la clasificación transitoria
     // que la base va a rehacer por su cuenta con ese mismo `current_date`.
     const fechaRefGrupo = fechasIda[0] ?? hoyServidor;
-    const precioTotal = validados.reduce((s, v) => s + v.comp.precioVenta, 0) + grupo.tours.reduce((s, t) => s + t.precio, 0);
-    const monedaGrupo = validados[0]?.comp.monedaReserva ?? "COP";
+    // Regla C.12: `ventas.precio_venta` para un grupo con un único ítem
+    // Bernalo (el caso típico) queda en EXACTAMENTE `resultado.precioVenta`
+    // — la suma de una sola parte más 0 tours/otros hoteles.
+    const precioTotal = validadosPersona.reduce((s, v) => s + v.comp.precioVenta, 0)
+      + validadosBernalo.reduce((s, v) => s + v.resultado.precioVenta, 0)
+      + grupo.tours.reduce((s, t) => s + t.precio, 0);
+    const monedaGrupo = validadosPersona[0]?.comp.monedaReserva ?? validadosBernalo[0]?.resultado.moneda ?? "COP";
 
     // ── Universo LOCAL de este contrato (B13, ronda 5; B17, ronda 6) ─────
     // ÚNICAMENTE la unión de posiciones asignadas a las UNIDADES DE ESTE
@@ -1661,8 +1955,13 @@ export async function convertirCotizacionCarrito(
     // contrato resultante muestran exactamente el mismo resultado. Legados
     // sin `servicioId` caen a "otro" vía `normalizarCategoriaServicio`
     // (nunca se inventa asistencia/tour para un dato ausente).
+    // Regla A.6/25: excluye explícitamente los `paqueteId` de ítems Bernalo —
+    // sus servicios incluidos se re-liquidan FRESCOS más abajo
+    // (`resultado.serviciosIncluidos`, autoritativo de `computarReservaBernalo`)
+    // y generan su propia CxP con identidad `servicio_id`; usar también este
+    // snapshot persistido para el mismo paquete los contaría DOS veces.
     const incluidosGrupo = serviciosIncluidosCot.filter(
-      (s) => s.paqueteId != null && grupo.items.some((it) => it.paqueteId === s.paqueteId)
+      (s) => s.paqueteId != null && grupo.items.some((it) => it.modeloTarifario !== "unidad" && it.paqueteId === s.paqueteId)
     );
     const serviciosEfectivosGrupo: ServicioEfectivo[] = [
       ...incluidosGrupo,
@@ -1692,9 +1991,9 @@ export async function convertirCotizacionCarrito(
       fecha_salida: fechasIda[0] ?? null,
       fecha_regreso: fechasReg.length ? fechasReg[fechasReg.length - 1] : null,
       pax: paxTotal,
-      hotel: validados.length === 1
-        ? (validados[0].comp.meta.hotel_nombre ?? validados[0].item.hotelNombre)
-        : validados.length === 0 ? null : `${validados.length} hoteles`,
+      hotel: totalHotelesGrupo === 1
+        ? (validadosPersona[0]?.comp.meta.hotel_nombre ?? validadosPersona[0]?.item.hotelNombre ?? validadosBernalo[0]?.resultado.hotelNombre ?? null)
+        : totalHotelesGrupo === 0 ? null : `${totalHotelesGrupo} hoteles`,
       precio_venta: precioTotal,
       estado: "pendiente",
       // Migración 172 — mismo criterio que reservarDesdeTarifarioInterno.
@@ -1704,9 +2003,9 @@ export async function convertirCotizacionCarrito(
       plazo: null,
       asesor_firma_nombre: oNull(opts.asesorInterno ?? null),
       asesor: oNull(opts.asesorInterno ?? null),
-      plan_nombre: validados.length === 1
-        ? `${validados[0].item.categoria} · ${validados[0].item.regimen}`
-        : validados.length === 0 ? (grupo.tours.length === 1 ? grupo.tours[0].nombre : `${grupo.tours.length} tours`) : `${validados.length} hoteles`,
+      plan_nombre: totalHotelesGrupo === 1
+        ? (validadosPersona[0] ? `${validadosPersona[0].item.categoria} · ${validadosPersona[0].item.regimen}` : `${validadosBernalo[0].item.categoria} · ${validadosBernalo[0].item.alimentacion}`)
+        : totalHotelesGrupo === 0 ? (grupo.tours.length === 1 ? grupo.tours[0].nombre : `${grupo.tours.length} tours`) : `${totalHotelesGrupo} hoteles`,
       tours_traslados: resumenGrupo.toursTraslados,
       asistencia_medica: resumenGrupo.asistenciaMedica,
     });
@@ -1773,7 +2072,7 @@ export async function convertirCotizacionCarrito(
     // Mismas reservas consolidadas que ya se pre-validaron por capacidad (B21):
     // única fuente `reservasSillasDeGrupo`, así lo escrito coincide byte a byte
     // con lo comprobado.
-    const reservasSillas = reservasSillasDeGrupo(validados, mapaGlobalALocal, pasajerosNormalizadosGlobal, fechaRefGrupo);
+    const reservasSillas = reservasSillasDeGrupo(validadosPersona, mapaGlobalALocal, pasajerosNormalizadosGlobal, fechaRefGrupo);
     // B10 (ronda 3): la fecha de referencia que usó la UI para decidir
     // quién es infante y capturar su responsable es SIEMPRE conservadora
     // (la más temprana de TODO el carrito — la UI no puede conocer de
@@ -1829,7 +2128,11 @@ export async function convertirCotizacionCarrito(
     // (migración 171) desde sus propios parámetros — ver el mismo criterio en
     // `reservarDesdeTarifarioInterno`.
     const cxp: CxPFinanciera[] = [];
-    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, servicioId?: number | null) => {
+    // Regla E.28: `moneda` es OPCIONAL y EXPLÍCITA — omitida (persona, sin
+    // cambios) sigue cayendo en el default 'COP' del RPC (regla A.16); un
+    // llamador Bernalo SIEMPRE la pasa (`resultado.moneda`), nunca depende
+    // de ese default.
+    const pushCxP = (tipo: string, servicio: string, valor: number, pr: ProvFact, nombreFallback?: string | null, servicioId?: number | null, moneda?: string) => {
       if (!(valor > 0)) return;
       cxp.push({
         proveedor: pr?.nombre ?? nombreFallback ?? null, tipo_proveedor: tipo, servicio,
@@ -1837,6 +2140,7 @@ export async function convertirCotizacionCarrito(
         aplica_retencion: pr?.aplica_retencion ?? false, pct_retencion: Number(pr?.pct_retencion) || 0, observaciones: OBS_AUTO,
         // Migración 170 — vínculo durable con el servicio del catálogo.
         servicio_id: servicioId ?? null,
+        ...(moneda ? { moneda } : {}),
       });
     };
 
@@ -1847,8 +2151,8 @@ export async function convertirCotizacionCarrito(
     // grupo, en UN solo contrato (igual que el resto de este flujo).
     const componentesCondicion: ComponenteSnapshot[] = [];
 
-    for (let hIdx = 0; hIdx < validados.length; hIdx++) {
-      const { item: it, comp } = validados[hIdx];
+    for (let hIdx = 0; hIdx < validadosPersona.length; hIdx++) {
+      const { item: it, comp } = validadosPersona[hIdx];
       const { meta, lineasHab, numNinos, numNinos2, pvpPorAcom, netoPorAcom, paxConSilla } = comp;
 
       const partes = lineasHab.map((l) => `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax)`);
@@ -1971,6 +2275,130 @@ export async function convertirCotizacionCarrito(
       if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotel += netoPorAcom["nino2"] * numNinos2;
       costoHotelTotal += costoHotel;
       pushCxP("hotel", `Hotel ${meta.hotel_nombre ?? it.hotelNombre}`.trim(), costoHotel, prH);
+    }
+
+    // ── Ítems Bernalo del grupo (Fase 3F-4B) ──────────────────────────────
+    // Cada uno ya viene RE-LIQUIDADO y con proveedores VALIDADOS por
+    // `validarBernaloParaConversion` (Paso 1) — acá solo se escribe.
+    for (let bIdx = 0; bIdx < validadosBernalo.length; bIdx++) {
+      const { item: it, resultado, proveedoresServicios } = validadosBernalo[bIdx];
+      // Offset de `orden` que nunca colisiona con los hoteles persona del
+      // mismo grupo (que usan `hIdx`/`hIdx*300` arriba) ni entre sí.
+      const ordenBase = validadosPersona.length + bIdx;
+      const numHabitaciones = resultado.habitaciones.length;
+
+      // Identidad del hotel — reutiliza la MISMA tabla/sección del documento
+      // que ya renderiza la tarjeta de hotel para persona (regla F.32: nunca
+      // se construyó un componente nuevo para esto). El desglose PRIVADO por
+      // habitación vive aparte, en `contrato_alojamiento_bernalo` (regla D).
+      const { error: eHotelB } = await sb.from("contrato_hoteles").insert({
+        numero_contrato: numero, nombre: resultado.hotelNombre, categoria: it.categoria,
+        proveedor: resultado.proveedorHotel?.nombre ?? null, ciudad: resultado.hotelDestino ?? it.destino,
+        alimentacion: it.alimentacion, acomodacion: it.categoria,
+        detalle_acomodacion: `${numHabitaciones} habitación(es) · ${resultado.paxTotal} viajero(s)`,
+        fecha_ingreso: resultado.salida.fechaIda, fecha_salida: resultado.salida.fechaRegreso, orden: ordenBase,
+      });
+      if (eHotelB) return fallarYRevertirGrupo(`No se pudo registrar el hotel "${resultado.hotelNombre}" del contrato: ${eHotelB.message}`);
+
+      // Regla D.17/18/19/21: UNA fila por habitación física, SOLO desde el
+      // resultado autoritativo del servidor (nunca del navegador/cotización),
+      // vía service-role (la tabla no tiene ninguna policy — migración 176).
+      // Cualquier fallo revierte TODO el contrato; el cascade de
+      // `revertir_contrato_incompleto` (FK a `ventas` ON DELETE CASCADE)
+      // limpia estas filas sin intervención manual.
+      const filasSnapshot = resultado.habitaciones.map((h, i) => ({
+        numero_contrato: numero,
+        habitacion_id: h.habitacionId,
+        orden: i,
+        hotel_id: resultado.hotelId,
+        hotel_nombre: resultado.hotelNombre,
+        categoria: it.categoria,
+        alimentacion: it.alimentacion,
+        adultos: h.ocupacion.adultos,
+        edades_menores: h.ocupacion.edadesMenores as unknown as Json,
+        snapshot: h.snapshot as unknown as Json,
+      }));
+      const { error: eSnap } = await admin.from("contrato_alojamiento_bernalo").insert(filasSnapshot);
+      if (eSnap) return fallarYRevertirGrupo(`No se pudo registrar el detalle por habitación del hotel "${resultado.hotelNombre}": ${eSnap.message}`);
+
+      // Regla C.13/14: UNA sola línea agregada, `modo_precio: "total"` — los
+      // 4 campos per-cápita quedan en su default (0), nunca son autoridad
+      // para esta fila (ver `lib/contrato/valorContratoItem.ts`).
+      const { error: eItemB } = await sb.from("contrato_items").insert({
+        numero_contrato: numero,
+        descripcion: `${resultado.hotelNombre} · ${it.categoria} / ${it.alimentacion} · ${numHabitaciones} habitación(es), ${resultado.paxTotal} viajero(s)`,
+        adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0,
+        modo_precio: "total", valor_total: resultado.precioVenta,
+        orden: ordenBase * 300,
+      });
+      if (eItemB) return fallarYRevertirGrupo(`No se pudo registrar el ítem del contrato para "${resultado.hotelNombre}": ${eItemB.message}`);
+
+      // Vuelo (regla B.9.3/24): SOLO si la salida resuelta es bloqueo o
+      // empaquetado — "sin_vuelo" nunca inserta contrato_vuelos ni CxP
+      // aérea. `validarBernaloParaConversion` (Paso 1) ya bloquea CUALQUIER
+      // salida distinta de "sin_vuelo" (cierre 3F-4B: sin integración de
+      // sillas todavía) — esta rama queda como código de defensa/preparación
+      // para cuando esa integración exista, nunca se alcanza hoy en la
+      // práctica. El proveedor se resuelve con la MISMA función que ya usa
+      // el flujo persona (`datosVueloBloqueo`/`datosVueloEmpaquetado`) —
+      // tolera proveedor ausente igual que persona (regla B.9.3: ninguna
+      // regla más estricta que inventar aquí).
+      if (resultado.salida.tipo === "bloqueo" || resultado.salida.tipo === "empaquetado") {
+        const rVuelo = resultado.salida.tipo === "bloqueo"
+          ? await datosVueloBloqueo(admin, resultado.salida.id)
+          : await datosVueloEmpaquetado(admin, resultado.salida.id);
+        // Hallazgo confirmado (cierre 3F-4B): antes, `!rVuelo.ok` omitía el
+        // tramo/CxP aérea best-effort — dejaba `costo_aereo` sin su CxP
+        // correspondiente cuando la salida SÍ lleva vuelo, un estado
+        // financiero incoherente. Ahora falla y revierte TODO el contrato,
+        // igual que cualquier otro insert de esta rama.
+        if (!rVuelo.ok) return fallarYRevertirGrupo(`No se pudo validar el vuelo del hotel "${resultado.hotelNombre}": ${rVuelo.error}`);
+        const dv = rVuelo.data;
+        const r = parseRuta(dv.ruta);
+        const tramosBernalo = [{
+          numero_contrato: numero, aerolinea: dv.aerolinea, record: dv.record, direccion: "ida",
+          origen_codigo: r.origen, origen_ciudad: ciudadIata(r.origen), destino_codigo: r.destino, destino_ciudad: ciudadIata(r.destino),
+          numero_vuelo: dv.vuelo_ida, hora_salida: dv.hora_salida_ida, hora_llegada: dv.hora_llegada_ida,
+          fecha_salida: dv.fecha_ida, orden: ordenBase * 10 + 5000,
+        }];
+        if (dv.fecha_regreso || dv.vuelo_regreso) {
+          tramosBernalo.push({
+            numero_contrato: numero, aerolinea: dv.aerolinea, record: dv.record, direccion: "regreso",
+            origen_codigo: r.destino, origen_ciudad: ciudadIata(r.destino), destino_codigo: r.origen, destino_ciudad: ciudadIata(r.origen),
+            numero_vuelo: dv.vuelo_regreso, hora_salida: dv.hora_salida_reg, hora_llegada: dv.hora_llegada_reg,
+            fecha_salida: dv.fecha_regreso, orden: ordenBase * 10 + 5001,
+          });
+        }
+        const { error: eVueloB } = await sb.from("contrato_vuelos").insert(tramosBernalo);
+        if (eVueloB) return fallarYRevertirGrupo(`No se pudo registrar el vuelo del hotel "${resultado.hotelNombre}": ${eVueloB.message}`);
+        // Hallazgo confirmado (cierre 3F-4B): la CxP/costo aéreo REAL sale
+        // del NETO real leído fresco (`dv.costo_neto`, ya corregido a
+        // `tarifa_proveedor` para empaquetados por `datosVueloEmpaquetado`)
+        // más el cargo fijo por infante — nunca de `resultado.costoVueloTotal`
+        // (que además de no incluir fee_infante, para "empaquetado" venía
+        // del `tarifa_para_empaquetar`/reventa antes de este cierre).
+        const infantesBernalo = resultado.paxTotal - resultado.paxConSilla;
+        const costoVueloReal = dv.costo_neto * resultado.paxConSilla + dv.fee_infante * infantesBernalo;
+        costoAereoTotal += costoVueloReal;
+        pushCxP("aereo", `Aéreo ${dv.aerolinea ?? ""}`.trim(), costoVueloReal, dv.proveedor, dv.aerolinea, null, resultado.moneda);
+      }
+
+      // `ProveedorHotelBernalo` (camelCase: `aplicaRetencion`/`pctRetencion`)
+      // vs. `ProvFact` (snake_case, la forma que ya arma el resto de este
+      // archivo desde `.select("proveedores(...)")`) — se adapta explícito
+      // en vez de mezclar las dos convenciones en `pushCxP`.
+      const proveedorHotelCxP: ProvFact = resultado.proveedorHotel
+        ? { nombre: resultado.proveedorHotel.nombre, aplica_retencion: resultado.proveedorHotel.aplicaRetencion, pct_retencion: resultado.proveedorHotel.pctRetencion }
+        : null;
+      // `costoAereoTotal` (si aplica) ya se acumuló DENTRO del bloque de
+      // vuelo de arriba, con el costo REAL (`dv.costo_neto`/`fee_infante`) —
+      // nunca `resultado.costoVueloTotal` (regla del cierre 3F-4B).
+      costoHotelTotal += resultado.costoHotelTotal;
+      pushCxP("hotel", `Hotel ${resultado.hotelNombre}`.trim(), resultado.costoHotelTotal, proveedorHotelCxP, null, null, resultado.moneda);
+      for (const s of resultado.serviciosIncluidos) {
+        if (s.costoNeto <= 0) continue;
+        pushCxP(tipoProveedorCxpServicio(s.categoria), s.nombre, s.costoNeto, proveedoresServicios.get(s.servicioId) ?? null, null, s.servicioId, resultado.moneda);
+      }
     }
 
     // Tours (opcionales del carrito): ítem visible del contrato + CxP real
@@ -2123,15 +2551,43 @@ export async function convertirCotizacionCarrito(
     }
 
     numeros.push(numero);
+    // Progreso DURABLE por grupo — se escribe ACÁ, apenas este grupo queda
+    // completo, nunca solo al final: si un grupo POSTERIOR falla, un
+    // reintento ya encuentra esta clave resuelta (Paso 1 la salta antes de
+    // reliquidar) y no duplica este contrato. `agrupar: opts.agrupar` viaja
+    // en CADA escritura para que el guard de modo de arriba tenga algo que
+    // comparar desde el primer grupo que complete, no solo al final.
+    contratosPorGrupo[claveGrupo] = numero;
+    const { error: eDetalleGrupo } = await sb.from("cotizaciones").update({
+      detalle: { ...detalleBase, contratos: numeros, contratosPorGrupo, agrupar: opts.agrupar },
+    }).eq("id", id);
+    // Hallazgo confirmado (idempotencia, ronda 2): si esta escritura falla,
+    // el progreso NO quedó durable — un reintento no sabría que este grupo
+    // ya está completo y lo duplicaría. El contrato ${numero} en sí YA es
+    // real y válido (ventas + financiero ya se escribieron arriba) — nunca
+    // se revierte por esto (sería peor: perder un contrato bueno por un
+    // fallo de bookkeeping) — pero SÍ se corta acá, sin seguir de largo como
+    // si el progreso fuera durable, para que quien reciba el error sepa que
+    // tiene que revisar manualmente antes de reintentar.
+    if (eDetalleGrupo) {
+      return {
+        ok: false,
+        error: `El contrato ${numero} se creó correctamente, pero no se pudo guardar el progreso de la conversión (${eDetalleGrupo.message}). Antes de reintentar, revisa en /dashboard/contratos que no se dupliquen contratos para el mismo grupo/destino.`,
+      };
+    }
   }
 
-  const { data: cotActual } = await sb.from("cotizaciones").select("detalle").eq("id", id).maybeSingle();
-  const detalleActual = (cotActual?.detalle ?? {}) as Record<string, unknown>;
-  await sb.from("cotizaciones").update({
+  const { error: eDetalleFinal } = await sb.from("cotizaciones").update({
     estado: "convertida",
     numero_contrato: numeros[0],
-    detalle: { ...detalleActual, contratos: numeros },
+    detalle: { ...detalleBase, contratos: numeros, contratosPorGrupo, agrupar: opts.agrupar },
   }).eq("id", id);
+  if (eDetalleFinal) {
+    return {
+      ok: false,
+      error: `Los contratos ${numeros.join(", ")} se crearon correctamente, pero no se pudo cerrar el estado de la cotización (${eDetalleFinal.message}). Los contratos son válidos — revisa la cotización manualmente antes de reintentar convertirla.`,
+    };
+  }
 
   revalidatePath("/dashboard/cotizaciones");
   revalidatePath(`/dashboard/cotizaciones/${id}`);

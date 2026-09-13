@@ -4,24 +4,41 @@ import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type CartItem, type HotelCartItem } from "@/lib/cart/CartContext";
+import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona, type HotelCartItemBernalo } from "@/lib/cart/CartContext";
 import { normalizarEdadesMenoresCarrito } from "@/lib/reservar/edadesMenores";
 import { crearSolicitudReserva, fotosPortada, getContextoB2B, type SolicitudResult, type ContextoB2B } from "./actions";
 
-function resumenHab(it: HotelCartItem): string {
+function resumenHab(it: HotelCartItemPersona): string {
   const partes = Object.entries(it.habitaciones).filter(([, n]) => n > 0).map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
   if (it.ninos > 0) partes.push(`${it.ninos} Niño 1`);
   if (it.ninos2 > 0) partes.push(`${it.ninos2} Niño 2`);
   return partes.join(", ");
 }
 
+// Resumen mínimo, solo lectura, de un ítem Bernalo (habitaciones físicas, sin
+// conteo por acomodación — regla A.2).
+function resumenHabBernalo(it: { habitaciones: { acom: string; adultos: number }[] }): string {
+  return it.habitaciones.map((h) => `${ACOM_ROOM_LABEL[h.acom as AcomRoom] ?? h.acom} (${h.adultos} adt)`).join(", ");
+}
+
 export default function CheckoutPage() {
-  const { items, total, remove, clear } = useCart();
-  const hotelItems = items.filter((i): i is HotelCartItem => i.tipo === "hotel");
+  const { items, total, remove, clear, actualizarPrecioBernalo } = useCart();
+  const hotelItems = items.filter((i): i is HotelCartItemPersona => i.tipo === "hotel" && i.modeloTarifario !== "unidad");
+  // Fase 3F-4A: el checkout YA envía los ítems Bernalo — el servidor los
+  // re-liquida directo con `computarReservaBernalo` (checkout/actions.ts),
+  // nunca confía en `precio`/`moneda` del carrito para calcular nada (solo
+  // para detectar si cambiaron, ver `enviar()`).
+  const bernaloItems = items.filter((i): i is HotelCartItemBernalo => i.tipo === "hotel" && i.modeloTarifario === "unidad");
   const tourItems = items.filter((i): i is Extract<CartItem, { tipo: "tour" }> => i.tipo === "tour");
   const [c, setC] = useState({ nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" });
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  // Fase 3F-4A, regla B.10: cuando el servidor detecta que el PVP/moneda de
+  // un ítem Bernalo cambiaron, el carrito se actualiza y se exige una
+  // SEGUNDA confirmación explícita (el botón normal ya no basta) — nunca se
+  // reintenta solo, y el segundo clic vuelve a pasar por el mismo recálculo
+  // completo (regla B.11).
+  const [precioCambio, setPrecioCambio] = useState<{ paqueteId: number; hotelId: number; mensaje: string } | null>(null);
   const [res, setRes] = useState<Extract<SolicitudResult, { ok: true }> | null>(null);
   const [fotos, setFotos] = useState<Record<number, string>>({});
 
@@ -42,7 +59,7 @@ export default function CheckoutPage() {
 
   // Resuelve la portada actual por hotel (ítems del carrito sin fotoUrl).
   useEffect(() => {
-    const ids = [...new Set(hotelItems.map((i) => i.hotelId))];
+    const ids = [...new Set([...hotelItems, ...bernaloItems].map((i) => i.hotelId))];
     if (!ids.length) return;
     fotosPortada(ids).then(setFotos).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -54,6 +71,7 @@ export default function CheckoutPage() {
 
   function enviar() {
     setErr("");
+    setPrecioCambio(null);
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
@@ -64,7 +82,7 @@ export default function CheckoutPage() {
     // AQUÍ, con un mensaje que dice qué hotel retirar y volver a agregar —
     // nunca se manda al servidor a que intente adivinar (ese reparto legado
     // ya no existe para este flujo público, ver checkout/actions.ts).
-    const itemsNormalizados: { it: HotelCartItem; edadesMenores: number[] }[] = [];
+    const itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[] = [];
     for (const it of hotelItems) {
       const r = normalizarEdadesMenoresCarrito(it);
       if (!r.ok) { setErr(`${it.hotelNombre}: ${r.error}`); return; }
@@ -84,13 +102,31 @@ export default function CheckoutPage() {
 
     start(async () => {
       const r = await crearSolicitudReserva({
-        items: itemsNormalizados.map(({ it, edadesMenores }) => ({
-          modulo: it.modulo, paqueteId: it.paqueteId, hotelId: it.hotelId, bloqueoId: it.bloqueoId,
-          hotelNombre: it.hotelNombre, destino: it.destino, categoria: it.categoria, regimen: it.regimen,
-          fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, noches: it.noches,
-          habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes, pax: it.pax, precio: it.precio,
-          edadesMenores, cantidadMenores: edadesMenores.length,
-        })),
+        items: [
+          ...itemsNormalizados.map(({ it, edadesMenores }) => ({
+            modulo: it.modulo, paqueteId: it.paqueteId, hotelId: it.hotelId, bloqueoId: it.bloqueoId,
+            hotelNombre: it.hotelNombre, destino: it.destino, categoria: it.categoria, regimen: it.regimen,
+            fechaIda: it.fechaIda, fechaRegreso: it.fechaRegreso, noches: it.noches,
+            habitaciones: it.habitaciones, ninos: it.ninos, ninos2: it.ninos2, infantes: it.infantes, pax: it.pax, precio: it.precio,
+            edadesMenores, cantidadMenores: edadesMenores.length,
+          })),
+          // `precio`/`moneda` viajan SOLO para que el servidor detecte si
+          // cambiaron frente al recálculo autoritativo — nunca se usan para
+          // calcular nada (regla B.9: el resultado del servidor SIEMPRE
+          // reemplaza lo que mande el navegador). `itemId` (cierre 3F-4A #1)
+          // es el `id` que el carrito ya le asignó a este ítem — viaja SOLO
+          // para que el servidor pueda correlacionar un `precio_actualizado`
+          // de vuelta a ESTE ítem exacto, nunca por paqueteId+hotelId (que
+          // puede repetirse si hay dos ítems del mismo hotel con
+          // ocupaciones distintas).
+          ...bernaloItems.map((it) => ({
+            modeloTarifario: "unidad" as const,
+            itemId: it.id,
+            paqueteId: it.paqueteId, hotelId: it.hotelId, hotelNombre: it.hotelNombre, destino: it.destino,
+            categoria: it.categoria, alimentacion: it.alimentacion, salida: it.salida, habitaciones: it.habitaciones,
+            precio: it.precio, moneda: it.moneda,
+          })),
+        ],
         // El servidor re-liquida cada tour EN VIVO por `servicioId`/
         // `paqueteId` (nunca confía en nombre/precio/moneda del carrito) —
         // ver liquidarServicioPuntual en lib/reservar/cotizar.ts.
@@ -107,7 +143,22 @@ export default function CheckoutPage() {
         ...(esB2B ? { modo } : {}),
       });
       if (r.ok) { setRes(r); clear(); }
-      else setErr(r.error);
+      // `"tipo" in r` (en vez de `r.tipo === "precio_actualizado"`) es lo que
+      // permite a TypeScript angostar `r` a `ResultadoPrecioActualizadoBernalo`
+      // aquí y al resto (`{ok:false, error:string}`) en el `else` final — la
+      // única variante con esa clave es "precio_actualizado" (regla B.10).
+      else if ("tipo" in r) {
+        // Cierre 3F-4A #1: se corrige EXACTAMENTE el ítem que cambió
+        // (`r.itemId`, el mismo `id` del carrito) — nunca el primero que
+        // coincida por paqueteId+hotelId, que podría ser un ítem distinto
+        // (misma habitación de hotel agregada dos veces con ocupaciones
+        // diferentes).
+        const item = bernaloItems.find((i) => i.id === r.itemId);
+        if (item) actualizarPrecioBernalo(item.id, r.pvp, r.moneda);
+        setPrecioCambio({ paqueteId: r.paqueteId, hotelId: r.hotelId, mensaje: r.mensaje });
+      } else {
+        setErr(r.error);
+      }
     });
   }
 
@@ -143,13 +194,19 @@ export default function CheckoutPage() {
                         : <span aria-hidden>{it.tipo === "hotel" ? "🏨" : "🗺️"}</span>}
                     </div>
                     <div className="min-w-0 flex-1">
-                      {it.tipo === "hotel" ? (
+                      {it.tipo === "hotel" && it.modeloTarifario !== "unidad" ? (
                         <>
                           <div className="font-medium text-gray-800">{it.hotelNombre}</div>
                           <div className="text-xs text-gray-500">
                             {it.destino ?? ""}{it.fechaIda ? ` · ${it.fechaIda} → ${it.fechaRegreso ?? ""}` : ""}
                           </div>
                           <div className="text-xs text-gray-400">{it.categoria} / {it.regimen} · {resumenHab(it)}</div>
+                        </>
+                      ) : it.tipo === "hotel" ? (
+                        <>
+                          <div className="font-medium text-gray-800">{it.hotelNombre}</div>
+                          <div className="text-xs text-gray-500">{it.destino ?? ""}</div>
+                          <div className="text-xs text-gray-400">{it.categoria} / {it.alimentacion} · {resumenHabBernalo(it)}</div>
                         </>
                       ) : (
                         <>
@@ -246,10 +303,15 @@ export default function CheckoutPage() {
                 <div><label className={lbl}>Teléfono / WhatsApp *</label><input className={inp} value={c.telefono} onChange={(e) => setC({ ...c, telefono: e.target.value })} /></div>
                 <div className="sm:col-span-2"><label className={lbl}>Correo</label><input type="email" className={inp} value={c.email} onChange={(e) => setC({ ...c, email: e.target.value })} /></div>
               </div>
+              {precioCambio && (
+                <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                  {precioCambio.mensaje}
+                </p>
+              )}
               {err && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
               <button type="button" onClick={enviar} disabled={pending}
                 className="mt-4 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
-                {pending ? "Generando…" : "Generar cotización y enviar solicitud"}
+                {pending ? "Generando…" : precioCambio ? "Confirmar con el nuevo precio y enviar" : "Generar cotización y enviar solicitud"}
               </button>
               <p className="mt-2 text-center text-[11px] text-gray-400">Generamos tu cotización y preparamos la solicitud para enviarla por WhatsApp o correo.</p>
             </section>

@@ -9,7 +9,7 @@ import { ConfigForm } from "../ConfigForm";
 import { SalidasDinamicasEditor, type SalidaDinamica } from "./SalidasDinamicasEditor";
 import {
   setVuelo, setTodosVuelos, setHotel, setTodosHoteles, setServicio, generarTarifario,
-  getTarifasHotel, setHotelFiltros, type TarifaHotelPreview,
+  getTarifasHotel, setHotelFiltros, type TarifaHotelPreview, type TarifaUnidadPreview,
 } from "../actions";
 import { setEmpaquetado, setTodosEmpaquetados } from "../../vuelos/empaquetados-actions";
 
@@ -77,7 +77,7 @@ export function ArmadoClient(props: {
     setMsg("");
     start(async () => {
       const r = await generarTarifario(props.paqueteId);
-      if (r.ok) setMsg(`Tarifario generado: ${r.id ?? 0} tarifas publicadas.`);
+      if (r.ok) setMsg(`Tarifario generado: ${r.id ?? 0} tarifas publicadas.${r.aviso ? ` ${r.aviso}` : ""}`);
       else setMsg(`Error: ${r.error}`);
       refrescar();
     });
@@ -494,32 +494,97 @@ function HotelRow({
   );
 }
 
+// Etiqueta legible de `unidadCobro` (payload de `hotel_tarifas_unidad`) —
+// nunca se muestra el valor crudo del enum del motor tal cual.
+const UNIDAD_COBRO_LBL: Record<string, string> = {
+  persona: "Por persona",
+  pareja: "Por pareja",
+  habitacion: "Por habitación",
+  apartamento: "Por apartamento",
+};
+
 function HotelModal({
   hotel, sel, paqueteId, onClose, onDone,
 }: {
   hotel: Hotel; sel: SelHotel | undefined; paqueteId: number; onClose: () => void; onDone: () => void;
 }) {
   const [loading, setLoading] = useState(true);
+  // "persona" es el default seguro mientras carga: evita que, por un
+  // instante, el modal trate un hotel Bernalo como si "todas" (arreglo
+  // vacío) fuera válido antes de que responda `getTarifasHotel`.
+  const [modelo, setModelo] = useState<"persona" | "unidad">("persona");
   const [cats, setCats] = useState<string[]>([]);
   const [regs, setRegs] = useState<string[]>([]);
-  const [tarifas, setTarifas] = useState<TarifaHotelPreview[]>([]);
+  const [tarifasPersona, setTarifasPersona] = useState<TarifaHotelPreview[]>([]);
+  const [tarifasUnidad, setTarifasUnidad] = useState<TarifaUnidadPreview[]>([]);
   const [selCats, setSelCats] = useState<Set<string>>(new Set());
   const [selRegs, setSelRegs] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
+  // Error de CARGA (`getTarifasHotel` respondió `ok:false` — Supabase falló,
+  // el hotel no existe, o `modelo_tarifario` trae un valor desconocido).
+  // Separado de `error` (el de `guardar()`/`setHotelFiltros`) a propósito:
+  // ante un error de carga nunca hay `categorias`/`regimenes`/`tarifas` que
+  // leer (el resultado no los trae en esa rama), así que ni siquiera se
+  // intenta — el modal se queda solo con el mensaje y sin forma de guardar.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, start] = useTransition();
 
   useEffect(() => {
     void (async () => {
-      const r = await getTarifasHotel(hotel.id);
-      setCats(r.categorias);
-      setRegs(r.regimenes);
-      setTarifas(r.tarifas);
-      // Selección inicial: lo guardado, o todo si era "todas" (null)
-      setSelCats(new Set(sel?.categorias ?? r.categorias));
-      setSelRegs(new Set(sel?.regimenes ?? r.regimenes));
-      setLoading(false);
+      // P2-2 (DeepSeek): `getTarifasHotel` es una Server Action — su promesa
+      // SÍ puede rechazar (red caída, el propio framework serializando un
+      // error no controlado, etc.), no solo resolver con `{ ok: false }`. Sin
+      // este `try/catch`, un rechazo dejaba el modal en "Cargando…" para
+      // siempre: `loading` nunca bajaba a `false` porque nada después del
+      // `await` llegaba a ejecutarse.
+      try {
+        const r = await getTarifasHotel(hotel.id);
+        if (!r.ok) {
+          // Fail-closed: nunca se leen r.modelo/r.categorias/r.regimenes/r.tarifas
+          // (no existen en esta rama del tipo) ni se permite guardar.
+          setLoadError(r.error);
+          setLoading(false);
+          return;
+        }
+        setLoadError(null);
+        setModelo(r.modelo);
+        setCats(r.categorias);
+        setRegs(r.regimenes);
+        if (r.modelo === "unidad") {
+          setTarifasPersona([]);
+          setTarifasUnidad(r.tarifas);
+        } else {
+          setTarifasUnidad([]);
+          setTarifasPersona(r.tarifas);
+        }
+        // Selección inicial: lo guardado, o todo si era "todas" (null/persona)
+        // o simplemente todo lo publicado (unidad, donde nunca hubo sentinela
+        // null). P2-1 (DeepSeek): lo guardado se RECONCILIA contra las
+        // opciones disponibles AHORA (`.filter(...)`) — una categoría o
+        // alimentación que se guardó cuando existía, pero que el hotel ya no
+        // tiene (se despublicó su tarifa, o para persona ya no aparece en
+        // `tarifa_hotel`), queda huérfana en el Set de selección: no se
+        // muestra ningún checkbox para ella (no está en `cats`/`regs`), pero
+        // sí cuenta para `selCats.size` — eso rompía el cálculo de "todas
+        // seleccionadas" y, para unidad, podía viajar tal cual a
+        // `setHotelFiltros` (que la rechaza, pero sin que el usuario
+        // entendiera por qué). `null` (sentinela histórico de "todas" en
+        // persona) sigue sin filtrarse: no hay nada guardado que reconciliar.
+        const catsGuardadas = sel?.categorias;
+        const regsGuardadas = sel?.regimenes;
+        setSelCats(new Set(catsGuardadas ? catsGuardadas.filter((c) => r.categorias.includes(c)) : r.categorias));
+        setSelRegs(new Set(regsGuardadas ? regsGuardadas.filter((rg) => r.regimenes.includes(rg)) : r.regimenes));
+        setError(null);
+        setLoading(false);
+      } catch {
+        setLoadError("No se pudieron cargar las tarifas del hotel. Cierra esta ventana e inténtalo de nuevo.");
+        setLoading(false);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hotel.id]);
+
+  const tarifas = modelo === "unidad" ? tarifasUnidad : tarifasPersona;
 
   function toggle(set: Set<string>, val: string, setter: (s: Set<string>) => void) {
     const n = new Set(set);
@@ -529,15 +594,58 @@ function HotelModal({
   }
 
   function guardar() {
-    // Si están todas seleccionadas → guardar como "todas" (array vacío)
-    const catsArr = selCats.size === cats.length ? [] : [...selCats];
-    const regsArr = selRegs.size === regs.length ? [] : [...selRegs];
+    // Defensa en profundidad: el botón de guardar no se renderiza mientras
+    // haya un error de carga (ver el `return` temprano de abajo), pero
+    // `guardar` no depende de eso para negarse — nunca se guarda nada si
+    // `getTarifasHotel` falló.
+    if (loadError) return;
+    setError(null);
+
+    // P2-1 (DeepSeek), defensa adicional: vuelve a filtrar contra `cats`/
+    // `regs` (las opciones REALMENTE disponibles ahora) justo antes de armar
+    // lo que se envía — nunca confía en que `selCats`/`selRegs` sigan siendo
+    // un subconjunto válido (la reconciliación al cargar cubre el caso
+    // normal, pero este filtro es la última puerta antes de la red).
+    const selCatsVigentes = [...selCats].filter((c) => cats.includes(c));
+    const selRegsVigentes = [...selRegs].filter((r) => regs.includes(r));
+
+    // Unidad (Bernalo): si tras reconciliar/filtrar no queda NINGUNA
+    // categoría o alimentación vigente, no hay nada válido que guardar —
+    // nunca se descarta la configuración en silencio ni se cierra el modal:
+    // se explica y se corta acá, antes de tocar la red.
+    if (modelo === "unidad" && (!selCatsVigentes.length || !selRegsVigentes.length)) {
+      setError(
+        "Las categorías o alimentaciones guardadas para este hotel ya no están disponibles. Selecciona opciones vigentes antes de guardar."
+      );
+      return;
+    }
+
+    // Unidad (Bernalo): NUNCA se envía un arreglo vacío como sentinela de
+    // "todas" — `armado_hoteles.categorias/regimenes = null` es justo lo que
+    // deja a `computarReservaBernalo` viendo "configuración incompleta". Se
+    // manda siempre la selección explícita (aunque sea el 100% de lo publicado).
+    // Persona: comportamiento de siempre — "todas seleccionadas" se guarda
+    // como arreglo vacío (sentinela histórico).
+    const catsArr = modelo === "unidad" ? selCatsVigentes : selCatsVigentes.length === cats.length ? [] : selCatsVigentes;
+    const regsArr = modelo === "unidad" ? selRegsVigentes : selRegsVigentes.length === regs.length ? [] : selRegsVigentes;
     start(async () => {
-      await setHotelFiltros(paqueteId, hotel.id, catsArr, regsArr);
+      const r = await setHotelFiltros(paqueteId, hotel.id, catsArr, regsArr);
+      if (!r.ok) {
+        // No cerrar el modal ni avisar éxito ante un error del servidor — el
+        // hallazgo confirmado era exactamente que este resultado se ignoraba.
+        setError(r.error);
+        return;
+      }
       onDone();
       onClose();
     });
   }
+
+  // Unidad sin ninguna tarifa PUBLICADA válida: no hay nada que seleccionar
+  // ni que guardar (guardar "todas" como vacío está prohibido para este
+  // modelo) — se explica y se deshabilita, en vez de dejar guardar un
+  // filtro vacío que rompería la reserva más adelante.
+  const sinTarifaPublicadaUnidad = modelo === "unidad" && tarifas.length === 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -552,6 +660,18 @@ function HotelModal({
 
         {loading ? (
           <p className="py-8 text-center text-sm text-gray-400">Cargando tarifas…</p>
+        ) : loadError ? (
+          <>
+            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={onClose}>Cerrar</Button>
+            </div>
+          </>
+        ) : sinTarifaPublicadaUnidad ? (
+          <p className="py-8 text-center text-sm text-gray-400">
+            Este hotel usa el modelo tarifario Bernalo por unidad y no tiene ninguna tarifa <strong>publicada</strong> en
+            {" "}Producto → Tarifas por unidad. Publica al menos una tarifa antes de agregarlo a este paquete.
+          </p>
         ) : !tarifas.length ? (
           <p className="py-8 text-center text-sm text-gray-400">Este hotel no tiene tarifas cargadas en Producto.</p>
         ) : (
@@ -575,35 +695,92 @@ function HotelModal({
               />
             </div>
 
-            <p className="mb-1 mt-4 text-xs font-medium text-gray-500">Tarifas netas cargadas (referencia interna)</p>
-            <div className="overflow-x-auto rounded-lg border border-gray-100">
-              <table className="w-full text-xs">
-                <thead className="text-gray-500">
-                  <tr className="border-b border-gray-100">
-                    <th className="px-2 py-1 text-left">Categoría</th>
-                    <th className="px-2 py-1 text-left">Régimen</th>
-                    <th className="px-2 py-1 text-left">Temp.</th>
-                    <th className="px-2 py-1 text-right">Doble</th>
-                    <th className="px-2 py-1 text-right">Triple</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tarifas.map((t, i) => (
-                    <tr key={i} className="border-b border-gray-50">
-                      <td className="px-2 py-1">{t.categoria}</td>
-                      <td className="px-2 py-1">{t.regimen}</td>
-                      <td className="px-2 py-1">{t.temporada}</td>
-                      <td className="px-2 py-1 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
-                      <td className="px-2 py-1 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {modelo === "unidad" && (!selCats.size || !selRegs.size) && (
+              // P2-1 (DeepSeek): mensaje PERSISTENTE, no solo el error tras
+              // intentar guardar — cubre tanto "la reconciliación al cargar
+              // dejó todo huérfano" como "el usuario desmarcó todo a mano".
+              // El botón de guardar ya queda deshabilitado (ver más abajo);
+              // esto explica POR QUÉ, en vez de dejarlo deshabilitado en
+              // silencio.
+              <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Selecciona al menos una categoría y una alimentación vigentes para este hotel — las opciones guardadas
+                anteriormente ya no están disponibles o fueron desmarcadas.
+              </p>
+            )}
+
+            {modelo === "unidad" ? (
+              <>
+                <p className="mb-1 mt-4 text-xs font-medium text-gray-500">
+                  Tarifas Bernalo publicadas (referencia — valor bruto/comisionable por unidad, no un valor per-cápita)
+                </p>
+                <div className="overflow-x-auto rounded-lg border border-gray-100">
+                  <table className="w-full text-xs">
+                    <thead className="text-gray-500">
+                      <tr className="border-b border-gray-100">
+                        <th className="px-2 py-1 text-left">Categoría</th>
+                        <th className="px-2 py-1 text-left">Alimentación</th>
+                        <th className="px-2 py-1 text-left">Temp.</th>
+                        <th className="px-2 py-1 text-left">Unidad de cobro</th>
+                        <th className="px-2 py-1 text-right">Valor base (bruto)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tarifasUnidad.map((t, i) => (
+                        <tr key={i} className="border-b border-gray-50">
+                          <td className="px-2 py-1">{t.categoria}</td>
+                          <td className="px-2 py-1">{t.alimentacion}</td>
+                          <td className="px-2 py-1">{t.temporada}</td>
+                          <td className="px-2 py-1">{UNIDAD_COBRO_LBL[t.unidadCobro] ?? t.unidadCobro ?? "—"}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">
+                            {t.valorBaseBruto ? formatCOP(t.valorBaseBruto) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mb-1 mt-4 text-xs font-medium text-gray-500">Tarifas netas cargadas (referencia interna)</p>
+                <div className="overflow-x-auto rounded-lg border border-gray-100">
+                  <table className="w-full text-xs">
+                    <thead className="text-gray-500">
+                      <tr className="border-b border-gray-100">
+                        <th className="px-2 py-1 text-left">Categoría</th>
+                        <th className="px-2 py-1 text-left">Régimen</th>
+                        <th className="px-2 py-1 text-left">Temp.</th>
+                        <th className="px-2 py-1 text-right">Doble</th>
+                        <th className="px-2 py-1 text-right">Triple</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tarifasPersona.map((t, i) => (
+                        <tr key={i} className="border-b border-gray-50">
+                          <td className="px-2 py-1">{t.categoria}</td>
+                          <td className="px-2 py-1">{t.regimen}</td>
+                          <td className="px-2 py-1">{t.temporada}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">{t.neto_doble ? formatCOP(t.neto_doble) : "—"}</td>
+                          <td className="px-2 py-1 text-right tabular-nums">{t.neto_triple ? formatCOP(t.neto_triple) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {error && (
+              <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
+            )}
 
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" onClick={onClose}>Cancelar</Button>
-              <Button onClick={guardar} disabled={saving} style={{ backgroundColor: "var(--brand-primary)" }}>
+              <Button
+                onClick={guardar}
+                disabled={saving || (modelo === "unidad" && (!selCats.size || !selRegs.size))}
+                style={{ backgroundColor: "var(--brand-primary)" }}
+              >
                 {saving ? "Guardando…" : "Guardar y agregar hotel"}
               </Button>
             </div>

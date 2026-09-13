@@ -5,6 +5,7 @@ import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
+import { cargarHotelesBernaloDescubiertos } from "@/lib/tarifario/datosBernalo";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
@@ -60,7 +61,12 @@ export default async function TarifarioPublicoPage() {
   // DEVUELVE todo lo que el resto de la función necesita (`user`,
   // `esAgencia`, `puedeReservar`) en vez de escribir a `let`s de afuera.
   const _cronoTotal = iniciarCronometro();
-  const { sesion, datos: resDatos, programas: resProgramas, configSitio: cfgSitio } = await orquestarCargaPublica({
+  // Fase 3E Bernalo — fuente PARALELA e independiente (regla 6 del encargo):
+  // nunca pasa por `orquestarCargaPublica`/`tarifario_resultado`. Best-effort
+  // (igual que `configSitio`/`programas`): un fallo aquí nunca bloquea ni
+  // rompe el tarifario público — la sección Bernalo simplemente queda vacía.
+  const [resultadoCarga, resultadoBernalo] = await Promise.all([
+    orquestarCargaPublica({
     resolverSesion: async () => {
       // Detectar sesión (badge de agencia + permiso de reservar). Revisión
       // posterior, defecto "RESULTADOS OK FALSOS" — autenticacion_perfil
@@ -93,7 +99,14 @@ export default async function TarifarioPublicoPage() {
     cargarTarifario: () => cargarResumenTarifario(sb, FLUJO, flujoId),
     cargarProgramas: () => getProgramasResumen(sb, true), // público: SOLO publicados
     cargarConfigSitio: async () => sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle(),
-  });
+    }),
+    cargarHotelesBernaloDescubiertos().catch(() => ({ ok: false as const, error: "excepcion_carga_bernalo" })),
+  ]);
+  const { sesion, datos: resDatos, programas: resProgramas, configSitio: cfgSitio } = resultadoCarga;
+  if (!resultadoBernalo.ok) {
+    registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_hoteles_bernalo_descubiertos", resultadoBernalo.error);
+  }
+  const hotelesBernalo = resultadoBernalo.ok ? resultadoBernalo.hoteles : [];
   const { user, esAgencia, puedeReservar } = sesion;
   registrarEtapa(
     FLUJO, flujoId, "tarifario_programas_config",
@@ -195,7 +208,7 @@ export default async function TarifarioPublicoPage() {
         {!filasVisibles.length && !programas.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} />
         )}
       </main>
     </div>

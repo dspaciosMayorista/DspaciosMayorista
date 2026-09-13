@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { Hotel, MapPin, ShoppingCart, X } from "lucide-react";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type CartItem, type HotelCartItem } from "@/lib/cart/CartContext";
+import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 
-function resumenHabitaciones(it: HotelCartItem): string {
+function resumenHabitaciones(it: HotelCartItemPersona): string {
   const partes = Object.entries(it.habitaciones)
     .filter(([, n]) => n > 0)
     .map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
@@ -16,6 +16,14 @@ function resumenHabitaciones(it: HotelCartItem): string {
   if (it.ninos2 > 0) partes.push(`${it.ninos2} Niño 2`);
   if (it.infantes > 0) partes.push(`${it.infantes} Infante(s)`);
   return partes.join(" · ");
+}
+
+// Resumen de habitaciones Bernalo — solo lectura, sin precio (regla 3F-1: el
+// carrito aún no "Agrega" ítems Bernalo desde la UI; este resumen existe
+// para que el tipo compile de forma honesta si alguna vez llega uno al
+// drawer, sin fingir soporte que todavía no existe).
+function resumenHabitacionesBernalo(it: { habitaciones: { acom: string; adultos: number }[] }): string {
+  return it.habitaciones.map((h) => `${ACOM_ROOM_LABEL[h.acom as AcomRoom] ?? h.acom} (${h.adultos} adt)`).join(" · ");
 }
 
 export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: { checkoutHabilitado?: boolean; fotosPorHotel?: Record<number, string> }) {
@@ -35,8 +43,12 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
 
   // Toma el hotel más reciente del carrito para prefiltrar Receptivos (destino/
   // fechas/pax) — así "Agregar tours" no obliga a repetir la búsqueda a mano.
+  // Solo hoteles "persona": un ítem Bernalo no tiene fechaIda/fechaRegreso/pax
+  // en el carrito (esos ni siquiera forman parte de su contrato — ver
+  // HotelCartItemBernalo, Fase 3F-1) y hoy no puede llegar a este drawer de
+  // todas formas ("Agregar al carrito" sigue sin habilitarse para Bernalo).
   function irAAgregarTours() {
-    const hoteles = items.filter((i): i is HotelCartItem => i.tipo === "hotel");
+    const hoteles = items.filter((i): i is HotelCartItemPersona => i.tipo === "hotel" && i.modeloTarifario !== "unidad");
     const ref = hoteles[hoteles.length - 1];
     setAddonsIntent(ref ? { destino: ref.destino, fechaIda: ref.fechaIda, fechaRegreso: ref.fechaRegreso, pax: ref.pax } : null);
     closeDrawer();
@@ -87,7 +99,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        {it.tipo === "hotel" ? (
+                        {it.tipo === "hotel" && it.modeloTarifario !== "unidad" ? (
                           <>
                             <div className="truncate font-medium text-gray-800">{it.hotelNombre}</div>
                             <div className="truncate text-xs text-gray-500">
@@ -95,6 +107,14 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                             </div>
                             <div className="truncate text-xs text-gray-400">{resumenHabitaciones(it)}</div>
                             <div className="mt-1"><CondicionHotelBadges condicion={it.condicion} /></div>
+                          </>
+                        ) : it.tipo === "hotel" ? (
+                          <>
+                            <div className="truncate font-medium text-gray-800">{it.hotelNombre}</div>
+                            <div className="truncate text-xs text-gray-500">
+                              {it.destino ?? ""}{it.categoria ? ` · ${it.categoria}` : ""}{it.alimentacion ? ` / ${it.alimentacion}` : ""}
+                            </div>
+                            <div className="truncate text-xs text-gray-400">{resumenHabitacionesBernalo(it)}</div>
                           </>
                         ) : (
                           <>

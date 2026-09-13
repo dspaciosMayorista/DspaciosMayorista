@@ -2,12 +2,27 @@
 
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from "react";
 import { type CondicionTipo } from "@/lib/cotizacion/condicionPago";
+import type { SalidaSeleccionadaBernaloEntrada } from "@/lib/reservar/solicitudAlojamientoBernalo";
+import type { HabitacionOcupacionEntrada } from "@/lib/reservar/ocupacionPorHabitacion";
 
-// Ítem de HOTEL del carrito (bloqueo/porción). Los campos mapean a la cotización
-// (ReservaInput) para que el checkout genere la cotización sin fricción.
-export type HotelCartItem = {
+// Ítem de HOTEL del carrito — unión discriminada real por `modeloTarifario`
+// (Fase 3F-1 Bernalo). `HotelCartItemPersona` es EXACTAMENTE el contrato de
+// siempre (hoteles con `modelo_tarifario = "persona"`, el único que existía
+// antes de esta fase) — el único cambio es el marcador `modeloTarifario?:
+// undefined`, que nunca se escribe en runtime (ver la nota en el tipo) y no
+// altera la serialización de un ítem persona ni un bit. Los ítems que ya
+// viven en `localStorage` de antes de esta fase no traen la clave
+// `modeloTarifario` en absoluto — se interpretan como persona (el branch
+// `undefined`/ausente de la unión), sin ninguna migración de datos.
+export type HotelCartItemPersona = {
   id: string;
   tipo: "hotel";
+  // Marcador de discriminación (nunca se asigna: siempre `undefined` para un
+  // ítem persona) — existe solo para que TypeScript narrowe
+  // `if (item.modeloTarifario === "unidad")` sin necesitar un cast, tanto en
+  // ítems nuevos como en los ya guardados en localStorage antes de esta fase
+  // (que tampoco traen la clave, así que siguen cayendo en este branch).
+  modeloTarifario?: undefined;
   modulo: "bloqueo" | "porcion_terrestre";
   paqueteId: number;
   hotelId: number;
@@ -44,6 +59,43 @@ export type HotelCartItem = {
   } | null;
 };
 
+// Ítem de HOTEL BERNALO del carrito (`hoteles.modelo_tarifario = "unidad"`,
+// Fase 3F-1) — transporta SOLO decisiones del usuario, nunca dinero: sin
+// neto, bruto, comisión, snapshot, payload, costos ni markup. `precio`/
+// `moneda` son PRESENTACIÓN (el "desde" que ya mostró Vista Booking al
+// cotizar en vivo, Fase 3E) — nunca autoridad; el checkout siempre re-liquida
+// (hoy, 3F-1, esa re-liquidación termina bloqueada por la guardia de
+// `computarReserva`, sin cambios en esta fase).
+export type HotelCartItemBernalo = {
+  id: string;
+  tipo: "hotel";
+  modeloTarifario: "unidad";
+  paqueteId: number;
+  hotelId: number;
+  hotelNombre: string;
+  destino: string | null;
+  fotoUrl: string | null;
+  // Categoría/alimentación EXACTAS elegidas (nunca texto libre adivinado —
+  // regla B1 de la auditoría DeepSeek, Fase 3E: solo valores realmente
+  // vinculados al hotel/paquete).
+  categoria: string;
+  alimentacion: string;
+  // Identidad discriminada de la salida elegida — nunca un índice `[0]`
+  // (regla A1). Validable server-side con
+  // `validarSalidaSeleccionadaBernalo` (lib/reservar/solicitudAlojamientoBernalo.ts).
+  salida: SalidaSeleccionadaBernaloEntrada;
+  // Habitaciones FÍSICAS con id, acomodación, adultos y edades exactas de
+  // sus menores — mismo wire format que ya valida
+  // `cotizarAlojamientoBernaloPublico` (Fase 3E). Nunca un conteo agregado:
+  // la asociación habitación↔edad se pierde si se aplana.
+  habitaciones: HabitacionOcupacionEntrada[];
+  // Presentación únicamente — ver la nota del tipo completo.
+  precio: number;
+  moneda: string | null;
+};
+
+export type HotelCartItem = HotelCartItemPersona | HotelCartItemBernalo;
+
 // Ítem de SERVICIO/TOUR (add-on de un paquete, agregado desde Receptivos —
 // siempre con fechas/pax reales de una búsqueda, nunca desde el "desde" genérico).
 export type TourCartItem = {
@@ -64,14 +116,31 @@ export type TourCartItem = {
 
 export type CartItem = HotelCartItem | TourCartItem;
 
+// `Omit<Union, K>` NO es distributivo (`keyof` de una unión colapsa a la
+// intersección de claves) — aplicado a `CartItem` (unión discriminada de 3
+// miembros desde Fase 3F-1) produce un tipo mezclado que ya no deja
+// TypeScript verificar un literal contra UN SOLO miembro. Esta variante SÍ
+// distribuye sobre cada miembro de la unión antes de omitir `id`, así que
+// `add({ tipo: "hotel", modulo: ... })` (persona) y
+// `add({ tipo: "hotel", modeloTarifario: "unidad", ... })` (Bernalo) siguen
+// verificándose cada uno contra su propia forma completa, como antes de la
+// unión.
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
 // Señal para que Vista Booking abra Receptivos ya filtrado por el destino/
 // fechas/pax del hotel recién agregado (ver botón "Agregar tours" del carrito).
 export type AddonsIntent = { destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number };
 
 type CartCtx = {
   items: CartItem[];
-  add: (item: Omit<CartItem, "id">) => void;
+  add: (item: DistributiveOmit<CartItem, "id">) => void;
   remove: (id: string) => void;
+  // Fase 3F-4A: cuando el checkout detecta que el PVP/moneda autoritativos de
+  // un ítem Bernalo ya no coinciden con lo que el carrito mostraba
+  // (`precio_actualizado`), esto actualiza SOLO el ítem visible en el
+  // carrito — nunca reordena ni recalcula nada más. No-op si `id` no
+  // corresponde a un ítem de hotel Bernalo (ej. ya se eliminó del carrito).
+  actualizarPrecioBernalo: (id: string, precio: number, moneda: string | null) => void;
   clear: () => void;
   total: number;
   count: number;
@@ -114,10 +183,13 @@ export function CartProvider({ children }: { children: ReactNode }) {
     try { localStorage.setItem(KEY, JSON.stringify(items)); } catch { /* ignore */ }
   }, [items]);
 
-  const add = useCallback((item: Omit<CartItem, "id">) => {
+  const add = useCallback((item: DistributiveOmit<CartItem, "id">) => {
     setItems((prev) => [...prev, { ...item, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` } as CartItem]);
   }, []);
   const remove = useCallback((id: string) => setItems((prev) => prev.filter((i) => i.id !== id)), []);
+  const actualizarPrecioBernalo = useCallback((id: string, precio: number, moneda: string | null) => {
+    setItems((prev) => prev.map((i) => (i.id === id && i.tipo === "hotel" && i.modeloTarifario === "unidad" ? { ...i, precio, moneda } : i)));
+  }, []);
   const clear = useCallback(() => setItems([]), []);
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
@@ -126,7 +198,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider value={{
-      items, add, remove, clear, total, count: items.length,
+      items, add, remove, actualizarPrecioBernalo, clear, total, count: items.length,
       drawerOpen, openDrawer, closeDrawer, addonsIntent, setAddonsIntent,
     }}>
       {children}
@@ -139,7 +211,7 @@ export function useCart(): CartCtx {
   if (!c) {
     // Outside CartProvider: return safe no-ops.
     return {
-      items: [], add: () => {}, remove: () => {}, clear: () => {}, total: 0, count: 0,
+      items: [], add: () => {}, remove: () => {}, actualizarPrecioBernalo: () => {}, clear: () => {}, total: 0, count: 0,
       drawerOpen: false, openDrawer: () => {}, closeDrawer: () => {}, addonsIntent: null, setAddonsIntent: () => {},
     };
   }
