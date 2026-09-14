@@ -92,6 +92,17 @@ export type HotelCartItemBernalo = {
   // Presentación únicamente — ver la nota del tipo completo.
   precio: number;
   moneda: string | null;
+  // Composición SANEADA (adultos/niños/infantes) por habitación, saliente
+  // de la clasificación AUTORITATIVA de la tarifa
+  // (`resultado.menoresClasificados` dentro de `computarReservaBernalo`,
+  // sanitizada en `cotizarAlojamientoBernaloPublico` — ver
+  // `lib/reservar/composicionHabitacionBernalo.ts`). SOLO presentación (el
+  // resumen "Doble (2 adt + 1 chd)" del carrito, `CartDrawer.tsx`): checkout
+  // y conversión SIEMPRE re-liquidan, nunca confían en estos conteos para
+  // calcular nada. Opcional: ítems agregados al carrito ANTES de esta
+  // ronda (ya en `localStorage`) no lo traen — `resumenHabitacionesBernalo`
+  // debe seguir renderizando sin romper cuando falta.
+  composicionHabitaciones?: { habitacionId: string; adultos: number; ninos: number; infantes: number }[];
 };
 
 export type HotelCartItem = HotelCartItemPersona | HotelCartItemBernalo;

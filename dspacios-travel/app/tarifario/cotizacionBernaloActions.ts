@@ -63,6 +63,10 @@ import {
   validarHabitacionesOcupacion,
   type HabitacionOcupacionEntrada,
 } from "@/lib/reservar/ocupacionPorHabitacion";
+import {
+  construirComposicionHabitacionesPublica,
+  type ComposicionHabitacionPublica,
+} from "@/lib/reservar/composicionHabitacionBernalo";
 // Fase 3F-1: `SalidaSeleccionadaBernaloEntrada` vive en un módulo NEUTRAL
 // (sin "use server"/"use client"), fuente única compartida con el carrito
 // (`lib/cart/CartContext.tsx`) y el checkout público
@@ -93,6 +97,13 @@ export type ResultadoCotizarAlojamientoBernaloPublicoOk = {
   moneda: string;
   paxTotal: number;
   promedioPorViajero: number;
+  // Composición SANEADA (adultos/niños/infantes) por habitación física —
+  // clasificación AUTORITATIVA de `tarifa.reglaMenores` (nunca un umbral
+  // fijo inventado en el cliente). Presentación únicamente, para el resumen
+  // del carrito (`resumenHabitacionesBernalo`, `CartDrawer.tsx`) — nunca
+  // netos/comisión/proveedor/snapshot/payload. Ver
+  // `lib/reservar/composicionHabitacionBernalo.ts`.
+  composicionHabitaciones: ComposicionHabitacionPublica[];
 };
 
 export type ResultadoCotizarAlojamientoBernaloPublico = ResultadoCotizarAlojamientoBernaloPublicoOk | RechazoCotizacionBernaloPublico;
@@ -203,13 +214,17 @@ export async function cotizarAlojamientoBernaloPublico(
     return { ok: false, codigo: resultado.codigo, mensaje: mensajePublico(resultado.codigo, resultado.mensaje) };
   }
 
-  // 3) Sanitización final — SOLO estas 5 claves, nunca el objeto interno
-  // completo (regla 2/3 del encargo).
+  // 3) Sanitización final — SOLO estas 6 claves, nunca el objeto interno
+  // completo (regla 2/3 del encargo). `composicionHabitaciones` se
+  // construye CAMPO A CAMPO (adultos/ninos/infantes, nunca netos/comisión/
+  // proveedor/snapshot/payload) desde `resultado.habitaciones` — ver
+  // `lib/reservar/composicionHabitacionBernalo.ts`.
   return {
     ok: true,
     pvp: resultado.precioVenta,
     moneda: resultado.moneda,
     paxTotal: resultado.paxTotal,
     promedioPorViajero: resultado.paxTotal > 0 ? Math.round(resultado.precioVenta / resultado.paxTotal) : resultado.precioVenta,
+    composicionHabitaciones: construirComposicionHabitacionesPublica(resultado.habitaciones),
   };
 }

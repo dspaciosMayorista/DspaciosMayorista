@@ -135,7 +135,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { AcomConfig } from "@/lib/acomodaciones";
+import { hoyISO } from "@/lib/calc/paquetes";
 import {
   validarAdultosDeclarados,
   validarCantidadMenores,
@@ -297,33 +297,57 @@ export async function buscarAlojamientosUnidadPorFechas(
   // hoteles por unidad del destino buscado fuera de la búsqueda sin decirlo.
   const idsAevaluar = [...ofertasPorHotel.keys()].sort((a, b) => a - b);
 
-  // ── 3) Reglas de ocupación de cada hotel, en UNA lectura por lote ──────
-  // Mismo patrón y mismas columnas que el motor persona
-  // (`lib/reservar/cotizar.ts`) — nunca una consulta por hotel.
+  // ── 3) Fila maestra + tarifa unidad AUTORITATIVA de cada hotel, en UNA
+  // lectura por lote (nunca una consulta por hotel) ──────────────────────
+  // ⚠️ Corrección de fondo (causa confirmada con datos reales, hotel_id=216
+  // "Hotel Prueba Odair"): antes se leía `hotel_acomodaciones` (tabla del
+  // modelo PERSONA) y, sin filas para el hotel, el reparto caía a
+  // `defaultAcomConfig("doble")` — capacidad de niño SIEMPRE 0
+  // (`pax_max=pax_tarifa=2`), rechazando 2 adultos + 1 menor pese a que la
+  // tarifa unidad publicada (`hotel_tarifas_unidad`) sí lo admitía. Ahora se
+  // leen `hotel_temporadas`/`hotel_tarifas_unidad` — la MISMA fuente que usa
+  // `computarReservaBernalo` — y la capacidad/reparto se resuelven por
+  // combinación dentro de `evaluarDisponibilidadHotelUnidad` (ver
+  // `lib/tarifario/distribucionOcupacionUnidad.ts`/`capacidadTarifaUnidad.ts`).
+  // `hotel_acomodaciones` ya NO se consulta en este flujo: nunca puede
+  // reducir en silencio la capacidad publicada de una tarifa unidad, y un
+  // hotel nuevo no necesita ninguna fila manual ahí para aparecer.
   const admin = createAdminClient();
-  const [{ data: acomCfg, error: eAcom }, { data: hotelRows, error: eHoteles }] = await Promise.all([
-    admin
-      .from("hotel_acomodaciones")
-      .select("hotel_id, acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
-      .in("hotel_id", idsAevaluar),
+  const [{ data: hotelRows, error: eHoteles }, { data: temporadasRows, error: eTemporadas }, { data: tarifasRows, error: eTarifas }] = await Promise.all([
     admin.from("hoteles").select("id, edad_infante_max, edad_nino_max, adults_only").in("id", idsAevaluar),
+    admin
+      .from("hotel_temporadas")
+      .select("hotel_id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido")
+      .in("hotel_id", idsAevaluar),
+    admin
+      .from("hotel_tarifas_unidad")
+      .select("id, hotel_id, tarifa_id, version_tarifario, temporada, categoria, alimentacion, estado, fuente_documento, fuente_pagina, comision_pct, payload")
+      .in("hotel_id", idsAevaluar)
+      .eq("estado", "publicada"),
   ]);
-  if (eAcom || eHoteles) {
-    console.error(`[buscarAlojamientosUnidadPorFechas] etapa=hotel_acomodaciones_o_hoteles detalle=${eAcom?.message ?? eHoteles?.message}`);
-    // Fallo TÉCNICO real — sin reglas confiables no se afirma nada, pero
+  if (eHoteles || eTemporadas || eTarifas) {
+    console.error(`[buscarAlojamientosUnidadPorFechas] etapa=hoteles_o_temporadas_o_tarifas detalle=${eHoteles?.message ?? eTemporadas?.message ?? eTarifas?.message}`);
+    // Fallo TÉCNICO real — sin datos confiables no se afirma nada, pero
     // tampoco se disfraza de "cero hoteles disponibles" (fallo estructural
     // corregido, ver la cabecera).
-    return { ok: false, error: "No se pudieron consultar las reglas de ocupación de los hoteles." };
+    return { ok: false, error: "No se pudieron consultar las tarifas/temporadas de los hoteles." };
   }
 
-  const reglasPorHotel = new Map<number, AcomConfig[]>();
-  for (const r of (acomCfg ?? []) as (AcomConfig & { hotel_id: number })[]) {
-    const arr = reglasPorHotel.get(r.hotel_id) ?? [];
-    arr.push(r);
-    reglasPorHotel.set(r.hotel_id, arr);
-  }
   const filaPorHotel = new Map<number, FilaHotelBusquedaUnidad>();
   for (const h of (hotelRows ?? []) as FilaHotelBusquedaUnidad[]) filaPorHotel.set(h.id, h);
+  const temporadasPorHotel = new Map<number, unknown[]>();
+  for (const t of (temporadasRows ?? []) as { hotel_id: number }[]) {
+    const arr = temporadasPorHotel.get(t.hotel_id) ?? [];
+    arr.push(t);
+    temporadasPorHotel.set(t.hotel_id, arr);
+  }
+  const tarifasPorHotel = new Map<number, unknown[]>();
+  for (const t of (tarifasRows ?? []) as { hotel_id: number }[]) {
+    const arr = tarifasPorHotel.get(t.hotel_id) ?? [];
+    arr.push(t);
+    tarifasPorHotel.set(t.hotel_id, arr);
+  }
+  const hoy = hoyISO();
 
   // ── 4) Evaluación COMPLETA, con concurrencia acotada ──────────────────
   // Cada hotel produce un `VeredictoHotelUnidad` (veredicto con fundamento, o
@@ -342,12 +366,14 @@ export async function buscarAlojamientosUnidadPorFechas(
         hotelId,
         ofertas: ofertasPorHotel.get(hotelId) ?? [],
         fila: filaPorHotel.get(hotelId),
-        reglas: reglasPorHotel.get(hotelId) ?? [],
+        temporadasRaw: temporadasPorHotel.get(hotelId) ?? [],
+        filasTarifas: tarifasPorHotel.get(hotelId) ?? [],
         habitacionesConsultadas: habitacionesValidadas.map((h) => ({ acom: h.acom })),
         adultosDeclarados: adultos,
         edadesMenores: edades,
         fechaIda,
         fechaRegreso,
+        hoy,
         computar: computarReservaBernalo,
       });
     }

@@ -104,13 +104,13 @@ describe("cotizacionBernaloActions.ts — mensajes públicos con motivo comercia
   });
 });
 
-describe("cotizacionBernaloActions.ts — la respuesta pública conserva ÚNICAMENTE sus 5 claves autorizadas", () => {
-  test("el tipo de salida OK declara exactamente ok/pvp/moneda/paxTotal/promedioPorViajero", () => {
+describe("cotizacionBernaloActions.ts — la respuesta pública conserva ÚNICAMENTE sus 6 claves autorizadas", () => {
+  test("el tipo de salida OK declara exactamente ok/pvp/moneda/paxTotal/promedioPorViajero/composicionHabitaciones", () => {
     const tipo = fuenteAction.slice(
       fuenteAction.indexOf("export type ResultadoCotizarAlojamientoBernaloPublicoOk"),
       fuenteAction.indexOf("export type ResultadoCotizarAlojamientoBernaloPublico =")
     );
-    for (const campo of ["ok: true;", "pvp: number;", "moneda: string;", "paxTotal: number;", "promedioPorViajero: number;"]) {
+    for (const campo of ["ok: true;", "pvp: number;", "moneda: string;", "paxTotal: number;", "promedioPorViajero: number;", "composicionHabitaciones: ComposicionHabitacionPublica[];"]) {
       assert.match(tipo, new RegExp(campo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     }
   });
@@ -123,12 +123,33 @@ describe("cotizacionBernaloActions.ts — la respuesta pública conserva ÚNICAM
     assert.match(codigoAction, /paxTotal: resultado\.paxTotal,/);
   });
 
-  test("no reenvía ningún campo interno en los objetos de respuesta pública", () => {
+  test("composicionHabitaciones se construye EXCLUSIVAMENTE vía construirComposicionHabitacionesPublica(resultado.habitaciones) — nunca el arreglo interno reenviado tal cual", () => {
     const bloqueOk = codigoAction.slice(codigoAction.indexOf("return {\n    ok: true,"), codigoAction.indexOf("};", codigoAction.indexOf("return {\n    ok: true,")));
-    assert.doesNotMatch(bloqueOk, /costoHotelTotal|costoVueloTotal|costoServiciosTotal|aportePvp|proveedorHotel|serviciosIncluidos\b|snapshot|habitaciones/i);
+    assert.match(bloqueOk, /composicionHabitaciones:\s*construirComposicionHabitacionesPublica\(resultado\.habitaciones\)/);
+    // La ÚNICA aparición de "habitaciones" en el bloque OK debe ser ESE
+    // argumento — nunca una clave "habitaciones:" propia devuelta tal cual.
+    assert.doesNotMatch(bloqueOk, /\bhabitaciones:/);
+  });
+
+  test("no reenvía ningún campo interno en los objetos de respuesta pública (costos/aportes/proveedor/snapshot)", () => {
+    const bloqueOk = codigoAction.slice(codigoAction.indexOf("return {\n    ok: true,"), codigoAction.indexOf("};", codigoAction.indexOf("return {\n    ok: true,")));
+    assert.doesNotMatch(bloqueOk, /costoHotelTotal|costoVueloTotal|costoServiciosTotal|aportePvp|proveedorHotel|serviciosIncluidos\b|snapshot/i);
     const rechazo = codigoAction.slice(codigoAction.indexOf("if (!resultado.ok)"), codigoAction.indexOf("return {\n    ok: true,"));
     assert.match(rechazo, /return \{ ok: false, codigo: resultado\.codigo, mensaje: mensajePublico\(resultado\.codigo, resultado\.mensaje\) \};/);
     assert.doesNotMatch(rechazo, /costoHotelTotal|costoVueloTotal|costoServiciosTotal|aportePvp|proveedorHotel|serviciosIncluidos\b|snapshot|habitaciones:/i);
+  });
+});
+
+describe("composicionHabitacionBernalo.ts — sanitización propia (adultos/niños/infantes), nunca netos/comisión/proveedor", () => {
+  const fuenteComposicion = readFileSync(join(raiz, "lib/reservar/composicionHabitacionBernalo.ts"), "utf8");
+  test("solo expone habitacionId/adultos/ninos/infantes en ComposicionHabitacionPublica", () => {
+    const idx = fuenteComposicion.indexOf("export type ComposicionHabitacionPublica");
+    const cuerpo = fuenteComposicion.slice(idx, idx + 300);
+    assert.match(cuerpo, /habitacionId: string;/);
+    assert.match(cuerpo, /adultos: number;/);
+    assert.match(cuerpo, /ninos: number;/);
+    assert.match(cuerpo, /infantes: number;/);
+    assert.doesNotMatch(cuerpo, /neto|comision|proveedor|snapshot|payload|suplemento/i);
   });
 });
 

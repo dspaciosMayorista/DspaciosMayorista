@@ -149,18 +149,24 @@ export type EntradaRevalidacionUnidad = {
   habitaciones: HabitacionOcupacionEntrada[];
 };
 
+/** Composición saneada mínima (adultos/niños/infantes por habitación) —
+ * mismo shape estructural que `ComposicionHabitacionPublica`
+ * (`lib/reservar/composicionHabitacionBernalo.ts`), duplicado a propósito
+ * (no importado) para que este módulo neutral no dependa de esa cadena. */
+export type ComposicionHabitacionMinima = { habitacionId: string; adultos: number; ninos: number; infantes: number };
+
 /** Forma MÍNIMA del resultado de `cotizarAlojamientoBernaloPublico` que este
  * helper lee — cualquier resultado real es estructuralmente compatible (trae
  * más campos en `ok:true`: paxTotal/promedioPorViajero; y `codigo` en el
- * rechazo). Solo `pvp`/`moneda`/`mensaje` se leen acá. */
+ * rechazo). Solo `pvp`/`moneda`/`composicionHabitaciones`/`mensaje` se leen acá. */
 export type CotizacionUnidadMinima =
-  | { ok: true; pvp: number; moneda: string }
+  | { ok: true; pvp: number; moneda: string; composicionHabitaciones: ComposicionHabitacionMinima[] }
   | { ok: false; mensaje: string };
 
 export type CotizarUnidadFn = (entrada: EntradaRevalidacionUnidad) => Promise<CotizacionUnidadMinima>;
 
 export type ResultadoRevalidacionUnidad =
-  | { estado: "agregar"; precio: number; moneda: string; precioCambio: boolean }
+  | { estado: "agregar"; precio: number; moneda: string; precioCambio: boolean; composicionHabitaciones: ComposicionHabitacionMinima[] }
   | { estado: "rechazo"; mensaje: string }
   | { estado: "error"; mensaje: string };
 
@@ -190,6 +196,7 @@ export async function revalidarReservaUnidad(
       precio: r.pvp,
       moneda: r.moneda,
       precioCambio: r.pvp !== precioMostrado || r.moneda !== monedaMostrada,
+      composicionHabitaciones: r.composicionHabitaciones,
     };
   } catch {
     return { estado: "error", mensaje: MENSAJE_ERROR_REVALIDACION };

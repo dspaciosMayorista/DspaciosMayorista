@@ -1671,6 +1671,7 @@ function TarjetaUnidadBusqueda({
       habitaciones,
       precio: rev.precio,
       moneda: rev.moneda,
+      composicionHabitaciones: rev.composicionHabitaciones,
     });
     openDrawer();
   }
@@ -1782,6 +1783,7 @@ function HotelBernaloCotizarModal({ hotelGrupo, onClose }: { hotelGrupo: HotelUn
   function agregarBernalo(item: {
     categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
     habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
+    composicionHabitaciones: { habitacionId: string; adultos: number; ninos: number; infantes: number }[];
   }) {
     if (!hotel) return;
     add({
@@ -1798,6 +1800,7 @@ function HotelBernaloCotizarModal({ hotelGrupo, onClose }: { hotelGrupo: HotelUn
       habitaciones: item.habitaciones,
       precio: item.precio,
       moneda: item.moneda,
+      composicionHabitaciones: item.composicionHabitaciones,
     });
     openDrawer();
     onClose();
@@ -1964,6 +1967,7 @@ function EditorPax({
   onAgregarBernalo?: (item: {
     categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
     habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
+    composicionHabitaciones: { habitacionId: string; adultos: number; ninos: number; infantes: number }[];
   }) => void;
   btnLabel?: string;
   moneda?: string | null;
@@ -2208,6 +2212,7 @@ function EditorPax({
     onAgregarBernalo({
       categoria: categoriaSel, alimentacion: alimentacionSel, salida: salidaPayload,
       habitaciones: payloadBernalo, precio: resultadoCotizacion.pvp, moneda: resultadoCotizacion.moneda,
+      composicionHabitaciones: resultadoCotizacion.composicionHabitaciones,
     });
   }
 

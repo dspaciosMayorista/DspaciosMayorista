@@ -8,6 +8,7 @@ import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { construirAddonsIntentDesdeCarrito } from "@/lib/cart/addonsIntent";
 import { crearContadorAddonsNonce } from "@/lib/cart/addonsNonce";
+import { resumenHabitacionesBernalo } from "@/lib/cart/resumenHabitacionBernalo";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 
 const MENSAJE_SIN_REFERENCIA_ADDONS =
@@ -22,14 +23,6 @@ function resumenHabitaciones(it: HotelCartItemPersona): string {
   if (it.ninos2 > 0) partes.push(`${it.ninos2} Niño 2`);
   if (it.infantes > 0) partes.push(`${it.infantes} Infante(s)`);
   return partes.join(" · ");
-}
-
-// Resumen de habitaciones Bernalo — solo lectura, sin precio (regla 3F-1: el
-// carrito aún no "Agrega" ítems Bernalo desde la UI; este resumen existe
-// para que el tipo compile de forma honesta si alguna vez llega uno al
-// drawer, sin fingir soporte que todavía no existe).
-function resumenHabitacionesBernalo(it: { habitaciones: { acom: string; adultos: number }[] }): string {
-  return it.habitaciones.map((h) => `${ACOM_ROOM_LABEL[h.acom as AcomRoom] ?? h.acom} (${h.adultos} adt)`).join(" · ");
 }
 
 export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: { checkoutHabilitado?: boolean; fotosPorHotel?: Record<number, string> }) {
@@ -169,7 +162,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                             <div className="truncate text-xs text-gray-500">
                               {it.destino ?? ""}{it.categoria ? ` · ${it.categoria}` : ""}{it.alimentacion ? ` / ${it.alimentacion}` : ""}
                             </div>
-                            <div className="truncate text-xs text-gray-400">{resumenHabitacionesBernalo(it)}</div>
+                            <div className="truncate text-xs text-gray-400">{resumenHabitacionesBernalo(it.habitaciones, it.composicionHabitaciones)}</div>
                           </>
                         ) : (
                           <>

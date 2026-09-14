@@ -32,13 +32,14 @@
 // `node --test` sin bundler.
 // ─────────────────────────────────────────────────────────────────────────
 
-import { defaultAcomConfig, type AcomConfig, type AcomRoom } from "../acomodaciones.ts";
-import { repartirMenoresEnHabitaciones } from "../reservar/repartoMenoresBusqueda.ts";
+import { type AcomRoom } from "../acomodaciones.ts";
 import {
   validarHabitacionesOcupacion,
   type HabitacionOcupacionEntrada,
   type HabitacionOcupacionValidada,
 } from "../reservar/ocupacionPorHabitacion.ts";
+import { distribuirOcupacionUnidad } from "./distribucionOcupacionUnidad.ts";
+import { resolverCapacidadTarifaUnidad } from "./capacidadTarifaUnidad.ts";
 import type { HotelBernaloDescubierto } from "./datosBernalo.ts";
 
 /** Fila mínima de `hoteles` que necesita el veredicto — mismas columnas que
@@ -212,14 +213,32 @@ export type EntradaEvaluarHotelUnidad = {
   ofertas: HotelBernaloDescubierto[];
   /** Fila de `hoteles` — `undefined` si no llegó en el lote (drift de datos: nunca se inventa). */
   fila: FilaHotelBusquedaUnidad | undefined;
-  /** Reglas de `hotel_acomodaciones` de este hotel (puede venir vacío: se usa el default por acomodación). */
-  reglas: AcomConfig[];
-  /** Tipos de habitación consultados, en el orden capturado. */
+  /** Filas de `hotel_temporadas` de este hotel, YA LEÍDAS — misma fuente que
+   * usa `computarReservaBernalo` (vía `resolverTemporadaEstadia`) para
+   * resolver la temporada de la estadía. NUNCA `hotel_acomodaciones`: la
+   * capacidad de un hotel `modelo_tarifario = "unidad"` sale de la tarifa
+   * unidad publicada (`capacidadTarifaUnidad.ts`), no de una tabla pensada
+   * para el modelo persona (ver la cabecera de
+   * `lib/tarifario/distribucionOcupacionUnidad.ts` para la causa completa
+   * del defecto que esto corrige). */
+  temporadasRaw: unknown[];
+  /** Filas `estado = "publicada"` de `hotel_tarifas_unidad` de este hotel,
+   * YA LEÍDAS — misma fuente que `seleccionarTarifaAlojamientoPublicada`
+   * (Fase 3B) usa dentro de `computarReservaBernalo`. */
+  filasTarifas: unknown[];
+  /** Tipos de habitación consultados, en el orden capturado — para unidad
+   * solo determinan CUÁNTAS habitaciones físicas hay (el nombre Doble/
+   * Triple/… no se usa para inferir capacidad; ver la cabecera de
+   * `distribucionOcupacionUnidad.ts`). */
   habitacionesConsultadas: { acom: AcomRoom }[];
   adultosDeclarados: number;
   edadesMenores: number[];
   fechaIda: string;
   fechaRegreso: string;
+  /** Fecha de "hoy" (yyyy-mm-dd) para la vigencia de compra de la tarifa —
+   * mismo criterio que `computarReservaBernalo` (`hoyISO()`), obligatoria
+   * acá también: sin `Date.now()` oculto, misma entrada → mismo resultado. */
+  hoy: string;
   /** INYECTADO — en producción es `computarReservaBernalo`; en pruebas, un doble de prueba. */
   computar: (input: EntradaComputarDisponibilidad) => Promise<ResultadoComputarDisponibilidad>;
 };
@@ -233,7 +252,10 @@ export type EntradaEvaluarHotelUnidad = {
 export async function evaluarDisponibilidadHotelUnidad(
   entrada: EntradaEvaluarHotelUnidad
 ): Promise<VeredictoHotelUnidad> {
-  const { hotelId, ofertas, fila, reglas, habitacionesConsultadas, adultosDeclarados, edadesMenores, fechaIda, fechaRegreso, computar } = entrada;
+  const {
+    hotelId, ofertas, fila, temporadasRaw, filasTarifas,
+    habitacionesConsultadas, adultosDeclarados, edadesMenores, fechaIda, fechaRegreso, hoy, computar,
+  } = entrada;
 
   // Sin fila maestra no se INVENTAN umbrales de edad ni "no es Adults Only"
   // (mismo criterio fail-closed que el motor persona): inconcluyente, nunca
@@ -247,59 +269,6 @@ export async function evaluarDisponibilidadHotelUnidad(
   if (edadesMenores.length > 0 && fila.adults_only) {
     return { tipo: "veredicto", valor: { hotelId, estado: "sin_disponibilidad" } };
   }
-
-  const configDe = (a: AcomRoom): AcomConfig => reglas.find((x) => x.acomodacion === a) ?? defaultAcomConfig(a);
-  const reparto = repartirMenoresEnHabitaciones({
-    habitaciones: habitacionesConsultadas.map((h) => ({ acom: h.acom, config: configDe(h.acom) })),
-    adultosDeclarados,
-    edades: edadesMenores,
-    infanteMax: fila.edad_infante_max ?? 2,
-    ninoMax: fila.edad_nino_max ?? 10,
-  });
-  if (!reparto.ok) {
-    // La SELECCIÓN no cabe en este hotel (habitaciones/adultos/menores): es
-    // una razón honesta de "no disponible para tu búsqueda" — veredicto real.
-    // Un rechazo por CONFIGURACIÓN del hotel o por una edad que el hotel
-    // clasifica como adulto no tiene ese mismo fundamento: inconcluyente.
-    if (reparto.tipo === "seleccion_invalida") {
-      return { tipo: "veredicto", valor: { hotelId, estado: "sin_disponibilidad" } };
-    }
-    return { tipo: "inconcluyente", hotelId, motivo: `reparto_${reparto.tipo}` };
-  }
-
-  // Reenvío por la MISMA frontera de validación que usa la cotización
-  // pública (nunca se salta): la asociación habitación↔edades que produce el
-  // reparto se revalida como si viniera del navegador.
-  //
-  // ⚠️ DEFECTO REAL confirmado por ejecución (no por inspección de fuente):
-  // `validarHabitacionesOcupacion` exige `HabitacionOcupacionEntrada`, que
-  // incluye `cantidadMenores` — un campo que `HabitacionRepartida` (la salida
-  // de `repartirMenoresEnHabitaciones`) NUNCA tuvo (solo trae
-  // `id/acom/adultos/edadesMenores`). Pasar `reparto.habitaciones` TAL CUAL
-  // (como hacía el código original de `busquedaUnidadActions.ts`) hacía que
-  // `typeof fila.cantidadMenores !== "number"` fuera SIEMPRE verdadero —
-  // `vOcupacion.ok` daba `false` para TODO hotel, en TODA búsqueda, desde que
-  // existe este código: la búsqueda general de "unidad" nunca pudo devolver
-  // un solo hotel disponible, no solo el hotel_id=216 reportado. Se detectó
-  // ejecutando esta función de verdad en `pruebas/evaluarDisponibilidadUnidad.test.ts`
-  // (el primer test, "hotel unidad descubierto + computarReservaBernalo ok",
-  // fallaba con `motivo: "ocupacion_rechazada_por_validador"` en vez de
-  // `disponible` hasta este fix). Se deriva `cantidadMenores` de
-  // `edadesMenores.length` — el mismo criterio que ya usa
-  // `construirPayloadHabitaciones` (`ocupacionPorHabitacion.ts`) para el
-  // flujo del modal.
-  const entradaOcupacion: HabitacionOcupacionEntrada[] = reparto.habitaciones.map((h) => ({
-    id: h.id,
-    acom: h.acom,
-    adultos: h.adultos,
-    cantidadMenores: h.edadesMenores.length,
-    edadesMenores: h.edadesMenores,
-  }));
-  const vOcupacion = validarHabitacionesOcupacion(entradaOcupacion);
-  if (!vOcupacion.ok) {
-    return { tipo: "inconcluyente", hotelId, motivo: "ocupacion_rechazada_por_validador" };
-  }
-  const ocupacion: HabitacionOcupacionValidada[] = vOcupacion.habitaciones;
 
   // Cierre de la UX de la tarjeta: la evaluación YA NO se corta en el primer
   // éxito — hace falta reunir TODAS las combinaciones que confirmen, porque
@@ -321,6 +290,58 @@ export async function evaluarDisponibilidadHotelUnidad(
   const opciones: OpcionUnidadConfirmada[] = [];
   const codigosNoClasificados = new Set<string>();
   for (const combo of combos) {
+    // ── Capacidad AUTORITATIVA de ESTA combinación puntual (categoría ×
+    // alimentación × temporada de la estadía) — NUNCA `hotel_acomodaciones`
+    // ni un valor inferido del nombre de la habitación consultada (Doble/
+    // Triple/…). Cada combinación se evalúa con SU PROPIA capacidad: dos
+    // combinaciones del mismo hotel pueden tener `minPax`/`maxPax`
+    // distintos (ej. una categoría más grande), y nunca se mezclan (ver la
+    // cabecera de `distribucionOcupacionUnidad.ts`).
+    const resolucionCapacidad = resolverCapacidadTarifaUnidad({
+      hotelId, temporadasRaw, filasTarifas,
+      categoria: combo.categoria, alimentacion: combo.alimentacion,
+      fechaIda, fechaRegreso, hoy,
+    });
+    // Sin capacidad resuelta para ESTA combinación puntual (temporada/tarifa
+    // no encontrada, ambigua o inválida): reparto SIN COTA
+    // (`{minPax:1, maxPax:null}`) — nunca se rechaza acá algo que
+    // `computarReservaBernalo` podría admitir; es esa llamada, que resuelve
+    // la MISMA tarifa por dentro, la que tiene la última palabra.
+    const capacidad = resolucionCapacidad.ok ? resolucionCapacidad.capacidad : { minPax: 1, maxPax: null };
+
+    const reparto = distribuirOcupacionUnidad({ habitacionesConsultadas, adultosDeclarados, edadesMenores, capacidad });
+    if (!reparto.ok) {
+      // "seleccion_invalida": la ocupación pedida no cabe en ESTA
+      // combinación (su capacidad real ya se conoce) — no es un fallo
+      // técnico, simplemente esta combinación no sirve para esta búsqueda;
+      // se sigue con la siguiente sin marcar nada raro. "configuracion_invalida"
+      // sí es una señal real de datos rotos (ej. una tarifa con
+      // `maxPax < minPax`) — cuenta como código no clasificado para que la
+      // búsqueda se marque `parcial`/inconcluyente en vez de desaparecer en
+      // silencio.
+      if (reparto.tipo === "configuracion_invalida") codigosNoClasificados.add(`distribucion_${reparto.tipo}`);
+      continue;
+    }
+
+    // Reenvío por la MISMA frontera de validación que usa la cotización
+    // pública (nunca se salta): la asociación habitación↔edades que produce
+    // el reparto se revalida como si viniera del navegador. `cantidadMenores`
+    // se deriva de `edadesMenores.length` — mismo criterio que ya usa
+    // `construirPayloadHabitaciones` (`ocupacionPorHabitacion.ts`).
+    const entradaOcupacion: HabitacionOcupacionEntrada[] = reparto.habitaciones.map((h) => ({
+      id: h.id,
+      acom: h.acom,
+      adultos: h.adultos,
+      cantidadMenores: h.edadesMenores.length,
+      edadesMenores: h.edadesMenores,
+    }));
+    const vOcupacion = validarHabitacionesOcupacion(entradaOcupacion);
+    if (!vOcupacion.ok) {
+      codigosNoClasificados.add("ocupacion_rechazada_por_validador");
+      continue;
+    }
+    const ocupacion: HabitacionOcupacionValidada[] = vOcupacion.habitaciones;
+
     const resultado = await computar({
       paqueteId: combo.oferta.paqueteId,
       hotelId,

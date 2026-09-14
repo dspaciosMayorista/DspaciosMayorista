@@ -198,20 +198,22 @@ describe("revalidarReservaUnidad — revalidación server-side que NUNCA lanza",
     habitaciones: [{ id: "doble-0", acom: "doble", adultos: 2, cantidadMenores: 0, edadesMenores: [] }],
   };
 
-  test("ok con MISMO precio → estado 'agregar', precioCambio false", async () => {
-    const cotizar: CotizarUnidadFn = async () => ({ ok: true, pvp: 500_000, moneda: "COP" });
+  const COMPOSICION = [{ habitacionId: "doble-0", adultos: 2, ninos: 0, infantes: 0 }];
+
+  test("ok con MISMO precio → estado 'agregar', precioCambio false, composicionHabitaciones pasada tal cual", async () => {
+    const cotizar: CotizarUnidadFn = async () => ({ ok: true, pvp: 500_000, moneda: "COP", composicionHabitaciones: COMPOSICION });
     const r = await revalidarReservaUnidad(cotizar, entrada, 500_000, "COP");
-    assert.deepEqual(r, { estado: "agregar", precio: 500_000, moneda: "COP", precioCambio: false });
+    assert.deepEqual(r, { estado: "agregar", precio: 500_000, moneda: "COP", precioCambio: false, composicionHabitaciones: COMPOSICION });
   });
 
   test("ok con precio DISTINTO (tarifa cambió) → estado 'agregar', precioCambio true, con el precio REVALIDADO", async () => {
-    const cotizar: CotizarUnidadFn = async () => ({ ok: true, pvp: 560_000, moneda: "COP" });
+    const cotizar: CotizarUnidadFn = async () => ({ ok: true, pvp: 560_000, moneda: "COP", composicionHabitaciones: COMPOSICION });
     const r = await revalidarReservaUnidad(cotizar, entrada, 500_000, "COP");
-    assert.deepEqual(r, { estado: "agregar", precio: 560_000, moneda: "COP", precioCambio: true });
+    assert.deepEqual(r, { estado: "agregar", precio: 560_000, moneda: "COP", precioCambio: true, composicionHabitaciones: COMPOSICION });
   });
 
   test("cambio de MONEDA también marca precioCambio", async () => {
-    const cotizar: CotizarUnidadFn = async () => ({ ok: true, pvp: 500_000, moneda: "USD" });
+    const cotizar: CotizarUnidadFn = async () => ({ ok: true, pvp: 500_000, moneda: "USD", composicionHabitaciones: COMPOSICION });
     const r = await revalidarReservaUnidad(cotizar, entrada, 500_000, "COP");
     assert.equal(r.estado, "agregar");
     if (r.estado === "agregar") assert.equal(r.precioCambio, true);
@@ -242,9 +244,12 @@ describe("revalidarReservaUnidad — revalidación server-side que NUNCA lanza",
     assert.equal(r.estado, "error");
   });
 
-  test("solo se lee pvp/moneda/mensaje del resultado — un ok con campos extra (paxTotal, etc.) no filtra nada al resultado del helper", async () => {
-    const cotizar: CotizarUnidadFn = async () => ({ ok: true, pvp: 500_000, moneda: "COP", paxTotal: 2, promedioPorViajero: 250_000 } as unknown as { ok: true; pvp: number; moneda: string });
+  test("solo se lee pvp/moneda/composicionHabitaciones/mensaje del resultado — un ok con campos extra (paxTotal, etc.) no filtra nada más al resultado del helper", async () => {
+    const cotizar: CotizarUnidadFn = async () =>
+      ({ ok: true, pvp: 500_000, moneda: "COP", paxTotal: 2, promedioPorViajero: 250_000, composicionHabitaciones: COMPOSICION } as unknown as {
+        ok: true; pvp: number; moneda: string; composicionHabitaciones: typeof COMPOSICION;
+      });
     const r = await revalidarReservaUnidad(cotizar, entrada, 500_000, "COP");
-    assert.deepEqual(Object.keys(r).sort(), ["estado", "moneda", "precio", "precioCambio"]);
+    assert.deepEqual(Object.keys(r).sort(), ["composicionHabitaciones", "estado", "moneda", "precio", "precioCambio"]);
   });
 });
