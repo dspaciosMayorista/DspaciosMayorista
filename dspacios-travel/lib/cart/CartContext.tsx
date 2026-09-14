@@ -128,8 +128,15 @@ export type CartItem = HotelCartItem | TourCartItem;
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 // Señal para que Vista Booking abra Receptivos ya filtrado por el destino/
-// fechas/pax del hotel recién agregado (ver botón "Agregar tours" del carrito).
-export type AddonsIntent = { destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number };
+// fechas/pax del hotel recién agregado (ver botón "Agregar tours" del
+// carrito). `nonce` identifica CADA clic del botón (se incrementa en
+// `CartDrawer`) — es lo que permite a `BuscadorReceptivos` distinguir "un
+// intent nuevo que hay que consumir" de "el mismo intent de siempre" aunque
+// el componente ya esté montado (no dependa solo del montaje inicial), sin
+// disparar la búsqueda dos veces ni perder los resultados cuando el intent
+// se limpia después de consumirse. Mismo patrón que `sugerenciaPedida` en
+// `BuscadorBooking.tsx`.
+export type AddonsIntent = { destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number; nonce: number };
 
 type CartCtx = {
   items: CartItem[];
