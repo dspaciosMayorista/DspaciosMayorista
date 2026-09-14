@@ -262,13 +262,22 @@ export function temporadaVigenteParaFecha(
  *    prioridad por debajo, con neto cargado).
  * Devuelve null si no hay tarifa aplicable (no se publica esa noche).
  */
-export function netoNoche(
+/**
+ * Resolución detallada de una noche: además del neto, identifica el NOMBRE de
+ * la temporada 'tarifa' que realmente aportó el precio (la fila de `tarifa_hotel`
+ * cuyo neto se usó) — sea porque ganó directo, o porque es la tarifa-base de un
+ * descuento. Es la única fuente de verdad para saber "qué fila de tarifa_hotel
+ * priceó esta noche" (p. ej. para resolver de ahí la regla de edad efectiva).
+ * `netoNoche` es un envoltorio delgado sobre esta función — mismo comportamiento,
+ * sin exponer la identidad.
+ */
+export function resolverNetoNocheDetallado(
   t0: number,
   temporadas: TemporadaRango[],
   netoPorTemporada: Record<string, number | null | undefined>,
   hoy: string,
   regimen?: string
-): number | null {
+): { neto: number; temporadaTarifa: string } | null {
   // 'promo_noche_gratis' no es un precio por noche (ver promoNocheGratisFactor):
   // se excluye de la resolución por-noche para que nunca "gane" un slot aquí.
   const ents = entradasNoche(t0, temporadas, hoy, regimen).filter((t) => (t.tipo ?? "tarifa") !== "promo_noche_gratis");
@@ -277,20 +286,33 @@ export function netoNoche(
   const tipoTop = top.tipo ?? "tarifa";
   if (tipoTop === "tarifa") {
     const v = netoPorTemporada[top.nombre];
-    if (v != null) return v;
+    if (v != null) return { neto: v, temporadaTarifa: top.nombre };
     // La temporada de mayor prioridad NO tiene neto para ESTE combo (categoría/
     // régimen) — p. ej. "BAJA" es de PAM y este combo es PC. Cae a la 'tarifa' de
     // mayor prioridad que cubra la fecha Y tenga neto para este combo ("BAJA PC").
     const baseT = ents.find((t) => (t.tipo ?? "tarifa") === "tarifa" && netoPorTemporada[t.nombre] != null);
-    return baseT ? (netoPorTemporada[baseT.nombre] as number) : null;
+    return baseT ? { neto: netoPorTemporada[baseT.nombre] as number, temporadaTarifa: baseT.nombre } : null;
   }
   // Descuento: necesita una tarifa-base por debajo, con neto cargado.
   const base = ents.find((t) => (t.tipo ?? "tarifa") === "tarifa" && netoPorTemporada[t.nombre] != null);
   if (!base) return null;
   const baseNeto = netoPorTemporada[base.nombre] as number;
   const val = Number(top.descuento_valor) || 0;
-  if (tipoTop === "descuento_pct") return Math.round(baseNeto * (1 - val / 100));
-  return Math.max(0, Math.round(baseNeto - val)); // descuento_monto (por pax)
+  const neto = tipoTop === "descuento_pct"
+    ? Math.round(baseNeto * (1 - val / 100))
+    : Math.max(0, Math.round(baseNeto - val)); // descuento_monto (por pax)
+  return { neto, temporadaTarifa: base.nombre };
+}
+
+export function netoNoche(
+  t0: number,
+  temporadas: TemporadaRango[],
+  netoPorTemporada: Record<string, number | null | undefined>,
+  hoy: string,
+  regimen?: string
+): number | null {
+  const r = resolverNetoNocheDetallado(t0, temporadas, netoPorTemporada, hoy, regimen);
+  return r ? r.neto : null;
 }
 
 /**
@@ -347,6 +369,38 @@ export function liquidarHotelNoches(args: {
   }
   const factor = promoNocheGratisFactor(args.temporadas, args.fechaIda, args.numNoches, hoy, args.regimen);
   return factor === 1 ? total : total * factor;
+}
+
+/**
+ * Igual que `liquidarHotelNoches`, pero además devuelve el nombre de CADA
+ * temporada 'tarifa' que aportó neto/precio a alguna noche de la estadía
+ * (sin duplicados). Sirve para resolver, después, la regla de edad efectiva
+ * de la estadía a partir de las filas de `tarifa_hotel` que realmente se
+ * usaron — nunca hay que volver a consultar ni inferir desde el total.
+ * Devuelve `null` en los mismos casos que `liquidarHotelNoches`.
+ */
+export function liquidarHotelNochesConTemporadas(args: {
+  fechaIda: string;
+  numNoches: number;
+  temporadas: TemporadaRango[];
+  netoPorTemporada: Record<string, number | null | undefined>;
+  hoy?: string;
+  regimen?: string;
+}): { total: number; temporadasTarifa: string[] } | null {
+  if (args.numNoches <= 0) return null;
+  const base = new Date(`${args.fechaIda}T00:00:00`).getTime();
+  if (Number.isNaN(base)) return null;
+  const hoy = args.hoy ?? hoyISO();
+  let total = 0;
+  const vistas = new Set<string>();
+  for (let n = 0; n < args.numNoches; n++) {
+    const r = resolverNetoNocheDetallado(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy, args.regimen);
+    if (r == null) return null;
+    total += r.neto;
+    vistas.add(r.temporadaTarifa);
+  }
+  const factor = promoNocheGratisFactor(args.temporadas, args.fechaIda, args.numNoches, hoy, args.regimen);
+  return { total: factor === 1 ? total : total * factor, temporadasTarifa: Array.from(vistas) };
 }
 
 /**

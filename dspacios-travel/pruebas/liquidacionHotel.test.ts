@@ -16,6 +16,7 @@ import {
   type SugerenciaFecha,
 } from "../lib/reservar/liquidacionHotel.ts";
 import { defaultAcomConfig } from "../lib/acomodaciones.ts";
+import { type FilaTarifaHotelEdadCruda } from "../lib/calc/reglaEdadTarifa.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Vista Booking — orientación de fechas cuando el hotel elegido no tiene
@@ -240,8 +241,11 @@ describe("10. Composición incompatible no produce sugerencias engañosas", () =
     adultosDeclarados: 2,
     habitacionesConsultadas: [{ acom: "doble", config: defaultAcomConfig("doble") }],
     edadesMenores: [],
-    edadInfanteMax: 2,
-    edadNinoMax: 10,
+    // Ninguna fila de `baseDatos()` trae override de edad (las 4 columnas
+    // ausentes) — la regla efectiva cae al fallback general de abajo
+    // (infanteMax 2 / ninoMax 10, mismos valores que antes de este cambio).
+    filasTarifa: baseDatos().tarifas as unknown as FilaTarifaHotelEdadCruda[],
+    generalEdad: { infanteMin: null, infanteMax: 2, ninoMin: null, ninoMax: 10 },
     adultsOnly: false,
   };
   test("Adults Only + menores declarados → nunca sugiere ninguna fecha (ninguna fecha lo arregla)", () => {
@@ -264,10 +268,142 @@ describe("10. Composición incompatible no produce sugerencias engañosas", () =
     const sinNino2: DatosHotelPaquete = baseDatos({ tarifas: [tarifaPara("ALTA", { neto_nino2: null }), tarifaPara("PUENTE", { neto_nino2: null })] });
     const composicion: ComposicionSugerencia = {
       ...composicionBase,
+      filasTarifa: sinNino2.tarifas as unknown as FilaTarifaHotelEdadCruda[],
       edadesMenores: [5, 6], // 2 menores → 1 habitación doble solo admite Niño1+Niño2
     };
     const sugerencias = generarSugerenciasFechas({ datos: sinNino2, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 3, hoy: HOY, composicion });
     assert.equal(sugerencias.length, 0, "sin tarifa de Niño 2 configurada, ninguna fecha es realmente compatible con 2 menores");
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 10bis. Hallazgo #1 (edades efectivas en búsqueda pública): `compatibleConComposicion`
+// resuelve la regla de edad EFECTIVA por combo (override de `tarifa_hotel` ??
+// regla general) a partir de `composicion.filasTarifa` — nunca un umbral fijo
+// pasado por el llamador. Un menor aceptado por el override debe permitir
+// mostrar el hotel; uno rechazado por el override debe excluirlo, aunque la
+// regla general diga lo contrario.
+// ───────────────────────────────────────────────────────────────────────────
+describe("10bis. Override de tarifa/promoción en la resolución de edad de sugerencias", () => {
+  function filaEdad(temporada: string, ov: Partial<FilaTarifaHotelEdadCruda> = {}): FilaTarifaHotelEdadCruda {
+    return {
+      tipo_habitacion: "Estandar", alimentacion: "PC", temporada,
+      edad_infante_min: null, edad_infante_max: null, edad_nino_min: null, edad_nino_max: null,
+      ...ov,
+    };
+  }
+  // `defaultAcomConfig` deja `pax_max === pax_tarifa` (sin espacio extra para
+  // un niño: capacidad efectiva de niño = min(chd_max, 2, pax_max−adultos) =
+  // 0) — estas pruebas SÍ necesitan que un niño quepa en la habitación para
+  // aislar el efecto de la regla de EDAD (no un problema de capacidad aparte).
+  function configConEspacioNino(acom: "doble" | "triple") {
+    const base = defaultAcomConfig(acom);
+    return { ...base, pax_max: base.pax_tarifa + 1 };
+  }
+
+  test("sugerencia usa el OVERRIDE de la fila, no el umbral general del hotel — override MÁS RESTRICTIVO excluye lo que el general aceptaría", () => {
+    const datos = baseDatos(); // ALTA: neto_nino=50_000 (tarifa de niño SÍ existe)
+    const composicionGeneral: ComposicionSugerencia = {
+      adultosDeclarados: 2,
+      habitacionesConsultadas: [{ acom: "doble", config: configConEspacioNino("doble") }],
+      edadesMenores: [8],
+      filasTarifa: [filaEdad("ALTA")], // sin override → cae al general
+      generalEdad: { infanteMin: null, infanteMax: 2, ninoMin: null, ninoMax: 10 },
+      adultsOnly: false,
+    };
+    const sinOverride = generarSugerenciasFechas({ datos, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 3, hoy: HOY, composicion: composicionGeneral });
+    assert.ok(sinOverride.length > 0, "con la regla GENERAL (ninoMax 10), un menor de 8 años es niño válido y hay tarifa de niño — debe aparecer");
+
+    const composicionConOverride: ComposicionSugerencia = {
+      ...composicionGeneral,
+      filasTarifa: [filaEdad("ALTA", { edad_infante_min: 0, edad_infante_max: 2, edad_nino_min: 3, edad_nino_max: 6 })], // override RESTRICTIVO (ninoMax 6)
+    };
+    const conOverride = generarSugerenciasFechas({ datos, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 3, hoy: HOY, composicion: composicionConOverride });
+    assert.equal(conOverride.length, 0, "el override de la tarifa (ninoMax 6) excluye a un menor de 8 años, aunque la regla general del hotel lo aceptaría");
+  });
+
+  test("override MÁS AMPLIO permite mostrar el hotel: un menor sin tarifa de niño cargada pasa a ser INFANTE (gratis) bajo el override", () => {
+    const sinNinoTarifa = baseDatos({ tarifas: [tarifaPara("ALTA", { neto_nino: null }), tarifaPara("PUENTE", { neto_nino: null })] });
+    const composicionGeneral: ComposicionSugerencia = {
+      adultosDeclarados: 2,
+      habitacionesConsultadas: [{ acom: "doble", config: configConEspacioNino("doble") }],
+      edadesMenores: [3],
+      filasTarifa: [filaEdad("ALTA")],
+      // Bajo el general (infanteMax 2), un menor de 3 años es NIÑO — y no
+      // hay tarifa de niño configurada en este fixture.
+      generalEdad: { infanteMin: null, infanteMax: 2, ninoMin: null, ninoMax: 10 },
+      adultsOnly: false,
+    };
+    const sinOverride = generarSugerenciasFechas({ datos: sinNinoTarifa, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 3, hoy: HOY, composicion: composicionGeneral });
+    assert.equal(sinOverride.length, 0, "bajo la regla general, un menor de 3 años es niño y no hay tarifa de niño — no debe mostrarse");
+
+    const composicionConOverride: ComposicionSugerencia = {
+      ...composicionGeneral,
+      filasTarifa: [filaEdad("ALTA", { edad_infante_min: 0, edad_infante_max: 4, edad_nino_min: 5, edad_nino_max: 10 })], // override AMPLIO de infante
+    };
+    const conOverride = generarSugerenciasFechas({ datos: sinNinoTarifa, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 3, hoy: HOY, composicion: composicionConOverride });
+    assert.ok(conOverride.length > 0, "el override amplía infante hasta 4 años — el menor de 3 años pasa a infante (gratis, sin tarifa) y el hotel SÍ debe mostrarse");
+  });
+
+  test("dos acomodaciones seleccionadas (doble + triple) combinan sus temporadas — reglas efectivas distintas fallan cerrado", () => {
+    const soloTriple: FilaTemporadaHotelRaw = {
+      nombre: "SOLO_TRIPLE", fecha_inicio: "2026-09-01", fecha_fin: "2026-09-15",
+      prioridad: 2, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null,
+      rangos: [], blackouts: [], min_noches: 1, regimen_restringido: null,
+    };
+    const datos = baseDatos({
+      temporadas: [temporadaAlta(), soloTriple, temporadaPuente()],
+      tarifas: [
+        tarifaPara("ALTA", { neto_triple: null }),
+        tarifaPara("SOLO_TRIPLE", { neto_sencilla: null, neto_doble: null, neto_triple: 180_000, neto_nino: null, neto_nino2: null, neto_infante: null }),
+        tarifaPara("PUENTE"),
+      ],
+    });
+    const composicion: ComposicionSugerencia = {
+      adultosDeclarados: 4,
+      habitacionesConsultadas: [
+        { acom: "doble", config: configConEspacioNino("doble") },
+        { acom: "triple", config: configConEspacioNino("triple") },
+      ],
+      edadesMenores: [8],
+      filasTarifa: [
+        filaEdad("ALTA", { edad_infante_min: 0, edad_infante_max: 2, edad_nino_min: 3, edad_nino_max: 10 }),       // niño hasta 10
+        filaEdad("SOLO_TRIPLE", { edad_infante_min: 0, edad_infante_max: 2, edad_nino_min: 3, edad_nino_max: 6 }), // niño hasta 6 — DISTINTA
+      ],
+      generalEdad: { infanteMin: null, infanteMax: 2, ninoMin: null, ninoMax: 10 },
+      adultsOnly: false,
+    };
+    const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 3, hoy: HOY, composicion });
+    assert.equal(sugerencias.length, 0, "las reglas de ALTA (doble) y SOLO_TRIPLE (triple) difieren — al pedir AMBAS acomodaciones se combinan y fallan cerrado");
+  });
+
+  test("solo UNA acomodación seleccionada (doble) ignora la temporada exclusiva de triple — aunque sus reglas difieran, no se combinan si triple no se pidió", () => {
+    const soloTriple: FilaTemporadaHotelRaw = {
+      nombre: "SOLO_TRIPLE", fecha_inicio: "2026-09-01", fecha_fin: "2026-09-15",
+      prioridad: 2, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null,
+      rangos: [], blackouts: [], min_noches: 1, regimen_restringido: null,
+    };
+    const datos = baseDatos({
+      temporadas: [temporadaAlta(), soloTriple, temporadaPuente()],
+      tarifas: [
+        tarifaPara("ALTA", { neto_triple: null }),
+        tarifaPara("SOLO_TRIPLE", { neto_sencilla: null, neto_doble: null, neto_triple: 180_000, neto_nino: null, neto_nino2: null, neto_infante: null }),
+        tarifaPara("PUENTE"),
+      ],
+    });
+    const composicion: ComposicionSugerencia = {
+      adultosDeclarados: 2,
+      habitacionesConsultadas: [{ acom: "doble", config: configConEspacioNino("doble") }], // SOLO doble, nunca triple
+      edadesMenores: [8],
+      filasTarifa: [
+        filaEdad("ALTA", { edad_infante_min: 0, edad_infante_max: 2, edad_nino_min: 3, edad_nino_max: 10 }),
+        filaEdad("SOLO_TRIPLE", { edad_infante_min: 0, edad_infante_max: 2, edad_nino_min: 3, edad_nino_max: 6 }), // nunca se toca: triple no se seleccionó
+      ],
+      generalEdad: { infanteMin: null, infanteMax: 2, ninoMin: null, ninoMax: 10 },
+      adultsOnly: false,
+    };
+    const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: "2026-09-20", numNochesSolicitadas: 3, hoy: HOY, composicion });
+    assert.ok(sugerencias.length > 0, "al pedir SOLO doble, la regla de SOLO_TRIPLE (triple) nunca entra a la resolución — 8 años cabe en niño hasta 10 (ALTA)");
   });
 });
 
@@ -570,5 +706,87 @@ describe("18. Ronda 4 — consolidarSugerenciasGlobales: elección de las 4 fech
     assert.equal(resultado.length, 2);
     assert.equal(resultado[0].fechaIda, addDiasISO(fechaSolicitada, 1));
     assert.equal(resultado[1].fechaIda, addDiasISO(fechaSolicitada, 2));
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 19. Ronda Dubai (edades propias) — `ComboCotizado.temporadasTarifaPorAcom`:
+// qué temporadas de `tarifa_hotel` REALMENTE liquidaron CADA acomodación de
+// HABITACIÓN de la estadía — POR ACOMODACIÓN, nunca una unión global. Es la
+// identidad que consume `resolverReglaEdadEstadiaSegura`
+// (lib/calc/reglaEdadTarifa.ts) desde `computo.ts`/`cotizar.ts` — nunca debe
+// incluir temporadas que solo aportaron a niño/niño2/infante (sería circular
+// con la propia regla que las usa para clasificar a esos menores).
+// ───────────────────────────────────────────────────────────────────────────
+describe("19. ComboCotizado.temporadasTarifaPorAcom — identidad por acomodación para la regla de edad", () => {
+  test("una sola temporada cubre toda la estadía → temporadasTarifaPorAcom[acom] = [esa temporada] para cada acomodación de habitación", () => {
+    const r = evaluarHotelPorFechas(baseDatos(), "2026-09-05", 3);
+    const combo = r!.combos.find((c) => c.categoria === "Estandar" && c.regimen === "PC")!;
+    assert.deepEqual(combo.temporadasTarifaPorAcom?.["doble"], ["ALTA"]);
+    assert.deepEqual(combo.temporadasTarifaPorAcom?.["sencilla"], ["ALTA"]);
+  });
+
+  test("estadía que cruza DOS temporadas de habitación → temporadasTarifaPorAcom[acom] trae ambas, sin duplicados", () => {
+    // ALTA cubre 1-13 sep, MEDIA cubre 14-20 sep (SIN solape, para que el
+    // desempate de prioridad nunca entre en juego) — una estadía de
+    // 2026-09-12 a 3 noches (12, 13, 14) liquida las dos primeras noches en
+    // ALTA y la última en MEDIA.
+    const temporadaAltaCorta: FilaTemporadaHotelRaw = {
+      nombre: "ALTA", fecha_inicio: "2026-09-01", fecha_fin: "2026-09-13",
+      prioridad: 1, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null,
+      rangos: [], blackouts: [], min_noches: 1, regimen_restringido: null,
+    };
+    const temporadaMedia: FilaTemporadaHotelRaw = {
+      nombre: "MEDIA", fecha_inicio: "2026-09-14", fecha_fin: "2026-09-20",
+      prioridad: 1, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null,
+      rangos: [], blackouts: [], min_noches: 1, regimen_restringido: null,
+    };
+    const datos = baseDatos({
+      temporadas: [temporadaAltaCorta, temporadaMedia],
+      tarifas: [tarifaPara("ALTA"), tarifaPara("MEDIA", { neto_doble: 120_000 })],
+    });
+    const r = evaluarHotelPorFechas(datos, "2026-09-12", 3); // noches: 12, 13, 14
+    const combo = r!.combos.find((c) => c.categoria === "Estandar" && c.regimen === "PC")!;
+    assert.deepEqual([...combo.temporadasTarifaPorAcom!["doble"]].sort(), ["ALTA", "MEDIA"]);
+  });
+
+  test("una temporada usada SOLO por triple nunca aparece en temporadasTarifaPorAcom['doble'] (reserva/búsqueda de solo doble no se ve afectada)", () => {
+    // ALTA (neto_triple null) cubre toda la estadía; SOLO_TRIPLE (prioridad
+    // más alta, pero SIN neto_doble) solo puede ganar la resolución de
+    // "triple" — para "doble", el motor cae a ALTA (la única con neto_doble).
+    const soloTriple: FilaTemporadaHotelRaw = {
+      nombre: "SOLO_TRIPLE", fecha_inicio: "2026-09-01", fecha_fin: "2026-09-30",
+      prioridad: 2, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null,
+      rangos: [], blackouts: [], min_noches: 1, regimen_restringido: null,
+    };
+    const datos = baseDatos({
+      temporadas: [temporadaAlta(), soloTriple],
+      tarifas: [
+        tarifaPara("ALTA", { neto_triple: null }),
+        tarifaPara("SOLO_TRIPLE", { neto_sencilla: null, neto_doble: null, neto_triple: 180_000, neto_nino: null, neto_nino2: null, neto_infante: null }),
+      ],
+    });
+    const r = evaluarHotelPorFechas(datos, "2026-09-05", 3);
+    const combo = r!.combos.find((c) => c.categoria === "Estandar" && c.regimen === "PC")!;
+    assert.deepEqual(combo.temporadasTarifaPorAcom?.["doble"], ["ALTA"]);
+    assert.deepEqual(combo.temporadasTarifaPorAcom?.["triple"], ["SOLO_TRIPLE"]);
+  });
+
+  test("una temporada que SOLO tiene tarifa de niño (no de habitación) no aparece en temporadasTarifaPorAcom de ninguna acomodación de habitación", () => {
+    const datos = baseDatos({
+      tarifas: [
+        tarifaPara("ALTA"),
+        // PUENTE: solo trae tarifa de niño, nunca de habitación (sencilla/
+        // doble/triple/multiple en null) — no debería colarse en la
+        // identidad de "temporadas que liquidaron habitaciones", aunque el
+        // motor la use igual para resolver el precio de niño.
+        tarifaPara("PUENTE", { neto_sencilla: null, neto_doble: null, neto_triple: null, neto_multiple: null, neto_nino: 40_000 }),
+      ],
+    });
+    const r = evaluarHotelPorFechas(datos, "2026-09-05", 3);
+    const combo = r!.combos.find((c) => c.categoria === "Estandar" && c.regimen === "PC")!;
+    assert.deepEqual(combo.temporadasTarifaPorAcom?.["doble"], ["ALTA"]);
+    assert.deepEqual(combo.temporadasTarifaPorAcom?.["sencilla"], ["ALTA"]);
+    assert.equal(combo.temporadasTarifaPorAcom?.["nino"], undefined, "nino/nino2/infante nunca deben aparecer en temporadasTarifaPorAcom");
   });
 });

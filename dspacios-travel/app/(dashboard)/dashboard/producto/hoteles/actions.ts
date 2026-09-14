@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
-import { generarTarifas, type DubaiParams, type MixtaParams, type CorporativaParams } from "@/lib/calc/calculadoras";
+import { generarTarifas, validarDubaiParams, type DubaiParams, type MixtaParams, type CorporativaParams } from "@/lib/calc/calculadoras";
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
 import type { Json } from "@/types/database";
 import { normalizarProveedorHotelId } from "@/lib/hoteles/proveedor";
@@ -800,6 +800,17 @@ export async function guardarCalculadora(
   tipo: string,
   params: DubaiParams | MixtaParams | CorporativaParams
 ): Promise<Result> {
+  // Fail-closed ANTES de escribir: un config Dubai con rangos/promos
+  // imposibles, solapados o incompletos nunca llega a `hotel_calculadora`
+  // (el servidor es la autoridad — nunca confía en que el editor ya validó
+  // en el navegador). Mixta/Corporativa no ganan validación nueva en esta
+  // ronda (fuera del alcance del encargo).
+  if (tipo === "dubai") {
+    const errores = validarDubaiParams(params as DubaiParams);
+    if (errores.length > 0) {
+      return { ok: false, error: errores.map((e) => e.mensaje).join(" ") };
+    }
+  }
   const sb = await createClient();
   const { error } = await sb
     .from("hotel_calculadora")

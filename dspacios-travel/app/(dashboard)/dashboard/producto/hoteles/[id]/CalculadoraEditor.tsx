@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCOP } from "@/lib/utils";
 import {
-  generarTarifasDubai, type DubaiParams, type DubaiPromo,
+  generarTarifasDubai, validarDubaiParams, type DubaiParams, type DubaiPromo, type DubaiBase, type DubaiSuplementoRegimen,
   generarTarifasMixta, type MixtaParams, type MixtaAcom, MIXTA_ACOMS, type CalcTipo,
   generarTarifasCorporativa, type CorporativaParams,
 } from "@/lib/calc/calculadoras";
+import { REGLA_EDAD_DEFAULT, construirReglaEdadDesdeMaximos } from "@/lib/calc/reglaEdadTarifa";
 import { PAX_TARIFA_DEFAULT } from "@/lib/acomodaciones";
 import { guardarCalculadora, generarTarifasCalculadora } from "../actions";
 
@@ -60,7 +61,7 @@ export function CalculadoraEditor({
   );
 }
 
-// ── Formulario DUBAI (sin cambios de lógica) ───────────────────────────────
+// ── Formulario DUBAI ────────────────────────────────────────────────────
 function DubaiForm({
   hotelId, categorias, temporadas, regimenes, inicial, adultsOnly,
 }: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: DubaiParams | null; adultsOnly: boolean }) {
@@ -72,6 +73,9 @@ function DubaiForm({
   const [pax3Pct, setPax3Pct] = useState(String(inicial?.modificadores?.pax3_pct ?? -20));
   const [pax4Pct, setPax4Pct] = useState(String(inicial?.modificadores?.pax4_pct ?? -20));
   const [ninoPct, setNinoPct] = useState(String(inicial?.modificadores?.nino_pct ?? -50));
+  // Niño 2 (segundo menor de la MISMA habitación) — opcional. Vacío = como
+  // siempre, `neto_nino2` sale `null` (ningún dato histórico se ve afectado).
+  const [nino2Pct, setNino2Pct] = useState(inicial?.modificadores?.nino2_pct != null ? String(inicial.modificadores.nino2_pct) : "");
   const [infantePct, setInfantePct] = useState(String(inicial?.modificadores?.infante_pct ?? -100));
   const [infanteNota, setInfanteNota] = useState(inicial?.infante_nota ?? "");
 
@@ -81,13 +85,76 @@ function DubaiForm({
   const [suplementos, setSuplementos] = useState<Record<string, string>>(supInicial);
 
   const baseInicial: Record<string, string> = {};
-  for (const b of inicial?.bases ?? []) baseInicial[`${b.categoria}|${b.temporada}`] = String(b.precio);
+  // Config propia (edades/suplementos) de cada BASE — keyed igual que el
+  // precio (`categoria|temporada`), así el índice con el que se construye
+  // `params.bases` (más abajo, `basesList`) coincide SIEMPRE con el que
+  // devuelve `validarDubaiParams` (`origen:"base", indice`) — nunca hay que
+  // adivinar cuál fila del arreglo le corresponde a cuál celda de la UI.
+  const basesExtraInicial: Record<string, Partial<DubaiBase>> = {};
+  for (const b of inicial?.bases ?? []) {
+    baseInicial[`${b.categoria}|${b.temporada}`] = String(b.precio);
+    basesExtraInicial[`${b.categoria}|${b.temporada}`] = {
+      usarEdadesPropias: b.usarEdadesPropias, edadesPropias: b.edadesPropias,
+      usarSuplementosPropios: b.usarSuplementosPropios, suplementosPropios: b.suplementosPropios,
+    };
+  }
   const [bases, setBases] = useState<Record<string, string>>(baseInicial);
+  const [basesExtra, setBasesExtra] = useState<Record<string, Partial<DubaiBase>>>(basesExtraInicial);
 
   const [promos, setPromos] = useState<DubaiPromo[]>(inicial?.promos ?? []);
 
   const setSup = (r: string, v: string) => setSuplementos((s) => ({ ...s, [r]: v }));
   const setBase = (c: string, t: string, v: string) => setBases((s) => ({ ...s, [`${c}|${t}`]: v }));
+  function setBaseExtra(clave: string, patch: Partial<DubaiBase>) {
+    setBasesExtra((s) => ({ ...s, [clave]: { ...s[clave], ...patch } }));
+  }
+  // Solo `infanteMax`/`ninoMax` son editables — `infanteMin` (siempre 0) y
+  // `ninoMin` (siempre `infanteMax + 1`) son valores DERIVADOS, nunca los
+  // escribe el operador (mismo contrato que el CHECK SQL de la migración 177
+  // y `validarRangoReglaEdad`). `construirReglaEdadDesdeMaximos` es la ÚNICA
+  // fuente de esta derivación — el objeto que termina en `DubaiParams` sale
+  // siempre completo y consistente, sin importar qué mínimos traía cargado
+  // un registro histórico.
+  function setBaseEdad(clave: string, campo: "infanteMax" | "ninoMax", valor: string) {
+    setBasesExtra((s) => {
+      const actual = s[clave]?.edadesPropias ?? REGLA_EDAD_DEFAULT;
+      const num = Number(valor) || 0;
+      const nueva = campo === "infanteMax"
+        ? construirReglaEdadDesdeMaximos(num, actual.ninoMax)
+        : construirReglaEdadDesdeMaximos(actual.infanteMax, num);
+      return { ...s, [clave]: { ...s[clave], edadesPropias: nueva } };
+    });
+  }
+  // Suplementos PROPIOS de una BASE — reemplazan COMPLETO el general
+  // (`suplementos[]`) para los regímenes que esa base genera (nunca el
+  // régimen base: ver `suplementoEfectivoBase` en `lib/calc/calculadoras.ts`,
+  // que además fuerza 0 en el régimen base sin importar lo que se cargue acá).
+  function setBaseSuplementoPropio(clave: string, regimen: string, monto: string) {
+    setBasesExtra((s) => {
+      const actuales = s[clave]?.suplementosPropios ?? [];
+      const sinEseRegimen = actuales.filter((x) => x.regimen !== regimen);
+      const propios: DubaiSuplementoRegimen[] = [...sinEseRegimen, { regimen, monto: Number(monto) || 0 }];
+      return { ...s, [clave]: { ...s[clave], suplementosPropios: propios } };
+    });
+  }
+
+  // `basesList` es la ÚNICA fuente de `DubaiBase[]` — se usa TAL CUAL para
+  // `params.bases` y para renderizar la sección "Edades/suplementos propios
+  // por base" (mismo orden, mismo índice en ambos lados).
+  const basesList = useMemo<DubaiBase[]>(
+    () =>
+      categorias
+        .flatMap((c) =>
+          temporadas.map((t) => {
+            const clave = `${c}|${t}`;
+            const precio = Number(bases[clave]) || 0;
+            return { categoria: c, temporada: t, precio, ...(basesExtra[clave] ?? {}) };
+          })
+        )
+        .filter((b) => b.precio > 0),
+    [categorias, temporadas, bases, basesExtra]
+  );
+
   function agregarPromo() {
     setPromos((ps) => [...ps, { temporadaBase: temporadas[0] ?? "", temporadaPromo: "", regimen: regimenBase, descuentoPct: 10 }]);
   }
@@ -97,6 +164,19 @@ function DubaiForm({
   function quitarPromo(i: number) {
     setPromos((ps) => ps.filter((_, n) => n !== i));
   }
+  // Mismo criterio que `setBaseEdad`: solo `infanteMax`/`ninoMax` editables,
+  // `infanteMin`/`ninoMin` siempre derivados.
+  function setPromoEdad(i: number, campo: "infanteMax" | "ninoMax", valor: string) {
+    setPromos((ps) => ps.map((p, n) => {
+      if (n !== i) return p;
+      const actual = p.edadesPropias ?? REGLA_EDAD_DEFAULT;
+      const num = Number(valor) || 0;
+      const nueva = campo === "infanteMax"
+        ? construirReglaEdadDesdeMaximos(num, actual.ninoMax)
+        : construirReglaEdadDesdeMaximos(actual.infanteMax, num);
+      return { ...p, edadesPropias: nueva };
+    }));
+  }
 
   const params = useMemo<DubaiParams>(() => ({
     regimen_base: regimenBase,
@@ -105,13 +185,22 @@ function DubaiForm({
       pax3_pct: Number(pax3Pct) || 0,
       pax4_pct: Number(pax4Pct) || 0,
       nino_pct: Number(ninoPct) || 0,
+      ...(nino2Pct.trim() !== "" ? { nino2_pct: Number(nino2Pct) || 0 } : {}),
       infante_pct: Number(infantePct) || 0,
     },
     suplementos: regimenes.filter((r) => r !== regimenBase).map((r) => ({ regimen: r, monto: Number(suplementos[r]) || 0 })),
-    bases: categorias.flatMap((c) => temporadas.map((t) => ({ categoria: c, temporada: t, precio: Number(bases[`${c}|${t}`]) || 0 }))).filter((b) => b.precio > 0),
+    bases: basesList,
     promos,
     infante_nota: infanteNota,
-  }), [regimenBase, sencillaPct, pax3Pct, pax4Pct, ninoPct, infantePct, infanteNota, suplementos, bases, regimenes, categorias, temporadas, promos]);
+  }), [regimenBase, sencillaPct, pax3Pct, pax4Pct, ninoPct, nino2Pct, infantePct, infanteNota, suplementos, basesList, regimenes, promos]);
+
+  // Validación EN VIVO (preview) — la misma función pura que revalida el
+  // servidor al guardar (`guardarCalculadora` → `validarDubaiParams`); acá
+  // solo se usa para mostrar el error ANTES de intentar guardar, nunca como
+  // autoridad (el servidor vuelve a validar siempre).
+  const erroresValidacion = useMemo(() => validarDubaiParams(params), [params]);
+  const erroresDeBase = (indice: number) => erroresValidacion.filter((e) => e.origen === "base" && e.indice === indice);
+  const erroresDePromo = (indice: number) => erroresValidacion.filter((e) => e.origen === "promo" && e.indice === indice);
 
   const preview = useMemo(() => generarTarifasDubai(params).filter((f) => f.alimentacion === regimenBase), [params, regimenBase]);
   // Vista previa de promos: se muestran aparte porque pueden ser de OTRO régimen.
@@ -122,6 +211,10 @@ function DubaiForm({
 
   function guardar(modo: "solo" | "agregar" | "reemplazar") {
     if (modo === "reemplazar" && !confirm("¿Borrar TODAS las tarifas de este hotel y dejar solo las generadas ahora?")) return;
+    // Fail-closed en el cliente (misma validación pura) para no esperar al
+    // servidor con un config que ya se sabe inválido — el servidor
+    // (`guardarCalculadora`) SIEMPRE vuelve a validar, nunca confía en esto.
+    if (erroresValidacion.length > 0) { setMsg(erroresValidacion.map((e) => e.mensaje).join(" ")); return; }
     setMsg("");
     start(async () => {
       const r = await guardarCalculadora(hotelId, "dubai", params);
@@ -142,17 +235,26 @@ function DubaiForm({
       <p className="text-xs text-gray-500">Carga una <b>base por persona/noche</b> (en doble, con el régimen base) por categoría y temporada; el sistema deriva sencilla/triple/múltiple/niño con los modificadores y suma los suplementos de régimen.</p>
       <div>
         <p className={lbl}>Modificadores (% sobre la base)</p>
-        <div className={`grid grid-cols-2 gap-3 ${adultsOnly ? "sm:grid-cols-3" : "sm:grid-cols-5"}`}>
+        <div className={`grid grid-cols-2 gap-3 ${adultsOnly ? "sm:grid-cols-3" : "sm:grid-cols-6"}`}>
           <div><label className="text-[11px] text-gray-500">Sencilla</label><Input type="number" value={sencillaPct} onChange={(e) => setSencillaPct(e.target.value)} /></div>
           <div><label className="text-[11px] text-gray-500">3er pax</label><Input type="number" value={pax3Pct} onChange={(e) => setPax3Pct(e.target.value)} /></div>
           <div><label className="text-[11px] text-gray-500">4to pax</label><Input type="number" value={pax4Pct} onChange={(e) => setPax4Pct(e.target.value)} /></div>
           {!adultsOnly && (
             <>
-              <div><label className="text-[11px] text-gray-500">Niño</label><Input type="number" value={ninoPct} onChange={(e) => setNinoPct(e.target.value)} /></div>
+              <div><label className="text-[11px] text-gray-500">Niño 1</label><Input type="number" value={ninoPct} onChange={(e) => setNinoPct(e.target.value)} /></div>
+              <div>
+                <label className="text-[11px] text-gray-500">Niño 2 (opcional)</label>
+                <Input type="number" value={nino2Pct} onChange={(e) => setNino2Pct(e.target.value)} placeholder="sin configurar*" />
+              </div>
               <div><label className="text-[11px] text-gray-500">Infante</label><Input type="number" value={infantePct} onChange={(e) => setInfantePct(e.target.value)} /></div>
             </>
           )}
         </div>
+        {!adultsOnly && (
+          <p className="mt-1 text-[11px] text-gray-400">
+            *Sin configurar Niño 2, esa habitación no tendrá una segunda tarifa de niño disponible (comportamiento de siempre) — no significa que cobre igual que Niño 1.
+          </p>
+        )}
         {!adultsOnly && (
           <div className="mt-2">
             <label className="text-[11px] text-gray-500">Nota de infante (opcional, ej. &quot;Comparte cama con los padres&quot;)</label>
@@ -194,6 +296,71 @@ function DubaiForm({
           </table>
         </div>
       </div>
+      {!adultsOnly && basesList.length > 0 && (
+        <div>
+          <p className={lbl}>Edades y suplementos propios por base <span className="font-normal text-gray-400">(opcional — solo aparecen las celdas con precio cargado arriba)</span></p>
+          <div className="space-y-2">
+            {basesList.map((b, i) => {
+              const clave = `${b.categoria}|${b.temporada}`;
+              const errores = erroresDeBase(i);
+              const edad = b.edadesPropias ?? REGLA_EDAD_DEFAULT;
+              return (
+                <div key={clave} className="rounded-lg border border-gray-100 p-2 text-xs">
+                  <p className="font-medium text-gray-700">{b.categoria} / {b.temporada}</p>
+
+                  <label className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={!!b.usarEdadesPropias}
+                      onChange={(e) => setBaseExtra(clave, { usarEdadesPropias: e.target.checked })}
+                    />
+                    Usar edades propias (en vez de las edades generales del hotel)
+                  </label>
+                  {b.usarEdadesPropias && (
+                    <div className="mt-1 grid grid-cols-2 gap-2 pl-5 sm:grid-cols-4">
+                      {/* Infante desde/Niño desde son valores DERIVADOS (0 y
+                          infanteMax+1 respectivamente) — nunca los escribe el
+                          operador, ver construirReglaEdadDesdeMaximos. */}
+                      <div><label className="text-[10px] text-gray-400">Infante desde</label><Input type="number" value={0} disabled className="bg-gray-50 text-gray-400" /></div>
+                      <div><label className="text-[10px] text-gray-400">Infante hasta</label><Input type="number" value={edad.infanteMax} onChange={(e) => setBaseEdad(clave, "infanteMax", e.target.value)} /></div>
+                      <div><label className="text-[10px] text-gray-400">Niño desde</label><Input type="number" value={edad.infanteMax + 1} disabled className="bg-gray-50 text-gray-400" /></div>
+                      <div><label className="text-[10px] text-gray-400">Niño hasta</label><Input type="number" value={edad.ninoMax} onChange={(e) => setBaseEdad(clave, "ninoMax", e.target.value)} /></div>
+                    </div>
+                  )}
+
+                  <label className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={!!b.usarSuplementosPropios}
+                      onChange={(e) => setBaseExtra(clave, { usarSuplementosPropios: e.target.checked })}
+                    />
+                    Usar suplementos propios (en vez de los generales de la sección Régimen)
+                  </label>
+                  {b.usarSuplementosPropios && (
+                    <div className="mt-1 grid grid-cols-2 gap-2 pl-5 sm:grid-cols-3">
+                      {regimenes.filter((r) => r !== regimenBase).map((r) => {
+                        const actual = (b.suplementosPropios ?? []).find((s) => s.regimen === r);
+                        return (
+                          <div key={r}>
+                            <label className="text-[10px] text-gray-400">Suplemento propio {r}</label>
+                            <Input type="number" value={actual != null ? String(actual.monto) : ""} onChange={(e) => setBaseSuplementoPropio(clave, r, e.target.value)} placeholder="0" />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {errores.length > 0 && (
+                    <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[11px] text-red-600">
+                      {errores.map((e, k) => <li key={k}>{e.mensaje}</li>)}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div>
         <p className={lbl}>Promociones <span className="font-normal text-gray-400">(descuento % SOLO sobre la base, el suplemento de régimen nunca se descuenta)</span></p>
         <p className="mb-2 text-[11px] text-gray-500">
@@ -201,26 +368,94 @@ function DubaiForm({
           Cada promo aplica <b>solo al régimen elegido</b>, aunque el hotel tenga varios.
         </p>
         <div className="space-y-2">
-          {promos.map((p, i) => (
-            <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-100 p-2 text-xs">
-              <select value={p.temporadaBase} onChange={(e) => editarPromo(i, { temporadaBase: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
-                {temporadas.map((t) => <option key={t} value={t}>Base: {t}</option>)}
-              </select>
-              <span className="text-gray-400">→</span>
-              <select value={p.temporadaPromo} onChange={(e) => editarPromo(i, { temporadaPromo: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
-                <option value="">— Elige la temporada promo —</option>
-                {temporadas.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <select value={p.regimen} onChange={(e) => editarPromo(i, { regimen: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
-                {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
-              <label className="flex items-center gap-1">
-                <Input type="number" min={0} max={100} className="h-7 w-20 text-xs" value={String(p.descuentoPct)} onChange={(e) => editarPromo(i, { descuentoPct: Number(e.target.value) || 0 })} />
-                %
-              </label>
-              <button type="button" onClick={() => quitarPromo(i)} className="text-gray-400 hover:text-red-500">Quitar</button>
-            </div>
-          ))}
+          {promos.map((p, i) => {
+            const errores = erroresDePromo(i);
+            const edad = p.edadesPropias ?? REGLA_EDAD_DEFAULT;
+            return (
+              <div key={i} className="rounded-lg border border-gray-100 p-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <select value={p.temporadaBase} onChange={(e) => editarPromo(i, { temporadaBase: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
+                    {temporadas.map((t) => <option key={t} value={t}>Base: {t}</option>)}
+                  </select>
+                  <span className="text-gray-400">→</span>
+                  <select value={p.temporadaPromo} onChange={(e) => editarPromo(i, { temporadaPromo: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
+                    <option value="">— Elige la temporada promo —</option>
+                    {temporadas.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <select value={p.regimen} onChange={(e) => editarPromo(i, { regimen: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
+                    {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <label className="flex items-center gap-1">
+                    <Input type="number" min={0} max={100} className="h-7 w-20 text-xs" value={String(p.descuentoPct)} onChange={(e) => editarPromo(i, { descuentoPct: Number(e.target.value) || 0 })} />
+                    %
+                  </label>
+                  <button type="button" onClick={() => quitarPromo(i)} className="text-gray-400 hover:text-red-500">Quitar</button>
+                </div>
+
+                {!adultsOnly && (
+                  <>
+                    <label className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-600">
+                      <input
+                        type="checkbox"
+                        checked={!!p.usarEdadesPropias}
+                        onChange={(e) => editarPromo(i, { usarEdadesPropias: e.target.checked })}
+                      />
+                      Usar edades propias (gana sobre las de su base; si no, hereda las de su base)
+                    </label>
+                    {p.usarEdadesPropias && (
+                      <div className="mt-1 grid grid-cols-2 gap-2 pl-5 sm:grid-cols-4">
+                        {/* Infante desde/Niño desde son valores DERIVADOS (0 y
+                            infanteMax+1 respectivamente) — nunca los escribe
+                            el operador, ver construirReglaEdadDesdeMaximos. */}
+                        <div><label className="text-[10px] text-gray-400">Infante desde</label><Input type="number" value={0} disabled className="bg-gray-50 text-gray-400" /></div>
+                        <div><label className="text-[10px] text-gray-400">Infante hasta</label><Input type="number" value={edad.infanteMax} onChange={(e) => setPromoEdad(i, "infanteMax", e.target.value)} /></div>
+                        <div><label className="text-[10px] text-gray-400">Niño desde</label><Input type="number" value={edad.infanteMax + 1} disabled className="bg-gray-50 text-gray-400" /></div>
+                        <div><label className="text-[10px] text-gray-400">Niño hasta</label><Input type="number" value={edad.ninoMax} onChange={(e) => setPromoEdad(i, "ninoMax", e.target.value)} /></div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <label className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={!!p.usarSuplementoPropio}
+                    onChange={(e) => editarPromo(i, { usarSuplementoPropio: e.target.checked })}
+                  />
+                  Usar suplemento propio (en vez del general de la sección Régimen)
+                </label>
+                {p.usarSuplementoPropio && (
+                  <div className="mt-1 pl-5">
+                    <label className="text-[10px] text-gray-400">Suplemento propio de {p.regimen || "(elige régimen)"}{p.regimen === regimenBase ? " — régimen base" : ""}</label>
+                    <Input
+                      type="number"
+                      value={p.suplementoPropioMonto == null ? "" : String(p.suplementoPropioMonto)}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        editarPromo(i, { suplementoPropioMonto: raw.trim() === "" ? null : Number(raw) || 0 });
+                      }}
+                      placeholder="vacío = incompleto; 0 = cero explícito"
+                    />
+                  </div>
+                )}
+
+                <div className="mt-2 pl-5">
+                  <label className="text-[10px] text-gray-400">Condiciones propias de esta promoción (opcional, texto libre)</label>
+                  <Input
+                    value={p.condicionesPropias ?? ""}
+                    onChange={(e) => editarPromo(i, { condicionesPropias: e.target.value })}
+                    placeholder='Ej. "No reembolsable. No endosable. Aplica solo para reservas nuevas."'
+                  />
+                </div>
+
+                {errores.length > 0 && (
+                  <ul className="mt-2 list-disc space-y-0.5 pl-9 text-[11px] text-red-600">
+                    {errores.map((e, k) => <li key={k}>{e.mensaje}</li>)}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
         </div>
         <button type="button" onClick={agregarPromo} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>+ Agregar promoción</button>
       </div>
@@ -542,7 +777,7 @@ function CorporativaForm({
 type FilaPrev = {
   tipo_habitacion: string; temporada: string;
   neto_sencilla: number; neto_doble: number; neto_triple: number; neto_multiple: number;
-  neto_nino: number; neto_infante?: number | null;
+  neto_nino: number; neto_nino2?: number | null; neto_infante?: number | null;
 };
 function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string; filas: FilaPrev[]; ocultarNinos?: boolean }) {
   return (
@@ -554,7 +789,7 @@ function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string;
             <th className="px-2 py-1">Categoría</th><th className="px-2 py-1">Temporada</th>
             <th className="px-2 py-1 text-right">Sencilla</th><th className="px-2 py-1 text-right">Doble</th>
             <th className="px-2 py-1 text-right">Triple</th><th className="px-2 py-1 text-right">Múltiple</th>
-            {!ocultarNinos && (<><th className="px-2 py-1 text-right">Niño</th><th className="px-2 py-1 text-right">Infante</th></>)}
+            {!ocultarNinos && (<><th className="px-2 py-1 text-right">Niño 1</th><th className="px-2 py-1 text-right">Niño 2</th><th className="px-2 py-1 text-right">Infante</th></>)}
           </tr></thead>
           <tbody>
             {filas.map((f, i) => (
@@ -568,6 +803,7 @@ function PreviewTabla({ titulo, filas, ocultarNinos = false }: { titulo: string;
                 {!ocultarNinos && (
                   <>
                     <td className="px-2 py-1 text-right tabular-nums">{formatCOP(f.neto_nino)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{f.neto_nino2 != null ? formatCOP(f.neto_nino2) : "—"}</td>
                     <td className="px-2 py-1 text-right tabular-nums">{f.neto_infante != null ? formatCOP(f.neto_infante) : "—"}</td>
                   </>
                 )}

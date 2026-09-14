@@ -13,11 +13,18 @@ import {
   precioServicio,
   noches,
   liquidarHotelNoches,
+  liquidarHotelNochesConTemporadas,
   temporadaVigenteParaFecha,
   toTemporadaRango,
   marcar,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
+import {
+  normalizarReglaEdadGeneral,
+  resolverReglaEdadEstadiaSegura,
+  type FilaTarifaHotelEdadCruda,
+  type ReglaEdadGeneralParcial,
+} from "@/lib/calc/reglaEdadTarifa";
 import {
   ACOM_ROOMS,
   PAX_TARIFA_DEFAULT,
@@ -343,8 +350,9 @@ export async function computarReserva(
     if (combo.netos) for (const [acom, n] of Object.entries(combo.netos)) netoPorAcom[acom] = n;
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
 
-    const { data: hotelRowF } = await sb
-      .from("hoteles").select("edad_infante_max, edad_nino_max, pax_min, pax_max, moneda, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota").eq("id", input.hotelId).maybeSingle();
+    const { data: hotelRowF, error: hotelRowFErr } = await sb
+      .from("hoteles").select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, moneda, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota").eq("id", input.hotelId).maybeSingle();
+    if (hotelRowFErr) return { ok: false, error: `No se pudo consultar el hotel: ${hotelRowFErr.message}` };
     monedaReserva = ((hotelRowF as { moneda?: string | null } | null)?.moneda) ?? "COP";
     ninoNotaTxt = hotelRowF?.nino_nota ?? null;
     petCostoNeto = Number(hotelRowF?.pet_costo_neto) || 0;
@@ -358,12 +366,47 @@ export async function computarReserva(
     const reglasF = (acomCfgF ?? []) as AcomConfig[];
     const paxTarifaF = (a: AcomRoom) => reglasF.find((x) => x.acomodacion === a)?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
 
+    // Regla de edad EFECTIVA de la estadía: override de las filas de
+    // `tarifa_hotel` que REALMENTE liquidaron las acomodaciones de HABITACIÓN
+    // que esta reserva SOLICITÓ (cantidad > 0 en `input.habitaciones`) —
+    // nunca la unión de sencilla/doble/triple/multiple del combo completo:
+    // una temporada usada solo por una acomodación no pedida no debe influir.
+    // Identidad ya conocida vía `combo.temporadasTarifaPorAcom` — nunca se
+    // vuelve a consultar ni se infiere desde el total agregado. ?? regla
+    // general del hotel ?? defaults históricos. Sin temporadas identificadas
+    // (paquete sin fechas reales o combo vacío), se queda con la regla
+    // general normalizada.
+    const generalEdadF: ReglaEdadGeneralParcial = {
+      infanteMin: hotelRowF?.edad_infante_min ?? null, infanteMax: hotelRowF?.edad_infante_max ?? null,
+      ninoMin: hotelRowF?.edad_nino_min ?? null, ninoMax: hotelRowF?.edad_nino_max ?? null,
+    };
+    let reglaEdadF = normalizarReglaEdadGeneral(generalEdadF);
+    const acomsSeleccionadasF = ACOM_ROOMS.filter((a) => Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0)) > 0);
+    const temporadasSeleccionadasF = new Set<string>();
+    for (const a of acomsSeleccionadasF) for (const t of combo.temporadasTarifaPorAcom?.[a] ?? []) temporadasSeleccionadasF.add(t);
+    if (temporadasSeleccionadasF.size) {
+      const { data: tarEdad, error: tarEdadErr } = await admin
+        .from("tarifa_hotel")
+        .select("tipo_habitacion, alimentacion, temporada, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max")
+        .eq("hotel_id", input.hotelId)
+        .eq("tipo_habitacion", input.categoria)
+        .eq("alimentacion", input.regimen)
+        .in("temporada", [...temporadasSeleccionadasF]);
+      if (tarEdadErr) return { ok: false, error: `No se pudo validar la regla de edad de la tarifa: ${tarEdadErr.message}` };
+      const rEdadF = resolverReglaEdadEstadiaSegura({
+        filas: (tarEdad ?? []) as FilaTarifaHotelEdadCruda[], categoria: input.categoria, regimen: input.regimen,
+        temporadasUsadas: temporadasSeleccionadasF, general: generalEdadF,
+      });
+      if (!rEdadF.ok) return { ok: false, error: rEdadF.error };
+      reglaEdadF = rEdadF.regla;
+    }
+
     // Reclasifica ninos/ninos2/infantes desde la edad real de cada menor
     // (nunca desde lo que haya mandado el cliente) ANTES de sumar su tarifa
-    // al precio — necesita el umbral real del hotel Y la config real de
-    // habitaciones (para distribuir por habitación), ambas ya consultadas.
+    // al precio — necesita la regla de edad EFECTIVA (arriba) Y la config real
+    // de habitaciones (para distribuir por habitación), ambas ya consultadas.
     if (input.edadesMenores !== undefined) {
-      const rMenores = resolverMenoresPorEdad(input, hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10, pvpPorAcom, reglasF);
+      const rMenores = resolverMenoresPorEdad(input, reglaEdadF.infanteMax, reglaEdadF.ninoMax, pvpPorAcom, reglasF);
       if (!rMenores.ok) return { ok: false, error: rMenores.error };
       numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
       distribucionMenores = rMenores.distribucion;
@@ -387,7 +430,7 @@ export async function computarReserva(
 
     const realF = clasificarPorEdad(
       input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
-      hotelRowF?.edad_infante_max ?? 2, hotelRowF?.edad_nino_max ?? 10
+      reglaEdadF.infanteMax, reglaEdadF.ninoMax
     );
     // Sin pasajeros (cotización preliminar desde el carrito público) se omite la
     // validación de edades vs acomodación; se revalida al convertir en contrato.
@@ -427,14 +470,15 @@ export async function computarReserva(
 
     // Umbral real de edad del hotel — consultado ANTES de decidir cuántos
     // niños/infantes se cobran, para poder reclasificar por edad si
-    // `input.edadesMenores` viene presente (nunca después: la fila con
-    // `edad_infante_max`/`edad_nino_max` se reutiliza más abajo también
-    // para `nino_nota`/mascota y para la validación de edades reales).
-    const { data: hotelRow } = await sb
+    // `input.edadesMenores` viene presente (nunca después: la fila se
+    // reutiliza más abajo también para `nino_nota`/mascota y para la
+    // validación de edades reales).
+    const { data: hotelRow, error: hotelRowErr } = await sb
       .from("hoteles")
-      .select("edad_infante_max, edad_nino_max, pax_min, pax_max, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota")
+      .select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, pax_min, pax_max, nino_nota, pet_costo_neto, pet_costo_desc, pet_nota")
       .eq("id", input.hotelId)
       .maybeSingle();
+    if (hotelRowErr) return { ok: false, error: `No se pudo consultar el hotel: ${hotelRowErr.message}` };
     ninoNotaTxt = hotelRow?.nino_nota ?? null;
     petCostoNeto = Number(hotelRow?.pet_costo_neto) || 0;
     petCostoDesc = hotelRow?.pet_costo_desc ?? null;
@@ -450,14 +494,18 @@ export async function computarReserva(
       return c?.pax_tarifa ?? PAX_TARIFA_DEFAULT[a];
     };
 
-    if (input.edadesMenores !== undefined) {
-      const rMenores = resolverMenoresPorEdad(input, hotelRow?.edad_infante_max ?? 2, hotelRow?.edad_nino_max ?? 10, pvpPorAcom, reglas);
-      if (!rMenores.ok) return { ok: false, error: rMenores.error };
-      numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
-      distribucionMenores = rMenores.distribucion;
-      edadesMenoresUsadas = rMenores.edades;
-    }
+    // Regla general del hotel normalizada — punto de partida; se reemplaza más
+    // abajo por la regla EFECTIVA (override de las filas de `tarifa_hotel` que
+    // realmente liquidan las habitaciones) en cuanto se conocen esas filas
+    // (requiere service-role + fechas, igual candado que el costo neto).
+    const generalEdad: ReglaEdadGeneralParcial = {
+      infanteMin: hotelRow?.edad_infante_min ?? null, infanteMax: hotelRow?.edad_infante_max ?? null,
+      ninoMin: hotelRow?.edad_nino_min ?? null, ninoMax: hotelRow?.edad_nino_max ?? null,
+    };
+    let reglaEdad = normalizarReglaEdadGeneral(generalEdad);
 
+    // `lineasHab` se arma ANTES de resolver menores/regla de edad — no
+    // depende de ellas (solo de habitaciones × pvp del tarifario congelado).
     for (const a of ACOM_ROOMS) {
       const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
       if (rooms <= 0 || pvpPorAcom[a] == null) continue;
@@ -467,11 +515,6 @@ export async function computarReserva(
       paxConSilla += pax;
       lineasHab.push({ acom: a, habitaciones: rooms, pax, pvp });
     }
-    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
-    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
-    if (numInfantes > 0 && pvpPorAcom["infante"] != null) { precioVenta += numInfantes * pvpPorAcom["infante"]; }
-
-    if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
 
     // Costo neto del hotel + control de VIGENCIA DE COMPRA. El PVP del tarifario
     // está congelado, pero la tarifa neta se liquida con la vigencia de HOY: si
@@ -479,41 +522,89 @@ export async function computarReserva(
     // —antes se creaba la venta con costo 0 (rentabilidad inflada y sin CxP de
     // hotel). Decisión del negocio: no dejar vender lo vencido. (Bloqueo: fechas
     // fijas del record.) Requiere service-role: la tarifa neta es interna.
-    if (process.env.SUPABASE_SERVICE_ROLE_KEY && meta.fecha_ida && meta.fecha_regreso) {
+    // De paso, es la ÚNICA rama que sabe qué filas de `tarifa_hotel` liquidaron
+    // de verdad las habitaciones — de ahí sale la regla de edad EFECTIVA.
+    const TARIFA_VENCIDA = "Esta tarifa ya no está vigente para compra (la vigencia del hotel venció). Pide regenerar el tarifario con vigencias vigentes antes de reservar.";
+    let numNochesVig = 0;
+    let temporadasVig: TemporadaRango[] = [];
+    let tarRowsVig: FilaTarifaHotelEdadCruda[] = [];
+    type TarRow = FilaTarifaHotelEdadCruda & { neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null };
+    const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante" };
+    const netoPorTemporadaDe = (rows: TarRow[], acom: string): Record<string, number | null> => {
+      const col = colDe[acom]; const m: Record<string, number | null> = {};
+      if (!col) return m;
+      for (const r of rows) if (r.temporada) m[r.temporada] = r[col] as number | null;
+      return m;
+    };
+    const conServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY && !!meta.fecha_ida && !!meta.fecha_regreso;
+    if (conServiceRole) {
       const admin = createAdminClient();
-      const numNoches = noches(meta.fecha_ida, meta.fecha_regreso);
-      const [{ data: temps }, { data: tarRows }] = await Promise.all([
+      numNochesVig = noches(meta.fecha_ida!, meta.fecha_regreso!);
+      const [{ data: temps, error: tempsErr }, { data: tarRows, error: tarRowsErr }] = await Promise.all([
         admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId),
-        admin.from("tarifa_hotel").select("temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
+        admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
       ]);
-      type TarRow = { temporada: string | null; neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null };
-      const rows = (tarRows ?? []) as TarRow[];
-      const temporadas = (temps ?? []).map(toTemporadaRango);
-      const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante" };
-      const netoDe = (acom: string): number | null => {
-        const col = colDe[acom]; if (!col) return null;
-        const netoPorTemporada: Record<string, number | null> = {};
-        for (const r of rows) if (r.temporada) netoPorTemporada[r.temporada] = r[col] as number | null;
-        return liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches, temporadas, netoPorTemporada, regimen: input.regimen });
-      };
-      const TARIFA_VENCIDA = "Esta tarifa ya no está vigente para compra (la vigencia del hotel venció). Pide regenerar el tarifario con vigencias vigentes antes de reservar.";
+      if (tempsErr) return { ok: false, error: `No se pudo validar la vigencia de temporadas del hotel: ${tempsErr.message}` };
+      if (tarRowsErr) return { ok: false, error: `No se pudo validar la tarifa neta del hotel: ${tarRowsErr.message}` };
+      temporadasVig = (temps ?? []).map(toTemporadaRango);
+      tarRowsVig = (tarRows ?? []) as TarRow[];
+
+      // Solo las temporadas de las acomodaciones REALMENTE seleccionadas
+      // (`lineasHab`, ya filtrado a `rooms > 0`) — nunca una unión global de
+      // sencilla/doble/triple/multiple: una reserva de solo "doble" no debe
+      // verse afectada por que "triple" (no pedida) haya usado otra temporada.
+      const temporadasEstadia = new Set<string>();
       for (const l of lineasHab) {
-        const per = netoDe(l.acom);
-        if (per == null) return { ok: false, error: TARIFA_VENCIDA };
-        netoPorAcom[l.acom] = per;
+        const netoPorTemporada = netoPorTemporadaDe(tarRowsVig as TarRow[], l.acom);
+        const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada, regimen: input.regimen });
+        if (r == null) return { ok: false, error: TARIFA_VENCIDA };
+        netoPorAcom[l.acom] = r.total;
+        for (const t of r.temporadasTarifa) temporadasEstadia.add(t);
       }
-      if (numNinos > 0) { const per = netoDe("nino"); if (per == null) return { ok: false, error: TARIFA_VENCIDA }; netoPorAcom["nino"] = per; }
-      if (numNinos2 > 0) { const per = netoDe("nino2"); if (per == null) return { ok: false, error: TARIFA_VENCIDA }; netoPorAcom["nino2"] = per; }
+      const rEdad = resolverReglaEdadEstadiaSegura({
+        filas: tarRowsVig, categoria: input.categoria, regimen: input.regimen,
+        temporadasUsadas: temporadasEstadia, general: generalEdad,
+      });
+      if (!rEdad.ok) return { ok: false, error: rEdad.error };
+      reglaEdad = rEdad.regla;
+    }
+
+    if (input.edadesMenores !== undefined) {
+      const rMenores = resolverMenoresPorEdad(input, reglaEdad.infanteMax, reglaEdad.ninoMax, pvpPorAcom, reglas);
+      if (!rMenores.ok) return { ok: false, error: rMenores.error };
+      numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
+      distribucionMenores = rMenores.distribucion;
+      edadesMenoresUsadas = rMenores.edades;
+    }
+    if (numNinos > 0 && pvpPorAcom["nino"] != null) { precioVenta += numNinos * pvpPorAcom["nino"]; paxConSilla += numNinos; }
+    if (numNinos2 > 0 && pvpPorAcom["nino2"] != null) { precioVenta += numNinos2 * pvpPorAcom["nino2"]; paxConSilla += numNinos2; }
+    if (numInfantes > 0 && pvpPorAcom["infante"] != null) { precioVenta += numInfantes * pvpPorAcom["infante"]; }
+
+    if (paxConSilla <= 0) return { ok: false, error: "Indica al menos una habitación (cantidad por tipo)." };
+
+    if (conServiceRole) {
+      if (numNinos > 0) {
+        const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino"), regimen: input.regimen });
+        if (per == null) return { ok: false, error: TARIFA_VENCIDA };
+        netoPorAcom["nino"] = per;
+      }
+      if (numNinos2 > 0) {
+        const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino2"), regimen: input.regimen });
+        if (per == null) return { ok: false, error: TARIFA_VENCIDA };
+        netoPorAcom["nino2"] = per;
+      }
       // Infante: a diferencia de niño, si no está configurado NO bloquea la
       // reserva (queda gratis) — evita romper reservas de hoteles que todavía
       // no han cargado su tarifa de infante en tarifa_hotel.
-      if (numInfantes > 0) { netoPorAcom["infante"] = netoDe("infante") ?? 0; }
+      if (numInfantes > 0) {
+        netoPorAcom["infante"] = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "infante"), regimen: input.regimen }) ?? 0;
+      }
     }
 
     const real = clasificarPorEdad(
       input.pasajeros.map((p) => calcularEdad(p.fechaNacimiento, meta.fecha_ida)),
-      hotelRow?.edad_infante_max ?? 2,
-      hotelRow?.edad_nino_max ?? 10
+      reglaEdad.infanteMax,
+      reglaEdad.ninoMax
     );
     if (input.pasajeros.length) {
       const habitacionesNum: Record<string, number> = {};
