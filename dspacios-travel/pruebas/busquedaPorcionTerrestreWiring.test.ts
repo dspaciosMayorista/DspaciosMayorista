@@ -180,13 +180,17 @@ describe("Disponibilidad REAL: la lista de búsqueda no se completa con el catá
   test('un `sin_disponibilidad` NUNCA se pinta como disponible: no queda ninguna rama que lo muestre', () => {
     assert.doesNotMatch(codigoVista, /Sin disponibilidad para tu búsqueda/);
     assert.match(codigoVista, /Disponible para tus fechas/);
-    // El badge sólo existe en modo búsqueda y es un HECHO ya verificado por el
-    // servidor: no decide nada (no hay rama condicional por disponibilidad).
-    assert.match(codigoVista, /badgeEsquina=\{enBusquedaPorcion \? \(/);
+    // El badge vive en `TarjetaUnidadBusqueda`, que SOLO se renderiza cuando
+    // `busquedaPorcion.unidad` (ya filtrado a `estado === "disponible"`)
+    // trajo este hotel — no hay rama condicional por disponibilidad DENTRO
+    // de la tarjeta porque un veredicto negativo nunca llega hasta acá.
+    const cuerpoTarjetaUnidadBadge = cuerpoFuncion(fuenteVista, "function TarjetaUnidadBusqueda({");
+    assert.match(cuerpoTarjetaUnidadBadge, /Disponible para tus fechas/);
   });
 
   test("un estado que el servidor NO pudo concluir no se anuncia: se cae de la lista (y ahora queda REGISTRADO como inconcluyente, no en silencio)", () => {
-    assert.match(codigoAction, /if \(v\.tipo === "veredicto"\) \{ disponibilidad\.push\(v\.valor\); continue; \}/);
+    assert.match(codigoAction, /if \(v\.tipo === "veredicto"\) \{/);
+    assert.match(codigoAction, /disponibilidad\.push\(v\.valor\);/);
     assert.match(codigoAction, /incompleto = true;/);
     assert.match(cuerpoEvaluarHotel, /if \(!fila\) return \{ tipo: "inconcluyente", hotelId, motivo: "hotel_sin_fila_maestra" \};/, "sin fila maestra no se inventan umbrales de edad");
   });
@@ -245,7 +249,13 @@ describe("Sin truncamiento (verificado por inspección de fuente, NO ejecutado c
     assert.match(codigoEval, /for \(let k = 0; k < maxPares; k\+\+\) \{/);
     assert.match(cuerpoEvaluarHotel, /const combos = combinacionesDe\(ofertas\);/);
     assert.match(cuerpoEvaluarHotel, /for \(const combo of combos\) \{/);
-    assert.doesNotMatch(cuerpoEvaluarHotel, /\bbreak;|\bcontinue;/);
+    // Nunca hay `break` (early-exit): la evaluación de esta ronda ya NO se
+    // corta en el primer éxito — agota TODAS las combinaciones para reunir
+    // las opciones de la tarjeta. `continue` SÍ existe (avanza a la
+    // siguiente combinación tras registrar un éxito), pero es control de
+    // flujo normal del bucle, no un atajo que descarte trabajo pendiente.
+    assert.doesNotMatch(cuerpoEvaluarHotel, /\bbreak;/);
+    assert.match(cuerpoEvaluarHotel, /opciones\.push\(\{/);
     // La Server Action llama a la función real, con el `computarReservaBernalo`
     // real inyectado — nunca copia su cuerpo.
     assert.match(codigoAction, /import \{\s*\n?\s*evaluarDisponibilidadHotelUnidad,/);
@@ -583,9 +593,11 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
     // barata; si ese orden cambia, este recorte elige otra fila sin avisar.
     assert.match(fuenteVista, /\/\/ .*ordenado por total ascendente/);
     // La unidad ya viene agrupada por hotel (una oferta por paquete, una
-    // tarjeta por hotel) — nunca se mapea una tarjeta por oferta.
+    // tarjeta por hotel) — nunca se mapea una tarjeta por oferta. La key
+    // arranca por `u-${u.hotelId}-` (una sola tarjeta por hotel) y agrega la
+    // identidad de la búsqueda (ver `claveBusquedaUnidad`).
     assert.match(rama, /\.map\(\(u\) => \(\{/);
-    assert.equal([...rama.matchAll(/key: `u-\$\{u\.hotelId\}`/g)].length, 1);
+    assert.equal([...rama.matchAll(/key: `u-\$\{u\.hotelId\}-/g)].length, 1);
   });
 
   test("los filtros del usuario (Pet friendly / Adults Only) siguen aplicando a las dos mitades de la lista", () => {
@@ -595,38 +607,41 @@ describe("VistaBooking — resultado CERRADO por destino, persona y unidad por e
 });
 
 describe("VistaBooking — disponibilidad real del hotel unidad (requisito C)", () => {
-  test("la tarjeta unidad de la búsqueda es la MISMA tarjeta de exploración, con el badge de un hecho ya verificado", () => {
+  test("la tarjeta unidad de EXPLORACIÓN (sin opcionesBusqueda) conserva tieneCondicion y sigue sin 'desde' — el precio no está precargado fuera de una búsqueda", () => {
     const rama = codigoVista.slice(codigoVista.indexOf("onClick={() => setModalBernalo(t.hotel)}"));
     const tarjeta = rama.slice(0, rama.indexOf("/>"));
     assert.match(tarjeta, /tieneCondicion=\{infoPorHotel\[t\.hotel\.hotelId\]\?\.tieneCondicion\}/);
-    // El badge de disponibilidad sólo aparece en modo búsqueda (fuera de él no
-    // hay disponibilidad declarada que mostrar) y no tiene rama negativa.
-    assert.match(tarjeta, /badgeEsquina=\{enBusquedaPorcion \? \(/);
-    assert.doesNotMatch(tarjeta, /Sin disponibilidad/);
-    assert.match(tarjeta, /Disponible para tus fechas/);
-  });
-
-  test("la tarjeta unidad NO anuncia un precio: sigue sin 'desde' (un mínimo verosímil no está precargado)", () => {
-    const rama = codigoVista.slice(codigoVista.indexOf("onClick={() => setModalBernalo(t.hotel)}"));
-    const tarjeta = rama.slice(0, rama.indexOf("/>"));
     assert.match(tarjeta, /desde=\{null\}/);
     assert.doesNotMatch(tarjeta, /moneda=/);
   });
 
-  test("la vista NO recalcula ni cotiza: la disponibilidad la resolvió el servidor", () => {
+  test("la vista NO recalcula ni cotiza en el RENDER de la grilla: `computarReservaBernalo` no vive en este archivo, y la revalidación de precio (`cotizarAlojamientoBernaloPublico`) solo ocurre dentro de una acción de usuario (EditorPax al cotizar, o TarjetaUnidadBusqueda al agregar al carrito) — nunca al pintar resultados", () => {
     // La grilla de búsqueda no vuelve a correr el motor ni abre el cliente
     // admin: todo eso pasó en la Server Action y llegó resuelto como estado.
     assert.doesNotMatch(codigoVista, /computarReservaBernalo/);
     assert.doesNotMatch(codigoVista, /createAdminClient/);
-    // `cotizarAlojamientoBernaloPublico` SÍ vive en este archivo, pero en el
-    // modal de cotización por demanda (`EditorPax`), que es el camino de
-    // siempre y no la grilla: ninguna llamada puede quedar fuera de ese
-    // cuerpo, o significaría una cotización disparada al pintar resultados.
-    const cuerpoEditorPax = cuerpoFuncion(fuenteVista, "function EditorPax({");
-    const todas = [...codigoVista.matchAll(/cotizarAlojamientoBernaloPublico\(/g)].length;
-    const enModal = [...cuerpoEditorPax.matchAll(/cotizarAlojamientoBernaloPublico\(/g)].length;
-    assert.ok(todas > 0, "el modal de cotización por demanda sigue existiendo");
-    assert.equal(enModal, todas, `${todas - enModal} llamada(s) a cotización fuera de EditorPax (¿desde la grilla?)`);
+    // `cotizarAlojamientoBernaloPublico` vive en DOS lugares, los dos
+    // disparados por una acción explícita del usuario (nunca al renderizar):
+    // el modal de exploración (`EditorPax`, cotizar bajo demanda) y
+    // `TarjetaUnidadBusqueda` (revalidación obligatoria al agregar al
+    // carrito, ver el describe dedicado más abajo) — ninguna otra llamada
+    // puede quedar fuera de esos dos cuerpos.
+    const cuerpoEditorPax = cuerpoFuncion(codigoVista, "function EditorPax({");
+    // La ÚNICA LLAMADA directa `cotizarAlojamientoBernaloPublico(` en todo el
+    // archivo vive dentro de EditorPax (cotización por demanda del modal). La
+    // tarjeta de búsqueda NO la llama directo: la INYECTA en
+    // `revalidarReservaUnidad` dentro de `agregar` (handler de usuario, nunca
+    // en el render). Así ninguna cotización se dispara al pintar la grilla.
+    const llamadasDirectas = [...codigoVista.matchAll(/cotizarAlojamientoBernaloPublico\(/g)].length;
+    const llamadasEnModal = [...cuerpoEditorPax.matchAll(/cotizarAlojamientoBernaloPublico\(/g)].length;
+    assert.equal(llamadasDirectas, 1, "solo el modal (EditorPax) debe LLAMAR la cotización directo");
+    assert.equal(llamadasEnModal, 1, "esa única llamada directa debe estar dentro de EditorPax");
+    // La tarjeta de búsqueda reutiliza la MISMA Server Action, inyectándola en
+    // el helper de revalidación (nunca una copia paralela ni una llamada al
+    // renderizar).
+    const cuerpoTarjetaUnidad = cuerpoFuncion(fuenteVista, "function TarjetaUnidadBusqueda({");
+    const cuerpoAgregarTarjeta = cuerpoFuncion(cuerpoTarjetaUnidad, "async function agregar() {");
+    assert.match(cuerpoAgregarTarjeta, /revalidarReservaUnidad\(\s*\n?\s*cotizarAlojamientoBernaloPublico,/, "la tarjeta debe inyectar la cotización en el helper, dentro de agregar()");
   });
 });
 
@@ -694,42 +709,54 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
     assert.doesNotMatch(cuerpoEvaluarHotel, /oferta: resultado/);
   });
 
-  // Hallazgo confirmado (auditoría independiente): el título anterior
-  // ("solo identidad + veredicto") describía el shape VIEJO de forma
-  // ambigua — la rama positiva SIEMPRE llevó más que un id (nombre,
-  // paquete, moneda...). Lo que cambió de verdad es CUÁNTO de eso: antes
-  // era el catálogo COMPLETO del hotel (`ofertas: HotelBernaloDescubierto[]`,
-  // todas sus categorías/regímenes/salidas de TODOS sus paquetes, como si
-  // todas estuvieran confirmadas); ahora es la identidad ESCALAR de la
-  // ÚNICA combinación que de verdad pasó `computarReservaBernalo`
-  // (`oferta: OfertaUnidadConfirmada`, singular) — nunca un arreglo de
-  // ofertas sin verificar.
-  test("la respuesta pública lleva la identidad de la oferta CONFIRMADA (hotel + paquete + categoría + alimentación + fechas + ocupación) — nunca todas las ofertas del hotel, nunca precio/costo/snapshot/proveedor", () => {
+  // Cierre de UX (ronda posterior): antes la rama positiva llevaba la
+  // identidad ESCALAR de una sola combinación (`oferta: OfertaUnidadConfirmada`,
+  // singular, sin precio) — la tarjeta no podía mostrar categoría/
+  // alimentación/precio sin volver a cotizar. Ahora lleva TODAS las
+  // combinaciones que confirmaron, cada una YA con su precio público saneado
+  // (`opciones: OpcionUnidadConfirmada[]`) — nunca el catálogo completo del
+  // hotel (`HotelBernaloDescubierto[]`, con categorías/regímenes/salidas de
+  // TODOS sus paquetes como si todas estuvieran confirmadas), y nunca el
+  // resultado interno completo de `computarReservaBernalo` (costoNeto,
+  // proveedor, comisión, snapshot).
+  test("la respuesta pública lleva TODAS las combinaciones CONFIRMADAS (hotel + paquete + categoría + alimentación + precio + fechas + ocupación) — nunca el catálogo completo del hotel, nunca costo/snapshot/proveedor/comisión", () => {
     // Los dos tipos viven ahora en el módulo puro (`evaluarDisponibilidadUnidad.ts`)
     // y `busquedaUnidadActions.ts` los REEXPORTA (frontera pública) — nunca los
     // redeclara.
-    assert.match(codigoAction, /export type \{ DisponibilidadUnidadHotel, OfertaUnidadConfirmada \};/);
+    assert.match(codigoAction, /export type \{ DisponibilidadUnidadHotel, OpcionUnidadConfirmada \};/);
     const pos = codigoEval.indexOf("export type DisponibilidadUnidadHotel =");
     assert.ok(pos > -1, "falta el tipo del veredicto por hotel");
     const decl = codigoEval.slice(pos, codigoEval.indexOf("};", pos) + 2);
-    assert.match(decl, /hotelId: number; estado: "disponible"; oferta: OfertaUnidadConfirmada/, "la rama positiva lleva la identidad de UNA sola oferta — la confirmada, no el catálogo completo");
+    assert.match(decl, /hotelId: number; estado: "disponible"; opciones: OpcionUnidadConfirmada\[\]/, "la rama positiva lleva TODAS las opciones confirmadas — nunca el catálogo completo sin verificar");
     assert.doesNotMatch(decl, /ofertas: HotelBernaloDescubierto\[\]/, "nunca debe volver el arreglo completo de ofertas sin verificar");
     assert.match(decl, /hotelId: number; estado: "sin_disponibilidad"/);
-    assert.doesNotMatch(decl, /pvp|precio|neto|snapshot|costo|proveedor|comision/i);
+    assert.doesNotMatch(decl, /costoNeto|snapshot|proveedor|comision/i);
     assert.match(codigoAction, /export type ResultadoBusquedaUnidad =\s*\n\s*\| \{ ok: true; disponibilidad: DisponibilidadUnidadHotel\[\]; incompleto: boolean \}\s*\n\s*\| \{ ok: false; error: string \};/);
-    // `OfertaUnidadConfirmada` (el shape de `oferta`) en sí: identidad
-    // escalar + fechas + ocupación — nunca precio/costo/snapshot/proveedor,
-    // y nunca los arreglos de categorías/regímenes/salidas de TODO el hotel.
-    const posOferta = codigoEval.indexOf("export type OfertaUnidadConfirmada = {");
-    assert.ok(posOferta > -1, "falta el tipo de la oferta confirmada");
-    const declOferta = codigoEval.slice(posOferta, codigoEval.indexOf("};", posOferta) + 2);
-    assert.match(declOferta, /categoria: string;/);
-    assert.match(declOferta, /alimentacion: string;/);
-    assert.match(declOferta, /fechaIda: string;/);
-    assert.match(declOferta, /fechaRegreso: string;/);
-    assert.match(declOferta, /ocupacion: \{ id: string; acom: AcomRoom; adultos: number; edadesMenores: number\[\] \}\[\];/);
-    assert.doesNotMatch(declOferta, /categorias: string\[\]|regimenes: string\[\]|salidas:/, "nunca debe llevar los arreglos completos del catálogo del hotel — solo la combinación confirmada");
-    assert.doesNotMatch(declOferta, /pvp|precio|neto|snapshot|costo|proveedor|comision/i);
+    // `OpcionUnidadConfirmada` (el shape de cada elemento de `opciones`) en
+    // sí: identidad + PRECIO PÚBLICO saneado (precioVenta/moneda/paxTotal) +
+    // fechas + ocupación — nunca costo/snapshot/proveedor/comisión, y nunca
+    // los arreglos de categorías/regímenes/salidas de TODO el hotel.
+    const posOpcion = codigoEval.indexOf("export type OpcionUnidadConfirmada = {");
+    assert.ok(posOpcion > -1, "falta el tipo de la opción confirmada");
+    const declOpcion = codigoEval.slice(posOpcion, codigoEval.indexOf("};", posOpcion) + 2);
+    assert.match(declOpcion, /categoria: string;/);
+    assert.match(declOpcion, /alimentacion: string;/);
+    assert.match(declOpcion, /moneda: string;/);
+    assert.match(declOpcion, /precioVenta: number;/);
+    assert.match(declOpcion, /paxTotal: number;/);
+    assert.match(declOpcion, /fechaIda: string;/);
+    assert.match(declOpcion, /fechaRegreso: string;/);
+    assert.match(declOpcion, /ocupacion: \{ id: string; acom: AcomRoom; adultos: number; edadesMenores: number\[\] \}\[\];/);
+    assert.doesNotMatch(declOpcion, /categorias: string\[\]|regimenes: string\[\]|salidas:/, "nunca debe llevar los arreglos completos del catálogo del hotel — solo la combinación confirmada");
+    assert.doesNotMatch(declOpcion, /costoNeto|neto|snapshot|proveedor|comision/i);
+    // El `computar` inyectado (la forma mínima del resultado de
+    // `computarReservaBernalo` que este módulo puede leer) declara SOLO 3
+    // campos en `ok:true` — cualquier otro campo del resultado interno
+    // (costoHotelTotal, proveedorHotel, habitaciones con snapshot…) ni
+    // siquiera está declarado, así que no puede filtrarse por accidente.
+    const posComputar = codigoEval.indexOf("export type ResultadoComputarDisponibilidad =");
+    const declComputar = codigoEval.slice(posComputar, codigoEval.indexOf("| { ok: false", posComputar));
+    assert.match(declComputar, /precioVenta: number; moneda: string; paxTotal: number/);
   });
 
   test("un fallo del descubrimiento o de las reglas de ocupación ahora es un error TÉCNICO explícito (ok:false) — fallo estructural corregido: antes se disfrazaba de 'cero hoteles' (ver la cabecera del archivo)", () => {
@@ -817,114 +844,184 @@ describe("datosBernalo.ts — descubrimiento acotado por destino (base de datos,
   });
 });
 
-// ── E) OFERTA REALMENTE CONFIRMADA: preselección exacta en el modal ───────
+// ── E) TARJETA UNIDAD EN MODO BÚSQUEDA: inline, sin modal, sin repetir nada ─
 //
-// Hallazgo confirmado (auditoría independiente): antes `evaluarHotel`
-// probaba combinaciones (paqueteId, categoría, alimentación) y al primer
-// éxito devolvía TODAS las ofertas del hotel como si todas estuvieran
-// verificadas — el modal dejaba elegir una combinación DISTINTA a la que
-// realmente pasó `computarReservaBernalo`. Ahora la identidad exacta que
-// funcionó viaja hasta el modal y lo preselecciona — nunca la primera
-// oferta a secas.
-describe("Oferta REALMENTE confirmada — identidad exacta hasta el modal (nunca la primera oferta a secas)", () => {
-  const cuerpoModal = cuerpoFuncion(fuenteVista, "function HotelBernaloCotizarModal({");
-  const cuerpoEditorPax = cuerpoFuncion(fuenteVista, "function EditorPax({");
+// Cierre de UX (ronda posterior a "Hotel Prueba Odair no aparece"): el hotel
+// unidad ya aparecía en la lista cerrada del destino, pero su tarjeta solo
+// mostraba "Disponible para tus fechas" + "Ver opciones" — abrir el modal
+// obligaba a repetir fechas/ocupación que el buscador general YA tenía. Un
+// hotel persona muestra categoría/alimentación/pax/precio/"Agregar al
+// carrito" directo; ahora un hotel unidad hace lo mismo — la diferencia
+// tarifaria interna no lo convierte en otro tipo de producto visual.
+describe("TarjetaUnidadBusqueda — selectores + precio + agregar al carrito INLINE, sin modal (cierre de UX)", () => {
+  const cuerpoTarjetaUnidad = cuerpoFuncion(fuenteVista, "function TarjetaUnidadBusqueda({");
 
-  test("evaluarHotel identifica la combinación EXACTA que funcionó (combo.oferta.paqueteId/categoria/alimentacion) — nunca ofertas[0] ni un índice fijo", () => {
-    // El objeto que se devuelve se arma DESDE `combo` (la iteración que
-    // encontró el éxito), nunca desde `ofertas[0]` — si el hotel tiene dos
-    // paquetes y solo el segundo combo evaluado tiene tarifa, `combo` en ese
-    // punto ES el segundo, y es lo único que se lee.
-    assert.match(cuerpoEvaluarHotel, /paqueteId: combo\.oferta\.paqueteId,/);
-    assert.match(cuerpoEvaluarHotel, /categoria: combo\.categoria,/);
-    assert.match(cuerpoEvaluarHotel, /alimentacion: combo\.alimentacion,/);
-    assert.doesNotMatch(cuerpoEvaluarHotel, /ofertas\[0\]/, "nunca debe leer la primera oferta a secas — la identidad sale de `combo`, el que realmente tuvo éxito");
+  test("HotelUnidadCard.opcionesBusqueda es el gate: presente → tarjeta inline; ausente (exploración) → sigue abriendo el modal de siempre", () => {
+    assert.match(codigoVista, /opcionesBusqueda\?: OpcionUnidadConfirmada\[\];/);
+    // El único punto que arma tarjetas de búsqueda SIEMPRE lo asigna (no es
+    // opcional en ese camino) — viene DIRECTO de `busquedaPorcion.unidad`,
+    // que ya filtró a `estado === "disponible"` en `BuscadorBooking`.
+    assert.match(codigoVista, /opcionesBusqueda: u\.opciones,/);
+    // El render de la grilla ramifica por esa misma propiedad — nunca por
+    // `enBusquedaPorcion` a secas (una tarjeta de exploración no debe activar
+    // la rama inline solo porque hay una búsqueda vigente en otro hotel).
+    assert.match(codigoVista, /t\.hotel\.opcionesBusqueda \? \(/);
+    assert.match(codigoVista, /<TarjetaUnidadBusqueda/);
   });
 
-  test("las combinaciones se recorren en orden determinista y CADA una se prueba contra el motor antes de pasar a la siguiente — la 2ª oferta puede ser la que confirme (nunca se asume que la 1ª es la buena)", () => {
-    // `combinacionesDe` interlava ofertas (k-ésima combinación de CADA
-    // oferta antes de pasar a la k+1) — con la 1ª oferta sin tarifa para
-    // estas fechas, su combinación simplemente no produce `resultado.ok` y
-    // el `for` sigue hasta la de la 2ª oferta, que si tiene éxito es la que
-    // se identifica.
-    assert.match(codigoEval, /for \(let k = 0; k < maxPares; k\+\+\) \{/);
-    assert.match(codigoEval, /for \(let o = 0; o < ofertas\.length; o\+\+\) \{/);
-    assert.match(cuerpoEvaluarHotel, /for \(const combo of combos\) \{/);
-    // El resultado se construye DENTRO del cuerpo del `for`, con el `combo`
-    // de ESA iteración — no hay ningún camino que "recuerde" solo la
-    // primera iteración.
-    const idxFor = cuerpoEvaluarHotel.indexOf("for (const combo of combos) {");
-    const idxReturn = cuerpoEvaluarHotel.indexOf("paqueteId: combo.oferta.paqueteId,", idxFor);
-    assert.ok(idxFor > -1 && idxReturn > idxFor, "la identidad debe construirse DENTRO del bucle, usando el combo de esa vuelta");
+  test("la rama de exploración (sin opcionesBusqueda) sigue abriendo el modal — `onClick={() => setModalBernalo(t.hotel)}` intacto", () => {
+    assert.match(codigoVista, /onClick=\{\(\) => setModalBernalo\(t\.hotel\)\}/);
+    // Y la tarjeta inline nunca llama `setModalBernalo` — no abre nada.
+    assert.doesNotMatch(cuerpoTarjetaUnidad, /setModalBernalo/);
   });
 
-  test("la categoría/alimentación que llegan al modal son las de la combinación confirmada — mismo dato, sin transformar, desde OfertaUnidadConfirmada hasta EditorPax", () => {
-    // VistaBooking arma la oferta única del modal con `[u.oferta.categoria]`/
-    // `[u.oferta.alimentacion]` (arreglo de UN elemento — la confirmada).
-    assert.match(codigoVista, /categorias: \[u\.oferta\.categoria\],/);
-    assert.match(codigoVista, /regimenes: \[u\.oferta\.alimentacion\],/);
-    // Y EditorPax nace con `categoriaSel`/`alimentacionSel` = esos mismos
-    // valores — nunca vacíos ni tomados de otra parte.
-    assert.match(cuerpoEditorPax, /const \[categoriaSel, setCategoriaSel\] = useState\(preseleccionBernalo\?\.categoria \?\? ""\);/);
-    assert.match(cuerpoEditorPax, /const \[alimentacionSel, setAlimentacionSel\] = useState\(preseleccionBernalo\?\.alimentacion \?\? ""\);/);
+  test("preselecciona la opción por defecto (opciones[0], ya ordenada por precio ascendente) — categoría y alimentación nacen de ahí, nunca vacías", () => {
+    assert.match(cuerpoTarjetaUnidad, /const \[cat, setCat\] = useState\(opciones\[0\]\?\.categoria \?\? ""\);/);
+    assert.match(cuerpoTarjetaUnidad, /const \[alim, setAlim\] = useState\(opciones\[0\]\?\.alimentacion \?\? ""\);/);
   });
 
-  test("el arreglo `ofertas` del modal trae UN solo elemento cuando viene de una búsqueda — el mismo mecanismo de autoselección (ofertas.length === 1) que ya existía preselecciona la confirmada, nunca deja elegir una sin verificar", () => {
-    assert.match(codigoVista, /ofertas: \[\{/);
-    // Dentro de ese único elemento van los campos escalares de
-    // `OfertaUnidadConfirmada` — nunca el catálogo completo del hotel.
-    const idxOfertaUnica = codigoVista.indexOf("ofertas: [{");
-    const idxFinOfertaUnica = codigoVista.indexOf("}],", idxOfertaUnica);
-    assert.ok(idxOfertaUnica > -1 && idxFinOfertaUnica > idxOfertaUnica);
-    const bloque = codigoVista.slice(idxOfertaUnica, idxFinOfertaUnica);
-    assert.match(bloque, /salidas: \[\],/, "porción terrestre nunca tiene salidas — no se inventa ninguna");
-    // La auto-selección ya existente (`ofertas.length === 1 ? ofertas[0].paqueteId : null`)
-    // sigue siendo el ÚNICO mecanismo de selección — no se agregó un segundo
-    // camino paralelo que pudiera divergir.
-    assert.match(cuerpoModal, /const \[paqueteIdSel, setPaqueteIdSel\] = useState<number \| null>\(ofertas\.length === 1 \? ofertas\[0\]\.paqueteId : null\);/);
+  test("los selectores muestran ÚNICAMENTE combinaciones confirmadas (derivadas de `opciones`, nunca un catálogo aparte ni el cartesiano completo)", () => {
+    assert.match(cuerpoTarjetaUnidad, /const categorias = useMemo\(\(\) => \[\.\.\.new Set\(opciones\.map\(\(o\) => o\.categoria\)\)\], \[opciones\]\);/);
+    assert.match(cuerpoTarjetaUnidad, /const alimentaciones = useMemo\(\s*\n\s*\(\) => \[\.\.\.new Set\(opciones\.filter\(\(o\) => o\.categoria === catEff\)\.map\(\(o\) => o\.alimentacion\)\)\],\s*\n\s*\[opciones, catEff\]\s*\n\s*\);/);
   });
 
-  test("preseleccionBernalo solo se pasa cuando la oferta seleccionada ACTUALMENTE en el modal coincide con la confirmada (por paqueteId) — nunca precarga datos de una oferta distinta", () => {
-    assert.match(
-      cuerpoModal,
-      /preseleccionBernalo=\{hotelGrupo\.confirmada\?\.paqueteId === hotel\.paqueteId \? hotelGrupo\.confirmada : undefined\}/
-    );
+  test("cambiar categoría limita las alimentaciones a las válidas para esa categoría — y si la alimentación elegida deja de ser válida, cae automáticamente a la primera que sí lo sea", () => {
+    assert.match(cuerpoTarjetaUnidad, /const alimEff = alimentaciones\.includes\(alim\) \? alim : \(alimentaciones\[0\] \?\? ""\);/);
+    // Ninguna otra variable decide la alimentación efectiva — un solo punto.
+    assert.equal([...cuerpoTarjetaUnidad.matchAll(/const alimEff =/g)].length, 1);
   });
 
-  test("las fechas de la búsqueda llegan precargadas al modal: fechaIdaBernalo/fechaRegresoBernalo nacen de preseleccionBernalo, nunca vacías cuando hay una oferta confirmada", () => {
-    assert.match(cuerpoEditorPax, /const \[fechaIdaBernalo, setFechaIdaBernalo\] = useState\(preseleccionBernalo\?\.fechaIda \?\? ""\);/);
-    assert.match(cuerpoEditorPax, /const \[fechaRegresoBernalo, setFechaRegresoBernalo\] = useState\(preseleccionBernalo\?\.fechaRegreso \?\? ""\);/);
+  test("el precio/pax se leen de `opciones` (ya calculadas por el buscador) — cambiar de selector NUNCA dispara una consulta nueva", () => {
+    assert.match(cuerpoTarjetaUnidad, /const opcionSel = opciones\.find\(\(o\) => o\.categoria === catEff && o\.alimentacion === alimEff\) \?\? opciones\[0\];/);
+    assert.doesNotMatch(cuerpoTarjetaUnidad, /buscarAlojamientosUnidadPorFechas/, "cambiar de selector no debe volver a buscar");
+    // El ÚNICO useEffect de la tarjeta es el cleanup de `montadoRef` (deps
+    // vacías, solo marca desmontaje — no toca datos ni reacciona a selectores).
+    // Nunca hay un efecto que sincronice cat/alim/precio ni que dispare red.
+    const efectos = [...cuerpoTarjetaUnidad.matchAll(/useEffect\(/g)].length;
+    assert.equal(efectos, 1, "el único useEffect permitido es el cleanup de montadoRef");
+    assert.match(cuerpoTarjetaUnidad, /useEffect\(\(\) => \(\) => \{ montadoRef\.current = false; \}, \[\]\);/);
+    assert.doesNotMatch(cuerpoTarjetaUnidad, /useEffect\([^)]*setCat|useEffect\([^)]*setAlim|useEffect\([^)]*setPrecioActualizado/);
   });
 
-  test("la ocupación buscada (habitaciones + adultos + edades) se traslada SIN reconstrucción ambigua: mismos ids posicionales que construirHabitacionesUI, agrupados por acom", () => {
-    const cuerpoHabs = cuerpoEditorPax.slice(
-      cuerpoEditorPax.indexOf("const [habs, setHabs] = useState"),
-      cuerpoEditorPax.indexOf("const [cantidadMenores, setCantidadMenoresState]")
-    );
-    assert.match(cuerpoHabs, /for \(const h of preseleccionBernalo\.ocupacion\) out\[h\.acom\] = \(out\[h\.acom\] \?\? 0\) \+ 1;/);
-    const cuerpoEdades = cuerpoEditorPax.slice(
-      cuerpoEditorPax.indexOf("const [edadesPorHabitacion, setEdadesPorHabitacion] = useState"),
-      cuerpoEditorPax.indexOf("const [categoriaSel, setCategoriaSel]")
-    );
-    assert.match(cuerpoEdades, /for \(const h of preseleccionBernalo\.ocupacion\) out\[h\.id\] = h\.edadesMenores\.map\(String\);/);
+  test('"TOTAL X PAX" + moneda + precio, mismo estilo visual que la tarjeta persona (Resultado)', () => {
+    assert.match(cuerpoTarjetaUnidad, /total \{opcionSel\.paxTotal\} pax/);
+    assert.match(cuerpoTarjetaUnidad, /formatMoneda\(precioMostrado, monedaMostrada\)/);
+    // Mismas clases que ya usa `Resultado` (persona) para el bloque de precio.
+    assert.match(cuerpoTarjetaUnidad, /text-\[10px\] uppercase tracking-wide text-gray-400/);
+    assert.match(cuerpoTarjetaUnidad, /text-lg font-bold/);
   });
 
-  test("cambiar categoría, alimentación o fecha DESPUÉS del prefill limpia resultadoCotizacion — el prefill nunca sustituye la validación real, siempre exige volver a cotizar", () => {
-    // Mismo mecanismo preexistente (cada `onChange` ya limpiaba
-    // `resultadoCotizacion`) — se verifica que sigue intacto con el prefill
-    // en juego, para las CUATRO entradas que ahora pueden llegar
-    // precargadas: categoría, alimentación, fecha de ida y fecha de regreso.
-    assert.match(cuerpoEditorPax, /onChange=\{\(e\) => \{ setCategoriaSel\(e\.target\.value\); setResultadoCotizacion\(null\); \}\}/);
-    assert.match(cuerpoEditorPax, /onChange=\{\(e\) => \{ setAlimentacionSel\(e\.target\.value\); setResultadoCotizacion\(null\); \}\}/);
-    assert.match(cuerpoEditorPax, /onChange=\{\(e\) => \{ setFechaIdaBernalo\(e\.target\.value\); setResultadoCotizacion\(null\); \}\}/);
-    assert.match(cuerpoEditorPax, /onChange=\{\(e\) => \{ setFechaRegresoBernalo\(e\.target\.value\); setResultadoCotizacion\(null\); \}\}/);
-    // El botón de agregar al carrito exige `resultadoCotizacion.ok` — nunca
-    // se habilita solo porque el formulario nació prellenado.
-    assert.match(cuerpoEditorPax, /!resultadoCotizacion\?\.ok/);
+  test('botón "Agregar al carrito" con el MISMO texto/estilo que la tarjeta persona, sin abrir ninguna pantalla intermedia', () => {
+    assert.match(cuerpoTarjetaUnidad, /"Agregar al carrito"/);
+    assert.match(cuerpoTarjetaUnidad, /En el carrito · quitar/);
+    // Nunca abre un modal/pantalla intermedia — ni siquiera al hacer clic.
+    assert.doesNotMatch(cuerpoTarjetaUnidad, /HotelBernaloCotizarModal|EditorPax/);
   });
 
-  test("el prefill nunca marca nada como 'ya confirmado' en el propio estado: resultadoCotizacion nace null incluso con preseleccionBernalo presente", () => {
-    assert.match(cuerpoEditorPax, /const \[resultadoCotizacion, setResultadoCotizacion\] = useState<ResultadoCotizarAlojamientoBernaloPublico \| null>\(null\);/);
+  test("no pide de nuevo fechas, habitaciones, adultos ni menores — ningún campo de CAPTURA de esos existe en esta tarjeta (solo se LEEN de `opcionSel`, que ya trae la búsqueda original)", () => {
+    // `<input` es el único chequeo genuinamente estructural acá: si la
+    // tarjeta tuviera un campo de captura de verdad, sería un `<input>`. Los
+    // demás términos (fIda/cantidadMenores/etc.) aparecen LEGÍTIMAMENTE como
+    // identificadores de lectura (`opcionSel.fechaIda`, `h.edadesMenores.length`
+    // al armar el payload de revalidación) — comprobar su AUSENCIA sería un
+    // falso positivo, no una garantía real de "no se pide de nuevo".
+    assert.doesNotMatch(cuerpoTarjetaUnidad, /<input/);
+    // Tampoco hay ningún estado propio de captura (useState de fecha/adultos/
+    // cantidad de menores) — solo selectores derivados de `opciones` y el
+    // estado de la revalidación/carrito.
+    assert.doesNotMatch(cuerpoTarjetaUnidad, /useState\(hoy\)|setFIda|setFReg|setCantidadMenoresState|setAdultos/);
+  });
+});
+
+// ── E-bis) AGREGAR AL CARRITO: revalidación server-side obligatoria ────────
+// La lógica de revalidación (try/catch, interpretación del resultado, precio
+// cambiado) se extrajo a `revalidarReservaUnidad` (`lib/tarifario/
+// identidadReservaUnidad.ts`) y se prueba con EJECUCIÓN REAL en
+// `pruebas/identidadReservaUnidad.test.ts` (incluye el caso "promesa
+// rechazada no agrega y libera el estado de carga"). Acá solo se verifica el
+// CABLEADO: que el componente delega en ese helper, no agrega en rechazo/
+// error, usa el precio revalidado, y envuelve todo en try/finally con guarda
+// de montaje.
+describe('TarjetaUnidadBusqueda — "Agregar al carrito" revalida en servidor (nunca usa el precio del navegador como autoridad)', () => {
+  const cuerpoTarjetaUnidad = cuerpoFuncion(fuenteVista, "function TarjetaUnidadBusqueda({");
+  const cuerpoAgregar = cuerpoFuncion(cuerpoTarjetaUnidad, "async function agregar() {");
+
+  test("delega la revalidación en `revalidarReservaUnidad`, inyectándole la Server Action pública EXISTENTE (cotizarAlojamientoBernaloPublico) — nunca una acción nueva", () => {
+    assert.match(cuerpoAgregar, /await revalidarReservaUnidad\(\s*\n?\s*cotizarAlojamientoBernaloPublico,/);
+    assert.match(fuenteVista, /import \{ claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad \} from "@\/lib\/tarifario\/identidadReservaUnidad";/);
+    // La Server Action sigue reutilizándose (nunca una copia paralela): vive
+    // acá al menos dos veces (modal de exploración + esta tarjeta).
+    const usos = [...codigoVista.matchAll(/cotizarAlojamientoBernaloPublico/g)];
+    assert.ok(usos.length >= 2, "debe reutilizarse la misma Server Action que ya usa el modal, no una nueva");
+  });
+
+  test("manda la ocupación/fechas de la combinación SELECCIONADA (de la búsqueda original) — nunca placeholders ni datos del formulario del modal", () => {
+    assert.match(cuerpoAgregar, /paqueteId: opcionSel\.paqueteId, hotelId: opcionSel\.hotelId,/);
+    assert.match(cuerpoAgregar, /categoria: opcionSel\.categoria, alimentacion: opcionSel\.alimentacion,/);
+    assert.match(cuerpoAgregar, /salida, habitaciones,/);
+    // Las fechas de la búsqueda entran por la `salida` sin_vuelo construida
+    // desde `opcionSel`.
+    assert.match(cuerpoAgregar, /fechaIda: opcionSel\.fechaIda, fechaRegreso: opcionSel\.fechaRegreso/);
+  });
+
+  test("agrega al carrito SOLO en estado 'agregar' — un rechazo/error nunca agrega, y muestra el mensaje REAL/entendible", () => {
+    assert.match(cuerpoAgregar, /if \(rev\.estado !== "agregar"\) \{/);
+    assert.match(cuerpoAgregar, /setErrorAgregar\(rev\.mensaje\);/);
+    const idxRechazo = cuerpoAgregar.indexOf('if (rev.estado !== "agregar") {');
+    const idxAdd = cuerpoAgregar.indexOf("add({");
+    assert.ok(idxRechazo > -1 && idxAdd > idxRechazo, "el chequeo de no-agregar debe ir ANTES de agregar al carrito");
+  });
+
+  test("el precio que se agrega al carrito es SIEMPRE el revalidado (rev.precio/rev.moneda) — nunca opcionSel.precioVenta (el que mostró la tarjeta antes de revalidar)", () => {
+    assert.match(cuerpoAgregar, /precio: rev\.precio,/);
+    assert.match(cuerpoAgregar, /moneda: rev\.moneda,/);
+    assert.doesNotMatch(cuerpoAgregar, /precio: opcionSel\.precioVenta/, "nunca debe agregar con el precio mostrado sin revalidar");
+  });
+
+  test("si la tarifa cambió entre la búsqueda y el clic (rev.precioCambio), la tarjeta se actualiza — nunca queda mostrando el precio viejo", () => {
+    assert.match(cuerpoAgregar, /if \(rev\.precioCambio\) \{/);
+    assert.match(cuerpoAgregar, /setPrecioActualizado\(\{ combo: claveCombo, precio: rev\.precio, moneda: rev\.moneda \}\);/);
+    assert.match(cuerpoTarjetaUnidad, /const precioMostrado = precioActualizado\?\.combo === claveCombo \? precioActualizado\.precio : opcionSel\.precioVenta;/);
+  });
+
+  test("try/finally + guarda de montaje: `agregando` SIEMPRE se libera en el finally (aun ante excepción), y ningún setState corre tras un remonte", () => {
+    assert.match(cuerpoTarjetaUnidad, /const \[agregando, setAgregando\] = useState\(false\);/);
+    assert.match(cuerpoAgregar, /setAgregando\(true\);/);
+    // La liberación vive en un finally (no en el camino feliz) y guardada por
+    // el montaje — nunca un setAgregando(false) suelto en medio del flujo.
+    assert.match(cuerpoAgregar, /\} finally \{\s*\n?\s*if \(montadoRef\.current\) setAgregando\(false\);\s*\n?\s*\}/);
+    assert.match(cuerpoAgregar, /if \(!montadoRef\.current\) return;/);
+    assert.match(cuerpoTarjetaUnidad, /const montadoRef = useRef\(true\);/);
+    assert.match(cuerpoTarjetaUnidad, /useEffect\(\(\) => \(\) => \{ montadoRef\.current = false; \}, \[\]\);/);
+    assert.match(cuerpoTarjetaUnidad, /disabled=\{agregando\}/);
+    assert.match(cuerpoTarjetaUnidad, /\{agregando \? "Confirmando…" : /);
+    // Nunca doble envío mientras revalida.
+    assert.match(cuerpoAgregar, /if \(agregando\) return;/);
+  });
+});
+
+// ── E-ter) IDENTIDAD: key de búsqueda y comparación de carrito ─────────────
+describe("TarjetaUnidadBusqueda — identidad de búsqueda (key) e identidad de carrito (enCarrito)", () => {
+  const cuerpoTarjetaUnidad = cuerpoFuncion(fuenteVista, "function TarjetaUnidadBusqueda({");
+
+  test("la key de React de una tarjeta de búsqueda incluye la identidad de la BÚSQUEDA vigente (claveBusquedaUnidad), no solo hotelId — una nueva búsqueda del mismo hotel remonta y resetea el estado", () => {
+    assert.match(codigoVista, /key: `u-\$\{u\.hotelId\}-\$\{claveBusquedaUnidad\(u\.opciones\)\}`,/);
+    // No queda un `useEffect` frágil sincronizando cat/alim/precioActualizado
+    // con la búsqueda — el remonte por key es el ÚNICO mecanismo de reset.
+    assert.doesNotMatch(cuerpoTarjetaUnidad, /useEffect\([^)]*setCat|useEffect\([^)]*setAlim|useEffect\([^)]*setPrecioActualizado/);
+  });
+
+  test("enCarrito compara la identidad CANÓNICA COMPLETA (claveReservaUnidad), no solo hotel+paquete+categoría+alimentación", () => {
+    assert.match(cuerpoTarjetaUnidad, /const claveReserva = claveReservaUnidad\(\{/);
+    // El candidato y cada ítem del carrito se reducen a la MISMA clave
+    // canónica — la comparación es por clave, nunca campo a campo parcial.
+    assert.match(cuerpoTarjetaUnidad, /claveReservaUnidad\(\{\s*\n?\s*hotelId: i\.hotelId,/);
+    assert.match(cuerpoTarjetaUnidad, /\}\) === claveReserva/);
+    assert.match(cuerpoTarjetaUnidad, /i\.modeloTarifario === "unidad"/);
+    // La clave incluye salida y habitaciones (fechas + ocupación) — no solo
+    // los cuatro campos escalares de antes.
+    assert.match(cuerpoTarjetaUnidad, /salida: i\.salida,/);
+    assert.match(cuerpoTarjetaUnidad, /habitaciones: i\.habitaciones,/);
   });
 });
 

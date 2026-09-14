@@ -39,7 +39,8 @@ import { obtenerDetalleHotel } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
-import type { OfertaUnidadConfirmada } from "./busquedaUnidadActions";
+import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
+import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from "@/lib/tarifario/identidadReservaUnidad";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
@@ -96,16 +97,18 @@ type HotelUnidadCard = {
    * abrir el modal — dentro del modal cada oferta muestra su propio destino. */
   destino: string | null;
   ofertas: HotelBernaloDescubierto[];
-  // Hallazgo confirmado (auditoría independiente): SOLO presente en modo
-  // búsqueda — la oferta que el servidor CONFIRMÓ disponible
-  // (`buscarAlojamientosUnidadPorFechas`), con la identidad EXACTA
-  // (paqueteId/categoría/alimentación/fechas/ocupación) que pasó
-  // `computarReservaBernalo`. En exploración queda `undefined` y el modal se
-  // comporta exactamente como antes (el usuario elige todo a mano). Nunca se
-  // usa para decidir un precio — solo para PRELLENAR el formulario; el modal
-  // vuelve a validar/cotizar todo contra el servidor antes de agregar al
-  // carrito.
-  confirmada?: OfertaUnidadConfirmada;
+  // Cierre de UX de la tarjeta unidad en modo búsqueda: SOLO presente ahí —
+  // TODAS las combinaciones que el servidor CONFIRMÓ disponibles
+  // (`buscarAlojamientosUnidadPorFechas`), ordenadas (la más barata primero,
+  // la preseleccionada por defecto). Cuando está presente, la tarjeta se
+  // pinta INLINE (`TarjetaUnidadBusqueda`: selectores + precio + "Agregar al
+  // carrito", sin abrir modal ni volver a pedir fechas/ocupación). En
+  // exploración queda `undefined` y la tarjeta sigue abriendo el modal de
+  // siempre (ahí todavía no hay fechas/ocupación que reutilizar). Los
+  // `precioVenta` que trae NUNCA son autoridad para el carrito — "Agregar al
+  // carrito" revalida con `cotizarAlojamientoBernaloPublico` antes de
+  // agregar (ver `TarjetaUnidadBusqueda`).
+  opcionesBusqueda?: OpcionUnidadConfirmada[];
 };
 
 // Una sola lista visible en la grilla — para el cliente, un hotel por unidad
@@ -647,46 +650,35 @@ export function VistaBooking({
         if (idsUnidadAutoritativa.has(r.hotelId) || !porFiltros(r.hotelId)) continue;
         busca.push({ tipo: "busqueda" as const, key: `b-${r.paqueteId}-${r.hotelId}`, r });
       }
-      // Hallazgo confirmado (auditoría independiente): antes `u.ofertas`
-      // traía TODAS las ofertas del hotel (todas sus paqueteId de porción
-      // terrestre), como si todas estuvieran confirmadas — el modal dejaba
-      // elegir una categoría/alimentación/paquete DISTINTO al que realmente
-      // pasó `computarReservaBernalo`. Ahora `u.oferta` (singular) es la
-      // identidad EXACTA que confirmó al hotel; se envuelve en un arreglo de
-      // UN solo elemento (mismo shape `HotelBernaloDescubierto` que ya
-      // consume `HotelBernaloCotizarModal`, pero con categorías/regímenes
-      // acotados a la combinación confirmada) para que el modal la
-      // AUTOSELECCIONE — `ofertas.length === 1` ya dispara esa rama sin
-      // tocar el modal. Nunca puede preseleccionar una oferta no verificada
-      // porque no hay ninguna otra en el arreglo.
+      // Cierre de UX de la tarjeta unidad: antes `u.oferta` (singular) era
+      // solo la IDENTIDAD del primer combo que confirmaba, y la tarjeta
+      // tenía que abrir un modal para poder cotizar/mostrar precio — el
+      // usuario repetía fechas/ocupación que el buscador ya tenía. Ahora
+      // `u.opciones` trae TODAS las combinaciones confirmadas, cada una con
+      // su precio público ya saneado — la tarjeta las pinta INLINE
+      // (`opcionesBusqueda`, ver `TarjetaUnidadBusqueda`) sin abrir ningún
+      // modal ni volver a pedir nada. `ofertas` queda vacío a propósito: esa
+      // lista solo la usa el modal de EXPLORACIÓN, que esta tarjeta nunca
+      // abre.
       const unidad: Tarjeta[] = busquedaPorcion.unidad
         .filter((u) => porFiltros(u.hotelId))
         .map((u) => ({
           tipo: "unidad" as const,
-          key: `u-${u.hotelId}`,
+          // La `key` incluye la identidad de la BÚSQUEDA vigente (fechas +
+          // ocupación + combinaciones confirmadas), no solo `hotelId`: una
+          // nueva búsqueda del MISMO hotel con fechas u ocupación distintas
+          // cambia la clave → React remonta `TarjetaUnidadBusqueda` y su
+          // estado local (cat/alim/precioActualizado/errorAgregar/agregando)
+          // nace de cero, sin ningún `useEffect` de sincronización frágil. Una
+          // búsqueda idéntica conserva la clave (no remonta sin motivo). Ver
+          // `claveBusquedaUnidad`.
+          key: `u-${u.hotelId}-${claveBusquedaUnidad(u.opciones)}`,
           hotel: {
             hotelId: u.hotelId,
-            hotelNombre: u.oferta.hotelNombre,
-            destino: u.oferta.destinoNombre,
-            ofertas: [{
-              hotelId: u.oferta.hotelId,
-              hotelNombre: u.oferta.hotelNombre,
-              paqueteId: u.oferta.paqueteId,
-              paqueteNombre: u.oferta.paqueteNombre,
-              destinoNombre: u.oferta.destinoNombre,
-              // `OfertaUnidadConfirmada` no lleva `destinoId` (no lo necesita
-              // el modal de cotización, que solo usa esta forma sintética
-              // para autoseleccionar la oferta confirmada) — `null` acá no
-              // afecta nada, esta tarjeta no vuelve a pasar por el selector
-              // de destino.
-              destinoId: null,
-              tipo: "porcion_terrestre" as const,
-              categorias: [u.oferta.categoria],
-              regimenes: [u.oferta.alimentacion],
-              moneda: u.oferta.moneda,
-              salidas: [],
-            }],
-            confirmada: u.oferta,
+            hotelNombre: u.opciones[0].hotelNombre,
+            destino: u.opciones[0].destinoNombre,
+            ofertas: [],
+            opcionesBusqueda: u.opciones,
           },
         }));
       return [...busca, ...unidad].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
@@ -1146,18 +1138,40 @@ export function VistaBooking({
                 ) : null;
               })()}
             />
+          ) : t.hotel.opcionesBusqueda ? (
+            // Cierre de UX (ronda posterior): en modo búsqueda, un hotel
+            // unidad se comporta EXACTAMENTE como uno persona — categoría,
+            // alimentación, precio y "Agregar al carrito" directo, SIN abrir
+            // modal ni repetir fechas/ocupación que el buscador ya tiene
+            // (ver `TarjetaUnidadBusqueda`). Solo existe acá porque
+            // `busquedaPorcion.unidad` ya viene filtrado a hoteles
+            // CONFIRMADOS disponibles — nunca sin fundamento.
+            <TarjetaUnidadBusqueda
+              key={t.key}
+              hotel={{ hotelId: t.hotel.hotelId, hotelNombre: t.hotel.hotelNombre, destino: t.hotel.destino }}
+              opciones={t.hotel.opcionesBusqueda}
+              foto={fotosPorHotel[t.hotel.hotelId] ?? null}
+              estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
+              clasificacion={infoPorHotel[t.hotel.hotelId]?.clasificacion ?? null}
+              adultsOnly={infoPorHotel[t.hotel.hotelId]?.adultsOnly ?? false}
+              petFriendly={infoPorHotel[t.hotel.hotelId]?.petFriendly ?? false}
+              tieneCondicion={infoPorHotel[t.hotel.hotelId]?.tieneCondicion}
+              descripcion={infoPorHotel[t.hotel.hotelId]?.descripcion ?? null}
+            />
           ) : (
-            // P2 (hallazgo confirmado): hotel por unidad (Bernalo) con la
-            // MISMA tarjeta que persona — antes usaba "Sin foto" fijo y
-            // nunca leía estrellas/descripción/Adults Only/Pet friendly
-            // reales, aunque el hotel SÍ los tuviera configurados. Ahora lee
-            // `fotosPorHotel`/`infoPorHotel` por `hotelId` — el mismo
-            // enriquecimiento que ya recibe un hotel persona (ver
-            // `page.tsx`, que ahora también consulta `hoteles`/`hotel_fotos`
-            // para los hotelId unidad). Sin "desde $X" (el precio no está
-            // precargado — "Consultar" es el mismo fallback que ya usa un
-            // hotel persona sin tarifa mínima resuelta) y el clic abre el
-            // cotizador en vivo en vez del modal de opciones precargadas.
+            // P2 (hallazgo confirmado): hotel por unidad (Bernalo) EN
+            // EXPLORACIÓN (sin `opcionesBusqueda` — acá todavía no hay
+            // fechas/ocupación que reutilizar, así que sigue abriendo el
+            // cotizador en vivo por modal) con la MISMA tarjeta que persona
+            // — antes usaba "Sin foto" fijo y nunca leía estrellas/
+            // descripción/Adults Only/Pet friendly reales, aunque el hotel
+            // SÍ los tuviera configurados. Ahora lee `fotosPorHotel`/
+            // `infoPorHotel` por `hotelId` — el mismo enriquecimiento que ya
+            // recibe un hotel persona (ver `page.tsx`, que ahora también
+            // consulta `hoteles`/`hotel_fotos` para los hotelId unidad). Sin
+            // "desde $X" (el precio no está precargado — "Consultar" es el
+            // mismo fallback que ya usa un hotel persona sin tarifa mínima
+            // resuelta).
             <TarjetaHotelCard
               key={t.key}
               onClick={() => setModalBernalo(t.hotel)}
@@ -1171,24 +1185,6 @@ export function VistaBooking({
               tieneCondicion={infoPorHotel[t.hotel.hotelId]?.tieneCondicion}
               descripcion={infoPorHotel[t.hotel.hotelId]?.descripcion ?? null}
               desde={null}
-              badgeEsquina={enBusquedaPorcion ? (
-                // Disponibilidad REAL para las fechas y la ocupación que se
-                // escribieron en el buscador: en modo búsqueda esta tarjeta
-                // SOLO existe si el servidor confirmó el hotel como disponible
-                // (`busquedaPorcion.unidad` ya viene filtrado a
-                // `estado === "disponible"` — ver `BuscadorBooking`). El badge
-                // no decide nada acá, solo hace visible un hecho ya verificado;
-                // por eso no hay rama "sin disponibilidad": un veredicto
-                // negativo no es un resultado disponible y no llega a la
-                // grilla. Fuera de modo búsqueda no hay badge en absoluto —
-                // no hay disponibilidad declarada que mostrar.
-                <span
-                  className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white transition-opacity hover:opacity-90"
-                  style={{ backgroundColor: "var(--brand-success)" }}
-                >
-                  Disponible para tus fechas
-                </span>
-              ) : undefined}
             />
           )
         )}
@@ -1516,6 +1512,235 @@ function HotelModal({
   );
 }
 
+// ── Tarjeta unidad en MODO BÚSQUEDA: selectores + precio + "Agregar al
+//    carrito" inline — sin modal, sin volver a pedir fechas/habitaciones/
+//    adultos/edades (el buscador general ya las tiene). Para el usuario, un
+//    hotel `modelo_tarifario = "unidad"` encontrado en la búsqueda se
+//    comporta EXACTAMENTE como uno persona (`Resultado`, más arriba): la
+//    diferencia tarifaria interna no lo convierte en otro tipo de producto
+//    visual — mismo estilo, mismos controles, mismo botón.
+//
+// `opciones` viene de `busquedaPorcion.unidad` (ya sanada — ver
+// `OpcionUnidadConfirmada`): SOLO combinaciones categoría×alimentación que
+// REALMENTE pasaron `computarReservaBernalo`, ordenadas por precio ascendente
+// (la primera es la preselección por defecto). Cambiar de categoría limita
+// las alimentaciones a las válidas para esa categoría; si la alimentación
+// elegida deja de ser válida, cae automáticamente a la primera que sí lo sea.
+//
+// "Agregar al carrito" NUNCA usa `opcionSel.precioVenta` como autoridad: por
+// seguridad, revalida en servidor con la MISMA Server Action pública que ya
+// usa el modal de exploración (`cotizarAlojamientoBernaloPublico`) antes de
+// agregar — si la tarifa cambió o dejó de estar disponible, se muestra el
+// mensaje real y la tarjeta se actualiza, nunca se agrega con un precio
+// obsoleto. Esta revalidación es una llamada de servidor más, invisible para
+// el usuario (estado de carga en el botón) — nunca una segunda pantalla de
+// búsqueda ni un "Cotizar" aparte.
+function TarjetaUnidadBusqueda({
+  hotel, opciones, foto, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion,
+}: {
+  hotel: { hotelId: number; hotelNombre: string; destino: string | null };
+  opciones: OpcionUnidadConfirmada[];
+  foto: string | null;
+  estrellas: number | null;
+  clasificacion: string | null;
+  adultsOnly: boolean;
+  petFriendly: boolean;
+  tieneCondicion?: boolean;
+  descripcion?: string | null;
+}) {
+  const { items, add, remove, openDrawer } = useCart();
+
+  const categorias = useMemo(() => [...new Set(opciones.map((o) => o.categoria))], [opciones]);
+  const [cat, setCat] = useState(opciones[0]?.categoria ?? "");
+  const catEff = categorias.includes(cat) ? cat : (categorias[0] ?? "");
+  const alimentaciones = useMemo(
+    () => [...new Set(opciones.filter((o) => o.categoria === catEff).map((o) => o.alimentacion))],
+    [opciones, catEff]
+  );
+  const [alim, setAlim] = useState(opciones[0]?.alimentacion ?? "");
+  // La alimentación efectiva cae a la primera válida de la categoría actual
+  // en cuanto la elegida deja de estarlo — nunca queda "colgada" de una
+  // categoría anterior.
+  const alimEff = alimentaciones.includes(alim) ? alim : (alimentaciones[0] ?? "");
+  const opcionSel = opciones.find((o) => o.categoria === catEff && o.alimentacion === alimEff) ?? opciones[0];
+
+  // Precio EN VIVO local: nace del resultado ya calculado por el buscador
+  // (`opcionSel.precioVenta`, ver el módulo puro) — cambiar de selector NUNCA
+  // dispara una nueva búsqueda/consulta, solo relee `opciones`, que ya tiene
+  // el precio de CADA combinación confirmada. Solo se actualiza si la
+  // revalidación de "Agregar al carrito" trae un precio distinto (tarifa
+  // cambiada entre la búsqueda y el clic) — nunca antes.
+  const [precioActualizado, setPrecioActualizado] = useState<{ combo: string; precio: number; moneda: string } | null>(null);
+  const claveCombo = `${opcionSel.paqueteId}|${opcionSel.categoria}|${opcionSel.alimentacion}`;
+  const precioMostrado = precioActualizado?.combo === claveCombo ? precioActualizado.precio : opcionSel.precioVenta;
+  const monedaMostrada = precioActualizado?.combo === claveCombo ? precioActualizado.moneda : opcionSel.moneda;
+
+  const [agregando, setAgregando] = useState(false);
+  const [errorAgregar, setErrorAgregar] = useState<string | null>(null);
+
+  // Guarda contra setState tras desmontaje: una nueva búsqueda del mismo
+  // hotel REMONTA esta tarjeta (la `key` incluye la búsqueda vigente — ver
+  // `claveBusquedaUnidad`), así que una revalidación en vuelo puede resolver
+  // cuando este componente ya no existe. Se marca en el cleanup y se revisa
+  // antes de cualquier setState del callback asíncrono.
+  const montadoRef = useRef(true);
+  useEffect(() => () => { montadoRef.current = false; }, []);
+
+  // `enCarrito` compara la identidad CANÓNICA COMPLETA de la reserva
+  // (hotel + paquete + categoría + alimentación + salida/fechas + composición
+  // de habitaciones: id/acomodación/adultos/edades) — no solo hotel+paquete+
+  // categoría+alimentación. Así, una reserva del MISMO hotel para otras fechas
+  // u ocupación NO se marca como agregada ni se elimina por error, y una
+  // idéntica SÍ se encuentra. Ver `claveReservaUnidad`.
+  const claveReserva = claveReservaUnidad({
+    hotelId: opcionSel.hotelId,
+    paqueteId: opcionSel.paqueteId,
+    categoria: opcionSel.categoria,
+    alimentacion: opcionSel.alimentacion,
+    salida: { tipo: "sin_vuelo", fechaIda: opcionSel.fechaIda, fechaRegreso: opcionSel.fechaRegreso },
+    habitaciones: opcionSel.ocupacion,
+  });
+  const enCarrito = items.find(
+    (i) =>
+      i.tipo === "hotel" &&
+      i.modeloTarifario === "unidad" &&
+      claveReservaUnidad({
+        hotelId: i.hotelId,
+        paqueteId: i.paqueteId,
+        categoria: i.categoria,
+        alimentacion: i.alimentacion,
+        salida: i.salida,
+        habitaciones: i.habitaciones,
+      }) === claveReserva
+  );
+
+  async function agregar() {
+    if (agregando) return; // nunca doble envío mientras revalida
+    setErrorAgregar(null);
+    setAgregando(true);
+    const habitaciones: HabitacionOcupacionEntrada[] = opcionSel.ocupacion.map((h) => ({
+      id: h.id, acom: h.acom, adultos: h.adultos, cantidadMenores: h.edadesMenores.length, edadesMenores: h.edadesMenores,
+    }));
+    const salida: SalidaSeleccionadaBernaloEntrada = { tipo: "sin_vuelo", fechaIda: opcionSel.fechaIda, fechaRegreso: opcionSel.fechaRegreso };
+    // Revalidación OBLIGATORIA en servidor, con la Server Action pública que
+    // YA existe (nunca se inventa una nueva): vuelve a validar pertenencia al
+    // paquete, moneda y ventana de fechas, y recalcula el precio real en este
+    // instante — el precio que mostraba la tarjeta nunca es autoridad.
+    // `revalidarReservaUnidad` envuelve la llamada en try/catch y NUNCA lanza;
+    // el `finally` de acá siempre libera `agregando` (aun ante excepción), y
+    // el guard de montaje evita setState tras un remonte por nueva búsqueda.
+    let rev: Awaited<ReturnType<typeof revalidarReservaUnidad>>;
+    try {
+      rev = await revalidarReservaUnidad(
+        cotizarAlojamientoBernaloPublico,
+        {
+          paqueteId: opcionSel.paqueteId, hotelId: opcionSel.hotelId,
+          categoria: opcionSel.categoria, alimentacion: opcionSel.alimentacion,
+          salida, habitaciones,
+        },
+        opcionSel.precioVenta,
+        opcionSel.moneda,
+      );
+    } finally {
+      if (montadoRef.current) setAgregando(false);
+    }
+    if (!montadoRef.current) return;
+    if (rev.estado !== "agregar") {
+      // Rechazo del servidor (dejó de estar disponible) o error técnico —
+      // mensaje REAL/entendible, NUNCA se agrega al carrito.
+      setErrorAgregar(rev.mensaje);
+      return;
+    }
+    if (rev.precioCambio) {
+      // Cambió la tarifa entre la búsqueda y este clic — la tarjeta se
+      // actualiza con el precio REAL revalidado; el carrito usa este mismo
+      // precio, nunca el que mostraba antes.
+      setPrecioActualizado({ combo: claveCombo, precio: rev.precio, moneda: rev.moneda });
+    }
+    add({
+      tipo: "hotel",
+      modeloTarifario: "unidad",
+      paqueteId: opcionSel.paqueteId,
+      hotelId: opcionSel.hotelId,
+      hotelNombre: hotel.hotelNombre,
+      destino: opcionSel.destinoNombre,
+      fotoUrl: foto,
+      categoria: opcionSel.categoria,
+      alimentacion: opcionSel.alimentacion,
+      salida,
+      habitaciones,
+      precio: rev.precio,
+      moneda: rev.moneda,
+    });
+    openDrawer();
+  }
+
+  const selCls = "rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs";
+
+  return (
+    <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
+      <div className="relative aspect-[16/10] w-full bg-gray-100">
+        {foto ? (
+          <Image src={foto} alt={hotel.hotelNombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover" unoptimized />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
+        )}
+        <span
+          className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white"
+          style={{ backgroundColor: "var(--brand-success)" }}
+        >
+          Disponible para tus fechas
+        </span>
+      </div>
+      <div className="flex flex-1 flex-col p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-gray-800">{hotel.hotelNombre}</span>
+          <Categoria estrellas={estrellas} clasificacion={clasificacion} className="text-sm" />
+          <EtiquetasHotel adultsOnly={adultsOnly} petFriendly={petFriendly} />
+          {tieneCondicion !== undefined && <CondicionCompacta activo={tieneCondicion} />}
+        </div>
+        <div className="mt-0.5 text-xs text-gray-500">{hotel.destino ?? ""}</div>
+        {descripcion?.trim() && (
+          <p className="mt-1 line-clamp-2 text-xs text-gray-400">{descripcion}</p>
+        )}
+
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="w-20 shrink-0">Categoría</span>
+            <select value={catEff} onChange={(e) => setCat(e.target.value)} className={`${selCls} flex-1`}>
+              {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="w-20 shrink-0">Alimentación</span>
+            <select value={alimEff} onChange={(e) => setAlim(e.target.value)} className={`${selCls} flex-1`}>
+              {alimentaciones.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </label>
+        </div>
+
+        {errorAgregar && <p className="mt-2 text-xs text-red-600">{errorAgregar}</p>}
+
+        <div className="mt-3 flex items-end justify-between">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-gray-400">total {opcionSel.paxTotal} pax</div>
+            <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precioMostrado, monedaMostrada)}</div>
+          </div>
+          <button
+            type="button"
+            disabled={agregando}
+            onClick={() => (enCarrito ? remove(enCarrito.id) : agregar())}
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+            style={{ backgroundColor: enCarrito ? "var(--brand-success)" : "var(--brand-primary)" }}
+          >
+            {agregando ? "Confirmando…" : enCarrito ? "✓ En el carrito · quitar" : "Agregar al carrito"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Fase 3E Bernalo — modal de cotización dinámica de un hotel descubierto
 // (`hotelesBernalo`, ver `lib/tarifario/datosBernalo.ts`). A diferencia de
 // `HotelModal` (hoteles "persona", con `tarifario_resultado` ya calculado),
@@ -1635,14 +1860,6 @@ function HotelBernaloCotizarModal({ hotelGrupo, onClose }: { hotelGrupo: HotelUn
               categoriasDisponibles={hotel.categorias}
               alimentacionesDisponibles={hotel.regimenes}
               salidas={hotel.salidas}
-              // Prefill de modo búsqueda — SOLO si la oferta que el usuario
-              // tiene seleccionada ahora mismo es la misma que el servidor
-              // confirmó (siempre lo es cuando viene de una búsqueda, porque
-              // `ofertas` trae un único elemento — ver `tarjetas` — pero la
-              // comparación explícita por `paqueteId` es la guarda real:
-              // nunca precarga el formulario con datos de una oferta que el
-              // usuario pudo haber cambiado).
-              preseleccionBernalo={hotelGrupo.confirmada?.paqueteId === hotel.paqueteId ? hotelGrupo.confirmada : undefined}
               onAgregar={() => {}}
               onAgregarBernalo={agregarBernalo}
             />
@@ -1729,7 +1946,6 @@ function EditorPax({
   pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
   edadInfanteMax, edadNinoMax, onAgregar, onAgregarBernalo, btnLabel = "Agregar al carrito", moneda = "COP",
   modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [],
-  preseleccionBernalo = null,
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -1773,56 +1989,28 @@ function EditorPax({
   // contra la ventana del paquete); una = se autoselecciona; varias = la UI
   // exige elegir explícitamente. Nunca se "toma la primera" en silencio.
   salidas?: SalidaAereaBernalo[];
-  // Hallazgo confirmado (auditoría independiente): PREFILL de una oferta que
-  // el servidor ya CONFIRMÓ disponible en modo búsqueda — categoría,
-  // alimentación, fechas y la ocupación (habitación↔edades) exactas que
-  // pasaron `computarReservaBernalo`. Solo inicializa el estado del
-  // formulario (useState perezoso, una sola vez — el componente se remonta
-  // por `key={paqueteId}` en el llamador si la oferta cambia); NUNCA marca
-  // nada como "ya confirmado": `resultadoCotizacion` sigue naciendo `null` y
-  // cualquier cambio del usuario lo resetea (mismo mecanismo que ya existía),
-  // así que el modal SIEMPRE exige volver a cotizar antes de agregar al
-  // carrito. `null`/ausente = comportamiento EXACTO de siempre (exploración).
-  preseleccionBernalo?: OfertaUnidadConfirmada | null;
 }) {
   const idBase = useId();
   const esBernalo = modeloTarifario === "unidad";
-  // Prefill de modo búsqueda (ver el prop arriba): SOLO inicializa el
-  // estado — un `useState` perezoso corre UNA vez, así que esto nunca
-  // "reaplica" el prefill si el usuario lo cambia después. `habs` cuenta
-  // habitaciones por tipo agrupando `preseleccionBernalo.ocupacion` (mismos
-  // ids posicionales `${acom}-${n}` que ya usa `construirHabitacionesUI`,
-  // así que no hay ninguna reconstrucción ambigua).
-  const [habs, setHabs] = useState<Record<string, number>>(() => {
-    if (!preseleccionBernalo) return {};
-    const out: Record<string, number> = {};
-    for (const h of preseleccionBernalo.ocupacion) out[h.acom] = (out[h.acom] ?? 0) + 1;
-    return out;
-  });
+  // Este editor solo se monta desde el modal de EXPLORACIÓN ahora (el modo
+  // búsqueda dejó de abrir modal — ver `TarjetaUnidadBusqueda`): nunca hay
+  // fechas/ocupación previas que precargar, arranca siempre en blanco.
+  const [habs, setHabs] = useState<Record<string, number>>({});
   const [cantidadMenores, setCantidadMenoresState] = useState(0);
   const [edadesTxt, setEdadesTxt] = useState<string[]>([]);
   // Fase 3D — estado canónico SOLO para Bernalo: una entrada por habitación
   // FÍSICA (id estable), nunca un conteo aparte (regla 14: single source —
   // ver `lib/reservar/ocupacionPorHabitacion.ts`).
-  const [edadesPorHabitacion, setEdadesPorHabitacion] = useState<EdadesPorHabitacion>(() => {
-    if (!preseleccionBernalo) return {};
-    const out: EdadesPorHabitacion = {};
-    for (const h of preseleccionBernalo.ocupacion) out[h.id] = h.edadesMenores.map(String);
-    return out;
-  });
+  const [edadesPorHabitacion, setEdadesPorHabitacion] = useState<EdadesPorHabitacion>({});
   // Fase 3E — clasificación y fechas REALES elegidas para esta cotización
   // (nunca placeholders): categoría/alimentación salen de las opciones
   // realmente vinculadas al hotel/paquete (`categoriasDisponibles`/
   // `alimentacionesDisponibles`); las fechas las escribe el usuario, dentro
-  // de la ventana que el servidor vuelve a validar. Con
-  // `preseleccionBernalo` (modo búsqueda) nacen con la combinación/fechas ya
-  // confirmadas — el usuario puede cambiarlas igual, y cualquier cambio
-  // limpia `resultadoCotizacion` (ver los `onChange` más abajo), así que el
-  // prefill nunca sustituye la validación real al cotizar.
-  const [categoriaSel, setCategoriaSel] = useState(preseleccionBernalo?.categoria ?? "");
-  const [alimentacionSel, setAlimentacionSel] = useState(preseleccionBernalo?.alimentacion ?? "");
-  const [fechaIdaBernalo, setFechaIdaBernalo] = useState(preseleccionBernalo?.fechaIda ?? "");
-  const [fechaRegresoBernalo, setFechaRegresoBernalo] = useState(preseleccionBernalo?.fechaRegreso ?? "");
+  // de la ventana que el servidor vuelve a validar.
+  const [categoriaSel, setCategoriaSel] = useState("");
+  const [alimentacionSel, setAlimentacionSel] = useState("");
+  const [fechaIdaBernalo, setFechaIdaBernalo] = useState("");
+  const [fechaRegresoBernalo, setFechaRegresoBernalo] = useState("");
   // A1: identidad de la salida elegida cuando hay MÁS de una — clave
   // `"tipo:id"`; vacío hasta que el usuario elige explícitamente (nunca se
   // autocompleta con la primera).

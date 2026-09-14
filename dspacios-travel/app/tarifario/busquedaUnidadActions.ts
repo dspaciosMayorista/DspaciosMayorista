@@ -13,29 +13,35 @@
 // ninguna relación con la búsqueda.
 //
 // Qué hace y qué NO hace (reglas del encargo):
-//   · NO calcula un precio. Devuelve la IDENTIDAD de la oferta que realmente
-//     pasó `computarReservaBernalo` (hotel, paquete, categoría, alimentación,
-//     fechas y la ocupación con la que se confirmó) más el veredicto
-//     `disponible`/`sin_disponibilidad` — nunca pvp, snapshot, costos netos,
-//     proveedor ni ningún dato interno. El precio real sigue saliendo, bajo
-//     demanda y con su propia frontera saneada, de
-//     `cotizarAlojamientoBernaloPublico`.
-//   · NO inventa un "desde": la evaluación SÍ recorre las combinaciones
-//     categoría×alimentación de TODOS los hoteles del destino hasta el
-//     PRIMER éxito por hotel (para poder afirmar con fundamento — nunca hace
-//     falta agotar las demás combinaciones una vez que una ya confirmó al
-//     hotel), pero el resultado que sale de acá es un VEREDICTO de
-//     disponibilidad con la identidad exacta que lo produjo, nunca un
-//     número. Publicar un mínimo exigiría exponer la liquidación completa
-//     detrás de la vitrina; el precio real sigue saliendo, bajo demanda y
-//     con su propia frontera saneada, de `cotizarAlojamientoBernaloPublico`.
+//   · SÍ calcula/expone un precio PÚBLICO SANEADO por combinación confirmada
+//     (`OpcionUnidadConfirmada.precioVenta`/`moneda`/`paxTotal`) — construido
+//     CAMPO A CAMPO desde el `ok:true` de `computarReservaBernalo`, nunca el
+//     objeto interno completo (costoNeto, proveedor, comisión, snapshot por
+//     habitación NUNCA cruzan esta frontera). Cierre de UX (ronda posterior):
+//     antes solo viajaba la identidad de la ÚNICA combinación en la que se
+//     cortaba la evaluación, así que la tarjeta no podía mostrar precio/pax
+//     sin volver a cotizar — obligaba a abrir un modal y repetir fechas/
+//     ocupación que el buscador YA tenía. La revalidación real de precio al
+//     momento de comprar sigue siendo, bajo demanda, `cotizarAlojamientoBernaloPublico`
+//     (nunca se agrega al carrito confiando en el precio que mostró la
+//     tarjeta — ver `VistaBooking.tsx`, `TarjetaUnidadBusqueda`).
+//   · Evalúa TODAS las combinaciones categoría×alimentación de cada hotel del
+//     destino — ya NO se corta en el primer éxito (eso era una "decisión
+//     acotada" válida cuando solo hacía falta un veredicto binario; ahora la
+//     tarjeta necesita CADA combinación cotizable para sus selectores, nunca
+//     el producto cartesiano completo si alguna no es cotizable). Ver
+//     `evaluarDisponibilidadHotelUnidad`, `lib/tarifario/
+//     evaluarDisponibilidadUnidad.ts` — clasifica: ningún éxito con todos los
+//     códigos "sin disponibilidad" real → `sin_disponibilidad`; algún éxito →
+//     `disponible` con las opciones confirmadas (ordenadas, la más barata
+//     primero); algún éxito + algún código TÉCNICO → `disponible` igual, pero
+//     `parcial` (ver más abajo); ningún éxito + algún código técnico →
+//     inconcluyente.
 //   · NO hace N+1 desde el navegador: es UNA acción por búsqueda (el
 //     buscador la llama UNA vez, junto con `buscarHoteles`), nunca una por
 //     tarjeta. El fan-out interno cubre TODOS los hoteles del destino (nadie
 //     queda sin evaluar) y solo acota la concurrencia — ver
-//     `CONCURRENCIA_HOTELES_UNIDAD`. Dentro de cada hotel, la evaluación SÍ
-//     se corta en el primer éxito (ver `evaluarDisponibilidadHotelUnidad`,
-//     `lib/tarifario/evaluarDisponibilidadUnidad.ts`).
+//     `CONCURRENCIA_HOTELES_UNIDAD`.
 //   · NO vuelve a traer hoteles de otros destinos: el descubrimiento se
 //     acota por destino ANTES de leer por `paquete_id`
 //     (`cargarHotelesBernaloDescubiertos({ destinoId })` — ver más abajo).
@@ -147,7 +153,7 @@ import {
   ofertasPorHotelDe,
   type DisponibilidadUnidadHotel,
   type FilaHotelBusquedaUnidad,
-  type OfertaUnidadConfirmada,
+  type OpcionUnidadConfirmada,
   type VeredictoHotelUnidad,
 } from "@/lib/tarifario/evaluarDisponibilidadUnidad";
 
@@ -155,7 +161,7 @@ import {
 // ESTE archivo (es la frontera pública) — viven físicamente en el módulo
 // puro para que `evaluarDisponibilidadHotelUnidad` los pueda construir sin
 // depender de un archivo `"use server"`.
-export type { DisponibilidadUnidadHotel, OfertaUnidadConfirmada };
+export type { DisponibilidadUnidadHotel, OpcionUnidadConfirmada };
 
 // ── Concurrencia del fan-out interno ─────────────────────────────────────
 // La evaluación es COMPLETA: TODOS los hoteles por unidad del destino
@@ -353,12 +359,22 @@ export async function buscarAlojamientosUnidadPorFechas(
   // Separa veredictos con fundamento de inconcluyentes — un hotel
   // inconcluyente NUNCA entra a `disponibilidad` (ni disponible ni
   // sin_disponibilidad sin fundamento), pero SÍ marca la búsqueda como
-  // incompleta y deja su motivo real en los logs — nunca en silencio.
+  // incompleta y deja su motivo real en los logs — nunca en silencio. Un
+  // hotel `disponible` con `parcial: true` SÍ entra a `disponibilidad` (sus
+  // opciones confirmadas son válidas), pero TAMBIÉN marca `incompleto`: no
+  // todas sus combinaciones se pudieron evaluar con confianza.
   const disponibilidad: DisponibilidadUnidadHotel[] = [];
   let incompleto = false;
   for (const v of veredictos) {
     if (!v) continue; // no debería pasar (todo índice se llena), defensivo
-    if (v.tipo === "veredicto") { disponibilidad.push(v.valor); continue; }
+    if (v.tipo === "veredicto") {
+      disponibilidad.push(v.valor);
+      if (v.parcial) {
+        incompleto = true;
+        console.error(`[buscarAlojamientosUnidadPorFechas] etapa=evaluacion hotelId=${v.valor.hotelId} motivo=parcial_algunas_combinaciones_no_concluyeron`);
+      }
+      continue;
+    }
     incompleto = true;
     console.error(`[buscarAlojamientosUnidadPorFechas] etapa=evaluacion hotelId=${v.hotelId} motivo=${v.motivo}`);
   }

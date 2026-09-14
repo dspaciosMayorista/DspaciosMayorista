@@ -51,12 +51,22 @@ export type FilaHotelBusquedaUnidad = {
 };
 
 /**
- * Identidad pública MÍNIMA de la combinación que REALMENTE pasó
- * `computarReservaBernalo` — nunca el catálogo completo del hotel. Ver el
- * detalle completo en `app/tarifario/busquedaUnidadActions.ts`, que reexporta
- * este tipo (es el shape público de la Server Action).
+ * Identidad + PRECIO público MÍNIMO de UNA combinación categoría×alimentación
+ * que REALMENTE pasó `computarReservaBernalo` — nunca el catálogo completo
+ * del hotel, nunca el resultado interno completo. Ver el detalle completo en
+ * `app/tarifario/busquedaUnidadActions.ts`, que reexporta este tipo (es el
+ * shape público de la Server Action).
+ *
+ * Cierre de la UX de la tarjeta unidad: antes solo viajaba la IDENTIDAD (sin
+ * precio) de la única combinación en la que se cortaba la evaluación — la
+ * tarjeta no podía mostrar precio/pax sin volver a cotizar. Ahora se evalúan
+ * TODAS las combinaciones y cada una que confirme trae también `precioVenta`/
+ * `moneda`/`paxTotal` — construidos CAMPO A CAMPO desde el `ok:true` de
+ * `computarReservaBernalo`, nunca por spread ni reenvío del objeto interno
+ * (que trae costoNeto, proveedor, comisión, snapshot por habitación —
+ * ninguno de esos cruza esta frontera).
  */
-export type OfertaUnidadConfirmada = {
+export type OpcionUnidadConfirmada = {
   hotelId: number;
   hotelNombre: string;
   paqueteId: number;
@@ -64,19 +74,29 @@ export type OfertaUnidadConfirmada = {
   destinoNombre: string | null;
   categoria: string;
   alimentacion: string;
-  moneda: "COP" | "USD" | null;
+  moneda: string;
+  precioVenta: number;
+  paxTotal: number;
   fechaIda: string;
   fechaRegreso: string;
   ocupacion: { id: string; acom: AcomRoom; adultos: number; edadesMenores: number[] }[];
 };
 
 /** Veredicto CONFIRMADO por hotel — solo estas dos formas pueden afirmarse:
- * "disponible" (con la identidad exacta que lo confirmó) o
- * "sin_disponibilidad" (el motor concluyó, con fundamento, que no cubre la
- * búsqueda). Cualquier otra situación es `VeredictoHotelUnidad.tipo ===
- * "inconcluyente"` — nunca se disfraza de una de estas dos. */
+ * "disponible" (con TODAS las combinaciones que confirmaron — nunca solo la
+ * primera) o "sin_disponibilidad" (el motor concluyó, con fundamento, que
+ * ninguna cubre la búsqueda). Cualquier otra situación es
+ * `VeredictoHotelUnidad.tipo === "inconcluyente"` — nunca se disfraza de una
+ * de estas dos.
+ *
+ * `opciones` viene ORDENADA — la primera es la que debe preseleccionarse por
+ * defecto: menor `precioVenta`, y en empate, orden determinista por
+ * `paqueteId`, `categoria`, `alimentacion` (ver `compararOpciones`). Cada
+ * opción del arreglo es una combinación que EFECTIVAMENTE pasó
+ * `computarReservaBernalo` — nunca el producto cartesiano completo si alguna
+ * combinación no fue cotizable. */
 export type DisponibilidadUnidadHotel =
-  | { hotelId: number; estado: "disponible"; oferta: OfertaUnidadConfirmada }
+  | { hotelId: number; estado: "disponible"; opciones: OpcionUnidadConfirmada[] }
   | { hotelId: number; estado: "sin_disponibilidad" };
 
 /**
@@ -87,10 +107,30 @@ export type DisponibilidadUnidadHotel =
  * es lo que permite depurar en los logs de Vercel en vez de ver "cero
  * resultados" sin ninguna pista). Nunca se convierte una inconcluyente en
  * "sin_disponibilidad": eso sería afirmar algo que el motor no concluyó.
+ *
+ * `parcial: true` en un veredicto `disponible` significa: al menos una
+ * combinación SÍ confirmó (por eso hay veredicto, con fundamento), pero
+ * OTRA combinación del mismo hotel falló con un código TÉCNICO (no
+ * "sin disponibilidad" legítima) — el hotel se muestra igual, con las
+ * opciones que sí se pudieron confirmar, pero el llamador debe marcar la
+ * búsqueda completa como `incompleto` (no se evaluó el universo de
+ * combinaciones con total confianza). Nunca se usa para ocultar el hotel:
+ * solo para el aviso agregado de la búsqueda.
  */
 export type VeredictoHotelUnidad =
-  | { tipo: "veredicto"; valor: DisponibilidadUnidadHotel }
+  | { tipo: "veredicto"; valor: DisponibilidadUnidadHotel; parcial?: boolean }
   | { tipo: "inconcluyente"; hotelId: number; motivo: string };
+
+/** Orden de las opciones confirmadas de un hotel: menor `precioVenta`
+ * primero (esa es la preseleccionada por defecto en la tarjeta); en empate,
+ * determinista por `paqueteId` → `categoria` → `alimentacion`, nunca por el
+ * orden de llegada de `Promise`/red. */
+export function compararOpciones(a: OpcionUnidadConfirmada, b: OpcionUnidadConfirmada): number {
+  if (a.precioVenta !== b.precioVenta) return a.precioVenta - b.precioVenta;
+  if (a.paqueteId !== b.paqueteId) return a.paqueteId - b.paqueteId;
+  if (a.categoria !== b.categoria) return a.categoria.localeCompare(b.categoria);
+  return a.alimentacion.localeCompare(b.alimentacion);
+}
 
 // ÚNICAS razones por las que se AFIRMA "sin_disponibilidad": el motor dijo
 // que esa oferta no cubre las fechas pedidas o que no pudo componer una
@@ -157,9 +197,13 @@ export type EntradaComputarDisponibilidad = {
 
 /** Forma MÍNIMA del resultado de `computarReservaBernalo` que esta función
  * necesita — cualquier resultado real es estructuralmente compatible (trae
- * más campos en `ok:true`, y `codigo`/`mensaje` son más específicos). */
+ * MUCHOS más campos en `ok:true` — costoHotelTotal, proveedorHotel,
+ * habitaciones con snapshot, etc. — y `codigo`/`mensaje` son más
+ * específicos). Solo estos 3 campos de `ok:true` se leen para construir
+ * `OpcionUnidadConfirmada`; ninguno de los demás cruza esta frontera porque
+ * este tipo ni siquiera los declara. */
 export type ResultadoComputarDisponibilidad =
-  | { ok: true }
+  | { ok: true; precioVenta: number; moneda: string; paxTotal: number }
   | { ok: false; codigo: string; mensaje: string };
 
 export type EntradaEvaluarHotelUnidad = {
@@ -257,8 +301,14 @@ export async function evaluarDisponibilidadHotelUnidad(
   }
   const ocupacion: HabitacionOcupacionValidada[] = vOcupacion.habitaciones;
 
-  // Decisión acotada: basta el PRIMER combo que confirme al hotel — no hace
-  // falta agotar las demás combinaciones solo para "llenar opciones".
+  // Cierre de la UX de la tarjeta: la evaluación YA NO se corta en el primer
+  // éxito — hace falta reunir TODAS las combinaciones que confirmen, porque
+  // la tarjeta debe ofrecer selectores de categoría/alimentación con
+  // opciones REALES (nunca el producto cartesiano completo si alguna no es
+  // cotizable). El costo adicional es el mismo trabajo que antes se evitaba
+  // a propósito ("decisión acotada") — ahora es requisito del producto, no
+  // un descuido: se paga con más llamadas a `computar`, nunca con menos
+  // combinaciones evaluadas.
   const combos = combinacionesDe(ofertas);
   if (combos.length === 0) {
     // El hotel llegó hasta acá (tiene ofertas `porcion_terrestre`) pero
@@ -268,6 +318,7 @@ export async function evaluarDisponibilidadHotelUnidad(
     return { tipo: "inconcluyente", hotelId, motivo: "sin_combinaciones_para_evaluar" };
   }
 
+  const opciones: OpcionUnidadConfirmada[] = [];
   const codigosNoClasificados = new Set<string>();
   for (const combo of combos) {
     const resultado = await computar({
@@ -279,28 +330,26 @@ export async function evaluarDisponibilidadHotelUnidad(
       habitaciones: ocupacion,
     });
     if (resultado.ok) {
-      // Identidad EXACTA de la combinación que funcionó — nunca el catálogo
-      // completo del hotel.
-      return {
-        tipo: "veredicto",
-        valor: {
-          hotelId,
-          estado: "disponible",
-          oferta: {
-            hotelId,
-            hotelNombre: combo.oferta.hotelNombre,
-            paqueteId: combo.oferta.paqueteId,
-            paqueteNombre: combo.oferta.paqueteNombre,
-            destinoNombre: combo.oferta.destinoNombre,
-            categoria: combo.categoria,
-            alimentacion: combo.alimentacion,
-            moneda: combo.oferta.moneda,
-            fechaIda,
-            fechaRegreso,
-            ocupacion,
-          },
-        },
-      };
+      // Identidad + precio de ESTA combinación — construida campo a campo
+      // desde `combo` (identidad ya conocida) y `resultado` (SOLO
+      // precioVenta/moneda/paxTotal, nunca el objeto completo). Se sigue
+      // evaluando el resto de combos: ninguna se descarta por "ya hay una".
+      opciones.push({
+        hotelId,
+        hotelNombre: combo.oferta.hotelNombre,
+        paqueteId: combo.oferta.paqueteId,
+        paqueteNombre: combo.oferta.paqueteNombre,
+        destinoNombre: combo.oferta.destinoNombre,
+        categoria: combo.categoria,
+        alimentacion: combo.alimentacion,
+        moneda: resultado.moneda,
+        precioVenta: resultado.precioVenta,
+        paxTotal: resultado.paxTotal,
+        fechaIda,
+        fechaRegreso,
+        ocupacion,
+      });
+      continue;
     }
     // El resultado interno NUNCA se guarda ni se reenvía — solo su código,
     // y solo si no está clasificado como "sin disponibilidad" legítima (para
@@ -308,11 +357,24 @@ export async function evaluarDisponibilidadHotelUnidad(
     if (!MOTIVOS_SIN_DISPONIBILIDAD.has(resultado.codigo)) codigosNoClasificados.add(resultado.codigo);
   }
 
-  // Agotadas todas las combinaciones: si TODAS las que no confirmaron lo
-  // hicieron con un motivo de la lista honesta ("sin disponibilidad" real),
-  // recién acá se afirma el veredicto negativo. Si quedó algún código fuera
-  // de esa lista, la evaluación es inconcluyente — con el/los código(s)
-  // reales para diagnóstico, nunca en silencio.
+  // Clasificación final (regla explícita del encargo):
+  //   · algún éxito → disponible, con las opciones confirmadas ordenadas
+  //     (la primera es la preseleccionada por defecto);
+  //   · algún éxito PERO también algún código técnico → disponible igual
+  //     (las opciones que sí confirmaron siguen siendo válidas), marcado
+  //     `parcial` para que el llamador avise que la búsqueda quedó
+  //     incompleta;
+  //   · ningún éxito y todos los códigos son "sin disponibilidad" legítima
+  //     → sin_disponibilidad;
+  //   · ningún éxito y algún código técnico → inconcluyente.
+  if (opciones.length > 0) {
+    opciones.sort(compararOpciones);
+    return {
+      tipo: "veredicto",
+      valor: { hotelId, estado: "disponible", opciones },
+      parcial: codigosNoClasificados.size > 0,
+    };
+  }
   if (codigosNoClasificados.size === 0) {
     return { tipo: "veredicto", valor: { hotelId, estado: "sin_disponibilidad" } };
   }

@@ -241,7 +241,7 @@ function claveHabitacionBernalo(h: HabitacionOcupacionValidada): string {
 // en distinto orden de arreglo deben comparar igual; dos ítems con
 // habitaciones realmente distintas (aunque sea solo una edad distinta en una
 // sola habitación) nunca pueden colisionar.
-function claveOcupacionBernalo(habitaciones: HabitacionOcupacionValidada[]): string {
+export function claveOcupacionBernalo(habitaciones: HabitacionOcupacionValidada[]): string {
   return habitaciones.map(claveHabitacionBernalo).sort().join(";");
 }
 

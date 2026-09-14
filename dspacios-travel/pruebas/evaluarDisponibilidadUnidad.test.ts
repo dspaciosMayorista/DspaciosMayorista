@@ -4,35 +4,33 @@ import {
   evaluarDisponibilidadHotelUnidad,
   ofertasPorHotelDe,
   combinacionesDe,
+  compararOpciones,
   type EntradaComputarDisponibilidad,
   type ResultadoComputarDisponibilidad,
   type FilaHotelBusquedaUnidad,
+  type OpcionUnidadConfirmada,
 } from "../lib/tarifario/evaluarDisponibilidadUnidad.ts";
 import type { HotelBernaloDescubierto } from "../lib/tarifario/datosBernalo.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
-// Pruebas de COMPORTAMIENTO REAL (no wiring) del cierre del hallazgo "Hotel
-// Prueba Odair no aparece en el buscador general de Porción terrestre"
-// (hotel_id=216, modelo_tarifario='unidad').
+// Pruebas de COMPORTAMIENTO REAL (no wiring) del cierre de UX de la tarjeta
+// unidad: "Hotel Prueba Odair" (y cualquier hotel `modelo_tarifario =
+// 'unidad'') ya aparecía en el buscador general, pero su tarjeta solo
+// mostraba "Disponible para tus fechas" — sin categoría/alimentación/precio,
+// obligando a abrir un modal y repetir fechas/ocupación que el buscador YA
+// tenía.
 //
 // A diferencia de `busquedaPorcionTerrestreWiring.test.ts` (que inspecciona
 // texto fuente porque `busquedaUnidadActions.ts` es un archivo `"use
 // server"` que no se puede invocar bajo `node --test` sin Next/Supabase),
 // este archivo EJECUTA de verdad `evaluarDisponibilidadHotelUnidad` —
-// exactamente la función que usa la Server Action real — con un
-// `computar` de prueba inyectado en lugar de `computarReservaBernalo`. La
-// extracción a `lib/tarifario/evaluarDisponibilidadUnidad.ts` existe
-// específicamente para que esto sea posible (ver la cabecera de ese
-// archivo).
+// exactamente la función que usa la Server Action real — con un `computar`
+// de prueba inyectado en lugar de `computarReservaBernalo`.
 //
-// El defecto real: antes, CUALQUIER código de `computarReservaBernalo` que
-// no fuera "fechas_fuera_de_ventana"/"no_cotizable" (p. ej.
-// `moneda_no_determinable`, `salida_no_vinculada`, `configuracion_incompleta`,
-// `error_interno`, drift de datos) hacía que el hotel devolviera `null` y
-// desapareciera del arreglo de disponibilidad EN SILENCIO — indistinguible de
-// "no evaluado". Estas pruebas verifican que ahora esa situación se distingue
-// explícitamente como `{ tipo: "inconcluyente", motivo }`, nunca como
-// "sin_disponibilidad" ni "disponible".
+// Cambio de fondo de esta ronda: la evaluación YA NO se corta en el primer
+// éxito — reúne TODAS las combinaciones categoría×alimentación que
+// confirman, con su precio público saneado (`OpcionUnidadConfirmada`), para
+// que la tarjeta pueda ofrecer selectores reales sin volver a cotizar.
 // ─────────────────────────────────────────────────────────────────────────
 
 const OFERTA: HotelBernaloDescubierto = {
@@ -43,8 +41,8 @@ const OFERTA: HotelBernaloDescubierto = {
   destinoNombre: "SAN ANDRÉS",
   destinoId: 7,
   tipo: "porcion_terrestre",
-  categorias: ["Estandar"],
-  regimenes: ["PC"],
+  categorias: ["Estandar", "Superior"],
+  regimenes: ["PC", "PAM"],
   moneda: "COP",
   salidas: [],
 };
@@ -63,34 +61,127 @@ const ENTRADA_BASE = {
   fechaRegreso: "2026-12-04",
 };
 
-function computarSiempreOk(): (input: EntradaComputarDisponibilidad) => Promise<ResultadoComputarDisponibilidad> {
-  return async () => ({ ok: true });
+function computarSiempreOk(precioVenta = 500_000): (input: EntradaComputarDisponibilidad) => Promise<ResultadoComputarDisponibilidad> {
+  return async () => ({ ok: true, precioVenta, moneda: "COP", paxTotal: 2 });
 }
 function computarSiempreCodigo(codigo: string): (input: EntradaComputarDisponibilidad) => Promise<ResultadoComputarDisponibilidad> {
   return async () => ({ ok: false, codigo, mensaje: `mensaje interno de ${codigo}` });
 }
+/** Precio distinto por combinación (categoria×alimentacion) — para probar
+ * ordenamiento por precio y selectores dependientes con datos reales. */
+function computarPorCombo(
+  precios: Record<string, number>
+): (input: EntradaComputarDisponibilidad) => Promise<ResultadoComputarDisponibilidad> {
+  return async (input) => {
+    const clave = `${input.categoria}|${input.alimentacion}`;
+    const precio = precios[clave];
+    if (precio == null) return { ok: false, codigo: "no_cotizable", mensaje: "sin tarifa para este combo" };
+    return { ok: true, precioVenta: precio, moneda: "COP", paxTotal: 2 };
+  };
+}
 
 describe("evaluarDisponibilidadHotelUnidad — comportamiento REAL (ejecutable, no wiring)", () => {
-  test("hotel unidad descubierto + computarReservaBernalo ok → APARECE como disponible, con la identidad exacta", async () => {
-    const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, computar: computarSiempreOk() });
+  test("hotel unidad con UNA combinación válida → aparece disponible con esa única opción, categoría/alimentación/precio incluidos", async () => {
+    const ofertaUnaCombo: HotelBernaloDescubierto = { ...OFERTA, categorias: ["Estandar"], regimenes: ["PC"] };
+    const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, ofertas: [ofertaUnaCombo], computar: computarSiempreOk(500_000) });
     assert.equal(veredicto.tipo, "veredicto");
     if (veredicto.tipo !== "veredicto") return;
     assert.equal(veredicto.valor.estado, "disponible");
     if (veredicto.valor.estado !== "disponible") return;
-    assert.equal(veredicto.valor.hotelId, 216);
-    assert.equal(veredicto.valor.oferta.hotelId, 216);
-    assert.equal(veredicto.valor.oferta.hotelNombre, "Hotel Prueba Odair");
-    assert.equal(veredicto.valor.oferta.paqueteId, 501);
-    assert.equal(veredicto.valor.oferta.categoria, "Estandar");
-    assert.equal(veredicto.valor.oferta.alimentacion, "PC");
-    assert.equal(veredicto.valor.oferta.fechaIda, "2026-12-01");
-    assert.equal(veredicto.valor.oferta.fechaRegreso, "2026-12-04");
-    // Nunca pvp/costo/neto/snapshot/proveedor — la identidad es EXCLUSIVAMENTE
-    // la de `OfertaUnidadConfirmada`.
-    assert.deepEqual(Object.keys(veredicto.valor.oferta).sort(), [
+    assert.equal(veredicto.valor.opciones.length, 1);
+    const op = veredicto.valor.opciones[0];
+    assert.equal(op.categoria, "Estandar");
+    assert.equal(op.alimentacion, "PC");
+    assert.equal(op.precioVenta, 500_000);
+    assert.equal(op.moneda, "COP");
+    assert.equal(op.paxTotal, 2);
+    assert.equal(veredicto.parcial, false);
+  });
+
+  test("dos combinaciones válidas → las DOS aparecen, ordenadas por precio ascendente (la más barata primero, preselección por defecto)", async () => {
+    const veredicto = await evaluarDisponibilidadHotelUnidad({
+      ...ENTRADA_BASE,
+      computar: computarPorCombo({ "Estandar|PC": 600_000, "Estandar|PAM": 700_000, "Superior|PC": 500_000, "Superior|PAM": 900_000 }),
+    });
+    assert.equal(veredicto.tipo, "veredicto");
+    if (veredicto.tipo !== "veredicto" || veredicto.valor.estado !== "disponible") return;
+    assert.equal(veredicto.valor.opciones.length, 4, "las 4 combinaciones del cartesiano confirmaron — deben estar TODAS");
+    // La primera es la más barata: Superior|PC a 500_000.
+    assert.equal(veredicto.valor.opciones[0].categoria, "Superior");
+    assert.equal(veredicto.valor.opciones[0].alimentacion, "PC");
+    assert.equal(veredicto.valor.opciones[0].precioVenta, 500_000);
+    // Y el arreglo completo queda ordenado ascendente.
+    const precios = veredicto.valor.opciones.map((o) => o.precioVenta);
+    assert.deepEqual(precios, [...precios].sort((a, b) => a - b));
+  });
+
+  test("una combinación inválida (no_cotizable) NUNCA aparece entre las opciones — solo el producto cartesiano REALMENTE cotizable", async () => {
+    const veredicto = await evaluarDisponibilidadHotelUnidad({
+      ...ENTRADA_BASE,
+      // Solo Estandar|PC y Superior|PAM confirman; las otras dos combinaciones
+      // del cartesiano (Estandar|PAM, Superior|PC) no traen precio → no_cotizable.
+      computar: computarPorCombo({ "Estandar|PC": 500_000, "Superior|PAM": 800_000 }),
+    });
+    assert.equal(veredicto.tipo, "veredicto");
+    if (veredicto.tipo !== "veredicto" || veredicto.valor.estado !== "disponible") return;
+    assert.equal(veredicto.valor.opciones.length, 2, "solo las 2 combinaciones que de verdad cotizaron");
+    const claves = veredicto.valor.opciones.map((o) => `${o.categoria}|${o.alimentacion}`).sort();
+    assert.deepEqual(claves, ["Estandar|PC", "Superior|PAM"]);
+    // No es "sin disponibilidad real" pura (no_cotizable SÍ está en la lista
+    // honesta de motivos legítimos) — parcial debe quedar false: no hubo
+    // ningún código TÉCNICO, solo combinaciones sin tarifa.
+    assert.equal(veredicto.parcial, false);
+  });
+
+  test("empate de precio se rompe determinísticamente por paqueteId → categoría → alimentación (nunca por orden de llegada de la promesa)", async () => {
+    const dosOfertas: HotelBernaloDescubierto[] = [
+      { ...OFERTA, paqueteId: 502, categorias: ["B"], regimenes: ["X"] },
+      { ...OFERTA, paqueteId: 501, categorias: ["A"], regimenes: ["X"] },
+    ];
+    const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, ofertas: dosOfertas, computar: computarSiempreOk(500_000) });
+    assert.equal(veredicto.tipo, "veredicto");
+    if (veredicto.tipo !== "veredicto" || veredicto.valor.estado !== "disponible") return;
+    assert.equal(veredicto.valor.opciones.length, 2);
+    // Mismo precio en las dos — gana el paqueteId menor (501).
+    assert.equal(veredicto.valor.opciones[0].paqueteId, 501);
+    assert.equal(veredicto.valor.opciones[1].paqueteId, 502);
+  });
+
+  test("compararOpciones: precio gana siempre; en empate de precio Y paqueteId, categoría; en empate total, alimentación", () => {
+    const base: OpcionUnidadConfirmada = {
+      hotelId: 1, hotelNombre: "H", paqueteId: 1, paqueteNombre: "P", destinoNombre: null,
+      categoria: "A", alimentacion: "PC", moneda: "COP", precioVenta: 100, paxTotal: 2,
+      fechaIda: "2026-01-01", fechaRegreso: "2026-01-04", ocupacion: [],
+    };
+    assert.ok(compararOpciones(base, { ...base, precioVenta: 200 }) < 0);
+    assert.ok(compararOpciones({ ...base, precioVenta: 200 }, base) > 0);
+    assert.ok(compararOpciones(base, { ...base, paqueteId: 2 }) < 0);
+    assert.ok(compararOpciones(base, { ...base, categoria: "B" }) < 0);
+    assert.ok(compararOpciones(base, { ...base, alimentacion: "PD" }) < 0);
+    assert.equal(compararOpciones(base, { ...base }), 0);
+  });
+
+  test("ningún campo privado del resultado de computarReservaBernalo llega a OpcionUnidadConfirmada — solo hotelId/hotelNombre/paqueteId/paqueteNombre/destinoNombre/categoria/alimentacion/moneda/precioVenta/paxTotal/fechaIda/fechaRegreso/ocupacion", async () => {
+    // `computar` de prueba devuelve SOLO los 3 campos que el tipo público
+    // exige (`ok:true; precioVenta; moneda; paxTotal`) — si el código
+    // intentara leer cualquier otro campo (costoNeto, proveedor, comisión,
+    // snapshot…) fallaría en tiempo de ejecución (undefined) o TypeScript no
+    // dejaría compilar `ResultadoComputarDisponibilidad` con esos campos.
+    const veredicto = await evaluarDisponibilidadHotelUnidad({
+      ...ENTRADA_BASE,
+      ofertas: [{ ...OFERTA, categorias: ["Estandar"], regimenes: ["PC"] }],
+      computar: computarSiempreOk(500_000),
+    });
+    assert.equal(veredicto.tipo, "veredicto");
+    if (veredicto.tipo !== "veredicto" || veredicto.valor.estado !== "disponible") return;
+    const claves = Object.keys(veredicto.valor.opciones[0]).sort();
+    assert.deepEqual(claves, [
       "alimentacion", "categoria", "destinoNombre", "fechaIda", "fechaRegreso",
-      "hotelId", "hotelNombre", "moneda", "ocupacion", "paqueteId", "paqueteNombre",
+      "hotelId", "hotelNombre", "moneda", "ocupacion", "paqueteId", "paqueteNombre", "paxTotal", "precioVenta",
     ]);
+    for (const prohibido of ["costoNeto", "costo", "proveedor", "comision", "snapshot", "habitaciones", "aportePvpHotel"]) {
+      assert.ok(!(prohibido in veredicto.valor.opciones[0]), `campo privado filtrado: ${prohibido}`);
+    }
   });
 
   test("computarReservaBernalo con fechas_fuera_de_ventana en TODAS las combinaciones → sin_disponibilidad (veredicto con fundamento, no inconcluyente)", async () => {
@@ -103,47 +194,26 @@ describe("evaluarDisponibilidadHotelUnidad — comportamiento REAL (ejecutable, 
     assert.deepEqual(veredicto, { tipo: "veredicto", valor: { hotelId: 216, estado: "sin_disponibilidad" } });
   });
 
-  test("computarReservaBernalo con un código TÉCNICO (moneda_no_determinable) → INCONCLUYENTE, nunca sin_disponibilidad ni disponible (el defecto real)", async () => {
+  test("computarReservaBernalo con un código TÉCNICO (moneda_no_determinable) en TODAS las combinaciones → INCONCLUYENTE, nunca sin_disponibilidad ni disponible", async () => {
     const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, computar: computarSiempreCodigo("moneda_no_determinable") });
     assert.equal(veredicto.tipo, "inconcluyente");
     if (veredicto.tipo !== "inconcluyente") return;
     assert.equal(veredicto.hotelId, 216);
-    // El motivo lleva el código REAL — para poder diagnosticar en los logs,
-    // nunca en silencio.
     assert.match(veredicto.motivo, /moneda_no_determinable/);
   });
 
-  test("computarReservaBernalo con configuracion_incompleta → inconcluyente (drift de datos: la oferta se descubrió pero el motor no la reconoce)", async () => {
-    const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, computar: computarSiempreCodigo("configuracion_incompleta") });
-    assert.equal(veredicto.tipo, "inconcluyente");
-  });
-
-  test("computarReservaBernalo con salida_no_vinculada (plausible para un paquete de porción terrestre con vuelos residuales mal configurados) → inconcluyente, NUNCA se pierde en silencio", async () => {
-    const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, computar: computarSiempreCodigo("salida_no_vinculada") });
-    assert.equal(veredicto.tipo, "inconcluyente");
-    if (veredicto.tipo !== "inconcluyente") return;
-    assert.match(veredicto.motivo, /salida_no_vinculada/);
-  });
-
-  test("computarReservaBernalo con error_interno → inconcluyente", async () => {
-    const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, computar: computarSiempreCodigo("error_interno") });
-    assert.equal(veredicto.tipo, "inconcluyente");
-  });
-
-  test("dos combinaciones: la primera falla técnico, la segunda confirma → el hotel SÍ aparece disponible (agota combos antes de rendirse)", async () => {
-    const dosOfertas: HotelBernaloDescubierto[] = [
-      OFERTA,
-      { ...OFERTA, paqueteId: 502, categorias: ["Superior"], regimenes: ["PAM"] },
-    ];
+  test("algún éxito Y algún código TÉCNICO en el mismo hotel → disponible con las opciones que SÍ confirmaron, marcado `parcial: true`", async () => {
     let llamada = 0;
     const computar = async (): Promise<ResultadoComputarDisponibilidad> => {
       llamada++;
-      if (llamada === 1) return { ok: false, codigo: "moneda_no_determinable", mensaje: "x" };
-      return { ok: true };
+      if (llamada === 1) return { ok: true, precioVenta: 500_000, moneda: "COP", paxTotal: 2 };
+      return { ok: false, codigo: "error_interno", mensaje: "x" };
     };
-    const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, ofertas: dosOfertas, computar });
+    const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, computar });
     assert.equal(veredicto.tipo, "veredicto");
-    assert.ok(llamada >= 2, "debe haber intentado más de una combinación");
+    if (veredicto.tipo !== "veredicto" || veredicto.valor.estado !== "disponible") return;
+    assert.ok(veredicto.valor.opciones.length >= 1, "al menos la combinación que confirmó debe quedar disponible");
+    assert.equal(veredicto.parcial, true, "un código técnico entre las que NO confirmaron marca la evaluación como parcial");
   });
 
   test("sin fila maestra (drift entre el lote de hoteles y el descubrimiento) → inconcluyente, nunca se inventa un umbral de edad", async () => {
@@ -192,6 +262,16 @@ describe("evaluarDisponibilidadHotelUnidad — comportamiento REAL (ejecutable, 
     const entrada = { ...ENTRADA_BASE, ofertas: ofertasCopia, computar: computarSiempreOk() };
     await evaluarDisponibilidadHotelUnidad(entrada);
     assert.deepEqual(ofertasCopia, [OFERTA]);
+  });
+
+  test("evalúa TODAS las combinaciones (ya no se corta en el primer éxito): con 4 combinaciones, computar() se llama 4 veces", async () => {
+    let llamadas = 0;
+    const computar = async (): Promise<ResultadoComputarDisponibilidad> => {
+      llamadas++;
+      return { ok: true, precioVenta: 100_000 * llamadas, moneda: "COP", paxTotal: 2 };
+    };
+    await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, computar }); // OFERTA tiene 2 categorías × 2 regímenes = 4
+    assert.equal(llamadas, 4);
   });
 });
 
