@@ -9,6 +9,7 @@ import type { Tenant } from "@/lib/tenant";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { Eye } from "lucide-react";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
+import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
 
 // ¿Quien mira puede ver el contrato COMPLETO, o solo la parte comercial?
 // Un asesor consultando el contrato de un colega de su agencia recibe el
@@ -71,6 +72,7 @@ export default async function ContratoImprimiblePage({
     { data: planes },
     { data: contratoCondiciones },
     { data: overridesCondiciones },
+    habitacionesBernalo,
   ] = await Promise.all([
     // Las dos vistas, no las tablas base: desde la migración 144 el rol
     // `venta` no lee `ventas`, y desde la 148 tampoco `contrato_vuelos`.
@@ -93,6 +95,11 @@ export default async function ContratoImprimiblePage({
     sb.from("planes_alimentacion").select("codigo, nombre, nota_especial"),
     sb.from("contrato_condiciones").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("restriccion_overrides").select("*").eq("numero_contrato", numero).order("creado_en"),
+    // Fase 3F-4B: frontera service-role propia (la tabla no tiene ninguna
+    // policy) — se llama AQUÍ, después de que `resolverAlcance` ya autorizó
+    // el acceso a este número de contrato (regla 19). Vacío para contratos
+    // persona (nunca escriben esta tabla).
+    habitacionesBernaloDeContrato(numero),
   ]);
 
   if (!venta) notFound();
@@ -155,6 +162,7 @@ export default async function ContratoImprimiblePage({
             totalPagado={totalPagado}
             agencia={agencia}
             condiciones={condicionesResueltas}
+            habitacionesBernalo={habitacionesBernalo}
           />
         </div>
       </div>

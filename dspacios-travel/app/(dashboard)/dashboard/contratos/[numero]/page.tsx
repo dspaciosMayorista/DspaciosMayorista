@@ -121,7 +121,7 @@ export default async function ContratoDetallePage({
   // también — cuatro consultas cuyo resultado nadie llegaba a mostrar.
   const [{ data: itemsC }, { data: hotelesC }, { data: vuelosC }, { data: serviciosC }] = esSuperadmin
     ? await Promise.all([
-        sb.from("contrato_items").select("descripcion, adultos, ninos, tarifa_adulto, tarifa_nino").eq("numero_contrato", numero).order("orden"),
+        sb.from("contrato_items").select("descripcion, adultos, ninos, tarifa_adulto, tarifa_nino, modo_precio, valor_total").eq("numero_contrato", numero).order("orden"),
         sb.from("contrato_hoteles").select("nombre, categoria, proveedor, ciudad, alimentacion, acomodacion, detalle_acomodacion, fecha_ingreso, fecha_salida").eq("numero_contrato", numero).order("orden"),
         sb.from("contrato_vuelos").select("aerolinea, record, direccion, origen_codigo, destino_codigo, numero_vuelo, fecha_salida, hora_salida, hora_llegada, servicios").eq("numero_contrato", numero).order("orden"),
         sb.from("contrato_servicios").select("tipo, descripcion, proveedor, costo").eq("numero_contrato", numero).order("orden"),
@@ -447,6 +447,7 @@ export default async function ContratoDetallePage({
           items={(itemsC ?? []).map((i) => ({
             descripcion: i.descripcion ?? "", adultos: i.adultos ?? 0, ninos: i.ninos ?? 0,
             tarifaAdulto: i.tarifa_adulto ?? 0, tarifaNino: i.tarifa_nino ?? 0,
+            modoPrecio: i.modo_precio ?? "por_persona", valorTotal: i.valor_total ?? null,
           }))}
           hoteles={(hotelesC ?? []).map((h) => ({
             nombre: h.nombre ?? "", categoria: h.categoria ?? "", proveedor: h.proveedor ?? "",

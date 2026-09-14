@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
+import { totalVisibleContratoItems, valorVisibleContratoItem } from "@/lib/contrato/valorContratoItem";
 import {
   guardarItemsContrato, guardarHotelesContrato, guardarVuelosContrato,
   guardarServiciosContrato, sincronizarPrecioVenta,
@@ -51,8 +52,21 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, items, ho
   const [fVuelos, setFVuelos] = useState<VueloContenido[]>(vuelos);
   const [fServicios, setFServicios] = useState<ServicioContenido[]>(servicios);
 
-  const totalItems = fItems.reduce((s, it) => s + it.adultos * it.tarifaAdulto + it.ninos * it.tarifaNino, 0);
+  // Cierre 3F-4B: helper ÚNICO (lib/contrato/valorContratoItem.ts) — una
+  // línea `modo_precio = "total"` (Bernalo) suma `valorTotal`, nunca $0.
+  const totalItems = totalVisibleContratoItems(
+    fItems.map((it) => ({
+      modo_precio: it.modoPrecio ?? "por_persona", valor_total: it.valorTotal ?? null,
+      adultos: it.adultos, ninos: it.ninos, tarifa_adulto: it.tarifaAdulto, tarifa_nino: it.tarifaNino,
+    }))
+  );
   const descuadre = Math.abs(totalItems - precioVenta) > 0.5;
+  // Este editor (adultos/ninos/tarifa_adulto/tarifa_nino) no sabe editar ni
+  // reenviar una línea Bernalo intacta — `guardarItemsContrato` la protege
+  // en el servidor (rechaza el guardado completo), pero la UI avisa ANTES
+  // de que el superadmin pierda tiempo editando algo que el servidor va a
+  // rechazar.
+  const hayLineaTotal = fItems.some((it) => it.modoPrecio === "total");
 
   function correr(fn: () => Promise<{ ok: true } | { ok: false; error: string }>, exito: string) {
     setMsg(""); setOk("");
@@ -106,21 +120,44 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, items, ho
       {seccion === "items" && (
         <div className="space-y-3">
           <p className="text-xs text-gray-500">Es lo que ve el cliente en el documento del contrato.</p>
+          {hayLineaTotal && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Este contrato tiene una línea de precio total (hotel con tarifa por habitación / Bernalo, resaltada
+              abajo) — este editor todavía no sabe editarla ni reenviarla intacta, así que &quot;Guardar
+              ítems&quot; queda deshabilitado para no destruirla. Contacta al equipo técnico si necesitas
+              corregirla.
+            </p>
+          )}
           {fItems.map((it, i) => (
-            <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-6">
-              <div className="md:col-span-2">
-                <label className={lblCls}>Descripción</label>
-                <Input className={inputCls} value={it.descripcion} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, descripcion: e.target.value } : x))} />
+            it.modoPrecio === "total" ? (
+              // Línea Bernalo — SOLO LECTURA: el formulario no captura
+              // valor_total, así que nunca se le deja "editar" campos que de
+              // todas formas el servidor va a ignorar/rechazar.
+              <div key={i} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="text-xs font-medium text-amber-800">{it.descripcion} (línea de precio total)</div>
+                <div className="mt-1 text-xs text-amber-700">
+                  Valor: {formatMoneda(valorVisibleContratoItem({
+                    modo_precio: it.modoPrecio ?? "total", valor_total: it.valorTotal ?? null,
+                    adultos: it.adultos, ninos: it.ninos, tarifa_adulto: it.tarifaAdulto, tarifa_nino: it.tarifaNino,
+                  }), moneda)} — no editable en este formulario.
+                </div>
               </div>
-              <div><label className={lblCls}>Adultos</label><Input type="number" min={0} value={it.adultos} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, adultos: Number(e.target.value) || 0 } : x))} /></div>
-              <div><label className={lblCls}>Niños</label><Input type="number" min={0} value={it.ninos} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, ninos: Number(e.target.value) || 0 } : x))} /></div>
-              <div><label className={lblCls}>Tarifa adulto</label><Input type="number" min={0} value={it.tarifaAdulto} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, tarifaAdulto: Number(e.target.value) || 0 } : x))} /></div>
-              <div><label className={lblCls}>Tarifa niño</label><Input type="number" min={0} value={it.tarifaNino} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, tarifaNino: Number(e.target.value) || 0 } : x))} /></div>
-              <div className="md:col-span-6 flex items-center justify-between">
-                <span className="text-xs text-gray-500">Subtotal: {formatMoneda(it.adultos * it.tarifaAdulto + it.ninos * it.tarifaNino, moneda)}</span>
-                <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setFItems((a) => a.filter((_, j) => j !== i))}>Quitar</button>
+            ) : (
+              <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-6">
+                <div className="md:col-span-2">
+                  <label className={lblCls}>Descripción</label>
+                  <Input className={inputCls} value={it.descripcion} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, descripcion: e.target.value } : x))} />
+                </div>
+                <div><label className={lblCls}>Adultos</label><Input type="number" min={0} value={it.adultos} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, adultos: Number(e.target.value) || 0 } : x))} /></div>
+                <div><label className={lblCls}>Niños</label><Input type="number" min={0} value={it.ninos} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, ninos: Number(e.target.value) || 0 } : x))} /></div>
+                <div><label className={lblCls}>Tarifa adulto</label><Input type="number" min={0} value={it.tarifaAdulto} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, tarifaAdulto: Number(e.target.value) || 0 } : x))} /></div>
+                <div><label className={lblCls}>Tarifa niño</label><Input type="number" min={0} value={it.tarifaNino} onChange={(e) => setFItems((a) => a.map((x, j) => j === i ? { ...x, tarifaNino: Number(e.target.value) || 0 } : x))} /></div>
+                <div className="md:col-span-6 flex items-center justify-between">
+                  <span className="text-xs text-gray-500">Subtotal: {formatMoneda(it.adultos * it.tarifaAdulto + it.ninos * it.tarifaNino, moneda)}</span>
+                  <button type="button" className="text-xs text-gray-400 hover:text-red-500" onClick={() => setFItems((a) => a.filter((_, j) => j !== i))}>Quitar</button>
+                </div>
               </div>
-            </div>
+            )
           ))}
           <button type="button" className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() => setFItems((a) => [...a, { descripcion: "", adultos: 1, ninos: 0, tarifaAdulto: 0, tarifaNino: 0 }])}>
@@ -151,7 +188,7 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, items, ho
             )}
           </div>
 
-          <Button disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}
+          <Button disabled={pending || hayLineaTotal} style={{ backgroundColor: "var(--brand-primary)" }}
             onClick={() => correr(() => guardarItemsContrato(numero, fItems), "Ítems guardados.")}>
             {pending ? "Guardando…" : "Guardar ítems"}
           </Button>

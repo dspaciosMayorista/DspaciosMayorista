@@ -1,20 +1,102 @@
 "use client";
 
-import { useId, useMemo, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import { formatCOP } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { buscarHoteles } from "@/app/(dashboard)/dashboard/reservar/actions";
+import { buscarAlojamientosUnidadPorFechas, type DisponibilidadUnidadHotel, type ResultadoBusquedaUnidad } from "./busquedaUnidadActions";
 import { type BusquedaResultado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 import { EDAD_MENOR_MAX, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseEdadMenor } from "@/lib/reservar/edadesMenores";
+import type { DestinoPorcionOpcion } from "@/lib/tarifario/destinosPorcion";
+
+// Veredicto POSITIVO del servidor sobre un hotel por unidad para las fechas y
+// la ocupación declaradas (`buscarAlojamientosUnidadPorFechas`). Se deriva del
+// tipo de la acción en vez de declararlo de nuevo: así el filtro del cliente
+// ("solo lo confirmado disponible") y lo que la acción puede devolver no
+// pueden divergir sin que el build lo note.
+export type AlojamientoUnidadDisponible = Extract<DisponibilidadUnidadHotel, { estado: "disponible" }>;
+
+// Lo que este buscador comunica HACIA ARRIBA (`VistaBooking`) cuando una
+// búsqueda se ejecutó con éxito — y `null` cuando se limpia o los criterios
+// dejan de corresponder a los resultados mostrados.
+//
+// Por qué sube TODO: este buscador ya NO pinta resultados. Antes renderizaba
+// su propia lista de filas persona y `VistaBooking` volvía a renderizar su
+// grilla de tarjetas (unidad + exploración) DEBAJO: dos listas visuales, dos
+// contadores y dos estados vacíos para una sola búsqueda. Ahora hay una única
+// colección y `VistaBooking` la pinta en una única grilla.
+export type EstadoBusquedaPorcion = {
+  /** Destino efectivamente buscado. Siempre una cadena con contenido: este
+   * buscador NO busca "todos los destinos" — el destino es obligatorio (ver
+   * `buscar()`), así que no existe un estado con `""` que `VistaBooking` tenga
+   * que interpretar como "sin filtro". Con esto `VistaBooking` cierra la grilla
+   * al destino buscado. */
+  destino: string;
+  fechaIda: string;
+  fechaRegreso: string;
+  /** Filas persona devueltas por `buscarHoteles` — EXCLUSIVAMENTE las que el
+   * motor validó contra fechas, ocupación y tarifa. Nunca se completa con la
+   * grilla precargada de exploración: por eso un hotel que el motor rechazó no
+   * puede reaparecer acá. */
+  resultados: BusquedaResultado[];
+  /** Motivo real por el que el motor no devolvió filas (ver
+   * `lib/reservar/cotizar.ts`), o `null` si no aplica. */
+  diagnostico: string | null;
+  /** Fechas alternativas con tarifa. Solo llegan cuando el motor no alcanzó a
+   * evaluar ningún hotel (motivo de fechas), nunca por un problema de
+   * composición — cambiar de fecha no resuelve un problema de capacidad. */
+  sugerenciasFecha: SugerenciaFecha[];
+  /** Alojamientos por unidad (Bernalo) del destino que el servidor CONFIRMÓ
+   * disponibles. Los `sin_disponibilidad` NO entran acá (no son un resultado
+   * disponible) y un estado desconocido por error técnico tampoco se anuncia
+   * — ver `MOTIVOS_SIN_DISPONIBILIDAD` en `evaluarDisponibilidadUnidad.ts`. */
+  unidad: AlojamientoUnidadDisponible[];
+  /** Aviso NO bloqueante cuando la mitad "unidad" de la búsqueda no se pudo
+   * completar con confianza — fallo técnico real (`ok:false`) o evaluación
+   * parcial (`incompleto:true`, al menos un hotel quedó inconcluyente). Los
+   * resultados PERSONA (`resultados`) siguen siendo válidos y se muestran
+   * igual: un fallo de la mitad unidad nunca oculta la mitad persona ni se
+   * disfraza de "no hay alojamientos por unidad en este destino" (fallo
+   * estructural corregido — ver `busquedaUnidadActions.ts`). `null` = la
+   * búsqueda unidad se completó con confianza (o no había nada que evaluar). */
+  avisoUnidad: string | null;
+};
+
+// Huella de los criterios de una búsqueda — sirve para detectar que el usuario
+// cambió un campo DESPUÉS de buscar y que, por lo tanto, los resultados ya
+// mostrados no corresponden a lo que está en pantalla.
+function huellaBusqueda(a: {
+  destino: string; destinoId: number | null; fIda: string; fReg: string; adultos: string;
+  habs: AcomRoom[]; cantidadMenores: number; edadesTxt: string[];
+}): string {
+  return [a.destino, a.destinoId ?? "", a.fIda, a.fReg, a.adultos, a.habs.join(","), a.cantidadMenores, a.edadesTxt.join(",")].join("|");
+}
 
 export function BuscadorBooking({
-  fotosPorHotel = {}, infoPorHotel = {}, destinos = [],
+  destinos = [], onBusqueda, sugerenciaPedida = null,
 }: {
-  fotosPorHotel?: Record<number, string>;
-  infoPorHotel?: Record<number, { estrellas: number | null; clasificacion: string | null; descripcion: string | null; adultsOnly?: boolean; petFriendly?: boolean }>;
-  destinos?: string[];
+  /** Destinos ofrecibles: la UNIÓN real de Porción terrestre (persona +
+   * unidad, deduplicada y ordenada — `destinosPorcionPublica`). Es la lista
+   * que hace que un destino que solo existe por hoteles unidad sea
+   * SELECCIONABLE y, por lo tanto, buscable desde acá: el motor
+   * (`buscarHoteles` + `buscarAlojamientosUnidadPorFechas`) ya sabe
+   * resolverlo, pero con la lista vieja solo-persona ese destino ni siquiera
+   * aparecía en el desplegable. Cada opción trae su `id` (`destinos.id`)
+   * cuando se conoce — la búsqueda unidad lo manda tal cual a la Server
+   * Action, que ya no tiene que re-resolverlo por texto (cierre del hallazgo
+   * de identidad de destino: dos registros de `destinos` pueden diferir por
+   * mayúsculas/espacios, y una resolución por nombre dentro de la acción
+   * podía no encontrar el id correcto). */
+  destinos?: DestinoPorcionOpcion[];
+  /** Canal hacia `VistaBooking` — ver `EstadoBusquedaPorcion`. */
+  onBusqueda?: (estado: EstadoBusquedaPorcion | null) => void;
+  /** Sugerencia de fecha elegida por el usuario. Los chips viven en
+   * `VistaBooking` (junto al estado vacío unificado) y bajan por acá con un
+   * `nonce` que se incrementa en cada clic: el efecto de abajo aplica la fecha
+   * y repite la búsqueda UNA vez por clic, nunca en cada render. */
+  sugerenciaPedida?: (SugerenciaFecha & { nonce: number }) | null;
 }) {
   const idBase = useId();
   const hoy = new Date().toISOString().slice(0, 10);
@@ -22,6 +104,13 @@ export function BuscadorBooking({
   const [fReg, setFReg] = useState("");
   const [adultos, setAdultos] = useState("2");
   const [destino, setDestino] = useState("");
+  // Identidad ESTABLE del destino elegido (`destinos.id`) — viaja junto al
+  // nombre, nunca en su lugar: `buscarHoteles` (persona) solo conoce nombre
+  // (`tarifario_resultado` no tiene `destino_id`, ver `destinosPorcion.ts`),
+  // así que el nombre sigue siendo obligatorio. `null` cuando la opción
+  // elegida no trae id (destino solo-persona) — la búsqueda unidad cae
+  // entonces a su camino legado por nombre dentro de la Server Action.
+  const [destinoId, setDestinoId] = useState<number | null>(null);
   const [nHab, setNHab] = useState("1");
   const [habs, setHabs] = useState<AcomRoom[]>(["doble"]);
   const [cantidadMenores, setCantidadMenoresState] = useState(0);
@@ -29,21 +118,72 @@ export function BuscadorBooking({
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [avisoHab, setAvisoHab] = useState("");
-  const [resultados, setResultados] = useState<BusquedaResultado[] | null>(null);
-  const [diagnostico, setDiagnostico] = useState<string | null>(null);
-  // Sugerencias de fecha cuando la búsqueda entera queda en 0 hoteles SOLO
-  // por motivo de fechas (ningún hotel llegó siquiera a evaluar capacidad/
-  // edad/Adults Only — ver lib/reservar/cotizar.ts) — nunca cuando el motivo
-  // real es de composición (ahí `diagnostico` ya cubre el caso, y mostrar
-  // fechas sería engañoso: cambiar de fecha no resuelve un problema de
-  // capacidad).
-  const [sugerenciasFecha, setSugerenciasFecha] = useState<SugerenciaFecha[] | null>(null);
-  const [soloPetFriendly, setSoloPetFriendly] = useState(false);
-  const [soloAdultsOnly, setSoloAdultsOnly] = useState(false);
+  // Huella de los criterios con los que se ejecutó la ÚLTIMA búsqueda (`null`
+  // = no hay búsqueda vigente). Gobierna la visibilidad de "Limpiar
+  // resultados": el botón sólo tiene sentido mientras lo pintado provenga de
+  // una búsqueda. Identifica criterios (ver `buscar`), pero NO es la
+  // protección contra respuestas fuera de orden (ver `generacionBusquedaRef`).
+  // Los resultados en sí NO se guardan acá — se suben a `VistaBooking` (ver
+  // `EstadoBusquedaPorcion`).
+  const [huellaBuscada, setHuellaBuscada] = useState<string | null>(null);
+
+  // Generación de solicitud: la protección REAL contra respuestas fuera de
+  // orden. Se incrementa de forma SÍNCRONA, dentro del mismo evento que
+  // invalida lo vigente — nunca desde un `useEffect` posterior que sincronice
+  // una huella. Esa vía (la que este mecanismo reemplaza) tenía una ventana:
+  // el evento que cambia un criterio limpia resultados y programa el cambio
+  // de estado, pero el efecto que actualizaba la huella "viva" solo corría en
+  // el render SIGUIENTE — una respuesta que llegaba justo entre medio todavía
+  // veía la huella vieja y se publicaba igual.
+  //
+  // Cada búsqueda captura su propia generación (`miGeneracion`) al arrancar
+  // (`buscar()`); al resolver, solo publica si `generacionBusquedaRef.current`
+  // sigue siendo esa MISMA generación — no "la más reciente vista", sino la
+  // exacta, así que el orden de llegada de las respuestas no importa: solo
+  // importa cuál fue la ÚLTIMA en arrancar. Toda invalidación pasa por acá:
+  // `limpiarResultados()` incrementa (limpiar sin volver a buscar también
+  // debe invalidar lo que esté en vuelo), y `buscar()` incrementa la suya
+  // propia al iniciar — incluida la búsqueda que dispara una sugerencia de
+  // fecha (`aplicarSugerenciaFecha` llama `buscar()` sin atajos), así que se
+  // invalidan entre sí sin depender de comparar criterios.
+  const generacionBusquedaRef = useRef(0);
+
+  // Este componente se desmontó (el usuario cambió de pestaña) mientras la
+  // búsqueda estaba en vuelo. `onBusqueda`/`setErr` seguirían siendo llamadas
+  // VÁLIDAS (son funciones del padre o de este mismo componente, no lanzan
+  // por sí solas), pero resucitarían el modo búsqueda con una respuesta que
+  // ya no corresponde a lo que el usuario está viendo. Se marca en el cleanup
+  // del efecto — la única señal confiable de desmontaje — y se revisa ANTES
+  // de cualquier `onBusqueda`/`setState` en el callback asíncrono de `buscar()`.
+  const montadoRef = useRef(true);
+  useEffect(() => () => { montadoRef.current = false; }, []);
+
+  // Salir del modo búsqueda desde este componente: limpiar es UNA sola
+  // decisión (deja de haber búsqueda vigente y los resultados unificados de
+  // `VistaBooking` se retiran), nunca dos actualizaciones que puedan quedar
+  // desincronizadas.
+  //
+  // La usan DOS caminos, y en los dos significa lo mismo —"lo que hay pintado
+  // dejó de corresponder"—: el botón "Limpiar resultados" y CADA evento que
+  // cambia un criterio de la búsqueda (destino, fechas, adultos, habitaciones,
+  // menores y sus edades). Que la invalidación viva en esos eventos —y no en
+  // un efecto que compare huellas— es deliberado: un `setState` dentro de un
+  // `useEffect` provoca renders en cascada, y además una huella derivada no
+  // alcanzaría, porque el botón debe OLVIDAR la búsqueda aunque el usuario
+  // vuelva a escribir los mismos criterios.
+  function limpiarResultados() {
+    // Invalida cualquier búsqueda en vuelo ANTES de tocar estado — ver
+    // `generacionBusquedaRef`. Sin esto, limpiar y no volver a buscar dejaría
+    // una respuesta tardía con la generación vieja todavía "vigente".
+    generacionBusquedaRef.current += 1;
+    setHuellaBuscada(null);
+    onBusqueda?.(null);
+  }
 
   // Ajusta el nº de filas de habitación (tope de 8; 9+ requiere asesor).
   function setCantidad(n: number) {
     const pedido = Math.trunc(n) || 1;
+    limpiarResultados();
     setAvisoHab(pedido > 8 ? "A partir de 9 habitaciones, contacta a un asesor." : "");
     const cant = Math.max(1, Math.min(8, pedido));
     setNHab(String(cant));
@@ -54,15 +194,22 @@ export function BuscadorBooking({
       return next;
     });
   }
-  const setHab = (i: number, acom: AcomRoom) => setHabs((p) => p.map((h, n) => (n === i ? acom : h)));
+  const setHab = (i: number, acom: AcomRoom) => {
+    limpiarResultados();
+    setHabs((p) => p.map((h, n) => (n === i ? acom : h)));
+  };
 
   // Cantidad de menores: agrega campos de edad vacíos al final o quita solo
   // los sobrantes del final — las edades ya escritas nunca se pierden/reordenan.
   function setCantidadMenores(nRaw: number) {
+    limpiarResultados();
     setCantidadMenoresState(Math.max(0, Math.min(MAX_MENORES_POR_CONSULTA, Math.trunc(nRaw) || 0)));
     setEdadesTxt((prev) => ajustarCantidadEdades(prev, nRaw));
   }
-  const setEdadAt = (i: number, v: string) => setEdadesTxt((prev) => prev.map((x, idx) => (idx === i ? v : x)));
+  const setEdadAt = (i: number, v: string) => {
+    limpiarResultados();
+    setEdadesTxt((prev) => prev.map((x, idx) => (idx === i ? v : x)));
+  };
 
   const edadesParsed = edadesTxt.map(parseEdadMenor);
   const edadesValidas = edadesParsed.every((p) => p.error == null);
@@ -79,22 +226,119 @@ export function BuscadorBooking({
   const adultosValido = adultosParsed != null && adultosParsed >= 1;
 
   function buscar(overrideIda?: string, overrideRegreso?: string) {
-    setErr(""); setResultados(null); setDiagnostico(null); setSugerenciasFecha(null);
+    setErr("");
+    // Arranca una búsqueda nueva: se retira la vigente ANTES de pedir nada, e
+    // incrementa la generación de una vez — invalida SINCRÓNICAMENTE
+    // cualquier búsqueda anterior en vuelo (o una sugerencia de fecha que
+    // dispare esta misma llamada), sin esperar a que la generación vieja
+    // resuelva para descubrir que quedó obsoleta. `miGeneracion` es la que
+    // esta búsqueda concreta debe ver intacta en `generacionBusquedaRef` para
+    // poder publicar (ver el chequeo tras el `Promise.all`).
+    const miGeneracion = (generacionBusquedaRef.current += 1);
+    // Los resultados de la anterior no pueden seguir a la vista como si
+    // fueran los de esta búsqueda (y menos con un contador que ya dice
+    // "Resultados de tu búsqueda").
+    setHuellaBuscada(null);
+    onBusqueda?.(null);
     const idaUsada = overrideIda ?? fIda;
     const regresoUsada = overrideRegreso ?? fReg;
-    if (!idaUsada || !regresoUsada) { setErr("Indica fecha de ida y de regreso."); return; }
-    if (!adultosValido) { setErr("La cantidad de adultos debe ser un entero mayor o igual a 1."); return; }
-    if (!menoresListos) { setErr(`Falta la edad de ${edadesFaltantes} menor(es).`); return; }
+    // DESTINO OBLIGATORIO. Sin esto, "todos los destinos" significa evaluar
+    // TODOS los hoteles y TODAS sus combinaciones de tarifa para descubrir que
+    // ninguna aplica — una consulta pública capaz de recorrer el catálogo
+    // entero, que es justo el costo que no se quiere exponer. Acotar a un
+    // destino concreto (y validarlo también en la Server Action, que es la
+    // frontera real) deja la evaluación completa pero acotada.
+    //
+    // `trim()` y no sólo `!destino`: un destino de puros espacios no es una
+    // selección, es el placeholder disfrazado — el servidor aplica el mismo
+    // criterio sobre el mismo valor.
+    if (!destino.trim()) { setErr("Selecciona un destino para buscar."); onBusqueda?.(null); return; }
+    if (!idaUsada || !regresoUsada) { setErr("Indica fecha de ida y de regreso."); onBusqueda?.(null); return; }
+    if (!adultosValido) { setErr("La cantidad de adultos debe ser un entero mayor o igual a 1."); onBusqueda?.(null); return; }
+    if (!menoresListos) { setErr(`Falta la edad de ${edadesFaltantes} menor(es).`); onBusqueda?.(null); return; }
+    // Los criterios de ESTA búsqueda quedan fijados de una vez — la huella
+    // sirve para identificarlos (botón "Limpiar resultados"), no para
+    // invalidar: eso ya lo hace `miGeneracion` de forma síncrona.
+    const huella = huellaBusqueda({ destino, destinoId, fIda: idaUsada, fReg: regresoUsada, adultos, habs, cantidadMenores, edadesTxt });
+    setHuellaBuscada(huella);
     start(async () => {
-      const r = await buscarHoteles({
-        fechaIda: idaUsada, fechaRegreso: regresoUsada,
-        habitaciones: habs.map((acom) => ({ acom })),
-        adultos: adultosParsed,
-        cantidadMenores, edadesMenores: edades,
-        destino,
+      // DOS llamadas por búsqueda, SIEMPRE en paralelo y NUNCA una por
+      // tarjeta: `buscarHoteles` (las filas persona, que son la mitad persona
+      // de la lista unificada) y la disponibilidad real de los hoteles por
+      // unidad del destino (la otra mitad). La segunda es auxiliar: si falla,
+      // la mitad persona se muestra igual, solo sin la unidad.
+      const [r, unidadRes] = await Promise.all([
+        buscarHoteles({
+          fechaIda: idaUsada, fechaRegreso: regresoUsada,
+          habitaciones: habs.map((acom) => ({ acom })),
+          adultos: adultosParsed,
+          cantidadMenores, edadesMenores: edades,
+          destino,
+        }),
+        buscarAlojamientosUnidadPorFechas({
+          fechaIda: idaUsada, fechaRegreso: regresoUsada,
+          destino, destinoId,
+          habitaciones: habs.map((acom) => ({ acom })),
+          adultos: adultosParsed,
+          cantidadMenores, edadesMenores: edades,
+        }).catch((e): ResultadoBusquedaUnidad => ({
+          ok: false,
+          error: e instanceof Error ? e.message : "No se pudo completar la búsqueda de alojamientos por unidad.",
+        })),
+      ]);
+      // Esta búsqueda quedó obsoleta: algo (otro `buscar()`, una sugerencia
+      // de fecha que dispara otro `buscar()`, o `limpiarResultados()` — botón
+      // "Limpiar" o cualquier evento que cambió un criterio) incrementó la
+      // generación DESPUÉS de que esta arrancó. No importa si esa invalidación
+      // ocurrió antes o después de que ESTA respuesta llegara: lo único que
+      // habilita publicar es que la generación siga siendo exactamente la que
+      // esta búsqueda capturó al iniciar — así una respuesta tardía nunca
+      // puede pisar a una más nueva, sin importar el orden de llegada.
+      if (generacionBusquedaRef.current !== miGeneracion) return;
+      // Este componente se desmontó (el usuario cambió de pestaña) mientras
+      // la búsqueda estaba en vuelo — cambiar de pestaña no incrementa la
+      // generación (no toca ningún campo del formulario ni llama
+      // `limpiarResultados`/`buscar`). `onBusqueda`/`setErr` seguirían siendo
+      // llamadas VÁLIDAS (son funciones del padre o de este mismo componente,
+      // no lanzan por sí solas), pero resucitarían el modo búsqueda con una
+      // respuesta que ya no corresponde a lo que el usuario está viendo — se
+      // ignora por completo.
+      if (!montadoRef.current) return;
+      if (!r.ok) { setErr(r.error); onBusqueda?.(null); return; }
+      // Solo lo CONFIRMADO disponible entra al resultado: `sin_disponibilidad`
+      // no es un resultado disponible (y un hotel sobre el que el servidor no
+      // pudo concluir no llegó hasta acá — ver `evaluarDisponibilidadUnidad.ts`).
+      // Se filtra acá, en el borde, para que la lista unificada de
+      // `VistaBooking` no tenga que saber de estados.
+      //
+      // Fallo estructural corregido: antes un `unidadRes.ok === false` (o una
+      // excepción, con el `.catch(() => null)` de antes) se volvía
+      // SILENCIOSAMENTE un arreglo `unidad` vacío — indistinguible de "este
+      // destino no tiene hoteles por unidad". Ahora SIEMPRE se distingue con
+      // `avisoUnidad`: los resultados PERSONA (`r.resultados`) se muestran
+      // igual (nunca dependen de que la mitad unidad haya funcionado), pero
+      // el aviso deja claro que la búsqueda unidad no se pudo completar (o se
+      // completó solo parcialmente — `incompleto`) en vez de dar a entender
+      // que se agotó el universo de hoteles del destino.
+      let unidad: AlojamientoUnidadDisponible[] = [];
+      let avisoUnidad: string | null = null;
+      if (unidadRes.ok) {
+        unidad = unidadRes.disponibilidad.filter((d): d is AlojamientoUnidadDisponible => d.estado === "disponible");
+        if (unidadRes.incompleto) {
+          avisoUnidad = "No pudimos confirmar la disponibilidad de todos los alojamientos por unidad de este destino — algunos podrían faltar. Los resultados por persona sí están completos.";
+        }
+      } else {
+        console.error(`[BuscadorBooking] búsqueda unidad falló: ${unidadRes.error}`);
+        avisoUnidad = "No pudimos completar la búsqueda de alojamientos por unidad para este destino. Los resultados por persona sí se muestran.";
+      }
+      onBusqueda?.({
+        destino, fechaIda: idaUsada, fechaRegreso: regresoUsada,
+        resultados: r.resultados,
+        diagnostico: r.diagnostico ?? null,
+        sugerenciasFecha: r.sugerenciasFecha ?? [],
+        unidad,
+        avisoUnidad,
       });
-      if (r.ok) { setResultados(r.resultados); setDiagnostico(r.diagnostico ?? null); setSugerenciasFecha(r.sugerenciasFecha ?? null); }
-      else setErr(r.error);
     });
   }
 
@@ -107,15 +351,27 @@ export function BuscadorBooking({
     buscar(s.fechaIda, s.fechaRegreso);
   }
 
-  const resultadosFiltrados = useMemo(() => {
-    if (!resultados) return null;
-    return resultados.filter((r) => {
-      const info = infoPorHotel[r.hotelId];
-      if (soloPetFriendly && !info?.petFriendly) return false;
-      if (soloAdultsOnly && !info?.adultsOnly) return false;
-      return true;
-    });
-  }, [resultados, infoPorHotel, soloPetFriendly, soloAdultsOnly]);
+  // Un clic en un chip de sugerencia (que vive en `VistaBooking`, junto al
+  // estado vacío unificado) baja por prop con un `nonce` nuevo. El ref guarda
+  // el último nonce aplicado: el efecto vuelve a correr en cada render, pero
+  // solo dispara la búsqueda UNA vez por clic — nunca en bucle.
+  //
+  // `aplicarSugerenciaFecha` se llama a través de un ref "último valor" en vez
+  // de listarla como dependencia: se re-crea en cada render (no es un
+  // `useCallback`, y no puede serlo sin tocar `buscar`, que los wiring tests
+  // verifican por nombre de función), así que como dependencia haría correr el
+  // efecto en cada render — justo lo que el guardia por `nonce` tiene que
+  // evitar. El ref mantiene el efecto dependiendo SÓLO del pedido.
+  const aplicarSugerenciaRef = useRef(aplicarSugerenciaFecha);
+  useEffect(() => { aplicarSugerenciaRef.current = aplicarSugerenciaFecha; });
+
+  const nonceSugerenciaRef = useRef(0);
+  useEffect(() => {
+    if (!sugerenciaPedida) return;
+    if (nonceSugerenciaRef.current === sugerenciaPedida.nonce) return;
+    nonceSugerenciaRef.current = sugerenciaPedida.nonce;
+    aplicarSugerenciaRef.current(sugerenciaPedida);
+  }, [sugerenciaPedida]);
 
   const sel = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
@@ -124,18 +380,33 @@ export function BuscadorBooking({
       <div className="rounded-2xl border border-gray-200 bg-white p-4">
         <p className="mb-3 text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Buscar alojamiento</p>
         <div className="flex flex-wrap items-end gap-3">
-          {destinos.length > 0 && (
-            <div><label className="mb-1 block text-xs text-gray-500">Destino</label>
-              <select value={destino} onChange={(e) => setDestino(e.target.value)} className={sel}>
-                <option value="">Todos</option>
-                {destinos.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-          )}
-          <div><label className="mb-1 block text-xs text-gray-500">Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} /></div>
-          <div><label className="mb-1 block text-xs text-gray-500">Regreso</label><input type="date" min={fIda} value={fReg} onChange={(e) => setFReg(e.target.value)} className={sel} /></div>
+          {/* El selector se pinta SIEMPRE (aunque el catálogo esté vacío) y su
+              opción inicial es un placeholder DESHABILITADO: el destino es
+              obligatorio para buscar, así que una opción "sin destino" elegible
+              sólo ofrecería el valor que el motor rechaza. */}
+          <div><label className="mb-1 block text-xs text-gray-500">Destino</label>
+            <select
+              value={destino}
+              onChange={(e) => {
+                const nombre = e.target.value;
+                // El id viaja junto al nombre elegido — se busca en la MISMA
+                // lista que armó las opciones, nunca se adivina ni se vuelve
+                // a resolver por texto en otro lugar.
+                const opcion = destinos.find((d) => d.nombre === nombre);
+                setDestino(nombre);
+                setDestinoId(opcion?.id ?? null);
+                limpiarResultados();
+              }}
+              className={sel}
+            >
+              <option value="" disabled>Selecciona un destino</option>
+              {destinos.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
+            </select>
+          </div>
+          <div><label className="mb-1 block text-xs text-gray-500">Ida</label><input type="date" min={hoy} value={fIda} onChange={(e) => { const nueva = e.target.value; limpiarResultados(); setFIda(nueva); if (fReg && fReg <= nueva) setFReg(""); }} className={sel} /></div>
+          <div><label className="mb-1 block text-xs text-gray-500">Regreso</label><input type="date" min={fIda} value={fReg} onChange={(e) => { limpiarResultados(); setFReg(e.target.value); }} className={sel} /></div>
           <div><label className="mb-1 block text-xs text-gray-500">Adultos (12+)</label>
-            <input type="number" min={1} value={adultos} onChange={(e) => setAdultos(e.target.value)}
+            <input type="number" min={1} value={adultos} onChange={(e) => { limpiarResultados(); setAdultos(e.target.value); }}
               className={`${sel} w-20 ${!adultosValido ? "border-red-400" : ""}`} aria-invalid={!adultosValido ? true : undefined} />
           </div>
           <div><label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs text-gray-500">Cantidad de menores</label>
@@ -194,72 +465,20 @@ export function BuscadorBooking({
           <button type="button" onClick={() => buscar()} disabled={pending || !menoresListos || !adultosValido} className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>
             {pending ? "Buscando…" : "Buscar hoteles"}
           </button>
-          {resultados && <button type="button" onClick={() => setResultados(null)} className="text-xs text-gray-400 hover:text-gray-700">Limpiar resultados</button>}
+          {huellaBuscada !== null && <button type="button" onClick={limpiarResultados} className="text-xs text-gray-400 hover:text-gray-700">Limpiar resultados</button>}
         </div>
         {avisoHab && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">{avisoHab}</p>}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
       </div>
-
-      {resultados && resultadosFiltrados && (
-        <div className="mt-4">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-gray-500">{resultadosFiltrados.length} hotel(es) disponibles para tu búsqueda</p>
-            <div className="flex flex-wrap gap-3 text-xs text-gray-600">
-              <label className="flex items-center gap-1.5">
-                <input type="checkbox" checked={soloPetFriendly} onChange={(e) => setSoloPetFriendly(e.target.checked)} />
-                Pet friendly
-              </label>
-              <label className="flex items-center gap-1.5">
-                <input type="checkbox" checked={soloAdultsOnly} onChange={(e) => setSoloAdultsOnly(e.target.checked)} />
-                Adults Only
-              </label>
-            </div>
-          </div>
-          {resultadosFiltrados.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-200 py-8 text-center">
-              <p className="text-sm text-gray-400">
-                {diagnostico
-                  ? diagnostico
-                  : "No hay hoteles que cumplan esa composición/fechas/filtros. Prueba otra acomodación, fechas o quita un filtro."}
-              </p>
-              {!!sugerenciasFecha?.length && (
-                <div className="mt-3">
-                  <p className="text-xs font-medium text-gray-500">Prueba estas fechas con tarifa</p>
-                  <div className="mt-1.5 flex flex-wrap justify-center gap-1.5">
-                    {sugerenciasFecha.map((s) => (
-                      <button
-                        key={s.fechaIda}
-                        type="button"
-                        onClick={() => aplicarSugerenciaFecha(s)}
-                        disabled={pending}
-                        className="rounded-full border border-gray-300 bg-transparent px-3 py-1 text-xs font-medium text-gray-600 transition-colors hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] disabled:opacity-50"
-                      >
-                        {s.etiqueta}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {resultadosFiltrados.map((r) => (
-                <Resultado
-                  key={`${r.paqueteId}-${r.hotelId}`}
-                  r={r}
-                  foto={fotosPorHotel[r.hotelId] ?? null}
-                  info={infoPorHotel[r.hotelId]}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
 
-function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null; descripcion?: string | null; adultsOnly?: boolean; petFriendly?: boolean } }) {
+// Tarjeta de un resultado PERSONA ya liquidado por el motor. Sigue viviendo
+// acá (y no en `VistaBooking`) porque es la única que conoce el carrito por
+// `HotelCartItemPersona`; `VistaBooking` la importa para pintar la rama
+// `tipo: "busqueda"` de la lista unificada.
+export function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | null; info?: { estrellas: number | null; clasificacion: string | null; descripcion?: string | null; adultsOnly?: boolean; petFriendly?: boolean } }) {
   const { items, add, remove } = useCart();
 
   // Combos disponibles → selectores de categoría y alimentación (el más barato
@@ -278,7 +497,7 @@ function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | nul
   // La clasificación (infante/Niño 1/Niño 2) ya viene resuelta por edad real
   // desde la búsqueda (misma para todos los combos de este hotel — depende
   // del umbral del hotel, no de la categoría/régimen elegidos).
-  const item: Omit<HotelCartItem, "id"> = {
+  const item: Omit<HotelCartItemPersona, "id"> = {
     tipo: "hotel",
     modulo: "porcion_terrestre", paqueteId: r.paqueteId, hotelId: r.hotelId, bloqueoId: null,
     hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: foto,
@@ -289,7 +508,7 @@ function Resultado({ r, foto, info }: { r: BusquedaResultado; foto: string | nul
   // El estado del botón se deriva del carrito real: si se quita del carrito,
   // vuelve a estar disponible para agregar.
   const enCarrito = items.find((i) =>
-    i.tipo === "hotel" && i.hotelId === item.hotelId && i.paqueteId === item.paqueteId &&
+    i.tipo === "hotel" && i.modeloTarifario !== "unidad" && i.hotelId === item.hotelId && i.paqueteId === item.paqueteId &&
     i.fechaIda === item.fechaIda && i.fechaRegreso === item.fechaRegreso &&
     i.categoria === item.categoria && i.regimen === item.regimen);
   const estrellas = info?.estrellas && info.estrellas > 0 ? "★".repeat(info.estrellas) : "";

@@ -10,6 +10,8 @@ import {
 } from "@/lib/contrato/plantilla";
 import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
+import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
+import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type {
   VentaDocumento,
   ContratoPasajero,
@@ -45,6 +47,15 @@ type Props = {
   // que usa la ficha del dashboard, para que UI y PDF nunca diverjan. null/
   // undefined = no se consultó (modo cotización, o contrato sin snapshot).
   condiciones?: CondicionesContratoResueltas | null;
+  // Fase 3F-4B — desglose informativo por habitación de un contrato Bernalo
+  // (hoteles `modelo_tarifario = "unidad"`), YA SANITIZADO por
+  // `habitacionesBernaloDeContrato` (lib/reservar/alojamientoBernaloDocumento.ts):
+  // nunca trae neto/bruto/comisión/fuente ni el snapshot completo (regla
+  // F.34). Vacío/ausente para cualquier contrato persona.
+  habitacionesBernalo?: HabitacionBernaloDocumento[];
+  // Composición pública de la tarifa Bernalo usada en cotizaciones previas:
+  // líneas del motor (base/suplementos) sin netos, comisión ni snapshot.
+  composicionBernalo?: ComposicionBernaloDocumento[];
 };
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
@@ -67,6 +78,18 @@ function Pill({ label, value }: { label: string; value: string }) {
   );
 }
 
+function resumenMenoresHabitacion(edadesMenores: number[]) {
+  const cantidad = edadesMenores.length;
+  if (!cantidad) return "—";
+  const edades = edadesMenores.map((edad) => `${edad} ${edad === 1 ? "año" : "años"}`).join(", ");
+  const sufijo = cantidad === 1 ? "menor" : "menores";
+  return `${cantidad} ${sufijo} (${edades})`;
+}
+
+function etiquetaPeriodicidad(periodicidad: ComposicionBernaloDocumento["periodicidad"]) {
+  return periodicidad === "por_estadia" ? "Por estadía" : "Por noche";
+}
+
 export function ContratoDocumento({
   venta,
   pasajeros,
@@ -79,16 +102,25 @@ export function ContratoDocumento({
   vigenciaHasta,
   agencia,
   condiciones,
+  habitacionesBernalo = [],
+  composicionBernalo = [],
 }: Props) {
   const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
-  const total = items.reduce(
-    (s, it) => s + it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino,
-    0
-  );
+  // Fase 3F-4B: helper ÚNICO (lib/contrato/valorContratoItem.ts) — lee
+  // `valor_total` para una línea `modo_precio = "total"` (Bernalo) o la
+  // fórmula per-cápita de siempre para cualquier otra fila. Sin este cambio,
+  // una línea Bernalo (adultos/ninos/tarifa_adulto/tarifa_nino en su default
+  // 0) se mostraba en $0.
+  const total = totalVisibleContratoItems(items);
   const saldo = Math.max(total - totalPagado, 0);
   // Separa servicios (línea propia: Servicio · Pax · Valor total) del alojamiento.
   const servicioItems = items.filter((it) => it.descripcion?.startsWith("Servicio · "));
   const alojItems = items.filter((it) => !it.descripcion?.startsWith("Servicio · "));
+  // Cierre 3F-4B: separa las líneas agregadas (`modo_precio = "total"`,
+  // Bernalo) de las per-cápita de siempre — nunca se mezclan en la misma
+  // tabla (regla F.5).
+  const alojItemsTotal = alojItems.filter((it) => it.modo_precio === "total");
+  const alojItemsPorPersona = alojItems.filter((it) => it.modo_precio !== "total");
   const anio = new Date().getFullYear();
 
   const tenant = ((venta as { tenant?: string | null }).tenant ?? "mayorista") === "minorista" ? "minorista" : "mayorista";
@@ -429,7 +461,56 @@ export function ContratoDocumento({
             <Pill label="Moneda" value={moneda} />
           </div>
 
-          {alojItems.length > 0 && (
+          {/* Hallazgo confirmado (cierre 3F-4B): una línea `modo_precio =
+              "total"` (Bernalo) no tiene adultos/niños/tarifa por columna —
+              son 0 en la base porque esa fila nunca reparte precio por
+              persona (ver lib/contrato/valorContratoItem.ts). Mostrarla en
+              la tabla de siempre (Adultos 0 · Niños 0 · Tarifa $0 · Tarifa
+              $0) parecía un dato real y no lo es. Se separa en una fila
+              agregada limpia — el detalle por habitación va aparte, debajo
+              (sección "Detalle por habitación", regla F.32-34). */}
+          {alojItemsTotal.length > 0 && (
+            <div className="mb-3 space-y-2">
+              {alojItemsTotal.map((it) => (
+                <div key={it.id} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-xs">
+                  <span className="text-gray-700">{it.descripcion}</span>
+                  <span className="font-semibold text-gray-800">{formatMoneda(valorVisibleContratoItem(it), moneda)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {composicionBernalo.length > 0 && (
+            <div className="mb-3 overflow-x-auto">
+              <p className="mb-1 text-xs font-semibold text-gray-500">Composición tarifa Bernalo</p>
+              <table className="w-full min-w-[560px] border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-50 text-left text-gray-500">
+                    <th className="border border-gray-200 px-2 py-1">Hotel</th>
+                    <th className="border border-gray-200 px-2 py-1">Concepto</th>
+                    <th className="border border-gray-200 px-2 py-1">Cantidad</th>
+                    <th className="border border-gray-200 px-2 py-1">Valor unitario</th>
+                    <th className="border border-gray-200 px-2 py-1">Cobro</th>
+                    <th className="border border-gray-200 px-2 py-1">Valor total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {composicionBernalo.map((linea, idx) => (
+                    <tr key={`${linea.habitacionId}-${idx}`}>
+                      <td className="border border-gray-200 px-2 py-1">{linea.hotelNombre}</td>
+                      <td className="border border-gray-200 px-2 py-1">{linea.concepto}</td>
+                      <td className="border border-gray-200 px-2 py-1">{linea.cantidad}</td>
+                      <td className="border border-gray-200 px-2 py-1">{formatMoneda(linea.valorUnitario, moneda)}</td>
+                      <td className="border border-gray-200 px-2 py-1">{etiquetaPeriodicidad(linea.periodicidad)}</td>
+                      <td className="border border-gray-200 px-2 py-1 font-medium">{formatMoneda(linea.valorTotal, moneda)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {alojItemsPorPersona.length > 0 && (
             <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] border-collapse text-xs">
               <thead>
@@ -449,7 +530,7 @@ export function ContratoDocumento({
                 </tr>
               </thead>
               <tbody>
-                {alojItems.map((it) => (
+                {alojItemsPorPersona.map((it) => (
                   <tr key={it.id}>
                     <td className="border border-gray-200 px-2 py-1">
                       {it.descripcion}
@@ -467,12 +548,46 @@ export function ContratoDocumento({
                       {formatMoneda(it.tarifa_nino, moneda)}
                     </td>
                     <td className="border border-gray-200 px-2 py-1 font-medium">
-                      {formatMoneda(it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino, moneda)}
+                      {formatMoneda(valorVisibleContratoItem(it), moneda)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            </div>
+          )}
+
+          {habitacionesBernalo.length > 0 && (
+            <div className="mt-3 overflow-x-auto">
+              {/* Regla F.32/33/34: SOLO desglose informativo (hotel,
+                  categoría, alimentación, adultos, edades) — nunca se
+                  reparte el PVP/vuelo/servicios/comisión entre habitaciones,
+                  y nunca se muestra un dato del snapshot privado. */}
+              <p className="mb-1 text-xs font-semibold text-gray-500">Detalle por habitación</p>
+              <table className="w-full min-w-[420px] border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-50 text-left text-gray-500">
+                    <th className="border border-gray-200 px-2 py-1">Hotel</th>
+                    <th className="border border-gray-200 px-2 py-1">Categoría</th>
+                    <th className="border border-gray-200 px-2 py-1">Alimentación</th>
+                    <th className="border border-gray-200 px-2 py-1">Adultos</th>
+                    <th className="border border-gray-200 px-2 py-1">Menores</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {habitacionesBernalo.map((h) => (
+                    <tr key={h.habitacionId}>
+                      <td className="border border-gray-200 px-2 py-1">{h.hotelNombre}</td>
+                      <td className="border border-gray-200 px-2 py-1">{h.categoria ?? "—"}</td>
+                      <td className="border border-gray-200 px-2 py-1">{h.alimentacion ?? "—"}</td>
+                      <td className="border border-gray-200 px-2 py-1">{h.adultos}</td>
+                      <td className="border border-gray-200 px-2 py-1">
+                        {resumenMenoresHabitacion(h.edadesMenores)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 
@@ -495,7 +610,7 @@ export function ContratoDocumento({
                       </td>
                       <td className="border border-gray-200 px-2 py-1">{venta.pax ?? "—"}</td>
                       <td className="border border-gray-200 px-2 py-1 font-medium">
-                        {formatMoneda(it.adultos * it.tarifa_adulto + it.ninos * it.tarifa_nino, moneda)}
+                        {formatMoneda(valorVisibleContratoItem(it), moneda)}
                       </td>
                     </tr>
                   ))}

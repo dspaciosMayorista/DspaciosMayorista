@@ -1,14 +1,21 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Hotel, MapPin, ShoppingCart, X } from "lucide-react";
 import { formatCOP, formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
-import { useCart, type CartItem, type HotelCartItem } from "@/lib/cart/CartContext";
+import { useCart, type CartItem, type HotelCartItem, type HotelCartItemPersona } from "@/lib/cart/CartContext";
+import { construirAddonsIntentDesdeCarrito } from "@/lib/cart/addonsIntent";
+import { crearContadorAddonsNonce } from "@/lib/cart/addonsNonce";
+import { resumenHabitacionesBernalo } from "@/lib/cart/resumenHabitacionBernalo";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
 
-function resumenHabitaciones(it: HotelCartItem): string {
+const MENSAJE_SIN_REFERENCIA_ADDONS =
+  "Ninguno de tus hoteles tiene destino, fechas y viajeros completos todavía — no se puede precargar la búsqueda de servicios. " +
+  "Si tu hotel usa un vuelo por bloqueo/empaquetado, sus fechas se confirman en el servidor y no se pueden adivinar aquí.";
+
+function resumenHabitaciones(it: HotelCartItemPersona): string {
   const partes = Object.entries(it.habitaciones)
     .filter(([, n]) => n > 0)
     .map(([a, n]) => `${n} ${ACOM_ROOM_LABEL[a as AcomRoom] ?? a}`);
@@ -33,12 +40,65 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
     return () => { document.body.style.overflow = prev; };
   }, [drawerOpen]);
 
-  // Toma el hotel más reciente del carrito para prefiltrar Receptivos (destino/
-  // fechas/pax) — así "Agregar tours" no obliga a repetir la búsqueda a mano.
+  // Fallo VISIBLE (regla 3 del encargo): ningún hotel del carrito tenía
+  // destino/fechas/pax utilizables. Vive en el propio drawer — nunca se
+  // cierra ni se limpia `addonsIntent` como si hubiera funcionado.
+  const [errorAddons, setErrorAddons] = useState<string | null>(null);
+
+  // Se limpia cuando el panel se ABRE, sin importar el origen (botón local
+  // del encabezado, o `openDrawer()` llamado desde otro componente — ej.
+  // VistaBooking tras agregar un hotel). Antes solo se limpiaba desde un
+  // wrapper local (`abrirCarrito`) del botón del encabezado: si el drawer se
+  // abría por cualquier otro camino, el mensaje de un fallo previo quedaba
+  // "pegado" en el siguiente `drawerOpen`. `limpiarErrorAddonsSiAbrio` vive
+  // fuera del efecto y se invoca a través de un ref "último valor" — mismo
+  // patrón que `aplicarPrefillRef` en `BuscadorReceptivos.tsx` — porque un
+  // `setState` escrito DIRECTO dentro de un `useEffect` dispara
+  // `react-hooks/set-state-in-effect` sin importar que esté guardado por un
+  // condicional.
+  function limpiarErrorAddonsSiAbrio() {
+    if (drawerOpen) setErrorAddons(null);
+  }
+  const limpiarErrorAddonsSiAbrioRef = useRef(limpiarErrorAddonsSiAbrio);
+  useEffect(() => { limpiarErrorAddonsSiAbrioRef.current = limpiarErrorAddonsSiAbrio; });
+  useEffect(() => {
+    limpiarErrorAddonsSiAbrioRef.current();
+  }, [drawerOpen]);
+
+  // Contador monotónico de "nonce" para cada AddonsIntent — UNA sola
+  // instancia por componente, INDEPENDIENTE de `addonsIntent` (estado del
+  // CartContext, que `BuscadorReceptivos` limpia a `null` en cuanto consume
+  // el intent — ver `onConsumedInitial`). Ver la cabecera de
+  // `lib/cart/addonsNonce.ts` para la causa completa del defecto que este
+  // contador corrige (derivar el nonce de `addonsIntent?.nonce ?? 0`
+  // reiniciaba el contador cada vez que el intent se limpiaba). `useRef` en
+  // vez de `useState` porque el contador NUNCA debe disparar un re-render
+  // por sí mismo — solo el intent construido (`setAddonsIntent`) lo hace.
+  const addonsNonceRef = useRef(crearContadorAddonsNonce());
+
+  // Toma el hotel MÁS RECIENTE del carrito (persona o unidad, sin priorizar
+  // ningún modelo — ver `construirAddonsIntentDesdeCarrito`) para prefiltrar
+  // Receptivos (destino/fechas/pax) — así "Agregar tours" no obliga a repetir
+  // la búsqueda a mano. Antes solo consideraba hoteles persona: si el
+  // carrito tenía únicamente un hotel por unidad, la referencia quedaba
+  // `undefined` y el drawer se cerraba sin ninguna navegación (defecto
+  // confirmado — ver la cabecera de `lib/cart/addonsIntent.ts`).
   function irAAgregarTours() {
-    const hoteles = items.filter((i): i is HotelCartItem => i.tipo === "hotel");
-    const ref = hoteles[hoteles.length - 1];
-    setAddonsIntent(ref ? { destino: ref.destino, fechaIda: ref.fechaIda, fechaRegreso: ref.fechaRegreso, pax: ref.pax } : null);
+    const intent = construirAddonsIntentDesdeCarrito(items);
+    if (!intent) {
+      // Fail visible: mensaje en el propio carrito, el panel NO se cierra y
+      // `addonsIntent` NUNCA se toca como si la operación hubiera funcionado.
+      setErrorAddons(MENSAJE_SIN_REFERENCIA_ADDONS);
+      return;
+    }
+    setErrorAddons(null);
+    // `nonce` identifica ESTE clic — permite a `BuscadorReceptivos` consumir
+    // el intent aunque ya esté montado en la pestaña Receptivos (ver
+    // `ReceptivosPrefill`/`BuscadorReceptivos.tsx`). Siempre el SIGUIENTE
+    // entero del contador local (`addonsNonceRef.current.siguiente()`),
+    // nunca derivado de `addonsIntent?.nonce` (ese valor se pierde cada vez
+    // que se consume).
+    setAddonsIntent({ ...intent, nonce: addonsNonceRef.current.siguiente() });
     closeDrawer();
   }
 
@@ -87,7 +147,7 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        {it.tipo === "hotel" ? (
+                        {it.tipo === "hotel" && it.modeloTarifario !== "unidad" ? (
                           <>
                             <div className="truncate font-medium text-gray-800">{it.hotelNombre}</div>
                             <div className="truncate text-xs text-gray-500">
@@ -95,6 +155,14 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                             </div>
                             <div className="truncate text-xs text-gray-400">{resumenHabitaciones(it)}</div>
                             <div className="mt-1"><CondicionHotelBadges condicion={it.condicion} /></div>
+                          </>
+                        ) : it.tipo === "hotel" ? (
+                          <>
+                            <div className="truncate font-medium text-gray-800">{it.hotelNombre}</div>
+                            <div className="truncate text-xs text-gray-500">
+                              {it.destino ?? ""}{it.categoria ? ` · ${it.categoria}` : ""}{it.alimentacion ? ` / ${it.alimentacion}` : ""}
+                            </div>
+                            <div className="truncate text-xs text-gray-400">{resumenHabitacionesBernalo(it.habitaciones, it.composicionHabitaciones)}</div>
                           </>
                         ) : (
                           <>
@@ -127,14 +195,17 @@ export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: {
                 <span className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatCOP(total)}</span>
               </div>
               {items.some((i) => i.tipo === "hotel") && (
-                <button
-                  type="button"
-                  onClick={irAAgregarTours}
-                  className="mb-2 w-full rounded-lg border px-4 py-2.5 text-sm font-medium"
-                  style={{ borderColor: "var(--brand-accent)", color: "var(--brand-accent)" }}
-                >
-                  + Agregar servicios / tours
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={irAAgregarTours}
+                    className="mb-2 w-full rounded-lg border px-4 py-2.5 text-sm font-medium"
+                    style={{ borderColor: "var(--brand-accent)", color: "var(--brand-accent)" }}
+                  >
+                    + Agregar servicios / tours
+                  </button>
+                  {errorAddons && <p className="mb-2 text-xs text-red-600">{errorAddons}</p>}
+                </>
               )}
               <div className="flex gap-2">
                 <button type="button" onClick={closeDrawer} className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700">

@@ -12,6 +12,7 @@ import type {
   ContratoVuelo,
   ContratoItem,
 } from "@/types/database";
+import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export async function generateMetadata({
@@ -46,6 +47,14 @@ type Detalle = {
   hoteles: ContratoHotel[];
   vuelos: ContratoVuelo[];
   items: ContratoItem[];
+  // Snapshot del detalle por habitación de los hoteles Bernalo del carrito
+  // (ver `crearCotizacionCarrito`) — mismo shape que
+  // `habitacionesBernaloDeContrato`, pero tomado del snapshot de la
+  // cotización (todavía no existe fila real en `contrato_alojamiento_bernalo`
+  // porque no se ha convertido a contrato). Ausente en cotizaciones sin
+  // hoteles Bernalo.
+  habitacionesBernalo?: HabitacionBernaloDocumento[];
+  composicionBernalo?: ComposicionBernaloDocumento[];
 };
 
 const PRINT_STYLES = `
@@ -146,6 +155,8 @@ export default async function CotizacionImprimiblePage({
             hoteles={d.hoteles ?? []}
             vuelos={d.vuelos ?? []}
             items={d.items ?? []}
+            habitacionesBernalo={d.habitacionesBernalo ?? []}
+            composicionBernalo={d.composicionBernalo ?? []}
             totalPagado={0}
             esCotizacion
             codigo={cot.codigo}

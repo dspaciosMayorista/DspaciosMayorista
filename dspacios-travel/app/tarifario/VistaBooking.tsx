@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import Image from "next/image";
 import { Star, Check, X, Info } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, defaultAcomConfig, textoEdadesHotel, type AcomRoom, type AcomConfig } from "@/lib/acomodaciones";
-import { useCart, type HotelCartItem } from "@/lib/cart/CartContext";
+import { useCart, type HotelCartItemPersona } from "@/lib/cart/CartContext";
 import { cotizarPorFechas } from "@/app/(dashboard)/dashboard/reservar/actions";
-import { type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
+import { type BusquedaResultado, type ComboCotizado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges, CondicionCompacta, type CondicionHotelBadgeData } from "@/components/cotizacion/CondicionHotelBadges";
 import {
   EDAD_MENOR_MAX,
@@ -18,16 +18,36 @@ import {
   verificarTarifasMenoresDisponibles,
 } from "@/lib/reservar/edadesMenores";
 import { distribuirPorHabitaciones, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
+import {
+  construirHabitacionesUI,
+  idsHabitacionesPorConteo,
+  sincronizarHabitaciones,
+  ajustarCantidadEdadesHabitacion,
+  establecerEdad,
+  construirPayloadHabitaciones,
+  validarHabitacionesOcupacion,
+  type EdadesPorHabitacion,
+  type HabitacionOcupacionEntrada,
+} from "@/lib/reservar/ocupacionPorHabitacion";
+import {
+  cotizarAlojamientoBernaloPublico,
+  type ResultadoCotizarAlojamientoBernaloPublico,
+  type SalidaSeleccionadaBernaloEntrada,
+} from "./cotizacionBernaloActions";
+import type { HotelBernaloDescubierto, SalidaAereaBernalo } from "@/lib/tarifario/datosBernalo";
 import { obtenerDetalleHotel } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleHotel, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
-import { BuscadorBooking } from "./BuscadorBooking";
+import { BuscadorBooking, Resultado, type EstadoBusquedaPorcion } from "./BuscadorBooking";
+import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
+import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from "@/lib/tarifario/identidadReservaUnidad";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import { minRoomPvpResumen, tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
 import { seccionesDescripcion, type DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
+import { destinosPorcionPublica } from "@/lib/tarifario/destinosPorcion";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
 
@@ -61,6 +81,59 @@ type HotelCard = {
   filas: FilaResumen[];
   moneda?: string | null;
 };
+
+// P1-2 (hallazgo confirmado): un mismo hotel `modelo_tarifario = "unidad"`
+// puede estar vinculado a VARIOS paquetes activos a la vez (igual que un
+// hotel persona puede aparecer en varias salidas/paquetes) — antes cada
+// combinación (hotelId, paqueteId) generaba su PROPIA tarjeta, así que el
+// mismo hotel aparecía repetido en la grilla. Ahora se agrupa por
+// `hotelId`: UNA tarjeta por hotel, con TODAS sus ofertas (una por
+// paqueteId) conservadas — nunca se elige la primera arbitrariamente ni se
+// descartan las demás.
+type HotelUnidadCard = {
+  hotelId: number;
+  hotelNombre: string;
+  /** Destino de la PRIMERA oferta, solo para mostrar en la tarjeta antes de
+   * abrir el modal — dentro del modal cada oferta muestra su propio destino. */
+  destino: string | null;
+  ofertas: HotelBernaloDescubierto[];
+  // Cierre de UX de la tarjeta unidad en modo búsqueda: SOLO presente ahí —
+  // TODAS las combinaciones que el servidor CONFIRMÓ disponibles
+  // (`buscarAlojamientosUnidadPorFechas`), ordenadas (la más barata primero,
+  // la preseleccionada por defecto). Cuando está presente, la tarjeta se
+  // pinta INLINE (`TarjetaUnidadBusqueda`: selectores + precio + "Agregar al
+  // carrito", sin abrir modal ni volver a pedir fechas/ocupación). En
+  // exploración queda `undefined` y la tarjeta sigue abriendo el modal de
+  // siempre (ahí todavía no hay fechas/ocupación que reutilizar). Los
+  // `precioVenta` que trae NUNCA son autoridad para el carrito — "Agregar al
+  // carrito" revalida con `cotizarAlojamientoBernaloPublico` antes de
+  // agregar (ver `TarjetaUnidadBusqueda`).
+  opcionesBusqueda?: OpcionUnidadConfirmada[];
+};
+
+// Una sola lista visible en la grilla — para el cliente, un hotel por unidad
+// (Bernalo) no es otro tipo de producto, solo cambia su forma interna de
+// cálculo. `key` es la identidad estable de React (evita colisiones entre
+// las dos fuentes); el resto de la lógica (abrir el modal correcto) discrimina
+// por `tipo`.
+//
+// La tercera rama ("busqueda") es la MISMA lista en modo búsqueda: una fila
+// persona ya liquidada por el motor (`buscarHoteles`) en vez de una tarjeta de
+// exploración. Antes esa fila la pintaba `BuscadorBooking` en SU propia grilla
+// y esta vista volvía a pintar la suya DEBAJO — dos listas para una sola
+// búsqueda. Ahora hay una sola colección y un solo lugar donde se pinta.
+type Tarjeta =
+  | { tipo: "persona"; key: string; card: HotelCard }
+  | { tipo: "unidad"; key: string; hotel: HotelUnidadCard }
+  | { tipo: "busqueda"; key: string; r: BusquedaResultado };
+
+// Nombre visible de una tarjeta, sin importar de cuál de las tres fuentes
+// venga — lo necesita el orden alfabético de la colección única.
+function nombreTarjeta(t: Tarjeta): string {
+  if (t.tipo === "persona") return t.card.hotelNombre;
+  if (t.tipo === "unidad") return t.hotel.hotelNombre;
+  return t.r.hotelNombre ?? "—";
+}
 
 type Receptivo = {
   servicioId: number | null;
@@ -123,6 +196,74 @@ function EtiquetasHotel({ adultsOnly, petFriendly, className = "" }: { adultsOnl
   );
 }
 
+// P2 (hallazgo confirmado): tarjeta ÚNICA compartida por hoteles persona y
+// unidad — antes cada rama de `tarjetas.map(...)` tenía su propia copia
+// visual (JSX duplicado), con el riesgo real de que las dos divergieran con
+// el tiempo (ya había divergido: la tarjeta unidad ignoraba foto/estrellas/
+// descripción/etiquetas reales y mostraba "Sin foto" siempre). Un solo
+// componente, con los datos ya resueltos por el llamador — nunca lógica de
+// "cuál modelo es" adentro de la tarjeta misma.
+function TarjetaHotelCard({
+  onClick, foto, hotelNombre, destino, estrellas = null, clasificacion = null,
+  adultsOnly = false, petFriendly = false, tieneCondicion, descripcion, desde = null, moneda,
+  badgeEsquina,
+}: {
+  onClick: () => void;
+  foto: string | null;
+  hotelNombre: string;
+  destino: string | null;
+  estrellas?: number | null;
+  clasificacion?: string | null;
+  adultsOnly?: boolean;
+  petFriendly?: boolean;
+  tieneCondicion?: boolean;
+  descripcion?: string | null;
+  desde?: number | null;
+  moneda?: string | null;
+  badgeEsquina?: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
+    >
+      <div className="relative aspect-[16/10] w-full bg-gray-100">
+        {foto ? (
+          <Image src={foto} alt={hotelNombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
+        )}
+        {badgeEsquina}
+      </div>
+      <div className="flex flex-1 flex-col p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-gray-800">{hotelNombre}</span>
+          <Categoria estrellas={estrellas} clasificacion={clasificacion} className="text-sm" />
+          <EtiquetasHotel adultsOnly={adultsOnly} petFriendly={petFriendly} />
+          {tieneCondicion !== undefined && <CondicionCompacta activo={tieneCondicion} />}
+        </div>
+        <div className="mt-0.5 text-xs text-gray-500">{destino ?? ""}</div>
+        {descripcion?.trim() && (
+          <p className="mt-1 line-clamp-2 text-xs text-gray-400">{descripcion}</p>
+        )}
+        <div className="mt-3 flex items-end justify-between">
+          {desde != null ? (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
+              <div className="text-xl font-extrabold tracking-tight" style={{ color: "var(--brand-primary)" }}>{formatMoneda(desde, moneda)}</div>
+              <div className="text-[10px] text-gray-400">por persona</div>
+            </div>
+          ) : <span className="text-sm text-gray-400">Consultar</span>}
+          <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "var(--brand-accent)" }}>
+            Ver opciones →
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
 type Opcion = {
   key: string;
   modulo: "bloqueo" | "porcion_terrestre";
@@ -170,6 +311,8 @@ export function VistaBooking({
   soloAcom = null,
   descripcionPorPaquete = {},
   filasAddon = [],
+  hotelesBernalo = [],
+  hotelIdsUnidadAutoritativos = [],
 }: {
   filas: FilaResumen[];
   fotosPorHotel?: Record<number, string>;
@@ -190,22 +333,125 @@ export function VistaBooking({
   // recorte que aplica `filas` para la vitrina plana de Servicios — de acá
   // sale `addonsPorPaquete`, scoped al hotel que se está viendo.
   filasAddon?: FilaResumen[];
+  // Fase 3E Bernalo — descubrimiento PARALELO (regla 6 del encargo): hoteles
+  // `modelo_tarifario = 'unidad'` de paquetes activos, sin precio (nunca
+  // pasan por `tarifario_resultado`/`filas` de arriba). Se muestran en su
+  // propia sección, con "Consultar tarifa" en vez de un precio.
+  hotelesBernalo?: HotelBernaloDescubierto[];
+  // Hallazgo confirmado (validación final): identidad AUTORITATIVA de "este
+  // hotel es modelo unidad ahora mismo" (`lib/tarifario/datosBernalo.ts`) —
+  // canal SEPARADO de `hotelesBernalo`, que en TarifarioPublic se filtra por
+  // acomodación/categoría/régimen/texto antes de llegar aquí. Se usa
+  // EXCLUSIVAMENTE para excluir tarjetas persona obsoletas (ver `tarjetas`
+  // más abajo) — nunca para decidir qué tarjeta unidad mostrar (eso lo
+  // sigue haciendo `hotelesUnidadVisibles`, derivado de `hotelesBernalo`).
+  hotelIdsUnidadAutoritativos?: number[];
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
+  // Fase 3E Bernalo: hotel (con TODAS sus ofertas — P1-2) cuyo modal de
+  // cotización está abierto.
+  const [modalBernalo, setModalBernalo] = useState<HotelUnidadCard | null>(null);
   // Buscador de bloqueos: origen → destino → salida (vuelo).
   const [origenSel, setOrigenSel] = useState("");
   const [destinoSel, setDestinoSel] = useState("");
   const [salidaSel, setSalidaSel] = useState<number | "">("");
+  // Filtro de destino de la grilla de Porción terrestre — ESTADO
+  // INDEPENDIENTE de `destinoSel` (el de Bloqueo). Residual confirmado
+  // (validación real, ronda 3): Porción terrestre no tenía NINGÚN selector
+  // de destino sobre su propia grilla — los destinos unidad `tipo:
+  // "porcion_terrestre"` quedaban fuera de cualquier filtro real.
+  // Reutilizar `destinoSel` habría hecho que una selección de Bloqueo
+  // persistiera (incorrectamente) al cambiar de pestaña, o viceversa — de ahí
+  // el estado propio. Es una de las dos entradas de `destinosPorcion`, que
+  // ahora alimenta tanto este selector como el del motor de búsqueda.
+  const [destinoPorcionSel, setDestinoPorcionSel] = useState("");
+  // MODO BÚSQUEDA de Porción terrestre: lo que el buscador (`BuscadorBooking`)
+  // comunica hacia arriba cuando ejecuta una búsqueda con éxito, y `null`
+  // cuando la limpia o cuando los criterios mostrados dejan de corresponder a
+  // los resultados. Mientras está activo, esta vista NO es un catálogo de
+  // exploración: la grilla queda CERRADA al destino buscado (persona + unidad
+  // por igual) y se deja de ofrecer "O explora todos los alojamientos" — que
+  // era exactamente lo que mezclaba un hotel unidad del destino buscado con
+  // hoteles de otros destinos, por debajo de los resultados (ver el informe
+  // de la tarea).
+  const [busquedaPorcion, setBusquedaPorcion] = useState<EstadoBusquedaPorcion | null>(null);
+  // Destino EFECTIVO de la grilla de Porción terrestre: el de la búsqueda
+  // cuando hay una vigente, y si no el del selector de exploración de siempre
+  // (`destinoPorcionSel`, que no se toca). Es el ÚNICO punto de sustitución:
+  // los memos de abajo consumen este valor, así que persona y unidad quedan
+  // cerradas por el mismo criterio y en el mismo lugar.
+  const destinoPorcionEfectivo = busquedaPorcion ? busquedaPorcion.destino : destinoPorcionSel;
+  const enBusquedaPorcion = sub === "porcion_terrestre" && busquedaPorcion != null;
+  // Sugerencia de fecha pedida por el usuario desde los chips del estado vacío
+  // (que ahora viven acá, junto a la lista unificada). El `nonce` se
+  // incrementa en cada clic: baja al buscador, que la aplica UNA vez por clic
+  // (ver `sugerenciaPedida` en `BuscadorBooking`).
+  const [sugerenciaPedida, setSugerenciaPedida] = useState<(SugerenciaFecha & { nonce: number }) | null>(null);
+
+  // Hallazgo confirmado (auditoría independiente): `BuscadorBooking` se
+  // desmonta al abandonar Porción terrestre (solo se renderiza cuando
+  // `sub === "porcion_terrestre"`, más abajo), pero `busquedaPorcion`/
+  // `sugerenciaPedida` viven ACÁ, en el padre — nada los limpiaba al cambiar
+  // de pestaña. Volver a Porción terrestre remontaba un formulario en blanco
+  // (perdía su propio estado interno) mientras la grilla seguía "congelada"
+  // en modo búsqueda (encabezado, contador y estado vacío de la búsqueda
+  // anterior), sin el botón "Limpiar resultados" a la vista (vive dentro del
+  // `BuscadorBooking` recién montado, gateado por SU propio estado, que
+  // volvió a nacer en `null`).
+  //
+  // Único punto de cambio de `sub`: centraliza la limpieza en el HANDLER que
+  // cambia de pestaña (nunca en un `useEffect` que compare `sub` — sería un
+  // `setState` síncrono dentro de un efecto, exactamente lo que se pidió
+  // evitar cuando el handler ya puede resolverlo). Lee `sub` del cierre del
+  // render actual (nunca queda obsoleto: se llama de forma síncrona desde un
+  // clic, no desde un efecto), así que siempre compara contra el valor
+  // vigente.
+  function cambiarSub(next: typeof sub) {
+    if (sub === "porcion_terrestre" && next !== "porcion_terrestre") {
+      setBusquedaPorcion(null);
+      setSugerenciaPedida(null);
+    }
+    setSub(next);
+  }
+
   // Filtros de la grilla de hoteles: pet friendly / adults only.
   const [soloPetFriendly, setSoloPetFriendly] = useState(false);
   const [soloAdultsOnly, setSoloAdultsOnly] = useState(false);
 
+  // Cuántos ALOJAMIENTOS trajo la búsqueda vigente ANTES de los filtros del
+  // usuario. Sirve para que el estado vacío diga la verdad: "tus filtros
+  // ocultaron lo que la búsqueda sí encontró" es un problema DISTINTO (y con
+  // otra salida) que "la búsqueda no encontró nada" — y confundirlos mandaría
+  // al usuario a cambiar fechas cuando el problema es un checkbox.
+  // Cuenta ALOJAMIENTOS, no filas: `buscarHoteles` devuelve una fila por
+  // (paquete, hotel), así que un mismo hotel en dos paquetes del destino
+  // inflaría el número por encima de lo que la grilla realmente pinta (una
+  // tarjeta por hotel — ver `tarjetas`).
+  const resultadosBusquedaVisibles = useMemo(() => {
+    if (!busquedaPorcion) return 0;
+    const idsUnidad = new Set(hotelIdsUnidadAutoritativos);
+    const hotelesPersona = new Set<number>();
+    for (const r of busquedaPorcion.resultados) {
+      if (!idsUnidad.has(r.hotelId)) hotelesPersona.add(r.hotelId);
+    }
+    return hotelesPersona.size + busquedaPorcion.unidad.length;
+  }, [busquedaPorcion, hotelIdsUnidadAutoritativos]);
+
   const { add, openDrawer, addonsIntent, setAddonsIntent } = useCart();
+  // `cambiarSub` no es un `useState` setter (React no lo reconoce como
+  // referencia estable) — se re-crea en cada render porque lee `sub` del
+  // cierre. Pasarlo directo como dependencia del efecto de abajo dispararía
+  // el efecto en CADA render mientras `addonsIntent` siga activo (bucle). Se
+  // llama a través de un ref "último valor" — mismo patrón ya usado para
+  // `aplicarSugerenciaFecha` en `BuscadorBooking.tsx` — así el efecto solo
+  // depende de `addonsIntent`.
+  const cambiarSubRef = useRef(cambiarSub);
+  useEffect(() => { cambiarSubRef.current = cambiarSub; });
   // Señal del carrito ("+ Agregar servicios/tours" con un hotel ya elegido):
   // salta directo a Receptivos con destino/fechas/pax ya puestos.
   useEffect(() => {
-    if (addonsIntent) setSub("receptivos");
+    if (addonsIntent) cambiarSubRef.current("receptivos");
   }, [addonsIntent]);
 
   // Salidas (bloqueos) con cupos > 0, con su origen/destino/fechas/cupos.
@@ -230,10 +476,22 @@ export function VistaBooking({
   }, [filas, cuposPorBloqueo, origenPorBloqueo]);
 
   const origenes = useMemo(() => [...new Set(salidasBloqueo.map((s) => s.origen).filter(Boolean))].sort(), [salidasBloqueo]);
-  const destinosBloqueo = useMemo(
-    () => [...new Set(salidasBloqueo.filter((s) => !origenSel || s.origen === origenSel).map((s) => s.destino).filter(Boolean))].sort(),
-    [salidasBloqueo, origenSel]
-  );
+  // P3 (hallazgo confirmado, validación final): los destinos del selector
+  // salían SOLO de `salidasBloqueo` (derivada de `filas`, hoteles persona) —
+  // un destino que solo existe en un hotel por unidad (`hotelesBernalo`)
+  // nunca aparecía como opción, así que ese hotel quedaba inalcanzable desde
+  // el selector aunque `hotelesUnidadVisibles` SÍ sepa filtrar por
+  // `destinoSel` cuando coincide (ver más abajo). Se agregan los destinos de
+  // ofertas `tipo: "bloqueo"`, deduplicados y ordenados junto con los
+  // legacy. Nunca se filtran por `origenSel`: un hotel unidad no tiene
+  // concepto de origen/salida aérea (esa integración no existe todavía, ver
+  // `hotelesUnidadVisibles`) — filtrar su destino por el origen elegido
+  // sería inventar un dato que no se tiene.
+  const destinosBloqueo = useMemo(() => {
+    const legacy = salidasBloqueo.filter((s) => !origenSel || s.origen === origenSel).map((s) => s.destino);
+    const unidad = hotelesBernalo.filter((h) => h.tipo === "bloqueo" && h.destinoNombre).map((h) => h.destinoNombre as string);
+    return [...new Set([...legacy, ...unidad])].filter(Boolean).sort();
+  }, [salidasBloqueo, origenSel, hotelesBernalo]);
   const salidasFiltradas = useMemo(
     () => salidasBloqueo.filter((s) => (!origenSel || s.origen === origenSel) && (!destinoSel || s.destino === destinoSel)),
     [salidasBloqueo, origenSel, destinoSel]
@@ -251,6 +509,7 @@ export function VistaBooking({
         if (destinoSel && (f.destino_nombre ?? "") !== destinoSel) return false;
         if (salidaSel !== "" && f.bloqueo_id !== salidaSel) return false;
       }
+      if (mod === "porcion_terrestre" && destinoPorcionEfectivo && (f.destino_nombre ?? "") !== destinoPorcionEfectivo) return false;
       return true;
     });
     const map = new Map<number, HotelCard>();
@@ -285,7 +544,162 @@ export function VistaBooking({
     if (soloAdultsOnly) arr = arr.filter((c) => c.adultsOnly);
     for (const c of arr) c.desde = minRoomPvp(c.filas);
     return arr.sort((a, b) => a.hotelNombre.localeCompare(b.hotelNombre));
-  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
+  }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenSel, destinoSel, destinoPorcionEfectivo, salidaSel, soloAcom, soloPetFriendly, soloAdultsOnly]);
+
+  // Hoteles por unidad (Bernalo) visibles en el submódulo/filtros ACTIVOS —
+  // para el cliente son hoteles normales, así que responden a la misma
+  // pestaña (Paquetes/Porción terrestre, por `h.tipo`, el tipo real del
+  // paquete al que pertenecen) y al filtro de destino de su propia pestaña
+  // (`destinoSel` en Bloqueo, `destinoPorcionSel` en Porción terrestre —
+  // residual confirmado, validación real ronda 3: antes Porción terrestre no
+  // filtraba por destino en absoluto, ni para persona ni para unidad). Nunca
+  // aparecen en Receptivos (no son un servicio).
+  //
+  // P2 (hallazgo confirmado): Pet friendly/Adults Only antes ocultaban TODOS
+  // los hoteles unidad incondicionalmente ("no están configurados hoy para
+  // este modelo") — pero SÍ están configurados: son atributos del HOTEL
+  // (`hoteles.pet_friendly`/`adults_only`), no del modelo tarifario, y ya
+  // llegan enriquecidos en `infoPorHotel` (ver `page.tsx`, que ahora
+  // consulta `hoteles` también para los hotelId unidad). Se filtra con el
+  // valor REAL — nunca se afirma "no cumple" por falta de dato: si
+  // `infoPorHotel[h.hotelId]` no llegó a cargar, el hotel queda fuera del
+  // filtro activo (mismo criterio conservador que persona, que también
+  // exige `=== true`, ver `hoteles` arriba).
+  const hotelesUnidadVisibles = useMemo(() => {
+    if (sub === "receptivos") return [];
+    let arr = hotelesBernalo.filter((h) => h.tipo === sub);
+    if (sub === "bloqueo" && destinoSel) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoSel);
+    if (sub === "porcion_terrestre" && destinoPorcionEfectivo) arr = arr.filter((h) => (h.destinoNombre ?? "") === destinoPorcionEfectivo);
+    if (soloPetFriendly) arr = arr.filter((h) => infoPorHotel[h.hotelId]?.petFriendly === true);
+    if (soloAdultsOnly) arr = arr.filter((h) => infoPorHotel[h.hotelId]?.adultsOnly === true);
+    return arr;
+  }, [hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel]);
+
+  // Una sola colección para la grilla — persona y unidad mezclados, sin
+  // sección aparte (el usuario ve hoteles, no "modelos de cálculo"). Clave
+  // estable por tipo+hotel.
+  //
+  // P1-2: las ofertas unidad se AGRUPAN por `hotelId` (una tarjeta por
+  // hotel, con TODAS sus ofertas — una por `paqueteId` — conservadas; ver
+  // `HotelUnidadCard`).
+  //
+  // P1 (hallazgo confirmado, validación final): `modelo_tarifario` es
+  // exclusivo por hotel — un hotel NO puede ser persona y unidad a la vez.
+  // Pero `tarifario_resultado` es una CACHÉ escrita por `generarTarifario`,
+  // que puede quedar desactualizada: si un hotel pasó de persona a unidad
+  // (`hoteles.modelo_tarifario = 'unidad'`) y su paquete no se ha vuelto a
+  // generar, su fila persona sigue viva en `tarifario_resultado`/`filas`
+  // aunque ya sea obsoleta. Se elimina del conjunto PERSONA todo `hotelId`
+  // presente en `hotelIdsUnidadAutoritativos` — nunca al revés — así la
+  // oferta unidad vigente siempre prevalece sobre una tarjeta persona
+  // obsoleta del mismo hotel. Un hotel realmente persona (su hotelId no
+  // aparece ahí) sigue su camino normal, sin cambios.
+  //
+  // ⚠️ Hallazgo confirmado (validación real, ronda 2): la primera versión de
+  // esta corrección derivaba el set de exclusión de `hotelesBernalo` (el
+  // prop tal cual llega a este componente) — pero en TarifarioPublic ese
+  // prop YA es `hotelesBernaloFiltrados`/`fAcom ? [] : ...` (filtrado por
+  // acomodación/categoría/régimen/texto antes de bajar hasta acá). Con un
+  // filtro activo, un hotel unidad podía desaparecer de `hotelesBernalo` y
+  // su tarjeta persona obsoleta REAPARECÍA — el bug seguía presente, solo
+  // que condicionado a los filtros. `hotelIdsUnidadAutoritativos` es un
+  // canal aparte que viaja SIN pasar por ningún filtro de visibilidad
+  // (`lib/tarifario/datosBernalo.ts` → `page.tsx` → `TarifarioPublic.tsx` →
+  // acá) — la única fuente correcta para esta exclusión.
+  const tarjetas = useMemo<Tarjeta[]>(() => {
+    const idsUnidadAutoritativa = new Set(hotelIdsUnidadAutoritativos);
+
+    // ── Modo búsqueda: UNA sola lista, la de la búsqueda ──────────────────
+    // Cuando hay una búsqueda vigente, la grilla deja de ser el catálogo de
+    // exploración y pasa a ser EXACTAMENTE lo que esa búsqueda produjo:
+    //   · persona → las filas que devolvió `buscarHoteles`
+    //     (`busquedaPorcion.resultados`), que ya validó fechas, ocupación y
+    //     tarifa. NUNCA se completa con la grilla precargada: por eso un hotel
+    //     que el motor rechazó no puede reaparecer acá por estar en el
+    //     catálogo del destino.
+    //   · unidad → los alojamientos que el servidor CONFIRMÓ disponibles
+    //     (`busquedaPorcion.unidad`, ya filtrado a `estado === "disponible"`).
+    //     Un `sin_disponibilidad` no es un resultado disponible y no llega
+    //     hasta acá; un estado desconocido por error técnico tampoco.
+    // Los filtros de Pet friendly / Adults Only SÍ aplican (son del usuario);
+    // `soloAcom` no — la búsqueda ya resolvió la composición que se pidió.
+    // Igual que en exploración, la fila persona de un hotel que hoy es unidad
+    // se excluye por el canal autoritativo: sería la caché obsoleta de
+    // `tarifario_resultado`, no una oferta vigente.
+    if (enBusquedaPorcion && busquedaPorcion) {
+      const porFiltros = (hotelId: number) => {
+        const info = infoPorHotel[hotelId];
+        if (soloPetFriendly && !info?.petFriendly) return false;
+        if (soloAdultsOnly && !info?.adultsOnly) return false;
+        return true;
+      };
+      // Un hotel = una tarjeta, igual que en exploración (que arma una sola
+      // tarjeta persona por hotel). `buscarHoteles` devuelve una fila por
+      // (paquete, hotel), así que el MISMO hotel puede venir varias veces si
+      // el destino lo tiene armado en más de un paquete — sin este recorte la
+      // grilla mostraría la misma tarjeta repetida (y un contador inflado).
+      // El motor ya devuelve `resultados` ordenado por total ascendente
+      // (`resultados.sort((a, b) => a.total - b.total)` en `cotizar.ts`), así
+      // que quedarse con la PRIMERA fila de cada hotel es quedarse con la más
+      // barata — el mismo criterio con el que el motor elige el `combos[0]`.
+      const vistos = new Set<number>();
+      const busca: Tarjeta[] = [];
+      for (const r of busquedaPorcion.resultados) {
+        if (vistos.has(r.hotelId)) continue;
+        vistos.add(r.hotelId);
+        if (idsUnidadAutoritativa.has(r.hotelId) || !porFiltros(r.hotelId)) continue;
+        busca.push({ tipo: "busqueda" as const, key: `b-${r.paqueteId}-${r.hotelId}`, r });
+      }
+      // Cierre de UX de la tarjeta unidad: antes `u.oferta` (singular) era
+      // solo la IDENTIDAD del primer combo que confirmaba, y la tarjeta
+      // tenía que abrir un modal para poder cotizar/mostrar precio — el
+      // usuario repetía fechas/ocupación que el buscador ya tenía. Ahora
+      // `u.opciones` trae TODAS las combinaciones confirmadas, cada una con
+      // su precio público ya saneado — la tarjeta las pinta INLINE
+      // (`opcionesBusqueda`, ver `TarjetaUnidadBusqueda`) sin abrir ningún
+      // modal ni volver a pedir nada. `ofertas` queda vacío a propósito: esa
+      // lista solo la usa el modal de EXPLORACIÓN, que esta tarjeta nunca
+      // abre.
+      const unidad: Tarjeta[] = busquedaPorcion.unidad
+        .filter((u) => porFiltros(u.hotelId))
+        .map((u) => ({
+          tipo: "unidad" as const,
+          // La `key` incluye la identidad de la BÚSQUEDA vigente (fechas +
+          // ocupación + combinaciones confirmadas), no solo `hotelId`: una
+          // nueva búsqueda del MISMO hotel con fechas u ocupación distintas
+          // cambia la clave → React remonta `TarjetaUnidadBusqueda` y su
+          // estado local (cat/alim/precioActualizado/errorAgregar/agregando)
+          // nace de cero, sin ningún `useEffect` de sincronización frágil. Una
+          // búsqueda idéntica conserva la clave (no remonta sin motivo). Ver
+          // `claveBusquedaUnidad`.
+          key: `u-${u.hotelId}-${claveBusquedaUnidad(u.opciones)}`,
+          hotel: {
+            hotelId: u.hotelId,
+            hotelNombre: u.opciones[0].hotelNombre,
+            destino: u.opciones[0].destinoNombre,
+            ofertas: [],
+            opcionesBusqueda: u.opciones,
+          },
+        }));
+      return [...busca, ...unidad].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
+    }
+
+    const a: Tarjeta[] = hoteles
+      .filter((c) => !idsUnidadAutoritativa.has(c.hotelId))
+      .map((c) => ({ tipo: "persona" as const, key: `p-${c.hotelId}`, card: c }));
+    const gruposUnidad = new Map<number, HotelBernaloDescubierto[]>();
+    for (const h of hotelesUnidadVisibles) {
+      const arr = gruposUnidad.get(h.hotelId) ?? [];
+      arr.push(h);
+      gruposUnidad.set(h.hotelId, arr);
+    }
+    const b: Tarjeta[] = [...gruposUnidad.entries()].map(([hotelId, ofertas]) => ({
+      tipo: "unidad" as const,
+      key: `u-${hotelId}`,
+      hotel: { hotelId, hotelNombre: ofertas[0].hotelNombre, destino: ofertas[0].destinoNombre, ofertas },
+    }));
+    return [...a, ...b].sort((x, y) => nombreTarjeta(x).localeCompare(nombreTarjeta(y)));
+  }, [hoteles, hotelesUnidadVisibles, hotelIdsUnidadAutoritativos, enBusquedaPorcion, busquedaPorcion, infoPorHotel, soloPetFriendly, soloAdultsOnly]);
 
   const [abierto, setAbierto] = useState<HotelCard | null>(null);
   const [detalleHotel, setDetalleHotel] = useState<EstadoDetalle<FilaTarifario> | null>(null);
@@ -415,10 +829,25 @@ export function VistaBooking({
     { key: "receptivos", label: "Receptivos" },
   ] as const;
 
-  // Destinos disponibles (porción) para el filtro del mini-motor.
-  const destinos = useMemo(
-    () => [...new Set(filas.filter((f) => f.modulo === "porcion_terrestre" && f.destino_nombre).map((f) => f.destino_nombre as string))].sort((a, b) => a.localeCompare(b)),
-    [filas]
+  // Destinos de Porción terrestre — la UNIÓN real (persona + unidad), y la
+  // ÚNICA lista de destinos de esta pestaña: alimenta el selector de
+  // exploración de la grilla Y el selector del motor de búsqueda
+  // (`BuscadorBooking`).
+  //
+  // Antes había DOS listas, y la del motor se armaba SÓLO con filas persona:
+  // un destino que existía únicamente por hoteles unidad quedaba fuera de su
+  // desplegable, así que el motor —que desde `buscarAlojamientosUnidadPorFechas`
+  // SÍ sabe resolver esos hoteles— no se podía invocar para ese destino desde la
+  // UI. Un destino ofrecible que no se puede seleccionar es un destino que no se
+  // puede buscar.
+  //
+  // La unión vive en `destinosPorcionPublica` (función pura) y no acá: así la
+  // prueba la ejercita con un catálogo de fixture —incluido el caso
+  // "sin ninguna fila persona y con un hotel unidad"— en vez de verificar su
+  // forma por texto fuente.
+  const destinosPorcion = useMemo(
+    () => destinosPorcionPublica(filas, hotelesBernalo),
+    [filas, hotelesBernalo]
   );
   // Destinos disponibles de RECEPTIVOS para el filtro de su mini-motor.
   const destinosServicios = useMemo(
@@ -434,7 +863,7 @@ export function VistaBooking({
           <button
             key={t.key}
             type="button"
-            onClick={() => setSub(t.key)}
+            onClick={() => cambiarSub(t.key)}
             className="rounded-full px-4 py-1.5 text-sm font-medium transition-colors"
             style={sub === t.key
               ? { backgroundColor: "var(--brand-primary)", color: "white" }
@@ -546,17 +975,70 @@ export function VistaBooking({
         </>
       ) : (
       <>
-      {/* Mini-motor por fechas: solo en Porción terrestre (en bloqueo manda el vuelo) */}
+      {/* Mini-motor por fechas: solo en Porción terrestre (en bloqueo manda el
+          vuelo). Recibe `destinosPorcion` — la unión persona + unidad —, no una
+          lista propia: el motor resuelve las dos mitades, así que su selector
+          tiene que ofrecer exactamente lo que el motor puede devolver. */}
       {sub === "porcion_terrestre" && (
-        <BuscadorBooking fotosPorHotel={fotosPorHotel} infoPorHotel={infoPorHotel} destinos={destinos} />
+        <BuscadorBooking destinos={destinosPorcion} onBusqueda={setBusquedaPorcion} sugerenciaPedida={sugerenciaPedida} />
+      )}
+
+      {/* Aviso NO bloqueante: la mitad "unidad" de la búsqueda vigente no se
+          pudo completar con confianza (fallo técnico o evaluación parcial —
+          ver `EstadoBusquedaPorcion.avisoUnidad`). Los resultados persona de
+          abajo siguen siendo los completos; esto nunca los reemplaza ni los
+          oculta, solo avisa que la mitad unidad puede estar incompleta. */}
+      {enBusquedaPorcion && busquedaPorcion?.avisoUnidad && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+          {busquedaPorcion.avisoUnidad}
+        </div>
       )}
 
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-          {sub === "bloqueo" ? "Hoteles disponibles" : "O explora todos los alojamientos"}
-          <span className="ml-2 font-normal normal-case text-gray-400">({hoteles.length})</span>
+          {sub === "bloqueo" ? (
+            "Hoteles disponibles"
+          ) : enBusquedaPorcion ? (
+            // Modo búsqueda: la grilla de abajo ya no es el catálogo de
+            // exploración sino el resultado de la búsqueda. Decirlo evita
+            // que se lea como "y además hay todo esto" — y deja claro por
+            // qué desaparecieron los hoteles de otros destinos.
+            <>
+              Resultados de tu búsqueda{` en ${busquedaPorcion.destino}`}
+              <span className="ml-2 font-normal normal-case text-gray-400">
+                {busquedaPorcion.fechaIda} → {busquedaPorcion.fechaRegreso}
+              </span>
+            </>
+          ) : (
+            "O explora todos los alojamientos"
+          )}
+          <span className="ml-2 font-normal normal-case text-gray-400">({tarjetas.length})</span>
         </p>
-        <div className="flex flex-wrap gap-3 text-xs text-gray-600">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
+          {/* Filtro de destino de "O explora todos los alojamientos"
+              (Porción terrestre) — residual confirmado, validación real
+              ronda 3: control DISTINTO del mini-motor BuscadorBooking de
+              arriba (ese busca por fechas contra el motor legacy; este
+              filtra en el cliente la grilla unificada persona+unidad que ya
+              está pintada, sin ninguna consulta nueva). En modo búsqueda se
+              oculta: el destino lo manda la búsqueda vigente, y ofrecer un
+              selector que compite con ella invitaría a creer que cambiarlo
+              re-ejecuta la búsqueda (no lo haría — solo movería el filtro
+              de la grilla por debajo de un encabezado que dice otra cosa).
+              Para volver a explorar está "Limpiar resultados". */}
+          {sub === "porcion_terrestre" && !enBusquedaPorcion && destinosPorcion.length > 0 && (
+            <label className="flex items-center gap-1.5">
+              <span>Destino</span>
+              <select
+                value={destinoPorcionSel}
+                onChange={(e) => setDestinoPorcionSel(e.target.value)}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs"
+              >
+                <option value="">Todos</option>
+                {destinosPorcion.map((d) => <option key={d.nombre} value={d.nombre}>{d.nombre}</option>)}
+              </select>
+            </label>
+          )}
           <label className="flex items-center gap-1.5">
             <input type="checkbox" checked={soloPetFriendly} onChange={(e) => setSoloPetFriendly(e.target.checked)} />
             Pet friendly
@@ -567,24 +1049,86 @@ export function VistaBooking({
           </label>
         </div>
       </div>
-      {!hoteles.length && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados. Prueba quitar filtros o cambiar de pestaña (Paquetes/Porción).</p>}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {hoteles.map((h) => (
-          <button
-            key={h.hotelId}
-            type="button"
-            onClick={() => abrirHotel(h)}
-            className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
-          >
-            <div className="relative aspect-[16/10] w-full bg-gray-100">
-              {h.foto ? (
-                <Image src={h.foto} alt={h.hotelNombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
+      {/* Estado vacío de la GRILLA (exploración). En modo búsqueda NO se
+          pinta: hay un estado vacío ÚNICO de búsqueda más abajo, junto a la
+          lista unificada — dos mensajes vacíos para la misma grilla dirían lo
+          mismo dos veces, y el de acá además invitaría a "quitar filtros", que
+          no es el problema cuando el resultado está cerrado por destino. */}
+      {!tarjetas.length && !enBusquedaPorcion && <p className="py-8 text-center text-sm text-gray-400">No hay alojamientos para los filtros aplicados. Prueba quitar filtros o cambiar de pestaña (Paquetes/Porción).</p>}
+      {/* Estado vacío ÚNICO de la búsqueda — uno solo para persona y unidad,
+          porque la lista es una sola. Distingue dos situaciones que NO son la
+          misma y no se resuelven igual:
+            · la búsqueda SÍ trajo resultados y fueron los filtros del usuario
+              los que los ocultaron (salida: quitar un filtro);
+            · la búsqueda no encontró nada (salida: el diagnóstico real y,
+              solo si el motivo fue de fechas, las fechas alternativas con
+              tarifa — cambiar de fecha no arregla un problema de capacidad). */}
+      {enBusquedaPorcion && !tarjetas.length && (
+        <div className="rounded-xl border border-dashed border-gray-200 py-8 text-center">
+          {resultadosBusquedaVisibles > 0 ? (
+            <p className="text-sm text-gray-500">
+              Tus filtros ocultaron los {resultadosBusquedaVisibles} resultado(s) de esta búsqueda. Quita un filtro para verlos de nuevo.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-gray-400">
+                {busquedaPorcion.diagnostico
+                  ? busquedaPorcion.diagnostico
+                  : "No hay hoteles que cumplan esa composición/fechas/filtros. Prueba otra acomodación, fechas o quita un filtro."}
+              </p>
+              {!!busquedaPorcion.sugerenciasFecha.length && (
+                <div className="mt-3">
+                  <p className="text-xs font-medium text-gray-500">Prueba estas fechas con tarifa</p>
+                  <div className="mt-1.5 flex flex-wrap justify-center gap-1.5">
+                    {busquedaPorcion.sugerenciasFecha.map((s) => (
+                      <button
+                        key={s.fechaIda}
+                        type="button"
+                        onClick={() => setSugerenciaPedida({ ...s, nonce: (sugerenciaPedida?.nonce ?? 0) + 1 })}
+                        className="rounded-full border border-gray-300 bg-transparent px-3 py-1 text-xs font-medium text-gray-600 transition-colors hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)]"
+                      >
+                        {s.etiqueta}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
-              {/* Cupos disponibles (solo para bloqueos con datos) */}
-              {(() => {
-                const ids = [...new Set(h.filas.filter((f) => f.bloqueo_id != null).map((f) => f.bloqueo_id as number))];
+            </>
+          )}
+        </div>
+      )}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {tarjetas.map((t) =>
+          t.tipo === "busqueda" ? (
+            // Fila persona ya liquidada por el motor para estas fechas y esta
+            // ocupación — la MISMA lista que las tarjetas de exploración, en
+            // modo búsqueda. El componente vive en `BuscadorBooking` porque es
+            // el único que conoce el carrito por persona
+            // (`HotelCartItemPersona`); acá solo se le da el lugar en la grilla.
+            <Resultado
+              key={t.key}
+              r={t.r}
+              foto={fotosPorHotel[t.r.hotelId] ?? null}
+              info={infoPorHotel[t.r.hotelId]}
+            />
+          ) : t.tipo === "persona" ? (
+            <TarjetaHotelCard
+              key={t.key}
+              onClick={() => abrirHotel(t.card)}
+              foto={t.card.foto}
+              hotelNombre={t.card.hotelNombre}
+              destino={t.card.destino}
+              estrellas={t.card.estrellas}
+              clasificacion={t.card.clasificacion}
+              adultsOnly={t.card.adultsOnly}
+              petFriendly={t.card.petFriendly}
+              tieneCondicion={t.card.tieneCondicion}
+              descripcion={t.card.descripcion}
+              desde={t.card.desde}
+              moneda={t.card.moneda}
+              badgeEsquina={(() => {
+                // Cupos disponibles (solo para bloqueos con datos)
+                const ids = [...new Set(t.card.filas.filter((f) => f.bloqueo_id != null).map((f) => f.bloqueo_id as number))];
                 const vals = ids.map((id) => cuposPorBloqueo[id]).filter((c): c is number => c != null && c > 0);
                 const min = vals.length ? Math.min(...vals) : null;
                 return min !== null ? (
@@ -593,39 +1137,67 @@ export function VistaBooking({
                   </span>
                 ) : null;
               })()}
-            </div>
-            <div className="flex flex-1 flex-col p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-semibold text-gray-800">{h.hotelNombre}</span>
-                <Categoria estrellas={h.estrellas} clasificacion={h.clasificacion} className="text-sm" />
-                <EtiquetasHotel adultsOnly={h.adultsOnly} petFriendly={h.petFriendly} />
-                <CondicionCompacta activo={h.tieneCondicion} />
-              </div>
-              <div className="mt-0.5 text-xs text-gray-500">{h.destino ?? ""}</div>
-              {h.descripcion?.trim() && (
-                <p className="mt-1 line-clamp-2 text-xs text-gray-400">{h.descripcion}</p>
-              )}
-              <div className="mt-3 flex items-end justify-between">
-                {h.desde != null ? (
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
-                    <div className="text-xl font-extrabold tracking-tight" style={{ color: "var(--brand-primary)" }}>{formatMoneda(h.desde, h.moneda)}</div>
-                    <div className="text-[10px] text-gray-400">por persona</div>
-                  </div>
-                ) : <span className="text-sm text-gray-400">Consultar</span>}
-                <span className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90" style={{ backgroundColor: "var(--brand-accent)" }}>
-                  Ver opciones →
-                </span>
-              </div>
-            </div>
-          </button>
-        ))}
+            />
+          ) : t.hotel.opcionesBusqueda ? (
+            // Cierre de UX (ronda posterior): en modo búsqueda, un hotel
+            // unidad se comporta EXACTAMENTE como uno persona — categoría,
+            // alimentación, precio y "Agregar al carrito" directo, SIN abrir
+            // modal ni repetir fechas/ocupación que el buscador ya tiene
+            // (ver `TarjetaUnidadBusqueda`). Solo existe acá porque
+            // `busquedaPorcion.unidad` ya viene filtrado a hoteles
+            // CONFIRMADOS disponibles — nunca sin fundamento.
+            <TarjetaUnidadBusqueda
+              key={t.key}
+              hotel={{ hotelId: t.hotel.hotelId, hotelNombre: t.hotel.hotelNombre, destino: t.hotel.destino }}
+              opciones={t.hotel.opcionesBusqueda}
+              foto={fotosPorHotel[t.hotel.hotelId] ?? null}
+              estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
+              clasificacion={infoPorHotel[t.hotel.hotelId]?.clasificacion ?? null}
+              adultsOnly={infoPorHotel[t.hotel.hotelId]?.adultsOnly ?? false}
+              petFriendly={infoPorHotel[t.hotel.hotelId]?.petFriendly ?? false}
+              tieneCondicion={infoPorHotel[t.hotel.hotelId]?.tieneCondicion}
+              descripcion={infoPorHotel[t.hotel.hotelId]?.descripcion ?? null}
+            />
+          ) : (
+            // P2 (hallazgo confirmado): hotel por unidad (Bernalo) EN
+            // EXPLORACIÓN (sin `opcionesBusqueda` — acá todavía no hay
+            // fechas/ocupación que reutilizar, así que sigue abriendo el
+            // cotizador en vivo por modal) con la MISMA tarjeta que persona
+            // — antes usaba "Sin foto" fijo y nunca leía estrellas/
+            // descripción/Adults Only/Pet friendly reales, aunque el hotel
+            // SÍ los tuviera configurados. Ahora lee `fotosPorHotel`/
+            // `infoPorHotel` por `hotelId` — el mismo enriquecimiento que ya
+            // recibe un hotel persona (ver `page.tsx`, que ahora también
+            // consulta `hoteles`/`hotel_fotos` para los hotelId unidad). Sin
+            // "desde $X" (el precio no está precargado — "Consultar" es el
+            // mismo fallback que ya usa un hotel persona sin tarifa mínima
+            // resuelta).
+            <TarjetaHotelCard
+              key={t.key}
+              onClick={() => setModalBernalo(t.hotel)}
+              foto={fotosPorHotel[t.hotel.hotelId] ?? null}
+              hotelNombre={t.hotel.hotelNombre}
+              destino={t.hotel.destino}
+              estrellas={infoPorHotel[t.hotel.hotelId]?.estrellas ?? null}
+              clasificacion={infoPorHotel[t.hotel.hotelId]?.clasificacion ?? null}
+              adultsOnly={infoPorHotel[t.hotel.hotelId]?.adultsOnly ?? false}
+              petFriendly={infoPorHotel[t.hotel.hotelId]?.petFriendly ?? false}
+              tieneCondicion={infoPorHotel[t.hotel.hotelId]?.tieneCondicion}
+              descripcion={infoPorHotel[t.hotel.hotelId]?.descripcion ?? null}
+              desde={null}
+            />
+          )
+        )}
       </div>
       </>
       )}
 
       {abierto && (
         <HotelModal hotel={abierto} detalle={detalleHotel} onReintentar={() => abrirHotel(abierto)} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} planesInfo={planesInfo} cap={capPorHotel[abierto.hotelId] ?? CAP_VACIA} descripcionPorPaquete={descripcionPorPaquete} addonsPorPaquete={addonsPorPaquete} onClose={cerrarHotel} />
+      )}
+
+      {modalBernalo && (
+        <HotelBernaloCotizarModal hotelGrupo={modalBernalo} onClose={() => setModalBernalo(null)} />
       )}
 
       {receptivoAbierto && (
@@ -940,12 +1512,373 @@ function HotelModal({
   );
 }
 
+// ── Tarjeta unidad en MODO BÚSQUEDA: selectores + precio + "Agregar al
+//    carrito" inline — sin modal, sin volver a pedir fechas/habitaciones/
+//    adultos/edades (el buscador general ya las tiene). Para el usuario, un
+//    hotel `modelo_tarifario = "unidad"` encontrado en la búsqueda se
+//    comporta EXACTAMENTE como uno persona (`Resultado`, más arriba): la
+//    diferencia tarifaria interna no lo convierte en otro tipo de producto
+//    visual — mismo estilo, mismos controles, mismo botón.
+//
+// `opciones` viene de `busquedaPorcion.unidad` (ya sanada — ver
+// `OpcionUnidadConfirmada`): SOLO combinaciones categoría×alimentación que
+// REALMENTE pasaron `computarReservaBernalo`, ordenadas por precio ascendente
+// (la primera es la preselección por defecto). Cambiar de categoría limita
+// las alimentaciones a las válidas para esa categoría; si la alimentación
+// elegida deja de ser válida, cae automáticamente a la primera que sí lo sea.
+//
+// "Agregar al carrito" NUNCA usa `opcionSel.precioVenta` como autoridad: por
+// seguridad, revalida en servidor con la MISMA Server Action pública que ya
+// usa el modal de exploración (`cotizarAlojamientoBernaloPublico`) antes de
+// agregar — si la tarifa cambió o dejó de estar disponible, se muestra el
+// mensaje real y la tarjeta se actualiza, nunca se agrega con un precio
+// obsoleto. Esta revalidación es una llamada de servidor más, invisible para
+// el usuario (estado de carga en el botón) — nunca una segunda pantalla de
+// búsqueda ni un "Cotizar" aparte.
+function TarjetaUnidadBusqueda({
+  hotel, opciones, foto, estrellas, clasificacion, adultsOnly, petFriendly, tieneCondicion, descripcion,
+}: {
+  hotel: { hotelId: number; hotelNombre: string; destino: string | null };
+  opciones: OpcionUnidadConfirmada[];
+  foto: string | null;
+  estrellas: number | null;
+  clasificacion: string | null;
+  adultsOnly: boolean;
+  petFriendly: boolean;
+  tieneCondicion?: boolean;
+  descripcion?: string | null;
+}) {
+  const { items, add, remove, openDrawer } = useCart();
+
+  const categorias = useMemo(() => [...new Set(opciones.map((o) => o.categoria))], [opciones]);
+  const [cat, setCat] = useState(opciones[0]?.categoria ?? "");
+  const catEff = categorias.includes(cat) ? cat : (categorias[0] ?? "");
+  const alimentaciones = useMemo(
+    () => [...new Set(opciones.filter((o) => o.categoria === catEff).map((o) => o.alimentacion))],
+    [opciones, catEff]
+  );
+  const [alim, setAlim] = useState(opciones[0]?.alimentacion ?? "");
+  // La alimentación efectiva cae a la primera válida de la categoría actual
+  // en cuanto la elegida deja de estarlo — nunca queda "colgada" de una
+  // categoría anterior.
+  const alimEff = alimentaciones.includes(alim) ? alim : (alimentaciones[0] ?? "");
+  const opcionSel = opciones.find((o) => o.categoria === catEff && o.alimentacion === alimEff) ?? opciones[0];
+
+  // Precio EN VIVO local: nace del resultado ya calculado por el buscador
+  // (`opcionSel.precioVenta`, ver el módulo puro) — cambiar de selector NUNCA
+  // dispara una nueva búsqueda/consulta, solo relee `opciones`, que ya tiene
+  // el precio de CADA combinación confirmada. Solo se actualiza si la
+  // revalidación de "Agregar al carrito" trae un precio distinto (tarifa
+  // cambiada entre la búsqueda y el clic) — nunca antes.
+  const [precioActualizado, setPrecioActualizado] = useState<{ combo: string; precio: number; moneda: string } | null>(null);
+  const claveCombo = `${opcionSel.paqueteId}|${opcionSel.categoria}|${opcionSel.alimentacion}`;
+  const precioMostrado = precioActualizado?.combo === claveCombo ? precioActualizado.precio : opcionSel.precioVenta;
+  const monedaMostrada = precioActualizado?.combo === claveCombo ? precioActualizado.moneda : opcionSel.moneda;
+
+  const [agregando, setAgregando] = useState(false);
+  const [errorAgregar, setErrorAgregar] = useState<string | null>(null);
+
+  // Guarda contra setState tras desmontaje: una nueva búsqueda del mismo
+  // hotel REMONTA esta tarjeta (la `key` incluye la búsqueda vigente — ver
+  // `claveBusquedaUnidad`), así que una revalidación en vuelo puede resolver
+  // cuando este componente ya no existe. Se marca en el cleanup y se revisa
+  // antes de cualquier setState del callback asíncrono.
+  const montadoRef = useRef(true);
+  useEffect(() => () => { montadoRef.current = false; }, []);
+
+  // `enCarrito` compara la identidad CANÓNICA COMPLETA de la reserva
+  // (hotel + paquete + categoría + alimentación + salida/fechas + composición
+  // de habitaciones: id/acomodación/adultos/edades) — no solo hotel+paquete+
+  // categoría+alimentación. Así, una reserva del MISMO hotel para otras fechas
+  // u ocupación NO se marca como agregada ni se elimina por error, y una
+  // idéntica SÍ se encuentra. Ver `claveReservaUnidad`.
+  const claveReserva = claveReservaUnidad({
+    hotelId: opcionSel.hotelId,
+    paqueteId: opcionSel.paqueteId,
+    categoria: opcionSel.categoria,
+    alimentacion: opcionSel.alimentacion,
+    salida: { tipo: "sin_vuelo", fechaIda: opcionSel.fechaIda, fechaRegreso: opcionSel.fechaRegreso },
+    habitaciones: opcionSel.ocupacion,
+  });
+  const enCarrito = items.find(
+    (i) =>
+      i.tipo === "hotel" &&
+      i.modeloTarifario === "unidad" &&
+      claveReservaUnidad({
+        hotelId: i.hotelId,
+        paqueteId: i.paqueteId,
+        categoria: i.categoria,
+        alimentacion: i.alimentacion,
+        salida: i.salida,
+        habitaciones: i.habitaciones,
+      }) === claveReserva
+  );
+
+  async function agregar() {
+    if (agregando) return; // nunca doble envío mientras revalida
+    setErrorAgregar(null);
+    setAgregando(true);
+    const habitaciones: HabitacionOcupacionEntrada[] = opcionSel.ocupacion.map((h) => ({
+      id: h.id, acom: h.acom, adultos: h.adultos, cantidadMenores: h.edadesMenores.length, edadesMenores: h.edadesMenores,
+    }));
+    const salida: SalidaSeleccionadaBernaloEntrada = { tipo: "sin_vuelo", fechaIda: opcionSel.fechaIda, fechaRegreso: opcionSel.fechaRegreso };
+    // Revalidación OBLIGATORIA en servidor, con la Server Action pública que
+    // YA existe (nunca se inventa una nueva): vuelve a validar pertenencia al
+    // paquete, moneda y ventana de fechas, y recalcula el precio real en este
+    // instante — el precio que mostraba la tarjeta nunca es autoridad.
+    // `revalidarReservaUnidad` envuelve la llamada en try/catch y NUNCA lanza;
+    // el `finally` de acá siempre libera `agregando` (aun ante excepción), y
+    // el guard de montaje evita setState tras un remonte por nueva búsqueda.
+    let rev: Awaited<ReturnType<typeof revalidarReservaUnidad>>;
+    try {
+      rev = await revalidarReservaUnidad(
+        cotizarAlojamientoBernaloPublico,
+        {
+          paqueteId: opcionSel.paqueteId, hotelId: opcionSel.hotelId,
+          categoria: opcionSel.categoria, alimentacion: opcionSel.alimentacion,
+          salida, habitaciones,
+        },
+        opcionSel.precioVenta,
+        opcionSel.moneda,
+      );
+    } finally {
+      if (montadoRef.current) setAgregando(false);
+    }
+    if (!montadoRef.current) return;
+    if (rev.estado !== "agregar") {
+      // Rechazo del servidor (dejó de estar disponible) o error técnico —
+      // mensaje REAL/entendible, NUNCA se agrega al carrito.
+      setErrorAgregar(rev.mensaje);
+      return;
+    }
+    if (rev.precioCambio) {
+      // Cambió la tarifa entre la búsqueda y este clic — la tarjeta se
+      // actualiza con el precio REAL revalidado; el carrito usa este mismo
+      // precio, nunca el que mostraba antes.
+      setPrecioActualizado({ combo: claveCombo, precio: rev.precio, moneda: rev.moneda });
+    }
+    add({
+      tipo: "hotel",
+      modeloTarifario: "unidad",
+      paqueteId: opcionSel.paqueteId,
+      hotelId: opcionSel.hotelId,
+      hotelNombre: hotel.hotelNombre,
+      destino: opcionSel.destinoNombre,
+      fotoUrl: foto,
+      categoria: opcionSel.categoria,
+      alimentacion: opcionSel.alimentacion,
+      salida,
+      habitaciones,
+      precio: rev.precio,
+      moneda: rev.moneda,
+      composicionHabitaciones: rev.composicionHabitaciones,
+    });
+    openDrawer();
+  }
+
+  const selCls = "rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs";
+
+  return (
+    <div className="flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white">
+      <div className="relative aspect-[16/10] w-full bg-gray-100">
+        {foto ? (
+          <Image src={foto} alt={hotel.hotelNombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover" unoptimized />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
+        )}
+        <span
+          className="absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white"
+          style={{ backgroundColor: "var(--brand-success)" }}
+        >
+          Disponible para tus fechas
+        </span>
+      </div>
+      <div className="flex flex-1 flex-col p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-gray-800">{hotel.hotelNombre}</span>
+          <Categoria estrellas={estrellas} clasificacion={clasificacion} className="text-sm" />
+          <EtiquetasHotel adultsOnly={adultsOnly} petFriendly={petFriendly} />
+          {tieneCondicion !== undefined && <CondicionCompacta activo={tieneCondicion} />}
+        </div>
+        <div className="mt-0.5 text-xs text-gray-500">{hotel.destino ?? ""}</div>
+        {descripcion?.trim() && (
+          <p className="mt-1 line-clamp-2 text-xs text-gray-400">{descripcion}</p>
+        )}
+
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="w-20 shrink-0">Categoría</span>
+            <select value={catEff} onChange={(e) => setCat(e.target.value)} className={`${selCls} flex-1`}>
+              {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-500">
+            <span className="w-20 shrink-0">Alimentación</span>
+            <select value={alimEff} onChange={(e) => setAlim(e.target.value)} className={`${selCls} flex-1`}>
+              {alimentaciones.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </label>
+        </div>
+
+        {errorAgregar && <p className="mt-2 text-xs text-red-600">{errorAgregar}</p>}
+
+        <div className="mt-3 flex items-end justify-between">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-gray-400">total {opcionSel.paxTotal} pax</div>
+            <div className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precioMostrado, monedaMostrada)}</div>
+          </div>
+          <button
+            type="button"
+            disabled={agregando}
+            onClick={() => (enCarrito ? remove(enCarrito.id) : agregar())}
+            className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+            style={{ backgroundColor: enCarrito ? "var(--brand-success)" : "var(--brand-primary)" }}
+          >
+            {agregando ? "Confirmando…" : enCarrito ? "✓ En el carrito · quitar" : "Agregar al carrito"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Fase 3E Bernalo — modal de cotización dinámica de un hotel descubierto
+// (`hotelesBernalo`, ver `lib/tarifario/datosBernalo.ts`). A diferencia de
+// `HotelModal` (hoteles "persona", con `tarifario_resultado` ya calculado),
+// este modal no tiene ningún precio precargado — todo sale de `EditorPax`
+// en modo Bernalo, que cotiza en vivo contra
+// `cotizarAlojamientoBernaloPublico`. Sin "Agregar al carrito" (regla 19).
+//
+// P1-2 (hallazgo confirmado): recibe el GRUPO de ofertas del hotel (una por
+// `paqueteId` en la que está vinculado) — nunca una sola oferta elegida de
+// antemano. Si hay más de una, el usuario elige explícitamente ANTES de
+// cotizar (mismo criterio fail-closed que la selección de salida dentro de
+// `EditorPax`: nunca "toma la primera" en silencio); si hay solo una, no se
+// añade ningún selector (nada que elegir). La oferta seleccionada es la
+// ÚNICA fuente de `paqueteId`/categorías/alimentaciones/salidas que ve
+// `EditorPax` — cotizar y agregar al carrito usan SIEMPRE el `paqueteId` de
+// la oferta elegida.
+function HotelBernaloCotizarModal({ hotelGrupo, onClose }: { hotelGrupo: HotelUnidadCard; onClose: () => void }) {
+  const { ofertas } = hotelGrupo;
+  // Identidad ESTABLE de la oferta elegida: `paqueteId`, nunca un índice de
+  // arreglo — dos ofertas pueden compartir nombre de paquete (o incluso
+  // rehacerse el orden si `hotelesBernalo` se recarga), pero `paqueteId` es
+  // único por definición (`armado_hoteles` tiene una fila por (paquete_id,
+  // hotel_id)).
+  const [paqueteIdSel, setPaqueteIdSel] = useState<number | null>(ofertas.length === 1 ? ofertas[0].paqueteId : null);
+  const ofertaSel = paqueteIdSel != null ? (ofertas.find((o) => o.paqueteId === paqueteIdSel) ?? null) : null;
+  const hotel = ofertaSel;
+
+  // B1.18: categorías/alimentación vacías = el hotel no es cotizable — mensaje
+  // genérico de configuración incompleta, nunca texto libre ni un editor que
+  // deje adivinar la clasificación.
+  const configuracionIncompleta = !!hotel && (hotel.categorias.length === 0 || hotel.regimenes.length === 0);
+  const { add, openDrawer } = useCart();
+
+  // Fase 3F-4A: EditorPax ya cotizó en vivo (resultadoCotizacion.ok) y reporta
+  // SOLO las decisiones + el PVP/moneda que mostró — la identidad del
+  // hotel/paquete la completa este modal (ya la conoce de `hotel`, la
+  // oferta elegida). Nunca se agrega neto/costos/comisión/snapshot al
+  // carrito (regla A.5).
+  function agregarBernalo(item: {
+    categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
+    habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
+    composicionHabitaciones: { habitacionId: string; adultos: number; ninos: number; infantes: number }[];
+  }) {
+    if (!hotel) return;
+    add({
+      tipo: "hotel",
+      modeloTarifario: "unidad",
+      paqueteId: hotel.paqueteId,
+      hotelId: hotel.hotelId,
+      hotelNombre: hotel.hotelNombre,
+      destino: hotel.destinoNombre,
+      fotoUrl: null,
+      categoria: item.categoria,
+      alimentacion: item.alimentacion,
+      salida: item.salida,
+      habitaciones: item.habitaciones,
+      precio: item.precio,
+      moneda: item.moneda,
+      composicionHabitaciones: item.composicionHabitaciones,
+    });
+    openDrawer();
+    onClose();
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
+      <div
+        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-gray-100 p-5">
+          <div>
+            <div className="font-semibold text-gray-800">{hotelGrupo.hotelNombre}</div>
+            <div className="text-xs text-gray-500">{(hotel ?? ofertas[0])?.destinoNombre ?? ""}</div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-700">
+            Cerrar ✕
+          </button>
+        </div>
+        <div className="space-y-4 p-5">
+          {ofertas.length > 1 && (
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Elige la oferta</p>
+              <div className="flex flex-wrap gap-2">
+                {ofertas.map((o) => (
+                  <button
+                    key={o.paqueteId}
+                    type="button"
+                    onClick={() => setPaqueteIdSel(o.paqueteId)}
+                    className="rounded-lg border px-3 py-2 text-left text-sm transition-colors"
+                    style={paqueteIdSel === o.paqueteId
+                      ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
+                      : { borderColor: "#e5e7eb", backgroundColor: "white" }}
+                  >
+                    <span className="block font-medium text-gray-800">{o.paqueteNombre}</span>
+                    <span className="block text-[11px] text-gray-500">{o.destinoNombre ?? ""}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {!hotel ? (
+            <p className="py-4 text-center text-sm text-gray-400">Elige una oferta para continuar.</p>
+          ) : configuracionIncompleta ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              Este hotel todavía no tiene su configuración completa (categorías/alimentación) —
+              no está disponible para cotizar en línea. Contacta a un asesor.
+            </p>
+          ) : (
+            <EditorPax
+              // `key` fuerza un componente NUEVO al cambiar de oferta — nunca
+              // arrastra habitaciones/edades/categoría/resultado de cotización
+              // de la oferta anterior (paquete distinto = cotización distinta).
+              key={hotel.paqueteId}
+              pvp={{}}
+              moneda={hotel.moneda}
+              modeloTarifario="unidad"
+              hotelId={hotel.hotelId}
+              paqueteId={hotel.paqueteId}
+              categoriasDisponibles={hotel.categorias}
+              alimentacionesDisponibles={hotel.regimenes}
+              salidas={hotel.salidas}
+              onAgregar={() => {}}
+              onAgregarBernalo={agregarBernalo}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Selector({
   opcion, hotel, puedeReservar, planesInfo, cap, onAgregar,
 }: {
   opcion: Opcion; hotel: HotelCard; puedeReservar: boolean; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Omit<HotelCartItem, "id">) => void;
+  onAgregar: (item: Omit<HotelCartItemPersona, "id">) => void;
 }) {
   const cats = useMemo(() => [...new Set(opcion.filas.map((f) => f.categoria).filter((x): x is string => !!x))], [opcion]);
   const [cat, setCat] = useState(cats[0] ?? "");
@@ -1014,7 +1947,8 @@ function Selector({
 // Niño 2 (ver lib/reservar/edadesMenores.ts) — nunca un conteo manual por tarifa.
 function EditorPax({
   pvp, acomConfig = [], paxMin = null, paxMax = null, nota, edadesNota,
-  edadInfanteMax, edadNinoMax, onAgregar, btnLabel = "Agregar al carrito", moneda = "COP",
+  edadInfanteMax, edadNinoMax, onAgregar, onAgregarBernalo, btnLabel = "Agregar al carrito", moneda = "COP",
+  modeloTarifario = null, hotelId, paqueteId, categoriasDisponibles = [], alimentacionesDisponibles = [], salidas = [],
 }: {
   pvp: Record<string, number>;
   acomConfig?: AcomConfig[];
@@ -1025,14 +1959,86 @@ function EditorPax({
   edadInfanteMax?: number | null;
   edadNinoMax?: number | null;
   onAgregar: (habitaciones: Record<string, number>, ninos: number, ninos2: number, infantes: number, pax: number, precio: number, edadesMenores: number[]) => void;
+  // Fase 3F-4A: SOLO se usa cuando `modeloTarifario === "unidad"` — forma
+  // completamente distinta a `onAgregar` (persona) porque Bernalo no tiene
+  // conteos por acomodación ni niños/infantes agregados, sino habitaciones
+  // físicas con sus propias edades (regla A.2 del encargo). Se dispara
+  // únicamente tras una cotización exitosa (`resultadoCotizacion.ok`).
+  onAgregarBernalo?: (item: {
+    categoria: string; alimentacion: string; salida: SalidaSeleccionadaBernaloEntrada;
+    habitaciones: HabitacionOcupacionEntrada[]; precio: number; moneda: string;
+    composicionHabitaciones: { habitacionId: string; adultos: number; ninos: number; infantes: number }[];
+  }) => void;
   btnLabel?: string;
   moneda?: string | null;
+  // Fase 3D/3E Bernalo: cuando llega "unidad", esta habitación se captura
+  // por HABITACIÓN FÍSICA (edades propias por habitación) y se cotiza en
+  // vivo contra el servidor — en vez del flujo legado (cantidad total +
+  // arreglo plano + `pvp` ya calculado). `null`/ausente = comportamiento
+  // EXACTO de siempre (regla 9 del encargo: hoteles "persona" sin cambios).
+  modeloTarifario?: string | null;
+  // Identidad REAL — obligatorios cuando `modeloTarifario === "unidad"`
+  // (nunca placeholders, regla 9 de Fase 3E): sin ellos no se puede llamar
+  // `cotizarAlojamientoBernaloPublico`, que re-valida pertenencia al
+  // paquete server-side.
+  hotelId?: number;
+  paqueteId?: number;
+  // Categoría/alimentación REALES habilitadas para este hotel en este
+  // paquete (`armado_hoteles.categorias`/`regimenes`) — nunca un valor
+  // normalizado inventado como "estandar" cuando el real es "Estándar".
+  categoriasDisponibles?: string[];
+  alimentacionesDisponibles?: string[];
+  // A1: salidas aéreas REALES del paquete (`lib/tarifario/datosBernalo.ts`) —
+  // vacío = porción terrestre (fechas libres, validadas por el servidor
+  // contra la ventana del paquete); una = se autoselecciona; varias = la UI
+  // exige elegir explícitamente. Nunca se "toma la primera" en silencio.
+  salidas?: SalidaAereaBernalo[];
 }) {
   const idBase = useId();
+  const esBernalo = modeloTarifario === "unidad";
+  // Este editor solo se monta desde el modal de EXPLORACIÓN ahora (el modo
+  // búsqueda dejó de abrir modal — ver `TarjetaUnidadBusqueda`): nunca hay
+  // fechas/ocupación previas que precargar, arranca siempre en blanco.
   const [habs, setHabs] = useState<Record<string, number>>({});
   const [cantidadMenores, setCantidadMenoresState] = useState(0);
   const [edadesTxt, setEdadesTxt] = useState<string[]>([]);
-  const setHab = (a: AcomRoom, n: number) => setHabs((p) => ({ ...p, [a]: Math.max(0, n) }));
+  // Fase 3D — estado canónico SOLO para Bernalo: una entrada por habitación
+  // FÍSICA (id estable), nunca un conteo aparte (regla 14: single source —
+  // ver `lib/reservar/ocupacionPorHabitacion.ts`).
+  const [edadesPorHabitacion, setEdadesPorHabitacion] = useState<EdadesPorHabitacion>({});
+  // Fase 3E — clasificación y fechas REALES elegidas para esta cotización
+  // (nunca placeholders): categoría/alimentación salen de las opciones
+  // realmente vinculadas al hotel/paquete (`categoriasDisponibles`/
+  // `alimentacionesDisponibles`); las fechas las escribe el usuario, dentro
+  // de la ventana que el servidor vuelve a validar.
+  const [categoriaSel, setCategoriaSel] = useState("");
+  const [alimentacionSel, setAlimentacionSel] = useState("");
+  const [fechaIdaBernalo, setFechaIdaBernalo] = useState("");
+  const [fechaRegresoBernalo, setFechaRegresoBernalo] = useState("");
+  // A1: identidad de la salida elegida cuando hay MÁS de una — clave
+  // `"tipo:id"`; vacío hasta que el usuario elige explícitamente (nunca se
+  // autocompleta con la primera).
+  const [salidaElegidaKey, setSalidaElegidaKey] = useState("");
+  const [resultadoCotizacion, setResultadoCotizacion] = useState<ResultadoCotizarAlojamientoBernaloPublico | null>(null);
+  const [validando, setValidando] = useState(false);
+
+  // Fase 3E: independiente de `pvp` (que en Bernalo no existe todavía —
+  // el precio sale de cotizar, no de una tabla precalculada) — cuántas
+  // habitaciones se eligieron, sin importar ninguna tarifa por columna.
+  const totalHabBernalo = ACOM_ROOMS.reduce((s, a) => s + (habs[a] ?? 0), 0);
+  const hayHabBernalo = totalHabBernalo > 0;
+
+  const setHab = (a: AcomRoom, n: number) => {
+    const next = { ...habs, [a]: Math.max(0, n) };
+    setHabs(next);
+    // Regla 5: cambiar la distribución NUNCA reasigna una edad ya escrita a
+    // otra habitación — solo limpia las de las habitaciones que ya no
+    // existen (mismo id ⇒ misma habitación, siempre).
+    if (esBernalo) {
+      setEdadesPorHabitacion((ep) => sincronizarHabitaciones(ep, idsHabitacionesPorConteo(next)));
+      setResultadoCotizacion(null);
+    }
+  };
 
   // Al cambiar la cantidad: agrega campos vacíos al final o quita solo los
   // sobrantes del final — las edades ya escritas nunca se reordenan/pierden.
@@ -1144,84 +2150,368 @@ function EditorPax({
   const inputCls = "w-16 rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
   const inputEdadCls = "w-14 rounded-lg border px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]";
 
+  // ── Fase 3D/3E Bernalo — captura por habitación física + cotización real ─
+  // Todo lo de abajo solo se usa cuando `esBernalo`; para hoteles "persona"
+  // no se evalúa (habitacionesUI queda vacío) y el bloque JSX de siempre
+  // (más abajo) no cambia una sola línea.
+  const habitacionesUI = esBernalo ? construirHabitacionesUI(habs) : [];
+  const paxTarifaPorTipo: Record<string, number> = {};
+  if (esBernalo) for (const a of ACOM_ROOMS) paxTarifaPorTipo[a] = cfg(a).pax_tarifa;
+  const payloadBernalo = esBernalo ? construirPayloadHabitaciones(habs, paxTarifaPorTipo, edadesPorHabitacion) : [];
+  // Preview EN VIVO con la MISMA función que re-corre el servidor (regla 8:
+  // "la UI no es autoridad" — esto es solo feedback inmediato, nunca la
+  // validación que de verdad autoriza nada).
+  const previewBernalo = esBernalo && habitacionesUI.length > 0 ? validarHabitacionesOcupacion(payloadBernalo) : null;
+  const erroresPorHabitacion = new Map<string, string[]>();
+  if (previewBernalo && !previewBernalo.ok) {
+    for (const e of previewBernalo.errores) {
+      if (!e.habitacionId) continue;
+      const arr = erroresPorHabitacion.get(e.habitacionId) ?? [];
+      arr.push(e.mensaje);
+      erroresPorHabitacion.set(e.habitacionId, arr);
+    }
+  }
+
+  function cambiarCantidadMenoresHab(habId: string, n: number) {
+    setEdadesPorHabitacion((ep) => ajustarCantidadEdadesHabitacion(ep, habId, n));
+    setResultadoCotizacion(null);
+  }
+  function cambiarEdadHab(habId: string, i: number, v: string) {
+    setEdadesPorHabitacion((ep) => establecerEdad(ep, habId, i, v));
+    setResultadoCotizacion(null);
+  }
+
+  // A1: identidad discriminada de la salida elegida — nunca `[0]`. Con una
+  // sola salida real se autoselecciona (regla A1.2); con varias, EXIGE que
+  // el usuario elija una explícitamente (regla A1.3 — `salidaElegidaKey`
+  // queda vacío hasta que el usuario hace clic, así que
+  // `salidaElegidaKeyEfectiva` no cae en ninguna por defecto); sin ninguna
+  // salida real, el paquete es porción terrestre y se cotiza con las fechas
+  // escritas a mano.
+  const salidaElegidaKeyEfectiva = salidas.length === 1
+    ? `${salidas[0].tipo}:${salidas[0].id}`
+    : (salidas.some((s) => `${s.tipo}:${s.id}` === salidaElegidaKey) ? salidaElegidaKey : "");
+  const salidaElegida = salidas.find((s) => `${s.tipo}:${s.id}` === salidaElegidaKeyEfectiva) ?? null;
+
+  const salidaPayload: SalidaSeleccionadaBernaloEntrada | null =
+    salidas.length > 0
+      ? (salidaElegida ? { tipo: salidaElegida.tipo, id: salidaElegida.id } : null)
+      : (fechaIdaBernalo && fechaRegresoBernalo ? { tipo: "sin_vuelo", fechaIda: fechaIdaBernalo, fechaRegreso: fechaRegresoBernalo } : null);
+
+  const bernaloListoParaCotizar =
+    hayHabBernalo && !!hotelId && !!paqueteId && !!categoriaSel && !!alimentacionSel && !!salidaPayload;
+
+  // Regla A.1: SOLO se habilita después de una cotización Bernalo exitosa.
+  // `resultadoCotizacion` ya se limpia (null) ante cualquier cambio de
+  // salida/clasificación/ocupación (ver setHab/cambiarCantidadMenoresHab/
+  // cambiarEdadHab/los onChange de categoría-alimentación-salida más abajo),
+  // así que este botón se deshabilita solo con recotizar pendiente —
+  // ninguna lógica de invalidación nueva hace falta acá.
+  function agregarBernaloClick() {
+    if (!onAgregarBernalo || !resultadoCotizacion?.ok || !salidaPayload) return;
+    onAgregarBernalo({
+      categoria: categoriaSel, alimentacion: alimentacionSel, salida: salidaPayload,
+      habitaciones: payloadBernalo, precio: resultadoCotizacion.pvp, moneda: resultadoCotizacion.moneda,
+      composicionHabitaciones: resultadoCotizacion.composicionHabitaciones,
+    });
+  }
+
+  async function cotizarBernalo() {
+    if (validando || !bernaloListoParaCotizar || !hotelId || !paqueteId || !salidaPayload) return;
+    setValidando(true);
+    setResultadoCotizacion(null);
+    try {
+      // El servidor vuelve a validar TODO (ocupación, pertenencia al
+      // paquete, categoría/alimentación, salida real, ventana de fechas) —
+      // nunca se confía en `previewBernalo` ni en nada calculado en el
+      // navegador (reglas 2-3 de Fase 3E). La salida viaja como identidad
+      // {tipo,id} (o "sin_vuelo" + fechas) — nunca un índice `[0]`.
+      const r = await cotizarAlojamientoBernaloPublico({
+        paqueteId, hotelId, categoria: categoriaSel, alimentacion: alimentacionSel,
+        salida: salidaPayload,
+        habitaciones: payloadBernalo,
+      });
+      setResultadoCotizacion(r);
+    } finally {
+      setValidando(false);
+    }
+  }
+
   return (
     <>
       <div>
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Habitaciones</p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {ACOM_ROOMS.map((a) => (
-            <div key={a} className={`rounded-lg border p-2 ${pvp[a] == null ? "opacity-40" : ""}`}>
-              <div className="text-xs font-medium text-gray-700">{ACOM_ROOM_LABEL[a]}</div>
-              <div className="text-[11px] text-gray-400">{pvp[a] != null ? `${formatMoneda(pvp[a], moneda)}/pers` : "No aplica"}</div>
-              <input type="number" min={0} value={habs[a] ?? 0} disabled={pvp[a] == null}
-                onChange={(e) => setHab(a, Number(e.target.value))} className={`${inputCls} mt-1`} />
-            </div>
-          ))}
+          {ACOM_ROOMS.map((a) => {
+            // Bernalo no tiene un PVP por columna precalculado (regla del
+            // encargo: el precio sale de cotizar, no de una tabla) — todas
+            // las acomodaciones quedan habilitadas; el servidor es quien
+            // dice si esa categoría/habitación tiene tarifa publicada.
+            const habilitada = esBernalo || pvp[a] != null;
+            return (
+              <div key={a} className={`rounded-lg border p-2 ${habilitada ? "" : "opacity-40"}`}>
+                <div className="text-xs font-medium text-gray-700">{ACOM_ROOM_LABEL[a]}</div>
+                <div className="text-[11px] text-gray-400">
+                  {esBernalo ? "" : (pvp[a] != null ? `${formatMoneda(pvp[a], moneda)}/pers` : "No aplica")}
+                </div>
+                <input type="number" min={0} value={habs[a] ?? 0} disabled={!habilitada}
+                  onChange={(e) => setHab(a, Number(e.target.value))} className={`${inputCls} mt-1`} />
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {muestraMenores && (
-        <div>
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <label htmlFor={`${idBase}-cant`} className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores</label>
-          </div>
-          {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
-              <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
-                value={cantidadMenores} disabled={!hayHab}
-                onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
-            </div>
-            {edadesTxt.map((v, i) => {
-              const err = edadesParsed[i]?.error;
-              const mostrarError = v.trim() !== "" && err;
-              return (
-                <div key={i}>
-                  <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
-                  <input
-                    id={`${idBase}-edad-${i}`}
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    max={EDAD_MENOR_MAX}
-                    value={v}
-                    onChange={(e) => setEdadAt(i, e.target.value)}
-                    className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
-                    aria-invalid={mostrarError ? true : undefined}
-                  />
-                  {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+      {esBernalo ? (
+        // ── Fase 3D/3E: una fila compacta por habitación FÍSICA, cada una
+        // con sus propias edades, más la clasificación/fechas REALES de
+        // esta cotización — nunca un total + arreglo plano para toda la
+        // solicitud, nunca un placeholder. Mismo contenedor/clases que el
+        // resto del componente (sin tarjetas anidadas ni rediseño).
+        hayHabBernalo && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label htmlFor={`${idBase}-categoria`} className="mb-1 block text-xs font-medium text-gray-600">Categoría</label>
+                {/* B1: SOLO opciones reales vinculadas al hotel/paquete —
+                    nunca texto libre. El gate de "configuración incompleta"
+                    vive en HotelBernaloCotizarModal (no monta este editor si
+                    no hay categorías/regímenes); por defensa en profundidad
+                    el select queda deshabilitado y sin opciones en vez de
+                    caer a un input de texto. */}
+                <select id={`${idBase}-categoria`} value={categoriaSel} disabled={!categoriasDisponibles.length}
+                  onChange={(e) => { setCategoriaSel(e.target.value); setResultadoCotizacion(null); }}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+                  <option value="">Elige…</option>
+                  {categoriasDisponibles.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor={`${idBase}-alimentacion`} className="mb-1 block text-xs font-medium text-gray-600">Alimentación</label>
+                <select id={`${idBase}-alimentacion`} value={alimentacionSel} disabled={!alimentacionesDisponibles.length}
+                  onChange={(e) => { setAlimentacionSel(e.target.value); setResultadoCotizacion(null); }}
+                  className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+                  <option value="">Elige…</option>
+                  {alimentacionesDisponibles.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              {salidas.length === 0 ? (
+                // A1.6: sin salidas reales configuradas → porción terrestre;
+                // las fechas SÍ las escribe el usuario, y el servidor las
+                // vuelve a validar contra la ventana de viaje del paquete.
+                <>
+                  <div>
+                    <label htmlFor={`${idBase}-fecha-ida`} className="mb-1 block text-xs font-medium text-gray-600">Entrada</label>
+                    <input id={`${idBase}-fecha-ida`} type="date" value={fechaIdaBernalo}
+                      onChange={(e) => { setFechaIdaBernalo(e.target.value); setResultadoCotizacion(null); }}
+                      className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label htmlFor={`${idBase}-fecha-regreso`} className="mb-1 block text-xs font-medium text-gray-600">Salida</label>
+                    <input id={`${idBase}-fecha-regreso`} type="date" value={fechaRegresoBernalo}
+                      onChange={(e) => { setFechaRegresoBernalo(e.target.value); setResultadoCotizacion(null); }}
+                      className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm" />
+                  </div>
+                </>
+              ) : salidas.length === 1 ? (
+                // A1.2: una sola salida real — se autoselecciona; solo se
+                // muestra como información (fechas AUTORITATIVAS de esa
+                // salida, nunca editables aquí).
+                <div>
+                  <span className="mb-1 block text-xs font-medium text-gray-600">Salida</span>
+                  <p className="rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm text-gray-700">
+                    {salidas[0].etiqueta ? `${salidas[0].etiqueta} · ` : ""}{fmtFecha(salidas[0].fechaIda)} → {fmtFecha(salidas[0].fechaRegreso)}
+                  </p>
                 </div>
-              );
-            })}
+              ) : null}
+            </div>
+            {salidas.length > 1 && (
+              // A1.3: varias salidas reales — la UI EXIGE una elección
+              // explícita, nunca "toma la primera" en silencio.
+              <div>
+                <p className="mb-1 text-xs font-medium text-gray-600">Elige tu salida</p>
+                <div className="flex flex-wrap gap-2">
+                  {salidas.map((s) => {
+                    const key = `${s.tipo}:${s.id}`;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => { setSalidaElegidaKey(key); setResultadoCotizacion(null); }}
+                        className="rounded-lg border px-3 py-2 text-left text-sm transition-colors"
+                        style={salidaElegidaKeyEfectiva === key
+                          ? { borderColor: "var(--brand-accent)", backgroundColor: "rgba(38,187,217,0.08)" }
+                          : { borderColor: "#e5e7eb", backgroundColor: "white" }}
+                      >
+                        <span className="block font-medium text-gray-800">{s.etiqueta || (s.tipo === "bloqueo" ? "Bloqueo" : "Empaquetado")}</span>
+                        <span className="block text-xs text-gray-500">{fmtFecha(s.fechaIda)} → {fmtFecha(s.fechaRegreso)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores por habitación</span>
+            </div>
+            {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
+            <div className="space-y-2">
+              {habitacionesUI.map((h, idx) => {
+                const edadesHab = edadesPorHabitacion[h.id] ?? [];
+                const erroresHab = erroresPorHabitacion.get(h.id) ?? [];
+                return (
+                  <div key={h.id} className="rounded-lg border border-gray-200 p-2">
+                    <div className="text-xs font-medium text-gray-700">
+                      {ACOM_ROOM_LABEL[h.acom]} #{idx + 1}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-end gap-3">
+                      <div>
+                        <label htmlFor={`${idBase}-${h.id}-cant`} className="mb-1 block text-xs font-medium text-gray-600">
+                          Cantidad de menores
+                        </label>
+                        <input
+                          id={`${idBase}-${h.id}-cant`}
+                          type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
+                          value={edadesHab.length}
+                          onChange={(e) => cambiarCantidadMenoresHab(h.id, Number(e.target.value))}
+                          className={inputCls}
+                        />
+                      </div>
+                      {edadesHab.map((v, i) => {
+                        const err = parseEdadMenor(v).error;
+                        const mostrarError = v.trim() !== "" && err;
+                        return (
+                          <div key={i}>
+                            <label htmlFor={`${idBase}-${h.id}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">
+                              Edad del menor {i + 1}
+                            </label>
+                            <input
+                              id={`${idBase}-${h.id}-edad-${i}`}
+                              type="number" inputMode="numeric" min={0} max={EDAD_MENOR_MAX}
+                              value={v}
+                              onChange={(e) => cambiarEdadHab(h.id, i, e.target.value)}
+                              className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                              aria-invalid={mostrarError ? true : undefined}
+                            />
+                            {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {erroresHab.length > 0 && (
+                      <p className="mt-1 text-[11px] text-red-600">{erroresHab.join(" ")}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
-            <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
-          )}
-          {clasifError && <p className="mt-1 text-[11px] text-red-600">{clasifError}</p>}
-          {cantidadMenores > 0 && !clasifError && edadesValidas && (
-            <p className="mt-1 text-[11px] text-gray-400">
-              {[infantes > 0 ? `${infantes} infante(s)` : null, ninosTotal > 0 ? `${ninosTotal} niño(s)` : null].filter(Boolean).join(" · ") || "Todas las edades corresponden a adulto."}
-            </p>
-          )}
-        </div>
+        )
+      ) : (
+        muestraMenores && (
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label htmlFor={`${idBase}-cant`} className="text-xs font-semibold uppercase tracking-wide text-gray-400">Menores</label>
+            </div>
+            {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label htmlFor={`${idBase}-cant`} className="mb-1 block text-xs font-medium text-gray-600">Cantidad de menores</label>
+                <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA}
+                  value={cantidadMenores} disabled={!hayHab}
+                  onChange={(e) => setCantidadMenores(Number(e.target.value))} className={inputCls} />
+              </div>
+              {edadesTxt.map((v, i) => {
+                const err = edadesParsed[i]?.error;
+                const mostrarError = v.trim() !== "" && err;
+                return (
+                  <div key={i}>
+                    <label htmlFor={`${idBase}-edad-${i}`} className="mb-1 block text-xs font-medium text-gray-600">Edad menor {i + 1}</label>
+                    <input
+                      id={`${idBase}-edad-${i}`}
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={EDAD_MENOR_MAX}
+                      value={v}
+                      onChange={(e) => setEdadAt(i, e.target.value)}
+                      className={`${inputEdadCls} ${mostrarError ? "border-red-400" : "border-gray-300"}`}
+                      aria-invalid={mostrarError ? true : undefined}
+                    />
+                    {mostrarError && <p className="mt-0.5 text-[10px] text-red-600">{err}</p>}
+                  </div>
+                );
+              })}
+            </div>
+            {cantidadMenores > 0 && edadesValidas === false && edadesFaltantes > 0 && (
+              <p className="mt-1 text-[11px] text-amber-600">Falta la edad de {edadesFaltantes} menor(es).</p>
+            )}
+            {clasifError && <p className="mt-1 text-[11px] text-red-600">{clasifError}</p>}
+            {cantidadMenores > 0 && !clasifError && edadesValidas && (
+              <p className="mt-1 text-[11px] text-gray-400">
+                {[infantes > 0 ? `${infantes} infante(s)` : null, ninosTotal > 0 ? `${ninosTotal} niño(s)` : null].filter(Boolean).join(" · ") || "Todas las edades corresponden a adulto."}
+              </p>
+            )}
+          </div>
+        )
       )}
 
-      {errores.length > 0 && (
+      {!esBernalo && errores.length > 0 && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{errores.join(" ")}</p>
       )}
 
-      <div className="flex items-center justify-between border-t border-gray-100 pt-3">
-        <div>
-          <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
-          <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
+      {esBernalo ? (
+        // Fase 3F-4A: cotización dinámica real contra el servidor + "Agregar
+        // al carrito" habilitado SOLO tras una cotización exitosa (regla
+        // A.1). El TOTAL es la autoridad (regla 18); el promedio por viajero
+        // es solo referencia visual, nunca el número que se resalta primero.
+        <div className="space-y-2 border-t border-gray-100 pt-3">
+          {resultadoCotizacion?.ok && (
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs text-gray-400">
+                  Total solicitado{resultadoCotizacion.paxTotal > 0 ? ` · ${resultadoCotizacion.paxTotal} pax` : ""}
+                </div>
+                <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>
+                  {formatMoneda(resultadoCotizacion.pvp, resultadoCotizacion.moneda)}
+                </div>
+                <div className="text-[11px] text-gray-400">
+                  ≈ {formatMoneda(resultadoCotizacion.promedioPorViajero, resultadoCotizacion.moneda)} por viajero (referencia)
+                </div>
+              </div>
+            </div>
+          )}
+          {resultadoCotizacion && !resultadoCotizacion.ok && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{resultadoCotizacion.mensaje}</p>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            <button type="button" onClick={cotizarBernalo} disabled={!bernaloListoParaCotizar || validando}
+              className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 disabled:opacity-40">
+              {validando ? "Cotizando…" : resultadoCotizacion?.ok ? "Recotizar" : "Cotizar"}
+            </button>
+            {onAgregarBernalo && (
+              <button type="button" onClick={agregarBernaloClick} disabled={!resultadoCotizacion?.ok}
+                className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+                style={{ backgroundColor: "var(--brand-primary)" }}>
+                Agregar al carrito
+              </button>
+            )}
+          </div>
         </div>
-        <button type="button" onClick={agregar} disabled={!puede}
-          className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
-          style={{ backgroundColor: "var(--brand-primary)" }}>
-          {btnLabel}
-        </button>
-      </div>
+      ) : (
+        <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+          <div>
+            <div className="text-xs text-gray-400">Total estimado{pax > 0 ? ` · ${pax} pax` : ""}</div>
+            <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precio, moneda)}</div>
+          </div>
+          <button type="button" onClick={agregar} disabled={!puede}
+            className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+            style={{ backgroundColor: "var(--brand-primary)" }}>
+            {btnLabel}
+          </button>
+        </div>
+      )}
       {nota && <p className="text-[11px] text-gray-400">{nota}</p>}
     </>
   );
@@ -1234,7 +2524,7 @@ function SelectorPorFechas({
 }: {
   opcion: Opcion; hotel: HotelCard; ventana: { min: string | null; max: string | null }; planesInfo: PlanesInfo;
   cap: { paxMin: number | null; paxMax: number | null; acom: AcomConfig[] };
-  onAgregar: (item: Omit<HotelCartItem, "id">) => void;
+  onAgregar: (item: Omit<HotelCartItemPersona, "id">) => void;
 }) {
   // No se permite check-in en el pasado: el mínimo es HOY (o el inicio del rango
   // del paquete si es posterior). Si el paquete empieza antes de hoy, arranca hoy.

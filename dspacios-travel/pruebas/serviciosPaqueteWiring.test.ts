@@ -160,7 +160,10 @@ describe("reservar/actions.ts (convertirCotizacionCarrito) — el carrito ya no 
   test("servicios incluidos se filtran por paqueteId del grupo (nunca se le atribuye a un contrato el incluido de OTRO paquete del carrito)", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
     assert.match(cuerpo, /serviciosIncluidosCot\.filter\(/);
-    assert.match(cuerpo, /grupo\.items\.some\(\(it\) => it\.paqueteId === s\.paqueteId\)/);
+    // Fase 3F-4B: además excluye explícitamente los paqueteId de ítems
+    // Bernalo (sus incluidos se re-liquidan frescos aparte — nunca se cuentan
+    // dos veces, ver convertirCotizacionCarritoBernaloWiring.test.ts).
+    assert.match(cuerpo, /grupo\.items\.some\(\(it\) => it\.modeloTarifario !== "unidad" && it\.paqueteId === s\.paqueteId\)/);
   });
   test("tours opcionales con servicioId/paqueteId generan CxP re-liquidando el costo NETO (nunca usa t.precio, que es PVP)", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");

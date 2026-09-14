@@ -54,6 +54,17 @@ export type CxPFinanciera = {
   observaciones: string;
   /** Migración 170 — vínculo durable con el servicio del catálogo (hotel/aéreo van en null). */
   servicio_id: number | null;
+  /**
+   * Fase 3F-4B (regla E.28): moneda EXPLÍCITA de esta CxP. `registrar_
+   * financiero_contrato` (migración 171) ya sabe leer esta clave del payload
+   * (`coalesce(nullif(v_item->>'moneda', ''), 'COP')`) — antes ningún flujo
+   * TypeScript la mandaba, así que TODA CxP caía en el default 'COP' del RPC
+   * sin importar la moneda real del contrato. Persona sigue sin mandarla
+   * (`undefined`, comportamiento IDÉNTICO de siempre — regla 16); un contrato
+   * Bernalo en USD SIEMPRE debe mandarla explícita, nunca depender de ese
+   * default.
+   */
+  moneda?: string;
 };
 
 /** Columnas de costo de `ventas`. Solo se escriben las claves presentes. */

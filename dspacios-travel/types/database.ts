@@ -1741,6 +1741,10 @@ export type Database = {
         Relationships: [];
       };
       contrato_items: {
+        // Migración 176 (Fase 3F-2): `modo_precio`/`valor_total` — sin
+        // cambios de comportamiento para ninguna fila existente ni para
+        // ningún insert de aplicación todavía (ver la migración). "total"
+        // (Bernalo) no tiene ningún escritor real hasta 3F-3.
         Row: {
           id: number;
           numero_contrato: string;
@@ -1750,6 +1754,8 @@ export type Database = {
           tarifa_adulto: number;
           tarifa_nino: number;
           orden: number;
+          modo_precio: string;
+          valor_total: number | null;
         };
         Insert: {
           id?: number;
@@ -1760,9 +1766,67 @@ export type Database = {
           tarifa_adulto?: number;
           tarifa_nino?: number;
           orden?: number;
+          modo_precio?: string;
+          valor_total?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_items"]["Insert"]>;
         Relationships: [];
+      };
+      // Migración 176 (Fase 3F-2): snapshot PRIVADO por habitación física de
+      // un contrato Bernalo (neto/bruto/comisión/fuente en `snapshot`, un
+      // `SnapshotAlojamiento` completo de `lib/calc/unidadAlojamiento.ts`).
+      // RLS activa SIN NINGUNA policy en esta fase — solo `service_role`
+      // (que bypassa RLS) puede tocar esta tabla; sin frontera server-side
+      // todavía (3F-3). `Json` para `snapshot`/`edades_menores` porque la
+      // forma exacta la garantiza el motor TypeScript, no la base.
+      contrato_alojamiento_bernalo: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          habitacion_id: string;
+          orden: number;
+          hotel_id: number | null;
+          hotel_nombre: string;
+          categoria: string | null;
+          alimentacion: string | null;
+          adultos: number;
+          edades_menores: Json;
+          snapshot: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          numero_contrato: string;
+          habitacion_id: string;
+          orden?: number;
+          hotel_id?: number | null;
+          hotel_nombre: string;
+          categoria?: string | null;
+          alimentacion?: string | null;
+          adultos: number;
+          edades_menores?: Json;
+          snapshot: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["contrato_alojamiento_bernalo"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "contrato_alojamiento_bernalo_numero_contrato_fkey";
+            columns: ["numero_contrato"];
+            isOneToOne: false;
+            referencedRelation: "ventas";
+            referencedColumns: ["numero_contrato"];
+          },
+          {
+            foreignKeyName: "contrato_alojamiento_bernalo_hotel_id_fkey";
+            columns: ["hotel_id"];
+            isOneToOne: false;
+            referencedRelation: "hoteles";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       paquetes: {
         Row: {

@@ -311,10 +311,21 @@ describe("7. BuscadorBooking.tsx — pulsar una sugerencia de fecha conserva des
     assert.doesNotMatch(cuerpo, /\badd\(/);
   });
   test("las sugerencias de fecha solo se muestran cuando NO hay resultados (nunca compiten visualmente con hoteles reales)", () => {
-    const idx = buscadorBooking.indexOf("resultadosFiltrados.length === 0 ?");
-    const idxSug = buscadorBooking.indexOf("sugerenciasFecha", idx);
-    const idxElse = buscadorBooking.indexOf(") : (", idx);
-    assert.ok(idx > -1 && idxSug > idx && idxSug < idxElse, "sugerenciasFecha debe renderizarse dentro de la rama de 0 resultados");
+    // El buscador ya no pinta: desde que la lista es ÚNICA (una sola colección
+    // y una sola grilla en VistaBooking), el estado vacío —el único lugar
+    // donde se ofrecen fechas alternativas— vive en VistaBooking, adentro de
+    // la MISMA rama que decide que no hay nada que mostrar.
+    const vista = leer("app/tarifario/VistaBooking.tsx");
+    const idxRamaVacia = vista.indexOf("{enBusquedaPorcion && !tarjetas.length && (");
+    const idxSug = vista.indexOf("sugerenciasFecha", idxRamaVacia);
+    // El fin de la rama vacía lo marca la grilla REAL (`tarjetas.map`).
+    const idxFinRamaVacia = vista.indexOf("{tarjetas.map((t) =>", idxRamaVacia);
+    assert.ok(
+      idxRamaVacia > -1 && idxSug > idxRamaVacia && idxFinRamaVacia > idxRamaVacia && idxSug < idxFinRamaVacia,
+      "sugerenciasFecha debe renderizarse dentro de la rama de 0 resultados"
+    );
+    // Y el buscador no puede volver a ofrecerlas por su cuenta.
+    assert.doesNotMatch(buscadorBooking, /sugerenciasFecha\.map\(/);
   });
 });
 

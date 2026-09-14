@@ -25,7 +25,6 @@ import {
   validarPaxTotalConsulta,
   validarPaxServicioConsulta,
   validarClienteInput,
-  validarCrearSolicitudInput,
   resolverB2BParaMensaje,
   validarPctComisionB2B,
   resolverContextoB2B,
@@ -42,6 +41,9 @@ import {
   MAX_NOCHES_CONSULTA,
 } from "../lib/reservar/edadesMenores.ts";
 import { noches } from "../lib/calc/paquetes.ts";
+// Movido en Fase 3F-1 (ver el encabezado de ese módulo) — despacha entre el
+// ítem persona (arriba) y el ítem Bernalo, evitando un ciclo de imports.
+import { validarCrearSolicitudInput } from "../lib/reservar/solicitudAlojamientoBernalo.ts";
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
 const leer = (rel: string) => readFileSync(join(raiz, rel), "utf8");

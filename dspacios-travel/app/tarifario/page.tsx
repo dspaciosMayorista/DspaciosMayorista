@@ -5,6 +5,7 @@ import { getProgramasResumen } from "@/lib/programas";
 import { Logo } from "@/components/Logo";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
+import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo } from "@/lib/tarifario/datosBernalo";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
 import {
   generarFlujoId, registrarEtapa, registrarDatoPagina, registrarErrorTecnico,
@@ -60,7 +61,12 @@ export default async function TarifarioPublicoPage() {
   // DEVUELVE todo lo que el resto de la función necesita (`user`,
   // `esAgencia`, `puedeReservar`) en vez de escribir a `let`s de afuera.
   const _cronoTotal = iniciarCronometro();
-  const { sesion, datos: resDatos, programas: resProgramas, configSitio: cfgSitio } = await orquestarCargaPublica({
+  // Fase 3E Bernalo — fuente PARALELA e independiente (regla 6 del encargo):
+  // nunca pasa por `orquestarCargaPublica`/`tarifario_resultado`. Best-effort
+  // (igual que `configSitio`/`programas`): un fallo aquí nunca bloquea ni
+  // rompe el tarifario público — la sección Bernalo simplemente queda vacía.
+  const [resultadoCarga, resultadoBernalo] = await Promise.all([
+    orquestarCargaPublica({
     resolverSesion: async () => {
       // Detectar sesión (badge de agencia + permiso de reservar). Revisión
       // posterior, defecto "RESULTADOS OK FALSOS" — autenticacion_perfil
@@ -93,7 +99,25 @@ export default async function TarifarioPublicoPage() {
     cargarTarifario: () => cargarResumenTarifario(sb, FLUJO, flujoId),
     cargarProgramas: () => getProgramasResumen(sb, true), // público: SOLO publicados
     cargarConfigSitio: async () => sb.from("config_sitio").select("video_fondo_url").eq("id", 1).maybeSingle(),
-  });
+    }),
+    cargarHotelesBernaloDescubiertos().catch(() => ({ ok: false as const, error: "excepcion_carga_bernalo" })),
+  ]);
+  const { sesion, datos: resDatos, programas: resProgramas, configSitio: cfgSitio } = resultadoCarga;
+  if (!resultadoBernalo.ok) {
+    registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_hoteles_bernalo_descubiertos", resultadoBernalo.error);
+  }
+  const hotelesBernalo = resultadoBernalo.ok ? resultadoBernalo.hoteles : [];
+  // Hallazgo confirmado (validación final): canal SEPARADO de identidad,
+  // nunca derivado de `hotelesBernalo` (que en TarifarioPublic se filtra por
+  // acomodación/categoría/régimen/texto antes de llegar a VistaBooking).
+  // Viaja intacto hasta VistaBooking, exclusivamente para excluir tarjetas
+  // persona obsoletas — ver el comentario en `datosBernalo.ts`. En fallo
+  // técnico queda vacío (mismo criterio best-effort que `hotelesBernalo`):
+  // no hay forma segura de "fallar cerrado" excluyendo tarjetas persona sin
+  // saber cuáles — ocultarlas TODAS sería un daño mayor que el riesgo (ya
+  // existente antes de esta función) de una tarjeta persona ocasionalmente
+  // obsoleta.
+  const hotelIdsUnidadAutoritativos = resultadoBernalo.ok ? resultadoBernalo.hotelIdsUnidadAutoritativos : [];
   const { user, esAgencia, puedeReservar } = sesion;
   registrarEtapa(
     FLUJO, flujoId, "tarifario_programas_config",
@@ -114,9 +138,35 @@ export default async function TarifarioPublicoPage() {
     );
   }
   const {
-    filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel, fotosPorServicio,
-    infoPorHotel, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
+    filasVisibles, filasAddon, cuposPorBloqueo, origenPorBloqueo, fotosPorHotel: fotosPorHotelLegacy, fotosPorServicio,
+    infoPorHotel: infoPorHotelLegacy, capPorHotel, planesInfo, ventanaPorPaquete, descripcionPorPaquete,
   } = resDatos.datos;
+
+  // P2 (hallazgo confirmado): las tarjetas de hoteles por unidad mostraban
+  // "Sin foto" fijo y nunca leían estrellas/descripción/Adults Only/Pet
+  // friendly reales — `fotosPorHotel`/`infoPorHotel` de arriba solo cubren
+  // los `hotelId` de `filasVisibles` (hoteles persona). Se enriquece con el
+  // MISMO criterio (mismas columnas) para los `hotelId` de `hotelesBernalo`
+  // y se combina en un solo mapa — best-effort: un fallo acá es decorativo
+  // (la tarjeta unidad queda sin foto/badges) y NUNCA bloquea la página.
+  //
+  // P5 (hallazgo confirmado, validación final): `cargarInfoHotelesBernalo`
+  // ya NO devuelve un único `ok` para las DOS consultas (fotos/hoteles) —
+  // cada una es independiente (`errorFotos`/`errorInfo`), así que un fallo
+  // en `hotel_fotos` nunca borra las estrellas/Adults Only/Pet friendly que
+  // sí se resolvieron bien (y viceversa). El merge con lo legacy es
+  // incondicional: `resultadoInfoBernalo.fotosPorHotel`/`infoPorHotel` ya
+  // vienen vacíos (no ausentes) cuando su propia consulta falló.
+  const hotelIdsBernalo = [...new Set(hotelesBernalo.map((h) => h.hotelId))];
+  const resultadoInfoBernalo = await cargarInfoHotelesBernalo(hotelIdsBernalo);
+  if (resultadoInfoBernalo.errorFotos) {
+    registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_fotos_hoteles_bernalo", resultadoInfoBernalo.errorFotos);
+  }
+  if (resultadoInfoBernalo.errorInfo) {
+    registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_info_hoteles_bernalo", resultadoInfoBernalo.errorInfo);
+  }
+  const fotosPorHotel = { ...fotosPorHotelLegacy, ...resultadoInfoBernalo.fotosPorHotel };
+  const infoPorHotel = { ...infoPorHotelLegacy, ...resultadoInfoBernalo.infoPorHotel };
   if (resProgramas.error) {
     registrarErrorTecnico(FLUJO, flujoId, "programas_resumen", "error_getProgramasResumen", resProgramas.error);
   }
@@ -192,10 +242,14 @@ export default async function TarifarioPublicoPage() {
       </header>
 
       <main className="mx-auto max-w-[1700px] px-4 pt-0 pb-8 md:px-6">
-        {!filasVisibles.length && !programas.length ? (
+        {/* P1-1: un catálogo con SOLO hoteles por unidad (sin ninguna fila
+            legacy ni programa) es un catálogo válido — nunca "en
+            preparación". `hotelesBernalo` es la tercera fuente que puede
+            justificar montar `TarifarioPublic` por sí sola. */}
+        {!filasVisibles.length && !programas.length && !hotelesBernalo.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} puedeReservar={puedeReservar} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} fotosPorHotel={fotosPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} />
         )}
       </main>
     </div>

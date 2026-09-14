@@ -21,8 +21,9 @@ import {
   validarRestriccionComercialCatalogo,
   type CondicionPagoEntrada,
 } from "@/lib/cotizacion/condicionPagoCatalogo";
+import { construirSetParesPublicados, todosLosParesConfiguradosPublicados, primerParConfiguradoSinPublicar } from "@/lib/calc/paresPublicadosUnidad";
 
-type Result = { ok: true; id?: number } | { ok: false; error: string };
+type Result = { ok: true; id?: number; aviso?: string } | { ok: false; error: string };
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 const dNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s : null);
 
@@ -240,6 +241,19 @@ export async function setTodosHoteles(paqueteId: number, hotelIds: number[], che
 }
 
 // ── Tarifas de un hotel (para la ventana de selección) ─────────────────────
+//
+// Hallazgo confirmado: este editor siempre consultaba `tarifa_hotel`, pero un
+// hotel `modelo_tarifario = "unidad"` (Bernalo) administra sus tarifas en
+// `hotel_tarifas_unidad` — `tarifa_hotel` para ese hotel está simplemente
+// vacía. El resultado era categorías/regímenes vacíos, y al guardar "todas"
+// (arreglo vacío = sentinela de "todas" para persona) `setHotelFiltros`
+// escribía `armado_hoteles.categorias/regimenes = null`, que
+// `computarReservaBernalo`/`cargarHotelesBernaloDescubiertos` interpretan
+// como "configuración incompleta" (mismo bug que exigió corregir a mano con
+// SQL el paquete 50 / hotel 216). Unión discriminada por `modelo`: persona
+// conserva EXACTAMENTE la consulta/forma de siempre; unidad lee
+// EXCLUSIVAMENTE `hotel_tarifas_unidad` con `estado = "publicada"` — nunca
+// `tarifa_hotel`, nunca borradores/inactivas.
 export type TarifaHotelPreview = {
   categoria: string;
   regimen: string;
@@ -250,32 +264,124 @@ export type TarifaHotelPreview = {
   neto_multiple: number | null;
   neto_nino: number | null;
 };
-export async function getTarifasHotel(hotelId: number): Promise<{
-  categorias: string[];
-  regimenes: string[];
-  tarifas: TarifaHotelPreview[];
-}> {
+
+// Referencia de una tarifa Bernalo — NUNCA se presenta bajo las columnas
+// falsas Doble/Triple/Niño de `TarifaHotelPreview` (esa tarifa no es
+// per-cápita: `unidadCobro` puede ser pareja/habitación/apartamento, donde
+// `valorBaseBruto` es el valor de LA UNIDAD completa, no de una persona). El
+// valor es BRUTO/comisionable (ver `TarifaAlojamiento.comisionPct` en
+// `lib/calc/unidadAlojamiento.ts`) — deliberadamente nunca llamado "neto".
+export type TarifaUnidadPreview = {
+  categoria: string;
+  alimentacion: string;
+  temporada: string;
+  unidadCobro: string; // "persona" | "pareja" | "habitacion" | "apartamento" (payload); "" si no se pudo leer
+  valorBaseBruto: number | null; // payload.valores.adulto — bruto/comisionable de la unidad completa
+};
+
+// Hallazgo confirmado (segunda ronda): la primera versión de este editor
+// consultaba `hoteles.modelo_tarifario` descartando el `error` de Supabase
+// (`const { data: hotelRow } = await sb...`) — un error transitorio de la
+// consulta dejaba `hotelRow` en `undefined`, y `hotelRow?.modelo_tarifario
+// === "unidad"` caía en `false` en silencio, tratando CUALQUIER error de red/
+// permisos como si el hotel fuera "persona". Ahora es una unión discriminada
+// con un tercer caso `{ ok: false; error }`: falla cerrado si Supabase
+// devuelve error, si el hotel no existe, o si `modelo_tarifario` trae un
+// valor que no sea EXACTAMENTE "persona" o "unidad" — nunca hay un `else`
+// implícito que interprete "no es unidad" como "por lo tanto es persona".
+export type TarifasHotelResultado =
+  | { ok: false; error: string }
+  | { ok: true; modelo: "persona"; categorias: string[]; regimenes: string[]; tarifas: TarifaHotelPreview[] }
+  | { ok: true; modelo: "unidad"; categorias: string[]; regimenes: string[]; tarifas: TarifaUnidadPreview[] };
+
+export async function getTarifasHotel(hotelId: number): Promise<TarifasHotelResultado> {
   const sb = await createClient();
-  const { data } = await sb
-    .from("tarifa_hotel")
-    .select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino")
-    .eq("hotel_id", hotelId);
-  const tarifas: TarifaHotelPreview[] = (data ?? []).map((r) => ({
-    categoria: r.tipo_habitacion ?? "",
-    regimen: r.alimentacion ?? "",
-    temporada: r.temporada ?? "",
-    neto_sencilla: r.neto_sencilla,
-    neto_doble: r.neto_doble,
-    neto_triple: r.neto_triple,
-    neto_multiple: r.neto_multiple,
-    neto_nino: r.neto_nino,
-  }));
-  const categorias = [...new Set(tarifas.map((t) => t.categoria).filter(Boolean))].sort();
-  const regimenes = [...new Set(tarifas.map((t) => t.regimen).filter(Boolean))].sort();
-  return { categorias, regimenes, tarifas };
+  const { data: hotelRow, error: eHotel } = await sb.from("hoteles").select("modelo_tarifario").eq("id", hotelId).maybeSingle();
+  if (eHotel) return { ok: false, error: `No se pudo consultar el modelo tarifario del hotel: ${eHotel.message}` };
+  if (!hotelRow) return { ok: false, error: "El hotel no existe." };
+  const modelo = hotelRow.modelo_tarifario;
+
+  if (modelo === "unidad") {
+    // Exclusivamente `hotel_tarifas_unidad`, exclusivamente `publicada` —
+    // nunca borrador/inactiva, nunca `tarifa_hotel`.
+    const { data, error: eUnidad } = await sb
+      .from("hotel_tarifas_unidad")
+      .select("categoria, alimentacion, temporada, payload")
+      .eq("hotel_id", hotelId)
+      .eq("estado", "publicada");
+    // Un error real de la consulta NUNCA debe verse igual que "cero tarifas
+    // publicadas" — lo primero es un fallo técnico (recuperable reintentando),
+    // lo segundo es un estado legítimo del catálogo que el modal explica y
+    // bloquea el guardado; confundirlos ocultaría el fallo técnico como si
+    // fuera "falta publicar una tarifa".
+    if (eUnidad) return { ok: false, error: `No se pudieron consultar las tarifas por unidad del hotel: ${eUnidad.message}` };
+    const tarifas: TarifaUnidadPreview[] = (data ?? []).map((r) => {
+      // Lectura DEFENSIVA del payload solo para referencia visual (nunca
+      // autoritativa: la fuente de verdad de si una tarifa es utilizable es
+      // `adaptarTarifaAlojamientoPersistida`/el motor, no este listado) —
+      // un payload malformado nunca debe romper la ventana de selección,
+      // solo mostrar "—" en su lugar.
+      const payload = r.payload as { unidadCobro?: unknown; valores?: { adulto?: unknown } } | null;
+      const unidadCobroCruda = payload?.unidadCobro;
+      const valorCrudo = payload?.valores?.adulto;
+      return {
+        categoria: r.categoria ?? "",
+        alimentacion: r.alimentacion ?? "",
+        temporada: r.temporada ?? "",
+        unidadCobro: typeof unidadCobroCruda === "string" ? unidadCobroCruda : "",
+        valorBaseBruto: typeof valorCrudo === "number" && Number.isFinite(valorCrudo) ? valorCrudo : null,
+      };
+    });
+    // Columnas espejo únicamente — nunca derivadas del payload ni de texto
+    // libre histórico de `tarifa_hotel`. Vacíos fuera, duplicados fuera,
+    // orden determinista.
+    const categorias = [...new Set(tarifas.map((t) => t.categoria).filter(Boolean))].sort();
+    const regimenes = [...new Set(tarifas.map((t) => t.alimentacion).filter(Boolean))].sort();
+    return { ok: true, modelo: "unidad", categorias, regimenes, tarifas };
+  }
+
+  if (modelo === "persona") {
+    // Persona: SIN cambios de comportamiento respecto al código anterior.
+    const { data } = await sb
+      .from("tarifa_hotel")
+      .select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino")
+      .eq("hotel_id", hotelId);
+    const tarifas: TarifaHotelPreview[] = (data ?? []).map((r) => ({
+      categoria: r.tipo_habitacion ?? "",
+      regimen: r.alimentacion ?? "",
+      temporada: r.temporada ?? "",
+      neto_sencilla: r.neto_sencilla,
+      neto_doble: r.neto_doble,
+      neto_triple: r.neto_triple,
+      neto_multiple: r.neto_multiple,
+      neto_nino: r.neto_nino,
+    }));
+    const categorias = [...new Set(tarifas.map((t) => t.categoria).filter(Boolean))].sort();
+    const regimenes = [...new Set(tarifas.map((t) => t.regimen).filter(Boolean))].sort();
+    return { ok: true, modelo: "persona", categorias, regimenes, tarifas };
+  }
+
+  // Defensa en profundidad: el tipo generado de `hoteles.modelo_tarifario`
+  // solo admite "persona"|"unidad", pero eso es una garantía de COMPILACIÓN,
+  // no de lo que realmente pueda traer la fila en runtime (un CHECK relajado,
+  // un tipo desactualizado, un valor `null` histórico). Cualquier valor que
+  // no sea EXACTAMENTE uno de los dos falla cerrado — nunca cae a persona
+  // "por default".
+  return {
+    ok: false,
+    error: `El hotel tiene un modelo tarifario desconocido ("${modelo}") — corrígelo en Producto antes de usarlo en un paquete.`,
+  };
 }
 
-// Guarda el hotel + su filtro de categorías/regímenes (null/vacío = todas).
+// Guarda el hotel + su filtro de categorías/regímenes.
+// Persona: null/vacío sigue significando "todas" — SIN cambios de
+// comportamiento.
+// Unidad (Bernalo): NUNCA se persiste `null` como sentinela de "todas" —
+// `computarReservaBernalo` interpreta un arreglo vacío/null como
+// configuración incompleta, no como "todas". Se exige un arreglo explícito
+// no vacío, validado autoritativamente (server-side, `hoteles.modelo_tarifario`
+// desde la base, nunca confiado del cliente) contra las categorías/
+// alimentaciones que de verdad tienen una tarifa `publicada`.
 export async function setHotelFiltros(
   paqueteId: number,
   hotelId: number,
@@ -283,18 +389,76 @@ export async function setHotelFiltros(
   regimenes: string[]
 ): Promise<Result> {
   const sb = await createClient();
-  const { error } = await sb.from("armado_hoteles").upsert(
-    {
-      paquete_id: paqueteId,
-      hotel_id: hotelId,
-      categorias: categorias.length ? categorias : null,
-      regimenes: regimenes.length ? regimenes : null,
-    },
-    { onConflict: "paquete_id,hotel_id" }
-  );
-  if (error) return { ok: false, error: error.message };
-  revalidatePath(`/dashboard/paquetes/${paqueteId}`);
-  return { ok: true };
+  const { data: hotelRow, error: eHotel } = await sb.from("hoteles").select("modelo_tarifario").eq("id", hotelId).maybeSingle();
+  // Mismo criterio fail-closed que `getTarifasHotel`: un error de Supabase
+  // NUNCA debe caer a la rama persona (antes, `hotelRow?.modelo_tarifario ===
+  // "unidad"` con `hotelRow` en `undefined` por un error descartado
+  // producía exactamente eso — la validación de un hotel Bernalo real se
+  // saltaba en silencio y se guardaba con el sentinela persona `[] → null`).
+  if (eHotel) return { ok: false, error: `No se pudo consultar el modelo tarifario del hotel: ${eHotel.message}` };
+  if (!hotelRow) return { ok: false, error: "El hotel no existe." };
+  const modelo = hotelRow.modelo_tarifario;
+
+  if (modelo === "unidad") {
+    if (!categorias.length || !regimenes.length) {
+      return {
+        ok: false,
+        error: "Este hotel usa el modelo tarifario Bernalo por unidad: selecciona al menos una categoría y una alimentación publicadas (no se puede guardar \"todas\" como vacío para este modelo).",
+      };
+    }
+    const { data: filas, error: eFilas } = await sb
+      .from("hotel_tarifas_unidad")
+      .select("categoria, alimentacion")
+      .eq("hotel_id", hotelId)
+      .eq("estado", "publicada");
+    if (eFilas) return { ok: false, error: eFilas.message };
+    // Hallazgo confirmado (segunda ronda): validar categorías y
+    // alimentaciones POR SEPARADO permite combinaciones que nunca se
+    // publicaron — ej. "Estándar/FULL" y "Suite/PC" publicadas no implican
+    // que "Estándar/PC" tenga tarifa. Se exige el PAR completo — ver
+    // `lib/calc/paresPublicadosUnidad.ts` (helper compartido: la MISMA
+    // función decide esto acá, en el descubrimiento público de
+    // `datosBernalo.ts` y en el aviso de `generarTarifario`).
+    const paresPublicados = construirSetParesPublicados(filas ?? []);
+    if (!todosLosParesConfiguradosPublicados(categorias, regimenes, paresPublicados)) {
+      const faltante = primerParConfiguradoSinPublicar(categorias, regimenes, paresPublicados);
+      return {
+        ok: false,
+        error: faltante
+          ? `No hay ninguna tarifa publicada para la combinación "${faltante.categoria}" / "${faltante.alimentacion}" — quita esa categoría o esa alimentación de la selección, o publica la tarifa que falta.`
+          : "Selecciona al menos una categoría y una alimentación con tarifa publicada.",
+      };
+    }
+    const { error } = await sb.from("armado_hoteles").upsert(
+      { paquete_id: paqueteId, hotel_id: hotelId, categorias, regimenes },
+      { onConflict: "paquete_id,hotel_id" }
+    );
+    if (error) return { ok: false, error: error.message };
+    revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+    return { ok: true };
+  }
+
+  if (modelo === "persona") {
+    // Persona: SIN cambios de comportamiento respecto al código anterior.
+    const { error } = await sb.from("armado_hoteles").upsert(
+      {
+        paquete_id: paqueteId,
+        hotel_id: hotelId,
+        categorias: categorias.length ? categorias : null,
+        regimenes: regimenes.length ? regimenes : null,
+      },
+      { onConflict: "paquete_id,hotel_id" }
+    );
+    if (error) return { ok: false, error: error.message };
+    revalidatePath(`/dashboard/paquetes/${paqueteId}`);
+    return { ok: true };
+  }
+
+  // Defensa en profundidad — ver el mismo bloque en `getTarifasHotel`.
+  return {
+    ok: false,
+    error: `El hotel tiene un modelo tarifario desconocido ("${modelo}") — corrígelo en Producto antes de usarlo en un paquete.`,
+  };
 }
 
 // ── Adición de servicio (con check) + modo de cobro (persona/grupo) ────────
@@ -334,6 +498,11 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   const paqueteActivo = pq.activo;
   const paqueteDestinoId = pq.destino_id;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
+  // Movido arriba (antes vivía justo antes de las validaciones por tipo, más
+  // abajo) — la clasificación de hoteles Bernalo (P2, ver más abajo) necesita
+  // saber el tipo del paquete ANTES de decidir si sus ofertas por unidad son
+  // compatibles con Vista Booking.
+  const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
 
   const [{ data: vuelosSel }, { data: empaquetadosSel }, { data: hotelesSel }, { data: serviciosSel }] = await Promise.all([
     sb
@@ -348,7 +517,7 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda)")
+      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario)")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
@@ -403,8 +572,128 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
     paqueteMoneda = monedasServicio[0] ?? "COP";
   }
 
-  // Temporadas y tarifas netas de cada hotel involucrado
-  const hotelIds = hoteles.map((h) => h.hotel_id);
+  // Temporadas y tarifas netas de cada hotel involucrado.
+  //
+  // Fase 3 Bernalo (guardia, ver informe de la tarea): un hotel con
+  // `modelo_tarifario = 'unidad'` administra su tarifa en
+  // `hotel_tarifas_unidad` (fase 2), NO en `tarifa_hotel` — ese hotel se
+  // EXCLUYE de esta consulta y de la generación de filas más abajo
+  // (`hotelesBernaloExcluidos`), en vez de leer `tarifa_hotel` en silencio
+  // (que para un hotel Bernalo puede estar vacío, o peor, contener datos
+  // viejos de antes de migrar a Bernalo). La integración real de
+  // `hotel_tarifas_unidad` con el tarifario queda fuera de esta fase — el
+  // desglose por acomodación (columna sencilla/doble/triple/multiple/niño/
+  // niño2/infante) que este archivo escribe en `tarifario_resultado` no
+  // tiene una forma no ambigua de derivarse de una tarifa Bernalo (la
+  // comisión se aplica una sola vez sobre el total, no por categoría) sin
+  // aproximar — ver el informe de la tarea.
+  const hotelesBernaloFilas = hoteles.filter(
+    (h) => (h.hoteles as unknown as { modelo_tarifario?: string | null } | null)?.modelo_tarifario === "unidad"
+  );
+  const hotelesBernaloExcluidos = hotelesBernaloFilas.map(
+    (h) => (h.hoteles as unknown as { nombre?: string | null } | null)?.nombre ?? `#${h.hotel_id}`
+  );
+  const hotelIds = hoteles
+    .filter((h) => (h.hoteles as unknown as { modelo_tarifario?: string | null } | null)?.modelo_tarifario !== "unidad")
+    .map((h) => h.hotel_id);
+
+  // P3 (hallazgo confirmado, validación final): un paquete "dinamico" cuyo
+  // alojamiento es 100% Bernalo (`hotelIds.length === 0`, ningún hotel
+  // persona) no tiene NADA real que ofrecer — el modelo unidad no vive en
+  // `tarifa_hotel`/`tarifario_resultado` y el tipo "dinamico" tampoco está
+  // soportado por Vista Booking (ver `tipoCompatibleConVistaBooking` más
+  // abajo). Antes esta guardia vivía DESPUÉS de publicar servicios
+  // opcionales y de borrar/reescribir `tarifario_resultado` — como los
+  // servicios SIEMPRE suman filas (`filas.push` más abajo, sin importar el
+  // tipo), un paquete dinámico 100% unidad CON al menos un servicio
+  // opcional terminaba con `filas.length > 0` y se colaba por la rama
+  // `if (filas.length)` del `insert` en vez de caer en el `else if` — se
+  // guardaba `ok:true` con un snapshot que son SOLO servicios (sin
+  // alojamiento real, la parte que el usuario más necesita) y sin ningún
+  // aviso de que el paquete no sirve. Esta prevalidación corre ANTES de
+  // tocar `armado_servicios`/`servicio_tarifa_pax`, ANTES del
+  // `delete().eq("paquete_id", paqueteId)` y ANTES de cualquier `insert` —
+  // nunca se publica un snapshot parcial (solo servicios) ni se borra uno
+  // previo válido al rechazar. Un paquete dinámico con AL MENOS un hotel
+  // persona (`hotelIds.length > 0`) nunca entra aquí, sin importar cuántos
+  // hoteles Bernalo tenga además — sigue su flujo normal. Bloqueo y porción
+  // terrestre no se tocan (la condición exige `tipo === "dinamico"`).
+  if (tipo === "dinamico" && hotelIds.length === 0 && hotelesBernaloFilas.length > 0) {
+    return {
+      ok: false,
+      error:
+        "Dinámico: el modelo tarifario por unidad todavía no está integrado con paquetes dinámicos (el motor de cotización Bernalo no soporta salidas dinámicas). Usa un hotel con modelo por persona, o cambia este paquete a Bloqueo/Porción terrestre.",
+    };
+  }
+
+  // P4 (hallazgo confirmado, validación final): TODA la clasificación de
+  // abajo (válido / sin publicar / no compatible por tipo) usa `hotel_id`
+  // como llave — nunca el nombre. Antes se armaba un `Set` de NOMBRES
+  // válidos y se filtraban los excluidos comparando también por nombre
+  // (`hotelesBernaloSinPublicar = hotelesBernaloExcluidos.filter(n =>
+  // !hotelesBernaloValidosSet.has(n))`): dos hoteles DISTINTOS con el mismo
+  // nombre —uno válido, otro sin publicar/no compatible— se clasificaban
+  // mal, porque el nombre compartido "contaminaba" al otro en el filtro por
+  // string. El nombre se resuelve SOLO al final, para construir el texto.
+  const nombrePorHotelBernalo = new Map<number, string>(
+    hotelesBernaloFilas.map((h, i) => [h.hotel_id, hotelesBernaloExcluidos[i]])
+  );
+
+  // P2 (hallazgo confirmado, validación final): el motor de cotización
+  // Bernalo (`computarReservaBernalo`) no soporta `salidas_dinamicas`
+  // todavía, y el tipo "servicios" no tiene concepto de hotel cotizable —
+  // `lib/tarifario/datosBernalo.ts` ya excluye esos dos tipos del
+  // descubrimiento de Vista Booking (`cargarHotelesBernaloDescubiertos`).
+  // Un hotel Bernalo de un paquete de ese tipo NUNCA puede contarse como
+  // "disponible en Vista Booking" acá tampoco, sin importar si tiene
+  // tarifa publicada o no — sería anunciar algo que la UI no puede
+  // mostrar/cotizar todavía.
+  const tipoCompatibleConVistaBooking = tipo === "bloqueo" || tipo === "porcion_terrestre";
+
+  // P1-3 (hallazgo confirmado): "excluido de la generación legacy" NO es lo
+  // mismo que "disponible para cotización dinámica" — un hotel Bernalo sin
+  // categorías/alimentación configuradas, o sin tarifa `publicada` para
+  // TODO el cartesiano configurado, sigue excluido de `tarifario_resultado`
+  // (correcto), pero el aviso NUNCA debe contarlo como disponible. Mismo
+  // helper puro compartido que `setHotelFiltros`/`datosBernalo.ts`
+  // (`lib/calc/paresPublicadosUnidad.ts`) — una sola función decide "¿este
+  // hotel Bernalo está realmente publicado?" en los tres lugares.
+  const paresPublicadosPorHotelBernalo = new Map<number, Set<string>>();
+  if (hotelesBernaloFilas.length && tipoCompatibleConVistaBooking) {
+    const { data: tarifasPublicadasBernalo, error: eTarifasBernalo } = await sb
+      .from("hotel_tarifas_unidad")
+      .select("hotel_id, categoria, alimentacion")
+      .in("hotel_id", hotelesBernaloFilas.map((h) => h.hotel_id))
+      .eq("estado", "publicada");
+    // Un error TÉCNICO acá no debe hacer que el paquete parezca "sin
+    // hoteles Bernalo disponibles" en silencio — se propaga como cualquier
+    // otro error de esta función.
+    if (eTarifasBernalo) return { ok: false, error: eTarifasBernalo.message };
+    const filasPorHotelBernalo = new Map<number, { categoria: string | null; alimentacion: string | null }[]>();
+    for (const t of tarifasPublicadasBernalo ?? []) {
+      const arr = filasPorHotelBernalo.get(t.hotel_id) ?? [];
+      arr.push({ categoria: t.categoria, alimentacion: t.alimentacion });
+      filasPorHotelBernalo.set(t.hotel_id, arr);
+    }
+    for (const [hotelId, filasPub] of filasPorHotelBernalo) {
+      paresPublicadosPorHotelBernalo.set(hotelId, construirSetParesPublicados(filasPub));
+    }
+  }
+  // Clasificación por id, en un único recorrido — nunca por nombre (P4).
+  const idsBernaloValidos = new Set<number>();
+  const idsBernaloSinPublicar = new Set<number>();
+  const idsBernaloNoCompatibles = new Set<number>();
+  for (const h of hotelesBernaloFilas) {
+    if (!tipoCompatibleConVistaBooking) { idsBernaloNoCompatibles.add(h.hotel_id); continue; }
+    const categorias = (h.categorias as string[] | null) ?? [];
+    const regimenes = (h.regimenes as string[] | null) ?? [];
+    const paresPublicados = paresPublicadosPorHotelBernalo.get(h.hotel_id) ?? new Set<string>();
+    if (todosLosParesConfiguradosPublicados(categorias, regimenes, paresPublicados)) idsBernaloValidos.add(h.hotel_id);
+    else idsBernaloSinPublicar.add(h.hotel_id);
+  }
+  const nombresDeIdsBernalo = (ids: Set<number>) => [...ids].map((id) => nombrePorHotelBernalo.get(id) ?? `#${id}`);
+  const hotelesBernaloValidos = nombresDeIdsBernalo(idsBernaloValidos);
+
   const temporadasPorHotel = new Map<number, TemporadaRango[]>();
   type TarifaRow = Record<string, unknown>;
   const tarifasPorHotel = new Map<number, TarifaRow[]>();
@@ -589,7 +878,8 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
       && empaquetadoVigente(v.e.compra_inicio, v.e.compra_fin, hoyBogota(new Date()))
     );
 
-  const tipo = (pq.tipo ?? "bloqueo") as "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
+  // `tipo` ya se resolvió arriba (justo tras leer `pq`) — lo necesita la
+  // clasificación de hoteles Bernalo antes de llegar aquí.
 
   // Salidas dinámicas (vuelo por sistema): solo para el tipo 'dinamico'.
   const { data: salidasRaw } = tipo === "dinamico"
@@ -729,12 +1019,30 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
   if (filas.length) {
     const ins = await sb.from("tarifario_resultado").insert(filas);
     if (ins.error) return { ok: false, error: ins.error.message };
-  } else if (tipo === "bloqueo" || tipo === "porcion_terrestre") {
+  } else if ((tipo === "bloqueo" || tipo === "porcion_terrestre") && hotelesBernaloValidos.length === 0) {
+    // Hallazgo confirmado: un paquete cuyos hoteles son TODOS Bernalo
+    // (`modelo_tarifario = 'unidad'`) queda con `hotelIds` vacío arriba —
+    // nunca genera ninguna fila legacy de `tarifario_resultado` (correcto:
+    // ese modelo no vive ahí, ver el comentario de `hotelesBernaloExcluidos`
+    // más arriba), así que `filas.length` cae en 0 igual que un paquete
+    // realmente roto (sin temporadas/tarifas). Sin este chequeo, un paquete
+    // Bernalo VÁLIDO (con sus tarifas por unidad bien cargadas y publicadas
+    // en `hotel_tarifas_unidad`) nunca podía guardarse. P1-3 (hallazgo
+    // confirmado): la condición usa `hotelesBernaloValidos` (con tarifa
+    // publicada compatible), no `hotelesBernaloExcluidos` (todo hotel
+    // unidad, publicado o no) — un paquete cuyos hoteles Bernalo existen
+    // pero NINGUNO tiene tarifa publicada compatible sigue sin nada que
+    // ofrecer en Vista Booking, así que el error legacy sigue aplicando.
     return {
       ok: false,
       error:
         "No se generaron tarifas. Revisa que el hotel tenga temporadas y tarifas netas que cubran el rango de fechas del viaje.",
     };
+    // El caso "dinamico 100% Bernalo" ya se rechazó ARRIBA, antes de tocar
+    // servicios/delete/insert (ver el comentario junto a `hotelIds`/
+    // `hotelesBernaloFilas` al inicio de la función) — nunca puede llegar
+    // aquí, así que no hace falta (ni debe) repetirse un `else if` para ese
+    // caso en este punto.
   }
 
   // Guarda la moneda resuelta en el paquete (la usan reservar/vitrina como pista).
@@ -742,7 +1050,37 @@ export async function generarTarifario(paqueteId: number): Promise<Result> {
 
   revalidatePath(`/dashboard/paquetes/${paqueteId}`);
   revalidatePath("/tarifario");
-  return { ok: true, id: filas.length };
+  // Hallazgo confirmado (Vista Booking unificada): el texto del aviso
+  // anterior afirmaba que la integración con el tarifario todavía no
+  // existía para ese modelo — eso ya no es cierto (Vista Booking muestra
+  // estos hoteles mezclados con los persona, con cotización dinámica en
+  // vivo) y sonaba a fracaso/pendiente incluso con el paquete bien
+  // configurado. El aviso ahora distingue explícitamente (a) cuántas
+  // tarifas persona/legacy se publicaron en `tarifario_resultado`, (b)
+  // cuántos hoteles por unidad quedan REALMENTE disponibles para
+  // cotización dinámica (con tarifa publicada compatible, `hotelesBernaloValidos`,
+  // clasificado por id — P4), (c) cuáles tienen el modelo pero no una
+  // tarifa publicada completa, y (d) cuáles simplemente no son compatibles
+  // porque su paquete es "dinamico"/"servicios" (P2) — nunca presenta (b)
+  // como una carencia, y nunca cuenta (c)/(d) como "disponible".
+  const hotelesBernaloSinPublicar = nombresDeIdsBernalo(idsBernaloSinPublicar);
+  const hotelesBernaloNoCompatibles = nombresDeIdsBernalo(idsBernaloNoCompatibles);
+  const avisoValidos = hotelesBernaloValidos.length
+    ? `${hotelesBernaloValidos.length === 1 ? "el hotel" : "los hoteles"} ${hotelesBernaloValidos.join(", ")} usa${hotelesBernaloValidos.length === 1 ? "" : "n"} el modelo tarifario por unidad — no genera${hotelesBernaloValidos.length === 1 ? "" : "n"} filas en el tarifario clásico, pero queda${hotelesBernaloValidos.length === 1 ? "" : "n"} disponible${hotelesBernaloValidos.length === 1 ? "" : "s"} en Vista Booking mediante cotización dinámica por ocupación.`
+    : null;
+  const avisoSinPublicar = hotelesBernaloSinPublicar.length
+    ? ` ${hotelesBernaloSinPublicar.length === 1 ? "El hotel" : "Los hoteles"} ${hotelesBernaloSinPublicar.join(", ")} también usa${hotelesBernaloSinPublicar.length === 1 ? "" : "n"} el modelo por unidad, pero no tiene${hotelesBernaloSinPublicar.length === 1 ? "" : "n"} una tarifa publicada que cubra su configuración — no aparecerá${hotelesBernaloSinPublicar.length === 1 ? "" : "n"} en Vista Booking hasta publicar la tarifa que falta.`
+    : "";
+  const avisoNoCompatibles = hotelesBernaloNoCompatibles.length
+    ? ` ${hotelesBernaloNoCompatibles.length === 1 ? "El hotel" : "Los hoteles"} ${hotelesBernaloNoCompatibles.join(", ")} también usa${hotelesBernaloNoCompatibles.length === 1 ? "" : "n"} el modelo por unidad, pero el tipo de paquete (${tipo === "dinamico" ? "dinámico" : "servicios"}) todavía no está integrado con Vista Booking — no aparecerá${hotelesBernaloNoCompatibles.length === 1 ? "" : "n"} ahí hasta que exista esa integración.`
+    : "";
+  return {
+    ok: true,
+    id: filas.length,
+    ...(avisoValidos || avisoSinPublicar || avisoNoCompatibles
+      ? { aviso: `${filas.length} tarifa(s) persona publicada(s) en el tarifario.${avisoValidos ? ` Además, ${avisoValidos}` : ""}${avisoSinPublicar}${avisoNoCompatibles}` }
+      : {}),
+  };
 }
 
 // ── AUTO-RECÁLCULO ─────────────────────────────────────────────────────────

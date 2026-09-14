@@ -215,6 +215,24 @@ describe("/tarifario (público) — usa orquestarCargaPublica() (sesión SECUENC
     assert.match(src, /if \(!resDatos\.ok\)/);
     assert.match(src, /MSG_ERROR_CARGAR_TARIFARIO/);
   });
+
+  // P1-1 (hallazgo confirmado): un catálogo con SOLO hoteles por unidad
+  // (`hotelesBernalo`, sin ninguna fila legacy ni programa) es un catálogo
+  // VÁLIDO — antes la guarda solo miraba `filasVisibles`/`programas` y
+  // mostraba "Tarifario en preparación" aunque hubiera hoteles unidad
+  // disponibles para cotizar.
+  test('la guarda de "Tarifario en preparación" también considera hotelesBernalo — no se muestra si hay hoteles por unidad', () => {
+    assert.match(src, /Tarifario en preparación/);
+    assert.match(src, /!filasVisibles\.length && !programas\.length && !hotelesBernalo\.length \? \(/);
+  });
+
+  test("TarifarioPublic se monta con hotelesBernalo aunque filasVisibles/programas estén vacíos (la condición es un Y de los TRES, nunca solo de los dos legacy)", () => {
+    const idxCondicion = src.indexOf("!filasVisibles.length && !programas.length && !hotelesBernalo.length");
+    assert.notEqual(idxCondicion, -1);
+    const idxTarifarioPublic = src.indexOf("<TarifarioPublic", idxCondicion);
+    assert.notEqual(idxTarifarioPublic, -1, "TarifarioPublic debe montarse en la rama contraria a la guarda de preparación");
+    assert.match(src.slice(idxTarifarioPublic, idxTarifarioPublic + 800), /hotelesBernalo=\{hotelesBernalo\}/);
+  });
 });
 
 describe("Ninguna de las tres rutas paraleliza una ESCRITURA junto a una LECTURA independiente", () => {

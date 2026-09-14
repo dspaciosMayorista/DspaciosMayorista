@@ -7,7 +7,13 @@ import { buscarReceptivos } from "@/app/(dashboard)/dashboard/reservar/actions";
 import type { ResultadoServicio } from "@/lib/reservar/cotizar";
 import type { TourCartItem } from "@/lib/cart/CartContext";
 
-export type ReceptivosPrefill = { destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number };
+// `nonce` identifica CADA vez que el carrito pide precargar (un clic en
+// "+ Agregar servicios / tours") — necesario para consumir el intent aunque
+// este componente YA esté montado (el `useEffect([])` de solo-montaje no
+// vuelve a correr si el usuario ya estaba en Receptivos y hace clic de
+// nuevo, o desde otro hotel). Mismo patrón que `sugerenciaPedida` en
+// `BuscadorBooking.tsx`.
+export type ReceptivosPrefill = { destino: string | null; fechaIda: string | null; fechaRegreso: string | null; pax: number; nonce: number };
 
 // Motor de búsqueda de receptivos: destino + fechas + pax → liquida EN VIVO
 // cada tour publicado (temporada de la fecha elegida, tarifa por persona o
@@ -45,15 +51,50 @@ export function BuscadorReceptivos({
     });
   }
 
-  // Solo una vez al montar: si llega precarga, busca sola y avisa que ya la usó.
-  const yaConsumido = useRef(false);
-  useEffect(() => {
-    if (yaConsumido.current || !initial) return;
-    yaConsumido.current = true;
-    if (initial.fechaIda && initial.fechaRegreso) buscar(initial.destino ?? "", initial.fechaIda, initial.fechaRegreso, String(initial.pax || 2));
+  // Aplica un intent: actualiza los campos visibles y dispara la búsqueda.
+  // Vive fuera del efecto (llamada vía ref "último valor" — ver abajo) para
+  // no violar `react-hooks/set-state-in-effect`: un `setState` (o una
+  // función que lo haga, como `buscar`) escrito DIRECTO dentro de un
+  // `useEffect` dispara ese lint incondicionalmente, sin importar que esté
+  // guardado por el chequeo de `nonce`. Mismo patrón ya usado en este mismo
+  // archivo/proyecto para `aplicarSugerenciaFecha` (`BuscadorBooking.tsx`).
+  function aplicarPrefill(p: ReceptivosPrefill) {
+    setDestino(p.destino ?? "");
+    setFIda(p.fechaIda ?? "");
+    setFReg(p.fechaRegreso ?? "");
+    setPax(p.pax ? String(p.pax) : "2");
+    if (p.fechaIda && p.fechaRegreso) buscar(p.destino ?? "", p.fechaIda, p.fechaRegreso, String(p.pax || 2));
     onConsumedInitial?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }
+  // `aplicarPrefill` se re-crea en cada render (no es un `useCallback`, y no
+  // puede serlo sin tocar `buscar`) — se llama a través de un ref "último
+  // valor" para que el efecto de abajo pueda depender SOLO de `initial`.
+  const aplicarPrefillRef = useRef(aplicarPrefill);
+  useEffect(() => { aplicarPrefillRef.current = aplicarPrefill; });
+
+  // Consume CADA intent nuevo (identificado por `nonce`) — no solo el que
+  // llega al montar. Antes esto corría en un `useEffect([])` (solo montaje):
+  // si el usuario pulsaba "Agregar servicios" estando YA en la pestaña
+  // Receptivos (el componente ya montado), el efecto de montaje no volvía a
+  // correr y el segundo intent se perdía en silencio. `nonceConsumidoRef`
+  // guarda el ÚLTIMO nonce ya procesado (mismo patrón que
+  // `nonceSugerenciaRef` en `BuscadorBooking.tsx`): el efecto corre en CADA
+  // render donde `initial` cambia de referencia, pero solo actualiza
+  // destino/fechas/pax y dispara la búsqueda cuando el nonce es REALMENTE
+  // nuevo — así cada intent se consume EXACTAMENTE una vez, nunca en bucle.
+  //
+  // Cuando el llamador limpia el intent tras consumirlo
+  // (`onConsumedInitial` → `setAddonsIntent(null)`), `initial` pasa a
+  // `null` y este efecto vuelve a correr (cambió de referencia) — pero
+  // `if (!initial) return;` sale de inmediato SIN tocar `resultados`: los
+  // resultados de la búsqueda que el intent disparó siguen visibles.
+  const nonceConsumidoRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!initial) return;
+    if (nonceConsumidoRef.current === initial.nonce) return;
+    nonceConsumidoRef.current = initial.nonce;
+    aplicarPrefillRef.current(initial);
+  }, [initial]);
 
   const sel = "rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 

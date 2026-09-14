@@ -52,16 +52,32 @@ function enRango(t0: number, ini: string | null, fin: string | null): boolean {
   return t0 >= i && t0 <= f;
 }
 
-function cubreFecha(t: TemporadaRango, t0: number): boolean {
+// Motivo detallado por el que UNA temporada, aislada, no cubre una fecha —
+// antes de mirar vigencia de compra ni régimen. `cubre`: la fecha cae en
+// alguno de sus rangos Y no está en blackout. `en_blackout`: cae en un
+// rango, pero también en un blackout que lo excluye. `sin_rango`: no cae en
+// ningún rango de esta temporada (blackout ni se evalúa: es irrelevante si
+// el rango base ya no cubre).
+type CoberturaTemporada = "cubre" | "en_blackout" | "sin_rango";
+
+function coberturaTemporada(t: TemporadaRango, t0: number): CoberturaTemporada {
   // Cobertura: si hay rangos múltiples, se usan; si no, el rango simple legado.
   const rangos = t.rangos && t.rangos.length
     ? t.rangos
     : (t.fecha_inicio && t.fecha_fin ? [{ fecha_inicio: t.fecha_inicio, fecha_fin: t.fecha_fin }] : []);
   const dentro = rangos.some((r) => enRango(t0, r.fecha_inicio, r.fecha_fin));
-  if (!dentro) return false;
+  if (!dentro) return "sin_rango";
   // Black-out: si la fecha cae en una exclusión, la temporada NO cubre esa noche.
-  if (t.blackouts && t.blackouts.some((b) => enRango(t0, b.fecha_inicio, b.fecha_fin))) return false;
-  return true;
+  if (t.blackouts && t.blackouts.some((b) => enRango(t0, b.fecha_inicio, b.fecha_fin))) return "en_blackout";
+  return "cubre";
+}
+
+// `cubreFecha` sigue siendo el booleano que ya usaba el resto del motor —
+// se redefine EN TÉRMINOS de `coberturaTemporada` (no se duplica ninguna
+// regla): mismo comportamiento exacto, ahora con el detalle observable
+// disponible para quien lo necesite (ver `resolverNocheDetallado`).
+function cubreFecha(t: TemporadaRango, t0: number): boolean {
+  return coberturaTemporada(t, t0) === "cubre";
 }
 
 /** ¿La vigencia de compra cubre HOY? (sin rango = siempre disponible). */
@@ -81,6 +97,56 @@ function entradasNoche(t0: number, temporadas: TemporadaRango[], hoy: string, re
   return temporadas
     .filter((t) => cubreFecha(t, t0) && compraVigente(t, hoy) && (t.regimen_restringido == null || t.regimen_restringido === regimen))
     .sort((a, b) => (b.prioridad ?? 1) - (a.prioridad ?? 1));
+}
+
+// Motivo por el que una NOCHE completa (todas las temporadas del hotel, ya
+// combinadas) no resolvió ninguna entrada — lo que `entradasNoche` colapsa
+// hoy en una lista vacía sin decir por qué. `en_blackout`: existe al menos
+// una temporada cuyo RANGO cubriría la fecha, pero un blackout la excluye
+// (se prioriza este motivo sobre los demás: es la señal más específica —
+// "sí hay una tarifa para esta fecha, pero está bloqueada a propósito").
+// `fuera_de_vigencia_compra`: ninguna está en blackout, pero al menos una
+// cubre el rango (y el régimen) y solo falla por `compraVigente`.
+// `sin_cobertura`: ninguna temporada, de ningún tipo, tiene un rango que
+// toque esta fecha (con el régimen pedido).
+export type MotivoNocheNoResuelta = "en_blackout" | "fuera_de_vigencia_compra" | "sin_cobertura";
+
+export type ResolucionNocheDetallada =
+  | { ok: true; temporada: TemporadaRango }
+  | { ok: false; motivo: MotivoNocheNoResuelta; temporadasImplicadas: TemporadaRango[] };
+
+/**
+ * Igual que `entradasNoche(...)[0]`, pero cuando NO hay ganadora explica
+ * POR QUÉ — reutilizando exactamente los mismos helpers de cobertura/
+ * blackout/vigencia de compra, sin duplicar ni relajar ninguna regla. La
+ * selección real (prioridad, régimen, vigencia de compra) es idéntica a la
+ * de `entradasNoche`: este resolver solo hace observable la razón que antes
+ * se perdía al colapsar todo en `null`.
+ */
+export function resolverNocheDetallado(
+  t0: number,
+  temporadas: TemporadaRango[],
+  hoy: string,
+  regimen?: string
+): ResolucionNocheDetallada {
+  const ents = entradasNoche(t0, temporadas, hoy, regimen);
+  if (ents.length > 0) return { ok: true, temporada: ents[0] };
+
+  const coincideRegimen = (t: TemporadaRango) => t.regimen_restringido == null || t.regimen_restringido === regimen;
+
+  const enBlackout = temporadas.filter((t) => coincideRegimen(t) && coberturaTemporada(t, t0) === "en_blackout");
+  if (enBlackout.length > 0) {
+    return { ok: false, motivo: "en_blackout", temporadasImplicadas: enBlackout };
+  }
+
+  const cubrenPeroSinCompraVigente = temporadas.filter(
+    (t) => coincideRegimen(t) && coberturaTemporada(t, t0) === "cubre" && !compraVigente(t, hoy)
+  );
+  if (cubrenPeroSinCompraVigente.length > 0) {
+    return { ok: false, motivo: "fuera_de_vigencia_compra", temporadasImplicadas: cubrenPeroSinCompraVigente };
+  }
+
+  return { ok: false, motivo: "sin_cobertura", temporadasImplicadas: [] };
 }
 
 /** Normaliza un valor jsonb a una lista de rangos de fechas válidos. */
@@ -173,14 +239,19 @@ export function temporadaParaFecha(
  * vigencia de compra. Para SERVICIOS por temporada: la fecha del viaje elige la
  * tarifa, respetando la vigencia de compra (igual que el hotel). Devuelve null si
  * ninguna temporada con fechas aplica (→ se usa la tarifa 'GENERAL').
+ *
+ * Contrato público sin cambios: delega en `resolverNocheDetallado` (mismo
+ * `entradasNoche[0]` de siempre) y solo se queda con el nombre — quien
+ * necesite distinguir blackout de "sin cobertura" debe llamar al resolver
+ * detallado directamente.
  */
 export function temporadaVigenteParaFecha(
   fecha: Date,
   temporadas: TemporadaRango[],
   hoy: string = hoyISO()
 ): string | null {
-  const top = entradasNoche(fecha.getTime(), temporadas, hoy)[0];
-  return top?.nombre ?? null;
+  const r = resolverNocheDetallado(fecha.getTime(), temporadas, hoy);
+  return r.ok ? r.temporada.nombre : null;
 }
 
 /**

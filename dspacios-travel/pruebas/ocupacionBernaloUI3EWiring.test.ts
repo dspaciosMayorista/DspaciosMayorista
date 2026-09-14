@@ -1,0 +1,712 @@
+import { test, describe } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { destinosPorcionPublica } from "../lib/tarifario/destinosPorcion.ts";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fase 3E Bernalo — verificación por inspección de la UI de descubrimiento
+// y cotización (`app/tarifario/VistaBooking.tsx`, `TarifarioPublic.tsx`,
+// `page.tsx`). No ejecutable bajo `node --test` (JSX/Next) — se verifica el
+// código fuente, mismo criterio del resto de wiring tests del repo.
+// ─────────────────────────────────────────────────────────────────────────
+
+const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
+const fuenteVista = readFileSync(join(raiz, "app/tarifario/VistaBooking.tsx"), "utf8");
+const fuentePublic = readFileSync(join(raiz, "app/tarifario/TarifarioPublic.tsx"), "utf8");
+const fuentePage = readFileSync(join(raiz, "app/tarifario/page.tsx"), "utf8");
+
+function sinComentarios(fuente: string): string {
+  return fuente.split(/\r?\n/).filter((l) => !/^\s*\/\//.test(l) && !/^\s*\*/.test(l) && !/^\s*\/\*\*?\s*$/.test(l)).join("\n");
+}
+const codigoVista = sinComentarios(fuenteVista);
+
+function cuerpoFuncion(fuenteCompleta: string, ancla: string): string {
+  const idx = fuenteCompleta.indexOf(ancla);
+  assert.ok(idx > -1, `no se encontró "${ancla}"`);
+  let profundidadParen = 0;
+  let idxLlaveInicial = -1;
+  for (let i = idx; i < fuenteCompleta.length; i++) {
+    const ch = fuenteCompleta[i];
+    if (ch === "(") profundidadParen++;
+    else if (ch === ")") profundidadParen--;
+    else if (ch === "{" && profundidadParen === 0) { idxLlaveInicial = i; break; }
+  }
+  assert.ok(idxLlaveInicial > -1, `no se encontró el "{" del cuerpo tras "${ancla}"`);
+  let profundidad = 0;
+  for (let i = idxLlaveInicial; i < fuenteCompleta.length; i++) {
+    if (fuenteCompleta[i] === "{") profundidad++;
+    else if (fuenteCompleta[i] === "}") {
+      profundidad--;
+      if (profundidad === 0) return fuenteCompleta.slice(idx, i + 1);
+    }
+  }
+  throw new Error(`no se encontró el cierre del cuerpo de "${ancla}"`);
+}
+
+const cuerpoEditorPax = cuerpoFuncion(fuenteVista, "function EditorPax({");
+
+describe("VistaBooking.tsx — Vista Booking unificada: persona y unidad en UNA sola lista", () => {
+  // Reemplaza el hallazgo original ("descubrimiento paralelo, sin filas
+  // ficticias", que exigía una sección SEPARADA) — la unificación pidió
+  // exactamente lo contrario: una sola colección visible (`tarjetas`),
+  // nunca una sección aparte "con tarifa personalizada". `hotelesBernalo`
+  // sigue sin tocar `tarifario_resultado`/`filas` (eso no cambió), pero la
+  // GRILLA sí mezcla ambas fuentes.
+  //
+  // `cuerpoFuncion` (brace-depth-aware, sin seguimiento de "<"/">") no puede
+  // acotar un `useMemo(() => { ... }, [deps]);`: el "(" de `useMemo(` y el de
+  // los parámetros vacíos de la flecha `()` dejan la profundidad de paréntesis
+  // en 1 justo cuando aparece el "{" real del cuerpo, así que ese "{" nunca
+  // se reconoce como inicio — se acota manualmente con marcadores de texto
+  // únicos, igual criterio que pruebas/armadoClientHotelModalWiring.test.ts.
+  const idxUnidadVisibles = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
+  const idxFinUnidadVisibles = fuenteVista.indexOf("// Una sola colección para la grilla", idxUnidadVisibles);
+  const cuerpoUnidadVisibles = fuenteVista.slice(idxUnidadVisibles, idxFinUnidadVisibles);
+  const idxTarjetas = fuenteVista.indexOf("const tarjetas = useMemo<Tarjeta[]>(() => {");
+  const idxFinTarjetas = fuenteVista.indexOf("const [abierto, setAbierto] = useState<HotelCard | null>(null);", idxTarjetas);
+  const cuerpoTarjetas = fuenteVista.slice(idxTarjetas, idxFinTarjetas);
+
+  test("existe una única colección `tarjetas` que combina hoteles persona y unidad, ordenada junta", () => {
+    assert.match(codigoVista, /const tarjetas = useMemo<Tarjeta\[\]>\(\(\) => \{/);
+    assert.match(cuerpoTarjetas, /tipo: "persona" as const/);
+    assert.match(cuerpoTarjetas, /tipo: "unidad" as const/);
+    assert.match(cuerpoTarjetas, /\[\.\.\.a, \.\.\.b\]\.sort\(/);
+  });
+
+  test("ya NO existe la sección separada 'Alojamientos con tarifa personalizada' ni un bloque de renderizado JSX aparte para hotelesBernalo", () => {
+    assert.doesNotMatch(codigoVista, /Alojamientos con tarifa personalizada/);
+    // `hotelesBernalo.map(...)` SÍ aparece ahora en lógica pura (armar el set
+    // de ids autoritativos en `tarjetas`, P1; derivar destinos en
+    // `destinosBloqueo`/`destinos`, P3) — lo que nunca debe volver a existir
+    // es un `{hotelesBernalo.map(...)}` DENTRO del JSX renderizado (un bloque
+    // de tarjetas aparte, fuera de la grilla única `tarjetas.map`).
+    assert.doesNotMatch(codigoVista, /\{hotelesBernalo\.map\(/);
+  });
+
+  test("P2: la grilla única (tarjetas.map) renderiza AMBOS tipos con el MISMO componente compartido `TarjetaHotelCard` — nunca dos copias de JSX que puedan divergir", () => {
+    const idxGrid = codigoVista.indexOf("{tarjetas.map((t) =>");
+    assert.notEqual(idxGrid, -1);
+    const bloque = codigoVista.slice(idxGrid, idxGrid + 6000);
+    const usosComponente = [...bloque.matchAll(/<TarjetaHotelCard\b/g)];
+    assert.equal(usosComponente.length, 2, "persona y unidad deben invocar el mismo componente de tarjeta, una vez cada uno");
+    // El contenedor visual en sí NUNCA se repite dentro de `tarjetas.map` —
+    // vive una sola vez, dentro de la definición de `TarjetaHotelCard`
+    // (verificado abajo), no como JSX duplicado por rama persona/unidad. (La
+    // clase también aparece en la tarjeta de Receptivos, un tipo de producto
+    // distinto y no tocado por esta unificación — por eso se acota la
+    // búsqueda al bloque `tarjetas.map`, no a todo el archivo.)
+    assert.doesNotMatch(bloque, /rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1/);
+    const cuerpoTarjetaCard = cuerpoFuncion(fuenteVista, "function TarjetaHotelCard({");
+    assert.match(cuerpoTarjetaCard, /rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1/);
+  });
+
+  test('TarjetaHotelCard (compartida) usa "Consultar" (fallback sin precio) y "Ver opciones →" (acción principal) — nunca "tarifa personalizada"/"Bernalo" visibles en la grilla', () => {
+    const cuerpoTarjetaCard = cuerpoFuncion(fuenteVista, "function TarjetaHotelCard({");
+    assert.match(cuerpoTarjetaCard, /Ver opciones →/);
+    assert.match(cuerpoTarjetaCard, /Consultar/);
+    const idxGrid = codigoVista.indexOf("{tarjetas.map((t) =>");
+    const idxFinGrid = codigoVista.indexOf("{abierto && (", idxGrid);
+    assert.notEqual(idxFinGrid, -1);
+    const bloque = codigoVista.slice(idxGrid, idxFinGrid);
+    assert.doesNotMatch(bloque, /tarifa personalizada/i);
+    // "Bernalo" no puede aparecer como TEXTO VISIBLE en el JSX — se excluyen
+    // los identificadores de código (`setModalBernalo`, `t.hotel`, etc., que
+    // nunca se renderizan al usuario) filtrando solo el contenido entre
+    // `>` y `<` de cada nodo de texto.
+    const textosVisibles = [...bloque.matchAll(/>([^<>{}]*Bernalo[^<>{}]*)</gi)];
+    assert.equal(textosVisibles.length, 0, `texto visible con "Bernalo": ${JSON.stringify(textosVisibles.map((m) => m[1]))}`);
+  });
+
+  // P1 (hallazgo confirmado, validación final — ronda 2): antes se excluía
+  // la oferta UNIDAD cuando el hotelId ya tenía tarjeta persona
+  // (`idsPersona`) — invertido: una fila persona en `tarifario_resultado`
+  // puede ser una CACHÉ obsoleta si el hotel migró a
+  // `modelo_tarifario = 'unidad'` después de la última corrida de
+  // `generarTarifario`. La primera corrección excluía por `hotelesBernalo`
+  // (el prop tal cual llega a VistaBooking) — pero ese prop YA viene
+  // filtrado por acomodación/categoría/régimen/texto desde TarifarioPublic
+  // (`hotelesBernaloFiltrados`/`fAcom ? [] : ...`), así que con un filtro
+  // activo el hotel podía desaparecer de ahí y su tarjeta persona obsoleta
+  // REAPARECÍA. Ahora se excluye por `hotelIdsUnidadAutoritativos` — un
+  // canal SEPARADO (`lib/tarifario/datosBernalo.ts`) que viaja sin pasar por
+  // ningún filtro de visibilidad — nunca al revés.
+  test("nunca se muestran DOS tarjetas del mismo hotel — la persona se excluye por `hotelIdsUnidadAutoritativos` (canal SIN filtrar), nunca por `hotelesBernalo` (que SÍ se filtra en TarifarioPublic)", () => {
+    assert.match(cuerpoUnidadVisibles, /h\.tipo === sub/);
+    assert.match(cuerpoTarjetas, /const idsUnidadAutoritativa = new Set\(hotelIdsUnidadAutoritativos\);/);
+    assert.match(cuerpoTarjetas, /hoteles\s*\n\s*\.filter\(\(c\) => !idsUnidadAutoritativa\.has\(c\.hotelId\)\)/);
+    // La rama unidad NUNCA debe volver a filtrar por "ya existe en persona"
+    // — eso reintroduciría la prioridad invertida.
+    assert.doesNotMatch(cuerpoTarjetas, /idsPersona/);
+    // Nunca debe derivarse de `hotelesBernalo` (filtrable) — ese fue
+    // exactamente el bug de la primera corrección.
+    assert.doesNotMatch(cuerpoTarjetas, /new Set\(hotelesBernalo\.map/);
+  });
+
+  // ⚠️ Hallazgo confirmado (validación real, ronda 2): con un filtro de
+  // acomodación/categoría/régimen/texto activo en TarifarioPublic, la
+  // primera corrección de P1 dejaba de excluir la tarjeta persona (porque
+  // derivaba la exclusión de `hotelesBernalo`, ya recortado) — la fila
+  // persona legacy REAPARECÍA. `hotelIdsUnidadAutoritativos` no pasa por
+  // ningún filtro, así que esto ya no puede volver a pasar.
+  test("P1 (ronda 2): persona legacy + unidad vigente + filtro de acomodación activo — la tarjeta persona NUNCA reaparece", () => {
+    // El prop que TarifarioPublic pasa como `hotelesBernalo` SÍ se filtra
+    // por `fAcom`/acomodación/categoría/régimen/texto (comportamiento
+    // correcto: decide qué tarjeta UNIDAD mostrar) — pero
+    // `hotelIdsUnidadAutoritativos` es un prop DISTINTO, nunca gateado por
+    // `fAcom` ni por `hotelesBernaloFiltrados`.
+    const idxVB = fuentePublic.indexOf("<VistaBooking");
+    const idxFinVB = fuentePublic.indexOf("/>", idxVB);
+    const propsVB = fuentePublic.slice(idxVB, idxFinVB);
+    assert.match(propsVB, /hotelesBernalo=\{fAcom \? \[\] : hotelesBernaloFiltrados\}/);
+    assert.match(propsVB, /hotelIdsUnidadAutoritativos=\{hotelIdsUnidadAutoritativos\}/);
+    assert.doesNotMatch(propsVB, /hotelIdsUnidadAutoritativos=\{fAcom/, "el canal autoritativo nunca debe gatearse por fAcom ni ningún otro filtro");
+  });
+
+  // ⚠️ Hallazgo confirmado (validación real, ronda 2): una oferta unidad sin
+  // tarifa publicable (P1-3) o de un paquete no compatible (P2) queda FUERA
+  // de `hoteles`/`hotelesBernalo` (el catálogo cotizable) — pero el hotel
+  // SIGUE siendo modelo unidad en la base. `hotelIdsUnidadAutoritativos` se
+  // calcula ANTES de esos dos filtros (ver `datosBernalo.ts`), así que la
+  // tarjeta persona obsoleta se excluye aunque la oferta unidad no sea
+  // publicable — mostrar la persona sería mentir sobre el modelo real.
+  test("P1 (ronda 2): persona legacy + unidad SIN tarifa publicable — la tarjeta persona tampoco aparece (nunca se infiere disponibilidad desde la ausencia en el catálogo)", () => {
+    const fuenteDiscovery = readFileSync(join(raiz, "lib/tarifario/datosBernalo.ts"), "utf8");
+    const idxAutoritativo = fuenteDiscovery.indexOf("const hotelIdsUnidadAutoritativos = [");
+    const idxParesPublicados = fuenteDiscovery.indexOf("P1-3 (hallazgo confirmado)");
+    assert.notEqual(idxAutoritativo, -1);
+    assert.notEqual(idxParesPublicados, -1);
+    assert.ok(idxAutoritativo < idxParesPublicados, "hotelIdsUnidadAutoritativos debe calcularse ANTES del filtro de disponibilidad publicada (P1-3)");
+    // Tampoco debe pasar por el filtro de tipo de paquete compatible (P2).
+    const idxTipoCompatible = fuenteDiscovery.indexOf("const TIPOS_UNIDAD_COMPATIBLES");
+    assert.notEqual(idxTipoCompatible, -1);
+    assert.ok(idxAutoritativo < idxTipoCompatible, "hotelIdsUnidadAutoritativos debe calcularse ANTES del filtro de tipo de paquete compatible (P2)");
+  });
+
+  test("una fila persona legacy + una oferta unidad vigente del MISMO hotelId producen una sola tarjeta — y es la unidad la que prevalece", () => {
+    // El array `a` (persona) se construye a partir del `hoteles` YA
+    // FILTRADO (sin los hotelId unidad) — nunca del `hoteles` crudo.
+    assert.match(
+      cuerpoTarjetas,
+      /const a: Tarjeta\[\] = hoteles\s*\n\s*\.filter\(\(c\) => !idsUnidadAutoritativa\.has\(c\.hotelId\)\)\s*\n\s*\.map\(\(c\) => \(\{ tipo: "persona" as const/
+    );
+    // El grupo unidad ya NO tiene ningún `continue`/filtro condicionado a la
+    // existencia de una tarjeta persona — todas sus ofertas visibles entran,
+    // así que si el hotelId solo existe en unidad, su tarjeta se arma igual.
+    const idxGruposUnidad = cuerpoTarjetas.indexOf("const gruposUnidad");
+    const idxFinGruposUnidad = cuerpoTarjetas.indexOf("const b: Tarjeta[] =", idxGruposUnidad);
+    assert.notEqual(idxGruposUnidad, -1);
+    assert.notEqual(idxFinGruposUnidad, -1);
+    const bloqueGruposUnidad = cuerpoTarjetas.slice(idxGruposUnidad, idxFinGruposUnidad);
+    assert.doesNotMatch(bloqueGruposUnidad, /continue/);
+  });
+
+  test("un hotel REALMENTE persona (su hotelId no aparece en hotelIdsUnidadAutoritativos) sigue mostrando su tarjeta — nunca se excluye por error", () => {
+    // El filtro de exclusión compara contra `idsUnidadAutoritativa`
+    // (derivado de `hotelIdsUnidadAutoritativos`, el canal SIN filtrar) — un
+    // hotelId que nunca aparece ahí (porque de verdad es persona, sin
+    // ninguna fila `hoteles.modelo_tarifario = 'unidad'`) nunca puede
+    // coincidir con `.has(c.hotelId)`, así que
+    // `!idsUnidadAutoritativa.has(c.hotelId)` es `true` y esa tarjeta
+    // persona se conserva exactamente como antes.
+    assert.match(cuerpoTarjetas, /const idsUnidadAutoritativa = new Set\(hotelIdsUnidadAutoritativos\);/);
+    // El resto del pipeline de la tarjeta persona (key, card) es idéntico al
+    // de antes de esta corrección — solo cambió LA FUENTE que se mapea.
+    assert.match(cuerpoTarjetas, /key: `p-\$\{c\.hotelId\}`, card: c/);
+  });
+
+  test("hotelesUnidadVisibles responde a la pestaña activa (h.tipo === sub) y al destino elegido en Paquetes — igual que la grilla persona", () => {
+    assert.match(cuerpoUnidadVisibles, /if \(sub === "receptivos"\) return \[\];/);
+    assert.match(cuerpoUnidadVisibles, /hotelesBernalo\.filter\(\(h\) => h\.tipo === sub\)/);
+    assert.match(cuerpoUnidadVisibles, /if \(sub === "bloqueo" && destinoSel\)/);
+  });
+
+  // P1-2: un mismo hotelId puede tener VARIAS ofertas (una por paqueteId) —
+  // deben agruparse en UNA tarjeta, conservando TODAS las ofertas (nunca
+  // elegir la primera arbitrariamente ni descartar las demás).
+  test("P1-2: las ofertas unidad se AGRUPAN por hotelId — una sola tarjeta por hotel, con TODAS sus ofertas conservadas en `HotelUnidadCard.ofertas`", () => {
+    assert.match(cuerpoTarjetas, /const gruposUnidad = new Map<number, HotelBernaloDescubierto\[\]>\(\);/);
+    assert.match(cuerpoTarjetas, /const arr = gruposUnidad\.get\(h\.hotelId\) \?\? \[\];/);
+    assert.match(cuerpoTarjetas, /arr\.push\(h\);/);
+    assert.match(cuerpoTarjetas, /gruposUnidad\.set\(h\.hotelId, arr\);/);
+    // El objeto `hotel` de cada tarjeta unidad debe llevar el arreglo
+    // COMPLETO de ofertas (`ofertas` tal cual, nunca `ofertas[0]` ni un solo
+    // elemento elegido de antemano) — se verifica con el nombre de la
+    // propiedad como última clave del objeto literal.
+    assert.match(cuerpoTarjetas, /hotel:\s*\{[^}]*\bofertas\s*\}/);
+    assert.doesNotMatch(cuerpoTarjetas, /hotel:\s*\{[^}]*ofertas:\s*ofertas\[0\]/, "nunca debe quedarse solo con la primera oferta, descartando las demás");
+  });
+
+  test("abre HotelBernaloCotizarModal (con TODAS las ofertas del hotel agrupado), que renderiza EditorPax con modeloTarifario=\"unidad\"", () => {
+    assert.match(codigoVista, /<HotelBernaloCotizarModal hotelGrupo=\{modalBernalo\}/);
+    const cuerpoModal = cuerpoFuncion(fuenteVista, "function HotelBernaloCotizarModal({");
+    assert.match(cuerpoModal, /modeloTarifario="unidad"/);
+    assert.match(cuerpoModal, /hotelId=\{hotel\.hotelId\}/);
+    assert.match(cuerpoModal, /paqueteId=\{hotel\.paqueteId\}/);
+    assert.match(cuerpoModal, /categoriasDisponibles=\{hotel\.categorias\}/);
+    assert.match(cuerpoModal, /alimentacionesDisponibles=\{hotel\.regimenes\}/);
+  });
+
+  test("P1-2: HotelBernaloCotizarModal identifica la oferta elegida por `paqueteId` (nunca por índice de arreglo) y solo muestra el selector cuando hay MÁS DE UNA oferta", () => {
+    const cuerpoModal = cuerpoFuncion(fuenteVista, "function HotelBernaloCotizarModal({");
+    assert.match(cuerpoModal, /const \[paqueteIdSel, setPaqueteIdSel\] = useState<number \| null>\(ofertas\.length === 1 \? ofertas\[0\]\.paqueteId : null\);/);
+    assert.match(cuerpoModal, /const ofertaSel = paqueteIdSel != null \? \(ofertas\.find\(\(o\) => o\.paqueteId === paqueteIdSel\) \?\? null\) : null;/);
+    assert.match(cuerpoModal, /ofertas\.length > 1 &&/);
+    assert.match(cuerpoModal, /onClick=\{\(\) => setPaqueteIdSel\(o\.paqueteId\)\}/);
+    // Cuando solo hay UNA oferta, no debe pedirse ninguna elección extra —
+    // el selector de "Elige la oferta" solo aparece dentro del `ofertas.length > 1 &&`.
+    const idxSelector = cuerpoModal.indexOf("ofertas.length > 1 &&");
+    const idxFinSelector = cuerpoModal.indexOf(")}", idxSelector);
+    assert.notEqual(idxSelector, -1);
+    assert.ok(idxFinSelector > idxSelector);
+  });
+
+  test("P1-2: elegir una oferta hace que agregarBernalo/EditorPax usen SU paqueteId (identidad real, no un valor fijo)", () => {
+    const cuerpoModal = cuerpoFuncion(fuenteVista, "function HotelBernaloCotizarModal({");
+    assert.match(cuerpoModal, /paqueteId: hotel\.paqueteId,/);
+    assert.match(cuerpoModal, /key=\{hotel\.paqueteId\}/, "EditorPax debe remontarse (key=paqueteId) al cambiar de oferta, para no arrastrar estado de la oferta anterior");
+  });
+});
+
+describe("EditorPax — identidad real hasta el componente (regla 9: sin placeholders)", () => {
+  test("los 2 call sites EXISTENTES (hoteles persona) no pasan modeloTarifario — comportamiento anterior intacto", () => {
+    const llamadas = [...fuenteVista.matchAll(/<EditorPax\s/g)];
+    // 2 originales (persona) + 1 nueva (HotelBernaloCotizarModal) = 3 en total.
+    assert.equal(llamadas.length, 3);
+    let sinModelo = 0;
+    for (const m of llamadas) {
+      const bloque = fuenteVista.slice(m.index, m.index + 400);
+      if (!/modeloTarifario=/.test(bloque)) sinModelo++;
+    }
+    assert.equal(sinModelo, 2, "deben quedar exactamente 2 call sites sin modeloTarifario (el flujo persona intacto)");
+  });
+
+  test("hotelId/paqueteId/categoriasDisponibles/alimentacionesDisponibles son props reales, no hay ningún valor hardcodeado como \"estandar\"", () => {
+    assert.doesNotMatch(codigoVista, /categoria:\s*"estandar"/i);
+    assert.doesNotMatch(codigoVista, /alimentacion:\s*"estandar"/i);
+    assert.match(cuerpoEditorPax, /categoriasDisponibles = \[\]/);
+    assert.match(cuerpoEditorPax, /alimentacionesDisponibles = \[\]/);
+  });
+
+  test("el selector de categoría/alimentación usa las opciones REALES recibidas por prop (no una lista fija)", () => {
+    assert.match(cuerpoEditorPax, /categoriasDisponibles\.map\(\(c\) => <option key=\{c\} value=\{c\}>\{c\}<\/option>\)/);
+    assert.match(cuerpoEditorPax, /alimentacionesDisponibles\.map\(\(r\) => <option key=\{r\} value=\{r\}>\{r\}<\/option>\)/);
+  });
+});
+
+describe("EditorPax — el selector de habitaciones ya no depende de un PVP inexistente para Bernalo", () => {
+  test("el conteo de habitaciones/hayHabBernalo se calcula independiente de `pvp` para Bernalo", () => {
+    assert.match(cuerpoEditorPax, /const totalHabBernalo = ACOM_ROOMS\.reduce\(\(s, a\) => s \+ \(habs\[a\] \?\? 0\), 0\);/);
+    assert.match(cuerpoEditorPax, /const hayHabBernalo = totalHabBernalo > 0;/);
+  });
+
+  test("el input de conteo por tipo de habitación queda HABILITADO en modo Bernalo aunque pvp[a] sea undefined", () => {
+    assert.match(cuerpoEditorPax, /const habilitada = esBernalo \|\| pvp\[a\] != null;/);
+    assert.match(cuerpoEditorPax, /disabled=\{!habilitada\}/);
+  });
+});
+
+describe("EditorPax — sin 'Agregar al carrito' en modo Bernalo (regla 19)", () => {
+  test("la rama esBernalo del botón final nunca llama onAgregar/agregar()", () => {
+    // Hay DOS ramas `esBernalo ? (` en el componente (el bloque de menores
+    // por habitación y la barra de acción final) — la del botón es la
+    // ÚLTIMA.
+    const idxBoton = cuerpoEditorPax.lastIndexOf("esBernalo ? (");
+    const idxFinBoton = cuerpoEditorPax.indexOf(") : (", idxBoton);
+    const ramaBernalo = cuerpoEditorPax.slice(idxBoton, idxFinBoton);
+    assert.doesNotMatch(ramaBernalo, /onClick=\{agregar\}/);
+    assert.doesNotMatch(ramaBernalo, /onAgregar\(/);
+    assert.match(ramaBernalo, /onClick=\{cotizarBernalo\}/);
+  });
+
+  test("cotizarBernalo llama cotizarAlojamientoBernaloPublico (nunca crearCotizacionCarrito/checkout)", () => {
+    assert.match(cuerpoEditorPax, /await cotizarAlojamientoBernaloPublico\(\{/);
+    assert.doesNotMatch(codigoVista, /crearCotizacionCarrito|crearSolicitudReserva/);
+  });
+
+  test("el total mostrado (pvp) es la autoridad; el promedio por viajero se etiqueta como referencia (regla 18)", () => {
+    assert.match(cuerpoEditorPax, /Total solicitado/);
+    assert.match(cuerpoEditorPax, /promedioPorViajero/);
+    assert.match(cuerpoEditorPax, /por viajero \(referencia\)/);
+  });
+});
+
+describe("EditorPax — cambiar/quitar una habitación limpia sus propias edades (regla 5, sigue vigente en 3E)", () => {
+  test("setHab sincroniza edadesPorHabitacion con los ids vigentes, solo cuando esBernalo", () => {
+    assert.match(cuerpoEditorPax, /setEdadesPorHabitacion\(\(ep\) => sincronizarHabitaciones\(ep, idsHabitacionesPorConteo\(next\)\)\)/);
+  });
+});
+
+describe("HotelBernaloCotizarModal — B1.18: configuración incompleta muestra mensaje genérico, nunca monta el editor", () => {
+  const cuerpoModal = cuerpoFuncion(fuenteVista, "function HotelBernaloCotizarModal({");
+
+  test("gatea por categorias/regimenes vacíos ANTES de renderizar EditorPax", () => {
+    assert.match(cuerpoModal, /hotel\.categorias\.length === 0 \|\| hotel\.regimenes\.length === 0/);
+    assert.match(cuerpoModal, /configuracionIncompleta \?/);
+  });
+
+  test("pasa `salidas` real al EditorPax (identidad de la salida, nunca inventada)", () => {
+    assert.match(cuerpoModal, /salidas=\{hotel\.salidas\}/);
+  });
+});
+
+describe("EditorPax — B1.17: sin texto libre para categoría/alimentación (auditoría DeepSeek)", () => {
+  test("ya no existe ningún <input type=\"text\"> de respaldo para categoría/alimentación en el bloque Bernalo", () => {
+    assert.doesNotMatch(cuerpoEditorPax, /type="text" value=\{categoriaSel\}/);
+    assert.doesNotMatch(cuerpoEditorPax, /type="text" value=\{alimentacionSel\}/);
+    assert.doesNotMatch(cuerpoEditorPax, /placeholder="Categoría"/);
+    assert.doesNotMatch(cuerpoEditorPax, /placeholder="Alimentación"/);
+  });
+
+  test("los <select> de categoría/alimentación quedan deshabilitados cuando no hay opciones reales (nunca se abren a adivinar)", () => {
+    assert.match(cuerpoEditorPax, /disabled=\{!categoriasDisponibles\.length\}/);
+    assert.match(cuerpoEditorPax, /disabled=\{!alimentacionesDisponibles\.length\}/);
+  });
+});
+
+describe("EditorPax — A1.2/A1.3/A1.6: selección de salida, nunca [0]", () => {
+  test("con 0 salidas, se muestran los inputs de fecha manual (porción terrestre)", () => {
+    assert.match(cuerpoEditorPax, /salidas\.length === 0 \?/);
+    assert.match(cuerpoEditorPax, /id=\{`\$\{idBase\}-fecha-ida`\}/);
+  });
+
+  test("con 1 salida, se autoselecciona y se muestra como información (no editable)", () => {
+    assert.match(cuerpoEditorPax, /salidas\.length === 1 \?/);
+  });
+
+  test("con más de 1 salida, la UI exige clic explícito — nunca autocompleta ni toma la primera", () => {
+    assert.match(cuerpoEditorPax, /salidas\.length > 1 &&/);
+    assert.match(cuerpoEditorPax, /onClick=\{\(\) => \{ setSalidaElegidaKey\(key\); setResultadoCotizacion\(null\); \}\}/);
+  });
+
+  test("el payload de cotización envía `salida` como identidad {tipo,id}/sin_vuelo — nunca fechaIda/fechaRegreso sueltos", () => {
+    assert.match(cuerpoEditorPax, /salida: salidaPayload/);
+    assert.doesNotMatch(cuerpoEditorPax, /fechaIda: fechaIdaBernalo, fechaRegreso: fechaRegresoBernalo,\s*\n\s*habitaciones: payloadBernalo/);
+  });
+
+  test("salidaPayload nunca se arma indexando `salidas[0]` de forma incondicional (solo dentro de la rama length===1)", () => {
+    const idxDecl = cuerpoEditorPax.indexOf("const salidaPayload");
+    assert.notEqual(idxDecl, -1);
+    // La única ocurrencia de `salidas[0]` en todo el componente debe estar
+    // dentro de la derivación `salidaElegidaKeyEfectiva` (autoselección
+    // legítima cuando length===1) o en el bloque informativo JSX — nunca en
+    // `salidaPayload` mismo, que siempre pasa por `salidaElegida` (buscado
+    // por identidad).
+    assert.doesNotMatch(cuerpoEditorPax.slice(idxDecl, idxDecl + 400), /salidas\[0\]/);
+  });
+});
+
+describe("TarifarioPublic.tsx / page.tsx — hilo completo de props hasta VistaBooking", () => {
+  test("TarifarioPublic recibe hotelesBernalo y aplica el MISMO filtro de texto/categoría/alimentación que a los hoteles persona antes de pasarlo a VistaBooking (búsqueda unificada)", () => {
+    assert.match(fuentePublic, /hotelesBernalo = \[\]/);
+    assert.match(fuentePublic, /const hotelesBernaloFiltrados = useMemo\(/);
+    assert.match(fuentePublic, /<VistaBooking[^>]*hotelesBernalo=\{fAcom \? \[\] : hotelesBernaloFiltrados\}/);
+  });
+
+  test("las opciones de categoría/alimentación del filtro incluyen las de hotelesBernalo, no solo las de `filas`", () => {
+    const idxCats = fuentePublic.indexOf("const cats = useMemo(");
+    const bloque = fuentePublic.slice(idxCats, idxCats + 400);
+    assert.match(bloque, /hotelesBernalo\.flatMap\(\(h\) => h\.categorias\)/);
+    const idxRegs = fuentePublic.indexOf("const regs = useMemo(");
+    const bloqueRegs = fuentePublic.slice(idxRegs, idxRegs + 400);
+    assert.match(bloqueRegs, /hotelesBernalo\.flatMap\(\(h\) => h\.regimenes\)/);
+  });
+
+  test("page.tsx carga el descubrimiento Bernalo en PARALELO (Promise.all) con la carga principal, nunca la bloquea", () => {
+    assert.match(fuentePage, /Promise\.all\(\[/);
+    assert.match(fuentePage, /cargarHotelesBernaloDescubiertos\(\)/);
+  });
+
+  test("un fallo en el descubrimiento Bernalo degrada a lista vacía, nunca rompe la página (best-effort)", () => {
+    assert.match(fuentePage, /\.catch\(\(\) => \(\{ ok: false as const/);
+    assert.match(fuentePage, /const hotelesBernalo = resultadoBernalo\.ok \? resultadoBernalo\.hoteles : \[\];/);
+  });
+
+  // P1 (ronda 2): page.tsx lee el canal separado `hotelIdsUnidadAutoritativos`
+  // del mismo resultado de `cargarHotelesBernaloDescubiertos()` y lo pasa
+  // TAL CUAL a TarifarioPublic — nunca derivado de `hotelesBernalo` (que sí
+  // se filtra más abajo, dentro de TarifarioPublic).
+  test("P1 (ronda 2): page.tsx propaga hotelIdsUnidadAutoritativos del resultado de cargarHotelesBernaloDescubiertos hacia TarifarioPublic, sin filtrarlo", () => {
+    assert.match(fuentePage, /const hotelIdsUnidadAutoritativos = resultadoBernalo\.ok \? resultadoBernalo\.hotelIdsUnidadAutoritativos : \[\];/);
+    const idxTP = fuentePage.indexOf("<TarifarioPublic");
+    const idxFinTP = fuentePage.indexOf("/>", idxTP);
+    assert.notEqual(idxTP, -1);
+    const propsTP = fuentePage.slice(idxTP, idxFinTP);
+    assert.match(propsTP, /hotelIdsUnidadAutoritativos=\{hotelIdsUnidadAutoritativos\}/);
+  });
+
+  // P2 (hallazgo confirmado): la búsqueda de texto para hoteles unidad solo
+  // comparaba contra el nombre del hotel — un cliente buscando por ciudad/
+  // destino ("Cartagena", "San Andrés") no encontraba hoteles unidad de esa
+  // ciudad aunque sí encontrara hoteles persona (que sí comparan destino vía
+  // `coincideFiltro`).
+  test("P2: la búsqueda de texto para hoteles unidad compara nombre DE HOTEL Y destino/ciudad — no solo el nombre", () => {
+    const idxFiltrados = fuentePublic.indexOf("const hotelesBernaloFiltrados = useMemo(");
+    const idxFin = fuentePublic.indexOf("const hayFiltro =", idxFiltrados);
+    const cuerpo = fuentePublic.slice(idxFiltrados, idxFin);
+    assert.match(cuerpo, /const hay = `\$\{h\.hotelNombre\} \$\{h\.destinoNombre \?\? ""\}`\.toLowerCase\(\);/);
+    assert.match(cuerpo, /if \(!hay\.includes\(q\.trim\(\)\.toLowerCase\(\)\)\) return false;/);
+  });
+
+  // P2 (hallazgo confirmado): Pet friendly/Adults Only ocultaban TODOS los
+  // hoteles unidad incondicionalmente ("no están configurados hoy para este
+  // modelo") — un texto falso, porque esos son atributos REALES del hotel
+  // (`hoteles.pet_friendly`/`adults_only`), no del modelo tarifario.
+  test("P2: los filtros Pet friendly/Adults Only para hoteles unidad usan el valor REAL de infoPorHotel — nunca ocultan el catálogo unidad completo por defecto", () => {
+    assert.doesNotMatch(codigoVista, /no están configurados hoy para este modelo/);
+    assert.match(codigoVista, /if \(soloPetFriendly\) arr = arr\.filter\(\(h\) => infoPorHotel\[h\.hotelId\]\?\.petFriendly === true\);/);
+    assert.match(codigoVista, /if \(soloAdultsOnly\) arr = arr\.filter\(\(h\) => infoPorHotel\[h\.hotelId\]\?\.adultsOnly === true\);/);
+  });
+
+  // P2 (hallazgo confirmado): `fotosPorHotel`/`infoPorHotel` solo se
+  // armaban a partir de `filasVisibles` (hoteles persona) — un hotel unidad
+  // nunca tenía foto/estrellas/badges reales aunque el hotel SÍ los tuviera
+  // configurados en el catálogo.
+  test("P2: page.tsx carga cargarInfoHotelesBernalo con los hotelId de unidad y fusiona el resultado en fotosPorHotel/infoPorHotel antes de pasarlos a TarifarioPublic", () => {
+    assert.match(fuentePage, /cargarInfoHotelesBernalo/);
+    assert.match(fuentePage, /const hotelIdsBernalo = \[\.\.\.new Set\(hotelesBernalo\.map\(\(h\) => h\.hotelId\)\)\];/);
+    assert.match(fuentePage, /const fotosPorHotel = \{ \.\.\.fotosPorHotelLegacy, \.\.\.resultadoInfoBernalo\.fotosPorHotel \};/);
+    assert.match(fuentePage, /const infoPorHotel = \{ \.\.\.infoPorHotelLegacy, \.\.\.resultadoInfoBernalo\.infoPorHotel \};/);
+  });
+
+  // P5 (hallazgo confirmado, validación final): `cargarInfoHotelesBernalo`
+  // ya NO devuelve un `ok` único para las dos consultas — cada una
+  // (`errorFotos`/`errorInfo`) es independiente, así que el merge en
+  // page.tsx es SIEMPRE incondicional (el loader ya entrega `{}` en la
+  // pieza que falló, nunca ausente) — un fallo de fotos no debe borrar la
+  // metadata que sí llegó bien, y viceversa.
+  test("P2/P5: el merge de fotosPorHotel/infoPorHotel es incondicional — un fallo en una consulta (fotos o metadata) nunca descarta la otra que sí resolvió", () => {
+    assert.doesNotMatch(fuentePage, /resultadoInfoBernalo\.ok/);
+    const idxCall = fuentePage.indexOf("const resultadoInfoBernalo = await cargarInfoHotelesBernalo(");
+    const idxFin = fuentePage.indexOf("const infoPorHotel =", idxCall);
+    const bloque = fuentePage.slice(idxCall, idxFin);
+    assert.match(bloque, /if \(resultadoInfoBernalo\.errorFotos\)/);
+    assert.match(bloque, /if \(resultadoInfoBernalo\.errorInfo\)/);
+  });
+});
+
+// P3 (hallazgo confirmado): los destinos del selector de Paquetes
+// (`destinosBloqueo`) salían SOLO de `salidasBloqueo` (hoteles persona) — un
+// destino que solo existe en un hotel por unidad quedaba inalcanzable desde
+// el dropdown, aunque `hotelesUnidadVisibles` SÍ sepa filtrar por
+// `destinoSel` cuando coincide. Se agregan los destinos de `hotelesBernalo`
+// tipo "bloqueo", deduplicados y ordenados — nunca se inventa origen/salida
+// aérea.
+//
+// ⚠️ Hallazgo confirmado (validación real, ronda 2): una corrección previa
+// aplicó el MISMO tratamiento a `destinos` (el que alimenta el mini-motor
+// legacy `BuscadorBooking`, para Porción terrestre) — pero ese buscador solo
+// sabe devolver hoteles PERSONA (`cotizarPorFechas`, 100% legacy). Anunciar
+// ahí un destino "solo unidad" era una promesa vacía: se elegía, se buscaba
+// por fechas, y el motor no tenía nada que devolver. Se revirtió: `destinos`
+// (renombrado `destinosBuscador`) vuelve a ser SOLO legacy; los destinos
+// unidad siguen disponibles donde SÍ hay un filtro real que los usa
+// (`destinosBloqueo`, que filtra `hotelesUnidadVisibles` reactivamente, sin
+// ningún buscador/consulta de por medio).
+describe("VistaBooking.tsx — P3: destinos de hoteles unidad SOLO en el filtro real de tarjetas (destinosBloqueo) — nunca en el buscador legacy", () => {
+  test("destinosBloqueo agrega los destinos de ofertas unidad tipo 'bloqueo' — deduplicados con `new Set` y ordenados con `.sort()`, SIN filtrar por origenSel", () => {
+    const idxDecl = fuenteVista.indexOf("const destinosBloqueo = useMemo(() => {");
+    const idxFin = fuenteVista.indexOf("}, [salidasBloqueo, origenSel, hotelesBernalo]);", idxDecl);
+    assert.notEqual(idxDecl, -1);
+    assert.notEqual(idxFin, -1);
+    const cuerpo = fuenteVista.slice(idxDecl, idxFin);
+    assert.match(cuerpo, /hotelesBernalo\.filter\(\(h\) => h\.tipo === "bloqueo" && h\.destinoNombre\)\.map\(\(h\) => h\.destinoNombre as string\)/);
+    assert.match(cuerpo, /return \[\.\.\.new Set\(\[\.\.\.legacy, \.\.\.unidad\]\)\]\.filter\(Boolean\)\.sort\(\);/);
+    // Los destinos unidad NO deben depender de `origenSel` — un hotel unidad
+    // no tiene concepto de origen/salida aérea (esa integración no existe
+    // todavía).
+    const idxUnidad = cuerpo.indexOf("const unidad =");
+    const idxFinUnidad = cuerpo.indexOf(";", idxUnidad);
+    const lineaUnidad = cuerpo.slice(idxUnidad, idxFinUnidad);
+    assert.doesNotMatch(lineaUnidad, /origenSel/);
+  });
+
+  test("un destino que SOLO existe en un hotel unidad aparece en destinosBloqueo (el filtro REAL de tarjetas) y, al seleccionarlo, hotelesUnidadVisibles mantiene la tarjeta visible", () => {
+    // El filtro de destino sobre la grilla unidad (`hotelesUnidadVisibles`)
+    // compara contra `h.destinoNombre` — un campo que viene ÍNTEGRAMENTE de
+    // `hotelesBernalo` (armado_paquetes.destino_id), nunca de `filas`. Así,
+    // una vez que `destinosBloqueo` ofrece la opción (test de arriba), elegir
+    // ese destino filtra `hotelesUnidadVisibles` sin que la lista dependa en
+    // ningún punto de `filas`/`hoteles` (persona) — nunca queda vacía por
+    // depender de datos legacy que no existen para ese destino.
+    const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
+    const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
+    assert.notEqual(idxDecl, -1);
+    assert.notEqual(idxFin, -1);
+    const cuerpo = fuenteVista.slice(idxDecl, idxFin);
+    assert.match(cuerpo, /if \(sub === "bloqueo" && destinoSel\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoSel\);/);
+    assert.doesNotMatch(cuerpo, /\bfilas\b/, "el filtro de destino de la grilla unidad nunca debe depender de `filas` (legacy)");
+  });
+
+  test("hay UNA sola lista de destinos de Porción terrestre: la vieja lista sólo-persona del motor ya no existe", () => {
+    // La lista propia del mini-motor (`destinosBuscador`) se eliminó: un
+    // destino que sólo existía por hoteles unidad quedaba fuera de su
+    // desplegable, así que el motor —que sí sabe resolverlos— no se podía
+    // invocar para ese destino desde la UI (ver
+    // `pruebas/destinosPorcionPublica.test.ts`).
+    assert.doesNotMatch(fuenteVista, /destinosBuscador/);
+    assert.match(fuenteVista, /const destinosPorcion = useMemo\(/);
+    assert.match(fuenteVista, /destinosPorcionPublica\(filas, hotelesBernalo\)/);
+  });
+
+  test("BuscadorBooking recibe `destinosPorcion` — la UNIÓN real (persona + unidad) — y no una lista propia", () => {
+    // El mini-motor comunica hacia arriba el estado de la búsqueda
+    // (`onBusqueda`); `sugerenciaPedida` es el canal de vuelta (las fechas
+    // alternativas que ofrece en el estado vacío se vuelven a pedir desde acá).
+    assert.match(
+      fuenteVista,
+      /<BuscadorBooking destinos=\{destinosPorcion\} onBusqueda=\{setBusquedaPorcion\} sugerenciaPedida=\{sugerenciaPedida\} \/>/
+    );
+    // Ya no debe existir ninguna variable `destinos` (el nombre viejo,
+    // ambiguo sobre si mezclaba o no unidad) — solo `destinosBloqueo`/
+    // `destinosPorcion`/`destinosServicios`, cada uno con su alcance claro.
+    assert.doesNotMatch(fuenteVista, /const destinos = useMemo/);
+    // Y el selector de EXPLORACIÓN de la misma pestaña usa LA MISMA lista: un
+    // destino ofrecible no puede estar en un desplegable y faltar en el otro.
+    assert.equal(
+      [...fuenteVista.matchAll(/destinosPorcion\.map\(\(d\) => <option key=\{d\.nombre\} value=\{d\.nombre\}>\{d\.nombre\}<\/option>\)/g)].length,
+      1,
+      "el selector de exploración sigue anunciando exactamente la misma lista que recibe el motor"
+    );
+  });
+
+  // Residual confirmado (validación real, ronda 3): Porción terrestre no
+  // tenía NINGÚN selector de destino sobre su propia grilla — a diferencia
+  // de Bloqueo (`destinoSel`/`destinosBloqueo`), los destinos unidad `tipo:
+  // "porcion_terrestre"` quedaban fuera de cualquier filtro real.
+  // `destinosPorcion` + `destinoPorcionSel` cierran ese hueco con el mismo
+  // patrón que Bloqueo, pero con estado PROPIO (nunca reutiliza `destinoSel`,
+  // para que la selección no persista incorrectamente al cambiar de pestaña).
+  describe("destinosPorcion / destinoPorcionSel — filtro de destino REAL para la grilla de Porción terrestre", () => {
+    test("destinosPorcion es la unión persona + unidad y delega en la función pura (una sola definición del criterio)", () => {
+      assert.match(
+        fuenteVista,
+        /const destinosPorcion = useMemo\(\s*\n\s*\(\) => destinosPorcionPublica\(filas, hotelesBernalo\),\s*\n\s*\[filas, hotelesBernalo\]\s*\n\s*\);/
+      );
+      // El criterio (qué fila cuenta como destino de porción, dedup y orden) NO
+      // se re-implementa acá: vive en `destinosPorcionPublica`, donde se prueba
+      // con catálogo de fixture.
+      const idxDecl = fuenteVista.indexOf("const destinosPorcion = useMemo(");
+      const idxFin = fuenteVista.indexOf(");", idxDecl);
+      assert.notEqual(idxDecl, -1);
+      assert.notEqual(idxFin, -1);
+      const cuerpo = fuenteVista.slice(idxDecl, idxFin + 2);
+      assert.doesNotMatch(cuerpo, /\.filter\(/);
+      assert.doesNotMatch(cuerpo, /new Set/);
+      // La misma lista alimenta el selector de exploración Y el del motor.
+      assert.match(fuenteVista, /value=\{destinoPorcionSel\}/);
+    });
+
+    test("destinoPorcionSel es un estado INDEPENDIENTE de destinoSel (Bloqueo) — nunca se reutiliza ni se resetea entre sí", () => {
+      assert.match(fuenteVista, /const \[destinoPorcionSel, setDestinoPorcionSel\] = useState\(""\);/);
+      // Ningún onChange de un selector debe tocar el estado del otro.
+      assert.doesNotMatch(fuenteVista, /setDestinoSel\([^)]*\)[\s\S]{0,60}setDestinoPorcionSel/);
+      assert.doesNotMatch(fuenteVista, /setDestinoPorcionSel\([^)]*\)[\s\S]{0,60}setDestinoSel\(/);
+    });
+
+    test("el destino de la grilla es UN valor DERIVADO: sin búsqueda vigente vale exactamente destinoPorcionSel (la exploración no cambió de estado)", () => {
+      // Ronda de búsqueda cerrada: mientras hay una búsqueda de Porción
+      // terrestre vigente, la grilla se cierra al destino BUSCADO; fuera de
+      // eso la exploración se comporta igual que siempre. Para que eso siga
+      // siendo UNA sola decisión (y no dos filtros compitiendo), los memos
+      // consumen un único valor derivado cuyo respaldo es el estado de
+      // exploración de siempre — `destinoPorcionSel` no se reutiliza para
+      // guardar el destino buscado.
+      assert.match(
+        fuenteVista,
+        /const destinoPorcionEfectivo = busquedaPorcion \? busquedaPorcion\.destino : destinoPorcionSel;/
+      );
+      const derivaciones = [...fuenteVista.matchAll(/const destinoPorcionEfectivo =/g)];
+      assert.equal(derivaciones.length, 1, "una sola derivación del destino efectivo");
+    });
+
+    test("el filtro de destino de Porción terrestre en `hoteles` (persona) está gateado por mod === 'porcion_terrestre', nunca por sub === 'bloqueo'", () => {
+      assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionEfectivo && \(f\.destino_nombre \?\? ""\) !== destinoPorcionEfectivo\) return false;/);
+    });
+
+    test("hotelesUnidadVisibles filtra por destinoPorcionSel SOLO cuando sub === 'porcion_terrestre' — igual patrón que destinoSel/bloqueo", () => {
+      const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
+      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
+      assert.notEqual(idxDecl, -1);
+      assert.notEqual(idxFin, -1);
+      const cuerpo = fuenteVista.slice(idxDecl, idxFin);
+      assert.match(cuerpo, /if \(sub === "porcion_terrestre" && destinoPorcionEfectivo\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionEfectivo\);/);
+    });
+
+    test("el selector de destino de Porción terrestre se renderiza solo para sub === 'porcion_terrestre', asociado a 'O explora todos los alojamientos' — nunca dispara buscarHoteles/cotizarPorFechas", () => {
+      const idxSelector = fuenteVista.indexOf('sub === "porcion_terrestre" && !enBusquedaPorcion && destinosPorcion.length > 0 && (');
+      assert.notEqual(idxSelector, -1);
+      const idxFinSelector = fuenteVista.indexOf("</label>", idxSelector);
+      assert.notEqual(idxFinSelector, -1);
+      const bloque = fuenteVista.slice(idxSelector, idxFinSelector);
+      assert.match(bloque, /value=\{destinoPorcionSel\}/);
+      assert.match(bloque, /onChange=\{\(e\) => setDestinoPorcionSel\(e\.target\.value\)\}/);
+      assert.match(bloque, /destinosPorcion\.map/);
+      assert.doesNotMatch(bloque, /buscarHoteles|cotizarPorFechas|BuscadorBooking/, "el selector debe ser un filtro local — nunca dispara el buscador legacy");
+    });
+
+    // Escenarios explícitos pedidos — estructurales (wiring), ya que este
+    // componente no es ejecutable bajo `node --test` (JSX/Next): cada uno
+    // verifica la pieza de código que GARANTIZA el comportamiento descrito.
+    test("catálogo solo-unidad de Porción terrestre: destinosPorcion no exige NINGUNA fila persona — un destino que solo existe en hotelesBernalo aparece igual", () => {
+      // Antes esto sólo se podía verificar por la FORMA del memo (dos ramas,
+      // `legacy` y `unidad`, calculadas por separado). Ahora la unión es una
+      // función pura, así que el escenario se corre DE VERDAD con el catálogo
+      // del caso: CERO filas persona y un hotel unidad en CARTAGENA.
+      assert.deepEqual(
+        destinosPorcionPublica([], [{ tipo: "porcion_terrestre", destinoNombre: "CARTAGENA", destinoId: 6 }]),
+        [{ id: 6, nombre: "CARTAGENA" }],
+        "un destino que sólo existe por hoteles unidad tiene que seguir apareciendo en el selector"
+      );
+      // Y `VistaBooking` consume ESA función — no una segunda copia del criterio
+      // que pueda divergir de la que se acaba de probar.
+      assert.match(fuenteVista, /destinosPorcionPublica\(filas, hotelesBernalo\)/);
+    });
+
+    test("seleccionar un destino exclusivamente unidad conserva la tarjeta unidad visible: el filtro de hotelesUnidadVisibles compara SOLO h.destinoNombre (de hotelesBernalo), nunca contra `hoteles`/`filas` (persona)", () => {
+      const idxDecl = fuenteVista.indexOf("const hotelesUnidadVisibles = useMemo(() => {");
+      const idxFin = fuenteVista.indexOf("}, [hotelesBernalo, sub, destinoSel, destinoPorcionEfectivo, soloPetFriendly, soloAdultsOnly, infoPorHotel]);", idxDecl);
+      const cuerpo = fuenteVista.slice(idxDecl, idxFin);
+      assert.match(cuerpo, /let arr = hotelesBernalo\.filter\(\(h\) => h\.tipo === sub\);/);
+      assert.match(cuerpo, /if \(sub === "porcion_terrestre" && destinoPorcionEfectivo\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionEfectivo\);/);
+      assert.doesNotMatch(cuerpo, /\bfilas\b|\bhoteles\b/, "el filtro de la grilla unidad nunca debe depender de datos persona");
+    });
+
+    test("dos destinos unidad distintos: el filtro es una comparación de IGUALDAD exacta contra destinoPorcionSel — seleccionar uno excluye estrictamente el otro, sin afectar más entradas", () => {
+      // `(h.destinoNombre ?? "") === destinoPorcionSel` es una comparación
+      // de IGUALDAD (no `.includes`/prefijo/substring) — con `destinoPorcionSel`
+      // fijo en "A", una oferta con destinoNombre "B" evalúa false y se
+      // excluye, mientras que CUALQUIER oferta con destinoNombre "A" (sin
+      // importar cuántas haya) evalúa true y permanece. Nunca se excluyen
+      // "de más" ni "de menos".
+      assert.match(codigoVista, /if \(sub === "porcion_terrestre" && destinoPorcionEfectivo\) arr = arr\.filter\(\(h\) => \(h\.destinoNombre \?\? ""\) === destinoPorcionEfectivo\);/);
+    });
+
+    test("destino compartido persona/unidad: hoteles (persona) y hotelesUnidadVisibles (unidad) filtran por el MISMO valor destinoPorcionSel — ambos modelos responden a la misma selección, nunca dos estados distintos", () => {
+      // Un único estado (`destinoPorcionSel`) alimenta AMBOS filtros — el de
+      // `hoteles` (mod === "porcion_terrestre") y el de `hotelesUnidadVisibles`
+      // (sub === "porcion_terrestre") — así que elegir un destino presente en
+      // ambas fuentes deja visibles las tarjetas de los dos modelos a la vez.
+      const usosEnHoteles = [...codigoVista.matchAll(/mod === "porcion_terrestre" && destinoPorcionEfectivo/g)];
+      const usosEnUnidadVisibles = [...codigoVista.matchAll(/sub === "porcion_terrestre" && destinoPorcionEfectivo/g)];
+      assert.equal(usosEnHoteles.length, 1, "hoteles (persona) debe filtrar por el destino efectivo exactamente una vez");
+      assert.equal(usosEnUnidadVisibles.length, 1, "hotelesUnidadVisibles debe filtrar por el destino efectivo exactamente una vez");
+      // Ningún estado paralelo (ej. `destinoPorcionSelPersona`/`...Unidad`) —
+      // solo existe UNA declaración de estado para porción terrestre.
+      const declaraciones = [...fuenteVista.matchAll(/const \[destinoPorcionSel,/g)];
+      assert.equal(declaraciones.length, 1);
+    });
+
+    test("destino persona continúa funcionando exactamente igual: el filtro de mod==='porcion_terrestre' en `hoteles` es aditivo (misma condición general del filter, no reemplaza ninguna lógica previa de bloqueo)", () => {
+      const idxHoteles = fuenteVista.indexOf("const hoteles = useMemo<HotelCard[]>(() => {");
+      const idxFinHoteles = fuenteVista.indexOf("const conHotel = filas.filter", idxHoteles);
+      assert.notEqual(idxHoteles, -1);
+      // El filtro de bloqueo (cupos/origen/destino/salida) sigue intacto,
+      // gateado por `mod === "bloqueo"` — el nuevo filtro de porción
+      // terrestre no lo toca ni lo reemplaza, solo agrega su propia rama.
+      assert.match(codigoVista, /if \(mod === "bloqueo" && f\.bloqueo_id != null\) \{/);
+      assert.match(codigoVista, /if \(mod === "porcion_terrestre" && destinoPorcionEfectivo && \(f\.destino_nombre \?\? ""\) !== destinoPorcionEfectivo\) return false;/);
+    });
+  });
+});
