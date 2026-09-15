@@ -437,9 +437,23 @@ describe("10. Ronda 3 — sugerenciasBusquedaGeneral falla cerrado por hotel sin
     const idxComposicion = cuerpoFn.indexOf("composicion = {", idxIfFalta);
     assert.ok(idxContinue > -1 && idxContinue < idxComposicion, "el `continue` por hotel sin fila maestra debe preceder la construcción de la composición");
   });
-  test("una vez confirmada la fila, los defaults por CAMPO null (edad_infante_max/edad_nino_max) siguen siendo el criterio ya establecido (?? 2 / ?? 10) — eso NO es lo que se corrigió, la fila ya existe", () => {
-    assert.match(cuerpoFn, /edadInfanteMax: hotelRow\.edad_infante_max \?\? 2/);
-    assert.match(cuerpoFn, /edadNinoMax: hotelRow\.edad_nino_max \?\? 10/);
+  // Ronda de validación Dubai (hallazgo #1): un umbral FIJO por hotel
+  // (`edadInfanteMax`/`edadNinoMax` con `?? 2`/`?? 10`) ya no es el criterio
+  // — la regla de edad efectiva se resuelve POR COMBO (override de
+  // `tarifa_hotel` ?? general), dentro de `compatibleConComposicion`
+  // (lib/reservar/liquidacionHotel.ts). Acá solo se arma la regla GENERAL
+  // (fallback, sin normalizar los `?? 2`/`?? 10` — eso vive en
+  // `normalizarReglaEdadGeneral`, lib/calc/reglaEdadTarifa.ts) + las filas
+  // crudas ya cargadas (`datos.tarifas`), sin consulta nueva por combinación.
+  test("una vez confirmada la fila, arma la regla GENERAL completa (las 4 columnas) y reusa datos.tarifas — nunca un umbral fijo edadInfanteMax/edadNinoMax", () => {
+    assert.doesNotMatch(cuerpoFn, /edadInfanteMax:/, "el campo plano eliminado no debe reaparecer");
+    assert.doesNotMatch(cuerpoFn, /edadNinoMax:/, "el campo plano eliminado no debe reaparecer");
+    assert.match(cuerpoFn, /filasTarifa:\s*datos\.tarifas/, "debe reusar datos.tarifas ya cargado, sin consulta nueva");
+    assert.match(cuerpoFn, /generalEdad:\s*\{/, "debe armar la regla general completa (las 4 columnas)");
+    assert.match(cuerpoFn, /infanteMin:\s*hotelRow\.edad_infante_min \?\? null/);
+    assert.match(cuerpoFn, /infanteMax:\s*hotelRow\.edad_infante_max \?\? null/);
+    assert.match(cuerpoFn, /ninoMin:\s*hotelRow\.edad_nino_min \?\? null/);
+    assert.match(cuerpoFn, /ninoMax:\s*hotelRow\.edad_nino_max \?\? null/);
   });
   test("defaultAcomConfig se conserva para hotel_acomodaciones sin filas — regla deliberada y documentada del sistema (mismo default 1/2/3/4 que usa el resto del motor de reservas cuando un hotel no configuró acomodaciones), no un fail-closed nuevo", () => {
     assert.match(cuerpoFn, /reglas\.find\(\(x\) => x\.acomodacion === a\) \?\? defaultAcomConfig\(a\)/);

@@ -2085,6 +2085,12 @@ export type Database = {
           neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null;
           neto_nino2: number | null; neto_infante: number | null; nota_infante: string | null;
           notas: string | null; created_at: string;
+          // Edades propias por fila (migración 177, PROPUESTA — no aplicada
+          // todavía en ningún entorno; ver supabase/migrations/20260601000177_*).
+          // Las 4 son NULL o las 4 tienen valor (CHECK "todas o ninguna").
+          // NULL = fallback histórico — ver lib/calc/reglaEdadTarifa.ts.
+          edad_infante_min: number | null; edad_infante_max: number | null;
+          edad_nino_min: number | null; edad_nino_max: number | null;
         };
         Insert: {
           id?: number; hotel_id: number; tipo_habitacion?: string | null; alimentacion?: string | null;
@@ -2092,6 +2098,8 @@ export type Database = {
           neto_triple?: number | null; neto_multiple?: number | null; neto_nino?: number | null;
           neto_nino2?: number | null; neto_infante?: number | null; nota_infante?: string | null;
           notas?: string | null; created_at?: string;
+          edad_infante_min?: number | null; edad_infante_max?: number | null;
+          edad_nino_min?: number | null; edad_nino_max?: number | null;
         };
         Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
         Relationships: [];
