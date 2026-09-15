@@ -1650,6 +1650,14 @@ export type Database = {
           categoria: string | null;
           proveedor: string | null;
           orden: number;
+          // Migración 178 (PROPUESTA, no aplicada) — condiciones de tarifa/
+          // promoción Dubai REALMENTE aplicadas (texto libre de
+          // `tarifa_hotel.notas`), copiadas UNA VEZ al convertir desde el
+          // snapshot de la cotización (nunca releídas de `tarifa_hotel`).
+          // NULL = sin snapshot que copiar (contrato histórico, o el ítem
+          // nunca trajo `ref`) — nunca se confunde con "cero condiciones"
+          // (eso se guarda como `[]`). Ver lib/calc/condicionesTarifa.ts.
+          condiciones_tarifa: Json | null;
         };
         Insert: {
           id?: number;
@@ -1664,6 +1672,7 @@ export type Database = {
           categoria?: string | null;
           proveedor?: string | null;
           orden?: number;
+          condiciones_tarifa?: Json | null;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_hoteles"]["Insert"]>;
         Relationships: [];

@@ -99,6 +99,15 @@ type SolicitudItemComputado = SolicitudItemValidado & {
   infantes: number;
   pax: number;
   precio: number;
+  // Referencia ESTABLE del ítem, generada server-side a partir de su
+  // posición ORIGINAL VALIDADA en `input.items` (nunca enviada por el
+  // navegador) — ver el bucle en `crearCotizacionCarrito`. Sobrevive a
+  // cualquier reagrupación posterior (`convertirCotizacionCarrito`, por
+  // destino) y es la ÚNICA llave que `resolverCondicionesTarifaParaConversion`
+  // (lib/calc/condicionesTarifa.ts) usa para encontrar el snapshot correcto
+  // de CADA hotel — nunca posición dentro del grupo, nombre ni hotelId+categoría,
+  // que pueden repetirse dentro del mismo carrito.
+  ref: string;
 };
 
 // Ítem Bernalo YA re-liquidado con `computarReservaBernalo` — SOLO decisiones
@@ -120,6 +129,12 @@ type SolicitudItemBernaloComputado = {
   habitaciones: HabitacionOcupacionValidada[];
   pax: number;
   precio: number;
+  // Misma referencia estable que `SolicitudItemComputado.ref` (ver ahí) —
+  // Bernalo la recibe por simetría/consistencia del snapshot, pero
+  // `convertirCotizacionCarrito` NUNCA la usa para copiar condiciones de
+  // tarifa Dubai a un ítem Bernalo (esa funcionalidad es exclusiva de
+  // hoteles "persona" — Bernalo nunca pasa por `computarReserva`).
+  ref: string;
 };
 
 // Tour/servicio agregado al carrito — entra a la MISMA cotización combinada
@@ -441,7 +456,17 @@ async function crearCotizacionCarrito(input: {
   let total = 0;
   let hIdx = 0, vIdx = 0, iIdx = 0;
 
-  for (const it of input.items) {
+  for (let posOriginal = 0; posOriginal < input.items.length; posOriginal++) {
+    const it = input.items[posOriginal];
+    // Referencia ESTABLE del ítem — deriva de su posición ORIGINAL VALIDADA
+    // dentro de `input.items` (el arreglo ya validado por
+    // `validarCrearSolicitudInput`/`validarSolicitudItem`, nunca algo que el
+    // navegador declare como "mi id") — sobrevive intacta a cualquier
+    // reordenamiento o agrupación posterior por destino en
+    // `convertirCotizacionCarrito`. Se persiste en `payload.items[].ref` Y en
+    // `detalle.hoteles[].ref` (ver más abajo), así ambas superficies pueden
+    // correlacionarse sin ambigüedad aunque dos ítems compartan hotel/nombre.
+    const ref = `item-${posOriginal}`;
     // Fase 3F-4A: el ítem Bernalo se re-liquida DIRECTO con el servicio
     // interno autoritativo (`computarReservaBernalo`, Fase 3F-3) — el MISMO
     // que usa la cotización pública en vivo (`cotizarAlojamientoBernaloPublico`),
@@ -506,7 +531,7 @@ async function crearCotizacionCarrito(input: {
 
       hIdx++;
       hotelesSnap.push({
-        id: hIdx, nombre: resultadoBernalo.hotelNombre, categoria: it.categoria, ciudad: destinoAutoritativo,
+        id: hIdx, ref, nombre: resultadoBernalo.hotelNombre, categoria: it.categoria, ciudad: destinoAutoritativo,
         proveedor: null, alimentacion: it.alimentacion, acomodacion: it.categoria,
         detalle_acomodacion: `${habitacionesSnap.length} habitación(es)`,
         fecha_ingreso: resultadoBernalo.salida.fechaIda, fecha_salida: resultadoBernalo.salida.fechaRegreso,
@@ -568,7 +593,7 @@ async function crearCotizacionCarrito(input: {
 
       total += resultadoBernalo.precioVenta;
       itemsBernaloOk.push({
-        modeloTarifario: "unidad",
+        modeloTarifario: "unidad", ref,
         paqueteId: it.paqueteId, hotelId: it.hotelId, hotelNombre: resultadoBernalo.hotelNombre, destino: destinoAutoritativo,
         categoria: it.categoria, alimentacion: it.alimentacion,
         salida: resultadoBernalo.salida, habitaciones: habitacionesSnap,
@@ -604,7 +629,7 @@ async function crearCotizacionCarrito(input: {
     };
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
-    const { meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas, serviciosIncluidos } = comp.data;
+    const { meta, precioVenta, monedaReserva, lineasHab, pvpPorAcom, numNinos, numNinos2, numInfantes, totalPax, distribucionMenores, edadesMenoresUsadas, serviciosIncluidos, condicionesTarifa } = comp.data;
     incluidosSnap.push(...serviciosIncluidos.map((s) => ({ ...s, paqueteId: it.paqueteId })));
 
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
@@ -639,7 +664,7 @@ async function crearCotizacionCarrito(input: {
 
     hIdx++;
     hotelesSnap.push({
-      id: hIdx, nombre: meta.hotel_nombre ?? it.hotelNombre, categoria: it.categoria, ciudad: meta.destino_nombre ?? it.destino,
+      id: hIdx, ref, nombre: meta.hotel_nombre ?? it.hotelNombre, categoria: it.categoria, ciudad: meta.destino_nombre ?? it.destino,
       proveedor: null, alimentacion: it.regimen, acomodacion: it.categoria, detalle_acomodacion: partes.join(", "),
       fecha_ingreso: meta.fecha_ida, fecha_salida: meta.fecha_regreso, nota_regimen: null, foto_url: fotoUrl,
       // Edad exacta de cada menor tal como se cotizó y clasificación/reparto
@@ -652,6 +677,14 @@ async function crearCotizacionCarrito(input: {
       edades_menores: edadesMenoresConfirmadas,
       menores_clasificados: { infantes: numInfantes, nino: numNinos, nino2: numNinos2 },
       distribucion_menores: distribucionMenores,
+      // Condiciones de tarifa/promoción REALMENTE aplicadas (texto libre de
+      // `tarifa_hotel.notas`) — snapshot autoritativo del servidor
+      // (`comp.data.condicionesTarifa`, ver lib/calc/condicionesTarifa.ts),
+      // atado a ESTE hotel/ítem exacto (misma entrada de `hotelesSnap` que ya
+      // carga categoria/alimentacion/fechas). Solo hoteles "persona" — el
+      // bloque Bernalo (arriba) nunca pasa por `computarReserva` y nunca
+      // toca este campo, así que no recibe condiciones Dubai por accidente.
+      condiciones_tarifa: condicionesTarifa,
     });
 
     if (it.modulo === "bloqueo" && it.bloqueoId) {
@@ -740,7 +773,7 @@ async function crearCotizacionCarrito(input: {
     }
 
     total += precioVenta;
-    itemsOk.push({ ...it, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta });
+    itemsOk.push({ ...it, ref, edadesMenores: edadesMenoresConfirmadas, ninos: numNinos, ninos2: numNinos2, infantes: numInfantes, pax: totalPax, precio: precioVenta });
   }
 
   for (const t of input.tours) {

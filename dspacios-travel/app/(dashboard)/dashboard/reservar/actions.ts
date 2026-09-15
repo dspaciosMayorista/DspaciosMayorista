@@ -35,6 +35,7 @@ import {
   type ComputoReserva,
 } from "@/lib/reservar/computo";
 import { resolverDatosVuelo, datosVueloBloqueo, datosVueloEmpaquetado, type DatosVueloOrigen } from "@/lib/reservar/empaquetadoOrigen";
+import { resolverCondicionesTarifaParaConversion, type HotelSnapConRef } from "@/lib/calc/condicionesTarifa";
 import { computarReservaBernalo, type ComputoReservaBernaloOk, type SalidaResueltaBernalo } from "@/lib/reservar/computoReservaBernalo";
 import type { HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { faltantesCxP, type CxpExistente } from "@/lib/reservar/cxpCobertura";
@@ -1212,6 +1213,12 @@ export type ItemCarritoPayload = {
   hotelNombre: string; destino: string | null; categoria: string; regimen: string;
   fechaIda: string | null; fechaRegreso: string | null; noches: number | null;
   habitaciones: Record<string, number>; ninos: number; ninos2: number; infantes: number; pax: number; precio: number;
+  // Referencia ESTABLE del ítem (ver checkout/actions.ts::crearCotizacionCarrito)
+  // — OPCIONAL: cotizaciones creadas ANTES de esta ronda no la traen. Cuando
+  // falta, `resolverCondicionesTarifaParaConversion` (lib/calc/condicionesTarifa.ts)
+  // devuelve "sin snapshot que copiar" — NUNCA se adivina la referencia por
+  // posición/nombre/hotelId+categoría.
+  ref?: string;
 };
 
 // Ítem Bernalo YA COMPUTADO al crear la cotización de carrito (Fase 3F-4A,
@@ -1228,6 +1235,9 @@ export type ItemCarritoBernaloPayload = {
   salida: SalidaResueltaBernalo;
   habitaciones: HabitacionOcupacionValidada[];
   pax: number; precio: number;
+  // Misma referencia estable que `ItemCarritoPayload.ref` (ver ahí) — nunca
+  // se usa para copiar condiciones de tarifa Dubai a un ítem Bernalo.
+  ref?: string;
 };
 export type TourCarritoPayload = {
   nombre: string; destino: string | null; fechaIda: string | null; fechaRegreso: string | null;
@@ -1520,6 +1530,16 @@ export async function convertirCotizacionCarrito(
   const itemsCrudos = payload.items ?? [];
   const tours = payload.tours ?? [];
   const serviciosIncluidosCot = payload.serviciosIncluidos ?? [];
+  // Snapshot `detalle.hoteles[]` — SOLO se usa para copiar condiciones de
+  // tarifa Dubai por referencia estable (`ref`, ver
+  // lib/calc/condicionesTarifa.ts::resolverCondicionesTarifaParaConversion).
+  // Nunca se consulta `tarifa_hotel` en esta función: el snapshot YA
+  // congelado al crear la cotización es la única fuente — cambios
+  // posteriores en el catálogo nunca deben alterar un contrato ya cotizado.
+  const detalleHotelesSnap: HotelSnapConRef[] = (() => {
+    const h = (cot.detalle as { hoteles?: unknown } | null)?.hoteles;
+    return Array.isArray(h) ? (h as HotelSnapConRef[]) : [];
+  })();
   const cliente = payload.cliente ?? { nombres: "", apellidos: "", numeroDoc: "", telefono: "", email: "" };
   if (!itemsCrudos.length && !tours.length) return { ok: false, error: "La cotización no tiene ítems." };
 
@@ -2165,12 +2185,28 @@ export async function convertirCotizacionCarrito(
       const prH = hp?.proveedores as unknown as ProvFact;
       proveedorHotel = prH?.nombre ?? null;
 
-      await sb.from("contrato_hoteles").insert({
+      // Condiciones de tarifa (Dubai) — EXCLUSIVAMENTE del snapshot de la
+      // cotización, correlacionado por `it.ref` (nunca por `hIdx`, que se
+      // reinicia en cada grupo con `agrupar: "por_destino"`; nunca por
+      // nombre/hotelId+categoría, que pueden repetirse dentro del mismo
+      // carrito — ver lib/calc/condicionesTarifa.ts). `it.ref` ausente
+      // (cotización histórica) ⇒ `condiciones: null`, se guarda NULL sin
+      // bloquear. `it.ref` presente pero sin match único ⇒ falla cerrado con
+      // el mecanismo existente (revierte TODO el grupo, nunca un contrato a
+      // medias ni un `continue` silencioso).
+      const rCondiciones = resolverCondicionesTarifaParaConversion(detalleHotelesSnap, it.ref);
+      if (!rCondiciones.ok) {
+        return fallarYRevertirGrupo(`No se pudieron determinar las condiciones de tarifa del hotel "${meta.hotel_nombre ?? it.hotelNombre}": ${rCondiciones.error}`);
+      }
+
+      const { error: eHotelP } = await sb.from("contrato_hoteles").insert({
         numero_contrato: numero, nombre: meta.hotel_nombre ?? it.hotelNombre, categoria: it.categoria,
         proveedor: proveedorHotel, ciudad: meta.destino_nombre ?? it.destino, alimentacion: it.regimen,
         acomodacion: it.categoria, detalle_acomodacion: partes.join(", "),
         fecha_ingreso: meta.fecha_ida, fecha_salida: meta.fecha_regreso, orden: hIdx,
+        condiciones_tarifa: rCondiciones.condiciones as unknown as Json,
       });
+      if (eHotelP) return fallarYRevertirGrupo(`No se pudo registrar el hotel "${meta.hotel_nombre ?? it.hotelNombre}" del contrato: ${eHotelP.message}`);
 
       if (usuarioCond && meta.fecha_ida && meta.fecha_regreso) {
         // componenteHotelReal puede devolver null si la consulta de vigencias
